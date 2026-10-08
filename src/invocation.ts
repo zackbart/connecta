@@ -598,7 +598,7 @@ export class InvocationService {
               target.connector.id,
               this.catalog.baseUrl,
               this.catalog.requestScope,
-              defined({ signal: callSignal, timeoutMs: context.timeoutMs }),
+              defined({ signal: callSignal, timeoutMs: context.timeoutMs, defer: this.catalog.defer }),
             );
             if (context.source === "execute_code") markProgramCall(connectorContext);
             if (

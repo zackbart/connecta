@@ -1,3 +1,4 @@
+import { skewedRefresh } from "./fixtures/oauth-refresh-clock.js";
 // The one-shot Workers KV → D1 copy, against a real local KV namespace and D1
 // database: the workers vitest project binds both (vitest.config.ts). The
 // test module is imported indirectly so this file still loads in the Node
@@ -21,7 +22,12 @@ import {
   credentialKeys,
   kvCopyKeys,
   oauthHandoffKeys,
-  oauthKeys,
+  oauthV2Keys,
+  oauthGrantKeys,
+  oauthFlowKeys,
+  oauthRefreshKeys,
+  oauthRefreshSpentKeys,
+  oauthRefreshActiveKeys,
   resultKeys,
   scopes,
 } from "../src/storage/keys.js";
@@ -118,6 +124,14 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
     ).bind(key).first<{ bytes: number; expires_at_ms: number | null }>();
   }
 
+  it("keeps a live dispatched refresh across D1 adapters with skewed isolate clocks (INV-5)", async () => {
+    try {
+      await skewedRefresh(d1Storage(db), d1Storage(db));
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("copies each family verbatim with its absolute expiry and counts by family", async () => {
     const entries: [key: string, value: string, ttl?: number][] = [
       [accessTokenKeys.record("t1"), '{"id":"t1"}'],
@@ -125,8 +139,13 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
       [accessTokenKeys.active, '["t1"]'],
       [credentialKeys.credential("svc"), '{"sealed":"x"}'],
       [credentialKeys.credential("svc", "owner"), '{"sealed":"y"}'],
-      [`${scopes.connector("svc")}${oauthKeys.value(oauthKeys.field.tokens, null)}`, "tokens"],
-      [`${scopes.connector("svc")}${oauthKeys.generation}`, "v2:g1"],
+      [`${scopes.connector("svc")}${oauthV2Keys.value(oauthV2Keys.field.tokens, null)}`, "tokens"],
+      [`${scopes.connector("svc")}${oauthV2Keys.generation}`, "v2:g1"],
+      [`${scopes.connector("svc")}${oauthGrantKeys.grant}`, "grant"],
+      [`${scopes.connector("svc")}${oauthFlowKeys.flow("digest")}`, "consent", 900],
+      [`${scopes.connector("svc")}${oauthRefreshKeys.lease("epoch", "digest")}`, "lease"],
+      [`${scopes.connector("svc")}${oauthRefreshSpentKeys.spent("digest")}`, '{"connectaOAuthRefreshSpent":1,"epoch":"epoch","holder":"holder","activeKey":"oauth:refresh-active:epoch:holder","state":"ambiguous"}'],
+      [`${scopes.connector("svc")}${oauthRefreshActiveKeys.holder("epoch", "holder")}`, "active", 120],
       [`${scopes.connector("svc")}custom:thing`, "mine"],
       [oauthHandoffKeys.handoff("svc", "hash"), "principal", 900],
       [catalogKeys.manifest("svc"), "{}", 3600],
@@ -149,7 +168,12 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
     expect(result.families).toEqual({
       "access-token": copied(3),
       credential: copied(2),
-      oauth: copied(2),
+      "oauth-v2": copied(2),
+      "oauth-grant": copied(1),
+      "oauth-flow": copied(1),
+      "oauth-refresh": copied(1),
+      "oauth-refresh-spent": copied(1),
+      "oauth-refresh-active": copied(1),
       "connector-owned": copied(1),
       "oauth-handoff": copied(1),
       catalog: copied(1),
@@ -627,7 +651,7 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
     expect(output.table.mock.lastCall?.[0].credential.invalid).toBe(1);
     expect(() => parseArgs(["--overwrite"])).toThrow("Unknown argument");
     expect(() => parseArgs([])).toThrow("Traffic and writers must be stopped");
-    for (const family of ["credential", "access-token", "oauth", "oauth-handoff", "oauth-connect"]) {
+    for (const family of ["credential", "access-token", "oauth-v2", "oauth-grant", "oauth-flow", "oauth-refresh", "oauth-handoff", "oauth-connect"]) {
       expect(() => parseArgs(["--maintenance", "--overwrite-family", family])).toThrow("requires --confirm-stale-d1");
       expect(parseArgs(["--maintenance", "--overwrite-family", family, "--confirm-stale-d1"]).overwriteFamilies).toEqual([family]);
     }

@@ -640,6 +640,7 @@ function renderSearchSchema(
  */
 export class CatalogService {
   readonly requestScope: object;
+  readonly defer: DeferredWork | undefined;
   private readonly probeTimeoutMs: number;
   private readonly concurrency: number;
   private readonly searchRoute: SearchRoute;
@@ -682,6 +683,7 @@ export class CatalogService {
     this.concurrency = resolveDiscoveryConcurrency(options.concurrency);
     this.searchRoute = options.searchRoute ?? "search_tools";
     this.requestSignal = options.requestSignal;
+    this.defer = options.defer;
     this.readOptions = options.defer
       ? {
           defer: options.defer,
@@ -742,7 +744,7 @@ export class CatalogService {
               id,
               this.baseUrl,
               this.requestScope,
-              { signal, timeoutMs: this.probeTimeoutMs },
+              { signal, timeoutMs: this.probeTimeoutMs, ...(this.defer ? { defer: this.defer } : {}) },
               this.readOptions,
             ).then((tools) => structuredClone(tools)),
           (succeeded) => {

@@ -14,8 +14,13 @@ import {
   kvCopyKeys,
   kvCutoverKeys,
   oauthConnectKeys,
+  oauthFlowKeys,
+  oauthGrantKeys,
+  oauthRefreshKeys,
+  oauthRefreshSpentKeys,
+  oauthRefreshActiveKeys,
   oauthHandoffKeys,
-  oauthKeys,
+  oauthV2Keys,
   resultKeys,
   scopes,
   stashLedgerKeys,
@@ -80,11 +85,16 @@ describe("storage key families", () => {
     within(accessTokenKeys.family, accessTokenKeys.lookup("hash"));
     within(accessTokenKeys.family, accessTokenKeys.active);
     within(oauthConnectKeys.family, oauthConnectKeys.used("nonce"));
-    within(oauthKeys.family, oauthKeys.generation);
     within(kvCopyKeys.family, kvCopyKeys.cursor("token"));
-    within(oauthKeys.family, oauthKeys.value(oauthKeys.field.tokens, "v2:epoch"));
-    within(oauthKeys.family, oauthKeys.cleanup("v2:epoch"));
-    within(oauthKeys.family, oauthKeys.cleanupAt("v2:epoch"));
+    within(oauthGrantKeys.family, oauthGrantKeys.grant);
+    within(oauthFlowKeys.family, oauthFlowKeys.flow("digest"));
+    within(oauthFlowKeys.family, oauthFlowKeys.prefix);
+    within(oauthRefreshKeys.family, oauthRefreshKeys.lease("epoch", "digest"));
+    within(oauthRefreshSpentKeys.family, oauthRefreshSpentKeys.spent("digest"));
+    within(oauthRefreshActiveKeys.family, oauthRefreshActiveKeys.holder("epoch", "holder"));
+    within(oauthV2Keys.family, oauthV2Keys.generation);
+    within(oauthV2Keys.family, oauthV2Keys.value(oauthV2Keys.field.tokens, "v2:epoch"));
+    within(oauthV2Keys.family, oauthV2Keys.value(oauthV2Keys.field.tokens, null));
     const artifact = artifactKeys.under("artifact:");
     for (const key of [artifact.head("a"), artifact.blob("b"), artifact.scanCursor,
       artifact.versionPrefix("a", "view"), artifact.runPrefix("a"), artifact.run("a", "0", "r")]) {
@@ -116,11 +126,16 @@ describe("storage key families", () => {
       [credentialKeys.credential("svc", "ab12"), "credential"],
       [artifact.head("a"), "artifact"],
       [artifact.run("a", "0", "r"), "artifact"],
-      [connector(oauthKeys.value(oauthKeys.field.tokens, null)), "oauth"],
-      [connector(oauthKeys.value(oauthKeys.field.client, "v2:epoch")), "oauth"],
-      [personal(connector(oauthKeys.generation)), "oauth"],
-      [connector(oauthKeys.cleanup("v2:epoch")), "oauth"],
-      [connector(oauthKeys.cleanupAt("v2:epoch")), "oauth"],
+      [connector(oauthV2Keys.value(oauthV2Keys.field.tokens, null)), "oauth-v2"],
+      [connector(oauthV2Keys.value(oauthV2Keys.field.client, "v2:epoch")), "oauth-v2"],
+      [personal(connector(oauthV2Keys.generation)), "oauth-v2"],
+      [connector("oauth:cleanup:v2:epoch"), "oauth-v2"],
+      [connector("oauth:cleanup-at:v2:epoch"), "oauth-v2"],
+      [connector(oauthGrantKeys.grant), "oauth-grant"],
+      [personal(connector(oauthFlowKeys.flow("digest"))), "oauth-flow"],
+      [connector(oauthRefreshKeys.lease("epoch", "digest")), "oauth-refresh"],
+      [personal(connector(oauthRefreshSpentKeys.spent("digest"))), "oauth-refresh-spent"],
+      [personal(connector(oauthRefreshActiveKeys.holder("epoch", "holder"))), "oauth-refresh-active"],
       [connector(oauthConnectKeys.used("nonce")), "oauth-connect"],
       [kvCopyKeys.cursor("token"), "kv-copy"],
       [kvCutoverKeys.source("namespace"), "kv-cutover"],
@@ -131,7 +146,7 @@ describe("storage key families", () => {
       [artifactKeys.under("pages:").head("a"), "unclassified"],
       ["", "unclassified"],
       // A family's key outside its scope is not that family's.
-      [oauthKeys.generation, "unclassified"],
+      [oauthV2Keys.generation, "unclassified"],
       [`${scopes.results}${catalogKeys.manifest("svc")}`, "unclassified"],
     ];
     for (const [key, family] of cases) expect(familyOfKey(key), key).toBe(family);
@@ -171,18 +186,14 @@ describe("storage key families", () => {
       () => artifact.run("id", bad, "run"),
       () => artifact.run("id", "0", bad),
       () => artifact.blob(bad),
-      () => oauthKeys.value(oauthKeys.field.tokens, bad),
+      () => oauthFlowKeys.flow(bad),
+      () => oauthV2Keys.value(oauthV2Keys.field.tokens, bad),
       () => oauthConnectKeys.used(bad),
       () => kvCopyKeys.cursor(bad),
     ];
     for (const build of builders) {
       expect(build).toThrow(/U\+0000 \(NUL\)/);
     }
-    // These existing builders encode the component, so NUL remains safe and
-    // distinct from a literal percent escape without changing their layout.
-    expect(oauthKeys.cleanup(bad)).toBe("oauth:cleanup:a%00b");
-    expect(oauthKeys.cleanupAt(bad)).toBe("oauth:cleanup-at:a%00b");
-    expect(oauthKeys.cleanup("a%00b")).not.toBe(oauthKeys.cleanup(bad));
   });
 
   it.each([

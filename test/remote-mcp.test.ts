@@ -13,6 +13,7 @@ import {
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
 import { ConnectorCallError, classifyCallError } from "../src/errors.js";
 import {
   buildSandboxProviders,
@@ -27,6 +28,7 @@ import {
 } from "../src/connectors/remote-mcp.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { oauthGrantKeys, oauthV2Keys, scopes } from "../src/storage/keys.js";
 import { withAbortableTimeout, withDeadline } from "../src/timeout.js";
 import { buildUiData } from "../src/ui.js";
 import type {
@@ -37,6 +39,7 @@ import { connectorContext as ctx, deferred, scriptedExecutor, spyLogger } from "
 import { createTestConnecta, required, makeRegistry, seedCatalog, silentLogger } from "./helpers.js";
 import { httpDownstream, inMemoryDownstream } from "./fixtures/downstream-mcp.js";
 import { mcpRpc } from "./fixtures/http.js";
+import { seedGrant } from "./fixtures/oauth.js";
 
 const BASE = "https://connecta.test";
 
@@ -239,12 +242,10 @@ describe("remoteMcp() connector", () => {
     "INV-7: keeps an OAuth connection usable after its first call's %s deadline scope ends",
     async (outcome) => {
       const storage = memoryStorage();
-      await storage.set("oauth:tokens", JSON.stringify({
-        connectaOAuthVersion: 2,
-        generation: "legacy",
-        issuer: "https://authorization.test",
-        value: { access_token: "oauth-secret", token_type: "bearer" },
-      }));
+      await seedGrant(storage, {
+      issuer: "https://authorization.test",
+      tokens: { access_token: "oauth-secret", token_type: "bearer" },
+    });
       const downstream = httpDownstream((server) => {
         server.registerTool("echo", {
           inputSchema: z.object({}),
@@ -289,12 +290,10 @@ describe("remoteMcp() connector", () => {
     async (exit) => {
       vi.useFakeTimers();
       const storage = memoryStorage();
-      await storage.set("oauth:tokens", JSON.stringify({
-        connectaOAuthVersion: 2,
-        generation: "legacy",
-        issuer: "https://authorization.test",
-        value: { access_token: "oauth-secret", token_type: "bearer" },
-      }));
+      await seedGrant(storage, {
+      issuer: "https://authorization.test",
+      tokens: { access_token: "oauth-secret", token_type: "bearer" },
+    });
       const downstream = httpDownstream((server) => {
         server.registerTool("echo", {
           inputSchema: z.object({ name: z.string() }),
@@ -377,12 +376,10 @@ describe("remoteMcp() connector", () => {
     async (exit) => {
       vi.useFakeTimers();
       const storage = memoryStorage();
-      await storage.set("conn:down:oauth:tokens", JSON.stringify({
-        connectaOAuthVersion: 2,
-        generation: "legacy",
+      await seedGrant(storage, {
         issuer: "https://authorization.test",
-        value: { access_token: "oauth-secret", token_type: "bearer" },
-      }));
+        tokens: { access_token: "oauth-secret", token_type: "bearer" },
+      }, undefined, scopes.connector("down"));
       await seedCatalog(storage, "down", "echo");
       const downstream = httpDownstream((server) => {
         server.registerTool("echo", {
@@ -519,12 +516,10 @@ describe("remoteMcp() connector", () => {
       const registry = makeRegistry([connector]);
       const warmScope = {};
       const context = registry.contextFor("down", BASE, warmScope);
-      await context.storage.set("oauth:tokens", JSON.stringify({
-        connectaOAuthVersion: 2,
-        generation: "legacy",
-        issuer: "https://authorization.test",
-        value: { access_token: "oauth-secret", token_type: "bearer" },
-      }));
+      await seedGrant(context.storage, {
+      issuer: "https://authorization.test",
+      tokens: { access_token: "oauth-secret", token_type: "bearer" },
+    });
       await registry.getTools("down", BASE, warmScope);
       await connector.closeScope!(context);
 
@@ -592,17 +587,18 @@ describe("remoteMcp() connector", () => {
   });
 
   it.each(["last waiter cancels", "scope closes"])(
-    "stops OAuth grant retirement during beginFlow when the %s",
+    "stops a layout 2 migration during beginFlow when the %s",
     async (exit) => {
       const backing = memoryStorage();
+      const tokensKey = oauthV2Keys.value(oauthV2Keys.field.tokens, null);
       const grant = JSON.stringify({ access_token: "legacy-token", token_type: "Bearer" });
-      await backing.set("oauth:tokens", grant);
+      await backing.set(tokensKey, grant);
       const entered = deferred<void>();
       const release = deferred<void>();
       const storage: KVStorage = {
         ...backing,
         async get(key) {
-          if (key === "oauth:tokens") {
+          if (key === tokensKey) {
             entered.resolve();
             await release.promise;
           }
@@ -631,8 +627,8 @@ describe("remoteMcp() connector", () => {
         // A cancelled waiter returned before the detached connect did. Let
         // the released in-memory storage promise chain finish before checking.
         await new Promise((resolve) => setTimeout(resolve, 0));
-        expect(await backing.get("oauth:generation")).toBeNull();
-        expect(await backing.get("oauth:tokens")).toBe(grant);
+        expect(await backing.get(oauthGrantKeys.grant)).toBeNull();
+        expect(await backing.get(tokensKey)).toBe(grant);
         expect(transport).not.toHaveBeenCalled();
       } finally {
         release.resolve();
@@ -1023,7 +1019,7 @@ describe("remoteMcp() connector", () => {
       list: (prefix) => backing.list(prefix),
       compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       async get(key) {
-        if (key === "oauth:generation" && ++generationReads === 2) {
+        if (key === oauthGrantKeys.grant && ++generationReads === 2) {
           reachedSecondRead();
           await generationGate;
         }
@@ -1149,12 +1145,10 @@ describe("downstream session termination", () => {
   it("sends legacy DELETE through the production OAuth wrapper after the first call's deadline scope ends", async () => {
     const downstream = makeHttpDownstream({ sessionId: "oauth-session" });
     const storage = memoryStorage();
-    await storage.set("oauth:tokens", JSON.stringify({
-      connectaOAuthVersion: 2,
-      generation: "legacy",
+    await seedGrant(storage, {
       issuer: "https://authorization.test",
-      value: { access_token: "oauth-secret", token_type: "bearer" },
-    }));
+      tokens: { access_token: "oauth-secret", token_type: "bearer" },
+    });
     const authorizations: (string | null)[] = [];
     vi.stubGlobal("fetch", (input: string | URL, init: RequestInit = {}) => {
       init.signal?.throwIfAborted();
@@ -1195,7 +1189,7 @@ describe("downstream session termination", () => {
     const context = { ...ctx(), requestScope: {}, credential: { get: async () => secret, getAll: async () => ({ value: secret }) } };
     await expect(connector.status!(context)).resolves.toMatchObject({ state: "ok" });
     if (exit === "rotation") secret = "new-secret";
-    if (exit === "generation") await context.storage.set("oauth:generation", "v2:replacement");
+    if (exit === "generation") await seedGrant(context.storage, {}, "v3:replacement");
     if (exit === "disconnect") await connector.disconnectAuth!(context);
     else await expect(connector.status!(context)).resolves.toMatchObject({ state: "ok" });
     // The operation above completes while the provider still holds DELETE.
@@ -1216,10 +1210,10 @@ describe("downstream session termination", () => {
     const storage: KVStorage = {
       ...backing,
       async get(key) {
-        if (key === "oauth:generation" && ++reads === 2) {
+        if (key === oauthGrantKeys.grant && ++reads === 2) {
           checked.resolve();
           await releaseCheck.promise;
-          return "v2:replacement";
+          return JSON.stringify({ connectaOAuth: 3, epoch: "v3:replacement" });
         }
         return backing.get(key);
       },
@@ -1552,15 +1546,10 @@ describe("remoteMcp() redirect policy", () => {
   it("never sends an OAuth bearer token across an origin boundary", async () => {
     const storage = memoryStorage();
     // A grant this release would write: stamped with the server that issued it.
-    await storage.set(
-      "oauth:tokens",
-      JSON.stringify({
-        connectaOAuthVersion: 2,
-        generation: "legacy",
-        issuer: "https://authorization.test",
-        value: { access_token: "oauth-secret", token_type: "bearer" },
-      }),
-    );
+    await seedGrant(storage, {
+      issuer: "https://authorization.test",
+      tokens: { access_token: "oauth-secret", token_type: "bearer" },
+    });
     const calls: Headers[] = [];
     vi.stubGlobal(
       "fetch",
@@ -1837,7 +1826,7 @@ describe("remoteMcp() connection lifecycle", () => {
       (connector, context) => {
         // Another isolate's force re-auth bumps the epoch; the next call in
         // this scope sees it and drops the cached client.
-        void context.storage.set("oauth:generation", "v2:replacement");
+        void seedGrant(context.storage, {}, "v3:replacement");
         return connector.listTools(context);
       },
       { oauth: true },
@@ -1893,29 +1882,31 @@ describe("remoteMcp() connection lifecycle", () => {
 
 
 describe("OAuth callback transport ownership", () => {
-  it.each(["exchange", "clearPending"] as const)("closes an exchange-only transport after %s fails", async failure => {
-    const backing = memoryStorage();
-    const context = { ...ctx(), storage: {
-      ...backing,
-      delete: async (key: string) => {
-        if (failure === "clearPending") throw new Error("pending cleanup failed");
-        await backing.delete(key);
-      },
-    } };
+  async function callback(context = { ...ctx(), requestScope: {} }) {
+    const provider = new KvOAuthProvider("down", context.storage, `${context.baseUrl}/oauth/callback/down`);
+    await provider.beginFlow();
+    const state = await provider.state();
+    await provider.redirectToAuthorization(new URL(`https://auth.example/authorize?state=${state}`));
+    return { context, params: new URLSearchParams({ code: "code", state }) };
+  }
+
+  it.each(["fails", "succeeds"] as const)("closes an exchange-only transport after the exchange %s", async outcome => {
+    const context = { ...ctx(), requestScope: {} };
     const close = vi.fn(async () => {});
     const transport = {
       start: async () => {}, send: async () => {}, close,
       finishAuth: async () => {
-        if (failure === "exchange") throw new Error("exchange failed");
+        if (outcome === "fails") throw new Error("exchange failed");
       },
     };
     const connector = remoteMcp("down", {
       url: "https://downstream.test/mcp", auth: { type: "oauth" },
       _transportFactory: () => transport,
     });
-    await expect(connector.finishAuth!("code", context)).rejects.toThrow(
-      "OAuth flow failed",
-    );
+    const { params } = await callback(context);
+    const finishing = connector.finishAuth!("code", context, params);
+    if (outcome === "fails") await expect(finishing).rejects.toThrow("OAuth flow failed");
+    else await expect(finishing).resolves.toBeUndefined();
     await connector.closeScope!(context);
     await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(1));
   });
@@ -1930,7 +1921,8 @@ describe("OAuth callback transport ownership", () => {
         finishAuth: async () => { throw new Error("exchange failed"); },
       }),
     });
-    await expect(connector.finishAuth!("code", ctx())).rejects.toThrow("OAuth flow failed");
+    const { context, params } = await callback();
+    await expect(connector.finishAuth!("code", context, params)).rejects.toThrow("OAuth flow failed");
     await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(1));
     closing.resolve();
   });

@@ -364,87 +364,217 @@ code, so `remoteMcp()` refuses it as personal at construction.
 
 ## Downstream OAuth state at rest
 
-With a vault, a `remoteMcp()` OAuth connector's tokens, registered client
-(secret included), and PKCE verifier are sealed with its AES-GCM key before
-storage, the additional authenticated data naming the connector, owner
-partition, and physical key (which carries the epoch), so ciphertext moved to
-another connector, principal, or epoch does not open. Anything that fails to
-open — tampered, or under a rotated key — reads as absent: `auth_required` and a
-logged warning. Flow bookkeeping (`state`, the pending URL, discovery metadata,
-the generation) stays plaintext; the callback reads `state` directly, and none
-of it authenticates anything by itself. An [`api()` OAuth
-connector](#downstream-oauth-on-api) seals tokens and verifier alike and stores
-no client.
+Each owner of an OAuth connector (the deployment when shared, each principal
+when personal) has one **grant record**, `oauth:grant` in the connector's
+namespace: the live **epoch**, the latest consent's state digest, and one
+authorization server's client registration, tokens, and discovery. Each
+consent has a **flow record**, `oauth:flow:<sha256(state)>`, holding its
+epoch, consent URL, and PKCE verifier for fifteen minutes; the state itself is
+stored nowhere. Keys come from `src/storage/keys.ts`.
 
-An older release's plaintext is read, then sealed in place through the same
-generation fence as any write, so an upgrade keeps the grant. Sealing is
-one-way: an older release reads sealed state as unusable, so a rollback
-authorizes again. A vault without the optional `seal`/`open` members keeps
-these values plaintext with a startup warning; no vault, plaintext as always.
+With a vault, the grant's body and each verifier are sealed with its AES-GCM
+key, the additional authenticated data naming the connector, owner partition,
+record, and epoch, so ciphertext moved to another connector, principal,
+record, or epoch does not open. Anything that fails to open (tampered, or
+under a rotated key) reads as absent: `auth_required` and a logged warning.
+The epoch, consent URL, and state digest stay plaintext and authenticate
+nothing. A plaintext body written before the vault could seal is sealed where
+it lies on first read, by compare-and-set. An [`api()` OAuth
+connector](#downstream-oauth-on-api) stores no client. A vault without the
+optional `seal`/`open` members keeps the body plaintext with a startup
+warning; no vault, plaintext as always.
 
-## Starting, restarting, and retiring an OAuth epoch
+**From 0.28 (layout 2).** The first read of an owner's grant that finds no
+record reads layout 2 once: the active generation's issuer-stamped client,
+tokens, and discovery (sealed values open under their old keys), kept only
+when every credential carries a stamp and the stamps agree with each other
+and with discovery. It writes them as the grant record by compare-and-set,
+then deletes every layout-2 key, cleanup lineage included. A disconnected
+connector stays disconnected; a cancelled request migrates nothing. Grants
+from before issuer binding (v0.8.1 and earlier) and pending consents are not
+carried, so those connectors need Connect again. Rolling back past this
+release finds no layout-2 grant and needs consent.
 
-Every downstream OAuth value lives under an **epoch**, the value of
-`oauth:generation`. A restart or disconnect publishes a new one before deleting
-anything, and a flow that captured an older epoch writes into that epoch's
-keys, where no reader looks. The fence keeps a retired grant out of use;
-deleting old keys is hygiene on top. `POST /ui/oauth/<id>` takes a `mode`:
+## Starting, restarting, and disconnecting
+
+Every grant write (registration, discovery, tokens, a refresh, a consent's
+pointer, an invalidation) reads the record and replaces it by compare-and-set
+against exactly what it read, so no write overwrites one it did not see.
+Every flow (a connect attempt, an `api()` call or start, a callback) binds to
+the epoch it began in. Once another epoch is live its reads fail, its writes
+land nowhere, and it fails retryable `unavailable`: "authorization changed
+while this request was in flight; try again". Restart and Disconnect replace
+the epoch, and the grant with it, in one compare-and-set, so no older
+namespace is left to clean up. They then delete each consent whose epoch is no
+longer live; one left behind cannot complete and expires with its link.
+`POST /ui/oauth/<id>` takes a `mode`:
 
 | Request | What it does |
 | --- | --- |
 | `POST /ui/oauth/<id>` or `?mode=restart` | Issues a signed `/connect/<id>` link requesting a fresh epoch. No downstream authorization starts until the verified browser visits it. |
-| `?mode=continue` | Issues a signed `/connect/<id>` link requesting continuation. At the browser visit, a recent pending flow can be reused; otherwise authorization begins in the current epoch. |
+| `?mode=continue` | Issues a signed `/connect/<id>` link requesting continuation. At the browser visit, a recent pending consent can be reused; otherwise authorization begins in the current epoch. |
 | `GET /connect/<id>?h=...` | Verifies the signed handoff, browser identity, connector visibility, and management permission before calling `startAuth`. Redirects the verified browser to consent. |
 | `DELETE /ui/oauth/<id>` | Disconnects and invalidates the cached catalog, even if the browser leaves. |
 
 `authorize_connector` issues the same browser link, with `force` carried in the
 signed handoff. Status reads never call `startAuth` and never expose the
 provider's consent URL. A UI start answers `{ state: "auth_required",
-authorizationUrl }`, where the URL belongs to connecta. Continuation can reuse a
-pending downstream URL for ten minutes when it still names the stored client.
-The cached catalog stays only when an unforced browser visit reuses that flow or
-finds the connection healthy. Restart invalidates it even if the connection ends
-healthy. A URL stored without a write time is stale. Continue trusts the stored
-registration's `redirect_uris`; after changing `publicUrl`, Restart registers for
-the current callback URL.
+authorizationUrl }`, where the URL belongs to connecta. Continue hands back the
+latest consent only while it is unclaimed, in the live epoch, written within
+ten minutes, and names the grant's client. The cached catalog stays only when
+an unforced browser visit reuses that consent or finds the connection
+healthy. Restart invalidates it even if the connection ends healthy. Continue
+trusts the stored registration's `redirect_uris`; after changing `publicUrl`,
+Restart registers for the current callback URL.
 
-Before activating a new epoch, restart publishes its cleanup lineage: a plain
-list of retired epoch names readable by every release, plus retirement times. Published lineages
-are never rewritten; stale writers append failed cleanups to the live lineage.
-An epoch leaves only when omitted from a successor's lineage.
+### Consents and callbacks
 
-Cleanup work is bounded regardless of prior restarts:
+A start stores its flow record, then the grant's pointer to it. A reset that
+replaced the epoch in between fails the start and removes the record, so no
+start hands out a consent its callback could not complete. The callback finds
+its consent by the state's digest, one read whether or not it exists. The
+exchange then:
 
-| Step | Bound and behavior |
-| --- | --- |
-| After fencing | Delete the retired epoch's six values, then its lineage records. Manifests outlive values only after failed deletion. Retry any of the eight most recent retired epochs (`RETRY_PROBES`) still having a manifest, so retrying a failed Disconnect or Restart deletes the grant. |
-| Before publishing | Sweep up to 16 epochs older than `CLEANUP_GRACE_MS` (24 hours), oldest first. Omit only fully deleted epochs; carry failed sweeps forward without failing restart. |
-| Within grace | Do not re-delete other epochs. Late writes are unreadable behind the fence and their writers delete them. On failure, a writer records retirement now, appending the epoch or changing only its time. A restart that swept it re-reads lineage before publishing, retaining it for a later sweep after grace. Racing writers may lose one time update, leaving the earlier time; missing times mean the reading restart's time, only lengthening grace. |
-| Lineage capacity | At most 5,000 epochs: last-day retirements plus unswept ones. Refuse an overflowing restart before moving the fence. This allows over 4,000 daily restarts beyond the old 1,000 limit. A connector at that old wall can restart immediately after upgrade; old entries drain 16 per restart a day later. Rollback ignores times and can restart unless lineage exceeds its old 1,000 cap. |
-| Delete concurrency | Six at a time, the Workers connection limit. Catalog chunks delete concurrently under the registry's chunk I/O bound. |
+1. binds to the consent's epoch and its issuer, client ID, token endpoint, and
+   discovery digest, noting the client and tokens the grant holds. A supplied
+   RFC 9207 `iss` must equal the consent's issuer;
+2. after every read it depends on, claims the consent by compare-and-set from
+   the exact record found to a claimed one keeping neither URL nor verifier.
+   Of duplicate callbacks exactly one wins; the rest send nothing and get the
+   flat 400 for an already-used link;
+3. after the claim, opens the current grant and checks its issuer, client ID,
+   token endpoint, and discovery against the consent. It re-reads that exact
+   record after opening ciphertext and sends the code in the reaction to that
+   read. Changing issuers advances the epoch as well. A
+   reset published before the read fails the callback with nothing sent. One
+   published while the request is leaving cannot be ordered before the send
+   without a lock across requests; the grant's compare-and-set refuses its
+   tokens, which costs one more consent.
 
-This assumes no request holds a retired epoch for a day, including OAuth flows
-and refreshes.
-If violated, a writer dying between write and cleanup can leave untracked
-residue, but it is never readable.
+The claim is spent whatever the exchange's outcome. The SDK's one retry after
+a refused code receives that refusal and sends nothing. A refused code
+invalidates the client or tokens only as step 1 found them, never what another
+flow wrote meanwhile. Consumption is recorded on that consent alone, so a
+delayed duplicate never deletes or invalidates a newer consent Continue
+published. An exchange no callback verified claims only the consent its
+callback's `state` names: programmatic `finishAuth`, or a PKCE-less `api()`
+exchange. Both built-in `finishAuth` adapters require `callbackParams` with a
+nonempty `state`, even with PKCE disabled or after a separate `verifyState` call.
+A missing state is refused before discovery, registration, or token dispatch.
+
+Layout-2 migration commits `cleanupPending` in the new grant before deleting
+historical keys. Every later grant read retries deletion, then clears the
+marker by CAS only when deletion succeeds. Restart preserves this obligation.
+Disconnect commits a tombstone with the marker and always removes historical
+keys for the connector and owner, including when a modern grant already exists.
+A crash during cleanup cannot restore the disconnected grant.
 
 ## Refresh failures
 
-Refresh classification uses the token endpoint's answer, not the SDK's parsing:
+A refresh token is spent when dispatch begins. Every refresh request passes
+through `KvOAuthProvider.dispatchRefresh`. Before sending, the gate wins the
+lease's `claimed` to `dispatched` CAS and a separate fingerprint CAS at
+`oauth:refresh-spent:<sha256(refresh_token)>`. The latter must succeed before
+any HTTP request leaves. Connector and owner storage namespaces partition both
+records. Spent records have **no TTL**, contain no token, and are never deleted
+by completion, failure, migration cleanup, Restart, Disconnect, or epoch sweeps.
+Copy these durable records during storage migration.
 
-| Answer | Outcome |
+Each fingerprint record names its dispatch epoch, holder, and resolution state:
+
+| State | Send gate |
 | --- | --- |
-| Dead grant: 4xx except 408, 425, 429; or 2xx with OAuth `error` | `auth_required`. Delete refused tokens before releasing refresh waiters, preventing requests or isolates from resending them; the next `authorize_connector` goes straight to consent. |
-| Outage: 5xx, 408, 425, 429, network failure, or 2xx without a token response | Retryable `unavailable`, or `rate_limited` for 429, with `retryAfterMs` from `Retry-After` when present. Keep the grant; passive calls write no consent URL. |
-| Valid refresh that cannot be stored | Retryable `unavailable` with fixed text; leave the stored grant untouched. |
+| `outstanding` | Dispatched without a definitive outcome yet. Refuse the fingerprint in every epoch. |
+| `ambiguous` | The sent request's outcome is unknowable. Refuse the fingerprint in every epoch, including when re-consent returns it again. |
+| `resolved` | The tokens were committed or a definitive failure was recorded. Refuse another send in the same epoch. A later epoch may send once only when its code exchange completed after the resolution was recorded. |
 
-All in-flight joiners get the same verdict even if the sender is cancelled after
-the answer; newcomers join a refusal instead of resending its token. The
-SDK parse failures and `server_error` otherwise fall through to consent; other
-OAuth errors rethrow as outages, resending dead grants. The coordinator adapts
-the answer for SDK classification and provider hooks finish the work, pinned
-beside `refreshResponseOutcome`. Explicit authorization during
-an outage still goes to consent.
+Resolution writes use CAS against the exact outstanding record and record a
+`resolvedAt` timestamp with a resolved outcome. When accepting a code response,
+the coordinator reads the returned refresh token's fingerprint record. Consent
+stores the exact resolved record it observed with the grant's tokens. That
+receipt proves resolution preceded consent completion without comparing
+isolate clocks. A delayed SDK save cannot acquire a newer receipt. The send
+CAS compares against that same resolved record and replaces it with the new
+outstanding dispatch. An earlier consent cannot become eligible merely because
+the pending refresh later resolves. Competing epochs cannot both replace the
+same record, and a late answer cannot turn an ambiguous record into resolved.
+
+An ambiguous token stays blocked even if re-consent returns identical bytes.
+Recovery requires re-consent that yields a different refresh token, or
+revocation at the provider. Restart never deletes spent records or moves old
+credentials into a new epoch.
+
+Credential-bearing token-endpoint requests never follow redirects, regardless
+of `remoteMcp()`'s `redirects` setting. The send gate uses `redirect: "manual"`
+and bypasses the resource redirect wrapper for refresh, authorization-code,
+and client-credentials grants and token revocation. Static `api()` OAuth uses
+the same gate and manual fetch. Any 3xx is a definitive failure, even if its
+body contains tokens. Fetch has already sent the request body; a refresh
+fingerprint is resolved as a definitive failure and the grant requires re-consent. A
+redirected code exchange is refused and its SDK retry cannot resend the code.
+
+| Outcome after dispatch | Result |
+| --- | --- |
+| Valid tokens durably committed | Mark the fingerprint resolved and release waiters with committed tokens. Within the epoch only a new fingerprint can be dispatched next. |
+| Definitive provider failure | `auth_required`. Mark the fingerprint resolved and conditionally remove its grant tokens. Includes every 3xx without following it and complete failures such as 5xx, 408, 425, and 429. |
+| Network or response-body loss, malformed or oversized success, deadline expiry, or process crash | `auth_required`. Mark the fingerprint ambiguous and conditionally remove its grant tokens. Identical-token re-consent cannot reopen it. |
+| Valid rotation whose grant commit retries are exhausted | `auth_required`. Record the definitive commit failure as resolved and conditionally remove its grant tokens. Never return uncommitted tokens to the SDK. |
+| Epoch changed during commit | Drop the response tokens and record the definitive failure as resolved. Restart, Disconnect, or issuer replacement determines the newer grant. A consent that completed before this resolution cannot reuse its fingerprint. |
+
+Refreshes coalesce per owner and epoch within a runtime. Across isolates, a
+shared-storage record at `oauth:refresh:<epoch>:<sha256(refresh_token)>` is
+claimed by CAS before dispatch. Only an expired unsent claim can be taken
+over. Its old holder loses the dispatch CAS. A dispatched record cannot be
+reopened by a completed answer, a verdict, or a newcomer read.
+
+The separate holder record at `oauth:refresh-active:<epoch>:<holder>` has a
+storage-owned 120-second TTL. SQLite and D1 create and check expiry with the
+database clock inside each statement. Custom shared stores must also use a
+storage-owned clock. Cross-isolate clock comparisons never permit takeover of
+a dispatched record. The refresh HTTP request and response body have a
+20-second deadline. Contenders wait at most 35 seconds with 10 ms to 250 ms
+backoff. A waiter deadline returns retryable `unavailable`, keeps the grant,
+and starts no consent. It never permits resending a spent token.
+
+One preparation deadline covers initial epoch and grant reads, claim acquisition,
+dispatch preparation, and local joiners waiting for a grant commit. Cancellation
+before sending settles the local flight without awaiting cleanup storage. An
+unsent claim can expire and be taken over. Late preparation never sends. If
+preparation recorded the fingerprint as spent, it stays spent even if the send
+was subsequently cancelled or a local destination guard refused it.
+
+After dispatch, caller and SDK cancellation end only that caller's wait. The
+exchange and grant commit continue under the HTTP deadline. The runtime passes
+completion to Workers `waitUntil`; paths without that hook keep a background
+promise. The holder re-reads the grant and retries the commit with its in-memory
+response tokens up to 32 times after CAS contention or storage errors. Each
+attempt checks the epoch, issuer, and current refresh token. A changed epoch
+drops the response tokens. Another consent's credentials remain intact. A lost
+commit answer can be recovered by reading the committed grant. Exhausting the
+commit retries requires re-consent.
+
+Lease release uses CAS after the commit or re-consent decision. Completion
+records include a SHA-256 digest of the committed token response, excluding
+the local issuer stamp. Waiters can adopt that committed response even when
+it kept the refresh token or was byte-identical. A newcomer cannot clear the
+completion record to redeem that fingerprint again. Verdict records contain
+fixed typed facts, without tokens or downstream text.
+
+If a dispatched holder crashes, shared-storage liveness expiry records
+re-consent and conditionally removes its grant tokens. A late response cannot
+restore them. Spent records already prohibit replay, including when refusal
+recording or token cleanup fails. Restart and Disconnect sweep obsolete lease
+records while retaining every spent record. Holder liveness remains until
+completion or storage-owned TTL expiry, so reset cannot turn a live request
+into an ambiguous one. The SDK receives
+sanitized failure responses, and provider hooks preserve the re-consent verdict
+for passive calls. A source-level guard pins both OAuth adapters to this single
+send gate, manual token fetches, and a separate resource redirect path.
+Connector status reports `auth_required`; agent calls report
+`downstream_oauth_required` with the authorization recovery action. A 403
+during a dispatched refresh also requires re-consent because its fingerprint
+is already spent. Provider permission denials on other calls retain their
+`provider_permission_denied` recovery.
 
 Refresh and failed code-exchange answers are rebuilt from the OAuth `error`
 code alone with fixed text. The SDK logs descriptions below the configured
@@ -492,10 +622,11 @@ To prevent a downstream from targeting the host's private network:
 
 A refused URL is never requested. Discovery, registration, and code exchange
 fail with a non-retryable `connector_call_failed` naming the host and nothing
-else from the URL. A refused refresh never reaches the token endpoint, so there
-is no verdict: the grant is kept, and the SDK falls through to consent as for
-any refresh it could not complete. Redirects cannot route around the rule; the
-redirect policy follows only same-origin hops.
+else from the URL. A refused refresh never reaches the token endpoint. If the
+send gate already recorded its fingerprint, that fingerprint remains blocked
+and the grant requires re-consent. Redirects cannot route around the
+rule; token requests never follow them, and resource redirects follow only
+same-origin hops.
 
 The check is syntactic: it reads the host after the WHATWG URL parser folds
 `2130706433` and `0x7f.1` into `127.0.0.1`, and never resolves a name — the
@@ -505,54 +636,25 @@ address is out of scope; a host that must stop that needs an egress policy.
 Downstream advertisements choose consent destinations, never destinations for
 existing grants. Tokens and registered clients bind to their issuing server;
 cached discovery sends refresh there despite changed advertisements. Fresh
-discovery naming another issuer receives no existing credentials and registers
-and consents in the same epoch. This can leave old tokens beside new client or
-discovery state; the next flow retires that mixed grant before sending anything
-(see [deciding a grant at flow entry](#deciding-a-grant-at-flow-entry)). The SDK
+discovery naming another issuer replaces the grant's body (see [one server per
+grant](#one-server-per-grant)), so it receives no existing credentials and
+registers and consents anew. The SDK
 also refuses [GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h)
 since client 2.2.0. New consent still follows the downstream's URL; the human
 must read it before approving.
 
-Pre-v0.9.0 grants have no issuer stamp and retire on first use for new consent.
-The SDK cannot protect these unstamped grants because it trusts the provider-supplied issuer stamp.
-They cannot be stamped retroactively: those releases recorded no grant server
-or discovery (first persisted in v0.22.3), and adjacent discovery proves nothing
-because flows save it before reading credentials. Bindings made by v0.9.0
-through v0.28.1 to the first issuer-aware read's discovered issuer still stand.
+Grants from before issuer binding (v0.8.1 and earlier) have no stamp and are
+not migrated (see [state at rest](#downstream-oauth-state-at-rest)).
 
-### Deciding a grant at flow entry
+### One server per grant
 
-Decide the grant once before handing the provider to the SDK: at each
-`remoteMcp()` connect attempt, containing all its 401s and step-ups, and each
-`api()` call or start. SDK hook order is not controlled by connecta: discovery
-writes precede credentials, and client reads precede tokens; consent uses that
-client copy. Retiring inside hooks could retain an old client or cross a reset.
-
-- It is kept when every credential carries a stamp, the stamps agree, and they
-  name the server the epoch's discovery names, if any; with discovery cached,
-  the flow cannot meet another server.
-- Anything else is retired behind a new epoch before anything it holds is
-  sent: a grant from before issuer binding, stamps that disagree with each
-  other, or stamps that disagree with the epoch's discovery.
-- A stamped grant whose epoch kept no discovery (from before v0.22.3 and not
-  refreshed since, or a forced restart's carried client) is kept and the SDK
-  discovers afresh; a different server found there is handed nothing.
-
-Retirement touches only the inspected epoch, checking before mutation and
-activating its successor with compare-and-set. If another reset replaced it,
-abandon the flow without touching anything. Records a superseded flow leaves
-behind are tracked in [#697](https://github.com/zackbart/connecta/issues/697).
-
-Bind every flow read and write to its resulting epoch, never the live one.
-Clean up and report writes overtaken after their epoch check as failed. Starts
-read only their connect attempt's consent URL; callbacks never report unstored
-grants, bind to the state check's captured epoch, and decide nothing about its
-grant. A flow overtaken by reset retires nothing, returns no consent URL, and
-fails retryable `unavailable`: "authorization changed while this request was in
-flight; try again". A callback already overtaken at entry fails before redeeming
-its code. Reset during verifier reads may still permit exchange at the original
-trusted endpoint before token-write fencing; exchange fencing is
-[#697](https://github.com/zackbart/connecta/issues/697).
+A grant record names one authorization server, its `issuer`. Saving
+discovery, a client, or tokens for another server replaces the body, and an
+issuer-aware read hands a value only to the server that issued it. The SDK
+discovers afresh only without cached discovery, after a forced restart's
+carried client for example; a different server found there is handed nothing
+and registers anew. Nothing is decided at flow entry and no hook retires
+anything, so SDK hook order cannot mix servers or cross a reset.
 
 ## Management permissions
 
@@ -763,7 +865,7 @@ instead of a base64 stack on every route.
 
 A verified `/connect` visit gives downstream OAuth work and its state handoff 30 seconds. The request signal
 and deadline reach discovery, registration, and other downstream fetches; expiry returns `504 OAuth
-authorization start timed out`. Storage generation writes, catalog invalidation, and scope close drain before
+authorization start timed out`. A restart's grant write, catalog invalidation, and scope close drain before
 responding because storage has no cancellation contract. They can extend that wait. The provider checks
 cancellation before writing and removes late cancelled writes. Disconnect commits even if the browser leaves.
 
@@ -808,8 +910,8 @@ shared `credentialAdministration` permission. Connecta saves that principal agai
 callback checks state, identity, and permission before consuming the handoff and exchanging the code. Reissue
 pending consent links after upgrading; callbacks without a saved initiating user cannot complete.
 
-`compareAndSet` atomically claims link nonces and callback handoffs, with one concurrent winner, so each
-completes once.
+`compareAndSet` atomically claims link nonces, callback handoffs, and consents, with one concurrent winner,
+so each completes once.
 [Meta-tools](./meta-tools.md#authorization-recovery) describes recovery.
 
 ## URL-based downstream OAuth clients
@@ -870,7 +972,7 @@ No discovery or registration occurs; all URLs are configuration, so the
 | `authorizationParams` | Adds provider parameters; cannot restate the grant's own. |
 | `tokenRequestHeaders` | Adds code-exchange and every refresh's headers; cannot set `Authorization`, `Content-Type`, `Content-Length`, `Cookie`, or `Host`. |
 | `tokenEndpointAuthMethod` | Defaults to `client_secret_basic` with a secret, `none` without; mismatched pairings refuse construction. |
-| Issuer/resource | No advertised issuer means no required RFC 9207 `iss` or sent RFC 8707 `resource`. The grant binds to the token endpoint; changing it fences old tokens behind a new epoch. |
+| Issuer/resource | No advertised issuer means no required RFC 9207 `iss` or sent RFC 8707 `resource`. The grant binds to the token endpoint; after it changes, old tokens are never sent and the next consent replaces them. |
 | Client | One deployment-config identity, never written or sealed to storage; no owner vault slot. Store leaks contain no client secret; Disconnect deletes none and Restart carries none. Read from environment or Worker secrets; empty strings refuse construction without quoting values. |
 
 Handlers never see the grant. `ctx.oauth.fetch(url, init)` sends the calling
@@ -882,17 +984,17 @@ owner's access token as `Authorization: Bearer` with these rules:
   refresh through `remoteMcp()`'s coordinator. Persist rotation even when its
   owner is cancelled after the answer. Replay once; stream bodies are refused.
 - No grant, a second 401, or a [dead refresh](#refresh-failures) means
-  `auth_required`, directing `authorize_connector`. Outages mean retryable
-  `unavailable` and keep the grant. Latch second 401s for the request scope,
+  `downstream_oauth_required`, directing `authorize_connector`. Refresh waiter deadlines
+  return retryable `unavailable`. Latch second 401s for the request scope,
   preventing repeated refreshes by later program calls.
 - Handlers can name no storage, sealing, or owner partition; the registry owns them.
 - The answer's `.text()` and `.json()`, clones' too, decode its bytes as UTF-8, so
   workerd never quotes a downstream's Content-Type in its own log (INV-6).
 
-Epoch fencing and cleanup lineage, vault sealing, shared/personal ownership,
+The grant record and consents, epoch fencing, vault sealing, shared/personal ownership,
 callback state/principal checks, `authorize_connector`, Connect, Restart, and
-Disconnect match `remoteMcp()`. Status calls report stored grants healthy without
-downstream probes and never start authorization. The first start immediately
-publishes a modern epoch; `api()` has no pre-epoch legacy grants. `oauth` and
+Disconnect match `remoteMcp()`. Status calls report a stored grant for the
+configured token endpoint healthy without downstream probes and never start
+authorization. `oauth` and
 `credential` are exclusive per connector, giving `auth_required` one recovery.
 For providers offering both, deployment config chooses; handlers check `ctx.oauth`.

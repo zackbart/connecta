@@ -13,7 +13,8 @@ export interface KVStorage {
   get(key: string): Promise<string | null>;
   /**
    * Write `value`. With `opts.ttlSeconds` the entry reads as absent once that
-   * many seconds pass; omitted or zero means no expiry.
+   * many seconds pass; omitted or zero means no expiry. Shared stores must
+   * create and check expiry with a storage-owned clock, not each caller's clock.
    */
   set(
     key: string,
@@ -231,6 +232,8 @@ export interface ConnectorContext {
   requestScope?: object;
   /** Best-effort cancellation signal for this connector operation. */
   signal?: AbortSignal;
+  /** Runtime hook keeping a dispatched OAuth refresh alive through its commit. */
+  defer?: (promise: Promise<unknown>) => void;
   /** Requested connector-operation deadline in milliseconds. */
   timeoutMs?: number;
 }
@@ -488,12 +491,15 @@ export interface Connector {
   /**
    * Optional: complete a downstream OAuth flow (called by
    * /oauth/callback/<id>). `callbackParams` preserves the authorization
-   * server's RFC 9207 `iss` response parameter for SDK validation.
+   * server's RFC 9207 `iss` response parameter for validation. Built-in
+   * OAuth adapters require a nonempty `state` in this parameter, including
+   * programmatic calls and `api()` flows with PKCE disabled. Missing state
+   * is refused before any downstream request.
    */
   finishAuth?(
     code: string,
     ctx: ConnectorContext,
-    callbackParams?: URLSearchParams,
+    callbackParams: URLSearchParams,
   ): Promise<void>;
 }
 

@@ -34,6 +34,7 @@ import {
   assertOAuthScope,
   authorizingContext,
   KvOAuthProvider,
+  OAuthRequestNotSentError,
   refreshCoordinatorsByPartition,
 } from "../auth/downstream-oauth.js";
 import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
@@ -749,7 +750,7 @@ export function redirectSafeFetch(
   };
 }
 
-class RemoteMcpDestinationError extends ConnectorCallError {
+class RemoteMcpDestinationError extends OAuthRequestNotSentError {
   constructor(connectorId: string, reason: string) {
     super(
       "connector_call_failed",
@@ -801,10 +802,10 @@ for (const [ctor, label] of [
  *
  * The SDK learns authorization-server, token, and registration URLs from the
  * downstream's own metadata and fetches them through the transport's fetch,
- * so this sits on that fetch: above `redirectSafeFetch`, whose same-origin
- * rule keeps every hop on the host checked here, and below the refresh
- * coordinator, which already treats a non-retryable `ConnectorCallError` as
- * connecta's own refusal rather than a token-endpoint verdict.
+ * so this sits below the refresh coordinator on both send paths. Resource
+ * redirects stay same-origin; credential-bearing token requests bypass the
+ * redirect wrapper. The typed local refusal proves that this guard sent nothing;
+ * failures after an HTTP dispatch keep their permanent ambiguous verdict.
  */
 function learnedUrlSafeFetch(
   connectorId: string,
@@ -816,7 +817,7 @@ function learnedUrlSafeFetch(
     if (reason !== undefined) {
       throw new RemoteMcpDestinationError(connectorId, reason);
     }
-    return await baseFetch(input, init);
+    return byteReadResponse(await baseFetch(input, init));
   };
 }
 
@@ -1048,10 +1049,10 @@ interface ConnectionState {
   provider: KvOAuthProvider | null;
   connectedGeneration: string | null;
   /**
-   * The OAuth epoch the latest connect attempt began in. A consent URL that
-   * attempt wrote lives there, and only there.
+   * The provider of the latest connect attempt: the consent it stored, if
+   * any, is the one a start hands out, while its epoch is live.
    */
-  attemptGeneration: string | null;
+  attemptProvider: KvOAuthProvider | null;
   /**
    * Digest of the operator-managed credential this scope's client is bound to
    * — or, while a connect is still in flight, the one that attempt is using.
@@ -1520,7 +1521,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         authRequired: false,
         provider: null,
         connectedGeneration: null,
-        attemptGeneration: null,
+        attemptProvider: null,
         credentialDigest: null,
       };
       states.set(key, state);
@@ -1614,8 +1615,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         onInsufficientScope: "throw",
         fetch: refreshCoordinatorFor(ctx).coordinatedFetch(
           oauthProvider,
-          learnedUrlSafeFetch(id, url, guardedFetch),
+          learnedUrlSafeFetch(id, url, fetch),
           signal,
+          ctx.defer,
+          learnedUrlSafeFetch(id, url, guardedFetch),
         ),
       });
       boundOAuthFlows(transport, url, [signal, ctx.signal]);
@@ -1646,8 +1649,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // `scope` is deliberately left as it is — see ConnectionState.
   };
 
-  // The context has no deferred-work hook. Detached exits start this bounded
-  // best-effort tail immediately; closeScope awaits its own tail so the core
+  // Detached exits start this bounded best-effort tail immediately;
+  // closeScope awaits its own tail so the core
   // can pass it to the runtime's deferred channel. Terminating and closing are
   // each bounded, so no close waits more than two seconds in all.
   const closingSessions = new WeakMap<Transport, Deferred.Deferred<void>>();
@@ -1700,14 +1703,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     let oauthGeneration: string | undefined;
     if (isOauth && (state.client || state.connecting)) {
       const provider = newProvider(ctx, state);
-      oauthGeneration = await provider.generation();
-      if (provider.isOperatorDisconnectedGeneration(oauthGeneration)) {
+      oauthGeneration = await provider.liveEpoch();
+      if (provider.isOperatorDisconnectedEpoch(oauthGeneration)) {
         closeHalf(state);
         throw operatorDisconnectedError();
       }
     }
-    // Cross-isolate force re-auth: another isolate bumped the stored generation and
-    // wiped credentials. This request's cached client still speaks the old
+    // Cross-isolate force re-auth: another isolate replaced the grant's epoch,
+    // and the grant with it. This request's cached client still speaks the old
     // token — drop it so the next connect runs against current state.
     if (state.client && oauthGeneration !== undefined && state.connectedGeneration !== null) {
       if (isClosed(state)) throw scopeEndedError();
@@ -1826,7 +1829,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // Keep OAuth work cancellable by the connection's own lifetime instead;
       // requestOptions still passes each call's signal to the SDK separately.
       const connectionAbort = new AbortController();
-      // Own cancellation before beginFlow's storage reads can retire a grant.
+      // Own cancellation before beginFlow's storage reads.
       // The lease first owns just the signal, then the transport it creates.
       const lease = Scope.forkUnsafe(state.scope);
       const handshakeAbort = new AbortController();
@@ -1852,13 +1855,13 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // the replacement must never mutate the abandoned provider's epoch.
         const provider = isOauth ? newProvider(ctx, undefined, connectionAbort.signal) : null;
         // Every OAuth run of this attempt — a 401's refresh or consent, a
-        // step-up — happens inside the SDK, so the grant is decided here, before
-        // the SDK is handed the provider, and the attempt is bound to the epoch
-        // that decision leaves. Nothing is retired from inside the SDK's flow.
+        // step-up — happens inside the SDK, bound to the epoch live now: a
+        // reset meanwhile fails the attempt rather than handing it the next
+        // epoch's grant.
         const genAtStart = provider ? yield* promised(() => provider.beginFlow()) : "";
         if (!owned()) return yield* Effect.fail(scopeEndedError());
-        if (provider) state.attemptGeneration = genAtStart;
-        if (provider?.isOperatorDisconnectedGeneration(genAtStart)) {
+        if (provider) state.attemptProvider = provider;
+        if (provider?.isOperatorDisconnectedEpoch(genAtStart)) {
           return yield* Effect.fail(operatorDisconnectedError());
         }
         // SDK v2 selects its validator by runtime export condition: AJV on
@@ -1904,8 +1907,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // credentials this client just bound to. Discard it rather than cache
         // a stale-isolate connection.
         if (provider) {
-          const generation = yield* promised(() => provider.generation());
-          // closeScope can land while the generation read is pending, after
+          const generation = yield* promised(() => provider.liveEpoch());
+          // closeScope can land while the epoch read is pending, after
           // connect succeeded but before this client is cached. Discard the
           // client on that side of the await too.
           if (!owned()) return yield* Effect.fail(scopeEndedError());
@@ -2331,17 +2334,24 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     async finishAuth(code, ctx, callbackParams) {
       const state = stateFor(ctx);
       const provider = newProvider(ctx, state);
-      // verifyState ran on this request-scoped provider first and captured the
-      // pending flow's generation. If force reset races the exchange, any late
-      // token write remains tagged with that older generation and is unreadable.
-      // A transport an attempt built belongs to that attempt's lease; one built
-      // here for the exchange alone belongs to this call, which closes it.
-      const leased = state.transport;
+      // verifyState ran on this request-scoped provider first and found the
+      // consent; a programmatic exchange names it by its callback's state.
+      const consent = callbackParams?.get("state") ?? null;
+      if (!consent || !(await provider.verifyCallbackState(consent))) {
+        throw new ConnectorCallError(
+          "connector_call_failed",
+          `Connector "${id}" authorization callback matches no pending consent; nothing was exchanged.`,
+        );
+      }
       // The exchange reads and writes only the epoch its consent was written
       // in; it decides nothing about the grant there.
+      provider.validateCallbackIssuer(callbackParams?.get("iss") ?? null);
       await provider.bindFlow();
-      const t = (leased ??
-        buildTransport(ctx, provider)) as StreamableHTTPClientTransport;
+      // Always a transport of the exchange's own, over the provider that
+      // verified the state: that provider holds the consent's claim, and the
+      // fence before the token request is its to cross. A connection this
+      // scope opened earlier speaks for its connect attempt, not this callback.
+      const t = buildTransport(ctx, provider) as StreamableHTTPClientTransport;
       const trail: OAuthTrail = {};
       const internals = t as unknown as { _fetchWithInit?: FetchLike };
       const traced = tracedOAuthFetch(trail, new URL(opts.url), internals._fetchWithInit ?? fetch);
@@ -2350,20 +2360,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         set: (target, key, value) => Reflect.set(target, key, value, target),
       });
       try {
-        if (callbackParams !== undefined) {
-          await exchange.finishAuth(callbackParams);
-        } else {
-          await exchange.finishAuth(code);
-        }
-        await provider.clearPending();
+        await exchange.finishAuth(callbackParams);
         // Reset so the next use reconnects with the freshly stored tokens.
         closeHalf(state);
       } catch (err) {
         throw withoutAuthorizationServerText(err, trail, [ctx.signal]);
       } finally {
         // This exchange-only transport has no lease in the request scope.
-        // It must close even when redemption or pending-state cleanup fails.
-        if (!leased) detach(closeConnection(null, t, ctx.logger));
+        detach(closeConnection(null, t, ctx.logger));
       }
     },
   };
@@ -2413,17 +2417,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         };
       } catch (err) {
         if (state.authRequired) {
-          // The consent URL this start's attempt wrote, read from the epoch
-          // that attempt began in: one a later reset published belongs to
-          // another flow, and this start fails rather than hand it out.
+          // The consent this start's attempt stored, while its epoch is live:
+          // one a later reset published belongs to another flow, and this
+          // start fails rather than hand it out.
           let authorizationUrl: string | undefined;
           try {
-            const reader = newProvider(ctx);
-            if (state.attemptGeneration !== null) {
-              reader.captureGeneration(state.attemptGeneration);
-              await reader.bindFlow();
-            }
-            authorizationUrl = await reader.pendingAuthorizationUrl();
+            authorizationUrl = await state.attemptProvider?.consentUrl();
           } catch (readErr) {
             return { state: "error", message: startMessage(readErr) };
           }

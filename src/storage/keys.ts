@@ -284,8 +284,97 @@ export const kvCutoverKeys = {
 
 // --- connector families ---------------------------------------------------
 
-/** The OAuth values a flow stores, each under its historical key. */
-const oauthField = {
+/** Seconds a consent's flow record stays claimable, the same as its link. */
+export const OAUTH_FLOW_TTL_SECONDS = 15 * 60;
+
+/**
+ * Downstream OAuth's grant in a connector's namespace, layout 3: one record
+ * per owner at `oauth:grant`, holding the epoch, the latest consent's state
+ * digest, and the sealed client, tokens, and discovery. Every write is a
+ * compare-and-set against the exact record read, so a write a restart
+ * overtook cannot land.
+ */
+export const oauthGrantKeys = {
+  family: {
+    name: "oauth-grant",
+    scope: "connector",
+    prefixes: ["oauth:grant"],
+    version: { number: 3, in: "value" },
+    codec: jsonCodec,
+    ttl: { kind: "durable" },
+    durable: true,
+  },
+  grant: "oauth:grant",
+} as const satisfies Keyed;
+
+/**
+ * One consent: `oauth:flow:<sha256(state)>`, holding its epoch, consent URL,
+ * and sealed PKCE verifier. The callback claims it by compare-and-set before
+ * the code leaves, so consumption is recorded on that consent alone.
+ */
+export const oauthFlowKeys = {
+  family: {
+    name: "oauth-flow",
+    scope: "connector",
+    prefixes: ["oauth:flow:"],
+    version: { number: 1, in: "value" },
+    codec: jsonCodec,
+    ttl: { kind: "fixed", seconds: OAUTH_FLOW_TTL_SECONDS },
+    durable: false,
+  },
+  prefix: "oauth:flow:",
+  flow: (stateDigest: string) => validateStorageKey(`oauth:flow:${stateDigest}`),
+} as const satisfies Keyed;
+
+/** Shared-storage lifetime of a refresh holder, longer than its HTTP deadline. */
+export const OAUTH_REFRESH_LEASE_SECONDS = 120;
+export const oauthRefreshKeys = {
+  family: {
+    name: "oauth-refresh",
+    scope: "connector",
+    prefixes: ["oauth:refresh:"],
+    version: { number: 1, in: "value" },
+    codec: jsonCodec,
+    ttl: { kind: "durable" },
+    durable: true,
+  },
+  prefix: "oauth:refresh:",
+  lease: (epoch: string, tokenDigest: string) =>
+    validateStorageKey(`oauth:refresh:${epoch}:${tokenDigest}`),
+} as const satisfies Keyed;
+
+/** One fingerprint's dispatch and resolution across epochs. Never expire or delete these records. */
+export const oauthRefreshSpentKeys = {
+  family: {
+    name: "oauth-refresh-spent",
+    scope: "connector",
+    prefixes: ["oauth:refresh-spent:"],
+    version: { number: 1, in: "value" },
+    codec: jsonCodec,
+    ttl: { kind: "durable" },
+    durable: true,
+  },
+  spent: (tokenDigest: string) => validateStorageKey(`oauth:refresh-spent:${tokenDigest}`),
+} as const satisfies Keyed;
+
+/** Expiry is storage-owned; dispatched fingerprints themselves never expire. */
+export const oauthRefreshActiveKeys = {
+  family: {
+    name: "oauth-refresh-active",
+    scope: "connector",
+    prefixes: ["oauth:refresh-active:"],
+    version: { number: 1, in: "value" },
+    codec: jsonCodec,
+    ttl: { kind: "fixed", seconds: OAUTH_REFRESH_LEASE_SECONDS },
+    durable: false,
+  },
+  prefix: "oauth:refresh-active:",
+  holder: (epoch: string, holder: string) =>
+    validateStorageKey(`oauth:refresh-active:${epoch}:${holder}`),
+} as const satisfies Keyed;
+
+/** The values layout 2 stored, each under its historical key. */
+const oauthV2Field = {
   client: "oauth:client",
   tokens: "oauth:tokens",
   pending: "oauth:pending",
@@ -294,22 +383,20 @@ const oauthField = {
   discovery: "oauth:discovery",
 } as const;
 
-export type OAuthValueKey = (typeof oauthField)[keyof typeof oauthField];
+export type OAuthV2ValueKey = (typeof oauthV2Field)[keyof typeof oauthV2Field];
 
 /**
- * Downstream OAuth state in a connector's namespace, layout 2: each value at
- * its field key, suffixed `:epoch:<generation>` once a modern generation owns
- * it; the active generation at `oauth:generation`; a reset's cleanup lineage
- * at `oauth:cleanup:` and `oauth:cleanup-at:`. Layout 2 is marked by the `v2:`
- * generation value. Phase 3 replaces it with one grant record per owner and
- * one flow record per consent, migrating from this layout.
+ * Layout 2, read once to migrate it into a grant record and then deleted:
+ * each value at its field key, suffixed `:epoch:<generation>` once a modern
+ * generation owned it; the active generation at `oauth:generation`; a reset's
+ * cleanup lineage at `oauth:cleanup:` and `oauth:cleanup-at:`.
  */
-export const oauthKeys = {
+export const oauthV2Keys = {
   family: {
-    name: "oauth",
+    name: "oauth-v2",
     scope: "connector",
     prefixes: [
-      ...Object.values(oauthField),
+      ...Object.values(oauthV2Field),
       "oauth:generation",
       "oauth:cleanup:",
       "oauth:cleanup-at:",
@@ -319,15 +406,13 @@ export const oauthKeys = {
     ttl: { kind: "durable" },
     durable: true,
   },
-  field: oauthField,
+  field: oauthV2Field,
+  /** One listing covers every layout 2 key; the reader keeps those above. */
+  scan: "oauth:",
   /** A value's physical key; `epoch` null is the historical unsuffixed name. */
-  value: (key: OAuthValueKey, epoch: string | null) =>
+  value: (key: OAuthV2ValueKey, epoch: string | null) =>
     validateStorageKey(epoch === null ? key : `${key}:epoch:${epoch}`),
   generation: "oauth:generation",
-  cleanup: (generation: string) =>
-    `oauth:cleanup:${encodeURIComponent(generation)}`,
-  cleanupAt: (generation: string) =>
-    `oauth:cleanup-at:${encodeURIComponent(generation)}`,
 } as const satisfies Keyed;
 
 /** Single-use `/connect/<id>` links already spent, by nonce. */
@@ -359,7 +444,12 @@ export const KEY_FAMILIES: readonly KeyFamily[] = [
   accessTokenKeys.family,
   credentialKeys.family,
   artifactKeys.family,
-  oauthKeys.family,
+  oauthGrantKeys.family,
+  oauthFlowKeys.family,
+  oauthRefreshKeys.family,
+  oauthRefreshSpentKeys.family,
+  oauthRefreshActiveKeys.family,
+  oauthV2Keys.family,
   oauthConnectKeys.family,
   kvCopyKeys.family,
   kvCutoverKeys.family,

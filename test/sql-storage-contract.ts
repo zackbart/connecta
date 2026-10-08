@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ActivityStore, KVStorage, ToolCallActivityEvent } from "../src/index.js";
 import { InvalidActivityCursorError } from "../src/activity.js";
 import { agentFrictionForCode } from "../src/activity-friction.js";
+import { skewedRefresh } from "./fixtures/oauth-refresh-clock.js";
 import { compareAndSetContract, NUL_VALUES } from "./storage-contract.js";
 
 /**
@@ -23,9 +24,41 @@ export interface SqlFixture {
 export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
-  compareAndSetContract(async () => (await open()).storage());
+  let casDatabase: SqlFixture;
+  compareAndSetContract(async () => {
+    casDatabase = await open();
+    return casDatabase.storage();
+  }, async (ms) => {
+    await casDatabase.exec("UPDATE connecta_kv SET expires_at_ms = expires_at_ms - ? WHERE expires_at_ms IS NOT NULL", ms);
+  });
+
+  it("keeps a live dispatched refresh with caller clock skew across SQL adapters (INV-5)", async () => {
+    const db = await open();
+    await skewedRefresh(db.storage(), db.storage());
+  });
+
+  it("creates and checks TTLs with database time despite skewed caller clocks (INV-5)", async () => {
+    const db = await open();
+    const a = db.storage();
+    const b = db.storage();
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now - 300_000);
+    await a.set("holder", "active", { ttlSeconds: 120 });
+    vi.spyOn(Date, "now").mockReturnValue(now + 300_000);
+    expect(await b.get("holder")).toBe("active");
+    expect(await b.list("holder")).toEqual(["holder"]);
+    expect(await b.compareAndSet("holder", null, "takeover")).toBe(false);
+    expect(await b.compareAndSet("holder", "active", "still-active", { ttlSeconds: 120 })).toBe(true);
+    vi.spyOn(Date, "now").mockReturnValue(now - 300_000);
+    expect(await a.get("holder")).toBe("still-active");
+    // Actual shared expiry, without advancing an isolate clock.
+    await db.exec("UPDATE connecta_kv SET expires_at_ms = 1 WHERE key = ?", "holder");
+    expect(await a.get("holder")).toBeNull();
+    expect(await a.compareAndSet("holder", null, "fresh", { ttlSeconds: 120 })).toBe(true);
+  });
 
   it("rejects a NUL key before creating the KV schema", async () => {
     const db = await open();

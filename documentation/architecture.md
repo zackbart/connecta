@@ -21,19 +21,31 @@ health, and the per-connector call limiters. It is built once and lives as long
 as the isolate — on Workers a lazy module-scope singleton, which is why both
 deployment shapes construct it outside the request handler.
 
-An OAuth connector — `remoteMcp()`, or `api()` with a static grant
-(`src/auth/static-oauth.ts`, the same provider with its discovery and client
-answered from config) — also owns a runtime-local refresh completion gate
-(`src/auth/downstream-oauth.ts`). It coordinates credential mutation across
-concurrent request scopes while sharing no client, transport, or response, and
-never lets a follower cancel the owner. The subtle part is that a valid token
-response consumes the refresh token whether or not the owner survives to save it,
-so the accepted tokens live on the flight: cancelling the owner *before* a valid
-response fails the joiners, because promoting one could replay a token the
-authorization server already consumed, while cancelling it *after* one does not —
-the host persists the rotation on its own write, holds contenders behind a
-generation-keyed pending-mutation marker until that write lands, and hands them
-the saved rotation ([#526](https://github.com/zackbart/connecta/issues/526)).
+An OAuth connector, `remoteMcp()` or `api()` with a static grant, owns a
+runtime-local refresh completion gate in `src/auth/downstream-oauth.ts`.
+Joined scopes share the outcome while keeping their own request I/O and
+cancellation. A shared-storage CAS lease prevents independent isolates from
+redeeming the same refresh token concurrently. The holder commits an accepted
+rotation to the grant by CAS before releasing waiters, even when the owner
+cancels after dispatch. The HTTP exchange uses its own 20-second deadline,
+detached from caller cancellation, and the runtime passes its completion and
+commit to Workers `waitUntil`. Contenders read the committed tokens or typed
+verdict. An unsent claim can be taken over after expiry. Dispatch uses a lease CAS
+transition and a CAS of the token fingerprint into permanent spent storage
+before sending. Fingerprint records have no TTL and carry outstanding,
+ambiguous, or resolved state across Restart and Disconnect. Outstanding and
+ambiguous fingerprints block every epoch. A resolved fingerprint can be sent
+once in a later epoch only when its code exchange observed the resolved
+storage write before completing. Holder liveness survives reset until
+completion or expiry. Credential-bearing
+token requests use manual fetch and bypass resource redirect handling. Every
+3xx requires re-consent after a refresh and refuses a code exchange. The HTTP
+deadline is 20 seconds. A sent request
+whose 120-second storage-owned liveness record expired without a commit is
+never retried and requires re-consent. Valid rotations retry their grant commit
+up to 32 times without another HTTP request; exhausted commits and all dispatched
+provider failures require re-consent. [Auth](./auth.md#refresh-failures) describes the lease and failure
+contracts.
 
 **Per request, and no longer.** The MCP server, its transport, downstream MCP
 clients, abort signals, and the connector scope a probe opens all belong to the
@@ -246,12 +258,14 @@ marker refuses stale copies afterward.
 required, and `createConnecta` refuses storage missing one (INV-11).
 `compareAndSet(key, expected, next, options?)` is an atomic claim: `null` means
 absent (expired counts) on the way in and delete on the way out, and a
-successful write takes the same optional `ttlSeconds` as `set`. Each SQL claim
+successful write takes the same optional `ttlSeconds` as `set`. SQL TTLs are
+created and checked by the database clock inside each statement, so isolate
+clock skew cannot expire a live holder's record. Each SQL claim
 is one statement, which SQLite executes atomically and D1 serializes on its
 primary. Everything that must claim a key exactly once relies on it with no
 read-then-write fallback: artifact head swaps, access-token issuance and
-capacity, OAuth handoff ownership, single-use connect links, downstream OAuth
-generation fences and grant discards, and the result stash.
+capacity, OAuth handoff ownership, single-use connect links, every downstream
+OAuth grant write and consent claim, and the result stash.
 
 Every key is built in `src/storage/keys.ts`, which lists each family with its
 scope, version, codec, and TTL policy; `test/storage-keys.node.test.ts` fails when
@@ -263,7 +277,7 @@ personal registry, `results:` and `subject:<key>:` for result paging.
 Keys and list prefixes must not contain U+0000 (NUL). D1, SQLite, and memory
 storage reject them with `TypeError` before accessing storage: Node 22's
 `node:sqlite` truncates TEXT results at NUL. Builders reject NUL in unencoded
-components; OAuth cleanup builders already percent-encode their components.
+components.
 State-file import validates all keys before writing. The `connecta_kv` table
 keeps its existing TEXT keys, including compatibility with the 0.28 schema.
 Storage writes no log lines. A refused import names the file and an entry's
@@ -690,7 +704,7 @@ storage is the root's namespaced to its principal.
 | Discovery (`catalog-service.ts`) | A request-scoped cache: one shared read per connector (`runtime/shared-read.ts`), settled by the read itself and carrying its own signal and the probe timeout whichever asker starts it. Each asker waits under its own deadline and signal, so one that times out or is cancelled fails alone, and the read is cancelled only once every asker has gone. Fan-out is `Effect.forEach` under the discovery concurrency. |
 | Registry (`registry.ts`) | Catalog persistence and the result stash are programs over `Storage`. A refresh flight is a Deferred its publishing request completes, bounded by its owner's deadline (the default probe timeout when it has none); persisted-catalog writes take per-connector turns, each a Deferred its own request completes. Same-request loads share one read the way discovery's do. |
 | Remote MCP (`connectors/remote-mcp.ts`) | Each request scope's state holds a Scope, each connection is a lease forked from it, and a connect in flight is a Deferred carrying the client it connected. Closing a session and the transport are each bounded to a second. |
-| Downstream OAuth (`auth/downstream-oauth.ts`) | A refresh flight is a Deferred; the owner's redemption is a fiber its abort interrupts, and committing an answer that already exists is uninterruptible. |
+| Downstream OAuth (`auth/downstream-oauth.ts`) | A refresh flight is a Deferred. Preparation follows caller cancellation; after dispatch, the HTTP exchange owns a 20-second deadline and the grant commit continues through the runtime deferred-work hook. |
 | Operator and activity data (`routes/operator.ts`) | Each JSON route is one program run by `serveOperator` behind the Promise `handle()`. Reads run under the request's signal; writes do not, so a vault write or OAuth disconnect that started reaches its cache invalidation. |
 | QuickJS pool (`executors/quickjs.ts`, Node only) | Each child is a scoped resource whose release sends SIGTERM, then SIGKILL after a second; crash respawn backoff is a `Schedule`. |
 

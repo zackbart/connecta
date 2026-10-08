@@ -180,7 +180,7 @@
         },
         {
           "file": "test/downstream-oauth.test.ts",
-          "title": "state() persists a random opaque value verifyState checks constant-time"
+          "title": "state() mints a random opaque value its stored consent verifies by digest"
         },
         {
           "file": "test/remote-mcp.test.ts",
