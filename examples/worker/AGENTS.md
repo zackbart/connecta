@@ -37,7 +37,9 @@ This repository is deployment configuration, not a copy of Connecta itself.
 - All state lives in the one D1 database bound as `CONNECTA_DB`, through
   `d1Storage` (and `d1ActivityStore`) from `@zackbart/connecta/d1`. Do not add
   a KV namespace, a second database, or a copied storage adapter; connecta
-  creates its own tables.
+  creates its own tables. The only KV binding is in `kv-to-d1.wrangler.jsonc`,
+  which is never deployed. It exists for the one-shot copy from a 0.28 Workers
+  KV deployment (README.md § "Upgrading from 0.28"); delete it after the copy.
 - Add application logic only inside deliberate `api()` connector handlers.
   Do not copy or modify Connecta package internals here.
 - Prefer `api()` when the agent must see an exact reviewed capability set;

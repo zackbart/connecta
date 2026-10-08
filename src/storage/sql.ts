@@ -46,8 +46,11 @@ export interface SqlDriver {
   all<Row>(statement: SqlStatement): Promise<Row[]>;
   /** Run one write; resolve with the number of rows it changed. */
   run(statement: SqlStatement): Promise<number>;
-  /** Run writes in order as one transaction. */
-  batch(statements: readonly SqlStatement[]): Promise<void>;
+  /**
+   * Run writes in order as one transaction; resolve with the rows each
+   * statement changed.
+   */
+  batch(statements: readonly SqlStatement[]): Promise<number[]>;
 }
 
 const sql = (text: string, ...params: SqlValue[]): SqlStatement => ({
@@ -139,9 +142,9 @@ export type SqlKind = "d1" | "sqlite";
 
 /** `KVStorage` over one `connecta_kv` table. */
 export function sqlStorage(driver: SqlDriver, kind: SqlKind): KVStorage {
-  const ensure = schemaOnce(driver, (d) =>
-    d.batch(KV_SCHEMA.map((statement) => sql(statement))),
-  );
+  const ensure = schemaOnce(driver, async (d) => {
+    await d.batch(KV_SCHEMA.map((statement) => sql(statement)));
+  });
   // Parameters are positional in both drivers; bind each occurrence in SQL order.
   const live = "(expires_at_ms IS NULL OR expires_at_ms > ?)";
   const current = async (key: string, now: number) => {
@@ -262,6 +265,142 @@ export function sqlStorage(driver: SqlDriver, kind: SqlKind): KVStorage {
       ))) > 0;
     },
   };
+}
+
+/** One entry copied from another store, with its absolute expiry. */
+export interface SqlCopyEntry {
+  readonly key: string;
+  readonly value: string;
+  /** Epoch milliseconds; null never expires. */
+  readonly expiresAtMs: number | null;
+}
+
+/**
+ * What a copy did with one entry: written where no live row was, left alone
+ * because the live row already held the value, refused because it held
+ * another (`conflict`), or replaced under `overwrite` (`overwritten`).
+ */
+export type SqlCopyOutcome = "copied" | "unchanged" | "conflict" | "overwritten";
+
+/** Keys one read compares: D1 binds at most 100 parameters, one is `now`. */
+const COPY_READ_KEYS = 99;
+/** Writes one transaction carries, by count and by bound characters. */
+const COPY_BATCH_STATEMENTS = 50;
+const COPY_BATCH_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Copy entries into the key-value table, verbatim: same key, same value,
+ * same absolute expiry. A live row holding a different value is kept unless
+ * `overwrite` is set, so a second copy of the same entries writes nothing.
+ * Writes go out in bounded transactions; the outcomes follow `entries`.
+ */
+export async function copyIntoSql(
+  driver: SqlDriver,
+  entries: readonly SqlCopyEntry[],
+  options: { overwrite: boolean; now: number },
+): Promise<SqlCopyOutcome[]> {
+  const { overwrite, now } = options;
+  for (const entry of entries) validateStorageKey(entry.key);
+  await driver.batch(KV_SCHEMA.map((statement) => sql(statement)));
+  const live = "(expires_at_ms IS NULL OR expires_at_ms > ?)";
+  const currentValues = async (keys: readonly string[]) => {
+    const values = new Map<string, string>();
+    for (let start = 0; start < keys.length; start += COPY_READ_KEYS) {
+      const chunk = keys.slice(start, start + COPY_READ_KEYS);
+      const rows = await driver.all<{
+        key: string;
+        value: string;
+        value_bytes: TextBytes | null;
+      }>(sql(
+        `SELECT key, ${textColumn("value")} FROM connecta_kv
+         WHERE key IN (${chunk.map(() => "?").join(", ")}) AND ${live}`,
+        ...chunk,
+        now,
+      ));
+      // The message names no key: a copy's errors reach operator output.
+      for (const row of rows) {
+        values.set(row.key, textOf(row.value, row.value_bytes, "a stored value") ?? "");
+      }
+    }
+    return values;
+  };
+
+  const outcomes = Array.from<SqlCopyOutcome>({ length: entries.length });
+  const writes: { index: number; statement: SqlStatement; bytes: number }[] = [];
+  const existing = await currentValues(entries.map((entry) => entry.key));
+  for (const [index, entry] of entries.entries()) {
+    const current = existing.get(entry.key);
+    if (current === entry.value) {
+      outcomes[index] = "unchanged";
+    } else if (current !== undefined && !overwrite) {
+      outcomes[index] = "conflict";
+    } else {
+      outcomes[index] = current === undefined ? "copied" : "overwritten";
+      writes.push({
+        index,
+        bytes: entry.key.length + entry.value.length,
+        statement: overwrite
+          ? sql(
+              `INSERT INTO connecta_kv (key, value, expires_at_ms)
+               VALUES (?, ?, ?)
+               ON CONFLICT (key) DO UPDATE SET
+                 value = excluded.value, expires_at_ms = excluded.expires_at_ms`,
+              entry.key,
+              entry.value,
+              entry.expiresAtMs,
+            )
+          // Absent when read; a live row written since is kept, not replaced.
+          : sql(
+              `INSERT INTO connecta_kv (key, value, expires_at_ms)
+               VALUES (?, ?, ?)
+               ON CONFLICT (key) DO UPDATE SET
+                 value = excluded.value, expires_at_ms = excluded.expires_at_ms
+               WHERE connecta_kv.expires_at_ms IS NOT NULL
+                 AND connecta_kv.expires_at_ms <= ?`,
+              entry.key,
+              entry.value,
+              entry.expiresAtMs,
+              now,
+            ),
+      });
+    }
+  }
+
+  const raced: number[] = [];
+  let batch: typeof writes = [];
+  let batchBytes = 0;
+  const flush = async () => {
+    if (batch.length === 0) return;
+    const changes = await driver.batch(batch.map((write) => write.statement));
+    for (const [position, write] of batch.entries()) {
+      if (!(changes[position]! > 0)) raced.push(write.index);
+    }
+    batch = [];
+    batchBytes = 0;
+  };
+  for (const write of writes) {
+    if (
+      batch.length > 0 &&
+      (batch.length >= COPY_BATCH_STATEMENTS || batchBytes + write.bytes > COPY_BATCH_BYTES)
+    ) {
+      await flush();
+    }
+    batch.push(write);
+    batchBytes += write.bytes;
+  }
+  await flush();
+
+  // A row another writer added between the read and the write: report what
+  // it holds, and leave it.
+  if (raced.length > 0) {
+    const after = await currentValues(raced.map((index) => entries[index]!.key));
+    for (const index of raced) {
+      outcomes[index] = after.get(entries[index]!.key) === entries[index]!.value
+        ? "unchanged"
+        : "conflict";
+    }
+  }
+  return outcomes;
 }
 
 // --- activity -----------------------------------------------------------

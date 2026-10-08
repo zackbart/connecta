@@ -1,0 +1,25 @@
+// Bindings for the one-shot Workers KV → D1 copy in scripts/copy-kv-to-d1.mjs.
+// Never deployed: `wrangler deploy` reads wrangler.jsonc, which binds no KV.
+// Both bindings are remote, so the script reads the real namespace and writes
+// the real database through your `wrangler login` session. Fill in the ids,
+// run the script once, then delete this file. README.md § "Upgrading from
+// 0.28" has the steps.
+{
+  "name": "connecta-kv-to-d1",
+  "compatibility_date": "2025-01-01",
+  "kv_namespaces": [
+    {
+      "binding": "CONNECTA_KV",
+      "id": "replace-with-kv-namespace-id",
+      "remote": true
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "CONNECTA_DB",
+      "database_name": "connecta",
+      "database_id": "replace-with-d1-database-id",
+      "remote": true
+    }
+  ]
+}

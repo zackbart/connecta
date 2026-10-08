@@ -87,8 +87,9 @@ function sqliteDriver(database: SqliteDatabase): SqlDriver {
       // another process cannot either.
       db.exec("BEGIN IMMEDIATE");
       try {
-        for (const statement of batch) run(statement);
+        const changes = batch.map(run);
         db.exec("COMMIT");
+        return changes;
       } catch (error) {
         db.exec("ROLLBACK");
         throw error;
