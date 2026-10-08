@@ -44,12 +44,15 @@ function requestFor(scope: object): RequestInvocations {
 
 /** Bind the verdict, annotation facts and schemas used for this call. */
 export async function classificationDigest(definition: ToolDef): Promise<string> {
-  let schema: string;
-  try { schema = await vettedSchemaDigest(definition); }
-  catch { return ""; } // A digest refusal blocks recovery, not an ordinary call.
-  const annotations = Object.entries(definition.annotations ?? {}).sort(([a], [b]) => a.localeCompare(b));
-  const bytes = new TextEncoder().encode(JSON.stringify({ classification: definition.classification, annotations, schema }));
-  return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), byte => byte.toString(16).padStart(2, "0")).join("");
+  try {
+    const schema = await vettedSchemaDigest(definition);
+    const annotations = Object.entries(definition.annotations ?? {}).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+    const bytes = new TextEncoder().encode(JSON.stringify({ classification: definition.classification, annotations, schema }));
+    return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), byte => byte.toString(16).padStart(2, "0")).join("");
+  } catch {
+    // A digest refusal blocks recovery, not an ordinary call.
+    return "";
+  }
 }
 
 /** Called by the host immediately before callTool, using its private scope. */

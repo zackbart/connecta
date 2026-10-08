@@ -170,6 +170,24 @@ function remoteReadFlow(program: boolean) {
 }
 
 describe("auth recovery invocation eligibility", () => {
+  it("INV-9: a classification digest refusal preserves normal calls and blocks post-entry recovery", async () => {
+    let needsAuth = false;
+    let entries = 0;
+    const connector = api("service", { tools: [{ name: "read", description: "Read a record",
+      annotations: { readOnlyHint: true, extension: 1n }, handler: () => {
+        entries++;
+        if (needsAuth) throw new ConnectorCallError("auth_required", "Connect first");
+        return {};
+      } }],
+    });
+    connector.startAuth = async () => ({ state: "auth_required", authorizationUrl: "https://auth.service.test/authorize" });
+    const flow = setup(connector);
+    expect((await flow.rpc("call_tool", undefined, "service.read")).isError).toBeFalsy();
+    needsAuth = true;
+    expectReconciliation(await flow.rpc("call_tool", undefined, "service.read"));
+    expect(entries).toBe(2);
+  });
+
   it.each([false, true])("INV-9: stale remote MCP read fallback cannot elicit after committing a write (program %s)", async program => {
     let now = Date.now();
     vi.spyOn(Date, "now").mockImplementation(() => now);
