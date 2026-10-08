@@ -18,7 +18,7 @@
     "./providers/forms starts at 26,161 B gzip (#684): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
     "./worker starts at 35500 B gzip (#704): bounded admission plus request-owned loader/RPC handle disposal around the optional upstream DynamicWorkerExecutor. The peer stays external; the cap uses the existing baseline + 60,000 B policy.",
     "./d1 starts at 2,542 B gzip (#705): the shared SQL key-value and activity store (src/storage/sql.ts) behind a structural D1 driver, with no Effect, no MCP SDK, and no dependency. The cap uses the existing baseline + 60,000 B policy. ./sqlite is its Node-only twin over node:sqlite and is reported, not capped.",
-    "examples/worker is remeasured at 386,783 B gzip (#705 item 4): the example now compiles its optional modules — activity history and its D1 store, artifact pages with their store and renderers, the D1 storage adapter — as type-checked code switched on by bindings, where before they were comments outside the bundle. On main the same example measured 352,716 B. The cap uses the existing baseline + 60,000 B policy."
+    "examples/worker is remeasured at 395,375 B gzip (#705 item 4): the example now compiles its optional modules — activity history, artifact pages with their store and renderers — as type-checked code switched on by its environment, over the D1 store from @zackbart/connecta/d1, where before they were comments outside the bundle. On main (97f25a9, after #722) the same example measured 360,549 B on the same machine. The cap uses the existing baseline + 60,000 B policy."
   ],
   "entries": {
     ".": {
@@ -134,8 +134,8 @@
       "maxGzip": 71247
     },
     "examples/worker": {
-      "baselineGzip": 386783,
-      "maxGzip": 446783
+      "baselineGzip": 395375,
+      "maxGzip": 455375
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,

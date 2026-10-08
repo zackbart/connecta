@@ -155,6 +155,7 @@ describe("public package boundary", () => {
     expect(packageJson.exports?.["./d1"]).toEqual({ types: "./dist/d1.d.ts", import: "./dist/d1.js" });
     expect(packageJson.exports?.["./sqlite"]).toEqual({ types: "./dist/sqlite.d.ts", import: "./dist/sqlite.js" });
     expect(readdirSync(join(ROOT, "examples", "worker", "src")).sort()).toEqual([
+      "connecta.config.ts",
       "index.ts",
       "r2-artifact-blobs.ts",
     ]);

@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { ConfigError } from "../src/config-schema.js";
 import { accessTokens } from "../src/access-tokens.js";
 import { activityHistory } from "../src/activity.js";
+import { d1ActivityStore } from "../src/d1.js";
 import { artifacts, kvArtifactStore } from "../src/artifacts.js";
 import { api, remoteMcp } from "../src/index.js";
 import { cloudflare } from "../src/providers/cloudflare.js";
@@ -30,6 +31,8 @@ const tool = {
   handler: () => null,
 };
 const loose = <T>(value: unknown) => value as T;
+/** A D1 binding that answers nothing: activity stores run no statement at construction. */
+const D1 = { prepare: () => ({ bind: () => ({}) }), batch: async () => [] } as never;
 
 describe("built-in factory options", () => {
   it.each([
@@ -78,6 +81,7 @@ describe("built-in factory options", () => {
     ["accessTokens()", () => accessTokens(memoryStorage(), loose({ maxActiv: 3 })), "accessTokens().maxActiv"],
     ["activityHistory()", () => activityHistory(loose({ store: { record() {} }, deploymentID: "prod" })),
       "activityHistory().deploymentID"],
+    ["d1ActivityStore()", () => d1ActivityStore(D1, loose({ retentionDay: 30 })), "d1ActivityStore().retentionDay"],
     ["artifacts() allowlist", () => artifacts(loose({
       store: kvArtifactStore(memoryStorage()), allowlist: { script: [] },
     })), "artifacts().allowlist.script"],
@@ -86,6 +90,14 @@ describe("built-in factory options", () => {
     })), "artifacts().limits.document"],
   ] as const)("INV-11: refuses an unknown option in %s with its path", (_, build, path) => {
     expect(build).toThrow(`Unknown option: ${path}.`);
+  });
+
+  it("INV-11: refuses an activity retention that is not a positive number of days", () => {
+    for (const retentionDays of [0, -1, Number.NaN, Infinity, "30"]) {
+      expect(() => d1ActivityStore(D1, { retentionDays: retentionDays as never }))
+        .toThrow("d1ActivityStore().retentionDays must be a positive number of days.");
+    }
+    expect(() => d1ActivityStore(D1, { retentionDays: 30 })).not.toThrow();
   });
 
   it("INV-11: refuses an accessor in factory options without running it", () => {

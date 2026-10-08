@@ -15,6 +15,7 @@ import { artifacts, kvArtifactStore } from "../src/artifacts.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import { clerkAuth } from "../src/auth/clerk.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
+import { d1ActivityStore, d1Storage } from "../src/d1.js";
 import {
   api,
   createConnecta,
@@ -63,6 +64,7 @@ const SECRETS = {
   iconData: "SENTINEL-icon-data",
   loggerField: "SENTINEL-logger-field",
   activityStoreField: "SENTINEL-activity-store-field",
+  storeDescribe: "SENTINEL-store-describe",
   customDescribe: "SENTINEL-custom-describe",
   productUrlPassword: "SENTINEL-product-url-password",
   productUrlQuery: "SENTINEL-product-url-query",
@@ -85,9 +87,12 @@ function secretBearingDeployment() {
     void SECRETS.functionBody;
     return result;
   };
+  // A custom store whose describe() answers free text where a kind and a
+  // number belong: described as "custom", with no retention.
   const activityStore: ActivityStore & { token: string } = {
     token: SECRETS.activityStoreField,
     record() {},
+    describe: () => ({ kind: SECRETS.storeDescribe, retentionDays: SECRETS.storeDescribe as never }),
   };
   // A connector whose own describe() tries to smuggle values past the
   // allowlist: unknown fields and a header *value* posing as a name list.
@@ -414,11 +419,11 @@ describe("describeConfig", () => {
         modules: {
           ui: { enabled: true },
           vault: { enabled: true, sealsOAuth: true },
-          activity: { enabled: true, readable: false, deploymentId: "production" },
+          activity: { enabled: true, readable: false, deploymentId: "production", store: { kind: "custom" } },
           accessTokens: { enabled: true, maxActive: 100 },
           artifacts: { enabled: true, renderCheck: true, allowlist: { scripts: [], styles: [], fonts: [] } },
         },
-        storage: { configured: true, list: true, compareAndSet: true },
+        storage: { configured: true, kind: "memory" },
         branding: { productName: "Connecta" },
         deploymentInfo: ["token"],
       });
@@ -440,6 +445,27 @@ describe("describeConfig", () => {
     }
   });
 
+  it("INV-5: describes a store by its shipped kind and retention, and any other store as custom", async () => {
+    // Construction and describeConfig() run no statement, so a binding that
+    // answers nothing stands in for D1.
+    const db = { prepare: () => ({ bind: () => ({}) }), batch: async () => [] } as never;
+    const shipped = createConnecta({
+      connectors: [],
+      executor,
+      logger: "silent",
+      storage: d1Storage(db),
+      activity: activityHistory({ store: d1ActivityStore(db, { retentionDays: 30 }) }),
+    });
+    expect(shipped.describeConfig().storage).toEqual({ configured: true, kind: "d1" });
+    expect(shipped.describeConfig().modules.activity.store).toEqual({ kind: "d1", retentionDays: 30 });
+    await shipped.close();
+    const smuggling = { ...memoryStorage(), describe: () => ({ kind: SECRETS.storeDescribe }) };
+    const custom = createConnecta({ connectors: [], executor, logger: "silent", storage: smuggling });
+    expect(custom.describeConfig().storage).toEqual({ configured: true, kind: "custom" });
+    expect(JSON.stringify(custom.describeConfig())).not.toContain("SENTINEL");
+    await custom.close();
+  });
+
   it("reports an unset default timeout as null and an executor-owned code pool", async () => {
     const admitting = customExecutor({
       execute: async () => ({ result: null }),
@@ -449,7 +475,7 @@ describe("describeConfig", () => {
     const snapshot = app.describeConfig();
     expect(snapshot.limits.calls.defaultTimeoutMs).toEqual({ value: null, source: "default" });
     expect(snapshot.executor.admission).toBe("executor");
-    expect(snapshot.storage).toEqual({ configured: false, list: true, compareAndSet: true });
+    expect(snapshot.storage).toEqual({ configured: false, kind: "memory" });
     expect(snapshot.modules).toEqual({
       ui: { enabled: false },
       vault: { enabled: false },
