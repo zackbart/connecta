@@ -47,7 +47,7 @@ if (!validPng(BADGE_PNG) || validPng(LEGACY_BADGE_PNG)) throw new Error("Badge P
 
 interface TrialControl {
   task: string; runner: string; repeat: number; checks: string[];
-  finalAnswer: string; channel?: string; artifactId?: string;
+  finalAnswer: string; channel?: string;
   program?: string; programResult?: string;
 }
 const trialControls = JSON.parse(await readFile(new URL("./tasks/fixtures/baseline-909b-controls.json", import.meta.url), "utf8")) as TrialControl[];
@@ -140,10 +140,6 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<{ cor
         saved.trace.finalAnswer = control.finalAnswer;
         if (control.channel) for (const call of saved.world.calls) {
           if (call.service === "chat" && call.tool === "post_message") call.args.channel = control.channel;
-        }
-        if (control.artifactId) {
-          for (const artifact of saved.world.artifacts?.artifacts ?? []) artifact.id = control.artifactId;
-          for (const message of saved.world.chat.messages) message.text = message.text.replaceAll("/artifacts/open-bugs", `/artifacts/${control.artifactId}`);
         }
         if (control.program) {
           // Same observed refused target, but the actual trial caught the

@@ -27,26 +27,6 @@ function recordEvidence(answer: string, records: EvidenceRecord[]): boolean {
   // is not a run status (for example, "0 failed tests").
   answer = answer.replace(/[*`]/g, "").replace(/\b\d+\s+(?:failed|passed)\s+tests?\b/gi, "test count");
   if (records.length === 1) return Object.values(records[0]!).every(fact => factPattern(fact).test(answer));
-  // Project tables can have other numeric columns such as customer counts
-  // and MRR. Bind the bug count to the project rather than matching all numbers.
-  if (records.every(r => Object.keys(r).length === 2 && "count" in r)) {
-    const pairs = records.map(r => ({ id: factPattern(r.id), count: r.count }));
-    const clauses = answer.split(/[;\r\n]+/);
-    const matched = new Set<string>();
-    for (const clause of clauses) {
-      if (/\b(?:total|open issues)\b/i.test(clause) && !/\bbugs?\b/i.test(clause)) continue;
-      for (const record of pairs) {
-        const label = record.id.source.replace(/^\\b|\\b$/g, "");
-        const forward = new RegExp(`\\b${label}\\b\\s*(?:[|:]\\s*|(?:open\\s+)?bugs?\\s*[:=]?\\s*)?(\\d+)\\b`, "gi");
-        const reverse = new RegExp(`\\b(\\d+)\\s+${label}\\b`, "gi");
-        for (const match of [...clause.matchAll(forward), ...clause.matchAll(reverse)]) {
-          if (match[1] !== record.count) return false;
-          matched.add(label);
-        }
-      }
-    }
-    return matched.size === pairs.length;
-  }
   const patterns = records.map(record => Object.fromEntries(
     Object.entries(record).map(([key, fact]) => [key, factPattern(fact)])));
   const fields = [...new Set(patterns.flatMap(record => Object.keys(record)))];

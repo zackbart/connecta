@@ -50,18 +50,6 @@
     "channel": "#security"
   },
   {
-    "task": "p2-build-page",
-    "runner": "claude",
-    "repeat": 1,
-    "checks": [
-      "correct-destination",
-      "answer-evidence"
-    ],
-    "finalAnswer": "I built the page and posted its link in #triage. The post returned no error, but I didn't read the channel back to confirm it appeared.\n\n**Link:** http://127.0.0.1:59258/artifacts/open-bugs-by-project\n\nThe figures are in a document named `bugs_by_project`, and the page reads them from there. The artifact id is `open-bugs-by-project`.\n\n| Project | Open bugs | Affected customers | MRR at risk |\n|---|---|---|---|\n| Web | 7 | 3 | $101,500 |\n| API | 3 | 3 | $65,500 |\n| Mobile | 2 | 1 | $51,000 |\n\nMRR at risk counts each customer once per project. Initech has two Web bugs but is counted once.\n\n**Source and record ids**\n- **Issue tracker:** I took the open bugs from `tracker.search_issues`; `tracker.list_projects` shows 30 open issues in total (13 Web, 9 API, 8 Mobile).\n  - **Web:** WEB-101 (initech.com), WEB-103 (globex.com), WEB-106 (soylent.com), WEB-110 (initech.com), and WEB-108, WEB-112, WEB-116, which have no customer.\n  - **API:** API-207 (stark.com), API-212 (acme.com), and API-209, which has no customer.\n  - **Mobile:** MOB-310 (wayne.com) and MOB-305, which has no customer.\n- **Product analytics:** MRR comes from `analytics.get_account_metrics`.\n\n| Customer | Account id | MRR |\n|---|---|---|\n| Initech | acc_01 | $48,000 |\n| Globex | acc_02 | $31,500 |\n| Soylent | acc_05 | $22,000 |\n| Stark Industries | acc_06 | $56,500 |\n| Acme | acc_08 | $9,000 |\n| Wayne Enterprises | acc_07 | $51,000 |\n\n- **Bugs with no customer:** WEB-108, WEB-112, WEB-116, API-209 and MOB-305 have no customer attached. The page lists them but counts no MRR for them.\n- **Non-bugs:** I counted only issues labelled \"bug\". WEB-115 has a customer (tyrell.com) but is labelled \"question\", so it's excluded.\n- **Chat:** #triage is channel C03.",
-    "channel": "triage",
-    "artifactId": "open-bugs-by-project"
-  },
-  {
     "task": "p5-read-only-program-refusal",
     "runner": "claude",
     "repeat": 1,
@@ -71,15 +59,6 @@
     "finalAnswer": "No, a program can't close WEB-105 in this read-only pool. I tried once and the call was refused. I didn't retry and I didn't use `call_destructive_tool`, so the issue should be unchanged. I didn't read the issue afterward to confirm that.\n\n- **Source system:** Issue tracker (connector `tracker`), tool `tracker.close_issue`.\n- **Record id:** WEB-105. This is the only record involved.\n- **Attempt:** One call from `execute_code` with `{id: \"WEB-105\"}`.\n- **Refusal:** The error code was `destructive_tool_requires_approval`. The message said: \"Tool \"tracker.close_issue\" is a write. Invoke it through call_destructive_tool so the MCP host can request approval.\"\n- **Tool classification:** The catalog lists `close_issue` as a write (`readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true`). Programs in this pool can only run read tools. A write has to go through `call_destructive_tool`, where the host asks for approval.\n- **Call counts:** The run reported 1 host call attempted and admitted, 0 succeeded and 1 failed.",
     "program": "async () => { try { const r = await connecta.call(\"tracker.close_issue\", {id:\"WEB-105\"}); return {ok:r}; } catch(e) { return {err:String(e && e.message || e), code:e&&e.code}; } }",
     "programResult": "{\"result\":{\"err\":\"Tool \\\"tracker.close_issue\\\" is a write. Invoke it through call_destructive_tool so the MCP host can request approval.\",\"code\":\"destructive_tool_requires_approval\"},\"hostCalls\":{\"attempted\":1,\"admitted\":1,\"succeeded\":0,\"failed\":1}}"
-  },
-  {
-    "task": "p2-refresh-weekly",
-    "runner": "claude",
-    "repeat": 1,
-    "checks": [
-      "answer-evidence"
-    ],
-    "finalAnswer": "Yes, the data updated.\n\n- **Source:** Artifacts connector, artifact `open-bugs`, document `data`.\n- **Run:** The scheduled run `fba08a2c-44d1-4b96-86f2-a273ca267f4e` succeeded at 2026-10-08T14:43:25Z, using refresh program version 1. It wrote document version 2.\n- **Data change:** The web count went from 7 (version 1) to 8. API stays at 3 and mobile at 2.\n- **Tracker check:** The tracker now lists eight open web bugs. Seven are the same as before, plus the new **WEB-999**.\n- **Page:** The HTML was not touched. It reads the `data` document, so it will show web 8.\n- **Next run:** The next refresh is due 2026-10-15."
   },
   {
     "task": "p5-program-image",
@@ -168,27 +147,6 @@
     "channel": "#security"
   },
   {
-    "task": "p2-build-page",
-    "runner": "claude",
-    "repeat": 2,
-    "checks": [
-      "correct-destination",
-      "answer-evidence"
-    ],
-    "finalAnswer": "I built the page and posted its link in #triage. The post returned no error, but I didn't read the channel back to confirm it landed.\n\n**Link:** http://127.0.0.1:60700/artifacts/open-bugs-by-project\n\nThe page is the `open-bugs-by-project` artifact. It reads its figures from a JSON document named `bugs_by_project`. Fixing a number later means updating that document, not rewriting the page.\n\n**Open bugs and affected-customer MRR**\n\n| Project | Open bugs | Bugs with a customer | MRR affected |\n|---|---|---|---|\n| Web | 7 | 4 | $149,500 |\n| API | 3 | 2 | $65,500 |\n| Mobile | 2 | 1 | $51,000 |\n\nThe MRR column adds up one entry per bug, so Initech's $48,000 counts twice in Web, once for each of its two bugs.\n\n**Sources and record ids**\n- **Issue tracker:** I searched open issues labelled `bug`. The tracker has 30 open issues in all, which matches its per-project counts of 13 for Web, 9 for API and 8 for Mobile.\n  - **Web:**\n    - WEB-101 (Initech)\n    - WEB-103 (Globex)\n    - WEB-106 (Soylent)\n    - WEB-110 (Initech)\n    - WEB-108, WEB-112 and WEB-116 have no customer recorded.\n  - **API:**\n    - API-207 (Stark Industries)\n    - API-212 (Acme)\n    - API-209 has no customer recorded.\n  - **Mobile:**\n    - MOB-310 (Wayne Enterprises)\n    - MOB-305 has no customer recorded.\n- **Product analytics:** I matched each customer's domain to an account, then read its MRR from `get_account_metrics`.\n\n  | Customer | Account | MRR (USD) |\n  |---|---|---|\n  | Initech | acc_01 | 48,000 |\n  | Globex | acc_02 | 31,500 |\n  | Soylent | acc_05 | 22,000 |\n  | Stark Industries | acc_06 | 56,500 |\n  | Wayne Enterprises | acc_07 | 51,000 |\n  | Acme | acc_08 | 9,000 |\n\n- **Gaps:** Five of the 12 bugs have no customer in the tracker, so the page shows \"No customer\" and a dash for them instead of a guessed MRR.",
-    "channel": "#triage",
-    "artifactId": "open-bugs-by-project"
-  },
-  {
-    "task": "p2-refresh-weekly",
-    "runner": "claude",
-    "repeat": 2,
-    "checks": [
-      "answer-evidence"
-    ],
-    "finalAnswer": "Yes, the page's data updated. The scheduled run picked up the new web bug.\n\n**Source system:** the tracker (`tracker.search_issues`, status=open, label=bug) and the `open-bugs` page's `data` document.\n\n**Record ids:**\n- The new bug is **WEB-999**. Web now has 8 open bugs: WEB-101, 103, 106, 108, 110, 112, 116 and 999.\n- The scheduled run is 7c7a5bef-b34e-4212-a8cc-1d0cb4e6dcb1. It started with the schedule, not by hand, and succeeded.\n- It saved `data` as **version 3**. Version 2 was my manual test run.\n\n**Supporting facts:**\n- `data` now reads web 8, api 3, mobile 2. Before the new bug it read web 7, api 3, mobile 2.\n- A fresh tracker query gives the same counts, with 13 open bugs in total (it was 12 before).\n- The page is marked current and the next refresh is due 2026-10-15.\n- The HTML is still view version 1. Only the data document changed."
-  },
-  {
     "task": "p5-fanout-over-budget",
     "runner": "claude",
     "repeat": 2,
@@ -249,17 +207,6 @@
     "channel": "C06"
   },
   {
-    "task": "p2-build-page",
-    "runner": "codex",
-    "repeat": 1,
-    "checks": [
-      "correct-destination"
-    ],
-    "finalAnswer": "**Published and shared in `#triage`:** [Open bugs by project \u2014 customer MRR](http://127.0.0.1:59690/artifacts/open-bugs-project-mrr)\n\nThe HTML page reads its figures from the named JSON document `bug_mrr`. It shows **12 open bug-labeled issues**: Web 7, API 3, and Mobile 2. Issues with no customer recorded in the tracker are marked \u201cCustomer not specified\u201d; no MRR is inferred for them.\n\n**Sources and supporting records**\n- **Issue tracker:** Open issues filtered to the `bug` label, by project. Record IDs: `WEB-101`, `WEB-103`, `WEB-106`, `WEB-108`, `WEB-110`, `WEB-112`, `WEB-116`; `API-207`, `API-209`, `API-212`; `MOB-305`, `MOB-310`. These yielded the per-project counts above. Some records have no customer field.\n- **Product analytics:** Current `mrrUsd` account metrics joined to tracker customer domains: Initech (`acc_01`) $48,000; Globex (`acc_02`) $31,500; Soylent (`acc_05`) $22,000; Stark Industries (`acc_06`) $56,500; Acme (`acc_08`) $9,000; Wayne Enterprises (`acc_07`) $51,000.\n- **Artifact and chat:** Artifact `open-bugs-project-mrr` was validated and published; the link was posted to `#triage` on 2026-10-08.",
-    "channel": "triage",
-    "artifactId": "open-bugs-project-mrr"
-  },
-  {
     "task": "p5-program-image",
     "runner": "codex",
     "repeat": 1,
@@ -317,17 +264,6 @@
     ],
     "finalAnswer": "Posted exactly one message to **#triage**: `API-207 Stark Industries $56500`\n\n**Sources and supporting facts**\n- **Product analytics** \u2014 account `acc_06`: Stark Industries; `mrrUsd` is 56,500. This is the highest MRR among the customers explicitly linked to an open bug in the tracker results.\n- **Issue tracker** \u2014 issue `API-207`: open, labeled `bug`, customer `stark.com`; title \u201cBulk import times out above 10k rows.\u201d\n- **Team chat** \u2014 channel `C03` (`triage`); message posted successfully.\n\nNote: Hooli (`acc_03`) has the highest MRR overall at $120,000, but its only open tracker issue, `WEB-102`, is labeled `feature`, not `bug`. There was no open bug explicitly linked to Hooli.",
     "channel": "C03"
-  },
-  {
-    "task": "p2-build-page",
-    "runner": "codex",
-    "repeat": 2,
-    "checks": [
-      "correct-destination"
-    ],
-    "finalAnswer": "Published the HTML report, backed by the named JSON document `bugs`, and shared it in **#triage**.\n\n**Report:** http://127.0.0.1:62015/artifacts/open-bugs-customer-mrr\n\nIt shows 7 Web, 3 API, and 2 Mobile open bugs labeled `bug`. Where an issue had no tracker customer, the report marks the customer and MRR as unspecified rather than assuming $0. MRR is the customer\u2019s full current monthly MRR, repeated for each linked issue.\n\n**Source systems and supporting records**\n- **Issue tracker:** `tracker.search_issues`, filtered to open issues labeled `bug`. Records: `WEB-101`, `WEB-103`, `WEB-106`, `WEB-108`, `WEB-110`, `WEB-112`, `WEB-116`; `API-207`, `API-209`, `API-212`; `MOB-305`, `MOB-310`. Project totals are also supported by `tracker.list_projects`.\n- **Product analytics:** `analytics.list_accounts` matched tracker customer domains to account records; `analytics.get_account_metrics` supplied current `mrrUsd`. Matched account IDs: `acc_01` Initech ($48,000), `acc_02` Globex ($31,500), `acc_05` Soylent ($22,000), `acc_06` Stark Industries ($56,500), `acc_08` Acme ($9,000), and `acc_07` Wayne Enterprises ($51,000).\n- **Artifacts:** validated before publication; artifact `open-bugs-customer-mrr`, revision 1, with document `bugs` version 1.\n- **Team chat:** posted to channel `C03` (`triage`).",
-    "channel": "C03",
-    "artifactId": "open-bugs-customer-mrr"
   },
   {
     "task": "p5-direct-rich-output",

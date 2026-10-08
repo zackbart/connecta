@@ -72,7 +72,7 @@ output checks, and simulated URL elicitations.
 
 Every downstream is a deterministic fake under `fakes/`; no task requires a
 real Mixpanel, RevenueCat, Supabase, GitHub or other third-party account.
-The existing eight tasks keep their state/outcome checks and now require source
+The existing five retained tasks keep their state/outcome checks and now require source
 calls and final-answer facts. Fourteen new active tasks cover:
 
 - a program write in a named trusted pool and refusal in a named read-only pool;
@@ -173,8 +173,8 @@ headless Chromium; install it with `npm run test:browser:install` if needed.
 
 Freeze the checkout before baseline runs, record the commit and CLI versions,
 and save new files rather than overwrite `baselines/`. Owner scope is Sonnet
-5.5 and GPT-6-Luna only, with 1-2 repeats per task. Defaults run 22 tasks x 1
-repeat = 22 trials per runner. A two-repeat baseline runs 44 per runner.
+5.5 and GPT-6-Luna only, with 1-2 repeats per task. Defaults run 19 tasks x 1
+repeat = 19 trials per runner. A two-repeat baseline runs 38 per runner.
 Both use signed-in CLI subscription logins and consume plan allowance.
 
 ```sh
@@ -240,7 +240,7 @@ Regrading starts no CLI, model, HTTP server, or saved program. It preserves the
 original run metadata and adds the grading commit and source filename under
 `regrade`. It writes JSON and an adjacent HTML report. New trials save full
 `toolUses`, final answers, result blocks, ledger arguments, guest-call
-observations, fake state, OAuth counters and artifact snapshots in `saved`.
+observations, fake state and OAuth counters in `saved`.
 The bounded transcript and ledger remain display fields.
 
 Old files lack those snapshots and observations. Regrading checks only facts
@@ -261,7 +261,12 @@ fake PNG had an invalid IDAT checksum. `p5-program-image` and
 capable-auth task is also N/A for Claude: saved trials recovered through
 `authorize_connector` without exercising the simulated URL/verified `/connect`
 path. This does not prove native URL elicitation is unsupported. Codex remains
-eligible for all tasks. Skips record their reason, appear as N/A in reports,
+eligible for all retained tasks. The removed built-in artifact tasks
+`p2-build-page`, `p2-fix-chart-title`, and
+`p2-refresh-weekly` are excluded from the active set and from regraded files.
+Regrading records them in `excluded` with a feature-removal reason.
+
+Skips record their reason, appear as N/A in reports,
 and count as neither passes nor failures. Revalidate and remove these skips
 when the host adapter can observe the required behavior.
 
@@ -280,14 +285,11 @@ stops the batch. No inventory is silently accepted and no failed trial is
 retried with weaker isolation.
 
 Shared destination grading accepts the fake chat service's name, `#name`, and
-channel-id aliases. Artifact creation allows the chosen slug. Weekly-refresh
-destination grading accepts a successful direct or observed trusted-program
-configuration and independently checks bug counts. Evidence ignores Markdown
+channel-id aliases. Evidence ignores Markdown
 styling, accepts the source connector id and prose access-field wording, keeps
-run-id lists and test counts out of record-conflict checks, and binds project
-counts independently of other table columns. The legacy log task does not
+run-id lists and test counts out of record-conflict checks. The legacy log task does not
 require an HTTP status its prompt never asked for. An unavailable service needs
 no invented repository record id. Actual caught program refusals pass; direct
 approval refusals still fail the program task. The self-test includes exact
-saved answers and channel aliases from 37 failed baseline trial shapes, with
+saved answers and channel aliases from 31 failed baseline trial shapes, with
 wrong-destination and missing-evidence controls.

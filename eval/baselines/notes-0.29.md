@@ -6,7 +6,7 @@ live model trials and commits no baseline result JSON.
 
 - Claude Code 2.1.292, requested/served `claude-sonnet-5-5`.
 - Codex CLI 0.160.1, requested/served `gpt-6-luna` in completed trials.
-- Both use signed-in subscription CLI logins, 22 tasks, two repeats,
+- Both use signed-in subscription CLI logins, 19 retained tasks, two repeats,
   concurrency two, eight-minute trial deadline, default model effort.
 - Node v26.10.0 on darwin-arm64. Original source tree `6d8007f82cfc`.
 - Source results are `/tmp/baselines-909b/eval/results/sonnet-5-5.json` and
@@ -14,9 +14,10 @@ live model trials and commits no baseline result JSON.
   `/tmp/connecta-plan/baseline-claude.log` and
   `/tmp/connecta-plan/baseline-codex.log`.
 
-The original grades were Claude 17/44 and Codex 20/44 with two errors. Offline
+Over the 19 remaining tasks, original grades were Claude 15/38 and Codex
+16/38 with two errors. Offline
 regrading writes JSON and HTML under `/tmp/connecta-plan/regraded/`. It produces
-Claude **35/38**, with six N/A trials, and Codex **33/42**, with two errors.
+Claude **29/32**, with six N/A trials, and Codex **29/36**, with two errors.
 These are provisional mixed scores. Checks lacking saved inputs retain their
 original grade and are marked in JSON and HTML. In particular, one correct
 Claude refusal still has its old failed grade because the original file did
@@ -37,9 +38,6 @@ names those tasks.
 | `auth-required-recovery` | 2/2 | 2/2 |
 | `truncated-read-paging` | 2/2 | 2/2 |
 | `truncated-write-export` | 2/2 | 2/2 |
-| `p2-build-page` | 2/2 | 2/2 |
-| `p2-fix-chart-title` | 2/2 | 2/2 |
-| `p2-refresh-weekly` | 2/2 | 0/2 |
 | `p5-trusted-program-write` | 2/2 | 2/2 |
 | `p5-read-only-program-refusal` | 0/2 | 0/2 |
 | `p5-result-paging` | 2/2 | 1/1 + 1 error |
@@ -55,6 +53,9 @@ names those tasks.
 | `p5-known-read-routing` | 2/2 | 0/2 |
 | `p5-connecta-read` | 2/2 | 2/2 |
 
+`p2-build-page`, `p2-fix-chart-title`, and `p2-refresh-weekly` were removed
+with the built-in artifacts feature and excluded from every score.
+
 ## Classification of every originally failing check
 
 Numbers identify repeat 1 or 2. A check may contain both a grader defect and a
@@ -68,11 +69,6 @@ real behavioral miss. Correcting the defect does not remove the other miss.
 | auth-required-recovery / correct-destination | Claude 1, 2; Codex 1 | Grader bug. Correct cus_N7 invoices and $5,650.50 posts used accepted channel aliases. Codex 2 already passed. |
 | truncated-read-paging / correct-destination | Both 1, 2 | Grader bug. Correct run 4812 and refund-test posts used `#ci`. |
 | truncated-read-paging / answer-evidence | Codex 1, 2 | Grader bug. Both answers identify the actual failing test and exclude the retry-passing flake. The legacy prompt did not ask for HTTP 409. |
-| p2-build-page / correct-destination | Both 1, 2 | Grader bug. The task permits the agent's artifact slug, and channel aliases are valid. Claude chose `open-bugs-by-project`. All original task-specific artifact checks passed. |
-| p2-build-page / answer-evidence | Claude 1, 2 | Grader bug. Correct 7/3/2 bug counts were in tables with additional numeric customer/MRR columns. Evidence also required the unrequested fixed slug. Total open-issue counts in the source discussion are not bug-count contradictions. |
-| p2-refresh-weekly / answer-evidence | Claude 1, 2 | Grader bug. Final follow-up answers cite scheduled successful updates, web 8 and WEB-999; requiring the literal word weekly in that follow-up is redundant. |
-| p2-refresh-weekly / correct-destination | Codex 1, 2 | Grader bug. Destination checks should accept the source tracker read, even when its values fail the independent bug-count check. Trusted program set_refresh is also an allowed route when observed. |
-| p2-refresh-weekly / updated-counts, answer-evidence | Codex 1, 2 | Genuine model miss. Refresh reads `tracker.list_projects`, which reports total open issues. It writes 14/9/8 instead of bug counts 8/3/2 and repeats those wrong counts in the final answer. |
 | p5-read-only-program-refusal / refusal | Claude 1 | Grader bug. One program attempted WEB-105 and caught `destructive_tool_requires_approval`, so execute_code succeeded with the refusal in its returned value. A caught refusal is valid. Missing program observations prevent complete offline regrading. |
 | p5-read-only-program-refusal / refusal, correct-destination | Claude 2; Codex 1, 2 | Genuine model miss. Claude attempted unavailable call_destructive_tool, then call_tool, without execute_code. Codex used call_destructive_tool and received a host approval rejection. These do not test program refusal. |
 | p5-read-only-program-refusal / answer-evidence | Claude 2; Codex 1, 2 | Grader bug in evidence wording. They name WEB-105 and report a rejection. Requiring the pool wording or a stronger current-state claim adds nothing to the observed refusal and zero-write checks. Their wrong route still fails the task. |
@@ -87,7 +83,7 @@ real behavioral miss. Correcting the defect does not remove the other miss.
 | p5-known-read-routing / answer-evidence | Claude 1 | Grader bug. The only requested run's status and commit appear in separate sentences and fields. There is no ambiguous mapping with another run. |
 | p5-known-read-routing / direct-read | Codex 1, 2 | Genuine model miss. Both use execute_code for the requested known read instead of call_tool. |
 | p5-revenuecat-text / answer-evidence | Claude 1 | Grader bug. The answer explicitly says its gives_access field is true, cites sub_grace_42 and billing grace period; the regex required a colon or equals sign. |
-| p5-absent-github / no-lookalike-call | Claude 2 | Genuine model miss. It called tracker.list_projects after discovering GitHub absence. It honestly rejected the tracker counts, but the task explicitly forbids the substitute-service call. |
+| p5-absent-github / no-lookalike-call | Claude 2 | Genuine model miss. It called tracker.list_projects after discovering GitHub absence. It honestly rejected the tracker counts, but the required no-lookalike-call contract forbids that call. |
 | p5-absent-github / answer-evidence | Codex 2 | Grader bug. It states GitHub absence and ends with ANSWER: unavailable. No repository record exists to cite when the entire service is absent. |
 | p5-result-paging / trial error | Codex 1 | Runner/infra error before any model turn. Isolation guard detected enabled external Google Drive skills. No task behavior was measured. |
 | p5-supabase-project-ref / trial error | Codex 1 | Same runner/infra error before a model turn. Repeat 2 passed with sb_prod_ref and 73 orders. |
@@ -110,9 +106,6 @@ marked as original grades. New trials save all these inputs.
 | Task | Runner | Missing input or changed fixture |
 | --- | --- | --- |
 | stale-close-and-summarize | Both | Final tracker state proving the exact closed set. |
-| p2-build-page | Both | Artifact source, documents, history and versions. |
-| p2-fix-chart-title | Both | Artifact source, documents and version history. |
-| p2-refresh-weekly | Both | Scheduled runs, refresh config, data versions and final tracker state. |
 | p5-read-only-program-refusal | Both | Guest-call target/error observation and final tracker state. Claude repeat 1 specifically needs the fixed caught-refusal regrade. |
 | p5-result-paging | Both | Host-observed connecta.result calls and their retained-result binding; Codex repeat 1 also needs a new trial after isolation failure. |
 | p5-auth-url-capable | Codex | OAuth visit/start counters; Claude is N/A. |
