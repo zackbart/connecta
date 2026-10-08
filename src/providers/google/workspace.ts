@@ -693,6 +693,9 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
     return unknown;
   }
 
+  // The errors built below keep no cause: a stream's or parser's error can
+  // quote the body it failed on, and the phase and status already say what
+  // happened (#695).
   function settled(
     error: unknown,
     facts: SendFacts,
@@ -739,7 +742,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
         ? new ConnectorCallError(
             "connector_call_failed",
             `${provider} was sent the request but no answer came back, so it may or may not have been applied. Re-read its target before repeating it.`,
-            { retryable: false, cause: error },
+            { retryable: false },
           )
         : error;
       return outcome(mapped, { dispatched: true, phase: "awaiting-response" });
@@ -753,7 +756,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
         ? new ConnectorCallError(
             "connector_call_failed",
             `${provider} answered HTTP ${status} with a redirect, which this connection does not follow, so whether the request was applied is unknown. Re-read its target before repeating it.`,
-            { retryable: false, cause: error },
+            { retryable: false },
           )
         : error;
       return outcome(redirected, { dispatched: true, status, phase: "redirected" });
@@ -764,14 +767,13 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
       ? new ConnectorCallError(
           "connector_call_failed",
           `${provider} accepted the request but its reply could not be read; the change probably applied. Re-read before repeating it.`,
-          { retryable: false, cause: error },
+          { retryable: false },
         )
       : error instanceof ConnectorCallError
         ? error
         : new ConnectorCallError(
             "unavailable",
             `${provider}'s reply broke off while it was being read; reading again is safe.`,
-            { cause: error },
           );
     return outcome(mapped, { dispatched: true, status, phase: "reading-body" });
   }

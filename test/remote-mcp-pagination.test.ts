@@ -328,9 +328,10 @@ describe("remoteMcp() tools/list pagination", () => {
       },
     });
 
-    // Rejects rather than resolving with the first page it had in hand.
+    // Rejects rather than resolving with the first page it had in hand. The
+    // transport's own text is withheld at the MCP boundary (#695).
     await expect(connector.listTools(ctx())).rejects.toThrow(
-      /page two never landed/,
+      /tools\/list with https:\/\/unused\.example failed/,
     );
     expect(cursors).toEqual([undefined]);
     expect(attempted).toEqual([OPAQUE_CURSOR]);
@@ -685,11 +686,11 @@ describe("remoteMcp() tools/list pagination", () => {
 
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).not.toMatch(/nextCursor/);
-    // The v2 protocol error still points at the tool entry that broke:
-    // "Invalid result for tools/list: tools.0.inputSchema: …" — path-first,
-    // so a widened cursor predicate can never absorb it.
-    expect((err as Error).message).toMatch(
-      /Invalid result for tools\/list: tools\.0\./,
+    // Told as a page that did not validate, never as a cursor fault. The
+    // validator's own path ("tools.0.inputSchema") is withheld with the rest
+    // of its account, which can quote keys the downstream chose (#695).
+    expect((err as Error).message).toContain(
+      'Connector "paged" tools/list with https://unused.example failed (SdkError).',
     );
   });
 });
@@ -873,9 +874,10 @@ describe("paginated catalogs through the discovery path", () => {
         /catalog refresh failed; serving stale catalog/.test(w),
       ),
     ).toBe(true);
-    expect(warnings().some((w) => /page two never landed/.test(w))).toBe(
-      true,
-    );
+    expect(
+      warnings().some((w) => w.includes('"step":"tools/list","origin":"https://unused.example"')),
+    ).toBe(true);
+    expect(warnings().some((w) => /page two never landed/.test(w))).toBe(false);
 
     await connector.closeScope!({ ...ctx(), requestScope: scope });
   });
@@ -996,10 +998,11 @@ describe("paginated catalogs through the discovery path", () => {
 
     // Not an authorization problem, so it must not be dressed as one: no
     // auth_required code and no recovery URL to open.
-    expect((failure as Error).message).toContain("page two transport failed");
+    expect((failure as Error).message).toContain("tools/list with https://unused.example failed");
+    expect((failure as Error).message).not.toContain("page two transport failed");
     expect((failure as { code?: string }).code).not.toBe("auth_required");
     await expect(registry.getTools("paged", BASE, {})).rejects.toThrow(
-      "page two transport failed",
+      "tools/list with https://unused.example failed",
     );
     expect(cursors).toEqual([undefined, undefined]);
   });

@@ -14,18 +14,27 @@ import {
 } from "./catalog-service.js";
 import {
   boundedEchoText,
+  classificationCode,
   classifyCallError,
   ConnectorCallError,
   echoedCallArgs,
   framingError,
   type AuthRecoveryMode,
   type CallErrorDetails,
+  type ClassificationCode,
 } from "./errors.js";
 import { unwrapMcpResult } from "./mcp-result.js";
+import {
+  carryFailureFacts,
+  classifiedFailure,
+  failureRecord,
+  logFailure,
+  recordedToolName,
+} from "./operator-record.js";
 import { splitAddress, type RegistryView } from "./registry.js";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { isExplicitlyReadOnly } from "./tool-safety.js";
-import { validateToolInput } from "./validate.js";
+import { validateCatalogToolInput } from "./validate.js";
 
 function defined<T extends object>(
   values: T,
@@ -331,12 +340,16 @@ export class InvocationService {
       });
       const record = (
         outcome: "success" | "error" | "timeout" | "cancelled",
-        classification: { errorCode?: string; friction?: AgentFriction } = {},
+        classification: { errorCode?: ClassificationCode; friction?: AgentFriction } = {},
       ) => {
         const identity = activityTarget
           ? {
               connectorId: activityTarget.connector.id,
-              toolName: activityTarget.toolName,
+              // A resolved tool's name is the downstream's choice, recorded
+              // only when it fits the tool-name grammar (INV-6).
+              toolName: resolved
+                ? recordedToolName(resolved.definition)
+                : activityTarget.toolName,
             }
           : attempted;
         if (!identity) return;
@@ -436,26 +449,29 @@ export class InvocationService {
         // A write refused only because its program had already returned
         // leaves no event and nothing in the operator's log.
         if (unrecorded) return outcome();
-        // Activity rows stay payload-free by construction; the operator's log is
-        // where the downstream reason goes, bounded and without arguments.
+        // Activity rows and this log line are both payload-free by
+        // construction: the line is the failure's typed record, never its
+        // message, which may be the downstream's own words (INV-6).
         if (target && details.code !== "destructive_tool_requires_approval") {
-          this.registry
-            .contextFor(
+          logFailure(
+            this.registry.contextFor(
               target.connector.id,
               this.catalog.baseUrl,
               this.catalog.requestScope,
-            )
-            .logger.warn("[connecta] call failed", {
+            ).logger,
+            "call failed",
+            failureRecord({
               connector: target.connector.id,
-              tool: target.toolName,
+              // Named only when the catalog listed it (src/operator-record.ts).
+              tool: resolved?.definition,
               source: context.source,
-              code: details.code,
-              // Sanitized transport diagnostics (origin and errno only, #539).
-              ...(details.details ? { details: details.details } : {}),
               attempts,
               durationMs: Date.now() - started,
-              message: String(details.message ?? "").slice(0, 300),
-            });
+              // Every refusal reaching `failed` is one connecta built: a
+              // thrown value's classification, a framing refusal, or a
+              // cancellation. Nothing else is read as a classification.
+            }, classifiedFailure(error)),
+          );
         }
         record(
           details.code === "timeout"
@@ -463,7 +479,7 @@ export class InvocationService {
             : details.code === "cancelled"
               ? "cancelled"
               : "error",
-          { errorCode: details.code },
+          defined({ errorCode: classificationCode(details.code) }),
         );
         return outcome();
       };
@@ -531,7 +547,7 @@ export class InvocationService {
             target.connector.kind === "mcp" &&
             target.definition.inputSchema
           ) {
-            const invalid = validateToolInput(
+            const invalid = validateCatalogToolInput(
               target.definition.inputSchema,
               args ?? {},
               {
@@ -542,6 +558,7 @@ export class InvocationService {
                   this.catalog.requestScope,
                 ).logger,
               },
+              { connector: target.connector.id, tool: target.definition },
             );
             if (invalid) return classifyCallError(invalid);
           }
@@ -614,7 +631,7 @@ export class InvocationService {
             answered = answeredFailure(attemptError);
             return isCallerCancellation(attemptError, context.requestSignal)
               ? callerCancelledDetails()
-              : classifyCallError(attemptError);
+              : carryFailureFacts(attemptError, classifyCallError(attemptError));
           }
           observedResult = attempt.value.observed;
           result = context.unwrapResult ? observedResult : attempt.value.raw;
@@ -639,9 +656,10 @@ export class InvocationService {
           : dispatch(),
       );
       if (Exit.isFailure(dispatched)) {
+        const failure = Cause.squash(dispatched.cause);
         return failed(context.requestSignal?.aborted
           ? callerCancelledDetails()
-          : classifyCallError(Cause.squash(dispatched.cause)));
+          : carryFailureFacts(failure, classifyCallError(failure)));
       }
       if (dispatched.value) return failed(dispatched.value);
       // A dispatch that returned no refusal resolved a concrete tool.

@@ -5,6 +5,7 @@ import type {
   OAuthDiscoveryState,
   StoredOAuthClientInformation,
 } from "@modelcontextprotocol/client";
+import { byteReadResponse } from "../byte-read-response.js";
 import type {
   ApiOAuthClientAuthentication,
   ApiOAuthConfig,
@@ -18,6 +19,7 @@ import {
   retainingOAuthPartition,
 } from "../oauth-partition.js";
 import { oauthSealerFor } from "../oauth-sealing.js";
+import { describeFailure } from "../operator-record.js";
 import type { ConnectorContext, ConnectorStatus } from "../types.js";
 import {
   assertOAuthScope,
@@ -420,11 +422,12 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       ),
     });
 
-  const authRequiredError = (cause?: unknown) =>
+  // No cause, as in remoteMcp(): the `UnauthorizedError` class is the whole
+  // verdict, and a logger rendering the chain renders whatever it says.
+  const authRequiredError = () =>
     new ConnectorCallError(
       "auth_required",
       `Connector "${id}" requires authorization — call authorize_connector({ connector: "${id}" }) and open the returned URL.`,
-      cause !== undefined ? { cause } : undefined,
     );
   const disconnectedMessage =
     `Connector "${id}" was disconnected by an operator — explicitly start authorization to reconnect it.`;
@@ -468,17 +471,21 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       init.signal && ctx.signal
         ? AbortSignal.any([init.signal, ctx.signal])
         : (init.signal ?? ctx.signal);
-    const send = (accessToken: string) => {
+    const send = async (accessToken: string) => {
       const sent = new Headers(headers);
       sent.set("Authorization", `Bearer ${accessToken}`);
       // The token rides to a declared origin and no further: a redirect is
       // handed back to the handler unfollowed rather than re-sent anywhere.
-      return fetch(url, {
+      // The handler reads the answer with `.json()` or `.text()`, which read
+      // bytes here: workerd quotes a text read's non-text Content-Type in
+      // its own log, out of the handler's reach.
+      const response = await fetch(url, {
         ...init,
         headers: sent,
         redirect: "manual",
         ...(signal ? { signal } : {}),
       });
+      return byteReadResponse(response);
     };
 
     if (rejectedScopes.has(scopeOf(ctx))) throw authRequiredError();
@@ -517,7 +524,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     } catch (error) {
       if (error instanceof UnauthorizedError) {
         rejectedScopes.add(scopeOf(ctx));
-        throw authRequiredError(error);
+        throw authRequiredError();
       }
       // The coordinator's answer while another request is still committing
       // a rotation it redeemed. The SDK rethrows it untouched; it is a
@@ -606,7 +613,16 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       if (error instanceof UnauthorizedError) {
         return { state: "auth_required", message: AUTH_REQUIRED_MESSAGE };
       }
-      return { state: "error", message: msg(error) };
+      // Reaches the agent through authorize_connector. Text already in
+      // connecta's words passes (token responses are rebuilt before the SDK
+      // reads them); anything else is told from its record.
+      return {
+        state: "error",
+        message:
+          error instanceof ConnectorCallError || error instanceof OAuthError
+            ? msg(error)
+            : describeFailure(id, error),
+      };
     }
   };
 

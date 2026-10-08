@@ -78,12 +78,13 @@ export async function invokeTestCall(
   registry: RegistryView,
   target: ReturnType<typeof activitySink>,
   address: string,
+  args: Record<string, unknown> = {},
 ): Promise<void> {
   await new InvocationService(
     registry,
     new CatalogService(registry, "https://connecta.example"),
     target.activity,
-  ).invoke(address, {}, {
+  ).invoke(address, args, {
     source: "call_tool",
     allowDestructive: true,
   });

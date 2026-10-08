@@ -1,8 +1,23 @@
 import {
+  AuthorizationServerMismatchError,
   Client,
+  InsecureTokenEndpointError,
+  InsufficientScopeError,
+  IssuerMismatchError,
+  MissingRequiredClientCapabilityError,
+  OAuthClientFlowError,
+  OAuthError,
   ProtocolError,
+  RegistrationRejectedError,
+  ResourceNotFoundError,
+  SdkError,
+  SdkErrorCode,
   SdkHttpError,
+  SseError,
+  UnsupportedProtocolVersionError,
+  UrlElicitationRequiredError,
   isInputRequiredResult,
+  isJSONRPCErrorResponse,
   specTypeSchemas,
   StreamableHTTPClientTransport,
   UnauthorizedError,
@@ -22,6 +37,7 @@ import {
   refreshCoordinatorsByPartition,
 } from "../auth/downstream-oauth.js";
 import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
+import { byteReadResponse } from "../byte-read-response.js";
 import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
 import { connectorScopeCleanupClaimed } from "../connector-scope.js";
 import {
@@ -29,7 +45,19 @@ import {
   ConnectorCallError,
   msg,
   unavailableCallError,
+  WithheldTextError,
 } from "../errors.js";
+import {
+  attachFailureFacts,
+  carryFailureFacts,
+  errorLabel,
+  failureRecord,
+  failureStatus,
+  labelErrorClass,
+  logFailure,
+  OAUTH_ERROR_CODES,
+  ownStatus,
+} from "../operator-record.js";
 import { CONNECTA_VERSION } from "../version.js";
 import { learnedUrlRefusal } from "../url-safety.js";
 import { oauthSealerFor } from "../oauth-sealing.js";
@@ -269,6 +297,17 @@ function isCursorShapeError(err: unknown): boolean {
 }
 
 /**
+ * An `authorize_connector` start message for a failure: its text, which has
+ * passed the MCP and OAuth boundaries, and the origin and errno connecta
+ * derived for it, which a message alone would drop.
+ */
+function startMessage(err: unknown): string {
+  const details = err instanceof ConnectorCallError ? err.details : undefined;
+  const facts = [details?.host, details?.code].filter(Boolean).join(", ");
+  return facts ? `${msg(err)} (${facts})` : msg(err);
+}
+
+/**
  * End the downstream's session before the connection is torn down.
  *
  * `Client.close()` only unwinds our side — it aborts the transport's controller
@@ -297,11 +336,10 @@ function terminateSession(
     transport as Transport & { terminateSession?: () => Promise<void> }
   ).terminateSession;
   if (typeof terminate !== "function") return Effect.void;
-  const warn = (message: string, error?: unknown) =>
+  const warn = (log: () => void) =>
     Effect.sync(() => {
       try {
-        if (error === undefined) logger.warn(message);
-        else logger.warn(message, error);
+        log();
       } catch {
         // A diagnostic sink cannot make best-effort teardown observable to the
         // caller in the one way this contract forbids: by replacing its result.
@@ -315,22 +353,30 @@ function terminateSession(
     // so a stateless downstream never sees a spurious DELETE.
     promised(() => Promise.resolve(terminate.call(transport))).pipe(
       Effect.catch((error) =>
-        warn(
-          `[connecta] connector "${connectorId}" session termination was ` +
-            "refused or failed; the downstream session may remain until its " +
-            "provider timeout.",
-          error,
+        // The SDK's error quotes the downstream's status text, and its `data`
+        // the body, so the record keeps only the status it answered with.
+        warn(() =>
+          logFailure(
+            logger,
+            "session termination refused or failed; the downstream session may remain until its provider timeout",
+            failureRecord(
+              { connector: connectorId },
+              error instanceof SdkHttpError
+                ? attachFailureFacts(error, { httpStatus: error.status })
+                : error,
+            ),
+          ),
         ),
       ),
     ),
     Effect.sleep(Duration.millis(TERMINATE_SESSION_BUDGET_MS)).pipe(
       Effect.andThen(
-        warn(
+        warn(() => logger.warn(
           `[connecta] connector "${connectorId}" session termination was not ` +
             `acknowledged within ${TERMINATE_SESSION_BUDGET_MS} ms; the ` +
             "downstream may still finish the headers-only DELETE, otherwise " +
             "the session will remain until its provider timeout.",
-        ),
+        )),
       ),
     ),
   ]);
@@ -483,6 +529,7 @@ export class RemoteMcpRedirectError extends ConnectorCallError {
     this.name = "RemoteMcpRedirectError";
   }
 }
+labelErrorClass(RemoteMcpRedirectError, "RemoteMcpRedirectError");
 
 function redirectedInit(init: RequestInit, status: number): RequestInit {
   const method = (init.method ?? "GET").toUpperCase();
@@ -526,9 +573,16 @@ export function redirectSafeFetch(
         });
       } catch (cause) {
         if (cause instanceof ConnectorCallError) throw cause;
-        throw unavailableCallError(cause, current.href);
+        throw unavailableCallError(
+          cause,
+          current.href,
+          undefined,
+          init.signal ?? undefined,
+        );
       }
-      if (!REDIRECT_STATUSES.has(response.status)) return response;
+      // Every MCP and OAuth exchange reads its answer through here, and the
+      // SDK reads bodies with `.text()` and `.json()`: as bytes, never text.
+      if (!REDIRECT_STATUSES.has(response.status)) return byteReadResponse(response);
 
       const location = response.headers.get("location");
       await response.body?.cancel().catch(() => {});
@@ -602,6 +656,42 @@ class RemoteMcpDestinationError extends ConnectorCallError {
     this.name = "RemoteMcpDestinationError";
   }
 }
+labelErrorClass(RemoteMcpDestinationError, "RemoteMcpDestinationError");
+
+/** A connection whose request scope ended while it was being made. */
+class ScopeEndedError extends Error {
+  override readonly name = "ScopeEndedError";
+}
+labelErrorClass(ScopeEndedError, "ScopeEndedError");
+
+/** The MCP client's transport lacks the OAuth flow seams this release is pinned against. */
+class UnboundOAuthFlowsError extends Error {
+  override readonly name = "UnboundOAuthFlowsError";
+}
+labelErrorClass(UnboundOAuthFlowsError, "UnboundOAuthFlowsError");
+
+// The pinned SDK's exported errors, labelled by identity for records and
+// connecta's fixed text.
+for (const [ctor, label] of [
+  [SdkError, "SdkError"],
+  [SdkHttpError, "SdkHttpError"],
+  [ProtocolError, "ProtocolError"],
+  [MissingRequiredClientCapabilityError, "MissingRequiredClientCapabilityError"],
+  [ResourceNotFoundError, "ResourceNotFoundError"],
+  [UnsupportedProtocolVersionError, "UnsupportedProtocolVersionError"],
+  [UrlElicitationRequiredError, "UrlElicitationRequiredError"],
+  [SseError, "SseError"],
+  [OAuthError, "OAuthError"],
+  [UnauthorizedError, "UnauthorizedError"],
+  [OAuthClientFlowError, "OAuthClientFlowError"],
+  [AuthorizationServerMismatchError, "AuthorizationServerMismatchError"],
+  [InsecureTokenEndpointError, "InsecureTokenEndpointError"],
+  [InsufficientScopeError, "InsufficientScopeError"],
+  [IssuerMismatchError, "IssuerMismatchError"],
+  [RegistrationRejectedError, "RegistrationRejectedError"],
+] as const) {
+  labelErrorClass(ctor, label);
+}
 
 /**
  * Refuse, before any request leaves, a URL the downstream taught the OAuth
@@ -626,6 +716,192 @@ function learnedUrlSafeFetch(
     }
     return await baseFetch(input, init);
   };
+}
+
+/** The JSON-RPC error answers each transport delivered, as `code\0message`. */
+const wireErrors = new WeakMap<Transport, Set<string>>();
+/** Answers remembered per transport; one request scope rarely sees more. */
+const MAX_WIRE_ERRORS = 64;
+
+function wireErrorKey(code: unknown, message: unknown): string {
+  return `${String(code)}\u0000${String(message)}`;
+}
+
+/**
+ * Remember every JSON-RPC error response `transport` delivers, so that a
+ * `ProtocolError` can be told apart as the downstream's own answer. The SDK
+ * builds its local refusals (an output schema it cannot compile, a result
+ * that fails it) from the same class, with its own text about what the
+ * downstream sent; only one whose code and message arrived on the wire is
+ * the answer. Installed before `Client.connect`, whose protocol calls the
+ * `onmessage` it finds there ahead of its own for every message, and whose
+ * version probe restores it when the probe is done.
+ */
+function recordWireErrors(transport: Transport): void {
+  const seen = new Set<string>();
+  wireErrors.set(transport, seen);
+  transport.onmessage = (message) => {
+    if (isJSONRPCErrorResponse(message) && seen.size < MAX_WIRE_ERRORS) {
+      seen.add(wireErrorKey(message.error.code, message.error.message));
+    }
+  };
+}
+
+/**
+ * Whether an error leaving the SDK may keep its own text. The boundary is an
+ * allow-list: a JSON-RPC error the downstream answered with, an HTTP 4xx
+ * refusal from the MCP endpoint, and errors already in connecta's words (its
+ * own classes, an OAuth error the token responses were rebuilt into, and
+ * `UnauthorizedError`, whose class is the whole verdict and whose text is
+ * never shown). The request's own abort reason is checked by identity before
+ * this. Everything else is withheld.
+ */
+function keepsItsText(err: unknown, transport: Transport | undefined): boolean {
+  if (
+    err instanceof ConnectorCallError ||
+    err instanceof WithheldTextError ||
+    err instanceof UnauthorizedError ||
+    err instanceof OAuthError
+  ) {
+    return true;
+  }
+  if (err instanceof SdkHttpError) return err.status >= 400 && err.status < 500;
+  if (err instanceof ProtocolError) {
+    return transport !== undefined &&
+      wireErrors.get(transport)?.has(wireErrorKey(err.code, err.message)) === true;
+  }
+  return false;
+}
+
+/**
+ * The SDK's own checks of a tool's output schema, recognized by how the
+ * pinned SDK (2.3.1) begins their messages, and told in connecta's words.
+ * Recognition reads the SDK's text only to choose connecta's: none of it, nor
+ * the validator's account that follows, is repeated.
+ */
+const SDK_OUTPUT_SCHEMA_CHECKS: readonly (readonly [RegExp, string])[] = [
+  [/^Structured content does not match the tool's output schema/, "the result did not match the tool's declared output schema"],
+  [/^Tool .* has an output schema but did not return structured content/s, "the result did not return structured content although the tool declares an output schema"],
+  [/^Tool .* has an invalid outputSchema/s, "the tool's declared output schema could not be compiled"],
+];
+
+function sdkCheckFailed(err: unknown): string {
+  if (err instanceof SdkError && err.code === SdkErrorCode.RequestTimeout) return ": the request timed out";
+  if (!(err instanceof ProtocolError)) return "";
+  const check = SDK_OUTPUT_SCHEMA_CHECKS.find(([pattern]) => pattern.test(err.message));
+  return check ? `: ${check[1]}` : "";
+}
+
+/** The first error in `err`'s cause chain already told in connecta's words. */
+function connectaErrorWithin(err: unknown): ConnectorCallError | WithheldTextError | undefined {
+  const seen = new Set<unknown>();
+  for (
+    let current: unknown = err instanceof Error ? err.cause : undefined;
+    current instanceof Error && !seen.has(current);
+    current = current.cause
+  ) {
+    seen.add(current);
+    if (current instanceof ConnectorCallError || current instanceof WithheldTextError) return current;
+  }
+  return undefined;
+}
+
+/** The request's own abort reason, by identity, never by name or class. */
+function ownAbortReason(err: unknown, signals: readonly (AbortSignal | undefined)[]): boolean {
+  return signals.some((signal) => signal?.aborted === true && err === signal.reason);
+}
+
+/**
+ * The request's own abort reason as the SDK hands it back: a request it
+ * cancels rejects with `new SdkError(RequestTimeout, String(reason))` unless
+ * the reason already is one (pinned against client 2.3.1). Its text is the
+ * caller's, so it passes as the SDK wrote it.
+ */
+function ownAbortReasonAsSdkReports(err: unknown, signals: readonly (AbortSignal | undefined)[]): boolean {
+  return err instanceof SdkError &&
+    err.code === SdkErrorCode.RequestTimeout &&
+    signals.some((signal) => signal?.aborted === true && err.message === String(signal.reason));
+}
+
+/** An error's class name, when it is a plain identifier worth naming. */
+function errorKind(err: unknown): string {
+  const label = errorLabel(err);
+  return label && label !== "Error" ? ` (${label})` : "";
+}
+
+/**
+ * `message` in place of an error's text, keeping the verdict
+ * `classifyCallError` gives `verdict`: its code, retryability, and wait when
+ * it is already a `ConnectorCallError`, the timeout and retryable flags
+ * otherwise.
+ */
+function withheldAs(message: string, verdict: unknown): Error {
+  if (verdict instanceof ConnectorCallError) {
+    return new ConnectorCallError(verdict.code, message, {
+      retryable: verdict.retryable,
+      ...(verdict.retryAfterMs !== undefined ? { retryAfterMs: verdict.retryAfterMs } : {}),
+    });
+  }
+  return new WithheldTextError(message, verdict);
+}
+
+/** An OAuth step, named by the shape the pinned SDK gives its request. */
+type OAuthStep = "discovery" | "client registration" | "token request";
+
+/**
+ * Where one OAuth flow last went, kept so that a failure whose text is
+ * withheld still says which step failed and against which host. Origins
+ * only, as `details.host` carries them. One per flow, never shared.
+ */
+interface OAuthTrail {
+  /** The flow's latest request, if it was not to the MCP endpoint. */
+  last?: { step: OAuthStep; host: string } | undefined;
+  /** The origin a client registration was last sent to. */
+  registration?: string;
+}
+
+/**
+ * Record each OAuth request on `trail` before sending it. Pinned against
+ * `@modelcontextprotocol/client` 2.3.1: every request the SDK sends anywhere
+ * but the MCP endpoint is a discovery GET, a token request (a form carrying
+ * `grant_type`), or the JSON POST of dynamic client registration.
+ */
+function tracedOAuthFetch(
+  trail: OAuthTrail,
+  endpoint: URL,
+  baseFetch: FetchLike,
+): FetchLike {
+  return async (input, init) => {
+    const url = new URL(input);
+    if (url.href === endpoint.href) {
+      trail.last = undefined;
+    } else {
+      const body = init?.body;
+      const step: OAuthStep =
+        (init?.method ?? "GET").toUpperCase() === "GET"
+          ? "discovery"
+          : body instanceof URLSearchParams ||
+              (typeof body === "string" &&
+                new URLSearchParams(body).has("grant_type"))
+            ? "token request"
+            : "client registration";
+      trail.last = { step, host: url.origin };
+      if (step === "client registration") trail.registration = url.origin;
+    }
+    // The SDK's own fetch when it was handed none: read as bytes all the same.
+    return byteReadResponse(await baseFetch(input, init));
+  };
+}
+
+function registrationErrorCode(body: string): string | undefined {
+  try {
+    const code = (JSON.parse(body) as { error?: unknown } | null)?.error;
+    return typeof code === "string" && OAUTH_ERROR_CODES.has(code)
+      ? code
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 interface ConnectionState {
@@ -775,13 +1051,179 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     }
   }
 
-  /** Typed per-call auth signal; the SDK's UnauthorizedError stays as cause. */
-  const authRequiredError = (cause: unknown) =>
+  /**
+   * Typed per-call auth signal. The `UnauthorizedError` behind it is not kept
+   * as cause: the class is the whole verdict, and a logger rendering the
+   * chain would render whatever text the error carried.
+   */
+  const authRequiredError = () =>
     new ConnectorCallError(
       "auth_required",
       `Connector "${id}" requires authorization — call authorize_connector({ connector: "${id}" }) and open the returned URL.`,
-      { cause },
     );
+
+  /**
+   * Tell a failure of one OAuth flow in connecta's words.
+   *
+   * The SDK builds these errors from what a downstream or its authorization
+   * server sent: a refused registration quotes the response body whole, an
+   * issuer mismatch quotes the issuers, a discovery failure the URL or the
+   * metadata it could not accept. Any of them can echo what the request
+   * carried, or text the server planted for an agent to read. What survives
+   * is the step and host of the flow's last request, the classification, and
+   * for a registration the status and a registered OAuth error code.
+   * Anything not already in connecta's words is withheld, including a store's
+   * error while the flow saves what it discovered, which can quote it.
+   */
+  const withoutAuthorizationServerText = (
+    err: unknown,
+    trail: OAuthTrail,
+    signals: readonly (AbortSignal | undefined)[],
+  ): unknown => {
+    if (ownAbortReason(err, signals)) return err;
+    if (err instanceof RegistrationRejectedError) {
+      const code = registrationErrorCode(err.body);
+      const facts = {
+        step: "OAuth client registration" as const,
+        ...(trail.registration ? { origin: trail.registration } : {}),
+        httpStatus: err.status,
+        ...(code ? { oauthError: code } : {}),
+      };
+      return attachFailureFacts(carryFailureFacts(err, new WithheldTextError(
+        `Connector "${id}" could not register an OAuth client with ` +
+          `${trail.registration ?? "its authorization server"}: the ` +
+          `registration endpoint answered HTTP ${err.status}` +
+          `${code ? ` with OAuth error ${code}` : ""}. Its response is ` +
+          "withheld because it can quote the request or anything the server " +
+          "chose to add. Check the server's client registration policy, then " +
+          "retry authorization.",
+        err,
+      )), facts);
+    }
+    const leg = trail.last;
+    const facts = leg
+      ? { step: `OAuth ${leg.step}` as const, origin: leg.host }
+      : { step: "OAuth flow" as const };
+    if (keepsItsText(err, undefined)) return attachFailureFacts(err, facts);
+    return attachFailureFacts(carryFailureFacts(err, withheldAs(
+      `Connector "${id}" OAuth ${leg ? `${leg.step} with ${leg.host}` : "flow"} ` +
+        `failed${errorKind(err)}. The error is withheld because its text can ` +
+        "quote what the server sent. Check the server's OAuth metadata, then " +
+        "retry authorization.",
+      err,
+    )), facts);
+  };
+
+  const endpointOrigin = new URL(opts.url).origin;
+
+  /**
+   * The MCP boundary, where an error leaves the SDK at the handshake, a
+   * `tools/list` page, or a `tools/call`. The request's own abort reason
+   * passes first, by identity, then what `keepsItsText` allows. Anything else
+   * (a parser's or validator's account, a non-4xx body, a runtime's message)
+   * is told as the step, the endpoint's origin, the HTTP status if there was
+   * one, and the error's class, classified as `verdict` would have been.
+   */
+  const atMcpBoundary = (
+    err: unknown,
+    step: "MCP handshake" | "tools/list" | "tools/call",
+    transport: Transport | undefined,
+    signals: readonly (AbortSignal | undefined)[],
+    verdict: (err: unknown) => unknown = (original) => original,
+  ): unknown => {
+    const httpStatus = err instanceof SdkHttpError ? err.status : undefined;
+    const facts = { step, origin: endpointOrigin, ...(httpStatus ? { httpStatus } : {}) };
+    if (
+      ownAbortReason(err, signals) ||
+      ownAbortReasonAsSdkReports(err, signals) ||
+      keepsItsText(err, transport)
+    ) {
+      return attachFailureFacts(err, facts);
+    }
+    // The SDK wraps a failure of connecta's own fetch (a refused redirect, an
+    // unreachable host) in an error of its own, such as the version probe's;
+    // that failure's words are connecta's, and they say what happened.
+    const ours = connectaErrorWithin(err);
+    if (ours) {
+      return attachFailureFacts(carryFailureFacts(ours, withheldAs(ours.message, verdict(err))), facts);
+    }
+    const status = httpStatus ? ` with HTTP ${httpStatus}` : "";
+    return attachFailureFacts(carryFailureFacts(err, withheldAs(
+      `Connector "${id}" ${step} with ${endpointOrigin} failed${status}` +
+        `${errorKind(err)}${sdkCheckFailed(err)}. The error is withheld because ` +
+        "its text can quote what the server sent.",
+      verdict(err),
+    )), facts);
+  };
+
+  /**
+   * Run every OAuth flow the SDK starts on `transport` inside a boundary of
+   * its own: a trail only that flow's requests write to, and
+   * `withoutAuthorizationServerText` on whatever the flow throws. Calls on
+   * one client can each start a flow at once, so no flow's failure is ever
+   * told by another flow's last request.
+   *
+   * Pinned against `@modelcontextprotocol/client` 2.3.1, whose transport
+   * offers no public seam for this. A flow starts in exactly two places, each
+   * handing `auth()` the fetch to use: the adapted provider's
+   * `onUnauthorized` (a 401, at connect or on a live client), given the fetch
+   * in its context, and `_stepUpAuthorize` (a 403 `insufficient_scope`),
+   * which reads `this._fetchWithInit`. The callback's code exchange runs
+   * outside both, and the callback route repeats nothing it throws. If an
+   * upgrade moves either seam, this refuses to build the transport rather
+   * than run flows unbounded.
+   */
+  const boundOAuthFlows = (
+    transport: StreamableHTTPClientTransport,
+    endpoint: URL,
+    /** The request's and connection's signals: only their reasons pass as written. */
+    signals: readonly (AbortSignal | undefined)[],
+  ): void => {
+    type FlowContext = { fetchFn?: FetchLike } & Record<string, unknown>;
+    const internals = transport as unknown as {
+      _authProvider?: { onUnauthorized?: (ctx: FlowContext) => Promise<void> };
+      _stepUpAuthorize?: (challenge: unknown, retries: number) => Promise<unknown>;
+      _fetchWithInit?: FetchLike;
+    };
+    const adapted = internals._authProvider;
+    const onUnauthorized = adapted?.onUnauthorized;
+    const stepUp = internals._stepUpAuthorize;
+    if (!adapted || typeof onUnauthorized !== "function" || typeof stepUp !== "function") {
+      // Its own class, so that a status record, which carries no message, says so.
+      throw new UnboundOAuthFlowsError(
+        `[connecta] connector "${id}": the MCP client's transport no longer ` +
+          "has the OAuth flow seams this release is pinned against, so its " +
+          "flows cannot be bounded. Pin @modelcontextprotocol/client to the " +
+          "version this release ships with.",
+      );
+    }
+    const flow = async <T>(
+      start: (trace: (fetchFn: FetchLike) => FetchLike) => Promise<T>,
+    ): Promise<T> => {
+      const trail: OAuthTrail = {};
+      try {
+        return await start((fetchFn) => tracedOAuthFetch(trail, endpoint, fetchFn));
+      } catch (err) {
+        throw withoutAuthorizationServerText(err, trail, signals);
+      }
+    };
+    adapted.onUnauthorized = (ctx) =>
+      flow((trace) =>
+        onUnauthorized.call(adapted, { ...ctx, fetchFn: trace(ctx.fetchFn ?? fetch) }),
+      );
+    internals._stepUpAuthorize = (challenge, retries) =>
+      flow((trace) => {
+        const traced = trace(internals._fetchWithInit ?? fetch);
+        // The step-up reads its fetch from `this`; everything else it reads
+        // and writes stays the transport's own.
+        const self = new Proxy(transport, {
+          get: (target, key) =>
+            key === "_fetchWithInit" ? traced : Reflect.get(target, key, target),
+          set: (target, key, value) => Reflect.set(target, key, value, target),
+        });
+        return stepUp.call(self, challenge, retries);
+      });
+  };
 
   class OperatorDisconnectedError extends ConnectorCallError {
     constructor() {
@@ -867,6 +1309,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     let current: unknown = err;
     while (current instanceof Error && !seen.has(current)) {
       seen.add(current);
+      // Decided already, beneath the transport, and wrapped by the SDK on
+      // the way up (the version probe's error, say).
+      if (current instanceof CredentialRequiredError) return current;
       if (quoted.some((secret) => current instanceof Error && current.message.includes(secret))) {
         return new CredentialRequiredError(
           `Connector "${id}" could not send its stored credential as a ` +
@@ -880,8 +1325,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     return err;
   };
 
+  // Its own class, so that a status record, which carries no message, still says so.
   const scopeEndedError = () =>
-    new Error(`Connector "${id}" scope ended during connection.`);
+    new ScopeEndedError(`Connector "${id}" scope ended during connection.`);
 
   const requestOptions = (ctx: ConnectorContext) =>
     ctx.timeoutMs || ctx.signal
@@ -911,10 +1357,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         requestOptions(ctx),
       );
     } catch (err) {
-      if (!isCursorShapeError(err)) throw err;
+      if (!isCursorShapeError(err)) {
+        throw atMcpBoundary(err, "tools/list", client.transport, [ctx.signal]);
+      }
+      // No cause: the validator's error describes the downstream's page.
       throw new Error(
         `Connector "${id}" returned a tools/list page whose nextCursor is neither a string, null, nor absent — this catalog cannot be walked.`,
-        { cause: err },
       );
     }
   };
@@ -999,13 +1447,31 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
      */
     credentialFramed: string | null = null,
     signal: AbortSignal | undefined = ctx.signal,
+    /** The raw value behind `credentialFramed`, under the same terms. */
+    credentialValue: string | null = null,
   ): Transport => {
     if (opts._transportFactory) return opts._transportFactory(ctx);
     const url = new URL(opts.url);
-    const guardedFetch = redirectSafeFetch(id, opts.redirects);
+    // A runtime refusing the assembled header quotes it, and the transport
+    // error below keeps none of what the runtime said. So whether the
+    // rejection quoted the credential is decided here, first, and survives
+    // as the class of the error rather than as its text.
+    const guardedFetch = redirectSafeFetch(
+      id,
+      opts.redirects,
+      credentialFramed === null
+        ? fetch
+        : async (input, init) => {
+            try {
+              return await fetch(input, init);
+            } catch (err) {
+              throw withoutCredential(err, credentialValue, credentialFramed);
+            }
+          },
+    );
     if (opts.auth?.type === "oauth") {
       const oauthProvider = provider ?? newProvider(ctx, undefined, signal);
-      return new StreamableHTTPClientTransport(url, {
+      const transport = new StreamableHTTPClientTransport(url, {
         authProvider: oauthProvider,
         fetch: refreshCoordinatorFor(ctx).coordinatedFetch(
           oauthProvider,
@@ -1013,6 +1479,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           signal,
         ),
       });
+      boundOAuthFlows(transport, url, [signal, ctx.signal]);
+      return transport;
     }
     const headers =
       opts.auth?.type === "headers"
@@ -1084,9 +1552,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // for the one call that observed it. Do not let the still-cached client make
     // a later status or call in the same scope report healthy.
     if (state.authRequired) {
-      throw authRequiredError(
-        new UnauthorizedError("Downstream authorization is no longer valid."),
-      );
+      throw authRequiredError();
     }
     // Read the OAuth epoch before trusting either a cached client or starting a
     // transport. A disconnected epoch is a durable operator instruction, not
@@ -1270,14 +1736,25 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             inputRequired: { autoFulfill: false },
           },
         );
-        const t = buildTransport(ctx, provider, credentialFramed, connectionAbort.signal);
+        const t = buildTransport(ctx, provider, credentialFramed, connectionAbort.signal, credentialValue);
         if (!owned()) {
           held.transport = t;
           return yield* Effect.fail(scopeEndedError());
         }
         state.transport = t;
         held.transport = t;
-        yield* promised(() => c.connect(t, { signal: handshakeAbort.signal }));
+        recordWireErrors(t);
+        yield* promised(() => c.connect(t, { signal: handshakeAbort.signal })).pipe(
+          Effect.mapError((err) =>
+            atMcpBoundary(
+              // First, while the runtime's text can still be read for it.
+              withoutCredential(err, credentialValue, credentialFramed),
+              "MCP handshake",
+              t,
+              [ctx.signal, connectionAbort.signal, handshakeAbort.signal],
+            ),
+          ),
+        );
         held.client = c;
         // A probe deadline can end its scope while connect is still in flight.
         // The transport is closed immediately by closeScope; if connect wins
@@ -1324,7 +1801,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             detach(closeConnection(held.client, held.transport, ctx.logger));
           }
           if (err instanceof UnauthorizedError) {
-            return Effect.fail(authRequiredError(err));
+            return Effect.fail(authRequiredError());
           }
           // Defense in depth for the one error class that can quote the
           // credential: a runtime refusing the assembled header.
@@ -1523,7 +2000,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // failures, and latch it for the rest of this request scope.
         if (err instanceof UnauthorizedError) {
           if (state.client === client) state.authRequired = true;
-          throw authRequiredError(err);
+          throw authRequiredError();
         }
         throw err;
       }
@@ -1598,17 +2075,21 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             `Tool "${name}" requires task-based execution, which Connecta does not support.`,
           );
         }
-        const result = await client.callTool(
-          {
-            name,
-            arguments: (args ?? {}) as Record<string, unknown>,
-          },
-          {
-            ...requestOptions(ctx),
-            allowInputRequired: true,
-            ...(toolDefinition ? { toolDefinition } : {}),
-          },
-        );
+        const result = await client
+          .callTool(
+            {
+              name,
+              arguments: (args ?? {}) as Record<string, unknown>,
+            },
+            {
+              ...requestOptions(ctx),
+              allowInputRequired: true,
+              ...(toolDefinition ? { toolDefinition } : {}),
+            },
+          )
+          .catch((err: unknown) => {
+            throw atMcpBoundary(err, "tools/call", client.transport, [ctx.signal], downstreamCallError);
+          });
         if (isInputRequiredResult(result)) {
           throw new ConnectorCallError(
             "input_required_unsupported",
@@ -1622,7 +2103,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // A grant revoked after connect surfaces here, not in ensureConnected.
         if (err instanceof UnauthorizedError) {
           if (state.client === client) state.authRequired = true;
-          throw authRequiredError(err);
+          throw authRequiredError();
         }
         throw downstreamCallError(err);
       }
@@ -1645,29 +2126,30 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const state = stateFor(ctx);
       try {
         await ensureConnected(ctx, state);
-        return { state: "ok" };
+        return ownStatus({ state: "ok" });
       } catch (err) {
         // An empty slot, or one with no vault behind it, is reported the way a
         // missing grant is: present, unauthenticated, and repairable — never a
         // boot failure and never a silently absent connector.
         if (err instanceof CredentialRequiredError) {
-          return { state: "auth_required", message: err.message };
+          return ownStatus({ state: "auth_required", message: err.message });
         }
         if (state.authRequired) {
           // Only an OAuth connector has a pending consent URL to offer. A
           // credential connector's downstream 401 is repaired in the operator
           // UI connection, so do not reach into OAuth storage to look for one.
-          return {
+          return ownStatus({
             state: "auth_required",
             message: credentialAuth
               ? "Authorization required — the downstream rejected this connector's stored credential."
               : "Authorization required — open the URL to connect.",
-          };
+          });
         }
         if (err instanceof OperatorDisconnectedError) {
-          return { state: "auth_required", message: err.message };
+          return ownStatus({ state: "auth_required", message: err.message });
         }
-        return { state: "error", message: msg(err) };
+        // An operator surface: the record, never the error's own text.
+        return failureStatus(id, err);
       }
     },
 
@@ -1759,7 +2241,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             }
             authorizationUrl = await reader.pendingAuthorizationUrl();
           } catch (readErr) {
-            return { state: "error", message: msg(readErr) };
+            return { state: "error", message: startMessage(readErr) };
           }
           return {
             state: "auth_required",
@@ -1767,7 +2249,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             message: "Authorization required — open the URL to connect.",
           };
         }
-        return { state: "error", message: msg(err) };
+        return { state: "error", message: startMessage(err) };
       }
     };
   }

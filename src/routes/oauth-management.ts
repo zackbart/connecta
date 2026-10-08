@@ -8,10 +8,10 @@ import {
   visibleRegistry,
   Answer,
 } from "./operator.js";
+import { failureRecord, logFailure } from "../operator-record.js";
 import {
   mayManageConnector,
   isSameOrigin,
-  msg,
   privateJson,
   type RouteContext,
 } from "./shared.js";
@@ -86,7 +86,7 @@ function oauthManagementRequest(
     }));
     if (Result.isFailure(operation) || Result.isFailure(invalidated)) {
       const error = Result.isFailure(operation) ? operation.failure : Result.isFailure(invalidated) ? invalidated.failure : undefined;
-      opts.logger.warn(`[connecta] connector "${connectorId}" OAuth disconnect failed: ${msg(error)}`);
+      logFailure(opts.logger, "OAuth disconnect failed", failureRecord({ connector: connectorId }, error));
       return yield* refuse("OAuth disconnect failed", 400);
     }
     return new Response(null, { status: 204, headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });

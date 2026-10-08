@@ -3,7 +3,7 @@ import { ConnectorCallError } from "../src/errors.js";
 import { compileValidator, validateToolInput } from "../src/validate.js";
 import type { JsonSchema } from "../src/types.js";
 import { spyLogger } from "./fixtures/misc.js";
-import { required, silentLogger } from "./helpers.js";
+import { silentLogger } from "./helpers.js";
 
 const OPTS = { address: "acme.create_note", logger: silentLogger };
 
@@ -156,7 +156,10 @@ describe("validateToolInput", () => {
         },
       ],
     });
-    expect(err?.message).toContain('["A","TXT"]');
+    // The validator's sentence quotes the schema's enum; the message is told
+    // from the reviewed finding instead (#695).
+    expect(err?.message).toContain("/type: expected one of the declared values (enum)");
+    expect(err?.message).not.toContain('["A","TXT"]');
     expect(err?.message).not.toContain("False boolean schema");
     expect(err?.message).not.toContain("additional properties");
   });
@@ -179,7 +182,8 @@ describe("validateToolInput", () => {
         },
       ],
     });
-    expect(err?.message).toContain('["ok"]');
+    expect(err?.message).toContain("/: expected one of the declared values (enum)");
+    expect(err?.message).not.toContain('["ok"]');
     expect(err?.message).not.toContain("False boolean schema");
     expect(err?.message).not.toContain("additional properties");
   });
@@ -240,7 +244,8 @@ describe("validateToolInput", () => {
         },
       ],
     });
-    expect(err?.message).toContain('["A"]');
+    expect(err?.message).toContain("/x: expected one of the declared values (enum)");
+    expect(err?.message).not.toContain('["A"]');
     expect(err?.message).not.toContain("False boolean schema");
   });
 
@@ -261,7 +266,7 @@ describe("validateToolInput", () => {
       ],
     });
     expect(err?.message).toBe(
-      'Invalid arguments for "acme.create_note": #/banned: Value is not allowed by the declared schema.',
+      'Invalid arguments for "acme.create_note": /banned: expected no additional properties (additionalProperties)',
     );
   });
 
@@ -292,7 +297,7 @@ describe("validateToolInput", () => {
       ],
     });
     expect(err?.message).toBe(
-      'Invalid arguments for "acme.create_note": #/settings/extra: Value is not allowed by the declared schema.',
+      'Invalid arguments for "acme.create_note": /settings/extra: expected no additional properties (additionalProperties)',
     );
   });
 
@@ -309,7 +314,12 @@ describe("validateToolInput", () => {
     if (!failClosed) {
       for (const result of results) expect(result).toBeNull();
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(required(warn.mock.calls[0])[0]).toContain(address);
+      // The caller's address is its own text, not a catalog entry connecta
+      // resolved, so the record names only the error's class (INV-6).
+      expect(warn.mock.calls[0]).toEqual([
+        "[connecta] input schema unusable; arguments are not validated",
+        { errorClass: "Error" },
+      ]);
       return;
     }
     const err = results[0]!;
@@ -449,11 +459,15 @@ describe("compileValidator", () => {
   });
 });
 
-it("bounds raw enum validation detail to 256 UTF-8 bytes plus its marker", () => {
-  const schema = { enum: Array.from({ length: 10_000 }, (_, i) => `選択${i}`) };
-  const error = validateToolInput(schema, "absent", OPTS)!;
+it("never quotes a schema's enum, and bounds detail to 256 UTF-8 bytes plus its marker", () => {
   const prefix = `Invalid arguments for "${OPTS.address}": `;
-  expect(error.code).toBe("invalid_args");
+  const enumSchema = { enum: Array.from({ length: 10_000 }, (_, i) => `選択${i}`) };
+  const enumError = validateToolInput(enumSchema, "absent", OPTS)!;
+  expect(enumError.code).toBe("invalid_args");
+  expect(enumError.message).toBe(`${prefix}/: expected one of the declared values (enum)`);
+  // A required property's name is part of the path the agent must supply.
+  const longName = "選択".repeat(200);
+  const error = validateToolInput({ type: "object", required: [longName] }, {}, OPTS)!;
   expect(error.message.startsWith(prefix)).toBe(true);
   const detail = error.message.slice(prefix.length);
   expect(new TextEncoder().encode(detail).length).toBeLessThanOrEqual(259);

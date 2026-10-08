@@ -922,7 +922,7 @@ test("keeps a downstream's error text out of every action notice, end to end", a
   const LEAK = `invalid_grant: token ${SECRET} was revoked`;
   const logged: string[] = [];
   const log = (...args: unknown[]) => {
-    logged.push(args.map(String).join(" "));
+    logged.push(args.map((arg) => typeof arg === "string" ? arg : JSON.stringify(arg)).join(" "));
   };
   const key = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=";
   const storage = memoryStorage();
@@ -996,12 +996,13 @@ test("keeps a downstream's error text out of every action notice, end to end", a
   expect(await page.locator("body").innerText()).not.toContain(SECRET);
   expect(realRoutes.answered).toHaveLength(4);
   for (const body of realRoutes.answered) expect(body).not.toContain(SECRET);
-  // ...and on the host, where an operator debugging it looks.
-  expect(logged.filter((line) => line.includes(LEAK))).toEqual([
-    `[connecta] connector "oauth" OAuth disconnect failed: ${LEAK}`,
-    `[connecta] connector "oauth" OAuth restart failed: ${LEAK}`,
-    `[connecta] connector "vaulted" credential test failed: ${LEAK}`,
-  ]);
+  // ...nor in the host's log, which records each failure as typed facts (INV-6).
+  expect(logged.join("\n")).not.toContain(SECRET);
+  expect(logged).toEqual(expect.arrayContaining([
+    '[connecta] OAuth disconnect failed {"connector":"oauth","errorClass":"Error"}',
+    '[connecta] OAuth start failed {"connector":"oauth","errorClass":"Error"}',
+    '[connecta] credential test failed {"connector":"vaulted"}',
+  ]));
 });
 
 test("offers client setup for the endpoint and each granted pool", async ({ page }) => {

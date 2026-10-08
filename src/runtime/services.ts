@@ -22,6 +22,7 @@ import type { DeferredWork as DeferredWorkHook } from "../connector-scope.js";
 import type { CredentialVault } from "../credential-contract.js";
 import type { ConnectaConfig } from "../index.js";
 import type { ActivityModule } from "../module-contracts.js";
+import { failureRecord, logFailure } from "../operator-record.js";
 import type { Registry } from "../registry.js";
 import type {
   CatalogDriftCounts,
@@ -184,7 +185,7 @@ function activityRecorder(
       try {
         record();
       } catch (error) {
-        logger.warn("[connecta] activity record failed", error);
+        logFailure(logger, "activity record failed", failureRecord({}, error));
       }
     });
   return {

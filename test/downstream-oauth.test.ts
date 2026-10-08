@@ -4528,7 +4528,7 @@ describe("remoteMcp() oauth status via _transportFactory", () => {
     const status = await connector.status!(ctx());
     expect(status.state).toBe("error");
     expect(status.authorizationUrl).toBeUndefined();
-    expect(status.message).toContain("ECONNREFUSED");
+    expect(status.message).toContain("MCP handshake with https://unused.example failed");
   });
 });
 
@@ -4860,7 +4860,7 @@ describe("remoteMcp() startAuth", () => {
 
     const status = await connector.startAuth!(ctx());
     expect(status.state).toBe("error");
-    expect(status.message).toContain("ECONNREFUSED");
+    expect(status.message).toContain("MCP handshake with https://unused.example failed");
   });
   it("non-force re-issues an outstanding consent URL without touching the verifier", async () => {
     const storage = memoryStorage();
@@ -4968,7 +4968,7 @@ describe("remoteMcp() startAuth", () => {
     expect(started).toBe(2);
     // Network failure on an oauth connector surfaces as error, not auth_required.
     expect(result.state).toBe("error");
-    expect(result.message).toContain("ECONNREFUSED");
+    expect(result.message).toContain("MCP handshake with https://unused.example failed");
   });
 });
 
@@ -6767,7 +6767,7 @@ describe("/oauth/callback/<id> route", () => {
     ]);
   });
 
-  it("bounds and escapes a verifier exception in the operator log", async () => {
+  it("INV-6: keeps a verifier exception's text out of the operator log", async () => {
     const warn = vi.fn();
     const finishAuth = vi.fn();
     const thrownMessage = `bad\n${"x".repeat(100)}`;
@@ -6799,12 +6799,9 @@ describe("/oauth/callback/<id> route", () => {
     expect(res.status).toBe(400);
     expect(finishAuth).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledTimes(1);
-    const diagnostic = String(required(warn.mock.calls[0])[0]);
-    expect(diagnostic).toContain("verifyState threw");
-    expect(diagnostic).toContain("\\n");
-    expect(diagnostic).not.toContain("\n");
-    expect(diagnostic).toContain("(truncated)");
-    expect(diagnostic).not.toContain("x".repeat(65));
+    expect(required(warn.mock.calls[0])[0]).toContain("verifyState threw");
+    expect(required(warn.mock.calls[0])[1]).toEqual({ connector: "throwing", errorClass: "Error" });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("x".repeat(10));
   });
 
   it("error param → 400", async () => {

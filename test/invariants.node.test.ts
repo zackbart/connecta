@@ -15,7 +15,6 @@ const ids = [...principles.matchAll(/^- \*\*(INV-\d+):/gm)].map((match) => match
 // test. Remove each entry when its target behavior has its own regression.
 const TRANSITIONAL_GAPS = {
   "INV-2": "TODO Phase 2 (#706 item 1): replace config-exemption tests with per-pool trust tests.",
-  "INV-6": "TODO Phase 2 (#706 item 4): remove raw downstream failure text from logs (#716); activity already has payload-free tests.",
 };
 
 describe("principles backed by tests", () => {

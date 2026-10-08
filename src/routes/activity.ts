@@ -5,6 +5,7 @@ import {
   type ActivityPage,
   type ActivityReadPage,
 } from "../activity.js";
+import { failureRecord, logFailure } from "../operator-record.js";
 import type { InboundAuth } from "../types.js";
 import {
   ACTOR_LABEL_BUDGET_MS,
@@ -108,7 +109,7 @@ function activityRead(context: RouteContext): Effect.Effect<Response, Answer> {
         if (error instanceof InvalidActivityCursorError) {
           return refuse(error.message, 400);
         }
-        opts.logger.error("[connecta] activity read failed", error);
+        logFailure(opts.logger, "activity read failed", failureRecord({}, error), "error");
         return refuse("activity history is temporarily unavailable", 503);
       }),
     );

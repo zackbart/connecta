@@ -18,6 +18,7 @@ import {
 import type { DeferredWork } from "./connector-scope.js";
 import { resolveDiscoveryConcurrency } from "./concurrency.js";
 import { boundedEchoText, msg, type CallErrorDetails } from "./errors.js";
+import { failureRecord, logFailure } from "./operator-record.js";
 import { serializeResultText } from "./executor-result.js";
 import {
   InvocationService,
@@ -688,12 +689,13 @@ export function createMetaTools(
             write: !isExplicitlyReadOnly(resolved.definition),
             cap,
             set: (key, value, ttlSeconds) => registry.stashResult(key, value, ttlSeconds),
-            warn: () => registry.contextFor(
-              resolved.connector.id, baseUrl, requestScope,
-            ).logger.warn("[connecta] result paging unavailable", {
-              connector: resolved.connector.id,
-              tool: resolved.toolName,
-            }),
+            // The catalog entry, never `toolName`: a record names a tool
+            // only through the grammar check (src/operator-record.ts).
+            warn: () => logFailure(
+              registry.contextFor(resolved.connector.id, baseUrl, requestScope).logger,
+              "result paging unavailable",
+              failureRecord({ connector: resolved.connector.id, tool: resolved.definition }),
+            ),
           };
           const processed = (
             toolResult: ToolResult,

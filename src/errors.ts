@@ -1,6 +1,8 @@
 // Typed failure contract for connector tool calls. Web-API only — no node:
 // imports here.
 
+import type { ExecutorAdmissionErrorCode } from "./executor-admission.js";
+
 /**
  * Machine-readable classification of a failed connector tool call.
  *
@@ -33,6 +35,48 @@ export type ConnectorCallErrorCode =
   | "conflict"
   | "input_required_unsupported"
   | "connector_call_failed";
+
+/**
+ * Every classification code connecta assigns: a connector's typed codes, the
+ * executor's admission codes, and the refusals connecta frames itself.
+ * Operator records and activity rows carry a code only when it is one of
+ * these (INV-6), so a code forwarded from a downstream is never recorded.
+ * Adding a member fails typecheck until {@link CLASSIFICATION_CODE_TABLE}
+ * lists it.
+ */
+export type ClassificationCode =
+  | ConnectorCallErrorCode
+  | ExecutorAdmissionErrorCode
+  | "cancelled"
+  | "unknown_address"
+  | "unknown_tool"
+  | "ambiguous_tool_alias"
+  | "catalog_lookup_failed"
+  | "result_too_large"
+  | "destructive_tool_requires_approval"
+  | "write_outcome_unknown"
+  | "result_processing_failed"
+  | "budget_exceeded"
+  | "executor_failed";
+
+const CLASSIFICATION_CODE_TABLE = {
+  timeout: true, auth_required: true, rate_limited: true, unavailable: true,
+  invalid_args: true, not_found: true, conflict: true,
+  input_required_unsupported: true, connector_call_failed: true,
+  executor_overloaded: true, executor_cancelled: true, executor_closed: true,
+  cancelled: true, unknown_address: true, unknown_tool: true,
+  ambiguous_tool_alias: true, catalog_lookup_failed: true,
+  result_too_large: true, destructive_tool_requires_approval: true,
+  write_outcome_unknown: true, result_processing_failed: true,
+  budget_exceeded: true, executor_failed: true,
+} as const satisfies Record<ClassificationCode, true>;
+
+/** `value` when it is a code connecta assigns, else undefined. */
+export function classificationCode(value: unknown): ClassificationCode | undefined {
+  return typeof value === "string" && Object.hasOwn(CLASSIFICATION_CODE_TABLE, value)
+    ? value as ClassificationCode
+    : undefined;
+}
 
 /** One bounded, payload-free explanation of an input-schema mismatch. */
 export interface ArgumentValidationIssue {
@@ -179,7 +223,8 @@ interface UnavailableDetails {
   code?: string;
 }
 
-const NETWORK_ERROR_CODES = new Set([
+/** The network errnos `networkErrorCode` reports, and `timeout`. */
+export const NETWORK_ERROR_CODES: ReadonlySet<string> = new Set([
   "ECONNREFUSED", "ENOTFOUND", "ECONNRESET", "ETIMEDOUT", "EAI_AGAIN",
   "EAI_FAIL", "EHOSTUNREACH", "ENETUNREACH", "ENETDOWN", "EHOSTDOWN",
   "ECONNABORTED", "EPIPE", "EACCES", "EPERM",
@@ -231,17 +276,55 @@ export function networkErrorCode(error: unknown): string | undefined {
   );
 }
 
-/** Use at a fetch boundary where the destination and transport failure are known. */
+/**
+ * Use at a fetch boundary where the destination and transport failure are
+ * known. The runtime's error is read for its errno and dropped, never kept as
+ * `cause`: its message and cause chain can quote the URL, headers, or body of
+ * the request that failed, and a logger that renders an error renders its
+ * cause. The origin and errno in `details` are what survives.
+ *
+ * The one failure kept is the request's own abort reason, when that is what
+ * the fetch rejected with: the caller wrote it, not the downstream, and it is
+ * how a cancelled request tells its reason from a network failure.
+ */
 export function unavailableCallError(
-  cause: unknown,
+  failure: unknown,
   host?: string,
   message = "Could not reach the downstream service.",
+  signal?: AbortSignal,
 ): ConnectorCallError {
-  const code = networkErrorCode(cause);
+  const code = networkErrorCode(failure);
+  const ownReason = signal?.aborted === true && failure === signal.reason;
   return new ConnectorCallError("unavailable", message, {
-    cause,
+    ...(ownReason ? { cause: failure } : {}),
     details: { ...(host ? { host } : {}), ...(code ? { code } : {}) },
   });
+}
+
+/**
+ * A failure told in connecta's words because the original's text came from a
+ * downstream or authorization server, which can echo what the request carried
+ * or plant whatever it likes. There is no `cause`: the original is dropped
+ * whole, never masked.
+ *
+ * It is classified exactly as the original would have been. That verdict is
+ * read from the original once, here, and kept as two flags, so withholding
+ * the text moves no failure between `timeout`, retryable, and the caller's
+ * fallback code. Never wrap a `ConnectorCallError`: it already speaks in
+ * connecta's words and carries its own code.
+ */
+export class WithheldTextError extends Error {
+  /** The original read as a timeout. */
+  readonly timeout: boolean;
+  readonly retryable: boolean;
+
+  constructor(message: string, original: unknown) {
+    super(message);
+    this.name = "WithheldTextError";
+    const verdict = classifyCallError(original);
+    this.timeout = verdict.code === "timeout";
+    this.retryable = verdict.retryable;
+  }
 }
 
 /** Agent-visible recovery class attached only to `auth_required` failures. */
@@ -443,7 +526,7 @@ const NEVER_RETRYABLE_FRAMING = new Set([
  * Details for a failure connecta itself framed — an address it could not
  * resolve, a tool it refuses to run — rather than one a connector threw.
  */
-export function framingError(code: string, message: string): CallErrorDetails {
+export function framingError(code: ClassificationCode, message: string): CallErrorDetails {
   return {
     code,
     message,
@@ -469,7 +552,7 @@ function messageLooksRetryable(message: string): boolean {
  */
 export function classifyCallError(
   err: unknown,
-  fallbackCode = "connector_call_failed",
+  fallbackCode: ClassificationCode = "connector_call_failed",
 ): CallErrorDetails {
   if (err instanceof ConnectorCallError) {
     return {
@@ -482,6 +565,13 @@ export function classifyCallError(
       ...(err.validation ? { validation: err.validation } : {}),
       ...(err.details ? { details: err.details } : {}),
       ...(err.current ? { current: err.current } : {}),
+    };
+  }
+  if (err instanceof WithheldTextError) {
+    return {
+      code: err.timeout ? "timeout" : fallbackCode,
+      message: err.message,
+      retryable: err.retryable,
     };
   }
   // An aborted fetch rejects with a DOMException named "AbortError" whose

@@ -21,6 +21,13 @@ import type {
   UiData,
   UiTool,
 } from "../operator-ui/model.js";
+import {
+  failureRecord,
+  failureStatus,
+  logFailure,
+  recordedToolName,
+  statusFailure,
+} from "../operator-record.js";
 import type { RegistryView } from "../registry.js";
 import { closeScope } from "../runtime/connector-scope.js";
 import { withDeadlineEffect } from "../runtime/run.js";
@@ -73,22 +80,26 @@ export function uiData(
     const vault = options.credentialVault;
     const owner = options.personalCredentialOwner;
     /**
-     * A connector's status message stops here. It can quote a downstream error
-     * body — and a downstream error body can quote the secret it just rejected —
-     * so the payload carries only the classified `problem` and the raw text goes
-     * to the deployment's log, where an operator debugging the failure already
-     * looks. An `ok` status's message is informational and simply dropped.
+     * A connector's status message stops here: the payload carries only the
+     * classified `problem`, and the log a record of the state and, when
+     * connecta described the failure itself, that failure's typed facts. The
+     * message is never logged, whatever it looks like: a connector's own
+     * `status()` can quote a downstream error body, which can quote the
+     * secret it just rejected (INV-6). An `ok` status is simply dropped.
      */
     const logStatus = (
       id: string,
       state: ConnectorStatus["state"] | "failed",
-      message: string | undefined,
+      failure: unknown,
     ) => {
-      if (!message || state === "ok") return;
+      if (state === "ok") return;
       const logger = registry.contextFor(id, baseUrl, requestScope).logger;
-      const line = `[connecta] connector "${id}" operator status ${state}: ${message}`;
-      if (state === "auth_required") logger.info(line);
-      else logger.warn(line);
+      logFailure(
+        logger,
+        "operator status",
+        failureRecord({ connector: id, state }, failure),
+        state === "auth_required" ? "info" : "warn",
+      );
     };
 
     // Status first, then the catalog only when status is ok. A failed status
@@ -113,11 +124,15 @@ export function uiData(
         if (status.state !== "ok" || signal.aborted) {
           return { status, tools: [], catalogFailed: false };
         }
+        // A catalog is configuration the operator chose to load, and its
+        // descriptions are the agent's too, so the page shows them as text.
+        // A name outside MCP's tool-name grammar is withheld here as in every
+        // record (INV-6), and so is the address built from it.
         return yield* attempt(async () =>
           (await registry.getTools(c.id, baseUrl, requestScope, { signal })).map(
             (t): UiTool => ({
-              name: t.name,
-              address: `${c.id}.${t.name}`,
+              name: recordedToolName(t),
+              address: `${c.id}.${recordedToolName(t)}`,
               ...(t.description ? { description: t.description } : {}),
               safety: uiToolSafety(
                 t,
@@ -136,13 +151,7 @@ export function uiData(
       }).pipe(
         Effect.catch((error) =>
           Effect.succeed<Observed>({
-            status: {
-              state: "error",
-              message:
-                error instanceof Error
-                  ? error.message
-                  : "Connection details unavailable",
-            },
+            status: failureStatus(c.id, error),
             tools: [],
             catalogFailed: false,
           }),
@@ -239,7 +248,7 @@ export function uiData(
         // after this one had already ended the row.
         const { status, tools, catalogFailed } = yield* observe(c, drift, signal);
         const credential = yield* credentialFor(c);
-        logStatus(c.id, status.state, status.message);
+        logStatus(c.id, status.state, statusFailure(status));
         const problem = uiProblemFor(c, status.state, {
           credentialDrift: Boolean(drift),
           catalogFailed,
@@ -269,7 +278,7 @@ export function uiData(
 
     const unavailable = (c: Connector, error: unknown) =>
       Effect.sync((): UiConnector => {
-        logStatus(c.id, "failed", error instanceof Error ? error.message : String(error));
+        logStatus(c.id, "failed", error);
         return {
           id: c.id,
           ...(c.title ? { title: c.title } : {}),

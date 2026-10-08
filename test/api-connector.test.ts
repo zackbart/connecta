@@ -191,11 +191,14 @@ describe("api() connector", () => {
     );
   });
 
-  it("handler throw surfaces to the caller (call_tool wraps it as isError)", async () => {
+  it("handler throw surfaces to the caller in connecta's words (call_tool wraps it as isError)", async () => {
+    // A plain Error may be a runtime's account of what the handler read, so
+    // its text is withheld; a handler means its words with ConnectorCallError.
     const c = makeApi();
-    await expect(c.callTool("boom", {}, ctx())).rejects.toThrow(
-      /handler exploded/,
-    );
+    const thrown = (await c.callTool("boom", {}, ctx()).then(() => null, (e: unknown) => e)) as Error;
+    expect(thrown.message).toMatch(/Connector "resend" tool "boom" handler failed \(Error\)/);
+    expect(thrown.message).not.toContain("handler exploded");
+    expect(thrown.cause).toBeUndefined();
   });
 
   it("an async handler that throws immediately never goes briefly unhandled", async () => {
@@ -211,7 +214,7 @@ describe("api() connector", () => {
     const thrown = await c
       .callTool("async_boom", {}, ctx())
       .then(() => null, (e: unknown) => e as Error);
-    expect(thrown?.message).toContain("async handler exploded");
+    expect(thrown?.message).toContain('tool "async_boom" handler failed');
   });
 });
 
@@ -311,7 +314,8 @@ describe("api() argument validation", () => {
     expect(typed.retryable).toBe(false);
     expect(typed.message).toContain("refy.broken_schema");
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(required(warn.mock.calls[0])[0]).toContain("refy.broken_schema");
+    // Named by its catalog entry, never the caller's address (INV-6).
+    expect(required(warn.mock.calls[0])[1]).toMatchObject({ connector: "refy", tool: "broken_schema" });
   });
 });
 
@@ -355,14 +359,26 @@ describe("api() transport diagnostics", () => {
     const typed = new ConnectorCallError("unavailable", "unreachable", {
       details: { host: "https://user:secret@example.com:8443/private?token=secret", code: "ENOTFOUND" },
     });
-    for (const cause of [typed, new Error("ECONNREFUSED timeout"), new TypeError("bad handler")]) {
+    const thrownBy = async (cause: unknown) => {
       const connector = api("down", { tools: [{ name: "read", description: "Read downstream",
         annotations: { readOnlyHint: true }, handler: () => { throw cause; },
       }] });
-      const error = await connector.callTool("read", {}, ctx()).catch(error => error);
-      expect(error).toBe(cause);
-    }
+      return (await connector.callTool("read", {}, ctx()).then(() => null, (error: unknown) => error)) as Error;
+    };
+    expect(await thrownBy(typed)).toBe(typed);
     expect(classifyCallError(typed).details).toEqual({ host: "https://example.com:8443", code: "ENOTFOUND" });
+    // Prose is rebuilt, not typed: no details, no cause, the verdict kept.
+    for (const cause of [new Error("ECONNREFUSED timeout"), new TypeError("bad handler")]) {
+      const error = await thrownBy(cause);
+      expect(error).not.toBe(cause);
+      expect(error.cause).toBeUndefined();
+      expect(classifyCallError(error)).toMatchObject({
+        code: classifyCallError(cause).code,
+        retryable: classifyCallError(cause).retryable,
+      });
+      expect(classifyCallError(error)).not.toHaveProperty("details");
+      expect(classifyCallError(error).message).not.toContain(cause.message);
+    }
   });
 });
 

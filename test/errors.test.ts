@@ -4,7 +4,55 @@ import {
   ConnectorCallError,
   framingError,
   networkErrorCode,
+  unavailableCallError,
+  WithheldTextError,
 } from "../src/errors.js";
+
+describe("WithheldTextError", () => {
+  it.each([
+    ["Dynamic Client Registration rejected (HTTP 400): secret", "fallback", false],
+    ["Dynamic Client Registration rejected (HTTP 503): secret", "fallback", true],
+    ["HTTP 400: secret request timed out", "timeout", true],
+  ] as const)("classifies %j as the original would have been", (text, code, retryable) => {
+    const original = new Error(text);
+    const withheld = new WithheldTextError("connecta's words", original);
+    for (const fallback of ["connector_call_failed", "catalog_lookup_failed"] as const) {
+      expect(classifyCallError(withheld, fallback)).toEqual({
+        code: code === "fallback" ? fallback : code,
+        message: "connecta's words",
+        retryable,
+      });
+      expect(classifyCallError(withheld, fallback)).toEqual({
+        ...classifyCallError(original, fallback),
+        message: "connecta's words",
+      });
+    }
+    expect(withheld.cause).toBeUndefined();
+    expect(JSON.stringify({ ...withheld })).not.toContain("secret");
+  });
+});
+
+describe("unavailableCallError", () => {
+  it("keeps the errno and origin and drops the runtime's error (#695)", () => {
+    const runtime = new TypeError("fetch failed https://h.example/p?token=secret", {
+      cause: { code: "ECONNRESET", message: "secret" },
+    });
+    const error = unavailableCallError(runtime, "https://h.example/p?token=secret");
+    expect(error.cause).toBeUndefined();
+    expect(error.details).toEqual({ host: "https://h.example", code: "ECONNRESET" });
+    expect(JSON.stringify(classifyCallError(error))).not.toContain("secret");
+  });
+
+  it("keeps only the request's own abort reason as cause", () => {
+    const controller = new AbortController();
+    const reason = new Error("owner left");
+    controller.abort(reason);
+    expect(unavailableCallError(reason, undefined, undefined, controller.signal).cause).toBe(reason);
+    expect(unavailableCallError(new Error("other"), undefined, undefined, controller.signal).cause)
+      .toBeUndefined();
+    expect(unavailableCallError(reason).cause).toBeUndefined();
+  });
+});
 
 describe("ConnectorCallError", () => {
   it("defaults retryable per code", () => {
@@ -224,7 +272,7 @@ describe("framingError", () => {
       "ambiguous_tool_alias",
       "destructive_tool_requires_approval",
       "result_processing_failed",
-    ]) {
+    ] as const) {
       expect(
         framingError(code, `Unknown address "temporary-503-service.read"`),
       ).toEqual({

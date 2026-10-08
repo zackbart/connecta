@@ -688,9 +688,10 @@ describe("tool cache TTL", () => {
     }
     expect(
       warnings.some((warning) =>
-        warning.includes("catalog invalidation failed: chunk delete failed"),
+        warning.includes("catalog invalidation failed"),
       ),
     ).toBe(true);
+    expect(warnings.some((warning) => warning.includes("chunk delete failed"))).toBe(false);
   });
 
   it("withholds the manifest when a parallel chunk write fails", async () => {
@@ -762,9 +763,10 @@ describe("tool cache TTL", () => {
     expect(await backing.get("catalog:parallel_write_failure")).toBeNull();
     expect(
       warnings.some((warning) =>
-        warning.includes("catalog persistence failed: chunk write failed"),
+        warning.includes("catalog persistence failed"),
       ),
     ).toBe(true);
+    expect(warnings.some((warning) => warning.includes("chunk write failed"))).toBe(false);
   });
 
   it("treats a missing persisted chunk as no catalog", async () => {
@@ -1136,7 +1138,8 @@ describe("broken-connector isolation", () => {
   it("reports error status for the broken connector", async () => {
     const status = await registry.statusFor("broken", BASE);
     expect(status.state).toBe("error");
-    expect(status.message).toContain("boom");
+    // An operator surface: the failure's record, never its text (INV-6).
+    expect(status.message).toBe('Connector "broken" failed (Error).');
   });
 
   it("keeps healthy connectors working alongside a broken one", async () => {
@@ -1384,9 +1387,10 @@ describe("catalog stale-while-revalidate", () => {
       expect(closed[0]).toBe(contexts[1]);
       expect(
         warnings.some((warning) =>
-          warning.includes("deferred catalog refresh failed: refresh broke"),
+          warning.includes("deferred catalog refresh failed"),
         ),
       ).toBe(true);
+      expect(warnings.some((warning) => warning.includes("refresh broke"))).toBe(false);
     } finally {
       vi.useRealTimers();
     }

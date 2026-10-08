@@ -497,7 +497,7 @@ describe("the connector seam is projected, not echoed", () => {
    * `Connector.catalogDrift()` is the open plugin seam and `/health` is
    * unauthenticated, so "four counts and nothing else" has to be built at the
    * boundary rather than trusted: TypeScript constrains neither an extra
-   * enumerable property nor the length of `observedAt` at runtime.
+   * enumerable property nor what `observedAt` holds at runtime.
    */
   const leaky = (): Connector =>
     (connectorWith({
@@ -506,7 +506,7 @@ describe("the connector seam is projected, not echoed", () => {
       call: async () => null,
       catalogDrift() {
         return {
-          observedAt: `2026-08-12T00:00:00.000Z${"x".repeat(500)}`,
+          observedAt: "2026-08-12T02:00:00+02:00",
           unclassifiedTools: 2,
           unservedTools: -1,
           annotationConflicts: Number.NaN,
@@ -525,7 +525,7 @@ describe("the connector seam is projected, not echoed", () => {
     "unservedTools",
   ];
 
-  it("strips extra fields and bounds the timestamp on /health", async () => {
+  it("strips extra fields and re-serializes the timestamp on /health", async () => {
     const connecta = createConnecta({
       executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
       storage: memoryStorage(),
@@ -545,7 +545,7 @@ describe("the connector seam is projected, not echoed", () => {
       annotationConflicts: 0,
       schemaChanges: 1,
     });
-    expect(String(report.observedAt).length).toBeLessThanOrEqual(65);
+    expect(report.observedAt).toBe("2026-08-12T00:00:00.000Z");
   });
 
   it("strips them on connector status too", async () => {

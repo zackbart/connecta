@@ -4,6 +4,8 @@
 
 import { createClerkClient } from "@clerk/backend";
 import { decodeJwt } from "@clerk/backend/jwt";
+import { byteReadResponse } from "../byte-read-response.js";
+import { failureRecord, logFailure } from "../operator-record.js";
 import { assertNoRetiredToolkitOptions } from "../retired-toolkits.js";
 import type { AuthResult, InboundAuth } from "../types.js";
 
@@ -311,7 +313,7 @@ async function opaqueOAuthClaims(
     signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
   });
   if (!response.ok) throw new Error("Opaque OAuth verification failed");
-  const claims: unknown = await response.json();
+  const claims: unknown = await byteReadResponse(response).json();
   if (
     !claims || typeof claims !== "object" || Array.isArray(claims) ||
     !("object" in claims) || claims.object !== "clerk_idp_oauth_access_token" ||
@@ -509,11 +511,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
         email = primary.emailAddress;
       }
     } catch (error) {
-      console.warn(
-        `[connecta] clerk email lookup failed for ${userId}: ${
-          error instanceof Error ? error.message : String(error)
-        } — denying`,
-      );
+      logFailure(console, "Clerk email lookup failed; denying", failureRecord({ userId }, error));
       return false;
     }
     const domain = email ? emailDomain(email) : null;
@@ -619,7 +617,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
               { status: 502, headers: CORS_HEADERS },
             );
           }
-          return Response.json(await upstream.json(), { headers: CORS_HEADERS });
+          return Response.json(await byteReadResponse(upstream).json(), { headers: CORS_HEADERS });
         } catch {
           return Response.json(
             { error: "upstream authorization server metadata unavailable" },
@@ -677,9 +675,9 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
           } else {
             claims = decodeJwt(token).payload as Record<string, unknown>;
           }
-          const reason = oauthBindingRejection(claims, resource, auth.clientId, allowedOAuthClientIds);
-          if (reason) {
-            console.warn(`[connecta] clerk rejected request: reason=${reason}`);
+          const rejection = oauthBindingRejection(claims, resource, auth.clientId, allowedOAuthClientIds);
+          if (rejection) {
+            console.warn(`[connecta] clerk rejected request: reason=${rejection}`);
             return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
           }
         } else {

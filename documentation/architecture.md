@@ -267,6 +267,35 @@ literal-headers-plus-personal version of that mistake. Visibility
 (`identity.connectorAccess`) is a separate rule; hiding a connector does not
 change who owns its auth.
 
+### Errors and records
+
+A failure has two audiences with two rules. The agent that made a call may read
+the downstream's own answer to it: a JSON-RPC error message, an HTTP 4xx
+refusal, `isError` content, or the words a handler put in a
+`ConnectorCallError`. Anything else (a transport, parser, stream, validator, or
+runtime error) reaches it in connecta's words: step, origin, HTTP status, and
+class, classified as the original would have been ([auth](./auth.md#what-a-servers-errors-may-say)).
+Operators read logs, status messages, and activity, and none of them carries
+any error's text, allowed or not (INV-6). `src/operator-record.ts` builds every
+failure record from an explicit list of fields, each checked against a constant
+table or grammar (connector, catalog-listed tool, step, origin, HTTP status,
+class, code, retryability, errno, counts), and `logFailure` writes a fixed
+`<rejected>` for a record it did not build, never throwing. Provenance is by
+identity, never by shape: an error's class is read from its prototype chain,
+never its `name`; a classification only from one connecta registered; a tool
+only from the catalog entry a call resolved to, and only if it fits MCP's
+tool-name grammar (else `<withheld>`, in activity rows too); and a status
+message only from the snapshot connecta took of a status it created, so a
+plugin `status()` or a decorator contributes its state alone. workerd quotes a
+body's Content-Type in its own output when a text read meets a type it does not
+parse as text, so connecta reads downstream bodies as bytes
+(`src/byte-read-response.ts`), `ctx.oauth.fetch()` answers included. The
+operator page may show catalog metadata the operator loaded (descriptions,
+schemas), but withholds a tool name outside the grammar as it does in records.
+`test/operator-record-sources.node.test.ts` is a secondary lint over every other
+log call in `src/`. Fix the sink, not the source: a filter at each source missed
+the next one.
+
 ## Optional deployment modules
 
 `createConnecta` takes closed typed `ui`, `vault`, `activity`, and `artifacts`

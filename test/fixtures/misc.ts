@@ -36,7 +36,8 @@ export function spyLogger(): {
   return {
     logger: { ...silentLogger, warn },
     warn,
-    warnings: () => warn.mock.calls.map((args) => args.map(String).join(" ")),
+    warnings: () => warn.mock.calls.map((args) =>
+      args.map((arg) => typeof arg === "string" ? arg : JSON.stringify(arg)).join(" ")),
   };
 }
 
