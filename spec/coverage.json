@@ -126,7 +126,7 @@
       "id": "authorization",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization",
-      "notes": "Clerk binds JWT and opaque OAuth tokens to the canonical MCP resource audience; edge-validated Worker Access and machine access tokens exist. Phase 3 hardens metadata/challenges and retires static bearer.",
+      "notes": "Clerk binds JWT and opaque OAuth tokens to the canonical MCP resource and owns its protected-resource challenge with scopes. Cloudflare Access is supported for humans on direct Worker invocations through edge-validated application AUD and ctx.access; Node uses Clerk. Machines use stored cta_ tokens; static bearer is removed. Downstream auth and auth elicitation follow-ups remain in #707.",
       "tests": [
         {
           "file": "test/server.test.ts",
@@ -135,6 +135,18 @@
         {
           "file": "test/clerk.test.ts",
           "title": "accepts the canonical resource audience at /mcp without a fallback allowlist"
+        },
+        {
+          "file": "test/inbound-auth.test.ts",
+          "title": "INV-4: an unrelated metadata hook cannot override Clerk's 401 challenge"
+        },
+        {
+          "file": "test/inbound-auth.test.ts",
+          "title": "INV-4: the final human-route 401 retains the actual metadata owner's challenge"
+        },
+        {
+          "file": "test/cloudflare-access-auth.test.ts",
+          "title": "uses the trusted Worker identity as ambient operator auth"
         }
       ],
       "issue": "https://github.com/zackbart/connecta/issues/707"

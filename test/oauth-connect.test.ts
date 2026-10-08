@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
@@ -34,7 +34,7 @@ function setup(provider: "clerk" | "access", authScope: "personal" | "shared", o
     verifyState: async (candidate, ctx) => candidate !== null && candidate === await ctx.storage.get("state"),
     disconnectAuth: async () => {},
   };
-  const auth = options.interactive === false ? bearerToken("machine") : provider === "access" ? cloudflareAccessAuth() : ["alice", "bob"].map(user => ({
+  const auth = options.interactive === false ? machineAuth("machine") : provider === "access" ? cloudflareAccessAuth() : ["alice", "bob"].map(user => ({
     ...fakeClerkAuth({ token: user, userId: user, ...(options.hostedSignIn === false ? {} : { signInUrl: "https://accounts.example/sign-in" }) }),
     activityActorNamespace: "https://clerk.example.test",
   }));
@@ -289,7 +289,7 @@ describe("OAuth identity and signature boundaries", () => {
     const link = JSON.parse(humanRpc.result.content[0].text).authorizationUrl;
     for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
       const response = await app.fetch(new Request(link, { method, headers: { Authorization: `Bearer ${token}` } }), undefined, runtime());
-      expect(response.status).toBe(method === "GET" ? provider === "clerk" ? 200 : 403 : 405);
+      expect(response.status).toBe(method === "GET" ? 403 : 405);
     }
     expect(startAuth).not.toHaveBeenCalled();
     expect((await app.fetch(new Request(link, { headers: { Cookie: "__session=alice" } }), undefined, runtime(true))).status).toBe(302);

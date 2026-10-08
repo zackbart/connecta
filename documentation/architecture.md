@@ -101,12 +101,13 @@ An admitted non-preflight `/mcp` request then takes five steps in
    unauthenticated flood costs a permit rather than a Clerk lookup, and held
    until the response *body* completes, the caller leaves, or its configured
    lifetime ends, not until the handler returns.
-2. **Authorize.** Each `InboundAuth` provider's `authorize` in order, bearer
-   before interactive. First `ok` admits; a `final` refusal — a recognized
-   credential refused on its merits, such as a bearer's unaccepted
-   [asserted principal](./auth.md#a-trusted-agent-acting-for-its-users) — ends
-   the walk; if all fail, the last provider's challenge is returned. No
-   providers means open — development only, and it warns at construction.
+2. **Authorize.** Machine tokens precede interactive providers. A provider's
+   synchronous credential recognition selects the sole verifier for an explicit
+   credential; a refusal never falls back to another identity. Human routes
+   reject machine credentials without verification. With no recognized
+   credential, configured providers are tried in order. A 401 takes its
+   challenge from the actual protected-resource metadata owner. No providers
+   means open development and warns at construction.
 3. **Narrow to the pool.** On `/mcp/<pool>`, look the name up, run its grant
    against the identity, then `intersectAccess` the pool with the identity's own
    access. A pool can never widen a view; anything else is a 404 naming no pool.
@@ -515,7 +516,7 @@ regardless of wrapping.
 
 `createConnecta` takes closed typed `ui`, `vault`, `activity`, and `artifacts`
 slots, with factories at `/ui`, `/credentials`, `/activity`, and `/artifacts`
-and bearer auth at `/auth/bearer`. Root exports the contracts, never the implementations, and there
+and machine tokens at `/auth/access-tokens`. Root exports the contracts, never the implementations, and there
 is no module array, runtime registration, or plugin lifecycle. Core keeps
 discovery, the executor contract, invocation, permissions, and OAuth callback
 verification; an omitted module contributes no runtime work at all.

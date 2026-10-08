@@ -36,8 +36,8 @@ export interface ClerkAuthOptions {
    * `mail.acme.com` — spell a subdomain out to allow it. Entries must be ASCII
    * (punycode for an internationalized domain) and are validated at
    * construction. Absent ⇒ every authenticated user passes this check, as
-   * before the option existed. Governs Clerk sign-in only: a co-configured
-   * A machine access token has no email to read and is admitted without a domain check.
+   * before the option existed. Governs Clerk sign-in only: a co-configured machine
+   * access token has no email to read and is admitted without a domain check.
    */
   allowedDomains?: readonly string[];
   /** Optional allow-list hook using Connecta's bundled user lookup client. */
@@ -52,7 +52,7 @@ export interface ClerkAuthOptions {
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
   "Access-Control-Allow-Headers":
     "Content-Type, Authorization, mcp-protocol-version",
 };
@@ -385,10 +385,11 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   });
   const allowedDomains = normalizeAllowedDomains(opts.allowedDomains);
   const allowedOAuthClientIds = normalizeOAuthClientIds(opts.allowedOAuthClientIds);
-  const scopes = opts.scopes ?? ["openid", "profile", "email"];
-  if (!Array.isArray(scopes) || scopes.some(scope => typeof scope !== "string" || !/^[\x21\x23-\x5b\x5d-\x7e]+$/.test(scope))) {
+  const requestedScopes = opts.scopes ?? ["openid", "profile", "email"];
+  if (!Array.isArray(requestedScopes) || requestedScopes.some(scope => typeof scope !== "string" || !/^[\x21\x23-\x5b\x5d-\x7e]+$/.test(scope))) {
     throw new Error("clerkAuth: `scopes` must contain OAuth scope tokens without whitespace, quotes, or backslashes.");
   }
+  const scopes = [...requestedScopes];
   const gateCache = new Map<string, { allowed: boolean; exp: number }>();
   const activityLabelCache = new Map<
     string,

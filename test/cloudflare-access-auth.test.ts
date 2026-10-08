@@ -3,6 +3,7 @@ import { memoryStorage } from "../src/storage/memory.js";
 import { describe, expect, it, vi } from "vitest";
 import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 import type { InboundAuthRuntimeContext } from "../src/types.js";
+import { authorize } from "../src/routes/shared.js";
 import { fakeClerkAuth, makeDeployment, mcpRpc } from "./fixtures/http.js";
 
 const BASE = "https://connecta.test";
@@ -45,6 +46,16 @@ describe("cloudflareAccessAuth", () => {
     });
   });
 
+  it("INV-4: maps a human to its stable Access principal and result owner", async () => {
+    const result = await authorize(request, BASE, [cloudflareAccessAuth()], workerRuntime({ user_uuid: "user-123" }));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.identity.principal).toEqual({ namespace: "cloudflare-access", id: "user-123" });
+      expect(result.identity.subject).toEqual(result.identity.principal);
+      expect(result.identity.interactive).toBe(true);
+    }
+  });
+
   it("uses a verified Access email when local development supplies no UUID", async () => {
     const result = await cloudflareAccessAuth().authorize(
       request,
@@ -58,29 +69,34 @@ describe("cloudflareAccessAuth", () => {
     });
   });
 
-  it("admits service tokens without granting a user identity", async () => {
-    const result = await cloudflareAccessAuth().authorize(
-      request,
-      BASE,
-      runtime(),
-    );
-    expect(result).toEqual({
-      ok: true,
-      subjectId: "access-app",
-    });
+  it("INV-4: refuses Access service identities; machines need cta_ tokens", async () => {
+    for (const identity of [undefined, { common_name: "service-client-id.access" }, { service_token_id: "service-id" }, { user_uuid: "human", service_token_status: true }]) {
+      const result = await cloudflareAccessAuth().authorize(request, BASE, runtime(identity));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.response.status).toBe(403);
+    }
+  });
 
-    // Keep accepting assertion-shaped identities for runtimes that expose
-    // them, even though production service tokens currently return no user
-    // identity from getIdentity().
-    const assertionShape = await cloudflareAccessAuth().authorize(
-      request,
-      BASE,
-      runtime({ common_name: "service-client-id.access" }),
-    );
-    expect(assertionShape).toEqual({
-      ok: true,
-      subjectId: "service-client-id.access",
-    });
+  it.each(["valid", "invalid", "expired", "wrong-audience"])("INV-4: refuses %s caller JWTs without edge-validated context on Node and Workers", async verdict => {
+    const header = btoa(JSON.stringify({ alg: "none" }));
+    const payload = btoa(JSON.stringify({ sub: "human", aud: verdict === "wrong-audience" ? "other-app" : "access-app", exp: verdict === "expired" ? 1 : 9999999999 }));
+    const jwt = verdict === "invalid" ? "invalid" : `${header}.${payload}.signature`;
+    const fetcher = vi.spyOn(globalThis, "fetch");
+    const result = await cloudflareAccessAuth().authorize(new Request(`${BASE}/mcp`, { headers: { "Cf-Access-Jwt-Assertion": jwt, Authorization: `Bearer ${jwt}` } }), BASE);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(401);
+      expect(result.response.headers.get("WWW-Authenticate")).toBe('Bearer scope="openid email"');
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+    fetcher.mockRestore();
+  });
+
+  it.each(["", undefined, 123, "bad aud"])("INV-4: refuses malformed trusted application AUD %j before identity lookup", async aud => {
+    const getIdentity = vi.fn(async () => ({ user_uuid: "human" }));
+    const result = await cloudflareAccessAuth().authorize(request, BASE, { access: { aud: aud as string, getIdentity } });
+    expect(result.ok).toBe(false);
+    expect(getIdentity).not.toHaveBeenCalled();
   });
 
   it("fails closed when Access or its identity is unavailable", async () => {
@@ -97,7 +113,7 @@ describe("cloudflareAccessAuth", () => {
     if (!failed.ok) expect(failed.response.status).toBe(401);
   });
 
-  it("admits MCP service calls but refuses service-token operator mutation", async () => {
+  it("refuses Access-only machine MCP calls and operator mutation", async () => {
     const deployment = makeDeployment({
       auth: cloudflareAccessAuth(),
       connectors: [{ id: "oauth", kind: "mcp", listTools: async () => [], callTool: async () => null, startAuth: async () => ({ state: "ok" }), disconnectAuth: async () => {} }],
@@ -106,7 +122,7 @@ describe("cloudflareAccessAuth", () => {
 
     const mcpRequest = mcpRpc("tools/list", {});
     const mcp = await deployment.fetch(mcpRequest, undefined, context);
-    expect(mcp.status).toBe(200);
+    expect(mcp.status).toBe(403);
 
     const mutation = await deployment.fetch(
       new Request(`${BASE}/ui/oauth/oauth`, {
@@ -122,7 +138,7 @@ describe("cloudflareAccessAuth", () => {
     );
     expect(mutation.status).toBe(403);
     await expect(mutation.json()).resolves.toEqual({
-      error: "authenticated user required",
+      error: "Cloudflare Access human identity required",
     });
   });
 

@@ -341,10 +341,14 @@ const connectaConfig = {
       const list = Array.isArray(value) ? value : [value];
       list.forEach((provider, index) => {
         if (!isObject(provider) || typeof provider.kind !== "string" ||
-          typeof provider.authorize !== "function") {
+          typeof provider.authorize !== "function" ||
+          ["recognizesCredential", "handleMetadata", "challenge"].some(key => provider[key] !== undefined && typeof provider[key] !== "function")) {
           throw new ConfigError(
             `${Array.isArray(value) ? `${path}[${index}]` : path} must be an inbound auth adapter.`,
           );
+        }
+        if ("finalRefusals" in provider) {
+          throw new ConfigError(`${Array.isArray(value) ? `${path}[${index}]` : path}.finalRefusals is retired; use synchronous recognizesCredential.`);
         }
       });
     },

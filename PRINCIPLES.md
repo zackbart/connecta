@@ -31,7 +31,7 @@ records the work still needed; a goal is not a claim that it has shipped.
 Revisable by decision record: one deployment serves one tenant; nothing
 installs connectors at runtime. Inbound human auth is Clerk or Cloudflare
 Access. Access is Workers-only; Node uses Clerk. Machine clients use `cta_` tokens.
-The remaining static bearer adapter retires in Phase 3.
+Static bearer secrets are retired.
 
 ## Invariants
 

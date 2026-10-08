@@ -129,7 +129,13 @@ async function providerChallenge(
 }
 
 function recognizedProvider(request: Request, auth: readonly InboundAuth[], runtimeContext?: RuntimeExecutionContext): InboundAuth | undefined {
-  return auth.find(provider => provider.recognizesCredential?.(request, runtimeContext) === true);
+  for (const provider of auth) {
+    if (!provider.recognizesCredential) continue;
+    const recognized = provider.recognizesCredential(request, runtimeContext);
+    if (typeof recognized !== "boolean") throw new Error("invalid credential recognition verdict");
+    if (recognized) return provider;
+  }
+  return undefined;
 }
 
 export async function authorize(

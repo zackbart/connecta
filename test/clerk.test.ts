@@ -574,7 +574,7 @@ describe("clerkAuth inbound auth", () => {
       expect(response.status).toBe(401);
       const metadataPath = path === "/mcp" ? "" : path;
       expect(response.headers.get("WWW-Authenticate")).toBe(
-        `Bearer error="invalid_token", resource_metadata="${BASE}/.well-known/oauth-protected-resource${metadataPath}"`,
+        `Bearer error="invalid_token", resource_metadata="${BASE}/.well-known/oauth-protected-resource${metadataPath}", scope="openid profile email"`,
       );
       expect(await response.json()).toMatchObject({ error: { code: "host_auth_required", retryable: false } });
       const metadata = await c.fetch(new Request(`${BASE}/.well-known/oauth-protected-resource${metadataPath}`));
@@ -812,6 +812,29 @@ describe("clerkAuth inbound auth", () => {
       controller.abort();
       expect((await result).ok).toBe(false);
       expect(mocks.fetch.mock.calls[0]![1].signal.aborted).toBe(true);
+    });
+
+    it("INV-7: expires the raw opaque verification request at its ten-second deadline", async () => {
+      authenticateOAuth("oat_verified");
+      mocks.fetch.mockImplementation((_url, { signal }: RequestInit) => new Promise((_resolve, reject) => {
+        signal!.addEventListener("abort", () => reject(signal!.reason), { once: true });
+      }));
+      const started = Date.now();
+      const result = await clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE }).authorize(mcpRequest("/mcp"), BASE);
+      expect(result.ok).toBe(false);
+      expect(mocks.fetch.mock.calls[0]![1].signal.aborted).toBe(true);
+      expect(Date.now() - started).toBeGreaterThanOrEqual(9_000);
+      expect(Date.now() - started).toBeLessThan(14_000);
+    }, 15_000);
+
+    it("INV-4: rechecks opaque revocation on every request without an audience cache", async () => {
+      authenticateOAuth("oat_verified");
+      mocks.fetch.mockResolvedValueOnce(Response.json(opaqueVerification({ aud: `${BASE}/mcp` })))
+        .mockResolvedValueOnce(Response.json(opaqueVerification({ aud: `${BASE}/mcp`, revoked: true })));
+      const auth = clerkAuth({ publishableKey, secretKey: "sk_test_fake", publicUrl: BASE });
+      expect((await auth.authorize(mcpRequest("/mcp"), BASE)).ok).toBe(true);
+      expect((await auth.authorize(mcpRequest("/mcp"), BASE)).ok).toBe(false);
+      expect(mocks.fetch).toHaveBeenCalledTimes(2);
     });
 
     it("defaults to bound tokens when allowedOAuthClientIds is omitted", async () => {

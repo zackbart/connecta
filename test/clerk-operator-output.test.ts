@@ -3,6 +3,7 @@ import { signJwt } from "@clerk/backend/jwt";
 import { clerkAuth } from "../src/auth/clerk.js";
 import { createByteReadingClerkClient } from "../src/auth/clerk-transport.js";
 import { createClerkClient } from "@clerk/backend";
+import { authorize as authorizeIdentity } from "../src/routes/shared.js";
 import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 
 const BASE = "https://connecta.test";
@@ -111,6 +112,42 @@ describe("Clerk operator output with the real SDK", () => {
     expect(await auth().authorize(browser("valid-nonce"), BASE)).toEqual({ ok: true, userId: "user_123", sessionCookies: [cookie] });
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(output(spies)).toBe("[]");
+  });
+
+  it("INV-4 INV-6: verifies valid, invalid, expired and wrong-audience OAuth JWTs through the bundled SDK", async () => {
+    const spies = captureOutput();
+    const pair = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]) as CryptoKeyPair;
+    const privateKey = await crypto.subtle.exportKey("jwk", pair.privateKey) as JsonWebKey;
+    const publicKey = await crypto.subtle.exportKey("jwk", pair.publicKey) as JsonWebKey;
+    const kid = crypto.randomUUID();
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ keys: [{ ...publicKey, kid, alg: "RS256", use: "sig" }] })));
+    const now = Math.floor(Date.now() / 1000);
+    const provider = auth();
+    for (const verdict of ["valid", "invalid", "expired", "wrong-audience"]) {
+      let token = await signJwt({ sub: "user_123", iss: FRONTEND, client_id: "client_connecta",
+        scope: "openid profile email", iat: now - 300, nbf: now - 300,
+        exp: verdict === "expired" ? now - 60 : now + 300,
+        aud: verdict === "wrong-audience" ? "https://other.test/mcp" : `${BASE}/mcp`,
+      }, privateKey, { algorithm: "RS256", header: { typ: "at+jwt", kid } });
+      if (verdict === "invalid") {
+        const parts = token.split(".");
+        parts[2] = (parts[2]!.startsWith("a") ? "b" : "a") + parts[2]!.slice(1);
+        token = parts.join(".");
+      }
+      const request = new Request(`${BASE}/mcp`, { headers: { Authorization: `Bearer ${token}` } });
+      const result = await authorizeIdentity(request, BASE, [provider]);
+      expect(result.ok, verdict).toBe(verdict === "valid");
+      if (result.ok) {
+        expect(result.identity.principal).toEqual({ namespace: FRONTEND, id: "user_123" });
+        expect(result.identity.subject).toEqual(result.identity.principal);
+        expect(result.identity.interactive).toBe(true);
+      } else {
+        expect(result.response.status).toBe(401);
+        expect(result.response.headers.get("WWW-Authenticate")).toContain('scope="openid profile email"');
+      }
+      expect(output(spies)).not.toContain(token);
+    }
   });
 
   it("INV-6: byte-reads a fresh SDK opaque-verification client and preserves resource binding", async () => {

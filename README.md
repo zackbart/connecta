@@ -122,8 +122,7 @@ client setup commands for the endpoints the signed-in person can use.
 
 One deployment may serve several authenticated people inside the same tenant.
 Cloudflare Access supplies Worker identity; Node uses Clerk for human auth. Machine clients use connecta-issued `cta_`
-access tokens. The optional static bearer adapter remains available until its
-Phase 3 retirement. Connecta owns no accounts or groups. Shared-credential administration and personal connection
+access tokens. Static bearer secrets are retired. Connecta owns no accounts or groups. Shared-credential administration and personal connection
 setup require separate explicit permissions, both denied by default. See
 [inbound auth](./documentation/auth.md#principals-visibility-and-operators).
 Clerk deployments enable `aud_claim_enabled` and use resource-bound JWT or

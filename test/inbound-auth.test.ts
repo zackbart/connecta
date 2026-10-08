@@ -56,6 +56,23 @@ describe("inbound credential ownership", () => {
     }
   });
 
+  it("INV-4: rejects non-boolean recognition rather than falling through", async () => {
+    for (const value of [undefined, "yes", Promise.resolve(true)]) {
+      const result = await authorize(request(), BASE, [{ kind: "broken", recognizesCredential: (() => value) as never,
+        authorize: () => ({ ok: true, userId: "wrong" }) }]);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.response.status).toBe(403);
+    }
+  });
+
+  it("INV-11: refuses retired refusal markers and invalid auth hooks at construction", () => {
+    const auth = { kind: "custom", authorize: () => ({ ok: true as const }) };
+    for (const key of ["recognizesCredential", "handleMetadata", "challenge"]) {
+      expect(() => createTestConnecta({ connectors: [], auth: { ...auth, [key]: "bad" } as never })).toThrow("inbound auth adapter");
+    }
+    expect(() => createTestConnecta({ connectors: [], auth: { ...auth, finalRefusals: true } as never })).toThrow("finalRefusals is retired");
+  });
+
   it("INV-6: fails closed without logging thrown credential-recognition text", async () => {
     const warn = vi.spyOn(console, "warn");
     const error = vi.spyOn(console, "error");

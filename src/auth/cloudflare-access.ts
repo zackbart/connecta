@@ -1,11 +1,12 @@
 import type { AuthResult, InboundAuth } from "../types.js";
+import { validIdentityReference } from "../identity.js";
 
 function identityString(
   identity: Record<string, unknown>,
   field: string,
 ): string | undefined {
   const value = identity[field];
-  return typeof value === "string" && value.length > 0 ? value : undefined;
+  return typeof value === "string" && validIdentityReference({ namespace: "cloudflare-access", id: value }) ? value : undefined;
 }
 
 function unauthorized(): AuthResult {
