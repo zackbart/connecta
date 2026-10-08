@@ -13,6 +13,7 @@ import {
   KEY_FAMILIES,
   kvCopyKeys,
   kvCutoverKeys,
+  negotiationKeys,
   oauthConnectKeys,
   oauthFlowKeys,
   oauthGrantKeys,
@@ -85,6 +86,7 @@ describe("storage key families", () => {
     within(accessTokenKeys.family, accessTokenKeys.lookup("hash"));
     within(accessTokenKeys.family, accessTokenKeys.active);
     within(oauthConnectKeys.family, oauthConnectKeys.used("nonce"));
+    within(negotiationKeys.family, negotiationKeys.verdict("digest"));
     within(kvCopyKeys.family, kvCopyKeys.cursor("token"));
     within(oauthGrantKeys.family, oauthGrantKeys.grant);
     within(oauthFlowKeys.family, oauthFlowKeys.flow("digest"));
@@ -128,6 +130,7 @@ describe("storage key families", () => {
       [artifact.run("a", "0", "r"), "artifact"],
       [connector(oauthV2Keys.value(oauthV2Keys.field.tokens, null)), "oauth-v2"],
       [connector(oauthV2Keys.value(oauthV2Keys.field.client, "v2:epoch")), "oauth-v2"],
+      [connector(negotiationKeys.verdict("digest")), "negotiation"],
       [personal(connector(oauthV2Keys.generation)), "oauth-v2"],
       [connector("oauth:cleanup:v2:epoch"), "oauth-v2"],
       [connector("oauth:cleanup-at:v2:epoch"), "oauth-v2"],

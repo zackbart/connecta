@@ -430,6 +430,8 @@ export function failureRecord(subject: FailureSubject, failure?: unknown): Failu
  * reviewed line here, never a string assembled at the call site.
  */
 export type FailureEvent =
+  | "negotiation cache read failed"
+  | "negotiation cache write failed"
   | "connectorAccess grant is unreachable"
   | "call failed"
   | "input schema unusable; arguments are not validated"

@@ -431,6 +431,21 @@ export const oauthConnectKeys = {
   retry: (nonce: string) => validateStorageKey(`oauth:request-used:${nonce}`),
 } as const satisfies Keyed;
 
+/** A bounded, credential-partitioned downstream protocol verdict. */
+export const NEGOTIATION_TTL_SECONDS = 300;
+export const negotiationKeys = {
+  family: {
+    name: "negotiation",
+    scope: "connector",
+    prefixes: ["negotiation:v1:"],
+    version: { number: 1, in: "key" },
+    codec: jsonCodec,
+    ttl: { kind: "fixed", seconds: NEGOTIATION_TTL_SECONDS },
+    durable: false,
+  },
+  verdict: (partitionDigest: string) => validateStorageKey(`negotiation:v1:${partitionDigest}`),
+} as const satisfies Keyed;
+
 /**
  * Every family, for the overlap and coverage checks and for migrations that
  * copy only what a deployment cannot recreate. Keys a custom connector writes
@@ -452,6 +467,7 @@ export const KEY_FAMILIES: readonly KeyFamily[] = [
   oauthRefreshActiveKeys.family,
   oauthV2Keys.family,
   oauthConnectKeys.family,
+  negotiationKeys.family,
   kvCopyKeys.family,
   kvCutoverKeys.family,
 ];

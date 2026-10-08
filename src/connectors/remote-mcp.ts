@@ -72,6 +72,8 @@ import { detach, runEdge } from "../runtime/run.js";
 import { assertKnownOptions, keys, optionsOf } from "../config-schema.js";
 import { describedEndpoint, describedUrl } from "../described.js";
 import { retryAfterMs } from "./guarded-fetch.js";
+import { callerOf } from "../connector-caller.js";
+import { readNegotiation, storeNegotiation } from "./negotiation-cache.js";
 import { CALL_ADMISSION, REMOTE_MCP_AUTH, USAGE_GUIDE } from "./option-shapes.js";
 import type {
   Connector,
@@ -1951,7 +1953,15 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // SDK v2 selects its validator by runtime export condition: AJV on
         // Node and @cfworker/json-schema under workerd. The Workers-safe path
         // no longer needs Connecta-specific wiring.
-        const c = new Client(
+        const negotiationDigest = yield* promised(() => digestOf(JSON.stringify([
+          opts.url, opts.versionNegotiation ?? "auto", opts.auth?.type,
+          opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
+          state.credentialDigest, genAtStart, callerOf(ctx),
+        ])));
+        const prior = opts.versionNegotiation === "legacy" ? undefined
+          : yield* promised(() => readNegotiation(ctx, negotiationDigest));
+        if (!owned()) return yield* Effect.fail(scopeEndedError());
+        const makeClient = () => new Client(
           { name: "connecta", version: CONNECTA_VERSION },
           {
             versionNegotiation: {
@@ -1962,7 +1972,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             inputRequired: { autoFulfill: false },
           },
         );
-        const t = buildTransport(ctx, provider, credentialFramed, connectionAbort.signal, credentialValue);
+        let c = makeClient();
+        let t = buildTransport(ctx, provider, credentialFramed, connectionAbort.signal, credentialValue);
         if (!owned()) {
           held.transport = t;
           return yield* Effect.fail(scopeEndedError());
@@ -1970,7 +1981,25 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         state.transport = t;
         held.transport = t;
         recordWireErrors(t);
-        yield* promised(() => c.connect(t, { signal: handshakeAbort.signal })).pipe(
+        yield* promised(async () => {
+          try {
+            await c.connect(t, { signal: handshakeAbort.signal, ...(prior ? { prior } : {}) });
+          } catch (error) {
+            // Some legacy servers crash on an unknown pre-initialize method.
+            // Only an auto probe's typed HTTP 5xx permits a fresh legacy
+            // handshake. An auth failure, timeout or initialize failure does not.
+            if (prior || opts.versionNegotiation === "legacy" ||
+                !(error instanceof SdkHttpError) || error.code !== SdkErrorCode.EraNegotiationFailed ||
+                error.status < 500 || !owned() || handshakeAbort.signal.aborted) throw error;
+            // The SDK closed the failed probe transport. Its replacement owns
+            // a new connection, with the same credential and OAuth generation.
+            c = makeClient();
+            t = buildTransport(ctx, provider, credentialFramed, connectionAbort.signal, credentialValue);
+            state.transport = held.transport = t;
+            recordWireErrors(t);
+            await c.connect(t, { signal: handshakeAbort.signal, prior: { kind: "legacy" } });
+          }
+        }).pipe(
           Effect.mapError((err) =>
             atMcpBoundary(
               ctx,
@@ -2008,6 +2037,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         state.client = c;
         state.connectedGeneration = genAtStart;
         state.authRequired = false;
+        const discover = c.getDiscoverResult();
+        if (!prior) yield* promised(() => storeNegotiation(ctx, negotiationDigest,
+          discover ? { kind: "modern", discover } : { kind: "legacy" }));
+        if (!owned()) return yield* Effect.fail(scopeEndedError());
         return c;
       }).pipe(
         Effect.catch((err) => {
