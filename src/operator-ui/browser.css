@@ -3,8 +3,14 @@
  * server-rendered page shares come first, from tokens.css and page.css; this
  * file adds only what the single-page app draws.
  */
+@import "tailwindcss" source(none);
 @import "./tokens.css";
 @import "./page.css";
+@theme inline { --color-muted: var(--muted); --color-accent: var(--accent); --font-sans: var(--sans); }
+@font-face {
+  font-family: "Inter Variable"; font-style: normal; font-weight: 100 900; font-display: swap;
+  src: url("@fontsource-variable/inter/files/inter-latin-wght-normal.woff2") format("woff2");
+}
 
   /* Chrome. The nav mounts after the session is checked; reserving its
      height keeps the masthead from growing under a gate that just opened. */
@@ -424,3 +430,70 @@
 .token-secret { overflow-wrap: anywhere; margin: 12px 0; }
 .token-card { border-top: 1px solid var(--rule); padding: 20px 0; }
 .token-card.revoked { color: var(--muted); }
+/* Operator shell: restrained chrome around existing working pages. */
+.operator-shell { background: var(--bg); font-family: var(--sans); font-size: var(--text-base); }
+.operator-shell .masthead { position: fixed; inset: 0 auto 0 0; width: var(--sidebar-width); max-width: none; margin: 0; padding: var(--space-6) var(--space-3); background: var(--surface-2); border-right: 1px solid var(--border); border-bottom: 0; z-index: 10; }
+.operator-shell .masthead-inner { display: flex; flex-direction: column; align-items: stretch; height: 100%; gap: var(--space-6); }
+.operator-shell .mast-nav { padding: 0 var(--space-2); gap: var(--space-2); font-size: var(--text-base); }
+.operator-shell .brand { font-weight: 650; }
+.operator-shell #operatorNav, .operator-shell .mast-actions { display: flex; flex-direction: column; flex: 1; gap: var(--space-3); }
+.operator-shell .page-nav { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-1); width: 100%; }
+.operator-shell .page-nav .navlink { padding: .5rem .625rem; border-radius: var(--radius); font-size: var(--text-sm); color: var(--muted); text-align: left; }
+.operator-shell .page-nav .navlink[aria-current="page"] { background: var(--tint); color: var(--link); font-weight: 550; }
+.operator-shell .page-nav .navlink:hover { background: var(--surface); color: var(--text); }
+.operator-shell .session-actions { margin-top: auto; border-top: 1px solid var(--border); padding: var(--space-3) var(--space-2) 0; }
+.operator-shell .session-actions[hidden] { display: none; }
+.operator-shell main.page { margin: 0 0 0 var(--sidebar-width); max-width: none; padding: var(--space-8) 2.5rem; min-height: 100vh; }
+.operator-shell main.page > * { max-width: 80rem; }
+.operator-shell .lead { display: block; padding: 0; gap: var(--space-4); }
+.operator-shell h1 { font-size: 1.375rem; font-weight: 600; letter-spacing: -.035em; margin: 0 0 var(--space-6); }
+.operator-shell h2 { font-size: var(--text-base); font-weight: 600; }
+.operator-shell .lead-copy { max-width: none; }
+.operator-shell .lead-copy > p { max-width: 70ch; }
+.operator-shell .section { margin-top: var(--space-8); }
+.operator-shell .rows { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.operator-shell .conn { background: var(--bg); border-radius: 0; border: 0; border-bottom: 1px solid var(--border); }
+.operator-shell .conn:last-child { border-bottom: 0; }
+.operator-shell .conn-head { min-height: 3rem; padding: .625rem 1rem; }
+.operator-shell .conn-body { padding: var(--space-4); background: var(--surface-2); border-top: 1px solid var(--border); }
+.operator-shell .conn-name { font-size: var(--text-sm); }
+.operator-shell .cap { font-size: var(--text-xs); letter-spacing: 0; text-transform: none; }
+.operator-shell .endpoint-block { max-width: 48rem; }
+.operator-shell .btn { min-height: 2rem; padding: .3rem .625rem; font-size: var(--text-sm); border-radius: var(--radius); box-shadow: none; }
+.operator-shell .badge { font-size: .6875rem; font-weight: 500; border-radius: 4px; padding: .125rem .375rem; }
+.operator-shell input:not([type="checkbox"], [type="radio"], [type="hidden"]) { min-height: 2rem; font-size: var(--text-sm); }
+.command-trigger { display: flex; justify-content: space-between; width: 100%; color: var(--muted); border: 1px solid var(--border) !important; background: var(--bg); }
+kbd { font-family: var(--sans); font-size: .6875rem; color: var(--muted); }
+.appearance-trigger { order: 2; justify-content: flex-start; color: var(--muted); }
+.dialog-overlay { position: fixed; inset: 0; background: #0006; z-index: 40; }
+.dialog-content { position: fixed; top: 20%; left: 50%; transform: translateX(-50%); width: min(32rem, calc(100vw - 2rem)); max-height: 70vh; overflow: auto; padding: var(--space-6); background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: 0 16px 64px #0003; z-index: 50; font-family: var(--sans); }
+.dialog-content > h2 { margin: 0 2rem .5rem 0; }
+.dialog-content > p { margin-bottom: var(--space-4); }
+.dialog-close { position: absolute; top: .75rem; right: .75rem; }
+.command-input { width: 100%; margin-bottom: var(--space-3); }
+.command-list { max-height: 20rem; overflow: auto; }
+[cmdk-group-heading] { font-size: var(--text-xs); color: var(--muted); padding: var(--space-3) var(--space-2); }
+[cmdk-item] { border-radius: var(--radius); padding: var(--space-2); cursor: pointer; font-size: var(--text-sm); }
+[cmdk-item][data-selected="true"] { background: var(--tint); color: var(--link); }
+[cmdk-empty] { padding: var(--space-4); color: var(--muted); font-size: var(--text-sm); }
+.tabs-list { display: flex; gap: var(--space-1); border-bottom: 1px solid var(--border); }
+.tabs-trigger { padding: var(--space-2) var(--space-3); color: var(--muted); border-bottom: 2px solid transparent; cursor: pointer; }
+.tabs-trigger[data-state="active"] { border-color: var(--accent); color: var(--text); }
+.tabs-content { padding: var(--space-4) 0; font-size: var(--text-sm); }
+.table-scroll { overflow-x: auto; }
+.data-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); text-align: left; }
+.data-table th { color: var(--muted); font-size: var(--text-xs); font-weight: 500; }
+.data-table th, .data-table td { padding: var(--space-3); border-bottom: 1px solid var(--border); vertical-align: top; }
+.data-table .tool { padding: 0; border: 0; }
+@media (max-width: 760px) {
+  .operator-shell .masthead { position: static; width: auto; border-right: 0; border-bottom: 1px solid var(--border); padding: var(--space-3) var(--space-4); }
+  .operator-shell .masthead-inner { display: grid; grid-template-columns: 1fr auto; gap: var(--space-2); }
+  .operator-shell #operatorNav, .operator-shell .mast-actions { display: contents; }
+  .operator-shell .mast-nav { grid-column: 1; grid-row: 1; padding: 0; }
+  .operator-shell .session-actions { grid-column: 2; grid-row: 1; border: 0; padding: 0; align-self: center; margin-top: 0; }
+  .operator-shell .page-nav { grid-column: 1 / -1; grid-row: 2; flex-direction: row; flex-wrap: wrap; }
+  .operator-shell .command-trigger { grid-column: 1; grid-row: 3; }
+  .operator-shell .appearance-trigger { grid-column: 2; grid-row: 3; }
+  .operator-shell main.page { margin: 0; padding: var(--space-6) var(--space-4); }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; } }

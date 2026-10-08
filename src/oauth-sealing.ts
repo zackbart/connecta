@@ -61,7 +61,7 @@ export function inheritOAuthSealer(
 
 /** A separate HMAC key for browser handoffs, derived from the credential key. */
 export async function deriveOAuthHandoffKey(raw: Uint8Array): Promise<CryptoKey> {
-  const material = await crypto.subtle.importKey("raw", raw, "HKDF", false, ["deriveKey"]);
+  const material = await crypto.subtle.importKey("raw", new Uint8Array(raw), "HKDF", false, ["deriveKey"]);
   return crypto.subtle.deriveKey({
     name: "HKDF",
     hash: "SHA-256",

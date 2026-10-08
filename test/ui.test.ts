@@ -1,3 +1,4 @@
+import { OPERATOR_UI_SCRIPT_PATH as SCRIPT_PATH, OPERATOR_UI_STYLE_PATH as STYLE_PATH, OPERATOR_UI_ASSETS } from "../src/operator-ui/generated.js";
 import { connectRequest, oauthVault } from "./fixtures/oauth.js";
 import { fetchTestUiDetails } from "./helpers.js";
 import { activityHistory } from "../src/activity.js";
@@ -99,21 +100,16 @@ describe("status UI", () => {
       const body = await res.text();
       expect(body).toContain("<!doctype html>");
       expect(body).toContain(`<title>${label} — Connecta</title>`);
-      expect(body).toContain(`const INITIAL_PAGE = "${page}";`);
+      expect(body).toContain(`"initialPage":"${page}"`);
       // The shell is a mount point and a no-JS fallback. Everything with a
       // state — nav, gate, and the four pages — is rendered by the bundle.
       expect(body).toContain(`<h1>${label}</h1>`);
       expect(body).toContain('<div id="operatorNav"></div>');
       expect(body).toContain('<main id="operatorContent"');
       expect(body).toContain("<noscript>");
-      expect(body).toContain("history.pushState");
-      expect(body).toContain('addEventListener("popstate"');
       // Gated, no page view is rendered at all, so a focus request while signed
       // out must land on the gate's own h1 rather than dropping to <body>.
-      expect(body).toContain('"gateHeading"');
-      expect(body).toContain("/ui/data");
-      expect(body).toContain(`const MCP_URL = "${BASE}/mcp";`);
-      expect(body).toContain('placeholder: "Bearer token"');
+      expect(body).toContain(`"mcpUrl":"${BASE}/mcp"`);
       expect(body).not.toContain("Calculator");
       expect(body).not.toContain("Broken connector");
       expect(body).not.toContain("clerk.browser.js");
@@ -142,7 +138,7 @@ describe("status UI", () => {
         get.headers.get("referrer-policy"),
       );
       expect(head.headers.get("content-security-policy")).toMatch(
-        /^script-src 'nonce-[^']+' 'strict-dynamic'/,
+        /^script-src 'self';/,
       );
     }
   });
@@ -241,14 +237,16 @@ describe("status UI", () => {
     const head = (page: string) => page
       .replace(/<title>[^<]*<\/title>/, "")
       .replace(/<style>[\s\S]*?<\/style>/, "")
+      .replace(/<link[^>]*href="\/ui\/assets\/[^>]*>\n?/g, "")
+      .replace('<body class="operator-shell">', "<body>")
       .replace(/<a class="skip-link"[^>]*>[^<]*<\/a>\n/, "")
       .replace(/\s*<div id="operatorNav"><\/div>/, "")
-      .split("</header>")[0];
+      .split("</header>")[0]!.replace(/\s+/g, " ").trim();
     expect(head(shell)).toBe(head(callback));
-    for (const page of [shell, callback]) {
+    for (const page of [OPERATOR_UI_ASSETS[STYLE_PATH]!.body, callback]) {
       expect(page).toContain("--surface-2:");
       expect(page).toContain("html[data-scheme=dark]");
-      expect(page).toContain('<meta name="theme-color" content="#151a21" media="(prefers-color-scheme: dark)">');
+
     }
   });
 
@@ -284,7 +282,7 @@ describe("status UI", () => {
     const body = await res.text();
 
     expect(res.status).toBe(200);
-    expect(body).toContain(`const MCP_URL = "${origin}/mcp";`);
+    expect(body).toContain(`"mcpUrl":"${origin}/mcp"`);
   });
 
   it("the operator shell uses Clerk sign-in when configured", async () => {
@@ -311,60 +309,37 @@ describe("status UI", () => {
     expect(res.status).toBe(200);
     expect(body).toContain("https://clerk.example.com/npm/@clerk/clerk-js@6");
     expect(body).toContain(`data-clerk-publishable-key="${publishableKey}"`);
-    expect(body).toContain("Sign in with Clerk");
-    expect(body).toContain('const AUTH = {"kind":"clerk"');
+    expect(body).toContain('"auth":{"kind":"clerk"');
   });
 
-  it("operator shells set nonce-based CSP and nonce every script tag", async () => {
+  it("operator shells allow same-origin scripts and deny framing", async () => {
     const c = makeDeployment(uiDeploymentConfig());
-    const nonces = new Set<string>();
-    for (const path of ["/"]) {
-      const res = await c.fetch(new Request(`${BASE}${path}`));
-      const csp = res.headers.get("content-security-policy") ?? "";
-      expect(csp).toContain("'strict-dynamic'");
-      expect(csp).toContain("object-src 'none'");
-      expect(csp).toContain("base-uri 'none'");
-      expect(csp).toContain("frame-ancestors 'none'");
-      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
-      expect(res.headers.get("x-frame-options")).toBe("DENY");
-      expect(res.headers.get("referrer-policy")).toBe("no-referrer");
-      const nonce = csp.match(/'nonce-([^']+)'/)?.[1];
-      expect(nonce).toBeTruthy();
-      nonces.add(nonce!);
-      const body = await res.text();
-      const scriptTags = body.match(/<script[^>]*>/g) ?? [];
-      expect(scriptTags.length).toBeGreaterThan(0);
-      for (const tag of scriptTags) {
-        expect(tag).toContain(`nonce="${nonce}"`);
-      }
-    }
-    expect(nonces.size).toBe(1);
+    const res = await c.fetch(new Request(`${BASE}/`));
+    expect(res.headers.get("content-security-policy")).toBe("script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(scriptSrcs(await res.text())).toEqual([SCRIPT_PATH]);
   });
 
-  it("/ui nonces the Clerk loader script under the same CSP nonce", async () => {
+  it("scopes Clerk CAPTCHA, images and workers to pages with a validated loader", async () => {
     const c = createTestConnecta({
       connectors: [calcApi(CALC_OPTIONS)],
       auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
-      storage: memoryStorage(),
-      publicUrl: BASE,
+      storage: memoryStorage(), publicUrl: BASE,
     });
     const res = await c.fetch(new Request(`${BASE}/`));
-    const csp = res.headers.get("content-security-policy") ?? "";
-    const nonce = csp.match(/'nonce-([^']+)'/)?.[1];
-    expect(nonce).toBeTruthy();
-
-    const body = await res.text();
-    expect(body).toContain("clerk.browser.js");
-    const scriptTags = body.match(/<script[^>]*>/g) ?? [];
-    expect(scriptTags.length).toBe(2);
-    for (const tag of scriptTags) {
-      expect(tag).toContain(`nonce="${nonce}"`);
-    }
-    const clerkTag = scriptTags.find((tag) => tag.includes("data-clerk"));
-    expect(clerkTag).toContain(`nonce="${nonce}"`);
-    // The later inline bundle calls boot immediately. Keeping this loader
-    // blocking makes its success or failure settle before that check runs.
+    const policy = res.headers.get("content-security-policy")!;
+    expect(policy).toContain("script-src 'self' https://clerk.example.com https://challenges.cloudflare.com;");
+    expect(policy).toContain("frame-src https://challenges.cloudflare.com");
+    expect(policy).toContain("connect-src 'self' https://clerk.example.com;");
+    expect(policy).toContain("img-src 'self' https://img.clerk.com;");
+    expect(policy).toContain("worker-src 'self' blob:;");
+    expect(policy.split(";")[0]).not.toMatch(/unsafe-inline|unsafe-eval|\*/);
+    const tags = (await res.text()).match(/<script[^>]*>/g) ?? [];
+    const clerkTag = tags.find(tag => tag.includes("data-clerk"));
+    // The blocking loader settles before the deferred application boots.
     expect(clerkTag).not.toContain(" defer");
+    expect(tags.every(tag => !tag.includes("nonce="))).toBe(true);
   });
 
   it("/ui never fetches its sign-in loader from a non-https origin", async () => {
@@ -389,10 +364,11 @@ describe("status UI", () => {
       // The shell still renders — a rejected loader origin drops the loader, it
       // does not fail the page.
       expect(res.status).toBe(200);
-      expect(scriptSrcs(body)).toEqual([]);
+      expect(scriptSrcs(body)).toEqual([SCRIPT_PATH]);
       expect(body).not.toContain("clerk.browser.js");
       // Nor may it reach the page through the inline AUTH object.
       expect(body).not.toContain(frontendApiUrl);
+      expect(res.headers.get("content-security-policy")).not.toMatch(/cloudflare|clerk|blob:/);
     }
   });
 
@@ -406,6 +382,7 @@ describe("status UI", () => {
     const body = await (await c.fetch(new Request(`${BASE}/`))).text();
     expect(scriptSrcs(body)).toEqual([
       "https://clerk.example.com/npm/@clerk/clerk-js@6/dist/clerk.browser.js",
+      SCRIPT_PATH,
     ]);
     expect(body).toContain('"frontendApiUrl":"https://clerk.example.com"');
   });
@@ -486,19 +463,14 @@ describe("status UI", () => {
     );
   });
 
-  it("renderUiHtml emits no nonce attributes when no nonce is passed", () => {
-    const html = renderUiHtml();
+  it("escapes inert JSON configuration without executable inline code", () => {
+    const value = 'https://example.test/</script><script>alert(1)</script>';
+    const html = renderUiHtml(undefined, value);
+    const json = /<script id="operatorConfig" type="application\/json">([\s\S]*?)<\/script>/.exec(html)![1];
+    expect(JSON.parse(json!).mcpUrl).toBe(value);
+    expect(json).not.toContain("<");
     expect(html).not.toContain("nonce=");
-    const inlineScript = /<script>([\s\S]*)<\/script>/.exec(html)?.[1];
-    expect(inlineScript).toBeTruthy();
-    expect(() => new Function(inlineScript!)).not.toThrow();
-    const withClerk = renderUiHtml({
-      kind: "clerk",
-      publishableKey: "pk_test_fake",
-      frontendApiUrl: "https://clerk.example.com",
-    });
-    expect(withClerk).toContain("clerk.browser.js");
-    expect(withClerk).not.toContain("nonce=");
+    expect(scriptSrcs(html)).toEqual([SCRIPT_PATH]);
   });
 
   it("/ui/data 401s without a token and includes WWW-Authenticate", async () => {
@@ -1666,8 +1638,7 @@ describe("status UI", () => {
     // exists in the bundle, and only the store decides when to draw it.
     expect(markup(connections)).not.toContain("credential");
     expect(markup(credentials)).not.toContain("credential");
-    expect(credentials).toContain('"new-password"');
-    expect(credentials).toContain("/ui/credentials/");
+    expect(credentials).toContain(SCRIPT_PATH);
     expect(connections).not.toContain("valid-secret-9876");
     expect(credentials).not.toContain("valid-secret-9876");
   });

@@ -1,5 +1,5 @@
-import { useEffect, useState } from "preact/hooks";
-import type { ComponentChildren } from "preact";
+import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import type { Notice, OperatorPage, OperatorState, Tone } from "../view.js";
 import { loadFailureCopy, PAGE_META } from "../view.js";
 import { fixPrompt, type FixPromptKind } from "../fix-prompts.js";
@@ -27,7 +27,7 @@ export function NoticeLine({
     <>
     <p
       id={id}
-      class={
+      className={
         notice?.tone === "error"
           ? `notice ${className} error-notice`
           : `notice ${className}`
@@ -62,7 +62,7 @@ export function FixPrompt({
   name?: string;
 }) {
   return (
-    <div class="fix-prompt" data-fix-prompt={kind}>
+    <div className="fix-prompt" data-fix-prompt={kind}>
       <FixPromptButton kind={kind} connectorId={connectorId} {...(name ? { name } : {})} />
       <FixPromptPreview kind={kind} connectorId={connectorId} />
     </div>
@@ -86,7 +86,7 @@ export function FixPromptButton({
     <CopyButton
       value={fixPrompt(kind, connectorId)}
       label="Copy fix prompt"
-      class="btn quiet"
+      className="btn quiet"
       ariaLabel={`Copy fix prompt for ${name ?? connectorId}`}
     />
   );
@@ -103,12 +103,12 @@ export function FixPromptPreview({
   standalone?: boolean;
 }) {
   return (
-    <details class="fix-prompt-preview" {...(standalone ? { "data-fix-prompt": kind } : {})}>
-      <summary class="disclosure">Preview prompt</summary>
-      <p class="meta">
+    <details className="fix-prompt-preview" {...(standalone ? { "data-fix-prompt": kind } : {})}>
+      <summary className="disclosure">Preview prompt</summary>
+      <p className="meta">
         Fixed text for a coding agent working on this deployment. It carries no error details or secrets.
       </p>
-      <pre class="fix-prompt-text">{fixPrompt(kind, connectorId)}</pre>
+      <pre className="fix-prompt-text">{fixPrompt(kind, connectorId)}</pre>
     </details>
   );
 }
@@ -119,9 +119,9 @@ export function Badge({
   children,
 }: {
   tone?: Tone;
-  children: ComponentChildren;
+  children: ReactNode;
 }) {
-  return <span class={tone === "neutral" ? "badge" : `badge ${tone}`}>{children}</span>;
+  return <span className={tone === "neutral" ? "badge" : `badge ${tone}`}>{children}</span>;
 }
 
 /**
@@ -138,22 +138,22 @@ export function StateBlock({
   id,
 }: {
   title?: string;
-  children?: ComponentChildren;
+  children?: ReactNode;
   tone?: "neutral" | "error";
   action?: { label: string; onClick: () => void; id?: string };
   id?: string;
 }) {
   return (
     <div
-      class={tone === "error" ? "state-block error" : "state-block"}
+      className={tone === "error" ? "state-block error" : "state-block"}
       role={tone === "error" ? "alert" : "status"}
       {...(id ? { id } : {})}
     >
-      {title ? <p class="state-title">{title}</p> : null}
-      {children ? <p class="state-copy">{children}</p> : null}
+      {title ? <p className="state-title">{title}</p> : null}
+      {children ? <p className="state-copy">{children}</p> : null}
       {action ? (
         <button
-          class="btn"
+          className="btn"
           type="button"
           onClick={action.onClick}
           {...(action.id ? { id: action.id } : {})}
@@ -181,12 +181,12 @@ export function LoadFailure({ state }: { state: OperatorState }) {
   );
 }
 
-export function Empty({ children }: { children: ComponentChildren }) {
+export function Empty({ children }: { children: ReactNode }) {
   return <StateBlock>{children}</StateBlock>;
 }
 
-export function Unavailable({ children }: { children: ComponentChildren }) {
-  return <div class="unavailable">{children}</div>;
+export function Unavailable({ children }: { children: ReactNode }) {
+  return <div className="unavailable">{children}</div>;
 }
 
 /**
@@ -209,7 +209,7 @@ export function ConfirmBar({
 }) {
   return (
     <div
-      class="confirm"
+      className="confirm"
       role="group"
       aria-labelledby={`confirm-question-${id}`}
       // Escape backs out, from either button, the way a dialog would.
@@ -220,13 +220,13 @@ export function ConfirmBar({
       }}
     >
       <p id={`confirm-question-${id}`}>{question}</p>
-      <div class="actions">
-        <button class="btn danger" type="button" onClick={onConfirm}>
+      <div className="actions">
+        <button className="btn danger" type="button" onClick={onConfirm}>
           {confirm}
         </button>
         <button
           id={`confirm-cancel-${id}`}
-          class="btn quiet"
+          className="btn quiet"
           type="button"
           onClick={onCancel}
         >
@@ -257,19 +257,19 @@ export function focusableId(...ids: string[]): string {
  */
 export function PageLink({
   page,
-  class: className,
+  className,
   current,
   children,
 }: {
   page: OperatorPage;
-  class?: string;
+  className?: string;
   current?: boolean;
-  children: ComponentChildren;
+  children: ReactNode;
 }) {
   const href = PAGE_META[page].path;
   return (
     <a
-      class={className}
+      className={className}
       href={href}
       {...(current ? { "aria-current": "page" as const } : {})}
       onClick={(event) => {
@@ -299,13 +299,13 @@ export function PageLink({
 export function CopyButton({
   value,
   label,
-  class: className = "btn",
+  className = "btn",
   ariaLabel,
   id,
 }: {
   value: string;
   label: string;
-  class?: string;
+  className?: string;
   /** For a row of identical labels, the name that tells them apart. */
   ariaLabel?: string;
   id?: string;
@@ -318,7 +318,7 @@ export function CopyButton({
   }, [status]);
   return (
     <button
-      class={className}
+      className={className}
       type="button"
       {...(id ? { id } : {})}
       {...(ariaLabel && status === "idle" ? { "aria-label": ariaLabel } : {})}

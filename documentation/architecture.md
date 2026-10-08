@@ -79,8 +79,12 @@ top to bottom.
 | 6 | `/mcp`, `/mcp/<pool>` | Admission, then auth, then a request-local MCP server. Body-confirmed modern listens skip admission and are refused after auth and SDK validation. An undeclared pool, a refusing grant, and a throwing grant are one identical 404; see [pools](./auth.md#pools). |
 | 7 | Other paths | 404. Custom HTTP routes belong to the deployment. |
 
-Every response leaves through `withSecurityHeaders`, and the UI module adds a
-nonce-based script CSP and framing denial to its shells.
+Every response leaves through `withSecurityHeaders`. HTML uses one common
+security-header helper, including status and error pages. Operator shells
+allow same-origin scripts and deny framing. Clerk pages also admit the validated
+loader origin, the exact Cloudflare CAPTCHA script and frame host, Clerk images,
+and first-party or blob workers. Local Clerk sign-in adds a nonce for its bootstrap.
+Sandboxed artifact documents retain their separate script and framing policy.
 `test/server-route-contracts.test.ts` pins the ordering and the exact refusal
 bodies; it exists because the ordering is invisible in any one file and a
 reordering reads like a harmless refactor.
@@ -476,7 +480,7 @@ discovery, the executor contract, invocation, permissions, and OAuth callback
 verification; an omitted module contributes no runtime work at all.
 
 The operator UI — `src/ui.ts` (data-free shell and `/ui/data` payload),
-`src/routes/ui.ts`, `src/operator-ui/` (the Preact app and its pure rules) —
+`src/routes/ui.ts`, `src/operator-ui/` (the React app, owned Radix primitives and its pure rules) —
 shows a human what a deployment exposes and manages only the authentication
 material code explicitly permitted; it never edits the connector set, catalog,
 annotations, scopes, or permission rules. Two invariants shape it: a status read
@@ -919,3 +923,13 @@ and effective activity, token, artifact, and per-connector auth permissions.
 `config` as indented JSON. It requires the UI module and the existing doctor
 authentication environment variables; it runs no diagnostic program, follows
 no redirects, and prints no raw HTTP failure body.
+
+The operator shell uses React, TanStack Router/Query/Table, Radix, cmdk and
+Tailwind v4. Inter, CSS, JavaScript and dependency notices are hashed assets
+under `/ui/assets/*`, served identically with immutable cache headers on Node
+and Workers. HTML contains only mount points and escaped inert configuration;
+it remains uncached. `generated.ts` is ignored and generated before build and
+test; `check:operator-ui` detects stale assets and shared page styles. The UI
+stays behind `./ui`, outside the root import graph. The identity-fenced store
+still owns the existing page behavior; the new Phase 4 pages remain planned work
+in #708. The typed data contract above is preserved.

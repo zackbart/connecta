@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from "preact/hooks";
+import { useLayoutEffect, useRef } from "react";
 import type { UiArtifactRow, UiArtifactView } from "../model.js";
 import {
   artifactRefreshBadge,
@@ -26,17 +26,17 @@ import {
 function ArtifactRow({ row }: { row: UiArtifactRow }) {
   const refresh = artifactRefreshBadge(row.freshness?.last);
   return (
-    <article class="artifact-row">
+    <article className="artifact-row">
       <div>
-        <a class="artifact-title" href={`/artifacts/${row.id}`}>
+        <a className="artifact-title" href={`/artifacts/${row.id}`}>
           {row.title}
         </a>
-        <div class="artifact-meta">
-          <span class="mono">{row.id}</span> · version {row.viewVersion} · updated{" "}
+        <div className="artifact-meta">
+          <span className="mono">{row.id}</span> · version {row.viewVersion} · updated{" "}
           <time dateTime={row.updatedAt}>{formatDate(row.updatedAt)}</time> by {row.updatedBy.label}
         </div>
       </div>
-      <div class="artifact-badges">
+      <div className="artifact-badges">
         <Badge>{row.kind === "markdown" ? "Markdown" : "HTML"}</Badge>
         {row.freshness?.state === "stale" ? <Badge tone="warn">Stale data</Badge>
           : row.freshness?.state === "current" ? <Badge>Current data</Badge> : null}
@@ -52,17 +52,17 @@ export function ArtifactsPage({ state }: { state: OperatorState }) {
   const rows = state.artifactRows;
   return (
     <section id="artifactsView">
-      <div class="lead">
+      <div className="lead">
         <h1 id="artifactsHeading" tabIndex={-1}>
           Artifacts
         </h1>
-        <div class="lead-copy">
+        <div className="lead-copy">
           <p>{pageDescription("artifacts", productDescription)}</p>
         </div>
       </div>
-      <div class="collection">
+      <div className="collection">
           <form
-            class="row"
+            className="row"
             onSubmit={(event) => {
               event.preventDefault();
               void loadArtifacts(true);
@@ -76,10 +76,10 @@ export function ArtifactsPage({ state }: { state: OperatorState }) {
               value={state.artifactQuery}
               onInput={(event) => setArtifactQuery(event.currentTarget.value)}
             />
-            <button id="searchArtifacts" class="btn" type="submit" disabled={loading}>
+            <button id="searchArtifacts" className="btn" type="submit" disabled={loading}>
               Search
             </button>
-            <label class="check artifact-meta">
+            <label className="check artifact-meta">
               <input
                 id="showArchived"
                 type="checkbox"
@@ -107,7 +107,7 @@ export function ArtifactsPage({ state }: { state: OperatorState }) {
                   : "No artifacts yet. Ask an agent to publish one."}
             </StateBlock>
           ) : (
-            <div id="artifactList" class="activity-list" aria-busy={loading ? "true" : "false"}>
+            <div id="artifactList" className="activity-list" aria-busy={loading ? "true" : "false"}>
               {rows.map((row) => <ArtifactRow key={row.id} row={row} />)}
             </div>
           )}
@@ -119,7 +119,7 @@ export function ArtifactsPage({ state }: { state: OperatorState }) {
           {state.artifactCursor ? (
             <button
               id="moreArtifacts"
-              class="btn activity-more"
+              className="btn activity-more"
               type="button"
               disabled={loading}
               onClick={() => void loadArtifacts(false)}
@@ -167,10 +167,10 @@ function ArtifactFrame({ view }: { view: UiArtifactView }) {
     <iframe
       ref={frame}
       id="artifactFrame"
-      class="artifact-frame"
+      className="artifact-frame"
       title={view.title}
       sandbox="allow-scripts"
-      referrerpolicy="no-referrer"
+      referrerPolicy="no-referrer"
       src="/artifacts/_frame"
     />
   );
@@ -181,12 +181,12 @@ export function ArtifactPage({ state }: { state: OperatorState }) {
   const failed = state.artifactPhase === "error";
   return (
     <section id="artifactView">
-      <div class="artifact-head">
+      <div className="artifact-head">
         <h1 id="artifactHeading" tabIndex={-1}>
           {view?.title ?? "Artifact"}
         </h1>
         {view ? (
-          <div class="artifact-meta" id="artifactMeta">
+          <div className="artifact-meta" id="artifactMeta">
             {view.snapshot ? "Snapshot of " : ""}version {view.view.version}
             {view.snapshot && view.view.version !== view.latestViewVersion
               ? ` (latest is ${view.latestViewVersion})`
@@ -203,7 +203,7 @@ export function ArtifactPage({ state }: { state: OperatorState }) {
                 {" "}·{" "}
                 <CopyButton
                   id="copySnapshot"
-                  class="navlink inline"
+                  className="navlink inline"
                   value={view.snapshotUrl}
                   label="Copy snapshot link"
                 />
@@ -212,18 +212,18 @@ export function ArtifactPage({ state }: { state: OperatorState }) {
           </div>
         ) : null}
         {view?.archived ? (
-          <div id="archivedBanner" class="artifact-banner" role="status">
+          <div id="archivedBanner" className="artifact-banner" role="status">
             This artifact is archived. It keeps every version, and an agent can restore it.
           </div>
         ) : null}
         {!view?.snapshot && view?.freshness?.state === "stale" ? (
-          <div id="staleBanner" class="artifact-banner" role="status">
+          <div id="staleBanner" className="artifact-banner" role="status">
             Data may be out of date. The last refresh {view.freshness.last?.status === "failed"
               ? "failed" : "is overdue"}; the last good document is still shown.
           </div>
         ) : null}
         {!view && !failed ? (
-          <p class="meta">{pageDescription("artifact", productDescription)}</p>
+          <p className="meta">{pageDescription("artifact", productDescription)}</p>
         ) : null}
       </div>
       {view ? (

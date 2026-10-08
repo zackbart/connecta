@@ -1,6 +1,7 @@
 import { ConnectorCallError } from "../errors.js";
 import { Effect } from "effect";
 import { escapeHtml, renderPage } from "../branding.js";
+import { htmlSecurityHeaders } from "../html-security.js";
 import { closeConnectorScope } from "../connector-scope.js";
 import { drainOAuthStartResets } from "../auth/oauth-start-reset.js";
 import { consumeOAuthConnectLink, oauthConnectUnavailable, verifyOAuthHandoff } from "../oauth-handoff.js";
@@ -43,11 +44,10 @@ function clerkSignIn(context: RouteContext): Response | undefined {
   window.Clerk.mountSignIn(document.getElementById("signin"), { routing: "hash", forceRedirectUrl: ${target}, signUpForceRedirectUrl: ${target} });
 }).catch(() => { document.getElementById("signin").textContent = "Sign-in could not load. Try again."; });</script>`;
   return new Response(renderPage(context.opts.config.ui?.branding, { title: "Sign in to connect", uiMounted: Boolean(context.opts.config.ui), body }), {
-    headers: {
+    headers: htmlSecurityHeaders({
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
-      "Content-Security-Policy": `script-src 'nonce-${nonce}' 'strict-dynamic' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`,
-    },
+    }, { clerkOrigin: origin, nonce }),
   });
 }
 

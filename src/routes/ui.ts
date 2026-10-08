@@ -1,3 +1,6 @@
+import { operatorAsset } from "../operator-ui/assets.js";
+import { isSafeHttpsUrl } from "../branding.js";
+import { htmlSecurityHeaders } from "../html-security.js";
 import { oauthConnectUrl, oauthConnectUnavailable } from "../oauth-handoff.js";
 import { Effect } from "effect";
 import { CONNECTA_VERSION } from "../version.js";
@@ -56,18 +59,11 @@ const INERT_ICON_HEADERS = {
   "X-Content-Type-Options": "nosniff",
 };
 
-/** Per-request base64 nonce for an operator shell's scripts (Node 22+ and Workers). */
-function uiScriptNonce(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
 export async function routeUi(
   context: RouteContext,
 ): Promise<Response | null> {
   const { request, url, path, baseUrl, opts, runtimeContext } = context;
+  if (path.startsWith("/ui/assets/")) return operatorAsset(request, path);
   if (request.method === "GET" && path === "/favicon.svg") {
     return new Response(opts.config.ui?.branding?.favicon?.svg ?? CONNECTA_FAVICON_SVG, {
       headers: {
@@ -120,13 +116,8 @@ export async function routeUi(
         provider.uiAuth && provider.uiAuth.kind !== "cloudflare-access",
     )?.uiAuth;
     const mcpUrl = new URL("/mcp", baseUrl).toString();
-    // Nonce the page's inline script (and the Clerk loader). 'strict-dynamic'
-    // lets scripts the nonced Clerk loader injects at runtime execute; the
-    // https:/'unsafe-inline' fallbacks are ignored by CSP3 browsers that
-    // honour the nonce and only cover legacy ones. No default-src, so Clerk's
-    // style/font/network needs and the page's inline <style> stay unrestricted
-    // — only script execution, the XSS sink, is gated.
-    const nonce = uiScriptNonce();
+    const clerkOrigin = uiAuth?.kind === "clerk" && isSafeHttpsUrl(uiAuth.frontendApiUrl)
+      ? new URL(uiAuth.frontendApiUrl).origin : undefined;
     // An artifact shell frames the sandboxed page from its own origin and
     // nothing else; Connections stays on the deployment's public origin.
     const homeUrl = opts.config.publicUrl ? new URL("/", opts.config.publicUrl).toString() : "/";
@@ -139,17 +130,13 @@ export async function routeUi(
     return new Response(
       request.method === "HEAD"
         ? null
-        : renderUiHtml(uiAuth, mcpUrl, opts.config.ui?.branding, nonce, operatorPage, { homeUrl, iconOrigin }),
+        : renderUiHtml(uiAuth, mcpUrl, opts.config.ui?.branding, undefined, operatorPage, { homeUrl, iconOrigin }),
       {
         status: 200,
-        headers: {
+        headers: htmlSecurityHeaders({
           "Content-Type": "text/html; charset=utf-8",
-          "Content-Security-Policy":
-            `script-src 'nonce-${nonce}' 'strict-dynamic' https: 'unsafe-inline'; ` +
-            "object-src 'none'; base-uri 'none'; frame-ancestors 'none'" +
-            (artifactPage ? "; frame-src 'self'" : ""),
-          "X-Content-Type-Options": "nosniff",
-        },
+          "Cache-Control": "no-store",
+        }, { ...(clerkOrigin ? { clerkOrigin } : {}), frameSelf: artifactPage }),
       },
     );
   }

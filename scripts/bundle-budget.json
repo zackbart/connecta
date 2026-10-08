@@ -8,6 +8,7 @@
     "./worker starts at 35500 B gzip (#704): bounded admission plus request-owned loader/RPC handle disposal around the optional upstream DynamicWorkerExecutor. The peer stays external; the cap uses the existing baseline + 60,000 B policy.",
     "./d1 starts at 2,542 B gzip (#705): the shared SQL key-value and activity store (src/storage/sql.ts) behind a structural D1 driver, with no Effect, no MCP SDK, and no dependency. The cap uses the existing baseline + 60,000 B policy. ./sqlite is its Node-only twin over node:sqlite and is reported, not capped.",
     "examples/worker is remeasured at 395,375 B gzip (#705 item 4): the example now compiles its optional modules — activity history, artifact pages with their store and renderers — as type-checked code switched on by its environment, over the D1 store from @zackbart/connecta/d1, where before they were comments outside the bundle. On main (97f25a9, after #722) the same example measured 360,549 B on the same machine. The cap uses the existing baseline + 60,000 B policy.",
+    "Phase 4 item 1 (#708) replaces Preact with production React, Radix, TanStack Router/Query/Table and cmdk, plus Tailwind v4 and locally hosted Inter. Assets measure 650.4 KB minified/raw and 218,702 B gzip summed per HTTP payload, including the font and license notices. The ./ui server entry embeds this portable asset manifest for Node and Workers (272,943 B gzip); the Worker example remeasures at 586,559 B. Each gzip cap retains baseline + 60,000 B; assets also cap raw bytes at 700,000 B. This is a deliberate stack migration: small uncached HTML responses now refer to reusable immutable assets rather than repeating inline browser code. React and all browser libraries remain build dependencies, outside the root import graph.",
     "./providers/basecamp starts at 131,228 B gzip, measured where it was introduced: a remoteMcp() wrapper like ./providers/revenuecat, so the same shape and the same baseline + 60,000 B policy.",
     "./providers/breeze starts at 20,637 B gzip: a hand-written api() surface with no hosted-MCP interface, so it carries no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
     "./providers/ccb starts at 120,479 B gzip: the hand-written surface plus api()'s static OAuth grant over the SDK's auth client, with no remoteMcp() transport. The cap uses the baseline + 60,000 B policy.",
@@ -114,8 +115,8 @@
       "maxGzip": 203649
     },
     "./ui": {
-      "baselineGzip": 68983,
-      "maxGzip": 128983
+      "baselineGzip": 272943,
+      "maxGzip": 332943
     },
     "./credentials": {
       "baselineGzip": 1459,
@@ -138,8 +139,8 @@
       "maxGzip": 71247
     },
     "examples/worker": {
-      "baselineGzip": 395375,
-      "maxGzip": 455375
+      "baselineGzip": 586559,
+      "maxGzip": 646559
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,
@@ -148,6 +149,11 @@
     "./worker": {
       "baselineGzip": 35500,
       "maxGzip": 95500
+    },
+    "operator-ui/assets": {
+      "baselineGzip": 218702,
+      "maxGzip": 278702,
+      "maxRaw": 700000
     }
   }
 }

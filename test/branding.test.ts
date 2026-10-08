@@ -397,7 +397,9 @@ describe("branding is not an injection vector", () => {
         )
       ).text();
       expect(body).not.toContain("</script><img");
-      expect(body).toContain("<\\/script>");
+      const config = /<script id="operatorConfig" type="application\/json">([^<]*)<\/script>/.exec(body)![1]!;
+      expect(config).not.toContain("<");
+      expect(JSON.parse(config).productName).toBe('</script><img src=x onerror=alert(1)>');
     }],
 
     ["never renders a javascript: favicon href on either page", async () => {

@@ -20,26 +20,26 @@ function ActivityRow({ event }: { event: UiActivityEvent }) {
   const badge = activityOutcomeBadge(event.outcome);
   const stableId = actorStableId(event.actor);
   return (
-    <article class={`activity-item ${outcome}`}>
-      <div class="activity-stamp">
-        <span class={`dot ${outcome}`} aria-hidden="true" />
+    <article className={`activity-item ${outcome}`}>
+      <div className="activity-stamp">
+        <span className={`dot ${outcome}`} aria-hidden="true" />
         <div>
-          <time class="activity-time" dateTime={event.occurredAt}>
+          <time className="activity-time" dateTime={event.occurredAt}>
             {formatDate(event.occurredAt)}
           </time>
-          <div class="activity-actor">{actorLabel(event.actor)}</div>
+          <div className="activity-actor">{actorLabel(event.actor)}</div>
           {stableId ? (
-            <div class="activity-actor-id mono">{stableId}</div>
+            <div className="activity-actor-id mono">{stableId}</div>
           ) : null}
         </div>
       </div>
       <div>
-        <div class="activity-address">{event.address}</div>
-        <div class="activity-detail">{activityDetail(event)}</div>
+        <div className="activity-address">{event.address}</div>
+        <div className="activity-detail">{activityDetail(event)}</div>
       </div>
-      <div class="activity-result">
+      <div className="activity-result">
         <Badge tone={badge.tone}>{badge.label}</Badge>
-        <div class="activity-detail">{event.durationMs} ms</div>
+        <div className="activity-detail">{event.durationMs} ms</div>
       </div>
     </article>
   );
@@ -54,11 +54,11 @@ export function ActivityPage({ state }: { state: OperatorState }) {
   const failed = state.activityPhase === "error";
   return (
     <section id="activityView">
-      <div class="lead">
+      <div className="lead">
         <h1 id="activityHeading" tabIndex={-1}>
           Activity
         </h1>
-        <div class="lead-copy">
+        <div className="lead-copy">
           <p>{pageDescription("activity", productDescription)}</p>
         </div>
       </div>
@@ -73,15 +73,15 @@ export function ActivityPage({ state }: { state: OperatorState }) {
       ) : !enabled ? (
         <Unavailable>
           Activity history is not configured. Add an{" "}
-          <span class="mono">activity.store</span> with a list reader to
+          <span className="mono">activity.store</span> with a list reader to
           enable this page.
         </Unavailable>
       ) : (
-        <div id="activityAvailable" class="collection">
+        <div id="activityAvailable" className="collection">
           {/* Nothing loaded and the load failed: the block below has the one
               Retry, and a search over nothing has nothing to find. */}
           {failed && state.activityEvents.length === 0 ? null : (
-          <div class="row">
+          <div className="row">
             <input
               id="activitySearch"
               type="search"
@@ -92,7 +92,7 @@ export function ActivityPage({ state }: { state: OperatorState }) {
             />
             <button
               id="refreshActivity"
-              class="btn"
+              className="btn"
               type="button"
               disabled={loading}
               onClick={() => void loadActivity(true)}
@@ -101,7 +101,7 @@ export function ActivityPage({ state }: { state: OperatorState }) {
             </button>
           </div>
           )}
-          <p id="activitySummary" class="meta" aria-live="polite">
+          <p id="activitySummary" className="meta" aria-live="polite">
             {summary}
           </p>
           {state.activityEvents.length === 0 ? (
@@ -128,7 +128,7 @@ export function ActivityPage({ state }: { state: OperatorState }) {
           ) : (
             <div
               id="activityList"
-              class="activity-list"
+              className="activity-list"
               aria-busy={loading ? "true" : "false"}
             >
               {visible.map((event, index) => (
@@ -146,7 +146,7 @@ export function ActivityPage({ state }: { state: OperatorState }) {
           {state.activityCursor ? (
             <button
               id="moreActivity"
-              class="btn activity-more"
+              className="btn activity-more"
               type="button"
               disabled={loading}
               onClick={() => void loadActivity(false)}

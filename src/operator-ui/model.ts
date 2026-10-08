@@ -1,3 +1,4 @@
+import type { OperatorConnectorOverlay, OperatorTool, OperatorUiContract, OperatorViewer } from "./contract.js";
 import type {
   CatalogAccessObservation,
   CatalogDriftReport,
@@ -6,10 +7,7 @@ import type {
 /** Tool verdicts, independent of the selected pool's trust. */
 export type UiToolSafety = "runs_in_programs" | "needs_approval";
 
-export interface UiTool {
-  name: string;
-  address: string;
-  description?: string;
+export interface UiTool extends Pick<OperatorTool, "name" | "address" | "description"> {
   /** Absent only in payloads older than the field; the page then shows no badge. */
   safety?: UiToolSafety;
 }
@@ -77,8 +75,8 @@ export interface UiConnector {
   authScope?: "shared" | "personal";
   title?: string;
   description?: string;
-  status: "loading" | "ok" | "auth_required" | "error";
-  permissions?: { use: boolean; manageSharedAuth: boolean; connectPersonal: boolean };
+  status: "loading" | OperatorConnectorOverlay["status"];
+  permissions?: Omit<OperatorViewer["permissions"]["connectors"][number], "id">;
   /**
    * Why this connector is not usable, when it is not. See `UiProblem`. The
    * only failure detail the payload carries; the status message behind it is
@@ -112,9 +110,9 @@ export type CredentialManagementCapability =
 
 export interface UiData {
   accessTokenManagement?: "available" | "requires_operator";
-  serverInfo: { name: string; version: string };
+  serverInfo: Pick<OperatorUiContract["config"]["server"], "name" | "version">;
   /** Version of the installed @zackbart/connecta package. */
-  connectaVersion: string;
+  connectaVersion: OperatorUiContract["config"]["connectaVersion"];
   connectors: UiConnector[];
   activityEnabled: boolean;
   credentialManagement: CredentialManagementCapability;

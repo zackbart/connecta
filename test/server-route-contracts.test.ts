@@ -279,6 +279,11 @@ describe("server route contracts", () => {
       );
       expect(response.status, contract.path).toBe(contract.status);
       expectGlobalSecurityHeaders(response);
+      if (response.headers.get("Content-Type")?.startsWith("text/html")) {
+        expect(response.headers.get("Content-Security-Policy"), contract.path).toBe("script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+        expect(response.headers.get("X-Frame-Options"), contract.path).toBe("DENY");
+        expect(response.headers.get("Cache-Control"), contract.path).toBe("no-store");
+      }
       await response.arrayBuffer();
     }
 
@@ -309,6 +314,9 @@ describe("server route contracts", () => {
       expect(response.headers.get("Content-Type"), path).toBe("text/html; charset=utf-8");
       expect(response.headers.get("Vary"), path).toBe("Accept");
       expectGlobalSecurityHeaders(response);
+      expect(response.headers.get("Content-Security-Policy"), path).toBe("script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+      expect(response.headers.get("X-Frame-Options"), path).toBe("DENY");
+      expect(response.headers.get("Cache-Control"), path).toBe("no-store");
       const body = await response.text();
       expect(body, path).not.toContain(path.split("?")[0]!.slice(1));
       bodies.add(body);
@@ -336,6 +344,8 @@ describe("server route contracts", () => {
     });
     const response = await connecta.fetch(new Request(`${BASE}/`, { headers: { Accept: "text/html" } }));
     expect(response.status).toBe(404);
+    expect(response.headers.get("Content-Security-Policy")).toBe("script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    expect(response.headers.get("X-Frame-Options")).toBe("DENY");
     const body = await response.text();
     expect(body).toContain("<h1>Page not found</h1>");
     expect(body).not.toContain("favicon");

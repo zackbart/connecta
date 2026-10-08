@@ -1,3 +1,4 @@
+import { OPERATOR_UI_SCRIPT_PATH } from "../src/operator-ui/generated.js";
 // Artifact pages at the route level: the shells, the JSON API behind them,
 // the sandboxed frame, who may view, and what an omitted UI leaves behind.
 // test/browser/artifacts.spec.ts drives the same routes in Chromium.
@@ -328,6 +329,10 @@ describe("the artifact API", () => {
 describe("mounting", () => {
   it("isolates a dedicated artifact origin and redirects main-host artifact paths", async () => {
     const { app } = await deploy({ artifactOrigin: ARTIFACT_ORIGIN });
+    const asset = await app.fetch(new Request(ARTIFACT_ORIGIN + OPERATOR_UI_SCRIPT_PATH));
+    expect(asset.status).toBe(200);
+    expect(asset.headers.get("cache-control")).toContain("immutable");
+
     const fetchAt = (origin: string, path: string, token?: string) => app.fetch(new Request(
       `${origin}${path}`,
       token ? { headers: { Authorization: `Bearer ${token}` } } : {},

@@ -167,11 +167,11 @@ export function createFetchHandler(
         ? runtimeContext.waitUntil.bind(runtimeContext)
         : undefined;
 
-      // The artifact hostname has no MCP, health, OAuth, or operator routes.
+      // The artifact hostname serves artifact pages and public UI assets only.
       // Dispatch before MCP origin checks so even a hostile /mcp gets the same
       // 404 as any other unserved path.
       if (opts.config.artifactOrigin && url.origin === new URL(opts.config.artifactOrigin).origin) {
-        if (!isArtifactPath(path) || !opts.config.ui || !opts.config.artifacts) {
+        if ((!isArtifactPath(path) && !path.startsWith("/ui/assets/")) || !opts.config.ui || !opts.config.artifacts) {
           return Effect.succeed(withSecurityHeaders(notFoundResponse(request, opts.config), url, path));
         }
         const context: RouteContext = {

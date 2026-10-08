@@ -1,4 +1,4 @@
-import { useState } from "preact/hooks";
+import { useState } from "react";
 import type { UiConnector } from "../model.js";
 import {
   confirmCopy,
@@ -53,10 +53,10 @@ function CredentialForm({
     void saveCredential(connector, { values: entries });
   };
   return (
-    <div class="credential-form" data-credential-form={connector}>
+    <div className="credential-form" data-credential-form={connector}>
       {single ? (
         <>
-          <label class="visually-hidden" for={inputId}>
+          <label className="visually-hidden" htmlFor={inputId}>
             {credential.label}
           </label>
           <input
@@ -64,9 +64,9 @@ function CredentialForm({
             type="password"
             aria-label={credential.label}
             placeholder={credential.placeholder || "Paste credential"}
-            autocomplete="new-password"
-            autocapitalize="none"
-            spellcheck={false}
+            autoComplete="new-password"
+            autoCapitalize="none"
+            spellCheck={false}
             value={values.value ?? ""}
             onInput={(event) =>
               setValues({ value: event.currentTarget.value })
@@ -74,23 +74,23 @@ function CredentialForm({
           />
         </>
       ) : (
-        <div class="credential-fields">
+        <div className="credential-fields">
           {fields.map((field, index) => {
             const id = `credential-input-${connector}-${index}`;
             return (
-              <div class="credential-field" key={field.name}>
-                <label for={id}>{field.label}</label>
+              <div className="credential-field" key={field.name}>
+                <label htmlFor={id}>{field.label}</label>
                 <input
                   id={id}
                   type={field.inputType || "password"}
                   placeholder={field.placeholder || field.label}
-                  autocomplete={
+                  autoComplete={
                     (field.inputType ?? "password") === "password"
                       ? "new-password"
                       : "off"
                   }
-                  autocapitalize="none"
-                  spellcheck={false}
+                  autoCapitalize="none"
+                  spellCheck={false}
                   value={values[field.name] ?? ""}
                   onInput={(event) =>
                     setValues({
@@ -104,12 +104,12 @@ function CredentialForm({
           })}
         </div>
       )}
-      <div class="actions">
-        <button class="btn primary" type="button" disabled={busy} onClick={submit}>
+      <div className="actions">
+        <button className="btn primary" type="button" disabled={busy} onClick={submit}>
           {busy ? "Saving…" : "Save"}
         </button>
         <button
-          class="btn quiet"
+          className="btn quiet"
           type="button"
           disabled={busy}
           onClick={() => editCredential(null)}
@@ -143,23 +143,23 @@ export function CredentialCard({
   const removable = configured || Boolean(credential.removable);
   return (
     <section
-      class="subcard"
+      className="subcard"
       id={`credential-${connector.id}`}
       aria-labelledby={`credential-title-${connector.id}`}
     >
-      <div class="subcard-head">
+      <div className="subcard-head">
         <h3 id={`credential-title-${connector.id}`}>{credential.label}</h3>
-        <span class="meta">{credentialStateLabel(credential)}</span>
+        <span className="meta">{credentialStateLabel(credential)}</span>
       </div>
       {credential.description ? (
-        <p class="meta">{credential.description}</p>
+        <p className="meta">{credential.description}</p>
       ) : null}
       {credential.fields?.length ? (
-        <div class="credential-field-summary">
+        <div className="credential-field-summary">
           {credential.fields.map((field) => (
             <div key={field.name}>
               <span>{field.label}</span>
-              <span class="meta">
+              <span className="meta">
                 {field.configured
                   ? `configured · ••••${field.lastFour ?? ""}${
                       field.updatedAt
@@ -175,7 +175,7 @@ export function CredentialCard({
       {/* The payload's error text can name a vault failure; the page says a
           fixed sentence keyed by the problem instead. */}
       {credential.error ? (
-        <p class="msg">{credentialProblemCopy(credential.problem)}</p>
+        <p className="msg">{credentialProblemCopy(credential.problem)}</p>
       ) : null}
       {credential.error && credential.problem ? (
         <FixPrompt
@@ -187,11 +187,11 @@ export function CredentialCard({
       {/* Leftover stored fields are not an error — the credential still works,
           so this stays muted copy rather than the msg block a failure earns. */}
       {credential.notice ? (
-        <p class="meta">{credential.notice}</p>
+        <p className="meta">{credential.notice}</p>
       ) : null}
-      <div class="actions">
+      <div className="actions">
         <button
-          class={removable ? "btn" : "btn primary"}
+          className={removable ? "btn" : "btn primary"}
           type="button"
           aria-expanded={editing ? "true" : "false"}
           disabled={busy}
@@ -201,7 +201,7 @@ export function CredentialCard({
         </button>
         {configured && credential.testable ? (
           <button
-            class="btn"
+            className="btn"
             type="button"
             disabled={busy}
             onClick={() => void testCredential(connector.id)}
@@ -212,7 +212,7 @@ export function CredentialCard({
         {removable ? (
           <button
             id={`remove-credential-${connector.id}`}
-            class="btn danger"
+            className="btn danger"
             type="button"
             disabled={busy}
             onClick={() => askConfirm(connector.id, "credential_remove")}

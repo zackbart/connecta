@@ -1,5 +1,6 @@
 import type { ActivityActor } from "../activity.js";
 import type { DeferredWork } from "../connector-scope.js";
+import { htmlSecurityHeaders } from "../html-security.js";
 import type { AdmissionController } from "../executor-admission.js";
 import type { Registry, ToolAccess } from "../registry.js";
 import { parseConnectorAccess } from "../connector-access.js";
@@ -310,7 +311,9 @@ export function withSecurityHeaders(
   requestUrl: URL,
   _path: string,
 ): Response {
-  const headers = new Headers(response.headers);
+  const headers = response.headers.get("Content-Type")?.toLowerCase().startsWith("text/html")
+    ? htmlSecurityHeaders(response.headers)
+    : new Headers(response.headers);
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Referrer-Policy", "no-referrer");
   if (requestUrl.protocol === "https:") {

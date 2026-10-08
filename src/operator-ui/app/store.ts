@@ -1,3 +1,5 @@
+import { queryClient } from "./query.js";
+import { isCancelledError } from "@tanstack/react-query";
 import type {
   UiArtifactRow,
   UiArtifactView,
@@ -133,6 +135,7 @@ export function navHint(): { activity: boolean; artifacts: boolean } {
 }
 
 function gate(notice: Notice | null = null): void {
+  queryClient.clear();
   forgetNav();
   awaitingAuthorization.clear();
   state = resetIdentity(state, notice);
@@ -333,8 +336,15 @@ function setPage(page: OperatorPage, focus = false): void {
   for (const listener of listeners) listener();
 }
 
+let routerNavigate: ((href: string) => void) | undefined;
+export function configureNavigation(navigate: (href: string) => void): void { routerNavigate = navigate; }
+export function routeChanged(path: string): void {
+  const page = pageForPath(path);
+  if (state.page !== page) setPage(page, true);
+}
 export function navigate(page: OperatorPage, href: string): void {
-  history.pushState({ operatorPage: page }, "", href);
+  if (routerNavigate) routerNavigate(href);
+  else history.pushState({ operatorPage: page }, "", href);
   setPage(page, true);
 }
 
@@ -913,7 +923,7 @@ function recheckAuthorization(): void {
 }
 
 export async function boot(): Promise<void> {
-  const onPop = () => setPage(pageForPath(window.location.pathname), true);
+  const onPop = () => { if (!routerNavigate) routeChanged(window.location.pathname); };
   window.addEventListener("popstate", onPop);
   window.addEventListener("focus", onReturn);
   if (typeof document !== "undefined") {
@@ -965,6 +975,19 @@ type DetailOutcome =
   | { kind: "downstream" };
 
 async function readConnector(id: string, token: string | null | undefined): Promise<DetailOutcome> {
+  try {
+    return await queryClient.fetchQuery({
+      queryKey: ["connector", state.generation, id, detailRevisions.get(id) ?? 0],
+      queryFn: () => fetchConnector(id, token),
+    });
+  } catch (error) {
+    // Clearing an identity's cache cancels pending Query promises. The session
+    // fence drops this outcome; consume the rejection even on background loads.
+    return { kind: "local", failure: isCancelledError(error) ? "session" : "network" };
+  }
+}
+
+async function fetchConnector(id: string, token: string | null | undefined): Promise<DetailOutcome> {
   let response: Response;
   try {
     response = await fetch(`/ui/connectors/${encodeURIComponent(id)}`, {

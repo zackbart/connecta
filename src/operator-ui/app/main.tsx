@@ -1,10 +1,15 @@
-import { render, type VNode } from "preact";
+import { createRoot } from "react-dom/client";
+import type { ReactNode } from "react";
+import { createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from "@tanstack/react-router";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { queryClient } from "./query.js";
+import { ShellControls } from "./shell.js";
+import { Button, Input } from "./primitives.js";
 import {
   useEffect,
-  useLayoutEffect,
-  useReducer,
+  useSyncExternalStore,
   useState,
-} from "preact/hooks";
+} from "react";
 import {
   checkingCopy,
   gateCopy,
@@ -33,6 +38,8 @@ import {
   signOut,
   navHint,
   subscribe,
+  configureNavigation,
+  routeChanged,
 } from "./store.js";
 
 /**
@@ -42,19 +49,7 @@ import {
  */
 
 function useOperatorState(): OperatorState {
-  const [, bump] = useReducer((count: number) => count + 1, 0);
-  const snapshot = getState();
-  // Subscribing in a layout effect, not a passive one: `boot()` starts the first
-  // request the moment this tree mounts, and a passive effect would run after
-  // its answer had already been stored — leaving the page on "checking your
-  // session" forever. The comparison catches the same race for any store change
-  // between this render and the subscription.
-  useLayoutEffect(() => {
-    const unsubscribe = subscribe(() => bump(undefined));
-    if (getState() !== snapshot) bump(undefined);
-    return unsubscribe;
-  }, []);
-  return snapshot;
+  return useSyncExternalStore(subscribe, getState);
 }
 
 /** Pages an identity may actually open. Hidden is the honest state for the rest. */
@@ -76,18 +71,19 @@ function visiblePages(state: OperatorState): OperatorPage[] {
 
 function OperatorNav() {
   const state = useOperatorState();
-  if (state.session !== "ready") return null;
+
   const onArtifactPage = isArtifactPage(state.page);
   return (
-    <div class="mast-actions">
-      <nav class="page-nav" aria-label="Operator pages">
-        {visiblePages(state).map((page) =>
+    <div className="mast-actions">
+      <ShellControls pages={state.session === "ready" ? visiblePages(state) : []} current={state.page} />
+      <nav className="page-nav" aria-label="Operator pages">
+        {(state.session === "ready" ? visiblePages(state) : []).map((page) =>
           // Crossing between artifact pages and the rest is a full navigation:
           // with a dedicated artifact origin, the two live on different hosts.
           page === "artifacts" || onArtifactPage ? (
             <a
               key={page}
-              class="navlink"
+              className="navlink"
               href={
                 page === "artifacts"
                   ? PAGE_META.artifacts.path
@@ -101,7 +97,7 @@ function OperatorNav() {
             <PageLink
               key={page}
               page={page}
-              class="navlink"
+              className="navlink"
               current={state.page === page}
             >
               {PAGE_META[page].label}
@@ -109,13 +105,13 @@ function OperatorNav() {
           ),
         )}
       </nav>
-      <div class="session-actions" aria-label="Session actions">
+      <div hidden={state.session !== "ready"} className="session-actions" aria-label="Session actions">
         {auth.kind === "clerk" || auth.kind === "cloudflare-access" ? (
-          <button class="navlink" type="button" onClick={signOut}>
+          <button className="navlink" type="button" onClick={signOut}>
             Sign out
           </button>
         ) : (
-          <button class="navlink" type="button" onClick={forgetBearer}>
+          <button className="navlink" type="button" onClick={forgetBearer}>
             Change token
           </button>
         )}
@@ -134,11 +130,11 @@ function Gate({ state }: { state: OperatorState }) {
   const signedIn = auth.kind === "clerk" && Boolean(window.Clerk?.user);
   const loading = state.session === "loading";
   return (
-    <section id="gate" class="gate lead" aria-busy={loading ? "true" : "false"}>
+    <section id="gate" className="gate lead" aria-busy={loading ? "true" : "false"}>
         <h1 id="gateHeading" tabIndex={-1}>
           {PAGE_META[state.page].label}
         </h1>
-        <div class="lead-copy">
+        <div className="lead-copy">
           <p>{pageDescription(state.page, productDescription)}</p>
           {/* While the session is checked, the same block the signed-in page
               shows while it loads, so the words and the shape do not change
@@ -146,32 +142,32 @@ function Gate({ state }: { state: OperatorState }) {
           {loading ? (
             <StateBlock id="gateCopy">{checkingCopy(state.page)}</StateBlock>
           ) : (
-            <p id="gateCopy" class="meta">
+            <p id="gateCopy" className="meta">
               {gateCopy(auth.kind, signedIn)}
             </p>
           )}
           {loading ? null : auth.kind === "clerk" ? (
-            <div id="clerkGate" class="actions">
+            <div id="clerkGate" className="actions">
               {signedIn ? (
-                <button class="btn" type="button" onClick={signOut}>
+                <button className="btn" type="button" onClick={signOut}>
                   Sign out
                 </button>
               ) : (
-                <button id="signin" class="btn primary" type="button" onClick={signIn}>
+                <button id="signin" className="btn primary" type="button" onClick={signIn}>
                   Team sign in
                 </button>
               )}
             </div>
           ) : auth.kind === "cloudflare-access" ? (
-            <div class="actions">
-              <button class="btn" type="button" onClick={signOut}>
+            <div className="actions">
+              <button className="btn" type="button" onClick={signOut}>
                 Sign out of Cloudflare Access
               </button>
             </div>
           ) : (
             <form
               id="tokenGate"
-              class="row gate-form"
+              className="row gate-form"
               onSubmit={(event) => {
                 event.preventDefault();
                 const value = token.trim();
@@ -180,18 +176,18 @@ function Gate({ state }: { state: OperatorState }) {
                 signInWithBearer(value);
               }}
             >
-              <input
+              <Input
                 id="token"
                 type="password"
                 placeholder="Bearer token"
-                autocomplete="off"
+                autoComplete="off"
                 aria-label="Bearer token"
                 value={token}
                 onInput={(event) => setToken(event.currentTarget.value)}
               />
-              <button id="save" class="btn primary" type="submit">
+              <Button id="save" variant="primary" type="submit">
                 Open operator pages
-              </button>
+              </Button>
             </form>
           )}
           <NoticeLine id="err" notice={state.gate} className="" />
@@ -265,14 +261,21 @@ function OperatorApp() {
   );
 }
 
-function mount(id: string, view: VNode): void {
+function mount(id: string, view: ReactNode): void {
   const host = document.getElementById(id);
   if (!host) return;
   // The shell's own copy is a no-JS fallback, not markup to diff against.
   host.textContent = "";
-  render(view, host);
+  createRoot(host).render(view);
 }
 
 mount("operatorNav", <OperatorNav />);
-mount("operatorContent", <OperatorApp />);
+const rootRoute = createRootRoute({ component: Outlet, notFoundComponent: OperatorApp });
+const routes = ["/", "/tokens", "/activity", "/artifacts", "/artifacts/$"].map(path =>
+  createRoute({ getParentRoute: () => rootRoute, path, component: OperatorApp }),
+);
+const router = createRouter({ routeTree: rootRoute.addChildren(routes), defaultPendingMinMs: 0 });
+configureNavigation(href => { void router.navigate({ to: href }); });
+router.subscribe("onResolved", () => routeChanged(router.state.location.pathname));
+mount("operatorContent", <QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>);
 void boot();

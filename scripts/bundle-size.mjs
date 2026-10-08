@@ -24,7 +24,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
-import { build } from "esbuild";
+import { build, transform } from "esbuild";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -139,6 +139,19 @@ targets.push({
 const results = [];
 for (const target of targets) results.push(await measure(target));
 
+// Sum individual compressed HTTP payloads, including the locally hosted font
+// and dependency notices. The ./ui entry also pays for its embedded manifest.
+const generated = await transform(readFileSync(join(root, "src/operator-ui/generated.ts"), "utf8"), { loader: "ts", format: "esm" });
+const { OPERATOR_UI_ASSETS } = await import(`data:text/javascript;base64,${Buffer.from(generated.code).toString("base64")}`);
+let assetRaw = 0, assetGzip = 0;
+for (const asset of Object.values(OPERATOR_UI_ASSETS)) {
+  const bytes = Buffer.from(asset.body, asset.binary ? "base64" : "utf8");
+  assetRaw += bytes.length;
+  assetGzip += gzipSync(bytes, { level: 9 }).length;
+}
+results.push({ name: "operator-ui/assets", platform: "neutral", raw: assetRaw,
+  gzip: assetGzip, attributed: Object.fromEntries(CATEGORIES.map(key => [key, 0])), nodeImports: [] });
+
 const kb = (bytes) => `${(bytes / 1000).toFixed(1)} KB`;
 const exact = (bytes) => `${bytes.toLocaleString("en-US")} B`;
 const signed = (bytes) =>
@@ -155,6 +168,7 @@ const rows = results.map((result) => {
       cap = "missing";
     } else {
       delta = signed(result.gzip - limits.baselineGzip);
+      if (limits.maxRaw && result.raw > limits.maxRaw) failures.push(`${result.name}: ${result.raw} B exceeds raw cap ${limits.maxRaw} B`);
       cap = exact(limits.maxGzip);
       if (result.gzip > limits.maxGzip) {
         failures.push(

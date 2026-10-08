@@ -1,6 +1,6 @@
 /**
- * The constants `renderUiHtml` writes into the page immediately before this
- * bundle, read once here so no component reaches for a bare global. Everything
+ * The inert JSON `renderUiHtml` writes into the shell, read once here so
+ * components receive only the deployment configuration the server gated. Everything
  * here is deployment configuration the server already gated; none of it is
  * operator data, which arrives only through the authenticated `/ui/*` APIs.
  */
@@ -38,30 +38,26 @@ interface BrowserClerk {
   signOut(options: { redirectUrl: string }): Promise<unknown>;
 }
 
-declare const AUTH: BrowserAuth;
-declare const MCP_URL: string;
-declare const INITIAL_PAGE: string;
-declare const HOME_URL: string;
-declare const TITLE_SUFFIX: string;
-declare const PRODUCT_NAME: string;
-declare const PRODUCT_DESCRIPTION: string;
-declare const PRODUCT_OPERATOR_LABEL: string;
-
 declare global {
   interface Window {
     Clerk?: BrowserClerk;
   }
 }
 
-export const auth = AUTH;
-export const mcpUrl = MCP_URL;
-export const initialPage = INITIAL_PAGE;
-/** The Connections page, which a dedicated artifact origin does not serve. */
-export const homeUrl = HOME_URL;
-export const titleSuffix = TITLE_SUFFIX;
-export const productName = PRODUCT_NAME;
-export const productDescription = PRODUCT_DESCRIPTION;
-export const productOperatorLabel = PRODUCT_OPERATOR_LABEL;
+interface ShellConfig {
+  auth: BrowserAuth;
+  mcpUrl: string;
+  initialPage: string;
+  homeUrl: string;
+  titleSuffix: string;
+  productName: string;
+  productDescription: string;
+  productOperatorLabel: string;
+}
+
+const config = JSON.parse(document.getElementById("operatorConfig")!.textContent!) as ShellConfig;
+export const { auth, mcpUrl, initialPage, homeUrl, titleSuffix, productName,
+  productDescription, productOperatorLabel } = config;
 
 /** Where a bearer operator's token lives between visits. */
 export const TOKEN_KEY = "connecta:token";

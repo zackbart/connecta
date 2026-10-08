@@ -88,11 +88,6 @@ async function loadStore(
     },
     confirm: () => true,
   };
-  for (const [name, value] of Object.entries(PAGE_CONSTANTS)) {
-    vi.stubGlobal(name, value);
-  }
-  vi.stubGlobal("INITIAL_PAGE", page);
-  vi.stubGlobal("AUTH", browserAuth);
   vi.stubGlobal("window", window);
   vi.stubGlobal("localStorage", {
     getItem: () => null,
@@ -101,6 +96,12 @@ async function loadStore(
   });
   vi.stubGlobal("fetch", fetchMock);
   vi.resetModules();
+  vi.doMock("../src/operator-ui/app/config.js", () => ({
+    auth: browserAuth, initialPage: page, mcpUrl: PAGE_CONSTANTS.MCP_URL,
+    homeUrl: PAGE_CONSTANTS.HOME_URL, titleSuffix: PAGE_CONSTANTS.TITLE_SUFFIX,
+    productName: PAGE_CONSTANTS.PRODUCT_NAME, productDescription: PAGE_CONSTANTS.PRODUCT_DESCRIPTION,
+    productOperatorLabel: PAGE_CONSTANTS.PRODUCT_OPERATOR_LABEL, TOKEN_KEY: "connecta:token",
+  }));
   const store = await import("../src/operator-ui/app/store.js");
   return {
     store,
@@ -129,6 +130,22 @@ afterEach(() => {
 });
 
 describe("operator store identity wiring", () => {
+  it("consumes Query cancellation and drops a pending connector detail after sign-out", async () => {
+    const { store, fetchMock, changeSession } = await loadStore({ id: "sess_a", getToken: async () => "token-a" });
+    fetchMock.mockResolvedValueOnce(Response.json(uiData("identity-a")));
+    await store.boot();
+    const pending = deferred<Response>();
+    fetchMock.mockImplementationOnce(() => pending.promise);
+    const refresh = store.refreshConnector("github");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    changeSession(null);
+    await expect(refresh).resolves.toBeUndefined();
+    pending.resolve(Response.json({ id: "github", status: "ok", toolCount: 1, tools: [] }));
+    await Promise.resolve();
+    expect(store.getState().session).toBe("gated");
+    expect(store.getState().data).toBeNull();
+  });
+
   it("clears and refetches identity state when Clerk reports a new session", async () => {
     const sessionA: FakeSession = {
       id: "sess_a",

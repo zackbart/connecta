@@ -171,7 +171,7 @@ describe("cloudflareAccessAuth", () => {
 
     const beforeAccess = await deployment.fetch(new Request(`${BASE}/`));
     const clerkShell = await beforeAccess.text();
-    expect(clerkShell).toContain('const AUTH = {"kind":"clerk"');
+    expect(clerkShell).toContain('"auth":{"kind":"clerk"');
     expect(clerkShell).toContain("clerk.browser.js");
 
     const afterAccess = await deployment.fetch(
@@ -181,7 +181,7 @@ describe("cloudflareAccessAuth", () => {
     );
     const accessShell = await afterAccess.text();
     expect(accessShell).toContain(
-      'const AUTH = {"kind":"cloudflare-access"}',
+      '"auth":{"kind":"cloudflare-access"}',
     );
     expect(accessShell).not.toContain("clerk.browser.js");
   });

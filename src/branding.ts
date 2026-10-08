@@ -1,4 +1,5 @@
 import { PAGE_CSS, TOKENS_CSS } from "./page-styles.js";
+import { htmlSecurityHeaders } from "./html-security.js";
 import type { ConnectaBranding, ConnectaTheme, UiAuthConfig } from "./types.js";
 /** Connecta's default monochrome "C" mark. */
 export const CONNECTA_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
@@ -239,6 +240,8 @@ function themeColorMeta(branding: ConnectaBranding | undefined, theme: ResolvedT
 export interface PageLayout {
   /** The complete `<title>`. */
   title: string;
+  /** The SPA puts the masthead in its sidebar. */
+  operatorShell?: boolean;
   /** Whether the operator UI is mounted, and so serves `/favicon.*` and `/`. */
   uiMounted: boolean;
   /**
@@ -332,7 +335,7 @@ ${icons.join("\n")}
 ${layout.head ?? ""}
 <style>${styles}${themeCss(brand.theme)}</style>
 </head>
-<body>
+<body${layout.operatorShell ? ' class="operator-shell"' : ""}>
 ${skip}<header class="masthead shell">
   <div class="masthead-inner">
     <div class="mast-nav">
@@ -412,7 +415,7 @@ export function notFoundResponse(
     }),
     {
       status: 404,
-      headers: { "Content-Type": "text/html; charset=utf-8", Vary: "Accept" },
+      headers: htmlSecurityHeaders({ "Content-Type": "text/html; charset=utf-8", Vary: "Accept" }),
     },
   );
 }
