@@ -1,7 +1,7 @@
 import { bindActivityRequest } from "../activity-request.js";
 import { closeConnectorScope } from "../connector-scope.js";
 import { executeLimits } from "../config.js";
-import { oauthConnectUrl, oauthConnectLink, oauthConnectLinkProgress, closeOAuthConnectLinks, oauthConnectUnavailable } from "../oauth-handoff.js";
+import { oauthConnectUrl, oauthConnectLink, oauthConnectLinkProgress, closeOAuthConnectLinks, claimAuthRetry, oauthConnectUnavailable } from "../oauth-handoff.js";
 import { AuthElicitation } from "../auth-elicitation.js";
 import {
   classifyInboundRequest,
@@ -382,10 +382,11 @@ function serveMcp(
       principal: principalKey,
       registry,
       canManage: canManageAuth,
-      connectLink: (id, force) => oauthConnectLink(opts, opts.config.publicUrl ?? baseUrl, id, principalKey, force,
-        Boolean(opts.config.vault?.seal && opts.config.vault.open)),
+      connectLink: (id, force, after) => oauthConnectLink(opts, opts.config.publicUrl ?? baseUrl, id, principalKey, force,
+        Boolean(opts.config.vault?.seal && opts.config.vault.open), after),
       linkProgress: (id, nonce) => oauthConnectLinkProgress(opts, baseUrl, id, nonce),
       closeLinks: (id, nonces) => closeOAuthConnectLinks(opts, baseUrl, id, nonces),
+      claimRetry: (id, nonce) => claimAuthRetry(opts, baseUrl, id, nonce),
       unavailable: oauthConnectUnavailable(opts),
       credentialUi: Boolean(opts.config.ui && opts.config.vault),
       requestSignal,

@@ -414,6 +414,14 @@
         {
           "file": "test/auth-elicitation.test.ts",
           "title": "INV-4 INV-5 INV-9: retires unused forced links before the completion status check"
+        },
+        {
+          "file": "test/auth-elicitation.test.ts",
+          "title": "INV-4 INV-9: each requestState admits one retry and concurrent forks are refused"
+        },
+        {
+          "file": "test/auth-elicitation.test.ts",
+          "title": "INV-4 INV-5 INV-9: Continue cannot reuse the old grant when its forced predecessor fails"
         }
       ]
     },

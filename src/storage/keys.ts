@@ -415,12 +415,12 @@ export const oauthV2Keys = {
   generation: "oauth:generation",
 } as const satisfies Keyed;
 
-/** Single-use `/connect/<id>` links: `used`, `started`, `failed`, or retired `closed`. */
+/** Single-use browser links (`used`/`started`/`failed`/`closed`) and MRTR rounds. */
 export const oauthConnectKeys = {
   family: {
     name: "oauth-connect",
     scope: "connector",
-    prefixes: ["oauth:connect-used:"],
+    prefixes: ["oauth:connect-used:", "oauth:request-used:"],
     version: { number: 1, in: "untagged" },
     codec: textCodec,
     // The link's remaining lifetime, or fifteen minutes when retiring it.
@@ -428,6 +428,7 @@ export const oauthConnectKeys = {
     durable: false,
   },
   used: (nonce: string) => validateStorageKey(`oauth:connect-used:${nonce}`),
+  retry: (nonce: string) => validateStorageKey(`oauth:request-used:${nonce}`),
 } as const satisfies Keyed;
 
 /**

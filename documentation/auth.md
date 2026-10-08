@@ -873,8 +873,11 @@ binds the admitted principal, canonical endpoint including pool, connector,
 meta-tool, address, SHA-256 digest of arguments or code, round, expiry, and
 the opaque browser-link nonces issued in that flow.
 Arguments and program source never enter the payload. The absolute expiry
-survives every round. Rotation invalidates outstanding states. Custom vaults
-may implement the host-only `requestStateKey` method; without it, the
+survives every round. Rotation invalidates outstanding states.
+Each state admits one retry through a connector-scoped storage CAS, including
+decline and cancel. Concurrent or repeated consumption is refused before
+dispatch, so retries cannot fork into sibling forced connection links.
+Custom vaults may implement the host-only `requestStateKey` method; without it, the
 deployment retains the ordinary handoff. It must return a stable,
 purpose-specific deployment key of at least 32 bytes. Only the MCP boundary
 reads this key; connector contexts and guest APIs cannot reach the vault.
@@ -886,6 +889,9 @@ Continue after that visit, so another prompt cannot restart pending consent.
 Failed starts remain single-use but do not block a later successful attempt.
 Before checking completion, unspent links in the retry flow are atomically
 retired so an older forced link cannot begin a reset during the status check.
+A Continue link issued during a pending forced start is bound to that
+predecessor and cannot be consumed unless the predecessor starts successfully.
+If it fails, the next prompt requests a fresh restart instead of reusing the old grant.
 
 The `/connect` link issued by the elicitation boundary encrypts its browser
 handoff with the vault's `seal`/`open` methods before signing it. The URL carries

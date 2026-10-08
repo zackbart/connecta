@@ -12,6 +12,7 @@ interface Handoff {
   expiresAt: number;
   nonce: string;
   force: boolean;
+  after?: string;
 }
 
 export function oauthConnectUnavailable(opts: Pick<ServerOptions, "config">): string | undefined {
@@ -43,6 +44,7 @@ export async function oauthConnectLink(
   principal: string | undefined,
   force = false,
   opaque = false,
+  after?: string,
 ): Promise<{ url: string; nonce: string }> {
   const unavailable = oauthConnectUnavailable(opts);
   if (unavailable) throw new Error(unavailable);
@@ -56,6 +58,7 @@ export async function oauthConnectLink(
     expiresAt: Date.now() + HANDOFF_TTL_MS,
     nonce: crypto.randomUUID(),
     force,
+    ...(after ? { after } : {}),
   };
   const vault = opts.config.vault!;
   if (opaque && (!vault.seal || !vault.open)) throw new Error("URL elicitation requires a sealing credential vault.");
@@ -82,6 +85,11 @@ export async function closeOAuthConnectLinks(opts: ServerOptions, baseUrl: strin
   }
 }
 
+/** Consuming a round prevents replay from creating sibling retry lineages. */
+export async function claimAuthRetry(opts: ServerOptions, baseUrl: string, id: string, nonce: string): Promise<boolean> {
+  return opts.registry.contextFor(id, baseUrl).storage.compareAndSet(oauthConnectKeys.retry(nonce), null, "used", { ttlSeconds: HANDOFF_TTL_MS / 1000 });
+}
+
 export async function verifyOAuthHandoff(
   opts: ServerOptions,
   baseUrl: string,
@@ -102,6 +110,7 @@ export async function verifyOAuthHandoff(
       h.origin !== new URL(baseUrl).origin || !Number.isSafeInteger(h.expiresAt) ||
       h.expiresAt <= Date.now() || h.expiresAt > Date.now() + HANDOFF_TTL_MS ||
       typeof h.nonce !== "string" || !h.nonce || typeof h.force !== "boolean") return null;
+    if (h.after !== undefined && (typeof h.after !== "string" || !/^[a-f0-9-]{36}$/.test(h.after) || h.after === h.nonce || h.force)) return null;
     if (await opts.registry.contextFor(connectorId, baseUrl).storage.get(oauthConnectKeys.used(h.nonce))) return null;
     return h;
   } catch {
@@ -113,6 +122,7 @@ export async function verifyOAuthHandoff(
 export async function consumeOAuthConnectLink(opts: ServerOptions, handoff: Handoff): Promise<boolean> {
   if (handoff.expiresAt <= Date.now()) return false;
   const storage = opts.registry.contextFor(handoff.connector, handoff.origin).storage;
+  if (handoff.after && await storage.get(oauthConnectKeys.used(handoff.after)) !== "started") return false;
   const expiry = { ttlSeconds: Math.max(1, Math.ceil((handoff.expiresAt - Date.now()) / 1000)) };
   return storage.compareAndSet(oauthConnectKeys.used(handoff.nonce), null, "used", expiry);
 }

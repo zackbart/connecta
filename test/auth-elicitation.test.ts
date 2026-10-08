@@ -344,6 +344,54 @@ describe("auth URL elicitation", () => {
     expect((await retry).result.structuredContent).toEqual({ connector: "service", status: "ok" });
   });
 
+  it("INV-4 INV-9: each requestState admits one retry and concurrent forks are refused", async () => {
+    const flow = setup();
+    const args = { connector: "service", force: true };
+    const first = (await flow.rpc("authorize_connector", args)).result;
+    const replies = await Promise.all([1, 2].map(() => flow.rpc("authorize_connector", args, { state: first.requestState, action: "accept" })));
+    expect(replies.filter(reply => reply.result.resultType === "input_required")).toHaveLength(1);
+    expect(replies.filter(reply => reply.result.structuredContent?.error?.code === "invalid_request_state")).toHaveLength(1);
+    expect(flow.connector.startAuth).not.toHaveBeenCalled();
+    for (const action of ["decline", "cancel"]) {
+      const state = (await flow.rpc()).result.requestState;
+      await flow.rpc(undefined, undefined, { state, action });
+      expect((await flow.rpc(undefined, undefined, { state, action: "accept" })).result.structuredContent.error.code).toBe("invalid_request_state");
+    }
+  });
+
+  it("INV-4 INV-5 INV-9: Continue cannot reuse the old grant when its forced predecessor fails", async () => {
+    const flow = setup();
+    flow.connect();
+    let resume!: () => void;
+    let entered!: () => void;
+    const paused = new Promise<void>(resolve => { resume = resolve; });
+    const starting = new Promise<void>(resolve => { entered = resolve; });
+    vi.mocked(flow.connector.startAuth!).mockImplementationOnce(async () => {
+      entered();
+      await paused;
+      throw new Error("Reset failed before changing the old grant");
+    });
+    const args = { connector: "service", force: true };
+    const first = (await flow.rpc("authorize_connector", args)).result;
+    const browser = flow.browser(first.inputRequests.connecta_auth.params.url);
+    await starting;
+    let pending;
+    try {
+      pending = (await flow.rpc("authorize_connector", args, { state: first.requestState, action: "accept" })).result;
+      expect(pending.resultType).toBe("input_required");
+      expect((await flow.browser(pending.inputRequests.connecta_auth.params.url)).status).toBe(400);
+    } finally { resume(); }
+    expect((await browser).status).toBe(400);
+    expect((await flow.browser(pending.inputRequests.connecta_auth.params.url)).status).toBe(400);
+    expect(flow.connector.startAuth).toHaveBeenCalledOnce();
+    const replacement = (await flow.rpc("authorize_connector", args, { state: pending.requestState, action: "accept" })).result;
+    expect(replacement.resultType).toBe("input_required");
+    vi.mocked(flow.connector.startAuth!).mockImplementationOnce(async () => ({ state: "ok" }));
+    expect((await flow.browser(replacement.inputRequests.connecta_auth.params.url)).status).toBe(200);
+    expect(flow.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: true });
+    expect((await flow.rpc("authorize_connector", args, { state: replacement.requestState, action: "accept" })).result.structuredContent).toEqual({ connector: "service", status: "ok" });
+  });
+
   it("INV-4 INV-5: credential handoffs respect configured UI paths and reject external redirects", async () => {
     for (const uiPath of ["/operator", "https://evil.test/operator"]) {
       const flow = setup({ credential: true, uiPath });

@@ -74,9 +74,10 @@ export class AuthElicitation {
     principal: string | undefined;
     registry: RegistryView;
     canManage: (id: string) => boolean;
-    connectLink: (id: string, force?: boolean) => Promise<{ url: string; nonce: string }>;
+    connectLink: (id: string, force?: boolean, after?: string) => Promise<{ url: string; nonce: string }>;
     linkProgress: (id: string, nonce: string) => Promise<"claimed" | "started" | "failed" | undefined>;
     closeLinks: (id: string, nonces: string[]) => Promise<void>;
+    claimRetry: (id: string, nonce: string) => Promise<boolean>;
     unavailable: string | undefined;
     credentialUi: boolean;
     requestSignal: AbortSignal;
@@ -104,17 +105,20 @@ export class AuthElicitation {
     return state as unknown as AuthRequestState;
   }
 
-  private async browserProgress(state: AuthRequestState): Promise<{ visited: boolean; completed: boolean }> {
-    let visited = false;
+  private async browserProgress(state: AuthRequestState): Promise<{ predecessor?: string; completed: boolean }> {
+    let started: string | undefined;
+    let claimed: string | undefined;
     let completed = false;
     let pending = false;
     for (const nonce of state.browserNonces) {
       const progress = await this.options.linkProgress(state.connector, nonce);
-      visited ||= progress === "claimed" || progress === "started";
+      if (progress === "started") started = nonce;
+      if (progress === "claimed") claimed = nonce;
       completed ||= progress === "started";
       pending ||= progress === "claimed";
     }
-    return { visited, completed: completed && !pending };
+    const predecessor = started ?? claimed;
+    return { ...(predecessor ? { predecessor } : {}), completed: completed && !pending };
   }
 
   private async connected(id: string, context: ServerContext): Promise<boolean> {
@@ -147,10 +151,15 @@ export class AuthElicitation {
     if (previous && (previous.tool !== tool || previous.digest !== requestDigest ||
         previous.address !== args.address)) return failure("invalid_request_state", "Invalid or expired requestState");
     const response = context.mcpReq.inputResponses?.[INPUT_KEY];
+    if (previous && object(response) && !["accept", "decline", "cancel"].includes(String(response.action))) {
+      throw new ProtocolError(INVALID_PARAMS, "Invalid auth elicitation response", { reason: "invalid_input_response" });
+    }
+    if (previous && !await this.options.claimRetry(previous.connector, previous.browserNonces.at(-1)!)) {
+      return failure("invalid_request_state", "Invalid or expired requestState");
+    }
     if (previous && object(response)) {
       if (response.action === "decline") return failure("auth_declined", "Connection was declined. The request was not retried.");
       if (response.action === "cancel") return failure("auth_cancelled", "Connection was cancelled. The request was not retried.");
-      if (response.action !== "accept") throw new ProtocolError(INVALID_PARAMS, "Invalid auth elicitation response", { reason: "invalid_input_response" });
     }
     const browser = previous && tool === "authorize_connector" ? await this.browserProgress(previous) : undefined;
     if (browser?.completed && previous) {
@@ -191,7 +200,9 @@ export class AuthElicitation {
     if (previous && previous.round >= MAX_ROUNDS) return failure("auth_round_limit", "Connection is still required after three prompts. Connect explicitly, then start a new request.");
     // Once a verified browser has started this attempt, retries continue it.
     // A pending consent must never be reset by another force=true prompt.
-    const link = await this.options.connectLink(id, explicit && args.force === true && !browser?.visited);
+    const forced = explicit && args.force === true;
+    const link = await this.options.connectLink(id, forced && !browser?.predecessor,
+      forced ? browser?.predecessor : undefined);
     const state: AuthRequestState = {
       version: 1, principal, endpoint: this.options.endpoint, connector: id, tool,
       ...(typeof args.address === "string" ? { address: args.address } : {}),

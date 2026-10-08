@@ -514,6 +514,9 @@ response on the original `tools/call`. Accept re-runs the original call; it
 does not prove browser consent completed. Decline or cancel ends without
 dispatch, with `auth_declined` or `auth_cancelled`. Three prompts are allowed
 within one ten-minute retry window, then `auth_round_limit` ends the flow.
+Each state can be consumed once; concurrent or repeated retries are refused
+before dispatch. A Continue link from a pending restart requires that restart
+to start successfully before the browser can consume it.
 Programs that attempted any write never elicit, even if that write failed.
 
 State integrity, expiry, principal, endpoint, and tool failures produce the
