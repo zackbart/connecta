@@ -1,19 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Server } from "@modelcontextprotocol/server";
-import { catalogClientOptions, attachCatalogCache, catalogIntake, observeCatalogChange } from "../src/catalog-cache.js";
+import { catalogClientOptions, attachCatalogCache, catalogIntake } from "../src/catalog-cache.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { MAX_CATALOG_CHUNK_BYTES } from "../src/catalog-limits.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { callerOf } from "../src/connector-caller.js";
 import { d1Storage } from "../src/d1.js";
+import { createExecuteTool } from "../src/execute.js";
 import { Registry } from "../src/registry.js";
 import { sqlStorage, type SqlStatement, type SqlDriver } from "../src/storage/sql.js";
 import { sentSecretsFor, sentSecretsForRequest } from "../src/sent-secrets.js";
 import { responseCacheKeys } from "../src/storage/keys.js";
+import { withDeadline } from "../src/timeout.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
-import { connectorContext, deferred, waitFor } from "./fixtures/misc.js";
-import { silentLogger } from "./helpers.js";
+import { connectorContext, deferred, scriptedExecutor, waitFor } from "./fixtures/misc.js";
+import { required, silentLogger } from "./helpers.js";
 import type { ConnectorContext, KVStorage } from "../src/types.js";
 
 const BASE = "https://connecta.test";
@@ -80,6 +82,186 @@ async function fixture(options: { ttl?: number; scope?: "public" | "private"; le
 }
 
 describe("SQL-backed SDK catalog cache", () => {
+  it.each([0, 1])("INV-7 INV-8: closing temporary instance %s preserves another instance with the same connector id and request scope", async closing => {
+    const store = await storage(); const id = `instances_${crypto.randomUUID().replaceAll("-", "")}`;
+    const ctx = { ...connectorContext(store), requestScope: {} };
+    attachCatalogCache(ctx, { storage: store, partition: "principal/pool", defaultTtlMs: 300_000, minTtlMs: 0, maxTtlMs: 86_400_000 });
+    const servers: Server[] = [];
+    let changed = false; let listings = 0;
+    const instance = () => {
+      const connector = remoteMcp(id, {
+        url: "https://downstream.test/mcp",
+        _transportFactory: () => {
+          const [client, peer] = InMemoryTransport.createLinkedPair();
+          const server = new Server({ name: "downstream", version: "1" }, { capabilities: { tools: { listChanged: true } } });
+          servers.push(server);
+          server.setRequestHandler("tools/list", async () => {
+            listings++;
+            return { tools: [{ name: changed ? "new_catalog" : "old_catalog", inputSchema: { type: "object" } }], ttlMs: 60_000, cacheScope: "private" };
+          });
+          const connected = server.connect(peer);
+          closers.push(async () => { await connected; await server.close(); });
+          return client;
+        },
+      });
+      closers.push(() => connector.closeScope!(ctx));
+      return connector;
+    };
+    const pair = [instance(), instance()];
+    for (const connector of pair) expect((await connector.listTools(ctx)).map(tool => tool.name)).toEqual(["old_catalog"]);
+    expect(listings).toBe(1);
+    await pair[closing]!.closeScope!(ctx);
+    const live = pair[1 - closing]!;
+    expect((await live.listTools(ctx)).map(tool => tool.name)).toEqual(["old_catalog"]);
+    expect(listings).toBe(1);
+    const generation = await store.get(responseCacheKeys.generation(id));
+    changed = true;
+    await servers[1 - closing]!.notification({ method: "notifications/tools/list_changed" });
+    await waitFor(async () => await store.get(responseCacheKeys.generation(id)) !== generation);
+    expect((await live.listTools(ctx)).map(tool => tool.name)).toEqual(["new_catalog"]);
+    expect((await live.listTools(ctx)).map(tool => tool.name)).toEqual(["new_catalog"]);
+    expect(listings).toBe(2);
+    await live.closeScope!(ctx);
+    // A later temporary client in this still-live outer request owns a fresh
+    // lifetime and can reuse the surviving client's complete publication.
+    expect((await instance().listTools(ctx)).map(tool => tool.name)).toEqual(["new_catalog"]);
+    expect(listings).toBe(2);
+    await expect(pair[closing]!.listTools(ctx)).rejects.toThrow("scope ended");
+  });
+
+  it.each((["resource", "listing"] as const).flatMap(operation => (["public", "private"] as const).map(scope => ({ operation, scope }))))("INV-7 INV-8: a completed $operation keeps connection notifications and later $scope SDK cache operations live", async ({ operation, scope }) => {
+    const store = await storage();
+    const id = `completed_${crypto.randomUUID().replaceAll("-", "")}`;
+    const servers: Server[] = [];
+    let changed = false; let listings = 0;
+    const connector = remoteMcp(id, {
+      url: "https://downstream.test/mcp",
+      auth: { type: "headers", headers: { "X-API-Key": TOKEN_A } },
+      _transportFactory: () => {
+        const [client, peer] = InMemoryTransport.createLinkedPair();
+        const server = new Server({ name: "downstream", version: "1" }, { capabilities: { tools: { listChanged: true }, resources: {} } });
+        servers.push(server);
+        server.setRequestHandler("tools/list", async () => {
+          listings++;
+          return { tools: [{ name: changed ? "new_catalog" : "old_catalog", description: `Catalog ${TOKEN_A}`, inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }], ttlMs: 60_000, cacheScope: scope };
+        });
+        server.setRequestHandler("resources/read", async request => ({ contents: [{ uri: request.params.uri, text: "resource" }] }));
+        const connected = server.connect(peer);
+        closers.push(async () => { await connected; await server.close(); });
+        return client;
+      },
+    });
+    const root = new Registry([connector], { storage: store, logger: silentLogger });
+    const seed = {};
+    expect((await root.getTools(id, BASE, seed)).map(tool => tool.name)).toEqual(["old_catalog"]);
+    await connector.closeScope!(root.contextFor(id, BASE, seed));
+    const listingScope = {};
+    if (operation === "listing") closers.push(() => connector.closeScope!(root.contextFor(id, BASE, listingScope)));
+    let completed: ConnectorContext | undefined;
+    const original = operation === "resource" ? connector.readResource!.bind(connector) : connector.listTools.bind(connector);
+    if (operation === "resource") connector.readResource = async (uri, ctx) => { completed = ctx; return (original as NonNullable<typeof connector.readResource>)(uri, ctx); };
+    else connector.listTools = async ctx => { completed = ctx; return (original as typeof connector.listTools)(ctx); };
+    const output = await createExecuteTool(root, BASE, scriptedExecutor(async fns => {
+      if (operation === "resource") await required(fns.read)(`resource://${id}/${encodeURIComponent("docs://manual/start")}`);
+      else await withDeadline(signal => connector.listTools(root.contextFor(id, BASE, listingScope, { signal })), { timeoutMs: 1_000, timeoutError: new Error("Opening listing deadline") });
+      const ctx = required(completed);
+      expect(ctx.signal?.aborted).toBe(true);
+      const liveList = () => withDeadline(signal => connector.listTools(root.contextFor(id, BASE, ctx.requestScope, { signal })), { timeoutMs: 1_000, timeoutError: new Error("Listing deadline") });
+      expect((await liveList()).map(tool => tool.name)).toEqual(["old_catalog"]);
+      expect(listings).toBe(1);
+      const generation = await store.get(responseCacheKeys.generation(id));
+      changed = true;
+      await servers[1]!.notification({ method: "notifications/tools/list_changed" });
+      await waitFor(async () => await store.get(responseCacheKeys.generation(id)) !== generation);
+      // This is the same live client whose opening operation already ended.
+      expect((await liveList()).map(tool => tool.name)).toEqual(["new_catalog"]);
+      expect(listings).toBe(2);
+      for (const key of await store.list(responseCacheKeys.prefix(id))) expect(await store.get(key)).not.toContain(TOKEN_A);
+      expect((await liveList()).map(tool => tool.name)).toEqual(["new_catalog"]);
+      expect(listings).toBe(2);
+      // If rotation storage fails later, the real SDK must still delete both
+      // current-generation slots after the previous listing's signal ended.
+      const set = store.set.bind(store);
+      const deletion = vi.spyOn(store, "delete");
+      const writing = vi.spyOn(store, "set").mockImplementation((key, ...args) => key === responseCacheKeys.generation(id)
+        ? Promise.reject(new Error(`Fence refused ${TOKEN_A}`)) : set(key, ...args));
+      const warning = vi.spyOn(silentLogger, "warn");
+      changed = false;
+      await servers[1]!.notification({ method: "notifications/tools/list_changed" });
+      await waitFor(() => deletion.mock.calls.length === 2);
+      writing.mockRestore();
+      expect(JSON.stringify(warning.mock.calls)).not.toContain(TOKEN_A);
+      expect(JSON.stringify(warning.mock.calls)).not.toContain("Fence refused");
+      expect((await liveList()).map(tool => tool.name)).toEqual(["old_catalog"]);
+      expect((await liveList()).map(tool => tool.name)).toEqual(["old_catalog"]);
+      expect(listings).toBe(3);
+      const fresh = {};
+      // Workerd forbids reading another request's signal. A SQL cache hit must
+      // carry no operation context from the request that published its catalog.
+      const foreignSignal = vi.spyOn(required(ctx.signal), "aborted", "get").mockImplementation(() => { throw new Error("Another request read the completed operation signal."); });
+      try { expect((await root.getTools(id, BASE, fresh)).map(tool => tool.name)).toEqual(["old_catalog"]); }
+      finally { await connector.closeScope!(root.contextFor(id, BASE, fresh)); foreignSignal.mockRestore(); }
+      expect(listings).toBe(3);
+      return "invalidated";
+    }), silentLogger)({ code: "async () => null" });
+    expect(output.isError, JSON.stringify(output)).toBeUndefined();
+    expect(output.structuredContent).toMatchObject({ result: "invalidated" });
+  });
+
+  it("INV-7 INV-8: an ended listing stops publication and cleanup without starving a live concurrent listing", async () => {
+    const f = await fixture({ ttl: 60_000, description: "x".repeat(MAX_CATALOG_CHUNK_BYTES + 100) });
+    const root = f.registry(); const requestScope = {};
+    const base = root.contextFor(f.id, BASE, requestScope);
+    await f.connector.status!(base);
+    closers.push(() => f.connector.closeScope!(base));
+    const entered = deferred<void>(); const release = deferred<void>(); const finished = deferred<void>(); const settled = deferred<void>();
+    const listTools = f.connector.listTools.bind(f.connector);
+    let calls = 0;
+    vi.spyOn(f.connector, "listTools").mockImplementation(async ctx => {
+      const first = ++calls === 1;
+      try { return await listTools(ctx); } finally { if (first) settled.resolve(); }
+    });
+    const set = f.store.set.bind(f.store);
+    let chunks = 0;
+    vi.spyOn(f.store, "set").mockImplementation(async (key, ...args) => {
+      if (key.includes(":chunk:") && ++chunks === 1) {
+        entered.resolve(); await release.promise;
+        try { return await set(key, ...args); } finally { finished.resolve(); }
+      }
+      return set(key, ...args);
+    });
+    vi.useFakeTimers();
+    let endedSignal: AbortSignal | undefined; let liveSignal: AbortSignal | undefined;
+    const ended = withDeadline(signal => {
+      endedSignal = signal;
+      return f.connector.listTools(root.contextFor(f.id, BASE, requestScope, { signal }));
+    }, { timeoutMs: 100, timeoutError: new Error("Ended listing") });
+    const rejected = expect(ended).rejects.toThrow("Ended listing");
+    await entered.promise;
+    const live = withDeadline(signal => {
+      liveSignal = signal;
+      return f.connector.listTools(root.contextFor(f.id, BASE, requestScope, { signal }));
+    }, { timeoutMs: 2_000, timeoutError: new Error("Live listing starved") });
+    try {
+      await vi.advanceTimersByTimeAsync(100);
+      await rejected;
+      expect(endedSignal?.aborted).toBe(true);
+      expect(liveSignal).not.toBe(endedSignal);
+      // The live listing must complete while the old storage write is blocked.
+      await expect(live).resolves.toHaveLength(1);
+      expect(f.listings()).toBe(2);
+      expect(chunks).toBe(3);
+      const before = await Promise.all((await f.store.list(responseCacheKeys.prefix(f.id))).filter(key => !key.includes(":chunk:")).map(async key => [key, await f.store.get(key)]));
+      release.resolve(); await finished.promise; await settled.promise;
+      await ended.catch(() => {});
+      const after = await Promise.all((await f.store.list(responseCacheKeys.prefix(f.id))).filter(key => !key.includes(":chunk:")).map(async key => [key, await f.store.get(key)]));
+      expect(after).toEqual(before);
+      expect(chunks).toBe(3);
+      await f.connector.listTools(root.contextFor(f.id, BASE, requestScope));
+      expect(f.listings()).toBe(2);
+    } finally { release.resolve(); vi.useRealTimers(); await finished.promise; await settled.promise; await ended.catch(() => {}); await live.catch(() => {}); }
+  });
+
   it.each([
     { ttl: 2_000, expected: 2_000 },
     { ttl: 1, min: 2, max: 4, expected: 2_000 },
@@ -363,30 +545,35 @@ describe("SQL-backed SDK catalog cache", () => {
   });
 
   it("INV-7: bounds teardown while notification invalidation storage is blocked", async () => {
-    const f = await fixture({ ttl: 60_000 });
-    const ctx = f.registry().contextFor(f.id, BASE, {});
-    await f.connector.listTools(ctx);
-    closers.push(() => f.connector.closeScope!(ctx));
+    const store = await storage(); const id = `teardown_${crypto.randomUUID().replaceAll("-", "")}`;
+    const [transport, peer] = InMemoryTransport.createLinkedPair();
+    const server = new Server({ name: "downstream", version: "1" }, { capabilities: { tools: { listChanged: true } } });
+    server.setRequestHandler("tools/list", async () => ({ tools: [], ttlMs: 60_000 }));
+    const connected = server.connect(peer);
+    closers.push(async () => { await connected; await server.close(); });
+    const connector = remoteMcp(id, { url: "https://downstream.test/mcp", _transportFactory: () => transport });
+    const ctx = new Registry([connector], { storage: store, logger: silentLogger }).contextFor(id, BASE, {});
+    await connector.listTools(ctx);
+    closers.push(() => connector.closeScope!(ctx));
     const entered = deferred<void>(); const release = deferred<void>(); const settled = deferred<void>();
-    const set = f.store.set.bind(f.store);
+    const set = store.set.bind(store);
     let writes = 0;
-    vi.spyOn(f.store, "set").mockImplementation(async (key, ...args) => {
-      if (key === responseCacheKeys.generation(f.id)) {
+    vi.spyOn(store, "set").mockImplementation(async (key, ...args) => {
+      if (key === responseCacheKeys.generation(id)) {
         writes++; entered.resolve(); await release.promise;
         try { return await set(key, ...args); } finally { settled.resolve(); }
       }
       return set(key, ...args);
     });
-    // The real notification path is exercised above. Block the same observer's
-    // storage I/O here so teardown's own deadline is the only possible exit.
-    observeCatalogChange(ctx, f.id);
+    const notify = required(transport.onmessage);
+    await server.notification({ method: "notifications/tools/list_changed" });
     await entered.promise;
     vi.useFakeTimers();
-    const closing = f.connector.closeScope!(ctx);
+    const closing = connector.closeScope!(ctx);
     try {
       await vi.advanceTimersByTimeAsync(2_000);
       await closing;
-      observeCatalogChange(ctx, f.id);
+      notify({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
       expect(writes).toBe(1);
     } finally {
       release.resolve(); vi.useRealTimers(); await settled.promise; await closing;

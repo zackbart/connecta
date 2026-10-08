@@ -23,28 +23,32 @@ export function observeCatalogFetch(ctx: ConnectorContext, at: number): void { f
 export function catalogFetchedAt(ctx: ConnectorContext): number | undefined { return fetchedAt.get(ctx); }
 const settings = new WeakMap<ConnectorContext, CatalogCacheSettings>();
 export function attachCatalogCache(ctx: ConnectorContext, value: CatalogCacheSettings): void { settings.set(ctx, value); }
-interface CacheScope { closed: boolean; invalidating?: Promise<void> }
-const scopes = new WeakMap<object, Map<string, CacheScope>>();
-function cacheScope(ctx: ConnectorContext, connectorId: string): CacheScope {
+interface CacheScope { closed: boolean; abort: AbortController; invalidating?: Promise<void> }
+const defaultOwner = {};
+const scopes = new WeakMap<object, Map<string, WeakMap<object, CacheScope>>>();
+function cacheScope(ctx: ConnectorContext, connectorId: string, owner = defaultOwner): CacheScope {
   const key = ctx.requestScope ?? ctx;
   let connectors = scopes.get(key);
   if (!connectors) { connectors = new Map(); scopes.set(key, connectors); }
-  let scope = connectors.get(connectorId);
-  if (!scope) { scope = { closed: false }; connectors.set(connectorId, scope); }
+  let owners = connectors.get(connectorId);
+  if (!owners) { owners = new WeakMap(); connectors.set(connectorId, owners); }
+  let scope = owners.get(owner);
+  if (!scope) { scope = { closed: false, abort: new AbortController() }; owners.set(owner, scope); }
   return scope;
 }
 /** Start the fence before SDK eviction; teardown joins already-started I/O. */
-export function observeCatalogChange(ctx: ConnectorContext, connectorId: string): void {
-  const scope = cacheScope(ctx, connectorId);
-  if (scope.closed || ctx.signal?.aborted) return;
+export function observeCatalogChange(ctx: ConnectorContext, connectorId: string, connectionSignal?: AbortSignal, owner?: object): void {
+  const scope = cacheScope(ctx, connectorId, owner);
+  if (scope.closed || connectionSignal?.aborted) return;
   const writing = invalidateCatalogCache(settings.get(ctx)?.storage ?? ctx.storage, connectorId).catch(error => {
     logFailure(ctx.logger, "catalog invalidation failed", failureRecord({ connector: connectorId }, error));
   });
   scope.invalidating = scope.invalidating ? Promise.all([scope.invalidating, writing]).then(() => {}) : writing;
 }
-export function closeCatalogCacheScope(ctx: ConnectorContext, connectorId: string): Promise<void> | undefined {
-  const scope = cacheScope(ctx, connectorId);
+export function closeCatalogCacheScope(ctx: ConnectorContext, connectorId: string, owner?: object): Promise<void> | undefined {
+  const scope = cacheScope(ctx, connectorId, owner);
   scope.closed = true;
+  scope.abort.abort();
   return scope.invalidating;
 }
 
@@ -114,48 +118,89 @@ interface Manifest {
   fingerprint: string;
 }
 
+interface Listing {
+  ctx: ConnectorContext;
+  generation: { value?: string };
+  ended: boolean;
+}
+interface CacheOperation {
+  ctx: ConnectorContext;
+  generation: Listing["generation"];
+  stopped: () => boolean;
+  io: <T>(read: () => Promise<T>) => Promise<T>;
+}
+
 /** Keys ignore self-reported serverInfo and bind the configured connector instead. */
 export async function catalogClientOptions(
   ctx: ConnectorContext,
   connectorId: string,
   config: string,
   authPartition: string,
-): Promise<Pick<ClientOptions, "responseCacheStore" | "cachePartition" | "defaultCacheTtlMs">> {
+  connectionSignal?: AbortSignal,
+  owner?: object,
+): Promise<Pick<ClientOptions, "responseCacheStore" | "cachePartition" | "defaultCacheTtlMs"> & {
+  withListing: <T>(ctx: ConnectorContext, read: () => Promise<T>) => Promise<T>;
+  currentContext: () => ConnectorContext;
+}> {
   const policy = settings.get(ctx);
   const partition = JSON.stringify([policy?.partition ?? "unscoped", authPartition]);
   const storage = policy?.storage ?? ctx.storage;
   const configHash = (await fingerprintSerializedCatalog(JSON.stringify([config, policy?.defaultTtlMs ?? 300_000, policy?.minTtlMs ?? 0, policy?.maxTtlMs ?? MAX_CACHE_TTL_MS]))).fingerprint;
-  const scope = cacheScope(ctx, connectorId);
+  const scope = cacheScope(ctx, connectorId, owner);
   let unavailable = false;
-  const stopped = () => unavailable || scope.closed || ctx.signal?.aborted === true;
-  let generation: string | undefined;
+  const connectionGeneration: Listing["generation"] = {};
+  let active: Listing | undefined;
+  // ResponseCacheStore has no per-call options. A method snapshots its binding
+  // before any await; an abandoned storage promise never adopts a later listing.
+  const capture = (listing = active): CacheOperation => {
+    const signals = [scope.abort.signal, connectionSignal, listing?.ctx.signal].filter((signal): signal is AbortSignal => signal !== undefined);
+    const ended = () => scope.closed || listing?.ended === true || signals.some(signal => signal.aborted);
+    const reason = () => signals.find(signal => signal.aborted)?.reason ?? new ConnectorCallError("connector_call_failed", "Catalog cache operation ended.");
+    return {
+      ctx: listing?.ctx ?? ctx,
+      generation: listing?.generation ?? { ...connectionGeneration },
+      stopped: () => unavailable || ended(),
+      io: read => new Promise((resolve, reject) => {
+        const cleanup = () => { for (const signal of signals) signal.removeEventListener("abort", abort); };
+        const abort = () => { cleanup(); reject(reason()); };
+        if (ended()) { abort(); return; }
+        for (const signal of signals) signal.addEventListener("abort", abort, { once: true });
+        // Storage cannot cancel dispatched I/O. Stop waiting, but attach both
+        // outcomes so its eventual completion cannot continue cache publication.
+        try { read().then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); }); }
+        catch (error) { cleanup(); reject(error); }
+      }),
+    };
+  };
   let lastStamp = 0;
-  const currentGeneration = async (): Promise<string | undefined> => {
+  const currentGeneration = async ({ stopped, io, generation }: CacheOperation): Promise<string | undefined> => {
     const key = responseCacheKeys.generation(connectorId);
     for (let attempt = 0; attempt < 16; attempt++) {
       if (stopped()) return undefined;
-      const current = await storage.get(key);
+      const current = await io(() => storage.get(key));
       if (stopped()) return undefined;
       if (current) return current;
-      const next = generation ?? crypto.randomUUID();
-      const claimed = await storage.compareAndSet(key, null, next, { ttlSeconds: GENERATION_TTL_SECONDS });
+      const next = generation.value ?? crypto.randomUUID();
+      const claimed = await io(() => storage.compareAndSet(key, null, next, { ttlSeconds: GENERATION_TTL_SECONDS }));
       if (stopped()) return undefined;
       if (claimed) return next;
     }
     throw new Error("Catalog cache generation is busy.");
   };
-  const namespace = async (): Promise<string | undefined> => {
-    const current = await currentGeneration();
+  const namespace = async (operation: CacheOperation): Promise<string | undefined> => {
+    const { stopped, generation } = operation;
+    const current = await currentGeneration(operation);
     if (!current || stopped()) return undefined;
-    generation ??= current;
-    return generation === current ? responseCacheKeys.namespace(connectorId, configHash, generation) : undefined;
+    generation.value ??= current;
+    return generation.value === current ? responseCacheKeys.namespace(connectorId, configHash, generation.value) : undefined;
   };
-  const address = async (key: CacheKey): Promise<string | undefined> => {
+  const address = async (key: CacheKey, operation: CacheOperation): Promise<string | undefined> => {
+    const { stopped } = operation;
     if (stopped() || key.method !== "tools/list" || key.params) return undefined;
     let pair: unknown;
     try { pair = JSON.parse(key.partition ?? ""); } catch { return undefined; }
     if (!Array.isArray(pair) || pair.length !== 2 || (pair[1] !== "" && pair[1] !== partition)) return undefined;
-    const prefix = await namespace();
+    const prefix = await namespace(operation);
     if (!prefix || stopped()) return undefined;
     // Hash the admitted principal/pool/auth partition; no identities or server text in keys.
     const digest = (await fingerprintSerializedCatalog(pair[1])).fingerprint;
@@ -175,20 +220,22 @@ export async function catalogClientOptions(
   };
   const store: ResponseCacheStore = {
     async get(key) {
-      const root = await address(key);
+      const operation = capture();
+      const { ctx, stopped, io } = operation;
+      const root = await address(key, operation);
       if (!root || stopped()) return undefined;
-      const m = manifest(await storage.get(root));
+      const m = manifest(await io(() => storage.get(root)));
       if (stopped() || !m || m.expiresAt <= Date.now()) return undefined;
       const chunks: string[] = [];
       for (let i = 0; i < m.chunkCount; i++) {
         if (stopped()) return undefined;
-        const chunk = await storage.get(responseCacheKeys.chunk(root, m.revision, i));
+        const chunk = await io(() => storage.get(responseCacheKeys.chunk(root, m.revision, i)));
         if (stopped() || chunk === null || new TextEncoder().encode(chunk).byteLength > MAX_CATALOG_CHUNK_BYTES) return undefined;
         chunks.push(chunk);
       }
       const value = chunks.join("");
       const fingerprint = await fingerprintSerializedCatalog(value);
-      if (stopped() || fingerprint.byteLength > MAX_SERIALIZED_CATALOG_BYTES || fingerprint.fingerprint !== m.fingerprint || !await namespace() || stopped()) return undefined;
+      if (stopped() || fingerprint.byteLength > MAX_SERIALIZED_CATALOG_BYTES || fingerprint.fingerprint !== m.fingerprint || !await namespace(operation) || stopped()) return undefined;
       const result = JSON.parse(value) as ListToolsResult;
       if (!Array.isArray(result.tools) || result.tools.length > MAX_CATALOG_TOOLS || "nextCursor" in result ||
         (result.resultType !== undefined && result.resultType !== "complete")) return undefined;
@@ -199,7 +246,9 @@ export async function catalogClientOptions(
       return { value: clean, stamp: m.stamp, expiresAt: m.expiresAt, scope: m.scope };
     },
     async set(key, entry) {
-      const root = await address(key);
+      const operation = capture();
+      const { ctx, stopped, io } = operation;
+      const root = await address(key, operation);
       if (!root || stopped()) return 0;
       const result = JSON.parse(entry.value) as ListToolsResult;
       if (!Array.isArray(result.tools) || "nextCursor" in result ||
@@ -209,7 +258,7 @@ export async function catalogClientOptions(
       const value = JSON.stringify(catalogIntake(ctx, result));
       const fingerprint = await fingerprintSerializedCatalog(value);
       const expiresAt = Math.min(entry.expiresAt ?? Date.now(), (catalogFetchedAt(ctx) ?? Date.now()) + catalogTtlMs(ctx, result.ttlMs));
-      if (stopped() || expiresAt <= Date.now() || !await namespace() || stopped()) return 0;
+      if (stopped() || expiresAt <= Date.now() || !await namespace(operation) || stopped()) return 0;
       const revision = crypto.randomUUID();
       const bytes = new TextEncoder().encode(value);
       const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
@@ -219,39 +268,76 @@ export async function catalogClientOptions(
         if (stopped() || expiresAt <= Date.now()) return 0;
         let end = Math.min(offset + MAX_CATALOG_CHUNK_BYTES, bytes.length);
         while (end < bytes.length && (bytes[end]! & 0xc0) === 0x80) end--;
-        await storage.set(responseCacheKeys.chunk(root, revision, chunkCount++), decoder.decode(bytes.subarray(offset, end)), { ttlSeconds: ttlSeconds() });
+        const chunk = responseCacheKeys.chunk(root, revision, chunkCount++);
+        await io(() => storage.set(chunk, decoder.decode(bytes.subarray(offset, end)), { ttlSeconds: ttlSeconds() }));
         if (stopped()) return 0;
         offset = end;
       }
       for (let attempt = 0; attempt < 16; attempt++) {
-        if (stopped() || expiresAt <= Date.now() || !await namespace() || stopped()) return 0;
-        const previous = await storage.get(root);
+        if (stopped() || expiresAt <= Date.now() || !await namespace(operation) || stopped()) return 0;
+        const previous = await io(() => storage.get(root));
         if (stopped() || expiresAt <= Date.now()) return 0;
         const stamp = Math.max(Date.now(), (manifest(previous)?.stamp ?? 0) + 1, lastStamp + 1);
         const m: Manifest = { stamp, expiresAt, fetchedAt: catalogFetchedAt(ctx) ?? Date.now(), scope: result.cacheScope === "public" ? "public" : "private", revision, chunkCount, fingerprint: fingerprint.fingerprint };
-        const published = await storage.compareAndSet(root, previous, JSON.stringify(m), { ttlSeconds: ttlSeconds() });
+        const published = await io(() => storage.compareAndSet(root, previous, JSON.stringify(m), { ttlSeconds: ttlSeconds() }));
         if (stopped()) return 0;
         if (published) { lastStamp = stamp; return stamp; }
       }
       throw new Error("Catalog cache publication is busy.");
     },
-    async delete(key) { const root = await address(key); if (root && !stopped()) await storage.delete(root); },
+    async delete(key) {
+      const operation = capture();
+      const root = await address(key, operation);
+      if (root && !operation.stopped()) await operation.io(() => storage.delete(root));
+    },
     async evict(method) { if (method === "tools/list") await store.clear(); },
-    async clear() { if (!stopped()) await invalidateCatalogCache(storage, connectorId); },
+    async clear() { const operation = capture(); if (!operation.stopped()) await operation.io(() => invalidateCatalogCache(storage, connectorId)); },
   };
   // Refresh/bypass listings may never call get(). Pin before any wire I/O so
   // their first late publication cannot adopt a post-notification generation.
   // Reading an absent generation pins a nonce without mutating storage before
   // negotiation/auth succeeds. The first cache operation may claim that nonce.
   try {
+    const { stopped, io } = capture({ ctx, generation: connectionGeneration, ended: false });
     if (!stopped()) {
-      const current = await storage.get(responseCacheKeys.generation(connectorId));
-      if (!stopped()) generation = current ?? crypto.randomUUID();
+      const current = await io(() => storage.get(responseCacheKeys.generation(connectorId)));
+      if (!stopped()) connectionGeneration.value = current ?? crypto.randomUUID();
     }
   }
   catch (error) {
     unavailable = true;
     logFailure(ctx.logger, "catalog read failed", failureRecord({ connector: connectorId }, error));
   }
-  return { responseCacheStore: store, cachePartition: partition, defaultCacheTtlMs: policy?.defaultTtlMs ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds * 1000 };
+  let tail = Promise.resolve();
+  const withListing = <T>(listingCtx: ConnectorContext, read: () => Promise<T>): Promise<T> => {
+    const pending = tail.then(async () => {
+      if (scope.closed || connectionSignal?.aborted) throw new ConnectorCallError("connector_call_failed", "Catalog cache scope ended.");
+      if (listingCtx.signal?.aborted) throw listingCtx.signal.reason;
+      if (policy && !settings.has(listingCtx)) settings.set(listingCtx, policy);
+      const listing: Listing = { ctx: listingCtx, generation: {}, ended: false };
+      active = listing;
+      const operation = capture();
+      try {
+        // Each new listing pins before even a refresh's first wire page. A
+        // notification fences this listing, while a later listing can refresh.
+        if (!operation.stopped()) {
+          try {
+            listing.generation.value = await operation.io(() => storage.get(responseCacheKeys.generation(connectorId))) ?? crypto.randomUUID();
+            connectionGeneration.value = listing.generation.value;
+          }
+          catch (error) {
+            if (operation.stopped()) throw error;
+            unavailable = true;
+            logFailure(ctx.logger, "catalog read failed", failureRecord({ connector: connectorId }, error));
+          }
+        }
+        return await read();
+      } finally { listing.ended = true; active = undefined; }
+    });
+    // Keep the binding through the entire SDK method, including its opposite
+    // partition delete even when set() failed. Only then may a sibling bind.
+    tail = pending.then(() => {}, () => {});
+    return pending;
+  };
+  return { responseCacheStore: store, cachePartition: partition, defaultCacheTtlMs: policy?.defaultTtlMs ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds * 1000, withListing, currentContext: () => active?.ctx ?? ctx };
 }

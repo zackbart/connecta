@@ -360,6 +360,8 @@ aggregate TTL and public scope grant. Private partitions include the admitted
 principal, subject, identity, pool, downstream credential digest, and OAuth
 epoch; `authScope: "shared"` does not collapse them. Public entries omit the
 principal partition only when the downstream explicitly declares `public`.
+Each remote connector instance owns its request's cache lifetime separately,
+so closing a temporary client does not end another instance with the same id.
 Only complete, intake-redacted tools/list successes are stored. SDK default
 in-memory caching is replaced, so raw catalogs never enter it.
 
@@ -378,12 +380,20 @@ monotonic stamp. Readers verify all chunks and fingerprint before accepting it.
 Entries expire at the bounded TTL, generations after 48 hours; invalidation
 rotates the generation, and old chunks expire without becoming reachable
 again. Remote clients pin that generation before listing, including SDK cache
-refreshes. A public transport observer starts a generation rotation before
-the SDK processes `notifications/tools/list_changed`; opposite-scope cleanup only deletes
-its entry. Cache I/O checks cancellation and scope teardown at every await
-boundary. Teardown waits a bounded time for generation rotations already
-started. Catalog age remains the original fetch age across process restarts and
-cache hits. `test/catalog-cache.test.ts` runs against real SQLite and D1.
+refreshes. Each new listing pins the current generation, so a live client can
+publish a new catalog after invalidation without letting an older listing
+adopt its generation. A public transport observer starts a generation rotation
+before the SDK processes `notifications/tools/list_changed`; its lifetime is
+the connection's, including after a successful resource read or listing ends.
+Opposite-scope cleanup only deletes its entry. SDK listings serialize per client
+because the cache store has no per-call options. Their operation binding lasts
+through the SDK's cleanup, and each cache method captures that binding before
+awaiting. Cache I/O checks cancellation and scope teardown at every await
+boundary. Cancelled storage waits release the listing without starting more
+I/O when an already-dispatched storage operation settles. Teardown waits a
+bounded time for generation rotations already started. Catalog age remains the
+original fetch age across process restarts and cache hits.
+`test/catalog-cache.test.ts` runs against real SQLite and D1.
 
 Result paging stores each oversized result for 15 minutes, chunked so a page
 reads only what it covers. Its bounds (`results.maxStashBytes`,

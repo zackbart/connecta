@@ -1116,6 +1116,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // A closed scope keeps its (emptied) entry, so a late or future lookup finds
   // it closed rather than recreating an ownerless connection under it.
   const states = new WeakMap<object, ConnectionState>();
+  const cacheOwner = {};
   // A cached transport may dispatch concurrent calls and listings. Register
   // its actual sent auth with every operation using that client, including
   // handshake/discovery requests and OAuth rotations. Remove settled users.
@@ -1555,12 +1556,23 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   /** Wrap the public request seam, before listTools aggregates or auto-caches.
    * SDK 2.3.1 treats an identical repeated page as completion. Refuse it here:
    * an advertised successor is never proof of a complete catalog (INV-8). */
-  const installCatalogIntake = (client: Client, ctx: ConnectorContext): void => {
+  const listingContexts = new WeakMap<RequestOptions, ConnectorContext>();
+  const installCatalogIntake = (client: Client, ctx: ConnectorContext, cache: Awaited<ReturnType<typeof catalogClientOptions>>): void => {
+    const listTools = client.listTools.bind(client);
+    client.listTools = (params, options) => {
+      const { signal: _signal, timeoutMs: _timeout, ...base } = ctx;
+      return cache.withListing(
+        (options && listingContexts.get(options)) ?? { ...base, requestScope: ctx.requestScope ?? ctx,
+          ...(options?.signal ? { signal: options.signal } : {}), ...(options?.timeout ? { timeoutMs: options.timeout } : {}) },
+        () => listTools(params, options),
+      );
+    };
     const request = client.request.bind(client);
     const walks = new WeakMap<object, { names: Set<string>; cursors: Set<string>; barren: number; bytes: number; first?: ReturnType<typeof catalogIntake> }>();
     client.request = (async (...args: unknown[]) => {
       const message = args[0] as { method: string; params?: { cursor?: string } };
       if (message.method !== "tools/list") return Reflect.apply(request, client, args);
+      const ctx = cache.currentContext();
       const options = (args.length === 3 ? args[2] : args[1]) as RequestOptions | undefined;
       if (isClosed(entryFor(ctx))) throw scopeEndedError();
       if (options?.signal?.aborted) throw options.signal.reason;
@@ -2002,13 +2014,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           credentialHeader, credentialScheme, authScope: opts.authScope ?? "shared",
           redirects: opts.redirects ?? "none", versionNegotiation: opts.versionNegotiation ?? "auto",
           oauthConfig, oauthScope,
-        }), JSON.stringify([genAtStart, state.credentialDigest])));
+        }), JSON.stringify([genAtStart, state.credentialDigest]), connectionAbort.signal, cacheOwner));
         if (!owned()) return yield* Effect.fail(scopeEndedError());
         const makeClient = () => {
+          const { withListing: _listing, currentContext: _context, ...clientOptions } = cacheOptions;
           const client = new Client(
             { name: "connecta", version: CONNECTA_VERSION },
             {
-              ...cacheOptions,
+              ...clientOptions,
               listMaxPages: MAX_TOOL_PAGES,
               versionNegotiation: {
                 mode: opts.versionNegotiation ?? "auto",
@@ -2018,7 +2031,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
               inputRequired: { autoFulfill: false },
             },
           );
-          installCatalogIntake(client, ctx);
+          installCatalogIntake(client, ctx, cacheOptions);
           return client;
         };
         let c = makeClient();
@@ -2029,7 +2042,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         }
         state.transport = t;
         held.transport = t;
-        recordWireErrors(t, () => observeCatalogChange(ctx, id));
+        recordWireErrors(t, () => observeCatalogChange(ctx, id, connectionAbort.signal, cacheOwner));
         yield* promised(async () => {
           try {
             await c.connect(t, { signal: handshakeAbort.signal, ...(prior ? { prior } : {}) });
@@ -2045,7 +2058,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             c = makeClient();
             t = buildTransport(ctx, provider, credentialFramed, connectionAbort.signal, credentialValue);
             state.transport = held.transport = t;
-            recordWireErrors(t, () => observeCatalogChange(ctx, id));
+            recordWireErrors(t, () => observeCatalogChange(ctx, id, connectionAbort.signal, cacheOwner));
             await c.connect(t, { signal: handshakeAbort.signal, prior: { kind: "legacy" } });
           }
         }).pipe(
@@ -2269,8 +2282,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const state = stateFor(ctx);
       const client = await ensureConnected(ctx, state);
       let clean: ListToolsResult["tools"];
+      const options = requestOptions(ctx) ?? {};
+      listingContexts.set(options, ctx);
       try {
-        const result = await client.listTools(undefined, requestOptions(ctx) ?? {});
+        const result = await client.listTools(undefined, options);
         clean = redactCatalog(ctx, result.tools);
       } catch (err) {
         if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
@@ -2280,7 +2295,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           if (bounded instanceof UnauthorizedError) throw carryFailureFacts(bounded, authRequiredError());
         }
         throw bounded;
-      }
+      } finally { listingContexts.delete(options); }
       state.toolDefinitions = new Map(clean.map((tool) => [tool.name, tool]));
       return clean.map((t) => ({
         name: t.name,
@@ -2414,7 +2429,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // from here on sees the scope ended. A duplicate teardown finds it
       // closed and has nothing to run.
       const release = Scope.closeUnsafe(state.scope, Exit.void);
-      const cacheClosing = closeCatalogCacheScope(ctx, id);
+      const cacheClosing = closeCatalogCacheScope(ctx, id, cacheOwner);
       // Storage cannot cancel an already-started write. Bound the join in
       // parallel with transport cleanup so it adds no unbounded teardown tail.
       const cacheClosed = cacheClosing && runEdge(Effect.raceAllFirst([

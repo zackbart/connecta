@@ -1192,10 +1192,10 @@ describe("SDK failure facts", () => {
     const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" }, versionNegotiation: "legacy" });
     const context = scope();
     try {
+      const operation = step === "tools/list" ? vi.spyOn(Client.prototype, "listTools") : vi.spyOn(Client.prototype, "callTool");
       await connector.status!(context);
       const original = new UnauthorizedError(`refused ${SECRET}`);
-      if (step === "tools/list") vi.spyOn(Client.prototype, "listTools").mockRejectedValueOnce(original);
-      else vi.spyOn(Client.prototype, "callTool").mockRejectedValueOnce(original);
+      operation.mockRejectedValueOnce(original);
       const error = await (step === "tools/list"
         ? connector.listTools(context) : connector.callTool("read", {}, context)).catch((error: unknown) => error);
       expect(classifyCallError(error)).toMatchObject({ code: "downstream_oauth_required", retryable: false });
