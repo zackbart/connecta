@@ -456,23 +456,6 @@ describe("managed token secret lifetime", () => {
 
 
 describe("operator collection ordering", () => {
-  it("discards an artifact list superseded by a filter change", async () => {
-    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
-    fetchMock.mockResolvedValueOnce(Response.json({ artifacts: [] }));
-    await store.loadArtifacts(true);
-    const old = deferred<Response>();
-    fetchMock.mockReturnValueOnce(old.promise);
-    const first = store.loadArtifacts(true);
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    fetchMock.mockResolvedValueOnce(Response.json({ artifacts: [{ id: "archived" }], nextCursor: "new" }));
-    store.setArtifactArchived(true);
-    await vi.waitFor(() => expect(store.getState().artifactRows).toEqual([{ id: "archived" }]));
-    old.resolve(Response.json({ artifacts: [{ id: "old" }], nextCursor: "old" }));
-    await first;
-    expect(store.getState().artifactArchived).toBe(true);
-    expect(store.getState().artifactRows).toEqual([{ id: "archived" }]);
-    expect(store.getState().artifactCursor).toBe("new");
-  });
 
   it("loads existing tokens and keeps issuance when an earlier list finishes later", async () => {
     const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
@@ -532,21 +515,6 @@ describe("operator collection ordering", () => {
     await listing;
     expect(store.getState().tokens).toEqual([issued, updated, other]);
   });
-
-  it("reloads a confined artifact shell when Clerk changes identity", async () => {
-    const { store, fetchMock, changeSession, window } = await loadStore(
-      { id: "a", getToken: async () => "token-a" }, undefined, "artifact",
-    );
-    window.location.href = `${BASE}/artifacts/probe`;
-    Object.assign(window.location, { pathname: "/artifacts/probe", search: "" });
-    fetchMock.mockResolvedValueOnce(Response.json({ document: "page" }));
-    await store.boot();
-    store.markArtifactFrameConfined();
-    changeSession({ id: "b", getToken: async () => "token-b" });
-    expect(window.location.reload).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(store.getState().artifactView).toBeNull();
-  });
 });
 
 
@@ -585,17 +553,6 @@ describe("operator recovery races", () => {
     old.resolve(Response.json(uiData("older deployment state")));
     await first;
     expect(store.getState().data?.serverInfo.name).toBe("newer deployment state");
-  });
-
-  it("offers retry when the artifact library returns an unreadable successful response", async () => {
-    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
-    fetchMock.mockResolvedValueOnce(new Response("truncated JSON", { status: 200 }));
-    await store.loadArtifacts(true);
-    expect(store.getState()).toMatchObject({ session: "ready", artifactPhase: "error" });
-    expect(store.getState().artifactNotice?.message).toContain("Retry");
-    fetchMock.mockResolvedValueOnce(Response.json({ artifacts: [{ id: "recovered" }] }));
-    await store.retryCollection();
-    expect(store.getState().artifactRows).toEqual([{ id: "recovered" }]);
   });
 });
 

@@ -11,8 +11,7 @@
  *
  * Optional modules are type-checked code switched by the environment: the
  * credential vault by the CREDENTIAL_ENCRYPTION_KEY secret, and activity
- * history and artifact pages by the CONNECTA_ACTIVITY and CONNECTA_ARTIFACTS
- * vars ("on"), both in the same database. README.md § "Select optional
+ * history by the CONNECTA_ACTIVITY var ("on"), in the same database. README.md § "Select optional
  * modules" walks through each.
  *
  * Setup (this example has no package.json of its own — it self-references the
@@ -38,7 +37,6 @@
  */
 import { api, defineConfig, remoteMcp } from "@zackbart/connecta";
 import { activityHistory } from "@zackbart/connecta/activity";
-import { artifacts, kvArtifactStore } from "@zackbart/connecta/artifacts";
 import { accessTokens } from "@zackbart/connecta/auth/access-tokens";
 import { cloudflareAccessAuth } from "@zackbart/connecta/auth/cloudflare-access";
 import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
@@ -59,8 +57,6 @@ export interface Env {
   PUBLIC_URL: string;
   /** "on" switches on activity history, in CONNECTA_DB. */
   CONNECTA_ACTIVITY?: string;
-  /** "on" switches on artifact pages, in CONNECTA_DB. */
-  CONNECTA_ARTIFACTS?: string;
   /**
    * Worker Loader binding (wrangler.jsonc `worker_loaders`) powering
    * execute_code. Dynamic Workers require the Workers Paid plan.
@@ -110,11 +106,6 @@ export default defineConfig((env: Env) => {
       : undefined,
     // Branding is code too: operatorUi({ branding }).
     ui: operatorUi(),
-    // Refreshable pages in the same database. The `scheduled` handler in
-    // src/index.ts runs their refresh once the cron in wrangler.jsonc is on.
-    artifacts: env.CONNECTA_ARTIFACTS === "on"
-      ? artifacts({ store: kvArtifactStore(storage) })
-      : undefined,
     connectors: [
       remoteMcp("notion", {
         url: "https://mcp.notion.com/mcp",

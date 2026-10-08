@@ -1,5 +1,4 @@
 import { Effect } from "effect";
-import { markProgramCall } from "./connector-caller.js";
 import { classifyCallError, ConnectorCallError } from "./errors.js";
 import { InvocationFailure, timed } from "./invocation.js";
 import type { RegistryView } from "./registry.js";
@@ -60,7 +59,6 @@ export function readResource(
       try: () => {
         if (signal.aborted) throw signal.reason;
         const ctx = registry.contextFor(target.connector.id, options.baseUrl, options.requestScope, { signal, timeoutMs: options.timeoutMs });
-        markProgramCall(ctx);
         options.sentSecrets.include(sentSecretsFor(ctx));
         if (target.connector.credential && !ctx.credential) {
           throw new ConnectorCallError("auth_required", "Operator-managed credential storage is not configured.");

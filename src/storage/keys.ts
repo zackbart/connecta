@@ -226,42 +226,6 @@ export const credentialKeys = {
     `${owner ? scopes.principal(owner) : ""}${scopes.connector(connectorId)}credential:v1`,
 } as const satisfies Keyed;
 
-/** Default root of the artifact store's keys. */
-export const ARTIFACT_PREFIX = "artifact:";
-
-/**
- * Artifact pages, under one root (default `artifact:`):
- *
- *   head:<id>                          the one mutable record per artifact
- *   ver:<id>:<stream>:<n, 10 digits>   every version but each stream's latest
- *   blob:<sha256>                      bodies, unless a blob store holds them
- *   run:<id>:<startedAt ms>:<runId>    refresh run history, newest 50
- *   refresh:scan-cursor                the scheduler's resume point
- */
-export const artifactKeys = {
-  family: {
-    name: "artifact",
-    scope: "root",
-    prefixes: [ARTIFACT_PREFIX],
-    version: { number: 1, in: "untagged" },
-    codec: jsonCodec,
-    ttl: { kind: "durable" },
-    durable: true,
-  },
-  under: (root: string) => {
-    validateStorageKey(root);
-    return {
-      head: (id: string) => validateStorageKey(`${root}head:${id}`),
-      versionPrefix: (id: string, stream: string) => validateStorageKey(`${root}ver:${id}:${stream}:`),
-      runPrefix: (id: string) => validateStorageKey(`${root}run:${id}:`),
-      /** One run under `runPrefix(id)`; `order` sorts runs oldest first. */
-      run: (id: string, order: string, runId: string) => validateStorageKey(`${root}run:${id}:${order}:${runId}`),
-      blob: (key: string) => validateStorageKey(`${root}blob:${key}`),
-      scanCursor: `${root}refresh:scan-cursor`,
-    };
-  },
-} as const satisfies Keyed;
-
 /** Seconds a Workers KV → D1 copy's resume point stays usable. */
 export const KV_COPY_CURSOR_TTL_SECONDS = 7 * 24 * 60 * 60;
 
@@ -489,7 +453,6 @@ export const KEY_FAMILIES: readonly KeyFamily[] = [
   oauthHandoffKeys.family,
   accessTokenKeys.family,
   credentialKeys.family,
-  artifactKeys.family,
   oauthGrantKeys.family,
   oauthFlowKeys.family,
   oauthRefreshKeys.family,
@@ -513,8 +476,7 @@ const PARTITION_SCOPE = /^(?:results:|subject:[^:]*:)/;
  * The family a physical key belongs to, for reports that count keys without
  * naming them: one-shot migrations report per family, never per key. A key
  * no family claims is `connector-owned` when a custom connector wrote it
- * through its own `ctx.storage`, and `unclassified` otherwise (an artifact
- * store under a custom root, a key an older release wrote).
+ * through its own `ctx.storage`, and `unclassified` otherwise (a key an older release wrote).
  */
 export function familyOfKey(key: string): string {
   let rest = key.replace(PRINCIPAL_SCOPE, "");

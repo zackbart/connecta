@@ -28,7 +28,6 @@ describe("CI browser paths", () => {
     "src/routes/credentials.ts",
     "src/routes/oauth-management.ts",
     "src/access-tokens.ts",
-    "src/artifacts.ts",
     "test/helpers.ts",
     "test/fixtures/http.ts",
     "src/operator-ui/app/index.tsx",

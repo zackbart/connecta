@@ -4,7 +4,7 @@ breaking: true
 ---
 
 `api()`, `remoteMcp()`, every maintained provider, `operatorUi()`,
-`accessTokens()`, `activityHistory()`, `artifacts()`, `d1ActivityStore()`, and
+`accessTokens()`, `activityHistory()`,  `d1ActivityStore()`, and
 `sqliteActivityStore()` refuse an unknown
 option at construction, naming its path — `api("crm").maxResultByte`,
 `operatorUi().branding.theme.accentColor` — instead of accepting and ignoring

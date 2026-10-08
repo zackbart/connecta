@@ -596,8 +596,7 @@ construction; static `api()` OAuth warns on its first provider operation.
 Connecta's own messages never quote credential values, regardless of length.
 One matcher is cached until the secret set changes, and an empty set skips matching. Redaction runs after
 JSON unwrapping or joining text blocks and on final serialized text and every
-structured string, before result paging, emits, program outputs/errors/logs,
-or artifact writes. See
+structured string, before result paging, emits, and program outputs/errors/logs. See
 [the agent boundary](./architecture.md#errors-and-records).
 
 ## URLs a downstream advertises

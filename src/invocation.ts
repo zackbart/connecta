@@ -1,5 +1,4 @@
 import { hasControlCharacters } from "./tool-name.js";
-import { markProgramCall } from "./connector-caller.js";
 import { surfaceAllowsTool, type PoolTrust } from "./tool-safety.js";
 import { Cause, Effect, Exit, type Scope } from "effect";
 import {
@@ -660,7 +659,6 @@ export class InvocationService {
               this.catalog.requestScope,
               defined({ signal: callSignal, timeoutMs: context.timeoutMs, defer: this.catalog.defer }),
             );
-            if (context.source === "execute_code") markProgramCall(connectorContext);
             trackCredentialReads(connectorContext);
             sentSecrets.include(sentSecretsFor(connectorContext));
             try {

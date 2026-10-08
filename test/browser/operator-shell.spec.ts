@@ -18,7 +18,7 @@ let server: Server;
 let origin: string;
 const fixture: UiData = {
   serverInfo: { name: "Production", version: "1.0" }, connectaVersion: "0.29",
-  activityEnabled: true, artifactsEnabled: true, credentialManagement: "no_slots", oauthManagement: false,
+  activityEnabled: true, credentialManagement: "no_slots", oauthManagement: false,
   connectors: [
     { id: "github", title: "GitHub", description: "Repositories, issues and pull requests", authScope: "shared", status: "ok", toolCount: 18, tools: [] },
     { id: "linear", title: "Linear", description: "Issues, projects and team workflows", authScope: "shared", status: "ok", toolCount: 12, tools: [] },

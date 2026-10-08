@@ -1185,30 +1185,6 @@ test("ignores a failed background read instead of repainting the row", async ({ 
   await expect(crm.locator('[data-problem="connector_unavailable"], [data-fix-prompt]')).toHaveCount(0);
 });
 
-test("keeps loaded artifacts when loading more fails", async ({ page }) => {
-  const row = (id: string) => ({
-    id, title: `Artifact ${id}`, kind: "html", viewVersion: 1,
-    updatedAt: "2026-09-20T18:00:00Z", updatedBy: { label: "Ada" }, archived: false,
-  });
-  await page.route("**/artifacts/_api/list*", (route) =>
-    new URL(route.request().url()).searchParams.has("cursor")
-      ? route.fulfill({ status: 500, json: { error: "db down" } })
-      : route.fulfill({ json: { artifacts: [row("one"), row("two")], nextCursor: "c1" } }),
-  );
-  await page.addInitScript((token) => {
-    localStorage.setItem("connecta:token", token);
-  }, TOKEN);
-  await page.goto(origin + "/artifacts");
-  await expect(page.getByRole("link", { name: "Artifact one" })).toBeVisible();
-
-  await page.getByRole("button", { name: "Load more" }).click();
-  await expect(page.locator("#artifactNotice")).toContainText("The deployment answered with an error.");
-  // What loaded stays, and the button that failed is still there to retry.
-  await expect(page.getByRole("link", { name: "Artifact two" })).toBeVisible();
-  await expect(page.locator("#artifactError")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Load more" })).toBeEnabled();
-});
-
 
 test("creates, shows once, renames and revokes client tokens through real routes", async ({ page }) => {
   const storage = memoryStorage();

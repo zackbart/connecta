@@ -10,7 +10,6 @@ import { ConfigError } from "../src/config-schema.js";
 import { accessTokens } from "../src/access-tokens.js";
 import { activityHistory } from "../src/activity.js";
 import { d1ActivityStore } from "../src/d1.js";
-import { artifacts, kvArtifactStore } from "../src/artifacts.js";
 import { api, remoteMcp } from "../src/index.js";
 import { cloudflare } from "../src/providers/cloudflare/index.js";
 import { docs } from "../src/providers/docs/index.js";
@@ -82,12 +81,6 @@ describe("built-in factory options", () => {
     ["activityHistory()", () => activityHistory(loose({ store: { record() {} }, deploymentID: "prod" })),
       "activityHistory().deploymentID"],
     ["d1ActivityStore()", () => d1ActivityStore(D1, loose({ retentionDay: 30 })), "d1ActivityStore().retentionDay"],
-    ["artifacts() allowlist", () => artifacts(loose({
-      store: kvArtifactStore(memoryStorage()), allowlist: { script: [] },
-    })), "artifacts().allowlist.script"],
-    ["artifacts() limits", () => artifacts(loose({
-      store: kvArtifactStore(memoryStorage()), limits: { document: 1 },
-    })), "artifacts().limits.document"],
   ] as const)("INV-11: refuses an unknown option in %s with its path", (_, build, path) => {
     expect(build).toThrow(`Unknown option: ${path}.`);
   });

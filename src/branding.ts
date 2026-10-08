@@ -200,7 +200,7 @@ export function themeCss(theme: ResolvedTheme): string {
  * off `html[data-scheme]`, so "system" leaves it off and the media query
  * decides.
  */
-export function schemeAttribute(theme: ResolvedTheme): string {
+function schemeAttribute(theme: ResolvedTheme): string {
   return theme.colorScheme === "system"
     ? ""
     : ` data-scheme="${theme.colorScheme}"`;
@@ -246,10 +246,7 @@ export interface PageLayout {
   uiMounted: boolean;
   /**
    * The origin that serves `/favicon.*`, for a page that may be rendered on
-   * another host: root-relative icon hrefs resolve against it. A browser 404
-   * on the artifact host passes `publicUrl`, since that host answers every
-   * non-artifact path, the favicons included, with 404. Omitted, they stay
-   * root-relative.
+   * another host: root-relative icon hrefs resolve against it. Omitted, they stay root-relative.
    */
   iconOrigin?: string | undefined;
   /** Markup after the masthead: the page's `<main>`. */
@@ -371,11 +368,9 @@ function wantsHtml(request: Request): boolean {
 /**
  * The 404 a browser gets for a path nothing serves, and everyone else's plain
  * `Not Found`. The body is built from deployment configuration alone and names
- * no path, so every unserved path — on the main host or an artifact host —
- * answers with the same bytes for the same `Accept`: a 404 must not tell one
+ * no path, so every unserved path answers with the same bytes for the same `Accept`: a 404 must not tell one
  * route from another. The home link appears only when the operator UI is
- * mounted to land on, and points at the public origin so an artifact host's
- * 404 does not link to another 404.
+ * mounted to land on, and points at the configured public origin.
  */
 export function notFoundResponse(
   request: Request,

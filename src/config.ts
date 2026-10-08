@@ -34,7 +34,6 @@ import { assertExecutor } from "./executor-contract.js";
 import type {
   AccessTokensModule,
   ActivityModule,
-  ArtifactsModule,
   OperatorSurface,
 } from "./module-contracts.js";
 import { memoryStorage } from "./storage/memory.js";
@@ -437,26 +436,6 @@ const connectaConfig = {
       }
     },
   }),
-  /**
-   * Optional team pages over stored data, created by artifacts() from
-   * /artifacts. Adds the built-in `artifacts` connector; needs `publicUrl`,
-   * because the links it hands out are shared.
-   */
-  artifacts: opaque<ArtifactsModule>({
-    check: (value) => {
-      const connector = isObject(value) ? value.connector : undefined;
-      if (
-        !hasMethods(value, ["handle"]) ||
-        !isObject(connector) ||
-        connector.id !== "artifacts" ||
-        typeof connector.callTool !== "function"
-      ) {
-        throw new ConfigError(
-          "ConnectaConfig.artifacts must be created with artifacts(...) from @zackbart/connecta/artifacts",
-        );
-      }
-    },
-  }),
   /** Optional managed client tokens, created by accessTokens() from /auth/access-tokens. */
   accessTokens: opaque<AccessTokensModule>({
     check: (value) => {
@@ -471,14 +450,6 @@ const connectaConfig = {
           "ConnectaConfig.accessTokens must be created with accessTokens(storage) from " +
             "@zackbart/connecta/auth/access-tokens; reuse your existing storage to preserve tokens",
         );
-      }
-    },
-  }),
-  /** Optional dedicated HTTPS origin that serves only artifact pages and their library. */
-  artifactOrigin: opaque<string>({
-    check: (value) => {
-      if (typeof value !== "string") {
-        throw new ConfigError("ConnectaConfig.artifactOrigin must be an HTTPS origin");
       }
     },
   }),
@@ -561,8 +532,7 @@ type Parsed = ConfigOutput<typeof connectaConfig>;
 
 /**
  * The configuration a Connecta runs with: validated, every default applied,
- * auth ordered, the artifacts connector appended, and `serverInfo` named and
- * versioned. Built once by createConnecta; nothing downstream re-derives it.
+ * auth ordered, and `serverInfo` named and versioned. Built once by createConnecta; nothing downstream re-derives it.
  */
 export interface ResolvedConfig extends Omit<Parsed, "serverInfo"> {
   /** `serverInfo` with its name and version defaults applied. */
@@ -600,39 +570,6 @@ function assertCoherent(config: Parsed): void {
   if (config.discovery.catalogMinTtlSeconds > config.discovery.catalogMaxTtlSeconds || config.discovery.catalogMaxTtlSeconds > 86_400) {
     throw new ConfigError("ConnectaConfig.discovery requires catalogMinTtlSeconds <= catalogMaxTtlSeconds <= 86400.");
   }
-  if (config.artifacts) {
-    if (config.connectors.some((candidate) => candidate.id === "artifacts")) {
-      throw new ConfigError(
-        'Connector id "artifacts" is reserved by the artifacts module; rename ' +
-          "your connector or drop the artifacts option",
-      );
-    }
-    if (!config.publicUrl) {
-      throw new ConfigError(
-        "ConnectaConfig.artifacts needs publicUrl: artifact links are shared " +
-          "with teammates, so they must name the deployment's own origin, never " +
-          "one taken from a request's Host header",
-      );
-    }
-  }
-  if (config.artifactOrigin !== undefined) {
-    if (!config.artifacts || !config.ui || !config.publicUrl) {
-      throw new ConfigError("ConnectaConfig.artifactOrigin needs artifacts, ui, and publicUrl");
-    }
-    let origin: URL;
-    try {
-      origin = new URL(config.artifactOrigin);
-    } catch {
-      throw new ConfigError("ConnectaConfig.artifactOrigin must be an HTTPS origin");
-    }
-    if (
-      origin.protocol !== "https:" ||
-      origin.toString() !== `${origin.origin}/` ||
-      origin.origin === new URL(config.publicUrl).origin
-    ) {
-      throw new ConfigError("ConnectaConfig.artifactOrigin must be a distinct HTTPS origin");
-    }
-  }
 }
 
 /**
@@ -666,11 +603,6 @@ export function readConfig(config: ConnectaConfig): { input: ConnectaConfig; res
     ...parsed,
     // A managed-token module contributes one more provider, ordered with the rest.
     auth: parsed.accessTokens ? normalizeAuth([parsed.accessTokens.auth, ...parsed.auth]) : parsed.auth,
-    // The artifacts module contributes one prebuilt connector, appended like any
-    // configured one: same catalog, invocation, admission, and activity.
-    connectors: parsed.artifacts
-      ? Object.freeze([...parsed.connectors, parsed.artifacts.connector])
-      : parsed.connectors,
     serverInfo: Object.freeze(info),
   });
   return { input, resolved };

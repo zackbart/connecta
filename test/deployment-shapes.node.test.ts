@@ -137,7 +137,7 @@ describe("deployment shapes", () => {
   });
 
   // Both shapes carry the whole operator feature set — sign-in, vault, access
-  // tokens, activity, artifacts — as type-checked code that the environment
+  // tokens, activity — as type-checked code that the environment
   // switches on (#345). A shape that quietly drops one is a deployment whose
   // operator pages exist for things it cannot do; running the configuration
   // proves each module is wired rather than described.
@@ -162,7 +162,6 @@ describe("deployment shapes", () => {
         accessTokens: { enabled: true },
         vault: { enabled: false },
         activity: { enabled: false },
-        artifacts: { enabled: false },
       });
       expect(quiet.storage).toEqual({ configured: true, kind: "sqlite" });
       await off.close();
@@ -175,7 +174,6 @@ describe("deployment shapes", () => {
           CLERK_SECRET_KEY: "sk_test_template",
           CONNECTA_CREDENTIAL_KEY: VAULT_KEY,
           CONNECTA_ACTIVITY: "on",
-          CONNECTA_ARTIFACTS: "on",
         }),
         logger: "silent",
       });
@@ -190,9 +188,8 @@ describe("deployment shapes", () => {
           deploymentId: "production",
           store: { kind: "sqlite", retentionDays: 90 },
         },
-        artifacts: { enabled: true, renderCheck: false },
       });
-      expect(full.connectors.map((connector) => connector.id)).toEqual(["time", "artifacts"]);
+      expect(full.connectors.map((connector) => connector.id)).toEqual(["time"]);
       await on.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -204,7 +201,6 @@ describe("deployment shapes", () => {
       "CONNECTA_CREDENTIAL_KEY",
       "CONNECTA_DATABASE",
       "CONNECTA_ACTIVITY",
-      "CONNECTA_ARTIFACTS",
     ]) {
       expect(env).toContain(variable);
       // Compose passes every one through, or setting it would work from
@@ -235,19 +231,17 @@ describe("deployment shapes", () => {
       accessTokens: { enabled: true },
       vault: { enabled: false },
       activity: { enabled: false },
-      artifacts: { enabled: false },
     });
     expect(quiet.storage).toEqual({ configured: true, kind: "d1" });
     await off.close();
     const on = createConnecta({
-      ...workerConfig(env({ CREDENTIAL_ENCRYPTION_KEY: VAULT_KEY, CONNECTA_ACTIVITY: "on", CONNECTA_ARTIFACTS: "on" })),
+      ...workerConfig(env({ CREDENTIAL_ENCRYPTION_KEY: VAULT_KEY, CONNECTA_ACTIVITY: "on" })),
       logger: "silent",
     });
     expect(on.describeConfig().modules).toMatchObject({
       accessTokens: { enabled: true },
       vault: { enabled: true },
       activity: { enabled: true, deploymentId: "production", store: { kind: "d1", retentionDays: 90 } },
-      artifacts: { enabled: true },
     });
     await on.close();
     // One D1 database, one Worker Loader, and nothing else: no KV, no second
@@ -260,8 +254,7 @@ describe("deployment shapes", () => {
     expect(wrangler).toContain('"binding": "LOADER"');
     // The vars that switch the modules on stay one uncommented line away.
     expect(readWorker("wrangler.jsonc")).toContain('// "CONNECTA_ACTIVITY": "on",');
-    expect(readWorker("wrangler.jsonc")).toContain('// "CONNECTA_ARTIFACTS": "on",');
-    expect(readdirSync(join(WORKER, "src")).sort()).toEqual(["connecta.config.ts", "index.ts", "r2-artifact-blobs.ts"]);
+    expect(readdirSync(join(WORKER, "src")).sort()).toEqual(["connecta.config.ts", "index.ts"]);
     const workerReadme = readWorker("README.md");
     expect(workerReadme).toContain("## Select optional modules");
     expect(workerReadme).toContain("Connections");

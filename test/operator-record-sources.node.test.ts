@@ -104,9 +104,8 @@ describe("operator log calls", () => {
         problems.push(`src/${name}:${line}: logger method alias ${match[0].slice(0, 80)}`);
       }
     }
-    // Retired catalog refresh/bearer logs and the moved usage guide examples
-    // no longer contribute call sites.
-    expect(calls).toBeGreaterThanOrEqual(38);
+    // Only the remaining core and optional-module logs contribute call sites.
+    expect(calls).toBeGreaterThanOrEqual(36);
     expect(problems).toEqual([]);
   });
 

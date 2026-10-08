@@ -4,17 +4,15 @@ import {
   describeCredentialTestMismatch,
 } from "./credential-rules.js";
 import { Registry } from "./registry.js";
-import { intersectAccess, parseConnectorAccess, POOL_NAME_RE } from "./connector-access.js";
+import { parseConnectorAccess, POOL_NAME_RE } from "./connector-access.js";
 import type { ConnectorAccess, ResolvedPool } from "./connector-access.js";
 import { createFetchHandler } from "./server.js";
-import { createExecuteTool, runClaimMs } from "./execute.js";
 import {
   droppedBrandingUrls,
   droppedThemeTokens,
   droppedUiAuthUrls,
 } from "./branding.js";
 import {
-  executeLimits,
   readConfig,
   type ConnectaConfig,
   type ResolvedConfig,
@@ -30,8 +28,6 @@ import {
 export type {
   AccessTokensModule,
   ActivityModule,
-  ArtifactsModule,
-  ArtifactsModuleDescription,
   OperatorSurface,
 } from "./module-contracts.js";
 export type { CredentialVault, CredentialMetadata } from "./credential-contract.js";
@@ -130,7 +126,7 @@ function warnInsecureConfig(config: ResolvedConfig): void {
   // Any configured connector warrants the open-deployment warning.
   if (
     inboundAuth.length === 0 &&
-    (config.connectors.length > 0 || config.artifacts)
+    config.connectors.length > 0
   ) {
     logger.warn(
       "[connecta] running with no inbound authentication: any caller can " +
@@ -139,22 +135,6 @@ function warnInsecureConfig(config: ResolvedConfig): void {
           ? "Configured credentials and downstream OAuth grants are exposed to those calls. "
           : "") +
         "Configure Clerk, Cloudflare Access on Workers, or accessTokens(storage) to gate access.",
-    );
-  }
-
-  // Artifact pages mount inside the operator UI and open only for an
-  // authenticated viewer; either missing leaves the connector with no page.
-  if (config.artifacts && !config.ui) {
-    logger.warn(
-      "[connecta] artifacts is configured without ui: agents can publish and " +
-        "read artifacts, but there is no viewer, so their links answer 404. " +
-        "Add ui: operatorUi() to serve artifact pages.",
-    );
-  } else if (config.artifacts && inboundAuth.length === 0) {
-    logger.warn(
-      "[connecta] artifacts is configured with no inbound authentication: " +
-        "artifact pages refuse every request, because there is no team to " +
-        "show them to. Configure `auth` to open them.",
     );
   }
 
@@ -316,53 +296,6 @@ export function createConnecta(config: ConnectaConfig): Connecta {
         "implements acquire() and owns its admission pool; configure that " +
         "executor's concurrency and queue options instead.",
     );
-  }
-  if (resolved.artifacts?.bindRefresh) {
-    const sharedIds = registry.listConnectors()
-      .filter((connector) => connector.id !== "artifacts" && connector.authScope !== "personal")
-      .map((connector) => connector.id);
-    const refreshConfig = {
-      ...executeLimits(resolved),
-      defaultToolTimeoutMs: resolved.calls.defaultTimeoutMs ?? resolved.execute.hostCallTimeoutMs,
-      failOnInvocationFailure: true,
-      trust: "read-only" as const,
-    };
-    const identity = resolved.identity;
-    resolved.artifacts.bindRefresh({
-      ...(resolved.ui?.branding ? { branding: resolved.ui.branding } : {}),
-      claimMs: runClaimMs(refreshConfig),
-      execute: async (program, owner, signal, options) => {
-        if (!owner) throw new Error("Refresh owner is missing; reconfigure this program.");
-        let access = parseConnectorAccess(identity.connectorAccess
-          ? await identity.connectorAccess(owner.identity) : "all", { allowReadOnly: true });
-        if (owner.pool) {
-          const pool = pools.get(owner.pool);
-          if (!pool || await pool.grant(owner.identity) !== true) {
-            throw new Error("Refresh owner's pool grant is no longer available.");
-          }
-          access = intersectAccess(access, pool.access);
-        }
-        if (access.connectorIds !== "all" && !access.connectorIds.includes("artifacts")) {
-          throw new Error("Refresh owner no longer has artifact publishing access.");
-        }
-        if (access.toolAccess?.get("artifacts") &&
-          !access.toolAccess.get("artifacts")!.has("set_refresh")) {
-          throw new Error("Refresh owner no longer has refresh configuration access.");
-        }
-        if (access.guardedToolAccess?.get("artifacts")?.has("set_refresh")) {
-          throw new Error("A read-only guarded grant cannot configure refresh.");
-        }
-        access = intersectAccess(access, { connectorIds: sharedIds });
-        if (signal.aborted) throw new Error("Refresh deadline expired before execution.");
-        const view = registry.scoped({ connectorIds: access.connectorIds,
-          ...(access.toolAccess ? { toolAccess: access.toolAccess } : {}),
-          ...(access.guardedToolAccess ? { guardedToolAccess: access.guardedToolAccess } : {}) });
-        const execute = createExecuteTool(view, resolved.publicUrl!, executor, logger, undefined, {
-          ...refreshConfig, waitForAdmission: options?.waitForAdmission,
-        });
-        return execute({ code: program }, { signal });
-      },
-    });
   }
   // Built once, from values construction already validated; never per call.
   const description = describeConfig({

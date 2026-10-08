@@ -1,10 +1,9 @@
 import type { OperatorUiContract } from "../../src/operator-ui/contract.js";
-import type { UiArtifactRow, UiArtifactView, UiData } from "../../src/operator-ui/model.js";
+import type { UiData } from "../../src/operator-ui/model.js";
 import type { UiAccessToken, UiActivityEvent } from "../../src/operator-ui/view.js";
 import type { Connector } from "../../src/types.js";
 import { activityHistory, type ToolCallActivityEvent } from "../../src/activity.js";
 import { accessTokens } from "../../src/access-tokens.js";
-import { artifacts, kvArtifactStore } from "../../src/artifacts.js";
 import { encryptedCredentialVault } from "../../src/credentials.js";
 import { memoryStorage } from "../../src/storage/memory.js";
 import { createTestConnecta } from "../helpers.js";
@@ -23,8 +22,6 @@ export interface OperatorVisualFixture {
   contract: OperatorUiContract;
   data: UiData;
   activity: { events: UiActivityEvent[]; nextCursor?: string };
-  artifacts: { artifacts: UiArtifactRow[]; nextCursor?: string };
-  artifact: UiArtifactView;
   tokens: { accessTokens: UiAccessToken[] };
 }
 
@@ -47,7 +44,7 @@ const events: ToolCallActivityEvent[] = [
   { schemaVersion: 1, id: "legacy", requestId: "", occurredAt: VISUAL_NOW, actor: call.actor, connectorId: "github", toolName: "read", address: "github.read", source: "call_tool", outcome: "success", durationMs: 12, attempts: 1, serverName: "Production", serverVersion: "1" },
 ];
 
-export async function createOperatorVisualFixture(state: VisualState, keepEmptyConnector = false, artifactPage = false): Promise<OperatorVisualFixture> {
+export async function createOperatorVisualFixture(state: VisualState, keepEmptyConnector = false): Promise<OperatorVisualFixture> {
   const empty = state === "empty";
   const restricted = state === "restricted";
   const storage = memoryStorage();
@@ -62,11 +59,11 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
     connectors: empty ? keepEmptyConnector ? [github] : [] : connectors, publicUrl: VISUAL_ORIGIN,
     serverInfo: { name: "Production", version: "1" }, auth: fakeClerkAuth({ token: VISUAL_TOKEN, userId: "alice" }),
     storage, vault: encryptedCredentialVault(storage, "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="), logger: "silent",
-    identity: { connectorAccess: () => empty ? artifactPage ? ["artifacts"] : keepEmptyConnector ? ["github"] : [] : restricted ? ["github.read", "slot"] : "all", activityAccess: () => !restricted,
+    identity: { connectorAccess: () => empty ? keepEmptyConnector ? ["github"] : [] : restricted ? ["github.read", "slot"] : "all", activityAccess: () => !restricted,
       credentialAdministration: () => restricted ? [] : "all", personalConnection: () => restricted ? [] : "all", accessTokenManagement: () => !restricted },
     pools: empty || restricted ? {} : { support: { tools: ["github.read"], trust: "read-only", grant: () => true }, automation: { tools: ["github"], trust: "trusted", grant: () => true } },
     activity: activityHistory({ store: { record() {}, list: async () => ({ events: empty ? [] : events }) } }),
-    artifacts: artifacts({ store: kvArtifactStore(storage) }), accessTokens: accessTokens(storage),
+    accessTokens: accessTokens(storage),
     calls: { maxResultBytes: 1_000_000 },
   });
   try {
@@ -90,13 +87,6 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
     return {
       contract, data,
       activity: { events: empty ? [] : events, ...(empty ? {} : { nextCursor: "older" }) },
-      artifacts: { artifacts: empty ? [] : [
-        { id: "report", title: "Weekly report", kind: "html", viewVersion: 3, updatedAt: VISUAL_NOW, updatedBy: { label: "Alice" }, archived: false, freshness: { state: "current", last: { at: VISUAL_NOW, status: "succeeded" } } },
-        { id: "notes", title: "Release notes", kind: "markdown", viewVersion: 1, updatedAt: VISUAL_NOW, updatedBy: { label: "Bob" }, archived: true, freshness: { state: "stale", last: { at: VISUAL_NOW, status: "failed" } } },
-      ], ...(empty ? {} : { nextCursor: "more" }) },
-      artifact: { id: "report", title: "Weekly report", kind: "html", archived: false, snapshot: false, latestViewVersion: 3,
-        view: { version: 3, at: VISUAL_NOW, by: { label: "Alice" } }, documents: [], url: `${VISUAL_ORIGIN}/artifacts/report`, snapshotUrl: `${VISUAL_ORIGIN}/artifacts/report?v=3`,
-        document: '<!doctype html><html><body style="margin:0;padding:24px;font:16px system-ui;background:#f5f6fa;color:#20222a"><h2>Weekly report</h2><p>42 requests completed this week.</p></body></html>', freshness: { state: "current" } },
       tokens: { accessTokens: empty ? [] : [{ id: "desktop", name: "Claude desktop", tokenPrefix: "cta_fixture", createdAt: VISUAL_NOW }] },
     } satisfies OperatorVisualFixture;
   } finally { await app.close(); }

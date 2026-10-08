@@ -11,7 +11,6 @@
  */
 import { api, defineConfig } from "@zackbart/connecta";
 import { activityHistory } from "@zackbart/connecta/activity";
-import { artifacts, kvArtifactStore } from "@zackbart/connecta/artifacts";
 import { accessTokens } from "@zackbart/connecta/auth/access-tokens";
 import { clerkAuth } from "@zackbart/connecta/auth/clerk";
 import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
@@ -28,7 +27,6 @@ export interface Env {
   CLERK_SECRET_KEY?: string;
   CONNECTA_CREDENTIAL_KEY?: string;
   CONNECTA_ACTIVITY?: string;
-  CONNECTA_ARTIFACTS?: string;
 }
 
 export default defineConfig((env: Env) => {
@@ -59,7 +57,7 @@ export default defineConfig((env: Env) => {
       })
     : undefined;
   // Every piece of state — OAuth grants, sealed credentials, catalogs,
-  // paging, access tokens, activity, artifacts — lives in this one file.
+  // paging, access tokens, activity — lives in this one file.
   const database = openSqlite(set("CONNECTA_DATABASE") ?? "./.connecta.sqlite");
   const storage = sqliteStorage(database);
 
@@ -99,11 +97,6 @@ export default defineConfig((env: Env) => {
       : undefined,
     // The operator UI at /. Branding is code too: operatorUi({ branding }).
     ui: operatorUi(),
-    // Artifact pages and their refresh jobs, in the same database.
-    // src/index.ts runs the hourly timer that refresh needs.
-    artifacts: set("CONNECTA_ARTIFACTS") === "on"
-      ? artifacts({ store: kvArtifactStore(storage) })
-      : undefined,
     connectors: [
       api("time", {
         description: "Time — current timestamp",

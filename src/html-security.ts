@@ -1,10 +1,10 @@
 /** Common headers for HTML, including script-free status and error pages. */
 export function htmlSecurityHeaders(
   initial: HeadersInit,
-  options: { clerkOrigin?: string; frameSelf?: boolean; nonce?: string } = {},
+  options: { clerkOrigin?: string; nonce?: string } = {},
 ): Headers {
   const headers = new Headers(initial);
-  const { clerkOrigin, frameSelf, nonce } = options;
+  const { clerkOrigin, nonce } = options;
   // Clerk's CAPTCHA host is exact and only admitted with a validated loader
   // origin. No wildcard or general HTTPS script permission is needed.
   const scripts = `${nonce ? `'nonce-${nonce}' ` : ""}'self'` +
@@ -15,9 +15,8 @@ export function htmlSecurityHeaders(
       (clerkOrigin
         ? `; connect-src 'self' ${clerkOrigin}; img-src 'self' https://img.clerk.com; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'`
         : "") +
-      (clerkOrigin || frameSelf ? `; frame-src ${frameSelf ? "'self' " : ""}${clerkOrigin ? "https://challenges.cloudflare.com" : ""}`.trimEnd() : ""));
+      (clerkOrigin ? "; frame-src https://challenges.cloudflare.com" : ""));
   }
-  // Sandboxed artifact documents retain their own framing and script policy.
   if (headers.get("Content-Security-Policy")!.includes("frame-ancestors 'none'")) {
     headers.set("X-Frame-Options", "DENY");
   }

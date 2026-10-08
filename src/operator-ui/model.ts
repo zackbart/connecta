@@ -128,48 +128,6 @@ export interface UiData {
    * it with a 404, so the page never enumerates a pool its reader cannot open.
    */
   pools?: string[];
-  /** True when artifact pages are mounted and this identity may open them. */
-  artifactsEnabled?: boolean;
-}
-
-/**
- * One row of the artifact library. Every field is a fact the store keeps or
- * an enum; nothing here is a message, a log line, or a downstream's words.
- */
-export interface UiArtifactRow {
-  id: string;
-  title: string;
-  kind: "html" | "markdown";
-  viewVersion: number;
-  updatedAt: string;
-  updatedBy: { label: string };
-  archived: boolean;
-  freshness?: UiArtifactFreshness;
-}
-
-interface UiArtifactFreshness {
-  state: "unconfigured" | "current" | "stale";
-  schedule?: "manual" | "daily" | "weekly";
-  document?: string;
-  dueAt?: string;
-  last?: { at: string; status: "succeeded" | "unchanged" | "failed" | "superseded" };
-  running?: boolean;
-}
-
-/** The viewer's payload: the page's facts and the one document its frame loads. */
-export interface UiArtifactView {
-  id: string;
-  title: string;
-  kind: "html" | "markdown";
-  archived: boolean;
-  snapshot: boolean;
-  latestViewVersion: number;
-  view: { version: number; at: string; by: { label: string } };
-  documents: { name: string; version: number; updatedAt: string }[];
-  url: string;
-  snapshotUrl: string;
-  document: string;
-  freshness?: UiArtifactFreshness;
 }
 
 export interface FilteredUiConnector {

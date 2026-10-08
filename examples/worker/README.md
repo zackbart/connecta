@@ -17,7 +17,6 @@ migrations, and secrets.
 | --- | --- |
 | `src/index.ts` | the Worker entrypoint — starts the configuration, under 30 lines |
 | `src/connecta.config.ts` | connectors, auth, storage, and optional modules, as `defineConfig((env) => …)` |
-| `src/r2-artifact-blobs.ts` | artifact bodies in an R2 bucket, beside a D1-backed `kvArtifactStore` (optional) |
 | `wrangler.jsonc` | Worker name, vars, bindings, `compatibility_flags` |
 | `scripts/copy-kv-to-d1.mjs`, `kv-to-d1.wrangler.jsonc` | one-shot copy of a 0.28 Workers KV deployment's state into D1, run once and deleted ([Upgrading from 0.28](#upgrading-from-028)) |
 
@@ -136,7 +135,6 @@ export default Alchemy.Stack(
     const database = yield* Cloudflare.D1.Database("ConnectaDB", {
       name: "connecta",
     }).pipe(adopt(true));
-    const blobs = yield* Cloudflare.R2.Bucket("ArtifactBlobs", { name: "connecta-artifacts" }).pipe(adopt(true));
     const access = yield* Cloudflare.Access.Application("ConnectaAccess", {
       type: "self_hosted",
       name: "Connecta",
@@ -154,23 +152,19 @@ export default Alchemy.Stack(
         },
       },
     }).pipe(adopt(true));
-    return { databaseId: database.databaseId, bucketName: blobs.bucketName,
+    return { databaseId: database.databaseId,
       accessId: access.applicationId };
   }),
 );
 ```
 
 Replace the Worker ID and example Access policy before applying this stack.
-Keep only the resources the deployment uses: `CONNECTA_DB` is required and R2
-is optional. Copy the output IDs into the matching `wrangler.jsonc` bindings. Keep `LOADER` in `worker_loaders` and, when
-enabled, the Browser Rendering binding and cron trigger in the Wrangler-owned
-Worker configuration. Configure the main and artifact hostnames as Wrangler
-custom domain `routes` with `custom_domain: true`. The Worker-level Access
-destination covers both hostnames; verify both against the same application
-after domain setup. Continue to set secrets with `wrangler secret put` and to
-deploy the Worker with Wrangler. After its initial `wrangler deploy`, use
-`wrangler versions upload` and `wrangler versions deploy` for code updates;
-apply route and cron changes through Wrangler too.
+`CONNECTA_DB` is required. Copy the database ID into `wrangler.jsonc` and keep
+`LOADER` in `worker_loaders`. Configure the hostname as a Wrangler custom domain
+route with `custom_domain: true`. Verify it against the Worker-level Access
+application, set secrets with `wrangler secret put`, and deploy with Wrangler.
+After the initial `wrangler deploy`, use `wrangler versions upload` and
+`wrangler versions deploy` for code updates.
 
 The `adopt(true)` calls explicitly permit taking over matching existing
 resources; compare their live names, IDs, Access policy, and data before the
@@ -383,7 +377,7 @@ wrapper.
 
 Every piece of connecta state lives in the one D1 database bound as
 `CONNECTA_DB`: downstream OAuth grants, sealed vault credentials, catalogs,
-result paging, OAuth handoffs, access tokens, artifacts, and activity.
+result paging, OAuth handoffs, access tokens, and activity.
 `d1Storage` creates its `connecta_kv` table on first use, and
 `d1ActivityStore` its `tool_call_activity` table, so there is no schema to
 apply. Every compare-and-set is one SQL statement, which D1 serializes on the
@@ -453,8 +447,7 @@ D1 database as `CONNECTA_DB`, keeping its name and id; otherwise create one
 with `wrangler d1 create connecta`. Remove `kv_namespaces` and copied adapters.
 Configuration lives in `src/connecta.config.ts` and
 `src/index.ts` is the entry point. Set the plain var `CONNECTA_ACTIVITY = "on"`
-so preserved activity remains visible. `CONNECTA_ARTIFACTS = "on"` enables
-artifacts if used. Bind only `CONNECTA_DB` and `LOADER` for storage/execution;
+so preserved activity remains visible. Bind only `CONNECTA_DB` and `LOADER` for storage/execution;
 keep existing auth vars and the credential secret.
 Fill in the copy config's namespace id and the same D1 database name/id,
 then `wrangler login` and check the prepared deployment with a dry run.
@@ -515,48 +508,6 @@ On failure, use the error's replacement token or restart under maintenance.
 Call `markKvToD1Live(db, namespaceId)` before reopening traffic, and remove the
 route and KV binding. The source stability check is the operator's duty when
 using the API directly. Remote bindings remain unverified until deploy day.
-
-## Artifacts (optional)
-
-`artifacts()` from `@zackbart/connecta/artifacts` adds the built-in `artifacts`
-connector: team pages whose data lives in versioned JSON documents. Every write
-commits by compare-and-set against the same D1 storage. Artifacts share the
-`connecta_kv` table and need no schema of their own. Bodies (page sources and documents) can stay in D1 rows,
-which the default limits keep well under D1's row size, or go to R2 with
-`src/r2-artifact-blobs.ts`:
-
-```ts
-import { artifacts, kvArtifactStore } from "@zackbart/connecta/artifacts";
-import { r2ArtifactBlobs } from "./r2-artifact-blobs.js";
-
-createConnecta({
-  // …
-  publicUrl: env.PUBLIC_URL, // required: artifact links are shared
-  artifacts: artifacts({
-    store: kvArtifactStore(storage, {
-      blobs: r2ArtifactBlobs(env.ARTIFACTS_BUCKET), // optional
-    }),
-  }),
-});
-```
-
-For R2, create the bucket (`wrangler r2 bucket create connecta-artifacts`) and
-add `"r2_buckets": [{ "binding": "ARTIFACTS_BUCKET", "bucket_name":
-"connecta-artifacts" }]` to `wrangler.jsonc` and `ARTIFACTS_BUCKET: R2Bucket`
-to `Env`. Nothing ever deletes a body: versions are immutable, a rollback
-points back at an old one, and a body written by a write that lost a conflict
-stays stored unreferenced.
-
-Setting the `CONNECTA_ARTIFACTS` var to `"on"` switches the module on in
-`src/connecta.config.ts`, and the `scheduled` handler in `src/index.ts` calls
-its `runDue()`. To refresh pages,
-uncomment the hourly cron in `wrangler.jsonc`. An hourly tick starts at most
-10 due pages; each page's `manual`, `daily`, or `weekly` schedule lives in its
-versioned refresh configuration. Refresh programs use only shared connectors'
-explicitly read-only tools within the program owner's current grants. Revoking
-refresh or pool access stops future runs. D1's compare-and-set prevents two cron invocations
-from claiming the same page. Failed runs keep the last good data and show a
-stale banner without exposing downstream error text to readers.
 
 ## Activity history (optional)
 

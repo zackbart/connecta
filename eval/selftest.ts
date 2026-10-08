@@ -93,7 +93,6 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<{ cor
         },
       });
     }
-    if (deployment.artifacts) world.artifacts = await deployment.artifacts.snapshot();
     world.programs = deployment.programs;
     const trace = emptyTrace(toolUses, finalAnswer, transcript);
     trace.urlElicitations = parseTrace(hostEvents, [], []).urlElicitations ?? [];
@@ -122,7 +121,7 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<{ cor
       ...(typeof use.input.address === "string" ? { address: use.input.address.replace(/^[^.]+/, "wrong_destination") } : {}),
       ...(typeof use.input.connector === "string" ? { connector: "wrong_destination" } : {}),
       ...(typeof use.input.query === "string" ? { query: "wrong_destination" } : {}),
-      ...(typeof use.input.code === "string" ? { code: use.input.code.replace(/tracker|ci|assets|oauth|mixpanel|supabase|revenuecat|artifacts|github/gi, "wrong_destination") } : {}),
+      ...(typeof use.input.code === "string" ? { code: use.input.code.replace(/tracker|ci|assets|oauth|mixpanel|supabase|revenuecat|github/gi, "wrong_destination") } : {}),
     } }));
     const wrongDestination = task.grade({ world, trace: { ...trace, toolUses: wrongUses } });
     return { correct, missingEvidence, wrongDestination, regressions, positives };

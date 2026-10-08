@@ -79,7 +79,7 @@ open, so the container's health probe never carries the bearer token.
 Every piece of state lives in one SQLite file, `CONNECTA_DATABASE`
 (`./.connecta.sqlite` locally, `/data/connecta.sqlite` in the container):
 downstream OAuth grants, sealed vault credentials, catalogs, result paging,
-access tokens, artifacts, and activity. `@zackbart/connecta/sqlite` uses
+access tokens and activity. `@zackbart/connecta/sqlite` uses
 Node's built-in `node:sqlite` (Node 22.13 or later), creates its tables on
 first use, and commits one row per write. Back it up as one file, together
 with its `-wal` file while the server runs. Node 22 and 23 print an
@@ -111,14 +111,6 @@ Every optional module is code in `src/connecta.config.ts`, switched by an
 environment variable: set it and the module is on, leave it empty and it is
 off. `.env.example` lists each one, and `npm run typecheck` checks every module
 whether or not it is switched on.
-
-For scheduled artifact pages, set `CONNECTA_ARTIFACTS=on`. The module uses the
-same SQLite storage, and `src/index.ts` runs its hourly `runDue()` timer; core
-starts no job on its own.
-Each tick starts at most 10 due pages. Refresh programs can call only shared
-connectors' explicitly read-only tools within the program owner's current
-grants. Revoking refresh or pool access stops future runs. Failed runs leave the last good data
-and mark the viewer stale.
 
 The template explicitly enables `ui: operatorUi()` from
 `@zackbart/connecta/ui`. Open `http://localhost:8787/` and supply a

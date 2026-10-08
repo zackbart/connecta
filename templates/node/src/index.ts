@@ -12,12 +12,3 @@ const port = Number(process.env.PORT || 8787);
 
 listen(connecta, port);
 console.log(`connecta listening on port ${port}; MCP at ${config.publicUrl}/mcp`);
-
-// The deployment owns the artifact refresh timer; core starts no background
-// work. Each tick starts at most 10 due pages.
-const artifacts = config.artifacts;
-if (artifacts?.runDue) {
-  setInterval(() => {
-    void artifacts.runDue!().catch((error) => console.error("artifact refresh failed", error));
-  }, 60 * 60 * 1000).unref();
-}

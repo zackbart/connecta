@@ -473,7 +473,7 @@ export interface Connector {
    * and its static tools. Never a probe and never a secret: header names but
    * no values, a credential slot's labels but never its contents, an
    * endpoint's origin and path but no query or userinfo. `remoteMcp()`,
-   * `api()`, the maintained providers, and the artifacts connector implement
+   * `api()` and the maintained providers implement
    * it; a custom connector without it is described as `{ source: { kind:
    * "custom" } }`. Core copies only the fields named in
    * `ConnectorDescription`, so anything else returned is dropped.
@@ -613,7 +613,7 @@ export interface ConnectorDescription {
   /** Construction-time presence for described fields, keyed by relative dot path. Never option values. */
   optionSources?: Readonly<Record<string, "default" | "config">>;
   source: {
-    kind: "remote-mcp" | "api" | "builtin" | "custom";
+    kind: "remote-mcp" | "api" | "custom";
     /** The maintained provider or built-in module that built the connector. */
     provider?: string;
   };

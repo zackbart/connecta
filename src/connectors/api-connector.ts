@@ -310,9 +310,8 @@ export interface ApiOAuthHooks {
 /**
  * A static connector; every tool passes {@link checkToolContract} first.
  *
- * The builder behind `api()`, without the downstream OAuth machinery: a
- * module that only ever builds credential-free connectors (the artifacts
- * connector) imports this and pays nothing for a grant it cannot declare.
+ * The builder behind `api()`, without the downstream OAuth machinery: credential-free
+ * providers import this without paying for a grant they cannot declare.
  */
 export function apiConnector(
   id: string,

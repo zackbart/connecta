@@ -396,23 +396,6 @@ export function validateAuthPermissions(
   }
 }
 
-/**
- * Whether this identity may open artifact pages: exactly whoever may read the
- * `artifacts` connector — it is visible to them and `get_artifact` is among
- * its tools they were granted. Viewing grants nothing a program could not
- * already read (PRINCIPLES.md, INV-4).
- */
-export function mayViewArtifacts(authz: AuthorizedIdentity, registry: Registry): boolean {
-  if (authz.connectorIds !== "all" && !authz.connectorIds.includes("artifacts")) {
-    return false;
-  }
-  const tools = authz.toolAccess?.get("artifacts");
-  if (tools && !tools.has("get_artifact")) return false;
-  if (!authz.guardedToolAccess?.get("artifacts")?.has("get_artifact")) return true;
-  return registry.describeStaticTools("artifacts")?.some((tool) =>
-    tool.name === "get_artifact" && tool.classification === "read") === true;
-}
-
 export function mayManageConnector(
   authz: AuthorizedIdentity,
   connector: { id: string; authScope?: "shared" | "personal" },

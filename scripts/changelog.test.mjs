@@ -256,13 +256,13 @@ test("check:fast keeps a failing Vitest run's summary and bounds other output", 
 
 test("check:fast keeps deleted fixtures and both sides of staged and committed renames", () => {
   fixture(({ root, git, commit }) => {
-    const old = "test/fixtures/artifacts-d1-r2/wrangler.jsonc";
-    const renamed = "test/fixtures/artifacts-d1-r2/renamed.jsonc";
-    mkdirSync(join(root, "test/fixtures/artifacts-d1-r2"), { recursive: true });
+    const old = "test/fixtures/storage-fixture/wrangler.jsonc";
+    const renamed = "test/fixtures/storage-fixture/renamed.jsonc";
+    mkdirSync(join(root, "test/fixtures/storage-fixture"), { recursive: true });
     writeFileSync(join(root, old), "{}\n");
     commit();
     const base = git("rev-parse", "HEAD").trim();
-    const suites = [{ file: "test/artifact-store-d1.node.test.ts", text: 'new URL("./fixtures/artifacts-d1-r2/wrangler.jsonc", import.meta.url)' }];
+    const suites = [{ file: "test/storage-fixture.node.test.ts", text: 'new URL("./fixtures/storage-fixture/wrangler.jsonc", import.meta.url)' }];
     rmSync(join(root, old));
     assert.deepEqual(changedPaths("HEAD", root), [old]);
     const selection = relatedInputs({ changed: changedPaths("HEAD", root), deleted: [old], suites });

@@ -3,11 +3,10 @@
     "Gzip-9 bytes of each Web-facing entry as scripts/bundle-size.mjs bundles it. baselineGzip is the P1-S19 measurement at 0.25.0, with the Effect core in place; main before the conversion (4f536a8) was 235,346 B at the root and 263,949 B for the Worker example.",
     "Caps: every entry gets baseline + 60,000 B. The conversion-era allowances are retired: the root's flat 386,000 B cap covered a rewrite that is finished, and the +160 KB held for HttpApi in ./ui, ./activity and the Worker example was never spent, because P1-S18 measured HttpApi and did not use it.",
     "A cap moves only in a change that says why. Raising one to make a check pass is the failure this file exists to catch.",
-    "./artifacts is measured where it was introduced (#562): the store, the hand-written HTML tokenizer, the Markdown renderer, and validation, with no Effect and no dependency. The connector, guide, and page routes that follow it spend from the same baseline + 60,000 B allowance.",
     "./auth/access-tokens starts at 4,222 B gzip in #619. Its legacy record verifier and operator lifecycle use no runtime dependency; the cap uses the existing baseline + 60,000 B policy.",
     "./worker starts at 35500 B gzip (#704): bounded admission plus request-owned loader/RPC handle disposal around the optional upstream DynamicWorkerExecutor. The peer stays external; the cap uses the existing baseline + 60,000 B policy.",
     "./d1 starts at 2,542 B gzip (#705): the shared SQL key-value and activity store (src/storage/sql.ts) behind a structural D1 driver, with no Effect, no MCP SDK, and no dependency. The cap uses the existing baseline + 60,000 B policy. ./sqlite is its Node-only twin over node:sqlite and is reported, not capped.",
-    "examples/worker is remeasured at 395,375 B gzip (#705 item 4): the example now compiles its optional modules — activity history, artifact pages with their store and renderers — as type-checked code switched on by its environment, over the D1 store from @zackbart/connecta/d1, where before they were comments outside the bundle. On main (97f25a9, after #722) the same example measured 360,549 B on the same machine. The cap uses the existing baseline + 60,000 B policy.",
+    "examples/worker is remeasured at 395,375 B gzip (#705 item 4): the example now compiles its optional modules — activity history — as type-checked code switched on by its environment, over the D1 store from @zackbart/connecta/d1, where before they were comments outside the bundle. On main (97f25a9, after #722) the same example measured 360,549 B on the same machine. The cap uses the existing baseline + 60,000 B policy.",
     "Phase 4 item 1 (#708) replaces Preact with production React, Radix, TanStack Router/Query/Table and cmdk, plus Tailwind v4 and locally hosted Inter. Assets measure 650.4 KB minified/raw and 218,702 B gzip summed per HTTP payload, including the font and license notices. The ./ui server entry embeds this portable asset manifest for Node and Workers (272,943 B gzip); the Worker example remeasures at 586,559 B. Each gzip cap retains baseline + 60,000 B; assets also cap raw bytes at 700,000 B. This is a deliberate stack migration: small uncached HTML responses now refer to reusable immutable assets rather than repeating inline browser code. React and all browser libraries remain build dependencies, outside the root import graph.",
     "Phase 2 item 2 (#706, PR #739) remeasures the typed guest API: root 339,882 B gzip, ./worker 74,666 B, and examples/worker 649,045 B. Acorn is the Worker import router's parser and also checks that a guest program is one expression before splicing; syntax-aware parsing prevents imports from reaching private runner modules. The named ESM parse import is already used, and Acorn exports no smaller parse-only entry. Esbuild attribution confirms Acorn is absent from the root graph; root growth over main is the typed guest outcomes, diagnostics, and runtime hardening. These entries use the measured baseline + 60,000 B policy.",
     "./providers/basecamp starts at 131,228 B gzip, measured where it was introduced: a remoteMcp() wrapper like ./providers/revenuecat, so the same shape and the same baseline + 60,000 B policy.",
@@ -135,10 +134,6 @@
     "./activity": {
       "baselineGzip": 35698,
       "maxGzip": 95698
-    },
-    "./artifacts": {
-      "baselineGzip": 11247,
-      "maxGzip": 71247
     },
     "examples/worker": {
       "baselineGzip": 649045,

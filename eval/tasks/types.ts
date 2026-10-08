@@ -6,8 +6,6 @@
  * operator action), an approval policy, and a grader over the fakes' final
  * state and call ledger. Later phases add tasks, not harness code:
  *
- * - P2 (artifacts) needs only new graders over state the deployment adapter
- *   exposes, and `deployment` options to switch the artifacts slot on.
  * - `approvals.deny` (a host that refuses a tool), `faults` (an
  *   unknown-outcome write), follow-ups that wait or act between turns, and
  *   `deployment` options for any config key all exist today. The P3 tasks
