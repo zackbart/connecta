@@ -435,12 +435,17 @@ start hands out a consent its callback could not complete. The callback finds
 its consent by the state's digest, one read whether or not it exists. The
 exchange then:
 
-1. binds to the consent's epoch, noting the client and tokens the grant holds;
+1. binds to the consent's epoch and its issuer, client ID, token endpoint, and
+   discovery digest, noting the client and tokens the grant holds. A supplied
+   RFC 9207 `iss` must equal the consent's issuer;
 2. after every read it depends on, claims the consent by compare-and-set from
    the exact record found to a claimed one keeping neither URL nor verifier.
    Of duplicate callbacks exactly one wins; the rest send nothing and get the
    flat 400 for an already-used link;
-3. reads the live epoch and sends the code in the reaction to that read. A
+3. after the claim, opens the current grant and checks its issuer, client ID,
+   token endpoint, and discovery against the consent. It re-reads that exact
+   record after opening ciphertext and sends the code in the reaction to that
+   read. Changing issuers advances the epoch as well. A
    reset published before the read fails the callback with nothing sent. One
    published while the request is leaving cannot be ordered before the send
    without a lock across requests; the grant's compare-and-set refuses its
@@ -453,7 +458,16 @@ flow wrote meanwhile. Consumption is recorded on that consent alone, so a
 delayed duplicate never deletes or invalidates a newer consent Continue
 published. An exchange no callback verified claims only the consent its
 callback's `state` names: programmatic `finishAuth`, or a PKCE-less `api()`
-exchange. Without a state it claims nothing.
+exchange. Both built-in `finishAuth` adapters require `callbackParams` with a
+nonempty `state`, even with PKCE disabled or after a separate `verifyState` call.
+A missing state is refused before discovery, registration, or token dispatch.
+
+Layout-2 migration commits `cleanupPending` in the new grant before deleting
+historical keys. Every later grant read retries deletion, then clears the
+marker by CAS only when deletion succeeds. Restart preserves this obligation.
+Disconnect commits a tombstone with the marker and always removes historical
+keys for the connector and owner, including when a modern grant already exists.
+A crash during cleanup cannot restore the disconnected grant.
 
 ## Refresh failures
 
@@ -465,12 +479,24 @@ Refresh classification uses the token endpoint's answer, not the SDK's parsing:
 | Outage: 5xx, 408, 425, 429, network failure, or 2xx without a token response | Retryable `unavailable`, or `rate_limited` for 429, with `retryAfterMs` from `Retry-After` when present. Keep the grant; passive calls write no consent URL. |
 | Valid refresh that cannot be stored | Retryable `unavailable` with fixed text; leave the stored grant untouched. |
 
-Refreshes coalesce per owner and epoch within a runtime. The first request
+Refreshes coalesce per owner and epoch within a runtime. Across isolates, a
+shared-storage lease at `oauth:refresh:<epoch>:<sha256(refresh_token)>` is
+claimed by CAS before dispatch. The connector and owner namespace partitions
+the key. It expires after 30 seconds. Contenders wait at most 35 seconds with
+10 ms to 250 ms backoff, reading the committed tokens or typed verdict; they
+never redeem while another holder owns the lease. The first request
 redeems and stores an accepted rotation by compare-and-set before releasing
 anyone, even if it was cancelled after the answer or the SDK redirects instead
 of saving; later requests join its outcome. A request whose read predates a
 stored refresh is handed that refresh instead of redeeming again. Across
-isolates the compare-and-set keeps a stale rotation from replacing a newer one.
+isolates the lease also prevents concurrent redemption, and the grant
+compare-and-set keeps a stale rotation from replacing a newer one. The holder
+releases by CAS after committing; a brief completion record hands waiting
+isolates the outcome even when the token response is byte-identical. A later
+request may claim a fresh attempt. Verdict records contain fixed typed facts,
+never tokens or downstream text. Lease expiry recovers a crashed holder. If
+the holder crashes after the provider rotated but before storage commits,
+connecta cannot recover that response; the next refusal requires re-consent.
 All in-flight joiners get the same verdict even if the sender is cancelled
 after the answer; newcomers join a refusal instead of resending its token. The
 SDK's parse failures and `server_error` otherwise fall through to consent;

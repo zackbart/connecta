@@ -326,6 +326,23 @@ export const oauthFlowKeys = {
   flow: (stateDigest: string) => validateStorageKey(`oauth:flow:${stateDigest}`),
 } as const satisfies Keyed;
 
+/** Shared refresh redemption claims, bounded so a crashed isolate recovers. */
+export const OAUTH_REFRESH_LEASE_SECONDS = 30;
+export const oauthRefreshKeys = {
+  family: {
+    name: "oauth-refresh",
+    scope: "connector",
+    prefixes: ["oauth:refresh:"],
+    version: { number: 1, in: "value" },
+    codec: jsonCodec,
+    ttl: { kind: "fixed", seconds: OAUTH_REFRESH_LEASE_SECONDS },
+    durable: false,
+  },
+  prefix: "oauth:refresh:",
+  lease: (epoch: string, tokenDigest: string) =>
+    validateStorageKey(`oauth:refresh:${epoch}:${tokenDigest}`),
+} as const satisfies Keyed;
+
 /** The values layout 2 stored, each under its historical key. */
 const oauthV2Field = {
   client: "oauth:client",
@@ -399,6 +416,7 @@ export const KEY_FAMILIES: readonly KeyFamily[] = [
   artifactKeys.family,
   oauthGrantKeys.family,
   oauthFlowKeys.family,
+  oauthRefreshKeys.family,
   oauthV2Keys.family,
   oauthConnectKeys.family,
   kvCopyKeys.family,

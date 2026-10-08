@@ -87,8 +87,11 @@ const epochOf = async (storage: KVStorage) => (await storedGrant(storage))?.epoc
 async function seedConsent(storage: KVStorage, url: string, state = "seeded-state"): Promise<string> {
   const provider = new KvOAuthProvider("svc", storage, REDIRECT);
   await provider.beginFlow();
-  await provider.saveCodeVerifier("verifier-123");
   const consent = new URL(url);
+  if (!(await provider.clientInformation())) {
+    await provider.saveClientInformation({ client_id: consent.searchParams.get("client_id") ?? "client-1" }, { issuer });
+  }
+  await provider.saveCodeVerifier("verifier-123");
   consent.searchParams.set("state", state);
   await provider.redirectToAuthorization(consent);
   return consent.href;
@@ -1042,9 +1045,8 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
     }
     expect(toForeign.map(({ url }) => url)).not.toContain(`${foreign}/token`);
     expect(classifyCallError(error).code).toBe("auth_required");
-    // No epoch changes hands: the grant belongs to one server, so the foreign
-    // server's discovery replaced the trusted server's grant where it was saved.
-    expect(await epochOf(storage)).toBe(grant.epoch);
+    // Replacing the issuer advances the epoch and fences its older consents.
+    expect(await epochOf(storage)).not.toBe(grant.epoch);
     expect((await storedGrant(storage))?.body?.issuer).toBe(foreign);
     expect((await everyStoredValue(storage)).filter((value) => /trusted-(refresh|access|secret)/.test(value ?? ""))).toEqual([]);
   });
@@ -1410,8 +1412,9 @@ describe("remoteMcp() finishAuth", () => {
       },
     });
 
-    // A programmatic exchange with no state claims no consent.
-    const callbackParams = new URLSearchParams({ code: "code123", iss: issuer });
+    // A programmatic exchange claims the consent named by its state.
+    await seedConsent(storage, `${issuer}/authorize?client_id=client-1`, "callback-state");
+    const callbackParams = new URLSearchParams({ code: "code123", state: "callback-state" });
     await connector.finishAuth!("code123", c, callbackParams);
 
     expect(finishAuth).toHaveBeenCalledWith(callbackParams);
@@ -2400,9 +2403,9 @@ describe("remoteMcp() dead and transient refresh grants", () => {
     const calls = Promise.all(scopes.map((s) => failureOf(c.listTools(s))));
     await gate.ready;
     // The owner reads the grant perCaller times before its token request; a
-    // follower that finds the flight already standing joins one read sooner.
+    // follower joins before the owner's three shared-lease grant reads.
     // Release once every caller has read and the reads have gone quiet.
-    await vi.waitFor(() => expect(grantReads).toBeGreaterThanOrEqual(3 * perCaller - 2));
+    await vi.waitFor(() => expect(grantReads).toBeGreaterThanOrEqual(3 * perCaller - 6));
     await vi.waitFor(async () => {
       const seen = grantReads;
       await new Promise((resolve) => setTimeout(resolve, 5));

@@ -291,10 +291,11 @@ export interface ApiOAuthHooks {
   ): Promise<ConnectorStatus>;
   disconnectAuth(ctx: ConnectorContext): Promise<void>;
   verifyState(state: string | null, ctx: ConnectorContext): Promise<boolean>;
+  /** Requires callbackParams with a nonempty state, including without PKCE. */
   finishAuth(
     code: string,
     ctx: ConnectorContext,
-    callbackParams?: URLSearchParams,
+    callbackParams: URLSearchParams,
   ): Promise<void>;
   /** The handler-facing accessor for one call's context. */
   access(ctx: ConnectorContext): ApiOAuthAccess;

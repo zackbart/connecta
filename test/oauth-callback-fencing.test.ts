@@ -633,8 +633,8 @@ describe("a completed exchange and a newer consent's records", () => {
     await writer.saveCodeVerifier("theirs");
     await writer.redirectToAuthorization(new URL(`https://auth.example/authorize?state=${state}`));
     const stranger = new KvOAuthProvider("svc", storage, REDIRECT);
-    await stranger.bindFlow();
-    expect(await stranger.claimCodeExchange()).toBeUndefined();
+    await expect(stranger.bindFlow()).rejects.toThrow(/authorization changed/);
+    await expect(stranger.claimCodeExchange()).rejects.toThrow(/authorization changed/);
     await stranger.invalidateCredentials("all");
     const owner = new KvOAuthProvider("svc", storage, REDIRECT);
     expect(await owner.verifyState(state)).toBe(true);

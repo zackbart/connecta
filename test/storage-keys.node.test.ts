@@ -16,6 +16,7 @@ import {
   oauthConnectKeys,
   oauthFlowKeys,
   oauthGrantKeys,
+  oauthRefreshKeys,
   oauthHandoffKeys,
   oauthV2Keys,
   resultKeys,
@@ -86,6 +87,7 @@ describe("storage key families", () => {
     within(oauthGrantKeys.family, oauthGrantKeys.grant);
     within(oauthFlowKeys.family, oauthFlowKeys.flow("digest"));
     within(oauthFlowKeys.family, oauthFlowKeys.prefix);
+    within(oauthRefreshKeys.family, oauthRefreshKeys.lease("epoch", "digest"));
     within(oauthV2Keys.family, oauthV2Keys.generation);
     within(oauthV2Keys.family, oauthV2Keys.value(oauthV2Keys.field.tokens, "v2:epoch"));
     within(oauthV2Keys.family, oauthV2Keys.value(oauthV2Keys.field.tokens, null));
@@ -120,11 +122,14 @@ describe("storage key families", () => {
       [credentialKeys.credential("svc", "ab12"), "credential"],
       [artifact.head("a"), "artifact"],
       [artifact.run("a", "0", "r"), "artifact"],
-      [connector(oauthKeys.value(oauthKeys.field.tokens, null)), "oauth"],
-      [connector(oauthKeys.value(oauthKeys.field.client, "v2:epoch")), "oauth"],
-      [personal(connector(oauthKeys.generation)), "oauth"],
-      [connector(oauthKeys.cleanup("v2:epoch")), "oauth"],
-      [connector(oauthKeys.cleanupAt("v2:epoch")), "oauth"],
+      [connector(oauthV2Keys.value(oauthV2Keys.field.tokens, null)), "oauth-v2"],
+      [connector(oauthV2Keys.value(oauthV2Keys.field.client, "v2:epoch")), "oauth-v2"],
+      [personal(connector(oauthV2Keys.generation)), "oauth-v2"],
+      [connector("oauth:cleanup:v2:epoch"), "oauth-v2"],
+      [connector("oauth:cleanup-at:v2:epoch"), "oauth-v2"],
+      [connector(oauthGrantKeys.grant), "oauth-grant"],
+      [personal(connector(oauthFlowKeys.flow("digest"))), "oauth-flow"],
+      [connector(oauthRefreshKeys.lease("epoch", "digest")), "oauth-refresh"],
       [connector(oauthConnectKeys.used("nonce")), "oauth-connect"],
       [kvCopyKeys.cursor("token"), "kv-copy"],
       [kvCutoverKeys.source("namespace"), "kv-cutover"],
@@ -135,7 +140,7 @@ describe("storage key families", () => {
       [artifactKeys.under("pages:").head("a"), "unclassified"],
       ["", "unclassified"],
       // A family's key outside its scope is not that family's.
-      [oauthKeys.generation, "unclassified"],
+      [oauthV2Keys.generation, "unclassified"],
       [`${scopes.results}${catalogKeys.manifest("svc")}`, "unclassified"],
     ];
     for (const [key, family] of cases) expect(familyOfKey(key), key).toBe(family);

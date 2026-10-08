@@ -488,12 +488,15 @@ export interface Connector {
   /**
    * Optional: complete a downstream OAuth flow (called by
    * /oauth/callback/<id>). `callbackParams` preserves the authorization
-   * server's RFC 9207 `iss` response parameter for SDK validation.
+   * server's RFC 9207 `iss` response parameter for validation. Built-in
+   * OAuth adapters require a nonempty `state` in this parameter, including
+   * programmatic calls and `api()` flows with PKCE disabled. Missing state
+   * is refused before any downstream request.
    */
   finishAuth?(
     code: string,
     ctx: ConnectorContext,
-    callbackParams?: URLSearchParams,
+    callbackParams: URLSearchParams,
   ): Promise<void>;
 }
 

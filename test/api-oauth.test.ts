@@ -339,7 +339,7 @@ describe("api() oauth authorization start", () => {
     const code = provider.consent(url.href);
     const callback = registry.contextFor("ccb", BASE);
     expect(await connector.verifyState!(url.searchParams.get("state"), callback)).toBe(true);
-    await connector.finishAuth!(code, callback);
+    await connector.finishAuth!(code, callback, new URLSearchParams({ code, state: url.searchParams.get("state")! }));
     const exchange = provider.tokenRequests.at(-1)!.params;
     expect(exchange.get("grant_type")).toBe("authorization_code");
     expect(exchange.has("code_verifier")).toBe(false);
@@ -878,7 +878,7 @@ describe("api() oauth reset and disconnect", () => {
     const code = provider.consent(second.href);
     const callback = ctx();
     expect(await connector.verifyState!(second.searchParams.get("state"), callback)).toBe(true);
-    await expect(connector.finishAuth!(code, callback)).rejects.toThrow();
+    await expect(connector.finishAuth!(code, callback, new URLSearchParams({ code, state: second.searchParams.get("state")! }))).rejects.toThrow();
     const third = new URL((await connector.startAuth!(ctx(), { force: true })).authorizationUrl!);
 
     // The client is configuration: a refusal is the deployment's to fix, so
@@ -903,7 +903,7 @@ describe("api() oauth reset and disconnect", () => {
     expect(await connector.verifyState!(first.searchParams.get("state"), callback)).toBe(true);
     await connector.startAuth!(ctx(), { force: true });
     const exchanges = provider.tokenRequests.length;
-    await expect(connector.finishAuth!(code, callback)).rejects.toThrow(/authorization changed .* try again/);
+    await expect(connector.finishAuth!(code, callback, new URLSearchParams({ code, state: first.searchParams.get("state")! }))).rejects.toThrow(/authorization changed .* try again/);
     expect(provider.tokenRequests.length).toBe(exchanges);
     expect((await connector.status!(ctx())).state).toBe("auth_required");
   });
@@ -922,7 +922,7 @@ describe("api() oauth reset and disconnect", () => {
     // The live epoch holds the replacement flow's verifier, so the old code's
     // exchange is refused; a PKCE-less one would land in the retired epoch,
     // where no reader looks.
-    await expect(connector.finishAuth!(code, callback)).rejects.toThrow();
+    await expect(connector.finishAuth!(code, callback, new URLSearchParams({ code, state: first.searchParams.get("state")! }))).rejects.toThrow();
     expect((await connector.status!(ctx())).state).toBe("auth_required");
   });
 });

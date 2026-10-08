@@ -292,6 +292,14 @@ class StaticOAuthProvider extends KvOAuthProvider {
     };
   }
 
+  protected override configuredAuthorizationBinding() {
+    return {
+      issuer: this.settings.identity,
+      clientId: this.settings.clientId,
+      tokenEndpoint: this.settings.tokenEndpoint.href,
+    };
+  }
+
   override async saveClientInformation(): Promise<void> {
     // Nothing to save: the SDK only saves a client it registered or stamped.
   }
@@ -628,15 +636,15 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     callbackProviders.delete(scopeOf(ctx));
     const authorizationCode = callbackParams?.get("code") ?? code;
     const iss = callbackParams?.get("iss") ?? undefined;
-    // A programmatic exchange names its consent by the callback's state; one
-    // with none (PKCE-less) claims and cleans up nothing.
+    // Every exchange names and claims its own consent, including without PKCE.
     const consent = callbackParams?.get("state") ?? null;
-    if (!provider.verified() && consent !== null && !(await provider.verifyState(consent))) {
+    if (!consent || !(await provider.verifyCallbackState(consent))) {
       throw new ConnectorCallError(
         "connector_call_failed",
         `Connector "${id}" authorization callback matches no pending consent; nothing was exchanged.`,
       );
     }
+    provider.validateCallbackIssuer(callbackParams?.get("iss") ?? null);
     provider.exchanging(authorizationCode);
     await provider.bindFlow();
     const result = await runAuth(provider, ctx, {

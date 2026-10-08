@@ -18,7 +18,7 @@ import {
 import { inheritOAuthSealer } from "../oauth-sealing.js";
 import type { OAuthStateSealer } from "../oauth-sealing.js";
 import { fromSignal, runEdge } from "../runtime/run.js";
-import { OAUTH_FLOW_TTL_SECONDS, oauthFlowKeys, oauthGrantKeys } from "../storage/keys.js";
+import { OAUTH_FLOW_TTL_SECONDS, OAUTH_REFRESH_LEASE_SECONDS, oauthFlowKeys, oauthGrantKeys, oauthRefreshKeys } from "../storage/keys.js";
 import type { ConnectorContext, KVStorage } from "../types.js";
 import {
   isRefreshTokenRequest,
@@ -101,6 +101,29 @@ type RefreshFlightOutcome =
  * One redemption of one epoch's refresh token. It holds no request state: the
  * owner settles it from its own request, and joined requests only await it.
  */
+interface RefreshLease {
+  key: string;
+  raw: string;
+}
+
+interface StoredRefreshLease {
+  connectaOAuthRefresh: 1;
+  holder: string;
+  expiresAt: number;
+  verdict?: RefreshFailure;
+  completed?: true;
+}
+
+/** Wait in this request's own I/O context, with bounded backoff and abort. */
+function refreshBackoff(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return runEdge(signal
+    ? Effect.raceAllFirst([
+        Effect.sleep(ms),
+        fromSignal(signal),
+      ])
+    : Effect.sleep(ms));
+}
+
 interface RefreshFlight {
   outcome: Deferred.Deferred<RefreshFlightOutcome>;
 }
@@ -159,8 +182,8 @@ function requestedRefreshToken(init: RequestInit | undefined): string | null {
  * that redirects instead of saving cannot strand a spent refresh token.
  * Requests that arrive meanwhile join its outcome; a request whose token read
  * predates a stored refresh is handed that refresh instead of redeeming again.
- * Coalescing is runtime-local; across isolates the grant record's
- * compare-and-set keeps a stale rotation from replacing a newer one.
+ * A shared-storage lease prevents concurrent redemption across isolates;
+ * the grant CAS also fences stale rotations.
  *
  * A code exchange claims its consent's flow record and re-checks the epoch in
  * the turn that dispatches it (`KvOAuthProvider.claimCodeExchange`,
@@ -198,7 +221,7 @@ export class OAuthRefreshCoordinator {
       };
       // Awaited here so workerd associates a rejection with the fetch the SDK
       // is already awaiting, not with an adopted inner promise.
-      const response = await (exchange ? provider.dispatchCodeExchange(dispatch) : dispatch());
+      const response = await (exchange ? provider.dispatchCodeExchange(dispatch, input) : dispatch());
       if (grantType === undefined) return response;
       // A code exchange's failure is the SDK's to log as well.
       const forSdk = await sdkSafeTokenResponse(response);
@@ -290,27 +313,43 @@ export class OAuthRefreshCoordinator {
     };
     // The authorization server this redemption answers to, fixed now.
     const issuer = provider.refreshIssuer(epoch);
+    let lease: RefreshLease;
+    try {
+      const claim = await provider.claimRefresh(epoch, requested, signal);
+      if (claim instanceof Response) {
+        const tokens = await provider.storedTokens();
+        if (tokens) settle({ status: "refreshed", tokens });
+        else settle({ status: "retired" });
+        return claim;
+      }
+      lease = claim;
+    } catch (error) {
+      fail(error, provider.refreshVerdict());
+      throw error;
+    }
+    const releaseLease = async (verdict?: RefreshFailure, completed = false) => {
+      await provider.releaseRefresh(lease, verdict, completed);
+    };
     let response: Response;
     let outcome: RefreshResponseOutcome;
     try {
-      response = await baseFetch(input, signal ? { ...init, signal } : init);
+      response = await provider.dispatchRefresh(lease, () => baseFetch(input, signal ? { ...init, signal } : init));
       outcome = await refreshResponseOutcome(response);
     } catch (error) {
       // No answer at all — the network, or a body too large to be one — is an
       // outage. This owner's own cancellation, and a refusal connecta itself
       // raised (a redirect the policy forbids), are not.
-      fail(
-        error,
-        signal?.aborted || (error instanceof ConnectorCallError && !error.retryable)
-          ? undefined
-          : transientFailure(
-              error instanceof OversizedRefreshResponse
-                ? "answered with an oversized response"
-                : "could not be reached",
-              undefined,
-              error,
-            ),
-      );
+      const verdict = signal?.aborted || (error instanceof ConnectorCallError && !error.retryable)
+        ? undefined
+        : transientFailure(
+            error instanceof OversizedRefreshResponse
+              ? "answered with an oversized response"
+              : "could not be reached",
+            undefined,
+            error,
+          );
+      await releaseLease(verdict);
+      fail(error, verdict);
       throw error;
     }
     // An answer exists from here on, and is committed whatever the owner does.
@@ -318,6 +357,7 @@ export class OAuthRefreshCoordinator {
       // Drop a refused grant while the flight still stands: a caller arriving
       // meanwhile joins it instead of redeeming the dead token again.
       if (outcome.verdict.kind === "dead") await provider.discardRefusedGrant(requested, epoch);
+      await releaseLease(outcome.verdict);
       fail(outcome.failure, outcome.verdict);
       return outcome.forSdk;
     }
@@ -333,9 +373,11 @@ export class OAuthRefreshCoordinator {
       await provider.storeRefresh(epoch, requested, accepted, issuer);
     } catch (error) {
       // The provider's saveTokens reports this, in fixed text.
+      await releaseLease({ kind: "unstored" });
       fail(error, { kind: "unstored" });
       return tokenResponse(accepted);
     }
+    await releaseLease(undefined, true);
     settle({ status: "refreshed", tokens: accepted });
     return provider.adoptRefresh(accepted);
   }
@@ -403,6 +445,7 @@ type GrantBody = MigratedGrantBody;
  * issue it.
  */
 interface Grant {
+  cleanupPending?: true;
   epoch: string;
   flow?: string;
   body: GrantBody;
@@ -410,6 +453,7 @@ interface Grant {
 
 /** A grant as stored: the body sealed when the vault can seal. */
 interface StoredGrant {
+  cleanupPending?: true;
   connectaOAuth: typeof GRANT_VERSION;
   epoch: string;
   flow?: string;
@@ -417,8 +461,24 @@ interface StoredGrant {
   body?: GrantBody;
 }
 
+interface FlowBinding {
+  issuer?: string | undefined;
+  clientId?: string | undefined;
+  tokenEndpoint?: string | undefined;
+  discovery?: string | undefined;
+}
+
+async function discoveryBinding(state: OAuthDiscoveryState | undefined): Promise<FlowBinding> {
+  return state ? {
+    issuer: discoveryIssuer(state),
+    tokenEndpoint: state.authorizationServerMetadata?.token_endpoint,
+    discovery: await oauthStateDigest(JSON.stringify(state)),
+  } : {};
+}
+
 /** One consent, by its state's digest. A claimed one keeps only its epoch. */
 interface Flow {
+  binding?: FlowBinding;
   epoch: string;
   /** Epoch milliseconds the consent was written. */
   at: number;
@@ -428,6 +488,7 @@ interface Flow {
 }
 
 interface StoredFlow {
+  binding?: FlowBinding;
   connectaOAuthFlow: typeof FLOW_VERSION;
   epoch: string;
   at: number;
@@ -520,6 +581,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   /** Set when a flow binds: from then on a replaced epoch fails the flow. */
   private bound = false;
   /** The consent being started, held until `redirectToAuthorization` stores it. */
+  private consentDiscovery: OAuthDiscoveryState | undefined;
   private consent: { state?: string; verifier?: string } = {};
   /** The consent this provider stored, for the start that asked for it. */
   private published: { epoch: string; url: string } | undefined;
@@ -590,6 +652,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     const stored: StoredGrant = {
       connectaOAuth: GRANT_VERSION,
       epoch: grant.epoch,
+      ...(grant.cleanupPending ? { cleanupPending: true as const } : {}),
       ...(grant.flow !== undefined ? { flow: grant.flow } : {}),
     };
     if (Object.keys(grant.body).length > 0) {
@@ -627,6 +690,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     }
     return {
       epoch: stored.epoch,
+      ...(stored.cleanupPending ? { cleanupPending: true as const } : {}),
       ...(stored.flow !== undefined ? { flow: stored.flow } : {}),
       body: grantBody(body),
     };
@@ -640,6 +704,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   private async readGrant(): Promise<{ raw: string | null; grant: Grant }> {
     let raw = await this.storage.get(GRANT);
     if (raw === null) raw = await this.migrate();
+    if (raw !== null && storedGrant(raw)?.cleanupPending) raw = await this.cleanupV2(raw);
     const grant = await this.openGrant(raw);
     if (raw !== null && this.sealer && storedGrant(raw)?.body !== undefined && !this.signal?.aborted) {
       const sealed = await this.encodeGrant(grant);
@@ -657,7 +722,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     // A request that has already left writes nothing, this included.
     if (!found || this.signal?.aborted) return null;
     const prefix = found.disconnected ? DISCONNECTED_EPOCH_PREFIX : ACTIVE_EPOCH_PREFIX;
-    const encoded = await this.encodeGrant({ epoch: `${prefix}${crypto.randomUUID()}`, body: found.body });
+    const encoded = await this.encodeGrant({ epoch: `${prefix}${crypto.randomUUID()}`, body: found.body, cleanupPending: true });
     let written: boolean;
     try {
       written = await this.storage.compareAndSet(GRANT, null, encoded);
@@ -666,8 +731,22 @@ export class KvOAuthProvider implements OAuthClientProvider {
       throw this.credentialWriteError();
     }
     const raw = written ? encoded : await this.storage.get(GRANT);
-    if (raw !== null) await deleteV2Keys(this.storage, found.keys);
     return raw;
+  }
+
+  /** Deletion is retried on every read, including reads after a reset. */
+  private async cleanupV2(raw: string): Promise<string | null> {
+    try {
+      if (!(await deleteV2Keys(this.storage))) return raw;
+      const grant = await this.openGrant(raw);
+      delete grant.cleanupPending;
+      const cleared = await this.encodeGrant(grant);
+      if (await this.storage.compareAndSet(GRANT, raw, cleared)) return cleared;
+      return this.storage.get(GRANT);
+    } catch {
+      // The durable marker survives both deletion and marker-clear failures.
+      return raw;
+    }
   }
 
   /** The grant a bound flow reads: a replaced epoch fails it. */
@@ -710,7 +789,10 @@ export class KvOAuthProvider implements OAuthClientProvider {
         // A store's own error can quote the value it refused.
         throw this.credentialWriteError();
       }
-      if (written) return true;
+      if (written) {
+        if (next.epoch !== grant.epoch) this.epoch = next.epoch;
+        return true;
+      }
     }
     throw this.credentialWriteError();
   }
@@ -726,12 +808,55 @@ export class KvOAuthProvider implements OAuthClientProvider {
         issuer !== undefined && grant.body.issuer !== issuer ? { issuer } : { ...grant.body };
       if (field === "client") body.client = value as NonNullable<GrantBody["client"]>;
       else body.tokens = value as OAuthTokens;
-      return { ...grant, body };
+      return this.withIssuer(grant, body);
     });
     // A flow may invalidate what it wrote itself.
     this.seen[field] = fingerprint(field === "client"
       ? (value as NonNullable<GrantBody["client"]>).value
       : value);
+  }
+
+  private withIssuer(grant: Grant, body: GrantBody): Grant {
+    if (grant.body.issuer !== undefined && grant.body.issuer !== body.issuer) {
+      if (this.codeExchange) throw this.flowSuperseded();
+      return {
+        epoch: `${ACTIVE_EPOCH_PREFIX}${crypto.randomUUID()}`,
+        ...(grant.cleanupPending ? { cleanupPending: true as const } : {}),
+        body,
+      };
+    }
+    return { ...grant, body };
+  }
+
+  /** Static clients bind to deployment configuration without storing secrets. */
+  protected configuredAuthorizationBinding(): FlowBinding | undefined {
+    return undefined;
+  }
+
+  private async bindingForGrant(grant: Grant): Promise<FlowBinding> {
+    const configured = this.configuredAuthorizationBinding();
+    return configured ? { ...configured, issuer: grant.body.issuer } : {
+      ...await discoveryBinding(grant.body.discovery),
+      issuer: grant.body.issuer,
+      clientId: grant.body.client?.value.client_id,
+    };
+  }
+
+  private async checkFlowBinding(grant: Grant): Promise<void> {
+    const binding = this.callback?.flow.binding;
+    if (!binding || fingerprint(binding) !== fingerprint(await this.bindingForGrant(grant))) {
+      throw this.flowSuperseded();
+    }
+  }
+
+  /** Validate RFC 9207 against the server this consent selected. */
+  validateCallbackIssuer(issuer: string | null): void {
+    if (issuer !== null && issuer !== this.callback?.flow.binding?.issuer) {
+      throw new ConnectorCallError(
+        "connector_call_failed",
+        `Connector "${this.connectorId}" authorization callback issuer does not match its consent; nothing was exchanged.`,
+      );
+    }
   }
 
   // --- flow records ---------------------------------------------------------
@@ -770,6 +895,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     const flow: Flow = {
       epoch: value.epoch,
       at: value.at,
+      ...(plainObject(value.binding) ? { binding: value.binding as FlowBinding } : {}),
       ...(typeof value.url === "string" ? { url: value.url } : {}),
       ...(value.consumed === true ? { consumed: true as const } : {}),
     };
@@ -845,10 +971,17 @@ export class KvOAuthProvider implements OAuthClientProvider {
     this.epoch = epoch;
     this.bound = true;
     this.codeExchange = true;
+    await this.checkFlowBinding(grant);
     this.seen = {
       client: fingerprint(grant.body.client?.value),
       tokens: fingerprint(grant.body.tokens),
     };
+  }
+
+  /** Retain an already verified snapshot only for the exact same state. */
+  async verifyCallbackState(state: string): Promise<boolean> {
+    if (this.callback?.key === oauthFlowKeys.flow(await oauthStateDigest(state))) return true;
+    return this.verifyState(state);
   }
 
   /** Whether `verifyState` matched a consent on this provider. */
@@ -940,7 +1073,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
-    return (await this.boundGrant()).body.discovery;
+    const state = (await this.boundGrant()).body.discovery;
+    this.consentDiscovery = state;
+    return state;
   }
 
   /**
@@ -951,12 +1086,13 @@ export class KvOAuthProvider implements OAuthClientProvider {
    */
   async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
     const issuer = discoveryIssuer(state);
+    this.consentDiscovery = state;
     await this.updateGrant((grant) => {
       const body: GrantBody = grant.body.issuer !== issuer
         ? (issuer !== undefined ? { issuer } : {})
         : { ...grant.body };
       body.discovery = state;
-      return { ...grant, body };
+      return this.withIssuer(grant, body);
     });
   }
 
@@ -1018,15 +1154,32 @@ export class KvOAuthProvider implements OAuthClientProvider {
     if (!this.allowAuthorization) throw this.authorizationRefused();
     const state = this.consent.state ?? authorizationUrl.searchParams.get("state");
     if (!state) throw new Error(`OAuth consent for "${this.connectorId}" carries no state`);
+    const configured = this.configuredAuthorizationBinding();
+    if (configured?.issuer !== undefined) {
+      const issuer = configured.issuer;
+      // Static adapters do not save discovery or client configuration. Publish
+      // their server identity before consent so a changed endpoint fences the
+      // old grant before any code exchange can leave.
+      await this.updateGrant((grant) => grant.body.issuer === issuer
+        ? undefined
+        : this.withIssuer(grant, { issuer }));
+    }
     const epoch = await this.flowEpoch();
     this.epoch = epoch;
     const digest = await oauthStateDigest(state);
     const key = oauthFlowKeys.flow(digest);
     const url = authorizationUrl.toString();
     const { verifier } = this.consent;
+    const grant = await this.boundGrant();
+    const binding = this.configuredAuthorizationBinding() ?? {
+      ...await discoveryBinding(this.consentDiscovery ?? grant.body.discovery),
+      issuer: discoveryIssuer(this.consentDiscovery) ?? grant.body.issuer,
+      clientId: authorizationUrl.searchParams.get("client_id") ?? grant.body.client?.value.client_id,
+    };
     const record = await this.encodeFlow(key, {
       epoch,
       at: Date.now(),
+      binding,
       url,
       ...(verifier !== undefined ? { verifier } : {}),
     });
@@ -1109,7 +1262,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   async claimCodeExchange(): Promise<Response | undefined> {
     if (this.exchangeRefusal) return this.exchangeRefusal.clone();
     const callback = this.callback;
-    if (!callback) return undefined;
+    if (!callback) throw this.flowSuperseded();
     if (callback.claimed) throw new OAuthCallbackClaimedError(this.connectorId);
     callback.claimed = true;
     const { epoch, at } = callback.flow;
@@ -1136,14 +1289,21 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * ordered before the send without a lock across requests, and its tokens
    * are refused by the grant's compare-and-set: one more consent.
    */
-  dispatchCodeExchange(send: () => Promise<Response>): Promise<Response> {
+  async dispatchCodeExchange(send: () => Promise<Response>, endpoint?: string | URL): Promise<Response> {
     const epoch = this.epoch;
-    if (!this.codeExchange || epoch === undefined) return send();
-    return this.storage.get(GRANT).then((raw) => {
-      if (epochOf(raw) !== epoch) throw this.flowSuperseded();
+    if (!this.codeExchange || epoch === undefined) throw this.flowSuperseded();
+    const raw = await this.storage.get(GRANT);
+    const grant = await this.openGrant(raw);
+    if (grant.epoch !== epoch) throw this.flowSuperseded();
+    await this.checkFlowBinding(grant);
+    if (endpoint !== undefined && this.callback?.flow.binding?.tokenEndpoint !== String(endpoint)) {
+      throw this.flowSuperseded();
+    }
+    // Opening ciphertext may yield. Re-read the exact record after opening,
+    // then check and send in the same reaction, without another await.
+    return this.storage.get(GRANT).then((current) => {
+      if (current !== raw) throw this.flowSuperseded();
       const sent = send();
-      // A refusal before anything leaves (a learned URL the guard rejects)
-      // is still the caller's; marking it handled stops a turn-late report.
       sent.catch(() => {});
       return sent;
     });
@@ -1202,6 +1362,103 @@ export class KvOAuthProvider implements OAuthClientProvider {
     this.refreshFailure = failure;
   }
 
+  /** @internal A shared-storage claim precedes every refresh dispatch. */
+  async claimRefresh(epoch: string, requested: string | null, signal?: AbortSignal): Promise<RefreshLease | Response> {
+    const key = oauthRefreshKeys.lease(epoch, await oauthStateDigest(requested ?? ""));
+    const deadline = Date.now() + (OAUTH_REFRESH_LEASE_SECONDS + 5) * 1000;
+    let delay = 10;
+    let waited = false;
+    while (Date.now() < deadline) {
+      if (signal?.aborted) throw aborted(signal);
+      const current = await this.storedTokens();
+      if (current?.refresh_token !== requested || (current && this.refreshedSinceRead(current, epoch))) {
+        return current ? this.adoptRefresh(current) : Response.json({ error: "invalid_grant" }, { status: 400 });
+      }
+      const raw = await this.storage.get(key);
+      const stored = raw === null ? undefined : parsed(raw);
+      const active = plainObject(stored) && typeof stored.expiresAt === "number" && stored.expiresAt > Date.now();
+      if (active && stored.completed === true) {
+        if (waited && current) return this.adoptRefresh(current);
+        await this.storage.compareAndSet(key, raw, null);
+        continue;
+      }
+      if (active && plainObject(stored.verdict)) {
+        if (!waited) {
+          await this.storage.compareAndSet(key, raw, null);
+          continue;
+        }
+        const verdict = stored.verdict as unknown as RefreshFailure;
+        this.recordRefreshFailure(verdict);
+        if (verdict.kind === "transient") throw this.refreshOutage(verdict);
+        if (verdict.kind === "unstored") throw this.credentialWriteError();
+        throw new UnauthorizedError("OAuth refresh grant is no longer active.");
+      }
+      if (!active) {
+        const claimed = JSON.stringify({
+          connectaOAuthRefresh: 1,
+          holder: crypto.randomUUID(),
+          expiresAt: Date.now() + OAUTH_REFRESH_LEASE_SECONDS * 1000,
+        } satisfies StoredRefreshLease);
+        let won: boolean;
+        try {
+          won = await this.storage.compareAndSet(key, raw, claimed, { ttlSeconds: OAUTH_REFRESH_LEASE_SECONDS });
+        } catch {
+          throw this.credentialWriteError();
+        }
+        if (won) {
+          // A rotation may have committed between the first read and claim.
+          try {
+            const latest = await this.storedTokens();
+            if (latest?.refresh_token !== requested || (latest && this.refreshedSinceRead(latest, epoch))) {
+              await this.releaseRefresh({ key, raw: claimed });
+              return latest ? this.adoptRefresh(latest) : Response.json({ error: "invalid_grant" }, { status: 400 });
+            }
+            if (signal?.aborted) throw aborted(signal);
+            return { key, raw: claimed };
+          } catch (error) {
+            await this.releaseRefresh({ key, raw: claimed });
+            throw error;
+          }
+        }
+      }
+      waited = true;
+      await refreshBackoff(delay, signal);
+      delay = Math.min(250, delay * 2);
+    }
+    throw this.refreshContended();
+  }
+
+  /** @internal Check lease ownership in the same reaction that dispatches. */
+  dispatchRefresh(lease: RefreshLease, send: () => Promise<Response>): Promise<Response> {
+    return this.storage.get(lease.key).then((raw) => {
+      const stored = raw === null ? undefined : parsed(raw);
+      if (raw !== lease.raw || !plainObject(stored) || typeof stored.expiresAt !== "number" || stored.expiresAt <= Date.now()) {
+        throw this.refreshContended();
+      }
+      const sent = send();
+      // workerd can report the inner rejection before promise adoption.
+      sent.catch(() => {});
+      return sent;
+    });
+  }
+
+  /** @internal Release by CAS; a failure verdict remains briefly for waiters. */
+  async releaseRefresh(lease: RefreshLease, verdict?: RefreshFailure, completed = false): Promise<void> {
+    // Persist typed verdict facts only. Never persist downstream causes or text.
+    const safe = verdict?.kind === "transient"
+      ? { kind: verdict.kind, reason: verdict.reason, ...(verdict.status !== undefined ? { status: verdict.status } : {}), ...(verdict.retryAfterMs !== undefined ? { retryAfterMs: verdict.retryAfterMs } : {}) }
+      : verdict;
+    const next = safe || completed ? JSON.stringify({
+      ...(parsed(lease.raw) as StoredRefreshLease), ...(safe ? { verdict: safe } : {}), ...(completed ? { completed: true as const } : {}),
+    } satisfies StoredRefreshLease) : null;
+    await this.storage.compareAndSet(lease.key, lease.raw, next, { ttlSeconds: OAUTH_REFRESH_LEASE_SECONDS }).catch(() => false);
+  }
+
+  /** @internal The same typed verdict for local and cross-isolate joiners. */
+  refreshVerdict(): RefreshFailure | undefined {
+    return this.refreshFailure;
+  }
+
   /** @internal The grant's tokens as stored, in the flow's epoch. */
   async storedTokens(): Promise<OAuthTokens | undefined> {
     return (await this.boundGrant()).body.tokens;
@@ -1240,7 +1497,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     await this.updateGrant((grant) => {
       if (issuer !== undefined && grant.body.issuer !== issuer) return undefined;
       const current = grant.body.tokens?.refresh_token;
-      if (current !== undefined && current !== requested) return undefined;
+      if (current !== requested) return undefined;
       return {
         ...grant,
         body: { ...grant.body, tokens: issuer !== undefined ? { ...tokens, issuer } : tokens },
@@ -1287,7 +1544,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     for (let attempt = 0; attempt < MAX_GRANT_WRITES; attempt++) {
       const { raw, grant } = await this.readGrant();
       const carried = preserveClient && !operatorDisconnected ? this.carriableClient(grant) : undefined;
-      const encoded = await this.encodeGrant({ epoch, body: carried ?? {} });
+      const encoded = await this.encodeGrant({ epoch, body: carried ?? {}, cleanupPending: true });
       let written: boolean;
       try {
         written = await this.storage.compareAndSet(GRANT, raw, encoded);
@@ -1296,7 +1553,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
       }
       if (written) {
         this.refreshCoordinator?.retire(grant.epoch);
+        await this.cleanupV2(encoded);
         await this.sweepConsents();
+        await this.sweepRefreshLeases();
         return;
       }
     }
@@ -1324,6 +1583,24 @@ export class KvOAuthProvider implements OAuthClientProvider {
       }
     } catch {
       // Hygiene only: the epoch, not this, fences a stale consent.
+    }
+  }
+
+  private async sweepRefreshLeases(): Promise<void> {
+    try {
+      const records: Array<[string, string]> = [];
+      for (const key of await this.storage.list(oauthRefreshKeys.prefix)) {
+        const raw = await this.storage.get(key);
+        if (raw !== null) records.push([key, raw]);
+      }
+      const live = epochOf(await this.storage.get(GRANT));
+      for (const [key, raw] of records) {
+        if (!key.startsWith(`${oauthRefreshKeys.prefix}${live}:`)) {
+          await this.storage.compareAndSet(key, raw, null);
+        }
+      }
+    } catch {
+      // Stale leases cannot grant credentials and expire within 30 seconds.
     }
   }
 

@@ -2334,7 +2334,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // verifyState ran on this request-scoped provider first and found the
       // consent; a programmatic exchange names it by its callback's state.
       const consent = callbackParams?.get("state") ?? null;
-      if (!provider.verified() && consent !== null && !(await provider.verifyState(consent))) {
+      if (!consent || !(await provider.verifyCallbackState(consent))) {
         throw new ConnectorCallError(
           "connector_call_failed",
           `Connector "${id}" authorization callback matches no pending consent; nothing was exchanged.`,
@@ -2342,6 +2342,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }
       // The exchange reads and writes only the epoch its consent was written
       // in; it decides nothing about the grant there.
+      provider.validateCallbackIssuer(callbackParams?.get("iss") ?? null);
       await provider.bindFlow();
       // Always a transport of the exchange's own, over the provider that
       // verified the state: that provider holds the consent's claim, and the
@@ -2356,11 +2357,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         set: (target, key, value) => Reflect.set(target, key, value, target),
       });
       try {
-        if (callbackParams !== undefined) {
-          await exchange.finishAuth(callbackParams);
-        } else {
-          await exchange.finishAuth(code);
-        }
+        await exchange.finishAuth(callbackParams);
         // Reset so the next use reconnects with the freshly stored tokens.
         closeHalf(state);
       } catch (err) {

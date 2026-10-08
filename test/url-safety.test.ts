@@ -355,7 +355,7 @@ describe("remoteMcp() OAuth URLs the downstream advertises", () => {
     const callback = scope(storage);
     expect(await c.verifyState!(state, callback)).toBe(true);
     const error = await c
-      .finishAuth!("code-123", callback)
+      .finishAuth!("code-123", callback, new URLSearchParams({ code: "code-123", state: state! }))
       .then(() => null, (err: unknown) => err);
 
     expect(error).toBeInstanceOf(Error);
@@ -443,7 +443,7 @@ describe("remoteMcp() OAuth URLs the downstream advertises", () => {
     );
     const callback = scope(storage);
     expect(await c.verifyState!(state, callback)).toBe(true);
-    await c.finishAuth!("code-123", callback);
+    await c.finishAuth!("code-123", callback, new URLSearchParams({ code: "code-123", state: state! }));
     expect(
       server.requests.some((url) => url.href === "http://localhost:9000/token"),
     ).toBe(true);

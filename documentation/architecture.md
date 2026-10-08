@@ -21,19 +21,17 @@ health, and the per-connector call limiters. It is built once and lives as long
 as the isolate — on Workers a lazy module-scope singleton, which is why both
 deployment shapes construct it outside the request handler.
 
-An OAuth connector — `remoteMcp()`, or `api()` with a static grant
-(`src/auth/static-oauth.ts`, the same provider with its discovery and client
-answered from config) — also owns a runtime-local refresh completion gate
-(`src/auth/downstream-oauth.ts`). It coordinates credential mutation across
-concurrent request scopes while sharing no client, transport, or response, and
-never lets a follower cancel the owner. The subtle part is that a valid token
-response consumes the refresh token whether or not the owner survives to save it,
-so the accepted tokens live on the flight: cancelling the owner *before* a valid
-response fails the joiners, because promoting one could replay a token the
-authorization server already consumed, while cancelling it *after* one does not —
-the host persists the rotation on its own write, holds contenders behind a
-generation-keyed pending-mutation marker until that write lands, and hands them
-the saved rotation ([#526](https://github.com/zackbart/connecta/issues/526)).
+An OAuth connector, `remoteMcp()` or `api()` with a static grant, owns a
+runtime-local refresh completion gate in `src/auth/downstream-oauth.ts`.
+Joined scopes share the outcome while keeping their own request I/O and
+cancellation. A shared-storage CAS lease prevents independent isolates from
+redeeming the same refresh token concurrently. The holder commits an accepted
+rotation to the grant by CAS before releasing waiters, even when the owner
+cancels after the answer. Contenders read the committed tokens or typed
+verdict. A lease expires after 30 seconds so a crashed holder does not block
+later attempts. A crash after provider rotation but before persistence requires
+re-consent. [Auth](./auth.md#refresh-failures) describes the lease and failure
+contracts.
 
 **Per request, and no longer.** The MCP server, its transport, downstream MCP
 clients, abort signals, and the connector scope a probe opens all belong to the

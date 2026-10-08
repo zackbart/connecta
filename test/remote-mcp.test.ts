@@ -13,6 +13,7 @@ import {
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
 import { ConnectorCallError, classifyCallError } from "../src/errors.js";
 import {
   buildSandboxProviders,
@@ -1881,6 +1882,14 @@ describe("remoteMcp() connection lifecycle", () => {
 
 
 describe("OAuth callback transport ownership", () => {
+  async function callback(context = { ...ctx(), requestScope: {} }) {
+    const provider = new KvOAuthProvider("down", context.storage, `${context.baseUrl}/oauth/callback/down`);
+    await provider.beginFlow();
+    const state = await provider.state();
+    await provider.redirectToAuthorization(new URL(`https://auth.example/authorize?state=${state}`));
+    return { context, params: new URLSearchParams({ code: "code", state }) };
+  }
+
   it.each(["fails", "succeeds"] as const)("closes an exchange-only transport after the exchange %s", async outcome => {
     const context = { ...ctx(), requestScope: {} };
     const close = vi.fn(async () => {});
@@ -1894,7 +1903,8 @@ describe("OAuth callback transport ownership", () => {
       url: "https://downstream.test/mcp", auth: { type: "oauth" },
       _transportFactory: () => transport,
     });
-    const finishing = connector.finishAuth!("code", context);
+    const { params } = await callback(context);
+    const finishing = connector.finishAuth!("code", context, params);
     if (outcome === "fails") await expect(finishing).rejects.toThrow("OAuth flow failed");
     else await expect(finishing).resolves.toBeUndefined();
     await connector.closeScope!(context);
@@ -1911,7 +1921,8 @@ describe("OAuth callback transport ownership", () => {
         finishAuth: async () => { throw new Error("exchange failed"); },
       }),
     });
-    await expect(connector.finishAuth!("code", ctx())).rejects.toThrow("OAuth flow failed");
+    const { context, params } = await callback();
+    await expect(connector.finishAuth!("code", context, params)).rejects.toThrow("OAuth flow failed");
     await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(1));
     closing.resolve();
   });

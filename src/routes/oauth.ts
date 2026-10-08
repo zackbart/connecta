@@ -267,7 +267,7 @@ async function finishOAuthCallback(
       // nothing: it is the already-used link the flat refusal describes, not
       // an exchange the provider rejected.
       if (claimedByAnotherCallback(err)) {
-        opts.logger.warn(
+        opts.config.logger.warn(
           `[connecta] refused an OAuth callback for connector ` +
             `${loggableValue(id)} with 400: another callback had already ` +
             "claimed its state. No authorization code was exchanged.",

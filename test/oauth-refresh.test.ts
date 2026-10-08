@@ -527,18 +527,17 @@ describe("OAuthRefreshCoordinator", () => {
 
   it.each(["a newer rotation another isolate stored", "another server's grant"])("does not store a late rotation over %s", async (landed) => {
     const storage = await grantStore();
-    // Two isolates: coordination is runtime-local, the grant's CAS is not.
-    const isolates = [new OAuthRefreshCoordinator(), new OAuthRefreshCoordinator()] as const;
+    // Another writer may finish a consent while a leased refresh is in flight.
+    const coordinator = new OAuthRefreshCoordinator();
     const gate = deferred<void>();
     const slow = tokenServer(async () => { await gate.promise; return Response.json(bearer("access-slow", "refresh-slow")); });
-    const owner = await flow(storage, isolates[0]);
-    const owning = refresh(isolates[0], owner, slow.fetch);
+    const owner = await flow(storage, coordinator);
+    const owning = refresh(coordinator, owner, slow.fetch);
     await slow.entered;
     if (landed === "another server's grant") {
       await new KvOAuthProvider("svc", storage, REDIRECT).saveClientInformation({ client_id: "other", redirect_uris: [REDIRECT] }, { issuer: "https://other-as.example" });
     } else {
-      const fast = tokenServer(() => Response.json(bearer("access-fast", "refresh-fast")));
-      await refresh(isolates[1], await flow(storage, isolates[1]), fast.fetch);
+      await new KvOAuthProvider("svc", storage, REDIRECT).saveTokens(bearer("access-fast", "refresh-fast"), ISSUER);
     }
     const before = await storage.get(GRANT);
     gate.resolve();

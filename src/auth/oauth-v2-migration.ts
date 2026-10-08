@@ -23,8 +23,6 @@ export interface MigratedGrantBody {
 export interface MigratedGrant {
   disconnected: boolean;
   body: MigratedGrantBody;
-  /** Every layout 2 key the owner's namespace held, to delete once written. */
-  keys: string[];
 }
 
 interface V2Value {
@@ -71,16 +69,13 @@ export async function readV2Grant(
   storage: KVStorage,
   sealer: OAuthStateSealer | undefined,
 ): Promise<MigratedGrant | undefined> {
-  const v2 = oauthV2Keys.family.prefixes;
-  const keys = (await storage.list(oauthV2Keys.scan)).filter((key) =>
-    v2.some((prefix) => key.startsWith(prefix)),
-  );
+  const keys = await listV2Keys(storage);
   if (keys.length === 0) return undefined;
   const generation = (await storage.get(oauthV2Keys.generation)) ?? "legacy";
-  if (generation.startsWith("disconnected:")) return { disconnected: true, body: {}, keys };
+  if (generation.startsWith("disconnected:")) return { disconnected: true, body: {} };
   if (!generation.startsWith("v2:") && generation !== "legacy") {
     // An unfinished reset, or a numeric generation from before epochs.
-    return { disconnected: false, body: {}, keys };
+    return { disconnected: false, body: {} };
   }
   const epoch = generation === "legacy" ? null : generation;
   const read = async (field: OAuthV2ValueKey): Promise<V2Value | undefined> => {
@@ -126,10 +121,9 @@ export async function readV2Grant(
   const consistent = credentials.every((value) =>
     value.issuer !== undefined && value.issuer === issuer && plainObject(value.value),
   ) && (named === undefined || named === issuer);
-  if (!consistent || issuer === undefined) return { disconnected: false, body: {}, keys };
+  if (!consistent || issuer === undefined) return { disconnected: false, body: {} };
   return {
     disconnected: false,
-    keys,
     body: {
       issuer,
       ...(client ? {
@@ -145,7 +139,16 @@ export async function readV2Grant(
   };
 }
 
-/** Delete what `readV2Grant` found, once its grant record is stored. */
-export async function deleteV2Keys(storage: KVStorage, keys: readonly string[]): Promise<void> {
-  await Promise.allSettled(keys.map((key) => storage.delete(key)));
+/** Only historical families are removed, never grants, flows, or leases. */
+async function listV2Keys(storage: KVStorage): Promise<string[]> {
+  return (await storage.list(oauthV2Keys.scan)).filter((key) =>
+    oauthV2Keys.family.prefixes.some((prefix) => key.startsWith(prefix)),
+  );
+}
+
+/** Return true only when every historical key was deleted. */
+export async function deleteV2Keys(storage: KVStorage): Promise<boolean> {
+  const keys = await listV2Keys(storage);
+  const results = await Promise.allSettled(keys.map((key) => storage.delete(key)));
+  return results.every((result) => result.status === "fulfilled");
 }

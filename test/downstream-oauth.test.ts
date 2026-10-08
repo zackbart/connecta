@@ -273,7 +273,7 @@ describe("KvOAuthProvider over memoryStorage", () => {
       discovery: { authorizationServerUrl: "https://auth-c.example" },
     });
     expect(await p.tokens()).toBeUndefined();
-    expect((await storedGrant(storage))?.epoch).toBe("initial");
+    expect((await storedGrant(storage))?.epoch).toMatch(/^v3:/);
   });
 
   it("round-trips the PKCE code verifier and throws when missing", async () => {
@@ -545,7 +545,7 @@ describe("KvOAuthProvider epochs", () => {
     plant = true;
     await provider(storage).resetAuthorization();
 
-    expect(grantOps).toEqual(["compareAndSet"]);
+    expect(grantOps).toEqual(["compareAndSet", "compareAndSet"]);
     const grant = required(await storedGrant(backing));
     expect(grant).toEqual({ connectaOAuth: 3, epoch: expect.stringMatching(/^v3:/) });
     expect(await backing.get(await consentKey(old.state))).toBeNull();
@@ -734,6 +734,7 @@ describe("KvOAuthProvider sealed state", () => {
     });
     expect(JSON.parse(flowRaw)).toEqual({
       connectaOAuthFlow: 1,
+      binding: { issuer: ISSUER, clientId: "dcr-client", discovery: expect.stringMatching(/^[a-f0-9]{64}$/) },
       epoch: "initial",
       at: expect.any(Number),
       url,
@@ -1042,13 +1043,13 @@ describe("layout 2 migration", () => {
     };
     const [a, b] = [provider(storage), provider(storage)];
     expect(await Promise.all([a.tokens(ctxA), b.tokens(ctxA)])).toEqual([{ ...tokens, ...ctxA }, { ...tokens, ...ctxA }]);
-    expect(lists).toBe(2);
-    expect(written).toBe(1);
+    expect(lists).toBe(4);
+    expect(written).toBe(2);
     expect(await a.liveEpoch()).toBe(await b.liveEpoch());
 
     const raw = await backing.get(GRANT);
     expect(await provider(storage).tokens(ctxA)).toEqual({ ...tokens, ...ctxA });
-    expect(lists).toBe(2);
+    expect(lists).toBe(4);
     expect(await backing.get(GRANT)).toBe(raw);
     expect(await backing.list("")).toEqual([GRANT]);
   });
