@@ -25,11 +25,17 @@ access without reading credentials.
 Each trial runs in an empty temporary workspace with
 `--setting-sources ""`, `--disable-slash-commands`, `--no-chrome`, `--tools ""`,
 and `--strict-mcp-config --mcp-config <fake-only config>`. Empty setting sources
-omit user/project/local settings and plugin enables.
-Explicit `--settings` disables hooks and automatic memory. The installed CLI's
+omit user/project/local settings. Built-in plugins still load with empty setting
+sources in Claude Code 2.1.292. Explicit `--settings` disables hooks, automatic
+memory, and the known built-ins by setting `enabledPlugins` entries
+`cc-plugin-agents-md@builtin`, `cc-plugin-telemetry@builtin`, and
+`cc-plugin-plugin-authoring@builtin` to `false`. `--disable-slash-commands`
+removes their skills. The installed CLI's
 `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` and `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1`
 controls suppress instructions and bundled skills; Claude.ai MCP servers are
-disabled too. Init inventories with any plugins or skills are rejected.
+disabled too. Init inventories with any plugins or skills are rejected, with
+the offending plugin sources or names and skill names in the error. A future
+built-in therefore fails closed until its explicit disable is added.
 `--safe-mode` suppresses even explicit MCP servers in CLI 2.1.292, so it cannot
 serve this eval; `--bare` cannot reuse subscription auth. The fake MCP allowlist
 runs with `dontAsk`; denied

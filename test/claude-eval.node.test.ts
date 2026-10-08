@@ -16,6 +16,8 @@ const send = event => process.stdout.write(JSON.stringify(event) + '\n');
 const model = value('--model');
 const tools = ['authorize_connector','call_destructive_tool','call_tool','execute_code','search_tools','skills'].map(t => 'mcp__connecta__' + t);
 const config = JSON.parse(fs.readFileSync(value('--mcp-config'), 'utf8'));
+const settings = JSON.parse(value('--settings'));
+const builtins = ['cc-plugin-agents-md@builtin','cc-plugin-telemetry@builtin','cc-plugin-plugin-authoring@builtin'];
 if (Object.keys(config.mcpServers).join(',') !== 'connecta' || value('--tools') !== '' ||
     value('--setting-sources') !== '' || !argv.includes('--strict-mcp-config') ||
     !argv.includes('--no-session-persistence') || value('--permission-mode') !== 'dontAsk' ||
@@ -23,7 +25,7 @@ if (Object.keys(config.mcpServers).join(',') !== 'connecta' || value('--tools') 
     argv.includes('--safe-mode') || !argv.includes('--disable-slash-commands') || !argv.includes('--no-chrome') ||
     JSON.parse(value('--settings')).disableAllHooks !== true ||
     JSON.parse(value('--settings')).autoMemoryEnabled !== false ||
-    Object.keys(JSON.parse(value('--settings')).enabledPlugins).length ||
+    Object.keys(settings.enabledPlugins).length !== builtins.length || builtins.some(source => settings.enabledPlugins[source] !== false) ||
     process.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS !== '1' || process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY !== '1' ||
     process.env.CLAUDE_CODE_DISABLE_BUNDLED_SKILLS !== '1' || process.env.ENABLE_CLAUDEAI_MCP_SERVERS !== 'false' ||
     process.env.HOME !== value('--expected-home') || process.env.CLAUDE_CONFIG_DIR || process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN ||
@@ -31,7 +33,7 @@ if (Object.keys(config.mcpServers).join(',') !== 'connecta' || value('--tools') 
   send({type:'result',subtype:'error',result:'isolation failed'}); process.exit(1);
 }
 send({type:'system',subtype:'init',model:mode === 'wrong-model' ? 'wrong-model' : model,
-  claude_code_version:'fake-claude',plugins:mode === 'extra-plugin' ? [{name:'unexpected'}] : [],skills:mode === 'extra-skill' ? ['unexpected'] : [],tools:mode === 'extra-tool' ? [...tools,'Bash'] : tools});
+  claude_code_version:'fake-claude',plugins:mode === 'extra-plugin' ? [{name:'unexpected',source:'cc-plugin-future@builtin',settings:{token:'fake-secret'}}] : mode === 'named-plugin' ? [{name:'unexpected'}] : [],skills:mode === 'extra-skill' ? ['future-skill'] : [],tools:mode === 'extra-tool' ? [...tools,'Bash'] : tools});
 let turn = 0;
 readline.createInterface({input:process.stdin}).on('line', line => {
   const input = JSON.parse(line); turn++;
@@ -84,6 +86,19 @@ describe("Claude eval CLI", () => {
     expect(parseTrace(run.events, run.turnStarts, []).claudeCodeVersion).toBe("fake-claude");
     expect(infraError(run.events, run.exitCode, run.loadedTools)).toBeDefined();
     expect(run.events.some(event => event.type === "result" && event.subtype === "error")).toBe(true);
+  });
+
+  it.each([
+    ["extra-plugin", '"plugins":["cc-plugin-future@builtin"]'],
+    ["named-plugin", '"plugins":["unexpected"]'],
+    ["extra-skill", '"skills":["future-skill"]'],
+  ])("names the offending inventory for %s without plugin settings", async (mode, inventory) => {
+    const run = await fixture(mode);
+    const error = run.events.find(event => event.type === "result" && event.subtype === "error");
+    expect(error?.result).toContain("Claude loaded plugins or skills outside the fake MCP config:");
+    expect(error?.result).toContain(inventory);
+    expect(error?.result).not.toContain("fake-secret");
+    expect(error?.result).not.toContain("settings");
   });
 
   it("terminates a hung CLI on the wall deadline", async () => {

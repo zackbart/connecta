@@ -41,7 +41,11 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
       "--print", "--verbose", "--input-format", "stream-json", "--output-format", "stream-json",
       "--model", options.model, "--tools", "", "--setting-sources", "",
       "--disable-slash-commands", "--no-chrome",
-      "--settings", JSON.stringify({ disableAllHooks: true, autoMemoryEnabled: false, enabledPlugins: {} }),
+      "--settings", JSON.stringify({ disableAllHooks: true, autoMemoryEnabled: false, enabledPlugins: {
+        "cc-plugin-agents-md@builtin": false,
+        "cc-plugin-telemetry@builtin": false,
+        "cc-plugin-plugin-authoring@builtin": false,
+      } }),
       "--strict-mcp-config", "--mcp-config", configPath, "--no-session-persistence",
       "--permission-mode", "dontAsk", "--permission-prompts", "none",
       "--allowedTools", options.allowedTools.map(tool => `mcp__connecta__${tool}`).join(","),
@@ -89,7 +93,18 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
           // tool, unrelated server, or retired meta-tool is allowed.
           assertSurface([...new Set([...loadedTools, ...options.deniedTools.map(t => `mcp__connecta__${t}`)])]);
           if ([event.plugins, event.skills].some(value => Array.isArray(value) && value.length)) {
-            throw new Error("Claude loaded plugins or skills outside the fake MCP config");
+            // Report only source/name fields, never plugin settings or credentials.
+            const plugins = Array.isArray(event.plugins) ? event.plugins.map(plugin => {
+              if (typeof plugin === "string") return plugin;
+              if (plugin && typeof plugin === "object") {
+                if (typeof plugin.source === "string") return plugin.source;
+                if (typeof plugin.name === "string") return plugin.name;
+              }
+              return "<unknown>";
+            }) : [];
+            const skills = Array.isArray(event.skills) ? event.skills.map(skill => typeof skill === "string" ? skill : "<unknown>") : [];
+            const inventory = JSON.stringify({ plugins, skills }).replaceAll(options.token, "<redacted>");
+            throw new Error(`Claude loaded plugins or skills outside the fake MCP config: ${inventory}`);
           }
           if (model !== options.model) throw new Error(`Claude served ${String(model)} instead of ${options.model}`);
         } catch (error) {
