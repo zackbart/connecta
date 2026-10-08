@@ -5,6 +5,7 @@ import { CredentialVault, encryptedCredentialVault } from "../src/credentials.js
 import { ConnectorCallError } from "../src/errors.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { oauthFlowKeys, oauthGrantKeys } from "../src/storage/keys.js";
 import type { ConnectorContext, InboundAuth } from "../src/types.js";
 import { connectorContext, spyLogger } from "./fixtures/misc.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
@@ -882,14 +883,24 @@ describe("remoteMcp() downstream OAuth — sealed at rest through the deployment
           value: required((await storage.get(key)) ?? undefined),
         })),
       );
-    /** The sealed kinds present now; every one of them must be ciphertext. */
+    /**
+     * The sealed records present now: the grant's body and each consent's
+     * verifier, every one of them ciphertext.
+     */
     const sealedKinds = async () => {
       const kinds: string[] = [];
       for (const { key, value } of await stored()) {
-        const kind = /:oauth:(tokens|client|verifier)(?::|$)/.exec(key)?.[1];
-        if (!kind) continue;
-        expect(JSON.parse(value)).toMatchObject({ connectaOAuthSealed: 1 });
-        kinds.push(kind);
+        if (key.endsWith(`:${oauthGrantKeys.grant}`)) {
+          const record = JSON.parse(value) as Record<string, unknown>;
+          expect(record).not.toHaveProperty("body");
+          expect(typeof record.sealed).toBe("string");
+          kinds.push("grant");
+        } else if (key.includes(`:${oauthFlowKeys.prefix}`)) {
+          const record = JSON.parse(value) as Record<string, unknown>;
+          if (!("verifier" in record)) continue;
+          expect(record.sealed).toBe(true);
+          kinds.push("verifier");
+        }
       }
       return kinds.sort();
     };
@@ -902,7 +913,7 @@ describe("remoteMcp() downstream OAuth — sealed at rest through the deployment
     const begun = await connecta.fetch(new Request(link, { headers: { Authorization: "Bearer operator" } }));
     expect(begun.status).toBe(302);
     const authorizationUrl = begun.headers.get("Location")!;
-    expect(await sealedKinds()).toEqual(["client", "verifier"]);
+    expect(await sealedKinds()).toEqual(["grant", "verifier"]);
 
     const state = required(new URL(authorizationUrl).searchParams.get("state") ?? undefined);
     const callback = await connecta.fetch(
@@ -913,7 +924,8 @@ describe("remoteMcp() downstream OAuth — sealed at rest through the deployment
     );
     expect(callback.status).toBe(200);
     expect(verifiers).toHaveLength(1);
-    expect(await sealedKinds()).toEqual(["client", "tokens"]);
+    // The claimed consent keeps no verifier.
+    expect(await sealedKinds()).toEqual(["grant"]);
 
     for (const { value } of await stored()) {
       for (const secret of [...SECRETS, ...verifiers]) {

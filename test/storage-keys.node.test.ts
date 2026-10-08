@@ -14,8 +14,10 @@ import {
   kvCopyKeys,
   kvCutoverKeys,
   oauthConnectKeys,
+  oauthFlowKeys,
+  oauthGrantKeys,
   oauthHandoffKeys,
-  oauthKeys,
+  oauthV2Keys,
   resultKeys,
   scopes,
   stashLedgerKeys,
@@ -80,11 +82,13 @@ describe("storage key families", () => {
     within(accessTokenKeys.family, accessTokenKeys.lookup("hash"));
     within(accessTokenKeys.family, accessTokenKeys.active);
     within(oauthConnectKeys.family, oauthConnectKeys.used("nonce"));
-    within(oauthKeys.family, oauthKeys.generation);
     within(kvCopyKeys.family, kvCopyKeys.cursor("token"));
-    within(oauthKeys.family, oauthKeys.value(oauthKeys.field.tokens, "v2:epoch"));
-    within(oauthKeys.family, oauthKeys.cleanup("v2:epoch"));
-    within(oauthKeys.family, oauthKeys.cleanupAt("v2:epoch"));
+    within(oauthGrantKeys.family, oauthGrantKeys.grant);
+    within(oauthFlowKeys.family, oauthFlowKeys.flow("digest"));
+    within(oauthFlowKeys.family, oauthFlowKeys.prefix);
+    within(oauthV2Keys.family, oauthV2Keys.generation);
+    within(oauthV2Keys.family, oauthV2Keys.value(oauthV2Keys.field.tokens, "v2:epoch"));
+    within(oauthV2Keys.family, oauthV2Keys.value(oauthV2Keys.field.tokens, null));
     const artifact = artifactKeys.under("artifact:");
     for (const key of [artifact.head("a"), artifact.blob("b"), artifact.scanCursor,
       artifact.versionPrefix("a", "view"), artifact.runPrefix("a"), artifact.run("a", "0", "r")]) {
@@ -171,18 +175,14 @@ describe("storage key families", () => {
       () => artifact.run("id", bad, "run"),
       () => artifact.run("id", "0", bad),
       () => artifact.blob(bad),
-      () => oauthKeys.value(oauthKeys.field.tokens, bad),
+      () => oauthFlowKeys.flow(bad),
+      () => oauthV2Keys.value(oauthV2Keys.field.tokens, bad),
       () => oauthConnectKeys.used(bad),
       () => kvCopyKeys.cursor(bad),
     ];
     for (const build of builders) {
       expect(build).toThrow(/U\+0000 \(NUL\)/);
     }
-    // These existing builders encode the component, so NUL remains safe and
-    // distinct from a literal percent escape without changing their layout.
-    expect(oauthKeys.cleanup(bad)).toBe("oauth:cleanup:a%00b");
-    expect(oauthKeys.cleanupAt(bad)).toBe("oauth:cleanup-at:a%00b");
-    expect(oauthKeys.cleanup("a%00b")).not.toBe(oauthKeys.cleanup(bad));
   });
 
   it.each([

@@ -14,6 +14,8 @@ import type {
   ConnectorCredentialConfig,
 } from "../src/types.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { oauthGrantKeys, scopes } from "../src/storage/keys.js";
+import { seedGrant } from "./fixtures/oauth.js";
 
 const KEY = Buffer.alloc(32, 7).toString("base64");
 const OAUTH_BASE = "https://connecta.test";
@@ -314,9 +316,9 @@ describe("CredentialVault", () => {
     const storage = memoryStorage();
     const tokens = { access_token: "mcp-token", token_type: "Bearer" };
     const client = { client_id: "mcp-client" };
-    // Plaintext in the pre-sealing legacy format, as an older release left it.
-    await storage.set("conn:notion:oauth:tokens", JSON.stringify(tokens));
-    await storage.set("conn:notion:oauth:client", JSON.stringify(client));
+    // A plaintext grant, as a deployment stored it before it had a sealing vault.
+    await seedGrant(storage, { client: { value: client }, tokens }, undefined, scopes.connector("notion"));
+    const grantKey = `${scopes.connector("notion")}${oauthGrantKeys.grant}`;
     const vault = new CredentialVault(storage, KEY);
     const oauthConnector = (id: string, authScope?: "personal") =>
       connectorWith({ id, kind: "mcp", ...(authScope ? { authScope } : {}) });
@@ -339,16 +341,14 @@ describe("CredentialVault", () => {
     expect(await provider.tokens()).toEqual(tokens);
     expect(await provider.clientInformation()).toEqual(client);
 
-    const sealedTokens = required((await storage.get("conn:notion:oauth:tokens")) ?? undefined);
-    const sealedClient = required((await storage.get("conn:notion:oauth:client")) ?? undefined);
-    expect(sealedTokens).not.toContain("mcp-token");
-    expect(sealedClient).not.toContain("mcp-client");
+    const sealed = required((await storage.get(grantKey)) ?? undefined);
+    expect(sealed).not.toContain("mcp-token");
+    expect(sealed).not.toContain("mcp-client");
 
     await vault.set("notion", "static-fallback-token", "user_123");
     await vault.delete("notion");
 
-    expect(await storage.get("conn:notion:oauth:tokens")).toBe(sealedTokens);
-    expect(await storage.get("conn:notion:oauth:client")).toBe(sealedClient);
+    expect(await storage.get(grantKey)).toBe(sealed);
     const reread = providerFor(registry.contextFor("notion", OAUTH_BASE), "notion");
     expect(await reread.tokens()).toEqual(tokens);
     expect(await reread.clientInformation()).toEqual(client);
@@ -356,14 +356,12 @@ describe("CredentialVault", () => {
     // The sealed bytes are bound to their connector and owner: copied into
     // another connector's namespace, or into a principal's partition of the
     // same connector, they open as nothing.
-    await storage.set("conn:linear:oauth:tokens", sealedTokens);
-    await storage.set("conn:linear:oauth:client", sealedClient);
+    await storage.set(`${scopes.connector("linear")}${oauthGrantKeys.grant}`, sealed);
     const linear = providerFor(registry.contextFor("linear", OAUTH_BASE), "linear");
     expect(await linear.tokens()).toBeUndefined();
     expect(await linear.clientInformation()).toBeUndefined();
 
-    await storage.set("principal:owner-a:conn:notion:oauth:tokens", sealedTokens);
-    await storage.set("principal:owner-a:conn:notion:oauth:client", sealedClient);
+    await storage.set(`${scopes.principal("owner-a")}${grantKey}`, sealed);
     const personal = providerFor(
       registry.personalRegistry("owner-a").contextFor("notion", OAUTH_BASE),
       "notion",

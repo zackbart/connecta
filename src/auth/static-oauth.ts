@@ -25,7 +25,6 @@ import {
   assertOAuthScope,
   authorizingContext,
   KvOAuthProvider,
-  LEGACY_GENERATION,
   refreshCoordinatorsByPartition,
 } from "./downstream-oauth.js";
 import type { OAuthRefreshCoordinator } from "./downstream-oauth.js";
@@ -37,8 +36,8 @@ import { trackOAuthStartReset } from "./oauth-start-reset.js";
  * declares, rather than ones a server advertises.
  *
  * Everything that makes the `remoteMcp()` grant safe is reused, not copied.
- * `StaticOAuthProvider` is a `KvOAuthProvider` — the same epochs, sealing,
- * owner partitions, generation fence, reset lineage, and refresh-failure
+ * `StaticOAuthProvider` is a `KvOAuthProvider` — the same grant record and
+ * consents, sealing, owner partitions, epoch fence, and refresh-failure
  * verdicts — whose discovery state and client are constants, and the SDK's
  * own `auth()` drives it through the same `OAuthRefreshCoordinator`. What a
  * static configuration subtracts is the network learning: no RFC 9728 or 8414
@@ -124,8 +123,7 @@ interface StaticOAuthSettings {
    * The authorization server identity tokens are bound to. A static
    * configuration has no advertised issuer, so the token endpoint stands in:
    * repointing it is repointing the grant, and the issuer-bound read then
-   * fences the old tokens behind a new epoch instead of sending them to the
-   * new server.
+   * leaves the old tokens unsent until a consent replaces them.
    */
   identity: string;
 }
@@ -326,11 +324,6 @@ class StaticOAuthProvider extends KvOAuthProvider {
     // Configuration is the discovery; there is nothing to remember.
   }
 
-  /** Configuration names the server a grant here belongs to. */
-  protected override async recordedIssuer(): Promise<string> {
-    return this.settings.identity;
-  }
-
   /** No RFC 8707 `resource` parameter: a plain REST API names no resource. */
   async validateResourceURL(): Promise<URL | undefined> {
     return undefined;
@@ -493,11 +486,10 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     try {
       if (signal?.aborted) throw signal.reason;
       const provider = providerFor(ctx);
-      // Decide the grant before anything reads it, and bind this call's reads
-      // and writes to the resulting epoch: a reset landing meanwhile fails
-      // the call rather than handing it another flow's grant.
-      const generation = await provider.beginFlow();
-      if (provider.isOperatorDisconnectedGeneration(generation)) {
+      // Bind this call's reads and writes to the live epoch: a reset landing
+      // meanwhile fails the call rather than handing it another flow's grant.
+      const epoch = await provider.beginFlow();
+      if (provider.isOperatorDisconnectedEpoch(epoch)) {
         throw new ConnectorCallError("downstream_oauth_required", disconnectedMessage);
       }
       const tokens = await provider.tokens(issuerContext);
@@ -526,17 +518,6 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         rejectedScopes.add(scopeOf(ctx));
         throw authRequiredError();
       }
-      // The coordinator's answer while another request is still committing
-      // a rotation it redeemed. The SDK rethrows it untouched; it is a
-      // moment, not a verdict on the grant.
-      if (error instanceof OAuthError && error.code === "temporarily_unavailable") {
-        throw new ConnectorCallError(
-          "unavailable",
-          `Connector "${id}" could not refresh its OAuth grant while another ` +
-            "request was saving one. The grant is kept; retry.",
-          { cause: error },
-        );
-      }
       throw error;
     } finally {
       release();
@@ -551,13 +532,14 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       };
     }
     // A status read never starts authorization: this provider cannot, and
-    // nothing here calls the SDK. A stored grant is healthy until a call
-    // says otherwise — the downstream is asked nothing.
+    // nothing here calls the SDK. A stored grant for the configured token
+    // endpoint is healthy until a call says otherwise — the downstream is
+    // asked nothing.
     const provider = providerFor(ctx);
     if (await provider.operatorDisconnected()) {
       return { state: "auth_required", message: disconnectedMessage };
     }
-    return (await provider.tokens())
+    return (await provider.tokens(issuerContext))
       ? { state: "ok" }
       : { state: "auth_required", message: AUTH_REQUIRED_MESSAGE };
   };
@@ -589,13 +571,8 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     }
     if (ctx.signal?.aborted) throw ctx.signal.reason;
     try {
-      // Born modern. The legacy generation exists so a `remoteMcp()` grant
-      // from before epochs survives an upgrade; this connector has no such
-      // past, and a flow started there writes an untimed pending URL that a
-      // second Connect could not hand back.
-      if ((await provider.generation()) === LEGACY_GENERATION) await provider.bumpGeneration();
-      // A grant from a since-repointed token endpoint is retired here, before
-      // it could be reported healthy.
+      // A grant from a since-repointed token endpoint reads as absent here,
+      // and the consent this start begins replaces it.
       await provider.beginFlow();
       if (await provider.tokens(issuerContext)) {
         return { state: "ok", message: "Already authorized — connection is healthy." };
@@ -603,7 +580,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       if ((await runAuth(provider, ctx)) === "AUTHORIZED") {
         return { state: "ok", message: "Already authorized — connection is healthy." };
       }
-      const authorizationUrl = await provider.pendingAuthorizationUrl();
+      const authorizationUrl = await provider.consentUrl();
       return {
         state: "auth_required",
         ...(authorizationUrl !== undefined ? { authorizationUrl } : {}),
@@ -651,6 +628,15 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     callbackProviders.delete(scopeOf(ctx));
     const authorizationCode = callbackParams?.get("code") ?? code;
     const iss = callbackParams?.get("iss") ?? undefined;
+    // A programmatic exchange names its consent by the callback's state; one
+    // with none (PKCE-less) claims and cleans up nothing.
+    const consent = callbackParams?.get("state") ?? null;
+    if (!provider.verified() && consent !== null && !(await provider.verifyState(consent))) {
+      throw new ConnectorCallError(
+        "connector_call_failed",
+        `Connector "${id}" authorization callback matches no pending consent; nothing was exchanged.`,
+      );
+    }
     provider.exchanging(authorizationCode);
     await provider.bindFlow();
     const result = await runAuth(provider, ctx, {
@@ -660,7 +646,6 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     if (result !== "AUTHORIZED") {
       throw new UnauthorizedError("Failed to authorize");
     }
-    await provider.clearPending();
     rejectedScopes.delete(scopeOf(ctx));
   };
 

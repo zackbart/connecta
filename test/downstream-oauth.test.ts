@@ -1,261 +1,192 @@
-import { callbackAuth, bindCallback, oauthVault } from "./fixtures/oauth.js";
-import { fetchTestUiDetails } from "./helpers.js";
-import { auth, OAuthError, UnauthorizedError } from "@modelcontextprotocol/client";
-import type { OAuthValueKey } from "../src/storage/keys.js";
+import { auth } from "@modelcontextprotocol/client";
 import type {
   FetchLike,
-  OAuthClientInformationContext,
   OAuthClientInformationFull,
   OAuthDiscoveryState,
   OAuthTokens,
-  Transport,
 } from "@modelcontextprotocol/client";
-import { z } from "zod";
-import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   KvOAuthProvider,
-  OAuthRefreshCoordinator,
-  oauthValueStorageKey,
+  OAuthCallbackClaimedError,
+  oauthStateDigest,
 } from "../src/auth/downstream-oauth.js";
-import { accessTokens } from "../src/access-tokens.js";
-import { api } from "../src/connectors/api.js";
-import { remoteMcp } from "../src/connectors/remote-mcp.js";
-import { classifyCallError, ConnectorCallError } from "../src/errors.js";
-import { memoryStorage } from "../src/storage/memory.js";
 import { CredentialVault } from "../src/credentials.js";
-import { vaultOAuthSealer } from "../src/oauth-sealing.js";
-import { attachOAuthSealer } from "../src/oauth-sealing.js";
-import type {
-  Connector,
-  ConnectorContext,
-  InboundAuth,
-  KVStorage,
-  Logger,
-} from "../src/types.js";
-import { createTestConnecta, makeRegistry, required, silentLogger } from "./helpers.js";
-import { identityStorageKey } from "../src/identity.js";
-import { httpDownstream, inMemoryDownstream, throwingTransport } from "./fixtures/downstream-mcp.js";
-import { connectorContext as ctx, deferred, spyLogger } from "./fixtures/misc.js";
+import { classifyCallError, ConnectorCallError } from "../src/errors.js";
+import { vaultOAuthSealer, type OAuthStateSealer } from "../src/oauth-sealing.js";
+import { memoryStorage } from "../src/storage/memory.js";
+import {
+  OAUTH_FLOW_TTL_SECONDS,
+  oauthConnectKeys,
+  oauthFlowKeys,
+  oauthGrantKeys,
+  oauthV2Keys,
+  type OAuthV2ValueKey,
+} from "../src/storage/keys.js";
+import type { KVStorage, Logger } from "../src/types.js";
+import { required, silentLogger } from "./helpers.js";
+import { deferred, spyLogger } from "./fixtures/misc.js";
+import { consentKey, storedGrant } from "./fixtures/oauth.js";
+import { CREDENTIAL_KEY } from "./fixtures/ui.js";
+
+// The provider over layout 3: one grant record per owner (`oauth:grant`) and
+// one flow record per consent (`oauth:flow:<sha256(state)>`), and the one-shot
+// migration from layout 2 (#707). The refresh coordinator and remoteMcp()'s
+// flows have suites of their own.
 
 const BASE = "https://connecta.test";
 const REDIRECT = `${BASE}/oauth/callback/svc`;
+const GRANT = oauthGrantKeys.grant;
+const ISSUER = "https://auth.example";
+const ctxA = { issuer: ISSUER };
+const ctxB = { issuer: "https://auth-b.example" };
+const BINDING = "same-config";
+const URL_CLIENT = `${BASE}/oauth-client.json`;
+const OTHER_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(9)));
+const SUPERSEDED = /authorization changed while this request was in flight; try again/;
 
-/**
- * Everything written to the console for the rest of the test. The SDK logs
- * there directly, below any logger a deployment configures, so a secret it is
- * handed reaches the host's output whatever connecta's own logger does.
- */
-function consoleOutput(): () => string {
-  const lines: string[] = [];
-  for (const method of ["debug", "error", "info", "log", "warn"] as const) {
-    const spy = vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
-      lines.push(args.map((arg) => (arg instanceof Error ? `${arg.stack}` : typeof arg === "string" ? arg : JSON.stringify(arg))).join(" "));
-    });
-    onTestFinished(() => spy.mockRestore());
-  }
-  return () => lines.join("\n");
-}
+const tokens: OAuthTokens = {
+  access_token: "secret-access",
+  token_type: "Bearer",
+  refresh_token: "secret-refresh",
+};
+const client: OAuthClientInformationFull = {
+  client_id: "dcr-client",
+  client_secret: "dcr-secret",
+  redirect_uris: [REDIRECT],
+};
+const discovery: OAuthDiscoveryState = { authorizationServerUrl: ISSUER };
 
-async function storeCurrentOAuthValue(
-  storage: KVStorage,
-  key: OAuthValueKey,
-  value: unknown,
-  issuer?: string,
-): Promise<void> {
-  const generation = (await storage.get("oauth:generation")) ?? "legacy";
-  await storage.set(
-    oauthValueStorageKey(key, generation),
-    JSON.stringify({
-      connectaOAuthVersion: 2,
-      generation,
-      ...(issuer !== undefined ? { issuer } : {}),
-      value,
-    }),
+function provider(
+  storage: KVStorage = memoryStorage(),
+  opts: {
+    sealer?: OAuthStateSealer;
+    signal?: AbortSignal;
+    binding?: string;
+    clientMetadataUrl?: string;
+    scope?: string;
+  } = {},
+): KvOAuthProvider {
+  return new KvOAuthProvider(
+    "svc", storage, REDIRECT, undefined, true, opts.sealer, opts.signal,
+    opts.binding, undefined, opts.clientMetadataUrl, opts.scope,
   );
 }
 
-// ---------------------------------------------------------------------------
-// KvOAuthProvider unit behavior (no authorization server involved).
-// ---------------------------------------------------------------------------
+function sealerFor(
+  key = CREDENTIAL_KEY,
+  logger: Logger = silentLogger,
+  connectorId = "svc",
+  owner?: string,
+): OAuthStateSealer {
+  return required(vaultOAuthSealer(new CredentialVault(memoryStorage(), key), connectorId, owner, logger));
+}
+
+/** Publish a consent the way the SDK starts one: state, verifier, redirect. */
+async function publish(
+  p: KvOAuthProvider,
+  verifier = "verifier",
+  authorize = `${ISSUER}/authorize?client_id=dcr-client`,
+): Promise<{ state: string; url: string }> {
+  const state = await p.state();
+  await p.saveCodeVerifier(verifier);
+  const url = new URL(authorize);
+  url.searchParams.set("state", state);
+  await p.redirectToAuthorization(url);
+  return { state, url: url.toString() };
+}
+
+async function rejection(work: Promise<unknown>): Promise<unknown> {
+  return work.then(() => undefined, (error: unknown) => error);
+}
+
+function expectSuperseded(error: unknown): void {
+  expect(error).toBeInstanceOf(ConnectorCallError);
+  expect(String(error)).toMatch(SUPERSEDED);
+  expect(classifyCallError(error)).toMatchObject({ code: "unavailable", retryable: true });
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("KvOAuthProvider over memoryStorage", () => {
-  it("retires a credential written before issuer binding when a flow begins", async () => {
-    // v0.8.x stored no issuer and nothing that names one, so nothing can
-    // tell which server the grant belongs to. It is never bound to any.
-    const storage = memoryStorage();
-    const old = { access_token: "old", token_type: "Bearer", refresh_token: "old-refresh" };
-    await storage.set("oauth:client", JSON.stringify({ client_id: "old-client", client_secret: "old-secret" }));
-    await storage.set("oauth:tokens", JSON.stringify(old));
-    const issuer = { issuer: "https://synthetic.test" };
-
-    // An issuer-aware read retires nothing and sends nothing: it simply
-    // hands an unstamped value to no one.
-    const reader = new KvOAuthProvider("svc", storage, REDIRECT);
-    expect(await reader.tokens(issuer)).toBeUndefined();
-    expect(await reader.clientInformation(issuer)).toBeUndefined();
-    expect(await reader.generation()).toBe("legacy");
-
-    // The decision is the flow's entry, before the SDK is handed anything.
-    const p = new KvOAuthProvider("svc", storage, REDIRECT);
-    const epoch = await p.beginFlow();
-    expect(epoch).toMatch(/^v2:/);
-    expect(await p.generation()).toBe(epoch);
-    expect(await p.tokens()).toBeUndefined();
-    expect(await p.clientInformation(issuer)).toBeUndefined();
-    const values = await Promise.all((await storage.list!("")).map((key) => storage.get(key)));
-    expect(values.filter((value) => /old-(refresh|secret)/.test(value ?? ""))).toEqual([]);
-  });
-
-  it("retains cleanup lineage when the generation write commits before rejecting", async () => {
-    const backing = memoryStorage();
-    let loseAnswer = false;
-    const storage: KVStorage = { ...backing, async set(key, value, options) {
-      await backing.set(key, value, options);
-      if (key === "oauth:generation" && loseAnswer) {
-        loseAnswer = false;
-        throw new Error("generation answer lost");
-      }
-    } };
-    const p = new KvOAuthProvider("svc", storage, REDIRECT);
-    await p.resetAuthorization();
-    const previous = await p.generation();
-    await p.saveTokens({ access_token: "synthetic", token_type: "Bearer", refresh_token: "retired" });
-    const oldKey = oauthValueStorageKey("oauth:tokens", previous);
-    loseAnswer = true;
-    await expect(p.resetAuthorization()).rejects.toThrow("generation answer lost");
-    expect(await p.generation()).not.toBe(previous);
-    expect(await p.tokens()).toBeUndefined();
-    expect(await backing.get(oldKey)).not.toBeNull();
-    await new KvOAuthProvider("svc", storage, REDIRECT).resetAuthorization();
-    expect(await backing.get(oldKey)).toBeNull();
-  });
-
-  function provider() {
-    return new KvOAuthProvider("svc", memoryStorage(), REDIRECT);
-  }
-
-  it("removes a client write whose storage call finishes after cancellation", async () => {
-    const inner = memoryStorage();
-    const blocked = deferred<void>();
-    const writing = deferred<void>();
-    const storage: KVStorage = {
-      list: (prefix) => inner.list(prefix),
-      get: (key) => inner.get(key),
-      delete: (key) => inner.delete(key),
-      async set(key, value, options) {
-        if (key.startsWith("oauth:client:epoch:")) {
-          writing.resolve();
-          await blocked.promise;
-        }
-        await inner.set(key, value, options);
-      },
-      compareAndSet: (key, expected, next, options) =>
-        inner.compareAndSet!(key, expected, next, options),
-    };
-    const controller = new AbortController();
-    const p = new KvOAuthProvider(
-      "svc", storage, REDIRECT, undefined, true, undefined,
-      controller.signal, "binding",
-    );
-    const generation = await p.bumpGeneration();
-    p.captureGeneration(generation);
-    const save = p.saveClientInformation({ client_id: "late" }, { issuer: "https://auth.example" });
-    await writing.promise;
-    controller.abort();
-    blocked.resolve();
-    await save;
-
-    expect(await inner.get(oauthValueStorageKey("oauth:client", generation))).toBeNull();
-  });
-
   it("exposes redirectUrl and the connecta client metadata", () => {
-    const p = provider();
+    const p = provider(memoryStorage(), { scope: "read write" });
     expect(p.redirectUrl).toBe(REDIRECT);
-    const meta = p.clientMetadata;
-    expect(meta.redirect_uris).toEqual([REDIRECT]);
-    expect(meta.client_name).toBe("connecta");
-    expect(meta.grant_types).toEqual(["authorization_code", "refresh_token"]);
-    expect(meta.response_types).toEqual(["code"]);
-    expect(meta.token_endpoint_auth_method).toBe("none");
+    expect(p.clientMetadata).toEqual({
+      redirect_uris: [REDIRECT],
+      client_name: "connecta",
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+      scope: "read write",
+    });
+    expect(provider().clientMetadata).not.toHaveProperty("scope");
   });
 
   it("round-trips client information (DCR)", async () => {
-    const p = provider();
+    const storage = memoryStorage();
+    const p = provider(storage);
     expect(await p.clientInformation()).toBeUndefined();
-    const info: OAuthClientInformationFull = {
-      client_id: "abc",
-      client_secret: "shh",
-      redirect_uris: [REDIRECT],
-    };
-    await p.saveClientInformation(info);
-    expect(await p.clientInformation()).toEqual(info);
+    await p.saveClientInformation(client);
+    expect(await p.clientInformation()).toEqual(client);
+    expect(await provider(storage).clientInformation()).toEqual(client);
   });
 
   it("round-trips tokens", async () => {
-    const p = provider();
+    const storage = memoryStorage();
+    const p = provider(storage);
     expect(await p.tokens()).toBeUndefined();
-    const tokens: OAuthTokens = {
-      access_token: "at",
-      token_type: "Bearer",
-      refresh_token: "rt",
-    };
     await p.saveTokens(tokens);
     expect(await p.tokens()).toEqual(tokens);
+    expect(await provider(storage).tokens()).toEqual(tokens);
   });
 
   it("persists discovery state across OAuth callback request scopes", async () => {
     const storage = memoryStorage();
-    const start = new KvOAuthProvider("svc", storage, REDIRECT);
-    const discovery: OAuthDiscoveryState = {
-      authorizationServerUrl: "https://auth.example",
-      resourceMetadataUrl:
-        "https://downstream.example/.well-known/custom-protected-resource",
+    const state: OAuthDiscoveryState = {
+      authorizationServerUrl: ISSUER,
+      resourceMetadataUrl: "https://downstream.example/.well-known/custom-protected-resource",
       resourceMetadata: {
         resource: "https://downstream.example/mcp",
-        authorization_servers: ["https://auth.example"],
+        authorization_servers: [ISSUER],
       },
     };
-
-    await start.saveDiscoveryState(discovery);
-
-    const callback = new KvOAuthProvider("svc", storage, REDIRECT);
-    await expect(callback.discoveryState()).resolves.toEqual(discovery);
+    await provider(storage).saveDiscoveryState(state);
+    await expect(provider(storage).discoveryState()).resolves.toEqual(state);
+    // Discovery names the grant's server.
+    expect((await storedGrant(storage))?.body).toEqual({ issuer: ISSUER, discovery: state });
   });
 
   it.each([false, true])("finishes OAuth from non-default metadata, URL client ID: %s", async (urlClient) => {
     const storage = memoryStorage();
-    const issuer = "https://auth.example";
     const mcpUrl = "https://downstream.example/mcp";
-    const metadataUrl =
-      "https://downstream.example/.well-known/custom-protected-resource/mcp";
-    const clientMetadataUrl = "https://connecta.test/oauth-client.json";
-    const makeProvider = () => new KvOAuthProvider(
-      "svc", storage, REDIRECT, undefined, true, undefined, undefined, undefined, undefined,
-      urlClient ? clientMetadataUrl : undefined,
-      "full mcp",
-    );
+    const metadataUrl = "https://downstream.example/.well-known/custom-protected-resource/mcp";
+    const makeProvider = () => provider(storage, {
+      ...(urlClient ? { clientMetadataUrl: URL_CLIENT } : {}),
+      scope: "full mcp",
+    });
     const fetchStub: FetchLike = async (input, init = {}) => {
       const url = new URL(input);
       if (url.href === metadataUrl) {
-        return Response.json({
-          resource: mcpUrl,
-          authorization_servers: [issuer],
-        });
+        return Response.json({ resource: mcpUrl, authorization_servers: [ISSUER] });
       }
-      if (url.href === `${issuer}/.well-known/oauth-authorization-server`) {
+      if (url.href === `${ISSUER}/.well-known/oauth-authorization-server`) {
         return Response.json({
-          issuer,
+          issuer: ISSUER,
           client_id_metadata_document_supported: urlClient,
           scopes_supported: ["full", "mcp", "offline_access"],
-          authorization_endpoint: `${issuer}/authorize`,
-          token_endpoint: `${issuer}/token`,
-          registration_endpoint: `${issuer}/register`,
+          authorization_endpoint: `${ISSUER}/authorize`,
+          token_endpoint: `${ISSUER}/token`,
+          registration_endpoint: `${ISSUER}/register`,
           response_types_supported: ["code"],
           grant_types_supported: ["authorization_code", "refresh_token"],
           code_challenge_methods_supported: ["S256"],
           token_endpoint_auth_methods_supported: ["none"],
         });
       }
-      if (url.href === `${issuer}/register`) {
+      if (url.href === `${ISSUER}/register`) {
         expect(urlClient).toBe(false);
         expect(init.method).toBe("POST");
         return Response.json({
@@ -266,7368 +197,911 @@ describe("KvOAuthProvider over memoryStorage", () => {
           response_types: ["code"],
         });
       }
-      if (url.href === `${issuer}/token`) {
+      if (url.href === `${ISSUER}/token`) {
         expect(init.method).toBe("POST");
         expect(init.body).toBeInstanceOf(URLSearchParams);
         expect((init.body as URLSearchParams).get("code")).toBe("auth-code");
-        expect((init.body as URLSearchParams).get("client_id")).toBe(urlClient ? clientMetadataUrl : "registered-client");
-        return Response.json({
-          access_token: "access-token",
-          token_type: "Bearer",
-        });
+        expect((init.body as URLSearchParams).get("client_id")).toBe(urlClient ? URL_CLIENT : "registered-client");
+        return Response.json({ access_token: "access-token", token_type: "Bearer" });
       }
       throw new Error(`Unexpected OAuth test request: ${url.href}`);
     };
 
     const start = makeProvider();
     await expect(
-      auth(start, {
-        serverUrl: mcpUrl,
-        resourceMetadataUrl: new URL(metadataUrl),
-        fetchFn: fetchStub,
-      }),
+      auth(start, { serverUrl: mcpUrl, resourceMetadataUrl: new URL(metadataUrl), fetchFn: fetchStub }),
     ).resolves.toBe("REDIRECT");
-    const pending = new URL((await start.pendingAuthorizationUrl())!);
-
-    expect(pending.searchParams.get("client_id")).toBe(urlClient ? clientMetadataUrl : "registered-client");
+    const pending = new URL(required(await start.pendingAuthorizationUrl()));
+    expect(pending.searchParams.get("client_id")).toBe(urlClient ? URL_CLIENT : "registered-client");
     expect(pending.searchParams.get("scope")).toBe("full mcp offline_access");
+
     const callback = makeProvider();
-    expect(await callback.verifyState(pending.searchParams.get("state"))).toBe(
-      true,
-    );
+    expect(await callback.verifyState(pending.searchParams.get("state"))).toBe(true);
     await expect(
-      auth(callback, {
-        serverUrl: mcpUrl,
-        authorizationCode: "auth-code",
-        fetchFn: fetchStub,
-      }),
+      auth(callback, { serverUrl: mcpUrl, authorizationCode: "auth-code", fetchFn: fetchStub }),
     ).resolves.toBe("AUTHORIZED");
-    await expect(callback.tokens()).resolves.toMatchObject({
-      access_token: "access-token",
-    });
+    await expect(callback.tokens()).resolves.toMatchObject({ access_token: "access-token" });
   });
 
   it("binds client registration and tokens to the validated authorization issuer", async () => {
     const storage = memoryStorage();
-    const p = new KvOAuthProvider("svc", storage, REDIRECT);
-    const issuer: OAuthClientInformationContext = {
-      issuer: "https://auth.example",
-    };
-    const info: OAuthClientInformationFull = {
-      client_id: "issuer-client",
-      redirect_uris: [REDIRECT],
-    };
-    const tokens: OAuthTokens = {
-      access_token: "issuer-token",
-      token_type: "Bearer",
-    };
-
-    await p.saveClientInformation(info, issuer);
-    await p.saveTokens(tokens, issuer);
+    const p = provider(storage);
+    await p.saveClientInformation(client, ctxA);
+    await p.saveTokens(tokens, ctxA);
 
     // An issuer-aware read hands back the stamp, so the SDK's own SEP-2352
     // check reads the value as bound rather than warning on the console.
-    expect(await p.clientInformation(issuer)).toEqual({ ...info, ...issuer });
-    expect(await p.tokens(issuer)).toEqual({ ...tokens, ...issuer });
-    // Token attachment has no issuer context, so it reads the already-bound
-    // credential selected during validated discovery.
+    expect(await p.clientInformation(ctxA)).toEqual({ ...client, ...ctxA });
+    expect(await p.tokens(ctxA)).toEqual({ ...tokens, ...ctxA });
+    // Token attachment has no issuer context: it reads the grant as stored.
     expect(await p.tokens()).toEqual(tokens);
-    expect(JSON.parse((await storage.get("oauth:client"))!)).toMatchObject({
-      connectaOAuthVersion: 2,
-      generation: "legacy",
-      issuer: issuer.issuer,
-      value: { client_id: "issuer-client" },
-    });
-    expect(JSON.parse((await storage.get("oauth:tokens"))!)).toMatchObject({
-      connectaOAuthVersion: 2,
-      generation: "legacy",
-      issuer: issuer.issuer,
-      value: { access_token: "issuer-token" },
+    expect(await storedGrant(storage)).toEqual({
+      connectaOAuth: 3,
+      epoch: "initial",
+      body: { issuer: ISSUER, client: { value: client }, tokens },
     });
   });
 
-  it("hands a grant to no other server, and retires it once its epoch's discovery names one", async () => {
+  it("keeps one server per grant: another issuer's write replaces the body, and its reads get nothing", async () => {
     const storage = memoryStorage();
-    const p = new KvOAuthProvider("svc", storage, REDIRECT);
-    const original = { issuer: "https://auth-a.example" };
-    const replacement = { issuer: "https://auth-b.example" };
-    await p.saveClientInformation(
-      { client_id: "client-a", redirect_uris: [REDIRECT] },
-      original,
-    );
-    await p.saveTokens(
-      { access_token: "token-a", token_type: "Bearer" },
-      original,
-    );
+    const p = provider(storage);
+    await p.saveClientInformation(client, ctxA);
+    await p.saveTokens(tokens, ctxA);
+    await p.saveDiscoveryState(discovery);
+    const before = await storage.get(GRANT);
 
     // A read for another server gets nothing, and changes nothing.
-    expect(await p.clientInformation(replacement)).toBeUndefined();
-    expect(await p.tokens(replacement)).toBeUndefined();
-    expect(await p.generation()).toBe("legacy");
-    expect(await p.tokens(original)).toMatchObject({ access_token: "token-a" });
+    expect(await p.clientInformation(ctxB)).toBeUndefined();
+    expect(await p.tokens(ctxB)).toBeUndefined();
+    expect(await storage.get(GRANT)).toBe(before);
+    // Discovery for the same server keeps the client and tokens beside it.
+    expect((await storedGrant(storage))?.body).toEqual({
+      issuer: ISSUER, client: { value: client }, tokens, discovery,
+    });
 
-    // Discovery naming another server is a grant this epoch cannot keep.
-    await p.saveDiscoveryState({ authorizationServerUrl: replacement.issuer });
-    const flow = new KvOAuthProvider("svc", storage, REDIRECT);
-    expect(await flow.beginFlow()).toMatch(/^v2:/);
-    expect(await flow.tokens()).toBeUndefined();
-    expect(await storage.get("oauth:client")).toBeNull();
-    expect(await storage.get("oauth:tokens")).toBeNull();
-  });
+    // Tokens for another server replace the whole grant.
+    const other = { access_token: "b-access", token_type: "Bearer" };
+    await p.saveTokens(other, ctxB);
+    expect((await storedGrant(storage))?.body).toEqual({ issuer: ctxB.issuer, tokens: other });
+    expect(await p.clientInformation()).toBeUndefined();
+    expect(await p.tokens(ctxA)).toBeUndefined();
 
-  it("retires a v1 credential envelope when a flow begins", async () => {
-    const storage = memoryStorage();
-    await storage.set(
-      "oauth:client",
-      JSON.stringify({
-        connectaOAuthVersion: 1,
-        generation: "legacy",
-        value: {
-          client_id: "upgrade-client",
-          redirect_uris: [REDIRECT],
-        },
-      }),
-    );
-    const p = new KvOAuthProvider("svc", storage, REDIRECT);
-
-    expect(await p.beginFlow()).toMatch(/^v2:/);
-    await expect(
-      p.clientInformation({ issuer: "https://auth.example" }),
-    ).resolves.toBeUndefined();
-    expect(await storage.get("oauth:client")).toBeNull();
+    // So does discovery naming a third.
+    await p.saveDiscoveryState({ authorizationServerUrl: "https://auth-c.example" });
+    expect((await storedGrant(storage))?.body).toEqual({
+      issuer: "https://auth-c.example",
+      discovery: { authorizationServerUrl: "https://auth-c.example" },
+    });
+    expect(await p.tokens()).toBeUndefined();
+    expect((await storedGrant(storage))?.epoch).toBe("initial");
   });
 
   it("round-trips the PKCE code verifier and throws when missing", async () => {
-    const p = provider();
+    const storage = memoryStorage();
+    const p = provider(storage);
     await expect(p.codeVerifier()).rejects.toThrow(/verifier/i);
     await p.saveCodeVerifier("v-123");
     expect(await p.codeVerifier()).toBe("v-123");
+
+    // Across request scopes it travels in its consent, found by state.
+    const { state } = await publish(p, "v-456");
+    const callback = provider(storage);
+    await expect(callback.codeVerifier()).rejects.toThrow(/verifier/i);
+    expect(await callback.verifyState(state)).toBe(true);
+    expect(await callback.codeVerifier()).toBe("v-456");
   });
 
   it("stores the pending authorization URL and surfaces it", async () => {
-    const p = provider();
+    const storage = memoryStorage();
+    const p = provider(storage);
     expect(await p.pendingAuthorizationUrl()).toBeUndefined();
-    await p.redirectToAuthorization(
-      new URL("https://auth.example/authorize?client_id=abc&state=xyz"),
-    );
-    expect(await p.pendingAuthorizationUrl()).toBe(
-      "https://auth.example/authorize?client_id=abc&state=xyz",
-    );
+    await p.redirectToAuthorization(new URL(`${ISSUER}/authorize?client_id=abc&state=xyz`));
+    expect(await provider(storage).pendingAuthorizationUrl()).toBe(`${ISSUER}/authorize?client_id=abc&state=xyz`);
+    expect(await p.consentUrl()).toBe(`${ISSUER}/authorize?client_id=abc&state=xyz`);
+    expect(await provider(storage).verifyState("xyz")).toBe(true);
   });
 
-  it("state() persists a random opaque value verifyState checks constant-time", async () => {
-    const p = provider();
-    // Nothing stored yet → fail closed.
+  it("state() mints a random opaque value its stored consent verifies by digest", async () => {
+    const storage = memoryStorage();
+    const p = provider(storage);
+    // Nothing stored yet: fail closed.
     expect(await p.verifyState("anything")).toBe(false);
     const s = await p.state();
     expect(s).toMatch(/^[0-9a-f]{64}$/);
-    expect(await p.verifyState(s)).toBe(true);
-    expect(await p.verifyState(`${s}x`)).toBe(false); // length differs
+    // Held in memory until its consent is published.
+    expect(await provider(storage).verifyState(s)).toBe(false);
+    await p.saveCodeVerifier("v");
+    await p.redirectToAuthorization(new URL(`${ISSUER}/authorize?state=${s}`));
+
+    // Stored under its digest, which the grant points at.
+    const digest = await oauthStateDigest(s);
+    expect(await storage.list(oauthFlowKeys.prefix)).toEqual([oauthFlowKeys.flow(digest)]);
+    expect((await storedGrant(storage))?.flow).toBe(digest);
+    expect(await storage.list("")).not.toContainEqual(expect.stringContaining(s));
+
+    const callback = provider(storage);
+    expect(await callback.verifyState(s)).toBe(true);
+    expect(await callback.verifyState(`${s}x`)).toBe(false);
     const differentLast = s.endsWith("0") ? "1" : "0";
-    expect(await p.verifyState(s.slice(0, -1) + differentLast)).toBe(false); // same length
-    expect(await p.verifyState(null)).toBe(false);
+    expect(await callback.verifyState(s.slice(0, -1) + differentLast)).toBe(false);
+    expect(await callback.verifyState(null)).toBe(false);
+    expect(callback.verified()).toBe(false);
   });
 
-  it("state() mints a fresh value each call; only the latest verifies", async () => {
-    const p = provider();
+  it("state() mints a fresh value each call; every published consent verifies until claimed", async () => {
+    const storage = memoryStorage();
+    const p = provider(storage);
     const a = await p.state();
     const b = await p.state();
     expect(a).not.toBe(b);
-    expect(await p.verifyState(a)).toBe(false);
-    expect(await p.verifyState(b)).toBe(true);
+    // A state is nothing until its consent is published.
+    expect(await provider(storage).verifyState(b)).toBe(false);
+
+    const first = await publish(provider(storage), "first-verifier", `${ISSUER}/authorize?n=1`);
+    const second = await publish(provider(storage), "second-verifier", `${ISSUER}/authorize?n=2`);
+    // The grant points at the latest; both consents still complete.
+    expect(await provider(storage).pendingAuthorizationUrl()).toBe(second.url);
+    const callback = provider(storage);
+    const duplicate = provider(storage);
+    expect(await callback.verifyState(first.state)).toBe(true);
+    expect(await duplicate.verifyState(first.state)).toBe(true);
+    expect(await callback.codeVerifier()).toBe("first-verifier");
+    expect(await provider(storage).verifyState(second.state)).toBe(true);
+
+    // The exchange claims its consent: exactly one of two callbacks wins,
+    // and the claimed record keeps only its epoch.
+    await callback.bindFlow();
+    expect(await callback.claimCodeExchange()).toBeUndefined();
+    await duplicate.bindFlow();
+    expect(await rejection(duplicate.claimCodeExchange())).toBeInstanceOf(OAuthCallbackClaimedError);
+    expect(JSON.parse(required((await storage.get(await consentKey(first.state))) ?? undefined))).toEqual({
+      connectaOAuthFlow: 1, epoch: "initial", at: expect.any(Number), consumed: true,
+    });
+    expect(await provider(storage).verifyState(first.state)).toBe(false);
+    expect(await provider(storage).verifyState(second.state)).toBe(true);
+
+    // Claiming the latest leaves nothing pending.
+    const last = provider(storage);
+    expect(await last.verifyState(second.state)).toBe(true);
+    await last.bindFlow();
+    await last.claimCodeExchange();
+    expect(await provider(storage).pendingAuthorizationUrl()).toBeUndefined();
   });
 
-  it("generation defaults to legacy and bumps to unique epochs", async () => {
-    const p = provider();
-    expect(await p.generation()).toBe("legacy");
-    const first = await p.bumpGeneration();
-    const second = await p.bumpGeneration();
-    expect(first).toMatch(/^v2:/);
-    expect(second).toMatch(/^v2:/);
+  it("stores each consent with the link's fifteen-minute lifetime", async () => {
+    const backing = memoryStorage();
+    const ttls: Array<number | undefined> = [];
+    const storage: KVStorage = { ...backing,
+      compareAndSet(key, expected, next, options) {
+        if (key.startsWith(oauthFlowKeys.prefix) && next !== null) ttls.push(options?.ttlSeconds);
+        return backing.compareAndSet(key, expected, next, options);
+      },
+    };
+    const before = Date.now();
+    const { state } = await publish(provider(storage));
+    const flow = JSON.parse(required((await backing.get(await consentKey(state))) ?? undefined)) as { at: number };
+    expect(OAUTH_FLOW_TTL_SECONDS).toBe(900);
+    expect(ttls).toEqual([OAUTH_FLOW_TTL_SECONDS]);
+    expect(flow.at).toBeGreaterThanOrEqual(before);
+    expect(flow.at).toBeLessThanOrEqual(Date.now());
+
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now + (OAUTH_FLOW_TTL_SECONDS + 1) * 1000);
+    expect(await provider(storage).verifyState(state)).toBe(false);
+  });
+
+  it("hands the latest consent back for Continue only while fresh and naming the grant's client", async () => {
+    const storage = memoryStorage();
+    const p = provider(storage);
+    await p.saveClientInformation(client, ctxA);
+    const { url } = await publish(p);
+    expect(await provider(storage).reusablePendingAuthorizationUrl()).toBe(url);
+
+    // Past ten minutes it is only pending.
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now + 10 * 60 * 1000);
+    expect(await provider(storage).reusablePendingAuthorizationUrl()).toBeUndefined();
+    expect(await provider(storage).pendingAuthorizationUrl()).toBe(url);
+    vi.restoreAllMocks();
+
+    // A consent naming another client is not handed back.
+    const other = await publish(provider(storage), "v", `${ISSUER}/authorize?client_id=other`);
+    expect(await provider(storage).reusablePendingAuthorizationUrl()).toBeUndefined();
+    expect(await provider(storage).pendingAuthorizationUrl()).toBe(other.url);
+  });
+});
+
+describe("KvOAuthProvider epochs", () => {
+  it("starts in the initial epoch; restarts publish fresh v3 epochs and beginFlow binds the live one", async () => {
+    const storage = memoryStorage();
+    const p = provider(storage);
+    expect(await p.liveEpoch()).toBe("initial");
+    await p.resetAuthorization();
+    const first = await p.liveEpoch();
+    await p.resetAuthorization();
+    const second = await p.liveEpoch();
+    expect(first).toMatch(/^v3:/);
+    expect(second).toMatch(/^v3:/);
     expect(second).not.toBe(first);
-    expect(await p.generation()).toBe(second);
-  });
-
-  it("generation survives clearPending and invalidateCredentials('all')", async () => {
-    const p = provider();
-    await p.bumpGeneration();
-    const generation = await p.bumpGeneration();
-    await p.clearPending();
+    expect(await provider(storage).beginFlow()).toBe(second);
+    // Invalidation is ordinary grant work; it never moves the epoch.
     await p.invalidateCredentials("all");
-    // The epoch is a fence; ordinary state cleanup may not erase it.
-    expect(await p.generation()).toBe(generation);
+    expect(await p.liveEpoch()).toBe(second);
   });
 
-  it("reads pre-envelope grants until the first modern reset", async () => {
+  it("fails a bound flow's reads and writes after a restart with the retryable supersession", async () => {
     const storage = memoryStorage();
-    await storage.set("oauth:generation", "2");
-    await storage.set(
-      "oauth:tokens",
-      JSON.stringify({ access_token: "legacy-token", token_type: "Bearer" }),
-    );
-    const p = new KvOAuthProvider("svc", storage, REDIRECT);
+    const flow = provider(storage);
+    const epoch = await flow.beginFlow();
+    const restarter = provider(storage);
+    await restarter.resetAuthorization();
+    expect(await restarter.liveEpoch()).not.toBe(epoch);
 
-    expect(await p.tokens()).toMatchObject({ access_token: "legacy-token" });
-    await p.resetAuthorization();
-    expect(await p.tokens()).toBeUndefined();
-  });
-
-  it("preserves old-reader formats before the first modern reset", async () => {
-    for (const generation of [null, "7"]) {
-      const storage = memoryStorage();
-      if (generation !== null) {
-        await storage.set("oauth:generation", generation);
-      }
-      const p = new KvOAuthProvider("svc", storage, REDIRECT);
-      const state = await p.state();
-      await p.saveCodeVerifier("legacy-verifier");
-      await p.redirectToAuthorization(
-        new URL("https://auth.example/legacy"),
-      );
-      await p.saveClientInformation({
-        client_id: "legacy-client",
-        redirect_uris: [REDIRECT],
-      });
-      await p.saveTokens({
-        access_token: "legacy-token",
-        token_type: "Bearer",
-      });
-
-      expect(await storage.get("oauth:state")).toBe(state);
-      expect(await storage.get("oauth:verifier")).toBe("legacy-verifier");
-      expect(await storage.get("oauth:pending")).toBe(
-        "https://auth.example/legacy",
-      );
-      expect(JSON.parse((await storage.get("oauth:client"))!)).toMatchObject({
-        client_id: "legacy-client",
-      });
-      expect(JSON.parse((await storage.get("oauth:tokens"))!)).toMatchObject({
-        access_token: "legacy-token",
-      });
-    }
-  });
-
-  it("saveTokens persists a refresh under a captured generation that has not advanced", async () => {
-    // Ordinary token refresh (no force): the flow captured the current
-    // generation and nothing bumped it, so the write must go through.
-    const p = provider();
-    p.captureGeneration(await p.generation());
-    await p.saveTokens({ access_token: "refreshed", token_type: "Bearer" });
-    expect(await p.tokens()).toEqual({
-      access_token: "refreshed",
-      token_type: "Bearer",
-    });
-  });
-
-  it("saveTokens/saveClientInformation skip once a concurrent force bumps the generation past the captured one", async () => {
-    // Two providers over ONE storage stand in for two isolates. A is mid-flow;
-    // B force-reauthorizes (bump + wipe). A's SDK then tries to persist tokens
-    // it minted against the still-valid grant — the write must be dropped so it
-    // cannot resurrect the wiped credentials for a later isolate to read.
-    const storage = memoryStorage();
-    const a = new KvOAuthProvider("svc", storage, REDIRECT);
-    const b = new KvOAuthProvider("svc", storage, REDIRECT);
-
-    // A starts its flow under the legacy generation.
-    a.captureGeneration(await a.generation());
-
-    // B publishes a unique epoch, wipes state, and opens a new namespace.
-    await b.resetAuthorization();
-
-    // A's late writes are dropped — KV stays wiped.
-    await a.saveTokens({ access_token: "resurrected", token_type: "Bearer" });
-    await a.saveClientInformation({
-      client_id: "resurrected",
-      redirect_uris: [REDIRECT],
-    });
-    expect(await storage.get("oauth:tokens")).toBeNull();
-    expect(await storage.get("oauth:client")).toBeNull();
-
-    // A provider that connects fresh under the NEW generation persists normally.
-    const a2 = new KvOAuthProvider("svc", storage, REDIRECT);
-    a2.captureGeneration(await a2.generation());
-    await a2.saveTokens({ access_token: "fresh", token_type: "Bearer" });
-    expect(await a2.tokens()).toEqual({
-      access_token: "fresh",
-      token_type: "Bearer",
-    });
-  });
-
-  it("clearPending wipes pending + verifier + state but keeps tokens/client", async () => {
-    const p = provider();
-    await p.saveClientInformation({
-      client_id: "abc",
-      redirect_uris: [REDIRECT],
-    });
-    await p.saveTokens({ access_token: "at", token_type: "Bearer" });
-    await p.saveCodeVerifier("v-123");
-    const s = await p.state();
-    await p.redirectToAuthorization(new URL("https://auth.example/authorize"));
-
-    await p.clearPending();
-
-    expect(await p.pendingAuthorizationUrl()).toBeUndefined();
-    await expect(p.codeVerifier()).rejects.toThrow();
-    expect(await p.verifyState(s)).toBe(false); // state cleared
-    expect(await p.tokens()).toBeDefined();
-    expect(await p.clientInformation()).toBeDefined();
-  });
-
-  it("resetAuthorization fences stale writers and attempts every state deletion", async () => {
-    const backing = memoryStorage();
-    const deleted: string[] = [];
-    const storage: KVStorage = {
-      list: (prefix) => backing.list(prefix),
-      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
-      get: (key) => backing.get(key),
-      set: (key, value, opts) => backing.set(key, value, opts),
-      async delete(key) {
-        deleted.push(key);
-        if (key === "oauth:tokens") {
-          throw new Error("token delete unavailable");
-        }
-        await backing.delete(key);
-      },
-    };
-    const p = new KvOAuthProvider("svc", storage, REDIRECT);
-    for (const key of [
-      "oauth:client",
-      "oauth:tokens",
-      "oauth:pending",
-      "oauth:verifier",
-      "oauth:state",
-      "oauth:discovery",
+    for (const work of [
+      () => flow.saveTokens(tokens, ctxA),
+      () => flow.saveClientInformation(client, ctxA),
+      () => flow.saveDiscoveryState(discovery),
+      () => flow.tokens(),
+      () => flow.clientInformation(ctxA),
+      () => flow.discoveryState(),
     ]) {
-      await backing.set(key, key);
+      expectSuperseded(await rejection(work()));
     }
-
-    await expect(p.resetAuthorization()).rejects.toThrow(
-      "token delete unavailable",
-    );
-
-    expect(await backing.get("oauth:generation")).toMatch(/^v2:/);
-    expect(deleted).toEqual([
-      "oauth:client",
-      "oauth:tokens",
-      "oauth:pending",
-      "oauth:verifier",
-      "oauth:state",
-      "oauth:discovery",
-    ]);
-    expect(await backing.get("oauth:client")).toBeNull();
-    expect(await backing.get("oauth:tokens")).toBe("oauth:tokens");
-    expect(await backing.get("oauth:pending")).toBeNull();
-    expect(await backing.get("oauth:verifier")).toBeNull();
-    expect(await backing.get("oauth:state")).toBeNull();
-    expect(await backing.get("oauth:discovery")).toBeNull();
-    // The surviving physical token is legacy residue outside the active
-    // generation namespace, so it is no longer a usable credential.
-    expect(await p.tokens()).toBeUndefined();
+    // A consent it starts is refused, and its flow record removed.
+    expectSuperseded(await rejection(publish(flow)));
+    expect(await storage.list(oauthFlowKeys.prefix)).toEqual([]);
+    expect((await storedGrant(storage))?.body).toBeUndefined();
   });
 
-  it("rejects a stale token write that lands after reset completed", async () => {
+  it("drops an unbound flow's write that a restart overtook, even mid-write", async () => {
     const backing = memoryStorage();
-    const { promise: writing, resolve: reachedWrite } = deferred<void>();
-    const { promise: writeGate, resolve: releaseWrite } = deferred<void>();
-    const storage: KVStorage = {
-      list: (prefix) => backing.list(prefix),
-      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
-      get: (key) => backing.get(key),
-      async set(key, value, opts) {
-        if (key === "oauth:tokens") {
-          reachedWrite();
-          await writeGate;
-        }
-        await backing.set(key, value, opts);
-      },
-      delete: (key) => backing.delete(key),
-    };
-    const stale = new KvOAuthProvider("svc", storage, REDIRECT);
-    stale.captureGeneration(await stale.generation());
-    const resetter = new KvOAuthProvider("svc", storage, REDIRECT);
-
-    const lateWrite = stale.saveTokens({
-      access_token: "stale",
-      token_type: "Bearer",
-    });
-    await writing;
-    await resetter.resetAuthorization();
-    await resetter.saveTokens({
-      access_token: "fresh",
-      token_type: "Bearer",
-    });
-    releaseWrite();
-    await lateWrite;
-
-    expect(await backing.get("oauth:tokens")).toBeNull();
-    // Both readers see the active namespace; the old physical write cannot
-    // overwrite the fresh token stored under that namespace.
-    expect(await stale.tokens()).toMatchObject({ access_token: "fresh" });
-    expect(await resetter.tokens()).toMatchObject({ access_token: "fresh" });
-  });
-
-  it("fences one-shot state and callback token writes from an older flow", async () => {
-    const storage = memoryStorage();
-    const stale = new KvOAuthProvider("svc", storage, REDIRECT);
-    stale.captureGeneration(await stale.generation());
-    const expectedState = await stale.state();
-    await stale.saveCodeVerifier("old-verifier");
-    expect(await stale.verifyState(expectedState)).toBe(true);
-
-    const resetter = new KvOAuthProvider("svc", storage, REDIRECT);
-    await resetter.resetAuthorization();
-    await stale.saveCodeVerifier("resurrected-verifier");
-    await stale.redirectToAuthorization(
-      new URL("https://auth.example/stale"),
-    );
-    await stale.saveTokens({
-      access_token: "resurrected",
-      token_type: "Bearer",
-    });
-
-    await expect(resetter.codeVerifier()).rejects.toThrow();
-    expect(await resetter.pendingAuthorizationUrl()).toBeUndefined();
-    expect(await resetter.tokens()).toBeUndefined();
-    expect(await resetter.verifyState(expectedState)).toBe(false);
-  });
-
-  it("does not retag the provider that performed a reset", async () => {
-    const storage = memoryStorage();
-    const staleAttempt = new KvOAuthProvider("svc", storage, REDIRECT);
-    staleAttempt.captureGeneration(await staleAttempt.generation());
-
-    await staleAttempt.resetAuthorization();
-    await staleAttempt.saveTokens({
-      access_token: "late-from-abandoned-transport",
-      token_type: "Bearer",
-    });
-
-    expect(await staleAttempt.tokens()).toBeUndefined();
-    expect(
-      await new KvOAuthProvider("svc", storage, REDIRECT).tokens(),
-    ).toBeUndefined();
-  });
-
-  it("concurrent resets cannot finalize over a newer epoch", async () => {
-    const backing = memoryStorage();
-    const { promise: firstCleanup, resolve: firstCleanupReached } = deferred<void>();
-    const { promise: firstCleanupGate, resolve: releaseFirstCleanup } = deferred<void>();
-    let heldFirstCleanup = false;
-    let secondGeneration: string | null = null;
-    const storage: KVStorage = {
-      list: (prefix) => backing.list(prefix),
-      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
-      get: (key) => backing.get(key),
-      async set(key, value, opts) {
-        if (key === "oauth:generation" && heldFirstCleanup) {
-          secondGeneration = value;
-        }
-        await backing.set(key, value, opts);
-      },
-      async delete(key) {
-        if (key === "oauth:client" && !heldFirstCleanup) {
-          heldFirstCleanup = true;
-          firstCleanupReached();
-          await firstCleanupGate;
-        }
-        if (
-          secondGeneration !== null &&
-          key.startsWith("oauth:tokens:epoch:")
-        ) {
-          throw new Error("second reset cleanup failed");
-        }
-        await backing.delete(key);
-      },
-    };
-    const a = new KvOAuthProvider("svc", storage, REDIRECT);
-    const b = new KvOAuthProvider("svc", storage, REDIRECT);
-
-    const resetA = a.resetAuthorization();
-    await firstCleanup;
-    await expect(b.resetAuthorization()).rejects.toThrow(
-      "second reset cleanup failed",
-    );
-    expect(secondGeneration).toMatch(/^v2:/);
-    releaseFirstCleanup();
-    await resetA;
-
-    expect(await backing.get("oauth:generation")).toBe(secondGeneration);
-  });
-
-  it("retries failed cleanup of an older modern epoch on the next reset", async () => {
-    const backing = memoryStorage();
-    let failTokenDelete = false;
-    let oldTokenKey = "";
-    const storage: KVStorage = {
-      list: (prefix) => backing.list(prefix),
-      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
-      get: (key) => backing.get(key),
-      set: (key, value, opts) => backing.set(key, value, opts),
-      async delete(key) {
-        if (failTokenDelete && key === oldTokenKey) {
-          failTokenDelete = false;
-          throw new Error("transient token cleanup failure");
-        }
-        await backing.delete(key);
-      },
-    };
-    const first = new KvOAuthProvider("svc", storage, REDIRECT);
-    await first.resetAuthorization();
-    const firstGeneration = await first.generation();
-    oldTokenKey = oauthValueStorageKey("oauth:tokens", firstGeneration);
-    await first.saveTokens({
-      access_token: "retired-secret",
-      token_type: "Bearer",
-    });
-    expect(await backing.get(oldTokenKey)).not.toBeNull();
-
-    failTokenDelete = true;
-    await expect(first.resetAuthorization()).rejects.toThrow(
-      "transient token cleanup failure",
-    );
-    expect(await backing.get(oldTokenKey)).not.toBeNull();
-    // Its manifest outlives the failed values: that is the retry's signal.
-    expect(
-      await backing.get(`oauth:cleanup:${encodeURIComponent(firstGeneration)}`),
-    ).not.toBeNull();
-
-    await new KvOAuthProvider("svc", storage, REDIRECT).resetAuthorization();
-    expect(await backing.get(oldTokenKey)).toBeNull();
-    expect(
-      await backing.get(`oauth:cleanup:${encodeURIComponent(firstGeneration)}`),
-    ).toBeNull();
-  });
-
-  it("deletes a grant whose disconnect failed when the operator retries it", async () => {
-    const backing = memoryStorage();
-    let failures = 1;
-    const storage: KVStorage = {
-      list: (prefix) => backing.list(prefix),
-      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
-      get: (key) => backing.get(key),
-      set: (key, value, opts) => backing.set(key, value, opts),
-      async delete(key) {
-        if (failures > 0 && key.startsWith("conn:svc:oauth:tokens:epoch:")) {
-          failures--;
-          throw new Error("token delete unavailable");
-        }
-        await backing.delete(key);
-      },
-    };
-    const connecta = createTestConnecta({
-      connectors: [
-        remoteMcp("svc", { url: "https://unused.example/mcp", auth: { type: "oauth" } }),
-      ],
-      auth: {
-        kind: "operator",
-        interactiveOperator: true,
-        activityActorNamespace: "https://identity.test",
-        authorize: () => ({ ok: true, userId: "operator" }),
-      },
-      storage,
-      publicUrl: BASE,
-      logger: silentLogger,
-    });
-    const grant = new KvOAuthProvider("svc", {
-      get: (key) => backing.get(`conn:svc:${key}`),
-      set: (key, value, opts) => backing.set(`conn:svc:${key}`, value, opts),
-      delete: (key) => backing.delete(`conn:svc:${key}`),
-      list: async (prefix) =>
-        (await backing.list(`conn:svc:${prefix}`)).map((key) => key.slice("conn:svc:".length)),
-      compareAndSet: (key, expected, next, opts) =>
-        backing.compareAndSet(`conn:svc:${key}`, expected, next, opts),
-    }, REDIRECT);
-    await grant.resetAuthorization();
-    const granted = await grant.generation();
-    await grant.saveTokens({
-      access_token: "live-access",
-      token_type: "Bearer",
-      refresh_token: "live-refresh",
-    });
-    const tokenKey = `conn:svc:${oauthValueStorageKey("oauth:tokens", granted)}`;
-    expect(await backing.get(tokenKey)).toContain("live-refresh");
-    const disconnect = () =>
-      connecta.fetch(
-        new Request(`${BASE}/ui/oauth/svc`, {
-          method: "DELETE",
-          headers: { Origin: BASE },
-        }),
-      );
-
-    const failed = await disconnect();
-    expect(failed.status).toBe(400);
-    await expect(failed.json()).resolves.toEqual({
-      error: "OAuth disconnect failed",
-    });
-    expect(await backing.get(tokenKey)).toContain("live-refresh");
-
-    expect((await disconnect()).status).toBe(204);
-    expect(await backing.get(tokenKey)).toBeNull();
-    await connecta.close();
-  });
-
-  it("keeps lineage while a late stale-write cleanup races the next reset", async () => {
-    const backing = memoryStorage();
-    const { promise: atStaleSet, resolve: staleSetReached } = deferred<void>();
-    const { promise: staleSetGate, resolve: releaseStaleSet } = deferred<void>();
-    const { promise: atRememberRead, resolve: rememberReadReached } = deferred<void>();
-    const { promise: rememberReadGate, resolve: releaseRememberRead } = deferred<void>();
-    let activeManifest = "";
-    let gatedRememberRead = false;
-    let failLateDelete = false;
-    let lateCleanupFailed = false;
-    const storage: KVStorage = {
-      list: (prefix) => backing.list(prefix),
-      // The late writer removes its own residue by compare-and-set delete.
+    const reached = deferred<void>();
+    const release = deferred<void>();
+    let hold = true;
+    const storage: KVStorage = { ...backing,
       async compareAndSet(key, expected, next, options) {
-        if (failLateDelete && key === "oauth:tokens" && next === null) {
-          failLateDelete = false;
-          lateCleanupFailed = true;
-          throw new Error("late cleanup unavailable");
+        if (key === GRANT && hold) {
+          hold = false;
+          reached.resolve();
+          await release.promise;
         }
         return backing.compareAndSet(key, expected, next, options);
       },
+    };
+    const stale = provider(storage);
+    const late = stale.saveTokens({ access_token: "stale", token_type: "Bearer" });
+    await reached.promise;
+    const fresh = provider(backing);
+    await fresh.resetAuthorization();
+    await fresh.saveTokens(tokens);
+    release.resolve();
+    await late;
+
+    expect((await storedGrant(backing))?.body).toEqual({ tokens });
+    // Later writes from the overtaken flow land nowhere, quietly.
+    await stale.saveTokens({ access_token: "resurrected", token_type: "Bearer" });
+    await stale.saveClientInformation({ client_id: "resurrected" });
+    expect((await storedGrant(backing))?.body).toEqual({ tokens });
+    expect(await stale.tokens()).toEqual(tokens);
+  });
+
+  it("stores nothing a cancelled request was still writing", async () => {
+    const backing = memoryStorage();
+    const reached = deferred<void>();
+    const release = deferred<void>();
+    let hold = true;
+    const storage: KVStorage = { ...backing,
       async get(key) {
-        if (
-          lateCleanupFailed &&
-          key === activeManifest &&
-          !gatedRememberRead
-        ) {
-          gatedRememberRead = true;
-          const value = await backing.get(key);
-          rememberReadReached();
-          await rememberReadGate;
-          return value;
-        }
-        return backing.get(key);
-      },
-      async set(key, value, opts) {
-        if (key === "oauth:tokens") {
-          staleSetReached();
-          await staleSetGate;
-        }
-        await backing.set(key, value, opts);
-      },
-      async delete(key) {
-        if (failLateDelete && key === "oauth:tokens") {
-          failLateDelete = false;
-          lateCleanupFailed = true;
-          throw new Error("late cleanup unavailable");
-        }
-        await backing.delete(key);
-      },
-    };
-    const stale = new KvOAuthProvider("svc", storage, REDIRECT);
-    stale.captureGeneration(await stale.generation());
-    const lateWrite = stale.saveTokens({
-      access_token: "late-secret",
-      token_type: "Bearer",
-    });
-    await atStaleSet;
-
-    const resetter = new KvOAuthProvider("svc", storage, REDIRECT);
-    await resetter.resetAuthorization();
-    const active = await resetter.generation();
-    activeManifest = `oauth:cleanup:${encodeURIComponent(active)}`;
-    expect(JSON.parse((await backing.get(activeManifest))!)).toContain(
-      "legacy",
-    );
-
-    failLateDelete = true;
-    releaseStaleSet();
-    await atRememberRead;
-    // A successor copies the immutable lineage while the stale writer is
-    // paused after reading it.
-    const successor = new KvOAuthProvider("svc", storage, REDIRECT);
-    await successor.resetAuthorization();
-    releaseRememberRead();
-    await lateWrite;
-
-    // The residue is unreadable, and still in the lineage the successor
-    // published, so the first reset past its grace reclaims it.
-    expect(await backing.get("oauth:tokens")).not.toBeNull();
-    expect(await successor.tokens()).toBeUndefined();
-    const successorManifest = `oauth:cleanup:${encodeURIComponent(await successor.generation())}`;
-    expect(JSON.parse((await backing.get(successorManifest))!)).toContain(
-      "legacy",
-    );
-    const realNow = Date.now();
-    const clock = vi
-      .spyOn(Date, "now")
-      .mockImplementation(() => realNow + 24 * 60 * 60 * 1000 + 1);
-    onTestFinished(() => clock.mockRestore());
-    await successor.resetAuthorization();
-    expect(await backing.get("oauth:tokens")).toBeNull();
-  });
-
-  it("clearPending attempts every one-shot deletion after a failure", async () => {
-    const backing = memoryStorage();
-    const deleted: string[] = [];
-    const storage: KVStorage = {
-      list: (prefix) => backing.list(prefix),
-      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
-      get: (key) => backing.get(key),
-      set: (key, value, opts) => backing.set(key, value, opts),
-      async delete(key) {
-        deleted.push(key);
-        if (key === "oauth:pending") throw new Error("pending delete failed");
-        await backing.delete(key);
-      },
-    };
-    const p = new KvOAuthProvider("svc", storage, REDIRECT);
-    await expect(p.clearPending()).rejects.toThrow("pending delete failed");
-    expect(deleted).toEqual([
-      "oauth:pending",
-      "oauth:verifier",
-      "oauth:state",
-    ]);
-  });
-
-  it("an old callback cannot clear a replacement flow's one-shot state", async () => {
-    const storage = memoryStorage();
-    const oldCallback = new KvOAuthProvider("svc", storage, REDIRECT);
-    const oldState = await oldCallback.state();
-    await oldCallback.saveCodeVerifier("old-verifier");
-    expect(await oldCallback.verifyState(oldState)).toBe(true);
-
-    const replacement = new KvOAuthProvider("svc", storage, REDIRECT);
-    await replacement.resetAuthorization();
-    const freshState = await replacement.state();
-    await replacement.saveCodeVerifier("fresh-verifier");
-    await replacement.redirectToAuthorization(
-      new URL("https://auth.example/fresh"),
-    );
-
-    await oldCallback.clearPending();
-
-    expect(await replacement.verifyState(freshState)).toBe(true);
-    expect(await replacement.codeVerifier()).toBe("fresh-verifier");
-    expect(await replacement.pendingAuthorizationUrl()).toBe(
-      "https://auth.example/fresh",
-    );
-  });
-
-  it("a stale invalidation cannot remove replacement credentials", async () => {
-    const storage = memoryStorage();
-    const stale = new KvOAuthProvider("svc", storage, REDIRECT);
-    stale.captureGeneration(await stale.generation());
-
-    const replacement = new KvOAuthProvider("svc", storage, REDIRECT);
-    await replacement.resetAuthorization();
-    await replacement.saveTokens({
-      access_token: "fresh",
-      token_type: "Bearer",
-    });
-    await replacement.saveClientInformation({
-      client_id: "fresh",
-      redirect_uris: [REDIRECT],
-    });
-
-    await stale.invalidateCredentials("all");
-
-    expect(await replacement.tokens()).toMatchObject({ access_token: "fresh" });
-    expect(await replacement.clientInformation()).toMatchObject({
-      client_id: "fresh",
-    });
-  });
-
-  it("invalidateCredentials is scoped", async () => {
-    const seed = async (p: KvOAuthProvider) => {
-      await p.saveClientInformation({
-        client_id: "abc",
-        redirect_uris: [REDIRECT],
-      });
-      await p.saveTokens({ access_token: "at", token_type: "Bearer" });
-      await p.saveCodeVerifier("v-123");
-      await p.saveDiscoveryState({
-        authorizationServerUrl: "https://auth.example",
-      });
-    };
-
-    const pTokens = provider();
-    await seed(pTokens);
-    await pTokens.invalidateCredentials("tokens");
-    expect(await pTokens.tokens()).toBeUndefined();
-    expect(await pTokens.clientInformation()).toBeDefined();
-    expect(await pTokens.codeVerifier()).toBe("v-123");
-    expect(await pTokens.discoveryState()).toBeDefined();
-
-    const pClient = provider();
-    await seed(pClient);
-    await pClient.invalidateCredentials("client");
-    expect(await pClient.clientInformation()).toBeUndefined();
-    expect(await pClient.tokens()).toBeDefined();
-    expect(await pClient.discoveryState()).toBeDefined();
-
-    const pVerifier = provider();
-    await seed(pVerifier);
-    await pVerifier.invalidateCredentials("verifier");
-    await expect(pVerifier.codeVerifier()).rejects.toThrow();
-    expect(await pVerifier.tokens()).toBeDefined();
-    expect(await pVerifier.discoveryState()).toBeDefined();
-
-    const pDiscovery = provider();
-    await seed(pDiscovery);
-    await pDiscovery.invalidateCredentials("discovery");
-    expect(await pDiscovery.discoveryState()).toBeUndefined();
-    expect(await pDiscovery.clientInformation()).toBeDefined();
-    expect(await pDiscovery.tokens()).toBeDefined();
-
-    const pAll = provider();
-    await seed(pAll);
-    await pAll.invalidateCredentials("all");
-    expect(await pAll.clientInformation()).toBeUndefined();
-    expect(await pAll.tokens()).toBeUndefined();
-    expect(await pAll.discoveryState()).toBeUndefined();
-    await expect(pAll.codeVerifier()).rejects.toThrow();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// A reset's storage work does not grow with the resets before it: it deletes
-// the epoch it retires and sweeps a bounded number past their grace.
-// ---------------------------------------------------------------------------
-describe("KvOAuthProvider cleanup lineage", () => {
-  const DAY = 24 * 60 * 60 * 1000;
-  const MINUTE = 60 * 1000;
-  const T0 = Date.UTC(2026, 0, 1);
-  const manifestKey = (generation: string) =>
-    `oauth:cleanup:${encodeURIComponent(generation)}`;
-  const timesKey = (generation: string) =>
-    `oauth:cleanup-at:${encodeURIComponent(generation)}`;
-  /** A timed entry, or a bare name for one the times record does not cover. */
-  type Entry = { generation: string; retiredAt: number } | string;
-  const generationOf = (entry: Entry) =>
-    typeof entry === "string" ? entry : entry.generation;
-
-  let now = T0;
-  let restoreClock: (() => void) | undefined;
-  afterEach(() => {
-    restoreClock?.();
-    restoreClock = undefined;
-  });
-  function useClock(start = T0) {
-    now = start;
-    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
-    restoreClock = () => clock.mockRestore();
-  }
-
-  /** The manifest, joined with its times the way a reset reads them. */
-  async function lineageOf(storage: KVStorage, generation: string) {
-    const names = JSON.parse(
-      required((await storage.get(manifestKey(generation))) ?? undefined),
-    ) as string[];
-    const times = JSON.parse(
-      (await storage.get(timesKey(generation))) ?? "{}",
-    ) as Record<string, number>;
-    return names.map((name): Entry =>
-      Object.hasOwn(times, name)
-        ? { generation: name, retiredAt: required(times[name]) }
-        : name,
-    );
-  }
-
-  /** Bare names seed an untimed manifest, as an earlier release wrote it. */
-  async function seedLineage(
-    storage: KVStorage,
-    current: string,
-    lineage: readonly Entry[],
-  ) {
-    await storage.set("oauth:generation", current);
-    await storage.set(
-      manifestKey(current),
-      JSON.stringify(lineage.map(generationOf)),
-    );
-    const timed = lineage.filter(
-      (entry): entry is Exclude<Entry, string> => typeof entry !== "string",
-    );
-    if (timed.length > 0) {
-      await storage.set(
-        timesKey(current),
-        JSON.stringify(
-          Object.fromEntries(timed.map((e) => [e.generation, e.retiredAt])),
-        ),
-      );
-    }
-  }
-
-  function countingStorage(backing: KVStorage) {
-    const counter = { ops: 0 };
-    const storage: KVStorage = {
-      list: (prefix) => backing.list(prefix),
-      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
-      get: (key) => (counter.ops++, backing.get(key)),
-      set: (key, value, opts) => (counter.ops++, backing.set(key, value, opts)),
-      delete: (key) => (counter.ops++, backing.delete(key)),
-    };
-    return { storage, counter };
-  }
-
-  it("does the same storage work for every reset on one day, however many came before", async () => {
-    useClock();
-    const backing = memoryStorage();
-    const { storage, counter } = countingStorage(backing);
-    const p = new KvOAuthProvider("svc", storage, REDIRECT);
-    const perReset: number[] = [];
-    for (let reset = 0; reset < 150; reset++) {
-      now += MINUTE;
-      counter.ops = 0;
-      await p.resetAuthorization();
-      perReset.push(counter.ops);
-    }
-
-    // The generation, manifest, and times reads (3), the publication (2),
-    // the fence (1), the retired epoch's six values, manifest, and times (8),
-    // and one manifest probe for each of up to eight younger epochs, whose
-    // cleanups all finished — the same from reset 9 to reset 150.
-    expect(perReset).toEqual(
-      Array.from({ length: 150 }, (_, reset) => 14 + Math.min(reset, 8)),
-    );
-    expect(new Set(perReset.slice(8))).toEqual(new Set([22]));
-    expect(await lineageOf(backing, await p.generation())).toHaveLength(150);
-  });
-
-  it("keeps each reset's storage work flat once earlier generations pass the grace", async () => {
-    useClock();
-    const backing = memoryStorage();
-    const { storage, counter } = countingStorage(backing);
-    const p = new KvOAuthProvider("svc", storage, REDIRECT);
-    const perReset: number[] = [];
-    for (let reset = 0; reset < 40; reset++) {
-      now += DAY + 1;
-      counter.ops = 0;
-      await p.resetAuthorization();
-      perReset.push(counter.ops);
-    }
-
-    // Past the first, each reset also sweeps the one past-grace epoch (8)
-    // and re-reads the lineage (2) before publishing.
-    expect(perReset[0]).toBe(14);
-    expect(perReset.slice(1)).toEqual(Array(39).fill(24));
-    expect(await lineageOf(backing, await p.generation())).toHaveLength(1);
-  });
-
-  it("refuses a full lineage inside the grace and drains it once the grace passes", async () => {
-    useClock();
-    const storage = memoryStorage();
-    await seedLineage(
-      storage,
-      "v2:current",
-      Array.from({ length: 5_000 }, (_, i) => ({
-        generation: `v2:old-${i}`,
-        retiredAt: T0,
-      })),
-    );
-    for (const index of [0, 15, 16, 4_999]) {
-      await storage.set(
-        oauthValueStorageKey("oauth:tokens", `v2:old-${index}`),
-        "residue",
-      );
-    }
-    const p = new KvOAuthProvider("svc", storage, REDIRECT);
-
-    now = T0 + 60 * MINUTE;
-    await expect(p.resetAuthorization()).rejects.toThrow(/backlog .* is full/);
-    expect(await p.generation()).toBe("v2:current");
-
-    now = T0 + DAY + 1;
-    await p.resetAuthorization();
-    const lineage = await lineageOf(storage, await p.generation());
-    // The sixteen oldest were swept and left; the rest wait their turn.
-    expect(lineage).toHaveLength(5_000 - 16 + 1);
-    expect(lineage).toContainEqual({ generation: "v2:current", retiredAt: now });
-    expect(lineage.map(generationOf)).not.toContain("v2:old-15");
-    expect(lineage.map(generationOf)).toContain("v2:old-16");
-    const tokens = (index: number) =>
-      storage.get(oauthValueStorageKey("oauth:tokens", `v2:old-${index}`));
-    expect(await tokens(0)).toBeNull();
-    expect(await tokens(15)).toBeNull();
-    expect(await tokens(16)).toBe("residue");
-
-    for (let reset = 0; reset < 5; reset++) await p.resetAuthorization();
-    expect(await lineageOf(storage, await p.generation())).toHaveLength(
-      5_000 - 6 * 16 + 6,
-    );
-  });
-
-  it("stamps an untimed lineage from an earlier release with the reset's own time", async () => {
-    useClock();
-    const storage = memoryStorage();
-    await seedLineage(storage, "v2:current", [
-      "legacy",
-      "v2:older",
-      { generation: "v2:timed", retiredAt: T0 - DAY / 2 },
-    ]);
-    const p = new KvOAuthProvider("svc", storage, REDIRECT);
-
-    await p.resetAuthorization();
-    const first = await p.generation();
-    expect(await lineageOf(storage, first)).toEqual([
-      { generation: "legacy", retiredAt: T0 },
-      { generation: "v2:older", retiredAt: T0 },
-      { generation: "v2:timed", retiredAt: T0 - DAY / 2 },
-      { generation: "v2:current", retiredAt: T0 },
-    ]);
-
-    // The timed entry leaves once its own grace passes; the untimed ones got
-    // a full grace from the reset that first read them.
-    now = T0 + DAY / 2 + 1;
-    await p.resetAuthorization();
-    const second = await p.generation();
-    expect((await lineageOf(storage, second)).map(generationOf)).toEqual([
-      "legacy",
-      "v2:older",
-      "v2:current",
-      first,
-    ]);
-
-    now = T0 + DAY + 1;
-    await p.resetAuthorization();
-    expect(await lineageOf(storage, await p.generation())).toEqual([
-      { generation: first, retiredAt: T0 + DAY / 2 + 1 },
-      { generation: second, retiredAt: now },
-    ]);
-  });
-
-  it("restarts, on the day it upgrades, a connector an earlier release had filled", async () => {
-    useClock();
-    const storage = memoryStorage();
-    await seedLineage(
-      storage,
-      "v2:current",
-      Array.from({ length: 1_000 }, (_, i) => `v2:untimed-${i}`),
-    );
-    const p = new KvOAuthProvider("svc", storage, REDIRECT);
-
-    // The earlier release refused this reset and every one after it.
-    await p.resetAuthorization();
-    now += MINUTE;
-    await p.resetAuthorization();
-    now += MINUTE;
-    await p.resetAuthorization();
-    expect(await lineageOf(storage, await p.generation())).toHaveLength(1_003);
-
-    // A day later the stamped backlog starts to drain.
-    now = T0 + DAY + 1;
-    await p.resetAuthorization();
-    expect(await lineageOf(storage, await p.generation())).toHaveLength(
-      1_003 - 16 + 1,
-    );
-  });
-
-  it("carries a past-grace generation whose sweep failed, and drops it once one succeeds", async () => {
-    useClock();
-    const backing = memoryStorage();
-    let failing = true;
-    const failingKey = oauthValueStorageKey("oauth:tokens", "v2:a");
-    const storage: KVStorage = {
-      list: (prefix) => backing.list(prefix),
-      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
-      get: (key) => backing.get(key),
-      set: (key, value, opts) => backing.set(key, value, opts),
-      async delete(key) {
-        if (failing && key === failingKey) throw new Error("sweep unavailable");
-        await backing.delete(key);
-      },
-    };
-    await seedLineage(backing, "v2:current", [
-      { generation: "v2:a", retiredAt: T0 },
-      { generation: "v2:b", retiredAt: T0 },
-    ]);
-    for (const generation of ["v2:a", "v2:b"]) {
-      await backing.set(oauthValueStorageKey("oauth:tokens", generation), "residue");
-      await backing.set(manifestKey(generation), "[]");
-    }
-    const p = new KvOAuthProvider("svc", storage, REDIRECT);
-
-    now = T0 + DAY + 1;
-    // Housekeeping for an old generation does not fail the reset.
-    await p.resetAuthorization();
-    const first = await p.generation();
-    expect(await lineageOf(backing, first)).toEqual([
-      { generation: "v2:a", retiredAt: T0 },
-      { generation: "v2:current", retiredAt: now },
-    ]);
-    expect(await backing.get(failingKey)).toBe("residue");
-    // A manifest waits for every one of its generation's values.
-    expect(await backing.get(manifestKey("v2:a"))).toBe("[]");
-    expect(await backing.get(manifestKey("v2:b"))).toBeNull();
-
-    failing = false;
-    now += 1;
-    await p.resetAuthorization();
-    expect(await backing.get(failingKey)).toBeNull();
-    expect(await backing.get(manifestKey("v2:a"))).toBeNull();
-    expect(
-      (await lineageOf(backing, await p.generation())).map(generationOf),
-    ).toEqual(["v2:current", first]);
-  });
-
-  it("keeps a bounded number of cleanup deletes in flight", async () => {
-    useClock();
-    const backing = memoryStorage();
-    let inFlight = 0;
-    let maxInFlight = 0;
-    const deleted: string[] = [];
-    const storage: KVStorage = {
-      list: (prefix) => backing.list(prefix),
-      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
-      get: (key) => backing.get(key),
-      set: (key, value, opts) => backing.set(key, value, opts),
-      async delete(key) {
-        deleted.push(key);
-        maxInFlight = Math.max(maxInFlight, ++inFlight);
-        await new Promise((resolve) => setTimeout(resolve, 1));
-        inFlight--;
-        await backing.delete(key);
-      },
-    };
-    await seedLineage(
-      backing,
-      "v2:current",
-      Array.from({ length: 10 }, (_, i) => ({
-        generation: `v2:expired-${i}`,
-        retiredAt: T0 - DAY - 1,
-      })),
-    );
-
-    await new KvOAuthProvider("svc", storage, REDIRECT).resetAuthorization();
-
-    // Ten past-grace sweeps and the retired epoch: six values, a manifest,
-    // and times each.
-    expect(deleted).toHaveLength(88);
-    expect(new Set(deleted).size).toBe(88);
-    expect(maxInFlight).toBe(6);
-  });
-
-  it("fails on a falsy rejection and keeps the manifest of the generation it left behind", async () => {
-    useClock();
-    const backing = memoryStorage();
-    let rejectKey: string | undefined;
-    const storage: KVStorage = {
-      list: (prefix) => backing.list(prefix),
-      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
-      get: (key) => backing.get(key),
-      set: (key, value, opts) => backing.set(key, value, opts),
-      async delete(key) {
-        if (key === rejectKey) {
-          rejectKey = undefined;
-          // A store that rejects without a reason still failed.
-          await Promise.reject(undefined);
-        }
-        await backing.delete(key);
-      },
-    };
-    const p = new KvOAuthProvider("svc", storage, REDIRECT);
-    await p.resetAuthorization();
-    const first = await p.generation();
-    const tokenKey = oauthValueStorageKey("oauth:tokens", first);
-    const clientKey = oauthValueStorageKey("oauth:client", first);
-    await backing.set(tokenKey, "residue");
-    await backing.set(clientKey, "residue");
-    rejectKey = tokenKey;
-
-    const outcome = await p.resetAuthorization().then(
-      () => ({ rejected: false }),
-      (reason: unknown) => ({ rejected: true, reason }),
-    );
-    expect(outcome).toEqual({ rejected: true, reason: undefined });
-    expect(await backing.get(tokenKey)).toBe("residue");
-    expect(await backing.get(clientKey)).toBeNull();
-    expect(await backing.get(manifestKey(first))).not.toBeNull();
-
-    now += DAY + 1;
-    await p.resetAuthorization();
-    expect(await backing.get(tokenKey)).toBeNull();
-    expect(await backing.get(manifestKey(first))).toBeNull();
-  });
-
-  it("carries a stale-write cleanup appended while a reset sweeps past-grace generations", async () => {
-    useClock();
-    const backing = memoryStorage();
-    const sibling = "v2:sibling";
-    const siblingTokens = oauthValueStorageKey("oauth:tokens", sibling);
-    const { promise: atSiblingSet, resolve: siblingSetReached } = deferred<void>();
-    const { promise: siblingSetGate, resolve: releaseSiblingSet } = deferred<void>();
-    const { promise: atSweep, resolve: sweepReached } = deferred<void>();
-    const { promise: sweepGate, resolve: releaseSweep } = deferred<void>();
-    let failSiblingDelete = true;
-    const storage: KVStorage = {
-      list: (prefix) => backing.list(prefix),
-      // The late writer removes its own residue by compare-and-set delete.
-      async compareAndSet(key, expected, next, options) {
-        if (failSiblingDelete && key === siblingTokens && next === null) {
-          failSiblingDelete = false;
-          throw new Error("late cleanup unavailable");
-        }
-        return backing.compareAndSet(key, expected, next, options);
-      },
-      get: (key) => backing.get(key),
-      async set(key, value, opts) {
-        if (key === siblingTokens) {
-          siblingSetReached();
-          await siblingSetGate;
-        }
-        await backing.set(key, value, opts);
-      },
-      async delete(key) {
-        if (key === "oauth:client") {
-          // The reset is sweeping the past-grace legacy namespace.
-          sweepReached();
-          await sweepGate;
-        }
-        if (failSiblingDelete && key === siblingTokens) {
-          failSiblingDelete = false;
-          throw new Error("late cleanup unavailable");
-        }
-        await backing.delete(key);
-      },
-    };
-    const first = new KvOAuthProvider("svc", backing, REDIRECT);
-    await first.resetAuthorization();
-    const current = await first.generation();
-
-    // A sibling epoch that lost the last-writer race is still what a stale
-    // reader sees, and it starts a write under it.
-    await backing.set("oauth:generation", sibling);
-    const stale = new KvOAuthProvider("svc", storage, REDIRECT);
-    stale.captureGeneration(sibling);
-    const lateWrite = stale.saveTokens({
-      access_token: "late-secret",
-      token_type: "Bearer",
-    });
-    await atSiblingSet;
-    await backing.set("oauth:generation", current);
-
-    now = T0 + DAY + 1;
-    const resetter = new KvOAuthProvider("svc", storage, REDIRECT);
-    const reset = resetter.resetAuthorization();
-    await atSweep;
-    // While the reset sweeps, the stale write lands, fails to remove itself,
-    // and appends its epoch to the live manifest the reset has already read.
-    releaseSiblingSet();
-    await lateWrite;
-    expect(await lineageOf(backing, current)).toContainEqual({
-      generation: sibling,
-      retiredAt: now,
-    });
-    releaseSweep();
-    await reset;
-
-    expect(await lineageOf(backing, await resetter.generation())).toEqual([
-      { generation: sibling, retiredAt: now },
-      { generation: current, retiredAt: now },
-    ]);
-    expect(await resetter.tokens()).toBeUndefined();
-    expect(await backing.get(siblingTokens)).not.toBeNull();
-
-    now += DAY + 1;
-    await resetter.resetAuthorization();
-    expect(await backing.get(siblingTokens)).toBeNull();
-  });
-
-  it("restarts the grace of a listed generation that a late write lands in mid-sweep", async () => {
-    useClock();
-    const backing = memoryStorage();
-    const expired = "v2:expired";
-    const expiredTokens = oauthValueStorageKey("oauth:tokens", expired);
-    const expiredClient = oauthValueStorageKey("oauth:client", expired);
-    const { promise: atLateSet, resolve: lateSetReached } = deferred<void>();
-    const { promise: lateSetGate, resolve: releaseLateSet } = deferred<void>();
-    const { promise: atSweep, resolve: sweepReached } = deferred<void>();
-    const { promise: sweepGate, resolve: releaseSweep } = deferred<void>();
-    let lateWriteLanded = false;
-    const storage: KVStorage = {
-      list: (prefix) => backing.list(prefix),
-      // The late writer removes its own residue by compare-and-set delete.
-      async compareAndSet(key, expected, next, options) {
-        if (lateWriteLanded && key === expiredTokens && next === null) {
-          throw new Error("late cleanup unavailable");
-        }
-        return backing.compareAndSet(key, expected, next, options);
-      },
-      get: (key) => backing.get(key),
-      async set(key, value, opts) {
-        if (key === expiredTokens) {
-          lateSetReached();
-          await lateSetGate;
-          await backing.set(key, value, opts);
-          lateWriteLanded = true;
-          return;
-        }
-        await backing.set(key, value, opts);
-      },
-      async delete(key) {
-        if (key === expiredClient) {
-          sweepReached();
-          await sweepGate;
-        }
-        if (lateWriteLanded && key === expiredTokens) {
-          throw new Error("late cleanup unavailable");
-        }
-        await backing.delete(key);
-      },
-    };
-    await seedLineage(backing, "v2:current", [
-      { generation: expired, retiredAt: T0 },
-    ]);
-
-    // A writer that captured the expired epoch long ago, and whose write
-    // passed its fence check before that epoch was retired.
-    await backing.set("oauth:generation", expired);
-    const late = new KvOAuthProvider("svc", storage, REDIRECT);
-    late.captureGeneration(expired);
-    const lateWrite = late.saveTokens({
-      access_token: "late-secret",
-      token_type: "Bearer",
-    });
-    await atLateSet;
-    await backing.set("oauth:generation", "v2:current");
-
-    now = T0 + DAY + 1;
-    const resetter = new KvOAuthProvider("svc", storage, REDIRECT);
-    const reset = resetter.resetAuthorization();
-    // The sweep has deleted the expired tokens and is still running when the
-    // late write lands and fails to delete itself. The epoch is already
-    // listed, so only its time moves.
-    await atSweep;
-    releaseLateSet();
-    await lateWrite;
-    expect(await lineageOf(backing, "v2:current")).toEqual([
-      { generation: expired, retiredAt: now },
-    ]);
-    releaseSweep();
-    await reset;
-
-    // Its sweep succeeded, but the re-read saw the new time and kept it.
-    expect(await backing.get(expiredTokens)).not.toBeNull();
-    expect(await resetter.tokens()).toBeUndefined();
-    expect(await lineageOf(backing, await resetter.generation())).toEqual([
-      { generation: expired, retiredAt: now },
-      { generation: "v2:current", retiredAt: now },
-    ]);
-
-    lateWriteLanded = false;
-    now += DAY + 1;
-    await resetter.resetAuthorization();
-    expect(await backing.get(expiredTokens)).toBeNull();
-  });
-
-  it("lets two resets from one predecessor sweep the same generations", async () => {
-    useClock();
-    const backing = memoryStorage();
-    const old = ["v2:old-0", "v2:old-1", "v2:old-2"];
-    let arrivals = 0;
-    const { promise: bothSweeping, resolve: releaseSweeps } = deferred<void>();
-    const gatedKey = oauthValueStorageKey("oauth:tokens", "v2:old-0");
-    const fences: string[] = [];
-    const storage: KVStorage = {
-      list: (prefix) => backing.list(prefix),
-      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
-      get: (key) => backing.get(key),
-      async set(key, value, opts) {
-        if (key === "oauth:generation") fences.push(value);
-        await backing.set(key, value, opts);
-      },
-      async delete(key) {
-        if (key === gatedKey) {
-          if (++arrivals === 2) releaseSweeps();
-          await bothSweeping;
-        }
-        await backing.delete(key);
-      },
-    };
-    await seedLineage(
-      backing,
-      "v2:current",
-      old.map((generation) => ({ generation, retiredAt: T0 })),
-    );
-    for (const generation of [...old, "v2:current"]) {
-      await backing.set(oauthValueStorageKey("oauth:tokens", generation), "residue");
-    }
-
-    now = T0 + DAY + 1;
-    const a = new KvOAuthProvider("svc", storage, REDIRECT);
-    const b = new KvOAuthProvider("svc", storage, REDIRECT);
-    await Promise.all([a.resetAuthorization(), b.resetAuthorization()]);
-
-    expect(arrivals).toBe(2);
-    const winner = await a.generation();
-    expect(winner).toMatch(/^v2:/);
-    expect(winner).not.toBe("v2:current");
-    // Both swept, both reclaimed, and whichever fence landed last publishes
-    // a lineage holding only the predecessor.
-    expect(await lineageOf(backing, winner)).toEqual([
-      { generation: "v2:current", retiredAt: now },
-    ]);
-    for (const generation of [...old, "v2:current"]) {
-      expect(
-        await backing.get(oauthValueStorageKey("oauth:tokens", generation)),
-      ).toBeNull();
-      expect(await backing.get(manifestKey(generation))).toBeNull();
-    }
-
-    // A reader whose replica still shows the losing epoch as current writes
-    // a grant into it. Every reader of the authoritative generation reads the
-    // winner's namespace, where that grant does not exist.
-    expect(fences).toHaveLength(2);
-    const loser = required(fences.find((fence) => fence !== winner));
-    const staleReplica = new KvOAuthProvider("svc", {
-      get: (key) =>
-        key === "oauth:generation" ? Promise.resolve(loser) : backing.get(key),
-      set: (key, value, opts) => backing.set(key, value, opts),
-      delete: (key) => backing.delete(key),
-      list: (prefix) => backing.list(prefix),
-      compareAndSet: (key, expected, next, opts) =>
-        backing.compareAndSet(key, expected, next, opts),
-    }, REDIRECT);
-    await staleReplica.saveTokens({
-      access_token: "loser-access",
-      token_type: "Bearer",
-      refresh_token: "loser-refresh",
-    });
-    const loserTokens = oauthValueStorageKey("oauth:tokens", loser);
-    expect(await backing.get(loserTokens)).toContain("loser-refresh");
-    expect(await a.tokens()).toBeUndefined();
-    expect(await new KvOAuthProvider("svc", backing, REDIRECT).tokens())
-      .toBeUndefined();
-
-    // The next reset proceeds from the winner, and the losing epoch's write
-    // stays out of every namespace a reader can reach.
-    now += MINUTE;
-    await a.resetAuthorization();
-    expect((await lineageOf(backing, await a.generation())).map(generationOf))
-      .toEqual(["v2:current", winner]);
-    expect(await a.tokens()).toBeUndefined();
-    expect(await new KvOAuthProvider("svc", backing, REDIRECT).tokens())
-      .toBeUndefined();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Sealed OAuth state: tokens, client registration, and the PKCE verifier are
-// ciphertext at rest when the deployment has a vault that can seal.
-// ---------------------------------------------------------------------------
-describe("KvOAuthProvider sealed state", () => {
-  const SEAL_KEY = Buffer.alloc(32, 7).toString("base64");
-  const OTHER_SEAL_KEY = Buffer.alloc(32, 9).toString("base64");
-
-  function sealerFor(key = SEAL_KEY, logger: Logger = silentLogger) {
-    return vaultOAuthSealer(
-      new CredentialVault(memoryStorage(), key),
-      "svc",
-      undefined,
-      logger,
-    );
-  }
-
-  function sealedProvider(storage: KVStorage, sealer = sealerFor()) {
-    return new KvOAuthProvider("svc", storage, REDIRECT, undefined, true, sealer);
-  }
-
-  function isSealed(raw: string | null): boolean {
-    if (raw === null) return false;
-    try {
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      return (
-        parsed.connectaOAuthSealed === 1 &&
-        typeof parsed.sealed === "string" &&
-        !("value" in parsed)
-      );
-    } catch {
-      return false;
-    }
-  }
-
-  const issuer = { issuer: "https://auth.example" };
-  const tokens: OAuthTokens = {
-    access_token: "secret-access",
-    token_type: "Bearer",
-    refresh_token: "secret-refresh",
-  };
-  const client: OAuthClientInformationFull = {
-    client_id: "dcr-client",
-    client_secret: "dcr-secret",
-    redirect_uris: [REDIRECT],
-  };
-
-  it("reseals a preserved registration under the replacement physical key", async () => {
-    const storage = memoryStorage();
-    const p = new KvOAuthProvider(
-      "svc", storage, REDIRECT, undefined, true, sealerFor(), undefined,
-      "same-config",
-    );
-    const firstGeneration = await p.bumpGeneration();
-    await p.saveClientInformation(client, issuer);
-    const firstKey = oauthValueStorageKey("oauth:client", firstGeneration);
-    const firstCiphertext = await storage.get(firstKey);
-    expect(isSealed(firstCiphertext)).toBe(true);
-
-    await p.resetAuthorization(false, true);
-    const secondGeneration = required((await storage.get("oauth:generation")) ?? undefined);
-    const secondKey = oauthValueStorageKey("oauth:client", secondGeneration);
-    const secondCiphertext = await storage.get(secondKey);
-    expect(isSealed(secondCiphertext)).toBe(true);
-    expect(secondCiphertext).not.toBe(firstCiphertext);
-    expect(await storage.get(firstKey)).toBeNull();
-    await expect(p.clientInformation(issuer)).resolves.toMatchObject(client);
-
-    await p.resetAuthorization(true);
-    expect(await p.clientInformation(issuer)).toBeUndefined();
-  });
-
-  it("carries a sealed registration again only after it earns a grant in its new epoch", async () => {
-    const storage = memoryStorage();
-    const p = new KvOAuthProvider(
-      "svc", storage, REDIRECT, undefined, true, sealerFor(), undefined,
-      "same-config",
-    );
-    await p.bumpGeneration();
-    await p.saveClientInformation(client, issuer);
-
-    await p.resetAuthorization(false, true);
-    // The carried mark lives inside the ciphertext, beside the binding.
-    const carriedGeneration = required((await storage.get("oauth:generation")) ?? undefined);
-    expect(isSealed(await storage.get(oauthValueStorageKey("oauth:client", carriedGeneration)))).toBe(true);
-    await p.saveTokens(tokens, issuer);
-    await p.resetAuthorization(false, true);
-    await expect(p.clientInformation(issuer)).resolves.toMatchObject(client);
-
-    // No grant in this epoch: the next restart leaves the registration behind.
-    await p.resetAuthorization(false, true);
-    expect(await p.clientInformation(issuer)).toBeUndefined();
-  });
-
-  it("seals tokens, client registration, and the verifier; flow bookkeeping stays plaintext", async () => {
-    const storage = memoryStorage();
-    const p = sealedProvider(storage);
-    const generation = await p.bumpGeneration();
-    const discovery: OAuthDiscoveryState = {
-      authorizationServerUrl: "https://auth.example",
-    };
-
-    await p.saveClientInformation(client, issuer);
-    await p.saveTokens(tokens, issuer);
-    await p.saveCodeVerifier("secret-verifier");
-    const state = await p.state();
-    await p.redirectToAuthorization(new URL("https://auth.example/authorize?x=1"));
-    await p.saveDiscoveryState(discovery);
-
-    const raw = (key: OAuthValueKey) => storage.get(oauthValueStorageKey(key, generation));
-    for (const key of ["oauth:tokens", "oauth:client", "oauth:verifier"] as const) {
-      const value = await raw(key);
-      expect(isSealed(value)).toBe(true);
-      for (const secret of ["secret-access", "secret-refresh", "dcr-secret", "secret-verifier"]) {
-        expect(value).not.toContain(secret);
-      }
-    }
-    for (const [key, value] of [
-      ["oauth:state", state],
-      ["oauth:pending", "https://auth.example/authorize?x=1"],
-      ["oauth:discovery", discovery],
-    ] as const) {
-      expect(JSON.parse(required((await raw(key)) ?? undefined))).toEqual({
-        connectaOAuthVersion: 2,
-        generation,
-        // Only the pending URL carries its write time, and it is plaintext.
-        ...(key === "oauth:pending" ? { writtenAt: expect.any(Number) } : {}),
-        value,
-      });
-    }
-    expect(await storage.get("oauth:generation")).toBe(generation);
-
-    const reader = sealedProvider(storage);
-    expect(await reader.tokens(issuer)).toEqual({ ...tokens, ...issuer });
-    expect(await reader.clientInformation(issuer)).toEqual({ ...client, ...issuer });
-    expect(await reader.codeVerifier()).toBe("secret-verifier");
-    expect(await reader.discoveryState()).toEqual(discovery);
-    expect(await reader.verifyState(state)).toBe(true);
-
-    // Without the sealer the ciphertext is nothing a caller could use.
-    const unsealed = new KvOAuthProvider("svc", storage, REDIRECT);
-    expect(await unsealed.tokens()).toBeUndefined();
-    expect(await unsealed.clientInformation()).toBeUndefined();
-    await expect(unsealed.codeVerifier()).rejects.toThrow("No PKCE code verifier");
-  });
-
-  it.each([
-    {
-      shape: "raw legacy strings",
-      generation: null,
-      tokens: () => JSON.stringify(tokens),
-      verifier: () => "legacy-verifier",
-      ctx: undefined,
-    },
-    {
-      shape: "v1 envelopes",
-      generation: "7",
-      tokens: () =>
-        JSON.stringify({ connectaOAuthVersion: 1, generation: "7", value: tokens }),
-      verifier: () =>
-        JSON.stringify({ connectaOAuthVersion: 1, generation: "7", value: "legacy-verifier" }),
-      ctx: undefined,
-    },
-    {
-      shape: "v2 envelopes",
-      generation: "v2:seeded",
-      tokens: () =>
-        JSON.stringify({
-          connectaOAuthVersion: 2,
-          generation: "v2:seeded",
-          issuer: issuer.issuer,
-          value: tokens,
-        }),
-      verifier: () =>
-        JSON.stringify({
-          connectaOAuthVersion: 2,
-          generation: "v2:seeded",
-          value: "legacy-verifier",
-        }),
-      ctx: issuer,
-    },
-  ])("upgrades $shape to sealed state on read", async (seed) => {
-    const storage = memoryStorage();
-    if (seed.generation !== null) {
-      await storage.set("oauth:generation", seed.generation);
-    }
-    const tokensKey = oauthValueStorageKey("oauth:tokens", seed.generation);
-    const verifierKey = oauthValueStorageKey("oauth:verifier", seed.generation);
-    await storage.set(tokensKey, seed.tokens());
-    await storage.set(verifierKey, seed.verifier());
-
-    const p = sealedProvider(storage);
-    expect(await p.tokens(seed.ctx)).toEqual({ ...tokens, ...seed.ctx });
-    expect(await p.codeVerifier()).toBe("legacy-verifier");
-
-    for (const key of [tokensKey, verifierKey]) {
-      const value = await storage.get(key);
-      expect(isSealed(value)).toBe(true);
-      expect(value).not.toContain("secret-access");
-      expect(value).not.toContain("legacy-verifier");
-    }
-    // The upgrade re-encodes; it neither moves the epoch nor loses the issuer.
-    expect(await storage.get("oauth:generation")).toBe(seed.generation);
-    const reader = sealedProvider(storage);
-    expect(await reader.tokens(seed.ctx)).toEqual({ ...tokens, ...seed.ctx });
-    expect(await reader.codeVerifier()).toBe("legacy-verifier");
-    expect(await storage.get("oauth:generation")).toBe(seed.generation);
-  });
-
-  it("does not rewrite plaintext after the generation has moved", async () => {
-    const base = memoryStorage();
-    const plaintext = JSON.stringify(tokens);
-    await base.set("oauth:tokens", plaintext);
-    let moved = false;
-    // A force reset lands between this read and the upgrade write.
-    const storage: KVStorage = {
-      ...base,
-      async get(key) {
-        const value = await base.get(key);
-        if (key === "oauth:tokens" && !moved) {
-          moved = true;
-          await base.set("oauth:generation", "v2:moved");
+        const value = await backing.get(key);
+        if (key === GRANT && hold) {
+          hold = false;
+          reached.resolve();
+          await release.promise;
         }
         return value;
       },
     };
+    const controller = new AbortController();
+    const p = provider(storage, { signal: controller.signal, binding: BINDING });
+    const save = p.saveClientInformation({ client_id: "late" }, ctxA);
+    await reached.promise;
+    controller.abort();
+    release.resolve();
+    await save;
+    // Nor does it publish a consent once cancelled.
+    const state = await p.state();
+    await p.redirectToAuthorization(new URL(`${ISSUER}/authorize?state=${state}`));
+    expect(await p.consentUrl()).toBeUndefined();
+    expect(await backing.list("")).toEqual([]);
+  });
 
-    await sealedProvider(storage).tokens();
+  it("restarts by one compare-and-set and sweeps every other epoch's consents", async () => {
+    const backing = memoryStorage();
+    const grantOps: string[] = [];
+    let plant = false;
+    const planted = oauthFlowKeys.flow("f".repeat(64));
+    const storage: KVStorage = {
+      get: (key) => backing.get(key),
+      set: (key, value, options) => (key === GRANT && grantOps.push("set"), backing.set(key, value, options)),
+      delete: (key) => (key === GRANT && grantOps.push("delete"), backing.delete(key)),
+      compareAndSet: (key, expected, next, options) =>
+        (key === GRANT && grantOps.push("compareAndSet"), backing.compareAndSet(key, expected, next, options)),
+      async list(prefix) {
+        if (plant && prefix === oauthFlowKeys.prefix) {
+          // A consent the new epoch began while the sweep was starting.
+          const live = required((await storedGrant(backing))?.epoch);
+          await backing.set(planted, JSON.stringify({ connectaOAuthFlow: 1, epoch: live, at: Date.now(), url: `${ISSUER}/live` }));
+        }
+        return backing.list(prefix);
+      },
+    };
+    const p = provider(storage);
+    await p.saveTokens(tokens, ctxA);
+    const old = await publish(p);
+    const older = oauthFlowKeys.flow("e".repeat(64));
+    await backing.set(older, JSON.stringify({ connectaOAuthFlow: 1, epoch: "v3:older", at: Date.now(), url: `${ISSUER}/older` }));
 
-    expect(moved).toBe(true);
-    expect(await base.get("oauth:tokens")).toBe(plaintext);
-    expect(await base.get(oauthValueStorageKey("oauth:tokens", "v2:moved"))).toBeNull();
-    expect(required(await base.list!(""))).toEqual(["oauth:generation", "oauth:tokens"]);
+    grantOps.length = 0;
+    plant = true;
+    await provider(storage).resetAuthorization();
+
+    expect(grantOps).toEqual(["compareAndSet"]);
+    const grant = required(await storedGrant(backing));
+    expect(grant).toEqual({ connectaOAuth: 3, epoch: expect.stringMatching(/^v3:/) });
+    expect(await backing.get(await consentKey(old.state))).toBeNull();
+    expect(await backing.get(older)).toBeNull();
+    expect(await backing.get(planted)).not.toBeNull();
+    expect(await provider(backing).verifyState(old.state)).toBe(false);
+  });
+
+  it("disconnects to a tombstone epoch nothing passive writes into until a restart replaces it", async () => {
+    const storage = memoryStorage();
+    const p = provider(storage, { binding: BINDING });
+    await p.saveClientInformation(client, ctxA);
+    await p.saveTokens(tokens, ctxA);
+    // A disconnect never carries the registration.
+    await p.resetAuthorization(true, true);
+    const tombstone = required(await storedGrant(storage));
+    expect(tombstone).toEqual({ connectaOAuth: 3, epoch: expect.stringMatching(/^disconnected:/) });
+    expect(await p.operatorDisconnected()).toBe(true);
+    expect(p.isOperatorDisconnectedEpoch(tombstone.epoch)).toBe(true);
+
+    const passive = provider(storage);
+    expect(await passive.beginFlow()).toBe(tombstone.epoch);
+    await passive.saveTokens(tokens, ctxA);
+    await provider(storage).saveDiscoveryState(discovery);
+    expect(await storedGrant(storage)).toEqual(tombstone);
+
+    await provider(storage).resetAuthorization();
+    expect(await p.operatorDisconnected()).toBe(false);
+  });
+
+  /** A grant whose client, tokens, and discovery a configured provider stored for `ctxA`. */
+  async function granted(storage: KVStorage, extra: Partial<OAuthClientInformationFull> = {}) {
+    const p = provider(storage, { binding: BINDING });
+    await p.saveDiscoveryState(discovery);
+    await p.saveClientInformation({ ...client, ...extra }, ctxA);
+    await p.saveTokens(tokens, ctxA);
+  }
+
+  it.each<{ held: string; carried: boolean; setup: (storage: KVStorage) => Promise<void>; binding?: string | null }>([
+    { held: "an issuer-bound client registered under this configuration", carried: true, setup: (s) => granted(s) },
+    { held: "a client whose secret never expires", carried: true, setup: (s) => granted(s, { client_secret_expires_at: 0 }) },
+    {
+      held: "a carried client that has earned tokens since",
+      carried: true,
+      setup: async (s) => {
+        await granted(s);
+        await provider(s, { binding: BINDING }).resetAuthorization(false, true);
+        await provider(s).saveTokens(tokens, ctxA);
+      },
+    },
+    {
+      held: "a carried client that earned no tokens",
+      carried: false,
+      setup: async (s) => {
+        await granted(s);
+        await provider(s, { binding: BINDING }).resetAuthorization(false, true);
+      },
+    },
+    { held: "a client stored with no issuer", carried: false, setup: (s) => provider(s, { binding: BINDING }).saveClientInformation(client) },
+    { held: "a client registered under another configuration", carried: false, setup: (s) => provider(s, { binding: "old-config" }).saveClientInformation(client, ctxA) },
+    { held: "a client while no binding is configured", carried: false, setup: (s) => granted(s), binding: null },
+    {
+      held: "a client whose secret has expired",
+      carried: false,
+      setup: (s) => granted(s, { client_secret_expires_at: Math.floor(Date.now() / 1000) - 60 }),
+    },
+    {
+      held: "a URL-based client",
+      carried: false,
+      setup: (s) => provider(s, { binding: BINDING, clientMetadataUrl: URL_CLIENT }).saveClientInformation({ client_id: URL_CLIENT }, ctxA),
+    },
+  ])("a restart that preserves the client, holding $held, carries it: $carried", async ({ carried, setup, binding }) => {
+    const storage = memoryStorage();
+    await setup(storage);
+    const before = (await storedGrant(storage))?.body?.client;
+    await provider(storage, {
+      ...(binding === null ? {} : { binding: binding ?? BINDING }),
+      clientMetadataUrl: URL_CLIENT,
+    }).resetAuthorization(false, true);
+    const grant = required(await storedGrant(storage));
+    expect(grant.epoch).toMatch(/^v3:/);
+    if (!carried) {
+      expect(grant.body).toBeUndefined();
+      return;
+    }
+    // Only the registration, marked carried; never tokens or discovery.
+    expect(grant.body).toEqual({
+      issuer: ISSUER,
+      client: { value: required(before).value, binding: BINDING, carried: true },
+    });
+    expect(await provider(storage).clientInformation(ctxA)).toMatchObject({ client_id: client.client_id });
+  });
+
+  it("invalidateCredentials is scoped", async () => {
+    const seeded = async () => {
+      const p = provider(memoryStorage());
+      await p.saveClientInformation(client, ctxA);
+      await p.saveTokens(tokens, ctxA);
+      await p.saveDiscoveryState(discovery);
+      await p.saveCodeVerifier("v-123");
+      return p;
+    };
+    const present = async (p: KvOAuthProvider) => ({
+      client: (await p.clientInformation()) !== undefined,
+      tokens: (await p.tokens()) !== undefined,
+      discovery: (await p.discoveryState()) !== undefined,
+    });
+    const cases = {
+      tokens: { client: true, tokens: false, discovery: true },
+      client: { client: false, tokens: true, discovery: true },
+      discovery: { client: true, tokens: true, discovery: false },
+      // The verifier lives in its consent, which the exchange's claim spends.
+      verifier: { client: true, tokens: true, discovery: true },
+      all: { client: false, tokens: false, discovery: false },
+    } as const;
+    for (const [scope, expected] of Object.entries(cases)) {
+      const p = await seeded();
+      await p.invalidateCredentials(scope as keyof typeof cases);
+      expect({ scope, ...(await present(p)) }).toEqual({ scope, ...expected });
+    }
+  });
+
+  it("invalidates only the client and tokens this flow saw, and nothing in a newer epoch", async () => {
+    const storage = memoryStorage();
+    const writer = provider(storage);
+    await writer.saveClientInformation(client, ctxA);
+    await writer.saveTokens(tokens, ctxA);
+    await writer.saveDiscoveryState(discovery);
+
+    const flow = provider(storage);
+    await flow.beginFlow();
+    await flow.clientInformation(ctxA);
+    await flow.tokens(ctxA);
+    // Another request stores newer tokens meanwhile.
+    const newer = { access_token: "newer", token_type: "Bearer", refresh_token: "newer-refresh" };
+    await provider(storage).saveTokens(newer, ctxA);
+    await flow.invalidateCredentials("all");
+    expect((await storedGrant(storage))?.body).toEqual({ issuer: ISSUER, tokens: newer });
+
+    // A flow that read nothing removes nothing.
+    await provider(storage).invalidateCredentials("tokens");
+    expect((await storedGrant(storage))?.body?.tokens).toEqual(newer);
+
+    // A flow a restart overtook removes nothing from the new epoch, quietly.
+    const stale = provider(storage);
+    await stale.beginFlow();
+    await stale.tokens(ctxA);
+    const fresh = provider(storage);
+    await fresh.resetAuthorization();
+    await fresh.saveTokens(newer, ctxA);
+    await fresh.saveDiscoveryState(discovery);
+    await expect(stale.invalidateCredentials("all")).resolves.toBeUndefined();
+    expect((await storedGrant(storage))?.body).toEqual({ issuer: ISSUER, tokens: newer, discovery });
+  });
+
+  it("fails a superseded consent link once its epoch is no longer live", async () => {
+    const storage = memoryStorage();
+    const start = provider(storage);
+    await start.beginFlow();
+    const { url } = await publish(start);
+    expect(await start.consentUrl()).toBe(url);
+    await provider(storage).resetAuthorization();
+    expectSuperseded(await rejection(start.consentUrl()));
+  });
+});
+
+// Tokens, client registration, and discovery (the grant body) and the PKCE
+// verifier are ciphertext at rest when the deployment has a vault that seals.
+describe("KvOAuthProvider sealed state", () => {
+  it("seals the grant body and the verifier; the flow's URL and epoch stay plaintext", async () => {
+    const storage = memoryStorage();
+    const sealer = sealerFor();
+    const p = provider(storage, { sealer });
+    await p.saveDiscoveryState(discovery);
+    await p.saveClientInformation(client, ctxA);
+    await p.saveTokens(tokens, ctxA);
+    const { state, url } = await publish(p, "secret-verifier");
+
+    const grantRaw = required((await storage.get(GRANT)) ?? undefined);
+    const flowRaw = required((await storage.get(await consentKey(state))) ?? undefined);
+    expect(JSON.parse(grantRaw)).toEqual({
+      connectaOAuth: 3,
+      epoch: "initial",
+      flow: await oauthStateDigest(state),
+      sealed: expect.stringMatching(/^v1\./),
+    });
+    expect(JSON.parse(flowRaw)).toEqual({
+      connectaOAuthFlow: 1,
+      epoch: "initial",
+      at: expect.any(Number),
+      url,
+      verifier: expect.stringMatching(/^v1\./),
+      sealed: true,
+    });
+    for (const secret of ["secret-access", "secret-refresh", "dcr-secret", "dcr-client", ISSUER]) {
+      expect(grantRaw).not.toContain(secret);
+    }
+    expect(flowRaw).not.toContain("secret-verifier");
+
+    const reader = provider(storage, { sealer: sealerFor() });
+    expect(await reader.tokens(ctxA)).toEqual({ ...tokens, ...ctxA });
+    expect(await reader.clientInformation(ctxA)).toEqual({ ...client, ...ctxA });
+    expect(await reader.discoveryState()).toEqual(discovery);
+    expect(await reader.verifyState(state)).toBe(true);
+    expect(await reader.codeVerifier()).toBe("secret-verifier");
+
+    // Without the sealer the ciphertext is nothing a caller could use; the
+    // pending URL, plaintext, is still there.
+    const unsealed = provider(storage);
+    expect(await unsealed.tokens()).toBeUndefined();
+    expect(await unsealed.clientInformation()).toBeUndefined();
+    expect(await unsealed.discoveryState()).toBeUndefined();
+    expect(await unsealed.verifyState(state)).toBe(false);
+    expect(await unsealed.pendingAuthorizationUrl()).toBe(url);
   });
 
   it("reads tampered or foreign-key ciphertext as absent, and warns without the secret", async () => {
     const storage = memoryStorage();
-    await sealedProvider(storage).saveTokens(tokens);
-    const sealed = required((await storage.get("oauth:tokens")) ?? undefined);
-    expect(isSealed(sealed)).toBe(true);
+    const { state } = await publish(provider(storage, { sealer: sealerFor() }), "secret-verifier");
+    await provider(storage, { sealer: sealerFor() }).saveTokens(tokens, ctxA);
+    const sealed = required((await storage.get(GRANT)) ?? undefined);
 
     const wrongKey = spyLogger();
-    expect(
-      await sealedProvider(storage, sealerFor(OTHER_SEAL_KEY, wrongKey.logger)).tokens(),
-    ).toBeUndefined();
-    expect(wrongKey.warnings().join("\n")).toMatch(/"svc".*oauth:tokens/);
+    expect(await provider(storage, { sealer: sealerFor(OTHER_KEY, wrongKey.logger) }).tokens()).toBeUndefined();
+    expect(wrongKey.warnings().join("\n")).toMatch(/"svc" has a sealed OAuth grant/);
 
     // Flip one base64 digit in the ciphertext's middle: still well-formed,
     // no longer authentic.
+    const flip = (value: string) => {
+      const at = Math.floor(value.length * 0.75);
+      return value.slice(0, at) + (value[at] === "A" ? "B" : "A") + value.slice(at + 1);
+    };
     const envelope = JSON.parse(sealed) as { sealed: string };
-    const at = Math.floor(envelope.sealed.length * 0.75);
-    const flipped = envelope.sealed[at] === "A" ? "B" : "A";
-    await storage.set(
-      "oauth:tokens",
-      JSON.stringify({
-        ...envelope,
-        sealed: envelope.sealed.slice(0, at) + flipped + envelope.sealed.slice(at + 1),
-      }),
-    );
+    await storage.set(GRANT, JSON.stringify({ ...envelope, sealed: flip(envelope.sealed) }));
     const tampered = spyLogger();
-    expect(
-      await sealedProvider(storage, sealerFor(SEAL_KEY, tampered.logger)).tokens(),
-    ).toBeUndefined();
+    expect(await provider(storage, { sealer: sealerFor(CREDENTIAL_KEY, tampered.logger) }).tokens()).toBeUndefined();
     expect(tampered.warnings()).toHaveLength(1);
-    for (const warning of [...wrongKey.warnings(), ...tampered.warnings()]) {
+
+    // A tampered verifier refuses its callback.
+    const key = await consentKey(state);
+    const flow = JSON.parse(required((await storage.get(key)) ?? undefined)) as { verifier: string };
+    await storage.set(key, JSON.stringify({ ...flow, verifier: flip(flow.verifier) }));
+    const consent = spyLogger();
+    expect(await provider(storage, { sealer: sealerFor(CREDENTIAL_KEY, consent.logger) }).verifyState(state)).toBe(false);
+    expect(consent.warnings().join("\n")).toMatch(/"svc" has a sealed OAuth consent/);
+
+    for (const warning of [...wrongKey.warnings(), ...tampered.warnings(), ...consent.warnings()]) {
       expect(warning).not.toContain("secret-access");
+      expect(warning).not.toContain("secret-verifier");
       expect(warning).not.toContain(envelope.sealed);
+      expect(warning).not.toContain(flow.verifier);
     }
   });
-});
 
-describe("OAuthRefreshCoordinator", () => {
-  const refreshInit = (token: string): RequestInit => ({
-    method: "POST",
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: token,
-    }),
-  });
-
-  const trackedAbortSignal = () => {
-    const controller = new AbortController();
-    let listeners = 0;
-    const signal = {
-      get aborted() {
-        return controller.signal.aborted;
-      },
-      get reason() {
-        return controller.signal.reason;
-      },
-      addEventListener(
-        type: string,
-        listener: EventListenerOrEventListenerObject,
-        options?: EventListenerOptions | boolean,
-      ) {
-        if (type === "abort") listeners++;
-        controller.signal.addEventListener(type, listener, options);
-      },
-      removeEventListener(
-        type: string,
-        listener: EventListenerOrEventListenerObject,
-        options?: EventListenerOptions | boolean,
-      ) {
-        if (type === "abort") listeners--;
-        controller.signal.removeEventListener(type, listener, options);
-      },
-    } as unknown as AbortSignal;
-    return { controller, signal, listeners: () => listeners };
-  };
-
-  it("settles non-2xx waiters at fetch completion and permits a later retry", async () => {
+  it("does not open a sealed grant moved to another connector, owner, or epoch", async () => {
     const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const owner = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    const follower = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    const retry = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    for (const provider of [owner, follower, retry]) {
-      provider.captureGeneration("legacy");
+    await provider(storage, { sealer: sealerFor() }).saveTokens(tokens, ctxA);
+    const raw = required((await storage.get(GRANT)) ?? undefined);
+    expect(await provider(storage, { sealer: sealerFor() }).tokens()).toEqual(tokens);
+
+    for (const sealer of [
+      sealerFor(CREDENTIAL_KEY, silentLogger, "other"),
+      sealerFor(CREDENTIAL_KEY, silentLogger, "svc", "owner-a"),
+    ]) {
+      const elsewhere = memoryStorage();
+      await elsewhere.set(GRANT, raw);
+      expect(await provider(elsewhere, { sealer }).tokens()).toBeUndefined();
     }
-    await owner.saveTokens({
-      access_token: "access-old",
-      token_type: "Bearer",
-      refresh_token: "refresh-old",
-    });
-    let attempts = 0;
-    let releaseFailure!: () => void;
-    let observedFirstRequest!: () => void;
-    const firstRequest = new Promise<void>((resolve) => {
-      observedFirstRequest = resolve;
-    });
-    const failureBarrier = new Promise<void>((resolve) => {
-      releaseFailure = resolve;
-    });
-    const baseFetch: FetchLike = async () => {
-      attempts++;
-      if (attempts === 1) {
-        observedFirstRequest();
-        await failureBarrier;
-        return Response.json(
-          { error: "server_error", error_description: "temporarily down" },
-          { status: 503 },
-        );
-      }
-      return Response.json({
-        access_token: "access-new",
-        token_type: "Bearer",
-        refresh_token: "refresh-new",
-      });
-    };
-    const ownerRefresh = coordinator.coordinatedFetch(owner, baseFetch)(
-      "https://auth.example/token",
-      refreshInit("refresh-old"),
-    );
-    await firstRequest;
-    let observedFollowerOldToken!: () => void;
-    const followerRead = new Promise<void>((resolve) => {
-      observedFollowerOldToken = resolve;
-    });
-    const readFollowerTokens = follower.tokens.bind(follower);
-    follower.tokens = async (issuerContext) => {
-      const tokens = await readFollowerTokens(issuerContext);
-      if (tokens?.refresh_token === "refresh-old") {
-        observedFollowerOldToken();
-      }
-      return tokens;
-    };
-    const followerRefresh = coordinator.coordinatedFetch(follower, baseFetch)(
-      "https://auth.example/token",
-      refreshInit("refresh-old"),
-    );
-    const firstOutcomes = Promise.allSettled([ownerRefresh, followerRefresh]);
-    await followerRead;
-    expect(attempts).toBe(1);
-    releaseFailure();
-    const [ownerOutcome, followerOutcome] = await firstOutcomes;
-
-    expect(ownerOutcome.status).toBe("fulfilled");
-    if (ownerOutcome.status === "fulfilled") {
-      expect(ownerOutcome.value.status).toBe(503);
-    }
-    expect(followerOutcome).toMatchObject({
-      status: "rejected",
-      reason: new Error("OAuth refresh failed with HTTP 503."),
-    });
-
-    const response = await coordinator.coordinatedFetch(retry, baseFetch)(
-      "https://auth.example/token",
-      refreshInit("refresh-old"),
-    );
-    const tokens = (await response.json()) as OAuthTokens;
-    await retry.saveTokens(tokens);
-
-    expect(attempts).toBe(2);
-    expect(await retry.tokens()).toMatchObject({
-      access_token: "access-new",
-      refresh_token: "refresh-new",
-    });
+    await storage.set(GRANT, JSON.stringify({ ...JSON.parse(raw), epoch: "v3:elsewhere" }));
+    expect(await provider(storage, { sealer: sealerFor() }).tokens()).toBeUndefined();
   });
 
-  it("releases an SDK-invalid success body without clearing its exact retry", async () => {
+  it("reseals a carried registration under the new epoch", async () => {
     const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const malformed = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    const retry = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    const follower = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    for (const provider of [malformed, retry, follower]) {
-      provider.captureGeneration("legacy");
-    }
-    await malformed.saveTokens({
-      access_token: "access-old",
-      token_type: "Bearer",
-      refresh_token: "refresh-old",
-    });
-
-    let attempts = 0;
-    const baseFetch: FetchLike = async () => {
-      attempts++;
-      return attempts === 1
-        ? Response.json({
-            access_token: "access-malformed",
-            token_type: "Bearer",
-            refresh_token: 123,
-          })
-        : Response.json({
-            access_token: "access-new",
-            token_type: "Bearer",
-            refresh_token: "refresh-new",
-            id_token: "id-new",
-            scope: "read",
-            expires_in: "3600",
-          });
-    };
-
-    const malformedResponse = await coordinator.coordinatedFetch(
-      malformed,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    // The SDK gets an outage it falls through on, rebuilt with nothing the
-    // server wrote: the malformed body never reaches its console.
-    expect(malformedResponse.status).toBe(200);
-    await expect(malformedResponse.json()).resolves.toEqual({
-      error: "server_error",
-      error_description: "The authorization server is temporarily unavailable.",
-    });
-
-    // The SDK rejects the first body before any provider callback. Its gate
-    // must already be gone so this same-generation attempt can own a retry.
-    const retryResponse = await coordinator.coordinatedFetch(
-      retry,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    expect(attempts).toBe(2);
-
-    // A delayed callback from the malformed attempt must not clear the newer
-    // exact flight. The valid response includes every SDK string optional and
-    // an expires_in value its schema coerces to a number.
-    await malformed.redirectToAuthorization(
-      new URL("https://auth.example/authorize"),
-    );
-    let observedFollowerOldToken!: () => void;
-    const followerRead = new Promise<void>((resolve) => {
-      observedFollowerOldToken = resolve;
-    });
-    const readFollowerTokens = follower.tokens.bind(follower);
-    follower.tokens = async (issuerContext) => {
-      const tokens = await readFollowerTokens(issuerContext);
-      if (tokens?.refresh_token === "refresh-old") {
-        observedFollowerOldToken();
-      }
-      return tokens;
-    };
-    let followerSettled = false;
-    const followerResponse = coordinator.coordinatedFetch(
-      follower,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-old")).then(
-      (response) => {
-        followerSettled = true;
-        return response;
-      },
-    );
-    await followerRead;
-    await Promise.resolve();
-    expect(followerSettled).toBe(false);
-    expect(attempts).toBe(2);
-
-    const raw = (await retryResponse.json()) as Record<string, unknown>;
-    await retry.saveTokens({
-      access_token: String(raw.access_token),
-      token_type: String(raw.token_type),
-      refresh_token: String(raw.refresh_token),
-      id_token: String(raw.id_token),
-      scope: String(raw.scope),
-      expires_in: Number(raw.expires_in),
-    });
-    const replayed = (await (await followerResponse).json()) as OAuthTokens;
-    await follower.saveTokens(replayed);
-
-    expect(attempts).toBe(2);
-    expect(replayed).toMatchObject({
-      access_token: "access-new",
-      refresh_token: "refresh-new",
-      expires_in: 3600,
-    });
-  });
-
-  it("lets an aborted follower leave an owner flight without poisoning it", async () => {
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const owner = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    const follower = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    const later = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    for (const provider of [owner, follower, later]) {
-      provider.captureGeneration("legacy");
-    }
-    await owner.saveTokens({
-      access_token: "access-old",
-      token_type: "Bearer",
-      refresh_token: "refresh-old",
-    });
-    let upstreamRequests = 0;
-    const baseFetch: FetchLike = async () => {
-      upstreamRequests++;
-      return Response.json({
-        access_token: "access-new",
-        token_type: "Bearer",
-        refresh_token: "refresh-new",
-      });
-    };
-
-    const ownerResponse = await coordinator.coordinatedFetch(
-      owner,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    let observedFollowerOldToken!: () => void;
-    const followerRead = new Promise<void>((resolve) => {
-      observedFollowerOldToken = resolve;
-    });
-    const readFollowerTokens = follower.tokens.bind(follower);
-    follower.tokens = async (issuerContext) => {
-      const tokens = await readFollowerTokens(issuerContext);
-      if (tokens?.refresh_token === "refresh-old") {
-        observedFollowerOldToken();
-      }
-      return tokens;
-    };
-    const controller = new AbortController();
-    const reason = new DOMException("Follower scope ended", "AbortError");
-    const followerRefresh = coordinator.coordinatedFetch(
-      follower,
-      baseFetch,
-      controller.signal,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    await followerRead;
-    controller.abort(reason);
-
-    await expect(followerRefresh).rejects.toBe(reason);
-    expect(upstreamRequests).toBe(1);
-
-    await owner.saveTokens((await ownerResponse.json()) as OAuthTokens);
-    const laterResponse = await coordinator.coordinatedFetch(
-      later,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    const replayed = (await laterResponse.json()) as OAuthTokens;
-    await later.saveTokens(replayed);
-
-    expect(upstreamRequests).toBe(1);
-    expect(replayed).toMatchObject({
-      access_token: "access-new",
-      refresh_token: "refresh-new",
-    });
-    expect(await later.tokens()).toMatchObject({
-      access_token: "access-new",
-      refresh_token: "refresh-new",
-    });
-  });
-
-  it("aborts the owner fetch and fails joined scopes without promotion", async () => {
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const owner = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    const follower = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    const later = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    for (const provider of [owner, follower, later]) {
-      provider.captureGeneration("legacy");
-    }
-    await owner.saveTokens({
-      access_token: "access-old",
-      token_type: "Bearer",
-      refresh_token: "refresh-old",
-    });
-
-    const trackedOwner = trackedAbortSignal();
-    const trackedFollower = trackedAbortSignal();
-    let upstreamRequests = 0;
-    let observedOwnerFetch!: () => void;
-    const ownerFetch = new Promise<void>((resolve) => {
-      observedOwnerFetch = resolve;
-    });
-    let fetchAbortListenerActive = false;
-    let firstFetchSignal: AbortSignal | null | undefined;
-    const baseFetch: FetchLike = async (_input, init) => {
-      upstreamRequests++;
-      if (upstreamRequests === 1) {
-        firstFetchSignal = init?.signal;
-        observedOwnerFetch();
-        await new Promise<never>((_resolve, reject) => {
-          const signal = init?.signal;
-          expect(signal).toBeDefined();
-          const onAbort = () => {
-            fetchAbortListenerActive = false;
-            signal?.removeEventListener("abort", onAbort);
-            reject(signal?.reason);
-          };
-          fetchAbortListenerActive = true;
-          signal?.addEventListener("abort", onAbort, { once: true });
-          if (signal?.aborted) onAbort();
-        });
-      }
-      return Response.json({
-        access_token: "access-new",
-        token_type: "Bearer",
-        refresh_token: "refresh-new",
-      });
-    };
-
-    const ownerRefresh = coordinator.coordinatedFetch(
-      owner,
-      baseFetch,
-      trackedOwner.signal,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    await ownerFetch;
-    let observedFollowerOldToken!: () => void;
-    const followerRead = new Promise<void>((resolve) => {
-      observedFollowerOldToken = resolve;
-    });
-    const readFollowerTokens = follower.tokens.bind(follower);
-    follower.tokens = async (issuerContext) => {
-      const tokens = await readFollowerTokens(issuerContext);
-      if (tokens?.refresh_token === "refresh-old") {
-        observedFollowerOldToken();
-      }
-      return tokens;
-    };
-    const followerRefresh = coordinator.coordinatedFetch(
-      follower,
-      baseFetch,
-      trackedFollower.signal,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    const outcomes = Promise.allSettled([ownerRefresh, followerRefresh]);
-    await followerRead;
-    await vi.waitFor(() => expect(trackedFollower.listeners()).toBe(1));
-
-    const ownerAbort = new DOMException("Owner scope ended", "AbortError");
-    trackedOwner.controller.abort(ownerAbort);
-    await expect(outcomes).resolves.toEqual([
-      { status: "rejected", reason: ownerAbort },
-      { status: "rejected", reason: ownerAbort },
-    ]);
-    expect(firstFetchSignal).toBe(trackedOwner.signal);
-    expect(upstreamRequests).toBe(1);
-    expect(fetchAbortListenerActive).toBe(false);
-    expect(trackedOwner.listeners()).toBe(0);
-    expect(trackedFollower.listeners()).toBe(0);
-
-    const laterController = new AbortController();
-    const retryResponse = await coordinator.coordinatedFetch(
-      later,
-      baseFetch,
-      laterController.signal,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    await later.saveTokens((await retryResponse.json()) as OAuthTokens);
-
-    expect(upstreamRequests).toBe(2);
-    expect(await later.tokens()).toMatchObject({
-      access_token: "access-new",
-      refresh_token: "refresh-new",
-    });
-  });
-
-  it.each(["redirect", "denied-redirect", "invalidate"])("releases a successful fetch when the SDK chooses %s instead of saveTokens", async (ending) => {
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const owner = new KvOAuthProvider("svc", storage, REDIRECT, coordinator, ending !== "denied-redirect");
-    const retry = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
-    const tokens = { access_token: "old", token_type: "Bearer", refresh_token: "refresh-old" };
-    await owner.saveTokens(tokens);
-    const fetch = vi.fn(async () => Response.json({ ...tokens, access_token: "new" }));
-    await coordinator.coordinatedFetch(owner, fetch)("https://auth.example/token", refreshInit("refresh-old"));
-    if (ending === "invalidate") {
-      await owner.invalidateCredentials("tokens");
-      await retry.saveTokens(tokens);
-    } else if (ending === "denied-redirect") {
-      await expect(owner.redirectToAuthorization(new URL("https://auth.example/authorize"))).rejects.toBeInstanceOf(UnauthorizedError);
-    } else {
-      await owner.redirectToAuthorization(new URL("https://auth.example/authorize"));
-    }
-    const response = await coordinator.coordinatedFetch(retry, fetch)("https://auth.example/token", refreshInit("refresh-old"));
-    expect(response.status).toBe(200);
-    await retry.saveTokens(await response.json() as OAuthTokens);
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(await retry.tokens()).toMatchObject({ access_token: "new" });
-  });
-
-  it("bounds successful token response reads and releases the failed owner", async () => {
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const owner = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
-    const retry = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
-    const tokens = { access_token: "old", token_type: "Bearer", refresh_token: "refresh-old" };
-    await owner.saveTokens(tokens);
-    let pulled = 0;
-    const fetch = vi.fn(async () => new Response(new ReadableStream({
-      pull(controller) {
-        pulled++;
-        controller.enqueue(new Uint8Array(4096).fill(32));
-        if (pulled === 100) controller.close();
-      },
-    })));
-    await expect(coordinator.coordinatedFetch(owner, fetch)("https://auth.example/token", refreshInit("refresh-old")))
-      .rejects.toThrow("exceeded 65536 bytes");
-    expect(pulled).toBeLessThan(100);
-    const response = await coordinator.coordinatedFetch(retry, async () => Response.json(tokens))(
-      "https://auth.example/token", refreshInit("refresh-old"));
-    expect(response.status).toBe(200);
-    await retry.saveTokens(tokens);
-  });
-
-  it("does not start a token request after its scope is already aborted", async () => {
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const provider = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
-    await provider.saveTokens({ access_token: "old", token_type: "Bearer", refresh_token: "refresh-old" });
-    const controller = new AbortController();
-    controller.abort(new Error("scope ended"));
-    const fetch = vi.fn(async () => Response.json({ access_token: "new", token_type: "Bearer" }));
-    await expect(coordinator.coordinatedFetch(provider, fetch, controller.signal)(
-      "https://auth.example/token", refreshInit("refresh-old"))).rejects.toThrow("scope ended");
-    expect(fetch).not.toHaveBeenCalled();
-  });
-
-  it("bounds repeated revision changes while reading credentials", async () => {
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const provider = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
-    const tokens = { access_token: "same", token_type: "Bearer", refresh_token: "refresh-old" };
-    await provider.saveTokens(tokens);
-    let interruptions = 0;
-    const read = provider.tokens.bind(provider);
-    provider.tokens = async () => {
-      const snapshot = await read();
-      // Another request finishes a refresh during each read. Stop at 100 so
-      // the old unbounded implementation fails an assertion rather than spins.
-      if (interruptions++ < 100) {
-        const owner = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
-        await coordinator.coordinatedFetch(owner, async () => Response.json(tokens))(
-          "https://auth.example/token", refreshInit("refresh-old"));
-        await owner.saveTokens(tokens);
-      }
-      return snapshot;
-    };
-    const response = await coordinator.coordinatedFetch(provider, async () => Response.json(tokens))(
-      "https://auth.example/token", refreshInit("refresh-old"));
-    expect(response.status).toBe(503);
-    expect(interruptions).toBeLessThan(100);
-    expect(await response.json()).toMatchObject({ error: "temporarily_unavailable" });
-  });
-
-  it("persists an aborted owner's accepted rotation and hands it to a contender", async () => {
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const trackedOwner = trackedAbortSignal();
-    const owner = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-      false,
-      undefined,
-      trackedOwner.signal,
-    );
-    const contender = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    for (const provider of [owner, contender]) {
-      provider.captureGeneration("legacy");
-    }
-    await owner.saveTokens({
-      access_token: "access-old",
-      token_type: "Bearer",
-      refresh_token: "refresh-old",
-    });
-    let upstreamRequests = 0;
-    const redeemed: string[] = [];
-    const baseFetch: FetchLike = async (_input, init) => {
-      upstreamRequests++;
-      redeemed.push(new URLSearchParams(String(init?.body)).get("refresh_token") ?? "");
-      return Response.json({
-        access_token: "access-new",
-        token_type: "Bearer",
-        refresh_token: "refresh-new",
-      });
-    };
-    // The owner has its valid response; the SDK has not saved it yet.
-    await coordinator.coordinatedFetch(
-      owner,
-      baseFetch,
-      trackedOwner.signal,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-
-    let observedTokenRead!: () => void;
-    let releaseTokenRead!: () => void;
-    const tokenRead = new Promise<void>((resolve) => {
-      observedTokenRead = resolve;
-    });
-    const tokenReadBarrier = new Promise<void>((resolve) => {
-      releaseTokenRead = resolve;
-    });
-    const readContenderTokens = contender.tokens.bind(contender);
-    contender.tokens = async (issuerContext) => {
-      observedTokenRead();
-      await tokenReadBarrier;
-      return readContenderTokens(issuerContext);
-    };
-    const contenderRefresh = coordinator.coordinatedFetch(
-      contender,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    await tokenRead;
-
-    // Cancelling the owner now means its SDK saveTokens never arrives. The
-    // authorization server has already consumed refresh-old, so the host must
-    // persist refresh-new itself and the contender must receive that rotation
-    // rather than redeeming the retired token a second time (#526).
-    trackedOwner.controller.abort(
-      new DOMException("Owner scope ended", "AbortError"),
-    );
-    releaseTokenRead();
-    const recovered = await contenderRefresh;
-    expect(recovered.status).toBe(200);
-    const replayed = await recovered.json() as OAuthTokens;
-    expect(replayed).toMatchObject({ access_token: "access-new", refresh_token: "refresh-new" });
-    await contender.saveTokens(replayed);
-    expect(await contender.tokens()).toMatchObject({ access_token: "access-new" });
-    expect(upstreamRequests).toBe(1);
-    expect(redeemed).toEqual(["refresh-old"]);
-    expect(trackedOwner.listeners()).toBe(0);
-    // A delayed SDK save from the cancelled owner is a duplicate of the same
-    // rotation, and the gate is free for the next refresh.
-    await expect(owner.saveTokens(replayed)).resolves.toBeUndefined();
-    expect(await contender.tokens()).toMatchObject({ access_token: "access-new" });
-    const later = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
-    later.captureGeneration("legacy");
-    const next = await coordinator.coordinatedFetch(
-      later,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-new"));
-    expect(next.status).toBe(200);
-    expect(upstreamRequests).toBe(2);
-    expect(redeemed).toEqual(["refresh-old", "refresh-new"]);
-  });
-
-  it.each([false, true])("commits an accepted response arriving after cancellation only in its active epoch, disconnected=%s", async disconnected => {
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const controller = new AbortController();
-    const owner = new KvOAuthProvider("svc", storage, REDIRECT, coordinator, false, undefined, controller.signal);
-    owner.captureGeneration("legacy");
-    await owner.saveTokens({ access_token: "old", token_type: "Bearer", refresh_token: "refresh-old" });
-    const answering = deferred<Response>();
-    const requested = deferred<void>();
-    const baseFetch: FetchLike = async () => { requested.resolve(); return answering.promise; };
-    const refreshed = coordinator.coordinatedFetch(owner, baseFetch, controller.signal)(
-      "https://auth.example/token", refreshInit("refresh-old"),
-    );
-    const failed = expect(refreshed).rejects.toThrow("owner cancelled");
-    await requested.promise;
-    controller.abort(new Error("owner cancelled"));
-    await failed;
-    const observer = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
-    expect(await observer.tokens()).toMatchObject({ refresh_token: "refresh-old" });
-    if (disconnected) await observer.resetAuthorization(true);
-    answering.resolve(Response.json({ access_token: "new", token_type: "Bearer", refresh_token: "refresh-new" }));
-    if (disconnected) {
-      // Await the late commit attempt, then check both the live epoch and residue.
-      const committing = vi.spyOn(owner, "saveAcceptedRefreshTokens");
-      await vi.waitFor(() => expect(committing).toHaveBeenCalledTimes(1));
-      await committing.mock.results[0]!.value;
-      expect(await observer.tokens()).toBeUndefined();
-      expect(await storage.get("oauth:tokens")).toBeNull();
-      expect(await observer.operatorDisconnected()).toBe(true);
-    } else {
-      await vi.waitFor(async () => expect(await observer.tokens()).toMatchObject({ refresh_token: "refresh-new" }));
-    }
-  });
-
-  it("stamps a cancelled owner's recovered rotation with the issuer its refresh answered to", async () => {
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const controller = new AbortController();
-    const issuer = { issuer: "https://old-as.example" };
-    const owner = new KvOAuthProvider("svc", storage, REDIRECT, coordinator, false, undefined, controller.signal);
-    owner.captureGeneration("legacy");
-    await owner.saveTokens({ access_token: "old", token_type: "Bearer", refresh_token: "refresh-old" }, issuer);
-    // The SDK's issuer-aware read that decides to refresh.
-    expect(await owner.tokens(issuer)).toMatchObject({ refresh_token: "refresh-old" });
-    await coordinator.coordinatedFetch(owner, async () => Response.json({
-      access_token: "new", token_type: "Bearer", refresh_token: "refresh-new",
-    }), controller.signal)("https://old-as.example/token", refreshInit("refresh-old"));
-    // The owner leaves before the SDK's saveTokens: recovery persists alone.
-    const committing = vi.spyOn(owner, "saveAcceptedRefreshTokens");
-    controller.abort(new Error("owner cancelled"));
-    await vi.waitFor(() => expect(committing).toHaveBeenCalledTimes(1));
-    await committing.mock.results[0]!.value;
-
-    const stored = JSON.parse((await storage.get("oauth:tokens"))!);
-    expect(stored).toMatchObject({
-      issuer: issuer.issuer,
-      value: { refresh_token: "refresh-new", issuer: issuer.issuer },
-    });
-    // A server the connector names later cannot adopt it as unbound state.
-    const repointed = new KvOAuthProvider("svc", storage, REDIRECT, new OAuthRefreshCoordinator());
-    expect(await repointed.tokens({ issuer: "https://new-as.example" })).toBeUndefined();
-  });
-
-  it("never keeps an issuer the token endpoint wrote into its own answer", async () => {
-    // Only the client stamps `issuer`. A recovered rotation with no issuer of
-    // its own to stamp must not carry one the answering server chose.
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const controller = new AbortController();
-    const owner = new KvOAuthProvider("svc", storage, REDIRECT, coordinator, false, undefined, controller.signal);
-    owner.captureGeneration("legacy");
-    await owner.saveTokens({ access_token: "old", token_type: "Bearer", refresh_token: "refresh-old" });
-    await coordinator.coordinatedFetch(owner, async () => Response.json({
-      access_token: "new",
-      token_type: "Bearer",
-      refresh_token: "refresh-new",
-      issuer: "https://elsewhere.example",
-    }), controller.signal)("https://old-as.example/token", refreshInit("refresh-old"));
-    const committing = vi.spyOn(owner, "saveAcceptedRefreshTokens");
-    controller.abort(new Error("owner cancelled"));
-    await vi.waitFor(() => expect(committing).toHaveBeenCalledTimes(1));
-    await committing.mock.results[0]!.value;
-
-    const reader = new KvOAuthProvider("svc", storage, REDIRECT, new OAuthRefreshCoordinator());
-    const stored = await reader.tokens();
-    expect(stored).toMatchObject({ refresh_token: "refresh-new" });
-    expect(stored).not.toHaveProperty("issuer");
-    expect(await storage.get("oauth:tokens")).not.toContain("elsewhere");
-  });
-
-  it("removes a cancelled owner's accepted rotation when disconnect fences its pending storage write", async () => {
-    const backing = memoryStorage();
-    const writing = deferred<void>();
-    const releaseWrite = deferred<void>();
-    let hold = false;
-    const storage: KVStorage = { ...backing, set: async (key, value) => {
-      if (hold && key === "oauth:tokens") {
-        writing.resolve();
-        await releaseWrite.promise;
-      }
-      await backing.set(key, value);
-    } };
-    const coordinator = new OAuthRefreshCoordinator();
-    const controller = new AbortController();
-    const owner = new KvOAuthProvider("svc", storage, REDIRECT, coordinator, false, undefined, controller.signal);
-    owner.captureGeneration("legacy");
-    await owner.saveTokens({ access_token: "old", token_type: "Bearer", refresh_token: "refresh-old" });
-    await coordinator.coordinatedFetch(owner, async () => Response.json({
-      access_token: "new", token_type: "Bearer", refresh_token: "refresh-new",
-    }), controller.signal)("https://auth.example/token", refreshInit("refresh-old"));
-    hold = true;
-    const committing = vi.spyOn(owner, "saveAcceptedRefreshTokens");
-    controller.abort(new Error("owner cancelled"));
-    await writing.promise;
-    const disconnected = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
-    await disconnected.resetAuthorization(true);
-    releaseWrite.resolve();
-    await committing.mock.results[0]!.value;
-    expect(await disconnected.tokens()).toBeUndefined();
-    expect(await disconnected.operatorDisconnected()).toBe(true);
-    expect(await backing.get("oauth:tokens")).toBeNull();
-  });
-
-  it("joins overlapping SDK and cancellation saves before permitting the next rotation", async () => {
-    const backing = memoryStorage();
-    const firstWrite = deferred<void>();
-    const releaseFirst = deferred<void>();
-    const releaseDuplicate = deferred<void>();
-    let held = false;
-    let writes = 0;
-    const storage: KVStorage = { ...backing, set: async (key, value) => {
-      if (held && key === "oauth:tokens" && JSON.parse(value).refresh_token === "refresh-b") {
-        writes++;
-        if (writes === 1) { firstWrite.resolve(); await releaseFirst.promise; }
-        else await releaseDuplicate.promise;
-      }
-      await backing.set(key, value);
-    } };
-    const coordinator = new OAuthRefreshCoordinator();
-    const controller = new AbortController();
-    const owner = new KvOAuthProvider("svc", storage, REDIRECT, coordinator, false, undefined, controller.signal);
-    owner.captureGeneration("legacy");
-    await owner.saveTokens({ access_token: "access-a", token_type: "Bearer", refresh_token: "refresh-a" });
-    const rotated = { access_token: "access-b", token_type: "Bearer", refresh_token: "refresh-b" };
-    await coordinator.coordinatedFetch(owner, async () => Response.json(rotated), controller.signal)(
-      "https://auth.example/token", refreshInit("refresh-a"),
-    );
-    held = true;
-    const recovery = vi.spyOn(owner, "saveAcceptedRefreshTokens");
-    controller.abort(new Error("owner cancelled after redemption"));
-    await firstWrite.promise;
-    const sdkSave = owner.saveTokens(rotated);
-    releaseFirst.resolve();
-    await recovery.mock.results[0]!.value;
-    const next = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
-    next.captureGeneration("legacy");
-    const answer = await coordinator.coordinatedFetch(next, async () => Response.json({
-      access_token: "access-c", token_type: "Bearer", refresh_token: "refresh-c",
-    }))("https://auth.example/token", refreshInit("refresh-b"));
-    await next.saveTokens(await answer.json() as OAuthTokens);
-    releaseDuplicate.resolve();
-    await sdkSave;
-    expect(await next.tokens()).toMatchObject({ access_token: "access-c", refresh_token: "refresh-c" });
-    expect(writes).toBe(1);
-  });
-
-  it("keeps a refused grant's flight standing when its owner aborts during the discard", async () => {
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const owner = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
-    const contender = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
-    for (const provider of [owner, contender]) {
-      provider.captureGeneration("legacy");
-    }
-    await owner.saveTokens({
-      access_token: "access-old",
-      token_type: "Bearer",
-      refresh_token: "refresh-old",
-    });
-    const tokenKey = oauthValueStorageKey("oauth:tokens", "legacy");
-    const discard = deferred<void>();
-    const discarding = deferred<void>();
-    const compareAndSet = storage.compareAndSet!.bind(storage);
-    storage.compareAndSet = async (key, expected, next, opts) => {
-      if (key === tokenKey && next === null) {
-        discarding.resolve();
-        await discard.promise;
-      }
-      return compareAndSet(key, expected, next, opts);
-    };
-    const redeemed: string[] = [];
-    const baseFetch: FetchLike = async (_input, init) => {
-      redeemed.push(new URLSearchParams(String(init?.body)).get("refresh_token") ?? "");
-      return Response.json({ error: "invalid_grant" }, { status: 400 });
-    };
-    const ownerScope = new AbortController();
-    const ownerAbort = new DOMException("Owner scope ended", "AbortError");
-    const ownerRefresh = coordinator.coordinatedFetch(
-      owner,
-      baseFetch,
-      ownerScope.signal,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    const ownerOutcome = ownerRefresh.then(
-      (response) => response.status,
-      (error: unknown) => error,
-    );
-    await discarding.promise;
-
-    // The authorization server has refused refresh-old, and the owner is
-    // deleting it. Cancelling the owner now must not free the generation
-    // for a contender to redeem the refused token a second time (P1-S09).
-    ownerScope.abort(ownerAbort);
-    const contenderScope = trackedAbortSignal();
-    const contenderRefresh = coordinator.coordinatedFetch(
-      contender,
-      baseFetch,
-      contenderScope.signal,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    const contenderOutcome = contenderRefresh.then(
-      (response) => response.status,
-      (error: unknown) => error,
-    );
-    // One listener: the contender is either waiting on the owner's flight or
-    // has published its own. Only the second redeems refresh-old again.
-    await vi.waitFor(() => expect(contenderScope.listeners()).toBe(1));
-    discard.resolve();
-
-    const [contenderResult, ownerResult] = await Promise.all([
-      contenderOutcome,
-      ownerOutcome,
-    ]);
-    expect(redeemed).toEqual(["refresh-old"]);
-    // The contender inherits the owner's refusal, verdict and all.
-    expect(contenderResult).toEqual(
-      new Error("OAuth refresh failed with HTTP 400."),
-    );
-    expect(ownerResult).toBe(ownerAbort);
-    expect(contenderScope.listeners()).toBe(0);
-    expect(await storage.get(tokenKey)).toBeNull();
-  });
-
-  it("surfaces a pending mutation as retryable without starting authorization", async () => {
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const issuer = "https://auth.example";
-    const mcpUrl = "https://downstream.example/mcp";
-    const owner = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    const contender = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    for (const provider of [owner, contender]) {
-      provider.captureGeneration("legacy");
-    }
-    await owner.saveClientInformation(
-      {
-        client_id: "connecta-client",
-        redirect_uris: [REDIRECT],
-        token_endpoint_auth_method: "none",
-      },
-      { issuer },
-    );
-    await owner.saveTokens(
-      {
-        access_token: "access-old",
-        token_type: "Bearer",
-        refresh_token: "refresh-old",
-      },
-      { issuer },
-    );
-    let tokenRequests = 0;
-    const baseFetch: FetchLike = async (input) => {
-      const url = new URL(input);
-      if (url.href === `${issuer}/token`) {
-        tokenRequests++;
-        return Response.json({
-          access_token: "access-new",
-          token_type: "Bearer",
-          refresh_token: "refresh-new",
-        });
-      }
-      if (
-        url.href ===
-        "https://downstream.example/.well-known/oauth-protected-resource/mcp"
-      ) {
-        return Response.json({
-          resource: mcpUrl,
-          authorization_servers: [issuer],
-        });
-      }
-      if (url.href === `${issuer}/.well-known/oauth-authorization-server`) {
-        return Response.json({
-          issuer,
-          authorization_endpoint: `${issuer}/authorize`,
-          token_endpoint: `${issuer}/token`,
-          response_types_supported: ["code"],
-          code_challenge_methods_supported: ["S256"],
-          token_endpoint_auth_methods_supported: ["none"],
-        });
-      }
-      throw new Error(`Unexpected OAuth test request: ${url.href}`);
-    };
-    const trackedOwner = trackedAbortSignal();
-    await coordinator.coordinatedFetch(
-      owner,
-      baseFetch,
-      trackedOwner.signal,
-    )(`${issuer}/token`, refreshInit("refresh-old"));
-    const writing = deferred<void>();
-    const writeGate = deferred<void>();
-    const originalSet = storage.set.bind(storage);
-    storage.set = async (key, value, ttl) => {
-      if (key.startsWith("oauth:tokens") && value.includes("access-new")) {
-        writing.resolve();
-        await writeGate.promise;
-      }
-      await originalSet(key, value, ttl);
-    };
-    const saving = owner.saveTokens({ access_token: "access-new", token_type: "Bearer", refresh_token: "refresh-new" });
-    await writing.promise;
-    trackedOwner.controller.abort(
-      new DOMException("Owner scope ended", "AbortError"),
-    );
-
-    let sdkError: unknown;
-    try {
-      await auth(contender, {
-        serverUrl: mcpUrl,
-        fetchFn: coordinator.coordinatedFetch(contender, baseFetch),
-      });
-    } catch (error) {
-      sdkError = error;
-    }
-
-    expect(sdkError).toBeInstanceOf(Error);
-    // Direct SDK callers see the registered code; Connecta's remote boundary
-    // translates it to a typed retry verdict without reading its description.
-    expect(sdkError).toBeInstanceOf(OAuthError);
-    expect(sdkError).toMatchObject({ code: "temporarily_unavailable" });
-    expect(await contender.pendingAuthorizationUrl()).toBeUndefined();
-    expect(tokenRequests).toBe(1);
-    writeGate.resolve();
-    await saving;
-
-  });
-
-  it("rereads a stale snapshot when an active refresh completes", async () => {
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const owner = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    const contender = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    for (const provider of [owner, contender]) {
-      provider.captureGeneration("legacy");
-    }
-    await owner.saveTokens({
-      access_token: "access-old",
-      token_type: "Bearer",
-      refresh_token: "refresh-old",
-    });
-    let upstreamRequests = 0;
-    const baseFetch: FetchLike = async () => {
-      upstreamRequests++;
-      return Response.json({
-        access_token: "access-new",
-        token_type: "Bearer",
-        refresh_token: "refresh-new",
-      });
-    };
-    const ownerResponse = await coordinator.coordinatedFetch(owner, baseFetch)(
-      "https://auth.example/token",
-      refreshInit("refresh-old"),
-    );
-
-    let observedStaleSnapshot!: () => void;
-    let releaseStaleSnapshot!: () => void;
-    const staleSnapshot = new Promise<void>((resolve) => {
-      observedStaleSnapshot = resolve;
-    });
-    const staleSnapshotBarrier = new Promise<void>((resolve) => {
-      releaseStaleSnapshot = resolve;
-    });
-    let holdFirstRead = true;
-    const readContenderTokens = contender.tokens.bind(contender);
-    contender.tokens = async (issuerContext) => {
-      const tokens = await readContenderTokens(issuerContext);
-      if (holdFirstRead) {
-        holdFirstRead = false;
-        observedStaleSnapshot();
-        await staleSnapshotBarrier;
-      }
-      return tokens;
-    };
-    const contenderRefresh = coordinator.coordinatedFetch(
-      contender,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    await staleSnapshot;
-
-    await owner.saveTokens((await ownerResponse.json()) as OAuthTokens);
-    releaseStaleSnapshot();
-    const replayed = (await (await contenderRefresh).json()) as OAuthTokens;
-
-    expect(upstreamRequests).toBe(1);
-    expect(replayed).toMatchObject({
-      access_token: "access-new",
-      refresh_token: "refresh-new",
-    });
-  });
-
-  it("detects a complete flight ABA during a stale token snapshot", async () => {
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const contender = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    const owner = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    for (const provider of [contender, owner]) {
-      provider.captureGeneration("legacy");
-    }
-    await contender.saveTokens({
-      access_token: "access-old",
-      token_type: "Bearer",
-      refresh_token: "refresh-old",
-    });
-    let upstreamRequests = 0;
-    const baseFetch: FetchLike = async () => {
-      upstreamRequests++;
-      return Response.json({
-        access_token: "access-new",
-        token_type: "Bearer",
-        refresh_token: "refresh-new",
-      });
-    };
-
-    let observedStaleSnapshot!: () => void;
-    let releaseStaleSnapshot!: () => void;
-    const staleSnapshot = new Promise<void>((resolve) => {
-      observedStaleSnapshot = resolve;
-    });
-    const staleSnapshotBarrier = new Promise<void>((resolve) => {
-      releaseStaleSnapshot = resolve;
-    });
-    let holdFirstRead = true;
-    const readContenderTokens = contender.tokens.bind(contender);
-    contender.tokens = async (issuerContext) => {
-      const tokens = await readContenderTokens(issuerContext);
-      if (holdFirstRead) {
-        holdFirstRead = false;
-        observedStaleSnapshot();
-        await staleSnapshotBarrier;
-      }
-      return tokens;
-    };
-    const contenderRefresh = coordinator.coordinatedFetch(
-      contender,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    await staleSnapshot;
-
-    const ownerResponse = await coordinator.coordinatedFetch(owner, baseFetch)(
-      "https://auth.example/token",
-      refreshInit("refresh-old"),
-    );
-    await owner.saveTokens((await ownerResponse.json()) as OAuthTokens);
-    releaseStaleSnapshot();
-    const replayed = (await (await contenderRefresh).json()) as OAuthTokens;
-
-    expect(upstreamRequests).toBe(1);
-    expect(replayed).toMatchObject({
-      access_token: "access-new",
-      refresh_token: "refresh-new",
-    });
-  });
-
-  it("replays byte-identical success completed before wrapped fetch", async () => {
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const owner = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    const contender = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    for (const provider of [owner, contender]) {
-      provider.captureGeneration("legacy");
-    }
-    const unchanged: OAuthTokens = {
-      access_token: "access-same",
-      token_type: "Bearer",
-      refresh_token: "refresh-same",
-    };
-    await owner.saveTokens(unchanged, { issuer: "https://auth.example" });
-    await contender.tokens({ issuer: "https://auth.example" });
-    let upstreamRequests = 0;
-    const baseFetch: FetchLike = async () => {
-      upstreamRequests++;
-      return Response.json(unchanged);
-    };
-
-    const ownerResponse = await coordinator.coordinatedFetch(owner, baseFetch)(
-      "https://auth.example/token",
-      refreshInit("refresh-same"),
-    );
-    await owner.saveTokens((await ownerResponse.json()) as OAuthTokens);
-    const replayedResponse = await coordinator.coordinatedFetch(
-      contender,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-same"));
-    const replayed = (await replayedResponse.json()) as OAuthTokens;
-
-    expect(upstreamRequests).toBe(1);
-    expect(replayed).toEqual(unchanged);
-  });
-
-  it("captures success identity before the SDK token-basis read", async () => {
-    const backing = memoryStorage();
-    let blockBasisRead = false;
-    let observedBasisRead!: () => void;
-    let releaseBasisRead!: () => void;
-    const basisRead = new Promise<void>((resolve) => {
-      observedBasisRead = resolve;
-    });
-    const basisReadBarrier = new Promise<void>((resolve) => {
-      releaseBasisRead = resolve;
-    });
-    const storage: KVStorage = {
-      list: (prefix) => backing.list(prefix),
-      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
-      get: async (key) => {
-        const snapshot = await backing.get(key);
-        if (blockBasisRead && key === "oauth:tokens") {
-          blockBasisRead = false;
-          observedBasisRead();
-          await basisReadBarrier;
-        }
-        return snapshot;
-      },
-      set: (key, value, options) => backing.set(key, value, options),
-      delete: (key) => backing.delete(key),
-    };
-    const coordinator = new OAuthRefreshCoordinator();
-    const owner = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    const contender = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    for (const provider of [owner, contender]) {
-      provider.captureGeneration("legacy");
-    }
-    const unchanged: OAuthTokens = {
-      access_token: "access-same",
-      token_type: "Bearer",
-      refresh_token: "refresh-same",
-    };
-    await owner.saveTokens(unchanged, { issuer: "https://auth.example" });
-    blockBasisRead = true;
-    const contenderBasis = contender.tokens({
-      issuer: "https://auth.example",
-    });
-    await basisRead;
-
-    let upstreamRequests = 0;
-    const baseFetch: FetchLike = async () => {
-      upstreamRequests++;
-      return Response.json(unchanged);
-    };
-    const ownerResponse = await coordinator.coordinatedFetch(owner, baseFetch)(
-      "https://auth.example/token",
-      refreshInit("refresh-same"),
-    );
-    await owner.saveTokens((await ownerResponse.json()) as OAuthTokens);
-    releaseBasisRead();
-    await contenderBasis;
-
-    const replayedResponse = await coordinator.coordinatedFetch(
-      contender,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-same"));
-    const replayed = (await replayedResponse.json()) as OAuthTokens;
-
-    expect(upstreamRequests).toBe(1);
-    expect(replayed).toEqual(unchanged);
-  });
-
-  it("detects byte-identical success across a complete flight ABA", async () => {
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const contender = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    const owner = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    for (const provider of [contender, owner]) {
-      provider.captureGeneration("legacy");
-    }
-    const unchanged: OAuthTokens = {
-      access_token: "access-same",
-      token_type: "Bearer",
-      refresh_token: "refresh-same",
-    };
-    await contender.saveTokens(unchanged, { issuer: "https://auth.example" });
-    await contender.tokens({ issuer: "https://auth.example" });
-    let upstreamRequests = 0;
-    const baseFetch: FetchLike = async () => {
-      upstreamRequests++;
-      return Response.json(unchanged);
-    };
-
-    let observedStaleSnapshot!: () => void;
-    let releaseStaleSnapshot!: () => void;
-    const staleSnapshot = new Promise<void>((resolve) => {
-      observedStaleSnapshot = resolve;
-    });
-    const staleSnapshotBarrier = new Promise<void>((resolve) => {
-      releaseStaleSnapshot = resolve;
-    });
-    let holdFirstRead = true;
-    const readContenderTokens = contender.tokens.bind(contender);
-    contender.tokens = async (issuerContext) => {
-      const tokens = await readContenderTokens(issuerContext);
-      if (holdFirstRead) {
-        holdFirstRead = false;
-        observedStaleSnapshot();
-        await staleSnapshotBarrier;
-      }
-      return tokens;
-    };
-    const contenderRefresh = coordinator.coordinatedFetch(
-      contender,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-same"));
-    await staleSnapshot;
-
-    const ownerResponse = await coordinator.coordinatedFetch(owner, baseFetch)(
-      "https://auth.example/token",
-      refreshInit("refresh-same"),
-    );
-    await owner.saveTokens((await ownerResponse.json()) as OAuthTokens);
-    releaseStaleSnapshot();
-    const replayed = (await (await contenderRefresh).json()) as OAuthTokens;
-
-    expect(upstreamRequests).toBe(1);
-    expect(replayed).toEqual(unchanged);
-  });
-
-  it("rechecks generation after a stale token read", async () => {
-    const backing = memoryStorage();
-    let blockTokenRead = false;
-    let observedTokenRead!: () => void;
-    let releaseTokenRead!: () => void;
-    const tokenRead = new Promise<void>((resolve) => {
-      observedTokenRead = resolve;
-    });
-    const tokenReadBarrier = new Promise<void>((resolve) => {
-      releaseTokenRead = resolve;
-    });
-    const storage: KVStorage = {
-      list: (prefix) => backing.list(prefix),
-      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
-      get: async (key) => {
-        const snapshot = await backing.get(key);
-        if (blockTokenRead && key === "oauth:tokens") {
-          blockTokenRead = false;
-          observedTokenRead();
-          await tokenReadBarrier;
-        }
-        return snapshot;
-      },
-      set: (key, value, options) => backing.set(key, value, options),
-      delete: (key) => backing.delete(key),
-    };
-    const coordinator = new OAuthRefreshCoordinator();
-    const stale = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    stale.captureGeneration("legacy");
-    await stale.saveTokens({
-      access_token: "access-old",
-      token_type: "Bearer",
-      refresh_token: "refresh-old",
-    });
-    let upstreamRequests = 0;
-    blockTokenRead = true;
-    const staleRefresh = coordinator.coordinatedFetch(stale, async () => {
-      upstreamRequests++;
-      return Response.json({});
-    })("https://auth.example/token", refreshInit("refresh-old"));
-    await tokenRead;
-
-    const resetter = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    await resetter.resetAuthorization();
-    releaseTokenRead();
-    const response = await staleRefresh;
-
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({
-      error: "invalid_grant",
-    });
-    expect(upstreamRequests).toBe(0);
-    expect(await storage.get("oauth:generation")).not.toBe("legacy");
-  });
-
-  it("blocks a new grant while an aborted owner's token write is pending", async () => {
-    const backing = memoryStorage();
-    let blockTokenWrite = false;
-    let observedBlockedWrite!: () => void;
-    let releaseBlockedWrite!: () => void;
-    const blockedWrite = new Promise<void>((resolve) => {
-      observedBlockedWrite = resolve;
-    });
-    const blockedWriteBarrier = new Promise<void>((resolve) => {
-      releaseBlockedWrite = resolve;
-    });
-    const storage: KVStorage = {
-      list: (prefix) => backing.list(prefix),
-      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
-      get: (key) => backing.get(key),
-      set: async (key, value, options) => {
-        if (blockTokenWrite && key === "oauth:tokens") {
-          blockTokenWrite = false;
-          observedBlockedWrite();
-          await blockedWriteBarrier;
-        }
-        await backing.set(key, value, options);
-      },
-      delete: (key) => backing.delete(key),
-    };
-    const coordinator = new OAuthRefreshCoordinator();
-    const owner = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    const follower = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    const retry = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    const retryFollower = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    for (const provider of [owner, follower, retry, retryFollower]) {
-      provider.captureGeneration("legacy");
-    }
-    await owner.saveTokens({
-      access_token: "access-old",
-      token_type: "Bearer",
-      refresh_token: "refresh-old",
-    });
-
-    let upstreamRequests = 0;
-    const baseFetch: FetchLike = async () => {
-      upstreamRequests++;
-      return Response.json({
-        access_token:
-          upstreamRequests === 1 ? "access-owner" : "access-retry",
-        token_type: "Bearer",
-        refresh_token:
-          upstreamRequests === 1 ? "refresh-owner" : "refresh-retry",
-      });
-    };
-    const trackedOwner = trackedAbortSignal();
-    const ownerResponse = await coordinator.coordinatedFetch(
-      owner,
-      baseFetch,
-      trackedOwner.signal,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    const trackedFollower = trackedAbortSignal();
-    blockTokenWrite = true;
-    let ownerSaveSettled = false;
-    const ownerSave = owner
-      .saveTokens((await ownerResponse.json()) as OAuthTokens)
-      .then(() => {
-        ownerSaveSettled = true;
-      });
-    await blockedWrite;
-
-    let observedFollowerOldToken!: () => void;
-    const followerRead = new Promise<void>((resolve) => {
-      observedFollowerOldToken = resolve;
-    });
-    const readFollowerTokens = follower.tokens.bind(follower);
-    follower.tokens = async (issuerContext) => {
-      const tokens = await readFollowerTokens(issuerContext);
-      if (tokens?.refresh_token === "refresh-old") {
-        observedFollowerOldToken();
-      }
-      return tokens;
-    };
-    const followerRefresh = coordinator.coordinatedFetch(
-      follower,
-      baseFetch,
-      trackedFollower.signal,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    const followerOutcome = followerRefresh.then(
-      () => undefined,
-      (error: unknown) => error,
-    );
-    await followerRead;
-    await vi.waitFor(() => expect(trackedFollower.listeners()).toBe(1));
-    expect(trackedOwner.listeners()).toBe(1);
-
-    const ownerAbort = new DOMException("Owner scope ended", "AbortError");
-    trackedOwner.controller.abort(ownerAbort);
-    await expect(followerOutcome).resolves.toBe(ownerAbort);
-    expect(ownerSaveSettled).toBe(false);
-    expect(trackedOwner.listeners()).toBe(0);
-    expect(trackedFollower.listeners()).toBe(0);
-    expect(upstreamRequests).toBe(1);
-
-    const blockedRetry = await coordinator.coordinatedFetch(retry, baseFetch)(
-      "https://auth.example/token",
-      refreshInit("refresh-old"),
-    );
-    expect(blockedRetry.status).toBe(503);
-    await expect(blockedRetry.json()).resolves.toMatchObject({
-      error: "temporarily_unavailable",
-    });
-    expect(upstreamRequests).toBe(1);
-
-    releaseBlockedWrite();
-    await ownerSave;
-    expect(await owner.tokens()).toMatchObject({
-      access_token: "access-owner",
-      refresh_token: "refresh-owner",
-    });
-
-    // An already-started old-token flow reuses the committed result locally.
-    const replayedResponse = await coordinator.coordinatedFetch(
-      retry,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    const replayed = (await replayedResponse.json()) as OAuthTokens;
-    await retry.saveTokens(replayed);
-    expect(upstreamRequests).toBe(1);
-    expect(replayed).toMatchObject({
-      access_token: "access-owner",
-      refresh_token: "refresh-owner",
-    });
-
-    // Once the old mutation physically settles, the generation can safely own
-    // another refresh and no late old write remains to overwrite its result.
-    const nextResponse = await coordinator.coordinatedFetch(
-      retryFollower,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-owner"));
-    const next = (await nextResponse.json()) as OAuthTokens;
-    await retryFollower.saveTokens(next);
-
-    expect(upstreamRequests).toBe(2);
-    expect(await retryFollower.tokens()).toMatchObject({
-      access_token: "access-retry",
-      refresh_token: "refresh-retry",
-    });
-  });
-
-  it("shares a storage mutation failure before allowing an independent retry", async () => {
-    const backing = memoryStorage();
-    let storageFailure!: Error;
-    let failTokenWrite = false;
-    let observedFailedWrite!: () => void;
-    let releaseFailedWrite!: () => void;
-    const failedWrite = new Promise<void>((resolve) => {
-      observedFailedWrite = resolve;
-    });
-    const failedWriteBarrier = new Promise<void>((resolve) => {
-      releaseFailedWrite = resolve;
-    });
-    const storage: KVStorage = {
-      list: (prefix) => backing.list(prefix),
-      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
-      get: (key) => backing.get(key),
-      set: async (key, value, options) => {
-        if (failTokenWrite && key === "oauth:tokens") {
-          failTokenWrite = false;
-          // A store whose error quotes the value it refused.
-          storageFailure = new Error(`write refused: ${value}`);
-          observedFailedWrite();
-          await failedWriteBarrier;
-          throw storageFailure;
-        }
-        await backing.set(key, value, options);
-      },
-      delete: (key) => backing.delete(key),
-    };
-    const coordinator = new OAuthRefreshCoordinator();
-    const owner = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    const follower = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    const retry = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    for (const provider of [owner, follower, retry]) {
-      provider.captureGeneration("legacy");
-    }
-    await owner.saveTokens({
-      access_token: "access-old",
-      token_type: "Bearer",
-      refresh_token: "refresh-old",
-    });
-    let upstreamRequests = 0;
-    const baseFetch: FetchLike = async () => {
-      upstreamRequests++;
-      return Response.json({
-        access_token: "access-new",
-        token_type: "Bearer",
-        refresh_token: "refresh-new",
-      });
-    };
-
-    const ownerResponse = await coordinator.coordinatedFetch(
-      owner,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    let observedFollowerOldToken!: () => void;
-    const followerRead = new Promise<void>((resolve) => {
-      observedFollowerOldToken = resolve;
-    });
-    const readFollowerTokens = follower.tokens.bind(follower);
-    follower.tokens = async (issuerContext) => {
-      const tokens = await readFollowerTokens(issuerContext);
-      if (tokens?.refresh_token === "refresh-old") {
-        observedFollowerOldToken();
-      }
-      return tokens;
-    };
-    const followerRefresh = coordinator.coordinatedFetch(
-      follower,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    await followerRead;
-
-    failTokenWrite = true;
-    const ownerSave = owner.saveTokens(
-      (await ownerResponse.json()) as OAuthTokens,
-    );
-    const failedOutcomes = Promise.allSettled([ownerSave, followerRefresh]);
-    await failedWrite;
-    expect(upstreamRequests).toBe(1);
-    releaseFailedWrite();
-    const outcomes = await failedOutcomes;
-    // Both see one failure, in fixed text: the store's own error never leaves.
-    expect(outcomes.map((outcome) => outcome.status)).toEqual(["rejected", "rejected"]);
-    const [ownerFailure, followerFailure] = outcomes.map(
-      (outcome) => (outcome as PromiseRejectedResult).reason as unknown,
-    );
-    expect(followerFailure).toBe(ownerFailure);
-    expect(ownerFailure).toBeInstanceOf(ConnectorCallError);
-    expect(ownerFailure).toMatchObject({
-      code: "unavailable",
-      message: 'Connector "svc" could not store its OAuth credentials; try again shortly.',
-    });
-    expect((ownerFailure as Error).cause).toBeUndefined();
-    expect(storageFailure.message).toContain("access-new");
-    expect(String(ownerFailure)).not.toContain("access-new");
-    expect(await owner.tokens()).toMatchObject({
-      access_token: "access-old",
-      refresh_token: "refresh-old",
-    });
-
-    const retryResponse = await coordinator.coordinatedFetch(
-      retry,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    await retry.saveTokens((await retryResponse.json()) as OAuthTokens);
-
-    expect(upstreamRequests).toBe(2);
-    expect(await retry.tokens()).toMatchObject({
-      access_token: "access-new",
-      refresh_token: "refresh-new",
-    });
-  });
-
-  it("keeps a late old-token flow behind the owner until rotated tokens are saved", async () => {
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const owner = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    owner.captureGeneration("legacy");
-    await owner.saveTokens({
-      access_token: "access-old",
-      token_type: "Bearer",
-      refresh_token: "refresh-old",
-    });
-    const late = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    late.captureGeneration("legacy");
-    let observedLateOldToken!: () => void;
-    const lateRead = new Promise<void>((resolve) => {
-      observedLateOldToken = resolve;
-    });
-    const readLateTokens = late.tokens.bind(late);
-    late.tokens = async (issuerContext) => {
-      const tokens = await readLateTokens(issuerContext);
-      if (tokens?.refresh_token === "refresh-old") observedLateOldToken();
-      return tokens;
-    };
-    let upstreamRequests = 0;
-    const baseFetch: FetchLike = async () => {
-      upstreamRequests++;
-      return Response.json({
-        access_token: "access-new",
-        token_type: "Bearer",
-        refresh_token: "refresh-new",
-      });
-    };
-
-    // The owner has its successful response, but has not parsed or saved it.
-    const ownerResponse = await coordinator.coordinatedFetch(
-      owner,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    let lateSettled = false;
-    const lateResponse = coordinator.coordinatedFetch(
-      late,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-old")).then(
-      (response) => {
-        lateSettled = true;
-        return response;
-      },
-    );
-    await lateRead;
-    await Promise.resolve();
-    expect(lateSettled).toBe(false);
-    expect(upstreamRequests).toBe(1);
-
-    await owner.saveTokens((await ownerResponse.json()) as OAuthTokens);
-    const replayed = (await (await lateResponse).json()) as OAuthTokens;
-    await late.saveTokens(replayed);
-
-    expect(upstreamRequests).toBe(1);
-    expect(replayed).toMatchObject({
-      access_token: "access-new",
-      refresh_token: "refresh-new",
-    });
-    expect(await late.tokens()).toMatchObject({
-      access_token: "access-new",
-      refresh_token: "refresh-new",
-    });
-  });
-
-  it("does not merge a retired refresh token into a tokenless current value", async () => {
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const provider = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    provider.captureGeneration("legacy");
-    await provider.saveTokens({
-      access_token: "access-current",
-      token_type: "Bearer",
-    });
-    let upstreamRequests = 0;
-    const response = await coordinator.coordinatedFetch(
-      provider,
-      async () => {
-        upstreamRequests++;
-        return Response.json({});
-      },
-    )("https://auth.example/token", refreshInit("refresh-retired"));
-
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({
-      error: "invalid_grant",
-    });
-    expect(upstreamRequests).toBe(0);
-    const current = await provider.tokens();
-    expect(current?.access_token).toBe("access-current");
-    expect(current?.refresh_token).toBeUndefined();
-  });
-
-  it("shares a successful refresh that keeps the existing refresh token", async () => {
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const owner = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    owner.captureGeneration("legacy");
-    await owner.saveTokens({
-      access_token: "access-old",
-      token_type: "Bearer",
-      refresh_token: "refresh-old",
-    }, { issuer: "https://auth.example" });
-    const follower = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    follower.captureGeneration("legacy");
-    const issuerContext = { issuer: "https://auth.example" };
-    await owner.tokens(issuerContext);
-    await follower.tokens(issuerContext);
-
-    let upstreamRequests = 0;
-    const baseFetch: FetchLike = async () => {
-      upstreamRequests++;
-      return Response.json({
-        access_token: "access-new",
-        token_type: "Bearer",
-      });
-    };
-    const ownerResponse = await coordinator.coordinatedFetch(
-      owner,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    let followerSettled = false;
-    const followerResponse = coordinator.coordinatedFetch(
-      follower,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-old")).then(
-      (response) => {
-        followerSettled = true;
-        return response;
-      },
-    );
-    await Promise.resolve();
-    expect(followerSettled).toBe(false);
-
-    const ownerTokens = (await ownerResponse.json()) as OAuthTokens;
-    await owner.saveTokens({
-      refresh_token: "refresh-old",
-      ...ownerTokens,
-    });
-    const followerTokens = (await (await followerResponse).json()) as OAuthTokens;
-    await follower.saveTokens(followerTokens);
-
-    expect(upstreamRequests).toBe(1);
-    expect(followerTokens).toMatchObject({
-      access_token: "access-new",
-      refresh_token: "refresh-old",
-    });
-    expect(await follower.tokens()).toMatchObject({
-      access_token: "access-new",
-      refresh_token: "refresh-old",
-    });
-  });
-
-  it("shares a successful refresh whose tokens are byte-identical", async () => {
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const owner = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    const follower = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    for (const provider of [owner, follower]) {
-      provider.captureGeneration("legacy");
-    }
-    const unchanged: OAuthTokens = {
-      access_token: "access-same",
-      token_type: "Bearer",
-      refresh_token: "refresh-same",
-    };
-    await owner.saveTokens(unchanged);
-    let upstreamRequests = 0;
-    const baseFetch: FetchLike = async () => {
-      upstreamRequests++;
-      return Response.json(unchanged);
-    };
-
-    const ownerResponse = await coordinator.coordinatedFetch(
-      owner,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-same"));
-    let observedFollowerToken!: () => void;
-    const followerRead = new Promise<void>((resolve) => {
-      observedFollowerToken = resolve;
-    });
-    const readFollowerTokens = follower.tokens.bind(follower);
-    follower.tokens = async (issuerContext) => {
-      const tokens = await readFollowerTokens(issuerContext);
-      if (tokens?.refresh_token === "refresh-same") observedFollowerToken();
-      return tokens;
-    };
-    const followerResponse = coordinator.coordinatedFetch(
-      follower,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-same"));
-    await followerRead;
-    expect(upstreamRequests).toBe(1);
-
-    await owner.saveTokens((await ownerResponse.json()) as OAuthTokens);
-    const replayed = (await (await followerResponse).json()) as OAuthTokens;
-    await follower.saveTokens(replayed);
-
-    expect(upstreamRequests).toBe(1);
-    expect(replayed).toEqual(unchanged);
-  });
-
-  it("does not join refreshes captured under different generations", async () => {
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const oldProvider = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    oldProvider.captureGeneration("legacy");
-    await oldProvider.saveTokens({
-      access_token: "access-old",
-      token_type: "Bearer",
-      refresh_token: "refresh-old",
-    });
-
-    const releases = new Map<string, () => void>();
-    const started: string[] = [];
-    const baseFetch: FetchLike = async (_input, init) => {
-      const body = init?.body as URLSearchParams;
-      const token = body.get("refresh_token")!;
-      started.push(token);
-      await new Promise<void>((resolve) => releases.set(token, resolve));
-      return Response.json({
-        access_token: `rotated-${token}`,
-        token_type: "Bearer",
-        refresh_token: `next-${token}`,
-      });
-    };
-    const oldRefresh = coordinator.coordinatedFetch(
-      oldProvider,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-    await vi.waitFor(() => expect(started).toEqual(["refresh-old"]));
-
-    const nextGeneration = `v2:${crypto.randomUUID()}`;
-    await storage.set("oauth:generation", nextGeneration);
-    await storeCurrentOAuthValue(
-      storage,
-      "oauth:tokens",
-      {
-        access_token: "access-current",
-        token_type: "Bearer",
-        refresh_token: "refresh-current",
-      },
-    );
-    const currentProvider = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    currentProvider.captureGeneration(nextGeneration);
-    const currentRefresh = coordinator.coordinatedFetch(
-      currentProvider,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-current"));
-    await vi.waitFor(() =>
-      expect(started).toEqual(["refresh-old", "refresh-current"]),
-    );
-
-    releases.get("refresh-old")!();
-    releases.get("refresh-current")!();
-    const [oldOutcome, currentOutcome] = await Promise.allSettled([
-      oldRefresh,
-      currentRefresh,
-    ]);
-    expect(oldOutcome).toMatchObject({
-      status: "rejected",
-      reason: new Error("OAuth refresh ended before tokens could be saved."),
-    });
-    expect(currentOutcome.status).toBe("fulfilled");
-    if (currentOutcome.status === "fulfilled") {
-      await currentProvider.saveTokens(
-        (await currentOutcome.value.json()) as OAuthTokens,
-      );
-    }
-    expect(await currentProvider.tokens()).toMatchObject({
-      access_token: "rotated-refresh-current",
-      refresh_token: "next-refresh-current",
-    });
-  });
-
-  it("cannot let late old-generation success replace the active success identity", async () => {
-    const backing = memoryStorage();
-    let blockOldWrite = false;
-    let observedOldWrite!: () => void;
-    let releaseOldWrite!: () => void;
-    const oldWrite = new Promise<void>((resolve) => {
-      observedOldWrite = resolve;
-    });
-    const oldWriteBarrier = new Promise<void>((resolve) => {
-      releaseOldWrite = resolve;
-    });
-    const storage: KVStorage = {
-      list: (prefix) => backing.list(prefix),
-      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
-      get: (key) => backing.get(key),
-      set: async (key, value, options) => {
-        if (blockOldWrite && key === "oauth:tokens") {
-          blockOldWrite = false;
-          observedOldWrite();
-          await oldWriteBarrier;
-        }
-        await backing.set(key, value, options);
-      },
-      delete: (key) => backing.delete(key),
-    };
-    const coordinator = new OAuthRefreshCoordinator();
-    const oldOwner = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    oldOwner.captureGeneration("legacy");
-    await oldOwner.saveTokens({
-      access_token: "access-a",
-      token_type: "Bearer",
-      refresh_token: "refresh-a",
-    });
-    const upstreamTokens: string[] = [];
-    const baseFetch: FetchLike = async (_input, init) => {
-      expect(init?.body).toBeInstanceOf(URLSearchParams);
-      const token = (init!.body as URLSearchParams).get("refresh_token")!;
-      upstreamTokens.push(token);
-      return token === "refresh-a"
-        ? Response.json({
-            access_token: "access-a-new",
-            token_type: "Bearer",
-            refresh_token: "refresh-a-new",
-          })
-        : Response.json({
-            access_token: "access-b",
-            token_type: "Bearer",
-            refresh_token: "refresh-b",
-          });
-    };
-    const oldResponse = await coordinator.coordinatedFetch(
-      oldOwner,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-a"));
-    blockOldWrite = true;
-    const oldSave = oldOwner.saveTokens(
-      (await oldResponse.json()) as OAuthTokens,
-    );
-    await oldWrite;
-
-    const generationB = `v2:${crypto.randomUUID()}`;
-    await storage.set("oauth:generation", generationB);
-    const unchangedB: OAuthTokens = {
-      access_token: "access-b",
-      token_type: "Bearer",
-      refresh_token: "refresh-b",
-    };
-    await storeCurrentOAuthValue(storage, "oauth:tokens", unchangedB, "https://auth.example");
-    const ownerB = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    const contenderB = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    for (const provider of [ownerB, contenderB]) {
-      provider.captureGeneration(generationB);
-    }
-    await contenderB.tokens({ issuer: "https://auth.example" });
-    const responseB = await coordinator.coordinatedFetch(ownerB, baseFetch)(
-      "https://auth.example/token",
-      refreshInit("refresh-b"),
-    );
-    await ownerB.saveTokens((await responseB.json()) as OAuthTokens);
-
-    releaseOldWrite();
-    await oldSave;
-    const replayedResponse = await coordinator.coordinatedFetch(
-      contenderB,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-b"));
-    const replayed = (await replayedResponse.json()) as OAuthTokens;
-
-    expect(upstreamTokens).toEqual(["refresh-a", "refresh-b"]);
-    expect(replayed).toEqual(unchangedB);
-    expect(await contenderB.tokens()).toEqual(unchangedB);
-  });
-
-  it("retires a pending mutation when force reauthorization fences its generation", async () => {
-    const storage = memoryStorage();
-    const coordinator = new OAuthRefreshCoordinator();
-    const owner = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    owner.captureGeneration("legacy");
-    await owner.saveTokens({
-      access_token: "access-old",
-      token_type: "Bearer",
-      refresh_token: "refresh-old",
-    });
-    let upstreamRequests = 0;
-    const baseFetch: FetchLike = async () => {
-      upstreamRequests++;
-      return Response.json({
-        access_token:
-          upstreamRequests === 1 ? "access-retired" : "access-current-new",
-        token_type: "Bearer",
-        refresh_token:
-          upstreamRequests === 1 ? "refresh-retired" : "refresh-current-new",
-      });
-    };
-    const retiredResponse = await coordinator.coordinatedFetch(
-      owner,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-old"));
-
-    const resetter = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    await resetter.resetAuthorization();
-    const currentGeneration = (await storage.get("oauth:generation"))!;
-    await storeCurrentOAuthValue(storage, "oauth:tokens", {
-      access_token: "access-current",
-      token_type: "Bearer",
-      refresh_token: "refresh-current",
-    });
-    const current = new KvOAuthProvider(
-      "svc",
-      storage,
-      REDIRECT,
-      coordinator,
-    );
-    current.captureGeneration(currentGeneration);
-    const currentResponse = await coordinator.coordinatedFetch(
-      current,
-      baseFetch,
-    )("https://auth.example/token", refreshInit("refresh-current"));
-    await current.saveTokens((await currentResponse.json()) as OAuthTokens);
-
-    // The retired provider can finish late, but its generation fence makes the
-    // write unreadable and its exact marker no longer blocks the active epoch.
-    await owner.saveTokens((await retiredResponse.json()) as OAuthTokens);
-    expect(upstreamRequests).toBe(2);
-    expect(await current.tokens()).toMatchObject({
-      access_token: "access-current-new",
-      refresh_token: "refresh-current-new",
-    });
-  });
-
-  it.each(["status", "authorization", "before-flight", "aborted-persistence", "late-answer", "retained-view", "retired-rejection"])("retains a personal registry during %s and recovers idle eviction capacity", async phase => {
-    const issuer = "https://auth.example";
-    const mcpUrl = "https://downstream.example/mcp";
-    const owner = await identityStorageKey({ namespace: "synthetic", id: "alice" });
-    const backing = memoryStorage();
-    const entered = deferred<void>();
-    const release = deferred<void>();
-    const readEntered = deferred<void>();
-    const readRelease = deferred<void>();
-    const writeEntered = deferred<void>();
-    const writeRelease = deferred<void>();
-    let pauseRead = false;
-    let tokenReads = 0;
-    const storage: KVStorage = { ...backing,
-      async get(key) {
-        if (key === `principal:${owner}:conn:svc:oauth:tokens`) tokenReads++;
-        if (pauseRead && key === `principal:${owner}:conn:svc:oauth:generation`) {
-          pauseRead = false;
-          readEntered.resolve();
-          await readRelease.promise;
-        }
-        return backing.get(key);
-      },
-      async set(key, value, options) {
-        if ((phase === "aborted-persistence" || phase === "late-answer") && key.includes("oauth:tokens") && value.includes("rotated-refresh")) {
-          writeEntered.resolve();
-          await writeRelease.promise;
-        }
-        await backing.set(key, value, options);
-      },
-    };
-    const connector = remoteMcp("svc", { url: mcpUrl, auth: { type: "oauth" }, authScope: "personal", versionNegotiation: "legacy" });
-    const root = makeRegistry([connector], { storage });
-    let active = root.personalRegistry(owner);
-    const view = () => root.scoped({ connectorIds: "all", principalKey: owner });
-    const seeder = new KvOAuthProvider("svc", view().contextFor("svc", BASE).storage, REDIRECT);
-    await seeder.saveClientInformation({ client_id: "synthetic", redirect_uris: [REDIRECT], token_endpoint_auth_method: "none" }, { issuer });
-    await seeder.saveTokens({ access_token: "old", token_type: "Bearer", refresh_token: "old-refresh" }, { issuer });
-    const retainedView = view();
-    if (phase === "retained-view") {
-      for (let i = 0; i < 1_024; i++) root.personalRegistry(`early:${i}`);
-      active = root.personalRegistry(owner);
-    }
-    const downstream = httpDownstream(() => {}, { url: mcpUrl });
-    let redemptions = 0;
-    let refusals = 0;
-    const bothRefused = deferred<void>();
-    vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
-      const url = new URL(input);
-      if (url.pathname === "/.well-known/oauth-protected-resource") return Response.json({ resource: mcpUrl, authorization_servers: [issuer] });
-      if (url.href === `${issuer}/.well-known/oauth-authorization-server`) return Response.json({ issuer,
-        authorization_endpoint: `${issuer}/authorize`, token_endpoint: `${issuer}/token`, response_types_supported: ["code"],
-        code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["none"] });
-      if (url.href === `${issuer}/token`) {
-        redemptions++;
-        expect((init.body as URLSearchParams).get("refresh_token")).toBe("old-refresh");
-        entered.resolve();
-        await release.promise;
-        if (phase === "retired-rejection") throw new Error("synthetic retired request failed");
-        return Response.json({ access_token: "new", token_type: "Bearer", refresh_token: "rotated-refresh" });
-      }
-      if (new Headers(init.headers).get("authorization") !== "Bearer new") {
-        if (++refusals === 2) bothRefused.resolve();
-        return new Response(null, { status: 401,
-          headers: { "www-authenticate": 'Bearer resource_metadata="https://downstream.example/.well-known/oauth-protected-resource"' } });
-      }
-      return downstream.fetch(input, init);
-    });
-    const controller = new AbortController();
-    const authContext = view().contextFor("svc", BASE, {}, { signal: controller.signal });
-    const statusScopes = [{}, {}, {}];
-    const pending: Promise<unknown>[] = [];
-    try {
-      pauseRead = phase === "before-flight";
-      const first = phase === "authorization"
-        ? connector.startAuth!(authContext)
-        : (phase === "retained-view" ? retainedView : view()).statusFor("svc", BASE, statusScopes[0], { signal: controller.signal });
-      pending.push(first);
-      if (phase === "before-flight") await readEntered.promise;
-      else await entered.promise;
-      if (phase === "retired-rejection") {
-        await connector.disconnectAuth!(authContext);
-        release.resolve();
-        await first;
-        for (let i = 0; i < 1_024; i++) root.personalRegistry(`retired:${i}`);
-        expect(root.personalRegistry(owner)).not.toBe(active);
-        return;
-      }
-      if (phase === "late-answer") {
-        controller.abort(new Error("synthetic owner left before answer"));
-        await first;
-      }
-      if (phase === "aborted-persistence") {
-        release.resolve();
-        await writeEntered.promise;
-        controller.abort(new Error("synthetic owner left"));
-      }
-      // Make Alice the oldest of 1,024 entries, then force an eviction.
-      for (let i = 0; i < 1_024; i++) root.personalRegistry(`filler:${i}`);
-      expect(root.personalRegistry(owner)).toBe(active);
-      if (phase === "late-answer") {
-        release.resolve();
-        await writeEntered.promise;
-        for (let i = 0; i < 1_024; i++) root.personalRegistry(`late:${i}`);
-        expect(root.personalRegistry(owner)).toBe(active);
-        writeRelease.resolve();
-        await vi.waitFor(async () => expect(await seeder.tokens()).toMatchObject({ refresh_token: "rotated-refresh" }));
-      }
-      const second = view().statusFor("svc", BASE, statusScopes[1]);
-      pending.push(second);
-      readRelease.resolve();
-      if (phase === "before-flight") await entered.promise;
-      if (phase !== "late-answer") await bothRefused.promise;
-      if (phase === "status" || phase === "authorization" || phase === "retained-view") {
-        // Each caller reads its tokens four times before it joins or starts a
-        // flight — its flow's entry decision, the bearer header, the SDK's
-        // issuer-aware read, and the coordinator's — so the second has joined
-        // the first's flight at eight. Release only then.
-        await vi.waitFor(() => expect(tokenReads).toBeGreaterThanOrEqual(8));
-      }
-      if (phase === "aborted-persistence") await second;
-      release.resolve();
-      writeRelease.resolve();
-      await Promise.all(pending);
-      expect((await view().statusFor("svc", BASE, statusScopes[2])).state).toBe("ok");
-      expect(redemptions).toBe(1);
-      // Once work drains, Alice can be evicted again. New owners still fit.
-      for (let i = 0; i < 1_024; i++) root.personalRegistry(`idle:${i}`);
-      expect(root.personalRegistry(owner)).not.toBe(active);
-    } finally {
-      readRelease.resolve(); release.resolve(); writeRelease.resolve();
-      await Promise.allSettled(pending);
-      await connector.closeScope?.(authContext);
-      await Promise.all(statusScopes.map(scope => connector.closeScope?.(active.contextFor("svc", BASE, scope))));
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it.each(["legacy", "modern", "disconnect"])("isolates personal registry refreshes with %s epochs while coalescing each owner's scopes", async epoch => {
-    const issuer = "https://auth.example";
-    const mcpUrl = "https://downstream.example/mcp";
-    const connector = remoteMcp("svc", {
-      url: mcpUrl, auth: { type: "oauth" }, authScope: "personal", versionNegotiation: "legacy",
-    });
-    const registry = makeRegistry([connector]);
-    const principalKeys = await Promise.all(["alice", "bob"].map(id =>
-      identityStorageKey({ namespace: "synthetic", id }),
-    ));
-    const ownerViews = principalKeys.map(principalKey => registry.scoped({ connectorIds: "all", principalKey }));
-    const scopes = ownerViews.map((view, owner) => [
-      view.contextFor("svc", BASE),
-      registry.scoped({ connectorIds: "all", principalKey: principalKeys[owner]! }).contextFor("svc", BASE),
-    ]);
-    const gates = [deferred<void>(), deferred<void>()];
-    const entered = [deferred<void>(), deferred<void>()];
-    const rejected = [deferred<void>(), deferred<void>()];
-    const counts = [0, 0];
-    const oldRequests = [0, 0];
-    const outcomes: Promise<unknown>[] = [];
-    for (let owner = 0; owner < 2; owner++) {
-      const storage = scopes[owner]![0]!.storage;
-      const p = new KvOAuthProvider("svc", storage, REDIRECT);
-      if (epoch !== "legacy") await p.resetAuthorization();
-      await p.saveClientInformation({ client_id: `client-${owner}`, redirect_uris: [REDIRECT], token_endpoint_auth_method: "none" }, { issuer });
-      await p.saveTokens({ access_token: `old-${owner}`, token_type: "Bearer", refresh_token: `refresh-${owner}` }, { issuer });
-    }
-    vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
-      const url = new URL(input);
-      if (url.pathname === "/.well-known/oauth-protected-resource") {
-        return Response.json({ resource: mcpUrl, authorization_servers: [issuer] });
-      }
-      if (url.href === `${issuer}/.well-known/oauth-authorization-server`) {
-        return Response.json({ issuer, authorization_endpoint: `${issuer}/authorize`, token_endpoint: `${issuer}/token`,
-          response_types_supported: ["code"], code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["none"] });
-      }
-      if (url.href === `${issuer}/token`) {
-        const owner = Number((init.body as URLSearchParams).get("refresh_token")!.slice(-1));
-        counts[owner] = counts[owner]! + 1;
-        entered[owner]!.resolve();
-        await gates[owner]!.promise;
-        return Response.json({ access_token: `new-${owner}`, token_type: "Bearer", refresh_token: `rotated-${owner}` });
-      }
-      if (init.method !== "POST") return new Response(null, { status: 405 });
-      const authorization = new Headers(init.headers).get("authorization")!;
-      const owner = Number(authorization.slice(-1));
-      if (authorization === `Bearer old-${owner}`) {
-        if (++oldRequests[owner]! === 2) rejected[owner]!.resolve();
-        return new Response(null, { status: 401, headers: { "www-authenticate":
-          'Bearer resource_metadata="https://downstream.example/.well-known/oauth-protected-resource"' } });
-      }
-      expect(authorization).toBe(`Bearer new-${owner}`);
-      const message = JSON.parse(String(init.body));
-      if (message.method === "notifications/initialized") return new Response(null, { status: 202 });
-      return Response.json({ jsonrpc: "2.0", id: message.id, result: message.method === "initialize"
-        ? { protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "personal", version: "1" } }
-        : { tools: [] } });
-    });
-    try {
-      const a = Promise.all(scopes[0]!.map(scope => connector.listTools(scope)));
-      const aOutcome = a.then(value => ({ value }), error => ({ error }));
-      outcomes.push(aOutcome);
-      await Promise.all([entered[0]!.promise, rejected[0]!.promise]);
-      const b = Promise.all(scopes[1]!.map(scope => connector.listTools(scope)));
-      const bOutcome = b.then(value => ({ value }), error => ({ error }));
-      outcomes.push(bOutcome);
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      try {
-        await Promise.race([
-          Promise.all([entered[1]!.promise, rejected[1]!.promise]),
-          new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Bob's refresh waited on Alice's partition")), 1_000); }),
-        ]);
-      } finally { clearTimeout(timer); }
-      expect(counts).toEqual([1, 1]);
-      if (epoch === "disconnect") {
-        await connector.disconnectAuth!(ownerViews[0]!.contextFor("svc", BASE));
-      }
-      gates[1]!.resolve();
-      expect(await bOutcome).toEqual({ value: [[], []] });
-      gates[0]!.resolve();
-      if (epoch === "disconnect") expect(await aOutcome).toHaveProperty("error");
-      else expect(await aOutcome).toEqual({ value: [[], []] });
-      expect(counts).toEqual([1, 1]);
-      for (let owner = 0; owner < 2; owner++) {
-        const saved = await new KvOAuthProvider("svc", scopes[owner]![0]!.storage, REDIRECT).tokens();
-        if (epoch === "disconnect" && owner === 0) expect(saved).toBeUndefined();
-        else expect(saved).toMatchObject({ access_token: `new-${owner}`, refresh_token: `rotated-${owner}` });
-      }
-    } finally {
-      gates.forEach(gate => gate.resolve());
-      await Promise.all(outcomes);
-      await Promise.all(scopes.flat().map(scope => connector.closeScope?.(scope)));
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it("shares exactly one rotating-token grant in each of two waves of eight scopes", async () => {
-    const storage = memoryStorage();
-    const issuer = "https://auth.example";
-    const mcpUrl = "https://downstream.example/mcp";
-    await storeCurrentOAuthValue(
-      storage,
-      "oauth:client",
-      {
-        client_id: "connecta-client",
-        redirect_uris: [REDIRECT],
-        token_endpoint_auth_method: "none",
-      },
-      issuer,
-    );
-    await storeCurrentOAuthValue(
-      storage,
-      "oauth:tokens",
-      {
-        access_token: "access-old",
-        token_type: "Bearer",
-        refresh_token: "refresh-old",
-      },
-      issuer,
-    );
-
-    let wave = 0;
-    let oldTokenRequests = 0;
-    const redeemed: string[] = [];
-    let rejected = deferred<void>();
-    let tokenEntered = deferred<void>();
-    let tokenGate = deferred<void>();
-    let refreshRequests = 0;
-    const fetchStub: FetchLike = async (input, init = {}) => {
-      const url = new URL(input);
-      if (url.href === "https://downstream.example/.well-known/oauth-protected-resource") {
-        return Response.json({
-          resource: mcpUrl,
-          authorization_servers: [issuer],
-        });
-      }
-      if (url.href === `${issuer}/.well-known/oauth-authorization-server`) {
-        return Response.json({
-          issuer,
-          authorization_endpoint: `${issuer}/authorize`,
-          token_endpoint: `${issuer}/token`,
-          response_types_supported: ["code"],
-          code_challenge_methods_supported: ["S256"],
-          token_endpoint_auth_methods_supported: ["none"],
-        });
-      }
-      if (url.href === `${issuer}/token`) {
-        refreshRequests++;
-        expect(init.body).toBeInstanceOf(URLSearchParams);
-        const token = (init.body as URLSearchParams).get("refresh_token")!;
-        expect(redeemed).not.toContain(token);
-        redeemed.push(token);
-        expect(token).toBe(wave === 0 ? "refresh-old" : "refresh-new");
-        tokenEntered.resolve();
-        await tokenGate.promise;
-        return Response.json({
-          access_token: wave === 0 ? "access-new" : "access-second",
-          token_type: "Bearer",
-          refresh_token: wave === 0 ? "refresh-new" : "refresh-second",
-        });
-      }
-      if (url.href !== mcpUrl) {
-        throw new Error(`Unexpected OAuth test request: ${url.href}`);
-      }
-      if (init.method !== "POST") return new Response(null, { status: 405 });
-
-      const authorization = new Headers(init.headers).get("authorization");
-      if (authorization === (wave === 0 ? "Bearer access-old" : "Bearer access-new")) {
-        oldTokenRequests++;
-        if (oldTokenRequests === 8) rejected.resolve();
-        return new Response(null, {
-          status: 401,
-          headers: {
-            "www-authenticate":
-              'Bearer resource_metadata="https://downstream.example/.well-known/oauth-protected-resource"',
-          },
-        });
-      }
-      expect(authorization).toBe(wave === 0 ? "Bearer access-new" : "Bearer access-second");
-      const message = JSON.parse(String(init.body)) as {
-        id?: string | number;
-        method: string;
-        params?: { protocolVersion?: string };
-      };
-      if (message.method === "notifications/initialized") {
-        return new Response(null, { status: 202 });
-      }
-      const result =
-        message.method === "initialize"
-          ? {
-              protocolVersion: message.params?.protocolVersion,
-              capabilities: { tools: {} },
-              serverInfo: { name: "rotating", version: "1.0.0" },
-            }
-          : message.method === "tools/list"
-            ? { tools: [] }
-            : undefined;
-      return Response.json({ jsonrpc: "2.0", id: message.id, result });
-    };
-    const connector = remoteMcp("svc", {
-      url: mcpUrl,
-      auth: { type: "oauth" },
-      versionNegotiation: "legacy",
-    });
-    vi.stubGlobal("fetch", fetchStub);
-    try {
-      for (wave = 0; wave < 2; wave++) {
-        oldTokenRequests = 0;
-        rejected = deferred<void>();
-        tokenEntered = deferred<void>();
-        tokenGate = deferred<void>();
-        const scopes = Array.from({ length: 8 }, () => ({ ...ctx(storage), requestScope: {} }));
-        const calls = Promise.all(scopes.map(scope => connector.listTools(scope)));
-        await Promise.all([rejected.promise, tokenEntered.promise]);
-        expect(refreshRequests).toBe(wave + 1);
-        tokenGate.resolve();
-        await expect(calls).resolves.toEqual(Array.from({ length: 8 }, () => []));
-        expect(oldTokenRequests).toBe(8);
-        expect(refreshRequests).toBe(wave + 1);
-        expect(await new KvOAuthProvider("svc", storage, REDIRECT).tokens()).toMatchObject({
-          access_token: wave === 0 ? "access-new" : "access-second",
-          refresh_token: wave === 0 ? "refresh-new" : "refresh-second",
-        });
-        await Promise.all(scopes.map(scope => connector.closeScope?.(scope)));
-      }
-    } finally {
-      vi.unstubAllGlobals();
-    }
-    expect(redeemed).toEqual(["refresh-old", "refresh-new"]);
+    const p = provider(storage, { sealer: sealerFor(), binding: BINDING });
+    await p.saveClientInformation(client, ctxA);
+    const first = required(await storedGrant(storage));
+
+    await p.resetAuthorization(false, true);
+    const second = required(await storedGrant(storage));
+    expect(second.epoch).toMatch(/^v3:/);
+    expect(second.sealed).toEqual(expect.stringMatching(/^v1\./));
+    expect(second.sealed).not.toBe(first.sealed);
+    expect(second.body).toBeUndefined();
+    await expect(p.clientInformation(ctxA)).resolves.toEqual({ ...client, ...ctxA });
+
+    await p.resetAuthorization(true);
+    expect(await p.clientInformation(ctxA)).toBeUndefined();
   });
 });
 
 // ---------------------------------------------------------------------------
-// remoteMcp() oauth-mode status via the _transportFactory seam.
+// Layout 2 (0.22 through 0.28): six values per epoch at `oauth:<field>`,
+// suffixed `:epoch:<generation>` once a `v2:` generation owned them. The first
+// grant read that finds no record migrates it, then deletes it.
 // ---------------------------------------------------------------------------
-
-/** A downstream MCP server exposing a single tool, wired in-process. */
-async function connectServer() {
-  return inMemoryDownstream((server) => {
-    server.registerTool(
-      "ping",
-      { description: "Ping", inputSchema: z.object({}) },
-      async () => ({ content: [{ type: "text", text: "pong" }] }),
-    );
-  });
-}
-
-let closer: (() => Promise<void>) | null = null;
-afterEach(async () => {
-  await closer?.();
-  closer = null;
-});
-
-describe("remoteMcp() oauth status via _transportFactory", () => {
-  it("UnauthorizedError → auth_required with the stored authorization URL", async () => {
-    const storage = memoryStorage();
-    const c = ctx(storage);
-    const authUrl = "https://auth.example/authorize?client_id=abc";
-    const connector = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: () =>
-        throwingTransport(new UnauthorizedError("401"), async () => {
-          // Simulate the SDK's headless redirectToAuthorization: stash the URL.
-          await storage.set("oauth:pending", authUrl);
-        }),
-    });
-
-    const status = await connector.status!(c);
-    expect(status.state).toBe("auth_required");
-    expect(status.authorizationUrl).toBeUndefined();
-  });
-
-  it("a plain network error → error, NOT auth_required", async () => {
-    const connector = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: () =>
-        throwingTransport(new Error("ECONNREFUSED downstream")),
-    });
-
-    const status = await connector.status!(ctx());
-    expect(status.state).toBe("error");
-    expect(status.authorizationUrl).toBeUndefined();
-    expect(status.message).toContain("MCP handshake with https://unused.example failed");
-  });
-});
-
-describe("remoteMcp() startAuth", () => {
-  it("OAuth lifecycle hooks are absent unless auth is oauth", () => {
-    const headers = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "headers", headers: { Authorization: "Bearer x" } },
-    });
-    expect(headers.startAuth).toBeUndefined();
-    expect(headers.disconnectAuth).toBeUndefined();
-    const oauth = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-    });
-    expect(oauth.startAuth).toBeDefined();
-    expect(oauth.disconnectAuth).toBeDefined();
-  });
-
-  it("disconnect wipes the grant without starting a replacement flow", async () => {
-    const storage = memoryStorage();
-    await storage.set(
-      "oauth:tokens",
-      JSON.stringify({ access_token: "old", token_type: "Bearer" }),
-    );
-    await storage.set("oauth:pending", "https://auth.example/stale");
-    let builds = 0;
-    const connector = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: () => {
-        builds++;
-        return throwingTransport(new UnauthorizedError("401"));
-      },
-    });
-    const c = ctx(storage);
-
-    await connector.disconnectAuth!(c);
-
-    expect(builds).toBe(0);
-    expect(await storage.get("oauth:tokens")).toBeNull();
-    expect(await storage.get("oauth:pending")).toBeNull();
-    expect(await storage.get("oauth:generation")).toMatch(/^disconnected:/);
-
-    const passive = await connector.status!(c);
-    expect(passive).toMatchObject({
-      state: "auth_required",
-      message: expect.stringContaining("disconnected by an operator"),
-    });
-    expect(passive.authorizationUrl).toBeUndefined();
-    expect(builds).toBe(0);
-    expect(await storage.get("oauth:pending")).toBeNull();
-  });
-
-  it("can start a fresh authorization after an explicit disconnect", async () => {
-    const storage = memoryStorage();
-    const c = ctx(storage);
-    const authUrl = "https://auth.example/reconnect";
-    const connector = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: () =>
-        throwingTransport(new UnauthorizedError("401"), async () => {
-          await storeCurrentOAuthValue(storage, "oauth:pending", authUrl);
-        }),
-    });
-
-    await connector.disconnectAuth!(c);
-    const status = await connector.startAuth!(c);
-
-    expect(status).toMatchObject({
-      state: "auth_required",
-      authorizationUrl: authUrl,
-    });
-    expect(await storage.get("oauth:generation")).toMatch(/^v2:/);
-  });
-
-  it("keeps DELETE durable across /ui/data until POST explicitly reconnects", async () => {
-    const storage = memoryStorage();
-    await storage.set(
-      "conn:svc:oauth:tokens",
-      JSON.stringify({ access_token: "old", token_type: "Bearer" }),
-    );
-    const authUrl = "https://auth.example/reconnect?state=test-state";
-    let builds = 0;
-    const connector = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: (transportCtx) => {
-        builds++;
-        return throwingTransport(new UnauthorizedError("401"), async () => {
-          await storeCurrentOAuthValue(
-            transportCtx.storage,
-            "oauth:pending",
-            authUrl,
-          );
-        });
-      },
-    });
-    const clerk: InboundAuth = {
-      kind: "clerk",
-      interactiveOperator: true,
-      activityActorNamespace: "https://clerk.example.com",
-      uiAuth: {
-        kind: "clerk",
-        publishableKey: "pk_test_fake",
-        frontendApiUrl: "https://clerk.example.com",
-      },
-      authorize(request) {
-        return request.headers.get("authorization") === "Bearer clerk-token"
-          ? { ok: true, userId: "user_123" }
-          : {
-              ok: false,
-              response: Response.json(
-                { error: "unauthorized" },
-                { status: 401 },
-              ),
-            };
-      },
-    };
-    const connecta = createTestConnecta({
-      connectors: [connector],
-      auth: clerk,
-      storage, vault: oauthVault(storage),
-      publicUrl: BASE,
-    });
-    const operatorRequest = (path: string, method = "GET") =>
-      connecta.fetch(
-        new Request(`${BASE}${path}`, {
-          method,
-          headers: {
-            Authorization: "Bearer clerk-token",
-            Origin: BASE,
-          },
-        }),
-      );
-
-    expect((await operatorRequest("/ui/oauth/svc", "DELETE")).status).toBe(204);
-    const data = (await (
-      await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, { headers: { Authorization: "Bearer clerk-token" } }))
-    ).json()) as {
-      connectors: Array<{
-        status: string;
-        authorizationUrl?: string;
-        toolCount: number;
-      }>;
-    };
-    expect(data.connectors[0]).toMatchObject({
-      status: "auth_required",
-      toolCount: 0,
-    });
-    expect(required(data.connectors[0]).authorizationUrl).toContain(`${BASE}/connect/svc?h=`);
-    expect(builds).toBe(0);
-    expect(await storage.get("conn:svc:oauth:pending")).toBeNull();
-    expect(await storage.get("conn:svc:oauth:generation")).toMatch(
-      /^disconnected:/,
-    );
-
-    const restarted = await operatorRequest("/ui/oauth/svc", "POST");
-    expect(restarted.status).toBe(200);
-    const link = (await restarted.json() as { authorizationUrl: string }).authorizationUrl;
-    expect(builds).toBe(0);
-    const begun = await connecta.fetch(new Request(link, { headers: { Authorization: "Bearer clerk-token" } }));
-    expect(begun.status).toBe(302);
-    expect(begun.headers.get("Location")).toBe(authUrl);
-    expect(builds).toBe(1);
-  });
-
-  it("kicks the flow and returns auth_required with the stored URL", async () => {
-    const storage = memoryStorage();
-    const c = ctx(storage);
-    const authUrl = "https://auth.example/authorize?client_id=abc";
-    const connector = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: () =>
-        throwingTransport(new UnauthorizedError("401"), async () => {
-          await storage.set("oauth:pending", authUrl);
-        }),
-    });
-
-    const status = await connector.startAuth!(c);
-    expect(status.state).toBe("auth_required");
-    expect(status.authorizationUrl).toBe(authUrl);
-  });
-
-  it("returns ok when the connection is already healthy", async () => {
-    const { server, clientTransport } = await connectServer();
-    closer = () => server.close();
-    const connector = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: () => clientTransport,
-    });
-
-    const status = await connector.startAuth!(ctx());
-    expect(status.state).toBe("ok");
-  });
-
-  it("force wipes stored credentials and restarts the flow", async () => {
-    const storage = memoryStorage();
-    const c = ctx(storage);
-    // Stale credentials from a previous (now-revoked) authorization.
-    await storage.set("oauth:client", JSON.stringify({ client_id: "old" }));
-    await storage.set(
-      "oauth:tokens",
-      JSON.stringify({ access_token: "old", token_type: "Bearer" }),
-    );
-    await storage.set("oauth:pending", "https://auth.example/stale");
-    await storage.set("oauth:verifier", "stale-verifier");
-    await storage.set("oauth:state", "stale-state");
-
-    const freshUrl = "https://auth.example/authorize?client_id=new";
-    const connector = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: () =>
-        throwingTransport(new UnauthorizedError("401"), async () => {
-          await storeCurrentOAuthValue(storage, "oauth:pending", freshUrl);
-        }),
-    });
-
-    const status = await connector.startAuth!(c, { force: true });
-    expect(status.state).toBe("auth_required");
-    expect(status.authorizationUrl).toBe(freshUrl);
-    expect(await storage.get("oauth:client")).toBeNull();
-    expect(await storage.get("oauth:tokens")).toBeNull();
-    expect(await storage.get("oauth:verifier")).toBeNull();
-    expect(await storage.get("oauth:state")).toBeNull();
-    expect(await storage.get("oauth:generation")).toMatch(/^v2:/);
-  });
-
-  it("force fences and replaces a connect that never settles on its own", async () => {
-    const storage = memoryStorage();
-    const c = ctx(storage);
-    const { promise: started, resolve: reachedStart } = deferred<void>();
-    const pendingStart = deferred<void>();
-    let builds = 0;
-    const freshUrl = "https://auth.example/recovered";
-    const connector = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: () => {
-        builds++;
-        if (builds === 1) {
-          return {
-            start() {
-              reachedStart();
-              return pendingStart.promise;
-            },
-            async send() {},
-            async close() {
-              pendingStart.reject(new Error("abandoned by force reset"));
-            },
-          } as unknown as Transport;
-        }
-        return throwingTransport(new UnauthorizedError("401"), async () => {
-          await storeCurrentOAuthValue(storage, "oauth:pending", freshUrl);
-        });
-      },
-    });
-
-    const abandoned = connector.status!(c);
-    await started;
-    const forced = connector.startAuth!(c, { force: true });
-    const timeout = new Promise<"timeout">((resolve) =>
-      setTimeout(() => resolve("timeout"), 250),
-    );
-    const result = await Promise.race([forced, timeout]);
-
-    expect(result).not.toBe("timeout");
-    expect(result).toMatchObject({
-      state: "auth_required",
-      authorizationUrl: freshUrl,
-    });
-    expect(await storage.get("oauth:generation")).toMatch(/^v2:/);
-    expect(builds).toBe(2);
-    await expect(abandoned).resolves.toMatchObject({ state: "error" });
-  });
-
-  it("an abandoned Unauthorized completion cannot poison its healthy replacement", async () => {
-    const storage = memoryStorage();
-    const c = ctx(storage);
-    const { promise: started, resolve: reachedStart } = deferred<void>();
-    const oldStart = deferred<void>();
-    let builds = 0;
-    const healthy = await connectServer();
-    closer = () => healthy.server.close();
-    const connector = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: () => {
-        builds++;
-        if (builds === 1) {
-          return {
-            start() {
-              reachedStart();
-              return oldStart.promise;
-            },
-            async send() {},
-            async close() {
-              // Simulate a transport whose close cannot cancel start().
-            },
-          } as unknown as Transport;
-        }
-        return healthy.clientTransport;
-      },
-    });
-
-    const abandoned = connector.status!(c);
-    await started;
-    await expect(connector.startAuth!(c, { force: true })).resolves.toMatchObject({
-      state: "ok",
-    });
-    oldStart.reject(new UnauthorizedError("late 401"));
-    await expect(abandoned).resolves.toMatchObject({ state: "error" });
-
-    expect(await connector.status!(c)).toMatchObject({ state: "ok" });
-    expect(builds).toBe(2);
-  });
-
-  it("a plain network error → error, NOT auth_required", async () => {
-    const connector = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: () =>
-        throwingTransport(new Error("ECONNREFUSED downstream")),
-    });
-
-    const status = await connector.startAuth!(ctx());
-    expect(status.state).toBe("error");
-    expect(status.message).toContain("MCP handshake with https://unused.example failed");
-  });
-  it("non-force re-issues an outstanding consent URL without touching the verifier", async () => {
-    const storage = memoryStorage();
-    const c = remoteMcp("oauthed", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      // Must not connect while a URL is pending — the pending short-circuit
-      // fires first, so this factory should never run.
-      _transportFactory: () => {
-        throw new Error("should not connect while a consent URL is pending");
-      },
-    });
-    const url = "https://auth.example/authorize?client_id=client-1&code_challenge=abc";
-    await storeCurrentOAuthValue(storage, "oauth:client", { client_id: "client-1" });
-    await storage.set(
-      "oauth:pending",
-      JSON.stringify({
-        connectaOAuthVersion: 2,
-        generation: "legacy",
-        writtenAt: Date.now(),
-        value: url,
-      }),
-    );
-    await storage.set("oauth:verifier", "verifier-123");
-    const context = ctx(storage);
-
-    const first = await c.startAuth!(context, {});
-    const second = await c.startAuth!(context, {});
-
-    expect(first.state).toBe("auth_required");
-    expect(first.authorizationUrl).toBe(url);
-    expect(first.authorizationReused).toBe(true);
-    expect(second.authorizationUrl).toBe(first.authorizationUrl);
-    // The verifier the operator's URL is bound to must survive both touches.
-    expect(await storage.get("oauth:verifier")).toBe("verifier-123");
-  });
-
-  it("force with a live client closes it, wipes creds, and reconnects", async () => {
-    const s1 = await connectServer();
-    const s2 = await connectServer();
-    closer = async () => {
-      await s1.server.close();
-      await s2.server.close();
-    };
-    let closedFirst = false;
-    const origClose = s1.clientTransport.close.bind(s1.clientTransport);
-    s1.clientTransport.close = async () => {
-      closedFirst = true;
-      return origClose();
-    };
-    const transports = [s1.clientTransport, s2.clientTransport];
-    const storage = memoryStorage();
-    const c = remoteMcp("oauthed", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: () => transports.shift()!,
-    });
-    const context = ctx(storage);
-
-    // First connect → live client on transport #1.
-    await c.listTools(context);
-    await storage.set("oauth:pending", "x");
-    await storage.set("oauth:verifier", "v");
-    await storage.set("oauth:tokens", "tok");
-    await storage.set("oauth:client", "cli");
-
-    const result = await c.startAuth!(context, { force: true });
-
-    expect(closedFirst).toBe(true);
-    // Reconnected cleanly via transport #2 → healthy again.
-    expect(result.state).toBe("ok");
-    expect(await storage.get("oauth:pending")).toBeNull();
-    expect(await storage.get("oauth:verifier")).toBeNull();
-    expect(await storage.get("oauth:tokens")).toBeNull();
-    expect(await storage.get("oauth:client")).toBeNull();
-  });
-
-  it("force fences an in-flight connect before wiping", async () => {
-    const storage = memoryStorage();
-    let started = 0;
-    // A transport whose start() rejects after a tick, standing in for a slow
-    // connect that is still in flight when force lands.
-    const slowFailing = (): Transport => ({
-      async start() {
-        started++;
-        await new Promise((r) => setTimeout(r, 5));
-        throw new Error("ECONNREFUSED");
-      },
-      async send() {},
-      async close() {},
-    });
-    const c = remoteMcp("oauthed", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: slowFailing,
-    });
-    const context = ctx(storage);
-
-    // Kick a connect without awaiting so it is in flight when force runs.
-    const inflight = c.listTools(context).catch(() => {});
-    const result = await c.startAuth!(context, { force: true });
-    await inflight;
-
-    // force awaited the in-flight connect (fence) then ran its own connect.
-    expect(started).toBe(2);
-    // Network failure on an oauth connector surfaces as error, not auth_required.
-    expect(result.state).toBe("error");
-    expect(result.message).toContain("MCP handshake with https://unused.example failed");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// startAuth's two starts, over the real SDK flow: continue reuses a recent
-// pending URL and a stored registration; restart re-registers from scratch.
-// ---------------------------------------------------------------------------
-describe("remoteMcp() continue and restart starts", () => {
-  const issuer = "https://auth.example";
-  const mcpUrl = "https://downstream.example/mcp";
-  const resourceMetadataUrl =
-    "https://downstream.example/.well-known/oauth-protected-resource";
-  const MINUTE = 60 * 1000;
-
-  /**
-   * An authorization server that remembers the clients it registered, and
-   * answers `invalid_client` for any other — including one it was told to
-   * `forget`, the way a provider purges a registration. A known client's
-   * code or refresh token always redeems.
-   */
-  function authorizationServer() {
-    const counts = { register: 0, fetches: 0, token: 0 };
-    let selectedIssuer = issuer;
-    let urlClients = false;
-    const known = new Set<string>();
-    const fetchStub: FetchLike = async (input, init = {}) => {
-      counts.fetches++;
-      const url = new URL(input);
-      if (url.href === resourceMetadataUrl) {
-        return Response.json({ resource: mcpUrl, authorization_servers: [selectedIssuer] });
-      }
-      if (url.href === `${selectedIssuer}/.well-known/oauth-authorization-server`) {
-        return Response.json({
-          issuer: selectedIssuer,
-          authorization_endpoint: `${selectedIssuer}/authorize`,
-          token_endpoint: `${selectedIssuer}/token`,
-          registration_endpoint: `${selectedIssuer}/register`,
-          response_types_supported: ["code"],
-          code_challenge_methods_supported: ["S256"],
-          token_endpoint_auth_methods_supported: ["none"],
-          ...(urlClients ? { client_id_metadata_document_supported: true } : {}),
-        });
-      }
-      if (url.href === `${selectedIssuer}/register`) {
-        counts.register++;
-        const clientId = `client-${counts.register}`;
-        known.add(clientId);
-        return Response.json({
-          ...(JSON.parse(String(init.body)) as object),
-          client_id: clientId,
-        });
-      }
-      if (url.href === `${selectedIssuer}/token`) {
-        counts.token++;
-        const params = new URLSearchParams(String(init.body));
-        if (!known.has(params.get("client_id") ?? "")) {
-          return Response.json({ error: "invalid_client" }, { status: 401 });
-        }
-        return Response.json({
-          access_token: `access-${counts.token}`,
-          token_type: "Bearer",
-          refresh_token: `refresh-${counts.token}`,
-        });
-      }
-      if (url.href === mcpUrl) {
-        return new Response(null, {
-          status: 401,
-          headers: {
-            "www-authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
-          },
-        });
-      }
-      throw new Error(`Unexpected OAuth test request: ${url.href}`);
-    };
-    return {
-      fetchStub,
-      counts,
-      selectIssuer: (next: string) => { selectedIssuer = next; },
-      forget: (clientId: string) => { known.delete(clientId); },
-      acceptUrlClients: (accept: boolean) => { urlClients = accept; },
-    };
-  }
-
-  async function withServer(
-    run: (
-      server: ReturnType<typeof authorizationServer>,
-      clock: { advance(ms: number): void },
-    ) => Promise<void>,
-  ) {
-    const server = authorizationServer();
-    const realNow = Date.now.bind(Date);
-    let offset = 0;
-    const clock = vi.spyOn(Date, "now").mockImplementation(() => realNow() + offset);
-    vi.stubGlobal("fetch", server.fetchStub);
-    try {
-      await run(server, { advance: (ms) => (offset += ms) });
-    } finally {
-      vi.unstubAllGlobals();
-      clock.mockRestore();
-    }
-  }
-
-  const connector = () =>
-    remoteMcp("svc", {
-      url: mcpUrl,
-      auth: { type: "oauth" },
-      versionNegotiation: "legacy",
-    });
-  const scope = (storage: KVStorage): ConnectorContext => ({
-    ...ctx(storage),
-    requestScope: {},
-  });
-  const clientOf = (url: string | undefined) =>
-    new URL(required(url)).searchParams.get("client_id");
-  /** Complete consent for a start's URL through the connector's callback hooks. */
-  const consent = async (c: Connector, storage: KVStorage, url: string | undefined) => {
-    const state = required(new URL(required(url)).searchParams.get("state") ?? undefined);
-    const params = new URLSearchParams({ code: "consented", state });
-    const callback = scope(storage);
-    expect(await c.verifyState!(state, callback)).toBe(true);
-    await c.finishAuth!("consented", callback, params);
-  };
-  /** How many stored values, in any epoch, still name `clientId`. */
-  const valuesNaming = async (storage: KVStorage, clientId: string) => {
-    const values = await Promise.all(
-      (await storage.list!("")).map((key) => storage.get(key)),
-    );
-    return values.filter((value) => value?.includes(`"${clientId}"`) || value?.includes(`client_id=${clientId}&`)).length;
-  };
-
-  it("continue reuses a recent pending URL without touching the network", async () => {
-    await withServer(async (server) => {
-      const storage = memoryStorage();
-      const c = connector();
-      const restarted = await c.startAuth!(scope(storage), { force: true });
-      expect(restarted.state).toBe("auth_required");
-      expect(restarted.authorizationReused).toBeUndefined();
-      expect(server.counts.register).toBe(1);
-      const fetches = server.counts.fetches;
-      const generation = await storage.get("oauth:generation");
-
-      const continued = await c.startAuth!(scope(storage), { force: false });
-
-      expect(continued).toMatchObject({
-        state: "auth_required",
-        authorizationUrl: restarted.authorizationUrl,
-        authorizationReused: true,
-      });
-      expect(server.counts.fetches).toBe(fetches);
-      expect(await storage.get("oauth:generation")).toBe(generation);
-    });
-  });
-
-  it("continue starts a fresh flow for a stale pending URL, keeping the registration", async () => {
-    await withServer(async (server, clock) => {
-      const storage = memoryStorage();
-      const c = connector();
-      const restarted = await c.startAuth!(scope(storage), { force: true });
-      const generation = await storage.get("oauth:generation");
-
-      clock.advance(10 * MINUTE);
-      const continued = await c.startAuth!(scope(storage), { force: false });
-
-      expect(continued.state).toBe("auth_required");
-      expect(continued.authorizationReused).toBeUndefined();
-      expect(continued.authorizationUrl).not.toBe(restarted.authorizationUrl);
-      // Same epoch, same client: no registration, no reset.
-      expect(clientOf(continued.authorizationUrl)).toBe("client-1");
-      expect(server.counts.register).toBe(1);
-      expect(await storage.get("oauth:generation")).toBe(generation);
-
-      // The fresh URL is itself reusable.
-      const again = await c.startAuth!(scope(storage), { force: false });
-      expect(again).toMatchObject({
-        authorizationUrl: continued.authorizationUrl,
-        authorizationReused: true,
-      });
-    });
-  });
-
-  it("continue treats an untimed pending URL from an earlier release as stale", async () => {
-    await withServer(async (server) => {
-      const storage = memoryStorage();
-      const c = connector();
-      await c.startAuth!(scope(storage), { force: true });
-      const generation = required((await storage.get("oauth:generation")) ?? undefined);
-      const untimed = "https://auth.example/authorize?from=an-earlier-release";
-      await storage.set(
-        oauthValueStorageKey("oauth:pending", generation),
-        JSON.stringify({ connectaOAuthVersion: 2, generation, value: untimed }),
-      );
-
-      const continued = await c.startAuth!(scope(storage), { force: false });
-
-      expect(continued.authorizationReused).toBeUndefined();
-      expect(continued.authorizationUrl).not.toBe(untimed);
-      expect(clientOf(continued.authorizationUrl)).toBe("client-1");
-      expect(server.counts.register).toBe(1);
-    });
-  });
-
-  it("restart reuses an issuer-bound registration while replacing each flow epoch", async () => {
-    await withServer(async (server) => {
-      const storage = memoryStorage();
-      const c = connector();
-      const first = await c.startAuth!(scope(storage), { force: true });
-      const firstGeneration = await storage.get("oauth:generation");
-
-      const second = await c.startAuth!(scope(storage), { force: true });
-
-      expect(second.authorizationReused).toBeUndefined();
-      expect(second.authorizationUrl).not.toBe(first.authorizationUrl);
-      expect(clientOf(second.authorizationUrl)).toBe("client-1");
-      expect(server.counts.register).toBe(1);
-      expect(await storage.get("oauth:generation")).not.toBe(firstGeneration);
-    });
-  });
-
-  it("registers again when fresh discovery selects a different issuer", async () => {
-    await withServer(async (server) => {
-      const storage = memoryStorage();
-      const c = connector();
-      await c.startAuth!(scope(storage), { force: true });
-      expect(await valuesNaming(storage, "client-1")).toBeGreaterThan(0);
-      server.selectIssuer("https://new-auth.example");
-
-      const second = await c.startAuth!(scope(storage), { force: true });
-
-      expect(clientOf(second.authorizationUrl)).toBe("client-2");
-      expect(server.counts.register).toBe(2);
-      // Issuer-mismatch recovery discarded the carried registration outright.
-      expect(await valuesNaming(storage, "client-1")).toBe(0);
-    });
-  });
-
-  it("registers again when redirect URI or connector configuration changes", async () => {
-    await withServer(async (server) => {
-      const storage = memoryStorage();
-      await connector().startAuth!(scope(storage), { force: true });
-      const changedRedirect = scope(storage);
-      changedRedirect.baseUrl = "https://another-operator.example";
-      await connector().startAuth!(changedRedirect, { force: true });
-      expect(server.counts.register).toBe(2);
-
-      const changedConfig = remoteMcp("svc", {
-        url: mcpUrl,
-        auth: { type: "oauth" },
-        versionNegotiation: "legacy",
-        redirects: "same-origin",
-      });
-      await changedConfig.startAuth!(changedRedirect, { force: true });
-      expect(server.counts.register).toBe(3);
-    });
-  });
-
-  it("re-registers on the next restart after a callback rejects the client", async () => {
-    await withServer(async (server) => {
-      const storage = memoryStorage();
-      const c = connector();
-      await c.startAuth!(scope(storage), { force: true });
-      await c.startAuth!(scope(storage), { force: true });
-      expect(server.counts.register).toBe(1);
-      server.forget("client-1");
-
-      const callback = new KvOAuthProvider("svc", storage, `${BASE}/oauth/callback/svc`);
-      await expect(auth(callback, {
-        serverUrl: mcpUrl,
-        authorizationCode: "rejected-code",
-        fetchFn: server.fetchStub,
-      })).rejects.toThrow();
-      expect(await callback.clientInformation({ issuer })).toBeUndefined();
-
-      const retried = await c.startAuth!(scope(storage), { force: true });
-      expect(clientOf(retried.authorizationUrl)).toBe("client-2");
-      expect(server.counts.register).toBe(2);
-    });
-  });
-
-  it("keeps carrying a restarted registration once it has earned a grant", async () => {
-    await withServer(async (server) => {
-      const storage = memoryStorage();
-      const c = connector();
-      await consent(c, storage, (await c.startAuth!(scope(storage), { force: true })).authorizationUrl);
-
-      const first = await c.startAuth!(scope(storage), { force: true });
-      expect(clientOf(first.authorizationUrl)).toBe("client-1");
-      await consent(c, storage, first.authorizationUrl);
-      const second = await c.startAuth!(scope(storage), { force: true });
-
-      expect(clientOf(second.authorizationUrl)).toBe("client-1");
-      expect(server.counts.register).toBe(1);
-    });
-  });
-
-  it("registers again on a restart that follows a restart whose consent never returned", async () => {
-    await withServer(async (server) => {
-      const storage = memoryStorage();
-      const c = connector();
-      await consent(c, storage, (await c.startAuth!(scope(storage), { force: true })).authorizationUrl);
-      const restarted = await c.startAuth!(scope(storage), { force: true });
-      expect(clientOf(restarted.authorizationUrl)).toBe("client-1");
-      // The provider purged the registration. Its consent page refuses the
-      // unknown client and, per RFC 6749 section 4.1.2.1, never redirects back.
-      server.forget("client-1");
-
-      const again = await c.startAuth!(scope(storage), { force: true });
-
-      expect(clientOf(again.authorizationUrl)).toBe("client-2");
-      expect(server.counts.register).toBe(2);
-      await consent(c, storage, again.authorizationUrl);
-    });
-  });
-
-  it("registers again within the same start when the provider refuses a reused client", async () => {
-    await withServer(async (server) => {
-      const storage = memoryStorage();
-      const c = connector();
-      await consent(c, storage, (await c.startAuth!(scope(storage), { force: true })).authorizationUrl);
-      const restarted = await c.startAuth!(scope(storage), { force: true });
-      await consent(c, storage, restarted.authorizationUrl);
-      server.forget("client-1");
-      const tokenRequests = server.counts.token;
-
-      const continued = await c.startAuth!(scope(storage), { force: false });
-
-      // The start's refresh carried the reused client, the provider answered
-      // invalid_client, and the same start registered and built a new URL.
-      expect(server.counts.token).toBe(tokenRequests + 1);
-      expect(continued.state).toBe("auth_required");
-      expect(clientOf(continued.authorizationUrl)).toBe("client-2");
-      expect(server.counts.register).toBe(2);
-      expect(await valuesNaming(storage, "client-1")).toBe(0);
-    });
-  });
-
-  it("continue never hands back a URL whose client a callback saw refused", async () => {
-    await withServer(async (server) => {
-      const storage = memoryStorage();
-      const c = connector();
-      await c.startAuth!(scope(storage), { force: true });
-      const restarted = await c.startAuth!(scope(storage), { force: true });
-      server.forget("client-1");
-      await expect(consent(c, storage, restarted.authorizationUrl)).rejects.toThrow();
-
-      const continued = await c.startAuth!(scope(storage), { force: false });
-
-      expect(continued.authorizationReused).toBeUndefined();
-      expect(clientOf(continued.authorizationUrl)).toBe("client-2");
-      expect(server.counts.register).toBe(2);
-    });
-  });
-
-  it("re-selects a URL-based client from fresh metadata on every restart", async () => {
-    await withServer(async (server) => {
-      const clientMetadataUrl = "https://connecta.test/oauth-client.json";
-      const storage = memoryStorage();
-      const c = remoteMcp("svc", {
-        url: mcpUrl,
-        auth: { type: "oauth", clientMetadataUrl },
-        versionNegotiation: "legacy",
-      });
-      server.acceptUrlClients(true);
-      const first = await c.startAuth!(scope(storage), { force: true });
-      const second = await c.startAuth!(scope(storage), { force: true });
-      expect(clientOf(first.authorizationUrl)).toBe(clientMetadataUrl);
-      expect(clientOf(second.authorizationUrl)).toBe(clientMetadataUrl);
-      expect(server.counts.register).toBe(0);
-
-      // A carried URL client would outlive the server's support for it.
-      server.acceptUrlClients(false);
-      const third = await c.startAuth!(scope(storage), { force: true });
-
-      expect(clientOf(third.authorizationUrl)).toBe("client-1");
-      expect(server.counts.register).toBe(1);
-    });
-  });
-
-  it("never carries a registration whose client secret has expired", async () => {
-    await withServer(async (server) => {
-      const storage = memoryStorage();
-      const c = connector();
-      await c.startAuth!(scope(storage), { force: true });
-      const generation = required((await storage.get("oauth:generation")) ?? undefined);
-      const key = oauthValueStorageKey("oauth:client", generation);
-      const stored = JSON.parse(required((await storage.get(key)) ?? undefined)) as {
-        value: Record<string, unknown>;
-      };
-      stored.value.client_secret = "dcr-secret";
-      stored.value.client_secret_expires_at = Math.floor(Date.now() / 1000) - 1;
-      await storage.set(key, JSON.stringify(stored));
-
-      const restarted = await c.startAuth!(scope(storage), { force: true });
-
-      expect(clientOf(restarted.authorizationUrl)).toBe("client-2");
-      expect(server.counts.register).toBe(2);
-    });
-  });
-
-  it("continue on a disconnected connector still resets before starting", async () => {
-    await withServer(async (server) => {
-      const storage = memoryStorage();
-      const c = connector();
-      await c.startAuth!(scope(storage), { force: true });
-      await c.disconnectAuth!(scope(storage));
-      expect(await storage.get("oauth:generation")).toMatch(/^disconnected:/);
-      // Disconnect leaves no registration behind for a later start to find.
-      expect(await valuesNaming(storage, "client-1")).toBe(0);
-
-      const continued = await c.startAuth!(scope(storage), { force: false });
-
-      expect(continued.state).toBe("auth_required");
-      expect(continued.authorizationReused).toBeUndefined();
-      expect(await storage.get("oauth:generation")).toMatch(/^v2:/);
-      expect(server.counts.register).toBe(2);
-    });
-  });
-
-  it("continues only the calling principal's own flow on a personal connector", async () => {
-    await withServer(async (server) => {
-      const users: InboundAuth = {
-        kind: "test-users",
-        interactiveOperator: true,
-        uiAuth: { kind: "clerk", frontendApiUrl: "https://identity.test", publishableKey: "pk_test_fake" },
-        activityActorNamespace: "https://identity.test",
-        authorize(request) {
-          const user = /^Bearer (alice|bob)$/u.exec(
-            request.headers.get("authorization") ?? "",
-          )?.[1];
-          return user
-            ? { ok: true, userId: user, subjectId: user }
-            : { ok: false, response: new Response(null, { status: 401 }) };
-        },
-      };
-      const connecta = createTestConnecta({
-        connectors: [
-          remoteMcp("svc", {
-            url: mcpUrl,
-            auth: { type: "oauth" },
-            authScope: "personal",
-            versionNegotiation: "legacy",
-          }),
-        ],
-        auth: users,
-        storage: memoryStorage(), vault: oauthVault(memoryStorage()),
-        publicUrl: BASE,
-      });
-      const start = async (user: "alice" | "bob", query = "") => {
-        const response = await connecta.fetch(
-          new Request(`${BASE}/ui/oauth/svc${query}`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${user}`, Origin: BASE },
-          }),
-        );
-        expect(response.status).toBe(200);
-        const link = (await response.json() as { authorizationUrl: string }).authorizationUrl;
-        const begun = await connecta.fetch(new Request(link, { headers: { Authorization: `Bearer ${user}` } }));
-        expect(begun.status).toBe(302);
-        return { authorizationUrl: begun.headers.get("Location")! };
-      };
-      const principalOf = async (url: string) =>
-        (await connecta.registry.oauthCallbackView(
-          "svc",
-          new URL(url).searchParams.get("state"),
-        ))?.principalKey;
-
-      const aliceFirst = await start("alice");
-      const aliceAgain = await start("alice", "?mode=continue");
-      expect(aliceAgain).toEqual(aliceFirst);
-      expect(server.counts.register).toBe(1);
-
-      // Bob's partition holds no pending flow, so his continue starts his own.
-      const bob = await start("bob", "?mode=continue");
-      expect(bob.authorizationUrl).not.toBe(aliceFirst.authorizationUrl);
-      expect(server.counts.register).toBe(2);
-
-      // The reused URL still hands its callback to Alice, never to Bob.
-      const alice = await principalOf(aliceAgain.authorizationUrl);
-      const bobPrincipal = await principalOf(bob.authorizationUrl);
-      expect(alice).toBeTypeOf("string");
-      expect(bobPrincipal).toBeTypeOf("string");
-      expect(bobPrincipal).not.toBe(alice);
-
-      // A restart carries only the restarting principal's own registration.
-      const aliceRestart = await start("alice");
-      const bobRestart = await start("bob");
-      expect(clientOf(aliceRestart.authorizationUrl)).toBe("client-1");
-      expect(clientOf(bobRestart.authorizationUrl)).toBe("client-2");
-      expect(server.counts.register).toBe(2);
-      await connecta.close();
-    });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// GHSA-6qxp-vccf-f47h: a downstream names the authorization server, so a
-// compromised one can name its own. A grant belongs to the server that issued
-// it; nothing it holds may reach any other.
-// ---------------------------------------------------------------------------
-describe("remoteMcp() and an authorization server the downstream switches to", () => {
-  const mcpUrl = "https://downstream.example/mcp";
-  const resourceMetadataUrl =
-    "https://downstream.example/.well-known/oauth-protected-resource";
-  const rotatedMetadataUrl =
-    "https://downstream.example/.well-known/oauth-protected-resource/rotated";
-  const trusted = "https://auth.example";
-  const foreign = "https://foreign-auth.example";
-
-  function downstream({ acceptIssuedTokens = false } = {}) {
-    let advertised = trusted;
-    let issued = 0;
-    const accessTokens = new Map<string, string>();
-    const requests: { url: string; text: string }[] = [];
-    const fetchStub: FetchLike = async (input, init = {}) => {
-      const url = new URL(input);
-      const headers = [...new Headers(init.headers).entries()].flat().join(" ");
-      requests.push({ url: url.href, text: `${headers} ${String(init.body ?? "")}` });
-      if (url.href === resourceMetadataUrl || url.href === rotatedMetadataUrl) {
-        return Response.json({ resource: mcpUrl, authorization_servers: [advertised] });
-      }
-      for (const [server, name] of [[trusted, "trusted"], [foreign, "foreign"]] as const) {
-        if (url.href === `${server}/.well-known/oauth-authorization-server`) {
-          return Response.json({
-            issuer: server,
-            authorization_endpoint: `${server}/authorize`,
-            token_endpoint: `${server}/token`,
-            registration_endpoint: `${server}/register`,
-            response_types_supported: ["code"],
-            code_challenge_methods_supported: ["S256"],
-            token_endpoint_auth_methods_supported: ["client_secret_post"],
-          });
-        }
-        if (url.href === `${server}/register`) {
-          return Response.json({
-            ...(JSON.parse(String(init.body)) as object),
-            client_id: `${name}-client`,
-            client_secret: `${name}-secret`,
-          });
-        }
-        if (url.href === `${server}/token`) {
-          issued++;
-          accessTokens.set(server, `${name}-access-${issued}`);
-          return Response.json({
-            access_token: `${name}-access-${issued}`,
-            token_type: "Bearer",
-            refresh_token: `${name}-refresh-${issued}`,
-          });
-        }
-      }
-      // By default the resource server refuses every token, so each call asks the
-      // authorization server it currently advertises to recover the grant.
-      // Once it names a foreign one, its challenge points at fresh metadata
-      // too, as a compromised downstream's would.
-      if (url.href === mcpUrl) {
-        const accessToken = accessTokens.get(advertised);
-        if (acceptIssuedTokens && accessToken !== undefined &&
-            new Headers(init.headers).get("authorization") === `Bearer ${accessToken}`) {
-          if (init.method !== "POST") return new Response(null, { status: 405 });
-          const request = JSON.parse(String(init.body)) as {
-            id?: number; method: string; params?: { protocolVersion?: string };
-          };
-          if (request.method.startsWith("notifications/")) return new Response(null, { status: 202 });
-          const result = request.method === "initialize"
-            ? { protocolVersion: request.params?.protocolVersion, capabilities: { tools: {} },
-                serverInfo: { name: "test", version: "1" } }
-            : { tools: [] };
-          return Response.json({ jsonrpc: "2.0", id: request.id, result });
-        }
-        const metadata = advertised === trusted ? resourceMetadataUrl : rotatedMetadataUrl;
-        return new Response(null, {
-          status: 401,
-          headers: { "www-authenticate": `Bearer resource_metadata="${metadata}"` },
-        });
-      }
-      throw new Error(`Unexpected OAuth test request: ${url.href}`);
-    };
-    return {
-      fetchStub,
-      requests,
-      advertise: (server: string) => { advertised = server; },
-    };
-  }
-
-  const scope = (storage: KVStorage): ConnectorContext => ({
-    ...ctx(storage),
-    requestScope: {},
-  });
-  const connector = () =>
-    remoteMcp("svc", { url: mcpUrl, auth: { type: "oauth" }, versionNegotiation: "legacy" });
-
-  /** Consent at the trusted server, leaving a refresh token and a client secret it issued. */
-  async function authorized(storage: KVStorage, c: Connector) {
-    const started = await c.startAuth!(scope(storage), { force: true });
-    expect(new URL(required(started.authorizationUrl)).origin).toBe(trusted);
-    const state = required(new URL(required(started.authorizationUrl)).searchParams.get("state") ?? undefined);
-    const callback = scope(storage);
-    expect(await c.verifyState!(state, callback)).toBe(true);
-    await c.finishAuth!("consented", callback, new URLSearchParams({ code: "consented", state }));
-  }
-
-  it("keeps refreshing at the issuing server while discovery is cached, consulting nothing the downstream names", async () => {
-    const server = downstream();
-    vi.stubGlobal("fetch", server.fetchStub);
-    onTestFinished(() => { vi.unstubAllGlobals(); });
-
-    const storage = memoryStorage();
-    const c = connector();
-    await authorized(storage, c);
-    server.requests.length = 0;
-    server.advertise(foreign);
-
-    await c.listTools(scope(storage)).catch(() => {});
-
-    // The refused token sent the grant back to the server that issued it —
-    // what a vulnerable client sends to whoever is named, and the control that
-    // keeps the next test from passing for want of a refresh.
-    const refresh = server.requests.find(({ url }) => url === `${trusted}/token`);
-    expect(refresh?.text).toMatch(/refresh_token=trusted-refresh-\d/);
-    expect(refresh?.text).toContain("client_secret=trusted-secret");
-    expect(server.requests.filter(({ url }) => new URL(url).origin === foreign)).toEqual([]);
-  });
-
-  it("sends nothing the issuing server gave it to a server fresh discovery names, and retires what that leaves at the next flow's entry", async () => {
-    const server = downstream();
-    vi.stubGlobal("fetch", server.fetchStub);
-    onTestFinished(() => { vi.unstubAllGlobals(); });
-
-    const storage = memoryStorage();
-    const c = connector();
-    await authorized(storage, c);
-    const generation = await storage.get("oauth:generation");
-    // Discovery is not cached — state written before it was, or dropped the
-    // way the SDK advises a host to pick up a changed `authorization_servers`
-    // list — so the next 401 asks the downstream again, and the downstream
-    // now names its own server.
-    await storage.delete(oauthValueStorageKey("oauth:discovery", generation));
-    server.requests.length = 0;
-    server.advertise(foreign);
-
-    const error = await c.listTools(scope(storage)).then(() => undefined, (e: unknown) => e);
-
-    const toForeign = server.requests.filter(({ url }) => new URL(url).origin === foreign);
-    expect(toForeign.length).toBeGreaterThan(0);
-    for (const { url, text } of toForeign) {
-      expect(text, url).not.toMatch(/trusted-(refresh|access|secret|client)/);
-    }
-    expect(toForeign.map(({ url }) => url)).not.toContain(`${foreign}/token`);
-    expect(classifyCallError(error).code).toBe("downstream_oauth_required");
-    // Nothing was retired inside the SDK's flow: it found nothing for the
-    // foreign server and went on within the same epoch.
-    expect(await storage.get("oauth:generation")).toBe(generation);
-
-    // The epoch now holds the foreign server's discovery beside a grant the
-    // trusted server stamped. The next flow's entry retires it before
-    // anything is sent.
-    server.requests.length = 0;
-    const again = await c.listTools(scope(storage)).then(() => undefined, (e: unknown) => e);
-    expect(classifyCallError(again).code).toBe("downstream_oauth_required");
-    expect(await storage.get("oauth:generation")).not.toBe(generation);
-    for (const { url, text } of server.requests) {
-      if (new URL(url).origin !== new URL(mcpUrl).origin) {
-        expect(text, url).not.toMatch(/trusted-(refresh|access|secret|client)/);
-      }
-    }
-    const stored = await Promise.all((await storage.list!("")).map((key) => storage.get(key)));
-    expect(stored.filter((value) => /trusted-(refresh|secret)/.test(value ?? ""))).toEqual([]);
-  });
-
-  // A grant written before issuer binding carries no stamp, so nothing in it
-  // says which server issued it. The advisory names exactly this state.
-  async function legacyGrant(storage: KVStorage) {
-    await storage.set("oauth:client", JSON.stringify({
-      client_id: "legacy-client",
-      client_secret: "legacy-secret",
-      redirect_uris: [`${BASE}/oauth/callback/svc`],
-      token_endpoint_auth_method: "client_secret_post",
-    }));
-    await storage.set("oauth:tokens", JSON.stringify({
-      access_token: "legacy-access",
-      token_type: "Bearer",
-      refresh_token: "legacy-refresh",
-    }));
-  }
-
-  async function expectRetiredWithNothingSent(
-    server: ReturnType<typeof downstream>,
+describe("layout 2 migration", () => {
+  const F = oauthV2Keys.field;
+  const v2 = (generation: string, value: unknown, stamp: Record<string, unknown> = {}) =>
+    JSON.stringify({ connectaOAuthVersion: 2, generation, ...stamp, value });
+
+  /** Seed one generation's values; `legacy` writes the unsuffixed keys and no generation. */
+  async function seedV2(
     storage: KVStorage,
-    error: unknown,
-    { discovered = true } = {},
-  ) {
-    const toForeign = server.requests.filter(({ url }) => new URL(url).origin === foreign);
-    // Fresh discovery asks the foreign server for its metadata first.
-    if (discovered) expect(toForeign.length).toBeGreaterThan(0);
-    for (const { url, text } of toForeign) {
-      expect(text, url).not.toMatch(/legacy-(refresh|access|secret|client)/);
+    generation: string,
+    values: Partial<Record<OAuthV2ValueKey, string>>,
+  ): Promise<void> {
+    if (generation !== "legacy") await storage.set(oauthV2Keys.generation, generation);
+    const epoch = generation.startsWith("v2:") ? generation : null;
+    for (const [field, raw] of Object.entries(values)) {
+      await storage.set(oauthV2Keys.value(field as OAuthV2ValueKey, epoch), raw);
     }
-    expect(toForeign.map(({ url }) => url)).not.toContain(`${foreign}/token`);
-    expect(server.requests.map(({ url }) => url)).not.toContain(`${trusted}/token`);
-    expect(classifyCallError(error).code).toBe("downstream_oauth_required");
-    // Retired behind a new epoch: an operator re-authorizes once.
-    expect(await storage.get("oauth:generation")).toMatch(/^v2:/);
-    const stored = await Promise.all((await storage.list!("")).map((key) => storage.get(key)));
-    expect(stored.filter((value) => /legacy-(refresh|secret)/.test(value ?? ""))).toEqual([]);
   }
 
-  /** Discovery as a release from v0.9.0 left it: raw JSON, saved before any credential was read. */
-  async function savedDiscovery(storage: KVStorage, server: string) {
-    await storage.set("oauth:discovery", JSON.stringify({
-      authorizationServerUrl: server,
-      authorizationServerMetadata: {
-        issuer: server,
-        authorization_endpoint: `${server}/authorize`,
-        token_endpoint: `${server}/token`,
-        registration_endpoint: `${server}/register`,
-        response_types_supported: ["code"],
-        code_challenge_methods_supported: ["S256"],
-        token_endpoint_auth_methods_supported: ["client_secret_post"],
-      },
-    }));
+  /** A connector namespace inside another partition of `backing`. */
+  function partition(backing: KVStorage, prefix: string): KVStorage {
+    return {
+      get: (key) => backing.get(prefix + key),
+      set: (key, value, options) => backing.set(prefix + key, value, options),
+      delete: (key) => backing.delete(prefix + key),
+      list: async (p) => (await backing.list(prefix + p)).map((key) => key.slice(prefix.length)),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(prefix + key, expected, next, options),
+    };
   }
 
-  it("retires a grant from before issuer binding instead of binding it to the server fresh discovery names", async () => {
-    const server = downstream();
-    vi.stubGlobal("fetch", server.fetchStub);
-    onTestFinished(() => { vi.unstubAllGlobals(); });
+  it("migrates a legacy grant from stamped envelopes, discovery bare, and carries no consent", async () => {
     const storage = memoryStorage();
-    await legacyGrant(storage);
-    server.advertise(foreign);
+    await seedV2(storage, "legacy", {
+      [F.client]: v2("legacy", client, { issuer: ISSUER, binding: BINDING }),
+      [F.tokens]: v2("legacy", tokens, { issuer: ISSUER }),
+      [F.discovery]: JSON.stringify(discovery),
+      [F.pending]: v2("legacy", `${ISSUER}/authorize?state=old`),
+      [F.verifier]: v2("legacy", "old-verifier"),
+      [F.state]: v2("legacy", "old"),
+    });
+    const p = provider(storage);
+    expect(await p.tokens(ctxA)).toEqual({ ...tokens, ...ctxA });
 
-    const c = connector();
-    const error = await c.listTools(scope(storage)).then(() => undefined, (e: unknown) => e);
-
-    await expectRetiredWithNothingSent(server, storage, error);
+    expect(await storedGrant(storage)).toEqual({
+      connectaOAuth: 3,
+      epoch: expect.stringMatching(/^v3:/),
+      body: { issuer: ISSUER, client: { value: client, binding: BINDING }, tokens, discovery },
+    });
+    expect(await storage.list("")).toEqual([GRANT]);
+    expect(await p.pendingAuthorizationUrl()).toBeUndefined();
+    expect(await p.verifyState("old")).toBe(false);
   });
 
-  it("does not take a discovery record saved before a failed credential read as the grant's issuer", async () => {
-    // A release from v0.9.0 saves discovery before it reads credentials. If
-    // that read failed after a downstream named its own server, the foreign
-    // record was left beside an unbound grant, with nothing to tell it apart
-    // from one kept at consent.
-    const server = downstream();
-    vi.stubGlobal("fetch", server.fetchStub);
-    onTestFinished(() => { vi.unstubAllGlobals(); });
+  it("migrates a v2 epoch's suffixed grant, carried client and binding included, and deletes every layout 2 key", async () => {
     const storage = memoryStorage();
-    await legacyGrant(storage);
-    await savedDiscovery(storage, foreign);
-    server.advertise(foreign);
+    const generation = "v2:live";
+    await seedV2(storage, generation, {
+      [F.client]: v2(generation, client, { issuer: ISSUER, binding: BINDING, carried: true }),
+      [F.tokens]: v2(generation, tokens, { issuer: ISSUER }),
+      [F.discovery]: v2(generation, discovery),
+      [F.pending]: v2(generation, `${ISSUER}/authorize?state=old`, { writtenAt: Date.now() }),
+      [F.verifier]: v2(generation, "old-verifier"),
+      [F.state]: v2(generation, "old"),
+    });
+    // An older epoch's residue, the legacy names, cleanup lineage, and a
+    // spent connect link that is not layout 2's to delete.
+    await storage.set(oauthV2Keys.value(F.tokens, "v2:older"), v2("v2:older", { access_token: "older", token_type: "Bearer" }, { issuer: ISSUER }));
+    await storage.set(oauthV2Keys.value(F.client, null), JSON.stringify({ client_id: "legacy-client" }));
+    await storage.set(`oauth:cleanup:${encodeURIComponent("v2:older")}`, JSON.stringify(["legacy"]));
+    await storage.set(`oauth:cleanup-at:${encodeURIComponent("v2:older")}`, JSON.stringify({ legacy: 1 }));
+    const used = oauthConnectKeys.used("spent-nonce");
+    await storage.set(used, "1");
 
-    const c = connector();
-    const error = await c.listTools(scope(storage)).then(() => undefined, (e: unknown) => e);
+    const p = provider(storage, { binding: BINDING });
+    expect(await p.clientInformation(ctxA)).toEqual({ ...client, ...ctxA });
+    const grant = required(await storedGrant(storage));
+    expect(grant.body).toEqual({
+      issuer: ISSUER,
+      client: { value: client, binding: BINDING, carried: true },
+      tokens,
+      discovery,
+    });
+    expect(grant.epoch).toMatch(/^v3:/);
+    expect(grant.epoch).not.toBe(generation);
+    expect((await storage.list("")).sort()).toEqual([GRANT, used].sort());
 
-    // The saved record is complete, so this flow asks the foreign server nothing.
-    await expectRetiredWithNothingSent(server, storage, error, { discovered: false });
+    // Carried with tokens, the registration survives the next restart too.
+    await p.resetAuthorization(false, true);
+    expect((await storedGrant(storage))?.body?.client).toEqual({ value: client, binding: BINDING, carried: true });
   });
 
-  it("leaves a consent that completes when Continue retires a grant from before issuer binding", async () => {
-    // Retirement lands mid-flow, after discovery was saved into the epoch it
-    // retires. The client, verifier, and consent URL the flow writes next go
-    // to the replacement epoch, and so must the discovery the callback checks.
-    const server = downstream({ acceptIssuedTokens: true });
-    vi.stubGlobal("fetch", server.fetchStub);
-    onTestFinished(() => { vi.unstubAllGlobals(); });
+  it("opens sealed v2 values with their old physical key, and leaves behind what does not open", async () => {
+    const sealer = sealerFor();
+    const generation = "v2:sealed";
+    const sealed = async (field: OAuthV2ValueKey, plaintext: string, label = oauthV2Keys.value(field, generation)) =>
+      JSON.stringify({ connectaOAuthSealed: 1, sealed: await sealer.seal(label, plaintext) });
+    const seed = async (storage: KVStorage, tokensLabel?: string) =>
+      seedV2(storage, generation, {
+        [F.client]: await sealed(F.client, v2(generation, client, { issuer: ISSUER })),
+        [F.tokens]: await sealed(F.tokens, v2(generation, tokens, { issuer: ISSUER }), tokensLabel),
+      });
+
     const storage = memoryStorage();
-    await legacyGrant(storage);
+    await seed(storage);
+    expect(await provider(storage, { sealer }).tokens(ctxA)).toEqual({ ...tokens, ...ctxA });
+    const raw = required((await storage.get(GRANT)) ?? undefined);
+    expect(JSON.parse(raw)).toEqual({ connectaOAuth: 3, epoch: expect.stringMatching(/^v3:/), sealed: expect.any(String) });
+    expect(raw).not.toContain("secret-access");
+    expect(await provider(storage, { sealer }).clientInformation(ctxA)).toEqual({ ...client, ...ctxA });
 
-    const c = connector();
-    const started = await c.startAuth!(scope(storage), { force: false });
-    expect(started.state).toBe("auth_required");
-    const url = required(started.authorizationUrl);
-    expect(new URL(url).origin).toBe(trusted);
-    const generation = await storage.get("oauth:generation");
-    expect(generation).toMatch(/^v2:/);
-    expect(await storage.get(oauthValueStorageKey("oauth:discovery", generation))).not.toBeNull();
+    // Tokens sealed under another key than their own do not open: the
+    // client that does is kept on its own.
+    const moved = memoryStorage();
+    await seed(moved, oauthV2Keys.value(F.tokens, null));
+    expect(await provider(moved, { sealer }).tokens()).toBeUndefined();
+    expect((await storedGrant(moved))?.body).toBeUndefined();
+    expect(await provider(moved, { sealer }).clientInformation(ctxA)).toEqual({ ...client, ...ctxA });
 
-    // Continue hands back the same consent, untouched.
-    const continued = await c.startAuth!(scope(storage), { force: false });
-    expect(continued).toMatchObject({ authorizationUrl: url, authorizationReused: true });
-
-    const state = required(new URL(url).searchParams.get("state") ?? undefined);
-    const callback = scope(storage);
-    expect(await c.verifyState!(state, callback)).toBe(true);
-    await c.finishAuth!("consented", callback, new URLSearchParams({ code: "consented", state }));
-
-    const exchange = server.requests.find(
-      ({ url: requested, text }) => requested === `${trusted}/token` && text.includes("grant_type=authorization_code"),
-    );
-    expect(exchange).toBeDefined();
-    expect(await storage.get("oauth:generation")).toBe(generation);
-    expect(JSON.parse(required((await storage.get(oauthValueStorageKey("oauth:tokens", generation))) ?? undefined)))
-      .toMatchObject({ issuer: trusted, value: { refresh_token: expect.stringMatching(/^trusted-refresh-/) } });
-    // The connection is healthy again: Continue has nothing left to hand back.
-    const after = await c.startAuth!(scope(storage), { force: false });
-    expect(after.authorizationUrl).toBeUndefined();
-    expect(after.state).toBe("ok");
-    expect(server.requests.filter(({ url }) => url === `${trusted}/token`)).toHaveLength(1);
-    expect(server.requests.some(({ url, text }) =>
-      url === mcpUrl && text.includes("Bearer trusted-access-1"))).toBe(true);
+    // Without a sealer nothing opens, and the grant migrates empty.
+    const unsealed = memoryStorage();
+    await seed(unsealed);
+    expect(await provider(unsealed).tokens()).toBeUndefined();
+    expect(await storedGrant(unsealed)).toEqual({ connectaOAuth: 3, epoch: expect.stringMatching(/^v3:/) });
+    expect(await unsealed.list("")).toEqual([GRANT]);
   });
 
-  it("retires a bound client with the unbound token set beside it, so the consent names a client it can redeem", async () => {
-    // An older release bound the client, then failed reading the tokens. The
-    // SDK reads the client first and builds its consent URL from that copy,
-    // so the whole grant must be retired on that read: retiring at the token
-    // read would leave a URL naming a client no epoch holds.
-    const server = downstream();
-    vi.stubGlobal("fetch", server.fetchStub);
-    onTestFinished(() => { vi.unstubAllGlobals(); });
+  it("migrates a disconnected generation as a disconnect tombstone", async () => {
     const storage = memoryStorage();
-    await legacyGrant(storage);
-    await storage.set("oauth:client", JSON.stringify({
-      connectaOAuthVersion: 2,
+    const generation = "disconnected:abc";
+    await seedV2(storage, generation, { [F.tokens]: v2(generation, tokens, { issuer: ISSUER }) });
+    const p = provider(storage);
+    expect(await p.operatorDisconnected()).toBe(true);
+    expect(await p.tokens()).toBeUndefined();
+    expect(await storedGrant(storage)).toEqual({ connectaOAuth: 3, epoch: expect.stringMatching(/^disconnected:/) });
+    expect(await storage.list("")).toEqual([GRANT]);
+  });
+
+  const other = "https://auth-b.example";
+  it.each<{ held: string; generation: string; values: Partial<Record<OAuthV2ValueKey, string>> }>([
+    { held: "unstamped values from before v0.9", generation: "legacy", values: { [F.client]: JSON.stringify(client), [F.tokens]: JSON.stringify(tokens) } },
+    {
+      held: "v1 envelopes",
       generation: "legacy",
-      issuer: trusted,
-      value: JSON.parse(required((await storage.get("oauth:client")) ?? undefined)),
-    }));
-
-    const c = connector();
-    const started = await c.startAuth!(scope(storage), { force: false });
-    const url = new URL(required(started.authorizationUrl));
-    expect(url.searchParams.get("client_id")).toBe("trusted-client");
-    const generation = await storage.get("oauth:generation");
-    expect(generation).toMatch(/^v2:/);
-    expect(JSON.parse(required((await storage.get(oauthValueStorageKey("oauth:client", generation))) ?? undefined)))
-      .toMatchObject({ issuer: trusted, value: { client_id: "trusted-client" } });
-
-    const state = required(url.searchParams.get("state") ?? undefined);
-    const callback = scope(storage);
-    expect(await c.verifyState!(state, callback)).toBe(true);
-    await c.finishAuth!("consented", callback, new URLSearchParams({ code: "consented", state }));
-    expect(JSON.parse(required((await storage.get(oauthValueStorageKey("oauth:tokens", generation))) ?? undefined)))
-      .toMatchObject({ issuer: trusted });
-    for (const { url: requested, text } of server.requests) {
-      expect(text, requested).not.toMatch(/legacy-(refresh|secret)/);
-    }
-  });
-
-  it("starts a consent that completes over an unbound token set with no client beside it", async () => {
-    // Nothing is stored to check at the client read, so only an entry
-    // decision catches this grant: retiring at the token read would follow
-    // the SDK's registration and leave a URL naming a client it deleted.
-    const server = downstream();
-    vi.stubGlobal("fetch", server.fetchStub);
-    onTestFinished(() => { vi.unstubAllGlobals(); });
-    const storage = memoryStorage();
-    await storage.set("oauth:tokens", JSON.stringify({
-      access_token: "legacy-access", token_type: "Bearer", refresh_token: "legacy-refresh",
-    }));
-
-    const c = connector();
-    const started = await c.startAuth!(scope(storage), { force: false });
-    const url = new URL(required(started.authorizationUrl));
-    const generation = await storage.get("oauth:generation");
-    expect(generation).toMatch(/^v2:/);
-    expect(JSON.parse(required((await storage.get(oauthValueStorageKey("oauth:client", generation))) ?? undefined)))
-      .toMatchObject({ value: { client_id: url.searchParams.get("client_id") } });
-
-    const state = required(url.searchParams.get("state") ?? undefined);
-    const callback = scope(storage);
-    expect(await c.verifyState!(state, callback)).toBe(true);
-    await c.finishAuth!("consented", callback, new URLSearchParams({ code: "consented", state }));
-    expect(JSON.parse(required((await storage.get(oauthValueStorageKey("oauth:tokens", generation))) ?? undefined)))
-      .toMatchObject({ issuer: trusted, value: { refresh_token: expect.stringMatching(/^trusted-refresh-/) } });
-    for (const { url: requested, text } of server.requests) {
-      expect(text, requested).not.toMatch(/legacy-refresh/);
-    }
-  });
-
-  it.each(["pending consent", "completed callback"])(
-    "fails a start a later reset overtook, leaving that reset's %s intact",
-    async (stage) => {
-      // Flow A begins over an unbound grant, retires it, and stalls just
-      // after publishing its epoch. Flow B restarts past it at another server
-      // and starts — or completes — its consent. A resumes inside the SDK:
-      // every read and write it makes is bound to its own epoch, so it fails
-      // cleanly instead of reading, overwriting, or retiring B's.
-      const server = downstream();
-      vi.stubGlobal("fetch", server.fetchStub);
-      onTestFinished(() => { vi.unstubAllGlobals(); });
-      const backing = memoryStorage();
-      await legacyGrant(backing);
-      const published = deferred<void>();
-      const resume = deferred<void>();
-      let holdA = true;
-      // Hold A just after its retirement publishes its epoch, through
-      // whichever write the store activates it with.
-      const holdAfter = async (key: string) => {
-        if (holdA && key === "oauth:generation") {
-          holdA = false;
-          published.resolve();
-          await resume.promise;
-        }
-      };
-      const storage: KVStorage = { ...backing,
-        async set(key, value, options) {
-          await backing.set(key, value, options);
-          await holdAfter(key);
-        },
-        async compareAndSet(key, expected, next, options) {
-          const swapped = await backing.compareAndSet!(key, expected, next, options);
-          await holdAfter(key);
-          return swapped;
-        },
-      };
-      const c = connector();
-
-      const startA = c.startAuth!(scope(storage), { force: false });
-      await published.promise;
-
-      server.advertise(foreign);
-      const startB = await c.startAuth!(scope(storage), { force: true });
-      const urlB = new URL(required(startB.authorizationUrl));
-      expect(urlB.origin).toBe(foreign);
-      const epochB = await storage.get("oauth:generation");
-      if (stage === "completed callback") {
-        const stateB = required(urlB.searchParams.get("state") ?? undefined);
-        const callbackB = scope(storage);
-        expect(await c.verifyState!(stateB, callbackB)).toBe(true);
-        await c.finishAuth!("consented", callbackB, new URLSearchParams({ code: "consented", state: stateB }));
-      }
-
-      resume.resolve();
-      const resultA = await startA;
-      expect(resultA.state).toBe("error");
-      expect(resultA.authorizationUrl).toBeUndefined();
-      expect(resultA.message).toMatch(/authorization changed while this request was in flight; try again/);
-
-      // B's epoch is still the live one, and nothing of A's landed in it.
-      expect(await storage.get("oauth:generation")).toBe(epochB);
-      const discoveryB = JSON.parse(required((await storage.get(oauthValueStorageKey("oauth:discovery", epochB))) ?? undefined));
-      expect(discoveryB.value.authorizationServerUrl).toBe(foreign);
-      if (stage === "pending consent") {
-        // Continue hands back B's consent, and it completes.
-        const continued = await c.startAuth!(scope(storage), { force: false });
-        expect(continued).toMatchObject({ authorizationUrl: urlB.href, authorizationReused: true });
-        const stateB = required(urlB.searchParams.get("state") ?? undefined);
-        const callbackB = scope(storage);
-        expect(await c.verifyState!(stateB, callbackB)).toBe(true);
-        await c.finishAuth!("consented", callbackB, new URLSearchParams({ code: "consented", state: stateB }));
-      }
-      expect(JSON.parse(required((await storage.get(oauthValueStorageKey("oauth:tokens", epochB))) ?? undefined)))
-        .toMatchObject({ issuer: foreign, value: { refresh_token: expect.stringMatching(/^foreign-refresh-/) } });
-
-      // B's grant survives its next issuer-aware flow: it refreshes at B's
-      // server, in B's epoch, and is not retired.
-      server.requests.length = 0;
-      await c.listTools(scope(storage)).catch(() => {});
-      expect(server.requests.some(({ url }) => url === `${foreign}/token`)).toBe(true);
-      expect(await storage.get("oauth:generation")).toBe(epochB);
-      for (const { url, text } of server.requests) {
-        expect(text, url).not.toMatch(/legacy-(refresh|secret)/);
-      }
+      values: { [F.tokens]: JSON.stringify({ connectaOAuthVersion: 1, generation: "legacy", value: tokens }) },
     },
-  );
+    { held: "a numeric generation", generation: "7", values: { [F.tokens]: v2("7", tokens, { issuer: ISSUER }) } },
+    { held: "an unfinished reset", generation: "reset:abc", values: { [F.tokens]: v2("reset:abc", tokens, { issuer: ISSUER }) } },
+    {
+      held: "an envelope of another generation",
+      generation: "v2:a",
+      values: { [F.tokens]: v2("v2:b", tokens, { issuer: ISSUER }) },
+    },
+    {
+      held: "a credential missing its stamp",
+      generation: "v2:a",
+      values: { [F.client]: v2("v2:a", client, { issuer: ISSUER }), [F.tokens]: v2("v2:a", tokens) },
+    },
+    {
+      held: "stamps naming different servers",
+      generation: "v2:a",
+      values: { [F.client]: v2("v2:a", client, { issuer: ISSUER }), [F.tokens]: v2("v2:a", tokens, { issuer: other }) },
+    },
+    {
+      held: "stamps that disagree with discovery",
+      generation: "v2:a",
+      values: {
+        [F.tokens]: v2("v2:a", tokens, { issuer: ISSUER }),
+        [F.discovery]: v2("v2:a", { authorizationServerUrl: other }),
+      },
+    },
+  ])("migrates empty from $held", async ({ generation, values }) => {
+    const storage = memoryStorage();
+    await seedV2(storage, generation, values);
+    const p = provider(storage);
+    expect(await p.tokens()).toBeUndefined();
+    expect(await p.clientInformation()).toBeUndefined();
+    expect(await p.operatorDisconnected()).toBe(false);
+    expect(await storedGrant(storage)).toEqual({ connectaOAuth: 3, epoch: expect.stringMatching(/^v3:/) });
+    expect(await storage.list("")).toEqual([GRANT]);
+  });
 
-  it("abandons an entry retirement whose epoch a later reset replaced, touching nothing", async () => {
-    // A inspects an unbound grant and stalls before retiring it. B restarts
-    // and completes its own consent. A's decision was about the grant it
-    // inspected, not B's: the retirement must find its epoch gone and stop.
-    const server = downstream();
-    vi.stubGlobal("fetch", server.fetchStub);
-    onTestFinished(() => { vi.unstubAllGlobals(); });
+  it("migrates once: two concurrent first reads write one record, and a later read does nothing more", async () => {
     const backing = memoryStorage();
-    await legacyGrant(backing);
-    const inspected = deferred<void>();
-    const resume = deferred<void>();
-    let holdRead = true;
+    await seedV2(backing, "legacy", { [F.tokens]: v2("legacy", tokens, { issuer: ISSUER }) });
+    const both = deferred<void>();
+    let lists = 0;
+    let written = 0;
     const storage: KVStorage = { ...backing,
-      async get(key) {
-        const value = await backing.get(key);
-        if (holdRead && key === "oauth:tokens") {
-          holdRead = false;
-          inspected.resolve();
-          await resume.promise;
-        }
-        return value;
+      async list(prefix) {
+        if (++lists === 2) both.resolve();
+        await both.promise;
+        return backing.list(prefix);
+      },
+      async compareAndSet(key, expected, next, options) {
+        const ok = await backing.compareAndSet(key, expected, next, options);
+        if (key === GRANT && ok) written++;
+        return ok;
       },
     };
-    const c = connector();
+    const [a, b] = [provider(storage), provider(storage)];
+    expect(await Promise.all([a.tokens(ctxA), b.tokens(ctxA)])).toEqual([{ ...tokens, ...ctxA }, { ...tokens, ...ctxA }]);
+    expect(lists).toBe(2);
+    expect(written).toBe(1);
+    expect(await a.liveEpoch()).toBe(await b.liveEpoch());
 
-    const startA = c.startAuth!(scope(storage), { force: false });
-    await inspected.promise;
-
-    server.advertise(foreign);
-    const startB = await c.startAuth!(scope(storage), { force: true });
-    const urlB = new URL(required(startB.authorizationUrl));
-    const epochB = await storage.get("oauth:generation");
-    const stateB = required(urlB.searchParams.get("state") ?? undefined);
-    const callbackB = scope(storage);
-    expect(await c.verifyState!(stateB, callbackB)).toBe(true);
-    await c.finishAuth!("consented", callbackB, new URLSearchParams({ code: "consented", state: stateB }));
-
-    resume.resolve();
-    const resultA = await startA;
-    expect(resultA.state).toBe("error");
-    expect(resultA.authorizationUrl).toBeUndefined();
-    expect(resultA.message).toMatch(/authorization changed while this request was in flight; try again/);
-
-    expect(await storage.get("oauth:generation")).toBe(epochB);
-    expect(JSON.parse(required((await storage.get(oauthValueStorageKey("oauth:tokens", epochB))) ?? undefined)))
-      .toMatchObject({ issuer: foreign, value: { refresh_token: expect.stringMatching(/^foreign-refresh-/) } });
-    server.requests.length = 0;
-    await c.listTools(scope(storage)).catch(() => {});
-    expect(server.requests.some(({ url }) => url === `${foreign}/token`)).toBe(true);
-    expect(await storage.get("oauth:generation")).toBe(epochB);
+    const raw = await backing.get(GRANT);
+    expect(await provider(storage).tokens(ctxA)).toEqual({ ...tokens, ...ctxA });
+    expect(lists).toBe(2);
+    expect(await backing.get(GRANT)).toBe(raw);
+    expect(await backing.list("")).toEqual([GRANT]);
   });
 
-  it("fails a start whose consent URL write a reset overtook, rather than hand out the newer flow's", async () => {
-    // A's consent URL write passes its epoch check and is held; B restarts and
-    // stores its own consent; A's write then lands in an epoch nobody reads.
-    // Reporting success there would let A's start read back B's URL.
-    const server = downstream();
-    vi.stubGlobal("fetch", server.fetchStub);
-    onTestFinished(() => { vi.unstubAllGlobals(); });
+  it("keeps layout 2 when its record cannot be written", async () => {
     const backing = memoryStorage();
-    const reached = deferred<void>();
-    const resume = deferred<void>();
-    let holdWrite = true;
+    await seedV2(backing, "legacy", { [F.tokens]: v2("legacy", tokens, { issuer: ISSUER }) });
     const storage: KVStorage = { ...backing,
-      async set(key, value, options) {
-        if (holdWrite && key === "oauth:pending") {
-          holdWrite = false;
-          reached.resolve();
-          await resume.promise;
-        }
-        await backing.set(key, value, options);
-      },
+      compareAndSet: async () => { throw new Error("storage unavailable"); },
     };
-    const c = connector();
-
-    const startA = c.startAuth!(scope(storage), { force: false });
-    await reached.promise;
-
-    const startB = await c.startAuth!(scope(storage), { force: true });
-    const urlB = required(startB.authorizationUrl);
-
-    resume.resolve();
-    const resultA = await startA;
-    expect(resultA.state).toBe("error");
-    expect(resultA.authorizationUrl).toBeUndefined();
-    expect(resultA.message).toMatch(/authorization changed while this request was in flight; try again/);
-    // A's late write was cleaned up, and B's consent is still the one Continue hands back.
-    expect(await backing.get("oauth:pending")).toBeNull();
-    const continued = await c.startAuth!(scope(storage), { force: false });
-    expect(continued).toMatchObject({ authorizationUrl: urlB, authorizationReused: true });
+    await expect(provider(storage).tokens()).rejects.toThrow();
+    expect(await backing.list("")).toEqual([oauthV2Keys.value(F.tokens, null)]);
+    expect(await provider(backing).tokens(ctxA)).toEqual({ ...tokens, ...ctxA });
   });
 
-  it("fails a callback whose token write a reset overtook, rather than report it connected", async () => {
-    // The exchange's token write passes its epoch check and is held; a
-    // restart lands; the write then goes to an epoch nobody reads. Nothing
-    // reads after it, so only the write itself can say it did not land.
-    const server = downstream();
-    vi.stubGlobal("fetch", server.fetchStub);
-    onTestFinished(() => { vi.unstubAllGlobals(); });
+  it("writes nothing when a never-authorized connector's grant is read (INV-10)", async () => {
+    const storage = memoryStorage();
+    const used = oauthConnectKeys.used("spent-nonce");
+    await storage.set(used, "1");
+    const p = provider(storage);
+    expect(await p.tokens(ctxA)).toBeUndefined();
+    expect(await p.clientInformation(ctxA)).toBeUndefined();
+    expect(await p.discoveryState()).toBeUndefined();
+    expect(await p.liveEpoch()).toBe("initial");
+    expect(await p.operatorDisconnected()).toBe(false);
+    expect(await p.pendingAuthorizationUrl()).toBeUndefined();
+    expect(await p.reusablePendingAuthorizationUrl()).toBeUndefined();
+    expect(await p.verifyState("anything")).toBe(false);
+    expect(await storage.list("")).toEqual([used]);
+  });
+
+  it("migrates each personal partition on its own", async () => {
     const backing = memoryStorage();
-    let holdKey: string | undefined;
-    const reached = deferred<void>();
-    const resume = deferred<void>();
-    const storage: KVStorage = { ...backing,
-      async set(key, value, options) {
-        if (key === holdKey) {
-          holdKey = undefined;
-          reached.resolve();
-          await resume.promise;
-        }
-        await backing.set(key, value, options);
-      },
-    };
-    const c = connector();
-    const started = await c.startAuth!(scope(storage), { force: true });
-    const url = new URL(required(started.authorizationUrl));
-    const epochA = required((await storage.get("oauth:generation")) ?? undefined);
-    holdKey = oauthValueStorageKey("oauth:tokens", epochA);
+    const shared = partition(backing, "conn:svc:");
+    const alice = partition(backing, "principal:alice:conn:svc:");
+    const bob = partition(backing, "principal:bob:conn:svc:");
+    const aliceTokens = { ...tokens, access_token: "alice-access" };
+    const bobTokens = { ...tokens, access_token: "bob-access" };
+    await seedV2(alice, "legacy", { [F.tokens]: v2("legacy", aliceTokens, { issuer: ISSUER }) });
+    await seedV2(bob, "v2:bob", { [F.tokens]: v2("v2:bob", bobTokens, { issuer: ISSUER }) });
 
-    const state = required(url.searchParams.get("state") ?? undefined);
-    const callback = scope(storage);
-    expect(await c.verifyState!(state, callback)).toBe(true);
-    const finishing = c.finishAuth!("consented", callback, new URLSearchParams({ code: "consented", state }))
-      .then(() => undefined, (e: unknown) => e);
-    await reached.promise;
-    await c.startAuth!(scope(storage), { force: true });
-    resume.resolve();
+    expect(await provider(alice).tokens(ctxA)).toEqual({ ...aliceTokens, ...ctxA });
+    // Bob's partition and the shared namespace are untouched.
+    expect(await bob.get(GRANT)).toBeNull();
+    expect(await bob.list("oauth:")).toHaveLength(2);
+    expect(await provider(shared).tokens()).toBeUndefined();
+    expect(await shared.list("")).toEqual([]);
 
-    const error = await finishing;
-    expect(String(error)).toMatch(/authorization changed while this request was in flight; try again/);
-    expect(await storage.get("oauth:generation")).not.toBe(epochA);
-    expect(await backing.get(holdKey ?? oauthValueStorageKey("oauth:tokens", epochA))).toBeNull();
-  });
-
-  it("retires a grant from before issuer binding even beside discovery naming the server that issued it", async () => {
-    // No record can prove where an unstamped grant came from, so even one that
-    // happens to be right buys it nothing: it is authorized once more.
-    const server = downstream();
-    vi.stubGlobal("fetch", server.fetchStub);
-    onTestFinished(() => { vi.unstubAllGlobals(); });
-    const storage = memoryStorage();
-    await legacyGrant(storage);
-    await savedDiscovery(storage, trusted);
-
-    const c = connector();
-    const error = await c.listTools(scope(storage)).then(() => undefined, (e: unknown) => e);
-
-    expect(classifyCallError(error).code).toBe("downstream_oauth_required");
-    expect(server.requests.map(({ url }) => url)).not.toContain(`${trusted}/token`);
-    // The access token still reaches the configured resource server, as it
-    // always did; the refresh token and client secret reach no one.
-    for (const { url, text } of server.requests) {
-      expect(text, url).not.toMatch(/legacy-(refresh|secret)/);
-    }
-    expect(await storage.get("oauth:generation")).toMatch(/^v2:/);
-    const stored = await Promise.all((await storage.list!("")).map((key) => storage.get(key)));
-    expect(stored.filter((value) => /legacy-(refresh|secret)/.test(value ?? ""))).toEqual([]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// From client 2.1.0 the SDK writes a token-endpoint failure's description — or
-// its raw body — to the console. Connecta hands it nothing the server wrote
-// but the OAuth code, so a server echoing the form it refused cannot put the
-// refresh token, client secret, or authorization code there.
-// ---------------------------------------------------------------------------
-describe("remoteMcp() token endpoint failures and the host's console", () => {
-  const issuer = "https://auth.example";
-  const mcpUrl = "https://downstream.example/mcp";
-  const resourceMetadataUrl =
-    "https://downstream.example/.well-known/oauth-protected-resource";
-  const SECRETS = /client-secret-xyz|refresh-secret|code-secret/;
-
-  type Refusal = (form: URLSearchParams) => Response;
-  const echo = (form: URLSearchParams) => form.toString();
-  const refusals: [string, Refusal][] = [
-    [
-      "an OAuth error whose description echoes the form",
-      (form) => Response.json({ error: "invalid_grant", error_description: `rejected ${echo(form)}` }, { status: 400 }),
-    ],
-    [
-      "a client refusal whose description echoes the form",
-      (form) => Response.json({ error: "invalid_client", error_description: `rejected ${echo(form)}` }, { status: 401 }),
-    ],
-    [
-      "an unregistered code carrying the form",
-      (form) => Response.json({ error: `bad_${echo(form)}` }, { status: 400 }),
-    ],
-    ["a non-JSON body echoing the form", (form) => new Response(`bad request: ${echo(form)}`, { status: 400 })],
-    ["an outage echoing the form", (form) => new Response(`unavailable: ${echo(form)}`, { status: 503 })],
-    [
-      "an outage whose description echoes the form",
-      (form) => Response.json({ error: "server_error", error_description: echo(form) }, { status: 500 }),
-    ],
-    [
-      "a 2xx OAuth error echoing the form",
-      (form) => Response.json({ error: "invalid_grant", error_description: echo(form) }),
-    ],
-    ["a 2xx body that is no token response", (form) => Response.json({ note: echo(form) })],
-    ["a 2xx body that is no JSON", (form) => new Response(`ok ${echo(form)}`)],
-    // An `error` that is not a string is no OAuth error, and the SDK's
-    // fallback puts the whole body in its message.
-    ["a 2xx null error beside the form", (form) => Response.json({ error: null, detail: echo(form) })],
-    ["a 2xx numeric error beside the form", (form) => Response.json({ error: 42, detail: echo(form) })],
-    ["a 2xx object error carrying the form", (form) => Response.json({ error: { message: echo(form) } })],
-  ];
-
-  function downstream() {
-    const refuse: { grant?: string; answer?: Refusal } = {};
-    /** Every PKCE verifier sent, a secret the form echoes on a code exchange. */
-    const verifiers: string[] = [];
-    let issued = 0;
-    const fetchStub: FetchLike = async (input, init = {}) => {
-      const url = new URL(input);
-      if (url.href === resourceMetadataUrl) {
-        return Response.json({ resource: mcpUrl, authorization_servers: [issuer] });
-      }
-      if (url.href === `${issuer}/.well-known/oauth-authorization-server`) {
-        return Response.json({
-          issuer,
-          authorization_endpoint: `${issuer}/authorize`,
-          token_endpoint: `${issuer}/token`,
-          registration_endpoint: `${issuer}/register`,
-          response_types_supported: ["code"],
-          code_challenge_methods_supported: ["S256"],
-          token_endpoint_auth_methods_supported: ["client_secret_post"],
-        });
-      }
-      if (url.href === `${issuer}/register`) {
-        return Response.json({
-          ...(JSON.parse(String(init.body)) as object),
-          client_id: "registered-client",
-          client_secret: "client-secret-xyz",
-        });
-      }
-      if (url.href === `${issuer}/token`) {
-        const form = new URLSearchParams(String(init.body));
-        const verifier = form.get("code_verifier");
-        if (verifier) verifiers.push(verifier);
-        if (refuse.answer && form.get("grant_type") === refuse.grant) return refuse.answer(form);
-        issued++;
-        return Response.json({
-          access_token: `access-${issued}`,
-          token_type: "Bearer",
-          refresh_token: `refresh-secret-${issued}`,
-        });
-      }
-      if (url.href === mcpUrl) {
-        return new Response(null, {
-          status: 401,
-          headers: { "www-authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"` },
-        });
-      }
-      throw new Error(`Unexpected OAuth test request: ${url.href}`);
-    };
-    return { fetchStub, refuse, verifiers };
-  }
-
-  function logged() {
-    const lines: string[] = [];
-    const record = (...args: unknown[]) => {
-      lines.push(args.map((arg) => (arg instanceof Error ? `${arg.stack} ${String(arg.cause)}` : String(arg))).join(" "));
-    };
-    return { logger: { debug: record, info: record, warn: record, error: record }, lines };
-  }
-
-  const connector = () =>
-    remoteMcp("svc", { url: mcpUrl, auth: { type: "oauth" }, versionNegotiation: "legacy" });
-
-  async function consentUrl(c: Connector, storage: KVStorage) {
-    const started = await c.startAuth!({ ...ctx(storage), requestScope: {} }, { force: true });
-    const url = new URL(required(started.authorizationUrl));
-    return required(url.searchParams.get("state") ?? undefined);
-  }
-
-  it.each(refusals)("keeps %s out of the console on a refresh", async (_label, answer) => {
-    const server = downstream();
-    vi.stubGlobal("fetch", server.fetchStub);
-    onTestFinished(() => { vi.unstubAllGlobals(); });
-    const storage = memoryStorage();
-    const c = connector();
-    const state = await consentUrl(c, storage);
-    const callback = { ...ctx(storage), requestScope: {} };
-    await c.finishAuth!("code-secret", callback, new URLSearchParams({ code: "code-secret", state }));
-
-    server.refuse.grant = "refresh_token";
-    server.refuse.answer = answer;
-    const output = consoleOutput();
-    const log = logged();
-    const passive = { ...ctx(storage), logger: log.logger, requestScope: {} };
-    const error = await c.listTools(passive).then(() => undefined, (e: unknown) => e);
-
-    expect(error).toBeInstanceOf(Error);
-    for (const surface of [output(), log.lines.join("\n"), String(error), JSON.stringify(classifyCallError(error))]) {
-      expect(surface).not.toMatch(SECRETS);
-      for (const verifier of server.verifiers) expect(surface).not.toContain(verifier);
-    }
-    await c.closeScope?.(passive);
-  });
-
-  it.each(refusals)("keeps %s out of the console on a code exchange", async (_label, answer) => {
-    const server = downstream();
-    vi.stubGlobal("fetch", server.fetchStub);
-    onTestFinished(() => { vi.unstubAllGlobals(); });
-    const storage = memoryStorage();
-    const c = connector();
-    const state = await consentUrl(c, storage);
-
-    server.refuse.grant = "authorization_code";
-    server.refuse.answer = answer;
-    const output = consoleOutput();
-    const log = logged();
-    const callback = { ...ctx(storage), logger: log.logger, requestScope: {} };
-    const error = await c.finishAuth!("code-secret", callback, new URLSearchParams({ code: "code-secret", state }))
-      .then(() => undefined, (e: unknown) => e);
-
-    expect(error).toBeInstanceOf(Error);
-    // The exchange really sent a verifier the answer could echo.
-    expect(server.verifiers.length).toBeGreaterThan(0);
-    for (const surface of [output(), log.lines.join("\n"), String(error), JSON.stringify(classifyCallError(error))]) {
-      expect(surface).not.toMatch(SECRETS);
-      for (const verifier of server.verifiers) expect(surface).not.toContain(verifier);
-    }
-  });
-});
-
-describe("remoteMcp() finishAuth", () => {
-  it("drives transport.finishAuth, clears pending, and reconnects next use", async () => {
-    const storage = memoryStorage();
-    const c = ctx(storage);
-    // Seed one-shot flow state that clearPending should wipe.
-    await storage.set("oauth:pending", "https://auth.example/authorize");
-    await storage.set("oauth:verifier", "v-123");
-
-    const finishAuth = vi.fn(async (_params: URLSearchParams) => {});
-    const { server, clientTransport } = await connectServer();
-    closer = () => server.close();
-
-    let build = 0;
-    const connector = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: () => {
-        build += 1;
-        // First build: the transport finishAuth() is called on.
-        if (build === 1) {
-          return { finishAuth, async close() {} } as unknown as Transport;
-        }
-        // Second build: a working in-process transport for the reconnect.
-        return clientTransport;
-      },
-    });
-
-    const callbackParams = new URLSearchParams({
-      code: "code123",
-      iss: "https://auth.example",
-    });
-    await connector.finishAuth!("code123", c, callbackParams);
-
-    expect(finishAuth).toHaveBeenCalledWith(callbackParams);
-    expect(await storage.get("oauth:pending")).toBeNull();
-    expect(await storage.get("oauth:verifier")).toBeNull();
-
-    // Next use reconnects (second factory build) and lists tools.
-    const tools = await connector.listTools(c);
-    expect(tools.map((t) => t.name)).toEqual(["ping"]);
-    expect(build).toBe(2);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Cross-isolate force re-auth via the shared KV generation counter (#11).
-// Two remoteMcp() instances over the SAME storage stand in for two isolates.
-// ---------------------------------------------------------------------------
-describe("remoteMcp() cross-isolate force re-auth", () => {
-  it("a stale isolate drops its client once another isolate force-reauthorizes", async () => {
-    const storage = memoryStorage();
-
-    // Isolate A: healthy first, then (after the force wipes creds) an
-    // unauthorized transport standing in for the revoked credentials.
-    const sA = await connectServer();
-    let aBuilds = 0;
-    const a = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: () => {
-        aBuilds += 1;
-        if (aBuilds === 1) return sA.clientTransport;
-        return throwingTransport(new UnauthorizedError("401"), async () => {
-          await storeCurrentOAuthValue(
-            storage,
-            "oauth:pending",
-            "https://auth.example/reauth",
-          );
-        });
-      },
-    });
-
-    // Isolate B: a second instance on the SAME KV that performs the force.
-    const sB = await connectServer();
-    const b = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: () => sB.clientTransport,
-    });
-    closer = async () => {
-      await sA.server.close();
-      await sB.server.close();
-    };
-
-    const ctxA = ctx(storage);
-    const ctxB = ctx(storage);
-
-    // A connects and is healthy under generation 0.
-    expect((await a.status!(ctxA)).state).toBe("ok");
-
-    // B force-reauthorizes → publishes a unique epoch and wipes credentials.
-    await b.startAuth!(ctxB, { force: true });
-    expect(await storage.get("oauth:generation")).toMatch(/^v2:/);
-
-    // A's next call notices the generation advanced, drops its now-stale client,
-    // and reconnects — against wiped creds, so it degrades to auth_required
-    // instead of silently keeping the revoked token alive.
-    const after = await a.status!(ctxA);
-    expect(after.state).toBe("auth_required");
-    expect(after.authorizationUrl).toBeUndefined();
-    expect(aBuilds).toBe(2);
-  });
-
-  it("discards a client whose connect completed after a concurrent force bumped the generation", async () => {
-    const storage = memoryStorage();
-    const c = ctx(storage);
-
-    const { server, clientTransport } = await connectServer();
-    closer = () => server.close();
-    // Simulate a force re-auth landing in ANOTHER isolate mid-connect: bump the
-    // shared generation as part of this connect's start().
-    const origStart = clientTransport.start.bind(clientTransport);
-    clientTransport.start = async () => {
-      await origStart();
-      await storage.set("oauth:generation", `v2:${crypto.randomUUID()}`);
-    };
-
-    const connector = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: () => clientTransport,
-    });
-
-    // connect() itself succeeds, but the generation advanced while it ran, so
-    // the client is discarded rather than cached — the wiped-and-reauthorized
-    // connector must not be resurrected by this stale isolate.
-    const status = await connector.status!(c);
-    expect(status.state).toBe("auth_required");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// End-to-end /oauth/callback/<id> route.
-// ---------------------------------------------------------------------------
-describe("/oauth/callback/<id> route", () => {
-  // The connector namespaces its storage as conn:<id>: — this is where the
-  // provider reads oauth:state from, so tests seed the expected state here.
-  const STATE_KEY = "conn:svc:oauth:state";
-
-  function callbackConnector(
-    id: string,
-    finishAuth: (code: string) => Promise<void>,
-    verifyState?: (
-      state: string | null,
-      ctx: ConnectorContext,
-    ) => Promise<boolean>,
-  ): Connector {
-    return {
-      id,
-      kind: "mcp",
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return {};
-      },
-      ...(verifyState ? { verifyState } : {}),
-      finishAuth,
-    };
-  }
-
-  function makeConnecta(
-    finishAuth: (code: string) => void,
-    storage = memoryStorage(),
-    logger: Logger = silentLogger,
-  ) {
-    const connecta = createTestConnecta({
-      publicUrl: BASE, auth: callbackAuth,
-      storage,
-      logger,
-      connectors: [
-        remoteMcp("svc", {
-          url: "https://unused.example/mcp",
-          auth: { type: "oauth" },
-          _transportFactory: () =>
-            ({
-              finishAuth: async (code: string) => finishAuth(code),
-              async close() {},
-            }) as unknown as Transport,
-        }),
-      ],
-    });
-    return { connecta, storage };
-  }
-
-  it.each(["connected", "mismatch", "verify failure", "exchange failure"])(
-    "closes the callback's connector scope after %s",
-    async outcome => {
-      let active = 0;
-      let opened: ConnectorContext | undefined;
-      const closeScope = vi.fn(async (ctx: ConnectorContext) => {
-        expect(ctx).toBe(opened);
-        active--;
-        throw new Error("cleanup failed");
-      });
-      const connector = callbackConnector("svc", async () => {
-        if (outcome === "exchange failure") throw new Error("exchange failed");
-      }, async (_state, ctx) => {
-        opened = ctx;
-        active++;
-        if (outcome === "verify failure") throw new Error("verification failed");
-        return outcome !== "mismatch";
-      });
-      connector.closeScope = closeScope;
-      const connecta = createTestConnecta({ publicUrl: BASE, auth: callbackAuth, logger: silentLogger, connectors: [connector] });
-      await bindCallback(connecta, "svc", "verified-state");
-      const response = await connecta.fetch(new Request(
-        `${BASE}/oauth/callback/svc?code=abc&state=verified-state`,
-      ));
-      expect(response.status).toBe(outcome === "connected" ? 200 : outcome === "exchange failure" ? 500 : 400);
-      expect(closeScope).toHaveBeenCalledTimes(1);
-      expect(active).toBe(0);
-    },
-  );
-
-  it("matching state + code → 200 'Connected' and calls finishAuth", async () => {
-    const spy = vi.fn();
-    const { connecta, storage } = makeConnecta(spy);
-    await storage.set(STATE_KEY, "s3cr3t-state");
-    await bindCallback(connecta, "svc", "s3cr3t-state");
-    const res = await connecta.fetch(
-      new Request(`${BASE}/oauth/callback/svc?code=abc&state=s3cr3t-state`),
-    );
-    expect(res.status).toBe(200);
-    const body = await res.text();
-    expect(body).toContain("Connected");
-    const callbackParams = spy.mock.calls[0]?.[0];
-    expect(callbackParams).toBeInstanceOf(URLSearchParams);
-    expect(callbackParams.get("code")).toBe("abc");
-  });
-
-  it.each([401, 403])("refuses an identity-free callback on either 401 or 403 (%i)", async (status) => {
-    const finish = vi.fn(async () => {});
-    const connecta = createTestConnecta({
-      publicUrl: BASE,
-      auth: { kind: "browser-bearer", interactiveOperator: true,
-        authorize: () => ({ ok: false, response: new Response(null, { status }) }) },
-      connectors: [callbackConnector("svc", finish, async state => state === "verified-state")],
-    });
-    const response = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=verified-state`));
-    expect(response.status).toBe(400);
-    expect(finish).not.toHaveBeenCalled();
-    const invalid = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=wrong`));
-    expect(invalid.status).toBe(400);
-    expect(finish).not.toHaveBeenCalled();
-  });
-
-  it("refuses a callback any provider refused with final, interactive or not", async () => {
-    const finish = vi.fn(async () => {});
-    const connecta = createTestConnecta({
-      publicUrl: BASE,
-      // A bearer's refused asserted principal (#679), and nothing interactive
-      // whose 403 would otherwise be the only explicit denial.
-      auth: { kind: "bearer", finalRefusals: true,
-        authorize: (request) => request.headers.has("authorization")
-          ? { ok: false, final: true, response: new Response(null, { status: 403 }) }
-          : { ok: false, response: new Response(null, { status: 401 }) } },
-      connectors: [callbackConnector("svc", finish, async state => state === "verified-state")],
-    });
-    const refused = await connecta.fetch(new Request(
-      `${BASE}/oauth/callback/svc?code=abc&state=verified-state`,
-      { headers: { authorization: "Bearer agent-secret" } },
-    ));
-    expect(refused.status).toBe(400);
-    expect(finish).not.toHaveBeenCalled();
-    const browser = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=verified-state`));
-    expect(browser.status).toBe(400);
-    expect(finish).not.toHaveBeenCalled();
-  });
-
-  // Human routes skip non-interactive providers unless they declare
-  // finalRefusals, so a managed access token is never looked up here: a bogus
-  // `cta_` token would otherwise add a read only where the connector exists.
-  it("a bogus managed token adds no storage reads to a configured or unknown callback", async () => {
-    const reads: string[] = [];
-    const inner = memoryStorage();
-    const counting: KVStorage = {
-      compareAndSet: (key, expected, next, options) => inner.compareAndSet(key, expected, next, options),
-      get: async (k) => {
-        reads.push(k);
-        return inner.get(k);
-      },
-      set: (k, v, o) => inner.set(k, v, o),
-      delete: (k) => inner.delete(k),
-      list: (prefix) => inner.list!(prefix),
-    };
-    const connecta = createTestConnecta({
-      publicUrl: BASE, auth: callbackAuth,
-      storage: counting,
-      logger: silentLogger,
-      accessTokens: accessTokens(counting),
-      connectors: [
-        remoteMcp("svc", {
-          url: "https://unused.example/mcp",
-          auth: { type: "oauth" },
-          _transportFactory: () => ({ async close() {} }) as unknown as Transport,
-        }),
-      ],
-    });
-    await counting.set(STATE_KEY, "the-real-state");
-    const readsFor = async (id: string, token?: string) => {
-      reads.length = 0;
-      const res = await connecta.fetch(new Request(
-        `${BASE}/oauth/callback/${id}?code=abc&state=attacker-state`,
-        token ? { headers: { authorization: `Bearer ${token}` } } : {},
-      ));
-      expect(res.status).toBe(400);
-      return [...reads];
-    };
-    const bogus = `cta_${"A".repeat(43)}`;
-    const configured = await readsFor("svc", bogus);
-    const unknown = await readsFor("absent", bogus);
-    expect(configured).toEqual(await readsFor("svc"));
-    expect(unknown).toEqual(await readsFor("absent"));
-    expect(configured.length).toBe(unknown.length);
-    expect([...configured, ...unknown].some((key) => key.includes("access-token"))).toBe(false);
-    await connecta.close();
-  });
-
-  it("every unverifiable callback failure is indistinguishable", async () => {
-    const spy = vi.fn();
-    const { connecta, storage } = makeConnecta(spy);
-    const unverifiedFinish = vi.fn();
-    const throwingFinish = vi.fn();
-    const edgeConnecta = createTestConnecta({
-      publicUrl: BASE, auth: callbackAuth,
-      storage: memoryStorage(),
-      logger: silentLogger,
-      connectors: [
-        // A connector that exists but has no OAuth at all — the other half of
-        // `!connector || !connector.finishAuth`, and the id an attacker is
-        // likeliest to guess right. It must not answer differently from an id
-        // that names nothing.
-        api("plain", {
-          description: "not an OAuth connector",
-          tools: [
-            {
-              name: "noop",
-              description: "does nothing",
-              annotations: { readOnlyHint: true },
-              handler: async () => ({}),
-            },
-          ],
-        }),
-        callbackConnector("unverified", async (code) => {
-          unverifiedFinish(code);
-        }),
-        callbackConnector(
-          "throwing",
-          async (code) => {
-            throwingFinish(code);
-          },
-          async () => {
-            throw new Error("verifier unavailable");
-          },
-        ),
-      ],
-    });
-    await storage.set(STATE_KEY, "the-real-state");
-    const shape = async (res: Response) => ({
-      status: res.status,
-      body: await res.text(),
-      headers: Object.fromEntries(res.headers.entries()),
-    });
-    const unknown = await shape(
-      await connecta.fetch(
-        new Request(
-          `${BASE}/oauth/callback/nope?code=abc&state=attacker-state`,
-        ),
-      ),
-    );
-    const nonOAuth = await shape(
-      await edgeConnecta.fetch(
-        new Request(
-          `${BASE}/oauth/callback/plain?code=abc&state=attacker-state`,
-        ),
-      ),
-    );
-    const missingState = await shape(
-      await connecta.fetch(
-        new Request(`${BASE}/oauth/callback/svc?code=abc`),
-      ),
-    );
-    const mismatchedState = await shape(
-      await connecta.fetch(
-        new Request(
-          `${BASE}/oauth/callback/svc?code=abc&state=attacker-state`,
-        ),
-      ),
-    );
-    const noVerifier = await shape(
-      await edgeConnecta.fetch(
-        new Request(
-          `${BASE}/oauth/callback/unverified?code=abc&state=attacker-state`,
-        ),
-      ),
-    );
-    const throwingVerifier = await shape(
-      await edgeConnecta.fetch(
-        new Request(
-          `${BASE}/oauth/callback/throwing?code=abc&state=attacker-state`,
-        ),
-      ),
-    );
-    expect(unknown.status).toBe(400);
-    expect(unknown.body).toContain("Authorization could not be completed");
-    expect(nonOAuth).toEqual(unknown);
-    expect(missingState).toEqual(unknown);
-    expect(mismatchedState).toEqual(unknown);
-    expect(noVerifier).toEqual(unknown);
-    expect(throwingVerifier).toEqual(unknown);
-    expect(spy).not.toHaveBeenCalled();
-    expect(unverifiedFinish).not.toHaveBeenCalled();
-    expect(throwingFinish).not.toHaveBeenCalled();
-  });
-
-  it("logs the reason for an opaque state refusal", async () => {
-    const warn = vi.fn();
-    const logger = { ...silentLogger, warn };
-    const { connecta, storage } = makeConnecta(
-      vi.fn(),
-      memoryStorage(),
-      logger,
-    );
-    warn.mockClear();
-    await storage.set(STATE_KEY, "the-real-state");
-    await bindCallback(connecta, "svc", "attacker-state");
-
-    await connecta.fetch(
-      new Request(
-        `${BASE}/oauth/callback/svc?code=abc&state=attacker-state`,
-      ),
-    );
-
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(required(warn.mock.calls[0])[0]).toContain(
-      "state did not match the pending authorization flow",
-    );
-  });
-
-  it("refuses a missing state before consulting browser identity or the verifier", async () => {
-    const warn = vi.fn();
-    const { connecta, storage } = makeConnecta(vi.fn(), memoryStorage(), {
-      ...silentLogger,
-      warn,
-    });
-    warn.mockClear();
-    await storage.set(STATE_KEY, "the-real-state");
-
-    await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc`));
-
-    expect(warn).not.toHaveBeenCalled();
-  });
-
-  // The response channel is closed above; this closes the clock. A refusal that
-  // returns without touching storage answers measurably sooner than one that
-  // read `oauth:state` first — on a KV-backed deployment that is a network hop
-  // — which would re-open the enumeration the flat 400 exists to deny. Counting
-  // reads rather than timing them: a wall-clock assertion is a CI flake waiting
-  // to happen, and the count is the property that actually matters.
-  it("an unknown id costs the same storage reads as a configured one", async () => {
-    const reads: string[] = [];
-    const inner = memoryStorage();
-    const counting: KVStorage = {
-      list: (prefix) => inner.list(prefix),
-      compareAndSet: (key, expected, next, options) => inner.compareAndSet(key, expected, next, options),
-      get: async (k) => {
-        reads.push(k);
-        return inner.get(k);
-      },
-      set: (k, v, o) => inner.set(k, v, o),
-      delete: (k) => inner.delete(k),
-    };
-    const connecta = createTestConnecta({
-      publicUrl: BASE, auth: callbackAuth,
-      storage: counting,
-      logger: silentLogger,
-      connectors: [
-        remoteMcp("svc", {
-          url: "https://unused.example/mcp",
-          auth: { type: "oauth" },
-          _transportFactory: () => ({ async close() {} }) as unknown as Transport,
-        }),
-        api("plain", {
-          description: "not an OAuth connector",
-          tools: [
-            {
-              name: "noop",
-              description: "does nothing",
-              annotations: { readOnlyHint: true },
-              handler: async () => ({}),
-            },
-          ],
-        }),
-        callbackConnector("unverified", async () => {}),
-      ],
-    });
-    await counting.set(STATE_KEY, "the-real-state");
-
-    const readsFor = async (id: string) => {
-      reads.length = 0;
-      const res = await connecta.fetch(
-        new Request(
-          `${BASE}/oauth/callback/${id}?code=abc&state=attacker-state`,
-        ),
-      );
-      expect(res.status).toBe(400);
-      return [...reads];
-    };
-
-    expect(await readsFor("svc")).toHaveLength(3);
-    expect(await readsFor("nope")).toHaveLength(3);
-    // The configured downstream-OAuth connector is the baseline: state plus
-    // the epoch that decides whether that state is still current.
-    expect((await readsFor("svc")).slice(1)).toEqual([
-      "conn:svc:oauth:generation",
-      "conn:svc:oauth:state",
+    expect(await provider(bob).tokens(ctxA)).toEqual({ ...bobTokens, ...ctxA });
+    expect(await provider(alice).liveEpoch()).not.toBe(await provider(bob).liveEpoch());
+    expect((await backing.list("")).sort()).toEqual([
+      `principal:alice:conn:svc:${GRANT}`,
+      `principal:bob:conn:svc:${GRANT}`,
     ]);
-    // Every free-by-default refusal pays the same reads in its own namespace,
-    // where an unconfigured id simply misses.
-    expect((await readsFor("nope")).slice(1)).toEqual([
-      "conn:nope:oauth:generation",
-      "conn:nope:oauth:state",
-    ]);
-    expect((await readsFor("plain")).slice(1)).toEqual([
-      "conn:plain:oauth:generation",
-      "conn:plain:oauth:state",
-    ]);
-    expect((await readsFor("unverified")).slice(1)).toEqual([
-      "conn:unverified:oauth:generation",
-      "conn:unverified:oauth:state",
-    ]);
-
-    // A configured connector with no outstanding flow still pays both reads.
-    await counting.delete(STATE_KEY);
-    expect((await readsFor("svc")).slice(1)).toEqual([
-      "conn:svc:oauth:generation",
-      "conn:svc:oauth:state",
-    ]);
-  });
-
-  it("INV-6: keeps a verifier exception's text out of the operator log", async () => {
-    const warn = vi.fn();
-    const finishAuth = vi.fn();
-    const thrownMessage = `bad\n${"x".repeat(100)}`;
-    const connecta = createTestConnecta({
-      publicUrl: BASE, auth: callbackAuth,
-      storage: memoryStorage(),
-      logger: { ...silentLogger, warn },
-      connectors: [
-        callbackConnector(
-          "throwing",
-          async (code) => {
-            finishAuth(code);
-          },
-          async () => {
-            throw new Error(thrownMessage);
-          },
-        ),
-      ],
-    });
-    await bindCallback(connecta, "throwing", "attacker-state");
-    warn.mockClear();
-
-    const res = await connecta.fetch(
-      new Request(
-        `${BASE}/oauth/callback/throwing?code=abc&state=attacker-state`,
-      ),
-    );
-
-    expect(res.status).toBe(400);
-    expect(finishAuth).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(required(warn.mock.calls[0])[0]).toContain("verifyState threw");
-    expect(required(warn.mock.calls[0])[1]).toEqual({ connector: "throwing", errorClass: "Error" });
-    expect(JSON.stringify(warn.mock.calls)).not.toContain("x".repeat(10));
-  });
-
-  it("error param → 400", async () => {
-    const { connecta } = makeConnecta(vi.fn());
-    const res = await connecta.fetch(
-      new Request(`${BASE}/oauth/callback/svc?error=access_denied`),
-    );
-    expect(res.status).toBe(400);
-    expect(await res.text()).toContain('data-oauth-callback="denied"');
-  });
-
-  it("missing code → 400", async () => {
-    const { connecta } = makeConnecta(vi.fn());
-    const res = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc`));
-    expect(res.status).toBe(400);
-  });
-
-  it("escapes a malicious error param (no raw <script> in the body)", async () => {
-    const { connecta } = makeConnecta(vi.fn());
-    const evil = "<script>alert(1)</script>";
-    const res = await connecta.fetch(
-      new Request(
-        `${BASE}/oauth/callback/svc?error=${encodeURIComponent(evil)}`,
-      ),
-    );
-    expect(res.status).toBe(400);
-    const body = await res.text();
-    expect(body).not.toContain(evil);
-    expect(body).not.toContain("&lt;script&gt;");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// remoteMcp() refresh failures: a dead grant is an authorization problem, an
-// unreachable or throttled token endpoint is an outage. The SDK's own auth()
-// blurs the two (see KvOAuthProvider), so these run the whole path.
-// ---------------------------------------------------------------------------
-describe("remoteMcp() dead and transient refresh grants", () => {
-  const issuer = "https://auth.example";
-  const mcpUrl = "https://downstream.example/mcp";
-  const resourceMetadataUrl =
-    "https://downstream.example/.well-known/oauth-protected-resource";
-  const SEAL_KEY = Buffer.alloc(32, 7).toString("base64");
-
-  type TokenAnswer = () => Response | Promise<Response>;
-
-  async function seededStorage(
-    sealer?: ReturnType<typeof vaultOAuthSealer>,
-    accessToken = "access-old",
-  ) {
-    const storage = memoryStorage();
-    const seeder = new KvOAuthProvider("svc", storage, REDIRECT, undefined, true, sealer);
-    await seeder.saveClientInformation(
-      {
-        client_id: "connecta-client",
-        redirect_uris: [REDIRECT],
-        token_endpoint_auth_method: "none",
-      },
-      { issuer },
-    );
-    await seeder.saveTokens(
-      {
-        access_token: accessToken,
-        token_type: "Bearer",
-        refresh_token: "refresh-old",
-      },
-      { issuer },
-    );
-    return storage;
-  }
-
-  /**
-   * The `https://auth.example` fixture: a downstream that rejects the stored
-   * access token, and a token endpoint whose answer each case chooses.
-   */
-  function downstream(answer: {
-    current: TokenAnswer;
-    /** Accept the stored token for connect, then 401 every tool call. */
-    revokedAfterConnect?: boolean;
-  }) {
-    const counts = { token: 0, register: 0, rejected: 0 };
-    const redeemed: string[] = [];
-    let rejectedAll = deferred<void>();
-    let expectedRejections = Infinity;
-    let tokenEntered = deferred<void>();
-    let tokenGate: Promise<void> = Promise.resolve();
-    const fetchStub: FetchLike = async (input, init = {}) => {
-      const url = new URL(input);
-      if (url.href === resourceMetadataUrl) {
-        return Response.json({
-          resource: mcpUrl,
-          authorization_servers: [issuer],
-        });
-      }
-      if (url.href === `${issuer}/.well-known/oauth-authorization-server`) {
-        return Response.json({
-          issuer,
-          authorization_endpoint: `${issuer}/authorize`,
-          token_endpoint: `${issuer}/token`,
-          registration_endpoint: `${issuer}/register`,
-          response_types_supported: ["code"],
-          grant_types_supported: ["authorization_code", "refresh_token"],
-          code_challenge_methods_supported: ["S256"],
-          token_endpoint_auth_methods_supported: ["none"],
-        });
-      }
-      if (url.href === `${issuer}/register`) {
-        counts.register++;
-        return Response.json({
-          client_id: "replacement-client",
-          redirect_uris: [REDIRECT],
-          token_endpoint_auth_method: "none",
-          grant_types: ["authorization_code", "refresh_token"],
-          response_types: ["code"],
-        });
-      }
-      if (url.href === `${issuer}/token`) {
-        counts.token++;
-        expect(init.body).toBeInstanceOf(URLSearchParams);
-        redeemed.push((init.body as URLSearchParams).get("refresh_token") ?? "");
-        tokenEntered.resolve();
-        await tokenGate;
-        return answer.current();
-      }
-      if (url.href !== mcpUrl) {
-        throw new Error(`Unexpected OAuth test request: ${url.href}`);
-      }
-      if (init.method !== "POST") return new Response(null, { status: 405 });
-      const authorization = new Headers(init.headers).get("authorization");
-      const method = (JSON.parse(String(init.body)) as { method: string }).method;
-      if (
-        authorization !== "Bearer access-new" ||
-        (answer.revokedAfterConnect && method === "tools/call")
-      ) {
-        counts.rejected++;
-        if (counts.rejected >= expectedRejections) rejectedAll.resolve();
-        return new Response(null, {
-          status: 401,
-          headers: {
-            "www-authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
-          },
-        });
-      }
-      const message = JSON.parse(String(init.body)) as {
-        id?: string | number;
-        method: string;
-        params?: { protocolVersion?: string };
-      };
-      if (message.method === "notifications/initialized") {
-        return new Response(null, { status: 202 });
-      }
-      const result =
-        message.method === "initialize"
-          ? {
-              protocolVersion: message.params?.protocolVersion,
-              capabilities: { tools: {} },
-              serverInfo: { name: "refreshing", version: "1.0.0" },
-            }
-          : message.method === "tools/list"
-            ? { tools: [] }
-            : undefined;
-      return Response.json({ jsonrpc: "2.0", id: message.id, result });
-    };
-    return {
-      fetchStub,
-      counts,
-      redeemed,
-      /** Hold the token endpoint until `callers` scopes have all been rejected. */
-      gate(callers: number) {
-        expectedRejections = callers;
-        rejectedAll = deferred<void>();
-        tokenEntered = deferred<void>();
-        const release = deferred<void>();
-        tokenGate = release.promise;
-        return {
-          ready: Promise.all([rejectedAll.promise, tokenEntered.promise]),
-          release: () => release.resolve(),
-        };
-      },
-    };
-  }
-
-  function connector() {
-    return remoteMcp("svc", {
-      url: mcpUrl,
-      auth: { type: "oauth" },
-      versionNegotiation: "legacy",
-    });
-  }
-
-  const scope = (
-    storage: KVStorage,
-    sealer?: ReturnType<typeof vaultOAuthSealer>,
-  ): ConnectorContext =>
-    attachOAuthSealer({ ...ctx(storage), requestScope: {} }, sealer);
-
-  async function failureOf(promise: Promise<unknown>) {
-    try {
-      await promise;
-    } catch (error) {
-      return { error, classified: classifyCallError(error) };
-    }
-    throw new Error("expected the call to fail");
-  }
-
-  const deadAnswers: [string, TokenAnswer][] = [
-    [
-      "GitHub's 200 bad_refresh_token",
-      () =>
-        Response.json({
-          error: "bad_refresh_token",
-          error_description: "The refresh token passed is incorrect or expired.",
-          error_uri: "https://docs.github.com/apps",
-        }),
-    ],
-    [
-      "400 invalid_grant",
-      () =>
-        Response.json(
-          { error: "invalid_grant", error_description: "Token revoked." },
-          { status: 400 },
-        ),
-    ],
-    [
-      "401 invalid_client",
-      () =>
-        Response.json(
-          { error: "invalid_client", error_description: "Unknown client." },
-          { status: 401 },
-        ),
-    ],
-    [
-      "400 invalid_scope",
-      () => Response.json({ error: "invalid_scope" }, { status: 400 }),
-    ],
-    ["404 with no body", () => new Response(null, { status: 404 })],
-  ];
-
-  it.each(deadAnswers)(
-    "%s ends as auth_required, drops the dead grant, and authorize_connector reaches consent",
-    async (_label, tokenAnswer) => {
-      const storage = await seededStorage();
-      const answer = { current: tokenAnswer };
-      const server = downstream(answer);
-      const c = connector();
-      vi.stubGlobal("fetch", server.fetchStub);
-      try {
-        const passive = scope(storage);
-        const { error, classified } = await failureOf(c.listTools(passive));
-        expect(error).toBeInstanceOf(Error);
-        expect(classified).toMatchObject({
-          code: "downstream_oauth_required",
-          retryable: false,
-        });
-        expect(classified.message).toContain("authorize_connector");
-        expect(server.counts.token).toBe(1);
-        // A passive call never starts consent, and never registers a client.
-        expect(server.counts.register).toBe(0);
-        const reader = new KvOAuthProvider("svc", storage, REDIRECT);
-        expect(await reader.pendingAuthorizationUrl()).toBeUndefined();
-        // The dead grant is gone, so nothing will replay it.
-        expect(await reader.tokens()).toBeUndefined();
-        await expect(c.status!(passive)).resolves.toMatchObject({
-          state: "auth_required",
-        });
-        await c.closeScope?.(passive);
-
-        const later = scope(storage);
-        await expect(c.status!(later)).resolves.toMatchObject({
-          state: "auth_required",
-        });
-        await c.closeScope?.(later);
-        expect(server.counts.token).toBe(1);
-
-        const authorizing = scope(storage);
-        const started = await c.startAuth!(authorizing);
-        expect(started.state).toBe("auth_required");
-        expect(started.authorizationUrl).toMatch(
-          new RegExp(`^${issuer}/authorize\\?`),
-        );
-        await c.closeScope?.(authorizing);
-        expect(server.redeemed).toEqual(["refresh-old"]);
-      } finally {
-        vi.unstubAllGlobals();
-      }
-    },
-  );
-
-  it("drops a dead grant held as sealed state", async () => {
-    const sealer = vaultOAuthSealer(
-      new CredentialVault(memoryStorage(), SEAL_KEY),
-      "svc",
-      undefined,
-      silentLogger,
-    );
-    const storage = await seededStorage(sealer);
-    const tokenKey = oauthValueStorageKey("oauth:tokens", "legacy");
-    expect(await storage.get(tokenKey)).not.toContain("refresh-old");
-    const server = downstream({
-      current: () => Response.json({ error: "bad_refresh_token" }),
-    });
-    const c = connector();
-    vi.stubGlobal("fetch", server.fetchStub);
-    try {
-      const passive = scope(storage, sealer);
-      const { classified } = await failureOf(c.listTools(passive));
-      expect(classified).toMatchObject({ code: "downstream_oauth_required" });
-      await c.closeScope?.(passive);
-      expect(await storage.get(tokenKey)).toBeNull();
-
-      const authorizing = scope(storage, sealer);
-      const started = await c.startAuth!(authorizing);
-      expect(started.authorizationUrl).toMatch(new RegExp(`^${issuer}/authorize\\?`));
-      await c.closeScope?.(authorizing);
-      expect(server.redeemed).toEqual(["refresh-old"]);
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  describe("discardRefusedGrant", () => {
-    const tokenKey = oauthValueStorageKey("oauth:tokens", "legacy");
-    const sealer = () =>
-      vaultOAuthSealer(
-        new CredentialVault(memoryStorage(), SEAL_KEY),
-        "svc",
-        undefined,
-        silentLogger,
-      );
-
-    it("deletes through compareAndSet against the exact sealed raw value it read", async () => {
-      const s = sealer();
-      const storage = await seededStorage(s);
-      const sealedRaw = await storage.get(tokenKey);
-      expect(sealedRaw).not.toContain("refresh-old");
-      const cas = vi.spyOn(storage, "compareAndSet");
-      const del = vi.spyOn(storage, "delete");
-      const p = new KvOAuthProvider("svc", storage, REDIRECT, undefined, false, s);
-      await p.discardRefusedGrant("refresh-old", "legacy");
-      expect(cas).toHaveBeenCalledWith(tokenKey, sealedRaw, null);
-      expect(del).not.toHaveBeenCalled();
-      expect(await storage.get(tokenKey)).toBeNull();
-    });
-
-    it("keeps a consent that lands between the read and the compare-and-set delete", async () => {
-      const s = sealer();
-      const storage = await seededStorage(s);
-      const consent = new KvOAuthProvider("svc", storage, REDIRECT, undefined, true, s);
-      const originalCas = storage.compareAndSet!.bind(storage);
-      let casResult: boolean | undefined;
-      storage.compareAndSet = async (key, expected, next, opts) => {
-        if (key === tokenKey) {
-          // A callback on another request completes consent right here.
-          await consent.saveTokens(
-            {
-              access_token: "access-consented",
-              token_type: "Bearer",
-              refresh_token: "refresh-consented",
-            },
-            { issuer },
-          );
-        }
-        casResult = await originalCas(key, expected, next, opts);
-        return casResult;
-      };
-      const del = vi.spyOn(storage, "delete");
-      const p = new KvOAuthProvider("svc", storage, REDIRECT, undefined, false, s);
-      await p.discardRefusedGrant("refresh-old", "legacy");
-      expect(casResult).toBe(false);
-      expect(del).not.toHaveBeenCalled();
-      expect(await consent.tokens()).toMatchObject({
-        access_token: "access-consented",
-        refresh_token: "refresh-consented",
-      });
-    });
-
-    it("leaves a different refresh token alone", async () => {
-      const storage = await seededStorage();
-      const p = new KvOAuthProvider("svc", storage, REDIRECT, undefined, false);
-      await p.discardRefusedGrant("refresh-other", "legacy");
-      expect(await p.tokens()).toMatchObject({ refresh_token: "refresh-old" });
-    });
-  });
-
-  it("gives every caller joined on a dead refresh flight the same auth_required", async () => {
-    const storage = await seededStorage();
-    const server = downstream({
-      current: () => Response.json({ error: "bad_refresh_token" }),
-    });
-    const c = connector();
-    vi.stubGlobal("fetch", server.fetchStub);
-    try {
-      const gate = server.gate(3);
-      const scopes = Array.from({ length: 3 }, () => scope(storage));
-      const calls = Promise.all(scopes.map((s) => failureOf(c.listTools(s))));
-      await gate.ready;
-      gate.release();
-      const failures = await calls;
-      expect(failures.map((f) => f.classified.code)).toEqual([
-        "downstream_oauth_required",
-        "downstream_oauth_required",
-        "downstream_oauth_required",
-      ]);
-      expect(server.counts.token).toBe(1);
-      const reader = new KvOAuthProvider("svc", storage, REDIRECT);
-      expect(await reader.tokens()).toBeUndefined();
-      expect(await reader.pendingAuthorizationUrl()).toBeUndefined();
-      await Promise.all(scopes.map((s) => c.closeScope?.(s)));
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it.each(["plain refusal", "timeout temporarily rate limit 503", "invalid_grant"])(
-    "INV-6 INV-9: HTTP 403 refresh denial ignores %s and keeps the grant without consent",
-    async prose => {
-      const storage = await seededStorage();
-      const server = downstream({ current: () => Response.json({ error: "invalid_grant", error_description: prose }, { status: 403 }) });
-      const c = connector();
-      vi.stubGlobal("fetch", server.fetchStub);
-      const passive = scope(storage);
-      try {
-        const { error, classified } = await failureOf(c.listTools(passive));
-        expect(classified).toMatchObject({ code: "provider_permission_denied", retryable: false });
-        expect(classified.message).toContain("Check the account's permissions");
-        expect(classified.message).not.toMatch(/authorize_connector|retry authorization/);
-        expect((error as Error).cause).toBeUndefined();
-        expect(server.counts.token).toBe(1);
-        const reader = new KvOAuthProvider("svc", storage, REDIRECT);
-        expect(await reader.tokens()).toMatchObject({ refresh_token: "refresh-old" });
-        expect(await reader.pendingAuthorizationUrl()).toBeUndefined();
-        expect(await c.status!(passive)).toMatchObject({ state: "error" });
-      } finally {
-        await c.closeScope!(passive);
-      }
-    },
-  );
-
-  const transientAnswers: [
-    string,
-    TokenAnswer,
-    { code: string; retryAfterMs?: number },
-  ][] = [
-    [
-      "503 server_error",
-      () =>
-        Response.json(
-          { error: "server_error", error_description: "down" },
-          { status: 503 },
-        ),
-      { code: "unavailable" },
-    ],
-    [
-      "503 temporarily_unavailable with Retry-After",
-      () =>
-        Response.json(
-          { error: "temporarily_unavailable" },
-          { status: 503, headers: { "retry-after": "12" } },
-        ),
-      { code: "unavailable", retryAfterMs: 12_000 },
-    ],
-    [
-      "502 with a non-OAuth body",
-      () => new Response("Bad Gateway", { status: 502 }),
-      { code: "unavailable" },
-    ],
-    [
-      "500 invalid_grant",
-      () => Response.json({ error: "invalid_grant" }, { status: 500 }),
-      { code: "unavailable" },
-    ],
-    ["408", () => new Response(null, { status: 408 }), { code: "unavailable" }],
-    ["425", () => new Response(null, { status: 425 }), { code: "unavailable" }],
-    [
-      "429 with Retry-After",
-      () =>
-        Response.json(
-          { error: "too_many_requests" },
-          { status: 429, headers: { "retry-after": "30" } },
-        ),
-      { code: "rate_limited", retryAfterMs: 30_000 },
-    ],
-    [
-      "429 without Retry-After",
-      () => new Response("slow down", { status: 429 }),
-      { code: "rate_limited" },
-    ],
-    [
-      "a network error",
-      () => {
-        throw new TypeError("fetch failed", {
-          cause: Object.assign(new Error("connect ECONNREFUSED"), {
-            code: "ECONNREFUSED",
-          }),
-        });
-      },
-      { code: "unavailable" },
-    ],
-  ];
-
-  it.each(transientAnswers)(
-    "%s stays a retryable outage, keeps the grant, and writes no consent",
-    async (_label, tokenAnswer, expected) => {
-      const storage = await seededStorage();
-      const answer = { current: tokenAnswer };
-      const server = downstream(answer);
-      const c = connector();
-      vi.stubGlobal("fetch", server.fetchStub);
-      try {
-        const passive = scope(storage);
-        const { classified } = await failureOf(c.listTools(passive));
-        expect(classified).toMatchObject({ ...expected, retryable: true });
-        if (expected.retryAfterMs === undefined) {
-          expect(classified.retryAfterMs).toBeUndefined();
-        }
-        expect(server.counts.token).toBe(1);
-        expect(server.counts.register).toBe(0);
-        const reader = new KvOAuthProvider("svc", storage, REDIRECT);
-        expect(await reader.pendingAuthorizationUrl()).toBeUndefined();
-        expect(await reader.tokens()).toMatchObject({
-          access_token: "access-old",
-          refresh_token: "refresh-old",
-        });
-        // Nothing is latched: a status read in the same scope tries again,
-        // meets the same outage, and still reports it as one.
-        await expect(c.status!(passive)).resolves.toMatchObject({
-          state: "error",
-        });
-        await c.closeScope?.(passive);
-        expect(server.counts.token).toBe(2);
-        expect(await reader.pendingAuthorizationUrl()).toBeUndefined();
-
-        // The outage passes; the kept grant still works.
-        answer.current = () =>
-          Response.json({
-            access_token: "access-new",
-            token_type: "Bearer",
-            refresh_token: "refresh-new",
-          });
-        const later = scope(storage);
-        await expect(c.listTools(later)).resolves.toEqual([]);
-        await c.closeScope?.(later);
-        expect(server.redeemed).toEqual([
-          "refresh-old",
-          "refresh-old",
-          "refresh-old",
-        ]);
-        expect(await reader.tokens()).toMatchObject({
-          refresh_token: "refresh-new",
-        });
-      } finally {
-        vi.unstubAllGlobals();
-      }
-    },
-  );
-
-  it("refreshes a grant an earlier release bound, without the SDK warning on the console", async () => {
-    // From v0.9.0 to v0.28.1 a grant from before binding was bound on its
-    // first read: the envelope carries the issuer, the value inside does not.
-    const storage = memoryStorage();
-    const bound = (value: object) =>
-      JSON.stringify({ connectaOAuthVersion: 2, generation: "legacy", issuer, value });
-    await storage.set("oauth:client", bound({
-      client_id: "connecta-client",
-      redirect_uris: [REDIRECT],
-      token_endpoint_auth_method: "none",
-    }));
-    await storage.set("oauth:tokens", bound({
-      access_token: "access-old",
-      token_type: "Bearer",
-      refresh_token: "refresh-old",
-    }));
-    const server = downstream({
-      current: () =>
-        Response.json({ access_token: "access-new", token_type: "Bearer", refresh_token: "refresh-new" }),
-    });
-    const c = connector();
-    vi.stubGlobal("fetch", server.fetchStub);
-    const output = consoleOutput();
-    try {
-      const passive = scope(storage);
-      await expect(c.listTools(passive)).resolves.toEqual([]);
-      expect(server.redeemed).toEqual(["refresh-old"]);
-      // Handed to the SDK carrying the stamp its envelope holds, so the SDK's
-      // own SEP-2352 check has nothing to warn about.
-      expect(output()).toBe("");
-      await c.closeScope?.(passive);
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it("reports a redeemed rotation it could not store as a retryable outage in fixed text, not as consent", async () => {
-    // Through @modelcontextprotocol/client 2.0.0, `auth()` swallowed a
-    // `saveTokens` failure and fell through to a fresh authorization, which a
-    // passive call reported as auth_required: a grant the server had just
-    // honored, sent to consent. From 2.1.0 the failure propagates, so what it
-    // says is connecta's to decide.
-    const seeded = await seededStorage();
-    let storageFailure: Error | undefined;
-    const storage: KVStorage = {
-      ...seeded,
-      get: (key) => seeded.get(key),
-      list: (prefix) => seeded.list!(prefix),
-      delete: (key) => seeded.delete(key),
-      set: async (key, value, options) => {
-        if (key === "oauth:tokens" && value.includes("access-new")) {
-          // A store whose error quotes the value it refused.
-          storageFailure = new Error(`write refused: ${value}`);
-          throw storageFailure;
-        }
-        await seeded.set(key, value, options);
-      },
-    };
-    const output = consoleOutput();
-    const server = downstream({
-      current: () =>
-        Response.json({
-          access_token: "access-new",
-          token_type: "Bearer",
-          refresh_token: "refresh-new",
-        }),
-    });
-    const c = connector();
-    vi.stubGlobal("fetch", server.fetchStub);
-    try {
-      const passive = scope(storage);
-      const { error, classified } = await failureOf(c.listTools(passive));
-      expect(storageFailure?.message).toContain("refresh-new");
-      expect(classified).toMatchObject({
-        code: "unavailable",
-        retryable: true,
-        message: 'Connector "svc" could not store its OAuth credentials; try again shortly.',
-      });
-      for (const surface of [String(error), JSON.stringify(classified), output()]) {
-        expect(surface).not.toMatch(/access-new|refresh-new/);
-      }
-      expect(server.counts.token).toBe(1);
-      expect(server.counts.register).toBe(0);
-      const reader = new KvOAuthProvider("svc", seeded, REDIRECT);
-      expect(await reader.pendingAuthorizationUrl()).toBeUndefined();
-      // Nothing was written over the grant it had.
-      expect(await reader.tokens()).toMatchObject({ refresh_token: "refresh-old" });
-      await c.closeScope?.(passive);
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it.each([
-    [
-      "a dead grant",
-      () => Response.json({ error: "bad_refresh_token" }),
-      { code: "downstream_oauth_required", retryable: false },
-      undefined,
-    ],
-    [
-      "an outage",
-      () => new Response("Service Unavailable", { status: 503 }),
-      { code: "unavailable", retryable: true },
-      { refresh_token: "refresh-old" },
-    ],
-  ])(
-    "classifies %s met by a tool call after connect",
-    async (_label, tokenAnswer, expected, keptTokens) => {
-      const storage = await seededStorage(undefined, "access-new");
-      const server = downstream({
-        current: tokenAnswer,
-        revokedAfterConnect: true,
-      });
-      const c = connector();
-      vi.stubGlobal("fetch", server.fetchStub);
-      try {
-        const passive = scope(storage);
-        await expect(c.listTools(passive)).resolves.toEqual([]);
-        expect(server.counts.token).toBe(0);
-        const { classified } = await failureOf(c.callTool("ping", {}, passive));
-        expect(classified).toMatchObject(expected);
-        expect(server.counts.token).toBe(1);
-        const reader = new KvOAuthProvider("svc", storage, REDIRECT);
-        expect(await reader.pendingAuthorizationUrl()).toBeUndefined();
-        if (keptTokens === undefined) {
-          expect(await reader.tokens()).toBeUndefined();
-        } else {
-          expect(await reader.tokens()).toMatchObject(keptTokens);
-        }
-        await c.closeScope?.(passive);
-      } finally {
-        vi.unstubAllGlobals();
-      }
-    },
-  );
-
-  it("gives every caller joined on a transient refresh flight the same retryable outage", async () => {
-    const storage = await seededStorage();
-    const tokenKey = oauthValueStorageKey("oauth:tokens", "legacy");
-    // A follower's last token read comes from the coordinator itself, right
-    // before it joins the flight: its flow's entry decision, the bearer header
-    // read, the SDK's issuer read, then the coordinator's. Hold the owner's
-    // token request until both followers have made all four, so none can
-    // arrive after the flight ends.
-    let tokenReads = 0;
-    const originalGet = storage.get.bind(storage);
-    storage.get = async (key) => {
-      if (key === tokenKey) tokenReads++;
-      return originalGet(key);
-    };
-    const server = downstream({
-      current: () =>
-        Response.json({ error: "server_error" }, { status: 503 }),
-    });
-    const c = connector();
-    vi.stubGlobal("fetch", server.fetchStub);
-    try {
-      const gate = server.gate(3);
-      const scopes = Array.from({ length: 3 }, () => scope(storage));
-      const calls = Promise.all(scopes.map((s) => failureOf(c.listTools(s))));
-      await gate.ready;
-      await vi.waitFor(() => expect(tokenReads).toBe(12));
-      // The join itself follows one more generation read: let it land.
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      gate.release();
-      const failures = await calls;
-      for (const { classified } of failures) {
-        expect(classified).toMatchObject({ code: "unavailable", retryable: true });
-      }
-      expect(server.counts.token).toBe(1);
-      const reader = new KvOAuthProvider("svc", storage, REDIRECT);
-      expect(await reader.pendingAuthorizationUrl()).toBeUndefined();
-      expect(await reader.tokens()).toMatchObject({ refresh_token: "refresh-old" });
-      await Promise.all(scopes.map((s) => c.closeScope?.(s)));
-    } finally {
-      vi.unstubAllGlobals();
-    }
   });
 });

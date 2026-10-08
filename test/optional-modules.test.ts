@@ -196,12 +196,16 @@ describe("optional deployment modules", () => {
     const active = new KvOAuthProvider("oauth", storage, BASE, undefined, true);
     const state = await active.state();
     await active.saveCodeVerifier("original");
+    await active.redirectToAuthorization(new URL(`${BASE}/authorize?state=${state}`));
+    const pending = await storage.list("");
     const passive = new KvOAuthProvider("oauth", storage, BASE, undefined, false);
     await expect(passive.state()).rejects.toThrow("Authorization required");
     await expect(passive.saveCodeVerifier("replacement")).rejects.toThrow("Authorization required");
     await expect(passive.redirectToAuthorization(new URL(BASE))).rejects.toThrow("Authorization required");
-    expect(await active.verifyState(state)).toBe(true);
-    expect(await active.codeVerifier()).toBe("original");
+    expect(await storage.list("")).toEqual(pending);
+    const callback = new KvOAuthProvider("oauth", storage, BASE, undefined, false);
+    expect(await callback.verifyState(state)).toBe(true);
+    expect(await callback.codeVerifier()).toBe("original");
   });
 
   it("mounts activity only with a reader and enforces interactive access", async () => {

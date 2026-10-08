@@ -6,6 +6,7 @@ import { activityHistory } from "../src/activity.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import type { ToolCallActivityEvent } from "../src/activity.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { oauthGrantKeys, scopes } from "../src/storage/keys.js";
 import type { Connector, InboundAuth, KVStorage } from "../src/types.js";
 import { createTestConnecta } from "./helpers.js";
 import { calcApi, fakeClerkAuth } from "./fixtures/http.js";
@@ -296,7 +297,7 @@ describe("operator data routes", () => {
     }
   });
 
-  it("drains an uncancellable generation write before returning a timeout", async () => {
+  it("drains an uncancellable grant write before returning a timeout", async () => {
     vi.useFakeTimers();
     const inner = memoryStorage();
     let entered!: () => void;
@@ -304,19 +305,20 @@ describe("operator data routes", () => {
     let release!: () => void;
     const blocked = new Promise<void>((resolve) => { release = resolve; });
     let stall = true;
+    const grantKey = `${scopes.connector("oauth")}${oauthGrantKeys.grant}`;
     const storage: KVStorage = {
       list: (prefix) => inner.list(prefix),
       get: (key) => inner.get(key),
       delete: (key) => inner.delete(key),
-      compareAndSet: (key, expected, next, options) =>
-        inner.compareAndSet!(key, expected, next, options),
-      async set(key, value, options) {
-        if (key === "conn:oauth:oauth:generation" && stall) {
+      set: (key, value, options) => inner.set(key, value, options),
+      // The restart replaces the grant's epoch with a compare-and-set.
+      async compareAndSet(key, expected, next, options) {
+        if (key === grantKey && stall) {
           stall = false;
           entered();
           await blocked;
         }
-        await inner.set(key, value, options);
+        return inner.compareAndSet(key, expected, next, options);
       },
     };
     let networkStarts = 0;
@@ -347,106 +349,6 @@ describe("operator data routes", () => {
     } finally {
       release();
       vi.useRealTimers();
-    }
-  });
-
-  it("drains a retirement at flow entry before returning a timeout", async () => {
-    // A grant from before issuer binding is retired when the flow begins,
-    // before the SDK runs. A start that times out meanwhile must still wait
-    // for that reset to land, not abandon it half-published.
-    const inner = memoryStorage();
-    await inner.set("conn:oauth:oauth:client", JSON.stringify({ client_id: "legacy-client" }));
-    await inner.set("conn:oauth:oauth:tokens", JSON.stringify({
-      access_token: "legacy-access", token_type: "Bearer", refresh_token: "legacy-refresh",
-    }));
-    const mcpUrl = "https://downstream.example/mcp";
-    const metadataUrl = "https://downstream.example/.well-known/oauth-protected-resource";
-    const issuer = "https://auth-a.example";
-    let registrations = 0;
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url === mcpUrl) {
-        return new Response(null, {
-          status: 401,
-          headers: { "www-authenticate": `Bearer resource_metadata="${metadataUrl}"` },
-        });
-      }
-      if (url === metadataUrl) {
-        return Response.json({ resource: mcpUrl, authorization_servers: [issuer] });
-      }
-      if (url === `${issuer}/.well-known/oauth-authorization-server`) {
-        return Response.json({
-          issuer,
-          authorization_endpoint: `${issuer}/authorize`,
-          token_endpoint: `${issuer}/token`,
-          registration_endpoint: `${issuer}/register`,
-          response_types_supported: ["code"],
-          code_challenge_methods_supported: ["S256"],
-          token_endpoint_auth_methods_supported: ["none"],
-        });
-      }
-      if (url === `${issuer}/register`) {
-        registrations++;
-        return Response.json({
-          ...(JSON.parse(String(init?.body)) as object),
-          client_id: `client-${registrations}`,
-        });
-      }
-      throw new Error(`Unexpected request: ${url}`);
-    }));
-    let generationWrites = 0;
-    let entered!: () => void;
-    const reachedEntryReset = new Promise<void>((resolve) => { entered = resolve; });
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => { release = resolve; });
-    const storage: KVStorage = {
-      list: (prefix) => inner.list(prefix),
-      get: (key) => inner.get(key),
-      delete: (key) => inner.delete(key),
-      // The entry retirement activates its epoch with a compare-and-set.
-      async compareAndSet(key, expected, next, options) {
-        if (key === "conn:oauth:oauth:generation" && ++generationWrites === 1) {
-          entered();
-          await blocked;
-        }
-        return inner.compareAndSet!(key, expected, next, options);
-      },
-      async set(key, value, options) {
-        if (key === "conn:oauth:oauth:generation" && ++generationWrites === 1) {
-          entered();
-          await blocked;
-        }
-        await inner.set(key, value, options);
-      },
-    };
-    try {
-      const connecta = createTestConnecta({
-        connectors: [remoteMcp("oauth", {
-          url: mcpUrl, auth: { type: "oauth" }, versionNegotiation: "legacy",
-        })],
-        auth: fakeClerkAuth(CLERK_OPTIONS), vault: oauthVault(storage), storage, publicUrl: BASE,
-      });
-      vi.useFakeTimers();
-      const continued = connectRequest(connecta, "/ui/oauth/oauth?mode=continue", { method: "POST" });
-      let answered = false;
-      void continued.then(() => { answered = true; }, () => { answered = true; });
-      await reachedEntryReset;
-      await vi.advanceTimersByTimeAsync(30_000);
-      expect(answered).toBe(false);
-      release();
-      expect((await continued).status).toBe(504);
-      vi.useRealTimers();
-      expect(await inner.get("conn:oauth:oauth:tokens")).toBeNull();
-
-      const next = await connectRequest(connecta, "/ui/oauth/oauth?mode=continue", { method: "POST" });
-      expect(next.status).toBe(302);
-      const nextGeneration = await storage.get("conn:oauth:oauth:generation");
-      await settle(2);
-      expect(await storage.get("conn:oauth:oauth:generation")).toBe(nextGeneration);
-    } finally {
-      release();
-      vi.useRealTimers();
-      vi.unstubAllGlobals();
     }
   });
 

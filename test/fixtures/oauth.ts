@@ -1,7 +1,9 @@
+import { oauthStateDigest } from "../../src/auth/downstream-oauth.js";
 import { encryptedCredentialVault } from "../../src/credentials.js";
 import { identityStorageKey } from "../../src/identity.js";
 import { fakeClerkAuth } from "./http.js";
 import { BASE, CLERK_OPTIONS, CREDENTIAL_KEY } from "./ui.js";
+import { oauthFlowKeys, oauthGrantKeys } from "../../src/storage/keys.js";
 import type { KVStorage } from "../../src/types.js";
 import type { Connecta } from "../../src/index.js";
 
@@ -28,4 +30,42 @@ export async function connectRequest(app: Connecta, path: string, init: RequestI
   if (response.status !== 200) return response;
   const { authorizationUrl } = await response.json() as { authorizationUrl: string };
   return visitConnect(app, authorizationUrl, init);
+}
+
+/** A grant record as layout 3 stores it without a sealing vault. */
+export interface StoredGrantRecord {
+  connectaOAuth: 3;
+  epoch: string;
+  flow?: string;
+  sealed?: string;
+  body?: {
+    issuer?: string;
+    client?: { value: Record<string, unknown>; binding?: string; carried?: true };
+    tokens?: { access_token: string; refresh_token?: string; token_type: string; [key: string]: unknown };
+    discovery?: Record<string, unknown>;
+  };
+}
+
+/** The owner's grant record in a connector namespace, or under `namespace` of a root. */
+export async function storedGrant(storage: KVStorage, namespace = ""): Promise<StoredGrantRecord | undefined> {
+  const raw = await storage.get(`${namespace}${oauthGrantKeys.grant}`);
+  return raw === null ? undefined : JSON.parse(raw) as StoredGrantRecord;
+}
+
+/**
+ * Write a plaintext grant record, as a vault-less deployment stores one, in a
+ * connector namespace or under `namespace` (`scopes.connector(id)`) of a root.
+ */
+export async function seedGrant(
+  storage: KVStorage,
+  body: NonNullable<StoredGrantRecord["body"]>,
+  epoch = "v3:seeded",
+  namespace = "",
+): Promise<void> {
+  await storage.set(`${namespace}${oauthGrantKeys.grant}`, JSON.stringify({ connectaOAuth: 3, epoch, body }));
+}
+
+/** The flow record key of the consent whose URL carries `state`. */
+export async function consentKey(state: string): Promise<string> {
+  return oauthFlowKeys.flow(await oauthStateDigest(state));
 }

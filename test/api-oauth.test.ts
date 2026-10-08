@@ -1,6 +1,5 @@
-import { callbackAuth, bindCallback } from "./fixtures/oauth.js";
+import { callbackAuth, bindCallback, storedGrant } from "./fixtures/oauth.js";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import { oauthValueStorageKey } from "../src/auth/downstream-oauth.js";
 import { api } from "../src/connectors/api.js";
 import type { ApiOAuthConfig, ApiOptions } from "../src/connectors/api.js";
 import { CredentialVault } from "../src/credentials.js";
@@ -8,6 +7,7 @@ import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { identityStorageKey } from "../src/identity.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { oauthFlowKeys, scopes } from "../src/storage/keys.js";
 import type { Connector, ConnectorContext, InboundAuth, KVStorage } from "../src/types.js";
 import { createTestConnecta, makeRegistry } from "./helpers.js";
 import { deferred } from "./fixtures/misc.js";
@@ -354,7 +354,7 @@ describe("api() oauth authorization start", () => {
     expect(status).toMatchObject({ state: "auth_required" });
     expect(status.authorizationUrl).toBeUndefined();
     const keys = await storage.list!("");
-    expect(keys.some((key) => key.includes("oauth:state") || key.includes("oauth:pending"))).toBe(false);
+    expect(keys).toEqual([]);
   });
 
   it("fails a call with no grant as auth_required, before any request", async () => {
@@ -633,11 +633,12 @@ describe("api() oauth refresh", () => {
 
     const { classified } = await failure(connector.callTool("whoami", {}, ctx()));
     expect(classified).toMatchObject({ code: "downstream_oauth_required" });
-    const generation = await storage.get("conn:ccb:oauth:generation");
-    expect(await storage.get(`conn:ccb:${oauthValueStorageKey("oauth:tokens", generation)}`)).toBeNull();
+    const grant = await storedGrant(storage, scopes.connector("ccb"));
+    expect(grant?.body?.tokens).toBeUndefined();
     expect((await connector.status!(ctx())).state).toBe("auth_required");
-    // A passive call wrote no consent URL.
-    expect(await storage.get(`conn:ccb:${oauthValueStorageKey("oauth:pending", generation)}`)).toBeNull();
+    // A passive call wrote no consent: the only one is the authorization's, claimed.
+    const consents = await storage.list(`${scopes.connector("ccb")}${oauthFlowKeys.prefix}`);
+    for (const key of consents) expect(await storage.get(key)).toContain('"consumed":true');
   });
 
   it("keeps the grant through an authorization-server outage and reports it retryable", async () => {
@@ -712,9 +713,8 @@ describe("api() oauth refresh", () => {
     await call;
     gate.resolve();
     await vi.waitFor(async () => {
-      const generation = await storage.get("conn:ccb:oauth:generation");
-      const stored = await storage.get(`conn:ccb:${oauthValueStorageKey("oauth:tokens", generation)}`);
-      expect(stored).toContain("refresh-alice-2");
+      const grant = await storedGrant(storage, scopes.connector("ccb"));
+      expect(grant?.body?.tokens?.refresh_token).toBe("refresh-alice-2");
     });
 
     // Redeployed against another authorization server: the rotation belongs
@@ -840,20 +840,20 @@ describe("api() oauth reset and disconnect", () => {
   it("INV-10: disconnect fences the grant until an explicit start, which passive reads never make", async () => {
     const { provider, connector, ctx, storage } = await connected();
     await connector.disconnectAuth!(ctx());
-    expect(await storage.get("conn:ccb:oauth:generation")).toMatch(/^disconnected:/);
+    expect((await storedGrant(storage, scopes.connector("ccb")))?.epoch).toMatch(/^disconnected:/);
     const status = await connector.status!(ctx());
     expect(status).toMatchObject({ state: "auth_required" });
     expect(status.message).toContain("disconnected by an operator");
     const { classified } = await failure(connector.callTool("whoami", {}, ctx()));
     expect(classified).toMatchObject({ code: "downstream_oauth_required" });
     expect(classified.message).toContain("disconnected by an operator");
-    expect(await storage.get("conn:ccb:oauth:generation")).toMatch(/^disconnected:/);
+    expect((await storedGrant(storage, scopes.connector("ccb")))?.epoch).toMatch(/^disconnected:/);
     expect(provider.apiAuthorizations).toEqual([]);
 
     // A plain (continue) start after a disconnect begins a new epoch and flow.
     const started = await connector.startAuth!(ctx());
     expect(started.authorizationUrl).toBeDefined();
-    expect(await storage.get("conn:ccb:oauth:generation")).toMatch(/^v2:/);
+    expect((await storedGrant(storage, scopes.connector("ccb")))?.epoch).toMatch(/^v3:/);
   });
 
   it("a healthy continue changes nothing, and a restart retires the grant", async () => {

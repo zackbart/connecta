@@ -250,8 +250,8 @@ successful write takes the same optional `ttlSeconds` as `set`. Each SQL claim
 is one statement, which SQLite executes atomically and D1 serializes on its
 primary. Everything that must claim a key exactly once relies on it with no
 read-then-write fallback: artifact head swaps, access-token issuance and
-capacity, OAuth handoff ownership, single-use connect links, downstream OAuth
-generation fences and grant discards, and the result stash.
+capacity, OAuth handoff ownership, single-use connect links, every downstream
+OAuth grant write and consent claim, and the result stash.
 
 Every key is built in `src/storage/keys.ts`, which lists each family with its
 scope, version, codec, and TTL policy; `test/storage-keys.node.test.ts` fails when
@@ -263,7 +263,7 @@ personal registry, `results:` and `subject:<key>:` for result paging.
 Keys and list prefixes must not contain U+0000 (NUL). D1, SQLite, and memory
 storage reject them with `TypeError` before accessing storage: Node 22's
 `node:sqlite` truncates TEXT results at NUL. Builders reject NUL in unencoded
-components; OAuth cleanup builders already percent-encode their components.
+components.
 State-file import validates all keys before writing. The `connecta_kv` table
 keeps its existing TEXT keys, including compatibility with the 0.28 schema.
 Storage writes no log lines. A refused import names the file and an entry's

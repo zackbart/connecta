@@ -1,8 +1,8 @@
 import { Effect } from "effect";
 import { closeConnectorScope } from "../connector-scope.js";
-import { oauthValueStorageKey } from "../auth/downstream-oauth.js";
+import { OAuthCallbackClaimedError, oauthStateDigest } from "../auth/downstream-oauth.js";
 import { failureRecord, logFailure } from "../operator-record.js";
-import { oauthKeys } from "../storage/keys.js";
+import { oauthFlowKeys } from "../storage/keys.js";
 import type { ConnectorContext } from "../types.js";
 import { escapeHtml, renderPage, resolveBranding, STATUS_ICONS } from "../branding.js";
 import {
@@ -85,12 +85,12 @@ function html(
  * paths that would otherwise pay nothing.
  *
  * Identical bodies do not hide a connector id if the clock still sorts them.
- * `KvOAuthProvider.verifyState` reads `oauth:state` and its generation before
- * it can reject a mismatched value, so a configured id costs two storage round
- * trips on the ordinary path while an id naming nothing used to touch no I/O.
- * That gap is an oracle: sample the two and a wordlist recovers the connector
- * list the flat 400 was meant to withhold. So zero-I/O refusals read the same
- * keys in the same `conn:<id>:` namespace, where an unconfigured id gets misses.
+ * `KvOAuthProvider.verifyState` reads the consent the state names before it
+ * can reject it, so a configured id costs a storage round trip on the
+ * ordinary path while an id naming nothing used to touch no I/O. That gap is
+ * an oracle: sample the two and a wordlist recovers the connector list the
+ * flat 400 was meant to withhold. So zero-I/O refusals read the same key in
+ * the same `conn:<id>:` namespace, where an unconfigured id gets a miss.
  *
  * This is deliberately *not* a constant-time claim: a hit and a miss are not
  * identical in a KV store, and a connector shipping its own `verifyState` may
@@ -104,12 +104,10 @@ function html(
  */
 async function equalizeRefusalCost(
   context: ConnectorContext,
+  state: string | null,
 ): Promise<void> {
   try {
-    const generation = await context.storage.get(oauthKeys.generation);
-    await context.storage.get(
-      oauthValueStorageKey(oauthKeys.field.state, generation),
-    );
+    await context.storage.get(oauthFlowKeys.flow(await oauthStateDigest(state ?? "")));
   } catch {
     // Deliberately ignored — see above.
   }
@@ -164,6 +162,16 @@ function exchangeErrorCode(err: unknown): string {
     : "";
 }
 
+/** The provider's own refusal of a duplicate callback, wherever it is wrapped. */
+function claimedByAnotherCallback(err: unknown): boolean {
+  const seen = new Set<unknown>();
+  for (let current = err; current instanceof Error && !seen.has(current); current = current.cause) {
+    if (current instanceof OAuthCallbackClaimedError) return true;
+    seen.add(current);
+  }
+  return false;
+}
+
 async function finishOAuthCallback(
   context: RouteContext,
 ): Promise<Response> {
@@ -187,7 +195,7 @@ async function finishOAuthCallback(
     : opts.registry.contextFor(id, baseUrl);
   const refused = () => html("invalid_callback", opts);
   if (!connector || !connector.finishAuth) {
-    await equalizeRefusalCost(connectorContext);
+    await equalizeRefusalCost(connectorContext, state);
     return refused();
   }
   try {
@@ -205,7 +213,7 @@ async function finishOAuthCallback(
     // CSRF / login-fixation guard: this route is intentionally public, so verify
     // the `state` matches the flow connecta started BEFORE exchanging the code.
     if (!connector.verifyState) {
-      await equalizeRefusalCost(connectorContext);
+      await equalizeRefusalCost(connectorContext, state);
       opts.config.logger.warn(
         `[connecta] refused an OAuth callback for connector ` +
           `${loggableValue(id)} with 400: it implements finishAuth but no ` +
@@ -255,6 +263,17 @@ async function finishOAuthCallback(
       await callbackRegistry!.invalidateStored(id);
       return withSessionCookies(html("connected", opts, connector), browserIdentity.sessionCookies);
     } catch (err) {
+      // A duplicate of a callback that already claimed this consent sent
+      // nothing: it is the already-used link the flat refusal describes, not
+      // an exchange the provider rejected.
+      if (claimedByAnotherCallback(err)) {
+        opts.logger.warn(
+          `[connecta] refused an OAuth callback for connector ` +
+            `${loggableValue(id)} with 400: another callback had already ` +
+            "claimed its state. No authorization code was exchanged.",
+        );
+        return refused();
+      }
       // Neither the page nor the log repeats what the exchange threw: the SDK
       // quotes the token endpoint's error_description or raw body, and a
       // provider echoing a client_secret_post request puts the secret there.
