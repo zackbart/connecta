@@ -25,8 +25,8 @@ export function guestPrelude(): string {
   return `${guestInitializer()}(connecta);`;
 }
 
-/** Capture a private initializer before a Worker evaluates its guest module. */
-export function guestInitializer(): string {
+/** Protect completion promises before any Worker or QuickJS guest runs. */
+export function guestPromiseInitializer(): string {
   return `(() => {
   const NativePromise = Promise;
   const nativeResolve = Function.prototype.call.bind(NativePromise.resolve);
@@ -62,6 +62,14 @@ export function guestInitializer(): string {
   // Async return values are adopted through their prototype's then method.
   // Guest callbacks must not change host completion.
   Object.freeze(NativePromise.prototype);
+})()`;
+}
+
+/** Capture a private initializer before a Worker evaluates its guest module. */
+export function guestInitializer(): string {
+  return `(() => {
+  ${guestPromiseInitializer()};
+  const NativePromise = Promise;
   const freeze = Object.freeze;
   const defineProperties = Object.defineProperties;
   // Protect the bridge codec and its object prototypes from guest hooks.

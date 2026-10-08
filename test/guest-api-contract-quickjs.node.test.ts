@@ -8,6 +8,7 @@ import { quickJsExecutor } from "../src/executors/quickjs.js";
 import {
   CAPABILITY_PROBE_CODE,
   caseConfig,
+  checkHostFailureArrays,
   checkQueuedWriteAtExhaustion,
   checkSharedPreludes,
   checkStashAuthority,
@@ -40,6 +41,9 @@ describe("guest API contract (QuickJS executor)", () => {
     await checkQueuedWriteAtExhaustion(executor);
   });
   for (const custom of [false, true]) {
+    it(`INV-3 INV-6: ${custom ? "customExecutor: " : ""}codec array hooks cannot change host validation and repair`, async () => {
+      await checkHostFailureArrays(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
+    });
     it(`INV-6 INV-7 INV-9: ${custom ? "customExecutor: " : ""}dispatched write timeouts retain diagnostics through caught guest errors`, async () => {
       await checkWriteDeadlineDiagnostics(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
     });

@@ -10,7 +10,12 @@ import type { AdmittingExecutor, ExecuteResult, ExecutorLease, ExecutorProvider 
 import { brandExecutor } from "./executor-contract.js";
 import { InvocationFailure } from "./invocation.js";
 import { parse, type Node } from "acorn";
-import { guestInitializer, guestPrelude, isolateGuestProgram } from "./guest-runtime.js";
+import { guestInitializer, guestPrelude, guestPromiseInitializer, isolateGuestProgram } from "./guest-runtime.js";
+
+/** Private RPC identity; published executor results contain only host facts. */
+type WorkerRunResult = ExecuteResult & {
+  failure?: NonNullable<ExecuteResult["failure"]> & { failureId?: string };
+};
 
 /** Parse guest syntax before rewriting imports; strings and regexes are data. */
 function routeGuestImports(source: string): string {
@@ -59,8 +64,10 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
       const disposers: Array<() => void> = [];
       let released = false;
       let executed = false;
+      let runEnded = false;
       let cancel: (() => void) | undefined;
       let hostProviders: ExecutorProvider[] | undefined;
+      const hostFailures = new Map<string, InvocationFailure["details"]>();
       // An upstream evaluation can remain pending after disposal. Its
       // dispatchers retain only these forwarders, detached on lease release.
       const forward = (index: number, name: string) => async (...args: unknown[]) => {
@@ -69,11 +76,19 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
           if (!fn) throw new Error("The Worker run ended.");
           return { ok: true, value: await fn(...args) };
         } catch (error) {
-          return { ok: false, error: error instanceof Error ? error.message : "Host call failed.",
-            ...(error instanceof InvocationFailure ? { call: error.details } : {}) };
+          const message = error instanceof Error ? error.message : "Host call failed.";
+          if (error instanceof InvocationFailure && !released && !runEnded) {
+            const failureId = crypto.randomUUID();
+            hostFailures.set(failureId, error.details);
+            // The codec may expose the copy to guest hooks. The authoritative
+            // record never leaves this host-side map.
+            return { ok: false, error: { message, code: error.details.code,
+              retryable: error.details.retryable, details: structuredClone(error.details) }, failureId };
+          }
+          return { ok: false, error: { message } };
         }
       };
-      let rpcOutcome: ExecuteResult | undefined;
+      let rpcOutcome: WorkerRunResult | undefined;
       // Keep each native method's receiver and make upstream's later finally
       // harmless. Release RPC stubs before the Worker Loader handle.
       const track = <T extends object>(resource: T, entrypoint = false): T => {
@@ -94,7 +109,7 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
               );
             }
             if (key === "evaluate" && entrypoint) return async (...args: unknown[]) => {
-              const result = await Reflect.apply(Reflect.get(target as object, key), target, args) as ExecuteResult;
+              const result = await Reflect.apply(Reflect.get(target as object, key), target, args) as WorkerRunResult;
               // Only the native RPC return channel supplies executor facts.
               rpcOutcome = result;
               return result;
@@ -128,13 +143,13 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
             isolated = isolated.replaceAll(bridge, `if (data.error) throw new NativeError(data.error);
           const reply = data.result;
           if (!reply.ok) {
-            const error = new NativeError(reply.error);
-            if (reply.call) {
-              retain(failures, error, reply.call);
+            const error = new NativeError(reply.error.message);
+            if (typeof reply.failureId === "string") {
+              retain(failures, error, reply.failureId);
               defineProperties(error, {
-                code: { value: reply.call.code, enumerable: true },
-                retryable: { value: reply.call.retryable, enumerable: true },
-                details: { value: freeze(clone(reply.call)), enumerable: true }
+                code: { value: reply.error.code, enumerable: true },
+                retryable: { value: reply.error.retryable, enumerable: true },
+                details: { value: freeze(clone(reply.error.details)), enumerable: true }
               });
             }
             throw error;
@@ -148,7 +163,7 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
             isolated = isolated.replace('new Error("Execution timed out")', 'timeoutError');
             isolated = isolated.replace('setTimeout(() => reject(timeoutError)', 'nativeSetTimeout(() => reject(timeoutError)');
             isolated = isolated.replace('return { result: undefined, error: err.message, logs: __logs };', `
-      const call = lookup(failures, err);
+      const failureId = lookup(failures, err);
       let name = "Error", message = "Program threw a value.", stack = "";
       try {
         if (typeof err === "string") message = slice(err, 0, 1000);
@@ -160,7 +175,7 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
       } catch {}
       const location = exec(/connecta-guest\\.js:(\\d+):\\d+/, stack);
       return { result: undefined, error: message, logs: __logs, failure: {
-        name, ...(call ? { call } : {}), ...(location ? { line: toNumber(location[1]) - 1 } : {}),
+        name, ...(failureId ? { failureId } : {}), ...(location ? { line: toNumber(location[1]) - 1 } : {}),
         ...(err === timeoutError ? { timeout: { elapsedMs: ${options.timeout ?? 60_000}, deadlineMs: ${options.timeout ?? 60_000} } } : {})
       } };`);
             const preludes: string[] = [];
@@ -225,6 +240,8 @@ const {
               .replace("async evaluate(__dispatchers = {}, __connectors = {}) {", `async evaluate(__dispatchers = {}, __connectors = {}, ${programName}) {\n${wrapper}`)
               .replaceAll("JSON.parse(", "jsonParse(")
               .replaceAll("JSON.stringify(", "jsonStringify(")
+              .replaceAll("(__CODEMODE_BINARY_TAG in value)", "hasOwn(value, __CODEMODE_BINARY_TAG)")
+              .replaceAll('typeof value.data !== "string"', '!hasOwn(value, "data") || typeof value.data !== "string"')
               .replaceAll("console.", "nativeConsole.")
               .replaceAll("new Proxy(", "new NativeProxy(")
               .replaceAll("Object.prototype.hasOwnProperty.call(target, toolName)", "hasOwn(target, toolName)")
@@ -247,7 +264,7 @@ const {
             const setup = firstInitializer ? isolated.indexOf(firstInitializer) : isolated.indexOf("    try {\n      const result = await race");
             if (setup < 0) throw new Error("Worker provider setup was unavailable.");
             const runner = hardening
-              + (captureGuest ? `const __connecta_guest_initialize = ${guestInitializer()};\n` : "")
+              + (captureGuest ? `const __connecta_guest_initialize = ${guestInitializer()};\n` : `${guestPromiseInitializer()};\n`)
               + captures + "let initialized = false;\n" + initializer
               + isolated.slice(0, setup) + globals + "\n" + isolated.slice(setup);
             const main = imports + `export default class CodeExecutor extends Runner {
@@ -298,7 +315,16 @@ const {
               }).execute(code, detached),
               stopped,
             ]);
-            const outcome: ExecuteResult = rpcOutcome ?? result;
+            const outcome: WorkerRunResult = rpcOutcome ?? result;
+            if (outcome.failure) {
+              const failure = { ...outcome.failure };
+              const call = typeof failure.failureId === "string" ? hostFailures.get(failure.failureId) : undefined;
+              // Neither an unknown id nor a guest/RPC-supplied call record
+              // supplies typed host details. Strip the private id at the edge.
+              delete failure.call;
+              delete failure.failureId;
+              outcome.failure = { ...failure, ...(call ? { call } : {}) };
+            }
             if (outcome.failure?.timeout) outcome.failure.timeout.elapsedMs = Date.now() - started;
             return outcome;
           } catch (error) {
@@ -314,13 +340,16 @@ const {
             }
             throw error;
           } finally {
+            runEnded = true;
             cancel = undefined;
+            hostFailures.clear();
           }
         },
         release() {
           if (released) return;
           released = true;
           hostProviders = undefined;
+          hostFailures.clear();
           cancel?.();
           for (const dispose of disposers.reverse()) {
             try { dispose(); } catch { /* Release every handle and the permit. */ }

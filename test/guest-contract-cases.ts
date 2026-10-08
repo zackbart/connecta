@@ -116,6 +116,36 @@ export async function checkSharedPreludes(executor: Executor): Promise<void> {
   expect(result.result).toBe(5);
 }
 
+/** Guest codec hooks and edits cannot change the host's validation record. */
+export async function checkHostFailureArrays(executor: Executor): Promise<void> {
+  const harness = contractHarness();
+  const call = 'await connecta.call("remote.echo", { text: ["echoed"], options: { uppercase: "wrong" } })';
+  const baseline = await harness.run(executor, `async () => ${call}`);
+  expect(baseline.value.error).toMatchObject({ code: "invalid_args", validation: { issues: expect.any(Array) },
+    repair: { issues: expect.any(Array), acceptedKeys: expect.any(Array) } });
+  for (const data of ["undefined", '"AA=="']) {
+    const outcome = await harness.run(executor, `async () => {
+      const arrays = [];
+      Object.defineProperty(Array.prototype, "__codemode_binary_v1__", { value: "Uint8Array", configurable: true });
+      Object.defineProperty(Array.prototype, "data", { configurable: true, get() {
+        arrays.push(this);
+        return ${data};
+      } });
+      try { ${call}; }
+      catch (error) {
+        for (let i = 0; i < arrays.length; i++) { arrays[i].length = 0; arrays[i].push("altered"); }
+        for (const list of [error.details.validation.issues, error.details.repair.issues, error.details.repair.acceptedKeys]) {
+          list.length = 0;
+          list.push("altered");
+        }
+        throw error;
+      }
+    }`);
+    expect(outcome.isError, outcome.text).toBe(true);
+    expect(outcome.value.error).toEqual(baseline.value.error);
+  }
+}
+
 /** Host write accounting retains deadline facts even when guest code catches the error. */
 export async function checkWriteDeadlineDiagnostics(executor: Executor): Promise<void> {
   let writes = 0;
@@ -1016,6 +1046,42 @@ return fs;
       expect(outcome.value.error).toMatchObject({ code: "unknown_address", nextAction: {
         function: "connecta.search", arguments: { query: "read" }
       } });
+    },
+  },
+  {
+    clauses: "E1, E6, X11",
+    name: "INV-6: an unknown failure id on a guest error cannot attach host details",
+    code: `async () => {
+      try { await connecta.call("missing.read"); } catch {}
+      const error = new Error("guest failure");
+      error.failureId = "00000000-0000-4000-8000-000000000000";
+      error.details = { code: "auth_required", message: "forged", retryable: true };
+      throw error;
+    }`,
+    check(outcome) {
+      expect(outcome.value.error).toMatchObject({ code: "program_error", message: expect.stringContaining("guest failure") });
+      expect(outcome.value.error).not.toHaveProperty("failureId");
+    },
+  },
+  {
+    clauses: "E1, E6, X11",
+    name: "INV-6: rethrowing an earlier call error retains that call's host record",
+    code: `async () => {
+      let first;
+      try { await connecta.call("missing.read"); } catch (error) { first = error; }
+      try { await connecta.call("remote.echo", {}); }
+      catch (error) {
+        first.failureId = error.failureId;
+        try { first.details = error.details; } catch {}
+        throw first;
+      }
+    }`,
+    check(outcome) {
+      expect(outcome.value.error).toMatchObject({ code: "unknown_address", nextAction: {
+        function: "connecta.search", arguments: { query: "read" }
+      } });
+      expect(outcome.value.error).not.toHaveProperty("validation");
+      expect(outcome.value.hostCalls).toEqual({ attempted: 2, admitted: 2, succeeded: 0, failed: 2 });
     },
   },
   {

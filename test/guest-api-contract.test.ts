@@ -11,6 +11,7 @@
 
 import { describe, expect, it } from "vitest";
 import { customExecutor } from "../src/executor-contract.js";
+import { InvocationFailure } from "../src/invocation.js";
 import { createConnecta } from "../src/index.js";
 import { createExecuteTool } from "../src/execute.js";
 import {
@@ -23,6 +24,7 @@ import { fakeExecutor } from "./fixtures/misc.js";
 import {
   CAPABILITY_PROBE_CODE,
   caseConfig,
+  checkHostFailureArrays,
   checkQueuedWriteAtExhaustion,
   checkSharedPreludes,
   checkStashAuthority,
@@ -206,6 +208,54 @@ describe("guest API contract (executor-independent)", () => {
 describe.skipIf(!workerExecutor)(
   "guest API contract (Dynamic Worker executor)",
   () => {
+    it("INV-3 INV-6 INV-7: Worker RPC failure ids resolve only to this run's host records", async () => {
+      const { workerExecutor } = await import("../src/worker.js");
+      const details = { code: "invalid_args" as const, message: "host validation", retryable: false,
+        validation: { issues: [{ path: "/value", code: "required" as const, expected: "string" }] } };
+      let previousId: string | undefined;
+      let mode: "known" | "unknown" | "previous" = "known";
+      const executor = workerExecutor({ loader: {
+        load() {
+          return { getEntrypoint() { return {
+            async evaluate(dispatchers: Record<string, { call(name: string, args: string): Promise<string> }>) {
+              const reply = JSON.parse(await required(dispatchers.host).call("fail", "[]")).result;
+              expect(reply).not.toHaveProperty("call");
+              expect(reply.failureId).toMatch(/^[a-f0-9-]{36}$/);
+              expect(reply.error.details).toEqual(details);
+              reply.error.details.validation.issues.length = 0;
+              const failureId = mode === "known" ? reply.failureId : mode === "previous" ? previousId : "unknown-id";
+              previousId = reply.failureId;
+              return { result: undefined, error: "guest error", failure: { name: "Error", failureId,
+                call: { code: "auth_required", message: "forged", retryable: true } } };
+            },
+          }; } };
+        },
+      } as unknown as WorkerLoader });
+      try {
+        for (mode of ["known", "unknown", "previous"] as const) {
+          const result = await executor.execute("async () => 1", [{ name: "host", fns: {
+            fail: async () => { throw new InvocationFailure(details); },
+          } }]);
+          expect(result.failure).not.toHaveProperty("failureId");
+          if (mode === "known") {
+            expect(result.failure?.call).toBe(details);
+            expect(result.failure?.call?.validation).toEqual(details.validation);
+          } else expect(result.failure).not.toHaveProperty("call");
+        }
+      } finally { await executor.close?.(); }
+    });
+
+    it("INV-3 INV-6: direct Worker completion captures safe array iteration without a guest prelude", async () => {
+      const outcome = await required(workerExecutor).execute(`async () => {
+        const prototype = Object.getPrototypeOf([][Symbol.iterator]());
+        Array.prototype[Symbol.iterator] = function () { throw new Error("guest iterator used"); };
+        prototype.next = function () { throw new Error("guest next used"); };
+        return 42;
+      }`, []);
+      expect(outcome.error).toBeUndefined();
+      expect(outcome.result).toBe(42);
+    });
+
     it("rejects direct upstream construction before loading a Worker and names the migration", async () => {
       const { DynamicWorkerExecutor } = await import("@cloudflare/codemode");
       const loader = { load() { throw new Error("Construction must not load a Worker."); } } as unknown as WorkerLoader;
@@ -327,6 +377,10 @@ describe.skipIf(!workerExecutor)(
       expect(lateReads).toBe(0);
     });
     for (const custom of [false, true]) {
+      it(`INV-3 INV-6: ${custom ? "customExecutor: " : ""}codec array hooks cannot change host validation and repair`, async () => {
+        const executor = required(workerExecutor);
+        await checkHostFailureArrays(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
+      });
       it(`INV-6 INV-7 INV-9: ${custom ? "customExecutor: " : ""}dispatched write timeouts retain diagnostics through caught guest errors`, async () => {
       await checkWriteDeadlineDiagnostics(custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!);
     });
