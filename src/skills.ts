@@ -342,6 +342,20 @@ const MAX_SKILLS = 1_024;
 const encoder = new TextEncoder();
 const PRIVATE = { resultType: "complete" as const, ttlMs: 0, cacheScope: "private" as const };
 
+/** Bound metadata before cloning it, without another payload-sized byte array. */
+function jsonBytes(value: unknown): number {
+  const json = JSON.stringify(value);
+  let bytes = 0;
+  for (let i = 0; i < json.length; i++) {
+    const code = json.charCodeAt(i);
+    if (code < 0x80) bytes++;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff && json.charCodeAt(i + 1) >= 0xdc00 && json.charCodeAt(i + 1) <= 0xdfff) { bytes += 4; i++; }
+    else bytes += 3;
+  }
+  return bytes;
+}
+
 interface SkillRecord {
   entry: ConnectorSkill;
   aliases: string[];
@@ -377,6 +391,7 @@ async function localRecords(connectors: readonly Connector[]): Promise<SkillReco
 
 /** Keep the downstream path tree, so relative supporting-file references still resolve. */
 export function downstreamSkillUri(connectorId: string, uri: string): string {
+  if (uri.length > 32_768) throw new ConnectorCallError("unavailable", "Downstream skill URI exceeds its bound.");
   const match = /^([A-Za-z][A-Za-z0-9+.-]*:(?:\/\/[^/?#]*)?)(\/[^?#]+)$/.exec(uri);
   if (!match || match[2]!.split("/").slice(1).some(segment => {
     try { const decoded = decodeURIComponent(segment); return !decoded || decoded === "." || decoded === ".." || decoded.includes("\\") || decoded.includes("/") || decoded.includes("\u0000"); }
@@ -385,7 +400,9 @@ export function downstreamSkillUri(connectorId: string, uri: string): string {
   const authority = match[1]!.split("://")[1];
   // A skill may root at the authority, e.g. skill://review/SKILL.md.
   // Repeating it as a path segment preserves the Agent Skills directory name.
-  return `skill://downstream/${encodeURIComponent(connectorId)}/${encodeURIComponent(match[1]!)}${authority ? `/${encodeURIComponent(authority)}` : ""}${match[2]}`;
+  const mapped = `skill://downstream/${encodeURIComponent(connectorId)}/${encodeURIComponent(match[1]!)}${authority ? `/${encodeURIComponent(authority)}` : ""}${match[2]}`;
+  if (mapped.length > 32_768) throw new ConnectorCallError("unavailable", "Downstream skill URI exceeds its bound.");
+  return mapped;
 }
 
 function validateEntry(entry: ConnectorSkill): void {
@@ -464,13 +481,15 @@ export class SkillsRegistry {
 
   private async build(): Promise<SkillRecord[]> {
     const records = await Promise.all((await this.local).map(withManifest));
+    let catalogBytes = jsonBytes(records.map(record => record.entry));
     // Bounded sequential connector reads avoid unbounded fan-out and finish
     // cleanup before a later connector's failure can end the whole listing.
     for (const connector of this.registry.listConnectors()) {
       if (!connector.downstreamSkills || !this.registry.canReadConnectorSkills(connector.id)) continue;
       const entries = await this.operation(connector, ctx => connector.downstreamSkills!.list(ctx));
-      if (!Array.isArray(entries) || entries.length > MAX_SKILLS) throw new ConnectorCallError("unavailable", "Downstream skills listing exceeds its bound.");
+      if (!Array.isArray(entries) || records.length + entries.length > MAX_SKILLS) throw new ConnectorCallError("unavailable", "Downstream skills listing exceeds its bound.");
       for (const original of entries) {
+        if (catalogBytes + jsonBytes(original) + 1 > MAX_SKILL_CATALOG_BYTES) throw new ConnectorCallError("unavailable", "Skills listing exceeds its byte bound.");
         const entry = structuredClone(original);
         validateEntry(entry);
         const files = new Map<string, string>();
@@ -485,10 +504,13 @@ export class SkillsRegistry {
           return { ...file, uri };
         });
         if (records.some(record => record.entry.uri === uri)) throw new ConnectorCallError("unavailable", "Downstream skills listing contains duplicate entries.");
-        records.push({ entry: { ...entry, uri, resources }, aliases: [], connector, files });
+        const mapped = { ...entry, uri, resources };
+        catalogBytes += jsonBytes(mapped) + 1;
+        if (catalogBytes > MAX_SKILL_CATALOG_BYTES) throw new ConnectorCallError("unavailable", "Skills listing exceeds its byte bound.");
+        records.push({ entry: mapped, aliases: [], connector, files });
       }
     }
-    if (records.length > MAX_SKILLS || encoder.encode(JSON.stringify(records.map(record => record.entry))).length > MAX_SKILL_CATALOG_BYTES) {
+    if (records.length > MAX_SKILLS || jsonBytes(records.map(record => record.entry)) > MAX_SKILL_CATALOG_BYTES) {
       throw new ConnectorCallError("unavailable", "Skills listing exceeds its byte or entry bound.");
     }
     // Keep the old investigation guide behind every connector and downstream

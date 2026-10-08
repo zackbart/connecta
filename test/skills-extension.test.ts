@@ -195,6 +195,17 @@ it("INV-8: refuses invalid downstream Agent Skills frontmatter without rewriting
   }
 });
 
+it("INV-8: stops catalog intake at aggregate bounds before cloning or fetching later connectors", async () => {
+  const later = vi.fn(async () => []);
+  const large = downstream("large", { list: async ctx => [{ ...(await downstream().downstreamSkills!.list(ctx))[0]!, frontmatter: {
+    name: "review", description: "Description", payload: "x".repeat(8 * 1024 * 1024),
+  } }] });
+  const registry = new SkillsRegistry(makeRegistry([large, downstream("later", { list: later })]), BASE);
+  await expect(registry.list()).rejects.toMatchObject({ code: "unavailable" });
+  expect(later).not.toHaveBeenCalled();
+  expect(() => downstreamSkillUri("remote", `skill://vendor/${"x".repeat(32_768)}/SKILL.md`)).toThrow("exceeds its bound");
+});
+
 it("INV-7: cancels bounded skill work and closes its owned connector scope", async () => {
   let signal: AbortSignal | undefined;
   const closeScope = vi.fn(async () => {});
