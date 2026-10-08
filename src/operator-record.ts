@@ -90,6 +90,29 @@ const STATUS_STATES: ReadonlySet<string> = new Set(["ok", "auth_required", "erro
 /** A status state, or `failed` for a status that could not be read at all. */
 const STATES: ReadonlySet<string> = new Set([...STATUS_STATES, "failed"]);
 
+/** Inbound denial facts, never identity text or provider diagnostics. */
+export type AuthDenialReason =
+  | "authentication_failed"
+  | "authorization_header_invalid"
+  | "token_type_mismatch"
+  | "oauth_verification_failed"
+  | "oauth_client_not_allowed"
+  | "oauth_binding_mismatch"
+  | "session_origin_mismatch"
+  | "user_missing"
+  | "email_lookup_failed"
+  | "verified_email_invalid"
+  | "email_domain_denied"
+  | "gate_denied"
+  | "gate_failed";
+
+const AUTH_DENIAL_REASONS: ReadonlySet<AuthDenialReason> = new Set([
+  "authentication_failed", "authorization_header_invalid", "token_type_mismatch",
+  "oauth_verification_failed", "oauth_client_not_allowed", "oauth_binding_mismatch",
+  "session_origin_mismatch", "user_missing", "email_lookup_failed",
+  "verified_email_invalid", "email_domain_denied", "gate_denied", "gate_failed",
+]);
+
 /** The registry's connector id grammar (src/registry.ts). */
 const CONNECTOR_ID_RE = /^[a-z0-9_-]{1,64}$/;
 /** MCP's tool name grammar (SEP-986). */
@@ -258,6 +281,7 @@ export function carryFailureFacts<T>(from: unknown, to: T): T {
 
 /** What a failure record may be about. Only these fields are read. */
 export interface FailureSubject {
+  reason?: AuthDenialReason;
   /** A registered connector's id. */
   connector?: string;
   /**
@@ -281,6 +305,7 @@ declare const recordBrand: unique symbol;
 /** One failure as an operator may read it. Only `failureRecord` makes one. */
 export interface FailureRecord {
   readonly [recordBrand]: true;
+  readonly reason?: AuthDenialReason;
   readonly connector?: string;
   readonly tool?: string;
   readonly source?: string;
@@ -327,6 +352,7 @@ export function recordedToolName(entry: { readonly name: string }): string {
 function checkedSubject(subject: FailureSubject): object {
   const tool = subject.tool;
   return {
+    ...defined("reason", member(subject.reason, AUTH_DENIAL_REASONS)),
     ...defined("connector", connectorId(subject.connector)),
     ...("tool" in subject
       ? { tool: tool === null || typeof tool !== "object" ? UNLISTED_TOOL : recordedToolName(tool) }
@@ -428,7 +454,7 @@ export type FailureEvent =
   | "operator status"
   | "result paging unavailable"
   | "request failed"
-  | "Clerk email lookup failed; denying"
+  | "Clerk request denied"
   | "Clerk authentication failed";
 
 /** What is logged in place of a record `failureRecord` did not build. */

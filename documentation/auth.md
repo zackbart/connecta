@@ -41,6 +41,10 @@ endpoints challenge with `Bearer` and advertise no authorization server. With
 Clerk, even a refused `cta_` token receives Clerk's resource metadata challenge.
 An open deployment with connectors warns at construction.
 
+Clerk denial logs carry checked fixed reason codes. Provider user IDs, email
+addresses, and email domains stay out of denial logs, activity, and status,
+including email lookup failures and admission policy refusals.
+
 ## Managed client tokens and upgrading from v0.23
 
 `accessTokens` from `@zackbart/connecta/auth/access-tokens` installs its inbound

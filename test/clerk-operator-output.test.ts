@@ -8,6 +8,9 @@ import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 import { accessTokens, AccessTokenManager } from "../src/access-tokens.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { createTestConnecta } from "./helpers.js";
+import { activityHistory } from "../src/activity.js";
+import { failureRecord } from "../src/operator-record.js";
+import type { InboundAuth } from "../src/types.js";
 
 const BASE = "https://connecta.test";
 const FRONTEND = "https://clerk.example.com";
@@ -47,9 +50,114 @@ function browser(nonce?: string) {
   });
 }
 
+async function assertDenialSinks(
+  provider: InboundAuth,
+  request: Request,
+  status: number,
+  spies: ReturnType<typeof captureOutput>,
+  context?: { waitUntil(promise: Promise<unknown>): void; access: { aud: string; getIdentity(): Promise<Record<string, unknown>> } },
+) {
+  const lines: unknown[][] = [];
+  const sink = (...args: unknown[]) => { lines.push(args); };
+  const record = vi.fn();
+  const storage = memoryStorage();
+  const call = vi.fn(async () => null);
+  const app = createTestConnecta({ publicUrl: BASE, auth: provider,
+    connectors: [{ id: "service", kind: "mcp", description: "Service", listTools: async () => [],
+      callTool: call, status: async () => ({ state: "ok" }) }],
+    accessTokens: accessTokens(storage), activity: activityHistory({ store: { record, recordCatalogDrift: record } }),
+    logger: { debug: sink, info: sink, warn: sink, error: sink },
+  });
+  try {
+    const response = await app.fetch(request, undefined, context);
+    expect(response.status).toBe(status);
+    const health = await app.fetch(new Request(`${BASE}/health`));
+    const connectorStatus = await app.registry.statusFor("service", BASE);
+    const operatorData = JSON.stringify({ lines, activity: record.mock.calls, connectorStatus,
+      config: app.describeConfig(), health: await health.json(), refusal: await response.text() });
+    expect(operatorData).not.toContain(SENTINEL);
+    expect(output(spies)).not.toContain(SENTINEL);
+    expect(record).not.toHaveBeenCalled();
+    expect(call).not.toHaveBeenCalled();
+  } finally { await app.close(); }
+}
+
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("Clerk operator output with the real SDK", () => {
+  it("INV-6: checks inbound denial reasons against the operator record allowlist", () => {
+    expect(failureRecord({ reason: "email_domain_denied" })).toEqual({ reason: "email_domain_denied" });
+    expect(failureRecord({ reason: SENTINEL as never })).toEqual({});
+  });
+
+  it.each(["domain-denied", "unverified-email", "missing-email", "malformed-email", "lookup-failed", "gate-denied", "gate-failed"])(
+    "INV-6: Clerk %s exposes no provider identity in logs, activity, or status", async denial => {
+      const spies = captureOutput();
+      const userId = `${SENTINEL}-user`;
+      const domain = `${SENTINEL}.example.com`;
+      const email = `${SENTINEL}@${domain}`;
+      const { token, privateKey, kid, jwks } = await session(userId);
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/v1/jwks") return Response.json(jwks);
+        expect(url.pathname).toBe(`/v1/users/${userId}`);
+        if (denial === "lookup-failed") throw new Error(`${userId} ${email} ${domain}`);
+        return Response.json({ object: "user", id: userId, primary_email_address_id: "primary",
+          email_addresses: denial === "missing-email" ? [] : [{ object: "email_address", id: "primary",
+            linked_to: [],
+            email_address: denial === "malformed-email" ? `${email}\nforged` : email,
+            verification: { status: denial === "unverified-email" ? "unverified" : "verified" } }],
+          phone_numbers: [], web3_wallets: [], external_accounts: [],
+        });
+      }));
+      const provider = clerkAuth({ publishableKey, secretKey, publicUrl: BASE,
+        ...(denial.startsWith("gate-") ? { gate: () => {
+          if (denial === "gate-failed") throw new Error(`${userId} ${email} ${domain}`);
+          return false;
+        } } : { allowedDomains: ["allowed.example.com"] }),
+      });
+      await assertDenialSinks(provider, new Request(`${BASE}/ui/access-tokens`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }), 403, spies);
+      const now = Math.floor(Date.now() / 1000);
+      const oauthToken = await signJwt({ sub: userId, iss: FRONTEND, client_id: "client_connecta",
+        scope: "openid profile email", aud: `${BASE}/mcp`, exp: now + 300, nbf: now - 5, iat: now - 5,
+      }, privateKey, { algorithm: "RS256", header: { typ: "at+jwt", kid } });
+      await assertDenialSinks(provider, new Request(`${BASE}/mcp`, { method: "POST",
+        headers: { Authorization: `Bearer ${oauthToken}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      }), 403, spies);
+      const reasons: Record<string, string> = { "domain-denied": "email_domain_denied",
+        "unverified-email": "verified_email_invalid", "missing-email": "verified_email_invalid",
+        "malformed-email": "verified_email_invalid", "lookup-failed": "email_lookup_failed",
+        "gate-denied": "gate_denied", "gate-failed": "gate_failed" };
+      expect(output(spies)).toContain(`"reason":"${reasons[denial]}"`);
+    },
+  );
+
+  it.each(["service", "missing-human", "identity-failed", "invalid-aud", "explicit-header"])(
+    "INV-6: Access %s exposes no provider identity in logs, activity, or status", async denial => {
+      const spies = captureOutput();
+      const identity = { user_uuid: `${SENTINEL}-user`, email: `${SENTINEL}@${SENTINEL}.example.com` };
+      const getIdentity = vi.fn(async () => {
+        if (denial === "identity-failed") throw new Error(JSON.stringify(identity));
+        if (denial === "missing-human") return { domain: `${SENTINEL}.example.com` };
+        return { ...identity, service_token_status: true, common_name: `${SENTINEL}.example.com` };
+      });
+      const context = { waitUntil() {}, access: { aud: denial === "invalid-aud" ? "" : "app", getIdentity } };
+      const request = new Request(`${BASE}/ui/access-tokens`, {
+        headers: denial === "explicit-header" ? { Authorization: `Basic ${SENTINEL}` } : {},
+      });
+      await assertDenialSinks(cloudflareAccessAuth(), request,
+        ["identity-failed", "invalid-aud", "explicit-header"].includes(denial) ? 401 : 403, spies, context);
+      await assertDenialSinks(cloudflareAccessAuth(), new Request(`${BASE}/mcp`, { method: "POST",
+        headers: { ...Object.fromEntries(request.headers), "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      }), ["identity-failed", "invalid-aud", "explicit-header"].includes(denial) ? 401 : 403, spies, context);
+      if (["invalid-aud", "explicit-header"].includes(denial)) expect(getIdentity).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(["/ui/access-tokens", "/connect/service", "/oauth/callback/service", "/mcp", "/mcp/support"])(
     "INV-4: explicit Authorization owns %s with another user's real session cookie", async path => {
       captureOutput();
@@ -151,7 +259,7 @@ describe("Clerk operator output with the real SDK", () => {
     expect(nativeJson).not.toHaveBeenCalled();
     expect(output(spies)).not.toContain(SENTINEL);
     expect(output(spies)).toContain("[connecta] Clerk authentication failed");
-    expect(output(spies)).toContain("reason=authentication_failed");
+    expect(output(spies)).toContain('"reason":"authentication_failed"');
     expect(output(spies)).not.toContain("HandshakeService");
   });
 
@@ -183,7 +291,7 @@ describe("Clerk operator output with the real SDK", () => {
     request.headers.set("Authorization", `Bearer ${token}`);
     expect((await auth().authorize(request, BASE)).ok).toBe(false);
     expect(output(spies)).not.toContain(SENTINEL);
-    expect(output(spies)).toContain("reason=authentication_failed");
+    expect(output(spies)).toContain('"reason":"authentication_failed"');
   });
 
   it("INV-6: completes a successful nonce handshake and preserves its verified session cookies", async () => {

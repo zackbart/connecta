@@ -754,7 +754,7 @@ describe("clerkAuth inbound auth", () => {
         authenticateOAuth("oat_private");
         mocks.fetch.mockImplementation(response);
         await expectUnauthorized(deployment());
-        expect(warn.mock.calls).toEqual([["[connecta] clerk rejected request: reason=oauth_verification_failed"]]);
+        expect(warn.mock.calls).toEqual([["[connecta] Clerk request denied", { reason: "oauth_verification_failed" }]]);
       } finally {
         warn.mockRestore();
       }
@@ -768,8 +768,8 @@ describe("clerkAuth inbound auth", () => {
         authenticateOAuth(jwt({}), "private-client");
         await expectUnauthorized(deployment([]));
         expect(warn.mock.calls).toEqual([
-          ["[connecta] clerk rejected request: reason=oauth_binding_mismatch"],
-          ["[connecta] clerk rejected request: reason=oauth_client_not_allowed"],
+          ["[connecta] Clerk request denied", { reason: "oauth_binding_mismatch" }],
+          ["[connecta] Clerk request denied", { reason: "oauth_client_not_allowed" }],
         ]);
       } finally {
         warn.mockRestore();
@@ -787,8 +787,8 @@ describe("clerkAuth inbound auth", () => {
         mocks.authenticateRequest.mockRejectedValue(new Error("oat_private"));
         await expectUnauthorized(deployment());
         expect(warn.mock.calls).toEqual([
-          ["[connecta] clerk rejected request: reason=authentication_failed"],
-          ["[connecta] clerk rejected request: reason=authentication_failed"],
+          ["[connecta] Clerk request denied", { reason: "authentication_failed" }],
+          ["[connecta] Clerk request denied", { reason: "authentication_failed" }],
         ]);
         expect(mocks.fetch).not.toHaveBeenCalled();
       } finally {
@@ -1090,33 +1090,21 @@ describe("clerkAuth inbound auth", () => {
       expect(gate).not.toHaveBeenCalled();
     });
 
-    it("logs the denied domain bounded, and never the address", async () => {
+    it("INV-6: logs checked domain denial reasons without user IDs, addresses, or domains", async () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-      // A denial names the domain for the operator — bounded, so a 253-byte
-      // domain cannot flood the log — and never the local part.
-      mocks.getUser.mockResolvedValue(
-        userWithEmail(
-          `secret-person@${"a".repeat(60)}.${"b".repeat(60)}.example.com`,
-        ),
-      );
+      const domain = `${"a".repeat(60)}.${"b".repeat(60)}.example.com`;
+      mocks.getUser.mockResolvedValue(userWithEmail(`secret-person@${domain}`));
       await authorize({ allowedDomains: ["acme.com"] });
-      const denied = warn.mock.calls.map(String).join("\n");
-      expect(denied).toContain("user_123");
-      expect(denied).toContain("(truncated)");
-      expect(denied.length).toBeLessThan(250);
-      expect(denied).not.toContain("secret-person");
+      expect(warn.mock.calls).toEqual([["[connecta] Clerk request denied", { reason: "email_domain_denied" }]]);
+      const denied = JSON.stringify(warn.mock.calls);
+      for (const canary of ["user_123", "secret-person", domain]) expect(denied).not.toContain(canary);
 
-      // A malformed address never reaches that line at all, so a
-      // caller-controlled newline has nothing to forge a log line with.
       warn.mockClear();
-      mocks.getUser.mockResolvedValue(
-        userWithEmail("secret-person@evil.com\n[connecta] forged"),
-      );
+      mocks.getUser.mockResolvedValue(userWithEmail("secret-person@evil.com\n[connecta] forged"));
       await authorize({ allowedDomains: ["acme.com"] });
-      const malformed = warn.mock.calls.map(String).join("\n");
-      expect(malformed).toContain("no verified primary email");
-      expect(malformed).not.toContain("secret-person");
-      expect(malformed).not.toContain("forged");
+      expect(warn.mock.calls).toEqual([["[connecta] Clerk request denied", { reason: "verified_email_invalid" }]]);
+      const malformed = JSON.stringify(warn.mock.calls);
+      for (const canary of ["user_123", "secret-person", "evil.com", "forged"]) expect(malformed).not.toContain(canary);
       warn.mockRestore();
     });
 
