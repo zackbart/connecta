@@ -16,8 +16,7 @@ This repository is deployment configuration, not a copy of Connecta itself.
   Do not copy or modify Connecta package internals here.
 - Prefer `api()` when the agent must see an exact reviewed capability surface;
   `remoteMcp()` follows the downstream server's evolving tool catalog.
-- Optional modules (Clerk sign-in, credential vault, activity history,
-  artifacts) are type-checked code in `src/connecta.config.ts`, switched on by
+- Optional modules (Clerk sign-in, credential vault, activity history) are type-checked code in `src/connecta.config.ts`, switched on by
   their environment variables. Follow README "Select optional modules". Auth management requires explicit
   `credentialAdministration` or `personalConnection` permissions; visibility
   alone never grants it. Clerk supplies human identity; `cta_` access tokens cover machine clients.

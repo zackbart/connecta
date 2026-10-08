@@ -62,7 +62,7 @@ to pass or be intentionally skipped.
 - Storage is one SQL key-value store (`src/storage/sql.ts`) with two drivers:
   `/d1` on Workers, `/sqlite` on Node. Every key is built in
   `src/storage/keys.ts`; add a family there, never an ad-hoc key.
-- UI, activity, vault, artifacts, and inbound auth implementations use explicit
+- UI, activity, vault, and inbound auth implementations use explicit
   subpaths and typed configuration slots, outside the root import graph.
 - `src/operator-ui/` owns the operator UI. Capability changes remain in code.
 

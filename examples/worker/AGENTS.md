@@ -4,8 +4,7 @@ This repository is deployment configuration, not a copy of Connecta itself.
 
 - Edit `src/connecta.config.ts` for connectors, authentication, storage, public
   URL, and optional modules. `src/index.ts` only starts it. Set plain vars
-  `CONNECTA_ACTIVITY="on"` for preserved activity and `CONNECTA_ARTIFACTS="on"`
-  when artifacts are used.
+  `CONNECTA_ACTIVITY="on"` for preserved activity.
 - Keep `cloudflareAccessAuth()` for human identity and `accessTokens(storage)`
   always installed over the same `CONNECTA_DB` for machines. Cloudflare Access
   admits the request before the Worker runs; a service identity alone is

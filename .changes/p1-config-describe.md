@@ -9,7 +9,7 @@ retention), the storage adapter's kind, branding, and each
 connector's source, endpoint, auth mode, credential slot labels, call
 admission, and static tools — for the operator UI and `connecta doctor`.
 `Connector.describe()` reports a connector's own facts and is implemented by
-`remoteMcp()`, `api()`, every provider, and the artifacts connector. Every URL
+`remoteMcp()`, `api()`, and every provider. Every URL
 either reports keeps origin and path only (a root-relative favicon, its path),
 and a URL of any scheme but http(s) is omitted.
 `defineConfig((env) => …)` declares a deployment's configuration as a

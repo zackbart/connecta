@@ -8,6 +8,6 @@ The per-call secret set stays in memory and covers credential slots, auth
 headers, bearer tokens, URL encodings, and base64 forms. Register final outgoing
 requests, including auxiliary OAuth headers and query credentials. Redact mixed
 JSON escapes and joined text blocks after unwrapping and before paging, emits,
-program returns, or artifact writes. Cache one matcher per secret set. Match
+or program returns. Cache one matcher per secret set. Match
 credentials of at least eight characters to avoid corrupting ordinary text with
 short Basic usernames; Connecta's own messages never quote credential values.

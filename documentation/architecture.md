@@ -85,7 +85,6 @@ security-header helper, including status and error pages. Operator shells
 allow same-origin scripts and deny framing. Clerk pages also admit the validated
 loader origin, the exact Cloudflare CAPTCHA script and frame host, Clerk images,
 and first-party or blob workers. Local Clerk sign-in adds a nonce for its bootstrap.
-Sandboxed artifact documents retain their separate script and framing policy.
 `test/server-route-contracts.test.ts` pins the ordering and the exact refusal
 bodies; it exists because the ordering is invisible in any one file and a
 reordering reads like a harmless refactor.
@@ -332,7 +331,7 @@ created and checked by the database clock inside each statement, so isolate
 clock skew cannot expire a live holder's record. Each SQL claim
 is one statement, which SQLite executes atomically and D1 serializes on its
 primary. Everything that must claim a key exactly once relies on it with no
-read-then-write fallback: artifact head swaps, access-token issuance and
+read-then-write fallback: access-token issuance and
 capacity, OAuth handoff ownership, single-use connect links, every downstream
 OAuth grant write and consent claim, and the result stash.
 
@@ -505,8 +504,7 @@ The matcher is cached until its set changes; the empty set has a fast path.
 including errors, and every host-to-guest value or rejection passes through
 it. Both MCP transports also pass their serialized response through it, covering
 JSON-RPC errors, HTTP diagnostics, structured content, and paging responses.
-Per-call redaction remains before diagnostic truncation, paging, emits and
-artifact writes. Paging stores only request-redacted text before encoding
+Per-call redaction remains before diagnostic truncation, paging, and emits. Paging stores only request-redacted text before encoding
 chunks, so a later request needs no original credentials. Programs retain the
 request set only for the run so later outputs cannot reconstruct an echo.
 Discovery registers sent credentials under the same rules, including
@@ -590,13 +588,12 @@ Workers KV adapter is refused at boot with the replacements named, not at the
 first OAuth callback.
 
 `resolveConfig` returns a frozen `ResolvedConfig`: defaults applied, auth
-ordered, the artifacts connector appended, `serverInfo` named and versioned.
+ordered, `serverInfo` named and versioned.
 Routes and meta-tools read limits from it (`ServerOptions.config`) instead of
 from fields copied out one at a time. `Connecta.describeConfig()` is a
 secret-free snapshot of it, built once (`src/describe-config.ts`): an allowlist
 serializer that copies named fields and never spreads a config object, plus
-`Connector.describe()` on `remoteMcp()`, `api()`, the providers, and the
-artifacts connector. Header values, keys, client secrets, credentials, URL
+`Connector.describe()` on `remoteMcp()`, `api()`, and the providers. Header values, keys, client secrets, credentials, URL
 userinfo, queries, and fragments, and function bodies never appear; every URL
 a description emits, from `describeConfig()` or a direct `describe()`, passes
 through the sanitizers in `src/described.ts`, which keep http(s) URLs only
@@ -672,8 +669,8 @@ regardless of wrapping.
 
 ## Optional deployment modules
 
-`createConnecta` takes closed typed `ui`, `vault`, `activity`, and `artifacts`
-slots, with factories at `/ui`, `/credentials`, `/activity`, and `/artifacts`
+`createConnecta` takes closed typed `ui`, `vault`, and `activity`
+slots, with factories at `/ui`, `/credentials`, and `/activity`
 and machine tokens at `/auth/access-tokens`. Root exports the contracts, never the implementations, and there
 is no module array, runtime registration, or plugin lifecycle. Core keeps
 discovery, the executor contract, invocation, permissions, and OAuth callback
@@ -698,7 +695,7 @@ mounted; OAuth callbacks never need it.
 
 Its appearance is one token layer, and it is not the UI's alone: every page
 connecta shows a person — the operator shell, the OAuth callback, a browser's
-404, the artifact frame and Markdown pages — reads it. `src/operator-ui/tokens.css`
+404 — reads it. `src/operator-ui/tokens.css`
 resolves every color, radius, and font through a custom property and mixes the
 rest from those with `color-mix`; `page.css` holds the base typography and the
 primitives (shell, masthead, buttons, badges, messages, the one-message status
@@ -712,91 +709,12 @@ block after the stylesheet. The five tokens it accepts are gated in
 `src/branding.ts`, each by a narrow syntactic check: deployment config reaches a
 `<style>` element here, and an unvalidated value would be CSS injection. The
 dark palette is the same tokens under `prefers-color-scheme`; `colorScheme` pins
-one with a `data-scheme` attribute on the page, and the artifact viewer passes
-the same attribute into a Markdown page, never into authored HTML.
+one with a `data-scheme` attribute on the page.
 
-The artifacts module — `artifacts()` from `/artifacts`, implemented in
-`src/artifacts/` — is the one module that contributes a connector. Core
-appends its prebuilt `artifacts` connector to the configured set, so its reads
-and writes take the same catalog, invocation, admission, and activity paths as
-any other connector; the slot binds its optional refresh runner once, after the
-registry and executor exist, and a deployment
-without it has no connector, no guide, and no artifact storage traffic. Its
-writes are not read-only anywhere — `call_tool` refuses them and discovery
-lists them approval-required — and programs may call them only in trusted pools. Approval belongs to the
-host. Artifact versions remain immutable and reversible. The
-module needs `publicUrl`: the links it hands out are shared, so they must never
-come from a request's `Host`.
-
-An artifact can version an `execute_code` program and target data document with
-`set_refresh`, on a manual, daily, or weekly schedule. The deployment calls
-`artifacts.runDue()` from a Node timer or Worker `scheduled()` handler; core
-starts no background jobs. One tick scans at most 1,000 heads and starts at
-most 10 due runs. Every run uses the configured executor, host-call budget,
-and watchdog, with a registry view containing only shared connectors. The
-owner admitted to `set_refresh` is stored with the program. Every run rechecks
-that identity's current `connectorAccess` and pool grant, including continued
-access to `artifacts.set_refresh`, then intersects those grants with shared
-connectors. Revoking either grant stops later runs.
-Refresh programs always use read-only trust, so a refresh writes nothing. A refused call fails the
-entire refresh even if its program catches the error. The head CAS claims one
-run per artifact; the data commit checks the claim ID and program version in
-the same CAS. The claim deadline starts before executor admission and aborts
-a queued or active play when it expires. An expired old run cannot publish over
-a newer claim. Run history retains 50 records with bounded logs. A failure leaves the
-last good data intact and marks the artifact stale. Library and viewer show
-only outcome enums and times, never downstream messages or logs.
-
-With the operator UI mounted, `/artifacts` lists the team pages and
-`/artifacts/<id>` opens one. The shell contains no page data. It reads the
-artifact through an authenticated JSON route with the operator UI's inbound
-identity and connector visibility, then passes the document into a sandboxed
-frame. Snapshot links pin the view and document versions. The frame's response
-CSP gives scripts an opaque origin, refuses fetch, XHR, images and other
-unlisted requests. External script, style, and font origins default to none;
-a deployment opts in to each one it trusts with page data. The shell tightens
-its own `frame-src` to `'none'` after the fixed bootstrap loads and before it
-hands over the page,
-so a page script cannot navigate even its own frame to send data in a URL.
-This browser boundary is covered by Chromium tests, including a
-`document.open/write` rewrite.
-
-`artifactOrigin` optionally names a distinct HTTPS origin for these pages.
-The main host redirects every `/artifacts` path to it; the artifact host
-answers every other path, including `/mcp` and operator APIs, with 404. The
-artifact shell still uses the same inbound auth providers and checks the
-identity on each data read. The bare shell and fixed frame bootstrap carry no
-artifact data, so a visitor can reach sign-in before an authenticated read.
-Bearer tokens in browser localStorage belong to one origin: signing in on the
-main host does not sign in on the artifact host. A redirected visitor enters
-the token again there; the redirect carries no credential. Cookie or session
-auth likewise depends on the provider admitting that separate origin.
-
-Storage is an `ArtifactStore`, and `kvArtifactStore` is the reference: over any
-`KVStorage` with `compareAndSet` and `list`, one head record per artifact is
-the only key ever compared-and-set, earlier versions sit beside it immutable,
-and bodies are content-addressed — in the key-value store, or in R2 through the
-Worker example's `r2-artifact-blobs.ts`. Storage without `compareAndSet` is
-refused at construction, because a write that cannot swap its head can lose a
-teammate's edit. Every
-rule lives once, in `src/artifacts/operations.ts`: a write checks its base
-against the one stream it touches, so of two writes from the same base exactly
-one wins and the other is a `conflict` carrying a bounded `current` map, while
-a head that moved for an unrelated reason is re-read and retried rather than
-reported. Patches match exactly once or change nothing, rollback is a new
-version reusing an old body, and the limits are checked on every write.
-Validation is a hand-written tokenizer and CommonMark subset rather than a
-dependency, because it is a lint: the page's CSP is the boundary.
-
-Who made a version is the one fact a built-in connector needs that
-`ConnectorContext` deliberately does not carry. `src/connector-caller.ts`
-attaches the admitted identity beside the context on the request's scoped
-view, the way the OAuth sealer rides beside it — readable only by in-repo
-code, set from the authorization and never from arguments
-(`test/identity-scope.test.ts`, `test/artifacts-connector.test.ts`).
-
-The same channel has exactly one other reader: maintained providers that act
-as the caller downstream. Google Workspace domain-wide delegation
+Maintained providers act as the caller downstream. `src/connector-caller.ts`
+attaches the admitted identity beside the request-scoped context, readable only
+by in-repo code and set from authorization, never arguments. Google Workspace
+domain-wide delegation
 (`src/providers/google/`, first consumed by `./providers/gmail`) hands the
 admitted identity to a deployment-config `subject` function and mints a
 service-account token as whatever Workspace address it returns. The caller
@@ -1119,7 +1037,7 @@ copies a validated timestamp and outcome only. A null call means unknown or
 absent in that window, not proof of no calls. `live.activity` distinguishes
 available, unconfigured, forbidden, and unavailable history. `you` names no
 identity or auth material; it reports grants, root and admitted-pool trust,
-and effective activity, token, artifact, and per-connector auth permissions.
+and effective activity, token, and per-connector auth permissions.
 
 `connecta doctor --config` fetches this authenticated contract and prints only
 `config` as indented JSON. It requires the UI module and the existing doctor
@@ -1134,8 +1052,8 @@ it remains uncached. `generated.ts` is ignored and generated before build and
 test; `check:operator-ui` detects stale assets and shared page styles. The UI
 stays behind `./ui`, outside the root import graph. The identity-fenced store
 owns authenticated reads and existing mutations. Overview, Connectors, connector
-detail, Tools, Access and Config consume the typed contract. Activity and
-Artifacts retain their authenticated data routes. Connector detail tabs live
+detail, Tools, Access and Config consume the typed contract. Activity retains
+its authenticated data routes. Connector detail tabs live
 in the URL hash; Activity filters live in the query string and apply to loaded
 history. Both `/ui/activity` and `/ui/api/activity` require Activity access and
 pass the optional activity `readGate`. Interactive operators and machine callers

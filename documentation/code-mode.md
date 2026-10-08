@@ -890,7 +890,7 @@ and `toolName` clamp at 128 UTF-8 bytes (`address` at 257) with a `…` marker:
 payload-free *by construction* means the event has nowhere to put a payload.
 
 **V4.** The execution itself emits no event. It has no address, and its one
-distinctive artifact is the program source — exactly what a payload-free history
+distinctive output is the program source — exactly what a payload-free history
 must never keep.
 
 **V5.** A trusted-pool write a program issues after it has already returned is not
@@ -901,15 +901,14 @@ sent and records nothing: it was never an attempt (`W9`).
 Pool trust belongs to deployment code. The default `/mcp` endpoint uses
 `trust: "read-only"`; each named pool has its own `trust`, also defaulting to
 `"read-only"`. A trusted default endpoint does not make named pools trusted.
-The default preserves refusal of ordinary program writes and removes the old
-artifact exemption. A deployment must opt into program writes explicitly.
+The default preserves refusal of ordinary program writes. A deployment must opt into program writes explicitly.
 
 ```ts
 createConnecta({
   connectors, executor,
   trust: "read-only",
   pools: {
-    automation: { tools: ["posthog", "artifacts"], trust: "trusted", grant },
+    automation: { tools: ["posthog"], trust: "trusted", grant },
   },
   classification: {
     posthog: { exec: "read" }, // only for a deployment with a read-only exec contract
@@ -1110,7 +1109,7 @@ rejection, and branded adapter acceptance across module copies.
 | `L6`, `X10` | `test/quickjs-executor.node.test.ts` (bridge and IPC bounds for arguments and result; the address in the over-bound message), `test/quickjs-child-stderr.node.test.ts` (outer reply serialization failure settles the call) |
 | `V1`–`V4` | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, the friction each derives, no event for the execution itself), `test/activity.test.ts` (the shared code → friction table, the identity clamp, the one-attempt floor), `test/operator-view.test.ts`, `test/sql-storage-contract.ts`, run by `test/d1-storage.node.test.ts` and `test/sqlite-storage.node.test.ts` (historical pause and approval rows still render and round-trip) |
 | `V5`, `W9` | `test/program-writes.test.ts` (an unawaited trusted-pool write finished and recorded, its unknown outcome reported, counts on a failed program, the classification table), `test/invocation-pipeline.test.ts` (the gate after validation, an unrecorded refusal) |
-| `W10`, `W12` | `test/program-writes.test.ts` (a trusted-pool write runs and every other write keeps `E4`, the write budget, pool trust and override precedence, `call_tool` still refusing, search and describe verdicts, construction refusals), `test/artifacts-connector.test.ts` (trusted-pool artifact writes and read-only refusal), `test/operator-ui-model.test.ts`, `test/browser/operator-ui.spec.ts` (the badge) |
+| `W10`, `W12` | `test/program-writes.test.ts` (a trusted-pool write runs and every other write keeps `E4`, the write budget, pool trust and override precedence, `call_tool` still refusing, search and describe verdicts, construction refusals), `test/operator-ui-model.test.ts`, `test/browser/operator-ui.spec.ts` (the badge) |
 | `M1` | `test/guest-api-contract.test.ts` (invalid emits throw catchably, accept nothing), `test/execute-emit.test.ts` (every rejected shape) |
 | `M2`, `M3` | `test/guest-api-contract.test.ts` (delivery order, truncated return plus delivered blocks), `test/execute-emit.test.ts` (envelope, `structuredContent`, byte-for-byte no-emit path) |
 | `M4` | `test/guest-api-contract.test.ts` (discard is visible), `test/execute-emit.test.ts` (structured and plain paths), `test/quickjs-executor.node.test.ts` (mid-run shutdown) |

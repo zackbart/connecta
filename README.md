@@ -99,7 +99,7 @@ Fifty issues in, one small object out. Your context window notices.
 
 Deployments explicitly compose optional features: `operatorUi()` from
 `@zackbart/connecta/ui`, `encryptedCredentialVault()` from `/credentials`,
-`activityHistory()` from `/activity`, `artifacts()` from `/artifacts`, and
+`activityHistory()` from `/activity`, and
 inbound authentication adapters from `/auth/*`. Omit a module and its implementation does no runtime work. Core
 keeps connector discovery, execution, invocation, and enforcement together.
 Both deployment shapes write configuration as `defineConfig((env) => …)`, with
@@ -112,13 +112,13 @@ facts, and the caller's grants and permissions. `CONNECTA_TOKEN=<bearer> connect
 doctor --config --url https://connecta.example` prints only the scoped snapshot
 as JSON, using the same serializer. It does not run the diagnostic program.
 
-The optional UI has Overview, Connectors, Tools, Access, Activity, Artifacts and
+The optional UI has Overview, Connectors, Tools, Access, Activity and
 Config pages. Connector detail separates configuration, schemas, authentication,
 activity and diagnostics into tabs. Overview shows health, attention items and
 endpoint setup in a drawer; Config marks each snapshot value as default or
 configured. Catalog descriptions and schemas render as text. Activity filters
 stay in the URL and calls group by recorded request id. Authentication, history,
-artifacts and token controls use the signed-in person's existing permissions.
+and token controls use the signed-in person's existing permissions.
 Connector selection and access rules remain in deployment code.
 
 One deployment may serve several authenticated people inside the same tenant.

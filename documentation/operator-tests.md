@@ -18,7 +18,7 @@ its state and fonts before capturing.
 ## Page and state matrix
 
 Each row runs empty, loading, error, populated, and restricted-viewer fixtures
-in both light and dark themes, for 140 screenshots.
+in both light and dark themes, for 120 screenshots.
 
 | Page or tab | Empty state | Loading/error request | Restricted viewer |
 | --- | --- | --- | --- |
@@ -33,8 +33,6 @@ in both light and dark themes, for 140 screenshots.
 | Access | No pools or client tokens | Config | No token management |
 | Access tokens | No client tokens | Token list | No token management |
 | Activity | No calls | Activity | Unavailable |
-| Artifacts | Empty library | Artifact list | Refused session |
-| Artifact viewer | No document at that address | Artifact view | Refused session |
 | Config | Snapshot without connectors or pools | Config | Scoped snapshot |
 
 Another 36 screenshots cover configured, mismatched, unreadable and multifield
@@ -47,7 +45,7 @@ classification/result size/client facts, and a catalog-change event.
 Screenshots cover presentation. Keep unit and server tests for INV-6 sentinels,
 secret disclosure, auth and grant boundaries, CSRF, identity fences, cancellation,
 request lifetime, and error sanitization. Keep browser tests for keyboard/focus,
-XSS, real CSP enforcement, popup lifetimes, and artifact confinement. A screenshot
+XSS, real CSP enforcement, and popup lifetimes. A screenshot
 cannot prove these rules.
 
 ## Updating Linux snapshots
