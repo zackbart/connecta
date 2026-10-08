@@ -72,7 +72,7 @@ const DEFAULT_MAX_CHARS = 20_000;
 /**
  * Connecta's ceiling on one rendering; Google caps a document near 1.02M
  * characters. At most about 3 MB of JSON, inside what a direct call can stash
- * and page with get_result; past 256 KiB it cannot cross into execute_code.
+ * and page with connecta.result; past 256 KiB it cannot cross into execute_code.
  */
 const MAX_CHARS = 1_000_000;
 /**
@@ -998,7 +998,7 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
             type: "integer",
             minimum: 0,
             maximum: MAX_CHARS,
-            description: `Characters of text kept across all rendered tabs, 0 to ${MAX_CHARS}; defaults to ${DEFAULT_MAX_CHARS}. Connecta's cap. Longer text ends with a truncation marker. Above the default, call directly (call_tool, get_result to page): execute_code carries at most 256 KiB per result.`,
+            description: `Characters of text kept across all rendered tabs, 0 to ${MAX_CHARS}; defaults to ${DEFAULT_MAX_CHARS}. Connecta's cap. Longer text ends with a truncation marker. Above the default, call directly (call_tool, connecta.result to page): execute_code carries at most 256 KiB per result.`,
           },
           withIndexes: {
             type: "boolean",

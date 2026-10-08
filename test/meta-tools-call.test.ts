@@ -1045,7 +1045,7 @@ describe("call_tool size guard + connecta.result", () => {
     expect(notice.totalBytes).toBeGreaterThan(100);
     expect(notice.nextAction).toEqual({
       tool: "execute_code",
-      arguments: { code: `async () => await connecta.result(${JSON.stringify(notice.resultId)}, { offset: 100 })` },
+      arguments: { code: `async () => await connecta.result(${JSON.stringify(notice.resultId)}, { offset: 100, maxBytes: 3829 })` },
     });
 
     // Round-trip the full text back through connecta.result.
@@ -1090,7 +1090,7 @@ describe("call_tool size guard + connecta.result", () => {
     expect(parsed.data).toMatchObject({
       nextAction: {
         tool: "execute_code",
-      arguments: { code: `async () => await connecta.result(${JSON.stringify(parsed.data.resultId)}, { offset: 0 })` },
+      arguments: { code: `async () => await connecta.result(${JSON.stringify(parsed.data.resultId)}, { offset: 0, maxBytes: 3829 })` },
       },
     });
     let text = "";
@@ -2351,7 +2351,7 @@ describe("truncated results lead with their connecta.result handle", () => {
     expect(preview).toBe(FULL.slice(0, 100));
     expect(notice.nextAction).toEqual({
       tool: "execute_code",
-      arguments: { code: `async () => await connecta.result(${JSON.stringify(notice.resultId)}, { offset: 100 })` },
+      arguments: { code: `async () => await connecta.result(${JSON.stringify(notice.resultId)}, { offset: 100, maxBytes: 3829 })` },
     });
     expect(preview + await pageFrom(mt, notice.resultId, 100)).toBe(FULL);
   });

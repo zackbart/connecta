@@ -55,7 +55,7 @@ not exist or is not shared with this person; Google does not say which.
 - The same holds for a `maxChars` above the default: a long rendering
   can pass here and still be refused inside `execute_code`, even when the
   program would only measure it. Read it with a direct `call_tool`, paged
-  with `get_result`, or read one tab at a time.
+  with `connecta.result`, or read one tab at a time.
 
 ## Editing
 

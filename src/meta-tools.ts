@@ -21,7 +21,7 @@ import type { DeferredWork } from "./connector-scope.js";
 import { resolveDiscoveryConcurrency } from "./concurrency.js";
 import { boundedEchoText, msg, type CallErrorDetails } from "./errors.js";
 import { failureRecord, logFailure } from "./operator-record.js";
-import { serializeResultText } from "./executor-result.js";
+import { MAX_EXECUTE_RESULT_CHARS, serializeResultText } from "./executor-result.js";
 import {
   InvocationService,
   type InvocationTiming,
@@ -361,7 +361,9 @@ async function stashResult(
     nextOffset: preview.kind === "prefix" ? preview.bytes : 0,
     nextAction: {
       tool: "execute_code",
-      arguments: { code: `async () => await connecta.result(${JSON.stringify(id)}, { offset: ${preview.kind === "prefix" ? preview.bytes : 0} })` },
+      // A byte may cost six JSON characters when escaped. Leave room for the
+      // result id, page counters, and continuation metadata in the returned page.
+      arguments: { code: `async () => await connecta.result(${JSON.stringify(id)}, { offset: ${preview.kind === "prefix" ? preview.bytes : 0}, maxBytes: ${Math.floor((MAX_EXECUTE_RESULT_CHARS - 1024) / 6)} })` },
     },
   };
 }

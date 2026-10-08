@@ -480,8 +480,11 @@ frame and request-local failure id. A new error containing its message is a new
 program error. There is no prose matching and no 64-entry ring. The frame id is
 kept by guest Error identity; copied public `code`/`details` cannot authenticate
 an error. Frames from another run and invented ids cannot identify a host failure.
-The guest JSON codec and Object prototype are immutable so a program cannot
-intercept a private frame during bridge decoding or response serialization.
+The guest JSON codec, Object prototype, and Promise prototype are immutable.
+Promise race and species are protected too, so a program cannot intercept a
+private frame during bridge decoding, async return adoption, or serialization.
+Program diagnostic fields are bounded before transport, including escaped text;
+a large custom error name cannot turn a failure into a truncated success.
 
 **E7.** `retryable` for `unknown_address`, `unknown_tool`, and
 `destructive_tool_requires_approval` is pinned false, never inferred from an

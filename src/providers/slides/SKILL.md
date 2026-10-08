@@ -74,7 +74,7 @@ from a Drive search or from a URL (`/presentation/d/<id>/`).
   whole, in every reply; text is cut first, and a large reply's other fields
   are named in `cut`. Ids too many for this tool's 192 KiB budget are all
   returned anyway, without text; past 256 KiB, more than a program can
-  receive, call the tool directly and page with `get_result`. A batch
+  receive, call the tool directly and page with `connecta.result`. A batch
   whose ids pass even that returns its comment state and `repliesNotShown`;
   read what it made with `list_comments`, `get_presentation`, or
   `get_page`, and do not send it again.

@@ -573,7 +573,7 @@ describe("pages that can be delivered", { timeout: 60_000 }, () => {
     expect(JSON.stringify(refused)).toContain("invalid_args");
     expect(JSON.stringify(refused)).toContain("narrow the range's columns");
 
-    // The largest page a caller may ask for still pages through get_result.
+    // The largest page a caller may ask for still pages through connecta.result.
     route = bigSheet(200, 3);
     const mt = metaTools();
     const paged = await mt.callTool({

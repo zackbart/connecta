@@ -27,13 +27,24 @@ export function guestPrelude(secret: string): string {
   return `((failurePrefix, runnerKey, token) => {
   const NativeError = globalThis.Error;
   const NativePromise = Promise;
-  const nativeResolve = NativePromise.resolve;
-  const nativeRace = NativePromise.race;
+  const nativeResolve = Function.prototype.call.bind(NativePromise.resolve);
+  const nativeRace = Function.prototype.call.bind(NativePromise.race);
   // The upstream Worker starts its Promise.race after invoking the program.
   // Its deadline must not use a resolve function replaced during that invocation.
   class HostPromise extends NativePromise {}
-  Object.defineProperty(HostPromise, "resolve", { value: value => nativeResolve.call(HostPromise, value) });
-  NativePromise.race = values => nativeRace.call(HostPromise, values);
+  Object.defineProperties(HostPromise, {
+    resolve: { value: value => nativeResolve(HostPromise, value) },
+    [Symbol.species]: { value: HostPromise }
+  });
+  Object.freeze(HostPromise.prototype);
+  Object.freeze(HostPromise);
+  Object.defineProperties(NativePromise, {
+    race: { value: values => nativeRace(HostPromise, values), writable: false, configurable: false },
+    [Symbol.species]: { value: NativePromise, configurable: false }
+  });
+  // Async return values are adopted through their prototype's then method.
+  // Guest callbacks must never observe the runner's private return frame.
+  Object.freeze(NativePromise.prototype);
   const startsWith = Function.prototype.call.bind(String.prototype.startsWith);
   const slice = Function.prototype.call.bind(String.prototype.slice);
   const parse = JSON.parse;
@@ -129,12 +140,16 @@ export function guestPrelude(secret: string): string {
         try {
           if (typeof error === "string") message = error;
           else if (error) {
-            if (typeof error.name === "string") name = error.name;
+            if (typeof error.name === "string") name = slice(error.name, 0, 64);
             if (typeof error.message === "string") message = error.message;
-            if (typeof error.stack === "string") stack = slice(error.stack, 0, 2000);
+            if (typeof error.stack === "string") stack = slice(error.stack, 0, 1000);
           }
         } catch {}
-        return { __connectaFailure: { token, program: { name, message: slice(message, 0, 2000), stack, baseline } } };
+        // Three 1,000-character fields fit the transport cap even when every
+        // character needs a six-character JSON escape. Failures never truncate
+        // into an ordinary successful program result.
+        return { __connectaFailure: { token, program: { name, message: slice(message, 0, 1000), stack,
+          baseline: typeof baseline === "string" ? slice(baseline, 0, 1000) : "" } } };
       }
     };
   }});

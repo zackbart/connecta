@@ -526,6 +526,11 @@ export function contractHarness(): {
   return {
     state,
     run: async (executor, code, config = {}) => {
+      if (code === "{{directRecoveryCode}}") {
+        const direct = await createMetaTools(registry, CONTRACT_BASE).callTool({ address: "reader.big", args: { chars: 30_000 }, resultMode: "value" });
+        const notice = required(direct.structuredContent).data as { nextAction: { arguments: { code: string } } };
+        code = notice.nextAction.arguments.code;
+      }
       if (code.includes("{{directResultId}}")) {
         const direct = await createMetaTools(registry, CONTRACT_BASE).callTool({ address: "reader.big", args: { chars: 30_000 }, resultMode: "value" });
         const id = (required(direct.structuredContent).data as { resultId: string }).resultId;
@@ -610,6 +615,17 @@ export const CONTRACT_CASES: ContractCase[] = [
       expect(outcome.result).toEqual({ length: 30_000, totalBytes: 30_011 });
       expect(state.calls["reader.big"]).toBe(1);
       expect(outcome.value.hostCalls).toEqual({ attempted: 4, admitted: 4, succeeded: 4, failed: 0 });
+    },
+  },
+  {
+    clauses: "R2, R4",
+    name: "INV-7: a direct result recovery action preserves its complete page and continuation",
+    code: "{{directRecoveryCode}}",
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toMatchObject({ offset: 0, bytes: 3829, totalBytes: 30_011, hasMore: true, nextOffset: 3829, format: "text", text: expect.any(String) });
+      expect(outcome.text.length).toBeLessThan(24_000);
+      expect(outcome.result).not.toHaveProperty("truncated");
     },
   },
   ...[
@@ -799,6 +815,43 @@ return fs;
       expect(outcome.value.error).toMatchObject({ code: "program_error", message: expect.stringContaining("wrapped:") });
     },
   },
+  {
+    clauses: "E6, X11",
+    name: "INV-6: promise adoption and mutable call hooks cannot observe private failure frames",
+    code: `async () => {
+      const then = Promise.prototype.then;
+      let observed = false;
+      Reflect.set(Promise.prototype, "then", function (...args) {
+        observed = true;
+        return then.apply(this, args);
+      });
+      Reflect.set(Promise.resolve, "call", () => { observed = true; });
+      Reflect.set(Promise, Symbol.species, class extends Promise {});
+      const racePrototype = Object.getPrototypeOf(Promise.race([]));
+      try { Object.defineProperty(racePrototype, "then", { value() { observed = true; } }); } catch {}
+      try { await connecta.call("missing.read"); }
+      catch (error) { throw new Error(observed ? "observed frame" : "wrapped: " + error.message); }
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(true);
+      expect(outcome.value.error).toMatchObject({ code: "program_error", message: expect.stringContaining("wrapped:") });
+    },
+  },
+  ...[false, true].map((escaped): ContractCase => ({
+    clauses: "E1, E6, R2",
+    name: `INV-7: oversized program diagnostics remain typed failures escaped=${escaped}`,
+    code: `async () => {
+      const error = new Error(${escaped ? '"\\u0000".repeat(40_000)' : '"failure"'});
+      error.name = "custom".repeat(8_000);
+      ${escaped ? 'error.stack = "\\u0000".repeat(40_000);' : ''}
+      throw error;
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(true);
+      expect(outcome.value.error).toMatchObject({ code: "program_error", details: { name: "Error" } });
+      expect(outcome.result).toBeUndefined();
+    },
+  })),
   {
     clauses: "P1",
     name: "TypeScript syntax is not JavaScript and does not run",
