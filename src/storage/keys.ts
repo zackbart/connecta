@@ -461,6 +461,20 @@ export const negotiationKeys = {
   verdict: (partitionDigest: string) => validateStorageKey(`negotiation:v1:${partitionDigest}`),
 } as const satisfies Keyed;
 
+/** A downstream MRTR round is consumed once before continuation dispatch. */
+export const inputRetryKeys = {
+  family: {
+    name: "downstream-input-retry",
+    scope: "connector",
+    prefixes: ["input-retry:v1:"],
+    version: { number: 1, in: "key" },
+    codec: textCodec,
+    ttl: { kind: "fixed", seconds: 10 * 60 },
+    durable: false,
+  },
+  used: (nonce: string) => validateStorageKey(`input-retry:v1:${nonce}`),
+} as const satisfies Keyed;
+
 /**
  * Every family, for the overlap and coverage checks and for migrations that
  * copy only what a deployment cannot recreate. Keys a custom connector writes
@@ -484,6 +498,7 @@ export const KEY_FAMILIES: readonly KeyFamily[] = [
   oauthV2Keys.family,
   oauthConnectKeys.family,
   negotiationKeys.family,
+  inputRetryKeys.family,
   kvCopyKeys.family,
   kvCutoverKeys.family,
 ];

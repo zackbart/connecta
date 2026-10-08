@@ -11,6 +11,7 @@ import {
   responseCacheKeys,
   credentialKeys,
   familyOfKey,
+  inputRetryKeys,
   KEY_FAMILIES,
   kvCopyKeys,
   kvCutoverKeys,
@@ -92,6 +93,7 @@ describe("storage key families", () => {
     within(accessTokenKeys.family, accessTokenKeys.active);
     within(oauthConnectKeys.family, oauthConnectKeys.used("nonce"));
     within(negotiationKeys.family, negotiationKeys.verdict("digest"));
+    within(inputRetryKeys.family, inputRetryKeys.used("nonce"));
     within(kvCopyKeys.family, kvCopyKeys.cursor("token"));
     within(oauthGrantKeys.family, oauthGrantKeys.grant);
     within(oauthFlowKeys.family, oauthFlowKeys.flow("digest"));
@@ -133,6 +135,7 @@ describe("storage key families", () => {
       [accessTokenKeys.active, "access-token"],
       [credentialKeys.credential("svc"), "credential"],
       [credentialKeys.credential("svc", "ab12"), "credential"],
+      [connector(inputRetryKeys.used("nonce")), "downstream-input-retry"],
       [artifact.head("a"), "artifact"],
       [artifact.run("a", "0", "r"), "artifact"],
       [connector(oauthV2Keys.value(oauthV2Keys.field.tokens, null)), "oauth-v2"],

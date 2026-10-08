@@ -18,6 +18,7 @@ import {
   UnsupportedProtocolVersionError,
   UrlElicitationRequiredError,
   isInputRequiredResult,
+  fromJsonSchema,
   isJSONRPCErrorResponse,
   isJSONRPCNotification,
   specTypeSchemas,
@@ -26,6 +27,7 @@ import {
 } from "@modelcontextprotocol/client";
 import type {
   FetchLike,
+  JsonSchemaType,
   ListToolsResult,
   RequestOptions,
   StandardSchemaV1,
@@ -71,6 +73,7 @@ import { learnedUrlRefusal } from "../url-safety.js";
 import { oauthSealerFor } from "../oauth-sealing.js";
 import { retainingOAuthPartition } from "../oauth-partition.js";
 import { registerInvocationAuth } from "../invocation-auth.js";
+import { downstreamInputCapabilities, assertDownstreamOutputSafe, downstreamWriteContinuation } from "../downstream-input-context.js";
 import { detach, runEdge } from "../runtime/run.js";
 import { assertKnownOptions, keys, optionsOf } from "../config-schema.js";
 import { describedEndpoint, describedUrl } from "../described.js";
@@ -1900,6 +1903,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         if (isCursorShapeError(error)) throw new ConnectorCallError("connector_call_failed", "Downstream catalog nextCursor must be a string, null, or absent.", { retryable: false });
         throw error;
       }
+      assertDownstreamOutputSafe(ctx.requestScope ?? ctx, page);
       const clean = cache.intake(ctx, method, page);
       if (method === "tools/list") toolPages++;
       if (message.params?.cursor === undefined) observeCatalogFetch(ctx, Date.now(), method);
@@ -2019,14 +2023,25 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     const url = new URL(opts.url);
     const trackedFetch: FetchLike = async (input, init) => {
       trackSentRequest(ctx, input, init);
-      const response = await fetch(input, init);
-      if (skillsEnabled && typeof init?.body === "string") {
-        let rpc: unknown;
+      let rpc: unknown;
+      if (typeof init?.body === "string") {
         try { rpc = JSON.parse(init.body); }
-        catch { return response; } // OAuth exchanges can send form-encoded bodies.
-        if (skillObject(rpc) && (rpc.method === "skills/list" || rpc.method === "resources/read")) {
-          return boundedSkillResponse(response, rpc.method === "skills/list" ? MAX_SERIALIZED_CATALOG_BYTES : MAX_SKILL_READ_RPC_BYTES, rpc.id, init.signal);
-        }
+        catch { /* OAuth exchanges can send form-encoded bodies. */ }
+      }
+      const writeContinuation = downstreamWriteContinuation(ctx.requestScope ?? ctx) &&
+        init?.method === "POST" && skillObject(rpc) && rpc.method === "tools/call";
+      const response = writeContinuation
+        ? await fetch(input, { ...init, redirect: "manual" })
+        : await fetch(input, init);
+      if (writeContinuation && (response.status === 401 || response.status >= 300 && response.status < 400)) {
+        await response.body?.cancel().catch(() => {});
+        // Stop before the SDK can refresh auth or follow a redirect and resend
+        // this write. The host's one-use continuation nonce remains spent.
+        if (response.status === 401) throw authRequiredError();
+        throw new ConnectorCallError("connector_call_failed", "The downstream redirected a write continuation; it was not repeated.", { retryable: false });
+      }
+      if (skillsEnabled && skillObject(rpc) && (rpc.method === "skills/list" || rpc.method === "resources/read")) {
+        return boundedSkillResponse(response, rpc.method === "skills/list" ? MAX_SERIALIZED_CATALOG_BYTES : MAX_SKILL_READ_RPC_BYTES, rpc.id, init?.signal);
       }
       return response;
     };
@@ -2347,13 +2362,15 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             { name: "connecta", version: CONNECTA_VERSION },
             {
               ...clientOptions,
-              ...(skillsEnabled ? { capabilities: { extensions: { [SKILLS_EXTENSION]: {} } } } : {}),
               listMaxPages: MAX_TOOL_PAGES,
               versionNegotiation: {
                 mode: opts.versionNegotiation ?? "auto",
               },
-              // Connecta has no interactive relay. Surface the result manually
-              // below as one structured, non-retryable connector failure.
+              capabilities: {
+                ...downstreamInputCapabilities(ctx.requestScope ?? ctx),
+                ...(skillsEnabled ? { extensions: { [SKILLS_EXTENSION]: {} } } : {}),
+              },
+              // The host owns each sealed continuation; never auto-retry a write.
               inputRequired: { autoFulfill: false },
             },
           );
@@ -2757,28 +2774,40 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             `Tool "${name}" requires task-based execution, which Connecta does not support.`,
           );
         }
+        let output: StandardSchemaV1 | undefined;
+        const outputError = (code: number, message: string): unknown => atMcpBoundary(ctx,
+          new ProtocolError(code, message), "tools/call", client.transport, [ctx.signal]);
+        if (toolDefinition?.outputSchema) {
+          try { output = fromJsonSchema(toolDefinition.outputSchema as JsonSchemaType); }
+          catch { throw outputError(-32602, `Tool '${name}' has an invalid outputSchema: schema could not be compiled`); }
+        }
         const result = await client
           .callTool(
             {
               name,
               arguments: (args ?? {}) as Record<string, unknown>,
+              ...options?.input,
             },
             {
               ...requestOptions(ctx),
               allowInputRequired: true,
-              ...(toolDefinition ? { toolDefinition } : {}),
+              // SDK 2.3.1's callTool checks outputSchema even for a suspension.
+              // Retain its header mirroring, then validate only final results.
+              ...(toolDefinition ? { toolDefinition: { ...toolDefinition, outputSchema: undefined } } : {}),
             },
           )
           .catch((err: unknown) => {
+            assertDownstreamOutputSafe(ctx.requestScope ?? ctx, err);
             throw atMcpBoundary(ctx, err, "tools/call", client.transport, [ctx.signal]);
           });
         if (isInputRequiredResult(result)) {
-          throw new ConnectorCallError(
-            "input_required_unsupported",
-            `Connector "${id}" returned input_required for "${name}". ` +
-              "Connecta cannot relay multi-round-trip input yet; this " +
-              "capability is gated pending real host and downstream adoption.",
-          );
+          return result;
+        }
+        assertDownstreamOutputSafe(ctx.requestScope ?? ctx, result);
+        if (output && !result.isError) {
+          if (result.structuredContent === undefined) throw outputError(-32600, `Tool ${name} has an output schema but did not return structured content`);
+          const validation = await output["~standard"].validate(result.structuredContent);
+          if (validation.issues) throw outputError(-32602, "Structured content does not match the tool's output schema: validation failed");
         }
         return result;
       } catch (err) {
@@ -3007,7 +3036,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     };
   }
 
-  const withActiveSecrets = async <T>(ctx: ConnectorContext, run: () => Promise<T>, redactResult = true): Promise<T> => {
+  const withActiveSecrets = async <T>(ctx: ConnectorContext, run: () => Promise<T>, redactResult = true, preserveInput = false): Promise<T> => {
     trackCredentialReads(ctx);
     const secrets = sentSecretsFor(ctx);
     if (opts.auth?.type === "headers") {
@@ -3019,14 +3048,17 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     active.add(ctx);
     try {
       const result = await run();
-      return redactResult ? redactSentSecrets(ctx, result) : result;
+      // Opaque state must reach the sealing handler byte-exact. Invocation
+      // intercepts it before ordinary result processing or guest exposure.
+      if (!preserveInput || !isInputRequiredResult(result)) assertDownstreamOutputSafe(ctx.requestScope ?? ctx, result);
+      return preserveInput && isInputRequiredResult(result) || !redactResult ? result : redactSentSecrets(ctx, result);
     }
-    catch (error) { throw redactSentSecrets(ctx, error); }
+    catch (error) { assertDownstreamOutputSafe(ctx.requestScope ?? ctx, error); throw redactSentSecrets(ctx, error); }
     finally { active.delete(ctx); }
   };
   const callTool = connector.callTool;
   connector.callTool = (name, args, ctx, options) =>
-    withActiveSecrets(ctx, () => callTool(name, args, ctx, options));
+    withActiveSecrets(ctx, () => callTool(name, args, ctx, options), true, true);
   const listTools = connector.listTools;
   connector.listTools = (ctx) => withActiveSecrets(ctx, () => listTools(ctx));
   const readResource = connector.readResource!;

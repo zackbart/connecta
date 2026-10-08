@@ -45,6 +45,7 @@ import {
 import { AUTHORIZE_OUTPUT, CALL_OUTPUT, SEARCH_OUTPUT, SKILLS_OUTPUT } from "./meta-output.js";
 import { RESULT_TTL_SECONDS, resultKeys } from "./storage/keys.js";
 import { agentOutputOperations, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
+import { captureDownstreamInput } from "./downstream-input.js";
 
 export {
   MAX_DESCRIBE_ADDRESSES,
@@ -641,6 +642,7 @@ function metaToolsForRequest(
     defer?: DeferredWork | undefined;
     /** Request identity shared by credential redaction, paging, and downstream invocation. */
     requestScope?: object | undefined;
+    downstreamInput?: boolean;
   } = {},
 ) {
   // Already normalized and warned about at registry construction.
@@ -705,6 +707,11 @@ function metaToolsForRequest(
           ? { requestSignal: opts.requestSignal }
           : {}),
         unwrapResult: call.resultMode === "value",
+        ...(opts.downstreamInput ? { processInputRequired: async (result, resolved, secrets) => {
+          await captureDownstreamInput(requestScope, resolved.connector.id,
+            `${resolved.connector.id}.${resolved.toolName}`, result, secrets);
+          return { toolResult: { content: [] } };
+        } } : {}),
         processResult: async (result, resolved, secrets, format) => {
           // Result-size cap for THIS call: the connector's own override wins,
           // then the deployment-wide value, then the built-in default (already
@@ -1273,6 +1280,7 @@ export function registerMetaTools(
   },
 ): void {
   const mt = createMetaTools(registry, ctx.baseUrl, {
+    downstreamInput: Boolean(ctx.authElicitation),
     requestScope: ctx.requestScope,
     trust: ctx.trust,
     defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,

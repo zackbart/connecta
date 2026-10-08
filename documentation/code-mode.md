@@ -510,7 +510,7 @@ caller what to do next, and never invents a cause it was not told.
 | `invalid_args` | arguments or discovery bounds were rejected | false |
 | `not_found` | the downstream answered and the resource is not there — the one code that says skip this id rather than stop, raised only where the provider tells absence from a permission gap | false |
 | `conflict` | the write named a base version someone else already moved past; nothing changed. `details.current` says where things stand (at most 20 whole-number entries) — re-read, reapply, retry with that base | false |
-| `input_required_unsupported` | a downstream asked for mid-call input | false |
+| `input_required_unsupported` | a downstream asked for input; use `nextAction` for the equivalent direct call | false |
 | `rate_limited` | the downstream reported a rate limit | true |
 | `unavailable` | the downstream is down or unreachable; optional sanitized `details.host` and `details.code` describe the transport failure without paths, queries, credentials, or provider prose | true |
 | `timeout` | a call or sandbox deadline expired; details name operation, stage, elapsedMs, and deadlineMs | per operation |

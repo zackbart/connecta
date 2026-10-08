@@ -559,6 +559,85 @@ partial matches, unavailable catalogs, unknown scopes, and genuine no-match
 results. A non-empty query with no ASCII lexical terms returns no tools with
 bounded no-match analysis. An empty or whitespace-only query browses.
 
+## Downstream input on direct calls
+
+On MCP 2026-07-28, `call_tool` and `call_destructive_tool` relay a downstream
+`input_required` through connecta's own `requestState`. This requires an
+authenticated principal and a vault with `requestStateKey`, `seal`, and `open`.
+The original request must be retried with identical arguments. Connecta
+continues only the same connector and resolved address, after the normal
+identity, pool, classification, schema, and admission checks.
+
+The signed `createRequestStateCodec` envelope contains a version-2
+`downstream` discriminator, connector id, and vault ciphertext. The encrypted
+payload binds the principal, endpoint including its pool path, meta-tool,
+submitted address and resolved target, arguments digest, round, original expiry,
+and one-use nonce. It carries the opaque downstream state byte-exact, bounded
+private state history from earlier rounds, and a map
+from connecta's numbered `downstream/<connector>/<index>` keys to the original
+downstream keys and elicitation modes. Neither the opaque state nor the original
+keys appear in agent output. Each round consumes a TTL-bound storage CAS before
+dispatch; tampering, expiry, changed arguments, cross-principal/pool reuse, and
+concurrent or repeated consumption are refused.
+
+Only well-formed form and URL elicitation declared by the client on that request
+is forwarded. An empty `elicitation: {}` declaration means form support, as in
+the spec. Capabilities are checked again on retry. Unknown response keys are
+ignored; recognized bare responses are validated and renamed back before being
+sent downstream. Accept, decline, and cancel all continue the pending downstream
+call, so the downstream can finish or terminate it. URL acknowledgements and
+decline/cancel carry only their action. Sampling and roots remain unsupported
+under [#703](https://github.com/zackbart/connecta/issues/703).
+
+URL elicitation retains the downstream-provided URL unchanged. It must be HTTPS,
+have no URL userinfo or control/space characters, contain no credential known to
+the sent-secret boundary, and remain byte-identical through agent redaction.
+Connecta refuses unsafe URLs instead of rewriting them. Messages begin
+with `Downstream <connector>:` so the host can display who supplied the prompt;
+the host owns consent and browser navigation. Connecta never adds credentials
+or follows the URL. Messages pass the ordinary agent-output redaction boundary.
+A form is refused if that boundary would change its schema, including property
+names, enum values, or annotations; the host never receives a rewritten answer
+contract. Prompts, raw continuation results, discovery, and continuation-time
+catalogs that echo any round's opaque state are refused before redaction, paging,
+stashing, error shaping, schema observation, or cache publication and reuse.
+This includes bounded percent-decoded and JSON-escaped views, encoded echoes,
+short state, and serialized
+numbers, booleans, and null. No prompt, state,
+response, arguments, or raw error reaches activity, logs, or status.
+
+Connecta's confidentiality guarantee covers its own handling and persistence of
+`requestState`. Checks for state echoed in downstream content are defense in
+depth; a downstream's deliberate disclosure of its own state is outside that
+guarantee. Binary blobs are not decoded to look for echoes.
+
+A write returning `input_required` has not completed its operation: the
+[MRTR spec](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr)
+defines that result as awaiting input before completion. Sending the original
+opaque state and input responses is a continuation, not an automatic replay.
+The sealed arguments digest prevents using that continuation for fresh write
+arguments. A timeout or other failure during a continuation leaves its nonce
+spent, so it cannot authorize a second attempt. Write continuations stop at an
+HTTP 401 or redirect before the SDK can refresh authorization or resend the call.
+HTTP 403 scope escalation also remains disabled. Read continuations retain normal
+OAuth refresh behavior.
+
+Auth recovery and downstream input are distinct state variants, with only one
+active in a round. An auth retry can reach downstream input within the same
+three-prompt, ten-minute window. A downstream continuation that fails auth ends
+with the ordinary failure; it does not replace its pending state with an auth
+replay. Downstream payloads and input responses are capped at 64 KiB, with at
+most 16 inputs and 256 characters per downstream key. The combined private
+state history is also capped at 64 KiB. Sealed wire state is
+capped at 128 KiB. `input_required_invalid`, `input_required_limit`,
+`input_required_unsupported`, and `input_required_round_limit` are non-retryable
+typed failures.
+
+Programs and in-process meta-tools return `input_required_unsupported`, with a
+`nextAction` naming the equivalent direct call and bounded original arguments.
+Programs never receive downstream state or prompts, and never restart to
+fulfill downstream input.
+
 ## Authorization recovery
 
 On MCP 2026-07-28, a host declaring `elicitation.url` receives

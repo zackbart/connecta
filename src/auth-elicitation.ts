@@ -13,9 +13,9 @@ import type { DeferredWork } from "./connector-scope.js";
 import { storedCredentialShape } from "./credential-rules.js";
 import { authRecoveryFacts, bindReplayReads, classificationDigest, type ReplayRead } from "./invocation-auth.js";
 import { CatalogService } from "./catalog-service.js";
+import { DownstreamElicitation, MAX_RELAY_STATE_CHARS, type DownstreamRequestState, type SealedDownstreamState } from "./downstream-input.js";
+import { canonicalState as canonical, requestDigest as digest, stateObject as object, invalidRequestState as invalidState, REQUEST_STATE_TTL_MS as TTL_MS, MAX_INPUT_ROUNDS as MAX_ROUNDS } from "./request-state.js";
 
-const TTL_MS = 10 * 60_000;
-const MAX_ROUNDS = 3;
 const INPUT_KEY = "connecta_auth";
 const MESSAGE = "Connect this service in your browser, then retry the request.";
 
@@ -33,25 +33,6 @@ interface AuthRequestState {
   reads: ReplayRead[];
 }
 
-function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function invalidState(): never {
-  throw new ProtocolError(INVALID_PARAMS, "Invalid or expired requestState", { reason: "invalid_request_state" });
-}
-
-/** JSON object order is immaterial; array order and every submitted value are bound. */
-function canonical(value: unknown): string {
-  return JSON.stringify(value, (_key, item: unknown) => object(item)
-    ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
-}
-
-async function digest(tool: string, args: Record<string, unknown>): Promise<string> {
-  const bytes = new TextEncoder().encode(canonical({ tool, args }));
-  return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), byte => byte.toString(16).padStart(2, "0")).join("");
-}
-
 function failure(code: "invalid_request_state" | "auth_declined" | "auth_cancelled" | "auth_round_limit", message: string): ToolResult {
   const structuredContent = { ok: false, error: { code, message, retryable: false } };
   return { content: [{ type: "text", text: JSON.stringify(structuredContent) }], structuredContent, isError: true };
@@ -59,12 +40,13 @@ function failure(code: "invalid_request_state" | "auth_declined" | "auth_cancell
 
 /** Request-local auth recovery at the MCP boundary, never inside a guest provider. */
 export class AuthElicitation {
-  private codec: Promise<RequestStateCodec<AuthRequestState>> | undefined;
+  private codec: Promise<RequestStateCodec<AuthRequestState | SealedDownstreamState>> | undefined;
+  private readonly downstream: DownstreamElicitation;
 
-  private stateCodec(): Promise<RequestStateCodec<AuthRequestState>> {
+  private stateCodec(): Promise<RequestStateCodec<AuthRequestState | SealedDownstreamState>> {
     const key = this.options.vault?.requestStateKey;
     if (!key) return invalidState();
-    return this.codec ??= key.call(this.options.vault).then(bytes => createRequestStateCodec<AuthRequestState>({
+    return this.codec ??= key.call(this.options.vault).then(bytes => createRequestStateCodec<AuthRequestState | SealedDownstreamState>({
       key: bytes, ttlSeconds: TTL_MS / 1000,
       bind: () => canonical({ principal: this.options.principal, endpoint: this.options.endpoint }),
     }));
@@ -86,13 +68,19 @@ export class AuthElicitation {
     requestSignal: AbortSignal;
     requestScope: object;
     defer: DeferredWork | undefined;
-  }) {}
+  }) {
+    this.downstream = new DownstreamElicitation({ ...options,
+      mint: async (state, context) => (await this.stateCodec()).mint(state, context),
+    });
+  }
 
   /** The SDK runs this before any tool handler, including non-auth tools. */
-  async verify(wire: string, context: ServerContext): Promise<AuthRequestState> {
+  async verify(wire: string, context: ServerContext): Promise<AuthRequestState | DownstreamRequestState> {
     const { vault, endpoint, principal, registry, canManage } = this.options;
-    if (!vault?.requestStateKey || wire.length > 8192) return invalidState();
+    if (!vault?.requestStateKey || wire.length > MAX_RELAY_STATE_CHARS) return invalidState();
     const state: unknown = await (await this.stateCodec()).verify(wire, context);
+    if (object(state) && state.version === 2 && state.kind === "downstream") return this.downstream.verify(state, context);
+    if (wire.length > 8192) return invalidState();
     if (!object(state) || state.version !== 1 || !principal || state.principal !== principal ||
         state.endpoint !== endpoint || typeof state.connector !== "string" ||
         !registry.getConnector(state.connector) || !canManage(state.connector) ||
@@ -152,7 +140,10 @@ export class AuthElicitation {
     tool: string, args: Record<string, unknown>, context: ServerContext,
     operation: () => Promise<ToolResult>,
   ): Promise<ToolResult | InputRequiredResult> {
-    const previous = context.mcpReq.requestState<AuthRequestState>();
+    this.downstream.bind(context);
+    const prior = context.mcpReq.requestState<AuthRequestState | DownstreamRequestState>();
+    if (prior?.version === 2) return this.downstream.resume(prior, tool, args, context, operation);
+    const previous = prior;
     const requestDigest = previous ? await digest(tool, args) : undefined;
     if (previous && (previous.tool !== tool || previous.digest !== requestDigest ||
         previous.address !== args.address)) return failure("invalid_request_state", "Invalid or expired requestState");
@@ -200,6 +191,8 @@ export class AuthElicitation {
       }
     }
     let result = await operation();
+    const relayed = await this.downstream.finish(tool, args, context, result, previous);
+    if (relayed !== result) return relayed;
     const error = result.structuredContent?.error;
     const authFailure = result.isError && object(error) &&
       (error.code === "auth_required" || error.code === "downstream_oauth_required");
