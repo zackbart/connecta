@@ -37,6 +37,10 @@ it.each([
   ["docs://manual/{page}", "docs://manual/%25E2%259C%2593"],
   ["docs://manual/{+path}", "docs://manual/caf%C3%A9/%E6%96%87%E6%9B%B8"],
   ["docs://manual{/pages*}", "docs://manual/caf%C3%A9/%E2%9C%93"],
+  ["https://h/.{x}/", "https://h/.safe/"],
+  ["https://h/{x}./y", "https://h/safe./y"],
+  ["docs://manual/{x}?literal=/../", "docs://manual/safe?literal=/../"],
+  ["docs://manual/{x}#literal/./", "docs://manual/safe#literal/./"],
 ])("INV-3: matches advertised RFC 6570 expansion %s as %s", (template, uri) => {
   expect(resourceUriMatchesTemplate(uri, template)).toBe(true);
 });
@@ -106,6 +110,21 @@ it.each(["%E2%80%A8", "%C2%A0", "%EF%BC%8F", "%E3%80%80", "%EF%BC%8E", "%EF%BC%8
       value = encodeURIComponent(value);
     }
   }
+});
+
+it.each([
+  ["https://h/.{x}/", "https://h/./"],
+  ["https://h/{x}./y", "https://h/./y"],
+  ["https://h/..{x}/", "https://h/../"],
+  ["https://h/%2e{x}/", "https://h/%2e/"],
+  ["https://h/{x}%252e/y", "https://h/%252e/y"],
+  ["docs://manual/.{x}", "docs://manual/."],
+  ["docs://manual/%E2%80%A8{x}", "docs://manual/%E2%80%A8"],
+  ["docs://manual/%25C2%25A0{x}", "docs://manual/%25C2%25A0"],
+  ["docs://manual/%EF%BC%8F{x}", "docs://manual/%EF%BC%8F"],
+])("INV-3 INV-4: checks final path segments formed by literals and empty captures %s as %s", (template, uri) => {
+  expect(resourceUriMatchesTemplate(uri, template)).toBe(false);
+  expect(resourceUriMatchesTemplates(uri, [{ uriTemplate: template }])).toEqual({ matched: false });
 });
 
 

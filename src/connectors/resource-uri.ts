@@ -182,7 +182,9 @@ function matches(uri: string, { parts, scheme, authority }: ParsedTemplate): boo
   const canonical = (text: string) => text.replace(/%[0-9a-f]{2}/gi, value => value.toUpperCase());
   // Empty expressions can join literals into an authority the template did
   // not advertise. Compare the final RFC 3986 authority after re-expansion.
-  return canonical(expanded) === canonical(uri) && literalAuthority(uri.slice(scheme.length)) === authority && sameHost(uri, scheme, authority);
+  const rest = uri.slice(scheme.length);
+  return canonical(expanded) === canonical(uri) && literalAuthority(rest) === authority && sameHost(uri, scheme, authority) &&
+    safePath(authority === undefined ? rest : rest.slice(authority.length + 2));
 }
 
 function sameHost(uri: string, scheme: string, authority: string | undefined): boolean {
@@ -194,6 +196,20 @@ function sameHost(uri: string, scheme: string, authority: string | undefined): b
     const host = authority === undefined ? "" : new URL(`${scheme}//${authority}/`).host;
     return new URL(uri).host === host;
   } catch { return false; }
+}
+
+function safePath(path: string): boolean {
+  // Inspect the RFC 3986 path before WHATWG removes dot segments. Empty
+  // captures can combine with literals to make traversal absent from any
+  // individual value. Queries and fragments do not contribute path segments.
+  const end = path.search(/[?#]/);
+  let value = end < 0 ? path : path.slice(0, end);
+  for (let depth = 0; depth < 8; depth++) {
+    if (/[\\\p{Cc}\p{Cf}]/u.test(value) || unsafeUnicode(value) || /(?:^|\/)\.{1,2}(?:\/|$)/.test(value)) return false;
+    if (!value.includes("%")) return true;
+    try { value = decodeURIComponent(value); } catch { return false; }
+  }
+  return false;
 }
 
 function expand({ operator, variables }: Expression, values: Map<string, string[]>): string {
