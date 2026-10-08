@@ -1,4 +1,4 @@
-import { assertRemoteOAuthClient, declareSelfHostedClient, downstreamClientMetadata, downstreamRedirectUri, selfHostedClientUrl, type RemoteOAuthClient } from "../auth/downstream-client-metadata.js";
+import { assertRemoteOAuthClient, declareSelfHostedClient, downstreamClientMetadata, downstreamRedirectUri, remoteClientAuthMethod, selfHostedClientUrl, type RemoteOAuthClient } from "../auth/downstream-client-metadata.js";
 import {
   AuthorizationServerMismatchError,
   Client,
@@ -1610,7 +1610,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         url: new URL(opts.url).href,
         redirectUri,
         clientMetadata: downstreamClientMetadata(redirectUri, oauthScope, ctx.oauthClientName,
-          staticClient?.tokenEndpointAuthMethod ?? (staticClient?.clientSecret === undefined ? "none" : "client_secret_basic")),
+          staticClient ? remoteClientAuthMethod(staticClient) : "none"),
         authScope: opts.authScope ?? "shared",
         versionNegotiation: opts.versionNegotiation ?? "auto",
         redirects: opts.redirects ?? "none",

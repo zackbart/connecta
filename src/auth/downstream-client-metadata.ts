@@ -10,11 +10,16 @@ export interface RemoteOAuthClient {
   tokenEndpointAuthMethod?: "none" | "client_secret_basic" | "client_secret_post";
 }
 
+/** Normalize the deployment-selected default once, including revocation. */
+export function remoteClientAuthMethod(client: RemoteOAuthClient): "none" | "client_secret_basic" | "client_secret_post" {
+  return client.tokenEndpointAuthMethod ?? (client.clientSecret === undefined ? "none" : "client_secret_basic");
+}
+
 export function assertRemoteOAuthClient(id: string, client: RemoteOAuthClient | undefined): void {
   if (client === undefined) return;
   let issuer: URL | undefined;
   try { issuer = new URL(client.issuer); } catch { /* Fixed refusal below. */ }
-  const method = client.tokenEndpointAuthMethod ?? (client.clientSecret === undefined ? "none" : "client_secret_basic");
+  const method = remoteClientAuthMethod(client);
   if (!issuer || issuer.protocol !== "https:" || issuer.username || issuer.password || issuer.hash || issuer.search ||
     typeof client.clientId !== "string" || !client.clientId.trim() ||
     (client.clientSecret !== undefined && (typeof client.clientSecret !== "string" || !client.clientSecret.trim())) ||
@@ -65,7 +70,7 @@ export function selfHostedClientDocument(connector: Connector, publicUrl: string
 
 /** RFC 6749 client authentication; deployment-selected methods never downgrade. */
 export function authenticateRemoteClient(client: RemoteOAuthClient, headers: Headers, params: URLSearchParams): void {
-  const method = client.tokenEndpointAuthMethod ?? (client.clientSecret === undefined ? "none" : "client_secret_basic");
+  const method = remoteClientAuthMethod(client);
   if (method === "client_secret_basic") {
     const encode = (value: string) => new URLSearchParams({ value }).toString().slice("value=".length);
     headers.set("Authorization", `Basic ${btoa(`${encode(client.clientId)}:${encode(client.clientSecret!)}`)}`);

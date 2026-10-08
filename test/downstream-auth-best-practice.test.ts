@@ -17,7 +17,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-function setup(options: { cimd?: boolean; publicUrl?: string | null; auth?: RemoteMcpAuth; revocation?: boolean; revokeStatus?: number; revokeThrows?: boolean; issRequired?: boolean; registeredClientId?: string } = {}) {
+function setup(options: { cimd?: boolean; publicUrl?: string | null; auth?: RemoteMcpAuth; revocation?: boolean; revokeStatus?: number; revokeThrows?: boolean; issRequired?: boolean; registeredClientId?: string; revocationMethods?: string[] } = {}) {
   const sent: Array<{ url: string; init: RequestInit; form: URLSearchParams }> = [];
   const registrations: Record<string, unknown>[] = [];
   let issuer = ISSUER;
@@ -37,6 +37,7 @@ function setup(options: { cimd?: boolean; publicUrl?: string | null; auth?: Remo
       response_types_supported: ["code"], code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["none", "client_secret_basic", "client_secret_post"],
       ...(options.cimd ? { client_id_metadata_document_supported: true } : {}),
       ...(options.revocation ? { revocation_endpoint: `${issuer}/revoke` } : {}),
+      ...(options.revocationMethods ? { revocation_endpoint_auth_methods_supported: options.revocationMethods } : {}),
       ...(options.issRequired ? { authorization_response_iss_parameter_supported: true } : {}),
     });
     if (url === `${issuer}/register`) {
@@ -120,6 +121,11 @@ describe("downstream OAuth best practice", () => {
     expect((await flow.callback(status.authorizationUrl!)).status).toBe(200);
     expect((await flow.app.registry.statusFor("svc", BASE)).registrationPath).toBe("dcr");
     expect(JSON.parse((await flow.ctx().storage.get("oauth:grant"))!).body.client.registrationPath).toBe("dcr");
+    const restarted = await flow.connector.startAuth!(flow.ctx(), { force: true });
+    expect(restarted.registrationPath).toBe("dcr");
+    expect(new URL(restarted.authorizationUrl!).searchParams.get("client_id")).toBe(DOCUMENT);
+    expect(flow.registrations).toHaveLength(1);
+    expect(JSON.parse((await flow.ctx().storage.get("oauth:grant"))!).body.client.carried).toBe(true);
   });
 
   it.each([null, "http://connecta.example", "https://localhost", "https://10.0.0.1", "https://[::1]"])("INV-4: uses DCR without a configured public HTTPS URL (%s)", async publicUrl => {
@@ -188,6 +194,21 @@ describe("downstream OAuth best practice", () => {
       expect(new Headers(request.init.headers).has("authorization")).toBe(false);
       expect(request.init.redirect).toBe("manual");
     }
+    expect(JSON.stringify(flow.lines)).not.toMatch(/SENTINEL/);
+  });
+
+  it("INV-5 INV-6: refuses revocation when the AS does not support a static client's default Basic method", async () => {
+    const flow = setup({ revocation: true, revocationMethods: ["client_secret_post"],
+      auth: { type: "oauth", client: { issuer: ISSUER, clientId: "static-client", clientSecret: SECRET } } });
+    const status = await flow.start();
+    expect((await flow.callback(status.authorizationUrl!)).status).toBe(200);
+    const tokenRequest = flow.sent.find(request => request.url.endsWith("/token"))!;
+    expect(new Headers(tokenRequest.init.headers).get("authorization")).toBe(`Basic ${btoa(`static-client:${SECRET}`)}`);
+    const error = await flow.connector.disconnectAuth!(flow.ctx()).catch(error => error);
+    expect(error.code).toBe("oauth_revocation_failed");
+    expect(error.cause).toBeUndefined();
+    expect(flow.sent.some(request => request.url.endsWith("/revoke"))).toBe(false);
+    expect(JSON.parse((await flow.ctx().storage.get("oauth:grant"))!).body).toBeUndefined();
     expect(JSON.stringify(flow.lines)).not.toMatch(/SENTINEL/);
   });
 

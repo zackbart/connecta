@@ -616,7 +616,14 @@ describe("KvOAuthProvider epochs", () => {
     {
       held: "a URL-based client",
       carried: false,
-      setup: (s) => provider(s, { binding: BINDING, clientMetadataUrl: URL_CLIENT }).saveClientInformation({ client_id: URL_CLIENT }, ctxA),
+      setup: async (s) => {
+        const p = provider(s, { binding: BINDING, clientMetadataUrl: URL_CLIENT });
+        await p.saveDiscoveryState({ ...discovery, authorizationServerMetadata: {
+          issuer: ISSUER, authorization_endpoint: `${ISSUER}/authorize`, token_endpoint: `${ISSUER}/token`,
+          response_types_supported: ["code"], client_id_metadata_document_supported: true,
+        } });
+        await p.saveClientInformation({ client_id: URL_CLIENT }, ctxA);
+      },
     },
   ])("a restart that preserves the client, holding $held, carries it: $carried", async ({ carried, setup, binding }) => {
     const storage = memoryStorage();

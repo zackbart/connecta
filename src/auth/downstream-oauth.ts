@@ -10,7 +10,7 @@ import type {
   OAuthTokens,
 } from "@modelcontextprotocol/client";
 import { revokeDownstreamGrant } from "./downstream-revocation.js";
-import { authenticateRemoteClient, downstreamClientMetadata, type RemoteOAuthClient } from "./downstream-client-metadata.js";
+import { authenticateRemoteClient, downstreamClientMetadata, remoteClientAuthMethod, type RemoteOAuthClient } from "./downstream-client-metadata.js";
 import { ConnectorCallError } from "../errors.js";
 import {
   attachOAuthPartition,
@@ -767,7 +767,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   get clientMetadata(): OAuthClientMetadata {
     const client = this.clientOptions?.client;
     return downstreamClientMetadata(this.redirectUri, this.scope, this.clientOptions?.name,
-      client?.tokenEndpointAuthMethod ?? (client?.clientSecret === undefined ? "none" : "client_secret_basic"));
+      client ? remoteClientAuthMethod(client) : "none");
   }
 
   // --- the grant record ---------------------------------------------------
@@ -1891,7 +1891,10 @@ export class KvOAuthProvider implements OAuthClientProvider {
       !client ||
       client.binding !== this.clientBinding ||
       typeof clientId !== "string" ||
-      clientId === this.clientMetadataUrl ||
+      client.registrationPath === "cimd" || client.registrationPath === "static" ||
+      // Legacy records have no mechanism field: retain their conservative
+      // URL-client refusal, but never reinterpret a recorded DCR identity.
+      (client.registrationPath === undefined && clientId === this.clientMetadataUrl) ||
       this.clientOptions?.client !== undefined ||
       (typeof expiresAt === "number" && expiresAt > 0 && expiresAt * 1000 <= Date.now()) ||
       (client.carried && !tokens)

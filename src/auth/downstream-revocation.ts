@@ -3,7 +3,7 @@ import { Effect } from "effect";
 import { ConnectorCallError } from "../errors.js";
 import { fromSignal, runEdge } from "../runtime/run.js";
 import { classifyHost } from "../url-safety.js";
-import { authenticateRemoteClient, type RemoteOAuthClient } from "./downstream-client-metadata.js";
+import { authenticateRemoteClient, remoteClientAuthMethod, type RemoteOAuthClient } from "./downstream-client-metadata.js";
 import { discoveryIssuer, type MigratedGrantBody } from "./oauth-v2-migration.js";
 
 /** Local removal succeeded; provider-side removal needs the operator's attention. */
@@ -38,7 +38,7 @@ export async function revokeDownstreamGrant(body: MigratedGrantBody, send: Fetch
     const advertisedMethods = revocation?.revocation_endpoint_auth_methods_supported;
     if (advertisedMethods !== undefined && (!Array.isArray(advertisedMethods) || !advertisedMethods.every(method => typeof method === "string"))) throw new OAuthRevocationError();
     const methods = advertisedMethods as string[] | undefined;
-    const declared = configuredClient?.tokenEndpointAuthMethod ?? ("token_endpoint_auth_method" in information ? information.token_endpoint_auth_method : undefined);
+    const declared = configuredClient ? remoteClientAuthMethod(configuredClient) : "token_endpoint_auth_method" in information ? information.token_endpoint_auth_method : undefined;
     const method = declared ?? (secret === undefined ? "none" : methods?.includes("client_secret_basic") || !methods ? "client_secret_basic" : "client_secret_post");
     if ((method !== "none" && method !== "client_secret_basic" && method !== "client_secret_post") ||
       (method === "none") !== (secret === undefined) || (methods && !methods.includes(method))) throw new OAuthRevocationError();
