@@ -259,7 +259,8 @@ async function finishOAuthCallback(
         return refused();
       }
     } catch { return refused(); }
-    if (!error && !code) return refused();
+    if (error === null && !code) return refused();
+    if (error !== null && !connector.consumeAuthError) return refused();
     {
       try {
         if (!await opts.registry.consumeOAuthHandoff(id, state, expectedPrincipalKey)) return refused();
@@ -272,7 +273,20 @@ async function finishOAuthCallback(
         return html("handoff_failed", opts, connector);
       }
     }
-    if (error) return withSessionCookies(html(providerErrorReason(error), opts), browserIdentity.sessionCookies);
+    if (error !== null) {
+      try {
+        await connector.consumeAuthError!(connectorContext);
+      } catch (err) {
+        if (claimedByAnotherCallback(err)) return refused();
+        logFailure(
+          opts.config.logger,
+          "OAuth error callback consent could not be consumed; no authorization code was exchanged",
+          failureRecord({ connector: id }, err),
+        );
+        return withSessionCookies(html("handoff_failed", opts, connector), browserIdentity.sessionCookies);
+      }
+      return withSessionCookies(html(providerErrorReason(error), opts), browserIdentity.sessionCookies);
+    }
     try {
       await connector.finishAuth(code!, connectorContext, url.searchParams);
       await callbackRegistry!.invalidateStored(id);

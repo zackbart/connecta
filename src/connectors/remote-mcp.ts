@@ -2451,6 +2451,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       return true;
     };
 
+    connector.consumeAuthError = async (ctx) => {
+      await newProvider(ctx, stateFor(ctx)).consumeAuthError();
+    };
+
     connector.disconnectAuth = async (ctx) => {
       await disconnectAuthorization(ctx, stateFor(ctx), true);
     };
@@ -2548,6 +2552,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     connector.disconnectAuth = retain(connector.disconnectAuth!, 0);
     connector.verifyState = retain(connector.verifyState!, 1);
     connector.verifyCallbackIssuer = retain(connector.verifyCallbackIssuer!, 1);
+    connector.consumeAuthError = retain(connector.consumeAuthError!, 0);
     connector.finishAuth = retain(connector.finishAuth!, 1);
   }
   connector.listTools = payloadFree(connector.listTools);

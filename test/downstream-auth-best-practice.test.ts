@@ -3,7 +3,7 @@ import { remoteMcp, type RemoteMcpAuth } from "../src/connectors/remote-mcp.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { createTestConnecta, fetchTestUiDetails } from "./helpers.js";
 import type { OperatorUiContract } from "../src/ui.js";
-import { bindCallback, callbackAuth } from "./fixtures/oauth.js";
+import { bindCallback, callbackAuth, consentKey } from "./fixtures/oauth.js";
 
 const BASE = "https://connecta.example";
 const ISSUER = "https://auth.example";
@@ -180,6 +180,8 @@ describe("downstream OAuth best practice", () => {
     expect(flow.sent.some(request => request.url.endsWith("/token") || request.url.endsWith("/register"))).toBe(false);
     const status = await flow.start();
     expect(status.registrationPath).toBe(path);
+    const contract = await (await flow.app.fetch(new Request(`${BASE}/ui/api/config`))).json() as OperatorUiContract;
+    expect(contract.live.connectors[0]!.auth).toEqual({ registrationPath: path });
     expect(JSON.parse((await storage.get("oauth:grant"))!).body.client.registrationPath).toBe(path);
   });
 
@@ -218,21 +220,78 @@ describe("downstream OAuth best practice", () => {
   it.each(["bad-state", "wrong-iss", "missing-iss"])("INV-4 INV-6: refuses callback %s before interpreting an error parameter", async kind => {
     const flow = setup({ issRequired: kind === "missing-iss" });
     const status = await flow.start();
+    const key = await consentKey(new URL(status.authorizationUrl!).searchParams.get("state")!);
+    const before = await flow.ctx().storage.get(key);
     const params = { error: "access_denied", error_description: TEXT, ...(kind === "bad-state" ? { state: "wrong" } : {}), ...(kind === "missing-iss" ? {} : { iss: kind === "wrong-iss" ? "https://wrong.example" : ISSUER }) };
     const response = await flow.callback(status.authorizationUrl!, params);
     expect(response.status).toBe(400);
     expect(await response.text()).toContain('data-oauth-callback="invalid_callback"');
     expect(flow.sent.some(request => request.url.endsWith("/token"))).toBe(false);
     expect(JSON.stringify(flow.lines)).not.toContain(TEXT);
+    expect(await flow.ctx().storage.get(key)).toBe(before);
+    expect((await flow.callback(status.authorizationUrl!, { code: "CODE_SENTINEL", iss: ISSUER })).status).toBe(200);
   });
 
-  it("INV-4: interprets a verified callback error once without exchanging a code", async () => {
+  it.each(["access_denied", ""])("INV-4 INV-5: a verified error consumes consent and its verifier before a later code or Continue (%s)", async error => {
     const flow = setup();
     const status = await flow.start();
-    const params = { error: "access_denied", iss: ISSUER };
-    expect(await (await flow.callback(status.authorizationUrl!, params)).text()).toContain('data-oauth-callback="denied"');
-    expect(await (await flow.callback(status.authorizationUrl!, params)).text()).toContain('data-oauth-callback="invalid_callback"');
+    const state = new URL(status.authorizationUrl!).searchParams.get("state")!;
+    const key = await consentKey(state);
+    expect(JSON.parse((await flow.ctx().storage.get(key))!).verifier).toBeDefined();
+    const params = { error, iss: ISSUER };
+    expect(await (await flow.callback(status.authorizationUrl!, params)).text()).toContain(`data-oauth-callback="${error === "access_denied" ? "denied" : "provider_error"}"`);
+    const consumed = JSON.parse((await flow.ctx().storage.get(key))!);
+    expect(consumed.consumed).toBe(true);
+    expect(consumed.verifier).toBeUndefined();
+    expect(consumed.url).toBeUndefined();
+    // Reissuing the browser handoff must not revive the underlying consent.
+    await bindCallback(flow.app, "svc", state);
+    const replay = await flow.callback(status.authorizationUrl!, { code: "CODE_SENTINEL", iss: ISSUER });
+    expect(replay.status).toBe(400);
+    expect(await replay.text()).toContain('data-oauth-callback="invalid_callback"');
     expect(flow.sent.some(request => request.url.endsWith("/token"))).toBe(false);
+    const continued = await flow.start();
+    expect(new URL(continued.authorizationUrl!).searchParams.get("state")).not.toBe(state);
+    expect(continued.authorizationReused).not.toBe(true);
+  });
+
+  it.each(["error", "code"] as const)("INV-4 INV-5: concurrent error and code callbacks have one consent CAS winner (%s)", async winner => {
+    const flow = setup();
+    const status = await flow.start();
+    const state = new URL(status.authorizationUrl!).searchParams.get("state")!;
+    const verify = flow.connector.verifyState!;
+    let verified = 0;
+    let releaseVerify!: () => void;
+    const bothVerified = new Promise<void>(resolve => { releaseVerify = resolve; });
+    flow.connector.verifyState = async (...args) => {
+      const matched = await verify(...args);
+      if (++verified === 2) releaseVerify();
+      await bothVerified;
+      return matched;
+    };
+    // Bypass only the earlier handoff CAS to exercise the consent CAS with
+    // two callbacks that both captured its unconsumed record.
+    vi.spyOn(flow.app.registry, "consumeOAuthHandoff").mockResolvedValue(true);
+    let releaseLoser!: () => void;
+    const winnerFinished = new Promise<void>(resolve => { releaseLoser = resolve; });
+    const loserHook = winner === "error" ? "finishAuth" : "consumeAuthError";
+    const loser = flow.connector[loserHook]!;
+    vi.spyOn(flow.connector, loserHook).mockImplementation(async (...args: unknown[]) => {
+      await winnerFinished;
+      await (loser as (...args: unknown[]) => Promise<void>)(...args);
+    });
+    const error = { error: "access_denied", iss: ISSUER };
+    const code = { code: "CODE_SENTINEL", iss: ISSUER };
+    const winning = flow.callback(status.authorizationUrl!, winner === "error" ? error : code).finally(releaseLoser);
+    const losing = flow.callback(status.authorizationUrl!, winner === "error" ? code : error);
+    const [accepted, refused] = await Promise.all([winning, losing]);
+    expect(await accepted.text()).toContain(`data-oauth-callback="${winner === "error" ? "denied" : "connected"}"`);
+    expect(refused.status).toBe(400);
+    expect(await refused.text()).toContain('data-oauth-callback="invalid_callback"');
+    expect(flow.sent.filter(request => request.url.endsWith("/token"))).toHaveLength(winner === "code" ? 1 : 0);
+    const consumed = JSON.parse((await flow.ctx().storage.get(await consentKey(state)))!);
+    expect(consumed.consumed).toBe(true);
+    expect(consumed.verifier).toBeUndefined();
   });
 
   it.each([false, true])("INV-5 INV-9: disconnect removes the local grant and revokes only when advertised (%s)", async revocation => {

@@ -673,6 +673,12 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       provider.validateCallbackIssuer(issuer);
       return true;
     }, 1),
+    consumeAuthError: retainingOAuthPartition(async (ctx: ConnectorContext) => {
+      const provider = callbackProviders.get(scopeOf(ctx));
+      callbackProviders.delete(scopeOf(ctx));
+      if (!provider) throw new ConnectorCallError("connector_call_failed", "OAuth error callback matches no pending consent.");
+      await provider.consumeAuthError();
+    }, 0),
     finishAuth: retainingOAuthPartition(finishAuth, 1),
     access: (ctx) => ({
       fetch: (input, init) => authorizedFetch(ctx, input, init),

@@ -186,6 +186,7 @@ describe("OAuth callback page", () => {
         return {};
       },
       verifyState: async (state) => state === "good-state",
+      consumeAuthError: async () => {},
       finishAuth,
     };
   }

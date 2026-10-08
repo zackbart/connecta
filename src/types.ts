@@ -499,6 +499,12 @@ export interface Connector {
   /** Validate a callback issuer against its verified consent, including error responses. */
   verifyCallbackIssuer?(issuer: string | null, ctx: ConnectorContext): Promise<boolean>;
   /**
+   * Atomically terminate the consent verified in this context, discarding its
+   * verifier. Required to accept error callbacks; must share finishAuth's
+   * single-use claim so concurrent error and code callbacks have one winner.
+   */
+  consumeAuthError?(ctx: ConnectorContext): Promise<void>;
+  /**
    * Optional: complete a downstream OAuth flow (called by
    * /oauth/callback/<id>). `callbackParams` preserves the authorization
    * server's RFC 9207 `iss` response parameter for validation. Built-in

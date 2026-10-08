@@ -894,7 +894,11 @@ the handoff, interpreting an error, or exchanging a code. A supplied issuer must
 exactly match the consent. A server advertising issuer-response support also
 requires `iss`; missing or mismatched values produce the generic refusal. Custom
 connectors receiving `iss` need `verifyCallbackIssuer`. Verified error callbacks
-consume their handoff once and display only fixed copy for a known reason. Reissue
+consume their handoff and CAS-terminate the consent once, discarding its PKCE
+verifier before displaying fixed copy for a known reason. Continue starts a new
+consent; later callbacks with the old state are refused. Custom OAuth connectors
+need `consumeAuthError` to accept error callbacks, sharing `finishAuth`'s atomic
+consent claim. Reissue
 pending consent links after upgrading; callbacks without a saved initiating user cannot complete.
 
 `compareAndSet` atomically claims link nonces, callback handoffs, and consents, with one concurrent winner,

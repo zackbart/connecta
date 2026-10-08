@@ -1400,6 +1400,20 @@ export class KvOAuthProvider implements OAuthClientProvider {
    */
   async claimCodeExchange(): Promise<Response | undefined> {
     if (this.exchangeRefusal) return this.exchangeRefusal.clone();
+    await this.claimConsent();
+    return undefined;
+  }
+
+  /** Terminate the verified consent on an error, sharing the code exchange CAS. */
+  async consumeAuthError(): Promise<void> {
+    const { grant } = await this.readGrant();
+    if (!this.callback || grant.epoch !== this.callback.flow.epoch) throw this.flowSuperseded();
+    await this.checkFlowBinding(grant);
+    await this.claimConsent();
+    this.callback = undefined;
+  }
+
+  private async claimConsent(): Promise<void> {
     const callback = this.callback;
     if (!callback) throw this.flowSuperseded();
     if (callback.claimed) throw new OAuthCallbackClaimedError(this.connectorId);
@@ -1414,7 +1428,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     const remaining = Math.ceil((at + OAUTH_FLOW_TTL_SECONDS * 1000 - Date.now()) / 1000);
     const ttlSeconds = Math.min(OAUTH_FLOW_TTL_SECONDS, Math.max(1, remaining));
     if (await this.storage.compareAndSet(callback.key, callback.raw, claimed, { ttlSeconds })) {
-      return undefined;
+      return;
     }
     if (epochOf(await this.storage.get(GRANT)) !== epoch) throw this.flowSuperseded();
     throw new OAuthCallbackClaimedError(this.connectorId);

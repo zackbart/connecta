@@ -449,6 +449,7 @@ export type FailureEvent =
   | "OAuth callback verifyState threw; no authorization code was exchanged"
   | "OAuth callback handoff could not be consumed; no authorization code was exchanged"
   | "MCP pool request denied"
+  | "OAuth error callback consent could not be consumed; no authorization code was exchanged"
   | "MCP handler error"
   | "operator status"
   | "result paging unavailable"
