@@ -982,10 +982,16 @@ the program either way (`R1`).
 
 **X11. Typed host rejection.** QuickJS creates and retains guest Error handles
 in its host bridge and compares handles when the program rejects. The Worker
-adapter retains Error identities in its private entrypoint and returns typed
-facts through Worker Loader RPC. Its host adapter copies that RPC outcome before
-upstream result shaping. Both construct `failure.call` from retained typed
-values, never from a guest result or printed text. Host failure details are
+adapter stores each typed failure in a per-run host map under a random UUID.
+Its private entrypoint associates that ID with the guest Error and returns only
+the ID through Worker Loader RPC. The host resolves it to its own record before
+upstream result shaping; unknown or forged IDs attach no typed details, and IDs
+from previous runs cannot resolve. Rethrowing an earlier call's Error retains
+that call's record. The guest receives a separate copy for catching errors.
+Both construct `failure.call` from host-retained values, never from a guest
+result, parsed guest-realm object, or printed text. The Worker codec checks own
+binary-envelope properties, and completion uses captured array iteration even
+when the executor runs without the Connecta guest prelude. Host failure details are
 bounded before bridging (`E1`), including JSON escapes. No frame parser or
 prose matching participates in classification. The guest cannot import runner
 modules or repeat privileged initialization. QuickJS checks host interrupt and
