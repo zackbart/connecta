@@ -606,6 +606,11 @@ short state, and serialized
 numbers, booleans, and null. No prompt, state,
 response, arguments, or raw error reaches activity, logs, or status.
 
+Connecta's confidentiality guarantee covers its own handling and persistence of
+`requestState`. Checks for state echoed in downstream content are defense in
+depth; a downstream's deliberate disclosure of its own state is outside that
+guarantee. Binary blobs are not decoded to look for echoes.
+
 A write returning `input_required` has not completed its operation: the
 [MRTR spec](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr)
 defines that result as awaiting input before completion. Sending the original
