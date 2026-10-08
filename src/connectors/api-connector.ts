@@ -1,9 +1,4 @@
-import {
-  ConnectorCallError,
-  networkErrorCode,
-  unavailableCallError,
-  WithheldTextError,
-} from "../errors.js";
+import { ConnectorCallError, networkErrorCode, unavailableCallError, WithheldTextError } from "../errors.js";
 import { attachFailureFacts, carryFailureFacts, errorLabel } from "../operator-record.js";
 import { compileValidator, validateCatalogToolInput } from "../validate.js";
 import { array, assertKnownOptions, instance, keys, optionsOf, strings } from "../config-schema.js";
@@ -27,12 +22,10 @@ import type {
   ToolDef,
 } from "../types.js";
 
-export function defined<T extends object>(
-  value: T,
-): { [K in keyof T]?: Exclude<T[K], undefined> } {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, item]) => item !== undefined),
-  ) as { [K in keyof T]?: Exclude<T[K], undefined> };
+export function defined<T extends object>(value: T): { [K in keyof T]?: Exclude<T[K], undefined> } {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) as {
+    [K in keyof T]?: Exclude<T[K], undefined>;
+  };
 }
 
 export interface ApiTool {
@@ -63,10 +56,7 @@ export interface ApiTool {
 }
 
 /** How a pre-registered client authenticates at the token endpoint. */
-export type ApiOAuthClientAuthentication =
-  | "client_secret_basic"
-  | "client_secret_post"
-  | "none";
+export type ApiOAuthClientAuthentication = "client_secret_basic" | "client_secret_post" | "none";
 
 /**
  * Downstream OAuth 2.0 authorization code grant for a hand-written API whose
@@ -169,15 +159,9 @@ export interface ApiOptions {
    */
   oauth?: ApiOAuthConfig;
   /** Optional validation behind the connection's Test action in the operator UI. */
-  testCredential?: (
-    value: string,
-    ctx: ConnectorContext,
-  ) => Promise<CredentialTestResult>;
+  testCredential?: (value: string, ctx: ConnectorContext) => Promise<CredentialTestResult>;
   /** Optional validation for named multi-field credentials. */
-  testCredentials?: (
-    values: ConnectorCredentialValues,
-    ctx: ConnectorContext,
-  ) => Promise<CredentialTestResult>;
+  testCredentials?: (values: ConnectorCredentialValues, ctx: ConnectorContext) => Promise<CredentialTestResult>;
   /**
    * Validate call arguments against each tool's `inputSchema` before invoking
    * the handler (default true). Mismatches fail with a non-retryable
@@ -223,17 +207,20 @@ function checkToolContract(id: string, tool: ApiTool): void {
 
 /** The closed options api() accepts; see `assertKnownOptions`. */
 export const API_OPTIONS = optionsOf<ApiOptions>()({
-  ...keys(
-    "title", "description", "authScope", "maxResultBytes", "testCredential", "testCredentials",
-    "validateArgs",
-  ),
+  ...keys("title", "description", "authScope", "maxResultBytes", "testCredential", "testCredentials", "validateArgs"),
   callAdmission: CALL_ADMISSION,
   usageGuide: USAGE_GUIDE,
   credential: CREDENTIAL,
   oauth: optionsOf<ApiOAuthConfig>()({
     ...keys(
-      "authorizationEndpoint", "tokenEndpoint", "clientId", "clientSecret", "tokenEndpointAuthMethod",
-      "scope", "pkce", "apiOrigins",
+      "authorizationEndpoint",
+      "tokenEndpoint",
+      "clientId",
+      "clientSecret",
+      "tokenEndpointAuthMethod",
+      "scope",
+      "pkce",
+      "apiOrigins",
     ),
     authorizationParams: strings(),
     tokenRequestHeaders: strings(),
@@ -242,9 +229,9 @@ export const API_OPTIONS = optionsOf<ApiOptions>()({
   // does not interpret, and its schemas are JSON Schema, not options. A tool
   // carries its handler, so it is checked in place and kept, never copied.
   tools: array(
-    instance(optionsOf<ApiTool>()(
-      keys("name", "description", "inputSchema", "outputSchema", "annotations", "handler"),
-    )),
+    instance(
+      optionsOf<ApiTool>()(keys("name", "description", "inputSchema", "outputSchema", "annotations", "handler")),
+    ),
   ),
 });
 
@@ -267,17 +254,12 @@ function describedApiAuth(opts: ApiOptions): ConnectorAuthDescription {
     ...(authorizationEndpoint ? { authorizationEndpoint } : {}),
     ...(tokenEndpoint ? { tokenEndpoint } : {}),
     apiOrigins,
-    tokenEndpointAuthMethod:
-      oauth.tokenEndpointAuthMethod ?? (confidential ? "client_secret_basic" : "none"),
+    tokenEndpointAuthMethod: oauth.tokenEndpointAuthMethod ?? (confidential ? "client_secret_basic" : "none"),
     confidentialClient: confidential,
     pkce: oauth.pkce ?? true,
     ...(oauth.scope !== undefined ? { scope: oauth.scope } : {}),
-    ...(oauth.authorizationParams
-      ? { authorizationParamNames: Object.keys(oauth.authorizationParams) }
-      : {}),
-    ...(oauth.tokenRequestHeaders
-      ? { tokenRequestHeaderNames: Object.keys(oauth.tokenRequestHeaders) }
-      : {}),
+    ...(oauth.authorizationParams ? { authorizationParamNames: Object.keys(oauth.authorizationParams) } : {}),
+    ...(oauth.tokenRequestHeaders ? { tokenRequestHeaderNames: Object.keys(oauth.tokenRequestHeaders) } : {}),
   };
 }
 
@@ -289,20 +271,13 @@ function describedApiAuth(opts: ApiOptions): ConnectorAuthDescription {
  */
 export interface ApiOAuthHooks {
   status(ctx: ConnectorContext): Promise<ConnectorStatus>;
-  startAuth(
-    ctx: ConnectorContext,
-    opts?: { force?: boolean },
-  ): Promise<ConnectorStatus>;
+  startAuth(ctx: ConnectorContext, opts?: { force?: boolean }): Promise<ConnectorStatus>;
   disconnectAuth(ctx: ConnectorContext): Promise<void>;
   verifyState(state: string | null, ctx: ConnectorContext): Promise<boolean>;
   verifyCallbackIssuer(issuer: string | null, ctx: ConnectorContext): Promise<boolean>;
   consumeAuthError(ctx: ConnectorContext): Promise<void>;
   /** Requires callbackParams with a nonempty state, including without PKCE. */
-  finishAuth(
-    code: string,
-    ctx: ConnectorContext,
-    callbackParams: URLSearchParams,
-  ): Promise<void>;
+  finishAuth(code: string, ctx: ConnectorContext, callbackParams: URLSearchParams): Promise<void>;
   /** The handler-facing accessor for one call's context. */
   access(ctx: ConnectorContext): ApiOAuthAccess;
 }
@@ -313,17 +288,11 @@ export interface ApiOAuthHooks {
  * The builder behind `api()`, without the downstream OAuth machinery: credential-free
  * providers import this without paying for a grant they cannot declare.
  */
-export function apiConnector(
-  id: string,
-  opts: ApiOptions,
-  oauth?: ApiOAuthHooks,
-): Connector {
+export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks): Connector {
   opts = assertKnownOptions(opts, `api(${JSON.stringify(id)})`, API_OPTIONS);
   assertStaticToolNames(opts.tools, `api(${JSON.stringify(id)}).tools`);
   if (opts.oauth !== undefined && oauth === undefined) {
-    throw new Error(
-      `api() connector "${id}" declares oauth but was built without its grant; construct it with api().`,
-    );
+    throw new Error(`api() connector "${id}" declares oauth but was built without its grant; construct it with api().`);
   }
   const names = new Set<string>();
   for (const tool of opts.tools) {
@@ -385,14 +354,19 @@ export function apiConnector(
       }
       const input = args ?? {};
       if (validateArgs && tool.inputSchema) {
-        const invalid = validateCatalogToolInput(tool.inputSchema, input, {
-          address: `${id}.${name}`,
-          logger: ctx.logger,
-          // Always: the schema compiled at construction, so anything that
-          // fails here is a schema that cannot be enforced, and a surface we
-          // wrote ourselves does not get to admit unvalidated input quietly.
-          failClosed: true,
-        }, { connector: id, tool });
+        const invalid = validateCatalogToolInput(
+          tool.inputSchema,
+          input,
+          {
+            address: `${id}.${name}`,
+            logger: ctx.logger,
+            // Always: the schema compiled at construction, so anything that
+            // fails here is a schema that cannot be enforced, and a surface we
+            // wrote ourselves does not get to admit unvalidated input quietly.
+            failClosed: true,
+          },
+          { connector: id, tool },
+        );
         if (invalid) throw invalid;
       }
       // `await` (not a bare promise return) so a handler that throws before
@@ -424,12 +398,15 @@ export function apiConnector(
           // which destination the handler read.
           const kind = errorLabel(error);
           throw attachFailureFacts(
-            carryFailureFacts(error, new WithheldTextError(
-              `Connector "${id}" tool "${name}" handler failed` +
-                `${kind ? ` (${kind})` : ""}. Its text is withheld because it ` +
-                "can quote what the downstream sent.",
+            carryFailureFacts(
               error,
-            )),
+              new WithheldTextError(
+                `Connector "${id}" tool "${name}" handler failed` +
+                  `${kind ? ` (${kind})` : ""}. Its text is withheld because it ` +
+                  "can quote what the downstream sent.",
+                error,
+              ),
+            ),
             { step: "handler" },
           );
         }
@@ -437,13 +414,16 @@ export function apiConnector(
       }
     },
   };
-  if (oauth) registerInvocationAuth(connector, async ctx => {
-    // The built-in static OAuth status only reads the stored grant. It never
-    // refreshes, invokes a handler, or sends a downstream request.
-    if ((await oauth.status(ctx)).state === "auth_required") {
-      throw new ConnectorCallError("downstream_oauth_required",
-        `Connector "${id}" requires authorization. Call authorize_connector.`);
-    }
-  });
+  if (oauth)
+    registerInvocationAuth(connector, async (ctx) => {
+      // The built-in static OAuth status only reads the stored grant. It never
+      // refreshes, invokes a handler, or sends a downstream request.
+      if ((await oauth.status(ctx)).state === "auth_required") {
+        throw new ConnectorCallError(
+          "downstream_oauth_required",
+          `Connector "${id}" requires authorization. Call authorize_connector.`,
+        );
+      }
+    });
   return connector;
 }

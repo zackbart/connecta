@@ -53,15 +53,9 @@ describe("lexical tool ranking", () => {
       },
     ];
 
-    expect(
-      rankTools(tools, "search drive file").map(({ tool }) => tool.name),
-    ).toEqual(["searchDriveFiles"]);
-    expect(
-      rankTools(tools, "url metadata").map(({ tool }) => tool.name),
-    ).toEqual(["getURLMetadata"]);
-    expect(
-      rankTools(tools, "created drive file").map(({ tool }) => tool.name),
-    ).toEqual(["createDriveFiles"]);
+    expect(rankTools(tools, "search drive file").map(({ tool }) => tool.name)).toEqual(["searchDriveFiles"]);
+    expect(rankTools(tools, "url metadata").map(({ tool }) => tool.name)).toEqual(["getURLMetadata"]);
+    expect(rankTools(tools, "created drive file").map(({ tool }) => tool.name)).toEqual(["createDriveFiles"]);
   });
 
   it("weights a rare domain term above a ubiquitous action term", () => {
@@ -136,10 +130,7 @@ describe("compactSchema const", () => {
     };
 
     const rendered = compactSchema(schema);
-    expect(rendered).toBe(
-      '{ type: "emoji", emoji: string } | ' +
-        '{ type: "external", external: { url: string } }',
-    );
+    expect(rendered).toBe('{ type: "emoji", emoji: string } | ' + '{ type: "external", external: { url: string } }');
     expect(rendered).toContain('"emoji"');
     expect(rendered).toContain('"external"');
   });
@@ -165,9 +156,7 @@ describe("compactSchema const", () => {
   });
 
   it("still renders enum unions", () => {
-    expect(compactSchema({ type: "string", enum: ["a", "b"] })).toBe(
-      '"a" | "b"',
-    );
+    expect(compactSchema({ type: "string", enum: ["a", "b"] })).toBe('"a" | "b"');
   });
 });
 
@@ -203,8 +192,7 @@ describe("compactSchema allOf", () => {
     // real connector it measured *longer* than the raw schema.
     expect(rendered.length).toBeLessThan(JSON.stringify(schema).length / 2);
     expect(rendered).toBe(
-      '{ id: string, createdAt?: string /* format "date-time" */ } & ' +
-        "{ name: string, tags?: string[] }",
+      '{ id: string, createdAt?: string /* format "date-time" */ } & ' + "{ name: string, tags?: string[] }",
     );
   });
 
@@ -228,9 +216,7 @@ describe("compactSchema allOf", () => {
     };
 
     const rendered = compactSchema(schema);
-    expect(rendered).toBe(
-      "{ localOnly: string, id?: number } & { inherited?: string }",
-    );
+    expect(rendered).toBe("{ localOnly: string, id?: number } & { inherited?: string }");
     for (const key of ["localOnly", "id", "inherited"]) {
       expect(rendered).toContain(key);
     }
@@ -246,14 +232,10 @@ describe("compactSchema allOf", () => {
         },
       },
       $ref: "#/$defs/Base",
-      allOf: [
-        { type: "object", properties: { extra: { type: "boolean" } } },
-      ],
+      allOf: [{ type: "object", properties: { extra: { type: "boolean" } } }],
     };
 
-    expect(compactSchema(schema)).toBe(
-      "{ id: string } & { extra?: boolean }",
-    );
+    expect(compactSchema(schema)).toBe("{ id: string } & { extra?: boolean }");
   });
 
   it("keeps a sibling enum, const, or items alongside allOf members", () => {
@@ -293,9 +275,7 @@ describe("compactSchema allOf", () => {
         },
         allOf: [{ type: "object", properties: { id: { type: "string" } } }],
       }),
-    ).toBe(
-      "{ mode?: string // fast | slow } & { id?: string }",
-    );
+    ).toBe("{ mode?: string // fast | slow } & { id?: string }");
   });
 
   it("renders an empty allOf as unknown", () => {
@@ -380,9 +360,7 @@ describe("compactSchema depth limit", () => {
       },
     };
 
-    expect(compactSchema(schema)).toBe(
-      "{ a?: { b?: { c?: { d?: { e?: … } } } } }",
-    );
+    expect(compactSchema(schema)).toBe("{ a?: { b?: { c?: { d?: { e?: … } } } } }");
   });
 });
 
@@ -416,24 +394,28 @@ describe("compactSchema 2020-12 keyword compatibility", () => {
       unevaluatedProperties: false,
     };
 
-    expect(compactSchema(schema)).toBe(
-      '{ mode: "basic" | "token", apiKey?: string } /* conditional */',
-    );
+    expect(compactSchema(schema)).toBe('{ mode: "basic" | "token", apiKey?: string } /* conditional */');
   });
 });
 
 function branchingSchema(width: number, onLeafRead?: () => void): JsonSchema {
   const $defs: Record<string, unknown> = {};
   for (let level = 0; level < 4; level += 1) {
-    $defs[`Level${level}`] = { allOf: Array.from({ length: width }, () => {
-      if (level !== 3) return { $ref: `#/$defs/Level${level + 1}` };
-      const leaf = { type: "object", properties: { id: { type: "string" } } };
-      if (onLeafRead) Object.defineProperty(leaf, "type", {
-        get: () => { onLeafRead(); return "object"; },
-        enumerable: true,
-      });
-      return leaf;
-    }) };
+    $defs[`Level${level}`] = {
+      allOf: Array.from({ length: width }, () => {
+        if (level !== 3) return { $ref: `#/$defs/Level${level + 1}` };
+        const leaf = { type: "object", properties: { id: { type: "string" } } };
+        if (onLeafRead)
+          Object.defineProperty(leaf, "type", {
+            get: () => {
+              onLeafRead();
+              return "object";
+            },
+            enumerable: true,
+          });
+        return leaf;
+      }),
+    };
   }
   return { $defs, $ref: "#/$defs/Level0" };
 }
@@ -486,31 +468,26 @@ describe("bounded catalog rendering", () => {
     expect(lastRendered).toBe(2);
   });
 
-  it.each(["oneOf", "allOf", "prefixItems"] as const)(
-    "stops a wide %s before rendering every member",
-    (keyword) => {
-      let rendered = 0;
-      const members: unknown[] = [];
-      for (let index = 0; index < 20; index += 1) {
-        const properties: Record<string, unknown> = {};
-        Object.defineProperty(properties, "value", {
-          enumerable: true,
-          get() {
-            rendered += 1;
-            return { type: "string", description: "😀".repeat(1_000) };
-          },
-        });
-        members.push({ type: "object", properties });
-      }
+  it.each(["oneOf", "allOf", "prefixItems"] as const)("stops a wide %s before rendering every member", (keyword) => {
+    let rendered = 0;
+    const members: unknown[] = [];
+    for (let index = 0; index < 20; index += 1) {
+      const properties: Record<string, unknown> = {};
+      Object.defineProperty(properties, "value", {
+        enumerable: true,
+        get() {
+          rendered += 1;
+          return { type: "string", description: "😀".repeat(1_000) };
+        },
+      });
+      members.push({ type: "object", properties });
+    }
 
-      const schema = keyword === "prefixItems"
-        ? { prefixItems: members, items: false }
-        : { [keyword]: members };
-      const result = compactSchema(schema);
-      expect(result).toContain("/* truncated */");
-      expect(rendered).toBeLessThan(20);
-    },
-  );
+    const schema = keyword === "prefixItems" ? { prefixItems: members, items: false } : { [keyword]: members };
+    const result = compactSchema(schema);
+    expect(result).toContain("/* truncated */");
+    expect(rendered).toBeLessThan(20);
+  });
 
   it("stops a wide type union before rendering every member", () => {
     let lastRendered = -1;
@@ -572,14 +549,10 @@ describe("bounded catalog rendering", () => {
   it("keeps escaped, multibyte, and array JSON within the byte cap", () => {
     const emoji = "😀".repeat(2_045);
     expect(compactSchema({ const: emoji })).toBe(JSON.stringify(emoji));
-    expect(compactSchema({ const: `${emoji}😀😀😀` })).toBe(
-      "unknown /* truncated */",
-    );
+    expect(compactSchema({ const: `${emoji}😀😀😀` })).toBe("unknown /* truncated */");
 
     const values = Array.from({ length: 7 }, () => "x".repeat(1_000));
-    expect(compactSchema({ unknownKeyword: values })).toBe(
-      JSON.stringify({ unknownKeyword: values }),
-    );
+    expect(compactSchema({ unknownKeyword: values })).toBe(JSON.stringify({ unknownKeyword: values }));
 
     const arrayAtLimit = ["😀".repeat(2_047)];
     expect(new TextEncoder().encode(JSON.stringify(arrayAtLimit)).length).toBe(8_192);
@@ -656,10 +629,10 @@ describe("bounded catalog rendering", () => {
       inputSchemaTruncated: true,
       outputSchemaTruncated: true,
     });
-    expect(new TextEncoder().encode(entry!.inputSchema as string).length)
-      .toBeLessThanOrEqual(1_024);
+    expect(new TextEncoder().encode(entry!.inputSchema as string).length).toBeLessThanOrEqual(1_024);
     const [exact] = await service.describe({
-      address: "pathological.read", format: "json",
+      address: "pathological.read",
+      format: "json",
     });
     expect(exact!.inputSchema).toEqual(schema);
     expect(exact).not.toHaveProperty("inputSchemaTruncated");
@@ -672,7 +645,8 @@ describe("bounded catalog rendering", () => {
       required: ["id", "ghost"],
     };
     expect(schemaObjectKeys(schema)).toEqual({
-      properties: ["id"], required: ["id"],
+      properties: ["id"],
+      required: ["id"],
     });
     const connector = connectorWith({
       id: "keys",
@@ -681,32 +655,29 @@ describe("bounded catalog rendering", () => {
     });
     const service = new CatalogService(makeRegistry([connector]), BASE);
     const page = await service.search({
-      includeSchemas: "compact", includeSchemaKeys: true,
+      includeSchemas: "compact",
+      includeSchemaKeys: true,
     });
     expect(page.entries[0]!.tool.requiredInputKeys).toEqual(["id"]);
   });
 });
 
 describe("catalog search argument validation", () => {
-  it.each([NaN, Infinity, -Infinity, -1, 0.5, "abc", "1", null])(
-    "rejects invalid offset %s", async (offset) => {
-      const service = new CatalogService(makeRegistry([calcConnector]), BASE);
-      await expect(service.search({ offset: offset as number })).rejects.toMatchObject({
-        code: "invalid_args",
-        message: expect.stringContaining("offset must be"),
-      });
-    },
-  );
+  it.each([NaN, Infinity, -Infinity, -1, 0.5, "abc", "1", null])("rejects invalid offset %s", async (offset) => {
+    const service = new CatalogService(makeRegistry([calcConnector]), BASE);
+    await expect(service.search({ offset: offset as number })).rejects.toMatchObject({
+      code: "invalid_args",
+      message: expect.stringContaining("offset must be"),
+    });
+  });
 
-  it.each([null, 1, false, {}, []].map((query) => [query]))(
-    "rejects non-string query %s", async (query) => {
-      const service = new CatalogService(makeRegistry([calcConnector]), BASE);
-      await expect(service.search({ query: query as string })).rejects.toMatchObject({
-        code: "invalid_args",
-        message: expect.stringContaining("query must be"),
-      });
-    },
-  );
+  it.each([null, 1, false, {}, []].map((query) => [query]))("rejects non-string query %s", async (query) => {
+    const service = new CatalogService(makeRegistry([calcConnector]), BASE);
+    await expect(service.search({ query: query as string })).rejects.toMatchObject({
+      code: "invalid_args",
+      message: expect.stringContaining("query must be"),
+    });
+  });
 
   it("refuses an oversized connector scope instead of echoing a clipped one", async () => {
     const service = new CatalogService(makeRegistry([calcConnector]), BASE);
@@ -823,10 +794,16 @@ describe("2020-12 schemas in search and describe", () => {
     },
   ];
   it.each(cases)("renders $name honestly in both routes", async ({ schema, text, truncated }) => {
-    const service = new CatalogService(makeRegistry([connectorWith({
-      id: "shapes", call: async () => null,
-      tools: [{ name: "read", inputSchema: schema, outputSchema: schema }],
-    })]), BASE);
+    const service = new CatalogService(
+      makeRegistry([
+        connectorWith({
+          id: "shapes",
+          call: async () => null,
+          tools: [{ name: "read", inputSchema: schema, outputSchema: schema }],
+        }),
+      ]),
+      BASE,
+    );
     const page = await service.search({ includeSchemas: "compact" });
     const [description] = await service.describe({ address: "shapes.read" });
     for (const tool of [page.entries[0]!.tool, description!]) {

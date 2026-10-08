@@ -17,9 +17,7 @@ import type {
 
 /** A count, or 0 when the seam returned something that is not one. */
 function boundedCount(value: number): number {
-  return typeof value === "number" && Number.isFinite(value)
-    ? Math.max(0, Math.trunc(value))
-    : 0;
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
 }
 
 /** An ISO-8601 date-time with a zone, as `Date.parse` reads it on every runtime. */
@@ -49,9 +47,7 @@ function observationTime(value: unknown): string | undefined {
  * otherwise put any text there. The activity path reconstructs its five
  * fields for the same reason.
  */
-export function boundedCatalogDrift(
-  report: CatalogDriftReport | undefined,
-): CatalogDriftReport | undefined {
+export function boundedCatalogDrift(report: CatalogDriftReport | undefined): CatalogDriftReport | undefined {
   if (!report || typeof report !== "object") return undefined;
   const observedAt = observationTime(report.observedAt);
   if (observedAt === undefined) return undefined;
@@ -61,9 +57,7 @@ export function boundedCatalogDrift(
     unservedTools: boundedCount(report.unservedTools),
     annotationConflicts: boundedCount(report.annotationConflicts),
     schemaChanges: boundedCount(report.schemaChanges),
-    ...(boundedCount(report.droppedTools ?? 0) > 0
-      ? { droppedTools: boundedCount(report.droppedTools ?? 0) }
-      : {}),
+    ...(boundedCount(report.droppedTools ?? 0) > 0 ? { droppedTools: boundedCount(report.droppedTools ?? 0) } : {}),
   };
 }
 
@@ -130,10 +124,7 @@ const MAX_SCHEMA_DIGEST_NODES = 100_000;
 /** Object keys in the order `JSON.stringify` emits a key-sorted object. */
 function canonicalKeys(value: object): [string, unknown][] {
   const entries = Object.entries(value as Record<string, unknown>).filter(
-    ([, item]) =>
-      item !== undefined &&
-      typeof item !== "function" &&
-      typeof item !== "symbol",
+    ([, item]) => item !== undefined && typeof item !== "function" && typeof item !== "symbol",
   );
   entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   // A plain object enumerates integer-like keys first, in numeric order.
@@ -161,9 +152,7 @@ function canonicalJson(root: unknown): string {
       continue;
     }
     if (++nodes > MAX_SCHEMA_DIGEST_NODES) {
-      throw new Error(
-        `schema has more than ${MAX_SCHEMA_DIGEST_NODES} values; refusing to digest it in part.`,
-      );
+      throw new Error(`schema has more than ${MAX_SCHEMA_DIGEST_NODES} values; refusing to digest it in part.`);
     }
     const value = task.value;
     if (value === null || value === undefined) {
@@ -219,9 +208,7 @@ export async function vettedSchemaDigest(tool: ToolDef): Promise<string> {
     }),
   );
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-  return `sha256:${[...digest]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("")}`;
+  return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
 /**
@@ -234,8 +221,7 @@ export async function vettedSchemaDigest(tool: ToolDef): Promise<string> {
  */
 export function vettedCatalog(input: VettedCatalogInput): VettedCatalog {
   const tools = new Map<string, VettedToolRecord>();
-  const digestFor = (name: string): string | undefined =>
-    input.schemaDigests?.[name];
+  const digestFor = (name: string): string | undefined => input.schemaDigests?.[name];
   for (const name of input.reads) {
     const digest = digestFor(name);
     tools.set(name, {
@@ -245,9 +231,7 @@ export function vettedCatalog(input: VettedCatalogInput): VettedCatalog {
   }
   for (const [name, verdict] of input.writes) {
     if (tools.has(name)) {
-      throw new Error(
-        `vettedCatalog() classified "${name}" as both a read and a write.`,
-      );
+      throw new Error(`vettedCatalog() classified "${name}" as both a read and a write.`);
     }
     const digest = digestFor(name);
     tools.set(name, {
@@ -257,9 +241,7 @@ export function vettedCatalog(input: VettedCatalogInput): VettedCatalog {
   }
   for (const name of Object.keys(input.schemaDigests ?? {})) {
     if (!tools.has(name)) {
-      throw new Error(
-        `vettedCatalog() recorded a schema digest for unclassified tool "${name}".`,
-      );
+      throw new Error(`vettedCatalog() recorded a schema digest for unclassified tool "${name}".`);
     }
   }
   return { version: 1, tools };
@@ -301,7 +283,8 @@ function parseClassification(
   }
   if (!isRecord(classification)) fail("must be an object with a tools record.");
   for (const key of Object.keys(classification)) {
-    if (key !== "tools" && key !== "unlisted") fail(`has unknown key "${key}"; only "tools" and "unlisted" are accepted.`);
+    if (key !== "tools" && key !== "unlisted")
+      fail(`has unknown key "${key}"; only "tools" and "unlisted" are accepted.`);
   }
   const unlisted = classification.unlisted;
   if (unlisted !== undefined && unlisted !== "hide") fail('unlisted must be "hide" when set.');
@@ -320,9 +303,7 @@ function parseClassification(
     }
     const { verdict: publicVerdict, reason, schemaDigest: digest } = record;
     const verdict =
-      typeof publicVerdict === "string" && Object.hasOwn(VERDICTS, publicVerdict)
-        ? VERDICTS[publicVerdict]
-        : undefined;
+      typeof publicVerdict === "string" && Object.hasOwn(VERDICTS, publicVerdict) ? VERDICTS[publicVerdict] : undefined;
     if (verdict === undefined) {
       fail(`tool "${name}" needs verdict "read", "write", or "destructive".`);
     }
@@ -352,10 +333,7 @@ function parseClassification(
 }
 
 /** Validate a {@link ToolClassification} and build the manifest it describes. */
-export function reviewedCatalog(
-  classification: ToolClassification,
-  owner: string,
-): VettedCatalog {
+export function reviewedCatalog(classification: ToolClassification, owner: string): VettedCatalog {
   return parseClassification(classification, owner).catalog;
 }
 
@@ -365,10 +343,7 @@ export function reviewedCatalog(
  * original object nor a write through the connector can change a verdict
  * after review.
  */
-export function reviewedClassification(
-  classification: ToolClassification,
-  owner: string,
-): ToolClassification {
+export function reviewedClassification(classification: ToolClassification, owner: string): ToolClassification {
   return parseClassification(classification, owner).frozen;
 }
 
@@ -397,16 +372,24 @@ function servedTool(
 ): ToolDef {
   const definition = structuredClone(fact);
   const reviewed = catalog.tools.get(fact.name);
-  definition.classification = classifyTool(fact, override, reviewed ? {
-    verdict: PUBLIC_VERDICTS[reviewed.verdict], stale: lapsed.has(fact.name),
-  } : undefined);
+  definition.classification = classifyTool(
+    fact,
+    override,
+    reviewed
+      ? {
+          verdict: PUBLIC_VERDICTS[reviewed.verdict],
+          stale: lapsed.has(fact.name),
+        }
+      : undefined,
+  );
   const downstream = definition.annotations ?? {};
   const record = catalog.tools.get(definition.name);
   const annotate = (annotations: ToolAnnotations): ToolDef => ({
     ...definition,
-    annotations: override === undefined ? annotations : { ...annotations,
-      readOnlyHint: override === "read", destructiveHint: override === "write",
-    },
+    annotations:
+      override === undefined
+        ? annotations
+        : { ...annotations, readOnlyHint: override === "read", destructiveHint: override === "write" },
   });
   if (record?.verdict === "destructive") {
     return annotate({ ...downstream, readOnlyHint: false, destructiveHint: true });
@@ -447,9 +430,7 @@ function servedTool(
 function contradicts(record: VettedToolRecord, definition: ToolDef): boolean {
   const downstream = definition.annotations ?? {};
   if (record.verdict === "read-only") {
-    return (
-      downstream.readOnlyHint === false || downstream.destructiveHint === true
-    );
+    return downstream.readOnlyHint === false || downstream.destructiveHint === true;
   }
   return downstream.readOnlyHint === true;
 }
@@ -460,17 +441,11 @@ function contradicts(record: VettedToolRecord, definition: ToolDef): boolean {
  * an opinion about its schema, so it does not pay for a hash either. Throws
  * when a digest cannot be computed; the caller decides what that means.
  */
-async function changedSchemas(
-  catalog: VettedCatalog,
-  tools: readonly ToolDef[],
-): Promise<Set<string>> {
+async function changedSchemas(catalog: VettedCatalog, tools: readonly ToolDef[]): Promise<Set<string>> {
   const changed = new Set<string>();
   for (const definition of tools) {
     const recorded = catalog.tools.get(definition.name)?.schemaDigest;
-    if (
-      recorded !== undefined &&
-      recorded !== (await vettedSchemaDigest(definition))
-    ) {
+    if (recorded !== undefined && recorded !== (await vettedSchemaDigest(definition))) {
       changed.add(definition.name);
     }
   }
@@ -478,10 +453,7 @@ async function changedSchemas(
 }
 
 /** Every served tool whose review recorded a digest: what cannot be verified. */
-function digestedTools(
-  catalog: VettedCatalog,
-  tools: readonly ToolDef[],
-): Set<string> {
+function digestedTools(catalog: VettedCatalog, tools: readonly ToolDef[]): Set<string> {
   return new Set(
     tools
       .filter((definition) => catalog.tools.get(definition.name)?.schemaDigest !== undefined)
@@ -548,10 +520,7 @@ export function catalogReviewOf(connector: Connector): VettedCatalog | undefined
   let review = reviews.get(connector);
   if (review === undefined) {
     const classification = connector.classification;
-    review =
-      classification === undefined
-        ? null
-        : reviewedCatalog(classification, `connector "${connector.id}"`);
+    review = classification === undefined ? null : reviewedCatalog(classification, `connector "${connector.id}"`);
     reviews.set(connector, review);
   }
   return review ?? undefined;
@@ -590,7 +559,8 @@ export async function classifyCatalog(
     }
   }
   const unverified = lapsed;
-  return facts.filter((fact) => catalog.unlisted !== "hide" || catalog.tools.has(fact.name))
+  return facts
+    .filter((fact) => catalog.unlisted !== "hide" || catalog.tools.has(fact.name))
     .map((fact) => servedTool(catalog, fact, unverified, overrides?.[fact.name]));
 }
 
@@ -633,8 +603,6 @@ export async function observeReviewedDrift(
 }
 
 /** The latest drift {@link observeReviewedDrift} kept for `connector`. */
-export function observedCatalogDrift(
-  connector: Connector,
-): CatalogDriftReport | undefined {
+export function observedCatalogDrift(connector: Connector): CatalogDriftReport | undefined {
   return observations.get(connector);
 }

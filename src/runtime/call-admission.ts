@@ -12,15 +12,10 @@
 // shared queue between them was refused.
 
 import { Effect, type Scope } from "effect";
-import type {
-  CallAdmissionError,
-  CallAdmissionPermit,
-  ConnectorCallAdmissionController,
-} from "../call-admission.js";
+import type { CallAdmissionError, CallAdmissionPermit, ConnectorCallAdmissionController } from "../call-admission.js";
 import type { ConnectorCallAdmissionInput } from "../types.js";
 
-export interface CallAdmissionRequest
-  extends Readonly<ConnectorCallAdmissionInput> {
+export interface CallAdmissionRequest extends Readonly<ConnectorCallAdmissionInput> {
   /** Cancels a queued wait as a `cancelled` CallAdmissionError. */
   signal?: AbortSignal | undefined;
 }
@@ -55,9 +50,7 @@ export function provideCallAdmissionProgram(admit: CallAdmissionProgram): void {
 
 function installed(): CallAdmissionProgram {
   if (!program) {
-    throw new Error(
-      "ConnectorCallAdmissionController's admission program was never installed.",
-    );
+    throw new Error("ConnectorCallAdmissionController's admission program was never installed.");
   }
   return program;
 }
@@ -93,9 +86,7 @@ export function admitCall(
   request: CallAdmissionRequest,
 ): Effect.Effect<CallAdmissionPermit, CallAdmissionError> {
   const admit = installed();
-  return Effect.clockWith((clock) =>
-    admit(controller, request, () => clock.currentTimeMillisUnsafe()),
-  );
+  return Effect.clockWith((clock) => admit(controller, request, () => clock.currentTimeMillisUnsafe()));
 }
 
 /**
@@ -108,9 +99,7 @@ export function acquireCallScoped(
   controller: ConnectorCallAdmissionController,
   request: CallAdmissionRequest,
 ): Effect.Effect<CallAdmissionPermit, CallAdmissionError, Scope.Scope> {
-  return Effect.acquireRelease(
-    admitCall(controller, request),
-    (permit) => Effect.sync(() => permit.release()),
-    { interruptible: true },
-  );
+  return Effect.acquireRelease(admitCall(controller, request), (permit) => Effect.sync(() => permit.release()), {
+    interruptible: true,
+  });
 }

@@ -21,11 +21,7 @@ vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
   remoteMcp: mocks.remoteMcp,
 }));
 
-import {
-  LINEAR_MCP_ENDPOINTS,
-  LINEAR_VETTED_CATALOG,
-  linear,
-} from "./index.js";
+import { LINEAR_MCP_ENDPOINTS, LINEAR_VETTED_CATALOG, linear } from "./index.js";
 import { connectorGuideSummary } from "../../skills.js";
 
 describe("linear()", () => {
@@ -46,8 +42,7 @@ describe("linear()", () => {
       expect.objectContaining({
         url: LINEAR_MCP_ENDPOINTS["read-write"],
         title: "Product issue tracking",
-        description:
-          "Linear issue tracking and project planning — Platform team issue and project planning",
+        description: "Linear issue tracking and project planning — Platform team issue and project planning",
         auth: { type: "oauth" },
         requireHttps: true,
       }),
@@ -61,9 +56,7 @@ describe("linear()", () => {
     // Real markdown, not a diff hunk: agents read this string verbatim.
     expect(guideOf(connector)).toContain("## Workspace instructions");
     expect(guideOf(connector)).not.toContain("+## Workspace instructions");
-    expect(guideOf(connector)).toContain(
-      "File bugs into the Platform team unless told otherwise.",
-    );
+    expect(guideOf(connector)).toContain("File bugs into the Platform team unless told otherwise.");
   });
 
   it("omits the account section entirely when no instructions are given", () => {
@@ -82,9 +75,7 @@ describe("linear()", () => {
     // Linear documents no MCP-specific limit and meters per user per hour, so
     // the connection invents no per-runtime ceiling. An operator may still set
     // one explicitly.
-    expect(mocks.remoteMcp.mock.calls[0]?.[1]).not.toHaveProperty(
-      "callAdmission",
-    );
+    expect(mocks.remoteMcp.mock.calls[0]?.[1]).not.toHaveProperty("callAdmission");
   });
 
   it("binds read-only mode to Linear's scope-limited endpoint", () => {
@@ -100,13 +91,10 @@ describe("linear()", () => {
         // Browse-time discovery renders the title, not the description, so the
         // title carries the mode unless the operator names the connection.
         title: "Linear (read-only)",
-        description:
-          "Linear issue tracking and project planning (read-only) — Reporting on delivery status",
+        description: "Linear issue tracking and project planning (read-only) — Reporting on delivery status",
       }),
     );
-    expect(LINEAR_MCP_ENDPOINTS["read-only"]).toBe(
-      "https://mcp.linear.app/mcp/readonly",
-    );
+    expect(LINEAR_MCP_ENDPOINTS["read-only"]).toBe("https://mcp.linear.app/mcp/readonly");
     expect(guideOf(connector)).toContain("read-only endpoint");
     expect(guideOf(connector)).not.toContain("call_destructive_tool");
   });
@@ -214,9 +202,7 @@ describe("linear()", () => {
       auth: { type: "headers", headers: { Authorization: "lin_api_secret" } },
       maxResultBytes: 25_000,
       callAdmission: {
-        rules: [
-          { budget: { kind: "rolling-window", maxCalls: 1_000, windowMs: 3_600_000 } },
-        ],
+        rules: [{ budget: { kind: "rolling-window", maxCalls: 1_000, windowMs: 3_600_000 } }],
       },
     });
 
@@ -243,16 +229,12 @@ describe("linear()", () => {
     );
   });
 
-  itClassifiesLikeARelease(
-    () => linear("tracker", { purpose: "Delivery planning", access: "read-write" }),
-    mocks,
-    {
-      read: ["list_issues", "get_issue", "get_project"],
-      write: "create_issue_label",
-      destructive: "save_issue",
-      unknown: ["summon_new_thing", "peek_at_new_thing", "wreck_new_thing"],
-    },
-  );
+  itClassifiesLikeARelease(() => linear("tracker", { purpose: "Delivery planning", access: "read-write" }), mocks, {
+    read: ["list_issues", "get_issue", "get_project"],
+    write: "create_issue_label",
+    destructive: "save_issue",
+    unknown: ["summon_new_thing", "peek_at_new_thing", "wreck_new_thing"],
+  });
 
   it("agrees with the markdown helper's own read-only annotation", async () => {
     // The hosted server ships `extract_images` with explicit `readOnlyHint`
@@ -317,13 +299,15 @@ describe("linear()", () => {
 
   it("INV-1: keeps its reviewed verdicts when the definition is written to", async () => {
     const tools = linear.definition.classify?.tools as Record<string, { verdict: string }>;
-    expect(() => { required(tools.save_issue).verdict = "read"; }).toThrow(TypeError);
-    expect(() => { (tools as Record<string, unknown>).delete_issue = "read"; }).toThrow(TypeError);
+    expect(() => {
+      required(tools.save_issue).verdict = "read";
+    }).toThrow(TypeError);
+    expect(() => {
+      (tools as Record<string, unknown>).delete_issue = "read";
+    }).toThrow(TypeError);
     expect(tools.save_issue).toMatchObject({ verdict: "destructive" });
     expect(LINEAR_VETTED_CATALOG.tools.get("save_issue")?.verdict).toBe("destructive");
-    mocks.listTools.mockResolvedValue([
-      { name: "save_issue", annotations: { readOnlyHint: true } },
-    ]);
+    mocks.listTools.mockResolvedValue([{ name: "save_issue", annotations: { readOnlyHint: true } }]);
     const connector = linear("tracker", {
       purpose: "Delivery planning",
       access: "read-write",
@@ -335,9 +319,9 @@ describe("linear()", () => {
   });
 
   it("INV-11: rejects an empty workspace purpose at construction", () => {
-    expect(() =>
-      linear("tracker", { purpose: "  ", access: "read-write" }),
-    ).toThrow('linear("tracker") requires a non-empty purpose');
+    expect(() => linear("tracker", { purpose: "  ", access: "read-write" })).toThrow(
+      'linear("tracker") requires a non-empty purpose',
+    );
     expect(mocks.remoteMcp).not.toHaveBeenCalled();
   });
 
@@ -346,9 +330,9 @@ describe("linear()", () => {
     // asked for, and `read-only` breaks a writing deployment at Linear, at
     // runtime, where no agent can repair it. So the declaration is required
     // and a deployment that forgot fails here, at construction.
-    expect(() =>
-      linear("tracker", { purpose: "Delivery planning" } as never),
-    ).toThrow('requires access "read-write" or "read-only"');
+    expect(() => linear("tracker", { purpose: "Delivery planning" } as never)).toThrow(
+      'requires access "read-write" or "read-only"',
+    );
     expect(() =>
       linear("tracker", {
         purpose: "Delivery planning",

@@ -131,9 +131,7 @@
         "url": "https://vercel.com/docs/agent-resources/vercel-mcp/tools.md",
         "format": "headings"
       },
-      "endpoints": [
-        "https://mcp.vercel.com"
-      ],
+      "endpoints": ["https://mcp.vercel.com"],
       "reviewed": [
         "search_vercel_documentation",
         "list_teams",

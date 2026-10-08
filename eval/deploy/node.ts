@@ -68,18 +68,21 @@ export async function startNodeDeployment(
     vault,
     ui: operatorUi(),
     logger: quiet,
-    connectors: [...(oauth ? [oauth.connector()] : []), ...connectors.map((spec) =>
-      remoteMcp(spec.id, {
-        url: spec.url,
-        title: spec.title,
-        description: spec.description,
-        ...(spec.usageGuide ? { usageGuide: spec.usageGuide } : {}),
-        logger: quiet,
-        ...(spec.credential
-          ? { auth: { type: "credential" as const, credential: { label: spec.credential.label } } }
-          : {}),
-      }),
-    )],
+    connectors: [
+      ...(oauth ? [oauth.connector()] : []),
+      ...connectors.map((spec) =>
+        remoteMcp(spec.id, {
+          url: spec.url,
+          title: spec.title,
+          description: spec.description,
+          ...(spec.usageGuide ? { usageGuide: spec.usageGuide } : {}),
+          logger: quiet,
+          ...(spec.credential
+            ? { auth: { type: "credential" as const, credential: { label: spec.credential.label } } }
+            : {}),
+        }),
+      ),
+    ],
     ...(passthrough as Partial<Parameters<typeof createConnecta>[0]>),
   });
   for (const spec of connectors) {
@@ -95,9 +98,10 @@ export async function startNodeDeployment(
     origin,
     mcpUrl: `${origin}/mcp${typeof pool === "string" ? `/${pool}` : ""}`,
     token: oauth?.token ?? token,
-    openConnect: async url => {
+    openConnect: async (url) => {
       const target = new URL(url);
-      if (target.origin !== origin || target.pathname !== "/connect/oauth" || !oauth) throw new Error("Unexpected eval connection URL");
+      if (target.origin !== origin || target.pathname !== "/connect/oauth" || !oauth)
+        throw new Error("Unexpected eval connection URL");
       target.searchParams.set("start", "1");
       const response = await fetch(target, { headers: { Cookie: `__session=${oauth.token}` }, redirect: "manual" });
       await response.body?.cancel();

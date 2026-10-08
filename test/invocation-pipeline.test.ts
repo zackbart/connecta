@@ -25,10 +25,11 @@ function limited(call: () => Promise<unknown>): Registry {
 }
 
 function invoke(registry: Registry, timeoutMs: number) {
-  return new InvocationService(
-    registry,
-    new CatalogService(registry, BASE),
-  ).invoke("limited.read", {}, { source: "call_tool", timeoutMs });
+  return new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+    "limited.read",
+    {},
+    { source: "call_tool", timeoutMs },
+  );
 }
 
 /** Resolves once the call has asked for admission, however that answers. */
@@ -76,7 +77,9 @@ describe("one deadline over resolve, admission, and dispatch", () => {
   it("charges a call that timed out in an unresponsive connector with that wait", async () => {
     vi.useFakeTimers();
     let enter!: () => void;
-    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
     const registry = limited(() => {
       enter();
       return new Promise(() => {});
@@ -132,58 +135,66 @@ describe("what a write's outcome can know", () => {
       connectorWith({
         id: "w",
         kind,
-        tools: [{
-          name: "send",
-          annotations: { destructiveHint: true },
-          inputSchema: {
-            type: "object",
-            properties: { to: { type: "string" } },
-            required: ["to"],
+        tools: [
+          {
+            name: "send",
+            annotations: { destructiveHint: true },
+            inputSchema: {
+              type: "object",
+              properties: { to: { type: "string" } },
+              required: ["to"],
+            },
           },
-        }],
+        ],
         call,
       }),
     ]);
   }
   const send = (registry: Registry, args: unknown) =>
-    new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
-      "w.send",
-      args,
-      { source: "call_destructive_tool" },
-    );
+    new InvocationService(registry, new CatalogService(registry, BASE)).invoke("w.send", args, {
+      source: "call_destructive_tool",
+    });
 
   it("reports whether the connector was actually called", async () => {
-    await expect(send(writer(async () => ({ ok: true })), { to: "a" }))
-      .resolves.toMatchObject({ ok: true, dispatched: true });
+    await expect(
+      send(
+        writer(async () => ({ ok: true })),
+        { to: "a" },
+      ),
+    ).resolves.toMatchObject({ ok: true, dispatched: true });
     // Refused before dispatch: nothing reached the connector.
     const call = vi.fn(async () => ({ ok: true }));
-    await expect(send(writer(call, "mcp"), {}))
-      .resolves.toMatchObject({ ok: false, dispatched: false, error: { code: "invalid_args" } });
+    await expect(send(writer(call, "mcp"), {})).resolves.toMatchObject({
+      ok: false,
+      dispatched: false,
+      error: { code: "invalid_args" },
+    });
     expect(call).not.toHaveBeenCalled();
   });
 
   it("tells an answer from silence", async () => {
     const answered = await send(
-      writer(
-        async () => ({ isError: true, content: [{ type: "text", text: "no such thread" }] }),
-        "mcp",
-      ),
+      writer(async () => ({ isError: true, content: [{ type: "text", text: "no such thread" }] }), "mcp"),
       { to: "a" },
     );
     expect(answered).toMatchObject({ ok: false, dispatched: true, answered: true });
     const silent = await send(
-      writer(async () => { throw new TypeError("fetch failed"); }),
+      writer(async () => {
+        throw new TypeError("fetch failed");
+      }),
       { to: "a" },
     );
     expect(silent).toMatchObject({ ok: false, dispatched: true, answered: false });
   });
 
   it("asks a write gate only after validation, and records an unrecorded refusal as nothing", async () => {
-    const gate = vi.fn(() => Effect.succeed({
-      kind: "refuse" as const,
-      error: { code: "cancelled", message: "The program had already returned.", retryable: false },
-      unrecorded: true as const,
-    }));
+    const gate = vi.fn(() =>
+      Effect.succeed({
+        kind: "refuse" as const,
+        error: { code: "cancelled", message: "The program had already returned.", retryable: false },
+        unrecorded: true as const,
+      }),
+    );
     const events: Array<{ outcome: string; attempts: number }> = [];
     const registry = writer(async () => ({ ok: true }), "mcp");
     const service = new InvocationService(registry, new CatalogService(registry, BASE), {
@@ -209,8 +220,6 @@ describe("what a write's outcome can know", () => {
     });
     expect(gate).toHaveBeenCalledTimes(1);
     // The validation failure is an attempt; the unrecorded refusal is not.
-    expect(events.map((event) => [event.outcome, event.attempts])).toEqual([
-      ["error", 1],
-    ]);
+    expect(events.map((event) => [event.outcome, event.attempts])).toEqual([["error", 1]]);
   });
 });

@@ -10,72 +10,60 @@
  * accent keeps all of them consistent with it.
  */
 
-  :root {
-    color-scheme: light;
-    --accent: #5263e8;
-    --radius: 6px;
-    --sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-      "Helvetica Neue", Arial, sans-serif;
-    --mono: ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", Consolas,
-      monospace;
+:root {
+  color-scheme: light;
+  --accent: #5263e8;
+  --radius: 6px;
+  --sans:
+    "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", Consolas, monospace;
 
-    --bg: #ffffff;
-    --surface: #ffffff;
-    --surface-2: #f7f8fa;
-    --border: #e8eaee;
-    --border-strong: #cdd2da;
-    --text: #20232b;
-    --muted: #69707e;
-    --ok: #12734a;
-    --warn: #9a5b06;
-    --danger: #bb3226;
-    --on-accent: #ffffff;
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f7f8fa;
+  --border: #e8eaee;
+  --border-strong: #cdd2da;
+  --text: #20232b;
+  --muted: #69707e;
+  --ok: #12734a;
+  --warn: #9a5b06;
+  --danger: #bb3226;
+  --on-accent: #ffffff;
 
-    /* Accent as text reads differently from accent as a fill; both derive. */
-    --link: var(--accent);
-    --tint: color-mix(in srgb, var(--accent) 8%, var(--surface));
-    --shell: 68rem;
-    --pad: 1.25rem;
-    --gap: 1rem;
-    --space-1: .25rem;
-    --space-2: .5rem;
-    --space-3: .75rem;
-    --space-4: 1rem;
-    --space-6: 1.5rem;
-    --space-8: 2rem;
-    --text-xs: .75rem;
-    --text-sm: .8125rem;
-    --text-base: .875rem;
-    --sidebar-width: 14rem;
-  }
+  /* Accent as text reads differently from accent as a fill; both derive. */
+  --link: var(--accent);
+  --tint: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  --shell: 68rem;
+  --pad: 1.25rem;
+  --gap: 1rem;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --sidebar-width: 14rem;
+}
 
-  /*
+/*
    * Dark applies when the OS asks for it and the deployment has not pinned a
    * scheme, or when the deployment pinned dark. Both selectors set the same
    * tokens, so there is one dark palette and not two that can drift apart.
    */
-  @media (prefers-color-scheme: dark) {
-    html:not([data-scheme="light"]) { color-scheme: dark; }
+@media (prefers-color-scheme: dark) {
+  html:not([data-scheme="light"]) {
+    color-scheme: dark;
   }
-  html[data-scheme="dark"] { color-scheme: dark; }
+}
+html[data-scheme="dark"] {
+  color-scheme: dark;
+}
 
-  @media (prefers-color-scheme: dark) {
-    html:not([data-scheme="light"]) {
-      --bg: #111216;
-      --surface: #18191e;
-      --surface-2: #202127;
-      --border: #2a2b33;
-      --border-strong: #3b3d48;
-      --text: #e6eaf1;
-      --muted: #97a1b2;
-      --ok: #4cc48c;
-      --warn: #e2a33f;
-      --danger: #f4776c;
-      --link: color-mix(in srgb, var(--accent) 55%, #ffffff);
-      --tint: color-mix(in srgb, var(--accent) 16%, var(--surface));
-    }
-  }
-  html[data-scheme="dark"] {
+@media (prefers-color-scheme: dark) {
+  html:not([data-scheme="light"]) {
     --bg: #111216;
     --surface: #18191e;
     --surface-2: #202127;
@@ -89,3 +77,18 @@
     --link: color-mix(in srgb, var(--accent) 55%, #ffffff);
     --tint: color-mix(in srgb, var(--accent) 16%, var(--surface));
   }
+}
+html[data-scheme="dark"] {
+  --bg: #111216;
+  --surface: #18191e;
+  --surface-2: #202127;
+  --border: #2a2b33;
+  --border-strong: #3b3d48;
+  --text: #e6eaf1;
+  --muted: #97a1b2;
+  --ok: #4cc48c;
+  --warn: #e2a33f;
+  --danger: #f4776c;
+  --link: color-mix(in srgb, var(--accent) 55%, #ffffff);
+  --tint: color-mix(in srgb, var(--accent) 16%, var(--surface));
+}

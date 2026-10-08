@@ -1,26 +1,15 @@
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { activityHistory } from "../src/activity.js";
 import { createTestConnecta, required } from "./helpers.js";
-import {
-  calcApi,
-  fakeClerkAuth,
-  makeDeployment,
-  mcpRpc,
-  readJsonRpc,
-} from "./fixtures/http.js";
-import {
-  Client,
-  StreamableHTTPClientTransport,
-} from "@modelcontextprotocol/client";
+import { calcApi, fakeClerkAuth, makeDeployment, mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it, vi } from "vitest";
 import { CONNECTOR_INVENTORY_MAX_BYTES } from "../src/execute.js";
 
 // True under @cloudflare/vitest-pool-workers. quickJsExecutor() is the Node
 // executor (emscripten WASM loaded from disk) — Workers deployments use
 // DynamicWorkerExecutor instead — so tests that actually run code skip there.
-const WORKERD =
-  typeof navigator !== "undefined" &&
-  navigator.userAgent?.includes("Cloudflare-Workers");
+const WORKERD = typeof navigator !== "undefined" && navigator.userAgent?.includes("Cloudflare-Workers");
 
 // QuickJS charges its 250ms default guest CPU budget by wall clock, so a loaded
 // host bills its own contention to these programs. Cases that are not about
@@ -31,9 +20,7 @@ async function loadQuickJsExecutor() {
   // This module now imports node:child_process by design. Keep it out of the
   // Workers bundle entirely; the two callers below skip under workerd.
   const path = "../src/executors/quickjs" + ".js";
-  return import(/* @vite-ignore */ path) as Promise<
-    typeof import("../src/executors/quickjs.js")
-  >;
+  return import(/* @vite-ignore */ path) as Promise<typeof import("../src/executors/quickjs.js")>;
 }
 import { api } from "../src/connectors/api.js";
 import { machineAuth } from "./helpers/machine-auth.js";
@@ -74,10 +61,7 @@ function recoverableStaticConnector(): Connector {
         handler: async (_args, ctx) => {
           const values = await ctx.credential?.getAll();
           if (!values) {
-            throw new ConnectorCallError(
-              "auth_required",
-              "Operator-managed credentials are required.",
-            );
+            throw new ConnectorCallError("auth_required", "Operator-managed credentials are required.");
           }
           return { account: values.account };
         },
@@ -101,9 +85,7 @@ describe("server /mcp end-to-end", () => {
     const res = await c.fetch(request);
     expect(res.status).toBe(401);
     expect(res.headers.get("Access-Control-Allow-Origin")).toBe(BASE);
-    expect(res.headers.get("Access-Control-Expose-Headers")).toContain(
-      "WWW-Authenticate",
-    );
+    expect(res.headers.get("Access-Control-Expose-Headers")).toContain("WWW-Authenticate");
   });
 
   it("serves CORS on successful legacy /mcp responses too", async () => {
@@ -121,9 +103,7 @@ describe("server /mcp end-to-end", () => {
     const res = await c.fetch(request);
     expect(res.status).toBe(200);
     expect(res.headers.get("Access-Control-Allow-Origin")).toBe(BASE);
-    expect(res.headers.get("Access-Control-Expose-Headers")).toContain(
-      "mcp-session-id",
-    );
+    expect(res.headers.get("Access-Control-Expose-Headers")).toContain("mcp-session-id");
   });
 
   it("legacy initialize succeeds with a valid token", async () => {
@@ -141,24 +121,16 @@ describe("server /mcp end-to-end", () => {
     expect(res.status).toBe(200);
     const body = await readJsonRpc(res);
     expect(body.result.serverInfo.name).toBe("connecta");
-    expect(body.result.instructions).toContain(
-      "Unknown-address read-only work starts with execute_code",
-    );
+    expect(body.result.instructions).toContain("Unknown-address read-only work starts with execute_code");
     expect(body.result.instructions).toContain(
       "Programs call reads in read-only pools and may also write in trusted pools",
     );
     expect(body.result.instructions).toContain("call_destructive_tool");
     expect(body.result.instructions).not.toContain("resume_execution");
     expect(body.result.instructions).toContain('skills({ name: "usage" })');
-    expect(body.result.instructions).toContain(
-      "Guidance is on demand",
-    );
-    expect(body.result.instructions).toContain(
-      "Sample unfamiliar reads",
-    );
-    expect(body.result.instructions).toContain(
-      "discover, call, and return the answer",
-    );
+    expect(body.result.instructions).toContain("Guidance is on demand");
+    expect(body.result.instructions).toContain("Sample unfamiliar reads");
+    expect(body.result.instructions).toContain("discover, call, and return the answer");
     expect(body.result.instructions).toContain("only when");
   });
 
@@ -189,42 +161,34 @@ describe("server /mcp end-to-end", () => {
     expect(body.result.serverInfo.name).toBe("acme-tools");
     expect(body.result.serverInfo.title).toBe("Acme Tools");
     expect(body.result.serverInfo.websiteUrl).toBe("https://acme.example");
-    expect(body.result.serverInfo.icons).toEqual([
-      { src: `${BASE}/favicon.svg`, mimeType: "image/svg+xml" },
-    ]);
+    expect(body.result.serverInfo.icons).toEqual([{ src: `${BASE}/favicon.svg`, mimeType: "image/svg+xml" }]);
   });
 
   it("serves a modern client without initialize and emits private tools/list cache hints", async () => {
     const c = makeDeployment();
     const methods: string[] = [];
     let toolsListResult: Record<string, unknown> | undefined;
-    const client = new Client(
-      { name: "modern-e2e", version: "1.0.0" },
-      { versionNegotiation: { mode: "auto" } },
-    );
-    const transport = new StreamableHTTPClientTransport(
-      new URL(`${BASE}/mcp`),
-      {
-        requestInit: {
-          headers: { Authorization: `Bearer ${TOKEN}` },
-        },
-        fetch: async (input, init) => {
-          const request = new Request(input, init);
-          const payload = (await request.clone().json()) as {
-            method?: string;
-          };
-          if (payload.method) methods.push(payload.method);
-          const response = await c.fetch(request);
-          if (payload.method === "tools/list") {
-            const body = (await response.clone().json()) as {
-              result?: Record<string, unknown>;
-            };
-            toolsListResult = body.result;
-          }
-          return response;
-        },
+    const client = new Client({ name: "modern-e2e", version: "1.0.0" }, { versionNegotiation: { mode: "auto" } });
+    const transport = new StreamableHTTPClientTransport(new URL(`${BASE}/mcp`), {
+      requestInit: {
+        headers: { Authorization: `Bearer ${TOKEN}` },
       },
-    );
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        const payload = (await request.clone().json()) as {
+          method?: string;
+        };
+        if (payload.method) methods.push(payload.method);
+        const response = await c.fetch(request);
+        if (payload.method === "tools/list") {
+          const body = (await response.clone().json()) as {
+            result?: Record<string, unknown>;
+          };
+          toolsListResult = body.result;
+        }
+        return response;
+      },
+    });
 
     try {
       await client.connect(transport);
@@ -249,8 +213,12 @@ describe("server /mcp end-to-end", () => {
     for (let i = 0; i < 2; i++) {
       const body = await readJsonRpc(await mcpRpc(c, "tools/list", {}, { token: TOKEN }));
       expect(body.result.tools.map((tool: { name: string }) => tool.name)).toEqual([
-        "skills", "search_tools", "call_tool", "call_destructive_tool",
-        "authorize_connector", "execute_code",
+        "skills",
+        "search_tools",
+        "call_tool",
+        "call_destructive_tool",
+        "authorize_connector",
+        "execute_code",
       ]);
     }
     await c.close();
@@ -274,17 +242,33 @@ describe("server /mcp end-to-end", () => {
   it("rejects removed retry arguments before dispatching either direct-call tool", async () => {
     const call = vi.fn(async () => ({ done: true }));
     const c = createTestConnecta({
-      connectors: [api("counter", { tools: [{
-        name: "read", description: "Count reads",
-        annotations: { readOnlyHint: true }, handler: call,
-      }] })],
+      connectors: [
+        api("counter", {
+          tools: [
+            {
+              name: "read",
+              description: "Count reads",
+              annotations: { readOnlyHint: true },
+              handler: call,
+            },
+          ],
+        }),
+      ],
       auth: machineAuth(TOKEN),
       publicUrl: BASE,
     });
     for (const name of ["call_tool", "call_destructive_tool"]) {
-      const body = await readJsonRpc(await mcpRpc(c, "tools/call", {
-        name, arguments: { address: "counter.read", maxRetries: 1 },
-      }, { token: TOKEN }));
+      const body = await readJsonRpc(
+        await mcpRpc(
+          c,
+          "tools/call",
+          {
+            name,
+            arguments: { address: "counter.read", maxRetries: 1 },
+          },
+          { token: TOKEN },
+        ),
+      );
       expect(body.result?.isError || body.error).toBeTruthy();
       expect(JSON.stringify(body)).toContain("maxRetries");
     }
@@ -292,17 +276,13 @@ describe("server /mcp end-to-end", () => {
   });
 
   it("advertises no rendering metadata on any tool", async () => {
-    const body = await readJsonRpc(
-      await mcpRpc(makeDeployment(), "tools/list", {}, { token: TOKEN }),
-    );
+    const body = await readJsonRpc(await mcpRpc(makeDeployment(), "tools/list", {}, { token: TOKEN }));
     const tools = body.result.tools as Array<{
       name: string;
       description: string;
       _meta?: unknown;
     }>;
-    const execute = required(
-      tools.find((tool) => tool.name === "execute_code"),
-    );
+    const execute = required(tools.find((tool) => tool.name === "execute_code"));
     expect(execute.description).not.toContain("connecta.ui");
     for (const tool of tools) {
       expect(tool._meta ?? {}).not.toHaveProperty("ui");
@@ -325,9 +305,16 @@ describe("server /mcp end-to-end", () => {
     );
     expect(body.result.capabilities.extensions).toEqual({ "io.modelcontextprotocol/skills": {} });
     expect(body.result.capabilities.resources).toEqual({});
-    const read = await readJsonRpc(await mcpRpc(c, "resources/read", {
-      uri: "ui://connecta/program-ui/v3",
-    }, { token: TOKEN }));
+    const read = await readJsonRpc(
+      await mcpRpc(
+        c,
+        "resources/read",
+        {
+          uri: "ui://connecta/program-ui/v3",
+        },
+        { token: TOKEN },
+      ),
+    );
     expect(read.error).toBeDefined();
   });
 
@@ -359,14 +346,10 @@ describe("server /mcp end-to-end", () => {
     // the modern createMcpHandler leg of serveMcp works at all. PR B owns the
     // full revision-adoption matrix; this pins the fork itself.
     const c = makeDeployment();
-    const transport = new StreamableHTTPClientTransport(
-      new URL(`${BASE}/mcp`),
-      {
-        fetch: (async (url: string | URL, init?: RequestInit) =>
-          c.fetch(new Request(url, init))) as typeof fetch,
-        requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
-      },
-    );
+    const transport = new StreamableHTTPClientTransport(new URL(`${BASE}/mcp`), {
+      fetch: (async (url: string | URL, init?: RequestInit) => c.fetch(new Request(url, init))) as typeof fetch,
+      requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+    });
     const client = new Client(
       { name: "modern-probe", version: "0.0.0" },
       // Pinning is the strict spelling: auto would silently fall back to the
@@ -413,38 +396,37 @@ describe("server /mcp end-to-end", () => {
     const padding = " ".repeat(5 * 1024 * 1024);
     const c = makeDeployment();
 
-    const legacy = await c.fetch(new Request(`${BASE}/mcp`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        Authorization: `Bearer ${TOKEN}`,
-      },
-      body: `${JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "tools/call",
-        params: { name: "skills", arguments: {} },
-      })}${padding}`,
-    }));
+    const legacy = await c.fetch(
+      new Request(`${BASE}/mcp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+          Authorization: `Bearer ${TOKEN}`,
+        },
+        body: `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "skills", arguments: {} },
+        })}${padding}`,
+      }),
+    );
     expect(legacy.status).toBe(200);
     const legacyBody = await readJsonRpc(legacy);
     expect(legacyBody.error, JSON.stringify(legacyBody)).toBeUndefined();
     expect(legacyBody.result.isError).toBeFalsy();
 
-    const transport = new StreamableHTTPClientTransport(
-      new URL(`${BASE}/mcp`),
-      {
-        fetch: (async (url: string | URL, init?: RequestInit) => {
-          const padded =
-            typeof init?.body === "string" && init.body.includes('"tools/call"')
-              ? { ...init, body: `${init.body}${padding}` }
-              : init;
-          return c.fetch(new Request(url, padded));
-        }) as typeof fetch,
-        requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
-      },
-    );
+    const transport = new StreamableHTTPClientTransport(new URL(`${BASE}/mcp`), {
+      fetch: (async (url: string | URL, init?: RequestInit) => {
+        const padded =
+          typeof init?.body === "string" && init.body.includes('"tools/call"')
+            ? { ...init, body: `${init.body}${padding}` }
+            : init;
+        return c.fetch(new Request(url, padded));
+      }) as typeof fetch,
+      requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+    });
     const client = new Client(
       { name: "modern-probe", version: "0.0.0" },
       { versionNegotiation: { mode: { pin: "2026-07-28" } } },
@@ -485,22 +467,19 @@ describe("server /mcp end-to-end", () => {
     // the SDK builds always sends the header — here a proxy strips it.
     const c = makeDeployment();
     let refused: { status: number; body: any } | undefined;
-    const transport = new StreamableHTTPClientTransport(
-      new URL(`${BASE}/mcp`),
-      {
-        fetch: (async (url: string | URL, init?: RequestInit) => {
-          const isCall = typeof init?.body === "string" && init.body.includes('"tools/call"');
-          if (!isCall) return c.fetch(new Request(url, init));
-          const headers = new Headers(init?.headers);
-          expect(headers.get("mcp-protocol-version")).toBe("2026-07-28");
-          headers.delete("mcp-protocol-version");
-          const response = await c.fetch(new Request(url, { ...init, headers }));
-          refused = { status: response.status, body: await response.clone().json() };
-          return response;
-        }) as typeof fetch,
-        requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
-      },
-    );
+    const transport = new StreamableHTTPClientTransport(new URL(`${BASE}/mcp`), {
+      fetch: (async (url: string | URL, init?: RequestInit) => {
+        const isCall = typeof init?.body === "string" && init.body.includes('"tools/call"');
+        if (!isCall) return c.fetch(new Request(url, init));
+        const headers = new Headers(init?.headers);
+        expect(headers.get("mcp-protocol-version")).toBe("2026-07-28");
+        headers.delete("mcp-protocol-version");
+        const response = await c.fetch(new Request(url, { ...init, headers }));
+        refused = { status: response.status, body: await response.clone().json() };
+        return response;
+      }) as typeof fetch,
+      requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+    });
     const client = new Client(
       { name: "modern-probe", version: "0.0.0" },
       { versionNegotiation: { mode: { pin: "2026-07-28" } } },
@@ -521,20 +500,22 @@ describe("server /mcp end-to-end", () => {
     // 100 messages, a constant with no option, and answers a longer one 400.
     const c = makeDeployment();
     const batch = (size: number) =>
-      c.fetch(new Request(`${BASE}/mcp`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json, text/event-stream",
-          Authorization: `Bearer ${TOKEN}`,
-        },
-        body: JSON.stringify(
-          Array.from({ length: size }, () => ({
-            jsonrpc: "2.0",
-            method: "notifications/initialized",
-          })),
-        ),
-      }));
+      c.fetch(
+        new Request(`${BASE}/mcp`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+            Authorization: `Bearer ${TOKEN}`,
+          },
+          body: JSON.stringify(
+            Array.from({ length: size }, () => ({
+              jsonrpc: "2.0",
+              method: "notifications/initialized",
+            })),
+          ),
+        }),
+      );
     expect((await batch(100)).status).toBe(202);
     const refused = await batch(101);
     expect(refused.status).toBe(400);
@@ -543,24 +524,12 @@ describe("server /mcp end-to-end", () => {
 
   it("lists and fetches the usage skill", async () => {
     const c = makeDeployment();
-    const listed = await mcpRpc(
-      c,
-      "tools/call",
-      { name: "skills", arguments: {} },
-      { token: TOKEN },
-    );
+    const listed = await mcpRpc(c, "tools/call", { name: "skills", arguments: {} }, { token: TOKEN });
     const listedBody = await readJsonRpc(listed);
     expect(listedBody.result.isError).toBeFalsy();
-    expect(listedBody.result.content[0].text).toContain(
-      "`usage` — How to route work between one execute_code program",
-    );
+    expect(listedBody.result.content[0].text).toContain("`usage` — How to route work between one execute_code program");
 
-    const fetched = await mcpRpc(
-      c,
-      "tools/call",
-      { name: "skills", arguments: { name: "usage" } },
-      { token: TOKEN },
-    );
+    const fetched = await mcpRpc(c, "tools/call", { name: "skills", arguments: { name: "usage" } }, { token: TOKEN });
     const fetchedBody = await readJsonRpc(fetched);
     const skill = fetchedBody.result.content[0].text as string;
     expect(skill).toContain("# Connecta usage");
@@ -576,17 +545,10 @@ describe("server /mcp end-to-end", () => {
     expect(skill).not.toContain("connecta.batch");
     expect(skill).toContain("crm.get_account");
 
-    const missing = await mcpRpc(
-      c,
-      "tools/call",
-      { name: "skills", arguments: { name: "missing" } },
-      { token: TOKEN },
-    );
+    const missing = await mcpRpc(c, "tools/call", { name: "skills", arguments: { name: "missing" } }, { token: TOKEN });
     const missingBody = await readJsonRpc(missing);
     expect(missingBody.result.isError).toBe(true);
-    expect(missingBody.result.content[0].text).toContain(
-      'Unknown skill "missing"',
-    );
+    expect(missingBody.result.content[0].text).toContain('Unknown skill "missing"');
   });
 
   it("keeps shared usage stable while guide-specific tool notes stay conditional", async () => {
@@ -597,20 +559,11 @@ describe("server /mcp end-to-end", () => {
         storage: memoryStorage(),
         publicUrl: BASE,
       });
-      const listed = await readJsonRpc(
-        await mcpRpc(c, "tools/list", {}, { token: TOKEN }),
-      );
+      const listed = await readJsonRpc(await mcpRpc(c, "tools/list", {}, { token: TOKEN }));
       const usage = await readJsonRpc(
-        await mcpRpc(
-          c,
-          "tools/call",
-          { name: "skills", arguments: { name: "usage" } },
-          { token: TOKEN },
-        ),
+        await mcpRpc(c, "tools/call", { name: "skills", arguments: { name: "usage" } }, { token: TOKEN }),
       );
-      const byName = Object.fromEntries(
-        listed.result.tools.map((tool: { name: string }) => [tool.name, tool]),
-      );
+      const byName = Object.fromEntries(listed.result.tools.map((tool: { name: string }) => [tool.name, tool]));
       return {
         description: byName.skills.description as string,
         search: byName.search_tools.description as string,
@@ -673,12 +626,10 @@ describe("server /mcp end-to-end", () => {
         storage: memoryStorage(),
         publicUrl: BASE,
       });
-      const listed = await readJsonRpc(
-        await mcpRpc(c, "tools/list", {}, { token: TOKEN }),
-      );
-      const execute = listed.result.tools.find(
-        (tool: { name: string }) => tool.name === "execute_code",
-      ) as { description: string };
+      const listed = await readJsonRpc(await mcpRpc(c, "tools/list", {}, { token: TOKEN }));
+      const execute = listed.result.tools.find((tool: { name: string }) => tool.name === "execute_code") as {
+        description: string;
+      };
       await c.close();
       return execute.description;
     }
@@ -687,37 +638,35 @@ describe("server /mcp end-to-end", () => {
     }
 
     expect(await inventory([])).toBe("Connectors: none.");
-    expect(await inventory(["calc", "my-service", "email_api"])).toBe(
-      "Connectors: calc, my-service, email_api.",
-    );
-    const ids = Array.from(
-      { length: 104 },
-      (_, index) =>
-        `connector-${String(index).padStart(3, "0")}-xxxxxxxx`,
-    );
+    expect(await inventory(["calc", "my-service", "email_api"])).toBe("Connectors: calc, my-service, email_api.");
+    const ids = Array.from({ length: 104 }, (_, index) => `connector-${String(index).padStart(3, "0")}-xxxxxxxx`);
     ids[2] = `${ids[2]}y`;
     const first = await inventory(ids);
     const second = await inventory(ids);
     expect(first).toBe(second);
     expect(first).toMatch(/; \+95 more\.$/);
-    expect(new TextEncoder().encode(first).length).toBeLessThanOrEqual(
-      CONNECTOR_INVENTORY_MAX_BYTES,
-    );
+    expect(new TextEncoder().encode(first).length).toBeLessThanOrEqual(CONNECTOR_INVENTORY_MAX_BYTES);
     expect((await executeDescription(ids)).length).toBeLessThan(1_800);
     expect(listTools).not.toHaveBeenCalled();
     expect(callTool).not.toHaveBeenCalled();
   });
 
   it("orients agents with account titles without loading either catalog", async () => {
-    const listTools = vi.fn(async () => { throw new Error("no catalog read"); });
-    const callTool = vi.fn(async () => { throw new Error("no provider call"); });
+    const listTools = vi.fn(async () => {
+      throw new Error("no catalog read");
+    });
+    const callTool = vi.fn(async () => {
+      throw new Error("no provider call");
+    });
     const c = createTestConnecta({
       connectors: [
         { id: "billing", title: "Android production", listTools, callTool },
         { id: "billing_test", title: "Android sandbox", listTools, callTool },
         { id: "international", title: "日本語".repeat(40), listTools, callTool },
       ],
-      auth: machineAuth(TOKEN), storage: memoryStorage(), publicUrl: BASE,
+      auth: machineAuth(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
     });
     const listed = await readJsonRpc(await mcpRpc(c, "tools/list", {}, { token: TOKEN }));
     const description = listed.result.tools.find((tool: { name: string }) => tool.name === "execute_code").description;
@@ -727,9 +676,17 @@ describe("server /mcp end-to-end", () => {
     expect(new TextEncoder().encode(inventory).length).toBeLessThanOrEqual(CONNECTOR_INVENTORY_MAX_BYTES);
     expect(inventory).not.toContain("\uFFFD");
     expect(description).toContain('skills({ name: "investigate" })');
-    const guide = await readJsonRpc(await mcpRpc(c, "tools/call", {
-      name: "skills", arguments: { name: "investigate" },
-    }, { token: TOKEN }));
+    const guide = await readJsonRpc(
+      await mcpRpc(
+        c,
+        "tools/call",
+        {
+          name: "skills",
+          arguments: { name: "investigate" },
+        },
+        { token: TOKEN },
+      ),
+    );
     expect(guide.result.isError).toBeFalsy();
     expect(guide.result.content[0].text).toContain("Purchase verification");
     expect(listTools).not.toHaveBeenCalled();
@@ -739,12 +696,7 @@ describe("server /mcp end-to-end", () => {
 
   it("tools/call search_tools returns its flat discovery envelope", async () => {
     const c = makeDeployment();
-    const res = await mcpRpc(
-      c,
-      "tools/call",
-      { name: "search_tools", arguments: { query: "add" } },
-      { token: TOKEN },
-    );
+    const res = await mcpRpc(c, "tools/call", { name: "search_tools", arguments: { query: "add" } }, { token: TOKEN });
     const body = await readJsonRpc(res);
     expect(body.result.isError).toBeFalsy();
     const payload = JSON.parse(body.result.content[0].text) as {
@@ -753,26 +705,24 @@ describe("server /mcp end-to-end", () => {
     };
     expect(payload).toEqual({
       catalogErrors: [],
-      tools: [{
-        name: "add",
-        address: "calc.add",
-        classification: "read",
-        description: "Add two numbers",
-        annotations: { readOnlyHint: true },
-      }],
+      tools: [
+        {
+          name: "add",
+          address: "calc.add",
+          classification: "read",
+          description: "Add two numbers",
+          annotations: { readOnlyHint: true },
+        },
+      ],
       total: 1,
       offset: 0,
       limit: 8,
       hasMore: false,
     });
     expect(body.result.structuredContent).toEqual(payload);
-    expect(body.result.content[0].text).toBe(
-      JSON.stringify(body.result.structuredContent),
-    );
+    expect(body.result.content[0].text).toBe(JSON.stringify(body.result.structuredContent));
     expect(payload.tools).toHaveLength(1);
-    expect(payload.tools.map((t) => t.address)).toEqual([
-      "calc.add",
-    ]);
+    expect(payload.tools.map((t) => t.address)).toEqual(["calc.add"]);
     expect(payload.total).toBe(1);
   });
 
@@ -820,7 +770,6 @@ describe("server /mcp end-to-end", () => {
           publicUrl: BASE,
           discovery: {
             catalogTtlSeconds: 1,
-
           },
           executor,
         });
@@ -833,10 +782,7 @@ describe("server /mcp end-to-end", () => {
           "tools/call",
           {
             name: surface,
-            arguments:
-              surface === "search_tools"
-                ? { query: "read" }
-                : { code: "async () => null" },
+            arguments: surface === "search_tools" ? { query: "read" } : { code: "async () => null" },
           },
           {
             token: TOKEN,
@@ -977,10 +923,7 @@ describe("server /mcp end-to-end", () => {
           ? { ok: true, userId: "local-user-1" }
           : {
               ok: false,
-              response: Response.json(
-                { error: "unauthorized" },
-                { status: 401 },
-              ),
+              response: Response.json({ error: "unauthorized" }, { status: 401 }),
             };
       },
     };
@@ -1040,12 +983,7 @@ describe("server /mcp end-to-end", () => {
       publicUrl: BASE,
     });
 
-    await mcpRpc(
-      c,
-      "tools/call",
-      { name: "call_tool", arguments: { address: "private.fail" } },
-      { token: TOKEN },
-    );
+    await mcpRpc(c, "tools/call", { name: "call_tool", arguments: { address: "private.fail" } }, { token: TOKEN });
 
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
@@ -1079,7 +1017,8 @@ describe("server /mcp end-to-end", () => {
     const c = createTestConnecta({
       connectors: [calcApi(), authConn],
       auth: fakeClerkAuth({ token: TOKEN }),
-      storage: memoryStorage(), vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
+      storage: memoryStorage(),
+      vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
       publicUrl: BASE,
     });
     const res = await mcpRpc(
@@ -1122,9 +1061,7 @@ describe("server /mcp end-to-end", () => {
       recovery: "operator_config",
       operatorUrl: `${BASE}/`,
     });
-    expect(recovery.instructions).toContain(
-      "signed-in human with access to this connector",
-    );
+    expect(recovery.instructions).toContain("signed-in human with access to this connector");
 
     const mutation = await c.fetch(
       new Request(`${BASE}/ui/credentials/static`, {
@@ -1148,7 +1085,10 @@ describe("server /mcp end-to-end", () => {
   it("recovers a machine agent after a Clerk operator update without redeploy", async () => {
     const c = createTestConnecta({
       connectors: [recoverableStaticConnector()],
-      auth: [machineAuth(TOKEN), fakeClerkAuth({ frontendApiUrl: "https://clerk.example.com", token: "operator-token", userId: "operator_1" })],
+      auth: [
+        machineAuth(TOKEN),
+        fakeClerkAuth({ frontendApiUrl: "https://clerk.example.com", token: "operator-token", userId: "operator_1" }),
+      ],
       storage: memoryStorage(),
       publicUrl: BASE,
       vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
@@ -1254,9 +1194,17 @@ describe("server /mcp end-to-end", () => {
 
   it("INV-3: get_result is removed from tools/call", async () => {
     const c = makeDeployment();
-    const body = await readJsonRpc(await mcpRpc(c, "tools/call", {
-      name: "get_result", arguments: { id: "any" },
-    }, { token: TOKEN }));
+    const body = await readJsonRpc(
+      await mcpRpc(
+        c,
+        "tools/call",
+        {
+          name: "get_result",
+          arguments: { id: "any" },
+        },
+        { token: TOKEN },
+      ),
+    );
     expect(body.error?.message ?? body.result?.content[0]?.text).toContain("get_result");
     expect(body.error !== undefined || body.result?.isError === true).toBe(true);
     await c.close();
@@ -1269,7 +1217,11 @@ describe("server /mcp end-to-end", () => {
     // pageable result.
     let pagedId = "";
     const c = createTestConnecta({
-      executor: { async execute(_code, providers) { return { result: await providers[0]!.fns.result!(pagedId, { maxBytes: 1_000 }) }; } },
+      executor: {
+        async execute(_code, providers) {
+          return { result: await providers[0]!.fns.result!(pagedId, { maxBytes: 1_000 }) };
+        },
+      },
       connectors: [
         api("blob", {
           description: "Blobs",
@@ -1312,14 +1264,21 @@ describe("server /mcp end-to-end", () => {
       "tools/call",
       {
         name: "execute_code",
-        arguments: { code: `async () => await connecta.result(${JSON.stringify(notice.resultId)}, { maxBytes: 1_000 })` },
+        arguments: {
+          code: `async () => await connecta.result(${JSON.stringify(notice.resultId)}, { maxBytes: 1_000 })`,
+        },
       },
       { token: TOKEN },
     );
     const page = (await readJsonRpc(paged)).result.structuredContent.result;
     expect(page).toMatchObject({
-      resultId: notice.resultId, offset: 0, bytes: 100, totalBytes: 502,
-      hasMore: true, nextOffset: 100, format: "text",
+      resultId: notice.resultId,
+      offset: 0,
+      bytes: 100,
+      totalBytes: 502,
+      hasMore: true,
+      nextOffset: 100,
+      format: "text",
     });
     expect(page.text).toBe(JSON.stringify("x".repeat(500)).slice(0, 100));
   });
@@ -1338,9 +1297,7 @@ describe("server /mcp end-to-end", () => {
               inputSchema: { type: "object" },
               handler: (_args, ctx) => {
                 seen.push({
-                  ...(ctx.timeoutMs !== undefined
-                    ? { timeoutMs: ctx.timeoutMs }
-                    : {}),
+                  ...(ctx.timeoutMs !== undefined ? { timeoutMs: ctx.timeoutMs } : {}),
                   hasSignal: Boolean(ctx.signal),
                 });
                 return { ok: true };
@@ -1354,12 +1311,7 @@ describe("server /mcp end-to-end", () => {
       calls: { defaultTimeoutMs: 1_234 },
     });
 
-    await mcpRpc(
-      c,
-      "tools/call",
-      { name: "call_tool", arguments: { address: "budget.read" } },
-      { token: TOKEN },
-    );
+    await mcpRpc(c, "tools/call", { name: "call_tool", arguments: { address: "budget.read" } }, { token: TOKEN });
 
     expect(seen).toEqual([{ timeoutMs: 1_234, hasSignal: true }]);
   });
@@ -1414,24 +1366,21 @@ describe("server /mcp end-to-end", () => {
   it("forwards discovery.concurrency to catalog fan-out", async () => {
     let active = 0;
     let maxActive = 0;
-    const connectors = Array.from(
-      { length: 6 },
-      (_, index): Connector => ({
-        id: `bounded_${index}`,
-        kind: "mcp",
-        description: `Bounded ${index}`,
-        async listTools() {
-          active++;
-          maxActive = Math.max(maxActive, active);
-          await new Promise((resolve) => setTimeout(resolve, 5));
-          active--;
-          return [{ name: `read_${index}`, description: "Read bounded data" }];
-        },
-        async callTool() {
-          return null;
-        },
-      }),
-    );
+    const connectors = Array.from({ length: 6 }, (_, index): Connector => ({
+      id: `bounded_${index}`,
+      kind: "mcp",
+      description: `Bounded ${index}`,
+      async listTools() {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active--;
+        return [{ name: `read_${index}`, description: "Read bounded data" }];
+      },
+      async callTool() {
+        return null;
+      },
+    }));
     const c = createTestConnecta({
       connectors,
       auth: machineAuth(TOKEN),
@@ -1458,9 +1407,7 @@ describe("server open routes", () => {
     const c = makeDeployment();
     const res = await c.fetch(new Request("http://connecta.test/ui?probe=1"));
     expect(res.status).toBe(308);
-    expect(res.headers.get("location")).toBe(
-      "https://connecta.test/?probe=1",
-    );
+    expect(res.headers.get("location")).toBe("https://connecta.test/?probe=1");
   });
 
   it("keeps authority-shaped upgrade paths on the configured origin", async () => {
@@ -1472,9 +1419,7 @@ describe("server open routes", () => {
       "/\r/evil.example/x",
       "/\n/evil.example/x",
     ]) {
-      const res = await c.fetch(
-        new Request(`http://connecta.test${unsafe}?next=%2Fcredentials`),
-      );
+      const res = await c.fetch(new Request(`http://connecta.test${unsafe}?next=%2Fcredentials`));
       const location = new URL(res.headers.get("location")!);
       expect(res.status).toBe(308);
       expect(location.origin).toBe(BASE);
@@ -1484,10 +1429,7 @@ describe("server open routes", () => {
 
   it("preserves ordinary operator and private-API paths while upgrading", async () => {
     const c = makeDeployment();
-    for (const path of [
-      "/credentials?from=http",
-      "/ui/data?include=connectors",
-    ]) {
+    for (const path of ["/credentials?from=http", "/ui/data?include=connectors"]) {
       const res = await c.fetch(new Request(`http://connecta.test${path}`));
       expect(res.status).toBe(308);
       expect(res.headers.get("location")).toBe(`${BASE}${path}`);
@@ -1497,10 +1439,7 @@ describe("server open routes", () => {
   it("rejects removed connector HTTP hooks at construction without invoking them", () => {
     const handleRequest = vi.fn(async () => new Response("private"));
     const ownHook = { ...calcApi(), handleRequest };
-    const inheritedHook = Object.assign(
-      Object.create({ handleRequest }) as Connector,
-      calcApi(),
-    );
+    const inheritedHook = Object.assign(Object.create({ handleRequest }) as Connector, calcApi());
     for (const connector of [ownHook, inheritedHook]) {
       expect(() => createTestConnecta({ connectors: [connector] })).toThrow(
         'Connector "calc" declares removed handleRequest',
@@ -1512,9 +1451,11 @@ describe("server open routes", () => {
   it("returns a secured 404 for custom paths with or without MCP authentication", async () => {
     const c = makeDeployment();
     for (const token of [undefined, TOKEN]) {
-      const response = await c.fetch(new Request(`${BASE}/download/report.txt`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      }));
+      const response = await c.fetch(
+        new Request(`${BASE}/download/report.txt`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        }),
+      );
       expect(response.status).toBe(404);
       expect(await response.text()).toBe("Not Found");
       expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
@@ -1545,9 +1486,7 @@ describe("server open routes", () => {
     const body = (await res.json()) as any;
     expect(body.status).toBe("ok");
     expect(body.connectors).toBe(1);
-    expect(res.headers.get("Strict-Transport-Security")).toBe(
-      "max-age=31536000",
-    );
+    expect(res.headers.get("Strict-Transport-Security")).toBe("max-age=31536000");
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(res.headers.get("Referrer-Policy")).toBe("no-referrer");
   });
@@ -1564,9 +1503,7 @@ describe("server open routes", () => {
 
     const legacy = await c.fetch(new Request(`${BASE}/ui`));
     expect(legacy.status).toBe(308);
-    expect(legacy.headers.get("Content-Security-Policy")).toContain(
-      "frame-ancestors 'none'",
-    );
+    expect(legacy.headers.get("Content-Security-Policy")).toContain("frame-ancestors 'none'");
     expect(legacy.headers.get("X-Frame-Options")).toBe("DENY");
 
     const health = await c.fetch(new Request(`${BASE}/health`));
@@ -1602,9 +1539,7 @@ describe("server open routes", () => {
       connectors: [calcApi()],
       executor: new CustomExecutor(),
     });
-    const namedBody = (await (
-      await named.fetch(new Request(`${BASE}/health`))
-    ).json()) as any;
+    const namedBody = (await (await named.fetch(new Request(`${BASE}/health`))).json()) as any;
     expect(namedBody.executor).toEqual({ name: "CustomExecutor" });
 
     const hostile = createTestConnecta({
@@ -1614,9 +1549,7 @@ describe("server open routes", () => {
         execute: async () => ({ result: null }),
       },
     });
-    const hostileBody = (await (
-      await hostile.fetch(new Request(`${BASE}/health`))
-    ).json()) as any;
+    const hostileBody = (await (await hostile.fetch(new Request(`${BASE}/health`))).json()) as any;
     expect(hostileBody.executor.name).toMatch(/^bad name y+$/);
     expect(hostileBody.executor.name.length).toBeLessThanOrEqual(40);
 
@@ -1626,17 +1559,13 @@ describe("server open routes", () => {
       connectors: [calcApi()],
       executor: { execute: async () => ({ result: null }) },
     });
-    const anonymousBody = (await (
-      await anonymous.fetch(new Request(`${BASE}/health`))
-    ).json()) as any;
+    const anonymousBody = (await (await anonymous.fetch(new Request(`${BASE}/health`))).json()) as any;
     expect(anonymousBody).not.toHaveProperty("executor");
   });
 
   it("OPTIONS returns a CORS preflight 204", async () => {
     const c = makeDeployment();
-    const res = await c.fetch(
-      new Request(`${BASE}/mcp`, { method: "OPTIONS", headers: { Origin: BASE } }),
-    );
+    const res = await c.fetch(new Request(`${BASE}/mcp`, { method: "OPTIONS", headers: { Origin: BASE } }));
     expect(res.status).toBe(204);
     expect(res.headers.get("Access-Control-Allow-Origin")).toBe(BASE);
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
@@ -1667,9 +1596,7 @@ describe("clerk metadata routes (no network)", () => {
 
   it("serves oauth-protected-resource metadata pointing at the derived fapi url", async () => {
     const c = makeClerkConnecta();
-    const res = await c.fetch(
-      new Request(`${BASE}/.well-known/oauth-protected-resource`),
-    );
+    const res = await c.fetch(new Request(`${BASE}/.well-known/oauth-protected-resource`));
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
     expect(body.resource).toBe(`${BASE}/mcp`);
@@ -1679,9 +1606,7 @@ describe("clerk metadata routes (no network)", () => {
 
   it("serves the /mcp-suffixed protected-resource variant too", async () => {
     const c = makeClerkConnecta();
-    const res = await c.fetch(
-      new Request(`${BASE}/.well-known/oauth-protected-resource/mcp`),
-    );
+    const res = await c.fetch(new Request(`${BASE}/.well-known/oauth-protected-resource/mcp`));
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
     expect(body.resource).toBe(`${BASE}/mcp`);
@@ -1689,9 +1614,7 @@ describe("clerk metadata routes (no network)", () => {
 
   it("serves pool-specific protected-resource metadata and challenges with it", async () => {
     const c = makeClerkConnecta();
-    const meta = await c.fetch(
-      new Request(`${BASE}/.well-known/oauth-protected-resource/mcp/support`),
-    );
+    const meta = await c.fetch(new Request(`${BASE}/.well-known/oauth-protected-resource/mcp/support`));
     expect(meta.status).toBe(200);
     expect(((await meta.json()) as any).resource).toBe(`${BASE}/mcp/support`);
     const challenge = await c.fetch(
@@ -1734,13 +1657,11 @@ describe("clerk metadata routes (no network)", () => {
 
 describe("execute_code registration (code mode)", () => {
   it("advertises the host-call limits the sandbox enforces", async () => {
-    async function executeDescription(
-      execute?: {
-        maxHostCalls?: number;
-        hostCallTimeoutMs?: number;
-        maxWrites?: number;
-      },
-    ): Promise<string> {
+    async function executeDescription(execute?: {
+      maxHostCalls?: number;
+      hostCallTimeoutMs?: number;
+      maxWrites?: number;
+    }): Promise<string> {
       const connecta = createTestConnecta({
         connectors: [calcApi()],
         auth: machineAuth(TOKEN),
@@ -1748,16 +1669,10 @@ describe("execute_code registration (code mode)", () => {
         publicUrl: BASE,
         ...(execute ? { execute } : {}),
       });
-      const listed = await readJsonRpc(
-        await mcpRpc(connecta, "tools/list", {}, { token: TOKEN }),
-      );
-      return listed.result.tools.find(
-        (tool: { name: string }) => tool.name === "execute_code",
-      ).description as string;
+      const listed = await readJsonRpc(await mcpRpc(connecta, "tools/list", {}, { token: TOKEN }));
+      return listed.result.tools.find((tool: { name: string }) => tool.name === "execute_code").description as string;
     }
-    expect(await executeDescription()).toContain(
-      "Limits: 20 host calls, 10 writes, 15s/host call.",
-    );
+    expect(await executeDescription()).toContain("Limits: 20 host calls, 10 writes, 15s/host call.");
     expect(
       await executeDescription({
         maxHostCalls: 7,
@@ -1773,9 +1688,7 @@ describe("execute_code registration (code mode)", () => {
       );
     }
     const description = await executeDescription();
-    expect(description).toContain(
-      "Read-only pool: programs read; writes use call_destructive_tool.",
-    );
+    expect(description).toContain("Read-only pool: programs read; writes use call_destructive_tool.");
     expect(description).not.toContain("resume_execution");
   });
 
@@ -1795,9 +1708,7 @@ describe("execute_code registration (code mode)", () => {
     });
     const res2 = await mcpRpc(withExec, "tools/list", {}, { token: TOKEN });
     const listed2 = (await readJsonRpc(res2)).result.tools;
-    const names2 = listed2.map(
-      (t: { name: string }) => t.name,
-    );
+    const names2 = listed2.map((t: { name: string }) => t.name);
     expect(names2.sort()).toEqual([
       "authorize_connector",
       "call_destructive_tool",
@@ -1807,21 +1718,13 @@ describe("execute_code registration (code mode)", () => {
       "skills",
     ]);
 
-    const executeTool = listed2.find(
-      (tool: { name: string }) => tool.name === "execute_code",
-    );
-    expect(executeTool.description).toContain(
-      "One known read: call_tool. One known write: call_destructive_tool.",
-    );
-    expect(executeTool.description).toContain(
-      "Everything else: execute_code.",
-    );
+    const executeTool = listed2.find((tool: { name: string }) => tool.name === "execute_code");
+    expect(executeTool.description).toContain("One known read: call_tool. One known write: call_destructive_tool.");
+    expect(executeTool.description).toContain("Everything else: execute_code.");
     // Advice, not a validity claim: nothing rejects a program that returns
     // catalog matches, and a description that says otherwise teaches the model
     // a rule the server does not enforce (#295).
-    expect(executeTool.description).toContain(
-      "JSON schemas default",
-    );
+    expect(executeTool.description).toContain("JSON schemas default");
     expect(executeTool.description).toContain("Never repeat writes for output");
     expect(executeTool.description).not.toContain("Never make a discovery-only");
     expect(executeTool.description).not.toContain("resume_execution");
@@ -2017,9 +1920,7 @@ describe("execute_code registration (code mode)", () => {
           });
         }, 50);
       });
-      const runaways = Array.from({ length: 4 }, () =>
-        executor.execute(`async () => { while (true) {} }`, []),
-      );
+      const runaways = Array.from({ length: 4 }, () => executor.execute(`async () => { while (true) {} }`, []));
       const latencies = await Promise.all(healthProbes);
       const callLatency = await ordinaryCall;
       const outcomes = await Promise.all(runaways);
@@ -2029,11 +1930,7 @@ describe("execute_code registration (code mode)", () => {
       expect(p95).toBeLessThan(bound);
       expect(p99).toBeLessThan(bound);
       expect(callLatency).toBeLessThan(bound);
-      expect(
-        outcomes.every((outcome) =>
-          outcome.error?.includes("guest CPU budget"),
-        ),
-      ).toBe(true);
+      expect(outcomes.every((outcome) => outcome.error?.includes("guest CPU budget"))).toBe(true);
       await c.close();
     },
     30_000,

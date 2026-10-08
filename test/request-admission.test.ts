@@ -32,9 +32,7 @@ async function settle(): Promise<void> {
   await vi.advanceTimersByTimeAsync(0);
 }
 
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-): Promise<void> {
+async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<void> {
   for (let i = 0; i < 100; i++) {
     if (await predicate()) return;
     await settle();
@@ -67,7 +65,14 @@ describe("request admission", () => {
             aborted++;
             resolve();
           } else {
-            ctx.signal?.addEventListener("abort", () => { aborted++; resolve(); }, { once: true });
+            ctx.signal?.addEventListener(
+              "abort",
+              () => {
+                aborted++;
+                resolve();
+              },
+              { once: true },
+            );
           }
           markStarted();
         });
@@ -81,10 +86,16 @@ describe("request admission", () => {
         requests: { concurrency: 1, maxQueueSize: 0, queueTimeoutMs: 1_000, maxDurationMs: 100 },
       },
     });
-    const first = connecta.fetch(mcpRpc("tools/call", {
-      name: "call_tool",
-      arguments: { address: "calc.add", args: { a: 1, b: 2 } },
-    }, { id: 1 }));
+    const first = connecta.fetch(
+      mcpRpc(
+        "tools/call",
+        {
+          name: "call_tool",
+          arguments: { address: "calc.add", args: { a: 1, b: 2 } },
+        },
+        { id: 1 },
+      ),
+    );
     // Catalog fingerprinting awaits native WebCrypto. An arbitrary number of
     // fake-clock turns cannot guarantee it finishes before the call begins.
     await callStarted;
@@ -103,14 +114,18 @@ describe("request admission", () => {
   it("ends stalled authorization before a response and returns its permit", async () => {
     const gate = blockingAuth();
     const connecta = createTestConnecta({
-      connectors: [], auth: gate.auth, logger: silentLogger,
+      connectors: [],
+      auth: gate.auth,
+      logger: silentLogger,
       admission: {
         requests: { concurrency: 1, maxQueueSize: 0, queueTimeoutMs: 1_000, maxDurationMs: 100 },
       },
     });
     let settled = false;
     const first = connecta.fetch(mcpRpc("tools/list", {}, { id: 1 }));
-    void first.finally(() => { settled = true; });
+    void first.finally(() => {
+      settled = true;
+    });
     await waitFor(() => gate.calls() === 1);
     await vi.advanceTimersByTimeAsync(99);
     expect(settled).toBe(false);
@@ -118,7 +133,10 @@ describe("request admission", () => {
     expect(settled).toBe(true);
     const response = await first;
     expect(response.status).toBe(504);
-    expect(await response.json()).toEqual({ jsonrpc: "2.0", error: { code: -33003, message: "MCP request lifetime exceeded." } });
+    expect(await response.json()).toEqual({
+      jsonrpc: "2.0",
+      error: { code: -33003, message: "MCP request lifetime exceeded." },
+    });
     const health = await connecta.fetch(new Request(`${BASE}/health`));
     expect(await health.json()).toMatchObject({ admission: { requests: { active: 0 } } });
     gate.release();
@@ -131,14 +149,17 @@ describe("request admission", () => {
       authorize() {
         return {
           ok: false,
-          response: new Response(new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.enqueue(new TextEncoder().encode("open"));
-            },
-            cancel() {
-              cancellations++;
-            },
-          }), { status: 401 }),
+          response: new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("open"));
+              },
+              cancel() {
+                cancellations++;
+              },
+            }),
+            { status: 401 },
+          ),
         };
       },
     };
@@ -407,24 +428,36 @@ describe("request admission", () => {
     });
 
     const first = connecta.fetch(
-      mcpRpc("tools/call", {
-        name: "execute_code",
-        arguments: { code: "() => 1" },
-      }, { id: 1 }),
+      mcpRpc(
+        "tools/call",
+        {
+          name: "execute_code",
+          arguments: { code: "() => 1" },
+        },
+        { id: 1 },
+      ),
     );
     await waitFor(() => started === 1);
     const second = connecta.fetch(
-      mcpRpc("tools/call", {
-        name: "execute_code",
-        arguments: { code: "() => 2" },
-      }, { id: 1 }),
+      mcpRpc(
+        "tools/call",
+        {
+          name: "execute_code",
+          arguments: { code: "() => 2" },
+        },
+        { id: 1 },
+      ),
     );
     await settle();
     const third = await connecta.fetch(
-      mcpRpc("tools/call", {
-        name: "execute_code",
-        arguments: { code: "() => 3" },
-      }, { id: 1 }),
+      mcpRpc(
+        "tools/call",
+        {
+          name: "execute_code",
+          arguments: { code: "() => 3" },
+        },
+        { id: 1 },
+      ),
     );
     const thirdBody = (await third.json()) as any;
     const error = JSON.parse(thirdBody.result.content[0].text);

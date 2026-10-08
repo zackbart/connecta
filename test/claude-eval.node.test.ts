@@ -45,17 +45,37 @@ readline.createInterface({input:process.stdin}).on('line', line => {
 });
 `;
 
-async function fixture(mode = "complete", options: { signal?: AbortSignal; timeoutMs?: number; followUp?: boolean } = {}) {
+async function fixture(
+  mode = "complete",
+  options: { signal?: AbortSignal; timeoutMs?: number; followUp?: boolean } = {},
+) {
   const dir = await mkdtemp(join(tmpdir(), "connecta-claude-test-"));
   try {
     const script = join(dir, "claude.cjs");
     await writeFile(script, CLI);
-    return await runClaude({ model: "claude-sonnet-5-5", mcpUrl: "http://127.0.0.1:1/mcp", token: "fake-secret",
-      allowedTools: ["authorize_connector", "call_destructive_tool", "call_tool", "execute_code", "search_tools", "skills"], deniedTools: [],
-      timeoutMs: options.timeoutMs ?? 10_000, ...(options.signal ? { signal: options.signal } : {}),
-      firstPrompt: "First", nextTurn: async n => options.followUp && n === 1 ? "Second" : undefined,
-      maxBudgetUsd: 0.1, testHost: { executable: process.execPath, args: [script, mode, "--expected-home", process.env.HOME!] } });
-  } finally { await rm(dir, { recursive: true, force: true }); }
+    return await runClaude({
+      model: "claude-sonnet-5-5",
+      mcpUrl: "http://127.0.0.1:1/mcp",
+      token: "fake-secret",
+      allowedTools: [
+        "authorize_connector",
+        "call_destructive_tool",
+        "call_tool",
+        "execute_code",
+        "search_tools",
+        "skills",
+      ],
+      deniedTools: [],
+      timeoutMs: options.timeoutMs ?? 10_000,
+      ...(options.signal ? { signal: options.signal } : {}),
+      firstPrompt: "First",
+      nextTurn: async (n) => (options.followUp && n === 1 ? "Second" : undefined),
+      maxBudgetUsd: 0.1,
+      testHost: { executable: process.execPath, args: [script, mode, "--expected-home", process.env.HOME!] },
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 describe("Claude eval CLI", () => {
@@ -66,8 +86,11 @@ describe("Claude eval CLI", () => {
     vi.stubEnv("CLAUDE_CODE_SIMPLE", "1");
     vi.stubEnv("CLAUDECODE", "1");
     let run;
-    try { run = await fixture("complete", { followUp: true }); }
-    finally { vi.unstubAllEnvs(); }
+    try {
+      run = await fixture("complete", { followUp: true });
+    } finally {
+      vi.unstubAllEnvs();
+    }
     const trace = parseTrace(run.events, run.turnStarts, ["First", "Second"]);
     expect(run.timedOut).toBe(false);
     expect(run.turnStarts).toHaveLength(2);
@@ -75,18 +98,21 @@ describe("Claude eval CLI", () => {
     expect(trace.toolUses).toHaveLength(2);
     expect(trace.toolUses[0]?.resultBlocks?.[1]).toMatchObject({ type: "image", mimeType: "image/png" });
     expect(trace.tokens.input).toBe(200);
-    expect(trace.costUsd).toBe(.02);
+    expect(trace.costUsd).toBe(0.02);
     expect(trace.claudeCodeVersion).toBe("fake-claude");
     expect(run.argv).toContain("<mcp-config>");
     expect(infraError(run.events, run.exitCode, trace.loadedTools)).toBeUndefined();
   });
 
-  it.each(["wrong-model", "extra-tool", "extra-plugin", "extra-skill"])("refuses %s before accepting a trial", async mode => {
-    const run = await fixture(mode);
-    expect(parseTrace(run.events, run.turnStarts, []).claudeCodeVersion).toBe("fake-claude");
-    expect(infraError(run.events, run.exitCode, run.loadedTools)).toBeDefined();
-    expect(run.events.some(event => event.type === "result" && event.subtype === "error")).toBe(true);
-  });
+  it.each(["wrong-model", "extra-tool", "extra-plugin", "extra-skill"])(
+    "refuses %s before accepting a trial",
+    async (mode) => {
+      const run = await fixture(mode);
+      expect(parseTrace(run.events, run.turnStarts, []).claudeCodeVersion).toBe("fake-claude");
+      expect(infraError(run.events, run.exitCode, run.loadedTools)).toBeDefined();
+      expect(run.events.some((event) => event.type === "result" && event.subtype === "error")).toBe(true);
+    },
+  );
 
   it.each([
     ["extra-plugin", '"plugins":["cc-plugin-future@builtin"]'],
@@ -94,7 +120,7 @@ describe("Claude eval CLI", () => {
     ["extra-skill", '"skills":["future-skill"]'],
   ])("names the offending inventory for %s without plugin settings", async (mode, inventory) => {
     const run = await fixture(mode);
-    const error = run.events.find(event => event.type === "result" && event.subtype === "error");
+    const error = run.events.find((event) => event.type === "result" && event.subtype === "error");
     expect(error?.result).toContain("Claude loaded plugins or skills outside the fake MCP config:");
     expect(error?.result).toContain(inventory);
     expect(error?.result).not.toContain("fake-secret");
@@ -110,7 +136,10 @@ describe("Claude eval CLI", () => {
   it("terminates an active trial when interrupted", async () => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 200);
-    try { expect((await fixture("hang", { signal: controller.signal })).aborted).toBe(true); }
-    finally { clearTimeout(timer); }
+    try {
+      expect((await fixture("hang", { signal: controller.signal })).aborted).toBe(true);
+    } finally {
+      clearTimeout(timer);
+    }
   });
 });

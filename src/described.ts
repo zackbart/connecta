@@ -3,13 +3,7 @@
 // nothing else, so a value that carries a secret — a URL's userinfo or query,
 // a header's value, a function's source — has no path into a description.
 
-import type {
-  ConnectorToolDescription,
-  DescribedEndpoint,
-  JsonSchema,
-  ToolAnnotations,
-  ToolDef,
-} from "./types.js";
+import type { ConnectorToolDescription, DescribedEndpoint, JsonSchema, ToolAnnotations, ToolDef } from "./types.js";
 
 /**
  * Origin and path of an absolute http(s) URL; undefined for anything else.

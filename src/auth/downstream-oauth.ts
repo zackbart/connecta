@@ -10,18 +10,27 @@ import type {
   OAuthTokens,
 } from "@modelcontextprotocol/client";
 import { revokeDownstreamGrant } from "./downstream-revocation.js";
-import { authenticateRemoteClient, downstreamClientMetadata, remoteClientAuthMethod, type RemoteOAuthClient } from "./downstream-client-metadata.js";
+import {
+  authenticateRemoteClient,
+  downstreamClientMetadata,
+  remoteClientAuthMethod,
+  type RemoteOAuthClient,
+} from "./downstream-client-metadata.js";
 import { SentSecrets } from "../sent-secrets.js";
 import { ConnectorCallError } from "../errors.js";
-import {
-  attachOAuthPartition,
-  oauthPartitionFor,
-  retainOAuthPartition,
-} from "../oauth-partition.js";
+import { attachOAuthPartition, oauthPartitionFor, retainOAuthPartition } from "../oauth-partition.js";
 import { inheritOAuthSealer } from "../oauth-sealing.js";
 import type { OAuthStateSealer } from "../oauth-sealing.js";
 import { detach, fromSignal, runEdge } from "../runtime/run.js";
-import { OAUTH_FLOW_TTL_SECONDS, OAUTH_REFRESH_LEASE_SECONDS, oauthFlowKeys, oauthGrantKeys, oauthRefreshKeys, oauthRefreshSpentKeys, oauthRefreshActiveKeys } from "../storage/keys.js";
+import {
+  OAUTH_FLOW_TTL_SECONDS,
+  OAUTH_REFRESH_LEASE_SECONDS,
+  oauthFlowKeys,
+  oauthGrantKeys,
+  oauthRefreshKeys,
+  oauthRefreshSpentKeys,
+  oauthRefreshActiveKeys,
+} from "../storage/keys.js";
 import type { ConnectorContext, KVStorage } from "../types.js";
 import {
   isRefreshTokenRequest,
@@ -32,12 +41,7 @@ import {
   type RefreshFailure,
   type RefreshResponseOutcome,
 } from "./oauth-token-response.js";
-import {
-  deleteV2Keys,
-  discoveryIssuer,
-  readV2Grant,
-  type MigratedGrantBody,
-} from "./oauth-v2-migration.js";
+import { deleteV2Keys, discoveryIssuer, readV2Grant, type MigratedGrantBody } from "./oauth-v2-migration.js";
 
 /** RFC 6749 section 3.3: one or more scope tokens, separated by single spaces. */
 const OAUTH_SCOPE = /^[\x21\x23-\x5B\x5D-\x7E]+(?: [\x21\x23-\x5B\x5D-\x7E]+)*$/;
@@ -56,11 +60,14 @@ export function assertOAuthScope(connectorId: string, scope: string | undefined)
  * and calls never do, which is what keeps them from starting authorization.
  */
 export function authorizingContext(ctx: ConnectorContext): ConnectorContext {
-  return attachOAuthPartition(inheritOAuthSealer(ctx, {
-    ...ctx,
-    requestScope: ctx.requestScope ?? ctx,
-    allowAuthorization: true,
-  }), oauthPartitionFor(ctx));
+  return attachOAuthPartition(
+    inheritOAuthSealer(ctx, {
+      ...ctx,
+      requestScope: ctx.requestScope ?? ctx,
+      allowAuthorization: true,
+    }),
+    oauthPartitionFor(ctx),
+  );
 }
 
 /**
@@ -124,11 +131,16 @@ interface StoredRefreshSpent {
 
 function storedRefreshSpent(raw: string | null): StoredRefreshSpent | undefined {
   const value = raw === null ? undefined : parsed(raw);
-  return plainObject(value) && value.connectaOAuthRefreshSpent === 1 &&
-    typeof value.epoch === "string" && typeof value.holder === "string" && typeof value.activeKey === "string" &&
-    (value.state === "outstanding" || value.state === "ambiguous" ||
+  return plainObject(value) &&
+    value.connectaOAuthRefreshSpent === 1 &&
+    typeof value.epoch === "string" &&
+    typeof value.holder === "string" &&
+    typeof value.activeKey === "string" &&
+    (value.state === "outstanding" ||
+      value.state === "ambiguous" ||
       (value.state === "resolved" && typeof value.resolvedAt === "number" && Number.isFinite(value.resolvedAt)))
-    ? value as unknown as StoredRefreshSpent : undefined;
+    ? (value as unknown as StoredRefreshSpent)
+    : undefined;
 }
 
 interface StoredRefreshLease {
@@ -161,10 +173,13 @@ function refreshWait(signal?: AbortSignal): RefreshWait {
   if (signal?.aborted) abort();
   return {
     signal: deadline.signal,
-    run: <T>(operation: () => Promise<T>) => runEdge(Effect.raceAllFirst<Effect.Effect<T, unknown>>([
-      fromSignal(deadline.signal),
-      Effect.tryPromise({ try: operation, catch: (error) => error }),
-    ])),
+    run: <T>(operation: () => Promise<T>) =>
+      runEdge(
+        Effect.raceAllFirst<Effect.Effect<T, unknown>>([
+          fromSignal(deadline.signal),
+          Effect.tryPromise({ try: operation, catch: (error) => error }),
+        ]),
+      ),
     close: () => {
       if (closed) return;
       closed = true;
@@ -179,9 +194,7 @@ interface RefreshFlight {
 }
 
 function aborted(signal: AbortSignal | undefined): unknown {
-  return (
-    signal?.reason ?? new DOMException("This operation was aborted", "AbortError")
-  );
+  return signal?.reason ?? new DOMException("This operation was aborted", "AbortError");
 }
 
 /**
@@ -202,11 +215,13 @@ function waitForRefreshFlight(
 ): Promise<RefreshFlightOutcome> {
   const settled = Deferred.await(flight.outcome);
   // The abort goes first, so a caller that has already left never joins.
-  return runEdge(Effect.raceAllFirst<Effect.Effect<RefreshFlightOutcome, unknown>>([
-    ...(signal ? [fromSignal(signal)] : []),
-    ...(deadline ? [fromSignal(deadline)] : []),
-    settled,
-  ]));
+  return runEdge(
+    Effect.raceAllFirst<Effect.Effect<RefreshFlightOutcome, unknown>>([
+      ...(signal ? [fromSignal(signal)] : []),
+      ...(deadline ? [fromSignal(deadline)] : []),
+      settled,
+    ]),
+  );
 }
 
 /** Tokens as a token response the SDK parses: only the client stamps an issuer. */
@@ -217,7 +232,9 @@ function tokenResponse(tokens: OAuthTokens): Response {
 
 function refreshTokensDigest(tokens: OAuthTokens): Promise<string> {
   const { issuer: _issuer, ...answer } = tokens as OAuthTokens & { issuer?: unknown };
-  return oauthStateDigest(JSON.stringify(Object.fromEntries(Object.entries(answer).sort(([a], [b]) => a.localeCompare(b)))));
+  return oauthStateDigest(
+    JSON.stringify(Object.fromEntries(Object.entries(answer).sort(([a], [b]) => a.localeCompare(b)))),
+  );
 }
 
 function requestedRefreshToken(init: RequestInit | undefined): string | null {
@@ -258,11 +275,14 @@ export class OAuthRefreshCoordinator {
     return async (input, init) => {
       // Freeze the form before any await: classification and the spent digest
       // must describe the exact token sent, even if its caller mutates a form.
-      init = init ? { ...init, ...(init.body instanceof URLSearchParams ? { body: new URLSearchParams(init.body) } : {}) } : undefined;
+      init = init
+        ? { ...init, ...(init.body instanceof URLSearchParams ? { body: new URLSearchParams(init.body) } : {}) }
+        : undefined;
       if (isRefreshTokenRequest(init)) {
-        const signal = requestSignal && init?.signal
-          ? AbortSignal.any([requestSignal, init.signal])
-          : requestSignal ?? init?.signal ?? undefined;
+        const signal =
+          requestSignal && init?.signal
+            ? AbortSignal.any([requestSignal, init.signal])
+            : (requestSignal ?? init?.signal ?? undefined);
         return this.refresh(provider, input, init, baseFetch, signal, defer);
       }
       const grantType = tokenGrantType(init);
@@ -290,7 +310,10 @@ export class OAuthRefreshCoordinator {
       const response = await (exchange ? provider.dispatchCodeExchange(dispatch, input) : dispatch());
       if (!tokenRequest) return response;
       // A code exchange's failure is the SDK's to log as well.
-      const forSdk = await sdkSafeTokenResponse(response, exchange ? (tokens) => provider.recordCodeExchangeTokens(tokens) : undefined);
+      const forSdk = await sdkSafeTokenResponse(
+        response,
+        exchange ? (tokens) => provider.recordCodeExchangeTokens(tokens) : undefined,
+      );
       if (exchange && forSdk !== response) provider.recordCodeExchangeRefusal(forSdk);
       return forSdk;
     };
@@ -342,15 +365,20 @@ export class OAuthRefreshCoordinator {
         // The refresh owns its completion after dispatch, including storage.
         // Attach it before yielding so a cancelled Worker keeps that work alive.
         try {
-          detach(Effect.promise(() => redemption), defer ? { waitUntil: defer } : undefined);
+          detach(
+            Effect.promise(() => redemption),
+            defer ? { waitUntil: defer } : undefined,
+          );
         } catch {
           // A missing or refusing runtime hook still leaves the promise running.
         }
         if (!signal) return await redemption;
-        return await runEdge(Effect.raceAllFirst<Effect.Effect<Response, unknown>>([
-          Effect.tryPromise({ try: () => redemption, catch: (error) => error }),
-          fromSignal(signal),
-        ]));
+        return await runEdge(
+          Effect.raceAllFirst<Effect.Effect<Response, unknown>>([
+            Effect.tryPromise({ try: () => redemption, catch: (error) => error }),
+            fromSignal(signal),
+          ]),
+        );
       }
       throw provider.refreshContended();
     } catch (error) {
@@ -410,31 +438,39 @@ export class OAuthRefreshCoordinator {
     let dispatched = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const read = provider.dispatchRefresh(lease, () => {
-        if (signal?.aborted) throw aborted(signal);
-        if (init?.signal?.aborted) throw aborted(init.signal);
-        dispatched = true;
-        // Preparation remains bounded through the send transition. After
-        // dispatch, caller cancellation must not prevent an answer's commit.
-        waiting.close();
-        // Start the deadline at dispatch, including the response body read.
-        timer = setTimeout(() => {
-          deadline.abort(new DOMException("OAuth refresh timed out", "TimeoutError"));
-        }, REFRESH_REQUEST_DEADLINE_MS);
-        return baseFetch(input, { ...init, redirect: "manual", signal: deadline.signal });
-      }, waiting).then((response) => {
-        if (deadline.signal.aborted) {
-          void response.body?.cancel().catch(() => {});
-          throw aborted(deadline.signal);
-        }
-        return refreshResponseOutcome(response, deadline.signal);
-      });
+      const read = provider
+        .dispatchRefresh(
+          lease,
+          () => {
+            if (signal?.aborted) throw aborted(signal);
+            if (init?.signal?.aborted) throw aborted(init.signal);
+            dispatched = true;
+            // Preparation remains bounded through the send transition. After
+            // dispatch, caller cancellation must not prevent an answer's commit.
+            waiting.close();
+            // Start the deadline at dispatch, including the response body read.
+            timer = setTimeout(() => {
+              deadline.abort(new DOMException("OAuth refresh timed out", "TimeoutError"));
+            }, REFRESH_REQUEST_DEADLINE_MS);
+            return baseFetch(input, { ...init, redirect: "manual", signal: deadline.signal });
+          },
+          waiting,
+        )
+        .then((response) => {
+          if (deadline.signal.aborted) {
+            void response.body?.cancel().catch(() => {});
+            throw aborted(deadline.signal);
+          }
+          return refreshResponseOutcome(response, deadline.signal);
+        });
       // The deadline can settle the race before a late fetch/body rejects.
       void read.catch(() => {});
-      outcome = await runEdge(Effect.raceAllFirst<Effect.Effect<RefreshResponseOutcome, unknown>>([
-        Effect.tryPromise({ try: () => read, catch: (error) => error }),
-        fromSignal(deadline.signal),
-      ]));
+      outcome = await runEdge(
+        Effect.raceAllFirst<Effect.Effect<RefreshResponseOutcome, unknown>>([
+          Effect.tryPromise({ try: () => read, catch: (error) => error }),
+          fromSignal(deadline.signal),
+        ]),
+      );
       if (deadline.signal.aborted) throw aborted(deadline.signal);
     } catch (error) {
       if (!dispatched) {
@@ -474,9 +510,7 @@ export class OAuthRefreshCoordinator {
     // same way when a rotation omits one.
     const accepted: OAuthTokens = {
       ...outcome.tokens,
-      ...(outcome.tokens.refresh_token === undefined && requested !== null
-        ? { refresh_token: requested }
-        : {}),
+      ...(outcome.tokens.refresh_token === undefined && requested !== null ? { refresh_token: requested } : {}),
     };
     let committed: OAuthTokens | undefined;
     try {
@@ -516,9 +550,7 @@ export class OAuthRefreshCoordinator {
  * stable registry partition; hand-written contexts coordinate by their shared
  * storage object instead.
  */
-export function refreshCoordinatorsByPartition(): (
-  ctx: ConnectorContext,
-) => OAuthRefreshCoordinator {
+export function refreshCoordinatorsByPartition(): (ctx: ConnectorContext) => OAuthRefreshCoordinator {
   const coordinators = new WeakMap<object, OAuthRefreshCoordinator>();
   return (ctx) => {
     const partition = oauthPartitionFor(ctx) ?? ctx.storage;
@@ -591,12 +623,16 @@ interface FlowBinding {
 }
 
 async function discoveryBinding(state: OAuthDiscoveryState | undefined): Promise<FlowBinding> {
-  return state ? {
-    issuer: discoveryIssuer(state),
-    tokenEndpoint: state.authorizationServerMetadata?.token_endpoint,
-    ...(state.authorizationServerMetadata?.authorization_response_iss_parameter_supported === true ? { issRequired: true as const } : {}),
-    discovery: await oauthStateDigest(JSON.stringify(state)),
-  } : {};
+  return state
+    ? {
+        issuer: discoveryIssuer(state),
+        tokenEndpoint: state.authorizationServerMetadata?.token_endpoint,
+        ...(state.authorizationServerMetadata?.authorization_response_iss_parameter_supported === true
+          ? { issRequired: true as const }
+          : {}),
+        discovery: await oauthStateDigest(JSON.stringify(state)),
+      }
+    : {};
 }
 
 /** One consent, by its state's digest. A claimed one keeps only its epoch. */
@@ -663,17 +699,21 @@ function grantBody(value: unknown): GrantBody {
             value: client.value as unknown as OAuthClientInformationMixed,
             ...(typeof client.binding === "string" ? { binding: client.binding } : {}),
             ...(client.carried === true ? { carried: true as const } : {}),
-            ...(client.registrationPath === "cimd" || client.registrationPath === "dcr" || client.registrationPath === "static" ? { registrationPath: client.registrationPath } : {}),
+            ...(client.registrationPath === "cimd" ||
+            client.registrationPath === "dcr" ||
+            client.registrationPath === "static"
+              ? { registrationPath: client.registrationPath }
+              : {}),
           },
         }
       : {}),
     ...(plainObject(tokens) && typeof tokens.access_token === "string"
       ? { tokens: tokens as unknown as OAuthTokens }
       : {}),
-    ...(discoveryIssuer(discovery) !== undefined
-      ? { discovery: discovery as unknown as OAuthDiscoveryState }
-      : {}),
-    ...(plainObject(refreshConsent) && typeof refreshConsent.digest === "string" && typeof refreshConsent.resolution === "string"
+    ...(discoveryIssuer(discovery) !== undefined ? { discovery: discovery as unknown as OAuthDiscoveryState } : {}),
+    ...(plainObject(refreshConsent) &&
+    typeof refreshConsent.digest === "string" &&
+    typeof refreshConsent.resolution === "string"
       ? { refreshConsent: { digest: refreshConsent.digest, resolution: refreshConsent.resolution } }
       : {}),
   };
@@ -714,9 +754,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   /** The consent this provider stored, for the start that asked for it. */
   private published: { epoch: string; url: string } | undefined;
   /** The consent a matching `verifyState` found, which the exchange claims. */
-  private callback:
-    | { key: string; raw: string; flow: Flow; claimed: boolean }
-    | undefined;
+  private callback: { key: string; raw: string; flow: Flow; claimed: boolean } | undefined;
   /** Set by `bindFlow`: this provider exchanges a code. */
   private codeExchange = false;
   /** The token endpoint's refusal of this exchange's code, for the SDK's retry. */
@@ -754,7 +792,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
     private readonly scope?: string,
     /** Isolate-local clock, used only for claims that have never been sent. */
     private readonly refreshNow: () => number = Date.now,
-    private readonly clientOptions?: { name?: string | undefined; client?: RemoteOAuthClient | undefined; secrets?: SentSecrets | undefined },
+    private readonly clientOptions?: {
+      name?: string | undefined;
+      client?: RemoteOAuthClient | undefined;
+      secrets?: SentSecrets | undefined;
+    },
   ) {
     if (clientMetadataUrl !== undefined) this.clientMetadataUrl = clientMetadataUrl;
     const client = clientOptions?.client;
@@ -767,8 +809,12 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
   get clientMetadata(): OAuthClientMetadata {
     const client = this.clientOptions?.client;
-    return downstreamClientMetadata(this.redirectUri, this.scope, this.clientOptions?.name,
-      client ? remoteClientAuthMethod(client) : "none");
+    return downstreamClientMetadata(
+      this.redirectUri,
+      this.scope,
+      this.clientOptions?.name,
+      client ? remoteClientAuthMethod(client) : "none",
+    );
   }
 
   // --- the grant record ---------------------------------------------------
@@ -853,7 +899,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
     // A request that has already left writes nothing, this included.
     if (!found || this.signal?.aborted) return null;
     const prefix = found.disconnected ? DISCONNECTED_EPOCH_PREFIX : ACTIVE_EPOCH_PREFIX;
-    const encoded = await this.encodeGrant({ epoch: `${prefix}${crypto.randomUUID()}`, body: found.body, cleanupPending: true });
+    const encoded = await this.encodeGrant({
+      epoch: `${prefix}${crypto.randomUUID()}`,
+      body: found.body,
+      cleanupPending: true,
+    });
     let written: boolean;
     try {
       written = await this.storage.compareAndSet(GRANT, null, encoded);
@@ -936,8 +986,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     refreshConsent?: GrantBody["refreshConsent"],
   ): Promise<void> {
     await this.updateGrant((grant) => {
-      const body: GrantBody =
-        issuer !== undefined && grant.body.issuer !== issuer ? { issuer } : { ...grant.body };
+      const body: GrantBody = issuer !== undefined && grant.body.issuer !== issuer ? { issuer } : { ...grant.body };
       if (field === "client") body.client = value as NonNullable<GrantBody["client"]>;
       else {
         body.tokens = value as OAuthTokens;
@@ -947,9 +996,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
       return this.withIssuer(grant, body);
     });
     // A flow may invalidate what it wrote itself.
-    this.seen[field] = fingerprint(field === "client"
-      ? (value as NonNullable<GrantBody["client"]>).value
-      : value);
+    this.seen[field] = fingerprint(field === "client" ? (value as NonNullable<GrantBody["client"]>).value : value);
   }
 
   private withIssuer(grant: Grant, body: GrantBody): Grant {
@@ -971,11 +1018,13 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
   private async bindingForGrant(grant: Grant): Promise<FlowBinding> {
     const configured = this.configuredAuthorizationBinding();
-    return configured ? { ...configured, issuer: grant.body.issuer } : {
-      ...await discoveryBinding(grant.body.discovery),
-      issuer: grant.body.issuer,
-      clientId: grant.body.client?.value.client_id,
-    };
+    return configured
+      ? { ...configured, issuer: grant.body.issuer }
+      : {
+          ...(await discoveryBinding(grant.body.discovery)),
+          issuer: grant.body.issuer,
+          clientId: grant.body.client?.value.client_id,
+        };
   }
 
   private async checkFlowBinding(grant: Grant): Promise<void> {
@@ -987,7 +1036,12 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
   /** Validate RFC 9207 against the server this consent selected. */
   validateCallbackIssuer(issuer: string | null): void {
-    if (!this.callback || (issuer === null ? this.callback.flow.binding?.issRequired === true : issuer !== this.callback.flow.binding?.issuer)) {
+    if (
+      !this.callback ||
+      (issuer === null
+        ? this.callback.flow.binding?.issRequired === true
+        : issuer !== this.callback.flow.binding?.issuer)
+    ) {
       throw new ConnectorCallError(
         "connector_call_failed",
         `Connector "${this.connectorId}" authorization callback issuer does not match its consent; nothing was exchanged.`,
@@ -1050,7 +1104,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   /** The live epoch's latest consent, until a callback claims it. */
-  private async latestConsent(): Promise<Flow & { url: string } | undefined> {
+  private async latestConsent(): Promise<(Flow & { url: string }) | undefined> {
     const grant = await this.boundGrant();
     if (grant.flow === undefined) return undefined;
     const key = oauthFlowKeys.flow(grant.flow);
@@ -1160,42 +1214,51 @@ export class KvOAuthProvider implements OAuthClientProvider {
   private authorizationRefused(): Error {
     const failure = this.refreshFailure;
     if (failure?.kind === "contended") return this.refreshContended();
-    return new UnauthorizedError(
-      "Authorization required. Use authorize_connector or Connect to start consent.",
-    );
+    return new UnauthorizedError("Authorization required. Use authorize_connector or Connect to start consent.");
   }
 
   // --- the SDK's hooks --------------------------------------------------------
 
-  async clientInformation(
-    ctx?: OAuthClientInformationContext,
-  ): Promise<OAuthClientInformationMixed | undefined> {
+  async clientInformation(ctx?: OAuthClientInformationContext): Promise<OAuthClientInformationMixed | undefined> {
     const { body } = await this.boundGrant();
     const client = this.clientOptions?.client;
     if (!body.client && !this.allowAuthorization) throw this.authorizationRefused();
     if (client) {
       if ((ctx && ctx.issuer !== client.issuer) || body.issuer !== client.issuer) throw this.flowSuperseded();
-      if (body.client && (body.client.value.client_id !== client.clientId || body.client.binding !== this.clientBinding)) throw this.flowSuperseded();
-      return { client_id: client.clientId, issuer: client.issuer,
+      if (
+        body.client &&
+        (body.client.value.client_id !== client.clientId || body.client.binding !== this.clientBinding)
+      )
+        throw this.flowSuperseded();
+      return {
+        client_id: client.clientId,
+        issuer: client.issuer,
         token_endpoint_auth_method: this.clientMetadata.token_endpoint_auth_method,
-        ...(client.clientSecret !== undefined ? { client_secret: client.clientSecret } : {}) };
+        ...(client.clientSecret !== undefined ? { client_secret: client.clientSecret } : {}),
+      };
     }
     if (!body.client || (ctx && body.issuer !== ctx.issuer)) return undefined;
     this.seen.client = fingerprint(body.client.value);
     return ctx ? { ...body.client.value, issuer: ctx.issuer } : body.client.value;
   }
 
-  async saveClientInformation(
-    info: OAuthClientInformationMixed,
-    ctx?: OAuthClientInformationContext,
-  ): Promise<void> {
+  async saveClientInformation(info: OAuthClientInformationMixed, ctx?: OAuthClientInformationContext): Promise<void> {
     const { body } = await this.boundGrant();
-    const registrationPath = this.clientOptions?.client ? "static"
-      : body.client?.value.client_id === info.client_id && body.client.registrationPath ? body.client.registrationPath
-      : this.clientMetadataUrl && body.discovery?.authorizationServerMetadata?.client_id_metadata_document_supported === true ? "cimd" : "dcr";
+    const registrationPath = this.clientOptions?.client
+      ? "static"
+      : body.client?.value.client_id === info.client_id && body.client.registrationPath
+        ? body.client.registrationPath
+        : this.clientMetadataUrl &&
+            body.discovery?.authorizationServerMetadata?.client_id_metadata_document_supported === true
+          ? "cimd"
+          : "dcr";
     await this.writeCredential(
       "client",
-      { value: this.clientOptions?.client ? { client_id: this.clientOptions.client.clientId } : info, registrationPath, ...(this.clientBinding !== undefined ? { binding: this.clientBinding } : {}) },
+      {
+        value: this.clientOptions?.client ? { client_id: this.clientOptions.client.clientId } : info,
+        registrationPath,
+        ...(this.clientBinding !== undefined ? { binding: this.clientBinding } : {}),
+      },
       ctx?.issuer,
     );
   }
@@ -1214,14 +1277,21 @@ export class KvOAuthProvider implements OAuthClientProvider {
     // is never changed, only this matching view.
     if (consentUrl && typeof value === "string") {
       const url = new URL(value);
-      const clientId = this.clientOptions?.client?.clientId ?? body.client?.value.client_id ?? this.configuredAuthorizationBinding()?.clientId;
+      const clientId =
+        this.clientOptions?.client?.clientId ??
+        body.client?.value.client_id ??
+        this.configuredAuthorizationBinding()?.clientId;
       const ids = url.searchParams.getAll("client_id");
       if (clientId && ids.length === 1 && ids[0] === clientId) url.searchParams.delete("client_id");
       value = url.href;
     }
     const secrets = new SentSecrets();
-    for (const value of [body.tokens?.access_token, body.tokens?.refresh_token,
-      body.client?.value.client_secret, this.clientOptions?.client?.clientSecret]) {
+    for (const value of [
+      body.tokens?.access_token,
+      body.tokens?.refresh_token,
+      body.client?.value.client_secret,
+      this.clientOptions?.client?.clientSecret,
+    ]) {
       if (typeof value === "string") secrets.secret(value);
     }
     if (body.client?.value.client_secret) secrets.add(body.client.value.client_id);
@@ -1229,14 +1299,24 @@ export class KvOAuthProvider implements OAuthClientProvider {
     const urls: string[] = [];
     const collect = (item: unknown): void => {
       if (typeof item === "string") {
-        try { urls.push(new URL(item).href); } catch { /* Not a URL field. */ }
+        try {
+          urls.push(new URL(item).href);
+        } catch {
+          /* Not a URL field. */
+        }
       } else if (item && typeof item === "object") for (const field of Object.values(item)) collect(field);
     };
     collect(value);
-    if ([secrets, this.clientOptions?.secrets].some((source) => source &&
-      (source.redact(value) !== value || urls.some((url) => source.containsUrl(url))))) {
-      throw new ConnectorCallError("connector_call_failed",
-        "OAuth metadata or consent URL contains a credential; refusing authorization.", { retryable: false });
+    if (
+      [secrets, this.clientOptions?.secrets].some(
+        (source) => source && (source.redact(value) !== value || urls.some((url) => source.containsUrl(url))),
+      )
+    ) {
+      throw new ConnectorCallError(
+        "connector_call_failed",
+        "OAuth metadata or consent URL contains a credential; refusing authorization.",
+        { retryable: false },
+      );
     }
   }
 
@@ -1244,8 +1324,12 @@ export class KvOAuthProvider implements OAuthClientProvider {
   async validatedIssuerOrigin(): Promise<string | undefined> {
     const { body } = await this.boundGrant();
     const state = body.discovery;
-    if (!state || state.authorizationServerMetadata?.issuer !== state.authorizationServerUrl ||
-      body.issuer !== state.authorizationServerUrl) return undefined;
+    if (
+      !state ||
+      state.authorizationServerMetadata?.issuer !== state.authorizationServerUrl ||
+      body.issuer !== state.authorizationServerUrl
+    )
+      return undefined;
     this.assertCredentialFree(state, body);
     return new URL(state.authorizationServerUrl).origin;
   }
@@ -1271,9 +1355,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
     if (!this.allowAuthorization && !(await this.boundGrant()).body.client) throw this.authorizationRefused();
     this.consentDiscovery = state;
     await this.updateGrant((grant) => {
-      const body: GrantBody = grant.body.issuer !== issuer
-        ? (issuer !== undefined ? { issuer } : {})
-        : { ...grant.body };
+      const body: GrantBody =
+        grant.body.issuer !== issuer ? (issuer !== undefined ? { issuer } : {}) : { ...grant.body };
       this.assertCredentialFree(state, grant.body);
       body.discovery = state;
       return this.withIssuer(grant, body);
@@ -1299,8 +1382,12 @@ export class KvOAuthProvider implements OAuthClientProvider {
     if (this.refreshFailure?.kind === "dead") throw this.authorizationRefused();
     // The coordinator stored this refresh already, or handed on another's.
     if (this.storedRefresh !== undefined && tokens.access_token === this.storedRefresh) return;
-    const refreshConsent = this.exchangeConsent && tokens.refresh_token !== undefined &&
-      this.exchangeConsent.digest === await oauthStateDigest(tokens.refresh_token) ? this.exchangeConsent : undefined;
+    const refreshConsent =
+      this.exchangeConsent &&
+      tokens.refresh_token !== undefined &&
+      this.exchangeConsent.digest === (await oauthStateDigest(tokens.refresh_token))
+        ? this.exchangeConsent
+        : undefined;
     await this.writeCredential("tokens", tokens, ctx?.issuer, refreshConsent);
     this.refreshFailure = undefined;
   }
@@ -1351,9 +1438,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
       // Static adapters do not save discovery or client configuration. Publish
       // their server identity before consent so a changed endpoint fences the
       // old grant before any code exchange can leave.
-      await this.updateGrant((grant) => grant.body.issuer === issuer
-        ? undefined
-        : this.withIssuer(grant, { issuer }));
+      await this.updateGrant((grant) =>
+        grant.body.issuer === issuer ? undefined : this.withIssuer(grant, { issuer }),
+      );
     }
     const epoch = await this.flowEpoch();
     this.epoch = epoch;
@@ -1364,7 +1451,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     const grant = await this.boundGrant();
     this.assertCredentialFree(url, grant.body, true);
     const binding = this.configuredAuthorizationBinding() ?? {
-      ...await discoveryBinding(this.consentDiscovery ?? grant.body.discovery),
+      ...(await discoveryBinding(this.consentDiscovery ?? grant.body.discovery)),
       issuer: discoveryIssuer(this.consentDiscovery) ?? grant.body.issuer,
       clientId: authorizationUrl.searchParams.get("client_id") ?? grant.body.client?.value.client_id,
     };
@@ -1546,9 +1633,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * refresh says nothing about a client or tokens another flow wrote since.
    * The verifier lives in its consent, which the claim already spent.
    */
-  async invalidateCredentials(
-    scope: "all" | "client" | "tokens" | "verifier" | "discovery",
-  ): Promise<void> {
+  async invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery"): Promise<void> {
     const fields = {
       all: ["client", "tokens", "discovery"],
       client: ["client"],
@@ -1557,18 +1642,21 @@ export class KvOAuthProvider implements OAuthClientProvider {
       verifier: [],
     }[scope] as Array<"client" | "tokens" | "discovery">;
     if (fields.length > 0) {
-      await this.updateGrant((grant) => {
-        const body: GrantBody = { ...grant.body };
-        let changed = false;
-        for (const field of fields) {
-          const current = field === "client" ? body.client?.value : body[field];
-          if (current === undefined) continue;
-          if (field !== "discovery" && fingerprint(current) !== this.seen[field]) continue;
-          delete body[field];
-          changed = true;
-        }
-        return changed ? { ...grant, body } : undefined;
-      }, { quiet: true });
+      await this.updateGrant(
+        (grant) => {
+          const body: GrantBody = { ...grant.body };
+          let changed = false;
+          for (const field of fields) {
+            const current = field === "client" ? body.client?.value : body[field];
+            if (current === undefined) continue;
+            if (field !== "discovery" && fingerprint(current) !== this.seen[field]) continue;
+            delete body[field];
+            changed = true;
+          }
+          return changed ? { ...grant, body } : undefined;
+        },
+        { quiet: true },
+      );
     }
     // The SDK invalidates after a refused refresh and then starts over, which
     // on `invalid_client` means registering a new client. A passive request
@@ -1590,7 +1678,12 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   /** @internal A shared-storage claim precedes every refresh dispatch. */
-  async claimRefresh(epoch: string, requested: string | null, signal?: AbortSignal, sharedWait?: RefreshWait): Promise<RefreshLease | Response> {
+  async claimRefresh(
+    epoch: string,
+    requested: string | null,
+    signal?: AbortSignal,
+    sharedWait?: RefreshWait,
+  ): Promise<RefreshLease | Response> {
     const waiting = sharedWait ?? refreshWait(signal);
     const wait = waiting.run;
     let delay = 10;
@@ -1607,8 +1700,12 @@ export class KvOAuthProvider implements OAuthClientProvider {
         }
         const raw = await wait(() => this.storage.get(key));
         const stored = raw === null ? undefined : parsed(raw);
-        if (plainObject(stored) && stored.completed === true && current &&
-          stored.tokenDigest === await wait(() => refreshTokensDigest(current))) {
+        if (
+          plainObject(stored) &&
+          stored.completed === true &&
+          current &&
+          stored.tokenDigest === (await wait(() => refreshTokensDigest(current)))
+        ) {
           return this.adoptRefresh(current);
         }
         if (plainObject(stored) && (plainObject(stored.verdict) || stored.completed === true)) {
@@ -1619,11 +1716,16 @@ export class KvOAuthProvider implements OAuthClientProvider {
         if (plainObject(stored) && stored.state !== "claimed") {
           // Never compare another isolate's clock for a sent request. The
           // durable record survives expiry of this storage-owned liveness key.
-          const active = typeof stored.activeKey === "string" ? await wait(() => this.storage.get(stored.activeKey as string)) : null;
+          const active =
+            typeof stored.activeKey === "string"
+              ? await wait(() => this.storage.get(stored.activeKey as string))
+              : null;
           if (active === null) {
             const refused = JSON.stringify({ ...stored, verdict: { kind: "dead" } });
             if (await wait(() => this.storage.compareAndSet(key, raw, refused))) {
-              await wait(() => this.resolveRefreshSpent({ key, spentKey, spentExpected: null, raw: raw! }, "ambiguous"));
+              await wait(() =>
+                this.resolveRefreshSpent({ key, spentKey, spentExpected: null, raw: raw! }, "ambiguous"),
+              );
               this.recordRefreshFailure({ kind: "dead" });
               await wait(() => this.discardRefusedGrant(requested, epoch));
               throw new UnauthorizedError("OAuth refresh outcome is unknown; authorization required.");
@@ -1635,19 +1737,28 @@ export class KvOAuthProvider implements OAuthClientProvider {
           if (spentExpected !== null) {
             const spent = storedRefreshSpent(spentExpected);
             const consent = (await wait(() => this.boundGrant())).body.refreshConsent;
-            if (spent?.state !== "resolved" || spent.epoch === epoch ||
-              consent?.digest !== digest || consent.resolution !== spentExpected) {
+            if (
+              spent?.state !== "resolved" ||
+              spent.epoch === epoch ||
+              consent?.digest !== digest ||
+              consent.resolution !== spentExpected
+            ) {
               // Reset can sweep the old lease while its request remains live.
               // Only storage-owned expiry can make an outstanding send ambiguous.
-              if (spent?.state === "outstanding" && await wait(() => this.storage.get(spent.activeKey)) === null) {
-                await wait(() => this.storage.compareAndSet(spentKey, spentExpected, JSON.stringify({ ...spent, state: "ambiguous" })));
+              if (spent?.state === "outstanding" && (await wait(() => this.storage.get(spent.activeKey))) === null) {
+                await wait(() =>
+                  this.storage.compareAndSet(spentKey, spentExpected, JSON.stringify({ ...spent, state: "ambiguous" })),
+                );
               }
               this.recordRefreshFailure({ kind: "dead" });
               await wait(() => this.discardRefusedGrant(requested, epoch));
               throw new UnauthorizedError("OAuth refresh token was already spent; authorization required.");
             }
           }
-          if (raw === null || (plainObject(stored) && typeof stored.expiresAt === "number" && stored.expiresAt <= this.refreshNow())) {
+          if (
+            raw === null ||
+            (plainObject(stored) && typeof stored.expiresAt === "number" && stored.expiresAt <= this.refreshNow())
+          ) {
             // Clock skew can replace an unsent claim; its dispatch CAS then loses.
             const claimed = JSON.stringify({
               connectaOAuthRefresh: 1,
@@ -1666,7 +1777,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
                 const latest = await wait(() => this.storedTokens());
                 if (latest?.refresh_token !== requested || (latest && this.refreshedSinceRead(latest, epoch))) {
                   await wait(() => this.releaseRefresh({ key, spentKey, spentExpected, raw: claimed }));
-                  return latest ? this.adoptRefresh(latest) : Response.json({ error: "invalid_grant" }, { status: 400 });
+                  return latest
+                    ? this.adoptRefresh(latest)
+                    : Response.json({ error: "invalid_grant" }, { status: 400 });
                 }
                 if (signal?.aborted) throw aborted(signal);
                 return { key, spentKey, spentExpected, raw: claimed };
@@ -1681,9 +1794,13 @@ export class KvOAuthProvider implements OAuthClientProvider {
             }
           }
         }
-        await runEdge(Effect.raceAllFirst([
-          Effect.sleep(delay), fromSignal(waiting.signal), ...(signal ? [fromSignal(signal)] : []),
-        ]));
+        await runEdge(
+          Effect.raceAllFirst([
+            Effect.sleep(delay),
+            fromSignal(waiting.signal),
+            ...(signal ? [fromSignal(signal)] : []),
+          ]),
+        );
         delay = Math.min(250, delay * 2);
       }
     } catch (error) {
@@ -1700,7 +1817,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
     const stored = parsed(lease.raw) as StoredRefreshLease;
     const epoch = await waiting.run(() => this.flowEpoch());
     const activeKey = oauthRefreshActiveKeys.holder(epoch, stored.holder);
-    await waiting.run(() => this.storage.set(activeKey, JSON.stringify({ connectaOAuthRefresh: 1 }), { ttlSeconds: OAUTH_REFRESH_LEASE_SECONDS }));
+    await waiting.run(() =>
+      this.storage.set(activeKey, JSON.stringify({ connectaOAuthRefresh: 1 }), {
+        ttlSeconds: OAUTH_REFRESH_LEASE_SECONDS,
+      }),
+    );
     const dispatched = JSON.stringify({ ...stored, state: "dispatched", activeKey } satisfies StoredRefreshLease);
     const transition = this.storage.compareAndSet(lease.key, lease.raw, dispatched).then((won) => {
       if (!won) throw this.refreshContended();
@@ -1712,36 +1833,53 @@ export class KvOAuthProvider implements OAuthClientProvider {
     // One CAS owns the fingerprint across every epoch. Only a later consent
     // that observed a resolved write may replace it. No TTL or deletion path.
     lease.spentRaw = JSON.stringify({
-      connectaOAuthRefreshSpent: 1, epoch, holder: stored.holder, activeKey, state: "outstanding",
+      connectaOAuthRefreshSpent: 1,
+      epoch,
+      holder: stored.holder,
+      activeKey,
+      state: "outstanding",
     } satisfies StoredRefreshSpent);
-    const preparation = this.storage.compareAndSet(lease.spentKey, lease.spentExpected, lease.spentRaw).catch(() => {
-      this.recordRefreshFailure({ kind: "dead" });
-      throw new UnauthorizedError("OAuth refresh dispatch could not be recorded; authorization required.");
-    }).then((unspent) => {
-      if (!unspent) {
+    const preparation = this.storage
+      .compareAndSet(lease.spentKey, lease.spentExpected, lease.spentRaw)
+      .catch(() => {
         this.recordRefreshFailure({ kind: "dead" });
-        throw new UnauthorizedError("OAuth refresh token was already spent; authorization required.");
-      }
-      // A storage operation can finish after its waiter left. Never send from
-      // abandoned preparation, even if both CAS operations succeeded.
-      if (waiting.signal.aborted) throw aborted(waiting.signal);
-      const sent = send();
-      sent.catch(() => {});
-      return { sent };
-    });
+        throw new UnauthorizedError("OAuth refresh dispatch could not be recorded; authorization required.");
+      })
+      .then((unspent) => {
+        if (!unspent) {
+          this.recordRefreshFailure({ kind: "dead" });
+          throw new UnauthorizedError("OAuth refresh token was already spent; authorization required.");
+        }
+        // A storage operation can finish after its waiter left. Never send from
+        // abandoned preparation, even if both CAS operations succeeded.
+        if (waiting.signal.aborted) throw aborted(waiting.signal);
+        const sent = send();
+        sent.catch(() => {});
+        return { sent };
+      });
     void preparation.catch(() => {});
     const { sent } = await waiting.run(() => preparation);
     return sent;
   }
 
   /** @internal Release by CAS after a commit or a classified failure. */
-  async releaseRefresh(lease: RefreshLease, verdict?: RefreshFailure, tokens?: OAuthTokens, resolution: "resolved" | "ambiguous" = "ambiguous"): Promise<void> {
+  async releaseRefresh(
+    lease: RefreshLease,
+    verdict?: RefreshFailure,
+    tokens?: OAuthTokens,
+    resolution: "resolved" | "ambiguous" = "ambiguous",
+  ): Promise<void> {
     const stored = parsed(lease.raw) as StoredRefreshLease;
     // Only an unsent claim may be removed. Dispatched outcomes never reopen it.
-    const next = stored.state === "claimed" ? null : JSON.stringify({
-      ...stored,
-      ...(tokens ? { completed: true as const, tokenDigest: await refreshTokensDigest(tokens) } : { verdict: { kind: "dead" } }),
-    } satisfies StoredRefreshLease);
+    const next =
+      stored.state === "claimed"
+        ? null
+        : JSON.stringify({
+            ...stored,
+            ...(tokens
+              ? { completed: true as const, tokenDigest: await refreshTokensDigest(tokens) }
+              : { verdict: { kind: "dead" } }),
+          } satisfies StoredRefreshLease);
     // Verdicts contain fixed typed facts; no downstream causes or text.
     if (verdict) this.recordRefreshFailure(verdict);
     await this.resolveRefreshSpent(lease, resolution);
@@ -1751,15 +1889,21 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
   private async resolveRefreshSpent(lease: RefreshLease, state: "resolved" | "ambiguous"): Promise<void> {
     try {
-      const raw = lease.spentRaw ?? await this.storage.get(lease.spentKey);
+      const raw = lease.spentRaw ?? (await this.storage.get(lease.spentKey));
       const spent = storedRefreshSpent(raw);
       const holder = (parsed(lease.raw) as StoredRefreshLease).holder;
       if (spent?.state !== "outstanding" || spent.holder !== holder) return;
       // The timestamp belongs to this resolution write, never to dispatch.
       // Consent copies the exact stored receipt, so wall clocks grant no sends.
-      await this.storage.compareAndSet(lease.spentKey, raw, JSON.stringify({
-        ...spent, state, ...(state === "resolved" ? { resolvedAt: Date.now() } : {}),
-      }));
+      await this.storage.compareAndSet(
+        lease.spentKey,
+        raw,
+        JSON.stringify({
+          ...spent,
+          state,
+          ...(state === "resolved" ? { resolvedAt: Date.now() } : {}),
+        }),
+      );
     } catch {
       // A lost resolution answer leaves outstanding or the durable outcome;
       // either blocks replay until a later consent observes a resolved write.
@@ -1830,11 +1974,14 @@ export class KvOAuthProvider implements OAuthClientProvider {
    */
   async discardRefusedGrant(refreshToken: string | null, epoch: string): Promise<void> {
     try {
-      await this.updateGrant((grant) => {
-        if (grant.body.tokens?.refresh_token !== refreshToken) return undefined;
-        const { tokens: _refused, ...body } = grant.body;
-        return { ...grant, body };
-      }, { epoch, quiet: true, commit: true });
+      await this.updateGrant(
+        (grant) => {
+          if (grant.body.tokens?.refresh_token !== refreshToken) return undefined;
+          const { tokens: _refused, ...body } = grant.body;
+          return { ...grant, body };
+        },
+        { epoch, quiet: true, commit: true },
+      );
     } catch {
       // See above: a refusal that could not be recorded recurs, it does not hide.
     }
@@ -1863,7 +2010,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
     return reset;
   }
 
-  private async performReset(operatorDisconnected: boolean, preserveClient: boolean, revoke?: FetchLike): Promise<void> {
+  private async performReset(
+    operatorDisconnected: boolean,
+    preserveClient: boolean,
+    revoke?: FetchLike,
+  ): Promise<void> {
     const epoch = `${operatorDisconnected ? DISCONNECTED_EPOCH_PREFIX : ACTIVE_EPOCH_PREFIX}${crypto.randomUUID()}`;
     for (let attempt = 0; attempt < MAX_GRANT_WRITES; attempt++) {
       const { raw, grant } = await this.readGrant();
@@ -1962,7 +2113,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
       !client ||
       client.binding !== this.clientBinding ||
       typeof clientId !== "string" ||
-      client.registrationPath === "cimd" || client.registrationPath === "static" ||
+      client.registrationPath === "cimd" ||
+      client.registrationPath === "static" ||
       // Legacy records have no mechanism field: retain their conservative
       // URL-client refusal, but never reinterpret a recorded DCR identity.
       (client.registrationPath === undefined && clientId === this.clientMetadataUrl) ||
@@ -1972,6 +2124,14 @@ export class KvOAuthProvider implements OAuthClientProvider {
     ) {
       return undefined;
     }
-    return { issuer, client: { value: client.value, binding: client.binding, carried: true, ...(client.registrationPath ? { registrationPath: client.registrationPath } : {}) } };
+    return {
+      issuer,
+      client: {
+        value: client.value,
+        binding: client.binding,
+        carried: true,
+        ...(client.registrationPath ? { registrationPath: client.registrationPath } : {}),
+      },
+    };
   }
 }

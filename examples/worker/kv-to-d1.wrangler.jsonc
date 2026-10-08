@@ -12,15 +12,15 @@
     {
       "binding": "CONNECTA_KV",
       "id": "replace-with-kv-namespace-id",
-      "remote": true
-    }
+      "remote": true,
+    },
   ],
   "d1_databases": [
     {
       "binding": "CONNECTA_DB",
       "database_name": "connecta",
       "database_id": "replace-with-d1-database-id",
-      "remote": true
-    }
-  ]
+      "remote": true,
+    },
+  ],
 }

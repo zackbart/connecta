@@ -26,14 +26,8 @@ const CONNECTOR_ID_RE = /^[a-z0-9_-]+$/;
  * it has the shape configuration enforces; anything else is dropped rather
  * than escaped, since a value that is not a connector id is not config.
  */
-export function renderFixPrompt(
-  spec: FixPromptSpec,
-  connectorId?: string,
-): string {
-  const id =
-    connectorId !== undefined && CONNECTOR_ID_RE.test(connectorId)
-      ? connectorId
-      : undefined;
+export function renderFixPrompt(spec: FixPromptSpec, connectorId?: string): string {
+  const id = connectorId !== undefined && CONNECTOR_ID_RE.test(connectorId) ? connectorId : undefined;
   return [
     "Diagnose and fix a problem in this connecta deployment (the @zackbart/connecta package). " +
       "It is configured as code: connectors, credential slots, OAuth clients, pools, and inbound auth " +

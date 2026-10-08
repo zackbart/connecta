@@ -4,12 +4,7 @@ import { operatorUi } from "../src/ui.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { activityHistory } from "../src/activity.js";
 import { describe, expect, it, vi } from "vitest";
-import {
-  customExecutor,
-  createConnecta,
-  defineConfig,
-  type ConnectaConfig,
-} from "../src/index.js";
+import { customExecutor, createConnecta, defineConfig, type ConnectaConfig } from "../src/index.js";
 import type { ActivityStore } from "../src/activity.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
@@ -18,12 +13,9 @@ import { silentLogger } from "./helpers.js";
 
 const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
 
-type UnsafeCreateConnecta = (
-  config: Record<PropertyKey, unknown>,
-) => unknown;
+type UnsafeCreateConnecta = (config: Record<PropertyKey, unknown>) => unknown;
 
-const unsafeCreateConnecta =
-  createConnecta as unknown as UnsafeCreateConnecta;
+const unsafeCreateConnecta = createConnecta as unknown as UnsafeCreateConnecta;
 
 describe("ConnectaConfig boundary", () => {
   it("wraps a frozen custom executor without losing private-field receivers or admission", async () => {
@@ -31,19 +23,30 @@ describe("ConnectaConfig boundary", () => {
     class SelfManaged {
       #value = "private";
       readonly name = "self-managed-test";
-      async execute() { return { result: this.#value }; }
+      async execute() {
+        return { result: this.#value };
+      }
       async acquire(options?: { signal?: AbortSignal }) {
         events.push(`acquire ${this.#value} ${options?.signal?.aborted}`);
         return { execute: this.execute.bind(this), release: () => events.push("release") };
       }
       admissionSnapshot() {
         events.push(`snapshot ${this.#value}`);
-        return { concurrency: 1, maxQueueSize: 0, queueTimeoutMs: 1, retryAfterMs: 1,
-          active: 0, queued: 0, closed: false,
+        return {
+          concurrency: 1,
+          maxQueueSize: 0,
+          queueTimeoutMs: 1,
+          retryAfterMs: 1,
+          active: 0,
+          queued: 0,
+          closed: false,
           totals: { admitted: 0, queued: 0, rejected: 0, cancelled: 0, closed: 0 },
-          queueWaitMs: { count: 0, total: 0, max: 0 } };
+          queueWaitMs: { count: 0, total: 0, max: 0 },
+        };
       }
-      close() { events.push(`close ${this.#value}`); }
+      close() {
+        events.push(`close ${this.#value}`);
+      }
     }
     const original = Object.freeze(new SelfManaged());
     const wrapped = customExecutor(original, { lifecycle: "self-managed" });
@@ -62,18 +65,25 @@ describe("ConnectaConfig boundary", () => {
   it("INV-11: requires explicit opt-in for custom executors regardless of constructor or display name", async () => {
     class CustomExecutor {
       readonly name = "DynamicWorkerExecutor";
-      async execute() { return { result: null }; }
+      async execute() {
+        return { result: null };
+      }
     }
     class DynamicWorkerExecutor {
-      async execute() { return { result: null }; }
+      async execute() {
+        return { result: null };
+      }
     }
     for (const executor of [
       new CustomExecutor(),
       new DynamicWorkerExecutor(),
       { name: "DynamicWorkerExecutor", execute: async () => ({ result: null }) },
-      { execute: async () => ({ result: null }), async acquire() {
-        return { waitMs: 0, execute: async () => ({ result: null }), release() {} };
-      } },
+      {
+        execute: async () => ({ result: null }),
+        async acquire() {
+          return { waitMs: 0, execute: async () => ({ result: null }), release() {} };
+        },
+      },
     ]) {
       const construct = () => createConnecta({ connectors: [], executor, logger: "silent" });
       for (const fragment of [
@@ -82,8 +92,13 @@ describe("ConnectaConfig boundary", () => {
         "executor: workerExecutor({ loader: env.LOADER })",
         "@zackbart/connecta/quickjs",
         'customExecutor(myExecutor, { lifecycle: "self-managed" })',
-      ]) expect(construct).toThrow(fragment);
-      const app = createConnecta({ connectors: [], executor: customExecutor(executor, { lifecycle: "self-managed" }), logger: "silent" });
+      ])
+        expect(construct).toThrow(fragment);
+      const app = createConnecta({
+        connectors: [],
+        executor: customExecutor(executor, { lifecycle: "self-managed" }),
+        logger: "silent",
+      });
       await app.close();
     }
   });
@@ -91,18 +106,21 @@ describe("ConnectaConfig boundary", () => {
   it("INV-11: refuses storage without list or compareAndSet, as a Workers KV adapter is", () => {
     // The 0.28 Worker example's Workers KV adapter: no atomic claim.
     const kv = { get: async () => null, set: async () => {}, delete: async () => {}, list: async () => [] };
-    expect(() => unsafeCreateConnecta({ connectors: [], executor, storage: kv }))
-      .toThrow(/storage must implement compareAndSet[\s\S]*d1Storage[\s\S]*sqliteStorage[\s\S]*Workers KV is not supported/);
+    expect(() => unsafeCreateConnecta({ connectors: [], executor, storage: kv })).toThrow(
+      /storage must implement compareAndSet[\s\S]*d1Storage[\s\S]*sqliteStorage[\s\S]*Workers KV is not supported/,
+    );
     const { list: _list, ...unlisted } = memoryStorage();
-    expect(() => unsafeCreateConnecta({ connectors: [], executor, storage: unlisted }))
-      .toThrow("storage must implement list");
+    expect(() => unsafeCreateConnecta({ connectors: [], executor, storage: unlisted })).toThrow(
+      "storage must implement list",
+    );
   });
 
   it("validates result stash limits and accepts zero to disable stashing", async () => {
     for (const field of ["maxStashBytes", "maxStashEntries"]) {
       for (const value of [-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "64", null]) {
-        expect(() => unsafeCreateConnecta({ connectors: [], executor, results: { [field]: value } }))
-          .toThrow(`results.${field}`);
+        expect(() => unsafeCreateConnecta({ connectors: [], executor, results: { [field]: value } })).toThrow(
+          `results.${field}`,
+        );
       }
     }
     for (const results of [null, [], 5]) {
@@ -115,14 +133,25 @@ describe("ConnectaConfig boundary", () => {
 
   it("warns for every open deployment with connectors, including static API auth", async () => {
     const fetchProvider = vi.fn();
-    const connector = api("static_auth", { tools: [{
-      name: "read", description: "Read provider data", annotations: { readOnlyHint: true },
-      handler: () => fetchProvider("https://provider.example", { headers: { Authorization: "Bearer private" } }),
-    }] });
+    const connector = api("static_auth", {
+      tools: [
+        {
+          name: "read",
+          description: "Read provider data",
+          annotations: { readOnlyHint: true },
+          handler: () => fetchProvider("https://provider.example", { headers: { Authorization: "Bearer private" } }),
+        },
+      ],
+    });
     for (const connectors of [[], [connector], [{ ...connector, credential: { label: "Token" } }]]) {
       for (const auth of [undefined, machineAuth("secret")]) {
         const warn = vi.fn();
-        const connecta = createConnecta({ connectors, executor, ...(auth ? { auth } : {}), logger: { ...silentLogger, warn } });
+        const connecta = createConnecta({
+          connectors,
+          executor,
+          ...(auth ? { auth } : {}),
+          logger: { ...silentLogger, warn },
+        });
         const warnings = warn.mock.calls.filter(([message]) => String(message).includes("no inbound authentication"));
         expect(warnings).toHaveLength(connectors.length && !auth ? 1 : 0);
         if (connectors[0]?.credential && !auth) expect(warnings[0]?.[0]).toContain("credentials");
@@ -133,7 +162,17 @@ describe("ConnectaConfig boundary", () => {
   });
 
   it("validates allowedOrigins as exact HTTP origins or an explicit wildcard", async () => {
-    for (const allowedOrigins of [null, true, "https://client.example", ["*"], ["null"], ["https://client.example/"], ["https://user:secret@client.example"], ["file://host"], [42]]) {
+    for (const allowedOrigins of [
+      null,
+      true,
+      "https://client.example",
+      ["*"],
+      ["null"],
+      ["https://client.example/"],
+      ["https://user:secret@client.example"],
+      ["file://host"],
+      [42],
+    ]) {
       expect(() => unsafeCreateConnecta({ connectors: [], executor, allowedOrigins })).toThrow(/allowedOrigins/);
     }
     for (const allowedOrigins of [[], ["https://client.example", "http://localhost:1234"], "*" as const]) {
@@ -190,20 +229,22 @@ describe("ConnectaConfig boundary", () => {
           retryAfterMs: 10,
         },
       },
-      ui: operatorUi({ branding: {
-        productName: "Connecta test",
-        productUrl: "https://connecta.test",
-        ownerName: "Test owner",
-        ownerUrl: "https://owner.connecta.test",
-        description: "Config boundary test",
-        pageTitle: "Connecta test page",
-        favicon: {
-          svg: "<svg xmlns=\"http://www.w3.org/2000/svg\" />",
-          ico: new Uint8Array([0]),
-          href: "/favicon.svg",
+      ui: operatorUi({
+        branding: {
+          productName: "Connecta test",
+          productUrl: "https://connecta.test",
+          ownerName: "Test owner",
+          ownerUrl: "https://owner.connecta.test",
+          description: "Config boundary test",
+          pageTitle: "Connecta test page",
+          favicon: {
+            svg: '<svg xmlns="http://www.w3.org/2000/svg" />',
+            ico: new Uint8Array([0]),
+            href: "/favicon.svg",
+          },
+          themeColor: "#ffffff",
         },
-        themeColor: "#ffffff",
-      } }),
+      }),
       logger: silentLogger,
       serverInfo: {
         name: "connecta-test",
@@ -265,11 +306,18 @@ describe("ConnectaConfig boundary", () => {
   });
 
   it("forwards catalog TTL bounds and rejects retired stale/persistence options", async () => {
-    const app = createConnecta({ connectors: [], executor, discovery: { catalogTtlSeconds: 10, catalogMinTtlSeconds: 1, catalogMaxTtlSeconds: 30 }, logger: "silent" });
+    const app = createConnecta({
+      connectors: [],
+      executor,
+      discovery: { catalogTtlSeconds: 10, catalogMinTtlSeconds: 1, catalogMaxTtlSeconds: 30 },
+      logger: "silent",
+    });
     expect(app.describeConfig()).toBeDefined();
     await app.close();
     for (const key of ["persistCatalog", "staleCatalogSeconds"]) {
-      expect(() => unsafeCreateConnecta({ connectors: [], executor, discovery: { [key]: true } })).toThrow("Unknown Connecta configuration option");
+      expect(() => unsafeCreateConnecta({ connectors: [], executor, discovery: { [key]: true } })).toThrow(
+        "Unknown Connecta configuration option",
+      );
     }
   });
 
@@ -285,9 +333,7 @@ describe("ConnectaConfig boundary", () => {
       },
     });
 
-    expect(() => unsafeCreateConnecta(config)).toThrow(
-      "ConnectaConfig.typo",
-    );
+    expect(() => unsafeCreateConnecta(config)).toThrow("ConnectaConfig.typo");
     expect(() => unsafeCreateConnecta(config)).not.toThrow(secret);
     expect(connectorsRead).toBe(false);
   });
@@ -302,25 +348,13 @@ describe("ConnectaConfig boundary", () => {
     ["results", { typo: true }, "results.typo"],
     ["execute", { typo: true }, "execute.typo"],
     ["admission", { typo: true }, "admission.typo"],
-    [
-      "admission",
-      { requests: { typo: true } },
-      "admission.requests.typo",
-    ],
+    ["admission", { requests: { typo: true } }, "admission.requests.typo"],
     ["admission", { code: { typo: true } }, "admission.code.typo"],
     ["admission", { code: { maxDurationMs: 2_000 } }, "admission.code.maxDurationMs"],
     ["branding", { typo: true }, "branding"],
-    [
-      "branding",
-      { favicon: { typo: true } },
-      "branding",
-    ],
+    ["branding", { favicon: { typo: true } }, "branding"],
     ["serverInfo", { typo: true }, "serverInfo.typo"],
-    [
-      "serverInfo",
-      { icons: [{ src: "/icon.svg", typo: true }] },
-      "serverInfo.icons[0].typo",
-    ],
+    ["serverInfo", { icons: [{ src: "/icon.svg", typo: true }] }, "serverInfo.icons[0].typo"],
   ] as const)("rejects an unknown %s option", (group, value, path) => {
     expect(() =>
       unsafeCreateConnecta({
@@ -337,9 +371,7 @@ describe("ConnectaConfig boundary", () => {
     ["surface", "classic"],
     ["maxResultBytes", 1],
   ] as const)("rejects the removed top-level %s option", (path, value) => {
-    expect(() =>
-      unsafeCreateConnecta({ connectors: [], executor, [path]: value }),
-    ).toThrow(`ConnectaConfig.${path}`);
+    expect(() => unsafeCreateConnecta({ connectors: [], executor, [path]: value })).toThrow(`ConnectaConfig.${path}`);
   });
 
   it.each([
@@ -365,20 +397,24 @@ describe("ConnectaConfig boundary", () => {
   });
 
   it("INV-11: refuses an array or a class instance where plain configuration belongs", () => {
-    const derived = Object.assign(Object.create({ maxResultBytes: 1 }), { connectors: [], executor }) as Record<PropertyKey, unknown>;
+    const derived = Object.assign(Object.create({ maxResultBytes: 1 }), { connectors: [], executor }) as Record<
+      PropertyKey,
+      unknown
+    >;
     expect(() => unsafeCreateConnecta(derived)).toThrow("ConnectaConfig must be a plain object.");
-    expect(() => unsafeCreateConnecta({ connectors: [], executor, discovery: [] }))
-      .toThrow("ConnectaConfig.discovery must be an object.");
-    expect(() => unsafeCreateConnecta({ connectors: [], executor, pools: [] }))
-      .toThrow("ConnectaConfig.pools must be an object.");
-    expect(() => unsafeCreateConnecta({ connectors: [], executor, classification: new Map() }))
-      .toThrow("ConnectaConfig.classification must be a plain object.");
+    expect(() => unsafeCreateConnecta({ connectors: [], executor, discovery: [] })).toThrow(
+      "ConnectaConfig.discovery must be an object.",
+    );
+    expect(() => unsafeCreateConnecta({ connectors: [], executor, pools: [] })).toThrow(
+      "ConnectaConfig.pools must be an object.",
+    );
+    expect(() => unsafeCreateConnecta({ connectors: [], executor, classification: new Map() })).toThrow(
+      "ConnectaConfig.classification must be a plain object.",
+    );
   });
 
   it("accepts an explicitly undefined activity group as omitted", () => {
-    expect(() =>
-      unsafeCreateConnecta({ connectors: [], executor, activity: undefined }),
-    ).not.toThrow();
+    expect(() => unsafeCreateConnecta({ connectors: [], executor, activity: undefined })).not.toThrow();
   });
 
   it("rejects an old activity store whose nested store is not an activity store", () => {
@@ -429,7 +465,11 @@ describe("ConnectaConfig schema", () => {
 
   it.each([
     ["discovery", { catalogTtlSeconds: -1 }, "discovery.catalogTtlSeconds must be a non-negative number of seconds"],
-    ["discovery", { catalogMinTtlSeconds: -1 }, "discovery.catalogMinTtlSeconds must be a non-negative number of seconds"],
+    [
+      "discovery",
+      { catalogMinTtlSeconds: -1 },
+      "discovery.catalogMinTtlSeconds must be a non-negative number of seconds",
+    ],
     ["discovery", null, "ConnectaConfig.discovery must be an object"],
     ["serverInfo", { name: 42 }, "serverInfo.name must be a string"],
     ["serverInfo", { icons: [{ mimeType: "image/png" }] }, "serverInfo.icons[0].src is required"],
@@ -608,28 +648,52 @@ describe("ConnectaConfig accessors and keyed maps", () => {
   }
 
   it.each([
-    ["a top-level option", (calls: { count: number }) =>
-      trap({ connectors: [], executor }, "discovery", calls), "ConnectaConfig.discovery"],
-    ["a nested limit", (calls: { count: number }) =>
-      ({ connectors: [], executor, discovery: trap({}, "concurrency", calls) }), "ConnectaConfig.discovery.concurrency"],
-    ["a pool", (calls: { count: number }) =>
-      ({ connectors: [], executor, pools: trap({}, "support", calls) }), "ConnectaConfig.pools.support"],
-    ["a classification entry", (calls: { count: number }) =>
-      ({ connectors: [], executor, classification: trap({}, "notes", calls) }),
-    "ConnectaConfig.classification.notes"],
-    ["a connector slot", (calls: { count: number }) =>
-      ({ connectors: trap([], "0", calls), executor }), "ConnectaConfig.connectors[0]"],
-    ["an icon", (calls: { count: number }) =>
-      ({ connectors: [], executor, serverInfo: { icons: [trap({}, "src", calls)] } }),
-    "ConnectaConfig.serverInfo.icons[0].src"],
+    [
+      "a top-level option",
+      (calls: { count: number }) => trap({ connectors: [], executor }, "discovery", calls),
+      "ConnectaConfig.discovery",
+    ],
+    [
+      "a nested limit",
+      (calls: { count: number }) => ({ connectors: [], executor, discovery: trap({}, "concurrency", calls) }),
+      "ConnectaConfig.discovery.concurrency",
+    ],
+    [
+      "a pool",
+      (calls: { count: number }) => ({ connectors: [], executor, pools: trap({}, "support", calls) }),
+      "ConnectaConfig.pools.support",
+    ],
+    [
+      "a classification entry",
+      (calls: { count: number }) => ({ connectors: [], executor, classification: trap({}, "notes", calls) }),
+      "ConnectaConfig.classification.notes",
+    ],
+    [
+      "a connector slot",
+      (calls: { count: number }) => ({ connectors: trap([], "0", calls), executor }),
+      "ConnectaConfig.connectors[0]",
+    ],
+    [
+      "an icon",
+      (calls: { count: number }) => ({ connectors: [], executor, serverInfo: { icons: [trap({}, "src", calls)] } }),
+      "ConnectaConfig.serverInfo.icons[0].src",
+    ],
     // Opaque arrays are still plain arrays: their items are read by descriptor.
-    ["an allowed origin", (calls: { count: number }) =>
-      ({ connectors: [], executor, allowedOrigins: trap([], "0", calls) }), "ConnectaConfig.allowedOrigins[0]"],
-    ["an inbound auth slot", (calls: { count: number }) =>
-      ({ connectors: [], executor, auth: trap([], "0", calls) }), "ConnectaConfig.auth[0]"],
-    ["a pool's tools", (calls: { count: number }) =>
-      ({ connectors: [], executor, pools: { support: { tools: trap([], "0", calls) } } }),
-    "ConnectaConfig.pools.support.tools[0]"],
+    [
+      "an allowed origin",
+      (calls: { count: number }) => ({ connectors: [], executor, allowedOrigins: trap([], "0", calls) }),
+      "ConnectaConfig.allowedOrigins[0]",
+    ],
+    [
+      "an inbound auth slot",
+      (calls: { count: number }) => ({ connectors: [], executor, auth: trap([], "0", calls) }),
+      "ConnectaConfig.auth[0]",
+    ],
+    [
+      "a pool's tools",
+      (calls: { count: number }) => ({ connectors: [], executor, pools: { support: { tools: trap([], "0", calls) } } }),
+      "ConnectaConfig.pools.support.tools[0]",
+    ],
   ] as const)("INV-11: refuses an accessor on %s by path, without running it", (_, build, path) => {
     const calls = { count: 0 };
     const config = build(calls) as Record<PropertyKey, unknown>;
@@ -648,17 +712,21 @@ describe("ConnectaConfig accessors and keyed maps", () => {
   it("INV-11: reports an unknown key beside an accessor without running the accessor", () => {
     const calls = { count: 0 };
     const config = trap({ connectors: [], executor, discovery: { concurrncy: 2 } }, "calls", calls);
-    expect(() => unsafeCreateConnecta(config as Record<PropertyKey, unknown>))
-      .toThrow("ConnectaConfig.discovery.concurrncy");
+    expect(() => unsafeCreateConnecta(config as Record<PropertyKey, unknown>)).toThrow(
+      "ConnectaConfig.discovery.concurrncy",
+    );
     expect(calls.count).toBe(0);
   });
 
   it("INV-11: refuses a config object whose inspection throws, without echoing the trap", () => {
-    const hostile = new Proxy({}, {
-      ownKeys() {
-        throw new Error(SECRET);
+    const hostile = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error(SECRET);
+        },
       },
-    });
+    );
     let error: unknown;
     try {
       unsafeCreateConnecta({ connectors: [], executor, discovery: hostile });
@@ -671,15 +739,18 @@ describe("ConnectaConfig accessors and keyed maps", () => {
 
   it("INV-11: resolves a root Proxy from its descriptors, so its get trap never runs", async () => {
     let gets = 0;
-    const config = new Proxy({ connectors: [], executor, logger: "silent", discovery: { concurrency: 1 } }, {
-      get() {
-        gets += 1;
-        throw new Error(SECRET);
+    const config = new Proxy(
+      { connectors: [], executor, logger: "silent", discovery: { concurrency: 1 } },
+      {
+        get() {
+          gets += 1;
+          throw new Error(SECRET);
+        },
+        has() {
+          throw new Error(SECRET);
+        },
       },
-      has() {
-        throw new Error(SECRET);
-      },
-    });
+    );
     const app = createConnecta(config as never);
     try {
       expect(app.describeConfig().limits.discovery.concurrency).toEqual({ value: 1, source: "config" });
@@ -694,10 +765,31 @@ describe("ConnectaConfig accessors and keyed maps", () => {
     const revocable = Proxy.revocable({ connectors: [], executor }, {});
     revocable.revoke();
     for (const config of [
-      new Proxy({ connectors: [], executor }, { ownKeys() { throw new Error(SECRET); } }),
-      new Proxy({ connectors: [], executor }, { getOwnPropertyDescriptor() { throw new Error(SECRET); } }),
+      new Proxy(
+        { connectors: [], executor },
+        {
+          ownKeys() {
+            throw new Error(SECRET);
+          },
+        },
+      ),
+      new Proxy(
+        { connectors: [], executor },
+        {
+          getOwnPropertyDescriptor() {
+            throw new Error(SECRET);
+          },
+        },
+      ),
       revocable.proxy,
-      { connectors: new Proxy([], { ownKeys() { throw new Error(SECRET); } }), executor },
+      {
+        connectors: new Proxy([], {
+          ownKeys() {
+            throw new Error(SECRET);
+          },
+        }),
+        executor,
+      },
     ]) {
       let error: unknown;
       try {
@@ -722,11 +814,10 @@ describe("ConnectaConfig accessors and keyed maps", () => {
       },
     } as Connector;
     const storage = memoryStorage();
-    const logger = Object.defineProperty(
-      { debug() {}, info() {}, warn() {}, error() {} },
-      "level",
-      { enumerable: true, get: () => "info" },
-    );
+    const logger = Object.defineProperty({ debug() {}, info() {}, warn() {}, error() {} }, "level", {
+      enumerable: true,
+      get: () => "info",
+    });
     const app = createConnecta({ connectors: [connector], executor, storage, logger });
     expect(app.describeConfig().connectors[0]?.title).toBe("Notes");
     expect(titleReads).toBeGreaterThan(0);
@@ -743,8 +834,12 @@ describe("ConnectaConfig accessors and keyed maps", () => {
     expect(Object.keys(pools)).toEqual(["__proto__", "constructor", "prototype"]);
     const notes: Connector = { id: "notes", listTools: async () => [], callTool: async () => null };
     const app = createConnecta({ connectors: [notes], executor, logger: "silent", pools });
-    expect(app.describeConfig().pools.map((pool) => pool.name).sort())
-      .toEqual(["__proto__", "constructor", "prototype"]);
+    expect(
+      app
+        .describeConfig()
+        .pools.map((pool) => pool.name)
+        .sort(),
+    ).toEqual(["__proto__", "constructor", "prototype"]);
     await app.close();
 
     // An undeclared name stays undeclared: a resolved map inherits nothing.

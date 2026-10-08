@@ -22,9 +22,7 @@ function users(): InboundAuth {
     uiAuth: { kind: "clerk", frontendApiUrl: "https://identity.test", publishableKey: "pk_test_fake" },
     activityActorNamespace: "https://identity.test",
     authorize(request) {
-      const user = /^Bearer (alice|bob)$/u.exec(
-        request.headers.get("authorization") ?? "",
-      )?.[1];
+      const user = /^Bearer (alice|bob)$/u.exec(request.headers.get("authorization") ?? "")?.[1];
       return user
         ? { ok: true, userId: user, subjectId: user }
         : {
@@ -35,11 +33,7 @@ function users(): InboundAuth {
   };
 }
 
-function request(
-  path: string,
-  user: "alice" | "bob",
-  init: RequestInit = {},
-): Request {
+function request(path: string, user: "alice" | "bob", init: RequestInit = {}): Request {
   const headers = new Headers(init.headers);
   headers.set("Authorization", `Bearer ${user}`);
   return new Request(`${BASE}${path}`, { ...init, headers });
@@ -50,47 +44,76 @@ function visible(id: string): Connector {
 }
 
 describe("identity-scoped connectors", () => {
-  it.each(["subject", "principal"] as const)("INV-4: isolates guest result pages for machine %s identities without an activity namespace", async (identityKind) => {
-    const auth: InboundAuth | InboundAuth[] = identityKind === "subject"
-      ? [machineAuth("alice", { subjectId: "alice" }), machineAuth("bob", { subjectId: "bob" })]
-      : {
-          kind: "access_token",
-          authorize(request) {
-            const id = /^Bearer (alice|bob)$/.exec(request.headers.get("authorization") ?? "")?.[1];
-            return id ? { ok: true, principal: { namespace: "directory", id } }
-              : { ok: false, response: new Response(null, { status: 401 }) };
-          },
-        };
-    const connecta = createTestConnecta({
-      connectors: [api("docs", { tools: [{ name: "read", description: "Read docs", annotations: { readOnlyHint: true }, handler: () => "x".repeat(500) }] })],
-      auth,
-      executor: scriptedExecutor((fns) => fns.result!(resultId)),
-      calls: { maxResultBytes: 100 },
-      logger: silentLogger,
-    });
-    const call = async (token: string, name: string, args: object) =>
-      (await readJsonRpc(await mcpRpc(connecta, "tools/call", { name, arguments: args }, { token }))).result;
-    const result = await call("alice", "call_tool", { address: "docs.read" });
-    const { resultId } = JSON.parse(result.content[0].text.split("\n")[0]);
-    expect(resultId).toBeTypeOf("string");
-    expect((await call("alice", "execute_code", { code: "async () => await connecta.result(id)" })).isError).toBeFalsy();
-    expect((await call("bob", "execute_code", { code: "async () => await connecta.result(id)" })).isError).toBe(true);
-    await connecta.close();
-  });
+  it.each(["subject", "principal"] as const)(
+    "INV-4: isolates guest result pages for machine %s identities without an activity namespace",
+    async (identityKind) => {
+      const auth: InboundAuth | InboundAuth[] =
+        identityKind === "subject"
+          ? [machineAuth("alice", { subjectId: "alice" }), machineAuth("bob", { subjectId: "bob" })]
+          : {
+              kind: "access_token",
+              authorize(request) {
+                const id = /^Bearer (alice|bob)$/.exec(request.headers.get("authorization") ?? "")?.[1];
+                return id
+                  ? { ok: true, principal: { namespace: "directory", id } }
+                  : { ok: false, response: new Response(null, { status: 401 }) };
+              },
+            };
+      const connecta = createTestConnecta({
+        connectors: [
+          api("docs", {
+            tools: [
+              {
+                name: "read",
+                description: "Read docs",
+                annotations: { readOnlyHint: true },
+                handler: () => "x".repeat(500),
+              },
+            ],
+          }),
+        ],
+        auth,
+        executor: scriptedExecutor((fns) => fns.result!(resultId)),
+        calls: { maxResultBytes: 100 },
+        logger: silentLogger,
+      });
+      const call = async (token: string, name: string, args: object) =>
+        (await readJsonRpc(await mcpRpc(connecta, "tools/call", { name, arguments: args }, { token }))).result;
+      const result = await call("alice", "call_tool", { address: "docs.read" });
+      const { resultId } = JSON.parse(result.content[0].text.split("\n")[0]);
+      expect(resultId).toBeTypeOf("string");
+      expect(
+        (await call("alice", "execute_code", { code: "async () => await connecta.result(id)" })).isError,
+      ).toBeFalsy();
+      expect((await call("bob", "execute_code", { code: "async () => await connecta.result(id)" })).isError).toBe(true);
+      await connecta.close();
+    },
+  );
 
   it("allows a tool grantee's OAuth handoff but hides wholly ungranted connectors", async () => {
     let starts = 0;
-    const docs = api("docs", { tools: [{ name: "read", description: "Read docs", annotations: { readOnlyHint: true }, handler: () => null }] });
-    docs.startAuth = async () => { starts++; return { state: "auth_required", authorizationUrl: "https://oauth.test/authorize" }; };
+    const docs = api("docs", {
+      tools: [{ name: "read", description: "Read docs", annotations: { readOnlyHint: true }, handler: () => null }],
+    });
+    docs.startAuth = async () => {
+      starts++;
+      return { state: "auth_required", authorizationUrl: "https://oauth.test/authorize" };
+    };
     const connecta = createTestConnecta({
-      connectors: [docs], auth: users(), vault: encryptedCredentialVault(memoryStorage(), ENCRYPTION_KEY),
+      connectors: [docs],
+      auth: users(),
+      vault: encryptedCredentialVault(memoryStorage(), ENCRYPTION_KEY),
       identity: {
-        connectorAccess: ({ subject }) => subject?.id === "alice" ? ["docs.read"] : [],
+        connectorAccess: ({ subject }) => (subject?.id === "alice" ? ["docs.read"] : []),
         credentialAdministration: () => "all",
       },
     });
     const call = async (token: string, connector: string) =>
-      (await readJsonRpc(await mcpRpc(connecta, "tools/call", { name: "authorize_connector", arguments: { connector } }, { token }))).result;
+      (
+        await readJsonRpc(
+          await mcpRpc(connecta, "tools/call", { name: "authorize_connector", arguments: { connector } }, { token }),
+        )
+      ).result;
     expect(JSON.parse((await call("alice", "docs")).content[0].text)).toMatchObject({ recovery: "oauth" });
     const hidden = await call("bob", "docs");
     const absent = await call("bob", "absent");
@@ -106,8 +129,8 @@ describe("identity-scoped connectors", () => {
         url: "https://mcp.test",
         authScope: "personal",
         auth: { type: "headers", headers: { Authorization: "secret" } },
-      })
-    ).toThrow("cannot combine authScope \"personal\" with static headers");
+      }),
+    ).toThrow('cannot combine authScope "personal" with static headers');
   });
 
   it("derives connector visibility from the authenticated principal", async () => {
@@ -116,9 +139,7 @@ describe("identity-scoped connectors", () => {
       auth: users(),
       identity: {
         connectorAccess(identity) {
-          return identity.principal?.id === "alice"
-            ? ["common", "alice_only"]
-            : ["common", "bob_only"];
+          return identity.principal?.id === "alice" ? ["common", "alice_only"] : ["common", "bob_only"];
         },
       },
       storage: memoryStorage(),
@@ -127,19 +148,24 @@ describe("identity-scoped connectors", () => {
 
     const alice = await fetchTestUiDetails(connecta, request("/ui/data", "alice"));
     const bob = await fetchTestUiDetails(connecta, request("/ui/data", "bob"));
-    expect(((await alice.json()) as any).connectors.map((item: Connector) => item.id))
-      .toEqual(["common", "alice_only"]);
-    expect(((await bob.json()) as any).connectors.map((item: Connector) => item.id))
-      .toEqual(["common", "bob_only"]);
+    expect(((await alice.json()) as any).connectors.map((item: Connector) => item.id)).toEqual([
+      "common",
+      "alice_only",
+    ]);
+    expect(((await bob.json()) as any).connectors.map((item: Connector) => item.id)).toEqual(["common", "bob_only"]);
 
-    const aliceResults = connecta.registry.scoped({
-      connectorIds: "all",
-      subjectKey: "alice-subject",
-    }).resultsStorage();
-    const bobResults = connecta.registry.scoped({
-      connectorIds: "all",
-      subjectKey: "bob-subject",
-    }).resultsStorage();
+    const aliceResults = connecta.registry
+      .scoped({
+        connectorIds: "all",
+        subjectKey: "alice-subject",
+      })
+      .resultsStorage();
+    const bobResults = connecta.registry
+      .scoped({
+        connectorIds: "all",
+        subjectKey: "bob-subject",
+      })
+      .resultsStorage();
     await aliceResults.set("result:id", "alice result");
     expect(await bobResults.get("result:id")).toBeNull();
   });
@@ -153,9 +179,7 @@ describe("identity-scoped connectors", () => {
     });
     personal.status = async (ctx) => {
       const value = await ctx.credential?.get();
-      return value
-        ? { state: "ok", message: value.slice(-4) }
-        : { state: "auth_required" };
+      return value ? { state: "ok", message: value.slice(-4) } : { state: "auth_required" };
     };
     const shared = api("shared", {
       description: "Shared connection",
@@ -188,18 +212,14 @@ describe("identity-scoped connectors", () => {
 
     const alice = await fetchTestUiDetails(connecta, request("/ui/data", "alice"));
     const bob = await fetchTestUiDetails(connecta, request("/ui/data", "bob"));
-    const aliceData = await alice.json() as any;
-    const bobData = await bob.json() as any;
-    expect(aliceData.connectors.find((item: any) => item.id === "personal")
-      .credential.lastFour).toBe("1111");
-    expect(bobData.connectors.find((item: any) => item.id === "personal")
-      .credential.lastFour).toBe("2222");
-    expect(bobData.connectors.find((item: any) => item.id === "shared")
-      .credential.lastFour).toBe("4444");
+    const aliceData = (await alice.json()) as any;
+    const bobData = (await bob.json()) as any;
+    expect(aliceData.connectors.find((item: any) => item.id === "personal").credential.lastFour).toBe("1111");
+    expect(bobData.connectors.find((item: any) => item.id === "personal").credential.lastFour).toBe("2222");
+    expect(bobData.connectors.find((item: any) => item.id === "shared").credential.lastFour).toBe("4444");
 
     const retired = await connecta.fetch(request("/ui/access-tokens", "alice"));
     expect(retired.status).toBe(404);
-
   });
 
   it("returns a personal OAuth callback to the principal that started it", async () => {
@@ -212,9 +232,7 @@ describe("identity-scoped connectors", () => {
       },
       async callTool() {},
       async status(ctx) {
-        return await ctx.storage.get("token")
-          ? { state: "ok" }
-          : { state: "auth_required" };
+        return (await ctx.storage.get("token")) ? { state: "ok" } : { state: "auth_required" };
       },
       async startAuth(ctx) {
         const state = crypto.randomUUID();
@@ -229,7 +247,7 @@ describe("identity-scoped connectors", () => {
         await ctx.storage.delete("pending");
       },
       async verifyState(state, ctx) {
-        return state !== null && state === await ctx.storage.get("pending");
+        return state !== null && state === (await ctx.storage.get("pending"));
       },
       async finishAuth(_code, ctx) {
         await ctx.storage.set("token", "connected");
@@ -238,7 +256,8 @@ describe("identity-scoped connectors", () => {
     };
     const connecta = createTestConnecta({
       connectors: [oauth],
-      auth: users(), vault: encryptedCredentialVault(memoryStorage(), ENCRYPTION_KEY),
+      auth: users(),
+      vault: encryptedCredentialVault(memoryStorage(), ENCRYPTION_KEY),
       identity: { activityAccess: () => false },
       storage: memoryStorage(),
       publicUrl: BASE,
@@ -251,22 +270,16 @@ describe("identity-scoped connectors", () => {
       }),
     );
     expect(started.status).toBe(200);
-    const link = (await started.json() as any).authorizationUrl;
+    const link = ((await started.json()) as any).authorizationUrl;
     const consent = await connecta.fetch(new Request(link, { headers: { Authorization: "Bearer alice" } }));
     expect(consent.status).toBe(302);
     const authorizationUrl = new URL(consent.headers.get("Location")!);
     const state = authorizationUrl.searchParams.get("state");
-    const fixedByAnotherUser = await connecta.fetch(
-      request(`/oauth/callback/oauth?code=code&state=${state}`, "bob"),
-    );
+    const fixedByAnotherUser = await connecta.fetch(request(`/oauth/callback/oauth?code=code&state=${state}`, "bob"));
     expect(fixedByAnotherUser.status).toBe(400);
-    const callback = await connecta.fetch(
-      request(`/oauth/callback/oauth?code=code&state=${state}`, "alice"),
-    );
+    const callback = await connecta.fetch(request(`/oauth/callback/oauth?code=code&state=${state}`, "alice"));
     expect(callback.status).toBe(200);
-    const replay = await connecta.fetch(
-      request(`/oauth/callback/oauth?code=code&state=${state}`, "alice"),
-    );
+    const replay = await connecta.fetch(request(`/oauth/callback/oauth?code=code&state=${state}`, "alice"));
     expect(replay.status).toBe(400);
 
     const alice = await fetchTestUiDetails(connecta, request("/ui/data", "alice"));
@@ -288,15 +301,19 @@ describe("identity-scoped tools", () => {
           name: "delete",
           description: "Delete a note",
           annotations: { readOnlyHint: false, destructiveHint: true },
-          handler: async () => { onDelete(); return { deleted: true }; },
+          handler: async () => {
+            onDelete();
+            return { deleted: true };
+          },
         },
       ],
     });
   }
-  const wiki = () => api("wiki", {
-    description: "Wiki",
-    tools: [{ name: "read", description: "Read a page", ...BASE_TOOL }],
-  });
+  const wiki = () =>
+    api("wiki", {
+      description: "Wiki",
+      tools: [{ name: "read", description: "Read a page", ...BASE_TOOL }],
+    });
   function deployment(
     access: (principalId: string | undefined) => "all" | readonly string[],
     executor?: Parameters<typeof createTestConnecta>[0]["executor"],
@@ -304,7 +321,12 @@ describe("identity-scoped tools", () => {
   ) {
     const deleted = { count: 0 };
     const connecta = createTestConnecta({
-      connectors: [notes(() => { deleted.count += 1; }), wiki()],
+      connectors: [
+        notes(() => {
+          deleted.count += 1;
+        }),
+        wiki(),
+      ],
       auth: users(),
       identity: { connectorAccess: ({ principal }) => access(principal?.id) },
       storage: memoryStorage(),
@@ -314,15 +336,11 @@ describe("identity-scoped tools", () => {
     });
     return { connecta, deleted };
   }
-  const alice = (id: string | undefined) =>
-    id === "alice" ? ["notes.search", "notes.fetch", "wiki"] : ["notes"];
-  const rpc = (
-    c: ReturnType<typeof createTestConnecta>,
-    user: "alice" | "bob",
-    name: string,
-    args: unknown,
-  ) => mcpRpc(c, "tools/call", { name, arguments: args }, { token: user })
-    .then((response) => readJsonRpc(response) as Promise<any>);
+  const alice = (id: string | undefined) => (id === "alice" ? ["notes.search", "notes.fetch", "wiki"] : ["notes"]);
+  const rpc = (c: ReturnType<typeof createTestConnecta>, user: "alice" | "bob", name: string, args: unknown) =>
+    mcpRpc(c, "tools/call", { name, arguments: args }, { token: user }).then(
+      (response) => readJsonRpc(response) as Promise<any>,
+    );
 
   it("hides ungranted tools from discovery and shows granted ones", async () => {
     const { connecta } = deployment(alice);
@@ -339,8 +357,8 @@ describe("identity-scoped tools", () => {
     const { connecta, deleted } = deployment(alice);
     const ungranted = await rpc(connecta, "alice", "call_destructive_tool", { address: "notes.delete", args: {} });
     const absent = await rpc(connecta, "alice", "call_destructive_tool", { address: "notes.purge", args: {} });
-    const code = (body: any) => body.result.structuredContent?.error?.code
-      ?? JSON.parse(body.result.content[0].text).error.code;
+    const code = (body: any) =>
+      body.result.structuredContent?.error?.code ?? JSON.parse(body.result.content[0].text).error.code;
     expect(ungranted.result.isError).toBe(true);
     expect(code(ungranted)).toBe("unknown_tool");
     expect(code(absent)).toBe("unknown_tool");
@@ -353,7 +371,10 @@ describe("identity-scoped tools", () => {
   it("INV-3 INV-4: scopes a program's search and call through the same view", async () => {
     const outcomes: Record<string, unknown> = {};
     const executor = {
-      async execute(_code: string, providers: Array<{ name: string; fns: Record<string, (...args: any[]) => Promise<unknown>> }>) {
+      async execute(
+        _code: string,
+        providers: Array<{ name: string; fns: Record<string, (...args: any[]) => Promise<unknown>> }>,
+      ) {
         const fns = providers.find((provider) => provider.name === "connecta")!.fns;
         outcomes.search = await fns.search!({ query: "notes", limit: 20 });
         try {
@@ -376,7 +397,9 @@ describe("identity-scoped tools", () => {
   it("lists only granted tools on the connection UI", async () => {
     const { connecta } = deployment(alice);
     const data = (await (await fetchTestUiDetails(connecta, request("/ui/data", "alice"))).json()) as any;
-    const names = data.connectors.find((item: { id: string }) => item.id === "notes").tools.map((tool: { name: string }) => tool.name);
+    const names = data.connectors
+      .find((item: { id: string }) => item.id === "notes")
+      .tools.map((tool: { name: string }) => tool.name);
     expect(names).toEqual(["search", "fetch"]);
   });
 
@@ -387,10 +410,15 @@ describe("identity-scoped tools", () => {
   });
 
   it("fails closed on an unparseable grant", async () => {
-    for (const bad of [["notes."], [".delete"], ["notes.delete", 7], ["Notes.delete"],
+    for (const bad of [
+      ["notes."],
+      [".delete"],
+      ["notes.delete", 7],
+      ["Notes.delete"],
       [{ tool: "notes.search", requireReadOnly: false }],
       [{ tool: "notes", requireReadOnly: true }],
-      [{ tool: "notes.search", requireReadOnly: true, unexpected: true }]]) {
+      [{ tool: "notes.search", requireReadOnly: true, unexpected: true }],
+    ]) {
       const { connecta } = deployment(() => bad as readonly string[]);
       const response = await mcpRpc(connecta, "tools/list", {}, { token: "alice" });
       expect(response.status).toBe(403);
@@ -399,7 +427,12 @@ describe("identity-scoped tools", () => {
 
   it("warns once for a granted address the catalog lacks and keeps it unreachable", async () => {
     const warnings: string[] = [];
-    const logger = { ...silentLogger, warn: (message: string) => { warnings.push(message); } };
+    const logger = {
+      ...silentLogger,
+      warn: (message: string) => {
+        warnings.push(message);
+      },
+    };
     const { connecta } = deployment(() => ["notes.ghost", "notes.search"], undefined, logger);
     await rpc(connecta, "alice", "search_tools", { query: "notes", limit: 20 });
     await rpc(connecta, "alice", "search_tools", { query: "notes", limit: 20 });
@@ -415,16 +448,23 @@ describe("identity-scoped tools", () => {
       id: "notes",
       kind: "api",
       description: "Notes — read and update records",
-      async listTools() { return tools; },
-      async callTool(name) { calls.push(name); return { ok: true }; },
+      async listTools() {
+        return tools;
+      },
+      async callTool(name) {
+        calls.push(name);
+        return { ok: true };
+      },
     };
     const connecta = createTestConnecta({
-      connectors: [notes], auth: users(),
+      connectors: [notes],
+      auth: users(),
       identity: { connectorAccess: () => ["notes.read"] },
-      storage: memoryStorage(), publicUrl: BASE, logger: silentLogger,
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      logger: silentLogger,
     });
-    const call = (name: string, address: string) =>
-      rpc(connecta, "alice", name, { address, args: {} });
+    const call = (name: string, address: string) => rpc(connecta, "alice", name, { address, args: {} });
 
     expect((await call("call_tool", "notes.read")).result.isError).toBeFalsy();
     tools = [
@@ -433,7 +473,9 @@ describe("identity-scoped tools", () => {
     ];
     await connecta.registry.invalidateStored("notes");
 
-    const discovered = JSON.stringify(await rpc(connecta, "alice", "search_tools", { connector: "notes", query: "", limit: 20 }));
+    const discovered = JSON.stringify(
+      await rpc(connecta, "alice", "search_tools", { connector: "notes", query: "", limit: 20 }),
+    );
     expect(discovered).toContain("notes.read");
     expect(discovered).not.toContain("notes.new_read");
     expect((await call("call_tool", "notes.read")).result.isError).toBe(true);
@@ -445,36 +487,82 @@ describe("identity-scoped tools", () => {
 
 describe("guarded read-only identity grants", () => {
   const guarded = (tool: string) => ({ tool, requireReadOnly: true as const });
-  const rpc = async (c: ReturnType<typeof createTestConnecta>, user: "alice" | "bob", name: string, args: unknown, path = "/mcp") =>
-    readJsonRpc(await c.fetch(request(path, user, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
-    }))) as Promise<any>;
+  const rpc = async (
+    c: ReturnType<typeof createTestConnecta>,
+    user: "alice" | "bob",
+    name: string,
+    args: unknown,
+    path = "/mcp",
+  ) =>
+    readJsonRpc(
+      await c.fetch(
+        request(path, user, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+        }),
+      ),
+    ) as Promise<any>;
 
   it("filters static tools across discovery, direct calls, code, and the connection UI", async () => {
     const called: string[] = [];
     const observations: Record<string, unknown> = {};
-    const notes = api("notes", { description: "Notes", tools: [
-      { name: "read", description: "Read a note", annotations: { readOnlyHint: true }, handler: async () => { called.push("read"); return 1; } },
-      { name: "write", description: "Write a note", annotations: { readOnlyHint: false }, handler: async () => { called.push("write"); return 2; } },
-      { name: "conflict", description: "Test a contradictory hint", annotations: { readOnlyHint: true, destructiveHint: true }, handler: async () => { called.push("conflict"); return 3; } },
-    ] });
+    const notes = api("notes", {
+      description: "Notes",
+      tools: [
+        {
+          name: "read",
+          description: "Read a note",
+          annotations: { readOnlyHint: true },
+          handler: async () => {
+            called.push("read");
+            return 1;
+          },
+        },
+        {
+          name: "write",
+          description: "Write a note",
+          annotations: { readOnlyHint: false },
+          handler: async () => {
+            called.push("write");
+            return 2;
+          },
+        },
+        {
+          name: "conflict",
+          description: "Test a contradictory hint",
+          annotations: { readOnlyHint: true, destructiveHint: true },
+          handler: async () => {
+            called.push("conflict");
+            return 3;
+          },
+        },
+      ],
+    });
     const connecta = createTestConnecta({
-      connectors: [notes], auth: users(),
+      connectors: [notes],
+      auth: users(),
       identity: { connectorAccess: () => [guarded("notes.read"), guarded("notes.write"), guarded("notes.conflict")] },
       trust: "trusted",
-      executor: { async execute(_code, providers) {
-        const fns = providers.find((provider) => provider.name === "connecta")!.fns;
-        observations.search = await fns.search!({ connector: "notes", query: "", limit: 20 });
-        observations.describe = await fns.describe!({ address: "notes.write" });
-        try { await fns.call!("notes.write", {}); }
-        catch (error) { observations.call = error instanceof InvocationFailure ? error.details : String(error); }
-        return { result: null };
-      } },
-      storage: memoryStorage(), publicUrl: BASE,
+      executor: {
+        async execute(_code, providers) {
+          const fns = providers.find((provider) => provider.name === "connecta")!.fns;
+          observations.search = await fns.search!({ connector: "notes", query: "", limit: 20 });
+          observations.describe = await fns.describe!({ address: "notes.write" });
+          try {
+            await fns.call!("notes.write", {});
+          } catch (error) {
+            observations.call = error instanceof InvocationFailure ? error.details : String(error);
+          }
+          return { result: null };
+        },
+      },
+      storage: memoryStorage(),
+      publicUrl: BASE,
     });
-    const page = JSON.stringify(await rpc(connecta, "alice", "search_tools", { connector: "notes", query: "", limit: 20 }));
+    const page = JSON.stringify(
+      await rpc(connecta, "alice", "search_tools", { connector: "notes", query: "", limit: 20 }),
+    );
     expect(page).toContain("notes.read");
     for (const name of ["write", "conflict"]) expect(page).not.toContain(`notes.${name}`);
     expect((await rpc(connecta, "alice", "call_tool", { address: "notes.read", args: {} })).result.isError).toBeFalsy();
@@ -489,8 +577,12 @@ describe("guarded read-only identity grants", () => {
     expect(JSON.stringify(observations.describe)).toContain("unknown_tool");
     expect(observations.call).toMatchObject({ code: "unknown_tool" });
     const ui = await fetchTestUiDetails(connecta, request("/ui/data", "alice"));
-    const data = await ui.json() as any;
-    expect(data.connectors.find((item: { id: string }) => item.id === "notes").tools.map((tool: { name: string }) => tool.name)).toEqual(["read"]);
+    const data = (await ui.json()) as any;
+    expect(
+      data.connectors
+        .find((item: { id: string }) => item.id === "notes")
+        .tools.map((tool: { name: string }) => tool.name),
+    ).toEqual(["read"]);
     expect(called).toEqual(["read"]);
     await connecta.close();
   });
@@ -500,16 +592,28 @@ describe("guarded read-only identity grants", () => {
     let offline = false;
     const calls: string[] = [];
     const remote: Connector = {
-      id: "remote", kind: "mcp", description: "Remote records",
-      async listTools() { if (offline) throw new Error("offline"); return tools; },
-      async callTool(name) { calls.push(name); return { ok: true }; },
+      id: "remote",
+      kind: "mcp",
+      description: "Remote records",
+      async listTools() {
+        if (offline) throw new Error("offline");
+        return tools;
+      },
+      async callTool(name) {
+        calls.push(name);
+        return { ok: true };
+      },
     };
     const connecta = createTestConnecta({
-      connectors: [remote], auth: users(),
+      connectors: [remote],
+      auth: users(),
       identity: { connectorAccess: () => [guarded("remote.read")] },
-      storage: memoryStorage(), publicUrl: BASE,
+      storage: memoryStorage(),
+      publicUrl: BASE,
     });
-    expect((await rpc(connecta, "alice", "call_tool", { address: "remote.read", args: {} })).result.isError).toBeFalsy();
+    expect(
+      (await rpc(connecta, "alice", "call_tool", { address: "remote.read", args: {} })).result.isError,
+    ).toBeFalsy();
     for (const annotations of [
       { readOnlyHint: false, destructiveHint: true },
       {},
@@ -520,7 +624,9 @@ describe("guarded read-only identity grants", () => {
         { name: "new_read", annotations: { readOnlyHint: true } },
       ];
       await connecta.registry.invalidateStored("remote");
-      const page = JSON.stringify(await rpc(connecta, "alice", "search_tools", { connector: "remote", query: "", limit: 20 }));
+      const page = JSON.stringify(
+        await rpc(connecta, "alice", "search_tools", { connector: "remote", query: "", limit: 20 }),
+      );
       expect(page).not.toContain("remote.read");
       expect(page).not.toContain("remote.new_read");
       for (const tool of ["read", "new_read"]) {
@@ -538,25 +644,68 @@ describe("guarded read-only identity grants", () => {
 
   it("preserves an explicit full grant and keeps guarded tools guarded through pools", async () => {
     const called: string[] = [];
-    const notes = api("notes", { description: "Notes", tools: [
-      { name: "read", description: "Read a note", annotations: { readOnlyHint: true }, handler: async () => { called.push("read"); return 1; } },
-      { name: "write", description: "Write a note", annotations: { readOnlyHint: false }, handler: async () => { called.push("write"); return 2; } },
-    ] });
+    const notes = api("notes", {
+      description: "Notes",
+      tools: [
+        {
+          name: "read",
+          description: "Read a note",
+          annotations: { readOnlyHint: true },
+          handler: async () => {
+            called.push("read");
+            return 1;
+          },
+        },
+        {
+          name: "write",
+          description: "Write a note",
+          annotations: { readOnlyHint: false },
+          handler: async () => {
+            called.push("write");
+            return 2;
+          },
+        },
+      ],
+    });
     const connecta = createTestConnecta({
-      connectors: [notes], auth: users(),
-      identity: { connectorAccess: ({ principal }) => principal?.id === "alice"
-        ? [guarded("notes.write"), "notes"] : [guarded("notes.write"), guarded("notes.read")] },
+      connectors: [notes],
+      auth: users(),
+      identity: {
+        connectorAccess: ({ principal }) =>
+          principal?.id === "alice"
+            ? [guarded("notes.write"), "notes"]
+            : [guarded("notes.write"), guarded("notes.read")],
+      },
       pools: {
         readers: { tools: ["notes"], grant: () => true },
         narrow: { tools: ["notes.read"], grant: () => true },
       },
-      storage: memoryStorage(), publicUrl: BASE,
+      storage: memoryStorage(),
+      publicUrl: BASE,
     });
-    const alice = await rpc(connecta, "alice", "call_destructive_tool", { address: "notes.write", args: {} }, "/mcp/readers");
-    const bob = await rpc(connecta, "bob", "call_destructive_tool", { address: "notes.write", args: {} }, "/mcp/readers");
+    const alice = await rpc(
+      connecta,
+      "alice",
+      "call_destructive_tool",
+      { address: "notes.write", args: {} },
+      "/mcp/readers",
+    );
+    const bob = await rpc(
+      connecta,
+      "bob",
+      "call_destructive_tool",
+      { address: "notes.write", args: {} },
+      "/mcp/readers",
+    );
     expect(alice.result.isError).toBeFalsy();
     expect(JSON.stringify(bob)).toContain("unknown_tool");
-    const narrowed = await rpc(connecta, "alice", "call_destructive_tool", { address: "notes.write", args: {} }, "/mcp/narrow");
+    const narrowed = await rpc(
+      connecta,
+      "alice",
+      "call_destructive_tool",
+      { address: "notes.write", args: {} },
+      "/mcp/narrow",
+    );
     expect(JSON.stringify(narrowed)).toContain("unknown_tool");
     const bobRead = await rpc(connecta, "bob", "call_tool", { address: "notes.read", args: {} }, "/mcp/readers");
     expect(bobRead.result.isError).toBeFalsy();
@@ -568,15 +717,29 @@ describe("guarded read-only identity grants", () => {
 describe("named tool pools", () => {
   const readOnly = { annotations: { readOnlyHint: true }, handler: async () => ({ ok: true }) };
   const connectors = () => [
-    api("notes", { description: "Notes", tools: [
-      { name: "search", description: "Search team data", ...readOnly },
-      { name: "fetch", description: "Fetch team data", ...readOnly },
-      { name: "delete", description: "Delete team data", annotations: { readOnlyHint: false, destructiveHint: true }, handler: async () => ({}) },
-    ] }),
+    api("notes", {
+      description: "Notes",
+      tools: [
+        { name: "search", description: "Search team data", ...readOnly },
+        { name: "fetch", description: "Fetch team data", ...readOnly },
+        {
+          name: "delete",
+          description: "Delete team data",
+          annotations: { readOnlyHint: false, destructiveHint: true },
+          handler: async () => ({}),
+        },
+      ],
+    }),
     api("wiki", { description: "Wiki", tools: [{ name: "read", description: "Read team data", ...readOnly }] }),
-    api("billing", { description: "Billing", tools: [{ name: "invoices", description: "Invoices team data", ...readOnly }] }),
+    api("billing", {
+      description: "Billing",
+      tools: [{ name: "invoices", description: "Invoices team data", ...readOnly }],
+    }),
   ];
-  function deployment(pools: NonNullable<Parameters<typeof createTestConnecta>[0]["pools"]>, ceiling?: (id: string | undefined) => "all" | readonly string[]) {
+  function deployment(
+    pools: NonNullable<Parameters<typeof createTestConnecta>[0]["pools"]>,
+    ceiling?: (id: string | undefined) => "all" | readonly string[],
+  ) {
     return createTestConnecta({
       connectors: connectors(),
       auth: users(),
@@ -587,11 +750,22 @@ describe("named tool pools", () => {
     });
   }
   const search = async (c: ReturnType<typeof createTestConnecta>, path: string, user: "alice" | "bob") => {
-    const response = await c.fetch(new Request(`${BASE}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: `Bearer ${user}` },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search_tools", arguments: { query: "team data", limit: 50 } } }),
-    }));
+    const response = await c.fetch(
+      new Request(`${BASE}${path}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+          Authorization: `Bearer ${user}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "search_tools", arguments: { query: "team data", limit: 50 } },
+        }),
+      }),
+    );
     return { status: response.status, text: JSON.stringify(await readJsonRpc(response)) };
   };
 
@@ -611,9 +785,8 @@ describe("named tool pools", () => {
   });
 
   it("INV-4: never widens the identity's own view", async () => {
-    const c = deployment(
-      { support: { tools: ["notes", "wiki", "billing"], grant: () => true } },
-      (id) => (id === "alice" ? ["notes.search", "wiki"] : ["billing"]),
+    const c = deployment({ support: { tools: ["notes", "wiki", "billing"], grant: () => true } }, (id) =>
+      id === "alice" ? ["notes.search", "wiki"] : ["billing"],
     );
     const alice = await search(c, "/mcp/support", "alice");
     expect(alice.text).toContain("notes.search");
@@ -628,17 +801,43 @@ describe("named tool pools", () => {
   it("answers an undeclared pool, a refused grant, and a throwing grant identically", async () => {
     const c = deployment({
       closed: { tools: ["wiki"], grant: () => false },
-      broken: { tools: ["wiki"], grant: () => { throw new Error("boom"); } },
+      broken: {
+        tools: ["wiki"],
+        grant: () => {
+          throw new Error("boom");
+        },
+      },
       silent: { tools: ["wiki"] },
     });
     const bodies = new Set<string>();
     for (const name of ["missing", "closed", "broken", "silent"]) {
-      const response = await c.fetch(new Request(`${BASE}/mcp/${name}`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: "Bearer alice" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) }));
+      const response = await c.fetch(
+        new Request(`${BASE}/mcp/${name}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+            Authorization: "Bearer alice",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+        }),
+      );
       expect(response.status).toBe(404);
-      bodies.add(`${response.status}:${[...response.headers].sort().map(([k, v]) => `${k}=${v}`).join("|")}:${await response.text()}`);
+      bodies.add(
+        `${response.status}:${[...response.headers]
+          .sort()
+          .map(([k, v]) => `${k}=${v}`)
+          .join("|")}:${await response.text()}`,
+      );
     }
     expect(bodies.size).toBe(1);
-    const unauthenticated = await c.fetch(new Request(`${BASE}/mcp/closed`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }));
+    const unauthenticated = await c.fetch(
+      new Request(`${BASE}/mcp/closed`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      }),
+    );
     expect(unauthenticated.status).toBe(401);
   });
 
@@ -657,21 +856,53 @@ describe("named tool pools: calls", () => {
   it("refuses a direct call outside the pool before any handler runs", async () => {
     const calls = { read: 0, purge: 0 };
     const c = createTestConnecta({
-      connectors: [api("docs", { description: "Docs", tools: [
-        { name: "read", description: "Read", annotations: { readOnlyHint: true }, handler: async () => { calls.read += 1; return { ok: true }; } },
-        { name: "purge", description: "Purge", annotations: { readOnlyHint: false, destructiveHint: true }, handler: async () => { calls.purge += 1; return { ok: true }; } },
-      ] })],
+      connectors: [
+        api("docs", {
+          description: "Docs",
+          tools: [
+            {
+              name: "read",
+              description: "Read",
+              annotations: { readOnlyHint: true },
+              handler: async () => {
+                calls.read += 1;
+                return { ok: true };
+              },
+            },
+            {
+              name: "purge",
+              description: "Purge",
+              annotations: { readOnlyHint: false, destructiveHint: true },
+              handler: async () => {
+                calls.purge += 1;
+                return { ok: true };
+              },
+            },
+          ],
+        }),
+      ],
       auth: users(),
       pools: { readers: { tools: ["docs.read"], grant: () => true } },
       storage: memoryStorage(),
       publicUrl: BASE,
     });
     const call = async (path: string, name: string, address: string) => {
-      const response = await c.fetch(new Request(`${BASE}${path}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: "Bearer alice" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: { address, args: {} } } }),
-      }));
+      const response = await c.fetch(
+        new Request(`${BASE}${path}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+            Authorization: "Bearer alice",
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: { name, arguments: { address, args: {} } },
+          }),
+        }),
+      );
       return readJsonRpc(response) as Promise<any>;
     };
     const purge = await call("/mcp/readers", "call_destructive_tool", "docs.purge");
@@ -686,20 +917,46 @@ describe("named tool pools: calls", () => {
 
   it("accepts a grant for a tool whose name has spaces or non-ASCII characters", async () => {
     const c = createTestConnecta({
-      connectors: [api("intl", { description: "Intl", tools: [
-        { name: "Liste des pages", description: "Lister", annotations: { readOnlyHint: true }, handler: async () => ({ ok: true }) },
-        { name: "supprimer", description: "Supprimer", annotations: { readOnlyHint: true }, handler: async () => ({ ok: true }) },
-      ] })],
+      connectors: [
+        api("intl", {
+          description: "Intl",
+          tools: [
+            {
+              name: "Liste des pages",
+              description: "Lister",
+              annotations: { readOnlyHint: true },
+              handler: async () => ({ ok: true }),
+            },
+            {
+              name: "supprimer",
+              description: "Supprimer",
+              annotations: { readOnlyHint: true },
+              handler: async () => ({ ok: true }),
+            },
+          ],
+        }),
+      ],
       auth: users(),
       identity: { connectorAccess: () => ["intl.Liste des pages"] },
       storage: memoryStorage(),
       publicUrl: BASE,
     });
-    const response = await c.fetch(new Request(`${BASE}/mcp`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: "Bearer alice" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search_tools", arguments: { query: "lister supprimer", limit: 20 } } }),
-    }));
+    const response = await c.fetch(
+      new Request(`${BASE}/mcp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+          Authorization: "Bearer alice",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "search_tools", arguments: { query: "lister supprimer", limit: 20 } },
+        }),
+      }),
+    );
     expect(response.status).toBe(200);
     const text = JSON.stringify(await readJsonRpc(response));
     expect(text).toContain("Liste des pages");

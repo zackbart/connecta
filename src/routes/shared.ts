@@ -6,12 +6,7 @@ import type { AdmissionController } from "../executor-admission.js";
 import type { Registry, ToolAccess } from "../registry.js";
 import { parseConnectorAccess } from "../connector-access.js";
 import type { ConnectorAccess, ResolvedPool } from "../connector-access.js";
-import type {
-  AuthenticatedIdentity,
-  Executor,
-  InboundAuth,
-  InboundAuthRuntimeContext,
-} from "../types.js";
+import type { AuthenticatedIdentity, Executor, InboundAuth, InboundAuthRuntimeContext } from "../types.js";
 import { identityStorageKey, validIdentityReference } from "../identity.js";
 import type { ConnectorPermission, ConnectaIdentityConfig, ResolvedConfig } from "../config.js";
 export { msg } from "../errors.js";
@@ -51,10 +46,7 @@ export interface RouteContext {
   runtimeContext: RuntimeExecutionContext | undefined;
 }
 
-export function privateJson(
-  body: unknown,
-  init: ResponseInit = {},
-): Response {
+export function privateJson(body: unknown, init: ResponseInit = {}): Response {
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
   headers.set("Cache-Control", "no-store");
@@ -75,18 +67,13 @@ const MAX_LOGGED_VALUE_LENGTH = 64;
  */
 export function loggableValue(requested: string): string {
   const bounded = requested.slice(0, MAX_LOGGED_VALUE_LENGTH);
-  const escaped = JSON.stringify(bounded).replace(
-    /[\u2028\u2029]/g,
-    (ch) => `\\u${ch.charCodeAt(0).toString(16)}`,
-  );
+  const escaped = JSON.stringify(bounded).replace(/[\u2028\u2029]/g, (ch) => `\\u${ch.charCodeAt(0).toString(16)}`);
   return escaped + (bounded.length < requested.length ? " (truncated)" : "");
 }
 
 const ACTIVITY_ACTOR_NAMESPACE_RE = /^[\x21-\x7e]{1,256}$/;
 
-export function activityActorNamespace(
-  provider: InboundAuth,
-): string | undefined {
+export function activityActorNamespace(provider: InboundAuth): string | undefined {
   return typeof provider.activityActorNamespace === "string" &&
     ACTIVITY_ACTOR_NAMESPACE_RE.test(provider.activityActorNamespace)
     ? provider.activityActorNamespace
@@ -121,10 +108,10 @@ async function providerChallenge(
   }
   const path = new URL(request.url).pathname;
   const pool = /^\/mcp\/([a-z0-9_-]+)$/.exec(path)?.[1];
-  const metadataRequest = new Request(new URL(
-    `/.well-known/oauth-protected-resource${pool ? `/mcp/${pool}` : ""}`,
-    baseUrl,
-  ), { signal: request.signal });
+  const metadataRequest = new Request(
+    new URL(`/.well-known/oauth-protected-resource${pool ? `/mcp/${pool}` : ""}`, baseUrl),
+    { signal: request.signal },
+  );
   const owner = await authMetadata(metadataRequest, baseUrl, auth);
   if (!owner) return response;
   // Metadata is an ordinary bounded response, never retained across requests.
@@ -136,7 +123,11 @@ async function providerChallenge(
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-function recognizedProvider(request: Request, auth: readonly InboundAuth[], runtimeContext?: RuntimeExecutionContext): InboundAuth | undefined {
+function recognizedProvider(
+  request: Request,
+  auth: readonly InboundAuth[],
+  runtimeContext?: RuntimeExecutionContext,
+): InboundAuth | undefined {
   for (const provider of auth) {
     if (!provider.recognizesCredential) continue;
     const recognized = provider.recognizesCredential(request, runtimeContext);
@@ -184,10 +175,23 @@ export async function authorize(
   const credential = authorizationCredential(request);
   const explicit = credential.kind !== "absent";
   if (credential.kind === "invalid") {
-    const challenge = auth.find(provider => provider.kind !== "access_token")?.challenge?.(request, baseUrl) ?? "Bearer";
-    return { ok: false, response: await providerChallenge(privateJson({ error: "unauthorized" }, {
-      status: 401, headers: { "WWW-Authenticate": challenge },
-    }), request, baseUrl, auth) };
+    const challenge =
+      auth.find((provider) => provider.kind !== "access_token")?.challenge?.(request, baseUrl) ?? "Bearer";
+    return {
+      ok: false,
+      response: await providerChallenge(
+        privateJson(
+          { error: "unauthorized" },
+          {
+            status: 401,
+            headers: { "WWW-Authenticate": challenge },
+          },
+        ),
+        request,
+        baseUrl,
+        auth,
+      ),
+    };
   }
   request = authorizationRequest(request);
   if (explicit && runtimeContext) runtimeContext = { waitUntil: runtimeContext.waitUntil.bind(runtimeContext) };
@@ -210,27 +214,53 @@ export async function authorize(
         response: privateJson({ error: "identity access resolution failed" }, { status: 403 }),
       };
     }
-    return { ok: true, actor, identity, ...access, operator: false, accessTokenManagement: false, credentialAdministration: "none", personalConnection: "none" };
+    return {
+      ok: true,
+      actor,
+      identity,
+      ...access,
+      operator: false,
+      accessTokenManagement: false,
+      credentialAdministration: "none",
+      personalConnection: "none",
+    };
   }
   let recognized: InboundAuth | undefined;
   try {
-    recognized = recognizedProvider(request, machineCredential
-      ? auth.filter(provider => provider.kind === "access_token")
-      : auth, runtimeContext);
+    recognized = recognizedProvider(
+      request,
+      machineCredential ? auth.filter((provider) => provider.kind === "access_token") : auth,
+      runtimeContext,
+    );
   } catch {
     return { ok: false, response: privateJson({ error: "credential recognition failed" }, { status: 403 }) };
   }
   if (machineCredential && !recognized) {
-    return { ok: false, response: await providerChallenge(privateJson({ error: "unauthorized" }, {
-      status: 401, headers: { "WWW-Authenticate": "Bearer" },
-    }), request, baseUrl, auth) };
+    return {
+      ok: false,
+      response: await providerChallenge(
+        privateJson(
+          { error: "unauthorized" },
+          {
+            status: 401,
+            headers: { "WWW-Authenticate": "Bearer" },
+          },
+        ),
+        request,
+        baseUrl,
+        auth,
+      ),
+    };
   }
   if (interactiveOnly && recognized && !recognized.interactiveOperator) {
     return { ok: false, response: privateJson({ error: "authenticated user required" }, { status: 403 }) };
   }
   let lastResponse: Response | null = null;
-  const eligible = auth.filter(provider => (!interactiveOnly || provider.interactiveOperator) &&
-    (!explicit || machineCredential || provider.kind !== "access_token" || !provider.recognizesCredential));
+  const eligible = auth.filter(
+    (provider) =>
+      (!interactiveOnly || provider.interactiveOperator) &&
+      (!explicit || machineCredential || provider.kind !== "access_token" || !provider.recognizesCredential),
+  );
   // A header owns one verdict even for adapters without a recognition hook.
   const candidates = recognized ? [recognized] : explicit ? eligible.slice(0, 1) : eligible;
   for (const provider of candidates) {
@@ -241,12 +271,9 @@ export async function authorize(
       }
       const subjectId = result.subjectId ?? result.userId;
       const actorNamespace = activityActorNamespace(provider);
-      const derivedPrincipal = result.userId && actorNamespace
-        ? { namespace: actorNamespace, id: result.userId }
-        : undefined;
-      const principal = validIdentityReference(result.principal)
-        ? result.principal
-        : derivedPrincipal;
+      const derivedPrincipal =
+        result.userId && actorNamespace ? { namespace: actorNamespace, id: result.userId } : undefined;
+      const principal = validIdentityReference(result.principal) ? result.principal : derivedPrincipal;
       const subject = subjectId
         ? { namespace: actorNamespace ?? `connecta:auth:${provider.kind}`, id: subjectId }
         : principal;
@@ -273,31 +300,39 @@ export async function authorize(
       let access: ConnectorAccess;
       try {
         if (identityConfig?.activityAccess) {
-          operator = principal
-            ? await identityConfig.activityAccess(principal)
-            : false;
+          operator = principal ? await identityConfig.activityAccess(principal) : false;
         }
         access = parseConnectorAccess(
           identityConfig?.connectorAccess ? await identityConfig.connectorAccess(identity) : "all",
           { allowReadOnly: true },
         );
         if (interactive) {
-          accessTokenManagement = identityConfig?.accessTokenManagement ? await identityConfig.accessTokenManagement(identity) : false;
+          accessTokenManagement = identityConfig?.accessTokenManagement
+            ? await identityConfig.accessTokenManagement(identity)
+            : false;
           if (typeof accessTokenManagement !== "boolean") throw new Error("invalid token management permission");
-          credentialAdministration = identityConfig?.credentialAdministration ? await identityConfig.credentialAdministration(identity) : "none";
-          personalConnection = principal && identityConfig?.personalConnection ? await identityConfig.personalConnection(identity) : "none";
+          credentialAdministration = identityConfig?.credentialAdministration
+            ? await identityConfig.credentialAdministration(identity)
+            : "none";
+          personalConnection =
+            principal && identityConfig?.personalConnection
+              ? await identityConfig.personalConnection(identity)
+              : "none";
         }
         if (typeof operator !== "boolean") throw new Error("invalid activity permission");
         for (const permission of [credentialAdministration, personalConnection]) {
-          if (permission !== "all" && permission !== "none" && (!Array.isArray(permission) || !permission.every(id => typeof id === "string" && /^[a-z0-9_-]+$/.test(id)))) throw new Error("invalid identity permission");
+          if (
+            permission !== "all" &&
+            permission !== "none" &&
+            (!Array.isArray(permission) ||
+              !permission.every((id) => typeof id === "string" && /^[a-z0-9_-]+$/.test(id)))
+          )
+            throw new Error("invalid identity permission");
         }
       } catch {
         return {
           ok: false,
-          response: privateJson(
-            { error: "identity access resolution failed" },
-            { status: 403 },
-          ),
+          response: privateJson({ error: "identity access resolution failed" }, { status: 403 }),
         };
       }
       return {
@@ -305,12 +340,8 @@ export async function authorize(
         actor,
         identity,
         ...(result.sessionCookies?.length ? { sessionCookies: result.sessionCookies } : {}),
-        ...(subject && partitionIdentity
-          ? { subjectKey: await identityStorageKey(subject) }
-          : {}),
-        ...(principal && partitionIdentity
-          ? { principalKey: await identityStorageKey(principal) }
-          : {}),
+        ...(subject && partitionIdentity ? { subjectKey: await identityStorageKey(subject) } : {}),
+        ...(principal && partitionIdentity ? { principalKey: await identityStorageKey(principal) } : {}),
         ...access,
         accessTokenManagement,
         credentialAdministration,
@@ -324,9 +355,20 @@ export async function authorize(
   }
   return {
     ok: false,
-    response: await providerChallenge(lastResponse ?? privateJson({ error: "unauthorized" }, {
-      status: 401, headers: { "WWW-Authenticate": "Bearer" },
-    }), request, baseUrl, auth, explicit ? candidates[0] : undefined),
+    response: await providerChallenge(
+      lastResponse ??
+        privateJson(
+          { error: "unauthorized" },
+          {
+            status: 401,
+            headers: { "WWW-Authenticate": "Bearer" },
+          },
+        ),
+      request,
+      baseUrl,
+      auth,
+      explicit ? candidates[0] : undefined,
+    ),
   };
 }
 
@@ -339,10 +381,11 @@ export async function authorizeUiIdentity(
   runtimeContext?: RuntimeExecutionContext,
   identityConfig?: ConnectaIdentityConfig,
 ): Promise<Awaited<ReturnType<typeof authorize>>> {
-  if (!auth.some(provider => provider.interactiveOperator)) {
-    return { ok: false, response: privateJson(
-      { error: `${purpose} requires interactive user authentication` }, { status: 403 },
-    ) };
+  if (!auth.some((provider) => provider.interactiveOperator)) {
+    return {
+      ok: false,
+      response: privateJson({ error: `${purpose} requires interactive user authentication` }, { status: 403 }),
+    };
   }
   return authorize(request, baseUrl, auth, runtimeContext, identityConfig, true, true);
 }
@@ -357,11 +400,7 @@ export function isSameOrigin(request: Request, baseUrl: string): boolean {
   }
 }
 
-export function withSecurityHeaders(
-  response: Response,
-  requestUrl: URL,
-  _path: string,
-): Response {
+export function withSecurityHeaders(response: Response, requestUrl: URL, _path: string): Response {
   const headers = response.headers.get("Content-Type")?.toLowerCase().startsWith("text/html")
     ? htmlSecurityHeaders(response.headers)
     : new Headers(response.headers);
@@ -380,17 +419,10 @@ export function withSecurityHeaders(
 type AuthorizedIdentity = Extract<Awaited<ReturnType<typeof authorize>>, { ok: true }>;
 
 /** Unknown configured ids refuse the complete view, including management rights. */
-export function validateAuthPermissions(
-  authz: AuthorizedIdentity,
-  registry: Registry,
-): void {
-  for (const value of [
-    authz.connectorIds,
-    authz.credentialAdministration,
-    authz.personalConnection,
-  ]) {
+export function validateAuthPermissions(authz: AuthorizedIdentity, registry: Registry): void {
+  for (const value of [authz.connectorIds, authz.credentialAdministration, authz.personalConnection]) {
     if (value === "all" || value === "none") continue;
-    if (!Array.isArray(value) || value.some(id => !registry.getConnector(id))) {
+    if (!Array.isArray(value) || value.some((id) => !registry.getConnector(id))) {
       throw new Error("invalid identity permission connector ids");
     }
   }
@@ -404,11 +436,8 @@ export function mayManageConnector(
   if (authz.connectorIds !== "all" && !authz.connectorIds.includes(connector.id)) {
     return false;
   }
-  const permission = connector.authScope === "personal"
-    ? authz.personalConnection
-    : authz.credentialAdministration;
-  return permission === "all" ||
-    (permission !== "none" && permission.includes(connector.id));
+  const permission = connector.authScope === "personal" ? authz.personalConnection : authz.credentialAdministration;
+  return permission === "all" || (permission !== "none" && permission.includes(connector.id));
 }
 
 /** Preserve refreshed browser cookies on the redirect or completion page. */

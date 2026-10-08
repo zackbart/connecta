@@ -19,12 +19,7 @@ function syntaxErrors(signature: string): string[] {
   return diagnostics.map((item) => ts.flattenDiagnosticMessageText(item.messageText, "\n"));
 }
 
-function expectParses(
-  label: string,
-  input: JsonSchema,
-  output: JsonSchema | undefined,
-  observed = false,
-): void {
+function expectParses(label: string, input: JsonSchema, output: JsonSchema | undefined, observed = false): void {
   for (const description of [false, true]) {
     const { text } = typescriptSignature(input, output, { observed, description });
     expect(syntaxErrors(text), `${label} (${description ? "describe" : "search"}): ${text}`).toEqual([]);
@@ -41,7 +36,13 @@ describe("rendered TypeScript signatures parse", () => {
 
   it("parses every Notion tool", async () => {
     const tools = await notion("workspace", { surface: "api", purpose: "Docs" }).listTools({
-      storage: { get: async () => null, set: async () => {}, delete: async () => {}, list: async () => [], compareAndSet: async () => false },
+      storage: {
+        get: async () => null,
+        set: async () => {},
+        delete: async () => {},
+        list: async () => [],
+        compareAndSet: async () => false,
+      },
       logger: silentLogger,
       baseUrl: "https://connecta.test",
       credential: { get: async () => "token", getAll: async () => ({ value: "token" }) },

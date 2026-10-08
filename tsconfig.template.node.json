@@ -16,8 +16,6 @@
       "@zackbart/connecta/quickjs": ["./dist/executors/quickjs.d.ts"]
     }
   },
-  "include": [
-    "templates/node/src/**/*.ts"
-  ],
+  "include": ["templates/node/src/**/*.ts"],
   "exclude": ["node_modules"]
 }

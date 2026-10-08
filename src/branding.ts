@@ -50,9 +50,7 @@ function trimmedString(value: unknown): string | undefined {
   return typeof value === "string" ? value.trim() || undefined : undefined;
 }
 
-export function resolveBranding(
-  branding?: ConnectaBranding,
-): ResolvedBranding {
+export function resolveBranding(branding?: ConnectaBranding): ResolvedBranding {
   const productName = trimmedString(branding?.productName) ?? "Connecta";
   const ownerName = trimmedString(branding?.ownerName);
   // Operator branding URLs become masthead/callback hrefs, so a non-http(s)
@@ -69,13 +67,8 @@ export function resolveBranding(
     description:
       trimmedString(branding?.description) ??
       `Manage the services this ${productName} instance makes available to agents.`,
-    pageTitle:
-      trimmedString(branding?.pageTitle) ??
-      (ownerName ? `${productName} — ${ownerName}` : productName),
-    faviconHref:
-      faviconHref && isSafeIconHref(faviconHref)
-        ? faviconHref
-        : DEFAULT_FAVICON_HREF,
+    pageTitle: trimmedString(branding?.pageTitle) ?? (ownerName ? `${productName} — ${ownerName}` : productName),
+    faviconHref: faviconHref && isSafeIconHref(faviconHref) ? faviconHref : DEFAULT_FAVICON_HREF,
     themeColor: configuredThemeColor(branding) ?? "#ffffff",
     theme: resolveTheme(branding?.theme),
   };
@@ -104,8 +97,7 @@ const FONT_NAME = /^(?:"[a-z0-9 ._-]+"|'[a-z0-9 ._-]+'|[a-z][a-z0-9 ._-]*)$/i;
 function isFontStack(value: string): boolean {
   if (value.length > 200) return false;
   const names = value.split(",");
-  return names.length <= 12 &&
-    names.every((name) => FONT_NAME.test(name.trim()));
+  return names.length <= 12 && names.every((name) => FONT_NAME.test(name.trim()));
 }
 
 const COLOR_SCHEMES = ["system", "light", "dark"] as const;
@@ -140,9 +132,7 @@ export function resolveTheme(theme?: ConnectaTheme): ResolvedTheme {
  */
 function radiusLength(radius: unknown): string | undefined {
   if (typeof radius === "number") {
-    return Number.isFinite(radius) && radius >= 0 && radius <= 999
-      ? `${radius}px`
-      : undefined;
+    return Number.isFinite(radius) && radius >= 0 && radius <= 999 ? `${radius}px` : undefined;
   }
   const value = trimmedString(radius);
   if (!value || !CSS_LENGTH.test(value)) return undefined;
@@ -170,10 +160,7 @@ export function droppedThemeTokens(theme?: ConnectaTheme): string[] {
   }
   // Compared against the trimmed value the resolver reads, so `" dark "` is
   // not reported as dropped when it was applied.
-  if (
-    isSetValue(theme.colorScheme) &&
-    trimmedString(theme.colorScheme) !== resolved.colorScheme
-  ) {
+  if (isSetValue(theme.colorScheme) && trimmedString(theme.colorScheme) !== resolved.colorScheme) {
     dropped.push("colorScheme");
   }
   return dropped.map((token) => `theme.${token}`);
@@ -201,18 +188,12 @@ export function themeCss(theme: ResolvedTheme): string {
  * decides.
  */
 function schemeAttribute(theme: ResolvedTheme): string {
-  return theme.colorScheme === "system"
-    ? ""
-    : ` data-scheme="${theme.colorScheme}"`;
+  return theme.colorScheme === "system" ? "" : ` data-scheme="${theme.colorScheme}"`;
 }
 
 /** Text or attribute value, escaped for any position in an HTML document. */
 export function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
+  return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 /**
@@ -233,8 +214,10 @@ function themeColorMeta(branding: ConnectaBranding | undefined, theme: ResolvedT
   if (theme.colorScheme !== "system") {
     return `<meta name="theme-color" content="${SURFACE[theme.colorScheme]}">`;
   }
-  return `<meta name="theme-color" content="${SURFACE.light}" media="(prefers-color-scheme: light)">\n` +
-    `<meta name="theme-color" content="${SURFACE.dark}" media="(prefers-color-scheme: dark)">`;
+  return (
+    `<meta name="theme-color" content="${SURFACE.light}" media="(prefers-color-scheme: light)">\n` +
+    `<meta name="theme-color" content="${SURFACE.dark}" media="(prefers-color-scheme: dark)">`
+  );
 }
 
 export interface PageLayout {
@@ -283,10 +266,7 @@ export interface PageLayout {
  * Every interpolated branding value is escaped here; `body`, `head`,
  * `mastheadEnd`, and `tail` are the caller's markup and are not.
  */
-export function renderPage(
-  branding: ConnectaBranding | undefined,
-  layout: PageLayout,
-): string {
+export function renderPage(branding: ConnectaBranding | undefined, layout: PageLayout): string {
   const brand = resolveBranding(branding);
   // Top-left corner. With an owner set it reads "<owner> <product>"; without
   // one the product label stands alone. Either half links out when the
@@ -298,23 +278,17 @@ export function renderPage(
   const owner = brand.ownerName
     ? label("brand", brand.ownerName, brand.ownerUrl)
     : label("brand", brand.productName, brand.productUrl);
-  const product = brand.ownerName
-    ? label("product", brand.productName, brand.productUrl)
-    : "";
+  const product = brand.ownerName ? label("product", brand.productName, brand.productUrl) : "";
   const customIcon = brand.faviconHref !== DEFAULT_FAVICON_HREF;
   // `isSafeIconHref` already limited a relative href to one leading slash, so
   // resolving it can only land on `iconOrigin` itself.
   const iconHref = (href: string) =>
-    layout.iconOrigin && href.startsWith("/")
-      ? new URL(href, layout.iconOrigin).toString()
-      : href;
+    layout.iconOrigin && href.startsWith("/") ? new URL(href, layout.iconOrigin).toString() : href;
   const icons = [
     ...(customIcon || layout.uiMounted
       ? [`<link rel="icon" href="${escapeHtml(iconHref(brand.faviconHref))}" type="image/svg+xml">`]
       : []),
-    ...(layout.uiMounted
-      ? [`<link rel="shortcut icon" href="${escapeHtml(iconHref("/favicon.ico"))}">`]
-      : []),
+    ...(layout.uiMounted ? [`<link rel="shortcut icon" href="${escapeHtml(iconHref("/favicon.ico"))}">`] : []),
   ];
   const skip = layout.skipTo
     ? `<a class="skip-link" href="#${escapeHtml(layout.skipTo.id)}">${escapeHtml(layout.skipTo.label)}</a>\n`
@@ -351,9 +325,12 @@ ${layout.body}${layout.tail ? `\n${layout.tail}` : ""}
  */
 export const STATUS_ICONS = {
   ok: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 10.5l3.2 3.2L15 6.8"/></svg>',
-  problem: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M10 5.5v5.5"/><path d="M10 14.6v.1"/></svg>',
-  declined: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 10h8"/></svg>',
-  missing: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="9" r="4.5"/><path d="M12.4 12.4L16 16"/></svg>',
+  problem:
+    '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M10 5.5v5.5"/><path d="M10 14.6v.1"/></svg>',
+  declined:
+    '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 10h8"/></svg>',
+  missing:
+    '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="9" r="4.5"/><path d="M12.4 12.4L16 16"/></svg>',
 } as const;
 
 /**
@@ -415,7 +392,6 @@ export function notFoundResponse(
   );
 }
 
-
 /**
  * Whether the operator meant to supply a value here — the question every
  * dropped-value warning asks before naming a field, and one definition so the
@@ -425,9 +401,7 @@ export function notFoundResponse(
  * from leaving the field alone, and both take the default silently.
  */
 function isSetValue(value: unknown): boolean {
-  return typeof value === "string"
-    ? trimmedString(value) !== undefined
-    : value !== undefined && value !== null;
+  return typeof value === "string" ? trimmedString(value) !== undefined : value !== undefined && value !== null;
 }
 
 /**
@@ -441,16 +415,9 @@ export function droppedBrandingUrls(branding?: ConnectaBranding): string[] {
   const resolved = resolveBranding(branding);
   const faviconHref = branding.favicon?.href;
   return [
-    ...(isSetValue(branding.productUrl) && !resolved.productUrl
-      ? ["productUrl"]
-      : []),
-    ...(isSetValue(branding.ownerUrl) && !resolved.ownerUrl
-      ? ["ownerUrl"]
-      : []),
-    ...(isSetValue(faviconHref) &&
-    trimmedString(faviconHref) !== resolved.faviconHref
-      ? ["favicon.href"]
-      : []),
+    ...(isSetValue(branding.productUrl) && !resolved.productUrl ? ["productUrl"] : []),
+    ...(isSetValue(branding.ownerUrl) && !resolved.ownerUrl ? ["ownerUrl"] : []),
+    ...(isSetValue(faviconHref) && trimmedString(faviconHref) !== resolved.faviconHref ? ["favicon.href"] : []),
   ];
 }
 
@@ -542,11 +509,7 @@ export function droppedUiAuthUrls(uiAuth?: UiAuthConfig): string[] {
   if (!uiAuth || uiAuth.kind !== "clerk") return [];
   return [
     ...(isSafeHttpsUrl(uiAuth.frontendApiUrl) ? [] : ["uiAuth.frontendApiUrl"]),
-    ...(isSetValue(uiAuth.signInUrl) && !isSafeHttpsUrl(uiAuth.signInUrl)
-      ? ["uiAuth.signInUrl"]
-      : []),
-    ...(isSetValue(uiAuth.signUpUrl) && !isSafeHttpsUrl(uiAuth.signUpUrl)
-      ? ["uiAuth.signUpUrl"]
-      : []),
+    ...(isSetValue(uiAuth.signInUrl) && !isSafeHttpsUrl(uiAuth.signInUrl) ? ["uiAuth.signInUrl"] : []),
+    ...(isSetValue(uiAuth.signUpUrl) && !isSafeHttpsUrl(uiAuth.signUpUrl) ? ["uiAuth.signUpUrl"] : []),
   ];
 }

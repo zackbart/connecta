@@ -2,12 +2,11 @@ import { authorizationCredential } from "../inbound-credential.js";
 import type { AuthResult, InboundAuth } from "../types.js";
 import { validIdentityReference } from "../identity.js";
 
-function identityString(
-  identity: Record<string, unknown>,
-  field: string,
-): string | undefined {
+function identityString(identity: Record<string, unknown>, field: string): string | undefined {
   const value = identity[field];
-  return typeof value === "string" && validIdentityReference({ namespace: "cloudflare-access", id: value }) ? value : undefined;
+  return typeof value === "string" && validIdentityReference({ namespace: "cloudflare-access", id: value })
+    ? value
+    : undefined;
 }
 
 function unauthorized(): AuthResult {
@@ -30,7 +29,8 @@ export function cloudflareAccessAuth(): InboundAuth {
   return {
     kind: "cloudflare-access",
     interactiveOperator: true,
-    recognizesCredential: (request, context) => authorizationCredential(request).kind === "absent" && Boolean(context?.access),
+    recognizesCredential: (request, context) =>
+      authorizationCredential(request).kind === "absent" && Boolean(context?.access),
     challenge: () => 'Bearer scope="openid email"',
     activityActorNamespace: "cloudflare-access",
     uiAuth: { kind: "cloudflare-access" },
@@ -49,20 +49,23 @@ export function cloudflareAccessAuth(): InboundAuth {
       // Access binds ctx.access.aud to its Worker application at the edge.
       // Service credentials can pass that edge, but connecta machines must
       // present a cta_ token to the machine provider instead.
-      const forbidden = (): AuthResult => ({ ok: false, response: Response.json(
-        { error: "Cloudflare Access human identity required" }, { status: 403 },
-      ) });
+      const forbidden = (): AuthResult => ({
+        ok: false,
+        response: Response.json({ error: "Cloudflare Access human identity required" }, { status: 403 }),
+      });
       if (!identity || typeof identity !== "object" || Array.isArray(identity)) return forbidden();
       const userId = identityString(identity, "user_uuid") ?? identityString(identity, "email");
-      if (identity.service_token_status === true || identityString(identity, "service_token_id") || identityString(identity, "common_name")) return forbidden();
+      if (
+        identity.service_token_status === true ||
+        identityString(identity, "service_token_id") ||
+        identityString(identity, "common_name")
+      )
+        return forbidden();
 
       if (!userId) {
         return {
           ok: false,
-          response: Response.json(
-            { error: "Cloudflare Access user identity required" },
-            { status: 403 },
-          ),
+          response: Response.json({ error: "Cloudflare Access user identity required" }, { status: 403 }),
         };
       }
       return { ok: true, userId, subjectId: userId };

@@ -39,12 +39,7 @@ import {
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../../errors.js";
-import type {
-  Connector,
-  ConnectorCallAdmissionPolicy,
-  ConnectorContext,
-  JsonSchema,
-} from "../../types.js";
+import type { Connector, ConnectorCallAdmissionPolicy, ConnectorContext, JsonSchema } from "../../types.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { CALL_ADMISSION } from "../../connectors/option-shapes.js";
 import { asProviderFactory } from "../../provider.js";
@@ -234,9 +229,7 @@ export interface CcbOptions {
 type JsonRecord = Record<string, any>;
 
 function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
 
 function asArray(value: unknown): unknown[] {
@@ -244,9 +237,7 @@ function asArray(value: unknown): unknown[] {
 }
 
 function compact<T extends object>(value: T): T {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined && entry !== null),
-  ) as T;
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined && entry !== null)) as T;
 }
 
 /** An object that is empty after compaction reads as absent. */
@@ -283,12 +274,9 @@ const NAMED_ENDPOINTS: Readonly<Record<string, string | ((args: JsonRecord) => s
   list_individual_assignments: "GET /individuals/{id}/assignments",
   list_individual_notes: "GET /individuals/{id}/notes",
   get_giving_metrics: (args) =>
-    args["familyId"] !== undefined
-      ? "GET /families/{id}/metrics/giving"
-      : "GET /individuals/{id}/metrics/giving",
+    args["familyId"] !== undefined ? "GET /families/{id}/metrics/giving" : "GET /individuals/{id}/metrics/giving",
   list_individual_pledges: "GET /individuals/{id}/pledges",
-  ccb_api_search: (args) =>
-    `POST /search/${typeof args["domain"] === "string" ? args["domain"] : "?"}/results`,
+  ccb_api_search: (args) => `POST /search/${typeof args["domain"] === "string" ? args["domain"] : "?"}/results`,
 };
 
 /** `/individuals/123/notes` → `/individuals/{id}/notes`; the key never holds an id. */
@@ -314,18 +302,16 @@ function endpointPartition(toolName: string, raw: unknown): string {
   if (typeof named === "string") key = named;
   else if (named) key = named(args);
   else {
-    const method =
-      toolName === "ccb_api_get"
-        ? "GET"
-        : typeof args["method"] === "string"
-          ? args["method"]
-          : "?";
+    const method = toolName === "ccb_api_get" ? "GET" : typeof args["method"] === "string" ? args["method"] : "?";
     const path = typeof args["path"] === "string" ? args["path"] : "";
     key = `${method} ${pathTemplate(path)}`;
   }
   // ASCII-only after templating in every realistic case; the slice keeps an
   // absurd path inside the admission controller's 128-byte key limit anyway.
-  return [...key].filter((c) => c.charCodeAt(0) < 128).join("").slice(0, MAX_PARTITION_KEY_CHARS);
+  return [...key]
+    .filter((c) => c.charCodeAt(0) < 128)
+    .join("")
+    .slice(0, MAX_PARTITION_KEY_CHARS);
 }
 
 // ---------------------------------------------------------------------------
@@ -376,11 +362,7 @@ function rateLimitWaitMs(headers: Headers, payload: unknown): number | undefined
  * lacks the permission in CCB. CCB answers a permission gap with 403 and an
  * absence with 404, so 404 is a genuine `not_found`.
  */
-function ccbFailure(
-  status: number,
-  headers: Headers,
-  payload: unknown,
-): ConnectorCallError {
+function ccbFailure(status: number, headers: Headers, payload: unknown): ConnectorCallError {
   const detail = errorDetail(payload, status);
   if (status === 429) {
     const wait = rateLimitWaitMs(headers, payload);
@@ -439,26 +421,16 @@ interface CcbResult {
   headers: Headers;
 }
 
-async function callCcb(
-  send: GuardedTransport,
-  request: GuardedRequest,
-  ctx: ConnectorContext,
-): Promise<CcbResult> {
+async function callCcb(send: GuardedTransport, request: GuardedRequest, ctx: ConnectorContext): Promise<CcbResult> {
   return await send(request, ctx, async (response) => {
     const parsed = await response.jsonResult();
     if (!response.ok) {
-      throw ccbFailure(
-        response.status,
-        response.headers,
-        "value" in parsed ? parsed.value : undefined,
-      );
+      throw ccbFailure(response.status, response.headers, "value" in parsed ? parsed.value : undefined);
     }
     if (!("value" in parsed)) {
-      throw new ConnectorCallError(
-        "connector_call_failed",
-        "CCB returned a successful response that is not JSON.",
-        { retryable: false },
-      );
+      throw new ConnectorCallError("connector_call_failed", "CCB returned a successful response that is not JSON.", {
+        retryable: false,
+      });
     }
     return { body: parsed.value, headers: response.headers };
   });
@@ -513,22 +485,26 @@ function pageInfo(headers: Headers, page: number, perPage: number, rows: number)
 
 function phones(value: unknown): JsonRecord | undefined {
   const phone = asRecord(value);
-  return present(compact({
-    mobile: phone["mobile"] || undefined,
-    home: phone["home"] || undefined,
-    work: phone["work"] || undefined,
-  }));
+  return present(
+    compact({
+      mobile: phone["mobile"] || undefined,
+      home: phone["home"] || undefined,
+      work: phone["work"] || undefined,
+    }),
+  );
 }
 
 function address(value: unknown): JsonRecord | undefined {
   const row = asRecord(value);
-  return present(compact({
-    street: row["street"] || undefined,
-    city: row["city"] || undefined,
-    state: row["state"] || undefined,
-    zip: row["zip"] || undefined,
-    country: row["country_iso"] || undefined,
-  }));
+  return present(
+    compact({
+      street: row["street"] || undefined,
+      city: row["city"] || undefined,
+      state: row["state"] || undefined,
+      zip: row["zip"] || undefined,
+      country: row["country_iso"] || undefined,
+    }),
+  );
 }
 
 function projectPerson(value: unknown): JsonRecord {
@@ -570,12 +546,14 @@ function projectIndividual(value: unknown): JsonRecord {
     listed: row["listed"],
     created: row["created"],
     modified: row["modified"],
-    customFields: present(Object.fromEntries(
-      asArray(row["custom_fields"])
-        .map(asRecord)
-        .filter((field) => field["id"] !== undefined)
-        .map((field) => [String(field["id"]), field["value"]]),
-    )),
+    customFields: present(
+      Object.fromEntries(
+        asArray(row["custom_fields"])
+          .map(asRecord)
+          .filter((field) => field["id"] !== undefined)
+          .map((field) => [String(field["id"]), field["value"]]),
+      ),
+    ),
   });
 }
 
@@ -671,11 +649,13 @@ function projectEvent(value: unknown): JsonRecord {
     address: address(row["address"]),
     guestCounts: present(compact({ ...asRecord(row["guest_counts"]) })),
     group: ref(row["group"]),
-    attendance: present(compact({
-      status: attendance["status"],
-      totalAttendance: attendance["total_attendance"],
-      visitors: attendance["visitors"],
-    })),
+    attendance: present(
+      compact({
+        status: attendance["status"],
+        totalAttendance: attendance["total_attendance"],
+        visitors: attendance["visitors"],
+      }),
+    ),
   });
 }
 
@@ -740,9 +720,7 @@ function projectProcess(value: unknown): JsonRecord {
     ownerId: row["owner_id"],
     hidden: row["hidden"],
     archived: row["archived"],
-    managers: Array.isArray(row["process_managers"])
-      ? row["process_managers"].map(ref).filter(Boolean)
-      : undefined,
+    managers: Array.isArray(row["process_managers"]) ? row["process_managers"].map(ref).filter(Boolean) : undefined,
   });
 }
 
@@ -921,88 +899,220 @@ function input(properties: Record<string, JsonSchema>, required: string[] = []):
 
 const PHONES = obj({ mobile: STR, home: STR, work: STR });
 const PERSON_SCHEMA = obj({
-  id: INT, name: STR, firstName: STR, lastName: STR, email: STR, phones: PHONES,
-  birthday: STR, familyId: INT, familyPosition: STR, campusId: INT,
-  membershipTypeId: INT, active: BOOL, deceased: STR,
+  id: INT,
+  name: STR,
+  firstName: STR,
+  lastName: STR,
+  email: STR,
+  phones: PHONES,
+  birthday: STR,
+  familyId: INT,
+  familyPosition: STR,
+  campusId: INT,
+  membershipTypeId: INT,
+  active: BOOL,
+  deceased: STR,
 });
 const ADDRESS = obj({ street: STR, city: STR, state: STR, zip: STR, country: STR });
 const INDIVIDUAL_SCHEMA = obj({
   ...(PERSON_SCHEMA as { properties: Record<string, JsonSchema> }).properties,
-  gender: STR, maritalStatus: STR, homeAddress: ADDRESS, mailingAddress: ADDRESS,
-  campusName: STR, membershipTypeName: STR, membershipDate: STR, baptized: BOOL,
-  lastAttendedDate: STR, listed: BOOL, customFields: { type: "object" },
+  gender: STR,
+  maritalStatus: STR,
+  homeAddress: ADDRESS,
+  mailingAddress: ADDRESS,
+  campusName: STR,
+  membershipTypeName: STR,
+  membershipDate: STR,
+  baptized: BOOL,
+  lastAttendedDate: STR,
+  listed: BOOL,
+  customFields: { type: "object" },
 });
-const FAMILY_SCHEMA = obj({ id: INT, lastName: STR, address: ADDRESS, members: { type: "array", items: PERSON_SCHEMA } });
+const FAMILY_SCHEMA = obj({
+  id: INT,
+  lastName: STR,
+  address: ADDRESS,
+  members: { type: "array", items: PERSON_SCHEMA },
+});
 const REF = obj({ id: INT, name: STR });
 const GROUP_SCHEMA = obj({
-  id: INT, name: STR, campusId: INT, inactive: BOOL, groupType: STR,
-  interactionType: STR, membershipType: STR, mainLeader: REF, departmentId: INT,
+  id: INT,
+  name: STR,
+  campusId: INT,
+  inactive: BOOL,
+  groupType: STR,
+  interactionType: STR,
+  membershipType: STR,
+  mainLeader: REF,
+  departmentId: INT,
 });
 const GROUP_DETAIL_SCHEMA = obj({
   ...(GROUP_SCHEMA as { properties: Record<string, JsonSchema> }).properties,
-  description: STR, memberCount: INT, childcare: BOOL, listed: BOOL, full: BOOL,
-  meetDay: STR, meetTime: STR, area: STR, address: ADDRESS,
+  description: STR,
+  memberCount: INT,
+  childcare: BOOL,
+  listed: BOOL,
+  full: BOOL,
+  meetDay: STR,
+  meetTime: STR,
+  area: STR,
+  address: ADDRESS,
 });
 const MEMBERSHIP_SCHEMA = obj({
-  groupId: INT, individualId: INT, status: STR, dateAdded: STR, name: STR, email: STR,
-  phones: PHONES, groupName: STR, groupType: STR, groupInactive: BOOL,
+  groupId: INT,
+  individualId: INT,
+  status: STR,
+  dateAdded: STR,
+  name: STR,
+  email: STR,
+  phones: PHONES,
+  groupName: STR,
+  groupType: STR,
+  groupInactive: BOOL,
 });
 const OCCURRENCE_SCHEMA = obj({
-  eventId: INT, occurrence: STR, start: STR, end: STR, name: STR, campusId: INT,
-  recurs: BOOL, groupId: INT, groupName: STR,
+  eventId: INT,
+  occurrence: STR,
+  start: STR,
+  end: STR,
+  name: STR,
+  campusId: INT,
+  recurs: BOOL,
+  groupId: INT,
+  groupName: STR,
 });
 const EVENT_SCHEMA = obj({
-  id: INT, name: STR, description: STR, campusId: INT, start: STR, end: STR,
-  recurs: BOOL, recurEndDate: STR, approvalStatus: STR, address: ADDRESS,
-  guestCounts: { type: "object" }, group: REF,
+  id: INT,
+  name: STR,
+  description: STR,
+  campusId: INT,
+  start: STR,
+  end: STR,
+  recurs: BOOL,
+  recurEndDate: STR,
+  approvalStatus: STR,
+  address: ADDRESS,
+  guestCounts: { type: "object" },
+  group: REF,
   attendance: obj({ status: STR, totalAttendance: INT, visitors: INT }),
 });
 const ATTENDANCE_SCHEMA = obj({
-  eventId: INT, occurrence: STR, status: STR, totalAttendance: INT, visitors: INT, topic: STR,
+  eventId: INT,
+  occurrence: STR,
+  status: STR,
+  totalAttendance: INT,
+  visitors: INT,
+  topic: STR,
 });
 const ATTENDEE_SCHEMA = obj({ individualId: INT, name: STR, familyId: INT, occurrenceDate: STR });
 const FORM_SCHEMA = obj({
-  id: INT, title: STR, status: STR, campusId: INT, start: STR, end: STR, public: BOOL, url: STR,
+  id: INT,
+  title: STR,
+  status: STR,
+  campusId: INT,
+  start: STR,
+  end: STR,
+  public: BOOL,
+  url: STR,
 });
 const RESPONSE_SCHEMA = obj({
-  id: INT, formId: INT, individualId: INT, created: STR, paymentStatus: STR,
+  id: INT,
+  formId: INT,
+  individualId: INT,
+  created: STR,
+  paymentStatus: STR,
   answers: { type: "array", items: obj({ questionId: INT, answer: STR }) },
 });
 const PROCESS_SCHEMA = obj({
-  id: INT, name: STR, campusId: INT, ownerId: INT, hidden: BOOL, archived: BOOL,
+  id: INT,
+  name: STR,
+  campusId: INT,
+  ownerId: INT,
+  hidden: BOOL,
+  archived: BOOL,
   managers: { type: "array", items: REF },
 });
 const QUEUE_SCHEMA = obj({
-  id: INT, name: STR, processId: INT, processName: STR, description: STR,
-  assignedCount: INT, unassignedCount: INT,
+  id: INT,
+  name: STR,
+  processId: INT,
+  processName: STR,
+  description: STR,
+  assignedCount: INT,
+  unassignedCount: INT,
 });
 const QUEUE_INDIVIDUAL_SCHEMA = obj({
-  queueIndividualId: INT, queueId: INT, queueName: STR, processId: INT, processName: STR,
-  individualId: INT, name: STR, status: STR, due: STR, created: STR, completed: STR,
+  queueIndividualId: INT,
+  queueId: INT,
+  queueName: STR,
+  processId: INT,
+  processName: STR,
+  individualId: INT,
+  name: STR,
+  status: STR,
+  due: STR,
+  created: STR,
+  completed: STR,
 });
 const CATEGORY_SCHEMA = obj({
-  id: INT, name: STR, campus: REF, organizer: REF, archived: BOOL,
+  id: INT,
+  name: STR,
+  campus: REF,
+  organizer: REF,
+  archived: BOOL,
   teams: { type: "array", items: REF },
 });
 const SCHEDULE_SCHEMA = obj({
-  id: INT, categoryId: INT, name: STR, start: STR, end: STR, needed: INT,
+  id: INT,
+  categoryId: INT,
+  name: STR,
+  start: STR,
+  end: STR,
+  needed: INT,
   events: { type: "array", items: obj({ id: INT, name: STR, start: STR, end: STR }) },
   metrics: { type: "object" },
 });
 const ASSIGNMENT_SCHEMA = obj({
-  id: INT, categoryId: INT, scheduleId: INT, eventId: INT, eventPositionId: INT,
-  status: STR, statusReason: STR, dateNotified: STR, individualId: INT, name: STR,
+  id: INT,
+  categoryId: INT,
+  scheduleId: INT,
+  eventId: INT,
+  eventPositionId: INT,
+  status: STR,
+  statusReason: STR,
+  dateNotified: STR,
+  individualId: INT,
+  name: STR,
 });
 const NOTE_SCHEMA = obj({
-  id: INT, individualId: INT, note: STR, date: STR, sharingLevel: STR,
-  context: STR, contextId: INT, creator: REF,
+  id: INT,
+  individualId: INT,
+  note: STR,
+  date: STR,
+  sharingLevel: STR,
+  context: STR,
+  contextId: INT,
+  creator: REF,
 });
 const PLEDGE_SCHEMA = obj({
-  id: INT, campusId: INT, fund: STR, pledged: { type: "number" }, paid: { type: "number" },
-  expected: { type: "number" }, total: { type: "number" }, frequency: STR, start: STR, end: STR,
+  id: INT,
+  campusId: INT,
+  fund: STR,
+  pledged: { type: "number" },
+  paid: { type: "number" },
+  expected: { type: "number" },
+  total: { type: "number" },
+  frequency: STR,
+  start: STR,
+  end: STR,
 });
 const ME_SCHEMA = obj({
-  id: INT, name: STR, email: STR, username: STR, familyId: INT, campusId: INT,
+  id: INT,
+  name: STR,
+  email: STR,
+  username: STR,
+  familyId: INT,
+  campusId: INT,
   userTypes: { type: "array", items: STR },
 });
 
@@ -1066,10 +1176,7 @@ function hatchPath(value: unknown): string {
     // An unparseable path is refused by the transport's own confinement.
   }
   if (/^\/+oauth(\/|$)/i.test(path) || /^\/+oauth(\/|$)/i.test(resolved)) {
-    throw new ConnectorCallError(
-      "invalid_args",
-      "CCB /oauth paths belong to the connector's grant, not to API calls.",
-    );
+    throw new ConnectorCallError("invalid_args", "CCB /oauth paths belong to the connector's grant, not to API calls.");
   }
   return path;
 }
@@ -1112,11 +1219,7 @@ const DAY_MS = 86_400_000;
 // Tools
 // ---------------------------------------------------------------------------
 
-function tools(
-  send: GuardedTransport,
-  defaultPerPage: number,
-  writable: boolean,
-): ApiTool[] {
+function tools(send: GuardedTransport, defaultPerPage: number, writable: boolean): ApiTool[] {
   const readOnly = { readOnlyHint: true } as const;
   const perPage = perPageProperty(defaultPerPage);
 
@@ -1182,10 +1285,19 @@ function tools(
         "Find CCB individuals by partial name, phone, or email. Returns lean profiles with family and campus ids; not the advanced search.",
       annotations: readOnly,
       inputSchema: input({
-        query: { type: "string", minLength: 1, maxLength: 200, description: "Partial name, phone number, or email. Omit to page everyone." },
+        query: {
+          type: "string",
+          minLength: 1,
+          maxLength: 200,
+          description: "Partial name, phone number, or email. Omit to page everyone.",
+        },
         includeInactive: { type: "boolean", description: "Include inactive individuals." },
         includeDeceased: { type: "boolean", description: "Include deceased individuals." },
-        campusScope: { type: "string", enum: ["all", "current", "other"], description: "Campuses to search relative to the connection's own." },
+        campusScope: {
+          type: "string",
+          enum: ["all", "current", "other"],
+          description: "Campuses to search relative to the connection's own.",
+        },
         page: PAGE,
         perPage,
         raw: RAW,
@@ -1204,7 +1316,9 @@ function tools(
       description:
         "Get one CCB individual's profile: contact, addresses, membership, and custom fields. CCB allows one call a second; prefer list_individuals for many people.",
       annotations: readOnly,
-      inputSchema: input({ individualId: idProperty("Individual id from list_individuals."), raw: RAW }, ["individualId"]),
+      inputSchema: input({ individualId: idProperty("Individual id from list_individuals."), raw: RAW }, [
+        "individualId",
+      ]),
       outputSchema: INDIVIDUAL_SCHEMA,
       handler: (args, ctx) => one(`/individuals/${id(args["individualId"])}`, args, ctx, projectIndividual),
     },
@@ -1233,12 +1347,15 @@ function tools(
       name: "get_family",
       description: "Get one CCB family with every member's lean profile and family position.",
       annotations: readOnly,
-      inputSchema: input({
-        familyId: idProperty("Family id from an individual's familyId or list_families."),
-        includeInactive: { type: "boolean", description: "Include inactive members." },
-        includeDeceased: { type: "boolean", description: "Include deceased members." },
-        raw: RAW,
-      }, ["familyId"]),
+      inputSchema: input(
+        {
+          familyId: idProperty("Family id from an individual's familyId or list_families."),
+          includeInactive: { type: "boolean", description: "Include inactive members." },
+          includeDeceased: { type: "boolean", description: "Include deceased members." },
+          raw: RAW,
+        },
+        ["familyId"],
+      ),
       outputSchema: FAMILY_SCHEMA,
       handler: (args, ctx) =>
         one(`/families/${id(args["familyId"])}`, args, ctx, projectFamily, {
@@ -1248,7 +1365,8 @@ function tools(
     },
     {
       name: "list_groups",
-      description: "List or search CCB groups by partial name, optionally for one campus. Returns group type, leader, and membership mode.",
+      description:
+        "List or search CCB groups by partial name, optionally for one campus. Returns group type, leader, and membership mode.",
       annotations: readOnly,
       inputSchema: input({
         name: { type: "string", minLength: 1, maxLength: 200, description: "Partial group name." },
@@ -1274,16 +1392,20 @@ function tools(
     },
     {
       name: "list_group_members",
-      description: "List one CCB group's participants with role and date added. Filter by leader or member status, or partial name.",
+      description:
+        "List one CCB group's participants with role and date added. Filter by leader or member status, or partial name.",
       annotations: readOnly,
-      inputSchema: input({
-        groupId: idProperty("Group id from list_groups."),
-        status: { type: "string", enum: ["all", "leader", "member"], description: "Participant role filter." },
-        name: { type: "string", minLength: 1, maxLength: 200, description: "Partial participant name." },
-        page: PAGE,
-        perPage,
-        raw: RAW,
-      }, ["groupId"]),
+      inputSchema: input(
+        {
+          groupId: idProperty("Group id from list_groups."),
+          status: { type: "string", enum: ["all", "leader", "member"], description: "Participant role filter." },
+          name: { type: "string", minLength: 1, maxLength: 200, description: "Partial participant name." },
+          page: PAGE,
+          perPage,
+          raw: RAW,
+        },
+        ["groupId"],
+      ),
       outputSchema: listOutput("members", MEMBERSHIP_SCHEMA),
       handler: (args, ctx) =>
         list(`/groups/${id(args["groupId"])}/members`, args, ctx, "members", projectMembership, {
@@ -1293,15 +1415,19 @@ function tools(
     },
     {
       name: "list_individual_groups",
-      description: "List the CCB groups one individual belongs to, with their role. Defaults to member and leader roles.",
+      description:
+        "List the CCB groups one individual belongs to, with their role. Defaults to member and leader roles.",
       annotations: readOnly,
-      inputSchema: input({
-        individualId: idProperty("Individual id."),
-        includeInactive: { type: "boolean", description: "List inactive groups instead of active ones." },
-        page: PAGE,
-        perPage,
-        raw: RAW,
-      }, ["individualId"]),
+      inputSchema: input(
+        {
+          individualId: idProperty("Individual id."),
+          includeInactive: { type: "boolean", description: "List inactive groups instead of active ones." },
+          page: PAGE,
+          perPage,
+          raw: RAW,
+        },
+        ["individualId"],
+      ),
       outputSchema: listOutput("groups", MEMBERSHIP_SCHEMA),
       handler: (args, ctx) =>
         list(`/individuals/${id(args["individualId"])}/groups`, args, ctx, "groups", projectMembership, {
@@ -1310,11 +1436,16 @@ function tools(
     },
     {
       name: "list_events",
-      description: "List CCB event occurrences by name and time range. Each row's eventId and occurrence feed the attendance tools.",
+      description:
+        "List CCB event occurrences by name and time range. Each row's eventId and occurrence feed the attendance tools.",
       annotations: readOnly,
       inputSchema: input({
         name: { type: "string", minLength: 1, maxLength: 200, description: "Partial event name." },
-        range: { type: "string", enum: ["ALL", "PAST", "CURRENT", "FUTURE"], description: "Time range relative to now." },
+        range: {
+          type: "string",
+          enum: ["ALL", "PAST", "CURRENT", "FUTURE"],
+          description: "Time range relative to now.",
+        },
         page: PAGE,
         perPage,
         raw: RAW,
@@ -1330,12 +1461,15 @@ function tools(
       name: "get_event",
       description: "Get one CCB event's details, optionally for one occurrence with its attendance totals.",
       annotations: readOnly,
-      inputSchema: input({
-        eventId: idProperty("Event id from list_events."),
-        occurrence: { ...OCCURRENCE, description: "Occurrence date, YYYYMMDD or YYYY-MM-DD. Omit for the series." },
-        withAttendance: { type: "boolean", description: "Add attendance totals for the occurrence." },
-        raw: RAW,
-      }, ["eventId"]),
+      inputSchema: input(
+        {
+          eventId: idProperty("Event id from list_events."),
+          occurrence: { ...OCCURRENCE, description: "Occurrence date, YYYYMMDD or YYYY-MM-DD. Omit for the series." },
+          withAttendance: { type: "boolean", description: "Add attendance totals for the occurrence." },
+          raw: RAW,
+        },
+        ["eventId"],
+      ),
       outputSchema: EVENT_SCHEMA,
       handler: (args, ctx) =>
         one(`/events/${id(args["eventId"])}`, args, ctx, projectEvent, {
@@ -1345,29 +1479,52 @@ function tools(
     },
     {
       name: "get_event_attendance",
-      description: "Get one CCB event occurrence's attendance summary: met or not, totals, visitors, topic. Drops leader notes and prayer requests unless raw.",
+      description:
+        "Get one CCB event occurrence's attendance summary: met or not, totals, visitors, topic. Drops leader notes and prayer requests unless raw.",
       annotations: readOnly,
-      inputSchema: input({ eventId: idProperty("Event id from list_events."), occurrence: OCCURRENCE, raw: RAW }, ["eventId", "occurrence"]),
+      inputSchema: input({ eventId: idProperty("Event id from list_events."), occurrence: OCCURRENCE, raw: RAW }, [
+        "eventId",
+        "occurrence",
+      ]),
       outputSchema: ATTENDANCE_SCHEMA,
       handler: (args, ctx) =>
-        one(`/events/${id(args["eventId"])}/attendance/${compactDate(args["occurrence"])}`, args, ctx, projectAttendance),
+        one(
+          `/events/${id(args["eventId"])}/attendance/${compactDate(args["occurrence"])}`,
+          args,
+          ctx,
+          projectAttendance,
+        ),
     },
     {
       name: "list_event_attendees",
       description: "List who attended one CCB event occurrence. Returns individual ids and names.",
       annotations: readOnly,
-      inputSchema: input({ eventId: idProperty("Event id from list_events."), occurrence: OCCURRENCE, page: PAGE, perPage, raw: RAW }, ["eventId", "occurrence"]),
+      inputSchema: input(
+        { eventId: idProperty("Event id from list_events."), occurrence: OCCURRENCE, page: PAGE, perPage, raw: RAW },
+        ["eventId", "occurrence"],
+      ),
       outputSchema: listOutput("attendees", ATTENDEE_SCHEMA),
       handler: (args, ctx) =>
-        list(`/events/${id(args["eventId"])}/attendance/${compactDate(args["occurrence"])}/attendees`, args, ctx, "attendees", projectAttendee),
+        list(
+          `/events/${id(args["eventId"])}/attendance/${compactDate(args["occurrence"])}/attendees`,
+          args,
+          ctx,
+          "attendees",
+          projectAttendee,
+        ),
     },
     {
       name: "list_forms",
-      description: "List or search CCB forms by partial title, status, or campus. Returns form ids for list_form_responses.",
+      description:
+        "List or search CCB forms by partial title, status, or campus. Returns form ids for list_form_responses.",
       annotations: readOnly,
       inputSchema: input({
         title: { type: "string", minLength: 1, maxLength: 200, description: "Partial form title." },
-        status: { type: "string", enum: ["ACTIVE", "SCHEDULED", "UNPUBLISHED", "EXPIRED", "ARCHIVED"], description: "Form status." },
+        status: {
+          type: "string",
+          enum: ["ACTIVE", "SCHEDULED", "UNPUBLISHED", "EXPIRED", "ARCHIVED"],
+          description: "Form status.",
+        },
         campusId: idProperty("Only forms at this campus."),
         page: PAGE,
         perPage,
@@ -1383,7 +1540,8 @@ function tools(
     },
     {
       name: "list_form_responses",
-      description: "List one CCB form's responses with answers by question id and payment status. Drops payment details unless raw.",
+      description:
+        "List one CCB form's responses with answers by question id and payment status. Drops payment details unless raw.",
       annotations: readOnly,
       inputSchema: input({ formId: idProperty("Form id from list_forms."), page: PAGE, perPage, raw: RAW }, ["formId"]),
       outputSchema: listOutput("responses", RESPONSE_SCHEMA),
@@ -1391,7 +1549,8 @@ function tools(
     },
     {
       name: "list_processes",
-      description: "List CCB processes (assimilation and follow-up pipelines) by name or status. Returns process ids for list_queues.",
+      description:
+        "List CCB processes (assimilation and follow-up pipelines) by name or status. Returns process ids for list_queues.",
       annotations: readOnly,
       inputSchema: input({
         name: { type: "string", minLength: 1, maxLength: 200, description: "Process name search." },
@@ -1429,10 +1588,15 @@ function tools(
     },
     {
       name: "list_queue_individuals",
-      description: "List people in CCB process queues the connection can see, by status or assignment. CCB offers no per-queue filter here; filter on queueId.",
+      description:
+        "List people in CCB process queues the connection can see, by status or assignment. CCB offers no per-queue filter here; filter on queueId.",
       annotations: readOnly,
       inputSchema: input({
-        status: { type: "string", enum: ["NOT_STARTED", "WAITING", "IN_PROCESS", "DONE"], description: "Queue status." },
+        status: {
+          type: "string",
+          enum: ["NOT_STARTED", "WAITING", "IN_PROCESS", "DONE"],
+          description: "Queue status.",
+        },
         assignment: { type: "string", enum: ["ASSIGNED_TO_ME", "UNASSIGNED"], description: "Omit for both." },
         page: PAGE,
         perPage,
@@ -1447,18 +1611,27 @@ function tools(
     },
     {
       name: "list_scheduling_categories",
-      description: "List CCB scheduling categories (serving ministries) with teams and organizer. Category ids feed list_schedules.",
+      description:
+        "List CCB scheduling categories (serving ministries) with teams and organizer. Category ids feed list_schedules.",
       annotations: readOnly,
       inputSchema: input({
         search: { type: "string", minLength: 1, maxLength: 200, description: "Category name search." },
-        status: { type: "string", enum: ["ACTIVE", "ARCHIVED", "ACTIVE_AND_ARCHIVED"], description: "Defaults to CCB's own (active)." },
+        status: {
+          type: "string",
+          enum: ["ACTIVE", "ARCHIVED", "ACTIVE_AND_ARCHIVED"],
+          description: "Defaults to CCB's own (active).",
+        },
         raw: RAW,
       }),
       outputSchema: rowsOutput("categories", CATEGORY_SCHEMA),
       handler: async (args, ctx) => {
         const { body } = await callCcb(
           send,
-          { method: "GET", path: "/scheduling/categories", query: { search_term: args["search"], status: args["status"] } },
+          {
+            method: "GET",
+            path: "/scheduling/categories",
+            query: { search_term: args["search"], status: args["status"] },
+          },
           ctx,
         );
         const rows = Array.isArray(body) ? body : body && typeof body === "object" ? [body] : [];
@@ -1467,16 +1640,20 @@ function tools(
     },
     {
       name: "list_schedules",
-      description: "List one CCB scheduling category's schedules with events and assignment metrics. CCB allows one call per two seconds here.",
+      description:
+        "List one CCB scheduling category's schedules with events and assignment metrics. CCB allows one call per two seconds here.",
       annotations: readOnly,
-      inputSchema: input({
-        categoryId: idProperty("Category id from list_scheduling_categories."),
-        after: dateProperty("Only schedules ending after this date, YYYY-MM-DD."),
-        before: dateProperty("Only schedules ending before this date, YYYY-MM-DD."),
-        page: PAGE,
-        perPage,
-        raw: RAW,
-      }, ["categoryId"]),
+      inputSchema: input(
+        {
+          categoryId: idProperty("Category id from list_scheduling_categories."),
+          after: dateProperty("Only schedules ending after this date, YYYY-MM-DD."),
+          before: dateProperty("Only schedules ending before this date, YYYY-MM-DD."),
+          page: PAGE,
+          perPage,
+          raw: RAW,
+        },
+        ["categoryId"],
+      ),
       outputSchema: listOutput("schedules", SCHEDULE_SCHEMA),
       handler: (args, ctx) =>
         list(`/scheduling/categories/${id(args["categoryId"])}/schedules`, args, ctx, "schedules", projectSchedule, {
@@ -1489,14 +1666,17 @@ function tools(
       name: "list_individual_assignments",
       description: "List one CCB individual's serving assignments with status, schedule, and event ids.",
       annotations: readOnly,
-      inputSchema: input({
-        individualId: idProperty("Individual id."),
-        startDate: dateProperty("Earliest assignment date, YYYY-MM-DD."),
-        endDate: dateProperty("Latest assignment date, YYYY-MM-DD."),
-        page: PAGE,
-        perPage,
-        raw: RAW,
-      }, ["individualId"]),
+      inputSchema: input(
+        {
+          individualId: idProperty("Individual id."),
+          startDate: dateProperty("Earliest assignment date, YYYY-MM-DD."),
+          endDate: dateProperty("Latest assignment date, YYYY-MM-DD."),
+          page: PAGE,
+          perPage,
+          raw: RAW,
+        },
+        ["individualId"],
+      ),
       outputSchema: listOutput("assignments", ASSIGNMENT_SCHEMA),
       // The spec declares start_date and end_date as this GET's request body
       // (getIndividualAssignments), which fetch cannot send; they ride the
@@ -1509,15 +1689,23 @@ function tools(
     },
     {
       name: "list_individual_notes",
-      description: "List the notes on one CCB individual that the connection may read, with sharing level and context. Pastoral content; reduce before returning.",
+      description:
+        "List the notes on one CCB individual that the connection may read, with sharing level and context. Pastoral content; reduce before returning.",
       annotations: readOnly,
-      inputSchema: input({
-        individualId: idProperty("Individual id."),
-        context: { type: "string", enum: ["GROUP", "DEPARTMENT", "PROCESS_QUEUE", "GENERAL"], description: "Only notes in this context." },
-        page: PAGE,
-        perPage,
-        raw: RAW,
-      }, ["individualId"]),
+      inputSchema: input(
+        {
+          individualId: idProperty("Individual id."),
+          context: {
+            type: "string",
+            enum: ["GROUP", "DEPARTMENT", "PROCESS_QUEUE", "GENERAL"],
+            description: "Only notes in this context.",
+          },
+          page: PAGE,
+          perPage,
+          raw: RAW,
+        },
+        ["individualId"],
+      ),
       outputSchema: listOutput("notes", NOTE_SCHEMA),
       handler: (args, ctx) =>
         list(`/individuals/${id(args["individualId"])}/notes`, args, ctx, "notes", projectNote, {
@@ -1527,7 +1715,8 @@ function tools(
     },
     {
       name: "get_giving_metrics",
-      description: "Get gift counts by period for one CCB individual or family, over at most 12 months. Counts only; v2 exposes no amounts or transactions.",
+      description:
+        "Get gift counts by period for one CCB individual or family, over at most 12 months. Counts only; v2 exposes no amounts or transactions.",
       annotations: readOnly,
       inputSchema: input({
         individualId: idProperty("Individual id. Exactly one of individualId or familyId."),
@@ -1539,7 +1728,11 @@ function tools(
       outputSchema: obj({
         periods: {
           type: "array",
-          items: obj({ start: STR, count: INT, members: { type: "array", items: obj({ individualId: INT, count: INT }) } }),
+          items: obj({
+            start: STR,
+            count: INT,
+            members: { type: "array", items: obj({ individualId: INT, count: INT }) },
+          }),
         },
       }),
       handler: async (args, ctx) => {
@@ -1552,12 +1745,19 @@ function tools(
           typeof args["end"] === "string" &&
           Date.parse(args["end"]) - Date.parse(args["start"]) > 366 * DAY_MS
         ) {
-          throw new ConnectorCallError("invalid_args", "CCB caps giving metrics at a 12-month range; narrow start and end.");
+          throw new ConnectorCallError(
+            "invalid_args",
+            "CCB caps giving metrics at a 12-month range; narrow start and end.",
+          );
         }
         const path = individual
           ? `/individuals/${id(args["individualId"])}/metrics/giving`
           : `/families/${id(args["familyId"])}/metrics/giving`;
-        const { body } = await callCcb(send, { method: "GET", path, query: { start: args["start"], end: args["end"] } }, ctx);
+        const { body } = await callCcb(
+          send,
+          { method: "GET", path, query: { start: args["start"], end: args["end"] } },
+          ctx,
+        );
         const rows = asArray(body);
         if (args["raw"] === true) return { periods: rows };
         return {
@@ -1581,9 +1781,12 @@ function tools(
       name: "list_individual_pledges",
       description: "List one CCB individual's pledges: fund, pledged, paid, and expected amounts, and recurrence.",
       annotations: readOnly,
-      inputSchema: input({ individualId: idProperty("Individual id."), page: PAGE, perPage, raw: RAW }, ["individualId"]),
+      inputSchema: input({ individualId: idProperty("Individual id."), page: PAGE, perPage, raw: RAW }, [
+        "individualId",
+      ]),
       outputSchema: listOutput("pledges", PLEDGE_SCHEMA),
-      handler: (args, ctx) => list(`/individuals/${id(args["individualId"])}/pledges`, args, ctx, "pledges", projectPledge),
+      handler: (args, ctx) =>
+        list(`/individuals/${id(args["individualId"])}/pledges`, args, ctx, "pledges", projectPledge),
     },
   ];
 
@@ -1597,14 +1800,19 @@ function tools(
       outputSchema: RESULT_OUTPUT,
       handler: async (args, ctx) => {
         const scalars = hatchQuery(args["query"]);
-        const { body, headers } = await callCcb(send, { method: "GET", path: hatchPath(args["path"]), query: scalars }, ctx);
+        const { body, headers } = await callCcb(
+          send,
+          { method: "GET", path: hatchPath(args["path"]), query: scalars },
+          ctx,
+        );
         const page = typeof scalars["page"] === "number" ? scalars["page"] : 1;
         const per = typeof scalars["per_page"] === "number" ? scalars["per_page"] : DEFAULT_PER_PAGE;
         return defined({
           result: body ?? null,
-          page: Array.isArray(body) && (headers.has("x-page") || headers.has("x-next-page"))
-            ? pageInfo(headers, page, per, body.length)
-            : undefined,
+          page:
+            Array.isArray(body) && (headers.has("x-page") || headers.has("x-next-page"))
+              ? pageInfo(headers, page, per, body.length)
+              : undefined,
         });
       },
     },
@@ -1613,22 +1821,25 @@ function tools(
       description:
         "Run a CCB advanced search (POST /search/{domain}/results) and return untouched rows. Read-only; individuals allows one call per five seconds.",
       annotations: readOnly,
-      inputSchema: input({
-        // A pattern, not an enum: fifteen domain names render past the
-        // 256-byte annotation budget and would truncate the whole tool in
-        // search (H7). The handler refuses anything outside the list.
-        domain: {
-          type: "string",
-          pattern: "^[a-z_]{1,40}$",
-          description: `Search domain: ${SEARCH_DOMAINS.join(", ")}.`,
+      inputSchema: input(
+        {
+          // A pattern, not an enum: fifteen domain names render past the
+          // 256-byte annotation budget and would truncate the whole tool in
+          // search (H7). The handler refuses anything outside the list.
+          domain: {
+            type: "string",
+            pattern: "^[a-z_]{1,40}$",
+            description: `Search domain: ${SEARCH_DOMAINS.join(", ")}.`,
+          },
+          body: {
+            type: "object",
+            description: "Search body as CCB documents it for the domain, e.g. { configuration, filters }.",
+          },
+          page: PAGE,
+          perPage,
         },
-        body: {
-          type: "object",
-          description: "Search body as CCB documents it for the domain, e.g. { configuration, filters }.",
-        },
-        page: PAGE,
-        perPage,
-      }, ["domain", "body"]),
+        ["domain", "body"],
+      ),
       outputSchema: RESULT_OUTPUT,
       handler: async (args, ctx) => {
         if (!(SEARCH_DOMAINS as readonly string[]).includes(args["domain"])) {
@@ -1657,15 +1868,22 @@ function tools(
       description:
         "Call any CCB v2 JSON POST, PUT, PATCH, or DELETE endpoint. The approval-gated hatch for every write; no file uploads.",
       annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: input({
-        method: { type: "string", enum: ["POST", "PUT", "PATCH", "DELETE"], description: "HTTP method the endpoint documents." },
-        path: HATCH_PATH,
-        query: QUERY,
-        body: {
-          type: ["object", "array", "string", "number", "boolean", "null"],
-          description: "JSON body exactly as CCB documents it. Omit when the endpoint takes none.",
+      inputSchema: input(
+        {
+          method: {
+            type: "string",
+            enum: ["POST", "PUT", "PATCH", "DELETE"],
+            description: "HTTP method the endpoint documents.",
+          },
+          path: HATCH_PATH,
+          query: QUERY,
+          body: {
+            type: ["object", "array", "string", "number", "boolean", "null"],
+            description: "JSON body exactly as CCB documents it. Omit when the endpoint takes none.",
+          },
         },
-      }, ["method", "path"]),
+        ["method", "path"],
+      ),
       outputSchema: RESULT_OUTPUT,
       handler: async (args, ctx) => {
         const { body } = await callCcb(
@@ -1754,12 +1972,21 @@ function defaultTitle(environment: CcbEnvironment, mode: CcbMode, writable: bool
   return `Pushpay ChMS (CCB)${qualifiers.length ? ` — ${qualifiers.join(", ")}` : ""}`;
 }
 
-
 /** The closed options ccb() accepts; see `assertKnownOptions`. */
 const CCB_OPTIONS = optionsOf<CcbOptions>()({
   ...keys(
-    "purpose", "title", "instructions", "environment", "mode", "clientId", "clientSecret",
-    "access", "scopes", "subdomain", "defaultPerPage", "maxResultBytes",
+    "purpose",
+    "title",
+    "instructions",
+    "environment",
+    "mode",
+    "clientId",
+    "clientSecret",
+    "access",
+    "scopes",
+    "subdomain",
+    "defaultPerPage",
+    "maxResultBytes",
   ),
   callAdmission: CALL_ADMISSION,
 });
@@ -1770,7 +1997,12 @@ export const ccb = asProviderFactory<CcbOptions>({
   title: "Church Community Builder",
   kind: "api",
   readme: "Church Community Builder",
-  bundle: {"baselineGzip":120479,"maxGzip":180479,"note":"./providers/ccb starts at 120,479 B gzip: the hand-written surface plus api()'s static OAuth grant over the SDK's auth client, with no remoteMcp() transport. The cap uses the baseline + 60,000 B policy."},
+  bundle: {
+    "baselineGzip": 120479,
+    "maxGzip": 180479,
+    "note":
+      "./providers/ccb starts at 120,479 B gzip: the hand-written surface plus api()'s static OAuth grant over the SDK's auth client, with no remoteMcp() transport. The cap uses the baseline + 60,000 B policy.",
+  },
   skill,
   options: CCB_OPTIONS,
   create: ccbConnector,

@@ -40,13 +40,14 @@ function shapeConnector(tool: ToolDef, values: unknown[]): Connector {
 async function invokeOnce(
   registry: ReturnType<typeof makeRegistry>,
 ): Promise<Awaited<ReturnType<InvocationService["invoke"]>>> {
-  return new InvocationService(
-    registry,
-    new CatalogService(registry, BASE),
-  ).invoke("linear.list_issues", { limit: 1 }, {
-    source: "call_tool",
-    unwrapResult: true,
-  });
+  return new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+    "linear.list_issues",
+    { limit: 1 },
+    {
+      source: "call_tool",
+      unwrapResult: true,
+    },
+  );
 }
 
 describe("observed output schemas", () => {
@@ -188,9 +189,7 @@ describe("observed output schemas", () => {
     shapes.observe("linear", tool, second);
 
     const schema = required(shapes.get("linear", tool));
-    const properties = required(
-      schema.properties as Record<string, JsonSchema> | undefined,
-    );
+    const properties = required(schema.properties as Record<string, JsonSchema> | undefined);
     expect(Object.keys(properties).length).toBeLessThanOrEqual(48);
     expect(properties["x".repeat(129)]).toBeUndefined();
     expect(Object.hasOwn(properties, "__proto__")).toBe(false);
@@ -257,17 +256,11 @@ describe("observed output schemas", () => {
       const tool = shapeTool({ name: `tool_${index}` });
       shapes.observe("linear", tool, { index });
     }
-    expect(
-      shapes.get("linear", shapeTool({ name: "tool_0" })),
-    ).toBeDefined();
+    expect(shapes.get("linear", shapeTool({ name: "tool_0" }))).toBeDefined();
     const newest = shapeTool({ name: "tool_256" });
     shapes.observe("linear", newest, { index: 256 });
-    expect(
-      shapes.get("linear", shapeTool({ name: "tool_1" })),
-    ).toBeUndefined();
-    expect(
-      shapes.get("linear", shapeTool({ name: "tool_0" })),
-    ).toBeDefined();
+    expect(shapes.get("linear", shapeTool({ name: "tool_1" }))).toBeUndefined();
+    expect(shapes.get("linear", shapeTool({ name: "tool_0" }))).toBeDefined();
     const first = required(shapes.get("linear", newest));
     (first.properties as Record<string, unknown>).poisoned = {
       type: "boolean",
@@ -281,9 +274,7 @@ describe("observed output schemas", () => {
   it("adds an explicitly observed shape to later search and describe calls", async () => {
     const tool = shapeTool();
     const registry = makeRegistry([
-      shapeConnector(tool, [
-        { cursor: "next", issues: [{ id: "one", title: "First" }] },
-      ]),
+      shapeConnector(tool, [{ cursor: "next", issues: [{ id: "one", title: "First" }] }]),
     ]);
     const catalog = new CatalogService(registry, BASE);
 
@@ -339,13 +330,14 @@ describe("observed output schemas", () => {
       },
     };
     const registry = makeRegistry([connector]);
-    const outcome = await new InvocationService(
-      registry,
-      new CatalogService(registry, BASE),
-    ).invoke("linear.list_issues", {}, {
-      source: "call_tool",
-      unwrapResult: false,
-    });
+    const outcome = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+      "linear.list_issues",
+      {},
+      {
+        source: "call_tool",
+        unwrapResult: false,
+      },
+    );
     expect(outcome.ok).toBe(true);
 
     const page = await new CatalogService(registry, BASE).search({
@@ -389,9 +381,7 @@ describe("observed output schemas", () => {
       additionalProperties: false,
     };
     const tool = shapeTool({ outputSchema: declaredSchema });
-    const registry = makeRegistry([
-      shapeConnector(tool, [{ actual: "different" }]),
-    ]);
+    const registry = makeRegistry([shapeConnector(tool, [{ actual: "different" }])]);
     expect((await invokeOnce(registry)).ok).toBe(true);
 
     const page = await new CatalogService(registry, BASE).search({
@@ -401,8 +391,6 @@ describe("observed output schemas", () => {
       includeSchemaKeys: true,
     });
     expect(required(page.entries[0]).tool.outputSchema).toEqual(declaredSchema);
-    expect(
-      required(page.entries[0]).tool.outputSchemaSource,
-    ).toBeUndefined();
+    expect(required(page.entries[0]).tool.outputSchemaSource).toBeUndefined();
   });
 });

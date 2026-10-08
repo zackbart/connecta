@@ -4,18 +4,11 @@
 // both pagination shapes, the hatch split, and the typed failures.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
-import {
-  OVERFLOW_API_BASE_URLS,
-  overflow,
-} from "./index.js";
+import { OVERFLOW_API_BASE_URLS, overflow } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { classifyTool } from "../../tool-safety.js";
 import { silentLogger } from "../../../test/helpers.js";
-import type {
-  Connector,
-  ConnectorContext,
-  ConnectorUsageGuide,
-} from "../../types.js";
+import type { Connector, ConnectorContext, ConnectorUsageGuide } from "../../types.js";
 
 const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
 
@@ -73,7 +66,7 @@ function context(values: Record<string, string> | null = KEYS): ConnectorContext
     logger: silentLogger,
     baseUrl: "https://connecta.example",
     credential: {
-      get: async (field?: string) => (field && values ? values[field] ?? null : null),
+      get: async (field?: string) => (field && values ? (values[field] ?? null) : null),
       getAll: async () => values,
     },
   };
@@ -155,12 +148,12 @@ const CONTRIBUTION = {
 
 describe("overflow() construction", () => {
   it("requires a purpose and an explicit environment, with no default", () => {
-    expect(() =>
-      overflow("giving", { environment: "production", purpose: "  " }),
-    ).toThrow("a non-empty nonprofit purpose");
-    expect(() =>
-      overflow("giving", { purpose: "Giving" } as unknown as Parameters<typeof overflow>[1]),
-    ).toThrow('requires environment: "production" or "staging"');
+    expect(() => overflow("giving", { environment: "production", purpose: "  " })).toThrow(
+      "a non-empty nonprofit purpose",
+    );
+    expect(() => overflow("giving", { purpose: "Giving" } as unknown as Parameters<typeof overflow>[1])).toThrow(
+      'requires environment: "production" or "staging"',
+    );
     expect(() =>
       overflow("giving", { environment: "sandbox", purpose: "Giving" } as unknown as Parameters<typeof overflow>[1]),
     ).toThrow('requires environment: "production" or "staging"');
@@ -175,7 +168,9 @@ describe("overflow() construction", () => {
     expect(staging.title).toBe("Overflow (staging)");
     expect(production.description).toContain("production: Grace Church");
     const firstLine = (connector: Connector) =>
-      guide(connector).content.split("\n").find((line) => line && !line.startsWith("#"));
+      guide(connector)
+        .content.split("\n")
+        .find((line) => line && !line.startsWith("#"));
     expect(firstLine(production)).toContain("**production**");
     expect(firstLine(production)).toContain("real money");
     expect(firstLine(staging)).toContain("**staging**");
@@ -253,7 +248,9 @@ describe("overflow() construction", () => {
     expect(content).toContain("`POST /payments/authorize` takes `amountInCents`");
     expect(content).not.toMatch(/read as cents|amounts are cents/);
     const mutate = (await connection().listTools(context())).find((tool) => tool.name === "overflow_api_mutate")!;
-    const body = flat(String((mutate.inputSchema!.properties as Record<string, { description?: string }>)["body"]!.description));
+    const body = flat(
+      String((mutate.inputSchema!.properties as Record<string, { description?: string }>)["body"]!.description),
+    );
     expect(body).not.toContain("amounts in cents");
     expect(body).toContain("subscription `amount` is dollars");
   });
@@ -365,7 +362,9 @@ describe("overflow() named reads", () => {
     const error = await failure(call(connection(), "list_contributions", { donorEmail: "x" }));
     expect(error.code).toBe("invalid_args");
     expect((await failure(call(connection(), "list_contributions", { limit: 101 }))).code).toBe("invalid_args");
-    expect((await failure(call(connection(), "get_contribution", { contributionId: "../donors" }))).code).toBe("invalid_args");
+    expect((await failure(call(connection(), "get_contribution", { contributionId: "../donors" }))).code).toBe(
+      "invalid_args",
+    );
     expect(calls).toHaveLength(0);
   });
 
@@ -393,7 +392,9 @@ describe("overflow() named reads", () => {
       reconciledAt: null,
       createdAt: "2026-01-13T00:00:00.000Z",
       updatedAt: "2026-01-15T00:00:00.000Z",
-      lineItems: [{ type: "payment", grossValueInCents: 5000, grossFeeValueInCents: 175, referenceId: CONTRIBUTION.id }],
+      lineItems: [
+        { type: "payment", grossValueInCents: 5000, grossFeeValueInCents: 175, referenceId: CONTRIBUTION.id },
+      ],
     };
     queue(
       { body: { data: [deposit], totalCount: 1 } },
@@ -422,7 +423,9 @@ describe("overflow() named reads", () => {
     expect(listed.deposits[0].paymentMethodTypes).toEqual(["card", "ach"]);
 
     const one = await call(connection(), "get_deposit", { depositId: deposit.id });
-    expect(one.lineItems).toEqual([{ type: "payment", grossValueInCents: 5000, grossFeeValueInCents: 175, referenceId: CONTRIBUTION.id }]);
+    expect(one.lineItems).toEqual([
+      { type: "payment", grossValueInCents: 5000, grossFeeValueInCents: 175, referenceId: CONTRIBUTION.id },
+    ]);
 
     const summary = await call(connection(), "get_deposit_summary", { depositId: deposit.id });
     expect(url(2).pathname).toBe(`/api/v3/deposits/${deposit.id}/summary`);
@@ -434,9 +437,16 @@ describe("overflow() named reads", () => {
   it("keeps phone and address out of donor lists but returns them from get_donor", async () => {
     const donor = CONTRIBUTION.donor;
     queue({ body: { data: [donor], totalCount: 1 } }, { body: { data: donor } });
-    const listed = await call(connection(), "list_donors", { sortBy: "totalContributionsCount", sortDirection: "DESC" });
+    const listed = await call(connection(), "list_donors", {
+      sortBy: "totalContributionsCount",
+      sortDirection: "DESC",
+    });
     expect(listed.donors[0]).toEqual({
-      id: donor.id, firstName: "Jane", lastName: "Doe", email: donor.email, totalContributionsCount: 12,
+      id: donor.id,
+      firstName: "Jane",
+      lastName: "Doe",
+      email: donor.email,
+      totalContributionsCount: 12,
     });
     expect(url(0).searchParams.get("sortBy")).toBe("totalContributionsCount");
     const full = await call(connection(), "get_donor", { donorId: donor.id });
@@ -467,17 +477,33 @@ describe("overflow() named reads", () => {
     });
     expect(url(0).pathname).toBe(`/api/v3/subscriptions/${CONTRIBUTION.donor.id}`);
     expect(url(0).searchParams.getAll("status[]")).toEqual(["active", "paused"]);
-    expect(result.subscriptions[0].paymentMethod).toEqual({ id: "pm1", type: "card", last4: "4242", expiration: "12/30" });
+    expect(result.subscriptions[0].paymentMethod).toEqual({
+      id: "pm1",
+      type: "card",
+      last4: "4242",
+      expiration: "12/30",
+    });
     await call(connection(), "list_subscriptions");
     expect(url(1).pathname).toBe("/api/v3/subscriptions");
   });
 
   it("lists payment methods without holder names, unpaginated", async () => {
-    queue({ body: { data: [{ id: "pm1", holderName: "Jane Doe", last4: "4242", type: "card", isExpired: false, updatedAt: "2025-01-01" }] } });
-    const result = await call(connection(), "list_payment_methods", { donorId: CONTRIBUTION.donor.id, showExpired: true });
+    queue({
+      body: {
+        data: [
+          { id: "pm1", holderName: "Jane Doe", last4: "4242", type: "card", isExpired: false, updatedAt: "2025-01-01" },
+        ],
+      },
+    });
+    const result = await call(connection(), "list_payment_methods", {
+      donorId: CONTRIBUTION.donor.id,
+      showExpired: true,
+    });
     expect(url().pathname).toBe(`/api/v3/payment-methods/${CONTRIBUTION.donor.id}`);
     expect(url().searchParams.get("showExpired")).toBe("true");
-    expect(result).toEqual({ paymentMethods: [{ id: "pm1", type: "card", last4: "4242", isExpired: false, updatedAt: "2025-01-01" }] });
+    expect(result).toEqual({
+      paymentMethods: [{ id: "pm1", type: "card", last4: "4242", isExpired: false, updatedAt: "2025-01-01" }],
+    });
   });
 
   it("asks for subcampaigns when a parent campaign is named", async () => {
@@ -491,11 +517,18 @@ describe("overflow() named reads", () => {
   it("flattens tap events to the ids and names they touched", async () => {
     queue({
       body: {
-        data: [{
-          id: "t1", createdAt: "2026-05-01T10:00:00.000Z", deviceId: "d1", groupId: "g1", destinationId: "x1",
-          device: { id: "d1", serialNumber: 12345 }, group: { id: "g1", name: "Sunday" },
-          destination: { id: "x1", name: "Give", type: "web" },
-        }],
+        data: [
+          {
+            id: "t1",
+            createdAt: "2026-05-01T10:00:00.000Z",
+            deviceId: "d1",
+            groupId: "g1",
+            destinationId: "x1",
+            device: { id: "d1", serialNumber: 12345 },
+            group: { id: "g1", name: "Sunday" },
+            destination: { id: "x1", name: "Give", type: "web" },
+          },
+        ],
         totalCount: 1,
       },
     });
@@ -503,16 +536,29 @@ describe("overflow() named reads", () => {
     expect(url().pathname).toBe("/api/v3/tap/events");
     expect(url().searchParams.getAll("groupIds[]")).toEqual(["6710f34fd5061afeec3eab58"]);
     expect(result.events[0]).toEqual({
-      id: "t1", createdAt: "2026-05-01T10:00:00.000Z", deviceId: "d1", deviceSerialNumber: 12345,
-      groupId: "g1", groupName: "Sunday", destinationId: "x1", destinationName: "Give", destinationType: "web",
+      id: "t1",
+      createdAt: "2026-05-01T10:00:00.000Z",
+      deviceId: "d1",
+      deviceSerialNumber: 12345,
+      groupId: "g1",
+      groupName: "Sunday",
+      destinationId: "x1",
+      destinationName: "Give",
+      destinationType: "web",
     });
   });
 
   it("pages webhook delivery logs by cursor and drops payloads unless raw", async () => {
     const attempt = {
-      id: "a1", eventId: "e1", webhookEventName: "contribution.approved", subscriptionId: "w1",
-      status: "failed", attemptNumber: 2, deliverySource: "automated",
-      originatedAt: "2026-01-01T00:00:00.000Z", attemptedAt: "2026-01-01T00:00:05.000Z",
+      id: "a1",
+      eventId: "e1",
+      webhookEventName: "contribution.approved",
+      subscriptionId: "w1",
+      status: "failed",
+      attemptNumber: 2,
+      deliverySource: "automated",
+      originatedAt: "2026-01-01T00:00:00.000Z",
+      attemptedAt: "2026-01-01T00:00:05.000Z",
       request: { url: "https://hooks.example/overflow", body: '{"donor":{"email":"jane.doe@example.com"}}' },
       response: { code: 500, body: "boom", durationMs: 120, errorMessage: "Internal Server Error" },
     };
@@ -528,12 +574,19 @@ describe("overflow() named reads", () => {
     expect(first.nextCursor).toBe("c2");
     expect(first.page).toBeUndefined();
     expect(JSON.stringify(first)).not.toContain("jane.doe@example.com");
-    expect(first.attempts[0]).toMatchObject({ status: "failed", responseCode: 500, errorMessage: "Internal Server Error", url: "https://hooks.example/overflow" });
+    expect(first.attempts[0]).toMatchObject({
+      status: "failed",
+      responseCode: 500,
+      errorMessage: "Internal Server Error",
+      url: "https://hooks.example/overflow",
+    });
     const second = await call(connection(), "list_webhook_event_logs", { webhookId, cursor: "c2", raw: true });
     expect(url(1).searchParams.get("cursor")).toBe("c2");
     expect(second.nextCursor).toBeUndefined();
     expect(second.attempts[0].request.body).toContain("jane.doe");
-    expect((await failure(call(connection(), "list_webhook_event_logs", { webhookId, limit: 51 }))).code).toBe("invalid_args");
+    expect((await failure(call(connection(), "list_webhook_event_logs", { webhookId, limit: 51 }))).code).toBe(
+      "invalid_args",
+    );
   });
 
   it("fails a successful named read that is not JSON", async () => {
@@ -584,14 +637,22 @@ describe("overflow() hatches", () => {
   });
 
   it("refuses a method the hatch does not offer", async () => {
-    expect((await failure(call(connection(), "overflow_api_mutate", { method: "GET", path: "/donors" }))).code).toBe("invalid_args");
-    expect((await failure(call(connection(), "overflow_api_mutate", { method: "PUT", path: "/donors" }))).code).toBe("invalid_args");
+    expect((await failure(call(connection(), "overflow_api_mutate", { method: "GET", path: "/donors" }))).code).toBe(
+      "invalid_args",
+    );
+    expect((await failure(call(connection(), "overflow_api_mutate", { method: "PUT", path: "/donors" }))).code).toBe(
+      "invalid_args",
+    );
   });
 });
 
 describe("overflow() failures map to the caller's next move", () => {
   it("waits out a 429 for Overflow's reported window remainder", async () => {
-    queue({ status: 429, body: { message: "ThrottlerException: Too Many Requests" }, headers: { "x-ratelimit-reset": "37" } });
+    queue({
+      status: 429,
+      body: { message: "ThrottlerException: Too Many Requests" },
+      headers: { "x-ratelimit-reset": "37" },
+    });
     const error = await failure(call(connection(), "list_locations"));
     expect(error.code).toBe("rate_limited");
     expect(error.retryable).toBe(true);
@@ -617,15 +678,22 @@ describe("overflow() failures map to the caller's next move", () => {
 
   it("states the 403 ambiguity on a write", async () => {
     queue({ status: 403, body: { message: "This Donor Profile is associated to a Donor and cannot be updated." } });
-    const error = await failure(call(connection(), "overflow_api_mutate", {
-      method: "PATCH", path: "/donors/d1", body: { phone: "+15555550100" },
-    }));
+    const error = await failure(
+      call(connection(), "overflow_api_mutate", {
+        method: "PATCH",
+        path: "/donors/d1",
+        body: { phone: "+15555550100" },
+      }),
+    );
     expect(error.code).toBe("provider_permission_denied");
     expect(error.message).toContain("donor account cannot be edited");
   });
 
   it("maps 404 to not_found and 400 to invalid_args", async () => {
-    queue({ status: 404, body: { message: "Contribution not found" } }, { status: 400, body: { message: ["limit must not be greater than 100"] } });
+    queue(
+      { status: 404, body: { message: "Contribution not found" } },
+      { status: 400, body: { message: ["limit must not be greater than 100"] } },
+    );
     const missing = await failure(call(connection(), "get_contribution", { contributionId: CONTRIBUTION.id }));
     expect(missing.code).toBe("not_found");
     expect(missing.message).toContain("Contribution not found");
@@ -635,22 +703,34 @@ describe("overflow() failures map to the caller's next move", () => {
   });
 
   it("marks 409 and 422 refusals as final", async () => {
-    queue({ status: 409, body: { message: "Refunds not supported for this processing gateway." } }, { status: 422, body: {} });
+    queue(
+      { status: 409, body: { message: "Refunds not supported for this processing gateway." } },
+      { status: 422, body: {} },
+    );
     for (let index = 0; index < 2; index += 1) {
-      const error = await failure(call(connection(), "overflow_api_mutate", { method: "POST", path: "/contributions/c1/initiate-refund" }));
+      const error = await failure(
+        call(connection(), "overflow_api_mutate", { method: "POST", path: "/contributions/c1/initiate-refund" }),
+      );
       expect(error.code).toBe("connector_call_failed");
       expect(error.retryable).toBe(false);
     }
   });
 
   it("retries a failing read but never a failing write", async () => {
-    queue({ status: 503, text: "<html>bad gateway</html>" }, { status: 500, body: { message: "Failed to validate campaign." } });
+    queue(
+      { status: 503, text: "<html>bad gateway</html>" },
+      { status: 500, body: { message: "Failed to validate campaign." } },
+    );
     const read = await failure(call(connection(), "list_locations"));
     expect(read.code).toBe("unavailable");
     expect(read.retryable).toBe(true);
-    const write = await failure(call(connection(), "overflow_api_mutate", {
-      method: "POST", path: "/contributions", body: { donorId: "d1", paymentMethodId: "pm1", amount: 5000 },
-    }));
+    const write = await failure(
+      call(connection(), "overflow_api_mutate", {
+        method: "POST",
+        path: "/contributions",
+        body: { donorId: "d1", paymentMethodId: "pm1", amount: 5000 },
+      }),
+    );
     expect(write.code).toBe("connector_call_failed");
     expect(write.retryable).toBe(false);
     expect(write.message).toContain("may or may not have taken effect");

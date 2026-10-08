@@ -5,9 +5,7 @@
     {
       "type": "mcp-docs",
       "setup": "https://linear.app/docs/mcp.md",
-      "endpoints": [
-        "https://mcp.linear.app/mcp"
-      ],
+      "endpoints": ["https://mcp.linear.app/mcp"],
       "reviewed": [
         "list_issues",
         "get_issue",

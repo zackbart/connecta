@@ -19,8 +19,20 @@ const WORD = /[\w$\\\u0080-\uffff]/;
  * Any other word is an identifier or a literal, which a `/` divides.
  */
 const REGEX_AFTER_WORD = new Set([
-  "await", "case", "delete", "do", "else", "in", "instanceof", "new", "of",
-  "return", "throw", "typeof", "void", "yield",
+  "await",
+  "case",
+  "delete",
+  "do",
+  "else",
+  "in",
+  "instanceof",
+  "new",
+  "of",
+  "return",
+  "throw",
+  "typeof",
+  "void",
+  "yield",
 ]);
 
 /**

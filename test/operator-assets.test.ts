@@ -6,7 +6,8 @@ import { OPERATOR_UI_ASSETS, OPERATOR_UI_SCRIPT_PATH, OPERATOR_UI_STYLE_PATH } f
 import { renderUiHtml } from "../src/ui.js";
 
 const BASE = "https://connecta.test";
-const deployment = () => createTestConnecta({ connectors: [], auth: machineAuth("test"), storage: memoryStorage(), publicUrl: BASE });
+const deployment = () =>
+  createTestConnecta({ connectors: [], auth: machineAuth("test"), storage: memoryStorage(), publicUrl: BASE });
 
 describe("operator assets on both runtimes", () => {
   it("serves exact hashed assets without authentication, with immutable caching and conditional HEAD", async () => {
@@ -18,13 +19,17 @@ describe("operator assets on both runtimes", () => {
       expect(get.headers.get("content-type")).toBe(asset.type);
       expect(get.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
       expect(get.headers.get("x-content-type-options")).toBe("nosniff");
-      const expected = asset.binary ? Uint8Array.from(atob(asset.body), char => char.charCodeAt(0)) : new TextEncoder().encode(asset.body);
+      const expected = asset.binary
+        ? Uint8Array.from(atob(asset.body), (char) => char.charCodeAt(0))
+        : new TextEncoder().encode(asset.body);
       expect(new Uint8Array(await get.arrayBuffer())).toEqual(expected);
       const head = await c.fetch(new Request(BASE + path, { method: "HEAD" }));
       expect(head.status).toBe(200);
       expect(await head.text()).toBe("");
       expect(head.headers.get("etag")).toBe(get.headers.get("etag"));
-      const conditional = await c.fetch(new Request(BASE + path, { headers: { "If-None-Match": `"older", W/${get.headers.get("etag")}` } }));
+      const conditional = await c.fetch(
+        new Request(BASE + path, { headers: { "If-None-Match": `"older", W/${get.headers.get("etag")}` } }),
+      );
       expect(conditional.status).toBe(304);
       expect(await conditional.text()).toBe("");
     }
@@ -48,7 +53,7 @@ describe("operator assets on both runtimes", () => {
     expect(html).toContain(OPERATOR_UI_SCRIPT_PATH);
     expect(html).toContain(OPERATOR_UI_STYLE_PATH);
     const css = OPERATOR_UI_ASSETS[OPERATOR_UI_STYLE_PATH]!.body;
-    const font = Object.keys(OPERATOR_UI_ASSETS).find(path => path.endsWith(".woff2"));
+    const font = Object.keys(OPERATOR_UI_ASSETS).find((path) => path.endsWith(".woff2"));
     expect(font).toBeTruthy();
     expect(css).toContain(font);
     expect(html).not.toContain("https://fonts.");

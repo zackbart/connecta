@@ -11,12 +11,8 @@ export interface CatalogSnapshot {
 }
 
 async function fingerprintBytes(bytes: Uint8Array): Promise<string> {
-  const digest = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", new Uint8Array(bytes)),
-  );
-  const hex = [...digest]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes)));
+  const hex = [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   return `sha256:${bytes.byteLength}:${hex}`;
 }
 
@@ -36,9 +32,7 @@ export async function fingerprintSerializedCatalog(
  * Object key order is allowed to cause a conservative extra write; changing
  * any serialized field must change the digest.
  */
-export async function snapshotCatalog(
-  tools: ToolDef[],
-): Promise<CatalogSnapshot> {
+export async function snapshotCatalog(tools: ToolDef[]): Promise<CatalogSnapshot> {
   const serializedTools = JSON.stringify(tools);
   if (serializedTools === undefined) {
     throw new TypeError("Tool catalog is not JSON-serializable.");

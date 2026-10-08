@@ -121,10 +121,7 @@
           },
           "resultMode": {
             "type": "string",
-            "enum": [
-              "mcp",
-              "value"
-            ]
+            "enum": ["mcp", "value"]
           },
           "timeoutMs": {
             "type": "integer",
@@ -135,9 +132,7 @@
             "type": "boolean"
           }
         },
-        "required": [
-          "address"
-        ],
+        "required": ["address"],
         "additionalProperties": false
       },
       "originalSearch": {
@@ -152,11 +147,7 @@
           },
           "safety": {
             "type": "string",
-            "enum": [
-              "readOnly",
-              "approvalRequired",
-              "all"
-            ]
+            "enum": ["readOnly", "approvalRequired", "all"]
           },
           "limit": {
             "type": "integer",
@@ -173,11 +164,7 @@
           },
           "includeSchemas": {
             "type": "string",
-            "enum": [
-              "compact",
-              "json",
-              "typescript"
-            ]
+            "enum": ["compact", "json", "typescript"]
           }
         }
       },
@@ -194,10 +181,7 @@
             },
             "resultMode": {
               "type": "string",
-              "enum": [
-                "mcp",
-                "value"
-              ]
+              "enum": ["mcp", "value"]
             },
             "timeoutMs": {
               "type": "integer",
@@ -208,9 +192,7 @@
               "type": "boolean"
             }
           },
-          "required": [
-            "address"
-          ],
+          "required": ["address"],
           "additionalProperties": false
         },
         "definitions": {}
@@ -228,11 +210,7 @@
             },
             "safety": {
               "type": "string",
-              "enum": [
-                "readOnly",
-                "approvalRequired",
-                "all"
-              ]
+              "enum": ["readOnly", "approvalRequired", "all"]
             },
             "limit": {
               "type": "integer",
@@ -259,11 +237,7 @@
             },
             "includeSchemas": {
               "type": "string",
-              "enum": [
-                "compact",
-                "json",
-                "typescript"
-              ]
+              "enum": ["compact", "json", "typescript"]
             }
           },
           "additionalProperties": true

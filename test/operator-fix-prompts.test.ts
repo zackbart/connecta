@@ -1,11 +1,7 @@
 import { callbackAuth, bindCallback } from "./fixtures/oauth.js";
 import { describe, expect, it, vi } from "vitest";
 import { renderFixPrompt } from "../src/fix-prompt.js";
-import {
-  oauthCallbackOutcome,
-  providerErrorReason,
-  type OAuthCallbackReason,
-} from "../src/oauth-callback-outcome.js";
+import { oauthCallbackOutcome, providerErrorReason, type OAuthCallbackReason } from "../src/oauth-callback-outcome.js";
 import { FIX_PROMPT_KINDS, fixPrompt } from "../src/operator-ui/fix-prompts.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { operatorUi } from "../src/ui.js";
@@ -135,15 +131,14 @@ describe("OAuth callback reasons", () => {
         oauthCallbackOutcome(reason, { id: "other", title: "Other" }),
       );
     }
-    expect(oauthCallbackOutcome("exchange_failed", { id: "svc" }).fixPrompt).toContain(
-      "Connector id: svc",
-    );
+    expect(oauthCallbackOutcome("exchange_failed", { id: "svc" }).fixPrompt).toContain("Connector id: svc");
     const connected = oauthCallbackOutcome("connected", { id: "svc", title: "Linear" });
     expect(connected.heading).toBe("Linear is connected");
     expect(connected.message).toBe("You can close this window.");
     expect(oauthCallbackOutcome("connected", { id: "svc" }).heading).toBe("svc is connected");
-    expect(oauthCallbackOutcome("exchange_failed", { id: "svc", title: "Linear" }).heading)
-      .toBe("Linear could not be connected");
+    expect(oauthCallbackOutcome("exchange_failed", { id: "svc", title: "Linear" }).heading).toBe(
+      "Linear could not be connected",
+    );
     // A connector handed in before verification is still not named.
     for (const reason of ["denied", "provider_error", "invalid_callback"] as const) {
       const early = oauthCallbackOutcome(reason, { id: "svc", title: "Linear" });
@@ -153,8 +148,9 @@ describe("OAuth callback reasons", () => {
   });
 
   it("gives each outcome its own heading and a tone the page marks by shape", () => {
-    const headings = CALLBACK_REASONS.map((reason) =>
-      oauthCallbackOutcome(reason, { id: "svc", title: "Linear" }).heading);
+    const headings = CALLBACK_REASONS.map(
+      (reason) => oauthCallbackOutcome(reason, { id: "svc", title: "Linear" }).heading,
+    );
     // handoff_failed and exchange_failed share one heading on purpose: both
     // are "this connector did not connect", told apart in the message.
     expect(new Set(headings).size).toBe(CALLBACK_REASONS.length - 1);
@@ -193,7 +189,8 @@ describe("OAuth callback page", () => {
     const secret = "token endpoint said: client_secret=cs_live_leaked is invalid";
     const warn = vi.fn();
     const connecta = createTestConnecta({
-      publicUrl: BASE, auth: callbackAuth,
+      publicUrl: BASE,
+      auth: callbackAuth,
       storage: memoryStorage(),
       logger: { ...silentLogger, warn },
       connectors: [
@@ -204,9 +201,7 @@ describe("OAuth callback page", () => {
     });
     await bindCallback(connecta, "svc", "good-state");
     warn.mockClear();
-    const res = await connecta.fetch(
-      new Request(`${BASE}/oauth/callback/svc?code=abc&state=good-state`),
-    );
+    const res = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=good-state`));
     expect(res.status).toBe(500);
     const body = await res.text();
     expect(body).toContain('data-oauth-callback="exchange_failed"');
@@ -223,7 +218,8 @@ describe("OAuth callback page", () => {
 
   it("names a provider error by reason and never repeats the parameter", async () => {
     const connecta = createTestConnecta({
-      publicUrl: BASE, auth: callbackAuth,
+      publicUrl: BASE,
+      auth: callbackAuth,
       storage: memoryStorage(),
       logger: silentLogger,
       connectors: [oauthConnector(async () => {})],
@@ -241,15 +237,14 @@ describe("OAuth callback page", () => {
 
   it("reports a missing code as the same invalid callback as a bad state", async () => {
     const connecta = createTestConnecta({
-      publicUrl: BASE, auth: callbackAuth,
+      publicUrl: BASE,
+      auth: callbackAuth,
       storage: memoryStorage(),
       logger: silentLogger,
       connectors: [oauthConnector(async () => {})],
     });
     const missing = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc`));
-    const stale = await connecta.fetch(
-      new Request(`${BASE}/oauth/callback/svc?code=abc&state=stale`),
-    );
+    const stale = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=stale`));
     expect(missing.status).toBe(400);
     expect(stale.status).toBe(400);
     expect(await missing.text()).toBe(await stale.text());
@@ -262,28 +257,29 @@ describe("OAuth callback page", () => {
 
   it("names the connector by title only after the state check", async () => {
     const connecta = createTestConnecta({
-      publicUrl: BASE, auth: callbackAuth,
+      publicUrl: BASE,
+      auth: callbackAuth,
       storage: memoryStorage(),
       logger: silentLogger,
       connectors: [
         titled("svc"),
-        titled("broken", async () => { throw new Error("exchange"); }),
+        titled("broken", async () => {
+          throw new Error("exchange");
+        }),
       ],
     });
     await bindCallback(connecta, "svc", "good-state");
     await bindCallback(connecta, "broken", "good-state");
-    const connected = await connecta.fetch(
-      new Request(`${BASE}/oauth/callback/svc?code=abc&state=good-state`),
-    );
+    const connected = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=good-state`));
     expect(connected.status).toBe(200);
     const connectedBody = await connected.text();
     expect(connectedBody).toContain(`<h1>${TITLE} is connected</h1>`);
     expect(connectedBody).toContain(`<title>${TITLE} is connected — Connecta</title>`);
     expect(connectedBody).not.toContain("Details for the operator");
 
-    const failed = await (await connecta.fetch(
-      new Request(`${BASE}/oauth/callback/broken?code=abc&state=good-state`),
-    )).text();
+    const failed = await (
+      await connecta.fetch(new Request(`${BASE}/oauth/callback/broken?code=abc&state=good-state`))
+    ).text();
     expect(failed).toContain(`<h1>${TITLE} could not be connected</h1>`);
 
     for (const path of [
@@ -301,12 +297,22 @@ describe("OAuth callback page", () => {
 
   it("keeps every refusal byte-identical across connectors and paths", async () => {
     const connecta = createTestConnecta({
-      publicUrl: BASE, auth: callbackAuth,
+      publicUrl: BASE,
+      auth: callbackAuth,
       storage: memoryStorage(),
       logger: silentLogger,
       connectors: [
         titled("svc"),
-        { id: "plain", title: "Plain API", async listTools() { return []; }, async callTool() { return {}; } },
+        {
+          id: "plain",
+          title: "Plain API",
+          async listTools() {
+            return [];
+          },
+          async callTool() {
+            return {};
+          },
+        },
       ],
     });
     const bodies = new Set<string>();
@@ -332,16 +338,21 @@ describe("OAuth callback page", () => {
 
   it("renders every outcome in the shared, themed layout", async () => {
     const connecta = createTestConnecta({
-      publicUrl: BASE, auth: callbackAuth,
+      publicUrl: BASE,
+      auth: callbackAuth,
       storage: memoryStorage(),
       logger: silentLogger,
-      ui: operatorUi({ branding: {
-        productName: "Acme Tools",
-        theme: { accent: "#0a7d55", colorScheme: "dark" },
-      } }),
+      ui: operatorUi({
+        branding: {
+          productName: "Acme Tools",
+          theme: { accent: "#0a7d55", colorScheme: "dark" },
+        },
+      }),
       connectors: [
         titled("svc"),
-        titled("broken", async () => { throw new Error("exchange"); }),
+        titled("broken", async () => {
+          throw new Error("exchange");
+        }),
       ],
     });
     await bindCallback(connecta, "svc", "good-state");
@@ -377,29 +388,26 @@ describe("OAuth callback page", () => {
 
   it("links the default favicon only where the operator UI serves it", async () => {
     const headless = createTestConnecta({
-      publicUrl: BASE, auth: callbackAuth,
+      publicUrl: BASE,
+      auth: callbackAuth,
       storage: memoryStorage(),
       logger: silentLogger,
       ...({ ui: undefined } as { ui?: never }),
       connectors: [titled("svc")],
     });
-    const body = await (await headless.fetch(
-      new Request(`${BASE}/oauth/callback/svc?code=abc&state=stale`),
-    )).text();
+    const body = await (await headless.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=stale`))).text();
     expect(body).not.toContain("favicon");
     expect(body).not.toContain("Return to");
     expect((await headless.fetch(new Request(`${BASE}/favicon.svg`))).status).toBe(404);
 
     const mounted = createTestConnecta({
-      publicUrl: BASE, auth: callbackAuth,
+      publicUrl: BASE,
+      auth: callbackAuth,
       storage: memoryStorage(),
       logger: silentLogger,
       connectors: [titled("svc")],
     });
-    const withUi = await (await mounted.fetch(
-      new Request(`${BASE}/oauth/callback/svc?code=abc&state=stale`),
-    )).text();
+    const withUi = await (await mounted.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=stale`))).text();
     expect(withUi).toContain('<link rel="icon" href="/favicon.svg" type="image/svg+xml">');
-
   });
 });

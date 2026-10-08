@@ -38,9 +38,7 @@ export function poolEndpointUrl(mcpUrl: string, pool: string): string {
 
 /** POSIX single-quoting, only when the value needs it. */
 function shellWord(value: string): string {
-  return /^[A-Za-z0-9_./:@%+=,~-]+$/.test(value)
-    ? value
-    : `'${value.replace(/'/g, `'"'"'`)}'`;
+  return /^[A-Za-z0-9_./:@%+=,~-]+$/.test(value) ? value : `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 export function clientSetupCommands(name: string, url: string): ClientSetupCommand[] {
@@ -58,11 +56,7 @@ export function clientSetupCommands(name: string, url: string): ClientSetupComma
     {
       id: "json",
       label: "JSON config",
-      text: JSON.stringify(
-        { mcpServers: { [name]: { type: "http", url } } },
-        null,
-        2,
-      ),
+      text: JSON.stringify({ mcpServers: { [name]: { type: "http", url } } }, null, 2),
     },
   ];
 }

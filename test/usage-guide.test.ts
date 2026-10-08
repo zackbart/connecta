@@ -14,10 +14,16 @@ try {
 } catch (error) {
   if (inWorkerd) throw error;
 }
-afterAll(async () => { await executor?.close?.(); });
+afterAll(async () => {
+  await executor?.close?.();
+});
 it("has a real Worker Loader in the workers project", () => {
   expect(inWorkerd ? executor !== undefined : true).toBe(true);
 });
-it.skipIf(!executor)("INV-3 INV-7: usage examples execute and assert their outputs on Workers", async () => {
-  await checkUsageExamples(executor!);
-}, 20_000);
+it.skipIf(!executor)(
+  "INV-3 INV-7: usage examples execute and assert their outputs on Workers",
+  async () => {
+    await checkUsageExamples(executor!);
+  },
+  20_000,
+);

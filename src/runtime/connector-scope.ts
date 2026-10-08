@@ -29,10 +29,7 @@ const CONNECTOR_SCOPE_DEFER_BUDGET_MS = 2_000;
  * cancel a connector's close, only stop waiting for it.
  */
 function waitAtMost(work: Promise<void>, budgetMs: number): Effect.Effect<void> {
-  return Effect.raceAllFirst([
-    Effect.promise(() => work),
-    Effect.sleep(Duration.millis(budgetMs)),
-  ]);
+  return Effect.raceAllFirst([Effect.promise(() => work), Effect.sleep(Duration.millis(budgetMs))]);
 }
 
 /**
@@ -41,11 +38,7 @@ function waitAtMost(work: Promise<void>, budgetMs: number): Effect.Effect<void> 
  * small fixed window, with a bounded tail handed to `defer` when the runtime
  * has one. The hook is called when the effect runs, not when it is built.
  */
-export function closeScope(
-  connector: Connector,
-  ctx: ConnectorContext,
-  defer?: DeferredWork,
-): Effect.Effect<void> {
+export function closeScope(connector: Connector, ctx: ConnectorContext, defer?: DeferredWork): Effect.Effect<void> {
   return Effect.suspend(() => {
     let settled: Promise<void>;
     try {

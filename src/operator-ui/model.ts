@@ -1,9 +1,5 @@
 import type { OperatorConnectorOverlay, OperatorTool, OperatorUiContract, OperatorViewer } from "./contract.js";
-import type {
-  CatalogAccessObservation,
-  CatalogDriftReport,
-  ResourceTemplateRefusalCode,
-} from "../types.js";
+import type { CatalogAccessObservation, CatalogDriftReport, ResourceTemplateRefusalCode } from "../types.js";
 
 /** Tool verdicts, independent of the selected pool's trust. */
 export type UiToolSafety = "runs_in_programs" | "needs_approval";
@@ -106,11 +102,7 @@ export interface UiConnector {
   resourceTemplateRefusals?: ResourceTemplateRefusalCode[];
 }
 
-export type CredentialManagementCapability =
-  | "available"
-  | "requires_operator"
-  | "vault_not_configured"
-  | "no_slots";
+export type CredentialManagementCapability = "available" | "requires_operator" | "vault_not_configured" | "no_slots";
 
 export interface UiData {
   accessTokenManagement?: "available" | "requires_operator";
@@ -140,27 +132,16 @@ export interface FilteredUiConnector {
  * connector-level match stays visible even when it currently exposes no tools
  * (for example while authorization is required).
  */
-export function filterUiConnectors(
-  connectors: UiConnector[],
-  query: string,
-): FilteredUiConnector[] {
+export function filterUiConnectors(connectors: UiConnector[], query: string): FilteredUiConnector[] {
   const q = query.trim().toLowerCase();
   const filtered: FilteredUiConnector[] = [];
   for (const connector of connectors) {
-    const connectorText = [
-      connector.id,
-      connector.title,
-      connector.description,
-      connector.status,
-    ]
+    const connectorText = [connector.id, connector.title, connector.description, connector.status]
       .join(" ")
       .toLowerCase();
     const connectorMatches = Boolean(q && connectorText.includes(q));
     const tools = connector.tools.filter(
-      (tool) =>
-        !q ||
-        connectorMatches ||
-        `${tool.name} ${tool.description ?? ""}`.toLowerCase().includes(q),
+      (tool) => !q || connectorMatches || `${tool.name} ${tool.description ?? ""}`.toLowerCase().includes(q),
     );
     if (q && tools.length === 0 && !connectorMatches) continue;
     filtered.push({ connector, tools });

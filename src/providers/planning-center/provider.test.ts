@@ -71,7 +71,7 @@ function context(
     logger: silentLogger,
     baseUrl: "https://connecta.example",
     credential: {
-      get: async (field?: string) => (field && values ? values[field] ?? null : null),
+      get: async (field?: string) => (field && values ? (values[field] ?? null) : null),
       getAll: async () => values,
     },
   };
@@ -128,7 +128,13 @@ describe("planningCenter() construction", () => {
     expect(byName.has("pco_api_upload")).toBe(false);
     // Additive writes are write-routed without claiming destruction; anything
     // that moves or fires existing state is destructive.
-    for (const name of ["create_person", "add_person_email", "schedule_plan_person", "add_group_member", "add_workflow_card"]) {
+    for (const name of [
+      "create_person",
+      "add_person_email",
+      "schedule_plan_person",
+      "add_group_member",
+      "add_workflow_card",
+    ]) {
       expect(byName.get(name)!.annotations, name).toEqual({ readOnlyHint: false, destructiveHint: false });
     }
     for (const name of ["update_person", "run_list", "apply_workflow_card_action"]) {
@@ -183,7 +189,9 @@ describe("Planning Center transport", () => {
     await call("list_donations");
     expect(calls.map((entry) => entry.url.origin)).toEqual(Array(3).fill(PLANNING_CENTER_API_BASE_URL));
     expect(calls[0]!.headers["authorization"]).toBe(`Basic ${btoa("app123:shh456")}`);
-    expect(calls[0]!.headers["user-agent"]).toMatch(/^connecta\/\d+\.\d+\.\d+ \(\+https:\/\/github\.com\/zackbart\/connecta\)$/);
+    expect(calls[0]!.headers["user-agent"]).toMatch(
+      /^connecta\/\d+\.\d+\.\d+ \(\+https:\/\/github\.com\/zackbart\/connecta\)$/,
+    );
     expect(calls.map((entry) => entry.headers["x-pco-api-version"])).toEqual([
       PLANNING_CENTER_API_VERSIONS.people,
       PLANNING_CENTER_API_VERSIONS.services,
@@ -202,7 +210,9 @@ describe("Planning Center transport", () => {
       code: "auth_required",
       message: expect.stringMatching(/Application ID and the Secret.*authorize_connector/),
     });
-    await expect(call("search_people", {}, connection(), context(null))).rejects.toMatchObject({ code: "auth_required" });
+    await expect(call("search_people", {}, connection(), context(null))).rejects.toMatchObject({
+      code: "auth_required",
+    });
     await expect(
       call("search_people", {}, connection(), context({ applicationId: "app:123", secret: "shh" })),
     ).rejects.toMatchObject({ code: "auth_required", message: expect.stringContaining("re-paste") });
@@ -218,7 +228,16 @@ describe("Planning Center transport", () => {
   ] as const)("maps HTTP %s to %s", async (status, code, retryable) => {
     queue({
       status,
-      body: { errors: [{ status: String(status), title: "Provider title", detail: "provider detail", source: { pointer: "/data/attributes/first_name" } }] },
+      body: {
+        errors: [
+          {
+            status: String(status),
+            title: "Provider title",
+            detail: "provider detail",
+            source: { pointer: "/data/attributes/first_name" },
+          },
+        ],
+      },
     });
     const error = (await call("get_person", { personId: "7" }).catch((caught) => caught)) as ConnectorCallError;
     expect(error).toBeInstanceOf(ConnectorCallError);
@@ -254,9 +273,23 @@ describe("Planning Center People", () => {
         data: [
           person(
             "1",
-            { name: "Ada Lovelace", first_name: "Ada", last_name: "Lovelace", status: "active", membership: "Member", child: false, medical_notes: "private", updated_at: "2026-01-01T00:00:00Z" },
             {
-              emails: { data: [{ type: "Email", id: "e1" }, { type: "Email", id: "e2" }] },
+              name: "Ada Lovelace",
+              first_name: "Ada",
+              last_name: "Lovelace",
+              status: "active",
+              membership: "Member",
+              child: false,
+              medical_notes: "private",
+              updated_at: "2026-01-01T00:00:00Z",
+            },
+            {
+              emails: {
+                data: [
+                  { type: "Email", id: "e1" },
+                  { type: "Email", id: "e2" },
+                ],
+              },
               phone_numbers: { data: [{ type: "PhoneNumber", id: "p1" }] },
             },
           ),
@@ -316,7 +349,14 @@ describe("Planning Center People", () => {
       body: {
         data: person(
           "7",
-          { name: "Ada Lovelace", first_name: "Ada", last_name: "Lovelace", status: "active", birthdate: "1815-12-10", people_permissions: "Editor" },
+          {
+            name: "Ada Lovelace",
+            first_name: "Ada",
+            last_name: "Lovelace",
+            status: "active",
+            birthdate: "1815-12-10",
+            people_permissions: "Editor",
+          },
           {
             emails: { data: [{ type: "Email", id: "e1" }] },
             phone_numbers: { data: [] },
@@ -328,7 +368,11 @@ describe("Planning Center People", () => {
         included: [
           { type: "Email", id: "e1", attributes: { address: "ada@example.com", location: "Home", primary: true } },
           { type: "Address", id: "a1", attributes: { city: "London", primary: true, created_at: "x" } },
-          { type: "Household", id: "h1", attributes: { name: "Lovelace household", primary_contact_id: "7", member_count: 3 } },
+          {
+            type: "Household",
+            id: "h1",
+            attributes: { name: "Lovelace household", primary_contact_id: "7", member_count: 3 },
+          },
           { type: "Campus", id: "c1", attributes: { name: "Downtown" } },
         ],
       },
@@ -357,10 +401,19 @@ describe("Planning Center People", () => {
 
   it("creates and updates people with JSON:API documents and refuses an empty update", async () => {
     queue(
-      { status: 201, body: { data: person("9", { name: "Grace Hopper", first_name: "Grace", last_name: "Hopper", status: "active" }) } },
+      {
+        status: 201,
+        body: {
+          data: person("9", { name: "Grace Hopper", first_name: "Grace", last_name: "Hopper", status: "active" }),
+        },
+      },
       { body: { data: person("9", { name: "Grace Hopper", status: "inactive" }) } },
     );
-    const createdPerson = await call("create_person", { firstName: "Grace", lastName: "Hopper", birthdate: "1906-12-09" });
+    const createdPerson = await call("create_person", {
+      firstName: "Grace",
+      lastName: "Hopper",
+      birthdate: "1906-12-09",
+    });
     expect(calls[0]).toMatchObject({ method: "POST" });
     expect(calls[0]!.body).toEqual({
       data: { type: "Person", attributes: { first_name: "Grace", last_name: "Hopper", birthdate: "1906-12-09" } },
@@ -370,7 +423,9 @@ describe("Planning Center People", () => {
     await call("update_person", { personId: "9", status: "inactive", nickname: null });
     expect(calls[1]).toMatchObject({ method: "PATCH" });
     expect(calls[1]!.url.pathname).toBe("/people/v2/people/9");
-    expect(calls[1]!.body).toEqual({ data: { type: "Person", id: "9", attributes: { status: "inactive", nickname: null } } });
+    expect(calls[1]!.body).toEqual({
+      data: { type: "Person", id: "9", attributes: { status: "inactive", nickname: null } },
+    });
 
     await expect(call("update_person", { personId: "9" })).rejects.toMatchObject({ code: "invalid_args" });
     expect(calls).toHaveLength(2);
@@ -378,8 +433,23 @@ describe("Planning Center People", () => {
 
   it("adds email and phone records with default locations", async () => {
     queue(
-      { status: 201, body: { data: { type: "Email", id: "e9", attributes: { address: "g@example.com", location: "Home", primary: true }, relationships: { person: { data: { type: "Person", id: "9" } } } } } },
-      { status: 201, body: { data: { type: "PhoneNumber", id: "p9", attributes: { number: "555", location: "Mobile", primary: false } } } },
+      {
+        status: 201,
+        body: {
+          data: {
+            type: "Email",
+            id: "e9",
+            attributes: { address: "g@example.com", location: "Home", primary: true },
+            relationships: { person: { data: { type: "Person", id: "9" } } },
+          },
+        },
+      },
+      {
+        status: 201,
+        body: {
+          data: { type: "PhoneNumber", id: "p9", attributes: { number: "555", location: "Mobile", primary: false } },
+        },
+      },
     );
     expect(await call("add_person_email", { personId: "9", address: "g@example.com", primary: true })).toEqual({
       id: "e9",
@@ -388,28 +458,50 @@ describe("Planning Center People", () => {
       primary: true,
       person_id: "9",
     });
-    expect(calls[0]!.body).toEqual({ data: { type: "Email", attributes: { address: "g@example.com", location: "Home", primary: true } } });
+    expect(calls[0]!.body).toEqual({
+      data: { type: "Email", attributes: { address: "g@example.com", location: "Home", primary: true } },
+    });
     await call("add_person_phone_number", { personId: "9", number: "555" });
     expect(calls[1]!.url.pathname).toBe("/people/v2/people/9/phone_numbers");
-    expect(calls[1]!.body).toEqual({ data: { type: "PhoneNumber", attributes: { number: "555", location: "Mobile" } } });
+    expect(calls[1]!.body).toEqual({
+      data: { type: "PhoneNumber", attributes: { number: "555", location: "Mobile" } },
+    });
   });
 
   it("names each profile note's category and files a new note under one", async () => {
     queue(
       {
         body: {
-          data: [{ type: "Note", id: "n1", attributes: { note: "Visited", note_category_id: "c1", person_id: "1", created_at: "2026-09-01" } }],
+          data: [
+            {
+              type: "Note",
+              id: "n1",
+              attributes: { note: "Visited", note_category_id: "c1", person_id: "1", created_at: "2026-09-01" },
+            },
+          ],
           included: [{ type: "NoteCategory", id: "c1", attributes: { name: "Pastoral" } }],
         },
       },
-      { status: 201, body: { data: { type: "Note", id: "n2", attributes: { note: "Called", note_category_id: "c1" } } } },
+      {
+        status: 201,
+        body: { data: { type: "Note", id: "n2", attributes: { note: "Called", note_category_id: "c1" } } },
+      },
     );
     const result = await call("list_person_notes", { personId: "1" });
     expect(calls[0]!.url.searchParams.get("order")).toBe("-created_at");
     expect(result.notes).toEqual([
-      { id: "n1", note: "Visited", note_category_id: "c1", person_id: "1", created_at: "2026-09-01", category: "Pastoral" },
+      {
+        id: "n1",
+        note: "Visited",
+        note_category_id: "c1",
+        person_id: "1",
+        created_at: "2026-09-01",
+        category: "Pastoral",
+      },
     ]);
-    await expect(call("add_person_note", { personId: "1", note: "Called" })).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(call("add_person_note", { personId: "1", note: "Called" })).rejects.toMatchObject({
+      code: "invalid_args",
+    });
     await call("add_person_note", { personId: "1", note: "Called", noteCategoryId: "4" });
     expect(calls[1]!.body).toEqual({ data: { type: "Note", attributes: { note: "Called", note_category_id: "4" } } });
   });
@@ -471,11 +563,15 @@ describe("Planning Center People", () => {
     expect(calls[2]!.url.pathname).toBe("/people/v2/people/1/workflow_cards/88/promote");
     expect(calls[2]!.body).toBeUndefined();
 
-    await expect(call("apply_workflow_card_action", { personId: "1", cardId: "88", action: "snooze" })).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(
+      call("apply_workflow_card_action", { personId: "1", cardId: "88", action: "snooze" }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
     await expect(
       call("apply_workflow_card_action", { personId: "1", cardId: "88", action: "remove", snoozeDays: 2 }),
     ).rejects.toMatchObject({ code: "invalid_args" });
-    await expect(call("apply_workflow_card_action", { personId: "1", cardId: "88", action: "send_email" })).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(
+      call("apply_workflow_card_action", { personId: "1", cardId: "88", action: "send_email" }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
     expect(calls).toHaveLength(3);
   });
 
@@ -496,26 +592,53 @@ describe("Planning Center People", () => {
           ],
           included: [
             person("1", { name: "Ada" }),
-            { type: "FormSubmissionValue", id: "v1", attributes: { value: "raw", display_value: "Shown" }, relationships: { form_field: { data: { type: "FormField", id: "f1" } } } },
+            {
+              type: "FormSubmissionValue",
+              id: "v1",
+              attributes: { value: "raw", display_value: "Shown" },
+              relationships: { form_field: { data: { type: "FormField", id: "f1" } } },
+            },
             { type: "FormField", id: "f1", attributes: { label: "T-shirt size" } },
           ],
         },
       },
       {
         body: {
-          data: [{ type: "FieldDatum", id: "d1", attributes: { value: "Blue" }, relationships: { field_definition: { data: { type: "FieldDefinition", id: "fd1" } } } }],
-          included: [{ type: "FieldDefinition", id: "fd1", attributes: { name: "Favorite color", data_type: "string" } }],
+          data: [
+            {
+              type: "FieldDatum",
+              id: "d1",
+              attributes: { value: "Blue" },
+              relationships: { field_definition: { data: { type: "FieldDefinition", id: "fd1" } } },
+            },
+          ],
+          included: [
+            { type: "FieldDefinition", id: "fd1", attributes: { name: "Favorite color", data_type: "string" } },
+          ],
         },
       },
     );
     const submissions = await call("list_form_submissions", { formId: "4" });
     expect(calls[0]!.url.searchParams.get("order")).toBe("-created_at");
     expect(submissions.submissions).toEqual([
-      { id: "fs1", created_at: "2026-09-01T00:00:00Z", person_id: "1", person_name: "Ada", values: [{ field: "T-shirt size", value: "Shown" }] },
+      {
+        id: "fs1",
+        created_at: "2026-09-01T00:00:00Z",
+        person_id: "1",
+        person_name: "Ada",
+        values: [{ field: "T-shirt size", value: "Shown" }],
+      },
     ]);
     const fields = await call("list_person_field_data", { personId: "1" });
     expect(fields.fields).toEqual([
-      { id: "d1", field_definition_id: "fd1", field: "Favorite color", data_type: "string", value: "Blue", file_name: null },
+      {
+        id: "d1",
+        field_definition_id: "fd1",
+        field: "Favorite color",
+        data_type: "string",
+        value: "Blue",
+        file_name: null,
+      },
     ]);
   });
 });
@@ -531,13 +654,24 @@ describe("Planning Center Services, Groups, Check-Ins, and Giving", () => {
             attributes: { title: "Easter", dates: "April 5, 2026", permissions: "Editor" },
             relationships: { plan_times: { data: [{ type: "PlanTime", id: "t1" }] } },
           },
-          included: [{ type: "PlanTime", id: "t1", attributes: { name: "9am", time_type: "service", starts_at: "2026-04-05T14:00:00Z" } }],
+          included: [
+            {
+              type: "PlanTime",
+              id: "t1",
+              attributes: { name: "9am", time_type: "service", starts_at: "2026-04-05T14:00:00Z" },
+            },
+          ],
         },
       },
       {
         body: {
           data: [
-            { type: "Item", id: "i2", attributes: { sequence: 2, item_type: "song", title: "Song", html_details: "<p>noise</p>" }, relationships: { song: { data: { type: "Song", id: "s1" } } } },
+            {
+              type: "Item",
+              id: "i2",
+              attributes: { sequence: 2, item_type: "song", title: "Song", html_details: "<p>noise</p>" },
+              relationships: { song: { data: { type: "Song", id: "s1" } } },
+            },
             { type: "Item", id: "i1", attributes: { sequence: 1, item_type: "header", title: "Welcome" } },
           ],
           meta: { next: { offset: 100 } },
@@ -545,7 +679,17 @@ describe("Planning Center Services, Groups, Check-Ins, and Giving", () => {
       },
       {
         body: {
-          data: [{ type: "PlanPerson", id: "pp1", attributes: { name: "Ada", status: "C" }, relationships: { team: { data: { type: "Team", id: "tm1" } }, person: { data: { type: "Person", id: "1" } } } }],
+          data: [
+            {
+              type: "PlanPerson",
+              id: "pp1",
+              attributes: { name: "Ada", status: "C" },
+              relationships: {
+                team: { data: { type: "Team", id: "tm1" } },
+                person: { data: { type: "Person", id: "1" } },
+              },
+            },
+          ],
           included: [{ type: "Team", id: "tm1", attributes: { name: "Band" } }],
           meta: {},
         },
@@ -564,7 +708,14 @@ describe("Planning Center Services, Groups, Check-Ins, and Giving", () => {
       times: [{ id: "t1", name: "9am", time_type: "service", starts_at: "2026-04-05T14:00:00Z" }],
     });
     expect(result.items.map((item: any) => item.id)).toEqual(["i1", "i2"]);
-    expect(result.items[1]).toEqual({ id: "i2", sequence: 2, item_type: "song", title: "Song", song_id: "s1", arrangement_id: null });
+    expect(result.items[1]).toEqual({
+      id: "i2",
+      sequence: 2,
+      item_type: "song",
+      title: "Song",
+      song_id: "s1",
+      arrangement_id: null,
+    });
     expect(result.teamMembers).toEqual([
       { id: "pp1", name: "Ada", status: "C", team_id: "tm1", team_name: "Band", person_id: "1" },
     ]);
@@ -576,17 +727,36 @@ describe("Planning Center Services, Groups, Check-Ins, and Giving", () => {
     queue(
       { body: { data: [] } },
       { body: { data: [] } },
-      { status: 201, body: { data: { type: "PlanPerson", id: "pp2", attributes: { name: "Ada", status: "U" }, relationships: { team: { data: { type: "Team", id: "3" } } } } } },
+      {
+        status: 201,
+        body: {
+          data: {
+            type: "PlanPerson",
+            id: "pp2",
+            attributes: { name: "Ada", status: "U" },
+            relationships: { team: { data: { type: "Team", id: "3" } } },
+          },
+        },
+      },
     );
     await call("list_plans", { serviceTypeId: "10" });
     expect(calls[0]!.url.searchParams.get("filter")).toBe("future");
     expect(calls[0]!.url.searchParams.get("order")).toBe("sort_date");
     await call("list_plans", { serviceTypeId: "10", when: "past" });
     expect(calls[1]!.url.searchParams.get("order")).toBe("-sort_date");
-    const scheduled = await call("schedule_plan_person", { serviceTypeId: "10", planId: "20", personId: "1", teamId: "3", teamPositionName: "Bass" });
+    const scheduled = await call("schedule_plan_person", {
+      serviceTypeId: "10",
+      planId: "20",
+      personId: "1",
+      teamId: "3",
+      teamPositionName: "Bass",
+    });
     expect(calls[2]!.url.pathname).toBe("/services/v2/service_types/10/plans/20/team_members");
     expect(calls[2]!.body).toEqual({
-      data: { type: "PlanPerson", attributes: { person_id: "1", team_id: "3", team_position_name: "Bass", status: "U" } },
+      data: {
+        type: "PlanPerson",
+        attributes: { person_id: "1", team_id: "3", team_position_name: "Bass", status: "U" },
+      },
     });
     expect(scheduled).toMatchObject({ id: "pp2", status: "U", team_id: "3" });
   });
@@ -595,22 +765,49 @@ describe("Planning Center Services, Groups, Check-Ins, and Giving", () => {
     // Services 2018-11-01: "The only value that you can pass is `header`. If
     // no value is passed then `item` will be used."
     const tools = await connection().listTools(context());
-    const itemType = (tools.find((tool) => tool.name === "add_plan_item")!.inputSchema!.properties as Record<string, { enum?: unknown[] }>)["itemType"]!;
+    const itemType = (
+      tools.find((tool) => tool.name === "add_plan_item")!.inputSchema!.properties as Record<
+        string,
+        { enum?: unknown[] }
+      >
+    )["itemType"]!;
     expect(itemType.enum).toEqual(["item", "header"]);
-    const item = (id: string, attributes: Record<string, unknown>) => ({ status: 201, body: { data: { type: "Item", id, attributes } } });
-    queue(item("i1", { item_type: "header", title: "Welcome" }), item("i2", { item_type: "song", title: "Amazing Grace" }), item("i3", { item_type: "item", title: "Prayer" }));
+    const item = (id: string, attributes: Record<string, unknown>) => ({
+      status: 201,
+      body: { data: { type: "Item", id, attributes } },
+    });
+    queue(
+      item("i1", { item_type: "header", title: "Welcome" }),
+      item("i2", { item_type: "song", title: "Amazing Grace" }),
+      item("i3", { item_type: "item", title: "Prayer" }),
+    );
     await call("add_plan_item", { serviceTypeId: "10", planId: "20", title: "Welcome", itemType: "header" });
-    await call("add_plan_item", { serviceTypeId: "10", planId: "20", title: "Amazing Grace", songId: "5", arrangementId: "6" });
+    await call("add_plan_item", {
+      serviceTypeId: "10",
+      planId: "20",
+      title: "Amazing Grace",
+      songId: "5",
+      arrangementId: "6",
+    });
     await call("add_plan_item", { serviceTypeId: "10", planId: "20", title: "Prayer", itemType: "item" });
     expect(calls[0]!.body).toEqual({ data: { type: "Item", attributes: { title: "Welcome", item_type: "header" } } });
-    expect(calls[1]!.body).toEqual({ data: { type: "Item", attributes: { title: "Amazing Grace", song_id: "5", arrangement_id: "6" } } });
+    expect(calls[1]!.body).toEqual({
+      data: { type: "Item", attributes: { title: "Amazing Grace", song_id: "5", arrangement_id: "6" } },
+    });
     expect(calls[2]!.body).toEqual({ data: { type: "Item", attributes: { title: "Prayer" } } });
   });
 
   it("resolves group membership names through the included person", async () => {
     queue({
       body: {
-        data: [{ type: "Membership", id: "m1", attributes: { role: "leader", joined_at: "2025-01-01" }, relationships: { person: { data: { type: "Person", id: "1" } } } }],
+        data: [
+          {
+            type: "Membership",
+            id: "m1",
+            attributes: { role: "leader", joined_at: "2025-01-01" },
+            relationships: { person: { data: { type: "Person", id: "1" } } },
+          },
+        ],
         included: [person("1", { first_name: "Ada", last_name: "Lovelace" })],
       },
     });
@@ -624,7 +821,12 @@ describe("Planning Center Services, Groups, Check-Ins, and Giving", () => {
 
   it("scopes check-ins by service date through the event period", async () => {
     queue({ body: { data: [] } }, { body: { data: [] } });
-    await call("list_check_ins", { eventId: "2", serviceAfter: "2026-09-06", serviceBefore: "2026-09-07", kind: "guest" });
+    await call("list_check_ins", {
+      eventId: "2",
+      serviceAfter: "2026-09-06",
+      serviceBefore: "2026-09-07",
+      kind: "guest",
+    });
     const query = calls[0]!.url.searchParams;
     expect(calls[0]!.url.pathname).toBe("/check-ins/v2/events/2/check_ins");
     expect(query.get("where[event_period][starts_at][gte]")).toBe("2026-09-06");
@@ -642,7 +844,13 @@ describe("Planning Center Services, Groups, Check-Ins, and Giving", () => {
             {
               type: "Donation",
               id: "d1",
-              attributes: { amount_cents: 5000, amount_currency: "USD", received_at: "2026-09-01", payment_last4: "4242", refunded: false },
+              attributes: {
+                amount_cents: 5000,
+                amount_currency: "USD",
+                received_at: "2026-09-01",
+                payment_last4: "4242",
+                refunded: false,
+              },
               relationships: {
                 person: { data: { type: "Person", id: "1" } },
                 batch: { data: null },
@@ -651,7 +859,12 @@ describe("Planning Center Services, Groups, Check-Ins, and Giving", () => {
             },
           ],
           included: [
-            { type: "Designation", id: "g1", attributes: { amount_cents: 5000 }, relationships: { fund: { data: { type: "Fund", id: "f1" } } } },
+            {
+              type: "Designation",
+              id: "g1",
+              attributes: { amount_cents: 5000 },
+              relationships: { fund: { data: { type: "Fund", id: "f1" } } },
+            },
             { type: "Fund", id: "f1", attributes: { name: "General" } },
           ],
         },
@@ -686,12 +899,28 @@ describe("Planning Center Services, Groups, Check-Ins, and Giving", () => {
   it("never returns a webhook subscription's signing secret", async () => {
     queue({
       body: {
-        data: [{ type: "WebhookSubscription", id: "w1", attributes: { name: "people.v2.events.person.created", url: "https://hooks.example", active: true, authenticity_secret: "whsec_live" } }],
+        data: [
+          {
+            type: "WebhookSubscription",
+            id: "w1",
+            attributes: {
+              name: "people.v2.events.person.created",
+              url: "https://hooks.example",
+              active: true,
+              authenticity_secret: "whsec_live",
+            },
+          },
+        ],
       },
     });
     const result = await call("list_webhook_subscriptions");
     expect(JSON.stringify(result)).not.toContain("whsec_live");
-    expect(result.subscriptions[0]).toEqual({ id: "w1", name: "people.v2.events.person.created", url: "https://hooks.example", active: true });
+    expect(result.subscriptions[0]).toEqual({
+      id: "w1",
+      name: "people.v2.events.person.created",
+      url: "https://hooks.example",
+      active: true,
+    });
   });
 });
 
@@ -701,7 +930,10 @@ describe("Planning Center hatches", () => {
     queue({ body }, { body: {} });
     const result = await call("pco_api_get", {
       path: "/publishing/v2/episodes",
-      query: [{ name: "where[title]", value: "Easter" }, { name: "per_page", value: 5 }],
+      query: [
+        { name: "where[title]", value: "Easter" },
+        { name: "per_page", value: 5 },
+      ],
     });
     expect(result).toEqual({ result: body });
     expect(calls[0]!.url.pathname).toBe("/publishing/v2/episodes");
@@ -744,7 +976,9 @@ describe("Planning Center hatches", () => {
     expect(calls[0]!.headers["content-type"]).toBe("application/json");
     expect(await call("pco_api_mutate", { method: "DELETE", path: "/people/v2/emails/9" })).toEqual({ result: null });
     for (const method of ["GET", "PUT"]) {
-      await expect(call("pco_api_mutate", { method, path: "/people/v2/people" })).rejects.toMatchObject({ code: "invalid_args" });
+      await expect(call("pco_api_mutate", { method, path: "/people/v2/people" })).rejects.toMatchObject({
+        code: "invalid_args",
+      });
     }
     expect(calls).toHaveLength(2);
   });

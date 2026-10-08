@@ -15,15 +15,34 @@ function fixture(run) {
     mkdirSync(join(root, ".changes"));
     copyFileSync(new URL("./changelog.mjs", import.meta.url), join(root, "scripts/changelog.mjs"));
     writeFileSync(join(root, "CHANGELOG.md"), "# Changelog\n\n## 0.28.1 — 2026-10-05\n\nPrevious release.\n");
-    writeFileSync(join(root, "narrative.md"), "This release changes contributor tooling.\n\nDeployments need no changes.\n");
+    writeFileSync(
+      join(root, "narrative.md"),
+      "This release changes contributor tooling.\n\nDeployments need no changes.\n",
+    );
     execFileSync("git", ["init", "--quiet", root]);
     const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
     const commit = () => {
       git("add", ".");
-      git("-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "-m", "Fixture");
+      git(
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--quiet",
+        "--allow-empty",
+        "-m",
+        "Fixture",
+      );
     };
     commit();
-    const command = (args, nodeArgs = []) => spawnSync(process.execPath, [...nodeArgs, join(root, "scripts/changelog.mjs"), ...args], { cwd: root, encoding: "utf8" });
+    const command = (args, nodeArgs = []) =>
+      spawnSync(process.execPath, [...nodeArgs, join(root, "scripts/changelog.mjs"), ...args], {
+        cwd: root,
+        encoding: "utf8",
+      });
     const assemble = ["--version", "0.29.0", "--narrative", "narrative.md", "--date", "2026-10-07"];
     run({ root, command, assemble, commit, git });
   } finally {
@@ -35,7 +54,10 @@ test("assembles every category deterministically, preserves narrative and histor
   fixture(({ root, command, assemble, commit }) => {
     const types = ["security", "removed", "fixed", "changed", "added"];
     for (const [i, type] of types.entries()) {
-      writeFileSync(join(root, `.changes/${i}.md`), `---\ntype: ${type}\n${type === "changed" ? "breaking: true\n" : ""}---\n\n${type} entry\ncontinued\n`);
+      writeFileSync(
+        join(root, `.changes/${i}.md`),
+        `---\ntype: ${type}\n${type === "changed" ? "breaking: true\n" : ""}---\n\n${type} entry\ncontinued\n`,
+      );
     }
     writeFileSync(join(root, ".changes/.gitkeep"), "");
     const history = readFileSync(join(root, "CHANGELOG.md"), "utf8");
@@ -44,8 +66,14 @@ test("assembles every category deterministically, preserves narrative and histor
     assert.equal(result.status, 0, result.stderr);
     const output = readFileSync(join(root, "CHANGELOG.md"), "utf8");
     assert.ok(output.endsWith(history.slice(history.indexOf("## 0.28.1"))));
-    assert.match(output, /## 0\.29\.0 — 2026-10-07\n\nThis release changes contributor tooling\.\n\nDeployments need no changes\./);
-    assert.deepEqual([...output.matchAll(/^### (\w+)/gm)].map((match) => match[1]), ["Added", "Changed", "Fixed", "Removed", "Security"]);
+    assert.match(
+      output,
+      /## 0\.29\.0 — 2026-10-07\n\nThis release changes contributor tooling\.\n\nDeployments need no changes\./,
+    );
+    assert.deepEqual(
+      [...output.matchAll(/^### (\w+)/gm)].map((match) => match[1]),
+      ["Added", "Changed", "Fixed", "Removed", "Security"],
+    );
     assert.match(output, /- \*\*Breaking:\*\* changed entry\n  continued/);
     assert.deepEqual(readdirSync(join(root, ".changes")), [".gitkeep"]);
     assert.equal(command(["--check"]).status, 0);
@@ -65,12 +93,18 @@ test("printed git command restores byte-identical committed inputs after a parti
     writeFileSync(join(root, ".changes/.gitkeep"), "");
     commit();
     const names = readdirSync(join(root, ".changes")).sort();
-    const before = new Map(["CHANGELOG.md", ...names.map((name) => `.changes/${name}`)]
-      .map((file) => [file, readFileSync(join(root, file))]));
+    const before = new Map(
+      ["CHANGELOG.md", ...names.map((name) => `.changes/${name}`)].map((file) => [
+        file,
+        readFileSync(join(root, file)),
+      ]),
+    );
     // Patch the actual CLI's filesystem boundary without relying on platform
     // permissions or immutable-file support. The first unlink must land.
     const fault = join(root, "fault.mjs");
-    writeFileSync(fault, `import fs from "node:fs";
+    writeFileSync(
+      fault,
+      `import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import assert from "node:assert/strict";
 const unlink = fs.unlinkSync;
@@ -83,13 +117,17 @@ fs.unlinkSync = (file) => {
   return unlink(file);
 };
 syncBuiltinESMExports();
-`);
+`,
+    );
     for (const interrupted of [false, true]) {
       if (interrupted) {
-        writeFileSync(fault, readFileSync(fault, "utf8").replace(
-          'throw Object.assign(new Error("injected unlink failure"), { code: "EPERM" });',
-          'process.kill(process.pid, "SIGTERM");',
-        ));
+        writeFileSync(
+          fault,
+          readFileSync(fault, "utf8").replace(
+            'throw Object.assign(new Error("injected unlink failure"), { code: "EPERM" });',
+            'process.kill(process.pid, "SIGTERM");',
+          ),
+        );
       }
       const result = command(assemble, ["--import", fault]);
       assert.notEqual(result.status, 0);
@@ -118,9 +156,14 @@ syncBuiltinESMExports();
 
 test("rejects malformed metadata and empty entries without changing history or consuming fragments", () => {
   for (const text of [
-    "No frontmatter", "---\ntype: other\n---\n\nEntry", "---\ntype: added\ntype: fixed\n---\n\nEntry",
-    "---\ntype: fixed\nextra: true\n---\n\nEntry", "---\ntype: fixed\nbreaking: false\n---\n\nEntry",
-    "---\ntype: fixed\n---\n\n", "---\ntype: fixed\n---\n\n### Section", "---\ntype: fixed\n---\n\n- Entry",
+    "No frontmatter",
+    "---\ntype: other\n---\n\nEntry",
+    "---\ntype: added\ntype: fixed\n---\n\nEntry",
+    "---\ntype: fixed\nextra: true\n---\n\nEntry",
+    "---\ntype: fixed\nbreaking: false\n---\n\nEntry",
+    "---\ntype: fixed\n---\n\n",
+    "---\ntype: fixed\n---\n\n### Section",
+    "---\ntype: fixed\n---\n\n- Entry",
   ]) {
     fixture(({ root, command, assemble, commit }) => {
       writeFileSync(join(root, ".changes/bad.md"), text);
@@ -140,7 +183,13 @@ test("requires fragments, a narrative, a version, and a real date before writing
     writeFileSync(join(root, ".changes/good.md"), "---\r\ntype: fixed\r\n---\r\n\r\nFix.\r\n");
     commit();
     const before = readFileSync(join(root, "CHANGELOG.md"), "utf8");
-    for (const args of [[], ["--version", "no"], ["--version", "0.29.0"], [...assemble.slice(0, 4), "--date", "2026-02-30"], [...assemble, "--unknown", "yes"]]) {
+    for (const args of [
+      [],
+      ["--version", "no"],
+      ["--version", "0.29.0"],
+      [...assemble.slice(0, 4), "--date", "2026-02-30"],
+      [...assemble, "--unknown", "yes"],
+    ]) {
       assert.notEqual(command(args).status, 0);
       assert.equal(readFileSync(join(root, "CHANGELOG.md"), "utf8"), before);
     }
@@ -151,7 +200,14 @@ test("requires fragments, a narrative, a version, and a real date before writing
 });
 
 test("refuses dirty, staged, untracked, and ignored untracked inputs before writing", () => {
-  for (const kind of ["dirty changelog", "dirty fragment", "staged fragment", "untracked fragment", "ignored fragment", "untracked changelog"]) {
+  for (const kind of [
+    "dirty changelog",
+    "dirty fragment",
+    "staged fragment",
+    "untracked fragment",
+    "ignored fragment",
+    "untracked changelog",
+  ]) {
     fixture(({ root, command, assemble, commit, git }) => {
       const fragment = join(root, ".changes/good.md");
       writeFileSync(fragment, "---\ntype: fixed\n---\n\nFix.\n");
@@ -168,7 +224,11 @@ test("refuses dirty, staged, untracked, and ignored untracked inputs before writ
       const result = command(assemble);
       assert.notEqual(result.status, 0, kind);
       assert.match(result.stderr, /Commit .*before assembling/, kind);
-      assert.deepEqual(files.map((file) => readFileSync(join(root, file))), before, kind);
+      assert.deepEqual(
+        files.map((file) => readFileSync(join(root, file))),
+        before,
+        kind,
+      );
     });
   }
 });
@@ -186,18 +246,28 @@ test("rejects a committed legacy Unreleased section without touching inputs", ()
 });
 
 function collection(node, workers, details = {}) {
-  return { node, workers, details: Object.fromEntries([...node, ...workers].map((file) => [file, details[file] ?? {}])) };
+  return {
+    node,
+    workers,
+    details: Object.fromEntries([...node, ...workers].map((file) => [file, details[file] ?? {}])),
+  };
 }
 
 test("collection assertion enforces exact Node-only membership and first-line reasons", () => {
   const file = "test/nested/example.node.test.ts";
   const portable = "test/portable.test.ts";
   for (const firstLine of ["import {};", "// Node-only: ", "// Node-only:    "]) {
-    assert.throws(() => assertSuiteCollection(collection([portable, file], [portable], { [file]: { firstLine } })), /first-line/);
+    assert.throws(
+      () => assertSuiteCollection(collection([portable, file], [portable], { [file]: { firstLine } })),
+      /first-line/,
+    );
   }
   const details = { [file]: { firstLine: "// Node-only: uses TCP sockets." } };
   assert.match(assertSuiteCollection(collection([portable, file], [portable], details)), /1 reasons present/);
-  assert.throws(() => assertSuiteCollection(collection([portable, file], [portable, file], details)), /workers must collect none/);
+  assert.throws(
+    () => assertSuiteCollection(collection([portable, file], [portable, file], details)),
+    /workers must collect none/,
+  );
   assert.throws(() => assertSuiteCollection(collection([portable], [])), /exactly the/);
   assert.throws(() => assertSuiteCollection(collection([], [portable])), /not collected by node/);
   assert.throws(() => assertSuiteCollection(collection(["outside/a.test.ts"], ["outside/a.test.ts"])), /under test/);
@@ -209,17 +279,32 @@ for (const directory of ["ignored", "dist", "worktrees", "symlink", "node_module
     assert.throws(() => assertSuiteCollection(collection([file], [])), /first-line/);
     if (["dist", "worktrees", "node_modules"].includes(directory)) {
       const portable = `test/${directory}/pkg/portable.test.ts`;
-      assert.throws(() => assertSuiteCollection(collection([portable], [portable])), /outside node_modules, dist, and nested worktrees/);
+      assert.throws(
+        () => assertSuiteCollection(collection([portable], [portable])),
+        /outside node_modules, dist, and nested worktrees/,
+      );
     }
     if (directory === "symlink") {
-      assert.throws(() => assertSuiteCollection(collection([file], [], { [file]: { realFile: "outside/example.node.test.ts", firstLine: "// Node-only: sockets." } })), /under test/);
+      assert.throws(
+        () =>
+          assertSuiteCollection(
+            collection([file], [], {
+              [file]: { realFile: "outside/example.node.test.ts", firstLine: "// Node-only: sockets." },
+            }),
+          ),
+        /under test/,
+      );
     }
   });
 }
 
 test("collection rejects nested git worktrees with arbitrary names and resolved excluded paths", () => {
   const file = "test/nested/portable.test.ts";
-  for (const details of [{ inWorktree: true }, { realFile: "test/node_modules/pkg/portable.test.ts" }, { realFile: "test/.claude/portable.test.ts" }]) {
+  for (const details of [
+    { inWorktree: true },
+    { realFile: "test/node_modules/pkg/portable.test.ts" },
+    { realFile: "test/.claude/portable.test.ts" },
+  ]) {
     assert.throws(() => assertSuiteCollection(collection([file], [file], { [file]: details })), /nested worktrees/);
   }
 });
@@ -230,10 +315,24 @@ test("check:fast always runs the guards and adds suites that name a changed path
     { file: "test/fixture-reader.test.ts", text: 'new URL("./fixtures/catalog.json", import.meta.url)' },
     { file: "test/unrelated.test.ts", text: "import { createConnecta } from '../src/index.js';" },
   ];
-  assert.deepEqual(relatedInputs({ changed: [], suites }), { related: [...GUARDS].sort(), deferred: [], fullRun: false });
-  const { related, deferred } = relatedInputs({ changed: [".github/workflows/ci.yml", "test/fixtures/catalog.json", "src/server.ts"], suites });
+  assert.deepEqual(relatedInputs({ changed: [], suites }), {
+    related: [...GUARDS].sort(),
+    deferred: [],
+    fullRun: false,
+  });
+  const { related, deferred } = relatedInputs({
+    changed: [".github/workflows/ci.yml", "test/fixtures/catalog.json", "src/server.ts"],
+    suites,
+  });
   assert.deepEqual(deferred, []);
-  for (const file of [...GUARDS, ".github/workflows/ci.yml", "test/ci.node.test.ts", "test/fixtures/catalog.json", "test/fixture-reader.test.ts", "src/server.ts"]) {
+  for (const file of [
+    ...GUARDS,
+    ".github/workflows/ci.yml",
+    "test/ci.node.test.ts",
+    "test/fixtures/catalog.json",
+    "test/fixture-reader.test.ts",
+    "src/server.ts",
+  ]) {
     assert.ok(related.includes(file), file);
   }
   assert.ok(!related.includes("test/unrelated.test.ts"));
@@ -247,12 +346,23 @@ test("check:fast defers inputs that would make Vitest rerun every suite", () => 
 });
 
 test("check:fast keeps a failing Vitest run's summary and bounds other output", () => {
-  const vitest = ["✓ passing suite", "", "⎯⎯⎯ Failed Tests 1 ⎯⎯⎯", " FAIL test/a.test.ts > breaks", " Test Files  1 failed"].join("\n");
-  assert.equal(failureOutput(vitest), ["⎯⎯⎯ Failed Tests 1 ⎯⎯⎯", " FAIL test/a.test.ts > breaks", " Test Files  1 failed"].join("\n"));
+  const vitest = [
+    "✓ passing suite",
+    "",
+    "⎯⎯⎯ Failed Tests 1 ⎯⎯⎯",
+    " FAIL test/a.test.ts > breaks",
+    " Test Files  1 failed",
+  ].join("\n");
+  assert.equal(
+    failureOutput(vitest),
+    ["⎯⎯⎯ Failed Tests 1 ⎯⎯⎯", " FAIL test/a.test.ts > breaks", " Test Files  1 failed"].join("\n"),
+  );
   const long = Array.from({ length: 250 }, (_, index) => `line ${index}`).join("\n");
-  assert.deepEqual(failureOutput(`${long}\n`).split("\n"), Array.from({ length: 200 }, (_, index) => `line ${index + 50}`));
+  assert.deepEqual(
+    failureOutput(`${long}\n`).split("\n"),
+    Array.from({ length: 200 }, (_, index) => `line ${index + 50}`),
+  );
 });
-
 
 test("check:fast keeps deleted fixtures and both sides of staged and committed renames", () => {
   fixture(({ root, git, commit }) => {
@@ -262,7 +372,12 @@ test("check:fast keeps deleted fixtures and both sides of staged and committed r
     writeFileSync(join(root, old), "{}\n");
     commit();
     const base = git("rev-parse", "HEAD").trim();
-    const suites = [{ file: "test/storage-fixture.node.test.ts", text: 'new URL("./fixtures/storage-fixture/wrangler.jsonc", import.meta.url)' }];
+    const suites = [
+      {
+        file: "test/storage-fixture.node.test.ts",
+        text: 'new URL("./fixtures/storage-fixture/wrangler.jsonc", import.meta.url)',
+      },
+    ];
     rmSync(join(root, old));
     assert.deepEqual(changedPaths("HEAD", root), [old]);
     const selection = relatedInputs({ changed: changedPaths("HEAD", root), deleted: [old], suites });
@@ -283,7 +398,13 @@ test("check:fast keeps deleted fixtures and both sides of staged and committed r
 });
 
 test("check:fast runs both full projects when a deleted module's former dependents are unknown", () => {
-  for (const path of ["src/removed.ts", "src/removed.js", "src/removed.mjs", "src/removed.cts", "src/operator-ui/removed.tsx"]) {
+  for (const path of [
+    "src/removed.ts",
+    "src/removed.js",
+    "src/removed.mjs",
+    "src/removed.cts",
+    "src/operator-ui/removed.tsx",
+  ]) {
     const selection = relatedInputs({ changed: [path], deleted: [path], suites: [] });
     assert.equal(selection.fullRun, true, path);
     assert.ok(!selection.related.includes(path));
@@ -292,11 +413,15 @@ test("check:fast runs both full projects when a deleted module's former dependen
 
 test("check:fast preserves every failure section even when the summary exceeds 200 lines", () => {
   const summary = [
-    "⎯⎯⎯ Failed Suites 1 ⎯⎯⎯", "Error: Cannot find module removed.js",
+    "⎯⎯⎯ Failed Suites 1 ⎯⎯⎯",
+    "Error: Cannot find module removed.js",
     ...Array.from({ length: 250 }, (_, index) => `stack ${index}`),
-    "⎯⎯⎯ Failed Tests 1 ⎯⎯⎯", "AssertionError: false is not true",
-    "⎯⎯⎯ Unhandled Errors ⎯⎯⎯", "Error: unhandled rejection",
-    " Test Files  2 failed", " Errors  1 error",
+    "⎯⎯⎯ Failed Tests 1 ⎯⎯⎯",
+    "AssertionError: false is not true",
+    "⎯⎯⎯ Unhandled Errors ⎯⎯⎯",
+    "Error: unhandled rejection",
+    " Test Files  2 failed",
+    " Errors  1 error",
   ].join("\n");
   assert.equal(failureOutput(`✓ passing suite\n${summary}\n`), summary);
   for (const section of ["Unhandled Errors", "Errors  1 error"]) {
@@ -306,12 +431,18 @@ test("check:fast preserves every failure section even when the summary exceeds 2
 
 test("check:fast prints a real mixed Vitest run's missing-module and assertion diagnostics", () => {
   fixture(({ root }) => {
-    writeFileSync(join(root, "vitest.config.mjs"), 'export default { test: { globals: true, include: ["*.test.mjs"] } };\n');
+    writeFileSync(
+      join(root, "vitest.config.mjs"),
+      'export default { test: { globals: true, include: ["*.test.mjs"] } };\n',
+    );
     writeFileSync(join(root, "suite.test.mjs"), 'import "./missing-module.mjs";\n');
     writeFileSync(join(root, "assertion.test.mjs"), 'test("fails an assertion", () => expect(false).toBe(true));\n');
     const vitest = fileURLToPath(new URL("../node_modules/vitest/vitest.mjs", import.meta.url));
     const result = spawnSync(process.execPath, [vitest, "run", "--config", "vitest.config.mjs", "--maxWorkers", "1"], {
-      cwd: root, encoding: "utf8", env: { ...process.env, FORCE_COLOR: "0" }, timeout: 30_000,
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, FORCE_COLOR: "0" },
+      timeout: 30_000,
     });
     assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
     const summary = failureOutput(`${result.stdout}\n${result.stderr}`);

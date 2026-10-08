@@ -17,7 +17,9 @@ describe("byte-reading responses", () => {
       expect(nativeText).not.toHaveBeenCalled();
       expect(nativeJson).not.toHaveBeenCalled();
     }
-    const json = byteReadResponse(new Response(new Uint8Array([0xef, 0xbb, 0xbf, ...encoder.encode('{"value":"世界"}')] )));
+    const json = byteReadResponse(
+      new Response(new Uint8Array([0xef, 0xbb, 0xbf, ...encoder.encode('{"value":"世界"}')])),
+    );
     expect(await json.json()).toEqual({ value: "世界" });
   });
 
@@ -48,7 +50,11 @@ describe("byte-reading responses", () => {
 
   it("INV-6: leaves SSE streaming incremental through body", async () => {
     let controller!: ReadableStreamDefaultController<Uint8Array>;
-    const stream = new ReadableStream<Uint8Array>({ start(value) { controller = value; } });
+    const stream = new ReadableStream<Uint8Array>({
+      start(value) {
+        controller = value;
+      },
+    });
     const response = byteReadResponse(new Response(stream, { headers: { "Content-Type": "text/event-stream" } }));
     expect(response.bodyUsed).toBe(false);
     const reader = response.body!.getReader();
@@ -76,9 +82,11 @@ describe("byte-reading responses", () => {
   });
 
   it("INV-6: retains URL-encoded and multipart formData readers", async () => {
-    const encoded = byteReadResponse(new Response("name=Ada+Lovelace&tag=one&tag=two", {
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    }));
+    const encoded = byteReadResponse(
+      new Response("name=Ada+Lovelace&tag=one&tag=two", {
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      }),
+    );
     const values = await encoded.formData();
     expect(values.get("name")).toBe("Ada Lovelace");
     expect(values.getAll("tag")).toEqual(["one", "two"]);

@@ -7,21 +7,11 @@ import { CatalogService } from "../src/catalog-service.js";
 import { InvocationService } from "../src/invocation.js";
 import { unwrapMcpResult } from "../src/mcp-result.js";
 import { ConnectorCallError } from "../src/errors.js";
-import {
-  alignEndToCharBoundary,
-  alignStartToCharBoundary,
-  createMetaTools,
-} from "../src/meta-tools.js";
+import { alignEndToCharBoundary, alignStartToCharBoundary, createMetaTools } from "../src/meta-tools.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
-import {
-  activitySink,
-  required,
-  calcConnector,
-  makeRegistry,
-  silentLogger,
-} from "./helpers.js";
+import { activitySink, required, calcConnector, makeRegistry, silentLogger } from "./helpers.js";
 
 /**
  * One connecta.result page, read the way a client does: a one-line JSON header,
@@ -119,9 +109,7 @@ describe("call_tool", () => {
 
   it("returns actionable recovery for unknown addresses and tools", async () => {
     const mt = createMetaTools(registry(), BASE);
-    const address = textOf(
-      await mt.callTool({ address: "ghost.read_items" }),
-    ) as {
+    const address = textOf(await mt.callTool({ address: "ghost.read_items" })) as {
       error: { nextAction: Record<string, unknown> };
     };
     expect(address.error.nextAction).toEqual({
@@ -133,9 +121,7 @@ describe("call_tool", () => {
       purpose: "Find the configured canonical address before retrying.",
     });
 
-    const tool = textOf(
-      await mt.callTool({ address: "calc.missing_sum" }),
-    ) as {
+    const tool = textOf(await mt.callTool({ address: "calc.missing_sum" })) as {
       error: { nextAction: Record<string, unknown> };
     };
     expect(tool.error.nextAction).toEqual({
@@ -212,10 +198,7 @@ describe("call_tool", () => {
         },
       ],
     });
-    const mt = createMetaTools(
-      makeRegistry([dangerous], { maxResultBytes: 1_000 }),
-      BASE,
-    );
+    const mt = createMetaTools(makeRegistry([dangerous], { maxResultBytes: 1_000 }), BASE);
     const huge = { blob: "x".repeat(50_000) };
 
     const direct = await mt.callTool({ address: "danger.erase", args: huge });
@@ -234,14 +217,12 @@ describe("call_tool", () => {
     expect(refusal.error.nextAction.arguments).toEqual({
       address: "danger.erase",
     });
-    expect(refusal.error.nextAction.purpose).toContain(
-      "Re-send the arguments you just sent",
-    );
+    expect(refusal.error.nextAction.purpose).toContain("Re-send the arguments you just sent");
 
     // Arguments that fit the echo budget still come back whole.
-    const small = textOf(
-      await mt.callTool({ address: "danger.erase", args: { target: "dupe" } }),
-    ) as { error: { nextAction: { arguments: { args?: unknown } } } };
+    const small = textOf(await mt.callTool({ address: "danger.erase", args: { target: "dupe" } })) as {
+      error: { nextAction: { arguments: { args?: unknown } } };
+    };
     expect(small.error.nextAction.arguments.args).toEqual({ target: "dupe" });
   });
 
@@ -251,10 +232,7 @@ describe("call_tool", () => {
     // record's search query — and each of those lands in both the text content
     // and structuredContent, so a 50 KB invented address produced a 200 KB
     // refusal against a deployment that capped results at 1 KB.
-    const mt = createMetaTools(
-      makeRegistry([calcConnector], { maxResultBytes: 1_000 }),
-      BASE,
-    );
+    const mt = createMetaTools(makeRegistry([calcConnector], { maxResultBytes: 1_000 }), BASE);
     const filler = "x".repeat(50_000);
 
     const unknownAddress = await mt.callTool({ address: `ghost.${filler}` });
@@ -362,10 +340,7 @@ describe("call_tool", () => {
     });
     const mt = createMetaTools(makeRegistry([silent, ambiguous]), BASE);
 
-    for (const address of [
-      "silent.unannotated",
-      "ambiguous.contradictory",
-    ]) {
+    for (const address of ["silent.unannotated", "ambiguous.contradictory"]) {
       const ordinary = await mt.callTool({ address });
       expect(ordinary.isError).toBe(true);
       expect(required(ordinary.content[0]).text).toContain("is a write");
@@ -398,10 +373,7 @@ describe("call_tool", () => {
     });
     // One meta-tool set is one inbound request, so its two concurrent calls
     // share the request-local catalog rather than each loading their own.
-    const mt = createMetaTools(
-      makeRegistry([connector], { toolCacheTtlSeconds: 0 }),
-      BASE,
-    );
+    const mt = createMetaTools(makeRegistry([connector], { toolCacheTtlSeconds: 0 }), BASE);
     const results = await Promise.all([
       mt.callTool({ address: "shared.read", resultMode: "value" }),
       mt.callTool({ address: "shared.read", resultMode: "value" }),
@@ -427,10 +399,7 @@ describe("call_tool", () => {
       },
       call: async () => ({ ok: true }),
     });
-    const mt = createMetaTools(
-      makeRegistry([connector], { toolCacheTtlSeconds: 0 }),
-      BASE,
-    );
+    const mt = createMetaTools(makeRegistry([connector], { toolCacheTtlSeconds: 0 }), BASE);
     expect(
       (
         textOf(
@@ -457,15 +426,17 @@ describe("call_tool", () => {
   it("INV-9: dispatches a transiently failing write exactly once", async () => {
     let calls = 0;
     const connector = api("once", {
-      tools: [{
-        name: "write",
-        description: "A write whose failure could invite a retry",
-        annotations: { readOnlyHint: false },
-        handler: () => {
-          calls++;
-          throw new Error("temporary 503");
+      tools: [
+        {
+          name: "write",
+          description: "A write whose failure could invite a retry",
+          annotations: { readOnlyHint: false },
+          handler: () => {
+            calls++;
+            throw new Error("temporary 503");
+          },
         },
-      }],
+      ],
     });
     const mt = createMetaTools(makeRegistry([connector]), BASE);
     const result = await mt.callDestructiveTool({
@@ -525,7 +496,6 @@ describe("call_tool", () => {
       await mt.callTool({
         address: "retry.unsafe_write",
         resultMode: "value",
-
       }),
     ) as { ok: boolean; attempts: number };
 
@@ -590,9 +560,7 @@ describe("call_tool", () => {
           annotations: { readOnlyHint: true },
           handler: (_args, ctx) => {
             seen.push({
-              ...(ctx.timeoutMs !== undefined
-                ? { timeoutMs: ctx.timeoutMs }
-                : {}),
+              ...(ctx.timeoutMs !== undefined ? { timeoutMs: ctx.timeoutMs } : {}),
               hasSignal: Boolean(ctx.signal),
             });
             return { ok: true };
@@ -664,9 +632,7 @@ describe("call_tool", () => {
       ],
     });
     const mt = createMetaTools(makeRegistry([connector]), BASE);
-    const parsed = textOf(
-      await mt.callTool({ address: "limited.read", resultMode: "value" }),
-    ) as {
+    const parsed = textOf(await mt.callTool({ address: "limited.read", resultMode: "value" })) as {
       ok: boolean;
       attempts: number;
       error: { code: string; retryable: boolean; retryAfterMs?: number };
@@ -716,11 +682,9 @@ describe("call_tool", () => {
           annotations: { readOnlyHint: true },
           handler: () => {
             calls++;
-            throw new ConnectorCallError(
-              "connector_call_failed",
-              'downstream rejected field "timeout"',
-              { retryable: false },
-            );
+            throw new ConnectorCallError("connector_call_failed", 'downstream rejected field "timeout"', {
+              retryable: false,
+            });
           },
         },
       ],
@@ -729,7 +693,6 @@ describe("call_tool", () => {
       await createMetaTools(makeRegistry([connector]), BASE).callTool({
         address: "typed.read",
         resultMode: "value",
-
       }),
     ) as {
       ok: boolean;
@@ -765,7 +728,6 @@ describe("call_tool", () => {
       await createMetaTools(makeRegistry([connector]), BASE).callTool({
         address: "expired.read",
         resultMode: "value",
-
       }),
     ) as {
       ok: boolean;
@@ -802,18 +764,12 @@ describe("call_tool", () => {
           description: "Read a value",
           annotations: { readOnlyHint: true },
           handler: () => {
-            throw new ConnectorCallError(
-              "auth_required",
-              "Authorization is required.",
-            );
+            throw new ConnectorCallError("auth_required", "Authorization is required.");
           },
         },
       ],
     });
-    const result = await createMetaTools(
-      makeRegistry([connector]),
-      BASE,
-    ).callTool({ address: "expired.read" });
+    const result = await createMetaTools(makeRegistry([connector]), BASE).callTool({ address: "expired.read" });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toMatchObject({
       ok: false,
@@ -851,7 +807,6 @@ describe("call_tool", () => {
         address: "strict.page",
         resultMode: "value",
         args: { page: "3" },
-
       }),
     ) as {
       ok: boolean;
@@ -908,9 +863,7 @@ describe("call_tool", () => {
       call: async (name) => {
         calls++;
         if (name === "provider_only") {
-          throw new Error(
-            'Malformed validation text: path=/value value="provider-secret"',
-          );
+          throw new Error('Malformed validation text: path=/value value="provider-secret"');
         }
         return { content: [{ type: "text", text: "unexpected dispatch" }] };
       },
@@ -946,9 +899,7 @@ describe("call_tool", () => {
       },
     };
 
-    const direct = textOf(
-      await mt.callTool({ address: "remote_strict.read", args }),
-    );
+    const direct = textOf(await mt.callTool({ address: "remote_strict.read", args }));
     const destructive = textOf(
       await mt.callDestructiveTool({
         address: "remote_strict.write",
@@ -964,9 +915,7 @@ describe("call_tool", () => {
       error: { ...expected.error, operation: "remote_strict.write" },
     });
 
-    expect(JSON.stringify([direct, destructive])).not.toContain(
-      "submitted-secret",
-    );
+    expect(JSON.stringify([direct, destructive])).not.toContain("submitted-secret");
     expect(calls).toBe(0);
 
     const providerOnly = textOf(
@@ -1008,20 +957,20 @@ const jsonMcpConnector: Connector = connectorWith({
   kind: "mcp",
   description: "JSON mcp",
   tools: [
-      {
-        name: "rec",
-        description: "record",
-        annotations: { readOnlyHint: true },
-        outputSchema: {
-          type: "object",
-          additionalProperties: false,
-          properties: { a: { type: "number" }, b: { type: "number" } },
-        },
+    {
+      name: "rec",
+      description: "record",
+      annotations: { readOnlyHint: true },
+      outputSchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: { a: { type: "number" }, b: { type: "number" } },
       },
-    ],
+    },
+  ],
   call: async () => ({
-      content: [{ type: "text", text: JSON.stringify({ a: 1, b: 2 }) }],
-    }),
+    content: [{ type: "text", text: JSON.stringify({ a: 1, b: 2 }) }],
+  }),
 });
 
 describe("call_tool size guard + connecta.result", () => {
@@ -1045,16 +994,16 @@ describe("call_tool size guard + connecta.result", () => {
     expect(notice.totalBytes).toBeGreaterThan(100);
     expect(notice.nextAction).toEqual({
       tool: "execute_code",
-      arguments: { code: `async () => await connecta.result(${JSON.stringify(notice.resultId)}, { offset: 100, maxBytes: 3829 })` },
+      arguments: {
+        code: `async () => await connecta.result(${JSON.stringify(notice.resultId)}, { offset: 100, maxBytes: 3829 })`,
+      },
     });
 
     // Round-trip the full text back through connecta.result.
     let offset = 0;
     let assembled = "";
     for (;;) {
-      const page = pageOf(
-        await mt.readResult({ id: notice.resultId, offset, maxBytes: 100 })
-      );
+      const page = pageOf(await mt.readResult({ id: notice.resultId, offset, maxBytes: 100 }));
       assembled += page.text;
       if (page.nextOffset === undefined) break;
       offset = page.nextOffset;
@@ -1070,10 +1019,7 @@ describe("call_tool size guard + connecta.result", () => {
   });
 
   it("replaces oversized value-mode data with a page handle", async () => {
-    const mt = createMetaTools(
-      makeRegistry([dataConnector], { maxResultBytes: 100 }),
-      BASE,
-    );
+    const mt = createMetaTools(makeRegistry([dataConnector], { maxResultBytes: 100 }), BASE);
     const parsed = textOf(
       await mt.callTool({
         address: "data.big",
@@ -1090,15 +1036,15 @@ describe("call_tool size guard + connecta.result", () => {
     expect(parsed.data).toMatchObject({
       nextAction: {
         tool: "execute_code",
-      arguments: { code: `async () => await connecta.result(${JSON.stringify(parsed.data.resultId)}, { offset: 0, maxBytes: 3829 })` },
+        arguments: {
+          code: `async () => await connecta.result(${JSON.stringify(parsed.data.resultId)}, { offset: 0, maxBytes: 3829 })`,
+        },
       },
     });
     let text = "";
     let offset: number | undefined = 0;
     while (offset !== undefined) {
-      const page = pageOf(
-        await mt.readResult({ id: parsed.data.resultId, offset, maxBytes: 1_000 })
-      );
+      const page = pageOf(await mt.readResult({ id: parsed.data.resultId, offset, maxBytes: 1_000 }));
       expect(page.text.length).toBeLessThanOrEqual(100);
       text += page.text;
       offset = page.nextOffset;
@@ -1115,19 +1061,16 @@ describe("call_tool size guard + connecta.result", () => {
       kind: "api",
       description: "Multibyte",
       tools: [
-          {
-            name: "get",
-            description: "unicode",
-            annotations: { readOnlyHint: true },
-          },
-        ],
+        {
+          name: "get",
+          description: "unicode",
+          annotations: { readOnlyHint: true },
+        },
+      ],
       call: async () => JSON.parse(original),
     });
     // cap of 4 forces truncation and 4-byte pages that split codepoints.
-    const mt = createMetaTools(
-      makeRegistry([conn], { maxResultBytes: 4 }),
-      BASE,
-    );
+    const mt = createMetaTools(makeRegistry([conn], { maxResultBytes: 4 }), BASE);
     const call = await mt.callTool({ address: "mb.get" });
     const lines = required(call.content[0]).text.split("\n");
     const notice = JSON.parse(required(lines[0])) as { resultId: string };
@@ -1136,9 +1079,7 @@ describe("call_tool size guard + connecta.result", () => {
     let offset = 0;
     let assembled = "";
     for (;;) {
-      const page = pageOf(
-        await mt.readResult({ id: notice.resultId, offset, maxBytes: 4 })
-      );
+      const page = pageOf(await mt.readResult({ id: notice.resultId, offset, maxBytes: 4 }));
       expect(page.text).not.toContain("�");
       assembled += page.text;
       if (page.nextOffset === undefined) break;
@@ -1154,18 +1095,15 @@ describe("call_tool size guard + connecta.result", () => {
       kind: "api",
       description: "Multibyte head",
       tools: [
-          {
-            name: "get",
-            description: "unicode",
-            annotations: { readOnlyHint: true },
-          },
-        ],
+        {
+          name: "get",
+          description: "unicode",
+          annotations: { readOnlyHint: true },
+        },
+      ],
       call: async () => "abc😀defghijklmnop",
     });
-    const mt = createMetaTools(
-      makeRegistry([conn], { maxResultBytes: 5 }),
-      BASE,
-    );
+    const mt = createMetaTools(makeRegistry([conn], { maxResultBytes: 5 }), BASE);
     const call = await mt.callTool({ address: "mb2.get" });
     const head = required(call.content[0]).text.split("\n")[1];
     expect(head).not.toContain("�");
@@ -1181,24 +1119,23 @@ const FULL = JSON.stringify(PAYLOAD); // 502 bytes
 
 /** An api connector returning PAYLOAD, optionally under its own byte cap. */
 function capped(id: string, maxResultBytes?: number): Connector {
-    return connectorWith({
-      id,
-      kind: "api",
-      description: "Capped",
-      ...(maxResultBytes !== undefined ? { maxResultBytes } : {}),
-      tools: [
-          {
-            name: "big",
-            description: "Return a large blob",
-            annotations: { readOnlyHint: true },
-          },
-        ],
-      call: async () => PAYLOAD,
-    });
+  return connectorWith({
+    id,
+    kind: "api",
+    description: "Capped",
+    ...(maxResultBytes !== undefined ? { maxResultBytes } : {}),
+    tools: [
+      {
+        name: "big",
+        description: "Return a large blob",
+        annotations: { readOnlyHint: true },
+      },
+    ],
+    call: async () => PAYLOAD,
+  });
 }
 
 describe("per-connector maxResultBytes override", () => {
-
   interface Notice {
     truncated: boolean;
     resultId: string;
@@ -1239,18 +1176,13 @@ describe("per-connector maxResultBytes override", () => {
   });
 
   it("pages a result truncated under an override through connecta.result", async () => {
-    const mt = createMetaTools(
-      makeRegistry([capped("tight", 100)], { maxResultBytes: 400 }),
-      BASE,
-    );
+    const mt = createMetaTools(makeRegistry([capped("tight", 100)], { maxResultBytes: 400 }), BASE);
     const { notice } = truncation(await mt.callTool({ address: "tight.big" }));
 
     let offset = 0;
     let assembled = "";
     for (;;) {
-      const page = pageOf(
-        await mt.readResult({ id: notice.resultId, offset, maxBytes: 64 })
-      );
+      const page = pageOf(await mt.readResult({ id: notice.resultId, offset, maxBytes: 64 }));
       expect(page.totalBytes).toBe(FULL.length);
       assembled += page.text;
       if (page.nextOffset === undefined) break;
@@ -1263,22 +1195,15 @@ describe("per-connector maxResultBytes override", () => {
     // Cap above the global one but below the payload: truncation happens at
     // the connector's 300, and connecta.result, given no maxBytes, pages at that
     // same 300 the stash recorded — not the deployment-wide 100.
-    const mt = createMetaTools(
-      makeRegistry([capped("wide", 300)], { maxResultBytes: 100 }),
-      BASE,
-    );
-    const { head, notice } = truncation(
-      await mt.callTool({ address: "wide.big" }),
-    );
+    const mt = createMetaTools(makeRegistry([capped("wide", 300)], { maxResultBytes: 100 }), BASE);
+    const { head, notice } = truncation(await mt.callTool({ address: "wide.big" }));
     expect(head).toBe(FULL.slice(0, 300));
 
     let offset = 0;
     let assembled = "";
     let pages = 0;
     for (;;) {
-      const page = pageOf(
-        await mt.readResult({ id: notice.resultId, offset })
-      );
+      const page = pageOf(await mt.readResult({ id: notice.resultId, offset }));
       pages++;
       expect(page.totalBytes).toBe(FULL.length);
       expect(page.text.length).toBeLessThanOrEqual(300);
@@ -1299,12 +1224,10 @@ describe("per-connector maxResultBytes override", () => {
       }),
       BASE,
     );
-    const truncated = textOf(
-      await mt.callTool({ address: "tight.big", resultMode: "value" }),
-    ) as { data: { truncated?: boolean; totalBytes?: number } };
-    const inline = textOf(
-      await mt.callTool({ address: "wide.big", resultMode: "value" }),
-    ) as { data: unknown };
+    const truncated = textOf(await mt.callTool({ address: "tight.big", resultMode: "value" })) as {
+      data: { truncated?: boolean; totalBytes?: number };
+    };
+    const inline = textOf(await mt.callTool({ address: "wide.big", resultMode: "value" })) as { data: unknown };
 
     expect(truncated.data.truncated).toBe(true);
     expect(truncated.data.totalBytes).toBe(FULL.length);
@@ -1321,10 +1244,7 @@ describe("maxResultBytes validation", () => {
     mt: ReturnType<typeof createMetaTools>;
     resultId: string;
   }> {
-    const mt = createMetaTools(
-      makeRegistry([capped("c")], { maxResultBytes: 100 }),
-      BASE,
-    );
+    const mt = createMetaTools(makeRegistry([capped("c")], { maxResultBytes: 100 }), BASE);
     const call = await mt.callTool({ address: "c.big" });
     const notice = JSON.parse(required(required(call.content[0]).text.split("\n")[0])) as {
       resultId: string;
@@ -1344,9 +1264,7 @@ describe("maxResultBytes validation", () => {
     let offset = 0;
     let assembled = "";
     for (let guard = 0; guard < FULL.length + 10; guard++) {
-      const page = pageOf(
-        await mt.readResult({ id: resultId, offset, maxBytes: 1 })
-      );
+      const page = pageOf(await mt.readResult({ id: resultId, offset, maxBytes: 1 }));
       assembled += page.text;
       if (page.nextOffset === undefined) break;
       expect(page.nextOffset).toBeGreaterThan(offset);
@@ -1360,10 +1278,7 @@ describe("maxResultBytes validation", () => {
     // must still yield forward progress rather than nextOffset === offset.
     const bytes = new TextEncoder().encode('"aa😀bb"');
     for (const end of [-5, 0, 1, 2]) {
-      expect(
-        alignEndToCharBoundary(bytes, 1, end, bytes.length),
-        `end ${end}`,
-      ).toBeGreaterThan(1);
+      expect(alignEndToCharBoundary(bytes, 1, end, bytes.length), `end ${end}`).toBeGreaterThan(1);
     }
     // At a multi-byte codepoint the widened window still lands on a boundary:
     // byte 3 starts the 4-byte emoji, so the whole emoji comes along.
@@ -1386,19 +1301,16 @@ describe("maxResultBytes validation", () => {
     // The floor, a tiny cap, and a cap either side of the payload — all
     // unchanged by validation.
     for (const cap of [1, 4, 100, 400, 1_000]) {
-      const viaGlobal = await createMetaTools(
-        makeRegistry([capped("c")], { maxResultBytes: cap }),
-        BASE,
-      ).callTool({ address: "c.big" });
+      const viaGlobal = await createMetaTools(makeRegistry([capped("c")], { maxResultBytes: cap }), BASE).callTool({
+        address: "c.big",
+      });
       const viaOverride = await createMetaTools(
         makeRegistry([capped("c", cap)], { maxResultBytes: 50_000 }),
         BASE,
       ).callTool({ address: "c.big" });
       const expected = cap >= FULL.length ? FULL : FULL.slice(0, cap);
       const preview = (result: typeof viaGlobal) =>
-        cap >= FULL.length
-          ? required(result.content[0]).text
-          : required(result.content[0]).text.split("\n")[1];
+        cap >= FULL.length ? required(result.content[0]).text : required(result.content[0]).text.split("\n")[1];
       expect(preview(viaGlobal), `global ${cap}`).toBe(expected);
       expect(preview(viaOverride), `override ${cap}`).toBe(expected);
     }
@@ -1415,8 +1327,7 @@ function overTheWire(result: unknown): {
   content: { type: string; text?: string }[];
 } {
   const serialized = JSON.parse(JSON.stringify(result));
-  const parsed =
-    specTypeSchemas.CallToolResult["~standard"].validate(serialized);
+  const parsed = specTypeSchemas.CallToolResult["~standard"].validate(serialized);
   expect(parsed.issues, JSON.stringify(serialized)).toBeUndefined();
   return serialized;
 }
@@ -1449,9 +1360,7 @@ describe("handler returns JSON cannot represent", () => {
     // JSON.stringify(undefined) is undefined and the size guard measured the
     // empty string the TextEncoder substituted for it (issue #42).
     const result = await callFor(undefined);
-    expect(overTheWire(result).content).toEqual([
-      { type: "text", text: "undefined" },
-    ]);
+    expect(overTheWire(result).content).toEqual([{ type: "text", text: "undefined" }]);
   });
 
   it("renders the other returns JSON drops the same way", async () => {
@@ -1460,9 +1369,7 @@ describe("handler returns JSON cannot represent", () => {
     const sym = Symbol("marker");
     for (const value of [fn, sym]) {
       const result = await callFor(value);
-      expect(overTheWire(result).content).toEqual([
-        { type: "text", text: String(value) },
-      ]);
+      expect(overTheWire(result).content).toEqual([{ type: "text", text: String(value) }]);
     }
   });
 
@@ -1471,10 +1378,10 @@ describe("handler returns JSON cannot represent", () => {
     const mcp = await callFor(null);
     expect(overTheWire(mcp).content).toEqual([{ type: "text", text: "null" }]);
 
-    const value = await createMetaTools(
-      makeRegistry([returning(null)]),
-      BASE,
-    ).callTool({ address: "ret.get", resultMode: "value" });
+    const value = await createMetaTools(makeRegistry([returning(null)]), BASE).callTool({
+      address: "ret.get",
+      resultMode: "value",
+    });
     expect(overTheWire(value)).toBeTruthy();
     expect(textOf(value)).toMatchObject({ ok: true, data: null });
   });
@@ -1482,10 +1389,10 @@ describe("handler returns JSON cannot represent", () => {
   it("carries no data for an undefined return in value mode", async () => {
     // JSON has no `undefined`, so the envelope simply omits the key — a
     // well-formed answer, unlike the block the mcp path used to emit.
-    const result = await createMetaTools(
-      makeRegistry([returning(undefined)]),
-      BASE,
-    ).callTool({ address: "ret.get", resultMode: "value" });
+    const result = await createMetaTools(makeRegistry([returning(undefined)]), BASE).callTool({
+      address: "ret.get",
+      resultMode: "value",
+    });
     const parsed = textOf(result) as Record<string, unknown>;
     expect(overTheWire(result)).toBeTruthy();
     expect(parsed.ok).toBe(true);
@@ -1502,10 +1409,7 @@ describe("handler returns JSON cannot represent", () => {
     // The guard measures and stashes one string on every path, so what pages
     // back is what was measured — even for a return JSON cannot represent.
     const long = "y".repeat(500);
-    const mt = createMetaTools(
-      makeRegistry([returning(long)], { maxResultBytes: 100 }),
-      BASE,
-    );
+    const mt = createMetaTools(makeRegistry([returning(long)], { maxResultBytes: 100 }), BASE);
     const call = await mt.callTool({ address: "ret.get" });
     const notice = JSON.parse(required(required(call.content[0]).text.split("\n")[0])) as {
       resultId: string;
@@ -1516,9 +1420,7 @@ describe("handler returns JSON cannot represent", () => {
     let text = "";
     let offset: number | undefined = 0;
     while (offset !== undefined) {
-      const page = pageOf(
-        await mt.readResult({ id: notice.resultId, offset, maxBytes: 10_000 }),
-      );
+      const page = pageOf(await mt.readResult({ id: notice.resultId, offset, maxBytes: 10_000 }));
       text += page.text;
       offset = page.nextOffset;
     }
@@ -1534,22 +1436,19 @@ describe("mcp-mode content size guard", () => {
       kind: "mcp",
       description: "Downstream MCP",
       tools: [
-          {
-            name: "fetch",
-            description: "Return canned content",
-            annotations: { readOnlyHint: true },
-          },
-        ],
+        {
+          name: "fetch",
+          description: "Return canned content",
+          annotations: { readOnlyHint: true },
+        },
+      ],
       call: async () => ({ content }),
     });
   }
 
   function metaTools(content: unknown[], maxResultBytes?: number) {
     return createMetaTools(
-      makeRegistry(
-        [downstream(content)],
-        maxResultBytes !== undefined ? { maxResultBytes } : {},
-      ),
+      makeRegistry([downstream(content)], maxResultBytes !== undefined ? { maxResultBytes } : {}),
       BASE,
     );
   }
@@ -1591,7 +1490,12 @@ describe("mcp-mode content size guard", () => {
     // One unit for the cap and totalBytes: the envelope. The preview is the
     // blocks' readable text, bounded by the same cap.
     expect(notice.totalBytes).toBe(byteLength(full));
-    expect(head).toBe(content.map((b) => b.text).join("\n").slice(0, cap));
+    expect(head).toBe(
+      content
+        .map((b) => b.text)
+        .join("\n")
+        .slice(0, cap),
+    );
     expect(byteLength(head)).toBeLessThanOrEqual(cap);
   });
 
@@ -1599,9 +1503,7 @@ describe("mcp-mode content size guard", () => {
     // Pre-fix contentBytes([image]) was 0, so `0 > cap` was false and the whole
     // 50 KB envelope came back inline with no resultId to page from — the one
     // guarantee maxResultBytes exists to give, missing entirely.
-    const content = [
-      { type: "image", data: "A".repeat(50_000), mimeType: "image/png" },
-    ];
+    const content = [{ type: "image", data: "A".repeat(50_000), mimeType: "image/png" }];
     const full = envelope(content);
     const cap = 1_000;
     const mt = metaTools(content, cap);
@@ -1618,9 +1520,7 @@ describe("mcp-mode content size guard", () => {
     let offset = 0;
     let assembled = "";
     for (;;) {
-      const page = pageOf(
-        await mt.readResult({ id: notice.resultId, offset, maxBytes: 10_000 })
-      );
+      const page = pageOf(await mt.readResult({ id: notice.resultId, offset, maxBytes: 10_000 }));
       expect(page.totalBytes).toBe(byteLength(full));
       assembled += page.text;
       if (page.nextOffset === undefined) break;
@@ -1653,9 +1553,7 @@ describe("mcp-mode content size guard", () => {
     // came back inline under the old text-only measure; failing it with
     // result_processing_failed would be a regression, not a fix.
     const withBigInt = [{ type: "text", text: "small", size: 1n }];
-    const circular: Record<string, unknown>[] = [
-      { type: "text", text: "small" },
-    ];
+    const circular: Record<string, unknown>[] = [{ type: "text", text: "small" }];
     required(circular[0]).self = circular[0];
     for (const content of [withBigInt, circular]) {
       const result = await metaTools(content).callTool({
@@ -1669,9 +1567,7 @@ describe("mcp-mode content size guard", () => {
     const result = await metaTools(withBigInt).callTool({
       address: "down.fetch",
     });
-    expect((result.content[0] as unknown as Record<string, unknown>).size).toBe(
-      1n,
-    );
+    expect((result.content[0] as unknown as Record<string, unknown>).size).toBe(1n);
   });
 
   it("passes an under-cap result through untouched, blocks and order intact", async () => {
@@ -1712,54 +1608,42 @@ describe("connecta.result offset validation and alignment", () => {
     // A cap of 9, one byte under the payload, stashes it whole; pages are
     // clamped to that cap, so it is also wide enough for the 100-byte requests
     // below to reach the end from any offset.
-    const mt = createMetaTools(
-      makeRegistry([conn], { maxResultBytes: 9 }),
-      BASE,
-    );
+    const mt = createMetaTools(makeRegistry([conn], { maxResultBytes: 9 }), BASE);
     const call = await mt.callTool({ address: "mb.get" });
     const lines = required(call.content[0]).text.split("\n");
     const notice = JSON.parse(required(lines[0])) as { resultId: string };
     return { mt, resultId: notice.resultId };
   }
 
-  it.each([
-    -50,
-    Number.NaN,
-    Number.POSITIVE_INFINITY,
-    Number.NEGATIVE_INFINITY,
-  ])("rejects in-process offset %s", async (offset) => {
-    // The tier #32 chose to defend for maxBytes: MCP callers are stopped by the
-    // registered schema, in-process callers of createMetaTools are not. Pre-fix
-    // `offset: NaN` answered with `"offset": null`, empty text and no
-    // nextOffset — the result silently vanished instead of erroring (issue #38).
-    const { mt, resultId } = await stashEmoji();
-    const result = await mt.readResult({ id: resultId, offset });
-    expect(result.isError, `offset ${String(offset)}`).toBe(true);
-    expect(required(result.content[0]).text).toContain("Invalid offset");
-  });
-
-  it.each([4, 5, 6])(
-    "aligns offset %s landing inside a character",
-    async (requested) => {
-    // Pre-fix these decoded the severed bytes as U+FFFD.
-    const { mt, resultId } = await stashEmoji();
-    const page = pageOf(
-      await mt.readResult({ id: resultId, offset: requested, maxBytes: 100 })
-    );
-    expect(page.text, `offset ${requested}`).not.toContain("�");
-    expect(page.offset, `offset ${requested}`).toBe(EMOJI_START);
-    expect(page.text).toBe("😀bb\"");
-    expect(page.totalBytes).toBe(byteLength(EMOJI_FULL));
+  it.each([-50, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "rejects in-process offset %s",
+    async (offset) => {
+      // The tier #32 chose to defend for maxBytes: MCP callers are stopped by the
+      // registered schema, in-process callers of createMetaTools are not. Pre-fix
+      // `offset: NaN` answered with `"offset": null`, empty text and no
+      // nextOffset — the result silently vanished instead of erroring (issue #38).
+      const { mt, resultId } = await stashEmoji();
+      const result = await mt.readResult({ id: resultId, offset });
+      expect(result.isError, `offset ${String(offset)}`).toBe(true);
+      expect(required(result.content[0]).text).toContain("Invalid offset");
     },
   );
+
+  it.each([4, 5, 6])("aligns offset %s landing inside a character", async (requested) => {
+    // Pre-fix these decoded the severed bytes as U+FFFD.
+    const { mt, resultId } = await stashEmoji();
+    const page = pageOf(await mt.readResult({ id: resultId, offset: requested, maxBytes: 100 }));
+    expect(page.text, `offset ${requested}`).not.toContain("�");
+    expect(page.offset, `offset ${requested}`).toBe(EMOJI_START);
+    expect(page.text).toBe('😀bb"');
+    expect(page.totalBytes).toBe(byteLength(EMOJI_FULL));
+  });
 
   it("leaves a boundary-aligned offset byte-identical", async () => {
     const { mt, resultId } = await stashEmoji();
     // Every boundary in the payload, including the ones paging produces.
     for (const offset of [0, 1, 2, EMOJI_START, 7, 8]) {
-      const page = pageOf(
-        await mt.readResult({ id: resultId, offset, maxBytes: 100 })
-      );
+      const page = pageOf(await mt.readResult({ id: resultId, offset, maxBytes: 100 }));
       expect(page.offset, `offset ${offset}`).toBe(offset);
       expect(page.text).not.toContain("�");
     }
@@ -1767,9 +1651,7 @@ describe("connecta.result offset validation and alignment", () => {
     let offset = 0;
     let assembled = "";
     for (;;) {
-      const page = pageOf(
-        await mt.readResult({ id: resultId, offset, maxBytes: 3 })
-      );
+      const page = pageOf(await mt.readResult({ id: resultId, offset, maxBytes: 3 }));
       expect(page.text).not.toContain("�");
       assembled += page.text;
       if (page.nextOffset === undefined) break;
@@ -1782,9 +1664,7 @@ describe("connecta.result offset validation and alignment", () => {
     // Still a whole number of bytes, so still legal: an empty last page rather
     // than an error, and nothing to align.
     const { mt, resultId } = await stashEmoji();
-    const page = pageOf(
-      await mt.readResult({ id: resultId, offset: byteLength(EMOJI_FULL) + 5 }),
-    );
+    const page = pageOf(await mt.readResult({ id: resultId, offset: byteLength(EMOJI_FULL) + 5 }));
     expect(page.text).toBe("");
     expect(page.offset).toBe(byteLength(EMOJI_FULL) + 5);
     expect(page.nextOffset).toBeUndefined();
@@ -1792,74 +1672,123 @@ describe("connecta.result offset validation and alignment", () => {
 
   it("moves a start offset back to the character it lands inside", () => {
     const bytes = new TextEncoder().encode(EMOJI_FULL);
-    expect([4, 5, 6].map((o) => alignStartToCharBoundary(bytes, o))).toEqual([
-      3, 3, 3,
-    ]);
+    expect([4, 5, 6].map((o) => alignStartToCharBoundary(bytes, o))).toEqual([3, 3, 3]);
     for (const o of [0, 1, 2, 3, 7, 8, 9]) {
       expect(alignStartToCharBoundary(bytes, o), `offset ${o}`).toBe(o);
     }
     // Past the end there is no character to split.
-    expect(alignStartToCharBoundary(bytes, bytes.length + 5)).toBe(
-      bytes.length + 5,
-    );
+    expect(alignStartToCharBoundary(bytes, bytes.length + 5)).toBe(bytes.length + 5);
   });
 });
 
-
 describe("audit regressions", () => {
-  it.each(["callTool", "callDestructiveTool"] as const)("keeps %s successful when result storage fails", async (method) => {
-    const store = memoryStorage();
-    const storage = { ...store, set: vi.fn(async (key: string, value: string, opts?: { ttlSeconds?: number }) => {
-      if (key.includes("result:")) throw new Error("KV PUT failed: 503 Service Temporarily Unavailable secret");
-      await store.set(key, value, opts);
-    }) };
-    const warn = vi.fn();
-    const call = vi.fn(async () => "x".repeat(4_000));
-    const connector = connectorWith({ id: "large", kind: "api", tools: [{ name: "read", annotations: { readOnlyHint: method === "callTool" } }], call });
-    const target = activitySink();
-    const mt = createMetaTools(makeRegistry([connector], { storage, maxResultBytes: 1_000, logger: { ...silentLogger, warn } }), BASE, { trust: "trusted", activity: target.activity });
-    for (const resultMode of ["mcp", "value"] as const) {
-      const result = await mt[method]({ address: "large.read", resultMode });
-      expect(result.isError).toBeFalsy();
-      expect(JSON.stringify(result)).toContain("Paging is unavailable");
-      expect(JSON.stringify(result)).not.toContain("resultId");
-      expect(JSON.stringify(result)).not.toContain("KV PUT");
-      if (resultMode === "value") expect(textOf(result)).toMatchObject({ ok: true });
-    }
-    expect(call).toHaveBeenCalledTimes(2);
-    expect(target.events).toHaveLength(2);
-    expect(target.events.every((event) => event.outcome === "success")).toBe(true);
-    expect(warn.mock.calls.filter(([line]) => line === "[connecta] result paging unavailable")).toHaveLength(2);
-  });
+  it.each(["callTool", "callDestructiveTool"] as const)(
+    "keeps %s successful when result storage fails",
+    async (method) => {
+      const store = memoryStorage();
+      const storage = {
+        ...store,
+        set: vi.fn(async (key: string, value: string, opts?: { ttlSeconds?: number }) => {
+          if (key.includes("result:")) throw new Error("KV PUT failed: 503 Service Temporarily Unavailable secret");
+          await store.set(key, value, opts);
+        }),
+      };
+      const warn = vi.fn();
+      const call = vi.fn(async () => "x".repeat(4_000));
+      const connector = connectorWith({
+        id: "large",
+        kind: "api",
+        tools: [{ name: "read", annotations: { readOnlyHint: method === "callTool" } }],
+        call,
+      });
+      const target = activitySink();
+      const mt = createMetaTools(
+        makeRegistry([connector], { storage, maxResultBytes: 1_000, logger: { ...silentLogger, warn } }),
+        BASE,
+        { trust: "trusted", activity: target.activity },
+      );
+      for (const resultMode of ["mcp", "value"] as const) {
+        const result = await mt[method]({ address: "large.read", resultMode });
+        expect(result.isError).toBeFalsy();
+        expect(JSON.stringify(result)).toContain("Paging is unavailable");
+        expect(JSON.stringify(result)).not.toContain("resultId");
+        expect(JSON.stringify(result)).not.toContain("KV PUT");
+        if (resultMode === "value") expect(textOf(result)).toMatchObject({ ok: true });
+      }
+      expect(call).toHaveBeenCalledTimes(2);
+      expect(target.events).toHaveLength(2);
+      expect(target.events.every((event) => event.outcome === "success")).toBe(true);
+      expect(warn.mock.calls.filter(([line]) => line === "[connecta] result paging unavailable")).toHaveLength(2);
+    },
+  );
 
   it("never retries result processing after a completed downstream call", async () => {
     const reg = makeRegistry([calcConnector]);
-    const outcome = await new InvocationService(reg, new CatalogService(reg, BASE)).invoke("calc.add", { a: 1, b: 2 }, {
-      source: "call_tool",
-      processResult: () => { throw new Error("503 temporarily unavailable secret"); },
-    });
+    const outcome = await new InvocationService(reg, new CatalogService(reg, BASE)).invoke(
+      "calc.add",
+      { a: 1, b: 2 },
+      {
+        source: "call_tool",
+        processResult: () => {
+          throw new Error("503 temporarily unavailable secret");
+        },
+      },
+    );
     expect(outcome).toMatchObject({ ok: false, error: { code: "result_processing_failed", retryable: false } });
     expect(JSON.stringify(outcome)).not.toContain("secret");
   });
 
   it.each(["mcp", "value"] as const)("bounds a 120 KB MCP error in %s mode", async (resultMode) => {
-    const connector = connectorWith({ id: "remote", kind: "mcp", tools: [{ name: "read", annotations: { readOnlyHint: true } }], call: async () => ({ isError: true, content: [{ type: "text", text: "x".repeat(120_000) }] }) });
-    const result = await createMetaTools(makeRegistry([connector], { maxResultBytes: 1_000 }), BASE).callTool({ address: "remote.read", resultMode });
+    const connector = connectorWith({
+      id: "remote",
+      kind: "mcp",
+      tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+      call: async () => ({ isError: true, content: [{ type: "text", text: "x".repeat(120_000) }] }),
+    });
+    const result = await createMetaTools(makeRegistry([connector], { maxResultBytes: 1_000 }), BASE).callTool({
+      address: "remote.read",
+      resultMode,
+    });
     expect(new TextEncoder().encode(JSON.stringify(result)).length).toBeLessThanOrEqual(1_000);
     expect(JSON.stringify(result)).toContain("…");
-    expect(() => unwrapMcpResult("mcp", { isError: true, content: [{ type: "text", text: "x".repeat(120_000) }] })).toThrow(/^x{512}…$/);
+    expect(() =>
+      unwrapMcpResult("mcp", { isError: true, content: [{ type: "text", text: "x".repeat(120_000) }] }),
+    ).toThrow(/^x{512}…$/);
   });
 
-  it.each([null, 7, [1, 2], { answer: 42 }].map((value) => [value]))("preserves a structured MCP value %j without a text mirror", async (value) => {
-    const connector = connectorWith({ id: "remote", kind: "mcp", tools: [{ name: "read", annotations: { readOnlyHint: true } }], call: async () => ({ content: [], structuredContent: value }) });
-    const mt = createMetaTools(makeRegistry([connector]), BASE);
-    expect((await mt.callTool({ address: "remote.read" })).content).toEqual([{ type: "text", text: JSON.stringify(value) }]);
-    expect(textOf(await mt.callTool({ address: "remote.read", resultMode: "value" }))).toMatchObject({ ok: true, data: value });
-  });
+  it.each([null, 7, [1, 2], { answer: 42 }].map((value) => [value]))(
+    "preserves a structured MCP value %j without a text mirror",
+    async (value) => {
+      const connector = connectorWith({
+        id: "remote",
+        kind: "mcp",
+        tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+        call: async () => ({ content: [], structuredContent: value }),
+      });
+      const mt = createMetaTools(makeRegistry([connector]), BASE);
+      expect((await mt.callTool({ address: "remote.read" })).content).toEqual([
+        { type: "text", text: JSON.stringify(value) },
+      ]);
+      expect(textOf(await mt.callTool({ address: "remote.read", resultMode: "value" }))).toMatchObject({
+        ok: true,
+        data: value,
+      });
+    },
+  );
 
   it("guards synthesized structured text and preserves existing text", async () => {
     let nativeText = false;
-    const connector = connectorWith({ id: "remote", kind: "mcp", tools: [{ name: "read", annotations: { readOnlyHint: true } }], call: async () => ({ content: nativeText ? [{ type: "text", text: "native" }] : [{ type: "image", data: "AA==", mimeType: "image/png" }], structuredContent: { large: "x".repeat(4_000) } }) });
+    const connector = connectorWith({
+      id: "remote",
+      kind: "mcp",
+      tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+      call: async () => ({
+        content: nativeText
+          ? [{ type: "text", text: "native" }]
+          : [{ type: "image", data: "AA==", mimeType: "image/png" }],
+        structuredContent: { large: "x".repeat(4_000) },
+      }),
+    });
     const mt = createMetaTools(makeRegistry([connector], { maxResultBytes: 1_000 }), BASE);
     const result = await mt.callTool({ address: "remote.read" });
     expect(JSON.stringify(result)).toContain("resultId");
@@ -1871,15 +1800,17 @@ describe("audit regressions", () => {
   it.each(["result", "authorization", "skill", "connector skill", "search"])(
     "bounds caller-authored %s names in refusals",
     async (kind) => {
-      const mt = createMetaTools(
-        makeRegistry([calcConnector], { maxResultBytes: 1_000 }), BASE,
-      );
+      const mt = createMetaTools(makeRegistry([calcConnector], { maxResultBytes: 1_000 }), BASE);
       const huge = "x".repeat(50_000);
-      const result = await (kind === "result" ? mt.readResult({ id: huge })
-        : kind === "authorization" ? mt.authorizeConnector({ connector: huge })
-        : kind === "skill" ? mt.skills({ name: huge })
-        : kind === "connector skill" ? mt.skills({ name: `connector:${huge}` })
-        : mt.searchTools({ query: "read", connector: huge }));
+      const result = await (kind === "result"
+        ? mt.readResult({ id: huge })
+        : kind === "authorization"
+          ? mt.authorizeConnector({ connector: huge })
+          : kind === "skill"
+            ? mt.skills({ name: huge })
+            : kind === "connector skill"
+              ? mt.skills({ name: `connector:${huge}` })
+              : mt.searchTools({ query: "read", connector: huge }));
       expect(new TextEncoder().encode(JSON.stringify(result)).length).toBeLessThan(1_000);
       expect(result.isError).toBe(true);
     },
@@ -1887,7 +1818,17 @@ describe("audit regressions", () => {
 
   it("maps result read failures to unavailable", async () => {
     const store = memoryStorage();
-    const mt = createMetaTools(makeRegistry([], { storage: { ...store, get: async () => { throw new Error("storage secret"); } } }), BASE);
+    const mt = createMetaTools(
+      makeRegistry([], {
+        storage: {
+          ...store,
+          get: async () => {
+            throw new Error("storage secret");
+          },
+        },
+      }),
+      BASE,
+    );
     const result = await mt.readResult({ id: "missing" });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toMatchObject({ error: { code: "unavailable" } });
@@ -1909,62 +1850,67 @@ describe("audit regressions", () => {
     }
   });
 
-  it.each(["admission", "connector"])(
-    "releases the permit when the deadline expires during %s",
-    async (stage) => {
-      vi.useFakeTimers();
-      try {
-        let enter!: () => void;
-        const entered = new Promise<void>((resolve) => { enter = resolve; });
-        const call = vi.fn(() => {
+  it.each(["admission", "connector"])("releases the permit when the deadline expires during %s", async (stage) => {
+    vi.useFakeTimers();
+    try {
+      let enter!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve;
+      });
+      const call = vi.fn(() => {
+        enter();
+        return new Promise(() => {});
+      });
+      const connector = connectorWith({
+        id: "limited",
+        kind: "api",
+        callAdmission: { rules: [{ maxConcurrency: 1 }] },
+        tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+        call,
+      });
+      const reg = makeRegistry([connector]);
+      const held = stage === "admission" ? await reg.admitCall("limited", { toolName: "read", args: {} }) : undefined;
+      if (stage === "admission") {
+        const admit = reg.admitCall.bind(reg);
+        vi.spyOn(reg, "admitCall").mockImplementation((...args) => {
+          const pendingPermit = admit(...args);
           enter();
-          return new Promise(() => {});
+          return pendingPermit;
         });
-        const connector = connectorWith({
-          id: "limited",
-          kind: "api",
-          callAdmission: { rules: [{ maxConcurrency: 1 }] },
-          tools: [{ name: "read", annotations: { readOnlyHint: true } }],
-          call,
-        });
-        const reg = makeRegistry([connector]);
-        const held = stage === "admission"
-          ? await reg.admitCall("limited", { toolName: "read", args: {} })
-          : undefined;
-        if (stage === "admission") {
-          const admit = reg.admitCall.bind(reg);
-          vi.spyOn(reg, "admitCall").mockImplementation((...args) => {
-            const pendingPermit = admit(...args);
-            enter();
-            return pendingPermit;
-          });
-        }
-        const pending = createMetaTools(reg, BASE).callTool({
-          address: "limited.read", timeoutMs: 100, resultMode: "value",
-        });
-        await entered;
-        await vi.advanceTimersByTimeAsync(100);
-        expect(textOf(await pending)).toMatchObject({
-          ok: false, error: { code: "timeout" },
-        });
-        held?.release();
-        expect(reg.callAdmissionSnapshot().limited).toMatchObject({
-          active: 0, queued: 0,
-        });
-        expect(call).toHaveBeenCalledTimes(stage === "admission" ? 0 : 1);
-      } finally {
-        vi.useRealTimers();
       }
-    },
-  );
+      const pending = createMetaTools(reg, BASE).callTool({
+        address: "limited.read",
+        timeoutMs: 100,
+        resultMode: "value",
+      });
+      await entered;
+      await vi.advanceTimersByTimeAsync(100);
+      expect(textOf(await pending)).toMatchObject({
+        ok: false,
+        error: { code: "timeout" },
+      });
+      held?.release();
+      expect(reg.callAdmissionSnapshot().limited).toMatchObject({
+        active: 0,
+        queued: 0,
+      });
+      expect(call).toHaveBeenCalledTimes(stage === "admission" ? 0 : 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("does not restart the deadline after catalog resolution", async () => {
     vi.useFakeTimers();
     try {
       let releaseCatalog!: () => void;
-      const ready = new Promise<void>((resolve) => { releaseCatalog = resolve; });
+      const ready = new Promise<void>((resolve) => {
+        releaseCatalog = resolve;
+      });
       let enter!: () => void;
-      const entered = new Promise<void>((resolve) => { enter = resolve; });
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve;
+      });
       const call = vi.fn(() => {
         enter();
         return new Promise(() => {});
@@ -1979,78 +1925,102 @@ describe("audit regressions", () => {
         call,
       });
       const pending = createMetaTools(makeRegistry([connector]), BASE).callTool({
-        address: "slow.read", timeoutMs: 100, resultMode: "value",
+        address: "slow.read",
+        timeoutMs: 100,
+        resultMode: "value",
       });
       await vi.advanceTimersByTimeAsync(60);
       releaseCatalog();
       await entered;
       await vi.advanceTimersByTimeAsync(40);
       expect(textOf(await pending)).toMatchObject({
-        ok: false, durationMs: 100, error: { code: "timeout" },
+        ok: false,
+        durationMs: 100,
+        error: { code: "timeout" },
       });
       expect(call).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }
   });
-
 });
-
 
 describe("bounded result stash", () => {
   const notice = (result: { content: { text: string }[] }) =>
     JSON.parse(required(required(result.content[0]).text.split("\n")[0]));
 
-  it.each([
-    { maxStashBytes: 1 },
-    { maxStashEntries: 0 },
-  ])("keeps a preview when the stash refuses %j", async (results) => {
-    const mt = createMetaTools(new Registry([capped("large", 100)], { storage: memoryStorage(), logger: silentLogger, results }), BASE);
-    const result = await mt.callTool({ address: "large.big" });
-    expect(result.isError).toBeFalsy();
-    expect(required(result.content[0]).text.split("\n")[1]).toBe(FULL.slice(0, 100));
-    expect(notice(result)).toMatchObject({ truncated: true, totalBytes: FULL.length });
-    expect(notice(result).hint).toContain("Paging is unavailable");
-    expect(notice(result)).not.toHaveProperty("resultId");
-  });
+  it.each([{ maxStashBytes: 1 }, { maxStashEntries: 0 }])(
+    "keeps a preview when the stash refuses %j",
+    async (results) => {
+      const mt = createMetaTools(
+        new Registry([capped("large", 100)], { storage: memoryStorage(), logger: silentLogger, results }),
+        BASE,
+      );
+      const result = await mt.callTool({ address: "large.big" });
+      expect(result.isError).toBeFalsy();
+      expect(required(result.content[0]).text.split("\n")[1]).toBe(FULL.slice(0, 100));
+      expect(notice(result)).toMatchObject({ truncated: true, totalBytes: FULL.length });
+      expect(notice(result).hint).toContain("Paging is unavailable");
+      expect(notice(result)).not.toHaveProperty("resultId");
+    },
+  );
 
-  it.each([{ maxStashEntries: 1 }, { maxStashBytes: 1_000 }])("reserves capacity across subjects before concurrent writes finish: %j", async (results) => {
-    const storage = memoryStorage();
-    let entered!: () => void;
-    let release!: () => void;
-    const writing = new Promise<void>(resolve => { entered = resolve; });
-    const gate = new Promise<void>(resolve => { release = resolve; });
-    const root = new Registry([capped("large", 100)], {
-      logger: silentLogger,
-      results,
-      storage: { ...storage, async set(key, value, options) {
-        if (key.startsWith("subject:a:result:")) { entered(); await gate; }
-        await storage.set(key, value, options);
-      } },
-    });
-    const first = createMetaTools(root.scoped({ connectorIds: "all", subjectKey: "a" }), BASE)
-      .callTool({ address: "large.big" });
-    await writing;
-    try {
-      const second = await createMetaTools(root.scoped({ connectorIds: "all", subjectKey: "b" }), BASE)
-        .callTool({ address: "large.big" });
-      expect(notice(second)).not.toHaveProperty("resultId");
-    } finally { release(); }
-    expect(notice(await first)).toHaveProperty("resultId");
-    expect(notice(await createMetaTools(root, BASE).callTool({ address: "large.big" })))
-      .not.toHaveProperty("resultId");
-  });
+  it.each([{ maxStashEntries: 1 }, { maxStashBytes: 1_000 }])(
+    "reserves capacity across subjects before concurrent writes finish: %j",
+    async (results) => {
+      const storage = memoryStorage();
+      let entered!: () => void;
+      let release!: () => void;
+      const writing = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const root = new Registry([capped("large", 100)], {
+        logger: silentLogger,
+        results,
+        storage: {
+          ...storage,
+          async set(key, value, options) {
+            if (key.startsWith("subject:a:result:")) {
+              entered();
+              await gate;
+            }
+            await storage.set(key, value, options);
+          },
+        },
+      });
+      const first = createMetaTools(root.scoped({ connectorIds: "all", subjectKey: "a" }), BASE).callTool({
+        address: "large.big",
+      });
+      await writing;
+      try {
+        const second = await createMetaTools(root.scoped({ connectorIds: "all", subjectKey: "b" }), BASE).callTool({
+          address: "large.big",
+        });
+        expect(notice(second)).not.toHaveProperty("resultId");
+      } finally {
+        release();
+      }
+      expect(notice(await first)).toHaveProperty("resultId");
+      expect(notice(await createMetaTools(root, BASE).callTool({ address: "large.big" }))).not.toHaveProperty(
+        "resultId",
+      );
+    },
+  );
 
   it("bounds the stash across registries sharing one store, as isolates do", async () => {
     // Two registries over one store stand in for two Worker isolates (or two
     // Node processes) over one D1 database or SQLite file: the ledger, not
     // either runtime's memory, decides.
     const storage = memoryStorage();
-    const isolate = () => new Registry([capped("large", 100)], {
-      logger: silentLogger,
-      results: { maxStashEntries: 1 },
-      storage,
-    });
+    const isolate = () =>
+      new Registry([capped("large", 100)], {
+        logger: silentLogger,
+        results: { maxStashEntries: 1 },
+        storage,
+      });
     const first = notice(await createMetaTools(isolate(), BASE).callTool({ address: "large.big" }));
     expect(first).toHaveProperty("resultId");
     const second = notice(await createMetaTools(isolate(), BASE).callTool({ address: "large.big" }));
@@ -2074,11 +2044,11 @@ describe("bounded result stash", () => {
       const second = notice(await createMetaTools(root, BASE).callTool({ address: "large.big" }));
       expect(second).toHaveProperty("resultId");
       expect(await storage.get(`results:result:${first.resultId}`)).toBeNull();
-      const ledger = JSON.parse(await storage.get("result-stash:v1:ledger") ?? "null");
-      expect(ledger.entries).toEqual([
-        [`results:result:${second.resultId}`, expect.any(Number), expect.any(Number)],
-      ]);
-    } finally { now.mockRestore(); }
+      const ledger = JSON.parse((await storage.get("result-stash:v1:ledger")) ?? "null");
+      expect(ledger.entries).toEqual([[`results:result:${second.resultId}`, expect.any(Number), expect.any(Number)]]);
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("keeps a charge booked until every chunk written under it has expired, however slow the writes", async () => {
@@ -2093,13 +2063,16 @@ describe("bounded result stash", () => {
       logger: silentLogger,
       results: { maxStashEntries: 1, maxStashBytes: 3 },
 
-      storage: { ...inner, async set(key, value, options) {
-        if (slow) clock += 20_500;
-        await inner.set(key, value, options);
-      } },
+      storage: {
+        ...inner,
+        async set(key, value, options) {
+          if (slow) clock += 20_500;
+          await inner.set(key, value, options);
+        },
+      },
     });
     const live = async () => {
-      const ledger = JSON.parse(await inner.get("result-stash:v1:ledger") ?? "null");
+      const ledger = JSON.parse((await inner.get("result-stash:v1:ledger")) ?? "null");
       return (ledger?.entries ?? []).filter((entry: [string, number, number]) => entry[2] > clock).length;
     };
     try {
@@ -2112,12 +2085,16 @@ describe("bounded result stash", () => {
       expect(await root.stashResult("second", ["h", "a", "b"], 900)).toBe(false);
       // Whenever any chunk is readable, its charge is still booked.
       for (; clock <= start + 970_000; clock += 500) {
-        const readable = await Promise.all([0, 1, 2].map((index) => inner.get(`results:result:first${index ? `#${index}` : ""}`)));
+        const readable = await Promise.all(
+          [0, 1, 2].map((index) => inner.get(`results:result:first${index ? `#${index}` : ""}`)),
+        );
         if (readable.some((value) => value !== null)) expect(await live()).toBe(1);
       }
       expect(await inner.get("results:result:first")).toBeNull();
       expect(await root.stashResult("second", ["h", "a", "b"], 900)).toBe(true);
-    } finally { now.mockRestore(); }
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it.each([
@@ -2131,30 +2108,42 @@ describe("bounded result stash", () => {
       logger: silentLogger,
       results: { maxStashEntries: 1 },
 
-      storage: { ...inner, async set(key, value, options) {
-        clock += delayMs;
-        await inner.set(key, value, options);
-      } },
+      storage: {
+        ...inner,
+        async set(key, value, options) {
+          clock += delayMs;
+          await inner.set(key, value, options);
+        },
+      },
     });
     try {
       expect(await root.stashResult("slow", chunks, ttlSeconds)).toBe(false);
       expect(await inner.list("results:")).toEqual([]);
-      expect(JSON.parse(await inner.get("result-stash:v1:ledger") ?? "null").entries).toEqual([]);
-    } finally { now.mockRestore(); }
+      expect(JSON.parse((await inner.get("result-stash:v1:ledger")) ?? "null").entries).toEqual([]);
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("books every simultaneous claim the ledger has room for, and refuses only past capacity", async () => {
     const storage = memoryStorage();
-    const isolates = Array.from({ length: 5 }, () => new Registry([], {
-      logger: silentLogger,
-      results: { maxStashEntries: 64 },
+    const isolates = Array.from(
+      { length: 5 },
+      () =>
+        new Registry([], {
+          logger: silentLogger,
+          results: { maxStashEntries: 64 },
 
-      storage,
-    }));
-    const accepted = await Promise.all(Array.from({ length: 65 }, (_, index) =>
-      isolates[index % isolates.length]!.stashResult(`claim-${index}`, ["x"], 900)));
+          storage,
+        }),
+    );
+    const accepted = await Promise.all(
+      Array.from({ length: 65 }, (_, index) =>
+        isolates[index % isolates.length]!.stashResult(`claim-${index}`, ["x"], 900),
+      ),
+    );
     expect(accepted.filter(Boolean)).toHaveLength(64);
-    expect(JSON.parse(await storage.get("result-stash:v1:ledger") ?? "null").entries).toHaveLength(64);
+    expect(JSON.parse((await storage.get("result-stash:v1:ledger")) ?? "null").entries).toHaveLength(64);
     expect(await storage.list("results:result:")).toHaveLength(64);
   });
 
@@ -2165,10 +2154,14 @@ describe("bounded result stash", () => {
     const root = new Registry([capped("large", 100)], {
       logger: silentLogger,
       results: { maxStashEntries: 1 },
-      storage: { ...storage,
+      storage: {
+        ...storage,
         async set(key, value, options) {
           await storage.set(key, value, options);
-          if (key.includes("result:") && failWrite) { failWrite = false; throw new Error("write failed after persisting"); }
+          if (key.includes("result:") && failWrite) {
+            failWrite = false;
+            throw new Error("write failed after persisting");
+          }
         },
         async delete(key) {
           if (key.includes("result:") && failDelete) throw new Error("delete unavailable");
@@ -2194,7 +2187,12 @@ describe("bounded result stash", () => {
 
   it("pages a large stored result without encoding the full text again", async () => {
     const payload = "aé界😀".repeat(20_000);
-    const connector = connectorWith({ id: "large", kind: "api", tools: [{ name: "read", annotations: { readOnlyHint: true } }], call: async () => payload });
+    const connector = connectorWith({
+      id: "large",
+      kind: "api",
+      tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+      call: async () => payload,
+    });
     const root = makeRegistry([connector], { maxResultBytes: 100 });
     const id = notice(await createMetaTools(root, BASE).callTool({ address: "large.read" })).resultId;
     const encode = vi.spyOn(TextEncoder.prototype, "encode");
@@ -2206,7 +2204,9 @@ describe("bounded result stash", () => {
         expect(page.totalBytes).toBe(200_002);
       }
       expect(encode.mock.calls.every(([text]) => (text?.length ?? 0) < 2048)).toBe(true);
-    } finally { encode.mockRestore(); }
+    } finally {
+      encode.mockRestore();
+    }
   });
 
   // One page, two results whose sizes differ by a factor of four. Counting the
@@ -2218,12 +2218,20 @@ describe("bounded result stash", () => {
       const payload = "aé界😀".repeat(repeats);
       const inner = memoryStorage();
       let chars = 0;
-      const storage = { ...inner, async get(key: string) {
-        const value = await inner.get(key);
-        chars += value?.length ?? 0;
-        return value;
-      } };
-      const connector = connectorWith({ id: "large", kind: "api", tools: [{ name: "read", annotations: { readOnlyHint: true } }], call: async () => payload });
+      const storage = {
+        ...inner,
+        async get(key: string) {
+          const value = await inner.get(key);
+          chars += value?.length ?? 0;
+          return value;
+        },
+      };
+      const connector = connectorWith({
+        id: "large",
+        kind: "api",
+        tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+        call: async () => payload,
+      });
       const root = makeRegistry([connector], { maxResultBytes: 100, storage });
       const id = notice(await createMetaTools(root, BASE).callTool({ address: "large.read" })).resultId;
       // Chunks widen rather than multiply past a point, so no result turns into
@@ -2249,7 +2257,12 @@ describe("bounded result stash", () => {
 
   it("reassembles a chunked stash byte-exactly across stored chunk boundaries", async () => {
     const payload = "aé界😀".repeat(30_000); // 300 KB: several stored chunks
-    const connector = connectorWith({ id: "large", kind: "api", tools: [{ name: "read", annotations: { readOnlyHint: true } }], call: async () => payload });
+    const connector = connectorWith({
+      id: "large",
+      kind: "api",
+      tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+      call: async () => payload,
+    });
     // Pages are clamped to the stashing call's cap, so the cap must admit the
     // 7,777-byte pages below.
     const root = makeRegistry([connector], { maxResultBytes: 8_000 });
@@ -2272,7 +2285,10 @@ describe("bounded result stash", () => {
     const stashed = JSON.stringify("aé界😀".repeat(400));
     const bytes = new TextEncoder().encode(stashed);
     const storage = memoryStorage();
-    await storage.set("results:result:inline", `connecta-result-v1:${bytes.length}:${btoa(String.fromCharCode(...bytes))}`);
+    await storage.set(
+      "results:result:inline",
+      `connecta-result-v1:${bytes.length}:${btoa(String.fromCharCode(...bytes))}`,
+    );
     await storage.set("results:result:raw", stashed);
     const mt = createMetaTools(makeRegistry([calcConnector], { storage }), BASE);
     for (const id of ["inline", "raw"]) {
@@ -2281,14 +2297,17 @@ describe("bounded result stash", () => {
       expect(JSON.stringify(page)).not.toContain(stashed);
     }
   });
-
 });
 
 describe("truncated results lead with their connecta.result handle", () => {
   // JSON lines: quote-heavy, so a serialized content envelope would escape
   // every one of them and a preview cut from it would read `\"ts\":…`.
   const JSON_LINES = Array.from({ length: 400 }, (_, i) =>
-    JSON.stringify({ ts: `2026-09-16T00:${String(i % 60).padStart(2, "0")}:00Z`, actor: `user${i}@example.com`, action: "login" }),
+    JSON.stringify({
+      ts: `2026-09-16T00:${String(i % 60).padStart(2, "0")}:00Z`,
+      actor: `user${i}@example.com`,
+      action: "login",
+    }),
   ).join("\n");
 
   /** A kind:"mcp" connector returning `content`, read-only or write-capable. */
@@ -2333,43 +2352,61 @@ describe("truncated results lead with their connecta.result handle", () => {
     return text;
   }
 
-  it.each(["api-text", "api-value", "mcp-text", "mcp-value", "mcp-blocks"] as const)("INV-2 INV-9: a read-only pool returns an inline %s write truncation without an unreachable stash", async (mode) => {
-    const store = memoryStorage();
-    const stashKeys: string[] = [];
-    const storage = { ...store, set: async (key: string, value: string, options?: { ttlSeconds?: number }) => {
-      if (key.includes("result:") || key.includes("result-stash:")) stashKeys.push(key);
-      await store.set(key, value, options);
-    } };
-    const { activity, events } = activitySink();
-    let calls = 0;
-    const connector = connectorWith({
-      id: "down", kind: mode.startsWith("mcp") ? "mcp" : "api",
-      tools: [{ name: "run", annotations: { readOnlyHint: false } }],
-      call: async () => {
-        calls++;
-        return mode === "mcp-blocks" ? { content: [{ type: "image", mimeType: "image/png", data: "a".repeat(3000) }] }
-          : mode.startsWith("mcp") ? { content: [{ type: "text", text: JSON_LINES }] } : JSON_LINES;
-      },
-    });
-    const mt = createMetaTools(makeRegistry([connector], { storage, maxResultBytes: 1000 }), BASE, {
-      trust: "read-only", activity,
-    });
-    const result = await mt.callDestructiveTool({ address: "down.run", resultMode: mode.endsWith("value") ? "value" : "mcp" });
-    expect(result.isError).toBeFalsy();
-    const notice = mode.endsWith("value") ? (textOf(result) as { data: Record<string, unknown> }).data
-      : JSON.parse(required(result.content[0]).text.split("\n")[0]!);
-    expect(notice).toMatchObject({ truncated: true, totalBytes: expect.any(Number) });
-    expect(notice.hint).toContain("This write already ran");
-    expect(notice.hint).toContain("Paging is unavailable for write results on read-only pools");
-    for (const key of ["resultId", "nextAction", "nextOffset"]) expect(notice).not.toHaveProperty(key);
-    expect(JSON.stringify(result)).not.toContain("connecta.result");
-    expect(stashKeys).toEqual([]);
-    expect(calls).toBe(1);
-    expect(events).toMatchObject([{ outcome: "success", friction: "result_too_large" }]);
-    if (mode === "api-text" || mode === "mcp-text") expect(lead(result).preview).toBe((mode === "api-text" ? JSON.stringify(JSON_LINES) : JSON_LINES).slice(0, 1000));
-    if (mode.endsWith("value")) expect(notice.preview).toBeTypeOf("string");
-    expect(new TextEncoder().encode(required(result.content[0]).text).length).toBeLessThan(1400);
-  });
+  it.each(["api-text", "api-value", "mcp-text", "mcp-value", "mcp-blocks"] as const)(
+    "INV-2 INV-9: a read-only pool returns an inline %s write truncation without an unreachable stash",
+    async (mode) => {
+      const store = memoryStorage();
+      const stashKeys: string[] = [];
+      const storage = {
+        ...store,
+        set: async (key: string, value: string, options?: { ttlSeconds?: number }) => {
+          if (key.includes("result:") || key.includes("result-stash:")) stashKeys.push(key);
+          await store.set(key, value, options);
+        },
+      };
+      const { activity, events } = activitySink();
+      let calls = 0;
+      const connector = connectorWith({
+        id: "down",
+        kind: mode.startsWith("mcp") ? "mcp" : "api",
+        tools: [{ name: "run", annotations: { readOnlyHint: false } }],
+        call: async () => {
+          calls++;
+          return mode === "mcp-blocks"
+            ? { content: [{ type: "image", mimeType: "image/png", data: "a".repeat(3000) }] }
+            : mode.startsWith("mcp")
+              ? { content: [{ type: "text", text: JSON_LINES }] }
+              : JSON_LINES;
+        },
+      });
+      const mt = createMetaTools(makeRegistry([connector], { storage, maxResultBytes: 1000 }), BASE, {
+        trust: "read-only",
+        activity,
+      });
+      const result = await mt.callDestructiveTool({
+        address: "down.run",
+        resultMode: mode.endsWith("value") ? "value" : "mcp",
+      });
+      expect(result.isError).toBeFalsy();
+      const notice = mode.endsWith("value")
+        ? (textOf(result) as { data: Record<string, unknown> }).data
+        : JSON.parse(required(result.content[0]).text.split("\n")[0]!);
+      expect(notice).toMatchObject({ truncated: true, totalBytes: expect.any(Number) });
+      expect(notice.hint).toContain("This write already ran");
+      expect(notice.hint).toContain("Paging is unavailable for write results on read-only pools");
+      for (const key of ["resultId", "nextAction", "nextOffset"]) expect(notice).not.toHaveProperty(key);
+      expect(JSON.stringify(result)).not.toContain("connecta.result");
+      expect(stashKeys).toEqual([]);
+      expect(calls).toBe(1);
+      expect(events).toMatchObject([{ outcome: "success", friction: "result_too_large" }]);
+      if (mode === "api-text" || mode === "mcp-text")
+        expect(lead(result).preview).toBe(
+          (mode === "api-text" ? JSON.stringify(JSON_LINES) : JSON_LINES).slice(0, 1000),
+        );
+      if (mode.endsWith("value")) expect(notice.preview).toBeTypeOf("string");
+      expect(new TextEncoder().encode(required(result.content[0]).text).length).toBeLessThan(1400);
+    },
+  );
 
   it("puts the notice and its next action before the preview", async () => {
     const mt = createMetaTools(makeRegistry([capped("c")], { maxResultBytes: 100 }), BASE);
@@ -2380,9 +2417,11 @@ describe("truncated results lead with their connecta.result handle", () => {
     expect(preview).toBe(FULL.slice(0, 100));
     expect(notice.nextAction).toEqual({
       tool: "execute_code",
-      arguments: { code: `async () => await connecta.result(${JSON.stringify(notice.resultId)}, { offset: 100, maxBytes: 3829 })` },
+      arguments: {
+        code: `async () => await connecta.result(${JSON.stringify(notice.resultId)}, { offset: 100, maxBytes: 3829 })`,
+      },
     });
-    expect(preview + await pageFrom(mt, notice.resultId, 100)).toBe(FULL);
+    expect(preview + (await pageFrom(mt, notice.resultId, 100))).toBe(FULL);
   });
 
   it.each([
@@ -2394,7 +2433,8 @@ describe("truncated results lead with their connecta.result handle", () => {
     // survives that; a leading one must.
     const mt = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: JSON_LINES }], readOnly)], { maxResultBytes: 10_000 }),
-      BASE, { trust: "trusted" },
+      BASE,
+      { trust: "trusted" },
     );
     const result = await mt[method]({ address: "down.run" });
     const { notice } = lead(result);
@@ -2407,7 +2447,8 @@ describe("truncated results lead with their connecta.result handle", () => {
   it("tells a write's caller that the call already ran and must not be repeated", async () => {
     const mt = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: JSON_LINES }], false)], { maxResultBytes: 1_000 }),
-      BASE, { trust: "trusted" },
+      BASE,
+      { trust: "trusted" },
     );
     const { notice } = lead(await mt.callDestructiveTool({ address: "down.run", reason: "export" }));
     expect(notice.hint).toMatch(/already ran/i);
@@ -2420,7 +2461,8 @@ describe("truncated results lead with their connecta.result handle", () => {
 
     const read = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: JSON_LINES }], true)], { maxResultBytes: 1_000 }),
-      BASE, { trust: "trusted" },
+      BASE,
+      { trust: "trusted" },
     );
     const { notice: readNotice } = lead(await read.callTool({ address: "down.run" }));
     expect(readNotice.hint).not.toMatch(/already ran/i);
@@ -2432,7 +2474,8 @@ describe("truncated results lead with their connecta.result handle", () => {
     // pages to find one line is how the eval's weakest model missed it.
     const read = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: JSON_LINES }], true)], { maxResultBytes: 1_000 }),
-      BASE, { trust: "trusted" },
+      BASE,
+      { trust: "trusted" },
     );
     for (const result of [
       await read.callTool({ address: "down.run" }),
@@ -2448,12 +2491,15 @@ describe("truncated results lead with their connecta.result handle", () => {
     const value = textOf(await read.callTool({ address: "down.run", resultMode: "value" })) as {
       data: LeadingNotice;
     };
-    expect(value.data.hint).toMatch(/^The result is \d+ bytes\. To find something specific.*execute_code.*connecta.result/);
+    expect(value.data.hint).toMatch(
+      /^The result is \d+ bytes\. To find something specific.*execute_code.*connecta.result/,
+    );
 
     // A write's notice is untouched: repeating it is exactly what it forbids.
     const write = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: JSON_LINES }], false)], { maxResultBytes: 1_000 }),
-      BASE, { trust: "trusted" },
+      BASE,
+      { trust: "trusted" },
     );
     const { notice: writeNotice } = lead(await write.callDestructiveTool({ address: "down.run", reason: "export" }));
     expect(writeNotice.hint).toBe(
@@ -2465,7 +2511,8 @@ describe("truncated results lead with their connecta.result handle", () => {
   it("previews a lone text block as its text, not its serialized envelope", async () => {
     const mt = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: JSON_LINES }], true)], { maxResultBytes: 1_000 }),
-      BASE, { trust: "trusted" },
+      BASE,
+      { trust: "trusted" },
     );
     const { notice, preview } = lead(await mt.callTool({ address: "down.run" }));
     expect(preview.startsWith('[{"type"')).toBe(false);
@@ -2475,8 +2522,7 @@ describe("truncated results lead with their connecta.result handle", () => {
     expect(notice.nextOffset).toBe(1_000);
     // The stash holds the same text, so the preview plus the pages after it
     // reassemble the downstream text byte for byte.
-    expect(preview + await pageFrom(mt, notice.resultId, notice.nextOffset))
-      .toBe(JSON_LINES);
+    expect(preview + (await pageFrom(mt, notice.resultId, notice.nextOffset))).toBe(JSON_LINES);
   });
 
   it("previews several text blocks as readable text and pages their content array", async () => {
@@ -2516,16 +2562,22 @@ describe("truncated results lead with their connecta.result handle", () => {
 
     const inline = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: "x".repeat(24_000) }], readOnly)]),
-      BASE, { trust: "trusted" },
+      BASE,
+      { trust: "trusted" },
     );
-    expect((await inline[method]({ address: "down.run" })).content)
-      .toEqual([{ type: "text", text: "x".repeat(24_000) }]);
+    expect((await inline[method]({ address: "down.run" })).content).toEqual([
+      { type: "text", text: "x".repeat(24_000) },
+    ]);
   });
 });
 
 describe("connecta.result pages raw text, clamped to the result's cap", () => {
   const LINES = Array.from({ length: 300 }, (_, i) =>
-    JSON.stringify({ ts: `2026-09-16T00:00:${String(i % 60).padStart(2, "0")}Z`, actor: `user${i}@example.com`, note: 'says "hi"' }),
+    JSON.stringify({
+      ts: `2026-09-16T00:00:${String(i % 60).padStart(2, "0")}Z`,
+      actor: `user${i}@example.com`,
+      note: 'says "hi"',
+    }),
   ).join("\n");
 
   function mcpText(id: string, content: unknown[], maxResultBytes?: number): Connector {
@@ -2548,7 +2600,11 @@ describe("connecta.result pages raw text, clamped to the result's cap", () => {
   }
 
   /** A page is one text block: a one-line JSON header, a newline, the raw text. */
-  function rawPage(result: { content: { text: string }[]; isError?: boolean }): { header: PageHeader; body: string; whole: string } {
+  function rawPage(result: { content: { text: string }[]; isError?: boolean }): {
+    header: PageHeader;
+    body: string;
+    whole: string;
+  } {
     expect(result.isError).toBeFalsy();
     expect(result.content).toHaveLength(1);
     const whole = required(result.content[0]).text;
@@ -2557,14 +2613,20 @@ describe("connecta.result pages raw text, clamped to the result's cap", () => {
     return { header: JSON.parse(whole.slice(0, newline)) as PageHeader, body: whole.slice(newline + 1), whole };
   }
 
-  async function truncatedId(mt: ReturnType<typeof createMetaTools>, address: string): Promise<{ id: string; next: number }> {
+  async function truncatedId(
+    mt: ReturnType<typeof createMetaTools>,
+    address: string,
+  ): Promise<{ id: string; next: number }> {
     const text = required((await mt.callTool({ address })).content[0]).text;
     const notice = JSON.parse(text.slice(0, text.indexOf("\n"))) as { resultId: string; nextOffset: number };
     return { id: notice.resultId, next: notice.nextOffset };
   }
 
   it("returns a header line then the raw page text, never JSON-escaped", async () => {
-    const mt = createMetaTools(makeRegistry([mcpText("down", [{ type: "text", text: LINES }])], { maxResultBytes: 1_000 }), BASE);
+    const mt = createMetaTools(
+      makeRegistry([mcpText("down", [{ type: "text", text: LINES }])], { maxResultBytes: 1_000 }),
+      BASE,
+    );
     const { id, next } = await truncatedId(mt, "down.run");
     const { header, body } = rawPage(await mt.readResult({ id, offset: next }));
     expect(body).toBe(LINES.slice(1_000, 2_000));
@@ -2580,7 +2642,10 @@ describe("connecta.result pages raw text, clamped to the result's cap", () => {
   });
 
   it("clamps a larger maxBytes to the cap instead of refusing it", async () => {
-    const mt = createMetaTools(makeRegistry([mcpText("down", [{ type: "text", text: LINES }])], { maxResultBytes: 1_000 }), BASE);
+    const mt = createMetaTools(
+      makeRegistry([mcpText("down", [{ type: "text", text: LINES }])], { maxResultBytes: 1_000 }),
+      BASE,
+    );
     const { id } = await truncatedId(mt, "down.run");
     for (const maxBytes of [1_001, 50_000, Number.MAX_SAFE_INTEGER]) {
       const { header, body } = rawPage(await mt.readResult({ id, offset: 0, maxBytes }));
@@ -2593,7 +2658,10 @@ describe("connecta.result pages raw text, clamped to the result's cap", () => {
   });
 
   it("reports the last page with hasMore false and no next action", async () => {
-    const mt = createMetaTools(makeRegistry([mcpText("down", [{ type: "text", text: LINES }])], { maxResultBytes: 1_000 }), BASE);
+    const mt = createMetaTools(
+      makeRegistry([mcpText("down", [{ type: "text", text: LINES }])], { maxResultBytes: 1_000 }),
+      BASE,
+    );
     const { id } = await truncatedId(mt, "down.run");
     const total = byteLength(LINES);
     const { header, body } = rawPage(await mt.readResult({ id, offset: total - 10 }));
@@ -2635,40 +2703,58 @@ describe("connecta.result pages raw text, clamped to the result's cap", () => {
 
   it("never answers a page request with more than the cap plus a small header", async () => {
     const cap = 1_000;
-    const mt = createMetaTools(makeRegistry([mcpText("down", [{ type: "text", text: LINES }])], { maxResultBytes: cap }), BASE);
+    const mt = createMetaTools(
+      makeRegistry([mcpText("down", [{ type: "text", text: LINES }])], { maxResultBytes: cap }),
+      BASE,
+    );
     const { id } = await truncatedId(mt, "down.run");
     for (const maxBytes of [undefined, 1, cap, cap * 10, Number.MAX_SAFE_INTEGER]) {
       for (const offset of [0, 777, 5_000]) {
         const result = await mt.readResult({ id, offset, ...(maxBytes ? { maxBytes } : {}) });
         // What a client measures: the text it is handed, with no second copy.
         expect(result.structuredContent).toMatchObject({ format: "text" });
-        expect(byteLength(rawPage(result).whole), `maxBytes ${String(maxBytes)} offset ${offset}`)
-          .toBeLessThanOrEqual(cap + 400);
+        expect(byteLength(rawPage(result).whole), `maxBytes ${String(maxBytes)} offset ${offset}`).toBeLessThanOrEqual(
+          cap + 400,
+        );
       }
     }
   });
 
-  it.each(["mcp", "value"] as const)("bounds an unpageable %s-mode truncation by the cap plus a small header", async (resultMode) => {
-    const store = memoryStorage();
-    const storage = { ...store, set: async (key: string, value: string, opts?: { ttlSeconds?: number }) => {
-      if (key.includes("result:")) throw new Error("stash down");
-      await store.set(key, value, opts);
-    } };
-    const cap = 1_000;
-    // Quote-heavy JSON, so a preview escaped into value mode's JSON envelope
-    // would grow well past the cap if it were cut at `cap` bytes before escaping.
-    const connector = connectorWith({ id: "api", kind: "api", tools: [{ name: "read", annotations: { readOnlyHint: true } }], call: async () => LINES });
-    const mt = createMetaTools(makeRegistry([connector], { storage, maxResultBytes: cap }), BASE);
-    const result = await mt.callTool({ address: "api.read", resultMode });
-    expect(JSON.stringify(result)).toContain("Paging is unavailable");
-    expect(byteLength(required(result.content[0]).text)).toBeLessThanOrEqual(cap + 400);
-  });
+  it.each(["mcp", "value"] as const)(
+    "bounds an unpageable %s-mode truncation by the cap plus a small header",
+    async (resultMode) => {
+      const store = memoryStorage();
+      const storage = {
+        ...store,
+        set: async (key: string, value: string, opts?: { ttlSeconds?: number }) => {
+          if (key.includes("result:")) throw new Error("stash down");
+          await store.set(key, value, opts);
+        },
+      };
+      const cap = 1_000;
+      // Quote-heavy JSON, so a preview escaped into value mode's JSON envelope
+      // would grow well past the cap if it were cut at `cap` bytes before escaping.
+      const connector = connectorWith({
+        id: "api",
+        kind: "api",
+        tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+        call: async () => LINES,
+      });
+      const mt = createMetaTools(makeRegistry([connector], { storage, maxResultBytes: cap }), BASE);
+      const result = await mt.callTool({ address: "api.read", resultMode });
+      expect(JSON.stringify(result)).toContain("Paging is unavailable");
+      expect(byteLength(required(result.content[0]).text)).toBeLessThanOrEqual(cap + 400);
+    },
+  );
 
   it("INV-3 INV-4: refuses an entry stashed before authority was recorded", async () => {
     const stashed = LINES.slice(0, 3_000);
     const bytes = new TextEncoder().encode(stashed);
     const storage = memoryStorage();
-    await storage.set("results:result:old", `connecta-result-v2:${bytes.length}:49152:${btoa(String.fromCharCode(...bytes))}`);
+    await storage.set(
+      "results:result:old",
+      `connecta-result-v2:${bytes.length}:49152:${btoa(String.fromCharCode(...bytes))}`,
+    );
     const mt = createMetaTools(makeRegistry([calcConnector], { storage, maxResultBytes: 1_000 }), BASE);
     const page = await mt.readResult({ id: "old", offset: 0, maxBytes: 5_000 });
     expect(page.isError).toBe(true);

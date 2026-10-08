@@ -9,21 +9,12 @@ import type { CallErrorDetails } from "../errors.js";
 // continuations from a host-side loop. Values cross the boundary as JSON, so
 // provider args/results must be JSON-serializable.
 
-import {
-  getQuickJS,
-  type QuickJSContext,
-  type QuickJSDeferredPromise,
-  type QuickJSHandle,
-} from "quickjs-emscripten";
+import { getQuickJS, type QuickJSContext, type QuickJSDeferredPromise, type QuickJSHandle } from "quickjs-emscripten";
 import type { ExecuteResult, ExecutorProvider } from "../types.js";
 import { InvocationFailure } from "../invocation.js";
 import { msg } from "../errors.js";
 import { withoutProgramTerminator } from "../program-source.js";
-import {
-  hostCallLabel,
-  MAX_QUICKJS_LOG_TRANSPORT_BYTES,
-  serializedBytes,
-} from "./quickjs-protocol.js";
+import { hostCallLabel, MAX_QUICKJS_LOG_TRANSPORT_BYTES, serializedBytes } from "./quickjs-protocol.js";
 
 export interface QuickJsRuntimeOptions {
   timeoutMs: number;
@@ -149,9 +140,7 @@ function formatGuestError(dumped: unknown): string {
   if (dumped && typeof dumped === "object") {
     const e = dumped as { name?: unknown; message?: unknown };
     if (e.message != null) {
-      return e.name != null && e.name !== "Error"
-        ? `${String(e.name)}: ${String(e.message)}`
-        : String(e.message);
+      return e.name != null && e.name !== "Error" ? `${String(e.name)}: ${String(e.message)}` : String(e.message);
     }
   }
   return typeof dumped === "string" ? dumped : JSON.stringify(dumped);
@@ -171,10 +160,7 @@ function armWake(bridge: HostBridge): void {
   });
 }
 
-function waitForHostOrDeadline(
-  waitForSettle: Promise<void>,
-  remainingMs: number,
-): Promise<boolean> {
+function waitForHostOrDeadline(waitForSettle: Promise<void>, remainingMs: number): Promise<boolean> {
   return new Promise((resolve) => {
     let done = false;
     const timer = setTimeout(() => {
@@ -232,8 +218,7 @@ function installBridge(
     const entryTransportBytes = logTransportBytes(entry);
     if (
       logTotalChars + entry.length > MAX_LOG_TOTAL_CHARS ||
-      logTotalTransportBytes + entryTransportBytes >
-        MAX_QUICKJS_LOG_TRANSPORT_BYTES - MAX_LOG_MARKER_TRANSPORT_BYTES
+      logTotalTransportBytes + entryTransportBytes > MAX_QUICKJS_LOG_TRANSPORT_BYTES - MAX_LOG_MARKER_TRANSPORT_BYTES
     ) {
       captureLog(LOG_SIZE_LIMIT_MARKER);
       logBudgetSpent = true;
@@ -247,17 +232,10 @@ function installBridge(
   logFn.dispose();
 
   const byName = new Map(providers.map((p) => [p.name, p]));
-  const invoke = async (
-    ns: string,
-    fn: string,
-    argsJson: string,
-  ): Promise<{ json: string } | { error: unknown }> => {
+  const invoke = async (ns: string, fn: string, argsJson: string): Promise<{ json: string } | { error: unknown }> => {
     try {
       const provider = byName.get(ns);
-      const f =
-        provider && Object.hasOwn(provider.fns, fn)
-          ? provider.fns[fn]
-          : undefined;
+      const f = provider && Object.hasOwn(provider.fns, fn) ? provider.fns[fn] : undefined;
       if (!f) throw new Error(`Unknown function ${ns}.${fn}`);
       const args = JSON.parse(argsJson) as unknown[];
       // Name the address the program called, never the internal dispatcher the
@@ -268,14 +246,10 @@ function installBridge(
       try {
         json = JSON.stringify({ ok: true, value });
       } catch (err) {
-        throw new Error(
-          `Host result from ${label} could not be serialized: ${msg(err)}`,
-        );
+        throw new Error(`Host result from ${label} could not be serialized: ${msg(err)}`);
       }
       if (exceedsUtf8ByteLimit(json, MAX_HOST_RESULT_BYTES)) {
-        throw new Error(
-          `Host result from ${label} exceeds the ${MAX_HOST_RESULT_BYTES}-byte serialized bridge limit.`,
-        );
+        throw new Error(`Host result from ${label} exceeds the ${MAX_HOST_RESULT_BYTES}-byte serialized bridge limit.`);
       }
       return { json };
     } catch (err) {
@@ -349,110 +323,124 @@ export async function executeQuickJs(
   options: QuickJsRuntimeOptions,
   onLog?: (entry: string) => void,
 ): Promise<QuickJsExecutionResult> {
-      const { timeoutMs, cpuTimeMs, memoryLimitBytes, maxStackSizeBytes } =
-        options;
-      const QuickJS = await getQuickJS();
-      const ctx = QuickJS.newContext();
-      const deadline = Date.now() + timeoutMs;
-      const timeoutError = `Execution timed out after ${timeoutMs}ms.`;
-      const cpuTimeoutError = `Execution exceeded the ${cpuTimeMs}ms guest CPU budget.`;
-      let cpuUsedMs = 0;
-      let segmentStarted = 0;
-      let inGuest = false;
-      let cpuInterrupted = false;
-      let wallInterrupted = false;
-      const runGuest = <T>(operation: () => T): T => {
-        segmentStarted = Date.now();
-        inGuest = true;
-        try {
-          return operation();
-        } finally {
-          cpuUsedMs += Date.now() - segmentStarted;
-          inGuest = false;
-        }
-      };
-      ctx.runtime.setMemoryLimit(memoryLimitBytes);
-      ctx.runtime.setMaxStackSize(maxStackSizeBytes);
-      ctx.runtime.setInterruptHandler(() => {
-        if (!inGuest) return false;
-        wallInterrupted = Date.now() >= deadline;
-        cpuInterrupted =
-          cpuUsedMs + (Date.now() - segmentStarted) >= cpuTimeMs;
-        return wallInterrupted || cpuInterrupted;
-      });
+  const { timeoutMs, cpuTimeMs, memoryLimitBytes, maxStackSizeBytes } = options;
+  const QuickJS = await getQuickJS();
+  const ctx = QuickJS.newContext();
+  const deadline = Date.now() + timeoutMs;
+  const timeoutError = `Execution timed out after ${timeoutMs}ms.`;
+  const cpuTimeoutError = `Execution exceeded the ${cpuTimeMs}ms guest CPU budget.`;
+  let cpuUsedMs = 0;
+  let segmentStarted = 0;
+  let inGuest = false;
+  let cpuInterrupted = false;
+  let wallInterrupted = false;
+  const runGuest = <T>(operation: () => T): T => {
+    segmentStarted = Date.now();
+    inGuest = true;
+    try {
+      return operation();
+    } finally {
+      cpuUsedMs += Date.now() - segmentStarted;
+      inGuest = false;
+    }
+  };
+  ctx.runtime.setMemoryLimit(memoryLimitBytes);
+  ctx.runtime.setMaxStackSize(maxStackSizeBytes);
+  ctx.runtime.setInterruptHandler(() => {
+    if (!inGuest) return false;
+    wallInterrupted = Date.now() >= deadline;
+    cpuInterrupted = cpuUsedMs + (Date.now() - segmentStarted) >= cpuTimeMs;
+    return wallInterrupted || cpuInterrupted;
+  });
 
-      let describeError: QuickJSHandle | undefined;
-      const logs: string[] = [];
-      const bridge = installBridge(ctx, providers, logs, onLog);
-      const finish = <T extends ExecuteResult>(r: T): T => {
-        bridge.aborted = true;
-        describeError?.dispose();
-        for (const failure of bridge.failures) failure.error.dispose();
-        bridge.failures.length = 0;
-        // Outstanding host calls still hold deferred-promise handles; their
-        // callbacks free them and wake the drain, which disposes the context
-        // once the last straggler settles. Re-arm before every wait so the
-        // deferred never resolves-and-stays-resolved between settles — that
-        // would spin the microtask queue and starve the very timers the
-        // stragglers are waiting on. Arming before the pending check (and
-        // synchronously, before the first await) closes the settle-before-arm
-        // window: any settle after this point resolves the promise we await.
-        if (bridge.pending === 0) ctx.dispose();
-        else {
-          void (async () => {
-            armWake(bridge);
-            while (bridge.pending > 0) {
-              await bridge.waitForSettle;
-              armWake(bridge);
-            }
-            ctx.dispose();
-          })();
+  let describeError: QuickJSHandle | undefined;
+  const logs: string[] = [];
+  const bridge = installBridge(ctx, providers, logs, onLog);
+  const finish = <T extends ExecuteResult>(r: T): T => {
+    bridge.aborted = true;
+    describeError?.dispose();
+    for (const failure of bridge.failures) failure.error.dispose();
+    bridge.failures.length = 0;
+    // Outstanding host calls still hold deferred-promise handles; their
+    // callbacks free them and wake the drain, which disposes the context
+    // once the last straggler settles. Re-arm before every wait so the
+    // deferred never resolves-and-stays-resolved between settles — that
+    // would spin the microtask queue and starve the very timers the
+    // stragglers are waiting on. Arming before the pending check (and
+    // synchronously, before the first await) closes the settle-before-arm
+    // window: any settle after this point resolves the promise we await.
+    if (bridge.pending === 0) ctx.dispose();
+    else {
+      void (async () => {
+        armWake(bridge);
+        while (bridge.pending > 0) {
+          await bridge.waitForSettle;
+          armWake(bridge);
         }
-        return logs.length > 0 ? { ...r, logs } : r;
-      };
-      const rejected = (error: QuickJSHandle): QuickJsExecutionResult => {
-        // Interrupt/deadline facts are host state, never inferred by inspecting
-        // the thrown value. Do not reenter a guest whose budget has ended.
-        if (wallInterrupted || Date.now() >= deadline) return timedOut();
-        if (cpuInterrupted || cpuUsedMs >= cpuTimeMs) return { result: undefined, error: cpuTimeoutError };
-        const call = bridge.failures.find((failure) => ctx.eq(failure.error, error))?.call;
-        let description: unknown = { name: "Error", message: "Program threw a value." };
-        const type = ctx.typeof(error);
-        if (type === "string") description = ctx.getString(error).slice(0, 4000);
-        else if (type === "number") description = ctx.getNumber(error);
-        else if (type === "undefined") description = "undefined";
-        else if (type === "boolean") description = ctx.eq(error, ctx.true);
-        else if (ctx.eq(error, ctx.null)) description = null;
-        else if (describeError) {
-          const describe = describeError;
-          const described = runGuest(() => ctx.callFunction(describe, ctx.undefined, error));
-          if (described.error) described.error.dispose();
-          else {
-            description = JSON.parse(ctx.getString(described.value)) ?? description;
-            described.value.dispose();
-          }
-          if (wallInterrupted || Date.now() >= deadline) return timedOut();
-          if (cpuInterrupted || cpuUsedMs >= cpuTimeMs) return { result: undefined, error: cpuTimeoutError };
-        }
-        const name = description && typeof description === "object" && "name" in description && typeof description.name === "string" ? description.name : "Error";
-        const stack = description && typeof description === "object" && "stack" in description && typeof description.stack === "string" ? description.stack : "";
-        const location = /:(\d+)(?::\d+)?\)?(?:\n|$)/.exec(stack);
-        return { result: undefined, error: formatGuestError(description).slice(0, 4000), failure: {
-          name, ...(call ? { call } : {}), ...(location ? { line: Math.max(1, Number(location[1]) - 1) } : {}),
-        } };
-      };
-      const timedOut = (): QuickJsExecutionResult => ({
-        result: undefined,
-        error: timeoutError,
-        failure: { name: "TimeoutError", timeout: { elapsedMs: Date.now() - (deadline - timeoutMs), deadlineMs: timeoutMs } },
-        timedOut: true,
-      });
+        ctx.dispose();
+      })();
+    }
+    return logs.length > 0 ? { ...r, logs } : r;
+  };
+  const rejected = (error: QuickJSHandle): QuickJsExecutionResult => {
+    // Interrupt/deadline facts are host state, never inferred by inspecting
+    // the thrown value. Do not reenter a guest whose budget has ended.
+    if (wallInterrupted || Date.now() >= deadline) return timedOut();
+    if (cpuInterrupted || cpuUsedMs >= cpuTimeMs) return { result: undefined, error: cpuTimeoutError };
+    const call = bridge.failures.find((failure) => ctx.eq(failure.error, error))?.call;
+    let description: unknown = { name: "Error", message: "Program threw a value." };
+    const type = ctx.typeof(error);
+    if (type === "string") description = ctx.getString(error).slice(0, 4000);
+    else if (type === "number") description = ctx.getNumber(error);
+    else if (type === "undefined") description = "undefined";
+    else if (type === "boolean") description = ctx.eq(error, ctx.true);
+    else if (ctx.eq(error, ctx.null)) description = null;
+    else if (describeError) {
+      const describe = describeError;
+      const described = runGuest(() => ctx.callFunction(describe, ctx.undefined, error));
+      if (described.error) described.error.dispose();
+      else {
+        description = JSON.parse(ctx.getString(described.value)) ?? description;
+        described.value.dispose();
+      }
+      if (wallInterrupted || Date.now() >= deadline) return timedOut();
+      if (cpuInterrupted || cpuUsedMs >= cpuTimeMs) return { result: undefined, error: cpuTimeoutError };
+    }
+    const name =
+      description && typeof description === "object" && "name" in description && typeof description.name === "string"
+        ? description.name
+        : "Error";
+    const stack =
+      description && typeof description === "object" && "stack" in description && typeof description.stack === "string"
+        ? description.stack
+        : "";
+    const location = /:(\d+)(?::\d+)?\)?(?:\n|$)/.exec(stack);
+    return {
+      result: undefined,
+      error: formatGuestError(description).slice(0, 4000),
+      failure: {
+        name,
+        ...(call ? { call } : {}),
+        ...(location ? { line: Math.max(1, Number(location[1]) - 1) } : {}),
+      },
+    };
+  };
+  const timedOut = (): QuickJsExecutionResult => ({
+    result: undefined,
+    error: timeoutError,
+    failure: {
+      name: "TimeoutError",
+      timeout: { elapsedMs: Date.now() - (deadline - timeoutMs), deadlineMs: timeoutMs },
+    },
+    timedOut: true,
+  });
 
-      // Keep this diagnostic function in a host-owned handle. Error.isError
-      // checks the native brand without Proxy traps. Own data descriptors of
-      // native Errors are safe to read; accessors and arbitrary thrown objects
-      // get a fixed description instead of dump's guest serialization/getters.
-      const described = runGuest(() => ctx.evalCode(`(() => {
+  // Keep this diagnostic function in a host-owned handle. Error.isError
+  // checks the native brand without Proxy traps. Own data descriptors of
+  // native Errors are safe to read; accessors and arbitrary thrown objects
+  // get a fixed description instead of dump's guest serialization/getters.
+  const described = runGuest(() =>
+    ctx.evalCode(`(() => {
         const isError = Error.isError;
         const descriptor = Object.getOwnPropertyDescriptor;
         const prototypeOf = Object.getPrototypeOf;
@@ -480,85 +468,83 @@ export async function executeQuickJs(
           return stringify({ __proto__: null, name: text("name", name, 64),
             message: text("message", "Program threw a value.", 4000), stack: text("stack", "", 1000) });
         };
-      })()`));
-      if (described.error) {
-        const rejection = rejected(described.error);
-        described.error.dispose();
-        return finish(rejection);
-      }
-      describeError = described.value;
+      })()`),
+  );
+  if (described.error) {
+    const rejection = rejected(described.error);
+    described.error.dispose();
+    return finish(rejection);
+  }
+  describeError = described.value;
 
-      const setup = runGuest(() => ctx.evalCode(setupScript(providers)));
-      if (setup.error) {
-        const rejection = rejected(setup.error);
-        setup.error.dispose();
-        return finish(rejection.timedOut || cpuInterrupted ? rejection
-          : { ...rejection, error: `Sandbox setup failed: ${rejection.error}` });
-      }
-      setup.value.dispose();
+  const setup = runGuest(() => ctx.evalCode(setupScript(providers)));
+  if (setup.error) {
+    const rejection = rejected(setup.error);
+    setup.error.dispose();
+    return finish(
+      rejection.timedOut || cpuInterrupted
+        ? rejection
+        : { ...rejection, error: `Sandbox setup failed: ${rejection.error}` },
+    );
+  }
+  setup.value.dispose();
 
-      const evaluated = runGuest(() =>
-        ctx.evalCode(`Promise.resolve((\n${normalizeCode(code)}\n)())`),
-      );
-      if (evaluated.error) {
-        const rejection = rejected(evaluated.error);
-        evaluated.error.dispose();
-        return finish(rejection);
-      }
-      const promiseHandle = evaluated.value;
+  const evaluated = runGuest(() => ctx.evalCode(`Promise.resolve((\n${normalizeCode(code)}\n)())`));
+  if (evaluated.error) {
+    const rejection = rejected(evaluated.error);
+    evaluated.error.dispose();
+    return finish(rejection);
+  }
+  const promiseHandle = evaluated.value;
 
-      // Drive the guest: run microtask jobs, inspect the result promise,
-      // sleep until a host call settles (or the budget runs out), repeat.
-      // Returns without touching the context lifecycle; disposal happens below.
-      const drive = async (): Promise<QuickJsExecutionResult> => {
-        for (;;) {
-          if (Date.now() >= deadline) {
-            return timedOut();
-          }
-          const jobs = runGuest(() => ctx.runtime.executePendingJobs());
-          if (jobs.error) {
-            const rejection = rejected(jobs.error);
-            jobs.error.dispose();
-            return rejection;
-          }
-          const state = ctx.getPromiseState(promiseHandle);
-          if (state.type === "fulfilled") {
-            const result: unknown = runGuest(() => ctx.dump(state.value));
-            state.value.dispose();
-            return { result };
-          }
-          if (state.type === "rejected") {
-            const rejection = rejected(state.error);
-            state.error.dispose();
-            return rejection;
-          }
-          if (bridge.pending === 0) {
-            return {
-              result: undefined,
-              error:
-                "Execution stalled: code awaits something that can never settle.",
-            };
-          }
-          const remaining = deadline - Date.now();
-          if (remaining <= 0) {
-            return timedOut();
-          }
-          const settled = await waitForHostOrDeadline(
-            bridge.waitForSettle,
-            remaining,
-          );
-          if (settled) armWake(bridge);
-          else {
-            return timedOut();
-          }
-        }
-      };
-
-      let outcome: QuickJsExecutionResult;
-      try {
-        outcome = await drive();
-      } finally {
-        promiseHandle.dispose();
+  // Drive the guest: run microtask jobs, inspect the result promise,
+  // sleep until a host call settles (or the budget runs out), repeat.
+  // Returns without touching the context lifecycle; disposal happens below.
+  const drive = async (): Promise<QuickJsExecutionResult> => {
+    for (;;) {
+      if (Date.now() >= deadline) {
+        return timedOut();
       }
-      return finish(outcome);
+      const jobs = runGuest(() => ctx.runtime.executePendingJobs());
+      if (jobs.error) {
+        const rejection = rejected(jobs.error);
+        jobs.error.dispose();
+        return rejection;
+      }
+      const state = ctx.getPromiseState(promiseHandle);
+      if (state.type === "fulfilled") {
+        const result: unknown = runGuest(() => ctx.dump(state.value));
+        state.value.dispose();
+        return { result };
+      }
+      if (state.type === "rejected") {
+        const rejection = rejected(state.error);
+        state.error.dispose();
+        return rejection;
+      }
+      if (bridge.pending === 0) {
+        return {
+          result: undefined,
+          error: "Execution stalled: code awaits something that can never settle.",
+        };
+      }
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        return timedOut();
+      }
+      const settled = await waitForHostOrDeadline(bridge.waitForSettle, remaining);
+      if (settled) armWake(bridge);
+      else {
+        return timedOut();
+      }
+    }
+  };
+
+  let outcome: QuickJsExecutionResult;
+  try {
+    outcome = await drive();
+  } finally {
+    promiseHandle.dispose();
+  }
+  return finish(outcome);
 }

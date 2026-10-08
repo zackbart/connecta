@@ -9,22 +9,11 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createExecuteTool } from "../src/execute.js";
 import { createConnecta } from "../src/index.js";
-import {
-  normalizeCode,
-  quickJsExecutor as untrackedQuickJs,
-} from "../src/executors/quickjs.js";
+import { normalizeCode, quickJsExecutor as untrackedQuickJs } from "../src/executors/quickjs.js";
 import { normalizeProgramSource } from "../src/program-source.js";
-import {
-  executeQuickJs,
-  prepareQuickJs,
-} from "../src/executors/quickjs-runtime.js";
+import { executeQuickJs, prepareQuickJs } from "../src/executors/quickjs-runtime.js";
 import type { Connector, ExecuteResult, ExecutorProvider } from "../src/types.js";
-import {
-  required,
-  calcConnector,
-  makeRegistry,
-  silentLogger,
-} from "./helpers.js";
+import { required, calcConnector, makeRegistry, silentLogger } from "./helpers.js";
 import { trackedQuickJs as quickJsExecutor } from "./fixtures/node.js";
 import { deferred, waitFor } from "./fixtures/misc.js";
 
@@ -42,7 +31,10 @@ vi.setConfig({ testTimeout: 20_000 });
  * own report is pinned race-free, in-process, by the runtime case below.
  */
 function deadlineOutcome(run: Promise<ExecuteResult>): Promise<string | undefined> {
-  return run.then((out) => out.error, (error: Error) => error.message);
+  return run.then(
+    (out) => out.error,
+    (error: Error) => error.message,
+  );
 }
 
 function providers(): ExecutorProvider[] {
@@ -80,14 +72,10 @@ describe("normalizeCode", () => {
     expect(normalizeCode("async () => 1")).toBe("async () => 1");
   });
   it("detects a function past a leading line comment", () => {
-    expect(normalizeCode("// grab the roadmap\nasync () => 1")).toBe(
-      "// grab the roadmap\nasync () => 1",
-    );
+    expect(normalizeCode("// grab the roadmap\nasync () => 1")).toBe("// grab the roadmap\nasync () => 1");
   });
   it("drops a trailing terminator after the arrow expression, and nothing else", () => {
-    expect(normalizeCode("async () => {\n  return 1;\n}; // done")).toBe(
-      "async () => {\n  return 1;\n} // done",
-    );
+    expect(normalizeCode("async () => {\n  return 1;\n}; // done")).toBe("async () => {\n  return 1;\n} // done");
     expect(normalizeCode("```js\nasync () => 1;\n```")).toBe("async () => 1");
     expect(normalizeCode("async () => 1; 2")).toBe("async () => 1; 2");
     expect(normalizeCode("while (poll());")).toBe("async () => {\nwhile (poll());\n}");
@@ -100,16 +88,12 @@ describe("normalizeCode", () => {
     await ex.close?.();
   });
   it("detects a function past a leading block comment", () => {
-    expect(normalizeCode("/* setup */\n(async () => 1)")).toBe(
-      "/* setup */\n(async () => 1)",
-    );
+    expect(normalizeCode("/* setup */\n(async () => 1)")).toBe("/* setup */\n(async () => 1)");
   });
 });
 
 it("forwards positional arguments through recovered named functions", async () => {
-  const source = normalizeProgramSource(
-    "async function read(value) { return { value, count: arguments.length }; }",
-  );
+  const source = normalizeProgramSource("async function read(value) { return { value, count: arguments.length }; }");
   const program = new Function(`return (${source});`)() as (value: number) => Promise<unknown>;
   await expect(program(42)).resolves.toEqual({ value: 42, count: 1 });
 });
@@ -117,8 +101,10 @@ it("forwards positional arguments through recovered named functions", async () =
 describe("quickJsExecutor", () => {
   it("carries a non-enumerable lifecycle brand accepted by createConnecta", async () => {
     const executor = quickJsExecutor();
-    expect(Object.getOwnPropertyDescriptor(executor, Symbol.for("connecta.executor")))
-      .toMatchObject({ enumerable: false, value: { version: 1, lifecycle: "leased" } });
+    expect(Object.getOwnPropertyDescriptor(executor, Symbol.for("connecta.executor"))).toMatchObject({
+      enumerable: false,
+      value: { version: 1, lifecycle: "leased" },
+    });
     const app = createConnecta({ connectors: [], executor, logger: "silent" });
     await app.close();
   });
@@ -179,14 +165,10 @@ describe("quickJsExecutor", () => {
     const size = 192 * 1024;
     const payload = "x".repeat(size);
     const ex = quickJsExecutor({ timeoutMs: 10_000 });
-    const provider: ExecutorProvider[] = [
-      { name: "large", fns: { get: async () => payload } },
-    ];
+    const provider: ExecutorProvider[] = [{ name: "large", fns: { get: async () => payload } }];
     for (let round = 0; round < 5; round += 1) {
       const outputs = await Promise.all(
-        Array.from({ length: 20 }, () =>
-          ex.execute(`async () => (await large.get()).length`, provider),
-        ),
+        Array.from({ length: 20 }, () => ex.execute(`async () => (await large.get()).length`, provider)),
       );
       expect(outputs).toEqual(Array(20).fill({ result: size }));
     }
@@ -202,13 +184,9 @@ describe("quickJsExecutor", () => {
     async (_label, size) => {
       const payload = "x".repeat(size);
       const ex = quickJsExecutor({ timeoutMs: 10_000 });
-      const provider: ExecutorProvider[] = [
-        { name: "large", fns: { get: async () => payload } },
-      ];
+      const provider: ExecutorProvider[] = [{ name: "large", fns: { get: async () => payload } }];
       const outputs = await Promise.all(
-        Array.from({ length: 8 }, () =>
-          ex.execute(`async () => (await large.get()).length`, provider),
-        ),
+        Array.from({ length: 8 }, () => ex.execute(`async () => (await large.get()).length`, provider)),
       );
       for (const output of outputs) {
         expect(output.result).toBeUndefined();
@@ -221,9 +199,7 @@ describe("quickJsExecutor", () => {
   it("measures the bridge limit in UTF-8 bytes, not UTF-16 code units", async () => {
     const payload = "😀".repeat(70_000);
     const ex = quickJsExecutor();
-    const out = await ex.execute(`async () => unicode.get()`, [
-      { name: "unicode", fns: { get: async () => payload } },
-    ]);
+    const out = await ex.execute(`async () => unicode.get()`, [{ name: "unicode", fns: { get: async () => payload } }]);
     expect(payload.length).toBeLessThan(256 * 1024);
     expect(out.error).toContain("serialized bridge limit");
   });
@@ -232,10 +208,9 @@ describe("quickJsExecutor", () => {
     const circular: Record<string, unknown> = {};
     circular.self = circular;
     const ex = quickJsExecutor();
-    const out = await ex.execute(
-      `async () => { console.log("before host call"); return bad.result(); }`,
-      [{ name: "bad", fns: { result: async () => circular } }],
-    );
+    const out = await ex.execute(`async () => { console.log("before host call"); return bad.result(); }`, [
+      { name: "bad", fns: { result: async () => circular } },
+    ]);
     expect(out.result).toBeUndefined();
     expect(out.error).toContain("could not be serialized");
     expect(out.logs).toEqual(["before host call"]);
@@ -243,10 +218,7 @@ describe("quickJsExecutor", () => {
 
   it("forwards every argument verbatim, positionally", async () => {
     const ex = quickJsExecutor();
-    const out = await ex.execute(
-      `async () => connecta.call("calc.add", { a: 1 })`,
-      providers(),
-    );
+    const out = await ex.execute(`async () => connecta.call("calc.add", { a: 1 })`, providers());
     // Both args reach the host fn positionally — no drop, no first-arg-only.
     expect(out.result).toEqual({ address: "calc.add", args: { a: 1 } });
   });
@@ -265,47 +237,66 @@ describe("quickJsExecutor", () => {
 
   it("reports uncaught guest errors as error, not a rejection", async () => {
     const ex = quickJsExecutor();
-    const out = await ex.execute(
-      `async () => { throw new Error("guest sad"); }`,
-      [],
-    );
+    const out = await ex.execute(`async () => { throw new Error("guest sad"); }`, []);
     expect(out.result).toBeUndefined();
     expect(out.error).toContain("guest sad");
   });
 
-  it.each(["native-error", "plain-object", "proxy"] as const)("INV-3 INV-7: describes a rejected %s without guest getters or serialization", async (kind) => {
-    const ex = quickJsExecutor({ timeoutMs: 1000, cpuTimeMs: 100 });
-    const thrown = kind === "native-error" ? `new Error("original")`
-      : kind === "plain-object" ? `{}` : `new Proxy(new Error("proxy"), {
+  it.each(["native-error", "plain-object", "proxy"] as const)(
+    "INV-3 INV-7: describes a rejected %s without guest getters or serialization",
+    async (kind) => {
+      const ex = quickJsExecutor({ timeoutMs: 1000, cpuTimeMs: 100 });
+      const thrown =
+        kind === "native-error"
+          ? `new Error("original")`
+          : kind === "plain-object"
+            ? `{}`
+            : `new Proxy(new Error("proxy"), {
         get() { console.log("proxy getter ran"); while (true) {} },
         getOwnPropertyDescriptor() { console.log("proxy descriptor ran"); while (true) {} },
         getPrototypeOf() { console.log("proxy prototype ran"); while (true) {} }
       })`;
-    const out = await ex.execute(`async () => {
+      const out = await ex.execute(
+        `async () => {
       const error = ${thrown};
-      ${kind === "proxy" ? "" : `Object.defineProperties(error, {
+      ${
+        kind === "proxy"
+          ? ""
+          : `Object.defineProperties(error, {
         name: { get() { console.log("name getter ran"); while (true) {} } },
         message: { get() { console.log("message getter ran"); while (true) {} } },
         stack: { get() { console.log("stack getter ran"); while (true) {} } },
         toJSON: { value() { console.log("toJSON ran"); while (true) {} } }
-      });`}
+      });`
+      }
       Object.defineProperty(Object.prototype, "value", { get() { console.log("descriptor getter ran"); while (true) {} } });
       throw error;
-    }`, []);
-    expect(out).toMatchObject({ error: "Program threw a value.", failure: { name: "Error" } });
-    expect(out.logs).toBeUndefined();
-    expect(out.failure?.timeout).toBeUndefined();
-  });
+    }`,
+        [],
+      );
+      expect(out).toMatchObject({ error: "Program threw a value.", failure: { name: "Error" } });
+      expect(out.logs).toBeUndefined();
+      expect(out.failure?.timeout).toBeUndefined();
+    },
+  );
 
   it("[E6] keeps native Error data and source locations in safe rejection descriptions", async () => {
-    const out = await quickJsExecutor().execute(`async () => {
+    const out = await quickJsExecutor().execute(
+      `async () => {
       throw new TypeError("native data");
-    }`, []);
+    }`,
+      [],
+    );
     expect(out).toMatchObject({ error: "TypeError: native data", failure: { name: "TypeError", line: 2 } });
   });
 
   it("INV-3 INV-6: accessor edits do not replace a retained typed host rejection", async () => {
-    const result = await createExecuteTool(makeRegistry([calcConnector]), "https://connecta.test", quickJsExecutor(), silentLogger)({
+    const result = await createExecuteTool(
+      makeRegistry([calcConnector]),
+      "https://connecta.test",
+      quickJsExecutor(),
+      silentLogger,
+    )({
       code: `async () => {
         try { await connecta.call("missing.read"); }
         catch (error) {
@@ -319,44 +310,65 @@ describe("quickJsExecutor", () => {
       }`,
     });
     expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({ error: { code: "unknown_address" },
-      hostCalls: { attempted: 1, admitted: 1, succeeded: 0, failed: 1 } });
+    expect(result.structuredContent).toMatchObject({
+      error: { code: "unknown_address" },
+      hostCalls: { attempted: 1, admitted: 1, succeeded: 0, failed: 1 },
+    });
     expect(result.structuredContent).not.toHaveProperty("logs");
   });
 
-  it.each(["cpu", "wall"] as const)("INV-7: checks %s interruption before inspecting a rejected handle", async (budget) => {
-    await prepareQuickJs();
-    const dump = vi.spyOn(QuickJSContext.prototype, "dump");
-    try {
-      const out = await executeQuickJs(`async () => { await Promise.resolve(); while (true) {} }`, [], {
-        timeoutMs: budget === "wall" ? 25 : 5000,
-        cpuTimeMs: budget === "cpu" ? 25 : 5000,
-        memoryLimitBytes: 64 * 1024 * 1024, maxStackSizeBytes: 1024 * 1024,
-      });
-      expect(out.error).toBe(budget === "wall" ? "Execution timed out after 25ms." : "Execution exceeded the 25ms guest CPU budget.");
-      expect(out.timedOut).toBe(budget === "wall" ? true : undefined);
-      expect(dump).not.toHaveBeenCalled();
-    } finally { dump.mockRestore(); }
-  });
+  it.each(["cpu", "wall"] as const)(
+    "INV-7: checks %s interruption before inspecting a rejected handle",
+    async (budget) => {
+      await prepareQuickJs();
+      const dump = vi.spyOn(QuickJSContext.prototype, "dump");
+      try {
+        const out = await executeQuickJs(`async () => { await Promise.resolve(); while (true) {} }`, [], {
+          timeoutMs: budget === "wall" ? 25 : 5000,
+          cpuTimeMs: budget === "cpu" ? 25 : 5000,
+          memoryLimitBytes: 64 * 1024 * 1024,
+          maxStackSizeBytes: 1024 * 1024,
+        });
+        expect(out.error).toBe(
+          budget === "wall" ? "Execution timed out after 25ms." : "Execution exceeded the 25ms guest CPU budget.",
+        );
+        expect(out.timedOut).toBe(budget === "wall" ? true : undefined);
+        expect(dump).not.toHaveBeenCalled();
+      } finally {
+        dump.mockRestore();
+      }
+    },
+  );
 
-  it.each(["cpu", "wall"] as const)("INV-7: preserves %s interruption during rejection-describer initialization", async (budget) => {
-    await prepareQuickJs();
-    const originalEval = QuickJSContext.prototype.evalCode;
-    const evaluate = vi.spyOn(QuickJSContext.prototype, "evalCode").mockImplementationOnce(function (this: QuickJSContext) {
-      return originalEval.call(this, "while (true) {}");
-    });
-    const dump = vi.spyOn(QuickJSContext.prototype, "dump");
-    try {
-      const out = await executeQuickJs(`async () => 42`, [], {
-        timeoutMs: budget === "wall" ? 25 : 5000,
-        cpuTimeMs: budget === "cpu" ? 25 : 5000,
-        memoryLimitBytes: 64 * 1024 * 1024, maxStackSizeBytes: 1024 * 1024,
+  it.each(["cpu", "wall"] as const)(
+    "INV-7: preserves %s interruption during rejection-describer initialization",
+    async (budget) => {
+      await prepareQuickJs();
+      const originalEval = QuickJSContext.prototype.evalCode;
+      const evaluate = vi.spyOn(QuickJSContext.prototype, "evalCode").mockImplementationOnce(function (
+        this: QuickJSContext,
+      ) {
+        return originalEval.call(this, "while (true) {}");
       });
-      expect(out.error).toBe(budget === "wall" ? "Execution timed out after 25ms." : "Execution exceeded the 25ms guest CPU budget.");
-      expect(out.timedOut).toBe(budget === "wall" ? true : undefined);
-      expect(dump).not.toHaveBeenCalled();
-    } finally { evaluate.mockRestore(); dump.mockRestore(); }
-  });
+      const dump = vi.spyOn(QuickJSContext.prototype, "dump");
+      try {
+        const out = await executeQuickJs(`async () => 42`, [], {
+          timeoutMs: budget === "wall" ? 25 : 5000,
+          cpuTimeMs: budget === "cpu" ? 25 : 5000,
+          memoryLimitBytes: 64 * 1024 * 1024,
+          maxStackSizeBytes: 1024 * 1024,
+        });
+        expect(out.error).toBe(
+          budget === "wall" ? "Execution timed out after 25ms." : "Execution exceeded the 25ms guest CPU budget.",
+        );
+        expect(out.timedOut).toBe(budget === "wall" ? true : undefined);
+        expect(dump).not.toHaveBeenCalled();
+      } finally {
+        evaluate.mockRestore();
+        dump.mockRestore();
+      }
+    },
+  );
 
   it("captures console output as logs", async () => {
     const ex = quickJsExecutor();
@@ -364,21 +376,13 @@ describe("quickJsExecutor", () => {
       `async () => { console.log("hello", { a: 1 }); console.warn("warned"); return null; }`,
       [],
     );
-    expect(out.logs).toEqual(["hello {\"a\":1}", "warned"]);
+    expect(out.logs).toEqual(['hello {"a":1}', "warned"]);
   });
 
   it("has no ambient capabilities in the sandbox", async () => {
     const ex = quickJsExecutor();
-    const out = await ex.execute(
-      `async () => [typeof fetch, typeof setTimeout, typeof process, typeof require]`,
-      [],
-    );
-    expect(out.result).toEqual([
-      "undefined",
-      "undefined",
-      "undefined",
-      "undefined",
-    ]);
+    const out = await ex.execute(`async () => [typeof fetch, typeof setTimeout, typeof process, typeof require]`, []);
+    expect(out.result).toEqual(["undefined", "undefined", "undefined", "undefined"]);
   });
 
   it("rejects unknown provider functions", async () => {
@@ -489,15 +493,17 @@ describe("quickJsExecutor", () => {
     let settled = false;
     const pending = executeQuickJs(
       `async () => slow.forever({})`,
-      [{
-        name: "slow",
-        fns: {
-          forever: () => {
-            called();
-            return new Promise(() => {});
+      [
+        {
+          name: "slow",
+          fns: {
+            forever: () => {
+              called();
+              return new Promise(() => {});
+            },
           },
         },
-      }],
+      ],
       {
         timeoutMs: 50,
         cpuTimeMs: 5_000,
@@ -518,15 +524,11 @@ describe("quickJsExecutor", () => {
   });
 
   it("times out when a host call hangs", async () => {
-    const hang: ExecutorProvider[] = [
-      { name: "slow", fns: { forever: () => new Promise(() => {}) } },
-    ];
+    const hang: ExecutorProvider[] = [{ name: "slow", fns: { forever: () => new Promise(() => {}) } }];
     // A budget the healthy follow-up below can meet on a loaded host; 300ms
     // was not always enough for it.
     const ex = quickJsExecutor({ timeoutMs: 1_000 });
-    expect(
-      await deadlineOutcome(ex.execute(`async () => slow.forever({})`, hang)),
-    ).toMatch(/timed out|wall budget/);
+    expect(await deadlineOutcome(ex.execute(`async () => slow.forever({})`, hang))).toMatch(/timed out|wall budget/);
     // The deadline ends the run, the parent retires the child, and the
     // replacement slot keeps serving.
     await expect(ex.execute("async () => 3", [])).resolves.toEqual({
@@ -535,9 +537,7 @@ describe("quickJsExecutor", () => {
   }, 10_000);
 
   it("releases every losing deadline timer after host waits settle", async () => {
-    const before = process
-      .getActiveResourcesInfo()
-      .filter((resource) => resource === "Timeout").length;
+    const before = process.getActiveResourcesInfo().filter((resource) => resource === "Timeout").length;
     const ex = quickJsExecutor({ timeoutMs: 2_000 });
     const out = await ex.execute(
       `async () => {
@@ -546,9 +546,7 @@ describe("quickJsExecutor", () => {
       }`,
       [{ name: "fast", fns: { one: async () => 1 } }],
     );
-    const after = process
-      .getActiveResourcesInfo()
-      .filter((resource) => resource === "Timeout").length;
+    const after = process.getActiveResourcesInfo().filter((resource) => resource === "Timeout").length;
     expect(out).toEqual({ result: 20 });
     expect(after).toBeLessThanOrEqual(before);
   });
@@ -561,48 +559,56 @@ describe("quickJsExecutor", () => {
   // The guest CPU budget is generous for the same reason as the fixture's.
   const EXECUTOR_WALL_MS = 300_000;
   const SPAWN_BUDGET_MS = 30_000;
-  it("lets a short-lived process exit near computation time", () => {
-    const child = spawnSync(
-      process.execPath,
-      [
-        "--import",
-        "tsx",
-        "--input-type=module",
-        "--eval",
+  it(
+    "lets a short-lived process exit near computation time",
+    () => {
+      const child = spawnSync(
+        process.execPath,
         [
-          'import { quickJsExecutor } from "./src/executors/quickjs.ts";',
-          `const ex = quickJsExecutor({ timeoutMs: ${EXECUTOR_WALL_MS}, cpuTimeMs: 5_000 });`,
-          'const providers = [{ name: "fast", fns: { one: async () => 1 } }];',
-          'const out = await ex.execute("async () => { for (let i = 0; i < 20; i += 1) await fast.one(); return 20; }", providers);',
-          "if (out.result !== 20) { console.error(JSON.stringify(out)); process.exitCode = 1; }",
-        ].join("\n"),
-      ],
-      {
-        cwd: process.cwd(),
-        encoding: "utf8",
-        timeout: SPAWN_BUDGET_MS,
-      },
-    );
-    expect(child.error).toBeUndefined();
-    expect(child.status, child.stderr).toBe(0);
-  }, 2 * SPAWN_BUDGET_MS);
+          "--import",
+          "tsx",
+          "--input-type=module",
+          "--eval",
+          [
+            'import { quickJsExecutor } from "./src/executors/quickjs.ts";',
+            `const ex = quickJsExecutor({ timeoutMs: ${EXECUTOR_WALL_MS}, cpuTimeMs: 5_000 });`,
+            'const providers = [{ name: "fast", fns: { one: async () => 1 } }];',
+            'const out = await ex.execute("async () => { for (let i = 0; i < 20; i += 1) await fast.one(); return 20; }", providers);',
+            "if (out.result !== 20) { console.error(JSON.stringify(out)); process.exitCode = 1; }",
+          ].join("\n"),
+        ],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          timeout: SPAWN_BUDGET_MS,
+        },
+      );
+      expect(child.error).toBeUndefined();
+      expect(child.status, child.stderr).toBe(0);
+    },
+    2 * SPAWN_BUDGET_MS,
+  );
 
-  it("drains pending host calls after a timeout without spinning [INV-7]", () => {
-    // Drive the runtime directly, without the pool terminating its child and
-    // settling both calls together. The fixture releases one call, yields a
-    // real event-loop turn, then releases the other and checks disposal.
-    // A missing re-arm spins microtasks and blocks timers in that process;
-    // spawnSync's external watchdog can still kill it. Its budget allows tsx
-    // and WASM startup under load, matching the exit guard above.
-    const child = spawnSync(
-      process.execPath,
-      ["--import", "tsx", fileURLToPath(new URL("./fixtures/quickjs-drain.ts", import.meta.url))],
-      { cwd: process.cwd(), encoding: "utf8", timeout: SPAWN_BUDGET_MS },
-    );
-    expect(child.error, child.stderr).toBeUndefined();
-    expect(child.status, child.stderr).toBe(0);
-    expect(child.stdout).toContain("drain completed after separate releases");
-  }, 2 * SPAWN_BUDGET_MS);
+  it(
+    "drains pending host calls after a timeout without spinning [INV-7]",
+    () => {
+      // Drive the runtime directly, without the pool terminating its child and
+      // settling both calls together. The fixture releases one call, yields a
+      // real event-loop turn, then releases the other and checks disposal.
+      // A missing re-arm spins microtasks and blocks timers in that process;
+      // spawnSync's external watchdog can still kill it. Its budget allows tsx
+      // and WASM startup under load, matching the exit guard above.
+      const child = spawnSync(
+        process.execPath,
+        ["--import", "tsx", fileURLToPath(new URL("./fixtures/quickjs-drain.ts", import.meta.url))],
+        { cwd: process.cwd(), encoding: "utf8", timeout: SPAWN_BUDGET_MS },
+      );
+      expect(child.error, child.stderr).toBeUndefined();
+      expect(child.status, child.stderr).toBe(0);
+      expect(child.stdout).toContain("drain completed after separate releases");
+    },
+    2 * SPAWN_BUDGET_MS,
+  );
 
   it("rejects guest calls that resolve to inherited prototype members", async () => {
     const ex = quickJsExecutor();
@@ -618,10 +624,7 @@ describe("quickJsExecutor", () => {
 
   it("flags awaiting a promise that can never settle", async () => {
     const ex = quickJsExecutor({ timeoutMs: 2_000 });
-    const out = await ex.execute(
-      `async () => { await new Promise(() => {}); }`,
-      [],
-    );
+    const out = await ex.execute(`async () => { await new Promise(() => {}); }`, []);
     expect(out.error).toContain("stalled");
   }, 10_000);
 
@@ -637,8 +640,7 @@ describe("quickJsExecutor", () => {
       {
         name: "slow",
         fns: {
-          read: () =>
-            new Promise((resolve) => setTimeout(() => resolve("done"), 600)),
+          read: () => new Promise((resolve) => setTimeout(() => resolve("done"), 600)),
         },
       },
     ]);
@@ -667,17 +669,9 @@ describe("quickJsExecutor", () => {
 
   it("cancels a running child from the inbound request signal", async () => {
     const ex = quickJsExecutor({ cpuTimeMs: 5_000, timeoutMs: 10_000 });
-    const handler = createExecuteTool(
-      makeRegistry([calcConnector]),
-      "https://connecta.test",
-      ex,
-      silentLogger,
-    );
+    const handler = createExecuteTool(makeRegistry([calcConnector]), "https://connecta.test", ex, silentLogger);
     const controller = new AbortController();
-    const pending = handler(
-      { code: `async () => { while (true) {} }` },
-      { signal: controller.signal },
-    );
+    const pending = handler({ code: `async () => { while (true) {} }` }, { signal: controller.signal });
     setTimeout(() => controller.abort(), 50);
     const out = await pending;
     const payload = JSON.parse(required(out.content[0]).text) as {
@@ -745,22 +739,17 @@ describe("quickJsExecutor", () => {
         return calcConnector.listTools(ctx);
       },
     };
-    const unused = Array.from(
-      { length: 20 },
-      (_, index): Connector => ({
-        id: `unused_${index}`,
-        kind: "api",
-        async listTools() {
-          catalogs.push(`unused_${index}`);
-          return [
-            { name: "read", annotations: { readOnlyHint: true } },
-          ];
-        },
-        async callTool() {
-          return index;
-        },
-      }),
-    );
+    const unused = Array.from({ length: 20 }, (_, index): Connector => ({
+      id: `unused_${index}`,
+      kind: "api",
+      async listTools() {
+        catalogs.push(`unused_${index}`);
+        return [{ name: "read", annotations: { readOnlyHint: true } }];
+      },
+      async callTool() {
+        return index;
+      },
+    }));
     const registry = makeRegistry([countedCalc, ...unused]);
     const ex = quickJsExecutor();
     const out = await createExecuteTool(
@@ -811,9 +800,7 @@ describe("quickJsExecutor", () => {
     });
 
     expect(out.isError).toBeUndefined();
-    const message = String(
-      (out.structuredContent as { result?: unknown }).result,
-    );
+    const message = String((out.structuredContent as { result?: unknown }).result);
     expect(message).toContain("serialized bridge limit");
     expect(message).toContain("reader.big");
     expect(message).not.toContain("__callNamespace");
@@ -824,10 +811,7 @@ describe("quickJsExecutor", () => {
       memoryLimitBytes: 16 * 1024 * 1024,
       cpuTimeMs: 1_000,
     });
-    const out = await ex.execute(
-      `async () => "x".repeat(5 * 1024 * 1024)`,
-      [],
-    );
+    const out = await ex.execute(`async () => "x".repeat(5 * 1024 * 1024)`, []);
     expect(out.error).toBeUndefined();
     expect(out.result).toMatchObject({
       truncated: true,
@@ -868,9 +852,7 @@ describe("quickJsExecutor", () => {
     const ex = quickJsExecutor({ cpuTimeMs: 1_000 });
     await ex.execute("async () => 1", [{ name: "catalog", fns }]);
     const started = performance.now();
-    const out = await ex.execute("async () => catalog.tool_9999()", [
-      { name: "catalog", fns },
-    ]);
+    const out = await ex.execute("async () => catalog.tool_9999()", [{ name: "catalog", fns }]);
     expect(out).toEqual({ result: 9_999 });
     expect(performance.now() - started).toBeLessThan(1_000);
   });
@@ -890,9 +872,7 @@ describe("quickJsExecutor", () => {
       last = now;
     }, 10);
     const outputs = await Promise.all(
-      Array.from({ length: 50 }, () =>
-        ex.execute(`async () => { while (true) {} }`, []),
-      ),
+      Array.from({ length: 50 }, () => ex.execute(`async () => { while (true) {} }`, [])),
     );
     clearInterval(heartbeat);
     gaps.sort((a, b) => a - b);
@@ -931,21 +911,12 @@ describe("quickJsExecutor", () => {
       async callTool(_name, _args, context) {
         callStarted();
         return new Promise((_, reject) => {
-          context.signal?.addEventListener(
-            "abort",
-            () => reject(new Error("call aborted")),
-            { once: true },
-          );
+          context.signal?.addEventListener("abort", () => reject(new Error("call aborted")), { once: true });
         });
       },
     };
     const executor = quickJsExecutor({ timeoutMs: 10_000 });
-    const handler = createExecuteTool(
-      makeRegistry([connector]),
-      "https://connecta.test",
-      executor,
-      silentLogger,
-    );
+    const handler = createExecuteTool(makeRegistry([connector]), "https://connecta.test", executor, silentLogger);
     const running = handler({
       code: `async () => {
         await connecta.emit({ type: "text", text: "doomed" });
@@ -971,23 +942,42 @@ describe("quickJsExecutor", () => {
   });
 });
 
-
 describe("the advertised discovery example", () => {
   it("reduces the selected account's run without reading other accounts", async () => {
     const code = required(USAGE_SKILL.match(/```js\n([\s\S]*?)\n```/)?.[1]);
     const calls: string[] = [];
     let unrelatedCatalogReads = 0;
     const registry = makeRegistry([
-      api("ci", { tools: [{
-        name: "get_run", description: "Get a deployment run",
-        inputSchema: { type: "object", properties: { runId: { type: "integer" } }, required: ["runId"], additionalProperties: false },
-        annotations: { readOnlyHint: true },
-        handler: (args: Record<string, unknown>) => {
-          expect(args).toEqual({ runId: 42 }); calls.push("run");
-          return { status: "failed", failedJobId: 7, privateContext: "omit" };
+      api("ci", {
+        tools: [
+          {
+            name: "get_run",
+            description: "Get a deployment run",
+            inputSchema: {
+              type: "object",
+              properties: { runId: { type: "integer" } },
+              required: ["runId"],
+              additionalProperties: false,
+            },
+            annotations: { readOnlyHint: true },
+            handler: (args: Record<string, unknown>) => {
+              expect(args).toEqual({ runId: 42 });
+              calls.push("run");
+              return { status: "failed", failedJobId: 7, privateContext: "omit" };
+            },
+          },
+        ],
+      }),
+      {
+        id: "ci_sandbox",
+        listTools: async () => {
+          unrelatedCatalogReads++;
+          throw new Error("wrong account searched");
         },
-      }] }),
-      { id: "ci_sandbox", listTools: async () => { unrelatedCatalogReads++; throw new Error("wrong account searched"); }, callTool: async () => { throw new Error("wrong account called"); } },
+        callTool: async () => {
+          throw new Error("wrong account called");
+        },
+      },
     ]);
     const executor = quickJsExecutor();
     try {
@@ -1005,15 +995,25 @@ describe("the advertised discovery example", () => {
 describe("authenticated host failures (E1, X11)", () => {
   it.each(["x", "\u0000", "😀"])("bounds 50 KB downstream errors containing %j before framing", async (character) => {
     const connector = connectorWith({
-      id: "bad", kind: "api",
+      id: "bad",
+      kind: "api",
       tools: [{ name: "read", annotations: { readOnlyHint: true } }],
-      call: async () => { throw new ConnectorCallError("not_found", character.repeat(50_000)); },
+      call: async () => {
+        throw new ConnectorCallError("not_found", character.repeat(50_000));
+      },
     });
-    const handler = createExecuteTool(makeRegistry([connector]), "https://connecta.test", quickJsExecutor(), silentLogger);
-    const caught = await handler({ code: `async () => {
+    const handler = createExecuteTool(
+      makeRegistry([connector]),
+      "https://connecta.test",
+      quickJsExecutor(),
+      silentLogger,
+    );
+    const caught = await handler({
+      code: `async () => {
       try { await connecta.call("bad.read", {}).then(({ data }) => data); }
       catch (error) { return { code: error.code, message: error.message, details: error.details }; }
-    }` });
+    }`,
+    });
     expect(caught.structuredContent).toMatchObject({ result: { code: "not_found", details: { code: "not_found" } } });
     const result = caught.structuredContent?.result as { message: string };
     expect(result.message.length).toBeLessThan(4_000);
@@ -1029,39 +1029,78 @@ describe("authenticated host failures (E1, X11)", () => {
       id: "large".repeat(1_000),
       kind: "api",
       tools: [{ name: "read", annotations: { readOnlyHint: true } }],
-      call: async () => { throw new ConnectorCallError("auth_required", "Please authenticate"); },
+      call: async () => {
+        throw new ConnectorCallError("auth_required", "Please authenticate");
+      },
     });
-    const handler = createExecuteTool(makeRegistry([connector]), "https://connecta.test", quickJsExecutor(), silentLogger);
-    const out = await handler({ code: `async () => {
+    const handler = createExecuteTool(
+      makeRegistry([connector]),
+      "https://connecta.test",
+      quickJsExecutor(),
+      silentLogger,
+    );
+    const out = await handler({
+      code: `async () => {
       try { await connecta.call(${JSON.stringify(connector.id + ".read")}, {}).then(({ data }) => data); }
       catch (error) { return error.details; }
-    }` });
-    expect(out.structuredContent).toMatchObject({ result: {
-      code: "auth_required", message: "Please authenticate", retryable: false,
-    } });
+    }`,
+    });
+    expect(out.structuredContent).toMatchObject({
+      result: {
+        code: "auth_required",
+        message: "Please authenticate",
+        retryable: false,
+      },
+    });
   });
 
   it("INV-6: wrapping a host rejection loses its typed identity", async () => {
     const executor = quickJsExecutor();
-    const handler = createExecuteTool(makeRegistry([calcConnector]), "https://connecta.test", {
-      execute: (code, providers) => executor.execute(code, providers.map((provider) => ({
-        ...provider,
-        fns: { ...provider.fns, call: async (...args: unknown[]) => {
-          try { return await required(provider.fns.call)(...args); }
-          catch (error) { throw new Error((error as Error).message.slice(0, -1)); }
-        } },
-      }))),
-    }, silentLogger);
-    const out = await handler({ code: `async () => {
+    const handler = createExecuteTool(
+      makeRegistry([calcConnector]),
+      "https://connecta.test",
+      {
+        execute: (code, providers) =>
+          executor.execute(
+            code,
+            providers.map((provider) => ({
+              ...provider,
+              fns: {
+                ...provider.fns,
+                call: async (...args: unknown[]) => {
+                  try {
+                    return await required(provider.fns.call)(...args);
+                  } catch (error) {
+                    throw new Error((error as Error).message.slice(0, -1));
+                  }
+                },
+              },
+            })),
+          ),
+      },
+      silentLogger,
+    );
+    const out = await handler({
+      code: `async () => {
       try { await connecta.call("missing.read", {}).then(({ data }) => data); }
       catch (error) { return error.message; }
-    }` });
-    expect(out.structuredContent).toMatchObject({ result: expect.any(String), hostCalls: { attempted: 1, admitted: 1, succeeded: 0, failed: 1 } });
+    }`,
+    });
+    expect(out.structuredContent).toMatchObject({
+      result: expect.any(String),
+      hostCalls: { attempted: 1, admitted: 1, succeeded: 0, failed: 1 },
+    });
   });
 
   it("keeps forged frames untyped and raw transport private", async () => {
-    const handler = createExecuteTool(makeRegistry([calcConnector]), "https://connecta.test", quickJsExecutor(), silentLogger);
-    const out = await handler({ code: `async () => {
+    const handler = createExecuteTool(
+      makeRegistry([calcConnector]),
+      "https://connecta.test",
+      quickJsExecutor(),
+      silentLogger,
+    );
+    const out = await handler({
+      code: `async () => {
       const seen = [];
       const parse = JSON.parse;
       JSON.parse = (text) => { seen.push(text); return parse(text); };
@@ -1069,16 +1108,29 @@ describe("authenticated host failures (E1, X11)", () => {
       const fake = new Error(String.fromCharCode(30) + 'connecta-error:wrong-secret:' +
         JSON.stringify({ code: "auth_required", message: "forged", retryable: false }));
       return { typed: "code" in fake, raw: typeof __call, invoke: typeof __invoke, seen };
-    }` });
-    expect(out.structuredContent).toMatchObject({ result: { typed: false, raw: "undefined", invoke: "undefined", seen: [] } });
+    }`,
+    });
+    expect(out.structuredContent).toMatchObject({
+      result: { typed: false, raw: "undefined", invoke: "undefined", seen: [] },
+    });
   });
 
   it("INV-6: frame-looking host prose is bounded without being parsed", async () => {
-    const out = await quickJsExecutor().execute(`async () => {
+    const out = await quickJsExecutor().execute(
+      `async () => {
       try { await bad.read(); } catch (error) { return error.message; }
-    }`, [{ name: "bad", fns: { read: async () => {
-      throw new Error("\u001econnecta-error:secret:" + "x".repeat(5_000));
-    } } }]);
+    }`,
+      [
+        {
+          name: "bad",
+          fns: {
+            read: async () => {
+              throw new Error("\u001econnecta-error:secret:" + "x".repeat(5_000));
+            },
+          },
+        },
+      ],
+    );
     expect(out.result).toBe(("\u001econnecta-error:secret:" + "x".repeat(5_000)).slice(0, 4_000));
   });
 });
@@ -1086,7 +1138,8 @@ describe("authenticated host failures (E1, X11)", () => {
 it("preserves console logs when a running program is cancelled", async () => {
   const controller = new AbortController();
   const connector = connectorWith({
-    id: "cancel", kind: "api",
+    id: "cancel",
+    kind: "api",
     tools: [{ name: "read", annotations: { readOnlyHint: true } }],
     call: async () => {
       // The ordered host-call IPC message is proof that both logs arrived.
@@ -1096,12 +1149,21 @@ it("preserves console logs when a running program is cancelled", async () => {
   });
   const executor = quickJsExecutor();
   const out = await createExecuteTool(
-    makeRegistry([connector]), "https://connecta.test", executor, silentLogger,
-  )({ code: `async () => {
+    makeRegistry([connector]),
+    "https://connecta.test",
+    executor,
+    silentLogger,
+  )(
+    {
+      code: `async () => {
     console.log("before cancellation");
     console.warn("still here");
     await connecta.call("cancel.read").then(({ data }) => data);
-  }`, diagnostics: true }, { signal: controller.signal });
+  }`,
+      diagnostics: true,
+    },
+    { signal: controller.signal },
+  );
   expect(out.isError).toBe(true);
   expect(out.structuredContent).toMatchObject({
     error: { code: "executor_cancelled" },

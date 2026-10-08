@@ -28,9 +28,5 @@ export function api(id: string, opts: ApiOptions): Connector {
         "both lets the deployment choose which one to pass.",
     );
   }
-  return apiConnector(
-    id,
-    opts,
-    opts.oauth !== undefined ? staticOAuth(id, opts.oauth) : undefined,
-  );
+  return apiConnector(id, opts, opts.oauth !== undefined ? staticOAuth(id, opts.oauth) : undefined);
 }

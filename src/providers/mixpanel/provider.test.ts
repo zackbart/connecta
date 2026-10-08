@@ -28,25 +28,28 @@ vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
   remoteMcp: mocks.remoteMcp,
 }));
 
-import {
-  MIXPANEL_MCP_ENDPOINTS,
-  MIXPANEL_VETTED_CATALOG,
-  mixpanel,
-} from "./index.js";
+import { MIXPANEL_MCP_ENDPOINTS, MIXPANEL_VETTED_CATALOG, mixpanel } from "./index.js";
 import { connectorGuideSummary } from "../../skills.js";
 
 describe("mixpanel()", () => {
   beforeEach(() => {
     mockRemoteMcp(mocks);
     const construct = mocks.remoteMcp.getMockImplementation()!;
-    mocks.remoteMcp.mockImplementation((id, options) => construct(id, {
-      ...options,
-      classify: mocks.schemasAsReviewed
-        ? { tools: Object.fromEntries(Object.entries(mixpanel.definition.classify!.tools).map(
-            ([name, entry]) => [name, typeof entry === "string" ? entry : { verdict: entry.verdict, reason: entry.reason }],
-          )) }
-        : options.classify,
-    }));
+    mocks.remoteMcp.mockImplementation((id, options) =>
+      construct(id, {
+        ...options,
+        classify: mocks.schemasAsReviewed
+          ? {
+              tools: Object.fromEntries(
+                Object.entries(mixpanel.definition.classify!.tools).map(([name, entry]) => [
+                  name,
+                  typeof entry === "string" ? entry : { verdict: entry.verdict, reason: entry.reason },
+                ]),
+              ),
+            }
+          : options.classify,
+      }),
+    );
     mocks.schemasAsReviewed = true;
   });
 
@@ -62,8 +65,7 @@ describe("mixpanel()", () => {
       expect.objectContaining({
         url: MIXPANEL_MCP_ENDPOINTS.us,
         title: "Production analytics",
-        description:
-          "Mixpanel product analytics (US residency) — Growth team product decisions",
+        description: "Mixpanel product analytics (US residency) — Growth team product decisions",
         auth: { type: "oauth" },
         requireHttps: true,
       }),
@@ -74,49 +76,31 @@ describe("mixpanel()", () => {
     expect(guideOf(connector)).toContain("not a fixed set");
     expect(guideOf(connector)).toContain("authorize_connector");
     expect(guideOf(connector)).toContain("never guess one");
-    expect(guideOf(connector)).toContain(
-      "`Get-Business-Context` requires either `project_id` or `organization_id`",
-    );
+    expect(guideOf(connector)).toContain("`Get-Business-Context` requires either `project_id` or `organization_id`");
     expect(guideOf(connector)).toContain(
       "`Get-Property-Values` requires `properties` or the deprecated `property` alias. " +
         "Event property values also require `event`",
     );
-    expect(guideOf(connector)).toContain(
-      "`List-Properties` accepts `names` or `query`, never both",
-    );
+    expect(guideOf(connector)).toContain("`List-Properties` accepts `names` or `query`, never both");
     // What Insights cannot answer and where its values lie (#430): the four
     // reduction bullets the schemas cannot carry.
-    expect(guideOf(connector)).toContain(
-      "One analysis is one `execute_code` program: fetch `Get-Query-Schema` once",
-    );
+    expect(guideOf(connector)).toContain("One analysis is one `execute_code` program: fetch `Get-Query-Schema` once");
     expect(guideOf(connector)).toContain("Never return raw `Run-Query` output.");
-    expect(guideOf(connector)).toContain(
-      "Insights, funnels, and retention answer aggregate questions",
-    );
+    expect(guideOf(connector)).toContain("Insights, funnels, and retention answer aggregate questions");
     expect(guideOf(connector)).toContain("no per-`distinct_id` event timeline");
     expect(guideOf(connector)).toContain("`Get-User-Replays-Data` covers");
-    expect(guideOf(connector)).toContain(
-      "tell the user the question is out of reach here",
-    );
-    expect(guideOf(connector)).toContain(
-      "`false` on a boolean property may be an absent property",
-    );
+    expect(guideOf(connector)).toContain("tell the user the question is out of reach here");
+    expect(guideOf(connector)).toContain("`false` on a boolean property may be an absent property");
     expect(guideOf(connector)).toContain(
       "Confirm the property is present with `List-Properties` or `Get-Property-Values`",
     );
-    expect(guideOf(connector)).toContain(
-      "say when a conclusion rests on that ambiguity",
-    );
-    expect(guideOf(connector)).toContain(
-      "Flatten to one row per complete breakdown combination inside `execute_code`",
-    );
+    expect(guideOf(connector)).toContain("say when a conclusion rests on that ambiguity");
+    expect(guideOf(connector)).toContain("Flatten to one row per complete breakdown combination inside `execute_code`");
     expect(guideOf(connector)).toContain("drop `$overall`");
     // Real markdown, not a diff hunk: agents read this string verbatim.
     expect(guideOf(connector)).toContain("## Account instructions");
     expect(guideOf(connector)).not.toContain("+## Account instructions");
-    expect(guideOf(connector)).toContain(
-      "Use project 42 unless the request names another project.",
-    );
+    expect(guideOf(connector)).toContain("Use project 42 unless the request names another project.");
   });
 
   it("frames an operator-managed service account as Mixpanel documents it", () => {
@@ -175,8 +159,7 @@ describe("mixpanel()", () => {
     }
     expect(MIXPANEL_VETTED_CATALOG.tools.get("Fill-Event-Metadata")).toEqual({
       verdict: "destructive",
-      schemaDigest:
-        "sha256:53accc988f216bdd5d7a259d731f6df82549e4e6146b191f1815a0d1a72a1abe",
+      schemaDigest: "sha256:53accc988f216bdd5d7a259d731f6df82549e4e6146b191f1815a0d1a72a1abe",
     });
   });
 
@@ -205,14 +188,10 @@ describe("mixpanel()", () => {
     // counter cannot approximate a per-user quota in either direction. The
     // number belongs to the operator who knows the account.
     mixpanel("analytics", { purpose: "Product decisions" });
-    expect(mocks.remoteMcp.mock.calls[0]?.[1]).not.toHaveProperty(
-      "callAdmission",
-    );
+    expect(mocks.remoteMcp.mock.calls[0]?.[1]).not.toHaveProperty("callAdmission");
 
     const policy = {
-      rules: [
-        { budget: { kind: "rolling-window" as const, maxCalls: 300, windowMs: 3_600_000 } },
-      ],
+      rules: [{ budget: { kind: "rolling-window" as const, maxCalls: 300, windowMs: 3_600_000 } }],
     };
     mixpanel("bounded_analytics", {
       purpose: "Product decisions",
@@ -233,16 +212,12 @@ describe("mixpanel()", () => {
     ).toThrow('region to be "us", "eu", or "in"');
   });
 
-  itClassifiesLikeARelease(
-    () => mixpanel("analytics", { purpose: "Product decisions" }),
-    mocks,
-    {
-      read: ["Run-Query", "List-Dashboards", "Get-Report"],
-      write: "Create-Dashboard",
-      destructive: "Delete-Dashboard",
-      unknown: ["Brand-New-Tool", "Get-Brand-New-Thing", "Wreck-Brand-New-Thing"],
-    },
-  );
+  itClassifiesLikeARelease(() => mixpanel("analytics", { purpose: "Product decisions" }), mocks, {
+    read: ["Run-Query", "List-Dashboards", "Get-Report"],
+    write: "Create-Dashboard",
+    destructive: "Delete-Dashboard",
+    unknown: ["Brand-New-Tool", "Get-Brand-New-Thing", "Wreck-Brand-New-Thing"],
+  });
 
   it("INV-1: serves a reviewed read whose schema no longer matches its digest as a write", async () => {
     mocks.schemasAsReviewed = false;
@@ -262,8 +237,6 @@ describe("mixpanel()", () => {
   });
 
   it("rejects an empty account purpose at construction", () => {
-    expect(() => mixpanel("analytics", { purpose: "  " })).toThrow(
-      "a non-empty purpose",
-    );
+    expect(() => mixpanel("analytics", { purpose: "  " })).toThrow("a non-empty purpose");
   });
 });

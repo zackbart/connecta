@@ -18,23 +18,37 @@ import { providerFixtures } from "./providers.generated.js";
 // Item 4 updates the permission recovery guides through a separate overlay.
 // Converted hosted providers have their subsequent baseline in hosted-presets.test.ts.
 // Providers added after the migration are covered by their own contract tests.
-describe.each(providerFixtures.filter((fixture) => Object.hasOwn(before, fixture.name) && !Object.hasOwn(hosted.providers, fixture.name)) as unknown as ContractFixture[])("$name provider contract", (fixture) => {
+describe.each(
+  providerFixtures.filter(
+    (fixture) => Object.hasOwn(before, fixture.name) && !Object.hasOwn(hosted.providers, fixture.name),
+  ) as unknown as ContractFixture[],
+)("$name provider contract", (fixture) => {
   it("INV-1: preserves provider contracts with explicit classifier, trust and error-guide changes", async () => {
     const actual = await providerContract(fixture);
-    const snapshot = await Promise.all(actual.map(async (row) => Object.fromEntries(await Promise.all(
-      Object.entries(JSON.parse(JSON.stringify(row)) as Record<string, unknown>).map(async ([key, value]) => {
-        if (key === "label") return [key, value];
-        const bytes = new TextEncoder().encode(JSON.stringify(value));
-        const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-        return [key, [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")];
-      }),
-    ))));
+    const snapshot = await Promise.all(
+      actual.map(async (row) =>
+        Object.fromEntries(
+          await Promise.all(
+            Object.entries(JSON.parse(JSON.stringify(row)) as Record<string, unknown>).map(async ([key, value]) => {
+              if (key === "label") return [key, value];
+              const bytes = new TextEncoder().encode(JSON.stringify(value));
+              const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+              return [key, [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")];
+            }),
+          ),
+        ),
+      ),
+    );
     const changes = trustChanges as Record<string, Record<string, Record<string, string>>>;
     const repairs = errorChanges as Record<string, Record<string, Record<string, string>>>;
     const usage = usageChanges as Record<string, Record<string, Record<string, string>>>;
     const guest = guestChanges as Record<string, Record<string, Record<string, string>>>;
     const expected = before[fixture.name as keyof typeof before].map((row) => ({
-      ...row, ...changes[fixture.name]?.[row.label], ...repairs[fixture.name]?.[row.label], ...guest[fixture.name]?.[row.label], ...usage[fixture.name]?.[row.label],
+      ...row,
+      ...changes[fixture.name]?.[row.label],
+      ...repairs[fixture.name]?.[row.label],
+      ...guest[fixture.name]?.[row.label],
+      ...usage[fixture.name]?.[row.label],
     }));
     expect(snapshot).toEqual(expected);
   });

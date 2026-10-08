@@ -8,9 +8,7 @@
 import { errorLabel } from "./operator-record.js";
 import type { ActivityStore } from "./activity.js";
 import type { KVStorage } from "./types.js";
-import {
-  familyOfKey, KEY_FAMILIES, KV_COPY_CURSOR_TTL_SECONDS, kvCopyKeys, kvCutoverKeys,
-} from "./storage/keys.js";
+import { familyOfKey, KEY_FAMILIES, KV_COPY_CURSOR_TTL_SECONDS, kvCopyKeys, kvCutoverKeys } from "./storage/keys.js";
 import {
   copyIntoSql,
   type SqlCopyEntry,
@@ -42,9 +40,7 @@ export type D1ActivityOptions = SqlActivityOptions;
 
 function d1Driver(db: D1DatabaseBinding): SqlDriver {
   const prepare = (statement: SqlStatement) =>
-    statement.params.length > 0
-      ? db.prepare(statement.sql).bind(...statement.params)
-      : db.prepare(statement.sql);
+    statement.params.length > 0 ? db.prepare(statement.sql).bind(...statement.params) : db.prepare(statement.sql);
   return {
     async all<Row>(statement: SqlStatement) {
       return (await prepare(statement).all()).results as Row[];
@@ -54,8 +50,7 @@ function d1Driver(db: D1DatabaseBinding): SqlDriver {
     },
     async batch(statements) {
       // D1 runs a batch as one transaction, in order.
-      return (await db.batch(statements.map(prepare)))
-        .map((result) => result.meta.changes ?? 0);
+      return (await db.batch(statements.map(prepare))).map((result) => result.meta.changes ?? 0);
     },
   };
 }
@@ -74,10 +69,7 @@ export function d1Storage(db: D1DatabaseBinding): KVStorage {
  * `activityHistory({ store })`. Keyset paging on `(occurred_at_ms, id)`; each
  * write prunes a bounded batch of rows older than `retentionDays`.
  */
-export function d1ActivityStore(
-  db: D1DatabaseBinding,
-  options?: D1ActivityOptions,
-): ActivityStore {
+export function d1ActivityStore(db: D1DatabaseBinding, options?: D1ActivityOptions): ActivityStore {
   return sqlActivityStore(d1Driver(db), "d1", options);
 }
 
@@ -179,8 +171,14 @@ const encoder = new TextEncoder();
 const ROW_OVERHEAD_BYTES = 32;
 
 const emptyCounts = (): KvToD1Counts => ({
-  copied: 0, unchanged: 0, conflicts: 0, overwritten: 0, expired: 0, invalid: 0,
-  verified: 0, mismatches: 0,
+  copied: 0,
+  unchanged: 0,
+  conflicts: 0,
+  overwritten: 0,
+  expired: 0,
+  invalid: 0,
+  verified: 0,
+  mismatches: 0,
 });
 
 const OUTCOME_COUNT: Record<SqlCopyOutcome, keyof KvToD1Counts> = {
@@ -250,11 +248,16 @@ export async function copyKvToD1(
   const count = (key: string, field: keyof KvToD1Counts) => {
     (families[familyOfKey(key)] ??= emptyCounts())[field] += 1;
   };
-  const unknown = new TypeError("copyKvToD1 cursor is unknown, expired, spent, or belongs to another source; restart under maintenance");
+  const unknown = new TypeError(
+    "copyKvToD1 cursor is unknown, expired, spent, or belongs to another source; restart under maintenance",
+  );
   const stale = new TypeError("copyKvToD1 refuses stale KV after cutover");
   // Validate before any D1 access so a failing binding cannot return raw input
   // as an error's resume point.
-  if (options.cursor !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(options.cursor)) {
+  if (
+    options.cursor !== undefined &&
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(options.cursor)
+  ) {
     throw unknown;
   }
   const failures = new WeakSet<KvToD1CopyError>();
@@ -265,24 +268,31 @@ export async function copyKvToD1(
   };
 
   try {
-    if (!options.allowStale && await storage.get(kvCutoverKeys.source(options.source)) !== null) {
+    if (!options.allowStale && (await storage.get(kvCutoverKeys.source(options.source))) !== null) {
       throw stale;
     }
     if (options.cursor !== undefined) {
       const key = kvCopyKeys.cursor(options.cursor);
       const stored = await storage.get(key);
       let record: { source?: string; cursor?: string } | null = null;
-      try { record = stored === null ? null : JSON.parse(stored); } catch { /* refused below */ }
+      try {
+        record = stored === null ? null : JSON.parse(stored);
+      } catch {
+        /* refused below */
+      }
       if (!record || record.source !== options.source || typeof record.cursor !== "string") {
         throw unknown;
       }
       // Delete only the exact record read: concurrent consumers cannot both win.
-      if (!await storage.compareAndSet(key, stored, null)) throw unknown;
+      if (!(await storage.compareAndSet(key, stored, null))) throw unknown;
       cursor = record.cursor;
     }
   } catch (error) {
     if (error === unknown || error === stale) throw error;
-    throw new KvToD1CopyError(`Workers KV to D1 copy stopped: claiming the resume point in D1 failed${errorClass(error)}`, options.cursor);
+    throw new KvToD1CopyError(
+      `Workers KV to D1 copy stopped: claiming the resume point in D1 failed${errorClass(error)}`,
+      options.cursor,
+    );
   }
 
   const flush = async (buffer: SqlCopyEntry[]) => {
@@ -304,9 +314,15 @@ export async function copyKvToD1(
           });
           const bytes = row ? Uint8Array.from(row.value_bytes) : undefined;
           const hash = bytes ? await crypto.subtle.digest("SHA-256", bytes) : undefined;
-          const hex = hash ? Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("") : undefined;
-          count(entry.key, row && row.expires_at_ms === entry.expiresAtMs && hex === await valueHash(entry.value)
-            ? "verified" : "mismatches");
+          const hex = hash
+            ? Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("")
+            : undefined;
+          count(
+            entry.key,
+            row && row.expires_at_ms === entry.expiresAtMs && hex === (await valueHash(entry.value))
+              ? "verified"
+              : "mismatches",
+          );
         }
       } else {
         // Partition only this bounded buffer by overwrite permission.
@@ -318,7 +334,9 @@ export async function copyKvToD1(
         }
       }
     } catch (error) {
-      throw failure(`Workers KV to D1 copy stopped: ${options.verify ? "verifying" : "writing to"} D1 failed${errorClass(error)}`);
+      throw failure(
+        `Workers KV to D1 copy stopped: ${options.verify ? "verifying" : "writing to"} D1 failed${errorClass(error)}`,
+      );
     }
   };
 
@@ -347,8 +365,12 @@ export async function copyKvToD1(
           continue;
         }
         let value: string | null;
-        try { value = await kv.get(key.name, "text"); } catch (error) {
-          throw failure(`Workers KV to D1 copy stopped: reading an entry of the ${familyOfKey(key.name)} family from Workers KV failed${errorClass(error)}`);
+        try {
+          value = await kv.get(key.name, "text");
+        } catch (error) {
+          throw failure(
+            `Workers KV to D1 copy stopped: reading an entry of the ${familyOfKey(key.name)} family from Workers KV failed${errorClass(error)}`,
+          );
         }
         if (value === null || (expiresAtMs !== null && expiresAtMs <= Date.now())) {
           count(key.name, "expired");
@@ -376,7 +398,11 @@ export async function copyKvToD1(
   } catch (error) {
     // The old token was claimed atomically. Replace it on failure, if D1 works.
     const resume = pageCursor === undefined ? undefined : await remember(pageCursor).catch(() => undefined);
-    throw new KvToD1CopyError(error instanceof KvToD1CopyError && failures.has(error) ? error.message
-      : `Workers KV to D1 copy stopped: recording the resume point in D1 failed${errorClass(error)}`, resume);
+    throw new KvToD1CopyError(
+      error instanceof KvToD1CopyError && failures.has(error)
+        ? error.message
+        : `Workers KV to D1 copy stopped: recording the resume point in D1 failed${errorClass(error)}`,
+      resume,
+    );
   }
 }

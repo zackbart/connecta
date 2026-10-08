@@ -14,8 +14,11 @@ export async function readNegotiation(ctx: ConnectorContext, digest: string): Pr
     const value = JSON.parse(raw);
     if (!Number.isFinite(value.expiresAt) || value.expiresAt <= Date.now()) return;
     const candidate = value.prior;
-    if (candidate?.kind === "legacy" && Object.keys(candidate).length === 1 ||
-      candidate?.kind === "modern" && isSpecType.DiscoverResult(candidate.discover)) prior = candidate;
+    if (
+      (candidate?.kind === "legacy" && Object.keys(candidate).length === 1) ||
+      (candidate?.kind === "modern" && isSpecType.DiscoverResult(candidate.discover))
+    )
+      prior = candidate;
   } catch (error) {
     logFailure(ctx.logger, "negotiation cache read failed", failureRecord({}, error));
   }
@@ -31,10 +34,14 @@ export async function storeNegotiation(ctx: ConnectorContext, digest: string, pr
   const clean = sentSecretsForRequest(ctx.requestScope ?? ctx).redact(prior);
   if (clean.kind === "modern" && !isSpecType.DiscoverResult(clean.discover)) return;
   try {
-    await ctx.storage.set(negotiationKeys.verdict(digest), JSON.stringify({
-      prior: clean,
-      expiresAt: Date.now() + NEGOTIATION_TTL_SECONDS * 1000,
-    }), { ttlSeconds: NEGOTIATION_TTL_SECONDS });
+    await ctx.storage.set(
+      negotiationKeys.verdict(digest),
+      JSON.stringify({
+        prior: clean,
+        expiresAt: Date.now() + NEGOTIATION_TTL_SECONDS * 1000,
+      }),
+      { ttlSeconds: NEGOTIATION_TTL_SECONDS },
+    );
   } catch (error) {
     logFailure(ctx.logger, "negotiation cache write failed", failureRecord({}, error));
   }

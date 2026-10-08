@@ -113,10 +113,7 @@ export function sqliteStorage(database: SqliteDatabase): KVStorage {
  * `activityHistory({ store })`. Each write prunes a bounded batch of rows
  * older than `retentionDays`.
  */
-export function sqliteActivityStore(
-  database: SqliteDatabase,
-  options?: SqliteActivityOptions,
-): ActivityStore {
+export function sqliteActivityStore(database: SqliteDatabase, options?: SqliteActivityOptions): ActivityStore {
   return sqlActivityStore(sqliteDriver(database), "sqlite", options);
 }
 
@@ -160,13 +157,13 @@ export function importStateFile(
   const entries = Object.entries(loaded as Record<string, unknown>);
   for (const [index, [key, entry]] of entries.entries()) {
     validateStorageKey(key);
-    const valid = entry !== null && typeof entry === "object" &&
+    const valid =
+      entry !== null &&
+      typeof entry === "object" &&
       typeof (entry as { value?: unknown }).value === "string" &&
       (!("exp" in entry) || Number.isFinite((entry as { exp?: unknown }).exp));
     if (!valid) {
-      throw new TypeError(
-        `${statePath} is not a connecta state file: entry ${index + 1} has no string value`,
-      );
+      throw new TypeError(`${statePath} is not a connecta state file: entry ${index + 1} has no string value`);
     }
   }
   const db = typeof database === "string" ? openSqlite(database) : database;

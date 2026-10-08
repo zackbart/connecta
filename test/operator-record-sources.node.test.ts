@@ -131,9 +131,6 @@ describe("operator log calls", () => {
 
   it("finds an error handed to a logger", () => {
     const source = 'logger.warn("[connecta] failed", { detail: msg(err) });';
-    expect(callArguments(source, source.indexOf("("))).toEqual([
-      '"[connecta] failed"',
-      "{ detail: msg(err) }",
-    ]);
+    expect(callArguments(source, source.indexOf("("))).toEqual(['"[connecta] failed"', "{ detail: msg(err) }"]);
   });
 });

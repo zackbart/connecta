@@ -17,11 +17,7 @@ vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
   remoteMcp: mocks.remoteMcp,
 }));
 
-import {
-  BASECAMP_MCP_ENDPOINT,
-  BASECAMP_VETTED_CATALOG,
-  basecamp,
-} from "./index.js";
+import { BASECAMP_MCP_ENDPOINT, BASECAMP_VETTED_CATALOG, basecamp } from "./index.js";
 import { connectorGuideSummary } from "../../skills.js";
 
 const CLIENT_METADATA_URL = "https://connecta.example/oauth/basecamp-client";
@@ -64,9 +60,7 @@ describe("basecamp()", () => {
     );
     expect(BASECAMP_MCP_ENDPOINT).toBe("https://mcp.basecamp.com/mcp");
     expect(guideOf(connector)).toContain("## Account instructions");
-    expect(guideOf(connector)).toContain(
-      "Post client-facing updates as messages, never as chat.",
-    );
+    expect(guideOf(connector)).toContain("Post client-facing updates as messages, never as chat.");
   });
 
   it("omits the account section when no instructions are given", () => {
@@ -75,24 +69,27 @@ describe("basecamp()", () => {
 
   it("INV-11: defaults to the deployment's self-hosted client metadata document", () => {
     basecamp("basecamp", { purpose: "Projects" });
-    expect(mocks.remoteMcp).toHaveBeenCalledWith("basecamp", expect.objectContaining({
-      auth: { type: "oauth", scope: "full mcp offline_access" },
-    }));
+    expect(mocks.remoteMcp).toHaveBeenCalledWith(
+      "basecamp",
+      expect.objectContaining({
+        auth: { type: "oauth", scope: "full mcp offline_access" },
+      }),
+    );
   });
 
   it("rejects an empty purpose at construction (P2)", () => {
-    expect(() => connection({ purpose: "  " })).toThrow(
-      "a non-empty purpose",
-    );
+    expect(() => connection({ purpose: "  " })).toThrow("a non-empty purpose");
   });
 
   it("INV-11: offers no headless credential and no access mode", () => {
     // Not part of the options type: OAuth is the only shape this provider
     // builds, so a stray auth option is refused rather than swapping the
     // credential out or being silently ignored.
-    expect(() => connection({
-      ...({ auth: { type: "headers", headers: { Authorization: "Bearer x" } } } as object),
-    })).toThrow('Unknown option: basecamp("basecamp").auth.');
+    expect(() =>
+      connection({
+        ...({ auth: { type: "headers", headers: { Authorization: "Bearer x" } } } as object),
+      }),
+    ).toThrow('Unknown option: basecamp("basecamp").auth.');
     expect(mocks.remoteMcp).not.toHaveBeenCalled();
     const connector = connection();
     expect(mocks.remoteMcp.mock.calls[0]?.[1]).toMatchObject({
@@ -105,10 +102,7 @@ describe("basecamp()", () => {
 
   it("declares no admission budget and passes an operator's through (P12)", () => {
     connection();
-    const defaults = mocks.remoteMcp.mock.calls[0]?.[1] as Record<
-      string,
-      unknown
-    >;
+    const defaults = mocks.remoteMcp.mock.calls[0]?.[1] as Record<string, unknown>;
     expect(defaults).not.toHaveProperty("callAdmission");
     expect(defaults).not.toHaveProperty("maxResultBytes");
 
@@ -140,9 +134,7 @@ describe("basecamp()", () => {
       "One account per authorization: The studio's client projects. Basecamp's hosted server acts in the single account the grant was made for, and no tool takes an account id. One shared authorization, made on Basecamp's consent screen, decides that account for everyone who uses this connector. Another account is another connector, never an argument.",
     );
     const personal = guideOf(connection({ authScope: "personal" }));
-    expect(personal).toContain(
-      "two people can reach different accounts through it",
-    );
+    expect(personal).toContain("two people can reach different accounts through it");
     expect(personal).not.toContain("One shared authorization");
   });
 
@@ -196,8 +188,7 @@ describe("basecamp()", () => {
   });
 
   it("keeps the argued verdicts where the release put them", () => {
-    const verdictFor = (name: string) =>
-      BASECAMP_VETTED_CATALOG.tools.get(name)?.verdict;
+    const verdictFor = (name: string) => BASECAMP_VETTED_CATALOG.tools.get(name)?.verdict;
     // Agrees with the server after review: no record written, and the feed
     // the ticket opens is already readable here.
     expect(verdictFor("create_stream_ticket")).toBe("read-only");
@@ -261,9 +252,6 @@ describe("basecamp()", () => {
 
   it("lets an operator title override the default", () => {
     connection({ title: "Client Basecamp" });
-    expect(mocks.remoteMcp).toHaveBeenLastCalledWith(
-      "basecamp",
-      expect.objectContaining({ title: "Client Basecamp" }),
-    );
+    expect(mocks.remoteMcp).toHaveBeenLastCalledWith("basecamp", expect.objectContaining({ title: "Client Basecamp" }));
   });
 });

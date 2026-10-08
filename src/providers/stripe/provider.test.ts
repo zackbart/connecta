@@ -1,10 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolDef } from "../../types.js";
-import {
-  guideOf,
-  itClassifiesLikeARelease,
-  mockRemoteMcp,
-} from "../../../test/fixtures/hosted-provider.js";
+import { guideOf, itClassifiesLikeARelease, mockRemoteMcp } from "../../../test/fixtures/hosted-provider.js";
 
 const mocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
@@ -38,8 +34,7 @@ describe("stripe()", () => {
       expect.objectContaining({
         url: STRIPE_MCP_ENDPOINT,
         title: "Stripe",
-        description:
-          "Stripe payments (live and sandbox accounts) — Revenue and dispute questions for the business",
+        description: "Stripe payments (live and sandbox accounts) — Revenue and dispute questions for the business",
         auth: { type: "oauth" },
         requireHttps: true,
       }),
@@ -54,15 +49,11 @@ describe("stripe()", () => {
     expect(guideOf(connector)).not.toContain("create_refund");
     expect(guideOf(connector)).not.toContain("get_stripe_account_info");
     expect(guideOf(connector)).toContain("Idempotency-Key");
-    expect(guideOf(connector)).toContain(
-      "100 requests per second in live mode and 25 in sandbox mode",
-    );
+    expect(guideOf(connector)).toContain("100 requests per second in live mode and 25 in sandbox mode");
     // Real markdown, not a diff hunk: agents read this string verbatim.
     expect(guideOf(connector)).toContain("## Account instructions");
     expect(guideOf(connector)).not.toContain("+## Account instructions");
-    expect(guideOf(connector)).toContain(
-      "Never refund above $500 without a human in the loop.",
-    );
+    expect(guideOf(connector)).toContain("Never refund above $500 without a human in the loop.");
     expect(mocks.remoteMcp).toHaveBeenCalledWith(
       "billing",
       expect.objectContaining({
@@ -175,15 +166,9 @@ describe("stripe()", () => {
     });
     const guide = guideOf(connector);
 
-    expect(guide).toContain(
-      "This OAuth session may expose both live and sandbox Stripe accounts.",
-    );
-    expect(guide).toContain(
-      "Never infer the account or mode from connector metadata.",
-    );
-    expect(connectorGuideSummary(connector)).toContain(
-      "Live and sandbox Stripe accounts",
-    );
+    expect(guide).toContain("This OAuth session may expose both live and sandbox Stripe accounts.");
+    expect(guide).toContain("Never infer the account or mode from connector metadata.");
+    expect(connectorGuideSummary(connector)).toContain("Live and sandbox Stripe accounts");
   });
 
   it("requires live-schema account selection and stops instead of inventing it", () => {
@@ -199,17 +184,10 @@ describe("stripe()", () => {
     expect(guide).toContain("list_available_accounts_or_orgs");
     expect(guide).toContain("stripe_context");
     expect(guide).toContain("livemode");
-    expect(guide).toContain(
-      "If the account, mode, or supported selector is ambiguous, stop and ask",
-    );
+    expect(guide).toContain("If the account, mode, or supported selector is ambiguous, stop and ask");
     expect(guide).toContain("carry the exact context fields required by the live schema unchanged");
-    expect(availableAccounts.map(({ livemode }) => livemode)).toEqual([
-      true,
-      false,
-    ]);
-    expect(guide).toContain(
-      "Organization accounts are not Stripe Connect connected accounts.",
-    );
+    expect(availableAccounts.map(({ livemode }) => livemode)).toEqual([true, false]);
+    expect(guide).toContain("Organization accounts are not Stripe Connect connected accounts.");
     expect(guide).toContain("restricted key plus Stripe's documented");
     expect(guide).toContain("OAuth does not support that path");
   });
@@ -379,25 +357,15 @@ describe("stripe()", () => {
     ).toThrow('connectedAccount to be a Stripe account id ("acct_...").');
   });
 
-  itClassifiesLikeARelease(
-    () => stripe("billing", { purpose: "Rehearsal" }),
-    mocks,
-    {
-      read: [
-        "stripe_api_read",
-        "list_available_accounts_or_orgs",
-        "manage_stripe_accounts",
-      ],
-      write: "stripe_analytics",
-      destructive: "stripe_api_write",
-      unknown: ["create_customer", "get_new_treasury_thing", "wreck_new_thing"],
-    },
-  );
+  itClassifiesLikeARelease(() => stripe("billing", { purpose: "Rehearsal" }), mocks, {
+    read: ["stripe_api_read", "list_available_accounts_or_orgs", "manage_stripe_accounts"],
+    write: "stripe_analytics",
+    destructive: "stripe_api_write",
+    unknown: ["create_customer", "get_new_treasury_thing", "wreck_new_thing"],
+  });
 
   it("rejects an empty purpose and an unknown static mode at construction", () => {
-    expect(() => stripe("billing", { purpose: "  " })).toThrow(
-      "a non-empty purpose",
-    );
+    expect(() => stripe("billing", { purpose: "  " })).toThrow("a non-empty purpose");
     expect(() =>
       stripe("billing", {
         mode: "test" as unknown as "sandbox",
@@ -407,9 +375,7 @@ describe("stripe()", () => {
           headers: { Authorization: "Bearer opaque-key" },
         },
       }),
-    ).toThrow(
-      'stripe("billing") requires headers or credential auth to declare mode "production" or "sandbox".',
-    );
+    ).toThrow('stripe("billing") requires headers or credential auth to declare mode "production" or "sandbox".');
   });
 
   it("takes an operator-managed key and still requires a declared mode", () => {
@@ -441,9 +407,7 @@ describe("stripe()", () => {
         purpose: "Organization billing",
         auth: { type: "credential" },
       } as unknown as Parameters<typeof stripe>[1]),
-    ).toThrow(
-      'stripe("billing") requires headers or credential auth to declare mode "production" or "sandbox".',
-    );
+    ).toThrow('stripe("billing") requires headers or credential auth to declare mode "production" or "sandbox".');
   });
 
   it("cannot check a mode against a key it will never see", () => {

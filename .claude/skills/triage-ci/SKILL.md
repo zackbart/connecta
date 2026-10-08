@@ -22,7 +22,7 @@ to merge on: it runs `if: always()` and on failure prints
   the push range on `main`). This includes templates installed by package and
   Docker smoke, published examples, and any future workspaces.
 - `check` passes when core and changes succeed, and browser and security each
-  succeed or were skipped *because they were not required*. A cancelled or
+  succeed or were skipped _because they were not required_. A cancelled or
   unexpectedly skipped job fails it.
 
 Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.

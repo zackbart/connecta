@@ -55,8 +55,12 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
 });
 `;
 
-async function fixture(mode: "complete" | "hang" | "extra-skill" | "late-skill" | "extra-plugin" | "bad-inventory", signal?: AbortSignal,
-  nextTurn: () => Promise<string | undefined> = async () => undefined, timeoutMs = 10_000) {
+async function fixture(
+  mode: "complete" | "hang" | "extra-skill" | "late-skill" | "extra-plugin" | "bad-inventory",
+  signal?: AbortSignal,
+  nextTurn: () => Promise<string | undefined> = async () => undefined,
+  timeoutMs = 10_000,
+) {
   const root = await mkdtemp(join(tmpdir(), "connecta-codex-test-"));
   try {
     const script = join(root, "server.cjs");
@@ -64,9 +68,21 @@ async function fixture(mode: "complete" | "hang" | "extra-skill" | "late-skill" 
     await writeFile(script, SERVER);
     await writeFile(auth, "{}");
     return await runCodex({
-      model: "gpt-6-sol", mcpUrl: "http://127.0.0.1:1/mcp", token: "fake-secret",
-      allowedTools: ["execute_code", "call_tool", "call_destructive_tool", "search_tools", "authorize_connector", "skills"], deniedTools: [], timeoutMs,
-      firstPrompt: "test", nextTurn,
+      model: "gpt-6-sol",
+      mcpUrl: "http://127.0.0.1:1/mcp",
+      token: "fake-secret",
+      allowedTools: [
+        "execute_code",
+        "call_tool",
+        "call_destructive_tool",
+        "search_tools",
+        "authorize_connector",
+        "skills",
+      ],
+      deniedTools: [],
+      timeoutMs,
+      firstPrompt: "test",
+      nextTurn,
       ...(signal ? { signal } : {}),
       testHost: { executable: process.execPath, args: [script, mode], authFile: auth, version: "fake-codex" },
     });
@@ -82,18 +98,27 @@ describe("Codex eval app-server", () => {
     expect(trace.permissionDenials).toContain("mcpServer/elicitation/request");
     expect(trace.toolUses).toMatchObject([{ tool: "execute_code", resultText: "ok", isError: false }]);
     expect(trace.resultSubtypes).toEqual(["success"]);
-    expect(run.events.filter(e => e.type === "assistant").at(-1)?.message).toMatchObject({ phase: "final_answer" });
+    expect(run.events.filter((e) => e.type === "assistant").at(-1)?.message).toMatchObject({ phase: "final_answer" });
     expect(trace.finalAnswer).toBe("Final answer.");
     expect(trace.modelTurns).toBeUndefined();
     expect(trace.apiMs).toBeUndefined();
     expect(run.model).toBe("gpt-6-sol");
     expect(run.loadedTools).toHaveLength(6);
-    expect(trace.skillInventory).toEqual(['imagegen','openai-docs','review-agent','skill-creator','skill-installer'].map(name => ({ name, enabled: false })));
+    expect(trace.skillInventory).toEqual(
+      ["imagegen", "openai-docs", "review-agent", "skill-creator", "skill-installer"].map((name) => ({
+        name,
+        enabled: false,
+      })),
+    );
     expect(trace.pluginInventory).toEqual([]);
   });
 
-  it.each([['extra-skill', 'future-skill'], ['late-skill', 'future-skill'], ['extra-plugin', 'future-plugin@builtin'],
-    ['bad-inventory', 'could not be verified']] as const)("fails closed on %s before any model turn", async (mode, diagnostic) => {
+  it.each([
+    ["extra-skill", "future-skill"],
+    ["late-skill", "future-skill"],
+    ["extra-plugin", "future-plugin@builtin"],
+    ["bad-inventory", "could not be verified"],
+  ] as const)("fails closed on %s before any model turn", async (mode, diagnostic) => {
     const run = await fixture(mode);
     expect(run.turnStarts).toEqual([]);
     if (mode !== "bad-inventory") {
@@ -101,10 +126,13 @@ describe("Codex eval app-server", () => {
       expect(trace.skillInventory).toBeDefined();
       expect(trace.pluginInventory).toBeDefined();
     }
-    const errors = run.events.filter(e => e.type === 'result').map(e => String(e.result)).join('\n');
+    const errors = run.events
+      .filter((e) => e.type === "result")
+      .map((e) => String(e.result))
+      .join("\n");
     expect(errors).toContain(diagnostic);
-    expect(errors).not.toContain('fake-secret');
-    expect(errors).not.toContain('settings');
+    expect(errors).not.toContain("fake-secret");
+    expect(errors).not.toContain("settings");
   });
 
   it("terminates an active turn when interrupted", async () => {
@@ -114,7 +142,7 @@ describe("Codex eval app-server", () => {
     try {
       const run = await fixture("hang", controller.signal);
       expect(performance.now() - started).toBeLessThan(5_000);
-      expect(run.events.some(event => event.type === "result" && event.subtype !== "success")).toBe(true);
+      expect(run.events.some((event) => event.type === "result" && event.subtype !== "success")).toBe(true);
     } finally {
       clearTimeout(timer);
     }
@@ -128,8 +156,11 @@ describe("Codex eval app-server", () => {
   });
 
   it("stops the batch on a typed usage limit even when its message has no rate keyword", () => {
-    const error = infraError([{ type: "result", subtype: "failed", result: "Usage cap reached",
-      codex_error_info: "usageLimitExceeded" }], 0, ["mcp__connecta__execute_code"]);
+    const error = infraError(
+      [{ type: "result", subtype: "failed", result: "Usage cap reached", codex_error_info: "usageLimitExceeded" }],
+      0,
+      ["mcp__connecta__execute_code"],
+    );
     expect(error).toContain("usageLimitExceeded");
     expect(stopsBatch(error)).toBe(true);
   });

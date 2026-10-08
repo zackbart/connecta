@@ -24,9 +24,7 @@ function context(overrides: Partial<ConnectorContext> = {}): ConnectorContext {
 let calls: Array<{ url: string; init: RequestInit }>;
 const realFetch = globalThis.fetch;
 
-function stubFetch(
-  respond: (url: string, init: RequestInit) => Response | Promise<Response>,
-): void {
+function stubFetch(respond: (url: string, init: RequestInit) => Response | Promise<Response>): void {
   globalThis.fetch = vi.fn(async (input: unknown, init: RequestInit = {}) => {
     calls.push({ url: String(input), init });
     return await respond(String(input), init);
@@ -40,9 +38,7 @@ function json(body: unknown, init: ResponseInit = {}): Response {
   });
 }
 
-function transport(
-  overrides: Partial<Parameters<typeof guardedFetch>[0]> = {},
-) {
+function transport(overrides: Partial<Parameters<typeof guardedFetch>[0]> = {}) {
   return guardedFetch({
     provider: "Example",
     baseUrl: BASE,
@@ -54,17 +50,11 @@ function transport(
 }
 
 /** The mapper a well-behaved provider writes: it, not the helper, reads status. */
-const asJson = async (response: {
-  ok: boolean;
-  status: number;
-  json(): Promise<unknown>;
-}): Promise<unknown> => {
+const asJson = async (response: { ok: boolean; status: number; json(): Promise<unknown> }): Promise<unknown> => {
   if (!response.ok) {
-    throw new ConnectorCallError(
-      "connector_call_failed",
-      `Example answered HTTP ${response.status}.`,
-      { retryable: false },
-    );
+    throw new ConnectorCallError("connector_call_failed", `Example answered HTTP ${response.status}.`, {
+      retryable: false,
+    });
   }
   return await response.json();
 };
@@ -90,15 +80,9 @@ afterEach(() => {
 describe("guardedFetch() construction", () => {
   it("refuses a base URL that is not an absolute, credential-free https origin", () => {
     expect(() => transport({ baseUrl: "/v2" })).toThrow(/absolute URL/);
-    expect(() => transport({ baseUrl: "http://api.example.com" })).toThrow(
-      /must be https/,
-    );
-    expect(() =>
-      transport({ baseUrl: "https://user:pw@api.example.com" }),
-    ).toThrow(/URL credentials/);
-    expect(() => transport({ baseUrl: "https://api.example.com/?k=1" })).toThrow(
-      /query or fragment/,
-    );
+    expect(() => transport({ baseUrl: "http://api.example.com" })).toThrow(/must be https/);
+    expect(() => transport({ baseUrl: "https://user:pw@api.example.com" })).toThrow(/URL credentials/);
+    expect(() => transport({ baseUrl: "https://api.example.com/?k=1" })).toThrow(/query or fragment/);
   });
 
   it("allows plain http only for a loopback proxy or test double", () => {
@@ -153,11 +137,7 @@ describe("guardedFetch() request construction", () => {
   it("serializes a JSON body with its content type, and frames a raw body with none", async () => {
     stubFetch(() => json({}));
     const send = transport();
-    await send(
-      { method: "POST", path: "/pages", body: { title: "x" } },
-      context(),
-      asJson,
-    );
+    await send({ method: "POST", path: "/pages", body: { title: "x" } }, context(), asJson);
     expect(calls[0]!.init.body).toBe('{"title":"x"}');
     expect(calls[0]!.init.headers).toMatchObject({
       "Content-Type": "application/json",
@@ -175,11 +155,7 @@ describe("guardedFetch() request construction", () => {
   it("refuses a request carrying both a JSON body and a raw body", async () => {
     stubFetch(() => json({}));
     await expect(
-      transport()(
-        { method: "POST", path: "/pages", body: {}, rawBody: "raw" },
-        context(),
-        asJson,
-      ),
+      transport()({ method: "POST", path: "/pages", body: {}, rawBody: "raw" }, context(), asJson),
     ).rejects.toThrow(/both a JSON body and a raw body/);
     expect(calls).toHaveLength(0);
   });
@@ -187,11 +163,7 @@ describe("guardedFetch() request construction", () => {
   it("propagates ctx.signal and never follows a redirect", async () => {
     stubFetch(() => json({}));
     const controller = new AbortController();
-    await transport()(
-      { method: "GET", path: "/self" },
-      context({ signal: controller.signal }),
-      asJson,
-    );
+    await transport()({ method: "GET", path: "/self" }, context({ signal: controller.signal }), asJson);
     expect(calls[0]!.init.signal).toBe(controller.signal);
     expect(calls[0]!.init.redirect).toBe("manual");
   });
@@ -208,9 +180,10 @@ describe("guardedFetch() confinement", () => {
       "/../v3/zones",
       "/../../evil",
     ]) {
-      await expect(
-        send({ method: "GET", path }, context(), asJson),
-      ).rejects.toMatchObject({ code: "invalid_args", retryable: false });
+      await expect(send({ method: "GET", path }, context(), asJson)).rejects.toMatchObject({
+        code: "invalid_args",
+        retryable: false,
+      });
     }
     expect(calls).toHaveLength(0);
   });
@@ -218,11 +191,7 @@ describe("guardedFetch() confinement", () => {
   it("refuses a sibling path that merely shares the base's prefix", async () => {
     stubFetch(() => json({}));
     await expect(
-      transport({ baseUrl: "https://api.example.com/v2" })(
-        { method: "GET", path: "/../v20/zones" },
-        context(),
-        asJson,
-      ),
+      transport({ baseUrl: "https://api.example.com/v2" })({ method: "GET", path: "/../v20/zones" }, context(), asJson),
     ).rejects.toMatchObject({ code: "invalid_args" });
     expect(calls).toHaveLength(0);
   });
@@ -261,9 +230,7 @@ describe("guardedFetch() confinement", () => {
           headers: { location: "https://evil.example/steal" },
         }),
     );
-    const error = await failure(
-      transport()({ method: "GET", path: "/self" }, context(), asJson),
-    );
+    const error = await failure(transport()({ method: "GET", path: "/self" }, context(), asJson));
     expect(error.code).toBe("connector_call_failed");
     expect(error.retryable).toBe(false);
     expect(error.message).toContain("never forwards its credential");
@@ -275,9 +242,7 @@ describe("guardedFetch() response handling", () => {
     globalThis.fetch = vi.fn(async () => {
       throw new TypeError("network unreachable");
     }) as unknown as typeof fetch;
-    const error = await failure(
-      transport()({ method: "GET", path: "/self" }, context(), asJson),
-    );
+    const error = await failure(transport()({ method: "GET", path: "/self" }, context(), asJson));
     expect(error.code).toBe("unavailable");
     expect(error.retryable).toBe(true);
     expect(error.message).toContain("Could not reach the Example API");
@@ -290,37 +255,34 @@ describe("guardedFetch() response handling", () => {
     [300, 300],
     [301, 300],
     [1000, 300],
-  ])(
-    "retains at most %i bytes and consumes at most one %i-byte chunk past them",
-    async (maxBytes, chunkSize) => {
-      // The reader is handed chunks as it asks for them, one at a time, so
-      // "consumed" counts exactly what left the source.
-      let consumed = 0;
-      const body = new ReadableStream<Uint8Array>(
-        {
-          pull(controller) {
-            if (consumed >= 20 * chunkSize) {
-              controller.close();
-              return;
-            }
-            consumed += chunkSize;
-            controller.enqueue(new Uint8Array(chunkSize).fill(7));
-          },
+  ])("retains at most %i bytes and consumes at most one %i-byte chunk past them", async (maxBytes, chunkSize) => {
+    // The reader is handed chunks as it asks for them, one at a time, so
+    // "consumed" counts exactly what left the source.
+    let consumed = 0;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (consumed >= 20 * chunkSize) {
+            controller.close();
+            return;
+          }
+          consumed += chunkSize;
+          controller.enqueue(new Uint8Array(chunkSize).fill(7));
         },
-        { highWaterMark: 0 },
-      );
-      stubFetch(() => new Response(body));
-      const result = await transport({ maxResponseBytes: 1_000_000 })(
-        { method: "GET", path: "/big", prefixOnly: true },
-        context(),
-        (response) => response.prefix(maxBytes),
-      );
-      expect(result.bytes.byteLength).toBe(maxBytes);
-      expect(result.truncated).toBe(true);
-      // The chunk that crosses the bound is the whole overrun.
-      expect(consumed).toBeLessThanOrEqual(maxBytes + chunkSize);
-    },
-  );
+      },
+      { highWaterMark: 0 },
+    );
+    stubFetch(() => new Response(body));
+    const result = await transport({ maxResponseBytes: 1_000_000 })(
+      { method: "GET", path: "/big", prefixOnly: true },
+      context(),
+      (response) => response.prefix(maxBytes),
+    );
+    expect(result.bytes.byteLength).toBe(maxBytes);
+    expect(result.truncated).toBe(true);
+    // The chunk that crosses the bound is the whole overrun.
+    expect(consumed).toBeLessThanOrEqual(maxBytes + chunkSize);
+  });
 
   it("reads a bounded prefix, past a declared ceiling only when asked, and cancels the rest", async () => {
     let cancelled = false;
@@ -344,10 +306,8 @@ describe("guardedFetch() response handling", () => {
           { headers: { "content-length": String(64 * 512) } },
         ),
     );
-    const prefix = await transport()(
-      { method: "GET", path: "/big", prefixOnly: true },
-      context(),
-      (response) => response.prefix(10),
+    const prefix = await transport()({ method: "GET", path: "/big", prefixOnly: true }, context(), (response) =>
+      response.prefix(10),
     );
     expect(prefix).toEqual({ bytes: new Uint8Array(10).fill(120), truncated: true });
     await vi.waitFor(() => expect(cancelled).toBe(true));
@@ -368,17 +328,13 @@ describe("guardedFetch() response handling", () => {
           headers: { "content-length": "1048576" },
         }),
     );
-    await expect(
-      transport()({ method: "GET", path: "/big" }, context(), asJson),
-    ).rejects.toMatchObject({ code: "connector_call_failed" });
+    await expect(transport()({ method: "GET", path: "/big" }, context(), asJson)).rejects.toMatchObject({
+      code: "connector_call_failed",
+    });
 
     stubFetch(() => new Response("x".repeat(2048)));
     const error = await failure(
-      transport()(
-        { method: "GET", path: "/big" },
-        context(),
-        async (response) => await response.text(),
-      ),
+      transport()({ method: "GET", path: "/big" }, context(), async (response) => await response.text()),
     );
     expect(error.code).toBe("connector_call_failed");
     expect(error.message).toContain("1024-byte response ceiling");
@@ -387,28 +343,18 @@ describe("guardedFetch() response handling", () => {
   it("reads a body that fits, as bytes, text, or JSON", async () => {
     stubFetch(() => json({ id: "p-1" }));
     const send = transport();
-    await expect(
-      send({ method: "GET", path: "/p" }, context(), asJson),
-    ).resolves.toEqual({ id: "p-1" });
+    await expect(send({ method: "GET", path: "/p" }, context(), asJson)).resolves.toEqual({ id: "p-1" });
 
     stubFetch(() => new Response(new Uint8Array([0, 1, 2, 255])));
     await expect(
-      send(
-        { method: "GET", path: "/p" },
-        context(),
-        async (response) => Array.from(await response.bytes()),
-      ),
+      send({ method: "GET", path: "/p" }, context(), async (response) => Array.from(await response.bytes())),
     ).resolves.toEqual([0, 1, 2, 255]);
   });
 
   it("reads an empty body as undefined rather than a parse failure", async () => {
     stubFetch(() => new Response(null, { status: 204 }));
     await expect(
-      transport()(
-        { method: "DELETE", path: "/p" },
-        context(),
-        async (response) => await response.json(),
-      ),
+      transport()({ method: "DELETE", path: "/p" }, context(), async (response) => await response.json()),
     ).resolves.toBeUndefined();
   });
 
@@ -418,14 +364,10 @@ describe("guardedFetch() response handling", () => {
     // success, which is absurd, and is exactly the point: nothing in the
     // transport intercepted it.
     await expect(
-      transport()(
-        { method: "GET", path: "/p" },
-        context(),
-        async (response) => ({
-          status: response.status,
-          body: await response.json(),
-        }),
-      ),
+      transport()({ method: "GET", path: "/p" }, context(), async (response) => ({
+        status: response.status,
+        body: await response.json(),
+      })),
     ).resolves.toEqual({
       status: 403,
       body: { code: "restricted_resource" },
@@ -470,9 +412,9 @@ describe("guardedFetch() sending through a connector's own fetch", () => {
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer secret");
     expect(seen).toBe(ctx);
     // Confinement still runs before the fetcher sees anything.
-    await expect(
-      send({ method: "GET", path: "/../../elsewhere" }, ctx, asJson),
-    ).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(send({ method: "GET", path: "/../../elsewhere" }, ctx, asJson)).rejects.toMatchObject({
+      code: "invalid_args",
+    });
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
@@ -511,7 +453,9 @@ describe("guardedFetch() sending through a connector's own fetch", () => {
         },
       },
     };
-    await expect(send({ method: "GET", path: "/me" }, refused, asJson)).rejects.toMatchObject({ code: "auth_required" });
+    await expect(send({ method: "GET", path: "/me" }, refused, asJson)).rejects.toMatchObject({
+      code: "auth_required",
+    });
     const unwired = await failure(send({ method: "GET", path: "/me" }, context(), asJson));
     expect(unwired).toMatchObject({ code: "connector_call_failed", retryable: false });
     expect(unwired.message).toContain("OAuth grant");
@@ -528,42 +472,65 @@ describe("Retry-After", () => {
       for (const value of ["-1", "junk", "Infinity"]) {
         expect(retryAfterMs(new Headers({ "retry-after": value }))).toBeUndefined();
       }
-    } finally { vi.restoreAllMocks(); }
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 });
 
-
 describe("guarded fetch diagnostics and bodies without streams", () => {
-  it.each(["ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT", "AbortError"])("preserves sanitized %s diagnostics", async (code) => {
-    stubFetch(() => { throw code === "AbortError"
-      ? new DOMException("deadline", "AbortError")
-      : new TypeError("fetch failed", { cause: { code } }); });
-    const error = await failure(transport()(
-      { method: "GET", path: "/private", query: { token: "secret" } }, context(), asJson,
-    ));
-    expect(error).toMatchObject({ code: "unavailable", retryable: true,
-      details: { host: "https://api.example.com", code: code === "AbortError" ? "timeout" : code } });
-  });
+  it.each(["ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT", "AbortError"])(
+    "preserves sanitized %s diagnostics",
+    async (code) => {
+      stubFetch(() => {
+        throw code === "AbortError"
+          ? new DOMException("deadline", "AbortError")
+          : new TypeError("fetch failed", { cause: { code } });
+      });
+      const error = await failure(
+        transport()({ method: "GET", path: "/private", query: { token: "secret" } }, context(), asJson),
+      );
+      expect(error).toMatchObject({
+        code: "unavailable",
+        retryable: true,
+        details: { host: "https://api.example.com", code: code === "AbortError" ? "timeout" : code },
+      });
+    },
+  );
 
   it("keeps only the known origin for workerd outbound denial", async () => {
-    stubFetch(() => { throw new Error("This worker is not permitted to access the internet via global functions like fetch(). It must use capabilities (such as bindings in 'env') to talk to the outside world."); });
+    stubFetch(() => {
+      throw new Error(
+        "This worker is not permitted to access the internet via global functions like fetch(). It must use capabilities (such as bindings in 'env') to talk to the outside world.",
+      );
+    });
     const error = await failure(transport()({ method: "GET", path: "/private" }, context(), asJson));
     expect(error).toMatchObject({ code: "unavailable", details: { host: "https://api.example.com" } });
     expect(error.details).not.toHaveProperty("code");
   });
 
-  it.each(["text", "json", "jsonResult"] as const)("enforces UTF-8 bytes through %s without a stream", async (accessor) => {
-    stubFetch(() => ({ status: 200, ok: true, headers: new Headers(), body: null,
-      arrayBuffer: async () => new TextEncoder().encode(JSON.stringify("é".repeat(600))).buffer,
-      text: async () => "trusted incorrectly",
-      json: async () => "trusted incorrectly",
-    }) as unknown as Response);
-    const error = await failure(transport()(
-      { method: "GET", path: "/large" }, context(), (response) => response[accessor](),
-    ));
-    expect(error).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(error.message).toContain("1024-byte response ceiling");
-  });
+  it.each(["text", "json", "jsonResult"] as const)(
+    "enforces UTF-8 bytes through %s without a stream",
+    async (accessor) => {
+      stubFetch(
+        () =>
+          ({
+            status: 200,
+            ok: true,
+            headers: new Headers(),
+            body: null,
+            arrayBuffer: async () => new TextEncoder().encode(JSON.stringify("é".repeat(600))).buffer,
+            text: async () => "trusted incorrectly",
+            json: async () => "trusted incorrectly",
+          }) as unknown as Response,
+      );
+      const error = await failure(
+        transport()({ method: "GET", path: "/large" }, context(), (response) => response[accessor]()),
+      );
+      expect(error).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(error.message).toContain("1024-byte response ceiling");
+    },
+  );
 
   // Bytes, never `text()` or `json()`: workerd quotes a text read's non-text
   // Content-Type in its own log (INV-6).
@@ -571,14 +538,17 @@ describe("guarded fetch diagnostics and bodies without streams", () => {
     const arrayBuffer = vi.fn(async () => new TextEncoder().encode('{"id":"é"}').buffer);
     const text = vi.fn(async () => '{"wrong":true}');
     const json = vi.fn(async () => ({ wrong: true }));
-    stubFetch(() => ({ status: 200, ok: true, headers: new Headers(), body: null, arrayBuffer, text, json }) as unknown as Response);
-    await expect(transport({ maxResponseBytes: 11 })(
-      { method: "GET", path: "/small" }, context(), async (response) => {
+    stubFetch(
+      () =>
+        ({ status: 200, ok: true, headers: new Headers(), body: null, arrayBuffer, text, json }) as unknown as Response,
+    );
+    await expect(
+      transport({ maxResponseBytes: 11 })({ method: "GET", path: "/small" }, context(), async (response) => {
         const value = await response.json();
         await response.text();
         return value;
-      },
-    )).resolves.toEqual({ id: "é" });
+      }),
+    ).resolves.toEqual({ id: "é" });
     expect(json).not.toHaveBeenCalled();
     expect(text).not.toHaveBeenCalled();
     expect(arrayBuffer).toHaveBeenCalledTimes(1);

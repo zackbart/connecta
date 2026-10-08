@@ -13,11 +13,13 @@ export const DEFAULT_MAX_WRITES = CONFIG_DEFAULTS.execute.maxWrites;
 /** How a dispatched write ended, as far as anyone can know. */
 type WriteState = "ok" | "failed" | "unknown";
 type WriteDeadline = Pick<NonNullable<CallErrorDetails["details"]>, "operation" | "stage" | "elapsedMs" | "deadlineMs">;
-type WriteCompletion = WriteState | {
-  state: "unknown";
-  uncertainCall: NonNullable<CallErrorDetails["uncertainCall"]>;
-  deadline?: WriteDeadline;
-};
+type WriteCompletion =
+  | WriteState
+  | {
+      state: "unknown";
+      uncertainCall: NonNullable<CallErrorDetails["uncertainCall"]>;
+      deadline?: WriteDeadline;
+    };
 
 /**
  * Whether a write landed, as far as anyone can know.
@@ -82,14 +84,27 @@ export function writeStateOf(outcome: InvocationOutcome<unknown>): WriteCompleti
         },
   );
   return state === "unknown" && !outcome.ok && outcome.error.uncertainCall
-    ? { state, uncertainCall: outcome.error.uncertainCall,
-        ...(outcome.error.details?.stage !== undefined ? { deadline: {
-          ...(outcome.error.details.operation !== undefined ? { operation: outcome.error.details.operation } : {}),
-          stage: outcome.error.details.stage,
-          ...(outcome.error.details.elapsedMs !== undefined ? { elapsedMs: outcome.error.details.elapsedMs } : {}),
-          ...(outcome.error.details.deadlineMs !== undefined ? { deadlineMs: outcome.error.details.deadlineMs } : {}),
-        } } : {}),
-      } : state;
+    ? {
+        state,
+        uncertainCall: outcome.error.uncertainCall,
+        ...(outcome.error.details?.stage !== undefined
+          ? {
+              deadline: {
+                ...(outcome.error.details.operation !== undefined
+                  ? { operation: outcome.error.details.operation }
+                  : {}),
+                stage: outcome.error.details.stage,
+                ...(outcome.error.details.elapsedMs !== undefined
+                  ? { elapsedMs: outcome.error.details.elapsedMs }
+                  : {}),
+                ...(outcome.error.details.deadlineMs !== undefined
+                  ? { deadlineMs: outcome.error.details.deadlineMs }
+                  : {}),
+              },
+            }
+          : {}),
+      }
+    : state;
 }
 
 type WriteCounts = { succeeded: number; failed: number; unknown: number };
@@ -157,15 +172,18 @@ export class ProgramWrites {
       unknown: this.states.filter((state) => state === "unknown").length,
     };
     if (writes.unknown > 0) {
-
       return errorEnvelope({
         code: "write_outcome_unknown",
-        message: "A write this program sent has no known outcome, so that is the result rather than what the program returned. It will not be sent again. Check its target before doing anything that depends on it.",
+        message:
+          "A write this program sent has no known outcome, so that is the result rather than what the program returned. It will not be sent again. Check its target before doing anything that depends on it.",
         retryable: false,
         ...(this.deadlines.length > 0 ? { details: this.deadlines[0] } : {}),
         ...(this.deadlines.length > 1 ? { timeouts: this.deadlines } : {}),
-        ...(this.uncertainCalls.length === 1 ? { uncertainCall: this.uncertainCalls[0] }
-          : this.uncertainCalls.length > 1 ? { uncertainCalls: this.uncertainCalls } : {}),
+        ...(this.uncertainCalls.length === 1
+          ? { uncertainCall: this.uncertainCalls[0] }
+          : this.uncertainCalls.length > 1
+            ? { uncertainCalls: this.uncertainCalls }
+            : {}),
         ...(this.uncertainCallsTruncated ? { uncertainCallsTruncated: true } : {}),
         writes,
       });

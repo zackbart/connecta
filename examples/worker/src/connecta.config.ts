@@ -92,18 +92,17 @@ export default defineConfig((env: Env) => {
     // signed-in human who can see that connector, encrypted with this key
     // before anything reaches D1. A saved replacement takes effect on the
     // next call; credentials fail at use.
-    vault: env.CREDENTIAL_ENCRYPTION_KEY
-      ? encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY)
-      : undefined,
+    vault: env.CREDENTIAL_ENCRYPTION_KEY ? encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY) : undefined,
     // Payload-free activity at /ui/api/activity in CONNECTA_DB. The shared
     // D1 mapping persists the build version and validated client facts, and
     // adds nullable columns to old tables. Each write prunes expired rows.
-    activity: env.CONNECTA_ACTIVITY === "on"
-      ? activityHistory({
-          store: d1ActivityStore(env.CONNECTA_DB, { retentionDays: 90 }),
-          deploymentId: "production",
-        })
-      : undefined,
+    activity:
+      env.CONNECTA_ACTIVITY === "on"
+        ? activityHistory({
+            store: d1ActivityStore(env.CONNECTA_DB, { retentionDays: 90 }),
+            deploymentId: "production",
+          })
+        : undefined,
     // Branding is code too: operatorUi({ branding }).
     ui: operatorUi(),
     connectors: [

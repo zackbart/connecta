@@ -7,13 +7,10 @@ import { runEdge } from "./runtime/run.js";
 // Standalone connector tests still close themselves.
 const cleanupOwners = new WeakMap<object, Map<string, number>>();
 
-export function claimConnectorScopeCleanup(
-  ctx: ConnectorContext,
-  connectorId: string,
-): () => void {
+export function claimConnectorScopeCleanup(ctx: ConnectorContext, connectorId: string): () => void {
   const scope = ctx.requestScope ?? ctx;
   let owners = cleanupOwners.get(scope);
-  if (!owners) cleanupOwners.set(scope, owners = new Map());
+  if (!owners) cleanupOwners.set(scope, (owners = new Map()));
   owners.set(connectorId, (owners.get(connectorId) ?? 0) + 1);
   let released = false;
   return () => {
@@ -26,10 +23,7 @@ export function claimConnectorScopeCleanup(
   };
 }
 
-export function connectorScopeCleanupClaimed(
-  ctx: ConnectorContext,
-  connectorId: string,
-): boolean {
+export function connectorScopeCleanupClaimed(ctx: ConnectorContext, connectorId: string): boolean {
   return cleanupOwners.get(ctx.requestScope ?? ctx)?.has(connectorId) === true;
 }
 
@@ -47,11 +41,7 @@ export type DeferredWork = (promise: Promise<unknown>) => void;
  * window. Callers own the at-most-once guarantee and must not use the scope
  * again after this returns.
  */
-export function closeConnectorScope(
-  connector: Connector,
-  ctx: ConnectorContext,
-  defer?: DeferredWork,
-): Promise<void> {
+export function closeConnectorScope(connector: Connector, ctx: ConnectorContext, defer?: DeferredWork): Promise<void> {
   // The Promise face of closeScope (src/runtime/connector-scope.ts), which
   // owns the budgets; an Effect caller registers it as a Scope finalizer.
   return runEdge(closeScope(connector, ctx, defer));

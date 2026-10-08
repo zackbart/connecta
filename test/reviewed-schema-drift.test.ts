@@ -31,10 +31,7 @@ describe.each(Object.keys(PATHS) as Array<keyof typeof PATHS>)(
       const app = deployment(PATHS[path](await currentDigest(), []));
       try {
         expect(await app.searched("readOnly")).toEqual(["things.list_things"]);
-        expect(await app.searched("approvalRequired")).toEqual([
-          "things.peek_things",
-          "things.scan_things",
-        ]);
+        expect(await app.searched("approvalRequired")).toEqual(["things.peek_things", "things.scan_things"]);
         const found = await app.run(async (connecta) => {
           const page = await connecta.search!({ connector: "things", query: "", safety: "readOnly" });
           return page.tools.map((tool: { address: string }) => tool.address).sort();
@@ -49,14 +46,11 @@ describe.each(Object.keys(PATHS) as Array<keyof typeof PATHS>)(
       const calls: string[] = [];
       const app = deployment(PATHS[path](await currentDigest(), calls));
       try {
-        expect((await app.call("call_tool", { address: "things.list_things", args: {} })).isError)
-          .toBeFalsy();
+        expect((await app.call("call_tool", { address: "things.list_things", args: {} })).isError).toBeFalsy();
         for (const address of ["things.peek_things", "things.scan_things"]) {
           const refused = await app.call("call_tool", { address, args: {} });
           expect(refused.isError).toBe(true);
-          expect(JSON.stringify(refused.structuredContent)).toContain(
-            "destructive_tool_requires_approval",
-          );
+          expect(JSON.stringify(refused.structuredContent)).toContain("destructive_tool_requires_approval");
         }
         expect(calls).toEqual(["list_things"]);
         const approved = await app.call("call_destructive_tool", {
@@ -114,9 +108,7 @@ describe.each(Object.keys(PATHS) as Array<keyof typeof PATHS>)(
         expect(await app.searched("readOnly")).toEqual([]);
         const refused = await app.call("call_tool", { address: "things.list_things", args: {} });
         expect(refused.isError).toBe(true);
-        expect(JSON.stringify(refused.structuredContent)).toContain(
-          "destructive_tool_requires_approval",
-        );
+        expect(JSON.stringify(refused.structuredContent)).toContain("destructive_tool_requires_approval");
         expect(calls).toEqual([]);
       } finally {
         await app.connecta.close();
@@ -137,45 +129,40 @@ const RESTARTS: Array<{
   { name: "a stale catalog", version: 3, fresh: false, listing: downstreamListing },
 ];
 
-describe.each(Object.keys(PATHS) as Array<keyof typeof PATHS>)(
-  "a stale reviewed read after a restart (%s)",
-  (path) => {
-    it.each(RESTARTS)(
-      "INV-1: INV-8: refuses retired $name when the downstream is unavailable",
-      async ({ version, fresh, listing }) => {
-        const storage = memoryStorage();
-        await seedThingsCatalog(storage, await listing(), { version, fresh });
-        const app = deployment(PATHS[path](await currentDigest(), [], true), storage);
-        try {
-          expect(await app.searched("readOnly")).toEqual([]);
-          expect(await app.searched("approvalRequired")).toEqual([]);
-          for (const address of ["things.list_things", "things.peek_things", "things.scan_things"]) {
-            const refused = await app.call("call_tool", { address, args: {} });
-            expect(refused.isError).toBe(true);
-            expect(JSON.stringify(refused)).toContain("connector_call_failed");
-          }
-        } finally {
-          await app.connecta.close();
-        }
-      },
-    );
-
-    it("INV-1: ignores a fresh 0.28 catalog and classifies live downstream facts", async () => {
+describe.each(Object.keys(PATHS) as Array<keyof typeof PATHS>)("a stale reviewed read after a restart (%s)", (path) => {
+  it.each(RESTARTS)(
+    "INV-1: INV-8: refuses retired $name when the downstream is unavailable",
+    async ({ version, fresh, listing }) => {
       const storage = memoryStorage();
-      await seedThingsCatalog(storage, await mainEraListing(), { version: 2, fresh: true });
-      const calls: string[] = [];
-      const app = deployment(PATHS[path](await currentDigest(), calls), storage);
+      await seedThingsCatalog(storage, await listing(), { version, fresh });
+      const app = deployment(PATHS[path](await currentDigest(), [], true), storage);
       try {
-        expect(await app.searched("readOnly")).toEqual(["things.list_things"]);
-        const refused = await app.call("call_tool", { address: "things.scan_things", args: {} });
-        expect(JSON.stringify(refused.structuredContent)).toContain(
-          "destructive_tool_requires_approval",
-        );
-        expect(calls).toEqual([]);
-        expect(JSON.parse((await storage.get("catalog:things"))!).version).toBe(2);
+        expect(await app.searched("readOnly")).toEqual([]);
+        expect(await app.searched("approvalRequired")).toEqual([]);
+        for (const address of ["things.list_things", "things.peek_things", "things.scan_things"]) {
+          const refused = await app.call("call_tool", { address, args: {} });
+          expect(refused.isError).toBe(true);
+          expect(JSON.stringify(refused)).toContain("connector_call_failed");
+        }
       } finally {
         await app.connecta.close();
       }
-    });
-  },
-);
+    },
+  );
+
+  it("INV-1: ignores a fresh 0.28 catalog and classifies live downstream facts", async () => {
+    const storage = memoryStorage();
+    await seedThingsCatalog(storage, await mainEraListing(), { version: 2, fresh: true });
+    const calls: string[] = [];
+    const app = deployment(PATHS[path](await currentDigest(), calls), storage);
+    try {
+      expect(await app.searched("readOnly")).toEqual(["things.list_things"]);
+      const refused = await app.call("call_tool", { address: "things.scan_things", args: {} });
+      expect(JSON.stringify(refused.structuredContent)).toContain("destructive_tool_requires_approval");
+      expect(calls).toEqual([]);
+      expect(JSON.parse((await storage.get("catalog:things"))!).version).toBe(2);
+    } finally {
+      await app.connecta.close();
+    }
+  });
+});

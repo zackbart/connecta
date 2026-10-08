@@ -92,8 +92,7 @@ const GOLDEN: Record<string, unknown> = {
           "One complete zero-argument JavaScript async arrow: async () => { ... }. Use the provided connecta global to discover, call, and return the reduced answer. At most 65,536 UTF-8 bytes.",
       },
       diagnostics: {
-        description:
-          "Add request-local, payload-free timing and result-size summaries.",
+        description: "Add request-local, payload-free timing and result-size summaries.",
         type: "boolean",
       },
     },
@@ -104,17 +103,10 @@ const GOLDEN: Record<string, unknown> = {
 describe("meta-tool input schemas", () => {
   it("renders all six exactly as the golden records", async () => {
     const body = await readJsonRpc(
-      await mcpRpc(
-        makeDeployment({ executor: stubExecutor }),
-        "tools/list",
-        {},
-        { token: TOKEN },
-      ),
+      await mcpRpc(makeDeployment({ executor: stubExecutor }), "tools/list", {}, { token: TOKEN }),
     );
     const rendered = Object.fromEntries(
-      (body.result.tools as Array<{ name: string; inputSchema: unknown }>).map(
-        (tool) => [tool.name, tool.inputSchema],
-      ),
+      (body.result.tools as Array<{ name: string; inputSchema: unknown }>).map((tool) => [tool.name, tool.inputSchema]),
     );
     expect(Object.keys(rendered).sort()).toEqual(Object.keys(GOLDEN).sort());
     for (const [name, schema] of Object.entries(GOLDEN)) {
@@ -122,7 +114,6 @@ describe("meta-tool input schemas", () => {
     }
   });
 });
-
 
 describe("meta-tool output schemas", () => {
   it("INV-3: every meta-tool advertises a schema matching successful structured content", async () => {
@@ -133,17 +124,26 @@ describe("meta-tool output schemas", () => {
         skills: {},
         search_tools: { connector: "calc" },
         call_tool: { address: "calc.add", args: { a: 2, b: 3 }, resultMode: "value" },
-        call_destructive_tool: { address: "calc.add", args: { a: 2, b: 3 }, resultMode: "value", reason: "Test the direct-call output contract." },
+        call_destructive_tool: {
+          address: "calc.add",
+          args: { a: 2, b: 3 },
+          resultMode: "value",
+          reason: "Test the direct-call output contract.",
+        },
         authorize_connector: { connector: "calc" },
         execute_code: { code: "async () => null" },
       };
       expect(list.result.tools).toHaveLength(6);
       for (const tool of list.result.tools) {
         expect(tool.outputSchema, tool.name).toMatchObject({ type: "object", properties: expect.any(Object) });
-        const response = await readJsonRpc(await mcpRpc(app, "tools/call", { name: tool.name, arguments: cases[tool.name] }, { token: TOKEN }));
+        const response = await readJsonRpc(
+          await mcpRpc(app, "tools/call", { name: tool.name, arguments: cases[tool.name] }, { token: TOKEN }),
+        );
         expect(response.error, tool.name).toBeUndefined();
         expect(response.result.isError, tool.name).toBeFalsy();
-        expect(new Validator(tool.outputSchema).validate(response.result.structuredContent).valid, tool.name).toBe(true);
+        expect(new Validator(tool.outputSchema).validate(response.result.structuredContent).valid, tool.name).toBe(
+          true,
+        );
       }
       const search = list.result.tools.find((tool: { name: string }) => tool.name === "search_tools");
       expect(search.outputSchema).toEqual(CATALOG_SEARCH_RESULT_SCHEMA);
@@ -159,7 +159,13 @@ describe("meta-tool output schemas", () => {
       }
       const execute = list.result.tools.find((tool: { name: string }) => tool.name === "execute_code");
       expect(new Validator(execute.outputSchema).validate({ result: null }).valid).toBe(false);
-      expect(new Validator(execute.outputSchema).validate({ hostCalls: { attempted: -1, admitted: 0, succeeded: 0, failed: 0 } }).valid).toBe(false);
-    } finally { await app.close(); }
+      expect(
+        new Validator(execute.outputSchema).validate({
+          hostCalls: { attempted: -1, admitted: 0, succeeded: 0, failed: 0 },
+        }).valid,
+      ).toBe(false);
+    } finally {
+      await app.close();
+    }
   });
 });

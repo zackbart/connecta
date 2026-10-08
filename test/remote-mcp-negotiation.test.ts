@@ -6,7 +6,10 @@ import { NEGOTIATION_TTL_SECONDS } from "../src/storage/keys.js";
 import { connectorContext } from "./fixtures/misc.js";
 import type { Connector, ConnectorContext, KVStorage } from "../src/types.js";
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 function downstream(probeStatus?: number, ttlMs = 0) {
   const methods: string[] = [];
@@ -15,13 +18,24 @@ function downstream(probeStatus?: number, ttlMs = 0) {
     const request = JSON.parse(String(init.body));
     methods.push(request.method);
     if (request.method === "notifications/initialized") return new Response(null, { status: 202 });
-    if (request.method === "server/discover" && probeStatus) return new Response("withheld probe body", { status: probeStatus });
+    if (request.method === "server/discover" && probeStatus)
+      return new Response("withheld probe body", { status: probeStatus });
     const token = new Headers(init.headers).get("authorization") ?? "";
-    const result = request.method === "server/discover"
-      ? { supportedVersions: ["2026-07-28"], capabilities: { tools: {} }, instructions: `Instructions ${token}` }
-      : request.method === "initialize"
-        ? { protocolVersion: request.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "legacy", version: "1" } }
-        : { resultType: "complete", ttlMs, cacheScope: "private", tools: [{ name: "read", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }] };
+    const result =
+      request.method === "server/discover"
+        ? { supportedVersions: ["2026-07-28"], capabilities: { tools: {} }, instructions: `Instructions ${token}` }
+        : request.method === "initialize"
+          ? {
+              protocolVersion: request.params.protocolVersion,
+              capabilities: { tools: {} },
+              serverInfo: { name: "legacy", version: "1" },
+            }
+          : {
+              resultType: "complete",
+              ttlMs,
+              cacheScope: "private",
+              tools: [{ name: "read", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }],
+            };
     return Response.json({ jsonrpc: "2.0", id: request.id, result });
   });
   return methods;
@@ -29,8 +43,11 @@ function downstream(probeStatus?: number, ttlMs = 0) {
 
 async function list(connector: Connector, storage: KVStorage, context?: ConnectorContext) {
   const ctx = context ?? { ...connectorContext(storage), requestScope: {} };
-  try { return await connector.listTools(ctx); }
-  finally { await connector.closeScope?.(ctx); }
+  try {
+    return await connector.listTools(ctx);
+  } finally {
+    await connector.closeScope?.(ctx);
+  }
 }
 
 describe("downstream negotiation verdicts", () => {
@@ -43,11 +60,11 @@ describe("downstream negotiation verdicts", () => {
     await list(connector, storage);
     clock.mockReturnValue(now + NEGOTIATION_TTL_SECONDS * 500);
     await list(connector, storage);
-    expect(methods.filter(method => method === "server/discover")).toHaveLength(1);
+    expect(methods.filter((method) => method === "server/discover")).toHaveLength(1);
     expect(methods).not.toContain("initialize");
     clock.mockReturnValue(now + NEGOTIATION_TTL_SECONDS * 1000 + 1);
     await list(connector, storage);
-    expect(methods.filter(method => method === "server/discover")).toHaveLength(2);
+    expect(methods.filter((method) => method === "server/discover")).toHaveLength(2);
   });
 
   for (const status of [405, 500, 502, 503, 599]) {
@@ -57,9 +74,9 @@ describe("downstream negotiation verdicts", () => {
       const connector = remoteMcp("down", { url: "https://down.test/mcp" });
       await list(connector, storage);
       await list(connector, storage);
-      expect(methods.filter(method => method === "server/discover")).toHaveLength(1);
+      expect(methods.filter((method) => method === "server/discover")).toHaveLength(1);
       // A legacy session still initializes on its own fresh transport.
-      expect(methods.filter(method => method === "initialize")).toHaveLength(2);
+      expect(methods.filter((method) => method === "initialize")).toHaveLength(2);
     });
   }
 
@@ -78,28 +95,41 @@ describe("downstream negotiation verdicts", () => {
     const methods = downstream();
     const storage = memoryStorage();
     let token = "request-A-secret";
-    const connector = remoteMcp("down", { url: "https://down.test/mcp", auth: { type: "request", token: async () => token } });
+    const connector = remoteMcp("down", {
+      url: "https://down.test/mcp",
+      auth: { type: "request", token: async () => token },
+    });
     await list(connector, storage);
-    const first = await Promise.all((await storage.list("")).map(key => storage.get(key)));
+    const first = await Promise.all((await storage.list("")).map((key) => storage.get(key)));
     expect(first.join("")).not.toContain(token);
     expect(first.join("")).toContain("[redacted]");
     token = "request-B-secret";
     await list(connector, storage);
-    expect(methods.filter(method => method === "server/discover")).toHaveLength(2);
-    expect((await Promise.all((await storage.list("")).map(key => storage.get(key)))).join("")).not.toContain(token);
+    expect(methods.filter((method) => method === "server/discover")).toHaveLength(2);
+    expect((await Promise.all((await storage.list("")).map((key) => storage.get(key)))).join("")).not.toContain(token);
   });
 
   it("INV-4: isolates negotiation verdicts between admitted principals and pools", async () => {
     const methods = downstream();
     const storage = memoryStorage();
     const connector = remoteMcp("down", { url: "https://down.test/mcp" });
-    for (const [id, pool] of [["alice", "one"], ["bob", "one"], ["alice", "two"], ["alice", "one"]] as const) {
-      const ctx = attachCaller({ ...connectorContext(storage), requestScope: {} }, {
-        authenticated: true, identity: { actor: { kind: "user", id }, interactive: true }, pool,
-      });
+    for (const [id, pool] of [
+      ["alice", "one"],
+      ["bob", "one"],
+      ["alice", "two"],
+      ["alice", "one"],
+    ] as const) {
+      const ctx = attachCaller(
+        { ...connectorContext(storage), requestScope: {} },
+        {
+          authenticated: true,
+          identity: { actor: { kind: "user", id }, interactive: true },
+          pool,
+        },
+      );
       await list(connector, storage, ctx);
     }
-    expect(methods.filter(method => method === "server/discover")).toHaveLength(3);
+    expect(methods.filter((method) => method === "server/discover")).toHaveLength(3);
   });
 
   it("INV-5: binds OAuth verdicts to the resolved metadata, redirect and static client configuration", async () => {
@@ -110,12 +140,19 @@ describe("downstream negotiation verdicts", () => {
       await list(defaultClient, storage, { ...connectorContext(storage), publicUrl, requestScope: {} });
     }
     for (const clientId of ["one", "two", "one"]) {
-      const connector = remoteMcp("down", { url: "https://down.test/mcp", auth: { type: "oauth",
-        client: { issuer: "https://auth.example", clientId, clientSecret: "confidential-client-secret" } } });
+      const connector = remoteMcp("down", {
+        url: "https://down.test/mcp",
+        auth: {
+          type: "oauth",
+          client: { issuer: "https://auth.example", clientId, clientSecret: "confidential-client-secret" },
+        },
+      });
       await list(connector, storage);
     }
-    expect(methods.filter(method => method === "server/discover")).toHaveLength(4);
-    expect(methods.filter(method => method === "tools/list")).toHaveLength(4);
-    expect((await Promise.all((await storage.list("")).map(key => storage.get(key)))).join("")).not.toContain("confidential-client-secret");
+    expect(methods.filter((method) => method === "server/discover")).toHaveLength(4);
+    expect(methods.filter((method) => method === "tools/list")).toHaveLength(4);
+    expect((await Promise.all((await storage.list("")).map((key) => storage.get(key)))).join("")).not.toContain(
+      "confidential-client-secret",
+    );
   });
 });

@@ -5,21 +5,12 @@
 // bounded degradation to a marked `unknown`, observed output that says so, and
 // one rendering shared by search_tools, connecta.search, and connecta.describe.
 import { describe, expect, it } from "vitest";
-import {
-  MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
-  typescriptSignature,
-} from "../src/catalog.js";
+import { MAX_COMPACT_DISCOVERY_SCHEMA_BYTES, typescriptSignature } from "../src/catalog.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { buildSandboxProviders } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { notion } from "../src/providers/notion/index.js";
-import type {
-  Connector,
-  ConnectorContext,
-  ExecutorProvider,
-  JsonSchema,
-  ToolDef,
-} from "../src/types.js";
+import type { Connector, ConnectorContext, ExecutorProvider, JsonSchema, ToolDef } from "../src/types.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { BASE, textOf, type SearchResult } from "./fixtures/meta-tools.js";
 import {
@@ -89,7 +80,13 @@ function expectBalanced(text: string): void {
 
 function notionContext(): ConnectorContext {
   return {
-    storage: { get: async () => null, set: async () => {}, delete: async () => {}, list: async () => [], compareAndSet: async () => false },
+    storage: {
+      get: async () => null,
+      set: async () => {},
+      delete: async () => {},
+      list: async () => [],
+      compareAndSet: async () => false,
+    },
     logger: silentLogger,
     baseUrl: BASE,
     credential: {
@@ -101,9 +98,7 @@ function notionContext(): ConnectorContext {
 
 describe("TypeScript signatures over real provider schemas", () => {
   it("renders the smallest real shape exactly, with and without prose", () => {
-    expect(search(LINEAR_LIST_ISSUE_STATUSES).text).toBe(
-      "(args: { team: string }) => Promise<unknown>",
-    );
+    expect(search(LINEAR_LIST_ISSUE_STATUSES).text).toBe("(args: { team: string }) => Promise<unknown>");
     expect(describeSignature(LINEAR_LIST_ISSUE_STATUSES).text).toBe(
       "(args: { /** Team name or ID */ team: string }) => Promise<unknown>",
     );
@@ -122,9 +117,7 @@ describe("TypeScript signatures over real provider schemas", () => {
     expect(search(STRIPE_IMPLEMENTATION_PLANNER).text).toMatch(
       /^\(args: \{ stripe_context: string; livemode: boolean; guide_id\?: string;/,
     );
-    expect(describeSignature(STRIPE_IMPLEMENTATION_PLANNER).text).toMatch(
-      /^\(args: \{ \/\*\* ONLY pass a guide_id/,
-    );
+    expect(describeSignature(STRIPE_IMPLEMENTATION_PLANNER).text).toMatch(/^\(args: \{ \/\*\* ONLY pass a guide_id/);
   });
 
   it("speaks TypeScript where compact speaks JSON Schema", () => {
@@ -144,21 +137,22 @@ describe("TypeScript signatures over real provider schemas", () => {
     expect(text).toContain("cycle?: string | null;");
     expect(text).toContain('slaType?: "all" | "onlyBusinessDays" | null;');
     expect(text).toContain("estimate?: number | null;");
-    expect(text).toContain("links?: { url: string /* format \"uri\" */; title: string /* length >= 1 */ }[]");
+    expect(text).toContain('links?: { url: string /* format "uri" */; title: string /* length >= 1 */ }[]');
   });
 
   it("keeps Linear's capped enum honest: whole values, an exact count, and the flag", () => {
     const signature = search(LINEAR_LIST_ISSUES);
-    expect(signature.text).toMatch(/fields\?: \("id" \| "uuid" \| .* \| unknown \/\* \d+ enum values omitted \*\/\)\[\];/);
-    expect(signature.inputTruncated).toBe(true);
-    expect(bytes(signature.text)).toBeLessThanOrEqual(
-      MAX_COMPACT_DISCOVERY_SCHEMA_BYTES + SIGNATURE_FRAME_BYTES,
+    expect(signature.text).toMatch(
+      /fields\?: \("id" \| "uuid" \| .* \| unknown \/\* \d+ enum values omitted \*\/\)\[\];/,
     );
+    expect(signature.inputTruncated).toBe(true);
+    expect(bytes(signature.text)).toBeLessThanOrEqual(MAX_COMPACT_DISCOVERY_SCHEMA_BYTES + SIGNATURE_FRAME_BYTES);
   });
 
   it("renders every Notion tool with its declared input and output within budget", async () => {
-    const tools = await notion("workspace", { surface: "api", purpose: "Team knowledge base" })
-      .listTools(notionContext());
+    const tools = await notion("workspace", { surface: "api", purpose: "Team knowledge base" }).listTools(
+      notionContext(),
+    );
     expect(tools).toHaveLength(15);
     for (const tool of tools) {
       const input = tool.inputSchema ?? { type: "object" };
@@ -166,14 +160,10 @@ describe("TypeScript signatures over real provider schemas", () => {
       expect(found.text, tool.name).toMatch(/^\(args\??: /);
       expect(found.text, tool.name).not.toContain("Promise<unknown>");
       expect(found.inputTruncated, tool.name).toBe(false);
-      expect(bytes(found.text)).toBeLessThanOrEqual(
-        2 * MAX_COMPACT_DISCOVERY_SCHEMA_BYTES + SIGNATURE_FRAME_BYTES,
-      );
+      expect(bytes(found.text)).toBeLessThanOrEqual(2 * MAX_COMPACT_DISCOVERY_SCHEMA_BYTES + SIGNATURE_FRAME_BYTES);
       expectBalanced(found.text);
       const described = describeSignature(input, tool.outputSchema);
-      expect(bytes(described.text)).toBeLessThanOrEqual(
-        2 * MAX_DESCRIPTION_SHAPE_BYTES + SIGNATURE_FRAME_BYTES,
-      );
+      expect(bytes(described.text)).toBeLessThanOrEqual(2 * MAX_DESCRIPTION_SHAPE_BYTES + SIGNATURE_FRAME_BYTES);
       expectBalanced(described.text);
     }
     const self = required(tools.find((tool) => tool.name === "integration_get_self"));
@@ -182,9 +172,7 @@ describe("TypeScript signatures over real provider schemas", () => {
     );
     // Notion's property maps declare no properties: an open map, not `{}`.
     const schema = required(tools.find((tool) => tool.name === "integration_get_data_source_schema"));
-    expect(search(schema.inputSchema ?? {}, schema.outputSchema).text).toContain(
-      "properties: Record<string, unknown>",
-    );
+    expect(search(schema.inputSchema ?? {}, schema.outputSchema).text).toContain("properties: Record<string, unknown>");
   });
 
   it("stays structurally valid for every provider shape in both modes", () => {
@@ -208,9 +196,7 @@ describe("TypeScript signatures over pathological schemas", () => {
       );
       expectBalanced(found.text);
       const described = describeSignature(schema, schema);
-      expect(bytes(described.text), name).toBeLessThanOrEqual(
-        2 * MAX_DESCRIPTION_SHAPE_BYTES + SIGNATURE_FRAME_BYTES,
-      );
+      expect(bytes(described.text), name).toBeLessThanOrEqual(2 * MAX_DESCRIPTION_SHAPE_BYTES + SIGNATURE_FRAME_BYTES);
       expectBalanced(described.text);
     }
   });
@@ -225,7 +211,9 @@ describe("TypeScript signatures over pathological schemas", () => {
 
   it("caps a 5,000-value enum with whole values and an exact omitted count", () => {
     const signature = search(required(corpus.hugeEnum));
-    expect(signature.text).toMatch(/^\(args: \{ code: \("code_0" \| .* \| unknown \/\* (\d+) enum values omitted \*\/\) \}\)/);
+    expect(signature.text).toMatch(
+      /^\(args: \{ code: \("code_0" \| .* \| unknown \/\* (\d+) enum values omitted \*\/\) \}\)/,
+    );
     const shown = signature.text.match(/"code_\d+"/g)?.length ?? 0;
     const omitted = Number(signature.text.match(/(\d+) enum values omitted/)?.[1]);
     expect(shown + omitted).toBe(5_000);
@@ -234,22 +222,16 @@ describe("TypeScript signatures over pathological schemas", () => {
 
   it("renders $ref cycles, direct and mutual, as a marked unknown instead of recursing", () => {
     const direct = search(required(corpus.refCycle));
-    expect(direct.text).toBe(
-      "(args: { value: string; children?: unknown /* recursive */[] }) => Promise<unknown>",
-    );
+    expect(direct.text).toBe("(args: { value: string; children?: unknown /* recursive */[] }) => Promise<unknown>");
     expect(direct.inputTruncated).toBe(true);
     const mutual = search(required(corpus.mutualRefCycle));
-    expect(mutual.text).toBe(
-      "(args: { a?: { b?: { a?: unknown /* recursive */ } } }) => Promise<unknown>",
-    );
+    expect(mutual.text).toBe("(args: { a?: { b?: { a?: unknown /* recursive */ } } }) => Promise<unknown>");
     expect(mutual.inputTruncated).toBe(true);
   });
 
   it("never prints a definition name as though it were a declared type", () => {
     const signature = search(required(corpus.unresolvedRef));
-    expect(signature.text).toBe(
-      "(args: { owner?: unknown /* unresolved */ }) => Promise<unknown>",
-    );
+    expect(signature.text).toBe("(args: { owner?: unknown /* unresolved */ }) => Promise<unknown>");
     expect(signature.inputTruncated).toBe(true);
   });
 
@@ -257,9 +239,7 @@ describe("TypeScript signatures over pathological schemas", () => {
     const signature = search(required(corpus.composites2020));
     expect(signature.text).toContain("point?: [number, number];");
     expect(signature.text).toContain('tagged?: ["tag", ...number[]];');
-    expect(signature.text).toContain(
-      'shipping?: { method?: "post" | "pickup"; address?: string } /* conditional */;',
-    );
+    expect(signature.text).toContain('shipping?: { method?: "post" | "pickup"; address?: string } /* conditional */;');
     expect(signature.text).toContain("billing?: { card?: string } /* conditional */;");
     expect(signature.text).toContain("tree?: unknown /* unresolved */;");
     expect(signature.text).toContain("merged?: { id: string } & { name?: string }");
@@ -281,9 +261,7 @@ describe("TypeScript signatures over pathological schemas", () => {
     expect(found).toContain('"kebab-key"?: string;');
     expect(found).toContain("union?: ({ x?: string } | number)[];");
     const described = describeSignature(schema).text;
-    expect(described).toContain(
-      '/** closes *\\/ the comment } ) ] and opens /* another */ "*/ evil"?: string;',
-    );
+    expect(described).toContain('/** closes *\\/ the comment } ) ] and opens /* another */ "*/ evil"?: string;');
     // A stray `)` in prose must not hide the real union from grouping.
     expect(described).toContain("union?: ({ /** b) c) */ x?: string } | number)[];");
     expectBalanced(described);
@@ -333,9 +311,7 @@ function corpusConnector(): Connector {
 
 async function programFns(registry: ReturnType<typeof makeRegistry>) {
   const providers = await buildSandboxProviders(registry, BASE, silentLogger);
-  const provider: ExecutorProvider = required(
-    providers.find((item) => item.name === "connecta"),
-  );
+  const provider: ExecutorProvider = required(providers.find((item) => item.name === "connecta"));
   return provider.fns;
 }
 
@@ -387,9 +363,7 @@ describe("TypeScript signatures across the discovery surfaces", () => {
       format: "typescript",
     })) as { tools: Row[] };
     expect(program.tools).toEqual(service);
-    expect(required(service[0]).signature).toBe(
-      "(args: { /** Team name or ID */ team: string }) => Promise<unknown>",
-    );
+    expect(required(service[0]).signature).toBe("(args: { /** Team name or ID */ team: string }) => Promise<unknown>");
     expect(required(service[1]).signature).toBe(
       describeSignature(STRIPE_LIST_ACCOUNTS_INPUT, STRIPE_LIST_ACCOUNTS_OUTPUT).text,
     );
@@ -429,9 +403,7 @@ describe("TypeScript signatures across the discovery surfaces", () => {
       format: "typescript",
     });
     expect(required(described).outputSchemaSource).toBe("observed");
-    expect(required(described).signature).toContain(
-      "Promise</* observed, not declared */ {",
-    );
+    expect(required(described).signature).toContain("Promise</* observed, not declared */ {");
   });
 
   it("carries truncation as the existing flags and guide reason", async () => {

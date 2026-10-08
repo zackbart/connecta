@@ -13,13 +13,7 @@ import { z } from "zod";
 import { vettedCatalog } from "../src/catalog-drift.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type {
-  Connector,
-  ConnectorContext,
-  KVStorage,
-  ToolClassification,
-  ToolDef,
-} from "../src/types.js";
+import type { Connector, ConnectorContext, KVStorage, ToolClassification, ToolDef } from "../src/types.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { connectorContext } from "./fixtures/misc.js";
 import { thingsDeployment } from "./fixtures/things-deployment.js";
@@ -33,31 +27,35 @@ type Name = (typeof NAMES)[number];
  * records its name when it runs.
  */
 function downstream(calls: string[], offline = false) {
-  return httpDownstream((mcp) => {
-    for (const name of NAMES) {
-      mcp.registerTool(
-        name,
-        {
-          description: `Things: ${name}`,
-          inputSchema: z.object({ id: z.string().optional() }),
-          ...(name === "list_things" ? { annotations: { readOnlyHint: true } } : {}),
-        },
-        async () => {
-          calls.push(name);
-          return { content: [{ type: "text", text: name }] };
-        },
-      );
-    }
-    if (offline) mcp.server.setRequestHandler("tools/list", async () => { throw new Error("listing unavailable"); });
-  }, { catalogTtlMs: 300_000 });
+  return httpDownstream(
+    (mcp) => {
+      for (const name of NAMES) {
+        mcp.registerTool(
+          name,
+          {
+            description: `Things: ${name}`,
+            inputSchema: z.object({ id: z.string().optional() }),
+            ...(name === "list_things" ? { annotations: { readOnlyHint: true } } : {}),
+          },
+          async () => {
+            calls.push(name);
+            return { content: [{ type: "text", text: name }] };
+          },
+        );
+      }
+      if (offline)
+        mcp.server.setRequestHandler("tools/list", async () => {
+          throw new Error("listing unavailable");
+        });
+    },
+    { catalogTtlMs: 300_000 },
+  );
 }
 
 type Calls = string[] | "unavailable";
 
 function transport(calls: Calls) {
-  return calls === "unavailable"
-    ? downstream([], true).transport
-    : downstream(calls).transport;
+  return calls === "unavailable" ? downstream([], true).transport : downstream(calls).transport;
 }
 
 /** What the downstream lists, with nothing connecta derived from it. */
@@ -95,8 +93,7 @@ const WRAPPERS = {
 };
 
 /** No review at all: the downstream's annotations are its own claims. */
-const unreviewed = (calls: Calls): Connector =>
-  remoteMcp("things", { url: URL, _transportFactory: transport(calls) });
+const unreviewed = (calls: Calls): Connector => remoteMcp("things", { url: URL, _transportFactory: transport(calls) });
 
 type Decorator = (connector: Connector) => Connector;
 
@@ -159,9 +156,7 @@ const claimingMakeIsRead: Decorator = (c) => ({
   ...c,
   listTools: async (ctx) =>
     (await c.listTools(ctx)).map((tool) =>
-      tool.name === "make_thing"
-        ? { ...tool, annotations: { ...tool.annotations, readOnlyHint: true } }
-        : tool,
+      tool.name === "make_thing" ? { ...tool, annotations: { ...tool.annotations, readOnlyHint: true } } : tool,
     ),
 });
 
@@ -212,11 +207,15 @@ function retainingDecorator(): { decorate: Decorator; claimAllRead: () => void }
 }
 
 async function persistedTools(storage: KVStorage): Promise<ToolDef[]> {
-  const roots = (await storage.list("response-cache:v1:things:")).filter(key => !key.includes(":chunk:") && !key.endsWith(":generation") && !key.includes(":refresh-digest:"));
+  const roots = (await storage.list("response-cache:v1:things:")).filter(
+    (key) => !key.includes(":chunk:") && !key.endsWith(":generation") && !key.includes(":refresh-digest:"),
+  );
   expect(roots).toHaveLength(1);
   const root = roots[0]!;
   const manifest = JSON.parse((await storage.get(root))!) as { revision: string; chunkCount: number };
-  const chunks = await Promise.all(Array.from({ length: manifest.chunkCount }, (_, i) => storage.get(`${root}:chunk:${manifest.revision}:${i}`)));
+  const chunks = await Promise.all(
+    Array.from({ length: manifest.chunkCount }, (_, i) => storage.get(`${root}:chunk:${manifest.revision}:${i}`)),
+  );
   return JSON.parse(chunks.join("")).tools as ToolDef[];
 }
 
@@ -237,14 +236,11 @@ async function expectServed(
   for (const name of writes) {
     const refused = await app.call("call_tool", { address: address(name), args: {} });
     expect(refused.isError).toBe(true);
-    expect(JSON.stringify(refused.structuredContent)).toContain(
-      "destructive_tool_requires_approval",
-    );
+    expect(JSON.stringify(refused.structuredContent)).toContain("destructive_tool_requires_approval");
   }
   if (calls) {
     for (const name of reads) {
-      expect((await app.call("call_tool", { address: address(name), args: {} })).isError)
-        .toBeFalsy();
+      expect((await app.call("call_tool", { address: address(name), args: {} })).isError).toBeFalsy();
     }
     expect(calls.slice(before)).toEqual(reads);
   }
@@ -379,11 +375,13 @@ describe.each(Object.keys(WRAPPERS) as Array<keyof typeof WRAPPERS>)(
           annotations: { readOnlyHint: true },
           inputSchema: { properties: { id: { type: "string" } } },
         });
-        expect(ran.described.tools).toEqual([expect.objectContaining({
-          address: "things.list_things",
-          annotations: expect.objectContaining({ readOnlyHint: true }),
-          inputSchema: expect.objectContaining({ properties: expect.objectContaining({ id: { type: "string" } }) }),
-        })]);
+        expect(ran.described.tools).toEqual([
+          expect.objectContaining({
+            address: "things.list_things",
+            annotations: expect.objectContaining({ readOnlyHint: true }),
+            inputSchema: expect.objectContaining({ properties: expect.objectContaining({ id: { type: "string" } }) }),
+          }),
+        ]);
       } finally {
         await app.connecta.close();
       }
@@ -510,16 +508,11 @@ describe.each(Object.keys(WRAPPERS) as Array<keyof typeof WRAPPERS>)(
         const dropped = await before.call("call_tool", { address: "things.drop_thing", args: {} });
         expect(dropped.isError).toBe(true);
         expect(calls).not.toContain("drop_thing");
-        expect(await persistedTools(storage)).toEqual(
-          await downstreamListing(),
-        );
+        expect(await persistedTools(storage)).toEqual(await downstreamListing());
       } finally {
         await before.connecta.close();
       }
-      const after = thingsDeployment(
-        dropping(wrap({ ...review, make_thing: "write" }, "unavailable")),
-        storage,
-      );
+      const after = thingsDeployment(dropping(wrap({ ...review, make_thing: "write" }, "unavailable")), storage);
       try {
         await expectServed(after, { reads: ["list_things"], writes: ["make_thing"] });
       } finally {
@@ -540,8 +533,7 @@ describe.each(Object.keys(WRAPPERS) as Array<keyof typeof WRAPPERS>)(
         calls,
       );
       // The claim is persisted as the decorator's fact, never as a verdict.
-      expect(persisted.find((tool) => tool.name === "make_thing")?.annotations)
-        .toBeUndefined();
+      expect(persisted.find((tool) => tool.name === "make_thing")?.annotations).toBeUndefined();
     });
 
     it("INV-1: keeps a reviewed write a write when a decorator marks its listing read-only in place", async () => {
@@ -567,8 +559,7 @@ describe.each(Object.keys(WRAPPERS) as Array<keyof typeof WRAPPERS>)(
         await expectServed(app, served, calls);
         // A write dispatched with approval hands the decorator its definition.
         expect(
-          (await app.call("call_destructive_tool", { address: "things.make_thing", args: {} }))
-            .isError,
+          (await app.call("call_destructive_tool", { address: "things.make_thing", args: {} })).isError,
         ).toBeFalsy();
         claimAllRead();
         // The unreviewed drop_thing included: the cached facts are the

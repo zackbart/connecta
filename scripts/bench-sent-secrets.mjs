@@ -31,4 +31,6 @@ const warmed = performance.now();
 secrets.redact(rows);
 const warmMs = performance.now() - warmed;
 if (result[0].description !== "[redacted]") throw new Error("Benchmark redaction failed");
-process.stdout.write(`${JSON.stringify({ rows: rows.length, vaultSecrets: Object.keys(values).length, coldMs, warmMs })}\n`);
+process.stdout.write(
+  `${JSON.stringify({ rows: rows.length, vaultSecrets: Object.keys(values).length, coldMs, warmMs })}\n`,
+);

@@ -33,7 +33,7 @@ This repository is deployment configuration, not a copy of Connecta itself.
   shape.
 - Run `npm run typecheck` after configuration changes. With the server running,
   run `CONNECTA_TOKEN=... npm run doctor` before calling setup complete.
-- `Dockerfile` and `docker-compose.yml` containerize *this* source; they are
+- `Dockerfile` and `docker-compose.yml` containerize _this_ source; they are
   the same deployment, not a second one. Configuration belongs in `.env` and
   `src/connecta.config.ts`, never in a divergent container entrypoint.
 - Moving this deployment to a newer Connecta is its own procedure, and it is

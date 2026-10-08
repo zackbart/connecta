@@ -1,17 +1,9 @@
 import { Deferred, Duration, Effect } from "effect";
 import { admit, provideAdmissionProgram } from "./runtime/admission.js";
 import { fromSignal, runEdge } from "./runtime/run.js";
-import type {
-  AdmittingExecutor,
-  AdmissionSnapshot,
-  Executor,
-  ExecutorLease,
-} from "./types.js";
+import type { AdmittingExecutor, AdmissionSnapshot, Executor, ExecutorLease } from "./types.js";
 
-export type ExecutorAdmissionErrorCode =
-  | "executor_overloaded"
-  | "executor_cancelled"
-  | "executor_closed";
+export type ExecutorAdmissionErrorCode = "executor_overloaded" | "executor_cancelled" | "executor_closed";
 
 /**
  * A stable, machine-readable admission failure. Overload is retryable; caller
@@ -29,11 +21,7 @@ export class ExecutorAdmissionError extends Error {
     super(message);
     this.name = "ExecutorAdmissionError";
     this.retryable = code === "executor_overloaded";
-    if (
-      opts.retryAfterMs !== undefined &&
-      Number.isFinite(opts.retryAfterMs) &&
-      opts.retryAfterMs >= 0
-    ) {
+    if (opts.retryAfterMs !== undefined && Number.isFinite(opts.retryAfterMs) && opts.retryAfterMs >= 0) {
       this.retryAfterMs = Math.trunc(opts.retryAfterMs);
     }
   }
@@ -121,21 +109,11 @@ export class AdmissionController {
 
   constructor(options: AdmissionControllerOptions) {
     this.concurrency = positiveWhole(options.concurrency, "concurrency");
-    this.maxQueueSize = nonNegativeWhole(
-      options.maxQueueSize,
-      "maxQueueSize",
-    );
-    this.queueTimeoutMs = positiveWhole(
-      options.queueTimeoutMs,
-      "queueTimeoutMs",
-    );
-    this.retryAfterMs = nonNegativeWhole(
-      options.retryAfterMs ?? this.queueTimeoutMs,
-      "retryAfterMs",
-    );
-    this.maxDurationMs = options.maxDurationMs === undefined
-      ? undefined
-      : positiveWhole(options.maxDurationMs, "maxDurationMs");
+    this.maxQueueSize = nonNegativeWhole(options.maxQueueSize, "maxQueueSize");
+    this.queueTimeoutMs = positiveWhole(options.queueTimeoutMs, "queueTimeoutMs");
+    this.retryAfterMs = nonNegativeWhole(options.retryAfterMs ?? this.queueTimeoutMs, "retryAfterMs");
+    this.maxDurationMs =
+      options.maxDurationMs === undefined ? undefined : positiveWhole(options.maxDurationMs, "maxDurationMs");
     if (this.maxDurationMs !== undefined && this.maxDurationMs > 2_147_483_647) {
       throw new TypeError("maxDurationMs must be at most 2,147,483,647 milliseconds.");
     }
@@ -186,12 +164,7 @@ export class AdmissionController {
       this.closedTotal++;
       Deferred.doneUnsafe(
         waiter.outcome,
-        Effect.fail(
-          new ExecutorAdmissionError(
-            "executor_closed",
-            "Executor is shutting down.",
-          ),
-        ),
+        Effect.fail(new ExecutorAdmissionError("executor_closed", "Executor is shutting down.")),
       );
     }
   }
@@ -204,17 +177,17 @@ export class AdmissionController {
 
   private makeLease(waitMs: number): AdmissionLease {
     const id = Symbol("admission lease");
-    const record: { expiresAt?: number } = this.maxDurationMs !== undefined
-      ? { expiresAt: Date.now() + this.maxDurationMs }
-      : {};
+    const record: { expiresAt?: number } =
+      this.maxDurationMs !== undefined ? { expiresAt: Date.now() + this.maxDurationMs } : {};
     this.leases.set(id, record);
     return {
       waitMs,
-      remainingMs: () => !this.leases.has(id)
-        ? 0
-        : record.expiresAt === undefined
-          ? undefined
-          : Math.max(0, record.expiresAt - Date.now()),
+      remainingMs: () =>
+        !this.leases.has(id)
+          ? 0
+          : record.expiresAt === undefined
+            ? undefined
+            : Math.max(0, record.expiresAt - Date.now()),
       release: () => {
         if (!this.leases.delete(id)) return;
         this.releaseSlot();
@@ -250,9 +223,10 @@ export class AdmissionController {
       if (now - waiter.queuedAt < this.queueTimeoutMs) continue;
       this.waiters.splice(index, 1);
       this.rejectedTotal++;
-      Deferred.doneUnsafe(waiter.outcome, Effect.fail(this.overloaded(
-        `Executor admission timed out after ${this.queueTimeoutMs}ms.`,
-      )));
+      Deferred.doneUnsafe(
+        waiter.outcome,
+        Effect.fail(this.overloaded(`Executor admission timed out after ${this.queueTimeoutMs}ms.`)),
+      );
     }
   }
 
@@ -276,9 +250,7 @@ export class AdmissionController {
     }
     // A queued request's own timer reaps the earliest admitted lease. A
     // fallback check covers a briefly empty lease map after a handoff.
-    return Number.isFinite(next)
-      ? Math.max(1, next - Date.now())
-      : 250;
+    return Number.isFinite(next) ? Math.max(1, next - Date.now()) : 250;
   }
 
   private remove(waiter: Waiter): boolean {
@@ -316,20 +288,12 @@ export class AdmissionController {
         controller.reapExpired();
         if (controller.closed) {
           controller.closedTotal++;
-          return Effect.fail(
-            new ExecutorAdmissionError(
-              "executor_closed",
-              "Executor is shutting down.",
-            ),
-          );
+          return Effect.fail(new ExecutorAdmissionError("executor_closed", "Executor is shutting down."));
         }
         if (signal?.aborted) {
           controller.cancelledTotal++;
           return Effect.fail(
-            new ExecutorAdmissionError(
-              "executor_cancelled",
-              "Execution was cancelled before admission.",
-            ),
+            new ExecutorAdmissionError("executor_cancelled", "Execution was cancelled before admission."),
           );
         }
         if (controller.active < controller.concurrency) {
@@ -339,7 +303,11 @@ export class AdmissionController {
         }
         if (!wait) {
           controller.rejectedTotal++;
-          return Effect.fail(controller.overloaded("No executor slot is free for nested execution. Invoke the operation directly, after this program ends."));
+          return Effect.fail(
+            controller.overloaded(
+              "No executor slot is free for nested execution. Invoke the operation directly, after this program ends.",
+            ),
+          );
         }
         if (controller.waiters.length >= controller.maxQueueSize) {
           controller.rejectedTotal++;
@@ -373,20 +341,19 @@ export class AdmissionController {
             Effect.andThen(
               giveUp(
                 () => controller.rejectedTotal++,
-                () =>
-                  controller.overloaded(
-                    `Executor admission timed out after ${controller.queueTimeoutMs}ms.`,
-                  ),
+                () => controller.overloaded(`Executor admission timed out after ${controller.queueTimeoutMs}ms.`),
               ),
             ),
           ),
         ];
         if (controller.maxDurationMs !== undefined) {
-          contenders.push(Effect.forever(
-            Effect.suspend(() => Effect.sleep(Duration.millis(controller.nextReapDelay()))).pipe(
-              Effect.andThen(Effect.sync(() => controller.reapExpired())),
+          contenders.push(
+            Effect.forever(
+              Effect.suspend(() => Effect.sleep(Duration.millis(controller.nextReapDelay()))).pipe(
+                Effect.andThen(Effect.sync(() => controller.reapExpired())),
+              ),
             ),
-          ));
+          );
         }
         if (signal) {
           contenders.push(
@@ -394,32 +361,21 @@ export class AdmissionController {
               Effect.catch(() =>
                 giveUp(
                   () => controller.cancelledTotal++,
-                  () =>
-                    new ExecutorAdmissionError(
-                      "executor_cancelled",
-                      "Execution was cancelled while queued.",
-                    ),
+                  () => new ExecutorAdmissionError("executor_cancelled", "Execution was cancelled while queued."),
                 ),
               ),
             ),
           );
         }
-        return Effect.raceAllFirst(contenders).pipe(
-          Effect.onInterrupt(() => controller.cleanup(waiter)),
-        );
+        return Effect.raceAllFirst(contenders).pipe(Effect.onInterrupt(() => controller.cleanup(waiter)));
       }),
     );
   }
 }
 
 /** Preserve the one-method Workers seam while recognizing richer Node executors. */
-export function isAdmittingExecutor(
-  executor: Executor,
-): executor is AdmittingExecutor {
-  return (
-    "acquire" in executor &&
-    typeof (executor as { acquire?: unknown }).acquire === "function"
-  );
+export function isAdmittingExecutor(executor: Executor): executor is AdmittingExecutor {
+  return "acquire" in executor && typeof (executor as { acquire?: unknown }).acquire === "function";
 }
 
 /** Terminal- and JSON-safe upper bound for an executor's self-reported name. */
@@ -458,10 +414,7 @@ export function executorName(executor: Executor): string | undefined {
  * admission contract as the built-in Node executor. The wrapper owns only the
  * queue; closing the underlying runtime remains the Connecta lifecycle's job.
  */
-export function withExecutorAdmission(
-  executor: Executor,
-  admission: AdmissionController,
-): AdmittingExecutor {
+export function withExecutorAdmission(executor: Executor, admission: AdmissionController): AdmittingExecutor {
   return {
     async acquire(options = {}): Promise<ExecutorLease> {
       const token = await admission.acquire(options);

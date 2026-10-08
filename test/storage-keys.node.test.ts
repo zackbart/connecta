@@ -30,12 +30,7 @@ import {
 
 const ts = createRequire(import.meta.url)("typescript") as typeof import("typescript");
 const SRC = fileURLToPath(new URL("../src/", import.meta.url));
-const SCOPE_PREFIXES = [
-  scopes.principal(""),
-  scopes.connector(""),
-  scopes.results,
-  scopes.subject(""),
-];
+const SCOPE_PREFIXES = [scopes.principal(""), scopes.connector(""), scopes.results, scopes.subject("")];
 
 describe("storage key families", () => {
   it("declare a version, codec, and TTL policy each, under unique names", () => {
@@ -57,9 +52,9 @@ describe("storage key families", () => {
 
   it("never claim overlapping keys within one scope", () => {
     for (const scope of ["root", "partition", "connector"] as const) {
-      const claimed = KEY_FAMILIES
-        .filter((family) => family.scope === scope)
-        .flatMap((family) => family.prefixes.map((prefix) => ({ family: family.name, prefix })));
+      const claimed = KEY_FAMILIES.filter((family) => family.scope === scope).flatMap((family) =>
+        family.prefixes.map((prefix) => ({ family: family.name, prefix })),
+      );
       // Root keys share the root with the scopes core nests inside it.
       if (scope === "root") {
         claimed.push(...SCOPE_PREFIXES.map((prefix) => ({ family: "scope", prefix })));
@@ -67,8 +62,7 @@ describe("storage key families", () => {
       for (const a of claimed) {
         for (const b of claimed) {
           if (a === b || a.family === b.family) continue;
-          expect(b.prefix.startsWith(a.prefix), `${a.family} ${a.prefix} vs ${b.family} ${b.prefix}`)
-            .toBe(false);
+          expect(b.prefix.startsWith(a.prefix), `${a.family} ${a.prefix} vs ${b.family} ${b.prefix}`).toBe(false);
         }
       }
     }
@@ -76,14 +70,23 @@ describe("storage key families", () => {
 
   it("build keys inside the prefixes their families declare", () => {
     const within = (family: { prefixes: readonly string[] }, key: string) =>
-      expect(family.prefixes.some((prefix) => key.startsWith(prefix)), key).toBe(true);
+      expect(
+        family.prefixes.some((prefix) => key.startsWith(prefix)),
+        key,
+      ).toBe(true);
     within(resultKeys.family, resultKeys.chunk("id", 0));
     within(resultKeys.family, resultKeys.chunk("id", 3));
     within(stashLedgerKeys.family, stashLedgerKeys.ledger);
     const responseNamespace = responseCacheKeys.namespace("svc", "config", "generation");
     const responseEntry = responseCacheKeys.entry(responseNamespace, "partition");
-    for (const key of [responseCacheKeys.prefix("svc"), responseCacheKeys.generation("svc"), responseNamespace,
-      responseEntry, responseCacheKeys.chunk(responseEntry, "revision", 0)]) within(responseCacheKeys.family, key);
+    for (const key of [
+      responseCacheKeys.prefix("svc"),
+      responseCacheKeys.generation("svc"),
+      responseNamespace,
+      responseEntry,
+      responseCacheKeys.chunk(responseEntry, "revision", 0),
+    ])
+      within(responseCacheKeys.family, key);
     within(catalogKeys.family, catalogKeys.manifest("svc"));
     within(catalogKeys.family, catalogKeys.chunk("svc", "rev", 1));
     within(oauthHandoffKeys.family, oauthHandoffKeys.handoff("svc", "hash"));
@@ -105,8 +108,9 @@ describe("storage key families", () => {
     within(oauthV2Keys.family, oauthV2Keys.value(oauthV2Keys.field.tokens, null));
     // A credential sits in its connector's namespace, under a principal when personal.
     expect(credentialKeys.credential("svc")).toBe(`${scopes.connector("svc")}credential:v1`);
-    expect(credentialKeys.credential("svc", "owner"))
-      .toBe(`${scopes.principal("owner")}${scopes.connector("svc")}credential:v1`);
+    expect(credentialKeys.credential("svc", "owner")).toBe(
+      `${scopes.principal("owner")}${scopes.connector("svc")}credential:v1`,
+    );
   });
 
   it("name the family of every key their builders write, in every scope", () => {
@@ -119,7 +123,10 @@ describe("storage key families", () => {
       [stashLedgerKeys.ledger, "result-stash-ledger"],
       [catalogKeys.manifest("svc"), "catalog"],
       [responseCacheKeys.generation("svc"), "response-cache"],
-      [responseCacheKeys.entry(responseCacheKeys.namespace("svc", "config", "generation"), "partition"), "response-cache"],
+      [
+        responseCacheKeys.entry(responseCacheKeys.namespace("svc", "config", "generation"), "partition"),
+        "response-cache",
+      ],
       [personal(catalogKeys.chunk("svc", "rev", 1)), "catalog"],
       [oauthHandoffKeys.handoff("svc", "hash"), "oauth-handoff"],
       [accessTokenKeys.record("id"), "access-token"],
@@ -191,7 +198,7 @@ describe("storage key families", () => {
   it.each([
     ["a split prefix", `storage.set("result" + ":" + id, value);`],
     ["a prefix in pieces outside a call", `const key = "res" + "ult:" + id;`],
-    ["a template of constants", "const key = `${\"result\"}:${id}`;"],
+    ["a template of constants", 'const key = `${"result"}:${id}`;'],
     ["a prefix held in a constant", `const P = "result"; const key = \`\${P}:\${id}\`;`],
     ["a scope prefix after a variable", `kv.get(partition + "principal:" + id);`],
     ["a literal key at a storage call", `storage.get("cursor");`],
@@ -207,16 +214,16 @@ describe("storage key families", () => {
     ["a builder through a constant", `const key = stashLedgerKeys.ledger; storageGet(key);`],
     ["a literal on something that is not storage", `cache.get("result");`],
     ["an unrelated string", `const label = "results" + " page";`],
-    ["a parameter sharing a constant's name", `const get = (key) => kv.get(key); const put = () => { const key = "x:" + id; };`],
+    [
+      "a parameter sharing a constant's name",
+      `const get = (key) => kv.get(key); const put = () => { const key = "x:" + id; };`,
+    ],
   ])("accept %s", (_, code) => {
     expect(strayKeys("fixture.ts", code)).toEqual([]);
   });
 });
 
-const PREFIXES = [
-  ...KEY_FAMILIES.flatMap((family) => family.prefixes),
-  ...SCOPE_PREFIXES,
-];
+const PREFIXES = [...KEY_FAMILIES.flatMap((family) => family.prefixes), ...SCOPE_PREFIXES];
 /** Storage operations whose first argument is a key. */
 const KEY_METHODS = new Set(["get", "set", "delete", "list", "compareAndSet"]);
 const KEY_HELPERS = new Set(["storageGet", "storageSet", "storageDelete", "storageCompareAndSet"]);
@@ -241,10 +248,12 @@ function strayKeys(name: string, text: string): string[] {
   const declared = new Map<string, Expression | null>();
   const collect = (node: Node): void => {
     if ((ts.isVariableDeclaration(node) || ts.isParameter(node)) && ts.isIdentifier(node.name)) {
-      const constant = ts.isVariableDeclaration(node) && node.initializer &&
-        ts.isVariableDeclarationList(node.parent) && node.parent.flags & ts.NodeFlags.Const;
-      declared.set(node.name.text,
-        declared.has(node.name.text) || !constant ? null : node.initializer ?? null);
+      const constant =
+        ts.isVariableDeclaration(node) &&
+        node.initializer &&
+        ts.isVariableDeclarationList(node.parent) &&
+        node.parent.flags & ts.NodeFlags.Const;
+      declared.set(node.name.text, declared.has(node.name.text) || !constant ? null : (node.initializer ?? null));
     }
     ts.forEachChild(node, collect);
   };
@@ -258,8 +267,10 @@ function strayKeys(name: string, text: string): string[] {
       return [...pieces(node.left, seen), ...pieces(node.right, seen)];
     }
     if (ts.isTemplateExpression(node)) {
-      return [node.head.text, ...node.templateSpans.flatMap((span) =>
-        [...pieces(span.expression, seen), span.literal.text])];
+      return [
+        node.head.text,
+        ...node.templateSpans.flatMap((span) => [...pieces(span.expression, seen), span.literal.text]),
+      ];
     }
     if (ts.isIdentifier(node) && !seen.has(node.text)) {
       const bound = declared.get(node.text);
@@ -268,11 +279,16 @@ function strayKeys(name: string, text: string): string[] {
     return [null];
   };
   const runs = (node: Expression): string[] =>
-    pieces(node).reduce<string[]>((all, piece) => {
-      if (piece === null) all.push("");
-      else all[all.length - 1] += piece;
-      return all;
-    }, [""]).filter(Boolean);
+    pieces(node)
+      .reduce<string[]>(
+        (all, piece) => {
+          if (piece === null) all.push("");
+          else all[all.length - 1] += piece;
+          return all;
+        },
+        [""],
+      )
+      .filter(Boolean);
 
   const offenders: string[] = [];
   const report = (node: Node, problem: string) => {
@@ -282,12 +298,18 @@ function strayKeys(name: string, text: string): string[] {
   const visit = (node: Node): void => {
     // Outermost string expressions only: a nested one is part of its parent's runs.
     const parent = node.parent as Node | undefined;
-    const nested = parent !== undefined && (ts.isParenthesizedExpression(parent) ||
-      ts.isTemplateSpan(parent) ||
-      (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.PlusToken));
-    if (!nested && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) ||
-      ts.isTemplateExpression(node) ||
-      (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken))) {
+    const nested =
+      parent !== undefined &&
+      (ts.isParenthesizedExpression(parent) ||
+        ts.isTemplateSpan(parent) ||
+        (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.PlusToken));
+    if (
+      !nested &&
+      (ts.isStringLiteral(node) ||
+        ts.isNoSubstitutionTemplateLiteral(node) ||
+        ts.isTemplateExpression(node) ||
+        (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken))
+    ) {
       for (const run of runs(node)) {
         const match = PREFIXES.find((prefix) => run.startsWith(prefix) || run.startsWith(`:${prefix}`));
         if (match) report(node, `spells "${match}"`);
@@ -307,9 +329,11 @@ function isStorageCall(callee: import("typescript").Expression): boolean {
   if (ts.isIdentifier(callee)) return KEY_HELPERS.has(callee.text);
   if (!ts.isPropertyAccessExpression(callee) || !KEY_METHODS.has(callee.name.text)) return false;
   const receiver = callee.expression;
-  const last = ts.isPropertyAccessExpression(receiver) ? receiver.name.text
-    : ts.isIdentifier(receiver) ? receiver.text
-    : undefined;
+  const last = ts.isPropertyAccessExpression(receiver)
+    ? receiver.name.text
+    : ts.isIdentifier(receiver)
+      ? receiver.text
+      : undefined;
   return last !== undefined && STORAGE_RECEIVER.test(last);
 }
 

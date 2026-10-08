@@ -11,9 +11,7 @@ const BASE = "https://connecta.test";
 
 afterEach(() => vi.restoreAllMocks());
 
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-): Promise<void> {
+async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<void> {
   for (let i = 0; i < 200; i++) {
     if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -25,17 +23,17 @@ async function waitFor(
 function within<T>(promise: Promise<T>, ms = 500): Promise<T | "still pending"> {
   return Promise.race([
     promise,
-    new Promise<"still pending">((resolve) =>
-      setTimeout(() => resolve("still pending"), ms),
-    ),
+    new Promise<"still pending">((resolve) => setTimeout(() => resolve("still pending"), ms)),
   ]);
 }
 
 async function admission(connecta: { fetch(request: Request): Promise<Response> }) {
   const health = await connecta.fetch(new Request(`${BASE}/health`));
-  return ((await health.json()) as {
-    admission: { requests: { active: number; queued: number } };
-  }).admission.requests;
+  return (
+    (await health.json()) as {
+      admission: { requests: { active: number; queued: number } };
+    }
+  ).admission.requests;
 }
 
 const ONE_PERMIT = {
@@ -59,9 +57,7 @@ describe("request pipeline lifetime", () => {
       admission: ONE_PERMIT,
     });
     const controller = new AbortController();
-    const pending = connecta.fetch(
-      mcpRpc("tools/list", {}, { id: 1, signal: controller.signal }),
-    );
+    const pending = connecta.fetch(mcpRpc("tools/list", {}, { id: 1, signal: controller.signal }));
     pending.catch(() => {});
     await waitFor(() => calls === 1);
     expect(await admission(connecta)).toMatchObject({ active: 1 });
@@ -99,11 +95,13 @@ describe("request pipeline lifetime", () => {
       admission: ONE_PERMIT,
     });
     const controller = new AbortController();
-    const pending = connecta.fetch(mcpRpc(
-      "tools/call",
-      { name: "call_tool", arguments: { address: "stalled.read" } },
-      { id: 1, signal: controller.signal },
-    ));
+    const pending = connecta.fetch(
+      mcpRpc(
+        "tools/call",
+        { name: "call_tool", arguments: { address: "stalled.read" } },
+        { id: 1, signal: controller.signal },
+      ),
+    );
     pending.catch(() => {});
     await waitFor(() => started);
 
@@ -128,9 +126,7 @@ describe("request pipeline lifetime", () => {
       admission: ONE_PERMIT,
     });
     const controller = new AbortController();
-    const first = connecta.fetch(
-      mcpRpc("tools/list", {}, { id: 1, signal: controller.signal }),
-    );
+    const first = connecta.fetch(mcpRpc("tools/list", {}, { id: 1, signal: controller.signal }));
     first.catch(() => {});
     await waitFor(() => calls === 1);
     const second = connecta.fetch(mcpRpc("tools/list", {}, { id: 2 }));
@@ -153,11 +149,7 @@ describe("request pipeline lifetime", () => {
       listTools(ctx) {
         probeSignal = ctx.signal;
         return new Promise((_, reject) => {
-          ctx.signal?.addEventListener(
-            "abort",
-            () => reject(ctx.signal?.reason),
-            { once: true },
-          );
+          ctx.signal?.addEventListener("abort", () => reject(ctx.signal?.reason), { once: true });
         });
       },
       async callTool() {
@@ -171,11 +163,13 @@ describe("request pipeline lifetime", () => {
       discovery: { probeTimeoutMs: 60_000, catalogTtlSeconds: 0 },
     });
     const controller = new AbortController();
-    const pending = connecta.fetch(mcpRpc(
-      "tools/call",
-      { name: "search_tools", arguments: { query: "anything" } },
-      { id: 1, signal: controller.signal },
-    ));
+    const pending = connecta.fetch(
+      mcpRpc(
+        "tools/call",
+        { name: "search_tools", arguments: { query: "anything" } },
+        { id: 1, signal: controller.signal },
+      ),
+    );
     pending.catch(() => {});
     await waitFor(() => probeSignal !== undefined);
 

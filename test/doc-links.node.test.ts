@@ -3,19 +3,13 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { spawnChecker, tempFixture } from "./fixtures/node.js";
 
-const checker = fileURLToPath(
-  new URL("../scripts/check-doc-links.mjs", import.meta.url),
-);
+const checker = fileURLToPath(new URL("../scripts/check-doc-links.mjs", import.meta.url));
 async function fixture(files: Record<string, string>): Promise<string> {
   return tempFixture("connecta-doc-links-", files);
 }
 
 function check(root: string, structure = false) {
-  return spawnChecker(checker, [
-    "--root",
-    root,
-    ...(structure ? [] : ["--skip-structure"]),
-  ]);
+  return spawnChecker(checker, ["--root", root, ...(structure ? [] : ["--skip-structure"])]);
 }
 
 describe("documentation link checker", () => {
@@ -68,9 +62,7 @@ describe("documentation link checker", () => {
 
     expect(check(root)).toMatchObject({
       status: 1,
-      output: expect.stringContaining(
-        'README.md:1: missing local target "./missing.md"',
-      ),
+      output: expect.stringContaining('README.md:1: missing local target "./missing.md"'),
     });
   });
 
@@ -114,7 +106,7 @@ describe("documentation link checker", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain(
-      'README.md:4: missing local target ' +
+      "README.md:4: missing local target " +
         '"https://raw.githubusercontent.com/zackbart/connecta/main/assets/gone.png"',
     );
     expect(result.output).not.toContain("hero.png");
@@ -157,9 +149,7 @@ describe("documentation link checker", () => {
     expect(result.status).toBe(1);
     expect(result.output).toContain("README.md:1: missing README.md");
     expect(result.output).toContain("PRINCIPLES.md:1: missing PRINCIPLES.md");
-    expect(result.output).toContain(
-      'documentation:1: missing "documentation/" directory',
-    );
+    expect(result.output).toContain('documentation:1: missing "documentation/" directory');
   });
 
   it("rejects non-Markdown entries and an otherwise-empty documentation/", async () => {
@@ -174,9 +164,7 @@ describe("documentation link checker", () => {
     expect(result.output).toContain(
       'documentation/notes.txt:1: non-Markdown entry in "documentation/"; guides are Markdown files only',
     );
-    expect(result.output).toContain(
-      'documentation:1: "documentation/" contains no guides',
-    );
+    expect(result.output).toContain('documentation:1: "documentation/" contains no guides');
   });
 
   it("rejects duplicate guide heading slugs", async () => {
@@ -188,9 +176,7 @@ describe("documentation link checker", () => {
 
     expect(check(root, true)).toMatchObject({
       status: 1,
-      output: expect.stringContaining(
-        'documentation/architecture.md:3: duplicate guide heading anchor "#repeat"',
-      ),
+      output: expect.stringContaining('documentation/architecture.md:3: duplicate guide heading anchor "#repeat"'),
     });
   });
 });

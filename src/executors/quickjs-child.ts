@@ -35,45 +35,36 @@ function send(message: ChildToParentMessage): void {
   process.send(message);
 }
 
-function provider(
-  name: string,
-  jobId: number,
-  prelude?: string,
-): ExecutorProvider {
-  const functions = new Proxy(
-    Object.create(null) as ExecutorProvider["fns"],
-    {
-      get: (_target, key) => {
-        if (typeof key !== "string") return undefined;
-        return async (...args: unknown[]): Promise<unknown> => {
-          const callId = nextCallId++;
-          const payloadJson = stringifyBounded(
-            {
-              namespace: name,
-              functionName: key,
-              args,
-            } satisfies HostCallPayload,
-            "Host call payload",
-            MAX_QUICKJS_HOST_RPC_BYTES,
-          );
-          const result = new Promise<unknown>((resolve, reject) => {
-            pending.set(callId, { resolve, reject });
-          });
-          send({
-            type: "host-call",
-            jobId,
-            callId,
-            payloadJson,
-          });
-          return result;
-        };
-      },
-      getOwnPropertyDescriptor: (_target, key) =>
-        typeof key === "string"
-          ? { configurable: true, enumerable: false }
-          : undefined,
+function provider(name: string, jobId: number, prelude?: string): ExecutorProvider {
+  const functions = new Proxy(Object.create(null) as ExecutorProvider["fns"], {
+    get: (_target, key) => {
+      if (typeof key !== "string") return undefined;
+      return async (...args: unknown[]): Promise<unknown> => {
+        const callId = nextCallId++;
+        const payloadJson = stringifyBounded(
+          {
+            namespace: name,
+            functionName: key,
+            args,
+          } satisfies HostCallPayload,
+          "Host call payload",
+          MAX_QUICKJS_HOST_RPC_BYTES,
+        );
+        const result = new Promise<unknown>((resolve, reject) => {
+          pending.set(callId, { resolve, reject });
+        });
+        send({
+          type: "host-call",
+          jobId,
+          callId,
+          payloadJson,
+        });
+        return result;
+      };
     },
-  );
+    getOwnPropertyDescriptor: (_target, key) =>
+      typeof key === "string" ? { configurable: true, enumerable: false } : undefined,
+  });
   return { name, fns: functions, ...(prelude ? { prelude } : {}) };
 }
 
@@ -92,14 +83,9 @@ async function run(payload: RunPayload): Promise<void> {
   }
   activeJobId = payload.id;
   try {
-    const providers = payload.providers.map(({ name, prelude }) =>
-      provider(name, payload.id, prelude),
-    );
-    const raw = await executeQuickJs(
-      payload.code,
-      providers,
-      payload.options,
-      (entry) => send({
+    const providers = payload.providers.map(({ name, prelude }) => provider(name, payload.id, prelude));
+    const raw = await executeQuickJs(payload.code, providers, payload.options, (entry) =>
+      send({
         type: "log",
         jobId: payload.id,
         payloadJson: stringifyBounded(entry, "QuickJS log entry"),
@@ -136,9 +122,7 @@ process.on("message", (message: ParentToChildMessage) => {
     const request = pending.get(message.callId);
     if (!request) return;
     pending.delete(message.callId);
-    if (
-      serializedBytes(message.payloadJson) > MAX_QUICKJS_HOST_RPC_BYTES
-    ) {
+    if (serializedBytes(message.payloadJson) > MAX_QUICKJS_HOST_RPC_BYTES) {
       request.reject(new Error("Host result exceeded the IPC limit."));
       return;
     }
@@ -157,9 +141,7 @@ process.on("message", (message: ParentToChildMessage) => {
   }
   const payload = JSON.parse(message.payloadJson) as RunPayload;
   void run(payload).catch((err) => {
-    const payloadJson = JSON.stringify(
-      fixedTransportFailure(`QuickJS child failed: ${msg(err)}`),
-    );
+    const payloadJson = JSON.stringify(fixedTransportFailure(`QuickJS child failed: ${msg(err)}`));
     send({ type: "result", jobId: payload.id, payloadJson });
     activeJobId = undefined;
   });

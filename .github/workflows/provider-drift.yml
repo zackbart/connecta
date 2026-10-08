@@ -5,12 +5,12 @@ name: Provider drift
 on:
   pull_request:
     paths:
-      - 'src/providers/**'
-      - 'scripts/drift-check.mjs'
-      - 'scripts/providers.mjs'
-      - '.github/workflows/provider-drift.yml'
+      - "src/providers/**"
+      - "scripts/drift-check.mjs"
+      - "scripts/providers.mjs"
+      - ".github/workflows/provider-drift.yml"
   schedule:
-    - cron: '23 10 * * 1'
+    - cron: "23 10 * * 1"
   workflow_dispatch:
 
 permissions:

@@ -1,29 +1,16 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { dirname, extname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  activeLines,
-  markdownLinks,
-  unescapeTarget,
-} from "./markdown-links.mjs";
+import { activeLines, markdownLinks, unescapeTarget } from "./markdown-links.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const ignoredDirectories = new Set([
-  ".claude",
-  ".git",
-  ".wrangler",
-  "coverage",
-  "dist",
-  "node_modules",
-]);
+const ignoredDirectories = new Set([".claude", ".git", ".wrangler", "coverage", "dist", "node_modules"]);
 // Historical release notes preserve links to paths from older releases.
 const historicalLinkAllowlist = new Set(["CHANGELOG.md"]);
 
 function usage(message) {
   if (message) console.error(message);
-  console.error(
-    "usage: node scripts/check-doc-links.mjs [--root <path>] [--skip-structure] [--packed --files <path>]",
-  );
+  console.error("usage: node scripts/check-doc-links.mjs [--root <path>] [--skip-structure] [--packed --files <path>]");
   process.exit(2);
 }
 
@@ -135,9 +122,7 @@ function decodeTargetPart(value) {
 // is served from one — and resolve to the same file.
 function repositoryPathFor(url) {
   if (url.hostname === "github.com") {
-    return url.pathname.match(
-      /^\/zackbart\/connecta\/(?:blob|tree|raw)\/main\/(.+)$/,
-    )?.[1];
+    return url.pathname.match(/^\/zackbart\/connecta\/(?:blob|tree|raw)\/main\/(.+)$/)?.[1];
   }
   if (url.hostname === "raw.githubusercontent.com") {
     return url.pathname.match(/^\/zackbart\/connecta\/main\/(.+)$/)?.[1];
@@ -147,11 +132,7 @@ function repositoryPathFor(url) {
 
 function resolveLocalTarget(root, sourcePath, rawTarget) {
   const target = unescapeTarget(rawTarget);
-  if (
-    target.startsWith("mailto:") ||
-    target.startsWith("data:") ||
-    target.startsWith("//")
-  ) {
+  if (target.startsWith("mailto:") || target.startsWith("data:") || target.startsWith("//")) {
     return { external: true };
   }
 
@@ -217,10 +198,7 @@ async function localTargetError(root, sourcePath, target, markdownCache) {
     }
     const anchors = new Set(headingsFor(document).map((heading) => heading.slug));
     if (!anchors.has(resolved.fragment)) {
-      return `missing fragment "#${resolved.fragment}" in "${displayPath(
-        root,
-        resolved.path,
-      )}" (target "${target}")`;
+      return `missing fragment "#${resolved.fragment}" in "${displayPath(root, resolved.path)}" (target "${target}")`;
     }
   }
   return undefined;
@@ -308,25 +286,13 @@ async function checkStructure(root, markdownCache, errors) {
   for (const entry of guideEntries) {
     const path = resolve(guidesDirectory, entry.name);
     if (!entry.isFile() || extname(entry.name).toLowerCase() !== ".md") {
-      addError(
-        errors,
-        root,
-        path,
-        1,
-        'non-Markdown entry in "documentation/"; guides are Markdown files only',
-      );
+      addError(errors, root, path, 1, 'non-Markdown entry in "documentation/"; guides are Markdown files only');
       continue;
     }
     guides.push(path);
   }
   if (guides.length === 0) {
-    addError(
-      errors,
-      root,
-      guidesDirectory,
-      1,
-      '"documentation/" contains no guides',
-    );
+    addError(errors, root, guidesDirectory, 1, '"documentation/" contains no guides');
   }
 
   for (const path of guides) {
@@ -337,26 +303,15 @@ async function checkStructure(root, markdownCache, errors) {
     }
     const headings = headingsFor(source);
     const duplicate = headings.find((heading) =>
-      headings.some(
-        (candidate) =>
-          candidate.line < heading.line &&
-          candidate.baseSlug === heading.baseSlug,
-      ),
+      headings.some((candidate) => candidate.line < heading.line && candidate.baseSlug === heading.baseSlug),
     );
     if (duplicate) {
-      addError(
-        errors,
-        root,
-        path,
-        duplicate.line,
-        `duplicate guide heading anchor "#${duplicate.baseSlug}"`,
-      );
+      addError(errors, root, path, duplicate.line, `duplicate guide heading anchor "#${duplicate.baseSlug}"`);
     }
   }
 }
 
-const { root, checkStructure: shouldCheckStructure, packed, files } =
-  parseArguments(process.argv.slice(2));
+const { root, checkStructure: shouldCheckStructure, packed, files } = parseArguments(process.argv.slice(2));
 const errors = [];
 let successMessage;
 
@@ -369,9 +324,7 @@ if (packed) {
   successMessage = `packed link check passed (${packedPaths.length} packed paths)`;
 } else {
   const paths = await walkFiles(root);
-  const markdownPaths = paths.filter(
-    (path) => extname(path).toLowerCase() === ".md",
-  );
+  const markdownPaths = paths.filter((path) => extname(path).toLowerCase() === ".md");
   const markdownCache = new Map();
   await checkLinks(root, markdownPaths, markdownCache, errors);
   if (shouldCheckStructure) {
@@ -384,9 +337,7 @@ if (packed) {
 
 errors.sort(
   (left, right) =>
-    left.path.localeCompare(right.path) ||
-    left.line - right.line ||
-    left.message.localeCompare(right.message),
+    left.path.localeCompare(right.path) || left.line - right.line || left.message.localeCompare(right.message),
 );
 
 if (errors.length > 0) {

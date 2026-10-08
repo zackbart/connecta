@@ -64,8 +64,7 @@ const OUTCOMES: Readonly<Record<OAuthCallbackReason, OAuthCallbackOutcome>> = {
     message:
       "Consent was declined at the provider, so nothing was stored. Start authorization again whenever you are ready.",
     fix: {
-      problem:
-        "Consent for a downstream OAuth connector was declined at the provider, so no grant was stored.",
+      problem: "Consent for a downstream OAuth connector was declined at the provider, so no grant was stored.",
       steps: [
         "If consent was declined on purpose, nothing in code needs to change: restart authorization from the operator page or authorize_connector when ready.",
         "If the consent screen asked for more than the connector needs, narrow the scopes the connector's OAuth configuration requests.",
@@ -77,11 +76,9 @@ const OUTCOMES: Readonly<Record<OAuthCallbackReason, OAuthCallbackOutcome>> = {
     status: 400,
     tone: "problem",
     heading: "The provider returned an error",
-    message:
-      "It sent back an error instead of an authorization code, so nothing was stored.",
+    message: "It sent back an error instead of an authorization code, so nothing was stored.",
     fix: {
-      problem:
-        "A provider redirected back to the OAuth callback with an OAuth error instead of an authorization code.",
+      problem: "A provider redirected back to the OAuth callback with an OAuth error instead of an authorization code.",
       steps: [
         "Compare the provider's OAuth client registration with the connector's configuration: client id, requested scopes, and the redirect URI, which is the deployment's public URL followed by /oauth/callback/<connector id>.",
         "Check that the deployment's publicUrl is the origin the provider redirects to; a different origin yields a redirect URI the provider does not recognize.",
@@ -124,12 +121,10 @@ const OUTCOMES: Readonly<Record<OAuthCallbackReason, OAuthCallbackOutcome>> = {
     status: 500,
     tone: "problem",
     heading: "{name} could not be connected",
-    message:
-      "The provider did not accept the authorization code exchange. Nothing was stored.",
+    message: "The provider did not accept the authorization code exchange. Nothing was stored.",
     namesConnector: true,
     fix: {
-      problem:
-        "A provider returned an authorization code, but exchanging it for tokens failed.",
+      problem: "A provider returned an authorization code, but exchanging it for tokens failed.",
       steps: [
         "Check the OAuth client credentials the connector uses — client id and secret in the deployment's environment — and that they belong to the same OAuth app that showed the consent screen.",
         "Check that the token endpoint and redirect URI the connector uses match the provider's registration exactly.",
@@ -182,9 +177,7 @@ export function oauthCallbackOutcome(
     tone: outcome.tone,
     heading: outcome.heading.replace("{name}", () => name),
     message: outcome.message.replace("{product}", () => productName),
-    ...(outcome.fix
-      ? { fixPrompt: renderFixPrompt(outcome.fix, named?.id) }
-      : {}),
+    ...(outcome.fix ? { fixPrompt: renderFixPrompt(outcome.fix, named?.id) } : {}),
   };
 }
 

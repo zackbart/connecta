@@ -35,47 +35,76 @@ const result = await build({
   minify: true,
   legalComments: "inline",
   write: false,
-  plugins: [{
-    name: "connecta-clerk-transport",
-    setup(builder) {
-      builder.onResolve({ filter: /^connecta:clerk-failure$/ }, () => ({ path: "../clerk-transport.js", external: true }));
-      builder.onLoad({ filter: /@clerk\/backend\/dist\/chunk-XPQZDI25\.mjs$/ }, async ({ path }) => {
-        let source = await readFile(path, "utf8");
-        if (createHash("sha256").update(source).digest("hex") !== expectedHash) throw new Error("Clerk upstream bundle changed");
-        source = replace(source, "fetchJWKSFromBAPI(apiUrl, secretKey, apiVersion)", "fetchJWKSFromBAPI(apiUrl, secretKey, apiVersion, params.fetch)");
-        source = replace(source, "async function fetchJWKSFromBAPI(apiUrl, key, apiVersion)", "async function fetchJWKSFromBAPI(apiUrl, key, apiVersion, fetch)");
-        source = replace(source, "runtime.fetch(url.href,", "fetch(url.href,");
-        source = replace(source, "runtime.fetch(finalUrl.href,", "options.fetch(finalUrl.href,", 2);
-        source = replace(source, "jwtKey: options.jwtKey\n", "jwtKey: options.jwtKey, fetch: options.fetch\n");
-        source = replace(source, "jwksCacheTtlInMs, skipJwksCache });", "jwksCacheTtlInMs, skipJwksCache, fetch: options.fetch });");
-        source = replace(source, 'var defaultOptions = {\n', 'var defaultOptions = {\n  fetch: void 0,\n');
-        if (source.includes("runtime.fetch(")) throw new Error("Unwrapped Clerk fetch remains");
-        // Route every SDK console failure/diagnostic through the same checked
-        // sink. Do not evaluate the diagnostic's text or interpolate errors.
-        const parsed = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-        const edits = [];
-        function visit(node) {
-          if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.expression.getText(parsed) === "console") {
-            const args = node.arguments;
-            const failure = args.find(arg => ts.isIdentifier(arg) && ["error", "e", "developmentError"].includes(arg.text));
-            edits.push({ start: node.getStart(parsed), end: node.end, text: `clerkSdkFailure(${failure?.getText(parsed) ?? ""})` });
-            return;
+  plugins: [
+    {
+      name: "connecta-clerk-transport",
+      setup(builder) {
+        builder.onResolve({ filter: /^connecta:clerk-failure$/ }, () => ({
+          path: "../clerk-transport.js",
+          external: true,
+        }));
+        builder.onLoad({ filter: /@clerk\/backend\/dist\/chunk-XPQZDI25\.mjs$/ }, async ({ path }) => {
+          let source = await readFile(path, "utf8");
+          if (createHash("sha256").update(source).digest("hex") !== expectedHash)
+            throw new Error("Clerk upstream bundle changed");
+          source = replace(
+            source,
+            "fetchJWKSFromBAPI(apiUrl, secretKey, apiVersion)",
+            "fetchJWKSFromBAPI(apiUrl, secretKey, apiVersion, params.fetch)",
+          );
+          source = replace(
+            source,
+            "async function fetchJWKSFromBAPI(apiUrl, key, apiVersion)",
+            "async function fetchJWKSFromBAPI(apiUrl, key, apiVersion, fetch)",
+          );
+          source = replace(source, "runtime.fetch(url.href,", "fetch(url.href,");
+          source = replace(source, "runtime.fetch(finalUrl.href,", "options.fetch(finalUrl.href,", 2);
+          source = replace(source, "jwtKey: options.jwtKey\n", "jwtKey: options.jwtKey, fetch: options.fetch\n");
+          source = replace(
+            source,
+            "jwksCacheTtlInMs, skipJwksCache });",
+            "jwksCacheTtlInMs, skipJwksCache, fetch: options.fetch });",
+          );
+          source = replace(source, "var defaultOptions = {\n", "var defaultOptions = {\n  fetch: void 0,\n");
+          if (source.includes("runtime.fetch(")) throw new Error("Unwrapped Clerk fetch remains");
+          // Route every SDK console failure/diagnostic through the same checked
+          // sink. Do not evaluate the diagnostic's text or interpolate errors.
+          const parsed = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+          const edits = [];
+          function visit(node) {
+            if (
+              ts.isCallExpression(node) &&
+              ts.isPropertyAccessExpression(node.expression) &&
+              node.expression.expression.getText(parsed) === "console"
+            ) {
+              const args = node.arguments;
+              const failure = args.find(
+                (arg) => ts.isIdentifier(arg) && ["error", "e", "developmentError"].includes(arg.text),
+              );
+              edits.push({
+                start: node.getStart(parsed),
+                end: node.end,
+                text: `clerkSdkFailure(${failure?.getText(parsed) ?? ""})`,
+              });
+              return;
+            }
+            ts.forEachChild(node, visit);
           }
-          ts.forEachChild(node, visit);
-        }
-        visit(parsed);
-        if (edits.length !== 7) throw new Error("Clerk diagnostics changed");
-        for (const edit of edits.reverse()) source = source.slice(0, edit.start) + edit.text + source.slice(edit.end);
-        return { contents: 'import { clerkSdkFailure } from "connecta:clerk-failure";\n' + source, loader: "js" };
-      });
+          visit(parsed);
+          if (edits.length !== 7) throw new Error("Clerk diagnostics changed");
+          for (const edit of edits.reverse()) source = source.slice(0, edit.start) + edit.text + source.slice(edit.end);
+          return { contents: 'import { clerkSdkFailure } from "connecta:clerk-failure";\n' + source, loader: "js" };
+        });
+      },
     },
-  }],
+  ],
 });
 const license = await readFile(resolve(sdk, "LICENSE"), "utf8");
 const sharedLicense = await readFile(resolve(root, "node_modules/@clerk/shared/LICENSE"), "utf8");
 const generated = `// @ts-nocheck\n// Generated by scripts/build-clerk-sdk.mjs from @clerk/backend 3.12.0. Do not edit.\n// Runtime-neutral SDK copy with instance fetch and checked diagnostic hooks.\n/*!\nClerk Backend SDK 3.12.0:\n${license}\nClerk Shared:\n${sharedLicense}*/\n${result.outputFiles[0].text}`;
 if (process.argv.includes("--check")) {
-  if (await readFile(generatedPath, "utf8") !== generated) throw new Error("Clerk adapter is stale; run node scripts/build-clerk-sdk.mjs");
+  if ((await readFile(generatedPath, "utf8")) !== generated)
+    throw new Error("Clerk adapter is stale; run node scripts/build-clerk-sdk.mjs");
 } else {
   await writeFile(generatedPath, generated);
 }

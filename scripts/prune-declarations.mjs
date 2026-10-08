@@ -43,6 +43,4 @@ for (const dir of declarationRoots(entries)) {
     pruned += 1;
   }
 }
-console.log(
-  `prune-declarations: kept ${kept}, removed ${pruned} unreachable declaration(s)`,
-);
+console.log(`prune-declarations: kept ${kept}, removed ${pruned} unreachable declaration(s)`);

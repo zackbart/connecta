@@ -5,12 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { Registry } from "../src/registry.js";
-import {
-  importStateFile,
-  openSqlite,
-  sqliteActivityStore,
-  sqliteStorage,
-} from "../src/sqlite.js";
+import { importStateFile, openSqlite, sqliteActivityStore, sqliteStorage } from "../src/sqlite.js";
 import { silentLogger } from "./helpers.js";
 import { sqlStorageContract, type SqlFixture } from "./sql-storage-contract.js";
 import { NUL_VALUES } from "./storage-contract.js";
@@ -56,8 +51,7 @@ describe("sqliteStorage in memory", () => {
 });
 
 describe("sqliteStorage in a file", () => {
-  sqlStorageContract(async () =>
-    fixture(track(openSqlite(join(tempDirectory(), "connecta.sqlite")))));
+  sqlStorageContract(async () => fixture(track(openSqlite(join(tempDirectory(), "connecta.sqlite")))));
 
   it("creates an owner-only file in an owner-only directory", async () => {
     const directory = join(tempDirectory(), "state");
@@ -75,8 +69,7 @@ describe("sqliteStorage in a file", () => {
     const first = track(openSqlite(path));
     await sqliteStorage(first).set("conn:svc:oauth:tokens", "sealed");
     first.close();
-    expect(await sqliteStorage(track(openSqlite(path))).get("conn:svc:oauth:tokens"))
-      .toBe("sealed");
+    expect(await sqliteStorage(track(openSqlite(path))).get("conn:svc:oauth:tokens")).toBe("sealed");
   });
 
   it("lets exactly one of two connections to one file win a claim", async () => {
@@ -95,14 +88,18 @@ describe("sqliteStorage in a file", () => {
 
   it("books 64 simultaneous stash claims from two processes at capacity 64, and refuses the 65th", async () => {
     const path = join(tempDirectory(), "connecta.sqlite");
-    const processes = [openSqlite(path), openSqlite(path)].map((db) => new Registry([], {
-      logger: silentLogger,
-      results: { maxStashEntries: 64 },
+    const processes = [openSqlite(path), openSqlite(path)].map(
+      (db) =>
+        new Registry([], {
+          logger: silentLogger,
+          results: { maxStashEntries: 64 },
 
-      storage: sqliteStorage(track(db)),
-    }));
-    const accepted = await Promise.all(Array.from({ length: 65 }, (_, index) =>
-      processes[index % 2]!.stashResult(`claim-${index}`, ["x"], 900)));
+          storage: sqliteStorage(track(db)),
+        }),
+    );
+    const accepted = await Promise.all(
+      Array.from({ length: 65 }, (_, index) => processes[index % 2]!.stashResult(`claim-${index}`, ["x"], 900)),
+    );
     expect(accepted.filter(Boolean)).toHaveLength(64);
     expect(await sqliteStorage(path).list("results:result:")).toHaveLength(64);
   });
@@ -116,13 +113,16 @@ describe("sqliteStorage in a file", () => {
 
 /** A 0.28 `fileStorage` state file, as that release wrote it. */
 function writeStateFile(path: string, now: number): void {
-  writeFileSync(path, JSON.stringify({
-    "conn:notion:oauth:tokens": { value: "{\"connectaOAuthSealed\":1}" },
-    "conn:notion:credential:v1": { value: "{\"version\":1}" },
-    "access-token:v1:active": { value: "[]" },
-    "oauth-handoff:v1:notion:abc": { value: "alice", exp: now + 60_000 },
-    "results:result:gone": { value: "envelope", exp: now - 1 },
-  }));
+  writeFileSync(
+    path,
+    JSON.stringify({
+      "conn:notion:oauth:tokens": { value: '{"connectaOAuthSealed":1}' },
+      "conn:notion:credential:v1": { value: '{"version":1}' },
+      "access-token:v1:active": { value: "[]" },
+      "oauth-handoff:v1:notion:abc": { value: "alice", exp: now + 60_000 },
+      "results:result:gone": { value: "envelope", exp: now - 1 },
+    }),
+  );
 }
 
 describe("importStateFile", () => {
@@ -131,14 +131,14 @@ describe("importStateFile", () => {
     const now = Date.now();
     writeStateFile(join(directory, "state.json"), now);
     const db = track(openSqlite(join(directory, "connecta.sqlite")));
-    expect(importStateFile(db, join(directory, "state.json"), now))
-      .toEqual({ imported: 4, kept: 0, expired: 1 });
+    expect(importStateFile(db, join(directory, "state.json"), now)).toEqual({ imported: 4, kept: 0, expired: 1 });
     const storage = sqliteStorage(db);
-    expect(await storage.get("conn:notion:oauth:tokens")).toBe("{\"connectaOAuthSealed\":1}");
+    expect(await storage.get("conn:notion:oauth:tokens")).toBe('{"connectaOAuthSealed":1}');
     expect(await storage.get("oauth-handoff:v1:notion:abc")).toBe("alice");
     expect(await storage.get("results:result:gone")).toBeNull();
-    expect(db.prepare("SELECT expires_at_ms FROM connecta_kv WHERE key = ?").get("oauth-handoff:v1:notion:abc"))
-      .toEqual({ expires_at_ms: now + 60_000 });
+    expect(
+      db.prepare("SELECT expires_at_ms FROM connecta_kv WHERE key = ?").get("oauth-handoff:v1:notion:abc"),
+    ).toEqual({ expires_at_ms: now + 60_000 });
   });
 
   it("keeps what the database already holds, so a second run changes nothing", async () => {
@@ -146,10 +146,8 @@ describe("importStateFile", () => {
     writeStateFile(join(directory, "state.json"), Date.now());
     const db = track(openSqlite(join(directory, "connecta.sqlite")));
     await sqliteStorage(db).set("conn:notion:oauth:tokens", "newer");
-    expect(importStateFile(db, join(directory, "state.json")))
-      .toMatchObject({ imported: 3, kept: 1 });
-    expect(importStateFile(db, join(directory, "state.json")))
-      .toMatchObject({ imported: 0, kept: 4 });
+    expect(importStateFile(db, join(directory, "state.json"))).toMatchObject({ imported: 3, kept: 1 });
+    expect(importStateFile(db, join(directory, "state.json"))).toMatchObject({ imported: 0, kept: 4 });
     expect(await sqliteStorage(db).get("conn:notion:oauth:tokens")).toBe("newer");
   });
 
@@ -191,12 +189,12 @@ describe("importStateFile", () => {
     const directory = tempDirectory();
     const path = join(directory, "state.json");
     // JSON.stringify writes each NUL as the escape \u0000, as 0.28 did.
-    writeFileSync(path, JSON.stringify(Object.fromEntries(
-      NUL_VALUES.map((value, index) => [`nul:${index}`, { value }]),
-    )));
+    writeFileSync(
+      path,
+      JSON.stringify(Object.fromEntries(NUL_VALUES.map((value, index) => [`nul:${index}`, { value }]))),
+    );
     const db = track(openSqlite(join(directory, "connecta.sqlite")));
-    expect(importStateFile(db, path))
-      .toEqual({ imported: NUL_VALUES.length, kept: 0, expired: 0 });
+    expect(importStateFile(db, path)).toEqual({ imported: NUL_VALUES.length, kept: 0, expired: 0 });
     const storage = sqliteStorage(db);
     for (const [index, value] of NUL_VALUES.entries()) {
       expect(await storage.get(`nul:${index}`)).toBe(value);

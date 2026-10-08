@@ -18,11 +18,7 @@ export function activeLines(source) {
     if (marker) {
       if (!fence) {
         fence = { character: marker[1][0], length: marker[1].length };
-      } else if (
-        marker[1][0] === fence.character &&
-        marker[1].length >= fence.length &&
-        marker[2].trim() === ""
-      ) {
+      } else if (marker[1][0] === fence.character && marker[1].length >= fence.length && marker[2].trim() === "") {
         fence = undefined;
       }
       continue;
@@ -34,9 +30,7 @@ export function activeLines(source) {
 
 function markdownTargets(line) {
   const targets = [];
-  const definition = line.match(
-    /^\s{0,3}\[[^\]]+\]:\s*(?:<([^>]+)>|(\S+))/,
-  );
+  const definition = line.match(/^\s{0,3}\[[^\]]+\]:\s*(?:<([^>]+)>|(\S+))/);
   if (definition) {
     targets.push(definition[1] ?? definition[2]);
   }

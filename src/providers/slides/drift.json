@@ -8,9 +8,7 @@
         "url": "https://slides.googleapis.com/$discovery/rest?version=v1",
         "format": "google-discovery"
       },
-      "scopes": [
-        "https://www.googleapis.com/auth/presentations"
-      ],
+      "scopes": ["https://www.googleapis.com/auth/presentations"],
       "endpoints": [
         {
           "method": "GET",

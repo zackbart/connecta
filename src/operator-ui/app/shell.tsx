@@ -12,7 +12,9 @@ function readScheme(): Scheme {
   try {
     const stored = localStorage.getItem(THEME_KEY);
     if (stored === "light" || stored === "dark") return stored;
-  } catch { /* private browsing */ }
+  } catch {
+    /* private browsing */
+  }
   return "system";
 }
 export function ShellControls({ pages }: { pages: OperatorPage[] }) {
@@ -32,7 +34,11 @@ export function ShellControls({ pages }: { pages: OperatorPage[] }) {
     if (scheme === "system") delete document.documentElement.dataset.scheme;
     else document.documentElement.dataset.scheme = scheme;
     if (!pinned) {
-      try { localStorage.setItem(THEME_KEY, scheme); } catch { /* private browsing */ }
+      try {
+        localStorage.setItem(THEME_KEY, scheme);
+      } catch {
+        /* private browsing */
+      }
     }
   }, [scheme, pinned]);
   useEffect(() => {
@@ -64,37 +70,87 @@ export function ShellControls({ pages }: { pages: OperatorPage[] }) {
     setCommandOpen(false);
     navigate(page, PAGE_META[page].path);
   };
-  return <>
-    <Button variant="quiet" className="command-trigger" onClick={() => { commandReturnFocus.current = document.activeElement as HTMLElement; setCommandOpen(true); }}>
-      <span>Search pages</span><kbd>⌘K</kbd>
-    </Button>
-    <Button variant="quiet" className="appearance-trigger" onClick={() => { appearanceReturnFocus.current = document.activeElement as HTMLElement; setAppearanceOpen(true); }}>Appearance</Button>
-    <Dialog returnFocusTo={appearanceReturnFocus} open={appearanceOpen} onOpenChange={setAppearanceOpen} title="Appearance" description={pinned ? "This deployment sets the color scheme." : "Choose a color scheme for operator pages."}>
-      {pinned ? <p className="meta">{scheme === "dark" ? "Dark" : "Light"} mode</p> : <Tabs value={scheme} onValueChange={value => setScheme(value as Scheme)} items={[
-        { value: "light", label: "Light", content: <p>Use light surfaces.</p> },
-        { value: "dark", label: "Dark", content: <p>Use dark surfaces.</p> },
-        { value: "system", label: "System", content: <p>Follow your device’s appearance.</p> },
-      ]} />}
-    </Dialog>
-    <Dialog returnFocusTo={commandReturnFocus} open={commandOpen} onOpenChange={setCommandOpen} title="Go to page" description="Search operator pages and actions.">
-      <Command label="Operator commands" loop>
-        <Command.Input className="command-input" placeholder="Search pages…" autoFocus />
-        <Command.List className="command-list">
-          <Command.Empty>No matching pages or actions.</Command.Empty>
-          <Command.Group heading="Pages">
-            {pages.map(page => <Command.Item key={page} value={PAGE_META[page].label} onSelect={() => go(page)}>{PAGE_META[page].label}</Command.Item>)}
-          </Command.Group>
-          <Command.Group heading="Preferences"><Command.Item onSelect={() => {
-            if (!appearanceOpen) {
-              appearanceReturnFocus.current = commandReturnFocus.current;
-              // A newly mounted Appearance dialog supplies its own autofocus.
-              commandReturnFocus.current = null;
-            }
-            // If already mounted, restore the tab the palette interrupted.
-            setCommandOpen(false); setAppearanceOpen(true);
-          }}>Appearance</Command.Item></Command.Group>
-        </Command.List>
-      </Command>
-    </Dialog>
-  </>;
+  return (
+    <>
+      <Button
+        variant="quiet"
+        className="command-trigger"
+        onClick={() => {
+          commandReturnFocus.current = document.activeElement as HTMLElement;
+          setCommandOpen(true);
+        }}
+      >
+        <span>Search pages</span>
+        <kbd>⌘K</kbd>
+      </Button>
+      <Button
+        variant="quiet"
+        className="appearance-trigger"
+        onClick={() => {
+          appearanceReturnFocus.current = document.activeElement as HTMLElement;
+          setAppearanceOpen(true);
+        }}
+      >
+        Appearance
+      </Button>
+      <Dialog
+        returnFocusTo={appearanceReturnFocus}
+        open={appearanceOpen}
+        onOpenChange={setAppearanceOpen}
+        title="Appearance"
+        description={pinned ? "This deployment sets the color scheme." : "Choose a color scheme for operator pages."}
+      >
+        {pinned ? (
+          <p className="meta">{scheme === "dark" ? "Dark" : "Light"} mode</p>
+        ) : (
+          <Tabs
+            value={scheme}
+            onValueChange={(value) => setScheme(value as Scheme)}
+            items={[
+              { value: "light", label: "Light", content: <p>Use light surfaces.</p> },
+              { value: "dark", label: "Dark", content: <p>Use dark surfaces.</p> },
+              { value: "system", label: "System", content: <p>Follow your device’s appearance.</p> },
+            ]}
+          />
+        )}
+      </Dialog>
+      <Dialog
+        returnFocusTo={commandReturnFocus}
+        open={commandOpen}
+        onOpenChange={setCommandOpen}
+        title="Go to page"
+        description="Search operator pages and actions."
+      >
+        <Command label="Operator commands" loop>
+          <Command.Input className="command-input" placeholder="Search pages…" autoFocus />
+          <Command.List className="command-list">
+            <Command.Empty>No matching pages or actions.</Command.Empty>
+            <Command.Group heading="Pages">
+              {pages.map((page) => (
+                <Command.Item key={page} value={PAGE_META[page].label} onSelect={() => go(page)}>
+                  {PAGE_META[page].label}
+                </Command.Item>
+              ))}
+            </Command.Group>
+            <Command.Group heading="Preferences">
+              <Command.Item
+                onSelect={() => {
+                  if (!appearanceOpen) {
+                    appearanceReturnFocus.current = commandReturnFocus.current;
+                    // A newly mounted Appearance dialog supplies its own autofocus.
+                    commandReturnFocus.current = null;
+                  }
+                  // If already mounted, restore the tab the palette interrupted.
+                  setCommandOpen(false);
+                  setAppearanceOpen(true);
+                }}
+              >
+                Appearance
+              </Command.Item>
+            </Command.Group>
+          </Command.List>
+        </Command>
+      </Dialog>
+    </>
+  );
 }

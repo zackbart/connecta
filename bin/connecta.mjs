@@ -1,16 +1,6 @@
 #!/usr/bin/env node
 
-import {
-  copyFile,
-  cp,
-  lstat,
-  mkdtemp,
-  readFile,
-  rename,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { copyFile, cp, lstat, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { CONNECTA_VERSION } from "./version.mjs";
 import { META_TOOL_NAMES } from "./meta-tool-names.mjs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -47,18 +37,13 @@ async function init() {
     await lstat(target);
     throw new Error(`Refusing to overwrite existing path: ${target}`);
   } catch (error) {
-    const code =
-      error && typeof error === "object" && "code" in error
-        ? String(error.code)
-        : "";
+    const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
     if (code !== "ENOENT") throw error;
   }
 
   // Build beside the destination, then rename once complete. A failed copy or
   // rewrite leaves no partial destination that blocks a clean retry.
-  let stage = await mkdtemp(
-    join(parent, `.${basename(target)}.connecta-init-`),
-  );
+  let stage = await mkdtemp(join(parent, `.${basename(target)}.connecta-init-`));
   try {
     await cp(join(packageRoot, "templates", "node"), stage, {
       recursive: true,
@@ -66,10 +51,7 @@ async function init() {
 
     // npm excludes .gitignore files and symlinks from packed dependencies.
     // Restore both conventions explicitly in the generated project.
-    await writeFile(
-      join(stage, ".gitignore"),
-      ".connecta.sqlite*\n.env\nnode_modules/\n",
-    );
+    await writeFile(join(stage, ".gitignore"), ".connecta.sqlite*\n.env\nnode_modules/\n");
     await rm(join(stage, "CLAUDE.md"), { force: true });
     try {
       await symlink("AGENTS.md", join(stage, "CLAUDE.md"));
@@ -79,18 +61,11 @@ async function init() {
       await copyFile(join(stage, "AGENTS.md"), join(stage, "CLAUDE.md"));
     }
 
-    const rootPackage = JSON.parse(
-      await readFile(join(packageRoot, "package.json"), "utf8"),
-    );
+    const rootPackage = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
     const deploymentPath = join(stage, "package.json");
-    const deploymentPackage = JSON.parse(
-      await readFile(deploymentPath, "utf8"),
-    );
+    const deploymentPackage = JSON.parse(await readFile(deploymentPath, "utf8"));
     deploymentPackage.dependencies["@zackbart/connecta"] = rootPackage.version;
-    await writeFile(
-      deploymentPath,
-      JSON.stringify(deploymentPackage, null, 2) + "\n",
-    );
+    await writeFile(deploymentPath, JSON.stringify(deploymentPackage, null, 2) + "\n");
 
     await rename(stage, target);
     stage = "";
@@ -141,10 +116,7 @@ async function doctorFetch(url, init = {}) {
     const response = await fetch(url, {
       ...init,
       redirect: "manual",
-      signal: AbortSignal.any([
-        AbortSignal.timeout(DOCTOR_TIMEOUT_MS),
-        ...(init.signal ? [init.signal] : []),
-      ]),
+      signal: AbortSignal.any([AbortSignal.timeout(DOCTOR_TIMEOUT_MS), ...(init.signal ? [init.signal] : [])]),
     });
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       await response.body?.cancel().catch(() => {});
@@ -154,10 +126,7 @@ async function doctorFetch(url, init = {}) {
     }
     return response;
   } catch (error) {
-    if (
-      error instanceof Error &&
-      (error.name === "TimeoutError" || error.name === "AbortError")
-    ) {
+    if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
       throw new Error(`Timed out after ${DOCTOR_TIMEOUT_MS}ms contacting ${url}`);
     }
     throw error;
@@ -182,22 +151,15 @@ async function doctor() {
     throw new Error("Doctor URL must use http or https.");
   }
   const loopbackHosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
-  if (
-    parsedUrl.protocol === "http:" &&
-    !loopbackHosts.has(parsedUrl.hostname)
-  ) {
-    throw new Error(
-      "Refusing to send authentication credentials over remote plaintext HTTP. Use HTTPS.",
-    );
+  if (parsedUrl.protocol === "http:" && !loopbackHosts.has(parsedUrl.hostname)) {
+    throw new Error("Refusing to send authentication credentials over remote plaintext HTTP. Use HTTPS.");
   }
   const baseUrl = requestedUrl.replace(/\/+$/, "");
   const token = process.env.CONNECTA_TOKEN;
   const accessClientId = process.env.CF_ACCESS_CLIENT_ID;
   const accessClientSecret = process.env.CF_ACCESS_CLIENT_SECRET;
   if (Boolean(accessClientId) !== Boolean(accessClientSecret)) {
-    throw new Error(
-      "Set both CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET.",
-    );
+    throw new Error("Set both CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET.");
   }
   if (!token && !accessClientId) {
     throw new Error(
@@ -235,9 +197,7 @@ async function doctor() {
     return;
   }
 
-  const health = await jsonResponse(
-    await doctorFetch(`${baseUrl}/health`, { headers: authHeaders }),
-  );
+  const health = await jsonResponse(await doctorFetch(`${baseUrl}/health`, { headers: authHeaders }));
   if (health.status !== "ok") {
     throw new Error(`Unexpected health status: ${String(health.status)}`);
   }
@@ -274,21 +234,22 @@ async function doctor() {
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
       throw new Error(
         `Unexpected MCP surface. Expected ${expected.join(", ")}; received ` +
-        `${Array.isArray(actual) ? actual.join(", ") : "no tool list"}.`,
+          `${Array.isArray(actual) ? actual.join(", ") : "no tool list"}.`,
       );
     }
 
-    const executed = await client.callTool({
-      name: "execute_code",
-      arguments: { code: "async () => 42" },
-    }, undefined, { timeout: DOCTOR_TIMEOUT_MS });
-    const executionResult =
-      executed.structuredContent ??
-      JSON.parse(executed.content?.[0]?.text ?? "null");
+    const executed = await client.callTool(
+      {
+        name: "execute_code",
+        arguments: { code: "async () => 42" },
+      },
+      undefined,
+      { timeout: DOCTOR_TIMEOUT_MS },
+    );
+    const executionResult = executed.structuredContent ?? JSON.parse(executed.content?.[0]?.text ?? "null");
     if (executed.isError || executionResult?.result !== 42) {
       throw new Error(
-        `${executorName ? `${executorName} execution` : "execute_code"} check ` +
-          `failed: ${JSON.stringify(executed)}`,
+        `${executorName ? `${executorName} execution` : "execute_code"} check ` + `failed: ${JSON.stringify(executed)}`,
       );
     }
   } finally {
@@ -314,9 +275,7 @@ async function migrateState() {
     return;
   }
   const [statePath, databasePath] = args.map((arg) => resolve(process.cwd(), arg));
-  const { importStateFile, openSqlite } = await import(
-    pathToFileURL(join(packageRoot, "dist", "sqlite.js")).href
-  );
+  const { importStateFile, openSqlite } = await import(pathToFileURL(join(packageRoot, "dist", "sqlite.js")).href);
   const database = openSqlite(databasePath);
   try {
     const result = importStateFile(database, statePath);
@@ -338,8 +297,6 @@ try {
     process.exitCode = command === "--help" || command === "-h" ? 0 : 1;
   }
 } catch (error) {
-  console.error(
-    `[connecta] ${error instanceof Error ? error.message : String(error)}`,
-  );
+  console.error(`[connecta] ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 }

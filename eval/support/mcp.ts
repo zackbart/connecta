@@ -24,10 +24,7 @@ export interface McpSession {
   close(): Promise<void>;
 }
 
-export async function connectMcp(
-  url: string,
-  headers: Record<string, string>,
-): Promise<McpSession> {
+export async function connectMcp(url: string, headers: Record<string, string>): Promise<McpSession> {
   const client = new Client({ name: "connecta-eval", version: "1.0.0" });
   const transport = new StreamableHTTPClientTransport(new URL(url), {
     requestInit: { headers },

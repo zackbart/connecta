@@ -341,9 +341,7 @@ describe("reading forms (H9)", () => {
           itemId: "i7",
           title: "Arrival date",
           kind: "question",
-          questions: [
-            { questionId: "q6", required: false, type: "date", includesYear: true, includesTime: false },
-          ],
+          questions: [{ questionId: "q6", required: false, type: "date", includesYear: true, includesTime: false }],
         },
       ],
     });
@@ -362,11 +360,19 @@ describe("reading forms (H9)", () => {
       body: {
         formId: "form-2",
         info: { title: "Big", description: "d".repeat(2_100) },
-        items: [{ itemId: "i1", title: "Pick", questionItem: { question: { questionId: "q1", choiceQuestion: { type: "DROP_DOWN", options } } } }],
+        items: [
+          {
+            itemId: "i1",
+            title: "Pick",
+            questionItem: { question: { questionId: "q1", choiceQuestion: { type: "DROP_DOWN", options } } },
+          },
+        ],
       },
     });
     const result = await call(connection(), "get_form", { formId: "form-2" });
-    expect(result.description).toBe(`${"d".repeat(2_000)}\n[… 100 more characters truncated; pass raw: true to read it]`);
+    expect(result.description).toBe(
+      `${"d".repeat(2_000)}\n[… 100 more characters truncated; pass raw: true to read it]`,
+    );
     const question = result.items[0].questions[0];
     expect(question.type).toBe("drop_down");
     expect(question.options).toHaveLength(100);
@@ -442,7 +448,10 @@ describe("cuts never split a surrogate pair", () => {
         ? {
             body: {
               responses: [
-                { responseId: "r1", answers: { q1: { questionId: "q1", textAnswers: { answers: [{ value: straddle(2_000) }] } } } },
+                {
+                  responseId: "r1",
+                  answers: { q1: { questionId: "q1", textAnswers: { answers: [{ value: straddle(2_000) }] } } },
+                },
               ],
             },
           }
@@ -568,7 +577,11 @@ describe("reading responses (H9, H10)", () => {
               totalScore: 3,
               answers: {
                 ...RESPONSE.answers,
-                q1: { questionId: "q1", grade: { score: 3, correct: true }, textAnswers: { answers: [{ value: "Evening" }] } },
+                q1: {
+                  questionId: "q1",
+                  grade: { score: 3, correct: true },
+                  textAnswers: { answers: [{ value: "Evening" }] },
+                },
               },
             },
           }
@@ -579,7 +592,13 @@ describe("reading responses (H9, H10)", () => {
       "/v1/forms/form-1/responses/r1",
     ]);
     expect(result.totalScore).toBe(3);
-    expect(result.answers[0]).toEqual({ questionId: "q1", title: "Which session?", values: ["Evening"], score: 3, correct: true });
+    expect(result.answers[0]).toEqual({
+      questionId: "q1",
+      title: "Which session?",
+      values: ["Evening"],
+      score: 3,
+      correct: true,
+    });
     expect(result.answers[1].values[0]).toHaveLength(2_500);
     expect(result.answers[1].feedback).toEqual({
       text: `See the allergy guide. ${"f".repeat(2_100)}`,
@@ -724,14 +743,25 @@ describe("output schemas declare what each tool returns (H8)", () => {
             },
           };
     await conforms(connector, "create_form", await call(connector, "create_form", { title: "New" }));
-    await conforms(connector, "update_form_info", await call(connector, "update_form_info", { formId: "new-1", title: "Newer" }));
+    await conforms(
+      connector,
+      "update_form_info",
+      await call(connector, "update_form_info", { formId: "new-1", title: "Newer" }),
+    );
     await conforms(
       connector,
       "batch_update_form",
       await call(connector, "batch_update_form", {
         formId: "new-1",
         requiredRevisionId: "00000001",
-        requests: [{ createItem: { item: { title: "Q", questionItem: { question: { textQuestion: {} } } }, location: { index: 0 } } }],
+        requests: [
+          {
+            createItem: {
+              item: { title: "Q", questionItem: { question: { textQuestion: {} } } },
+              location: { index: 0 },
+            },
+          },
+        ],
       }),
     );
   });
@@ -768,9 +798,9 @@ describe("writing forms", () => {
 
     // Description, items, and settings are refused by Google at creation, and
     // so by the schema here.
-    await expect(
-      call(connection(), "create_form", { title: "x", description: "y" }),
-    ).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(call(connection(), "create_form", { title: "x", description: "y" })).rejects.toMatchObject({
+      code: "invalid_args",
+    });
   });
 
   it("replaces only the info fields it is given, with the revision guard when passed", async () => {
@@ -789,10 +819,19 @@ describe("writing forms", () => {
     expect(result).toEqual({ formId: "form-1", revisionId: "00000043" });
 
     calls.length = 0;
-    await call(connection(), "update_form_info", { formId: "form-1", title: "Retreat 2026", description: "Bring a coat." });
+    await call(connection(), "update_form_info", {
+      formId: "form-1",
+      title: "Retreat 2026",
+      description: "Bring a coat.",
+    });
     expect(calls[0]!.body).toEqual({
       requests: [
-        { updateFormInfo: { info: { title: "Retreat 2026", description: "Bring a coat." }, updateMask: "title,description" } },
+        {
+          updateFormInfo: {
+            info: { title: "Retreat 2026", description: "Bring a coat." },
+            updateMask: "title,description",
+          },
+        },
       ],
     });
   });
@@ -862,28 +901,31 @@ describe("writing forms", () => {
         expect(result.createdItemCount).toBe(100);
       },
     ],
-  ])("bounds a batch reply too large to return whole, and still reports it applied: %s", async (_case, reply, check) => {
-    route = () => ({
-      body: {
-        writeControl: { requiredRevisionId: "00000050" },
-        replies: Array.from({ length: 100 }, (_, index) => reply(index)),
-      },
-    });
-    const connector = connection();
-    const result = await call(connector, "batch_update_form", {
-      formId: "form-1",
-      requiredRevisionId: "00000049",
-      requests: Array.from({ length: 100 }, () => ({
-        createItem: { item: { title: "Grid", questionGroupItem: {} }, location: { index: 0 } },
-      })),
-    });
-    expect(jsonBytes(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
-    expect(result).toMatchObject({ formId: "form-1", revisionId: "00000050", truncated: true });
-    expect(result.note).toMatch(/^The batch applied\./);
-    expect(result.note).not.toMatch(/nothing|not applied|failed/i);
-    check(result);
-    await conforms(connector, "batch_update_form", result);
-  });
+  ])(
+    "bounds a batch reply too large to return whole, and still reports it applied: %s",
+    async (_case, reply, check) => {
+      route = () => ({
+        body: {
+          writeControl: { requiredRevisionId: "00000050" },
+          replies: Array.from({ length: 100 }, (_, index) => reply(index)),
+        },
+      });
+      const connector = connection();
+      const result = await call(connector, "batch_update_form", {
+        formId: "form-1",
+        requiredRevisionId: "00000049",
+        requests: Array.from({ length: 100 }, () => ({
+          createItem: { item: { title: "Grid", questionGroupItem: {} }, location: { index: 0 } },
+        })),
+      });
+      expect(jsonBytes(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
+      expect(result).toMatchObject({ formId: "form-1", revisionId: "00000050", truncated: true });
+      expect(result.note).toMatch(/^The batch applied\./);
+      expect(result.note).not.toMatch(/nothing|not applied|failed/i);
+      check(result);
+      await conforms(connector, "batch_update_form", result);
+    },
+  );
 
   it("refuses a batch without a revision, an unknown request kind, or two kinds in one request", async () => {
     const createItem = { item: { title: "x", textItem: {} }, location: { index: 0 } };
@@ -924,11 +966,21 @@ describe("a write whose outcome is unknown is never told to retry", () => {
   };
   /** Google received it and answered 5xx: it may still have applied. */
   const serverError = async () =>
-    Response.json({ error: { code: 503, message: "The service is currently unavailable.", status: "UNAVAILABLE" } }, { status: 503 });
+    Response.json(
+      { error: { code: 503, message: "The service is currently unavailable.", status: "UNAVAILABLE" } },
+      { status: 503 },
+    );
   /** A 5xx carrying a rate-limit reason is still a 5xx on a write: unknown. */
   const rateLimited503 = async () =>
     Response.json(
-      { error: { code: 503, message: "Quota exceeded.", status: "UNAVAILABLE", details: [{ reason: "RATE_LIMIT_EXCEEDED" }] } },
+      {
+        error: {
+          code: 503,
+          message: "Quota exceeded.",
+          status: "UNAVAILABLE",
+          details: [{ reason: "RATE_LIMIT_EXCEEDED" }],
+        },
+      },
       { status: 503 },
     );
   /** A redirect, never followed: whether the write applied is unknown. */
@@ -969,9 +1021,10 @@ describe("a write whose outcome is unknown is never told to retry", () => {
     ["answered with a redirect", redirect, "whether the request was applied is unknown"],
   ])("tells a create %s to look for the form before creating another", async (_case, reply, says) => {
     answer(reply);
-    const failure = await call(connection(), "create_form", { title: "Volunteer roster", documentTitle: "Roster" }).catch(
-      (error) => error,
-    );
+    const failure = await call(connection(), "create_form", {
+      title: "Volunteer roster",
+      documentTitle: "Roster",
+    }).catch((error) => error);
     expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
     expect(failure.message).toContain(says);
     expect(failure.message).toContain('look for "Roster" in the user\'s Drive');
@@ -986,7 +1039,10 @@ describe("a write whose outcome is unknown is never told to retry", () => {
   });
 
   it("leaves a refused create as Google refused it", async () => {
-    route = () => ({ status: 400, body: { error: { code: 400, message: "Title too long.", status: "INVALID_ARGUMENT" } } });
+    route = () => ({
+      status: 400,
+      body: { error: { code: 400, message: "Title too long.", status: "INVALID_ARGUMENT" } },
+    });
     const failure = await call(connection(), "create_form", { title: "x" }).catch((error) => error);
     expect(failure.code).toBe("invalid_args");
     expect(failure.message).not.toContain("look for");
@@ -995,7 +1051,10 @@ describe("a write whose outcome is unknown is never told to retry", () => {
 
 describe("errors (H11)", () => {
   it("never calls a 404 absent: a form is a Drive file the user may not see", async () => {
-    route = () => ({ status: 404, body: { error: { code: 404, message: "Requested entity was not found.", status: "NOT_FOUND" } } });
+    route = () => ({
+      status: 404,
+      body: { error: { code: 404, message: "Requested entity was not found.", status: "NOT_FOUND" } },
+    });
     const failure = await call(connection(), "get_form", { formId: "hidden" }).catch((error) => error);
     expect(failure.code).toBe("connector_call_failed");
     expect(failure.code).not.toBe("not_found");
@@ -1038,7 +1097,13 @@ describe("errors (H11)", () => {
   it("passes any other refusal of a guarded write through as Google classed it", async () => {
     route = () => ({
       status: 400,
-      body: { error: { code: 400, message: "Invalid requests[0].deleteItem: index out of range.", status: "INVALID_ARGUMENT" } },
+      body: {
+        error: {
+          code: 400,
+          message: "Invalid requests[0].deleteItem: index out of range.",
+          status: "INVALID_ARGUMENT",
+        },
+      },
     });
     await expect(call(connection(), "batch_update_form", staleBatch)).rejects.toMatchObject({
       code: "invalid_args",
@@ -1049,7 +1114,14 @@ describe("errors (H11)", () => {
   it("names the exact scopes when the delegated grant lacks one", async () => {
     route = () => ({
       status: 403,
-      body: { error: { code: 403, message: "Request had insufficient authentication scopes.", status: "PERMISSION_DENIED", details: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }] } },
+      body: {
+        error: {
+          code: 403,
+          message: "Request had insufficient authentication scopes.",
+          status: "PERMISSION_DENIED",
+          details: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }],
+        },
+      },
     });
     const failure = await call(connection(), "list_responses", { formId: "form-1" }).catch((error) => error);
     expect(failure.code).toBe("provider_permission_denied");
@@ -1059,7 +1131,14 @@ describe("errors (H11)", () => {
   it("names the API to enable when the project has not", async () => {
     route = () => ({
       status: 403,
-      body: { error: { code: 403, message: "Google Forms API has not been used in project 1.", status: "PERMISSION_DENIED", details: [{ reason: "SERVICE_DISABLED" }] } },
+      body: {
+        error: {
+          code: 403,
+          message: "Google Forms API has not been used in project 1.",
+          status: "PERMISSION_DENIED",
+          details: [{ reason: "SERVICE_DISABLED" }],
+        },
+      },
     });
     const failure = await call(connection(), "get_form", { formId: "form-1" }).catch((error) => error);
     expect(failure.code).toBe("connector_call_failed");
@@ -1067,7 +1146,10 @@ describe("errors (H11)", () => {
   });
 
   it("carries Google's stated wait on a rate limit", async () => {
-    route = () => ({ status: 429, body: { error: { code: 429, message: "Quota exceeded.", status: "RESOURCE_EXHAUSTED" } } });
+    route = () => ({
+      status: 429,
+      body: { error: { code: 429, message: "Quota exceeded.", status: "RESOURCE_EXHAUSTED" } },
+    });
     globalThis.fetch = vi.fn(async (input: unknown) => {
       if (String(input) === TOKEN_URL) return Response.json({ access_token: "token", expires_in: 3599 });
       return Response.json(
@@ -1175,27 +1257,34 @@ describe("worst-case results fit one host result (256 KiB)", () => {
   it.each([
     ["the default page", {}, 25, 30, 2_500],
     ["the largest page", { limit: 100 }, 100, 6, 1_500],
-  ])("ends %s early and continues by cursor, losing and repeating nothing", { timeout: 30_000 }, async (_label, extra, count, questions, chars) => {
-    const rows = responses(count, questions, long(chars));
-    for (const row of rows) row.answers["q0"] = { questionId: "q0", textAnswers: { answers: [{ value: long(2_500) }] } };
-    route = serve(paragraphForm(questions), rows);
-    const pages = await everyPage("list_responses", { formId: "big", ...extra });
-    const seen = pages.flatMap((page) => page.responses.map((response: any) => response.responseId));
-    expect(seen).toEqual(Array.from({ length: count }, (_, index) => `r${index}`));
-    // Ended early: more pages than Google's one, each cut answer marked.
-    expect(pages.length).toBeGreaterThan(1);
-    for (const page of [pages[0], pages.at(-1)]) {
-      const [first, second] = page.responses[0].answers;
-      if (chars <= 2_000) {
-        expect(first.values[0]).toBe(`${long(2_000)}\n[… 500 more characters truncated; get_response reads it whole]`);
-        expect(second.values[0]).toBe(long(chars));
-      } else {
-        // Thirty long answers do not fit one page even at 2,000 characters,
-        // so this response is cut harder, and says so the same way.
-        expect(first.values[0]).toMatch(/^日+\n\[… \d+ more characters truncated; get_response reads it whole\]$/);
+  ])(
+    "ends %s early and continues by cursor, losing and repeating nothing",
+    { timeout: 30_000 },
+    async (_label, extra, count, questions, chars) => {
+      const rows = responses(count, questions, long(chars));
+      for (const row of rows)
+        row.answers["q0"] = { questionId: "q0", textAnswers: { answers: [{ value: long(2_500) }] } };
+      route = serve(paragraphForm(questions), rows);
+      const pages = await everyPage("list_responses", { formId: "big", ...extra });
+      const seen = pages.flatMap((page) => page.responses.map((response: any) => response.responseId));
+      expect(seen).toEqual(Array.from({ length: count }, (_, index) => `r${index}`));
+      // Ended early: more pages than Google's one, each cut answer marked.
+      expect(pages.length).toBeGreaterThan(1);
+      for (const page of [pages[0], pages.at(-1)]) {
+        const [first, second] = page.responses[0].answers;
+        if (chars <= 2_000) {
+          expect(first.values[0]).toBe(
+            `${long(2_000)}\n[… 500 more characters truncated; get_response reads it whole]`,
+          );
+          expect(second.values[0]).toBe(long(chars));
+        } else {
+          // Thirty long answers do not fit one page even at 2,000 characters,
+          // so this response is cut harder, and says so the same way.
+          expect(first.values[0]).toMatch(/^日+\n\[… \d+ more characters truncated; get_response reads it whole\]$/);
+        }
       }
-    }
-  });
+    },
+  );
 
   it("narrows one response too large for a page, naming the answers it left out", async () => {
     const form = paragraphForm(400);
@@ -1281,89 +1370,99 @@ describe("worst-case results fit one host result (256 KiB)", () => {
     ).rejects.toMatchObject({ code: "invalid_args" });
   });
 
-  it("recovers every question id a truncated batch reply left out, through get_form's pages", { timeout: 30_000 }, async () => {
-    // Five grids of 2,000 rows: the batch reply names 10,000 question ids,
-    // more than one result carries, so it comes back without them.
-    const grids = Array.from({ length: 5 }, (_, grid) => ({
-      itemId: `grid${grid}`,
-      ids: Array.from({ length: 2_000 }, (_, row) => `question-${grid}-${row}-abcdefghij`),
-    }));
-    route = () => ({
-      body: {
-        writeControl: { requiredRevisionId: "00000021" },
-        replies: grids.map((grid) => ({ createItem: { itemId: grid.itemId, questionId: grid.ids } })),
-      },
-    });
-    const reply = await call(connection(), "batch_update_form", {
-      formId: "rows",
-      requiredRevisionId: "00000020",
-      requests: grids.map(() => ({ createItem: { item: { title: "Grid", questionGroupItem: {} }, location: { index: 0 } } })),
-    });
-    expect(reply.truncated).toBe(true);
-    expect(reply.replies.map((entry: any) => entry.createdItemId)).toEqual(grids.map((grid) => grid.itemId));
-    expect(reply.note).toContain("get_form, following page.nextCursor");
-
-    // The form as Google then returns it; every row recovers, each once.
-    route = () => ({
-      body: {
-        formId: "rows",
-        revisionId: "00000021",
-        info: { title: "Rows" },
-        items: grids.map((grid) => ({
-          itemId: grid.itemId,
-          title: "Availability",
-          questionGroupItem: {
-            grid: { columns: { type: "CHECKBOX", options: [{ value: "Fri" }, { value: "Sat" }] } },
-            questions: grid.ids.map((questionId) => ({ questionId, rowQuestion: { title: "列".repeat(50) } })),
-          },
-        })),
-      },
-    });
-    const pages = await everyPage("get_form", { formId: "rows" });
-    for (const grid of grids) expect(rowsOf(pages, grid.itemId)).toEqual(grid.ids);
-    expect(itemIds(pages)).toEqual(grids.map((grid) => grid.itemId));
-  });
-
-  it("bounds escaped control characters and an oversized header, measuring the whole result", { timeout: 30_000 }, async () => {
-    // Each U+0001 is one character and six bytes of JSON (\u0001), so a
-    // character cut alone would let text grow six-fold past its place.
-    const control = (chars: number) => "\u0001".repeat(chars);
-    const options = Array.from({ length: 100 }, () => ({ value: control(400) }));
-    const form = {
-      formId: "escaped",
-      revisionId: "00000003",
-      info: { title: control(5_000), documentTitle: control(5_000), description: control(5_000) },
-      items: [
-        ...Array.from({ length: 12 }, (_, index) => ({
-          itemId: `i${index}`,
-          title: control(5_000),
-          description: control(5_000),
-          questionItem: { question: { questionId: `q${index}`, choiceQuestion: { type: "CHECKBOX", options } } },
-        })),
-        {
-          itemId: "grid",
-          title: control(5_000),
-          questionGroupItem: {
-            grid: { columns: { type: "CHECKBOX", options } },
-            questions: Array.from({ length: 1_000 }, (_, index) => ({
-              questionId: `row${index}`,
-              rowQuestion: { title: control(400) },
-            })),
-          },
+  it(
+    "recovers every question id a truncated batch reply left out, through get_form's pages",
+    { timeout: 30_000 },
+    async () => {
+      // Five grids of 2,000 rows: the batch reply names 10,000 question ids,
+      // more than one result carries, so it comes back without them.
+      const grids = Array.from({ length: 5 }, (_, grid) => ({
+        itemId: `grid${grid}`,
+        ids: Array.from({ length: 2_000 }, (_, row) => `question-${grid}-${row}-abcdefghij`),
+      }));
+      route = () => ({
+        body: {
+          writeControl: { requiredRevisionId: "00000021" },
+          replies: grids.map((grid) => ({ createItem: { itemId: grid.itemId, questionId: grid.ids } })),
         },
-      ],
-    };
-    route = () => ({ body: form });
-    const pages = await everyPage("get_form", { formId: "escaped" });
-    expect(itemIds(pages)).toEqual([...Array.from({ length: 12 }, (_, index) => `i${index}`), "grid"]);
-    expect(rowsOf(pages, "grid")).toEqual(Array.from({ length: 1_000 }, (_, index) => `row${index}`));
-    const header = pages[0];
-    for (const field of ["title", "documentTitle", "description"]) {
-      expect(jsonBytes(header[field])).toBeLessThanOrEqual(8 * 1024);
-      expect(header[field]).toMatch(/more characters truncated; pass raw: true to read it\]$/);
-    }
-    expect(jsonBytes(pages[0].items[0].questions[0].options[0])).toBeLessThanOrEqual(1024);
-  });
+      });
+      const reply = await call(connection(), "batch_update_form", {
+        formId: "rows",
+        requiredRevisionId: "00000020",
+        requests: grids.map(() => ({
+          createItem: { item: { title: "Grid", questionGroupItem: {} }, location: { index: 0 } },
+        })),
+      });
+      expect(reply.truncated).toBe(true);
+      expect(reply.replies.map((entry: any) => entry.createdItemId)).toEqual(grids.map((grid) => grid.itemId));
+      expect(reply.note).toContain("get_form, following page.nextCursor");
+
+      // The form as Google then returns it; every row recovers, each once.
+      route = () => ({
+        body: {
+          formId: "rows",
+          revisionId: "00000021",
+          info: { title: "Rows" },
+          items: grids.map((grid) => ({
+            itemId: grid.itemId,
+            title: "Availability",
+            questionGroupItem: {
+              grid: { columns: { type: "CHECKBOX", options: [{ value: "Fri" }, { value: "Sat" }] } },
+              questions: grid.ids.map((questionId) => ({ questionId, rowQuestion: { title: "列".repeat(50) } })),
+            },
+          })),
+        },
+      });
+      const pages = await everyPage("get_form", { formId: "rows" });
+      for (const grid of grids) expect(rowsOf(pages, grid.itemId)).toEqual(grid.ids);
+      expect(itemIds(pages)).toEqual(grids.map((grid) => grid.itemId));
+    },
+  );
+
+  it(
+    "bounds escaped control characters and an oversized header, measuring the whole result",
+    { timeout: 30_000 },
+    async () => {
+      // Each U+0001 is one character and six bytes of JSON (\u0001), so a
+      // character cut alone would let text grow six-fold past its place.
+      const control = (chars: number) => "\u0001".repeat(chars);
+      const options = Array.from({ length: 100 }, () => ({ value: control(400) }));
+      const form = {
+        formId: "escaped",
+        revisionId: "00000003",
+        info: { title: control(5_000), documentTitle: control(5_000), description: control(5_000) },
+        items: [
+          ...Array.from({ length: 12 }, (_, index) => ({
+            itemId: `i${index}`,
+            title: control(5_000),
+            description: control(5_000),
+            questionItem: { question: { questionId: `q${index}`, choiceQuestion: { type: "CHECKBOX", options } } },
+          })),
+          {
+            itemId: "grid",
+            title: control(5_000),
+            questionGroupItem: {
+              grid: { columns: { type: "CHECKBOX", options } },
+              questions: Array.from({ length: 1_000 }, (_, index) => ({
+                questionId: `row${index}`,
+                rowQuestion: { title: control(400) },
+              })),
+            },
+          },
+        ],
+      };
+      route = () => ({ body: form });
+      const pages = await everyPage("get_form", { formId: "escaped" });
+      expect(itemIds(pages)).toEqual([...Array.from({ length: 12 }, (_, index) => `i${index}`), "grid"]);
+      expect(rowsOf(pages, "grid")).toEqual(Array.from({ length: 1_000 }, (_, index) => `row${index}`));
+      const header = pages[0];
+      for (const field of ["title", "documentTitle", "description"]) {
+        expect(jsonBytes(header[field])).toBeLessThanOrEqual(8 * 1024);
+        expect(header[field]).toMatch(/more characters truncated; pass raw: true to read it\]$/);
+      }
+      expect(jsonBytes(pages[0].items[0].questions[0].options[0])).toBeLessThanOrEqual(1024);
+    },
+  );
 });
 
 describe("list_responses resumes only on the page it was issued for", () => {

@@ -134,9 +134,7 @@ export interface TithelyOptions {
 type JsonRecord = Record<string, any>;
 
 function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
 
 function asArray(value: unknown): unknown[] {
@@ -144,9 +142,7 @@ function asArray(value: unknown): unknown[] {
 }
 
 function compact<T extends object>(value: T): T {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined),
-  ) as T;
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
 function text(value: unknown): string | undefined {
@@ -216,9 +212,7 @@ function keyPairProblem(values: ConnectorCredentialValues | null): string | KeyP
  * source would be a second function of this type selected at construction,
  * with the transport, tools, and error mapping unchanged.
  */
-type TithelyAuthentication = (
-  ctx: ConnectorContext,
-) => Promise<Record<string, string>>;
+type TithelyAuthentication = (ctx: ConnectorContext) => Promise<Record<string, string>>;
 
 const operatorKeyPair: TithelyAuthentication = async (ctx) => {
   const pair = keyPairProblem((await ctx.credential?.getAll()) ?? null);
@@ -236,11 +230,7 @@ const operatorKeyPair: TithelyAuthentication = async (ctx) => {
 function detailFor(payload: unknown, status: number): string {
   const root = asRecord(payload);
   const error = root["error"];
-  const message =
-    text(root["reason"]) ??
-    text(root["message"]) ??
-    text(error) ??
-    text(asRecord(error)["message"]);
+  const message = text(root["reason"]) ?? text(root["message"]) ?? text(error) ?? text(asRecord(error)["message"]);
   return message ? `Tithe.ly: ${message.trim()}` : `Tithe.ly returned HTTP ${status}.`;
 }
 
@@ -249,11 +239,7 @@ function detailFor(payload: unknown, status: number): string {
  * statuses, so every branch states what it cannot know rather than choosing
  * the convenient reading.
  */
-function tithelyFailure(
-  status: number,
-  headers: Headers,
-  payload: unknown,
-): ConnectorCallError {
+function tithelyFailure(status: number, headers: Headers, payload: unknown): ConnectorCallError {
   const detail = detailFor(payload, status);
   if (status === 429) {
     const wait = retryAfterMs(headers);
@@ -318,10 +304,7 @@ function inBandFailure(payload: unknown): ConnectorCallError | undefined {
   );
 }
 
-function tithelyTransport(
-  baseUrl: string,
-  authenticate: TithelyAuthentication,
-): GuardedTransport {
+function tithelyTransport(baseUrl: string, authenticate: TithelyAuthentication): GuardedTransport {
   return guardedFetch({
     provider: "Tithe.ly",
     baseUrl,
@@ -331,19 +314,11 @@ function tithelyTransport(
   });
 }
 
-async function callTithely(
-  send: GuardedTransport,
-  request: GuardedRequest,
-  ctx: ConnectorContext,
-): Promise<unknown> {
+async function callTithely(send: GuardedTransport, request: GuardedRequest, ctx: ConnectorContext): Promise<unknown> {
   return await send(request, ctx, async (response) => {
     const parsed = await response.jsonResult();
     if (!response.ok) {
-      throw tithelyFailure(
-        response.status,
-        response.headers,
-        "value" in parsed ? parsed.value : undefined,
-      );
+      throw tithelyFailure(response.status, response.headers, "value" in parsed ? parsed.value : undefined);
     }
     if (!("value" in parsed)) {
       throw new ConnectorCallError(
@@ -421,7 +396,7 @@ function projectFunds(organization: JsonRecord): JsonRecord[] {
       return compact({
         id: fund["id"] === undefined ? undefined : String(fund["id"]),
         name: String(fund["name"] ?? ""),
-        status: status === undefined ? undefined : FUND_STATUS[status] ?? status,
+        status: status === undefined ? undefined : (FUND_STATUS[status] ?? status),
       });
     });
   }
@@ -657,10 +632,7 @@ function scopeFilters(args: JsonRecord, noun: string): Record<string, string | u
 
 // --- Schemas ----------------------------------------------------------------------
 
-function namedInput(
-  properties: Record<string, JsonSchema>,
-  required: string[],
-): JsonSchema {
+function namedInput(properties: Record<string, JsonSchema>, required: string[]): JsonSchema {
   return { type: "object", properties, required, additionalProperties: false };
 }
 
@@ -915,11 +887,8 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       outputSchema: UNTOUCHED_RESULT,
       handler: async (args, ctx) => ({
         result:
-          (await callTithely(
-            send,
-            { method: "GET", path: String(args["path"]), query: pairs(args["query"]) },
-            ctx,
-          )) ?? null,
+          (await callTithely(send, { method: "GET", path: String(args["path"]), query: pairs(args["query"]) }, ctx)) ??
+          null,
       }),
     },
     {
@@ -932,7 +901,8 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
           method: {
             type: "string",
             enum: ["POST", "DELETE"],
-            description: "POST creates, updates, charges, or refunds; DELETE cancels a recurring gift or removes a payment method.",
+            description:
+              "POST creates, updates, charges, or refunds; DELETE cancels a recurring gift or removes a payment method.",
           },
           path: PATH_PROPERTY,
           query: QUERY_PROPERTY,
@@ -969,13 +939,17 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       description:
         "List the organizations these keys manage, with their funds (giving types) and status. Omits payout bank and legal-contact details.",
       annotations: readOnly,
-      inputSchema: namedInput(
-        { limit, cursor: CURSOR_PROPERTY, order: ORDER_PROPERTY, raw: RAW_PROPERTY },
-        [],
-      ),
+      inputSchema: namedInput({ limit, cursor: CURSOR_PROPERTY, order: ORDER_PROPERTY, raw: RAW_PROPERTY }, []),
       outputSchema: listSchema("organizations", ORGANIZATION_SCHEMA),
       handler: async (args, ctx) => {
-        const { rows, page } = await listPage(send, ctx, "/organizations-list", "organization_id", args, defaultPageSize);
+        const { rows, page } = await listPage(
+          send,
+          ctx,
+          "/organizations-list",
+          "organization_id",
+          args,
+          defaultPageSize,
+        );
         return { organizations: raw(args) ? rows : rows.map(projectOrganization), page };
       },
     },
@@ -984,10 +958,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       description:
         "Get one organization with its funds (giving types) and whether each is active, hidden, or archived. Omits payout bank and legal-contact details.",
       annotations: readOnly,
-      inputSchema: namedInput(
-        { organizationId: ORGANIZATION_ID_PROPERTY, raw: RAW_PROPERTY },
-        ["organizationId"],
-      ),
+      inputSchema: namedInput({ organizationId: ORGANIZATION_ID_PROPERTY, raw: RAW_PROPERTY }, ["organizationId"]),
       outputSchema: ORGANIZATION_SCHEMA,
       handler: async (args, ctx) => {
         const payload = await callTithely(
@@ -1009,7 +980,8 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
           scope: {
             type: "string",
             enum: ["all", "api"],
-            description: "all (default) lists every account Tithe.ly lets these keys see; api lists only accounts created through this API.",
+            description:
+              "all (default) lists every account Tithe.ly lets these keys see; api lists only accounts created through this API.",
           },
           limit,
           cursor: CURSOR_PROPERTY,
@@ -1030,10 +1002,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       description:
         "Get one donor account with email, phone, and postal address. Does not include giving; use list_charges with accountId.",
       annotations: readOnly,
-      inputSchema: namedInput(
-        { accountId: ACCOUNT_ID_PROPERTY, raw: RAW_PROPERTY },
-        ["accountId"],
-      ),
+      inputSchema: namedInput({ accountId: ACCOUNT_ID_PROPERTY, raw: RAW_PROPERTY }, ["accountId"]),
       outputSchema: ACCOUNT_SCHEMA,
       handler: async (args, ctx) => {
         const payload = await callTithely(
@@ -1052,13 +1021,20 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       annotations: readOnly,
       inputSchema: namedInput(
         {
-          organizationId: { ...ORGANIZATION_ID_PROPERTY, description: "Organization (org_…) the gifts went to. This or accountId is required." },
-          accountId: { ...ACCOUNT_ID_PROPERTY, description: "Donor account (user_…) that gave. This or organizationId is required." },
+          organizationId: {
+            ...ORGANIZATION_ID_PROPERTY,
+            description: "Organization (org_…) the gifts went to. This or accountId is required.",
+          },
+          accountId: {
+            ...ACCOUNT_ID_PROPERTY,
+            description: "Donor account (user_…) that gave. This or organizationId is required.",
+          },
           createdAfter: {
             type: ["integer", "string"],
             minimum: 0,
             minLength: 1,
-            description: "Only charges created after this time: Unix seconds or an ISO 8601 date/date-time (UTC when no offset).",
+            description:
+              "Only charges created after this time: Unix seconds or an ISO 8601 date/date-time (UTC when no offset).",
           },
           createdBefore: {
             type: ["integer", "string"],
@@ -1083,10 +1059,11 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
             "createdAfter is later than createdBefore, so no charge can match.",
           );
         }
-        const { rows, page } = await listPage(
-          send, ctx, "/charges-list", "charge_id", args, defaultPageSize,
-          { ...scopeFilters(args, "charges"), created_after: after, created_before: before },
-        );
+        const { rows, page } = await listPage(send, ctx, "/charges-list", "charge_id", args, defaultPageSize, {
+          ...scopeFilters(args, "charges"),
+          created_after: after,
+          created_before: before,
+        });
         return { charges: raw(args) ? rows : rows.map(projectCharge), page };
       },
     },
@@ -1120,8 +1097,14 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       annotations: readOnly,
       inputSchema: namedInput(
         {
-          organizationId: { ...ORGANIZATION_ID_PROPERTY, description: "Organization (org_…) receiving the gifts. This or accountId is required." },
-          accountId: { ...ACCOUNT_ID_PROPERTY, description: "Donor account (user_…) giving. This or organizationId is required." },
+          organizationId: {
+            ...ORGANIZATION_ID_PROPERTY,
+            description: "Organization (org_…) receiving the gifts. This or accountId is required.",
+          },
+          accountId: {
+            ...ACCOUNT_ID_PROPERTY,
+            description: "Donor account (user_…) giving. This or organizationId is required.",
+          },
           limit,
           cursor: CURSOR_PROPERTY,
           order: ORDER_PROPERTY,
@@ -1132,7 +1115,12 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       outputSchema: listSchema("recurringCharges", RECURRING_SCHEMA),
       handler: async (args, ctx) => {
         const { rows, page } = await listPage(
-          send, ctx, "/recurring-list", "recurring_id", args, defaultPageSize,
+          send,
+          ctx,
+          "/recurring-list",
+          "recurring_id",
+          args,
+          defaultPageSize,
           scopeFilters(args, "recurring gifts"),
         );
         return { recurringCharges: raw(args) ? rows : rows.map(projectRecurring), page };
@@ -1145,7 +1133,11 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       annotations: readOnly,
       inputSchema: namedInput(
         {
-          recurringId: { type: "string", minLength: 1, description: "Recurring gift id (rc_…) from list_recurring_charges." },
+          recurringId: {
+            type: "string",
+            minLength: 1,
+            description: "Recurring gift id (rc_…) from list_recurring_charges.",
+          },
           raw: RAW_PROPERTY,
         },
         ["recurringId"],
@@ -1166,10 +1158,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
       description:
         "List one donor's stored payment methods as type, brand, and last four. Every method in one response; never card numbers or tokens.",
       annotations: readOnly,
-      inputSchema: namedInput(
-        { accountId: ACCOUNT_ID_PROPERTY, raw: RAW_PROPERTY },
-        ["accountId"],
-      ),
+      inputSchema: namedInput({ accountId: ACCOUNT_ID_PROPERTY, raw: RAW_PROPERTY }, ["accountId"]),
       outputSchema: {
         type: "object",
         properties: { paymentMethods: { type: "array", items: PAYMENT_METHOD_SCHEMA } },
@@ -1190,11 +1179,7 @@ function tools(send: GuardedTransport, defaultPageSize: number): ApiTool[] {
 
 // --- Guide ------------------------------------------------------------------------
 
-function usageGuide(
-  purpose: string,
-  environment: TithelyEnvironment,
-  instructions: string | undefined,
-): string {
+function usageGuide(purpose: string, environment: TithelyEnvironment, instructions: string | undefined): string {
   const accountInstructions = instructions?.trim();
   const where =
     environment === "live"
@@ -1205,9 +1190,7 @@ function usageGuide(
 ${where}
 
 Account purpose: ${purpose}${skill.fragments.guide_0}${
-    accountInstructions
-      ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n`
-      : ""
+    accountInstructions ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n` : ""
   }`;
 }
 
@@ -1229,7 +1212,7 @@ async function testKeyPair(
       {
         ...ctx,
         credential: {
-          get: async (field?: string) => (field ? values[field] ?? null : null),
+          get: async (field?: string) => (field ? (values[field] ?? null) : null),
           getAll: async () => values,
         },
       },
@@ -1251,9 +1234,11 @@ async function testKeyPair(
   }
 }
 
-
 /** The closed options tithely() accepts; see `assertKnownOptions`. */
-const TITHELY_OPTIONS = optionsOf<TithelyOptions>()({ ...PROVIDER_COMMON, ...keys("environment", "defaultPageSize", "baseUrl") });
+const TITHELY_OPTIONS = optionsOf<TithelyOptions>()({
+  ...PROVIDER_COMMON,
+  ...keys("environment", "defaultPageSize", "baseUrl"),
+});
 
 /** A maintained Tithe.ly giving connection over the v1 REST API. */
 export const tithely = asProviderFactory<TithelyOptions>({
@@ -1261,7 +1246,7 @@ export const tithely = asProviderFactory<TithelyOptions>({
   title: "Tithe.ly",
   kind: "api",
   readme: "Tithe.ly",
-  bundle: {"baselineGzip":18076,"maxGzip":78076},
+  bundle: { "baselineGzip": 18076, "maxGzip": 78076 },
   skill,
   options: TITHELY_OPTIONS,
   create: tithelyConnector,
@@ -1279,19 +1264,10 @@ function tithelyConnector(id: string, options: TithelyOptions): Connector {
     );
   }
   const defaultPageSize = options.defaultPageSize ?? DEFAULT_PAGE_SIZE;
-  if (
-    !Number.isInteger(defaultPageSize) ||
-    defaultPageSize < 1 ||
-    defaultPageSize > MAX_PAGE_SIZE
-  ) {
-    throw new Error(
-      `tithely() defaultPageSize must be a whole number between 1 and ${MAX_PAGE_SIZE}.`,
-    );
+  if (!Number.isInteger(defaultPageSize) || defaultPageSize < 1 || defaultPageSize > MAX_PAGE_SIZE) {
+    throw new Error(`tithely() defaultPageSize must be a whole number between 1 and ${MAX_PAGE_SIZE}.`);
   }
-  const send = tithelyTransport(
-    options.baseUrl?.trim() || TITHELY_API_BASE_URLS[environment],
-    operatorKeyPair,
-  );
+  const send = tithelyTransport(options.baseUrl?.trim() || TITHELY_API_BASE_URLS[environment], operatorKeyPair);
   const live = environment === "live";
   return api(id, {
     ...defined({

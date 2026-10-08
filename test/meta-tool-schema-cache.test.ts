@@ -52,31 +52,17 @@ const stubExecutor: Executor = {
 
 type ListedTool = { name: string; description: string; inputSchema: unknown };
 type Listing = Record<
-  | "skills"
-  | "search_tools"
-  | "call_tool"
-  | "call_destructive_tool"
-  | "authorize_connector"
-  | "execute_code",
+  "skills" | "search_tools" | "call_tool" | "call_destructive_tool" | "authorize_connector" | "execute_code",
   ListedTool
 >;
 
-async function listTools(
-  deployment: Parameters<typeof mcpRpc>[0],
-  token = TOKEN,
-): Promise<Listing> {
-  const body = await readJsonRpc(
-    await mcpRpc(deployment, "tools/list", {}, { token }),
-  );
-  return Object.fromEntries(
-    (body.result.tools as ListedTool[]).map((tool) => [tool.name, tool]),
-  ) as Listing;
+async function listTools(deployment: Parameters<typeof mcpRpc>[0], token = TOKEN): Promise<Listing> {
+  const body = await readJsonRpc(await mcpRpc(deployment, "tools/list", {}, { token }));
+  return Object.fromEntries((body.result.tools as ListedTool[]).map((tool) => [tool.name, tool])) as Listing;
 }
 
 function schemasOf(tools: Listing) {
-  return Object.fromEntries(
-    Object.entries(tools).map(([name, tool]) => [name, tool.inputSchema]),
-  );
+  return Object.fromEntries(Object.entries(tools).map(([name, tool]) => [name, tool.inputSchema]));
 }
 
 function guided(id: string): Connector {
@@ -131,9 +117,7 @@ describe("meta-tool input schema rendering", () => {
     const users: InboundAuth = {
       kind: "test-users",
       authorize(request) {
-        const user = /^Bearer (alice|bob)$/u.exec(
-          request.headers.get("authorization") ?? "",
-        )?.[1];
+        const user = /^Bearer (alice|bob)$/u.exec(request.headers.get("authorization") ?? "")?.[1];
         return user
           ? { ok: true, userId: user, subjectId: user }
           : { ok: false, response: new Response(null, { status: 401 }) };
@@ -144,8 +128,7 @@ describe("meta-tool input schema rendering", () => {
       connectors: [calcApi(), guided("notes")],
       auth: users,
       identity: {
-        connectorAccess: ({ subject }) =>
-          subject?.id === "alice" ? ["calc", "notes"] : ["calc"],
+        connectorAccess: ({ subject }) => (subject?.id === "alice" ? ["calc", "notes"] : ["calc"]),
       },
     });
 
@@ -166,9 +149,7 @@ describe("meta-tool input schema rendering", () => {
     expect(alice.execute_code.description).toContain("notes");
     expect(bob.execute_code.description).not.toContain("notes");
     // Bob's view matches a deployment that never had the guided connector.
-    expect(bob.call_destructive_tool.description).toBe(
-      base.call_destructive_tool.description,
-    );
+    expect(bob.call_destructive_tool.description).toBe(base.call_destructive_tool.description);
 
     // Input schemas never vary, so all four share the one rendering.
     for (const tools of [variant, alice, bob]) {

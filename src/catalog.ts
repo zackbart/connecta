@@ -3,10 +3,8 @@ import type { JsonSchema, ToolDef } from "./types.js";
 const DEFAULT_DESCRIPTION_LENGTH = 240;
 const DISCOVERY_DESCRIPTION_LENGTH = 160;
 export const MAX_COMPACT_DISCOVERY_SCHEMA_BYTES = 1_024;
-const MAX_COMPACT_DISCOVERY_ENUM_BYTES =
-  MAX_COMPACT_DISCOVERY_SCHEMA_BYTES / 4;
-const MAX_COMPACT_DISCOVERY_CONSTRAINT_BYTES =
-  MAX_COMPACT_DISCOVERY_SCHEMA_BYTES / 4;
+const MAX_COMPACT_DISCOVERY_ENUM_BYTES = MAX_COMPACT_DISCOVERY_SCHEMA_BYTES / 4;
+const MAX_COMPACT_DISCOVERY_CONSTRAINT_BYTES = MAX_COMPACT_DISCOVERY_SCHEMA_BYTES / 4;
 const schemaEncoder = new TextEncoder();
 const COMPACT_DISCOVERY_TRUNCATION = " /* truncated */";
 const MAX_COMPACT_DESCRIPTION_SCHEMA_BYTES = 8_192;
@@ -33,10 +31,7 @@ class SchemaWork {
 
   text(value: string): string {
     // Check code units first so encoding a hostile scalar is itself bounded.
-    if (
-      value.length > this.byteLimit ||
-      schemaEncoder.encode(value).length > this.byteLimit
-    ) {
+    if (value.length > this.byteLimit || schemaEncoder.encode(value).length > this.byteLimit) {
       throw schemaSizeExceeded;
     }
     return value;
@@ -53,53 +48,44 @@ class SchemaWork {
       serializedBytes += schemaEncoder.encode(value).length;
       if (serializedBytes > this.byteLimit) throw schemaSizeExceeded;
     };
-    return this.text(JSON.stringify(value, function (key, item: unknown) {
-      visit();
-      text(key);
-      if (typeof item === "string") text(item);
-      const omitted =
-        item === undefined || typeof item === "function" || typeof item === "symbol";
-      const root = key === "" && ancestors.length === 0;
-      if (!omitted) {
-        // Array indexes are implicit in JSON. Object keys and primitive values
-        // are the useful lower bound; the final text check remains authoritative
-        // for braces, commas, and values whose encoding is larger than this bound.
-        if (!root && !Array.isArray(this)) addSerialized(JSON.stringify(key));
-        if (typeof item !== "object" || item === null) {
-          addSerialized(JSON.stringify(item));
+    return this.text(
+      JSON.stringify(value, function (key, item: unknown) {
+        visit();
+        text(key);
+        if (typeof item === "string") text(item);
+        const omitted = item === undefined || typeof item === "function" || typeof item === "symbol";
+        const root = key === "" && ancestors.length === 0;
+        if (!omitted) {
+          // Array indexes are implicit in JSON. Object keys and primitive values
+          // are the useful lower bound; the final text check remains authoritative
+          // for braces, commas, and values whose encoding is larger than this bound.
+          if (!root && !Array.isArray(this)) addSerialized(JSON.stringify(key));
+          if (typeof item !== "object" || item === null) {
+            addSerialized(JSON.stringify(item));
+          }
         }
-      }
-      if (item !== null && typeof item === "object") {
-        while (ancestors.length && ancestors[ancestors.length - 1] !== this) {
-          ancestors.pop();
+        if (item !== null && typeof item === "object") {
+          while (ancestors.length && ancestors[ancestors.length - 1] !== this) {
+            ancestors.pop();
+          }
+          if (ancestors.length > 32) throw schemaWorkExceeded;
+          ancestors.push(item);
         }
-        if (ancestors.length > 32) throw schemaWorkExceeded;
-        ancestors.push(item);
-      }
-      return item;
-    }));
+        return item;
+      }),
+    );
   }
 }
 
-export function summarizeDescription(
-  text: string | undefined,
-  full: boolean,
-): string | undefined {
+export function summarizeDescription(text: string | undefined, full: boolean): string | undefined {
   return summarizeToLength(text, full, DEFAULT_DESCRIPTION_LENGTH);
 }
 
-export function summarizeDiscoveryDescription(
-  text: string | undefined,
-  full: boolean,
-): string | undefined {
+export function summarizeDiscoveryDescription(text: string | undefined, full: boolean): string | undefined {
   return summarizeToLength(text, full, DISCOVERY_DESCRIPTION_LENGTH);
 }
 
-function summarizeToLength(
-  text: string | undefined,
-  full: boolean,
-  maxLength: number,
-): string | undefined {
+function summarizeToLength(text: string | undefined, full: boolean, maxLength: number): string | undefined {
   if (!text) return undefined;
   if (full) return text;
   const compact = text.replace(/\s+/g, " ").trim();
@@ -176,9 +162,7 @@ const CONVERSATIONAL_QUERY_WORDS = new Set([
  */
 export function lexicalSearchQuery(query: string): string {
   const terms = normalized(query).split(/\s+/).filter(Boolean);
-  const contentTerms = terms.filter(
-    (term) => !CONVERSATIONAL_QUERY_WORDS.has(term),
-  );
+  const contentTerms = terms.filter((term) => !CONVERSATIONAL_QUERY_WORDS.has(term));
   return contentTerms.length > 0 ? contentTerms.join(" ") : query;
 }
 
@@ -212,11 +196,7 @@ function indexFor(tools: ToolDef[]): SearchIndex {
   if (!index) {
     const nameTokenDocuments = new Map<string, ToolDef[]>();
     const descriptionTokenDocuments = new Map<string, ToolDef[]>();
-    const addTokens = (
-      target: Map<string, ToolDef[]>,
-      tokens: string[],
-      tool: ToolDef,
-    ) => {
+    const addTokens = (target: Map<string, ToolDef[]>, tokens: string[], tool: ToolDef) => {
       for (const token of new Set(tokens)) {
         const documents = target.get(token) ?? [];
         documents.push(tool);
@@ -257,12 +237,7 @@ function inflectionVariants(base: string): string[] {
     `${base}es`,
     `${base}ed`,
     ...(base.endsWith("e") ? [`${base}d`] : []),
-    ...(base.endsWith("y")
-      ? [
-          `${base.slice(0, -1)}ies`,
-          `${base.slice(0, -1)}ied`,
-        ]
-      : []),
+    ...(base.endsWith("y") ? [`${base.slice(0, -1)}ies`, `${base.slice(0, -1)}ied`] : []),
   ];
 }
 
@@ -273,12 +248,8 @@ function matchingTokenCandidates(term: string): Set<string> {
     ...(term.endsWith("es") ? [term.slice(0, -2)] : []),
     ...(term.endsWith("ed") ? [term.slice(0, -2)] : []),
     ...(term.endsWith("d") ? [term.slice(0, -1)] : []),
-    ...(term.endsWith("ies")
-      ? [`${term.slice(0, -3)}y`]
-      : []),
-    ...(term.endsWith("ied")
-      ? [`${term.slice(0, -3)}y`]
-      : []),
+    ...(term.endsWith("ies") ? [`${term.slice(0, -3)}y`] : []),
+    ...(term.endsWith("ied") ? [`${term.slice(0, -3)}y`] : []),
   ];
   for (const base of possibleBases) {
     if (base && inflectionVariants(base).includes(term)) {
@@ -320,17 +291,11 @@ export interface LexicalCorpusStatistics {
  * connector rank, so ubiquitous words contribute less than discriminative
  * ones without making any action word a stopword.
  */
-export function lexicalCorpusStatistics(
-  toolSets: ToolDef[][],
-  query: string,
-): LexicalCorpusStatistics {
+export function lexicalCorpusStatistics(toolSets: ToolDef[][], query: string): LexicalCorpusStatistics {
   const terms = lexicalQueryTerms(query);
   if (terms.length === 0) {
     return {
-      documentCount: toolSets.reduce(
-        (total, tools) => total + tools.length,
-        0,
-      ),
+      documentCount: toolSets.reduce((total, tools) => total + tools.length, 0),
       documentFrequency: new Map(),
       nameMatches: new Map(),
       descriptionMatches: new Map(),
@@ -347,10 +312,7 @@ export function lexicalCorpusStatistics(
         for (const tool of index.nameTokenDocuments.get(candidate) ?? []) {
           termNameMatches.add(tool);
         }
-        for (
-          const tool of
-          index.descriptionTokenDocuments.get(candidate) ?? []
-        ) {
+        for (const tool of index.descriptionTokenDocuments.get(candidate) ?? []) {
           termDescriptionMatches.add(tool);
         }
       }
@@ -361,33 +323,20 @@ export function lexicalCorpusStatistics(
   const documentFrequency = new Map(
     terms.map((term) => [
       term,
-      new Set([
-        ...(nameMatches.get(term) ?? []),
-        ...(descriptionMatches.get(term) ?? []),
-      ]).size,
+      new Set([...(nameMatches.get(term) ?? []), ...(descriptionMatches.get(term) ?? [])]).size,
     ]),
   );
   return {
-    documentCount: toolSets.reduce(
-      (total, tools) => total + tools.length,
-      0,
-    ),
+    documentCount: toolSets.reduce((total, tools) => total + tools.length, 0),
     documentFrequency,
     nameMatches,
     descriptionMatches,
   };
 }
 
-function inverseDocumentFrequency(
-  term: string,
-  statistics: LexicalCorpusStatistics,
-): number {
+function inverseDocumentFrequency(term: string, statistics: LexicalCorpusStatistics): number {
   const frequency = statistics.documentFrequency.get(term) ?? 0;
-  return Math.log(
-    1 +
-      (statistics.documentCount - frequency + 0.5) /
-        (frequency + 0.5),
-  );
+  return Math.log(1 + (statistics.documentCount - frequency + 0.5) / (frequency + 0.5));
 }
 
 function scoreDocument(
@@ -398,9 +347,8 @@ function scoreDocument(
   statistics: LexicalCorpusStatistics,
 ): { score: number; matchedTermCount: number } | null {
   if (!phrase) return { score: 0, matchedTermCount: 0 };
-  const matchedTerms = terms.filter((term) =>
-    statistics.nameMatches.get(term)?.has(doc.tool) ||
-    statistics.descriptionMatches.get(term)?.has(doc.tool),
+  const matchedTerms = terms.filter(
+    (term) => statistics.nameMatches.get(term)?.has(doc.tool) || statistics.descriptionMatches.get(term)?.has(doc.tool),
   );
   if (mode === "all" && matchedTerms.length !== terms.length) return null;
   if (matchedTerms.length === 0) return null;
@@ -408,16 +356,8 @@ function scoreDocument(
   // Coverage remains meaningful in partial mode, but is IDF-weighted rather
   // than a raw term count: one rare domain term can beat several ubiquitous
   // catalog verbs.
-  let score = matchedTerms.reduce(
-    (total, term) =>
-      total + 4 * inverseDocumentFrequency(term, statistics),
-    0,
-  );
-  const phraseWeight = terms.reduce(
-    (total, term) =>
-      total + inverseDocumentFrequency(term, statistics),
-    0,
-  );
+  let score = matchedTerms.reduce((total, term) => total + 4 * inverseDocumentFrequency(term, statistics), 0);
+  const phraseWeight = terms.reduce((total, term) => total + inverseDocumentFrequency(term, statistics), 0);
   if (doc.name === phrase) score += 40 * phraseWeight;
   else if (doc.name.startsWith(`${phrase} `)) score += 24 * phraseWeight;
   else if (` ${doc.name} `.includes(` ${phrase} `)) {
@@ -440,7 +380,7 @@ function scoreDocument(
 
 function queryContainsExactName(doc: SearchDocument, phrase: string): boolean {
   if (!doc.name || !phrase) return false;
-  return (` ${phrase} `).includes(` ${doc.name} `);
+  return ` ${phrase} `.includes(` ${doc.name} `);
 }
 
 /**
@@ -452,10 +392,7 @@ export function rankTools(
   tools: ToolDef[],
   query: string,
   mode: LexicalMatchMode = "all",
-  statistics: LexicalCorpusStatistics = lexicalCorpusStatistics(
-    [tools],
-    query,
-  ),
+  statistics: LexicalCorpusStatistics = lexicalCorpusStatistics([tools], query),
   exactNameQuery: string = query,
 ): RankedTool[] {
   const phrase = normalized(query);
@@ -532,8 +469,7 @@ function renderEnum(
 ): string {
   if (values.length === 0) return "never";
   const limit = byteLimit ?? MAX_COMPACT_DISCOVERY_ENUM_BYTES;
-  const marker = (omitted: number) =>
-    `unknown /* ${omitted} enum ${omitted === 1 ? "value" : "values"} omitted */`;
+  const marker = (omitted: number) => `unknown /* ${omitted} enum ${omitted === 1 ? "value" : "values"} omitted */`;
   let rendered = `(${marker(values.length)})`;
   const prefix: string[] = [];
   for (let index = 0; index < values.length; index += 1) {
@@ -610,18 +546,13 @@ function renderConstraints(
   const kept: string[] = [];
   for (const entry of entries) {
     const candidate = ` /* ${[...kept, entry].join("; ")} */`;
-    if (
-      byteLimit !== undefined &&
-      schemaEncoder.encode(candidate).length > byteLimit
-    ) {
+    if (byteLimit !== undefined && schemaEncoder.encode(candidate).length > byteLimit) {
       onTruncated?.();
       continue;
     }
     kept.push(entry);
   }
-  return kept.length === 0
-    ? base
-    : `${grouped(base)} /* ${kept.join("; ")} */`;
+  return kept.length === 0 ? base : `${grouped(base)} /* ${kept.join("; ")} */`;
 }
 
 /**
@@ -645,10 +576,7 @@ function groupedType(part: string): string {
       nesting += 1;
     } else if (char === "}" || char === ")" || char === "]" || char === ">") {
       nesting -= 1;
-    } else if (
-      nesting === 0 &&
-      (part.startsWith(" | ", i) || part.startsWith(" & ", i))
-    ) {
+    } else if (nesting === 0 && (part.startsWith(" | ", i) || part.startsWith(" & ", i))) {
       return `(${part})`;
     }
   }
@@ -670,9 +598,7 @@ function typescriptPrimitive(type: string): string {
   if (type === "integer") return "number";
   if (type === "array") return "unknown[]";
   if (type === "object") return "Record<string, unknown>";
-  return ["string", "number", "boolean", "null"].includes(type)
-    ? type
-    : "unknown";
+  return ["string", "number", "boolean", "null"].includes(type) ? type : "unknown";
 }
 
 interface RenderOptions {
@@ -702,8 +628,7 @@ function boundedParts(
   // Check each addition before joining so a rejected schema never creates a
   // large intermediate string just to discover that the final result is over.
   const parts: string[] = [];
-  let bytes =
-    schemaEncoder.encode(prefix).length + schemaEncoder.encode(suffix).length;
+  let bytes = schemaEncoder.encode(prefix).length + schemaEncoder.encode(suffix).length;
   const separatorBytes = schemaEncoder.encode(separator).length;
   return {
     get length() {
@@ -746,9 +671,7 @@ function renderSchemaNode(
   // A `[]` suffix binds tighter than `|` and `&`, so an element rendered at
   // operator level needs parentheses or it reads as its last member's array.
   const element = (rendered: string) =>
-    ts
-      ? groupedType(rendered)
-      : ungrouped.has(rendered) ? `(${rendered})` : rendered;
+    ts ? groupedType(rendered) : ungrouped.has(rendered) ? `(${rendered})` : rendered;
   if (depth > 4) {
     if (!ts) return "…";
     options.work.truncated = true;
@@ -767,20 +690,13 @@ function renderSchemaNode(
     for (const key of propertyNames(s, options.work)) {
       if (key !== "nullable") base[key] = s[key];
     }
-    const rendered = declaresShape(base)
-      ? renderSchema(base, defs, seen, depth, options)
-      : "unknown";
+    const rendered = declaresShape(base) ? renderSchema(base, defs, seen, depth, options) : "unknown";
     return rendered === "unknown" ? rendered : `${rendered} | null`;
   }
 
   const constrain = (rendered: string) => {
     if (!options.renderConstraints) return rendered;
-    const result = renderConstraints(
-      rendered,
-      s,
-      options.constraintByteLimit,
-      options.onConstraintTruncated,
-    );
+    const result = renderConstraints(rendered, s, options.constraintByteLimit, options.onConstraintTruncated);
     // Constraints parenthesize a union before their comment but leave an
     // intersection bare, and a comment does not group what precedes it.
     if (ungrouped.has(rendered) && !result.startsWith(`(${rendered})`)) {
@@ -791,18 +707,13 @@ function renderSchemaNode(
 
   // Conditions cannot be expressed by a single static shape. Preserve the
   // base and send callers to the exact schema instead of hiding the rules.
-  if (
-    s.dependentSchemas !== undefined || s.if !== undefined ||
-    s.then !== undefined || s.else !== undefined
-  ) {
+  if (s.dependentSchemas !== undefined || s.if !== undefined || s.then !== undefined || s.else !== undefined) {
     options.work.truncated = true;
     const base: Record<string, unknown> = Object.create(null);
     for (const key of propertyNames(s, options.work)) {
       if (!["dependentSchemas", "if", "then", "else"].includes(key)) base[key] = s[key];
     }
-    const rendered = declaresShape(base)
-      ? renderSchema(base, defs, seen, depth, options)
-      : "unknown";
+    const rendered = declaresShape(base) ? renderSchema(base, defs, seen, depth, options) : "unknown";
     const result = `${rendered} /* conditional */`;
     if (ungrouped.has(rendered)) ungrouped.add(result);
     return result;
@@ -822,9 +733,7 @@ function renderSchemaNode(
       if (key !== "allOf") own[key] = s[key];
     }
     const parts = boundedParts(options.work, " & ", "", "");
-    const groupParts = declaresShape(own)
-      ? s.allOf.length > 0
-      : s.allOf.length > 1;
+    const groupParts = declaresShape(own) ? s.allOf.length > 0 : s.allOf.length > 1;
     if (declaresShape(own)) {
       const rendered = renderSchema(own, defs, seen, depth, options);
       parts.add(groupParts ? group(rendered) : rendered);
@@ -879,12 +788,7 @@ function renderSchemaNode(
     return constrain(rendered);
   }
   if (Array.isArray(s.enum)) {
-    const rendered = renderEnum(
-      s.enum,
-      options.work,
-      options.enumByteLimit,
-      options.onEnumTruncated,
-    );
+    const rendered = renderEnum(s.enum, options.work, options.enumByteLimit, options.onEnumTruncated);
     return constrain(rendered);
   }
   // Checked before type/properties so a discriminator like
@@ -926,17 +830,14 @@ function renderSchemaNode(
       parts.add(renderSchema(item, defs, seen, depth + 1, options));
     }
     if (s.items !== false) {
-      const rest = s.items === undefined || s.items === true
-        ? "unknown"
-        : renderSchema(s.items, defs, seen, depth + 1, options);
+      const rest =
+        s.items === undefined || s.items === true ? "unknown" : renderSchema(s.items, defs, seen, depth + 1, options);
       parts.add(`...${element(rest)}[]`);
     }
     return parts.finish();
   }
   if (type === "array" || s.items) {
-    const items = s.items
-      ? renderSchema(s.items, defs, seen, depth + 1, options)
-      : "unknown";
+    const items = s.items ? renderSchema(s.items, defs, seen, depth + 1, options) : "unknown";
     return `${element(items)}[]`;
   }
   if (type === "object" || s.properties) {
@@ -944,15 +845,13 @@ function renderSchemaNode(
     const required = new Set(schemaRequired(s, options.work));
     const declaredKeys = propertyNames(props, options.work);
     const keys = options.requiredFirst
-      ? [
-          ...declaredKeys.filter((key) => required.has(key)),
-          ...declaredKeys.filter((key) => !required.has(key)),
-        ]
+      ? [...declaredKeys.filter((key) => required.has(key)), ...declaredKeys.filter((key) => !required.has(key))]
       : declaredKeys;
     const additional = s.additionalProperties;
-    const index = ts && additional !== null && typeof additional === "object"
-      ? renderSchema(additional, defs, seen, depth + 1, options)
-      : undefined;
+    const index =
+      ts && additional !== null && typeof additional === "object"
+        ? renderSchema(additional, defs, seen, depth + 1, options)
+        : undefined;
     if (keys.length === 0 && index === undefined) {
       // In TypeScript `{}` reads as "empty"; an object with no declared
       // properties is an open map unless it closes itself explicitly.
@@ -961,33 +860,21 @@ function renderSchemaNode(
     const parts = boundedParts(options.work, ts ? "; " : ", ", "{ ", " }");
     for (const key of keys) {
       const optional = required.has(key) ? "" : "?";
-      const rendered = renderSchema(
-        props[key],
-        defs,
-        seen,
-        depth + 1,
-        options,
-      );
-      const description = (
-        props[key] as Record<string, unknown> | null
-      )?.description;
+      const rendered = renderSchema(props[key], defs, seen, depth + 1, options);
+      const description = (props[key] as Record<string, unknown> | null)?.description;
       if (options.propertyDescriptions && typeof description === "string") {
         options.work.text(description);
       }
       options.work.text(key);
       if (ts) {
         const doc =
-          options.propertyDescriptions && typeof description === "string" &&
-          description.trim()
+          options.propertyDescriptions && typeof description === "string" && description.trim()
             ? `/** ${typescriptDoc(description)} */ `
             : "";
         parts.add(`${doc}${typescriptKey(key)}${optional}: ${rendered}`);
         continue;
       }
-      const comment =
-        options.propertyDescriptions && typeof description === "string"
-          ? ` // ${description}`
-          : "";
+      const comment = options.propertyDescriptions && typeof description === "string" ? ` // ${description}` : "";
       parts.add(`${key}${optional}: ${rendered}${comment}`);
     }
     if (index !== undefined) parts.add(`[key: string]: ${index}`);
@@ -1008,12 +895,7 @@ function renderSchemaNode(
     return constrain(rendered);
   }
   if (options.renderConstraints && constraintEntries(s).length > 0) {
-    return renderConstraints(
-      "unknown",
-      s,
-      options.constraintByteLimit,
-      options.onConstraintTruncated,
-    );
+    return renderConstraints("unknown", s, options.constraintByteLimit, options.onConstraintTruncated);
   }
   return ts ? "unknown" : options.work.json(schema);
 }
@@ -1025,7 +907,9 @@ function resolveDefinition(schema: JsonSchema, name: string): unknown {
   const defs = schema.$defs as Record<string, unknown> | undefined;
   return definitions && Object.hasOwn(definitions, name)
     ? definitions[name]
-    : defs && Object.hasOwn(defs, name) ? defs[name] : undefined;
+    : defs && Object.hasOwn(defs, name)
+      ? defs[name]
+      : undefined;
 }
 
 /** Render and cache a compact TypeScript-like representation of JSON Schema. */
@@ -1034,9 +918,7 @@ export function compactSchema(schema: JsonSchema): string {
 }
 
 /** Describe allows 8 KiB for property prose, with the same work cap as search. */
-export function compactDescriptionSchema(
-  schema: JsonSchema,
-): CompactDiscoverySchema {
+export function compactDescriptionSchema(schema: JsonSchema): CompactDiscoverySchema {
   const cached = compactSchemas.get(schema);
   if (cached) return cached;
   const result = boundedCompactSchema(schema, true);
@@ -1049,10 +931,7 @@ export interface CompactDiscoverySchema {
   truncated: boolean;
 }
 
-const compactDiscoverySchemas = new WeakMap<
-  JsonSchema,
-  CompactDiscoverySchema
->();
+const compactDiscoverySchemas = new WeakMap<JsonSchema, CompactDiscoverySchema>();
 
 /**
  * A valid, bounded replacement for a discovery shape too large to carry.
@@ -1066,7 +945,9 @@ function truncatedDiscoverySchema(schema: JsonSchema, work: SchemaWork): string 
   let keys: SchemaObjectKeys | undefined;
   try {
     keys = objectKeys(schema, schema, new Set(), 0, work);
-  } catch { /* An exhausted walk has no reliable key inventory. */ }
+  } catch {
+    /* An exhausted walk has no reliable key inventory. */
+  }
   if (!keys) return `unknown${COMPACT_DISCOVERY_TRUNCATION}`;
   const required = new Set(keys.required);
   const ordered = [
@@ -1077,10 +958,7 @@ function truncatedDiscoverySchema(schema: JsonSchema, work: SchemaWork): string 
   for (const key of ordered) {
     const part = `${JSON.stringify(key)}${required.has(key) ? "" : "?"}: unknown`;
     const candidate = `{ ${[...parts, part].join(", ")} }${COMPACT_DISCOVERY_TRUNCATION}`;
-    if (
-      schemaEncoder.encode(candidate).length >
-      MAX_COMPACT_DISCOVERY_SCHEMA_BYTES
-    ) {
+    if (schemaEncoder.encode(candidate).length > MAX_COMPACT_DISCOVERY_SCHEMA_BYTES) {
       break;
     }
     parts.push(part);
@@ -1099,9 +977,7 @@ function truncatedDiscoverySchema(schema: JsonSchema, work: SchemaWork): string 
  * UTF-8 budget; exact JSON and the prose-rich compact rendering remain
  * available through the existing full retrieval paths.
  */
-export function compactDiscoverySchema(
-  schema: JsonSchema,
-): CompactDiscoverySchema {
+export function compactDiscoverySchema(schema: JsonSchema): CompactDiscoverySchema {
   const cached = compactDiscoverySchemas.get(schema);
   if (cached) return cached;
   const result = boundedCompactSchema(schema, false);
@@ -1117,10 +993,7 @@ const typescriptDescriptionTypes = new WeakMap<JsonSchema, CompactDiscoverySchem
  * drops prose and orders required keys first within 1,024 bytes, describe
  * keeps prose as JSDoc within 8,192, and both share the 2,000-visit walk.
  */
-function typescriptType(
-  schema: JsonSchema,
-  description: boolean,
-): CompactDiscoverySchema {
+function typescriptType(schema: JsonSchema, description: boolean): CompactDiscoverySchema {
   const cache = description ? typescriptDescriptionTypes : typescriptDiscoveryTypes;
   const cached = cache.get(schema);
   if (cached) return cached;
@@ -1155,17 +1028,12 @@ export function typescriptSignature(
   options: { observed: boolean; description: boolean },
 ): TypeScriptSignature {
   const renderedInput = typescriptType(input, options.description);
-  const renderedOutput = output
-    ? typescriptType(output, options.description)
-    : undefined;
+  const renderedOutput = output ? typescriptType(output, options.description) : undefined;
   const args =
-    renderedInput.text === "{}" ||
-    renderedInput.text === "Record<string, unknown>"
-    ? "args?: {}"
-    : `args: ${renderedInput.text}`;
-  const result = renderedOutput
-    ? `${options.observed ? OBSERVED_OUTPUT_MARKER : ""}${renderedOutput.text}`
-    : "unknown";
+    renderedInput.text === "{}" || renderedInput.text === "Record<string, unknown>"
+      ? "args?: {}"
+      : `args: ${renderedInput.text}`;
+  const result = renderedOutput ? `${options.observed ? OBSERVED_OUTPUT_MARKER : ""}${renderedOutput.text}` : "unknown";
   return {
     text: `(${args}) => Promise<${result}>`,
     inputTruncated: renderedInput.truncated,
@@ -1173,24 +1041,22 @@ export function typescriptSignature(
   };
 }
 
-function boundedCompactSchema(
-  schema: JsonSchema,
-  description: boolean,
-  typescript = false,
-): CompactDiscoverySchema {
-  const work = new SchemaWork(
-    description ? MAX_COMPACT_DESCRIPTION_SCHEMA_BYTES : MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
-  );
+function boundedCompactSchema(schema: JsonSchema, description: boolean, typescript = false): CompactDiscoverySchema {
+  const work = new SchemaWork(description ? MAX_COMPACT_DESCRIPTION_SCHEMA_BYTES : MAX_COMPACT_DISCOVERY_SCHEMA_BYTES);
   const options: RenderOptions = {
     work,
     typescript,
     propertyDescriptions: description,
     requiredFirst: !description,
     enumByteLimit: description ? work.byteLimit : MAX_COMPACT_DISCOVERY_ENUM_BYTES,
-    onEnumTruncated: () => { work.truncated = true; },
+    onEnumTruncated: () => {
+      work.truncated = true;
+    },
     renderConstraints: true,
     constraintByteLimit: description ? work.byteLimit : MAX_COMPACT_DISCOVERY_CONSTRAINT_BYTES,
-    onConstraintTruncated: () => { work.truncated = true; },
+    onConstraintTruncated: () => {
+      work.truncated = true;
+    },
   };
   try {
     const text = renderSchema(schema, schema, new Set(), 0, options);
@@ -1209,7 +1075,9 @@ function boundedCompactSchema(
           }),
           truncated: true,
         };
-      } catch { /* Fall through to a bounded key-only shape. */ }
+      } catch {
+        /* Fall through to a bounded key-only shape. */
+      }
     }
     return { text: truncatedDiscoverySchema(schema, work), truncated: true };
   }
@@ -1235,9 +1103,7 @@ export interface SchemaObjectKeys {
  * the rendered schema instead; an empty array would claim the tool takes no
  * fields.
  */
-export function schemaObjectKeys(
-  schema: JsonSchema | undefined,
-): SchemaObjectKeys | undefined {
+export function schemaObjectKeys(schema: JsonSchema | undefined): SchemaObjectKeys | undefined {
   if (!schema) return undefined;
   try {
     return objectKeys(schema, schema, new Set(), 0, new SchemaWork());
@@ -1247,9 +1113,7 @@ export function schemaObjectKeys(
 }
 
 /** Merge in declaration order, first occurrence winning, as renderSchema renders. */
-function mergedKeys(
-  parts: readonly SchemaObjectKeys[],
-): SchemaObjectKeys | undefined {
+function mergedKeys(parts: readonly SchemaObjectKeys[]): SchemaObjectKeys | undefined {
   if (parts.length === 0) return undefined;
   return {
     properties: [...new Set(parts.flatMap((part) => part.properties))],
@@ -1275,9 +1139,7 @@ function objectKeys(
     for (const key of propertyNames(s, work)) {
       if (key !== "allOf") own[key] = s[key];
     }
-    const parts = declaresShape(own)
-      ? [objectKeys(own, defs, seen, depth, work)]
-      : [];
+    const parts = declaresShape(own) ? [objectKeys(own, defs, seen, depth, work)] : [];
     for (const member of s.allOf) {
       const keys = objectKeys(member, defs, seen, depth + 1, work);
       if (!keys) return undefined;
@@ -1285,9 +1147,7 @@ function objectKeys(
     }
     // An allOf whose members are not all object shapes renders as an
     // intersection with a non-object half; no single key list describes it.
-    return parts.every((part) => part !== undefined)
-      ? mergedKeys(parts as SchemaObjectKeys[])
-      : undefined;
+    return parts.every((part) => part !== undefined) ? mergedKeys(parts as SchemaObjectKeys[]) : undefined;
   }
 
   const reference = s.$ref ?? s.$dynamicRef;

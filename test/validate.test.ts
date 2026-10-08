@@ -74,9 +74,7 @@ describe("validateToolInput", () => {
   it("bounds multiple validation findings", () => {
     const schema: JsonSchema = {
       type: "object",
-      properties: Object.fromEntries(
-        ["a", "b", "c", "d"].map((name) => [name, { type: "string" }]),
-      ),
+      properties: Object.fromEntries(["a", "b", "c", "d"].map((name) => [name, { type: "string" }])),
       required: ["a", "b", "c", "d"],
     };
     const validation = validateToolInput(schema, {}, OPTS)?.validation;
@@ -87,32 +85,19 @@ describe("validateToolInput", () => {
   it("preserves the finding bound after removing duplicate keyword branches", () => {
     const schema: JsonSchema = {
       type: "object",
-      properties: Object.fromEntries(
-        ["a", "b", "c", "d"].map((name) => [
-          name,
-          { type: "string", enum: ["allowed"] },
-        ]),
-      ),
+      properties: Object.fromEntries(["a", "b", "c", "d"].map((name) => [name, { type: "string", enum: ["allowed"] }])),
       additionalProperties: false,
     };
-    const validation = validateToolInput(
-      schema,
-      { a: "bad", b: "bad", c: "bad", d: "bad" },
-      OPTS,
-    )?.validation;
+    const validation = validateToolInput(schema, { a: "bad", b: "bad", c: "bad", d: "bad" }, OPTS)?.validation;
     expect(validation?.issues).toHaveLength(3);
-    expect(validation?.issues.every((issue) => issue.code === "enum")).toBe(
-      true,
-    );
+    expect(validation?.issues.every((issue) => issue.code === "enum")).toBe(true);
     expect(validation?.truncated).toBe(true);
   });
 
   it("returns rather than throws, so the caller owns the failure", () => {
     const schema: JsonSchema = { type: "object", required: ["id"] };
     expect(() => validateToolInput(schema, {}, OPTS)).not.toThrow();
-    expect(validateToolInput(schema, {}, OPTS)).toBeInstanceOf(
-      ConnectorCallError,
-    );
+    expect(validateToolInput(schema, {}, OPTS)).toBeInstanceOf(ConnectorCallError);
   });
 
   it("catches the unknown key a manifest's additionalProperties: false declares", () => {
@@ -202,11 +187,7 @@ describe("validateToolInput", () => {
       },
       additionalProperties: false,
     };
-    const err = validateToolInput(
-      schema,
-      { settings: { mode: "invalid" } },
-      OPTS,
-    );
+    const err = validateToolInput(schema, { settings: { mode: "invalid" } }, OPTS);
     expect(err?.validation).toEqual({
       issues: [
         {
@@ -224,10 +205,7 @@ describe("validateToolInput", () => {
     const schema: JsonSchema = {
       type: "object",
       properties: { x: true },
-      allOf: [
-        { properties: { x: { enum: ["A"] } } },
-        { properties: { x: false } },
-      ],
+      allOf: [{ properties: { x: { enum: ["A"] } } }, { properties: { x: false } }],
     };
     const err = validateToolInput(schema, { x: "B" }, OPTS);
     expect(err?.validation).toEqual({
@@ -282,11 +260,7 @@ describe("validateToolInput", () => {
       },
       additionalProperties: false,
     };
-    const err = validateToolInput(
-      schema,
-      { settings: { extra: "value" } },
-      OPTS,
-    );
+    const err = validateToolInput(schema, { settings: { extra: "value" } }, OPTS);
     expect(err?.validation).toEqual({
       issues: [
         {
@@ -302,10 +276,38 @@ describe("validateToolInput", () => {
   });
 
   it.each([
-    ["a schema the validator cannot compile warns once and passes through", { $id: "urn:connecta-test:dup", type: "object", $defs: { clash: { $id: "urn:connecta-test:dup" } } }, [{ anything: true }, { anything: true }], "acme.dup_id", false],
-    ["a schema that only fails on first validate warns once and passes through", { type: "object", properties: { x: { $ref: "#/definitions/missing" } } }, [{ x: 1 }, { x: 2 }], "acme.broken_ref", false],
-    ["fail-closed: a schema that cannot compile yields invalid_args", { $id: "urn:connecta-test:failclosed-compile", type: "object", $defs: { clash: { $id: "urn:connecta-test:failclosed-compile" } } }, [{ anything: true }], "acme.dup_id_strict", true],
-    ["fail-closed: a schema that only fails on first validate yields invalid_args", { type: "object", properties: { x: { $ref: "#/definitions/missing" } } }, [{ x: 1 }], "acme.broken_ref_strict", true],
+    [
+      "a schema the validator cannot compile warns once and passes through",
+      { $id: "urn:connecta-test:dup", type: "object", $defs: { clash: { $id: "urn:connecta-test:dup" } } },
+      [{ anything: true }, { anything: true }],
+      "acme.dup_id",
+      false,
+    ],
+    [
+      "a schema that only fails on first validate warns once and passes through",
+      { type: "object", properties: { x: { $ref: "#/definitions/missing" } } },
+      [{ x: 1 }, { x: 2 }],
+      "acme.broken_ref",
+      false,
+    ],
+    [
+      "fail-closed: a schema that cannot compile yields invalid_args",
+      {
+        $id: "urn:connecta-test:failclosed-compile",
+        type: "object",
+        $defs: { clash: { $id: "urn:connecta-test:failclosed-compile" } },
+      },
+      [{ anything: true }],
+      "acme.dup_id_strict",
+      true,
+    ],
+    [
+      "fail-closed: a schema that only fails on first validate yields invalid_args",
+      { type: "object", properties: { x: { $ref: "#/definitions/missing" } } },
+      [{ x: 1 }],
+      "acme.broken_ref_strict",
+      true,
+    ],
   ] as const)("%s", (_name, schema, inputs, address, failClosed) => {
     const { logger, warn } = spyLogger();
     const results = inputs.map((input) =>
@@ -340,9 +342,7 @@ describe("validateToolInput", () => {
     };
     // Same object, repeated use: still validating, not silently disabled.
     expect(validateToolInput(schema, { n: 1 }, OPTS)).toBeNull();
-    expect(validateToolInput(schema, { n: "1" }, OPTS)?.code).toBe(
-      "invalid_args",
-    );
+    expect(validateToolInput(schema, { n: "1" }, OPTS)?.code).toBe("invalid_args");
     expect(validateToolInput(schema, { n: 2 }, OPTS)).toBeNull();
   });
 
@@ -363,24 +363,9 @@ describe("validateToolInput", () => {
     };
 
     expect(validateToolInput(schema, { mode: "basic" }, OPTS)).toBeNull();
-    expect(
-      validateToolInput(
-        schema,
-        { mode: "token", apiKey: "secret" },
-        OPTS,
-      ),
-    ).toBeNull();
-    expect(
-      validateToolInput(
-        schema,
-        { mode: "basic", apiKey: "wrong-mode" },
-        OPTS,
-      )?.code,
-    ).toBe("invalid_args");
-    expect(
-      validateToolInput(schema, { mode: "basic", surprise: true }, OPTS)
-        ?.code,
-    ).toBe("invalid_args");
+    expect(validateToolInput(schema, { mode: "token", apiKey: "secret" }, OPTS)).toBeNull();
+    expect(validateToolInput(schema, { mode: "basic", apiKey: "wrong-mode" }, OPTS)?.code).toBe("invalid_args");
+    expect(validateToolInput(schema, { mode: "basic", surprise: true }, OPTS)?.code).toBe("invalid_args");
   });
 
   it("fail-closed still returns null for input that matches a good schema", () => {
@@ -389,9 +374,7 @@ describe("validateToolInput", () => {
       properties: { title: { type: "string" } },
       required: ["title"],
     };
-    expect(
-      validateToolInput(schema, { title: "hi" }, { ...OPTS, failClosed: true }),
-    ).toBeNull();
+    expect(validateToolInput(schema, { title: "hi" }, { ...OPTS, failClosed: true })).toBeNull();
   });
 
   it("defaults the logger when opts omits one", () => {
@@ -401,9 +384,7 @@ describe("validateToolInput", () => {
         type: "object",
         properties: { x: { $ref: "#/definitions/nope" } },
       };
-      expect(
-        validateToolInput(schema, { x: 1 }, { address: "acme.no_logger" }),
-      ).toBeNull();
+      expect(validateToolInput(schema, { x: 1 }, { address: "acme.no_logger" })).toBeNull();
       expect(warn).toHaveBeenCalledTimes(1);
     } finally {
       warn.mockRestore();
@@ -418,12 +399,8 @@ describe("compileValidator", () => {
       type: "object",
       $defs: { clash: { $id: "urn:connecta-test:compile-bad" } },
     };
-    expect(() =>
-      compileValidator(schema, { address: "acme.compile_bad" }),
-    ).toThrow(/acme\.compile_bad/);
-    expect(() =>
-      compileValidator(schema, { address: "acme.compile_bad" }),
-    ).toThrow(/cannot use/);
+    expect(() => compileValidator(schema, { address: "acme.compile_bad" })).toThrow(/acme\.compile_bad/);
+    expect(() => compileValidator(schema, { address: "acme.compile_bad" })).toThrow(/cannot use/);
   });
 
   it("refuses a schema an earlier call already found unusable", () => {
@@ -434,13 +411,9 @@ describe("compileValidator", () => {
       type: "object",
       properties: { x: { $ref: "#/definitions/missing" } },
     };
-    expect(
-      validateToolInput(schema, { x: 1 }, { address: "acme.late", logger }),
-    ).toBeNull();
+    expect(validateToolInput(schema, { x: 1 }, { address: "acme.late", logger })).toBeNull();
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(() => compileValidator(schema, { address: "acme.late" })).toThrow(
-      /acme\.late/,
-    );
+    expect(() => compileValidator(schema, { address: "acme.late" })).toThrow(/acme\.late/);
   });
 
   it("silently caches a good schema so the runtime path hits the cache", () => {
@@ -449,13 +422,9 @@ describe("compileValidator", () => {
       properties: { n: { type: "integer" } },
       required: ["n"],
     };
-    expect(() =>
-      compileValidator(schema, { address: "acme.compile_ok" }),
-    ).not.toThrow();
+    expect(() => compileValidator(schema, { address: "acme.compile_ok" })).not.toThrow();
     expect(validateToolInput(schema, { n: 1 }, OPTS)).toBeNull();
-    expect(validateToolInput(schema, { n: "1" }, OPTS)?.code).toBe(
-      "invalid_args",
-    );
+    expect(validateToolInput(schema, { n: "1" }, OPTS)?.code).toBe("invalid_args");
   });
 });
 
@@ -477,11 +446,13 @@ it("never quotes a schema's enum, and bounds detail to 256 UTF-8 bytes plus its 
 
 it("INV-6: agent repair includes schema keys, enum values, bounds and received types without caller values", () => {
   const schema: JsonSchema = {
-    type: "object", additionalProperties: false,
+    type: "object",
+    additionalProperties: false,
     properties: {
       mode: { type: "string", enum: ["fast", "safe"] },
       count: { type: "integer", minimum: 1, maximum: 10 },
-    }, required: ["mode", "count"],
+    },
+    required: ["mode", "count"],
   };
   const error = validateToolInput(schema, { mode: "caller-secret", count: 20, typo: "another-secret" }, OPTS);
   expect(error?.repair).toMatchObject({
@@ -505,20 +476,27 @@ it("INV-6: agent repair states dependent and conditional date requirements from 
       distinct_id: { type: "string", minLength: 1 },
       from_date: { type: "string", format: "date" },
       to_date: { type: "string", format: "date" },
-    }, required: ["distinct_id"],
+    },
+    required: ["distinct_id"],
     dependentRequired: { distinct_id: ["from_date", "to_date"] },
     ...JSON.parse('{"if":{"required":["distinct_id"]},"then":{"required":["from_date","to_date"]}}'),
   };
   const error = validateToolInput(schema, { distinct_id: "caller-secret" }, OPTS);
   expect(error?.repair?.conditionalRequirements).toContainEqual({
-    path: "/", condition: { required: ["distinct_id"] }, required: ["from_date", "to_date"],
+    path: "/",
+    condition: { required: ["distinct_id"] },
+    required: ["from_date", "to_date"],
   });
   expect(error?.repair?.example).toEqual({ distinct_id: "x", from_date: "2000-01-01", to_date: "2000-01-01" });
   expect(validateToolInput(schema, error?.repair?.example, OPTS)).toBeNull();
 });
 
 it("INV-6: examples are verified and oversized schema detail is bounded", () => {
-  const unsupported: JsonSchema = { type: "object", properties: { code: { type: "string", pattern: "^CUSTOM-[0-9]{5}$" } }, required: ["code"] };
+  const unsupported: JsonSchema = {
+    type: "object",
+    properties: { code: { type: "string", pattern: "^CUSTOM-[0-9]{5}$" } },
+    required: ["code"],
+  };
   const error = validateToolInput(unsupported, {}, OPTS);
   expect(error?.repair).not.toHaveProperty("example");
   expect(error?.repair?.exampleUnavailable).toContain("No valid example");
@@ -542,7 +520,8 @@ it("INV-6: recursive schema examples stop before expanding beyond a shared synth
 
 it("INV-6: minimization restores a field when removing it makes validation throw", () => {
   const schema: JsonSchema = {
-    type: "object", properties: { selector: { type: "string" } },
+    type: "object",
+    properties: { selector: { type: "string" } },
     examples: [{ selector: "keep" }],
     ...JSON.parse('{"if":{"required":["selector"]},"else":{"$ref":"#/$defs/missing"}}'),
   };
@@ -553,9 +532,17 @@ it("INV-6: minimization restores a field when removing it makes validation throw
 
 it("INV-6: conditional advice does not assert dependencies from an unselected alternative", () => {
   const schema: JsonSchema = {
-    type: "object", oneOf: [
-      { properties: { kind: { const: "a" }, trigger: { type: "string" }, extra: { type: "string" } }, required: ["kind"], dependentRequired: { trigger: ["extra"] } },
-      { properties: { kind: { const: "b" }, trigger: { type: "string" }, count: { type: "integer", minimum: 1 } }, required: ["kind"] },
+    type: "object",
+    oneOf: [
+      {
+        properties: { kind: { const: "a" }, trigger: { type: "string" }, extra: { type: "string" } },
+        required: ["kind"],
+        dependentRequired: { trigger: ["extra"] },
+      },
+      {
+        properties: { kind: { const: "b" }, trigger: { type: "string" }, count: { type: "integer", minimum: 1 } },
+        required: ["kind"],
+      },
     ],
   };
   expect(validateToolInput(schema, { kind: "b", trigger: "v" }, OPTS)).toBeNull();

@@ -33,8 +33,7 @@ async function toRequest(
   signal: AbortSignal,
 ): Promise<Request | typeof BODY_TOO_LARGE> {
   const host = req.headers.host ?? "localhost";
-  const proto =
-    (req.headers["x-forwarded-proto"] as string | undefined) ?? "http";
+  const proto = (req.headers["x-forwarded-proto"] as string | undefined) ?? "http";
   const url = `${proto}://${host}${req.url ?? "/"}`;
   const method = req.method ?? "GET";
   const headers = new Headers();
@@ -65,10 +64,7 @@ async function toRequest(
   } as RequestInit);
 }
 
-async function writeResponse(
-  res: ServerResponse,
-  response: Response,
-): Promise<void> {
+async function writeResponse(res: ServerResponse, response: Response): Promise<void> {
   res.statusCode = response.status;
   response.headers.forEach((value, key) => res.setHeader(key, value));
   if (!response.body) {
@@ -78,10 +74,7 @@ async function writeResponse(
   // Stream rather than buffer: a connector-served route may return a large
   // proxied file body, and materializing it would hold the whole thing in
   // memory before the first byte reaches the client.
-  await pipeline(
-    Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
-    res,
-  );
+  await pipeline(Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]), res);
 }
 
 /**
@@ -90,12 +83,8 @@ async function writeResponse(
  * container needs (body cap, response streaming, graceful shutdown). No
  * dependencies beyond node core.
  */
-export function listen(
-  connecta: Connecta,
-  portOrOptions: number | ListenOptions,
-): Server {
-  const opts: ListenOptions =
-    typeof portOrOptions === "number" ? { port: portOrOptions } : portOrOptions;
+export function listen(connecta: Connecta, portOrOptions: number | ListenOptions): Server {
+  const opts: ListenOptions = typeof portOrOptions === "number" ? { port: portOrOptions } : portOrOptions;
   const maxBodyBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
 
   // Node has no ExecutionContext, so deferred work (activity sinks) would
@@ -127,11 +116,7 @@ export function listen(
       req.once("close", abortIncompleteRequest);
       res.once("close", abortIncompleteResponse);
       try {
-        const request = await toRequest(
-          req,
-          maxBodyBytes,
-          controller.signal,
-        );
+        const request = await toRequest(req, maxBodyBytes, controller.signal);
         if (request === BODY_TOO_LARGE) {
           res.statusCode = 413;
           // The request stream was abandoned mid-body, so this connection

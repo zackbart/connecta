@@ -7,17 +7,9 @@ import type {
 } from "@modelcontextprotocol/client";
 import { byteReadResponse } from "../byte-read-response.js";
 import { sentSecretsFor, sentSecretsFetch, shortSecretWarning } from "../sent-secrets.js";
-import type {
-  ApiOAuthClientAuthentication,
-  ApiOAuthConfig,
-  ApiOAuthHooks,
-} from "../connectors/api-connector.js";
+import type { ApiOAuthClientAuthentication, ApiOAuthConfig, ApiOAuthHooks } from "../connectors/api-connector.js";
 import { ConnectorCallError, msg } from "../errors.js";
-import {
-  oauthPartitionFor,
-  retainOAuthPartition,
-  retainingOAuthPartition,
-} from "../oauth-partition.js";
+import { oauthPartitionFor, retainOAuthPartition, retainingOAuthPartition } from "../oauth-partition.js";
 import { oauthSealerFor } from "../oauth-sealing.js";
 import { describeFailure } from "../operator-record.js";
 import type { ConnectorContext, ConnectorStatus } from "../types.js";
@@ -70,18 +62,10 @@ const RESERVED_TOKEN_HEADERS: ReadonlySet<string> = new Set([
 /** An RFC 9110 field-name token. */
 const HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
-const CLIENT_AUTHENTICATION: ReadonlySet<string> = new Set([
-  "client_secret_basic",
-  "client_secret_post",
-  "none",
-]);
+const CLIENT_AUTHENTICATION: ReadonlySet<string> = new Set(["client_secret_basic", "client_secret_post", "none"]);
 
 function isLoopback(hostname: string): boolean {
-  return (
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "[::1]"
-  );
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
 }
 
 /** An absolute HTTPS URL (or HTTP on loopback), without credentials or fragment. */
@@ -142,18 +126,12 @@ function settingsFor(id: string, config: ApiOAuthConfig): StaticOAuthSettings {
   if (typeof config.clientId !== "string" || config.clientId.trim() === "") {
     throw new Error(`[connecta] connector "${id}" oauth.clientId must be a non-empty string.`);
   }
-  if (
-    config.clientSecret !== undefined &&
-    (typeof config.clientSecret !== "string" || config.clientSecret === "")
-  ) {
+  if (config.clientSecret !== undefined && (typeof config.clientSecret !== "string" || config.clientSecret === "")) {
     // Usually an unset environment variable read as "". Never echo it.
-    throw new Error(
-      `[connecta] connector "${id}" oauth.clientSecret must be a non-empty string when set.`,
-    );
+    throw new Error(`[connecta] connector "${id}" oauth.clientSecret must be a non-empty string when set.`);
   }
   const clientAuthentication =
-    config.tokenEndpointAuthMethod ??
-    (config.clientSecret !== undefined ? "client_secret_basic" : "none");
+    config.tokenEndpointAuthMethod ?? (config.clientSecret !== undefined ? "client_secret_basic" : "none");
   if (!CLIENT_AUTHENTICATION.has(clientAuthentication)) {
     throw new Error(
       `[connecta] connector "${id}" oauth.tokenEndpointAuthMethod must be ` +
@@ -168,8 +146,7 @@ function settingsFor(id: string, config: ApiOAuthConfig): StaticOAuthSettings {
   }
   if (clientAuthentication !== "none" && config.clientSecret === undefined) {
     throw new Error(
-      `[connecta] connector "${id}" oauth.tokenEndpointAuthMethod ` +
-        `"${clientAuthentication}" needs a clientSecret.`,
+      `[connecta] connector "${id}" oauth.tokenEndpointAuthMethod ` + `"${clientAuthentication}" needs a clientSecret.`,
     );
   }
   assertOAuthScope(id, config.scope);
@@ -182,29 +159,22 @@ function settingsFor(id: string, config: ApiOAuthConfig): StaticOAuthSettings {
       );
     }
     if (typeof value !== "string") {
-      throw new Error(
-        `[connecta] connector "${id}" oauth.authorizationParams.${name} must be a string.`,
-      );
+      throw new Error(`[connecta] connector "${id}" oauth.authorizationParams.${name} must be a string.`);
     }
     authorizationParams.push([name, value]);
   }
   const tokenRequestHeaders: Array<readonly [string, string]> = [];
   for (const [name, value] of Object.entries(config.tokenRequestHeaders ?? {})) {
     if (!HEADER_NAME.test(name)) {
-      throw new Error(
-        `[connecta] connector "${id}" oauth.tokenRequestHeaders has an invalid header name.`,
-      );
+      throw new Error(`[connecta] connector "${id}" oauth.tokenRequestHeaders has an invalid header name.`);
     }
     if (RESERVED_TOKEN_HEADERS.has(name.toLowerCase())) {
       throw new Error(
-        `[connecta] connector "${id}" oauth.tokenRequestHeaders may not set ` +
-          `"${name}"; the token request owns it.`,
+        `[connecta] connector "${id}" oauth.tokenRequestHeaders may not set ` + `"${name}"; the token request owns it.`,
       );
     }
     if (typeof value !== "string" || value.includes("\r") || value.includes("\n") || value.includes("\0")) {
-      throw new Error(
-        `[connecta] connector "${id}" oauth.tokenRequestHeaders.${name} must be a single-line string.`,
-      );
+      throw new Error(`[connecta] connector "${id}" oauth.tokenRequestHeaders.${name} must be a single-line string.`);
     }
     tokenRequestHeaders.push([name, value]);
   }
@@ -286,9 +256,7 @@ class StaticOAuthProvider extends KvOAuthProvider {
     const { settings } = this;
     return {
       client_id: settings.clientId,
-      ...(settings.clientSecret !== undefined
-        ? { client_secret: settings.clientSecret }
-        : {}),
+      ...(settings.clientSecret !== undefined ? { client_secret: settings.clientSecret } : {}),
       redirect_uris: [this.redirectUrl],
       token_endpoint_auth_method: settings.clientAuthentication,
       issuer: settings.identity,
@@ -397,10 +365,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
    */
   const tokenEndpointFetch = async (ctx: ConnectorContext, input: string | URL, init: RequestInit = {}) => {
     const url = new URL(input);
-    if (
-      settings.tokenRequestHeaders.length === 0 ||
-      `${url.origin}${url.pathname}` !== settings.identity
-    ) {
+    if (settings.tokenRequestHeaders.length === 0 || `${url.origin}${url.pathname}` !== settings.identity) {
       trackRemoteClientRequest(sentSecretsFor(ctx), input, init);
       return byteReadResponse(await sentSecretsFetch(ctx)(input, { ...init, redirect: "manual" }));
     }
@@ -440,8 +405,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       "downstream_oauth_required",
       `Connector "${id}" requires authorization — call authorize_connector({ connector: "${id}" }) and open the returned URL.`,
     );
-  const disconnectedMessage =
-    `Connector "${id}" was disconnected by an operator — explicitly start authorization to reconnect it.`;
+  const disconnectedMessage = `Connector "${id}" was disconnected by an operator — explicitly start authorization to reconnect it.`;
 
   /**
    * One request through the owner's grant. A 401 earns exactly one recovery:
@@ -478,10 +442,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         { retryable: false },
       );
     }
-    const signal =
-      init.signal && ctx.signal
-        ? AbortSignal.any([init.signal, ctx.signal])
-        : (init.signal ?? ctx.signal);
+    const signal = init.signal && ctx.signal ? AbortSignal.any([init.signal, ctx.signal]) : (init.signal ?? ctx.signal);
     const send = async (accessToken: string) => {
       sentSecretsFor(ctx).add(accessToken);
       const sent = new Headers(headers);
@@ -563,10 +524,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       : { state: "auth_required", message: AUTH_REQUIRED_MESSAGE };
   };
 
-  const startAuth = async (
-    original: ConnectorContext,
-    opts?: { force?: boolean },
-  ): Promise<ConnectorStatus> => {
+  const startAuth = async (original: ConnectorContext, opts?: { force?: boolean }): Promise<ConnectorStatus> => {
     const ctx = authorizingContext(original);
     const provider = providerFor(ctx);
     if (ctx.signal?.aborted) throw ctx.signal.reason;
@@ -615,9 +573,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       return {
         state: "error",
         message:
-          error instanceof ConnectorCallError || error instanceof OAuthError
-            ? msg(error)
-            : describeFailure(id, error),
+          error instanceof ConnectorCallError || error instanceof OAuthError ? msg(error) : describeFailure(id, error),
       };
     }
   };
@@ -627,10 +583,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     await providerFor(ctx).resetAuthorization(true);
   };
 
-  const verifyState = async (
-    state: string | null,
-    ctx: ConnectorContext,
-  ): Promise<boolean> => {
+  const verifyState = async (state: string | null, ctx: ConnectorContext): Promise<boolean> => {
     // The provider that verified the state captured its flow's epoch, and the
     // exchange must write under exactly that one.
     const provider = providerFor(ctx);
@@ -638,11 +591,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     return provider.verifyState(state);
   };
 
-  const finishAuth = async (
-    code: string,
-    ctx: ConnectorContext,
-    callbackParams?: URLSearchParams,
-  ): Promise<void> => {
+  const finishAuth = async (code: string, ctx: ConnectorContext, callbackParams?: URLSearchParams): Promise<void> => {
     const provider = callbackProviders.get(scopeOf(ctx)) ?? providerFor(ctx);
     callbackProviders.delete(scopeOf(ctx));
     const authorizationCode = callbackParams?.get("code") ?? code;
@@ -682,7 +631,8 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     consumeAuthError: retainingOAuthPartition(async (ctx: ConnectorContext) => {
       const provider = callbackProviders.get(scopeOf(ctx));
       callbackProviders.delete(scopeOf(ctx));
-      if (!provider) throw new ConnectorCallError("connector_call_failed", "OAuth error callback matches no pending consent.");
+      if (!provider)
+        throw new ConnectorCallError("connector_call_failed", "OAuth error callback matches no pending consent.");
       await provider.consumeAuthError();
     }, 0),
     finishAuth: retainingOAuthPartition(finishAuth, 1),

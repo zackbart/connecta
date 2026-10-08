@@ -237,10 +237,14 @@ function ownDescription(connector: Connector): ConnectorDescription {
     described = undefined;
   }
   const value = (typeof described === "object" && described !== null ? described : {}) as Record<string, unknown>;
-  const source = (typeof value.source === "object" && value.source !== null ? value.source : {}) as Record<string, unknown>;
-  const kind = typeof source.kind === "string" && SOURCE_KINDS.has(source.kind)
-    ? (source.kind as ConnectorDescription["source"]["kind"])
-    : "custom";
+  const source = (typeof value.source === "object" && value.source !== null ? value.source : {}) as Record<
+    string,
+    unknown
+  >;
+  const kind =
+    typeof source.kind === "string" && SOURCE_KINDS.has(source.kind)
+      ? (source.kind as ConnectorDescription["source"]["kind"])
+      : "custom";
   const endpoint = endpointOf(value.endpoint);
   const auth = copyAuth(value.auth);
   const transportValue = value.transport;
@@ -263,7 +267,11 @@ function ownDescription(connector: Connector): ConnectorDescription {
   };
 }
 
-function describeConnector(connector: Connector, deploymentCap: number, registry: import("./registry.js").Registry): DescribedConnector {
+function describeConnector(
+  connector: Connector,
+  deploymentCap: number,
+  registry: import("./registry.js").Registry,
+): DescribedConnector {
   const own = ownDescription(connector);
   const credential = connector.credential;
   const admission = connector.callAdmission;
@@ -292,9 +300,10 @@ function describeConnector(connector: Connector, deploymentCap: number, registry
           },
         }
       : {}),
-    maxResultBytes: num(connector.maxResultBytes) !== undefined
-      ? { value: connector.maxResultBytes!, source: "connector" }
-      : { value: deploymentCap, source: "deployment" },
+    maxResultBytes:
+      num(connector.maxResultBytes) !== undefined
+        ? { value: connector.maxResultBytes!, source: "connector" }
+        : { value: deploymentCap, source: "deployment" },
     ...(admission && Array.isArray(admission.rules)
       ? {
           callAdmission: {
@@ -334,7 +343,7 @@ type DescribedStoreKind = "memory" | "d1" | "sqlite" | "custom";
 const STORE_KINDS: ReadonlySet<string> = new Set(["memory", "d1", "sqlite"]);
 const storeKind = (described: { kind?: unknown } | undefined): DescribedStoreKind =>
   typeof described?.kind === "string" && STORE_KINDS.has(described.kind)
-    ? described.kind as DescribedStoreKind
+    ? (described.kind as DescribedStoreKind)
     : "custom";
 
 /** Build the snapshot. Pure: it reads configuration and calls only describe hooks. */
@@ -367,26 +376,40 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
     urls: {
       ...(publicUrl ? { publicUrl } : {}),
       mcpPath: "/mcp",
-      allowedOrigins: config.allowedOrigins === undefined
-        ? "default"
-        : config.allowedOrigins === "*"
-          ? "*"
-          : config.allowedOrigins.flatMap((origin) => describedOrigin(origin) ?? []),
+      allowedOrigins:
+        config.allowedOrigins === undefined
+          ? "default"
+          : config.allowedOrigins === "*"
+            ? "*"
+            : config.allowedOrigins.flatMap((origin) => describedOrigin(origin) ?? []),
     },
     executor: {
       ...(input.executorName !== undefined ? { name: input.executorName } : {}),
       admission: input.executorAdmits ? "executor" : codeLimits,
     },
     limits: {
-      discovery: limitGroup(config.discovery, ownValue(raw, "discovery"),
-        Object.keys(D.discovery) as Array<keyof typeof D.discovery>),
-      calls: limitGroup(config.calls, ownValue(raw, "calls"),
-        ["defaultTimeoutMs", "maxResultBytes"] as const) as ConnectaConfigDescription["limits"]["calls"],
-      results: limitGroup(config.results, ownValue(raw, "results"),
-        Object.keys(D.results) as Array<keyof typeof D.results>) as ConnectaConfigDescription["limits"]["results"],
-      execute: limitGroup(config.execute, ownValue(raw, "execute"),
-        Object.keys(D.execute) as Array<keyof typeof D.execute>) as ConnectaConfigDescription["limits"]["execute"],
-      requests: limitGroup(config.admission.requests, ownValue(ownValue(raw, "admission"), "requests"),
+      discovery: limitGroup(
+        config.discovery,
+        ownValue(raw, "discovery"),
+        Object.keys(D.discovery) as Array<keyof typeof D.discovery>,
+      ),
+      calls: limitGroup(config.calls, ownValue(raw, "calls"), [
+        "defaultTimeoutMs",
+        "maxResultBytes",
+      ] as const) as ConnectaConfigDescription["limits"]["calls"],
+      results: limitGroup(
+        config.results,
+        ownValue(raw, "results"),
+        Object.keys(D.results) as Array<keyof typeof D.results>,
+      ) as ConnectaConfigDescription["limits"]["results"],
+      execute: limitGroup(
+        config.execute,
+        ownValue(raw, "execute"),
+        Object.keys(D.execute) as Array<keyof typeof D.execute>,
+      ) as ConnectaConfigDescription["limits"]["execute"],
+      requests: limitGroup(
+        config.admission.requests,
+        ownValue(ownValue(raw, "admission"), "requests"),
         Object.keys(D.admission.requests) as Array<keyof typeof D.admission.requests>,
       ) as ConnectaConfigDescription["limits"]["requests"],
     },
@@ -419,9 +442,7 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
         ? {
             enabled: true,
             readable: typeof config.activity.store.list === "function",
-            ...(str(config.activity.deploymentId) !== undefined
-              ? { deploymentId: config.activity.deploymentId! }
-              : {}),
+            ...(str(config.activity.deploymentId) !== undefined ? { deploymentId: config.activity.deploymentId! } : {}),
             store: {
               kind: storeKind(activityStore),
               ...(num(activityStore?.retentionDays) !== undefined
@@ -431,7 +452,10 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
           }
         : { enabled: false },
       accessTokens: config.accessTokens
-        ? { enabled: true, ...(num(accessTokens?.maxActive) !== undefined ? { maxActive: accessTokens!.maxActive } : {}) }
+        ? {
+            enabled: true,
+            ...(num(accessTokens?.maxActive) !== undefined ? { maxActive: accessTokens!.maxActive } : {}),
+          }
         : { enabled: false },
     },
     storage: {
@@ -447,14 +471,16 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
       faviconHref: describedHref(brand.faviconHref) ?? "/favicon.svg",
       themeColor: brand.themeColor,
       theme: {
-        ...(pick(brand.theme, ["accent", "radius", "fontFamily", "monoFamily"] as const, str) as
-          Partial<Record<"accent" | "radius" | "fontFamily" | "monoFamily", string>>),
+        ...(pick(brand.theme, ["accent", "radius", "fontFamily", "monoFamily"] as const, str) as Partial<
+          Record<"accent" | "radius" | "fontFamily" | "monoFamily", string>
+        >),
         colorScheme: brand.theme.colorScheme,
       },
     },
     deploymentInfo: Object.keys(config.deploymentInfo ?? {}),
     connectors: config.connectors.map((connector) =>
-      describeConnector(connector, config.calls.maxResultBytes, input.registry)),
+      describeConnector(connector, config.calls.maxResultBytes, input.registry),
+    ),
   };
   return deepFreeze(description);
 }

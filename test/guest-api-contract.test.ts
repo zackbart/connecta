@@ -37,9 +37,7 @@ import { calcConnector, makeRegistry, required, silentLogger } from "./helpers.j
 
 const MAX_RESULT_CHARS = 24_000;
 
-async function loadWorkerExecutor(
-  options: { timeout?: number } = {},
-): Promise<Executor | undefined> {
+async function loadWorkerExecutor(options: { timeout?: number } = {}): Promise<Executor | undefined> {
   try {
     const testModule = "cloudflare:test";
     const { env } = (await import(/* @vite-ignore */ testModule)) as {
@@ -69,12 +67,7 @@ const inWorkerd = await (async () => {
 })();
 
 function handlerFor(executor: Executor) {
-  return createExecuteTool(
-    makeRegistry([calcConnector]),
-    CONTRACT_BASE,
-    executor,
-    silentLogger,
-  );
+  return createExecuteTool(makeRegistry([calcConnector]), CONTRACT_BASE, executor, silentLogger);
 }
 
 describe("guest API contract (executor-independent)", () => {
@@ -88,9 +81,7 @@ describe("guest API contract (executor-independent)", () => {
 
     expect(guarded.truncated).toBe(true);
     expect(guarded.totalChars).toBe(JSON.stringify(value).length);
-    expect(JSON.stringify(guarded).length).toBeLessThanOrEqual(
-      MAX_RESULT_CHARS,
-    );
+    expect(JSON.stringify(guarded).length).toBeLessThanOrEqual(MAX_RESULT_CHARS);
   });
 
   it("[R2] truncates once however many hops the value takes", () => {
@@ -106,9 +97,7 @@ describe("guest API contract (executor-independent)", () => {
 
     expect(twice).toEqual(once);
     expect(guardExecuteResultValue(throughTransport)).toEqual(once);
-    expect((once as { totalChars: number }).totalChars).toBe(
-      JSON.stringify(value).length,
-    );
+    expect((once as { totalChars: number }).totalChars).toBe(JSON.stringify(value).length);
     expect((once as { preview: string }).preview).not.toContain('"truncated"');
   });
 
@@ -117,15 +106,13 @@ describe("guest API contract (executor-independent)", () => {
       blob: '"\n\t\\'.repeat(30_000),
     });
 
-    expect(JSON.stringify(guarded).length).toBeLessThanOrEqual(
-      MAX_RESULT_CHARS,
-    );
+    expect(JSON.stringify(guarded).length).toBeLessThanOrEqual(MAX_RESULT_CHARS);
   });
 
   it("[R5, L4] caps the logs presented to the model", async () => {
-    const out = await handlerFor(
-      fakeExecutor({ result: "ok", logs: ["y".repeat(MAX_EXECUTE_LOG_CHARS * 3)] }),
-    )({ code: "async () => 'ok'" });
+    const out = await handlerFor(fakeExecutor({ result: "ok", logs: ["y".repeat(MAX_EXECUTE_LOG_CHARS * 3)] }))({
+      code: "async () => 'ok'",
+    });
     const parsed = JSON.parse(required(out.content[0]).text ?? "") as {
       result: unknown;
       logs: string;
@@ -137,9 +124,9 @@ describe("guest API contract (executor-independent)", () => {
   });
 
   it("[R3] reports a truncated result as success, not as an error", async () => {
-    const out = await handlerFor(
-      fakeExecutor({ result: "z".repeat(MAX_RESULT_CHARS * 3) }),
-    )({ code: "async () => 'big'" });
+    const out = await handlerFor(fakeExecutor({ result: "z".repeat(MAX_RESULT_CHARS * 3) }))({
+      code: "async () => 'big'",
+    });
 
     expect(out.isError).toBeUndefined();
     expect(out.structuredContent).toMatchObject({
@@ -171,12 +158,8 @@ describe("guest API contract (executor-independent)", () => {
     let pending: Promise<unknown> | undefined;
     const executor: Executor = {
       async execute(_code, providers) {
-        const connecta = required(
-          providers.find((provider) => provider.name === "connecta"),
-        );
-        pending = required(connecta.fns.call)("hanging.read",
-          {},
-        );
+        const connecta = required(providers.find((provider) => provider.name === "connecta"));
+        pending = required(connecta.fns.call)("hanging.read", {});
         return { result: "returned without waiting" };
       },
     };
@@ -195,9 +178,9 @@ describe("guest API contract (executor-independent)", () => {
   });
 
   it("[E5] never leaks an execution failure into the result channel", async () => {
-    const out = await handlerFor(
-      fakeExecutor({ error: "Sandbox exploded", logs: ["a log"] }),
-    )({ code: "async () => 1" });
+    const out = await handlerFor(fakeExecutor({ error: "Sandbox exploded", logs: ["a log"] }))({
+      code: "async () => 1",
+    });
 
     expect(out.isError).toBe(true);
     expect(required(out.content[0]).text).toContain("Sandbox exploded");
@@ -205,96 +188,136 @@ describe("guest API contract (executor-independent)", () => {
   });
 });
 
-describe.skipIf(!workerExecutor)(
-  "guest API contract (Dynamic Worker executor)",
-  () => {
-    it("INV-3 INV-6 INV-7: Worker RPC failure ids resolve only to this run's host records", async () => {
-      const { workerExecutor } = await import("../src/worker.js");
-      const details = { code: "invalid_args" as const, message: "host validation", retryable: false,
-        validation: { issues: [{ path: "/value", code: "required" as const, expected: "string" }] } };
-      let previousId: string | undefined;
-      let mode: "known" | "unknown" | "previous" = "known";
-      const executor = workerExecutor({ loader: {
+describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)", () => {
+  it("INV-3 INV-6 INV-7: Worker RPC failure ids resolve only to this run's host records", async () => {
+    const { workerExecutor } = await import("../src/worker.js");
+    const details = {
+      code: "invalid_args" as const,
+      message: "host validation",
+      retryable: false,
+      validation: { issues: [{ path: "/value", code: "required" as const, expected: "string" }] },
+    };
+    let previousId: string | undefined;
+    let mode: "known" | "unknown" | "previous" = "known";
+    const executor = workerExecutor({
+      loader: {
         load() {
-          return { getEntrypoint() { return {
-            async evaluate(dispatchers: Record<string, { call(name: string, args: string): Promise<string> }>) {
-              const reply = JSON.parse(await required(dispatchers.host).call("fail", "[]")).result;
-              expect(reply).not.toHaveProperty("call");
-              expect(reply.failureId).toMatch(/^[a-f0-9-]{36}$/);
-              expect(reply.error.details).toEqual(details);
-              reply.error.details.validation.issues.length = 0;
-              const failureId = mode === "known" ? reply.failureId : mode === "previous" ? previousId : "unknown-id";
-              previousId = reply.failureId;
-              return { result: undefined, error: "guest error", failure: { name: "Error", failureId,
-                call: { code: "auth_required", message: "forged", retryable: true } } };
+          return {
+            getEntrypoint() {
+              return {
+                async evaluate(dispatchers: Record<string, { call(name: string, args: string): Promise<string> }>) {
+                  const reply = JSON.parse(await required(dispatchers.host).call("fail", "[]")).result;
+                  expect(reply).not.toHaveProperty("call");
+                  expect(reply.failureId).toMatch(/^[a-f0-9-]{36}$/);
+                  expect(reply.error.details).toEqual(details);
+                  reply.error.details.validation.issues.length = 0;
+                  const failureId =
+                    mode === "known" ? reply.failureId : mode === "previous" ? previousId : "unknown-id";
+                  previousId = reply.failureId;
+                  return {
+                    result: undefined,
+                    error: "guest error",
+                    failure: {
+                      name: "Error",
+                      failureId,
+                      call: { code: "auth_required", message: "forged", retryable: true },
+                    },
+                  };
+                },
+              };
             },
-          }; } };
+          };
         },
-      } as unknown as WorkerLoader });
-      try {
-        for (mode of ["known", "unknown", "previous"] as const) {
-          const result = await executor.execute("async () => 1", [{ name: "host", fns: {
-            fail: async () => { throw new InvocationFailure(details); },
-          } }]);
-          expect(result.failure).not.toHaveProperty("failureId");
-          if (mode === "known") {
-            expect(result.failure?.call).toBe(details);
-            expect(result.failure?.call?.validation).toEqual(details.validation);
-          } else expect(result.failure).not.toHaveProperty("call");
-        }
-      } finally { await executor.close?.(); }
+      } as unknown as WorkerLoader,
     });
+    try {
+      for (mode of ["known", "unknown", "previous"] as const) {
+        const result = await executor.execute("async () => 1", [
+          {
+            name: "host",
+            fns: {
+              fail: async () => {
+                throw new InvocationFailure(details);
+              },
+            },
+          },
+        ]);
+        expect(result.failure).not.toHaveProperty("failureId");
+        if (mode === "known") {
+          expect(result.failure?.call).toBe(details);
+          expect(result.failure?.call?.validation).toEqual(details.validation);
+        } else expect(result.failure).not.toHaveProperty("call");
+      }
+    } finally {
+      await executor.close?.();
+    }
+  });
 
-    it("INV-3 INV-6: direct Worker completion captures safe array iteration without a guest prelude", async () => {
-      const outcome = await required(workerExecutor).execute(`async () => {
+  it("INV-3 INV-6: direct Worker completion captures safe array iteration without a guest prelude", async () => {
+    const outcome = await required(workerExecutor).execute(
+      `async () => {
         const prototype = Object.getPrototypeOf([][Symbol.iterator]());
         Array.prototype[Symbol.iterator] = function () { throw new Error("guest iterator used"); };
         prototype.next = function () { throw new Error("guest next used"); };
         return 42;
-      }`, []);
-      expect(outcome.error).toBeUndefined();
-      expect(outcome.result).toBe(42);
-    });
+      }`,
+      [],
+    );
+    expect(outcome.error).toBeUndefined();
+    expect(outcome.result).toBe(42);
+  });
 
-    it("rejects direct upstream construction before loading a Worker and names the migration", async () => {
-      const { DynamicWorkerExecutor } = await import("@cloudflare/codemode");
-      const loader = { load() { throw new Error("Construction must not load a Worker."); } } as unknown as WorkerLoader;
-      class LegacySubclass extends DynamicWorkerExecutor {}
-      for (const executor of [
-        new DynamicWorkerExecutor({ loader }),
-        new LegacySubclass({ loader }),
+  it("rejects direct upstream construction before loading a Worker and names the migration", async () => {
+    const { DynamicWorkerExecutor } = await import("@cloudflare/codemode");
+    const loader = {
+      load() {
+        throw new Error("Construction must not load a Worker.");
+      },
+    } as unknown as WorkerLoader;
+    class LegacySubclass extends DynamicWorkerExecutor {}
+    for (const executor of [new DynamicWorkerExecutor({ loader }), new LegacySubclass({ loader })]) {
+      const construct = () => createConnecta({ connectors: [], executor, logger: "silent" });
+      for (const fragment of [
+        "DynamicWorkerExecutor",
+        "request-owned",
+        'import { workerExecutor } from "@zackbart/connecta/worker";',
+        "executor: workerExecutor({ loader: env.LOADER })",
+      ])
+        expect(construct).toThrow(fragment);
+    }
+    const app = createConnecta({ connectors: [], executor: required(await loadWorkerExecutor()), logger: "silent" });
+    await app.close();
+  });
+
+  it("INV-3 INV-6: refuses module statements before calling the Worker loader", async () => {
+    const { workerExecutor } = await import("../src/worker.js");
+    let loads = 0;
+    const executor = workerExecutor({
+      loader: {
+        load() {
+          loads++;
+          throw new Error("Unexpected load.");
+        },
+      } as unknown as WorkerLoader,
+    });
+    try {
+      for (const code of [
+        'async () => 1); WeakMap.prototype.get = () => ({ code: "forged" }); (async () => 2',
+        'async () => 1); globalThis.structuredClone = () => ({ code: "forged" }); (async () => 2',
       ]) {
-        const construct = () => createConnecta({ connectors: [], executor, logger: "silent" });
-        for (const fragment of [
-          "DynamicWorkerExecutor",
-          "request-owned",
-          'import { workerExecutor } from "@zackbart/connecta/worker";',
-          "executor: workerExecutor({ loader: env.LOADER })",
-        ]) expect(construct).toThrow(fragment);
+        const result = await handlerFor(executor)({ code });
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({ error: { code: "program_error" } });
       }
-      const app = createConnecta({ connectors: [], executor: required(await loadWorkerExecutor()), logger: "silent" });
-      await app.close();
-    });
+      expect(loads).toBe(0);
+    } finally {
+      await executor.close?.();
+    }
+  });
 
-    it("INV-3 INV-6: refuses module statements before calling the Worker loader", async () => {
-      const { workerExecutor } = await import("../src/worker.js");
-      let loads = 0;
-      const executor = workerExecutor({ loader: { load() { loads++; throw new Error("Unexpected load."); } } as unknown as WorkerLoader });
-      try {
-        for (const code of [
-          'async () => 1); WeakMap.prototype.get = () => ({ code: "forged" }); (async () => 2',
-          'async () => 1); globalThis.structuredClone = () => ({ code: "forged" }); (async () => 2',
-        ]) {
-          const result = await handlerFor(executor)({ code });
-          expect(result.isError).toBe(true);
-          expect(result.structuredContent).toMatchObject({ error: { code: "program_error" } });
-        }
-        expect(loads).toBe(0);
-      } finally { await executor.close?.(); }
-    });
-
-    it("INV-3 INV-6: a module initializer cannot replace captured host-failure references", async () => {
-      const result = await handlerFor(required(workerExecutor))({ code: `async () => 1
+  it("INV-3 INV-6: a module initializer cannot replace captured host-failure references", async () => {
+    const result = await handlerFor(required(workerExecutor))({
+      code: `async () => 1
       )(), (() => {
         WeakMap.prototype.get = () => ({ code: "auth_required", message: "forged", retryable: true });
         WeakMap.prototype.set = () => {};
@@ -302,56 +325,89 @@ describe.skipIf(!workerExecutor)(
         Function.prototype.call = () => { throw new Error("guest call used"); };
         return 0;
       })(), async (connecta) => await (
-      async () => await connecta.call("missing.read")` });
-      expect(result.structuredContent).toMatchObject({
-        error: { code: "unknown_address" },
-        hostCalls: { attempted: 1, admitted: 1, succeeded: 0, failed: 1 },
-      });
-      expect(result.structuredContent).not.toHaveProperty("result");
+      async () => await connecta.call("missing.read")`,
     });
-
-    it("[P1] normalizes and runs a legitimate multi-statement body on the Worker", async () => {
-      const result = await required(workerExecutor).execute("const first = 20; const second = 22; return first + second;", []);
-      expect(result.error).toBeUndefined();
-      expect(result.result).toBe(42);
+    expect(result.structuredContent).toMatchObject({
+      error: { code: "unknown_address" },
+      hostCalls: { attempted: 1, admitted: 1, succeeded: 0, failed: 1 },
     });
+    expect(result.structuredContent).not.toHaveProperty("result");
+  });
 
-    it("INV-3: trusted-wrapper markers inside a direct guest body remain data", async () => {
-      const code = "const marker = `async (connecta) => await (\nasync () => 42\n)())`; return marker;";
-      const result = await required(workerExecutor).execute(code, []);
-      expect(result.error).toBeUndefined();
-      expect(result.result).toBe("async (connecta) => await (\nasync () => 42\n)())");
+  it("[P1] normalizes and runs a legitimate multi-statement body on the Worker", async () => {
+    const result = await required(workerExecutor).execute(
+      "const first = 20; const second = 22; return first + second;",
+      [],
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.result).toBe(42);
+  });
+
+  it("INV-3: trusted-wrapper markers inside a direct guest body remain data", async () => {
+    const code = "const marker = `async (connecta) => await (\nasync () => 42\n)())`; return marker;";
+    const result = await required(workerExecutor).execute(code, []);
+    expect(result.error).toBeUndefined();
+    expect(result.result).toBe("async (connecta) => await (\nasync () => 42\n)())");
+  });
+
+  it("[L4, W9] cancels an exempt write queued at exhaustion", async () => {
+    await checkQueuedWriteAtExhaustion(required(workerExecutor));
+  });
+
+  it("[L4, X3, W9] a timer escape cannot restore host access or replace the terminal result", async () => {
+    let started!: () => void;
+    const writing = new Promise<void>((resolve) => {
+      started = resolve;
     });
-
-    it("[L4, W9] cancels an exempt write queued at exhaustion", async () => {
-      await checkQueuedWriteAtExhaustion(required(workerExecutor));
-    });
-
-    it("[L4, X3, W9] a timer escape cannot restore host access or replace the terminal result", async () => {
-      let started!: () => void;
-      const writing = new Promise<void>((resolve) => { started = resolve; });
-      let lateReads = 0;
-      const registry = makeRegistry([{
-        id: "writer", kind: "api",
-        async listTools() { return [{ name: "write", annotations: { readOnlyHint: false } }]; },
+    let lateReads = 0;
+    const registry = makeRegistry([
+      {
+        id: "writer",
+        kind: "api",
+        async listTools() {
+          return [{ name: "write", annotations: { readOnlyHint: false } }];
+        },
         async callTool() {
           started();
           await new Promise((resolve) => setTimeout(resolve, 100));
           return "written";
         },
-      }, {
-        id: "control", kind: "api",
-        async listTools() { return [{ name: "ready", annotations: { readOnlyHint: true } }]; },
-        async callTool() { await writing; return true; },
-      }, {
-        id: "reader", kind: "api",
-        async listTools() { return [{ name: "read", annotations: { readOnlyHint: true } }]; },
-        async callTool() { lateReads++; return "late"; },
-      }]);
-      const outcome = await createExecuteTool(registry, CONTRACT_BASE, required(workerExecutor), silentLogger, undefined, {
+      },
+      {
+        id: "control",
+        kind: "api",
+        async listTools() {
+          return [{ name: "ready", annotations: { readOnlyHint: true } }];
+        },
+        async callTool() {
+          await writing;
+          return true;
+        },
+      },
+      {
+        id: "reader",
+        kind: "api",
+        async listTools() {
+          return [{ name: "read", annotations: { readOnlyHint: true } }];
+        },
+        async callTool() {
+          lateReads++;
+          return "late";
+        },
+      },
+    ]);
+    const outcome = await createExecuteTool(
+      registry,
+      CONTRACT_BASE,
+      required(workerExecutor),
+      silentLogger,
+      undefined,
+      {
         maxHostCalls: 3,
         trust: "trusted",
-      })({ code: `async () => {
+      },
+    )({
+      code: `async () => {
         void connecta.call("writer.write", {}).catch(() => {});
         await connecta.call("control.ready", {});
         await connecta.call("control.ready", {});
@@ -365,101 +421,100 @@ describe.skipIf(!workerExecutor)(
           void connecta.emit({ type: "text", text: "must not be accepted" }).catch(() => {});
         });
         return "late guest value";
-      }` });
-      expect(outcome.isError).toBe(true);
-      expect(outcome.structuredContent).toMatchObject({
-        error: { code: "budget_exceeded", writes: { succeeded: 1, failed: 0, unknown: 0 } },
-        hostCalls: { attempted: 4, admitted: 3, succeeded: 3, failed: 1 },
-
-      });
-      expect(outcome.structuredContent).not.toHaveProperty("result");
-      expect(outcome.structuredContent).not.toHaveProperty("emittedDiscarded");
-      expect(lateReads).toBe(0);
+      }`,
     });
-    for (const custom of [false, true]) {
-      it(`INV-3 INV-6: ${custom ? "customExecutor: " : ""}codec array hooks cannot change host validation and repair`, async () => {
-        const executor = required(workerExecutor);
-        await checkHostFailureArrays(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
-      });
-      it(`INV-6 INV-7 INV-9: ${custom ? "customExecutor: " : ""}dispatched write timeouts retain diagnostics through caught guest errors`, async () => {
-      await checkWriteDeadlineDiagnostics(custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!);
+    expect(outcome.isError).toBe(true);
+    expect(outcome.structuredContent).toMatchObject({
+      error: { code: "budget_exceeded", writes: { succeeded: 1, failed: 0, unknown: 0 } },
+      hostCalls: { attempted: 4, admitted: 3, succeeded: 3, failed: 1 },
+    });
+    expect(outcome.structuredContent).not.toHaveProperty("result");
+    expect(outcome.structuredContent).not.toHaveProperty("emittedDiscarded");
+    expect(lateReads).toBe(0);
+  });
+  for (const custom of [false, true]) {
+    it(`INV-3 INV-6: ${custom ? "customExecutor: " : ""}codec array hooks cannot change host validation and repair`, async () => {
+      const executor = required(workerExecutor);
+      await checkHostFailureArrays(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
+    });
+    it(`INV-6 INV-7 INV-9: ${custom ? "customExecutor: " : ""}dispatched write timeouts retain diagnostics through caught guest errors`, async () => {
+      await checkWriteDeadlineDiagnostics(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
     });
     it(`INV-2 INV-3 INV-4: ${custom ? "customExecutor: " : ""}stash pages enforce bindings and live grants, pool membership and trust`, async () => {
-      await checkStashAuthority(custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!);
+      await checkStashAuthority(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
     });
     it(`INV-3: ${custom ? "customExecutor: " : ""}provider preludes retain shared lexical bindings`, async () => {
-        const executor = required(workerExecutor);
-        await checkSharedPreludes(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
-      });
-      for (const contractCase of CONTRACT_CASES) {
-        it(`[${contractCase.clauses}] ${custom ? "customExecutor: " : ""}${contractCase.name}`, async () => {
-          const harness = contractHarness();
-          const executor = required(
-            contractCase.deadline ? workerDeadlineExecutor : workerExecutor,
-          );
-          const config = caseConfig(contractCase);
-          const chosen = custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor;
-          const outcome = await harness.run(chosen, contractCase.code, config);
-          const follow = contractCase.follows
-            ? await harness.run(chosen, contractCase.follows, config)
-            : undefined;
-          contractCase.check(outcome, harness.state, follow);
-        });
-      }
-    }
-
-    it("[P2, X5] pins the Dynamic Worker capability exceptions", async () => {
-      const outcome = await contractHarness().run(
-        required(workerExecutor),
-        CAPABILITY_PROBE_CODE,
-      );
-
-      expect(outcome.isError, outcome.text).toBe(false);
-      const outboundDenied =
-        "Error: This worker is not permitted to access the internet via global functions like fetch(). It must use capabilities (such as bindings in 'env') to talk to the outside world.";
-      expect(outcome.result).toEqual({
-        globals: {
-          fetch: "function",
-          setTimeout: "function",
-          clearTimeout: "function",
-          process: "object",
-          crypto: "object",
-          WebSocket: "function",
-          require: "undefined",
-          Deno: "undefined",
-          Bun: "undefined",
-        },
-        dataFetch: "reachable",
-        externalHttp: outboundDenied,
-        externalHttps: outboundDenied,
-        webSocket: outboundDenied,
-        netConnect: outboundDenied,
-        tlsConnect: outboundDenied,
-        dnsLookup: "Error [ENOTFOUND]: queryA ENOTFOUND example.com",
-        unavailableImports: {
-          fs: "blocked",
-          http: "blocked",
-          https: "blocked",
-        },
-        unavailableBuiltins: {
-          fs: "undefined",
-          http: "undefined",
-          https: "undefined",
-        },
-        env: {
-          entrypoint: { type: "undefined", keys: 0 },
-          global: { type: "undefined", keys: 0 },
-          process: { type: "object", keys: 0 },
-          workers: { type: "object", keys: 0 },
-        },
-      });
+      const executor = required(workerExecutor);
+      await checkSharedPreludes(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
     });
-  },
-);
+    for (const contractCase of CONTRACT_CASES) {
+      it(`[${contractCase.clauses}] ${custom ? "customExecutor: " : ""}${contractCase.name}`, async () => {
+        const harness = contractHarness();
+        const executor = required(contractCase.deadline ? workerDeadlineExecutor : workerExecutor);
+        const config = caseConfig(contractCase);
+        const chosen = custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor;
+        const outcome = await harness.run(chosen, contractCase.code, config);
+        const follow = contractCase.follows ? await harness.run(chosen, contractCase.follows, config) : undefined;
+        contractCase.check(outcome, harness.state, follow);
+      });
+    }
+  }
+
+  it("[P2, X5] pins the Dynamic Worker capability exceptions", async () => {
+    const outcome = await contractHarness().run(required(workerExecutor), CAPABILITY_PROBE_CODE);
+
+    expect(outcome.isError, outcome.text).toBe(false);
+    const outboundDenied =
+      "Error: This worker is not permitted to access the internet via global functions like fetch(). It must use capabilities (such as bindings in 'env') to talk to the outside world.";
+    expect(outcome.result).toEqual({
+      globals: {
+        fetch: "function",
+        setTimeout: "function",
+        clearTimeout: "function",
+        process: "object",
+        crypto: "object",
+        WebSocket: "function",
+        require: "undefined",
+        Deno: "undefined",
+        Bun: "undefined",
+      },
+      dataFetch: "reachable",
+      externalHttp: outboundDenied,
+      externalHttps: outboundDenied,
+      webSocket: outboundDenied,
+      netConnect: outboundDenied,
+      tlsConnect: outboundDenied,
+      dnsLookup: "Error [ENOTFOUND]: queryA ENOTFOUND example.com",
+      unavailableImports: {
+        fs: "blocked",
+        http: "blocked",
+        https: "blocked",
+      },
+      unavailableBuiltins: {
+        fs: "undefined",
+        http: "undefined",
+        https: "undefined",
+      },
+      env: {
+        entrypoint: { type: "undefined", keys: 0 },
+        global: { type: "undefined", keys: 0 },
+        process: { type: "object", keys: 0 },
+        workers: { type: "object", keys: 0 },
+      },
+    });
+  });
+});
 
 // E5: an empty terminal error string is a failure on the child transport too,
 // not a success with no result.
 it("keeps an empty error string as a failure through the transport", () => {
-  expect(prepareExecuteResultForTransport({ result: undefined, error: "", logs: ["before failure"] }))
-    .toEqual({ result: undefined, error: "", logs: ["before failure"] });
+  expect(prepareExecuteResultForTransport({ result: undefined, error: "", logs: ["before failure"] })).toEqual({
+    result: undefined,
+    error: "",
+    logs: ["before failure"],
+  });
 });

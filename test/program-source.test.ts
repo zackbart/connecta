@@ -11,8 +11,14 @@ describe("normalizeProgramSource", () => {
     ["I will read the value.\n```js\nasync () => 42;\n```\nHere is the program.", "async () => 42"],
     ["export default async () => ({ value: 42 });", "async () => ({ value: 42 })"],
     ["async function main() { return 42; }", "async (...args) => (async function main() { return 42; })(...args)"],
-    ["async function read(value) { return { value, text: \"}\" }; };", "async (...args) => (async function read(value) { return { value, text: \"}\" }; })(...args)"],
-    ["async function read() { return /}/.test('}'); } // done", "async (...args) => (async function read() { return /}/.test('}'); })(...args) // done"],
+    [
+      'async function read(value) { return { value, text: "}" }; };',
+      'async (...args) => (async function read(value) { return { value, text: "}" }; })(...args)',
+    ],
+    [
+      "async function read() { return /}/.test('}'); } // done",
+      "async (...args) => (async function read() { return /}/.test('}'); })(...args) // done",
+    ],
   ])("recovers one wrapped program", (code, expected) => {
     expect(normalizeProgramSource(code)).toBe(expected);
   });
@@ -53,7 +59,7 @@ describe("withoutProgramTerminator", () => {
     ["async () => {\n}; // done;\n/* ; */ ;", "async () => {\n} // done;\n/* ; */ "],
     // Semicolons in strings, templates, and regexes are data.
     ['async () => "a;b";', 'async () => "a;b"'],
-    ["async () => `;${\"}\"};`;", "async () => `;${\"}\"};`"],
+    ['async () => `;${"}"};`;', 'async () => `;${"}"};`'],
     ["async () => `${`;${1}`}`;", "async () => `${`;${1}`}`"],
     ["async () => /;[;/]/.test(x);", "async () => /;[;/]/.test(x)"],
     ["async () => a / b / c;", "async () => a / b / c"],

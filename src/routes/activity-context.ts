@@ -12,7 +12,9 @@ export function operatorActivityContext(context: RouteContext, authz: Authorized
     sink: activity.store,
     recordTool: activity.recordTool,
     actor: authz.actor,
-    ...(principal ? { principalActor: { kind: authz.actor.kind, id: principal.id, namespace: principal.namespace } } : {}),
+    ...(principal
+      ? { principalActor: { kind: authz.actor.kind, id: principal.id, namespace: principal.namespace } }
+      : {}),
     requestId: crypto.randomUUID(),
     serverInfo: opts.config.serverInfo,
     ...(activity.deploymentId ? { deploymentId: activity.deploymentId } : {}),

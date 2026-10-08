@@ -1,8 +1,5 @@
 import type { CredentialMetadata, CredentialVault as Vault } from "./credential-contract.js";
-import type {
-  ConnectorCredentialValues,
-  KVStorage,
-} from "./types.js";
+import type { ConnectorCredentialValues, KVStorage } from "./types.js";
 
 import { deriveOAuthHandoffKey, deriveRequestStateKey } from "./oauth-sealing.js";
 import { credentialKeys } from "./storage/keys.js";
@@ -34,14 +31,8 @@ const SEALED_VERSION = "v1";
  * (which carries the authorization epoch), so ciphertext copied anywhere else
  * does not open. Connector ids cannot contain `|`, and the owner is a hash.
  */
-function oauthStateAdditionalData(
-  connectorId: string,
-  purpose: string,
-  owner?: string,
-): Uint8Array {
-  return encoder.encode(
-    `connecta:oauth-state:v1|${connectorId}|${owner ?? ""}|${purpose}`,
-  );
+function oauthStateAdditionalData(connectorId: string, purpose: string, owner?: string): Uint8Array {
+  return encoder.encode(`connecta:oauth-state:v1|${connectorId}|${owner ?? ""}|${purpose}`);
 }
 
 function storageKey(connectorId: string, owner?: string): string {
@@ -59,9 +50,7 @@ function base64ToBytes(value: string): Uint8Array {
   try {
     binary = atob(value);
   } catch {
-    throw new Error(
-      "The credential vault encryption key must be a base64-encoded 32-byte key",
-    );
+    throw new Error("The credential vault encryption key must be a base64-encoded 32-byte key");
   }
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
@@ -88,18 +77,13 @@ function parsePlaintext(raw: string): CredentialPlaintext {
     const parsed = JSON.parse(raw) as Partial<CredentialPlaintext> & {
       value?: unknown;
     };
-    const values =
-      typeof parsed.value === "string"
-        ? { value: parsed.value }
-        : parsed.values;
+    const values = typeof parsed.value === "string" ? { value: parsed.value } : parsed.values;
     if (
       !values ||
       typeof values !== "object" ||
       Array.isArray(values) ||
       !Object.entries(values).every(
-        ([field, value]) =>
-          /^[A-Za-z][A-Za-z0-9_-]*$/.test(field) &&
-          typeof value === "string",
+        ([field, value]) => /^[A-Za-z][A-Za-z0-9_-]*$/.test(field) && typeof value === "string",
       ) ||
       typeof parsed.updatedAt !== "string" ||
       typeof parsed.updatedBy !== "string"
@@ -116,9 +100,7 @@ function parsePlaintext(raw: string): CredentialPlaintext {
   }
 }
 
-function validateValues(
-  values: ConnectorCredentialValues,
-): ConnectorCredentialValues {
+function validateValues(values: ConnectorCredentialValues): ConnectorCredentialValues {
   const entries = Object.entries(values);
   if (entries.length === 0) throw new Error("Credential cannot be empty");
   const normalized: ConnectorCredentialValues = {};
@@ -131,10 +113,7 @@ function validateValues(
     }
     normalized[field] = value;
   }
-  if (
-    encoder.encode(JSON.stringify(normalized)).byteLength >
-    MAX_CREDENTIAL_BYTES
-  ) {
+  if (encoder.encode(JSON.stringify(normalized)).byteLength > MAX_CREDENTIAL_BYTES) {
     throw new Error(`Credential cannot exceed ${MAX_CREDENTIAL_BYTES} bytes`);
   }
   return normalized;
@@ -157,25 +136,17 @@ export class CredentialVault implements Vault {
   ) {
     const raw = base64ToBytes(encryptionKey.trim());
     if (raw.byteLength !== KEY_BYTES) {
-      throw new Error(
-        "The credential vault encryption key must be a base64-encoded 32-byte key",
-      );
+      throw new Error("The credential vault encryption key must be a base64-encoded 32-byte key");
     }
     this.handoffKey = deriveOAuthHandoffKey(raw);
     this.retryKey = deriveRequestStateKey(raw);
-    this.key = crypto.subtle.importKey(
-      "raw",
-      raw,
-      { name: "AES-GCM" },
-      false,
-      ["encrypt", "decrypt"],
-    );
+    this.key = crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
   }
 
   async signOAuthHandoff(payload: string): Promise<string> {
-    return bytesToBase64(new Uint8Array(await crypto.subtle.sign(
-      "HMAC", await this.handoffKey, encoder.encode(payload),
-    )));
+    return bytesToBase64(
+      new Uint8Array(await crypto.subtle.sign("HMAC", await this.handoffKey, encoder.encode(payload))),
+    );
   }
 
   async requestStateKey(): Promise<Uint8Array> {
@@ -185,7 +156,10 @@ export class CredentialVault implements Vault {
   async verifyOAuthHandoff(payload: string, signature: string): Promise<boolean> {
     try {
       return await crypto.subtle.verify(
-        "HMAC", await this.handoffKey, base64ToBytes(signature), encoder.encode(payload),
+        "HMAC",
+        await this.handoffKey,
+        base64ToBytes(signature),
+        encoder.encode(payload),
       );
     } catch {
       return false;
@@ -194,16 +168,11 @@ export class CredentialVault implements Vault {
 
   private additionalData(connectorId: string, owner?: string): Uint8Array {
     return encoder.encode(
-      owner
-        ? `connecta:credential:principal:${owner}:${connectorId}:v1`
-        : `connecta:credential:${connectorId}:v1`,
+      owner ? `connecta:credential:principal:${owner}:${connectorId}:v1` : `connecta:credential:${connectorId}:v1`,
     );
   }
 
-  private async read(
-    connectorId: string,
-    owner?: string,
-  ): Promise<CredentialPlaintext | null> {
+  private async read(connectorId: string, owner?: string): Promise<CredentialPlaintext | null> {
     const raw = await this.storage.get(storageKey(connectorId, owner));
     if (!raw) return null;
     const envelope = parseEnvelope(raw);
@@ -223,27 +192,17 @@ export class CredentialVault implements Vault {
     }
   }
 
-  async get(
-    connectorId: string,
-    field = "value",
-    owner?: string,
-  ): Promise<string | null> {
+  async get(connectorId: string, field = "value", owner?: string): Promise<string | null> {
     const values = (await this.read(connectorId, owner))?.values;
     return values && Object.hasOwn(values, field) ? values[field]! : null;
   }
 
-  async getAll(
-    connectorId: string,
-    owner?: string,
-  ): Promise<ConnectorCredentialValues | null> {
+  async getAll(connectorId: string, owner?: string): Promise<ConnectorCredentialValues | null> {
     const credential = await this.read(connectorId, owner);
     return credential ? { ...credential.values } : null;
   }
 
-  async metadata(
-    connectorId: string,
-    owner?: string,
-  ): Promise<CredentialMetadata | null> {
+  async metadata(connectorId: string, owner?: string): Promise<CredentialMetadata | null> {
     const credential = await this.read(connectorId, owner);
     if (!credential) return null;
     const fields = Object.fromEntries(
@@ -267,12 +226,7 @@ export class CredentialVault implements Vault {
     };
   }
 
-  async set(
-    connectorId: string,
-    value: string,
-    updatedBy: string,
-    owner?: string,
-  ): Promise<CredentialMetadata> {
+  async set(connectorId: string, value: string, updatedBy: string, owner?: string): Promise<CredentialMetadata> {
     // `await` (not a bare promise return) so a validation throw inside setAll
     // never sits handler-less for the thenable-adoption microtask — workerd
     // reports that gap as an unhandled rejection.
@@ -307,10 +261,7 @@ export class CredentialVault implements Vault {
       iv: bytesToBase64(iv),
       ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
     };
-    await this.storage.set(
-      storageKey(connectorId, owner),
-      JSON.stringify(envelope),
-    );
+    await this.storage.set(storageKey(connectorId, owner), JSON.stringify(envelope));
     return (await this.metadata(connectorId, owner))!;
   }
 
@@ -319,12 +270,7 @@ export class CredentialVault implements Vault {
   }
 
   /** Encrypt downstream OAuth state under the vault key; nothing is stored. */
-  async seal(
-    connectorId: string,
-    purpose: string,
-    plaintext: string,
-    owner?: string,
-  ): Promise<string> {
+  async seal(connectorId: string, purpose: string, plaintext: string, owner?: string): Promise<string> {
     const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
     const ciphertext = await crypto.subtle.encrypt(
       {
@@ -339,19 +285,9 @@ export class CredentialVault implements Vault {
   }
 
   /** Decrypt what `seal` produced for this connector, purpose, and owner. */
-  async open(
-    connectorId: string,
-    purpose: string,
-    sealed: string,
-    owner?: string,
-  ): Promise<string> {
+  async open(connectorId: string, purpose: string, sealed: string, owner?: string): Promise<string> {
     const [version, iv, ciphertext, ...rest] = sealed.split(".");
-    if (
-      version !== SEALED_VERSION ||
-      iv === undefined ||
-      ciphertext === undefined ||
-      rest.length > 0
-    ) {
+    if (version !== SEALED_VERSION || iv === undefined || ciphertext === undefined || rest.length > 0) {
       throw new Error("Sealed OAuth state is invalid or corrupted");
     }
     try {

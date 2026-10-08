@@ -14,8 +14,7 @@ import workerConfig from "../examples/worker/src/connecta.config.js";
 // load; this suite checks which modules the configuration switches on, not
 // the sandbox, so a self-managed stand-in takes its place.
 vi.mock("../src/worker.js", () => ({
-  workerExecutor: () =>
-    customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
+  workerExecutor: () => customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
 }));
 
 // There are two deployment shapes: the Node template `connecta init` copies —
@@ -27,14 +26,11 @@ const TEMPLATE = join(ROOT, "templates", "node");
 
 const WORKER = join(ROOT, "examples", "worker");
 
-const read = (...segments: string[]) =>
-  readFileSync(join(TEMPLATE, ...segments), "utf8");
-const readWorker = (...segments: string[]) =>
-  readFileSync(join(WORKER, ...segments), "utf8");
+const read = (...segments: string[]) => readFileSync(join(TEMPLATE, ...segments), "utf8");
+const readWorker = (...segments: string[]) => readFileSync(join(WORKER, ...segments), "utf8");
 
 /** A syntactically valid Clerk publishable key; nothing here contacts Clerk. */
-const PUBLISHABLE_KEY =
-  "pk_test_" + Buffer.from("example.clerk.accounts.dev$", "utf8").toString("base64");
+const PUBLISHABLE_KEY = "pk_test_" + Buffer.from("example.clerk.accounts.dev$", "utf8").toString("base64");
 const VAULT_KEY = Buffer.alloc(32, 7).toString("base64");
 
 describe("deployment shapes", () => {
@@ -43,9 +39,9 @@ describe("deployment shapes", () => {
   });
 
   it("keeps the Worker sandbox loader-only", () => {
-    const options = [...readWorker("src", "connecta.config.ts").matchAll(
-      /workerExecutor\(\{([^}]*)\}\)/g,
-    )].map((match) => match[1]?.trim());
+    const options = [...readWorker("src", "connecta.config.ts").matchAll(/workerExecutor\(\{([^}]*)\}\)/g)].map(
+      (match) => match[1]?.trim(),
+    );
     expect(options).toEqual(["loader: env.LOADER"]);
   });
 
@@ -78,12 +74,8 @@ describe("deployment shapes", () => {
       expect(readme).toContain(callback);
       expect(source).toContain(callback);
     }
-    expect(agents).toContain(
-      "oauth_configuration.dynamic_client_registration.allowed_uris",
-    );
-    expect(readme).toContain(
-      '"dynamic_client_registration": {',
-    );
+    expect(agents).toContain("oauth_configuration.dynamic_client_registration.allowed_uris");
+    expect(readme).toContain('"dynamic_client_registration": {');
     expect(readme).toContain('"allowed_uris": [');
   });
 
@@ -113,9 +105,7 @@ describe("deployment shapes", () => {
     expect(dockerfile).toContain("src/index.ts");
     expect(manifest.scripts.start).toBe("tsx src/index.ts");
     expect(manifest.allowScripts).toEqual({ "esbuild@0.28.2": true });
-    expect(read("README.md")).toContain(
-      "do not replace the pinned entry with a broad\npackage-name approval",
-    );
+    expect(read("README.md")).toContain("do not replace the pinned entry with a broad\npackage-name approval");
     // No lockfile ships with the template — init rewrites the version pin, so
     // a committed lockfile would disagree with it on the first build.
     expect(readdirSync(TEMPLATE)).not.toContain("package-lock.json");
@@ -216,10 +206,21 @@ describe("deployment shapes", () => {
     // Construction and describeConfig() run no statement: tables are created
     // on first use, so a binding that answers nothing is enough here.
     const d1 = { prepare: () => ({ bind: () => ({}) }), batch: async () => [] };
-    const base = { CONNECTA_DB: d1, DOWNSTREAM_TOKEN: "downstream", PUBLIC_URL: "https://worker.example", LOADER: { get: () => ({}) } };
-    const env = (extra: Record<string, unknown>) => ({ ...base, ...extra }) as unknown as Parameters<typeof workerConfig>[0];
+    const base = {
+      CONNECTA_DB: d1,
+      DOWNSTREAM_TOKEN: "downstream",
+      PUBLIC_URL: "https://worker.example",
+      LOADER: { get: () => ({}) },
+    };
+    const env = (extra: Record<string, unknown>) =>
+      ({ ...base, ...extra }) as unknown as Parameters<typeof workerConfig>[0];
     const config = workerConfig(env({}));
-    expect(config.identity?.accessTokenManagement?.({ interactive: true, actor: { kind: "cloudflare-access", id: "operator" } })).toBe(true);
+    expect(
+      config.identity?.accessTokenManagement?.({
+        interactive: true,
+        actor: { kind: "cloudflare-access", id: "operator" },
+      }),
+    ).toBe(true);
     const off = createConnecta({ ...config, logger: "silent" });
     const quiet = off.describeConfig();
     expect(quiet.auth).toEqual([
@@ -247,7 +248,9 @@ describe("deployment shapes", () => {
     // One D1 database, one Worker Loader, and nothing else: no KV, no second
     // database, no copied adapter.
     const wrangler = readWorker("wrangler.jsonc")
-      .split("\n").filter((line) => !line.trimStart().startsWith("//")).join("\n");
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("//"))
+      .join("\n");
     expect(wrangler).not.toContain("kv_namespaces");
     expect(wrangler.match(/"binding":/g)).toHaveLength(2);
     expect(wrangler).toContain('"binding": "CONNECTA_DB"');
@@ -263,9 +266,7 @@ describe("deployment shapes", () => {
       expect(workerReadme).toContain(variable);
       expect(readWorker("AGENTS.md")).toContain(variable);
     }
-    expect(workerReadme).not.toContain(
-      "checking that Credentials, Tokens, and Activity are live",
-    );
+    expect(workerReadme).not.toContain("checking that Credentials, Tokens, and Activity are live");
   });
 
   it("keeps empty storage fail-closed and admits only provisioned machine tokens (INV-4)", async () => {
@@ -275,22 +276,31 @@ describe("deployment shapes", () => {
     const config = nodeConfig(env);
     const app = createConnecta({ ...config, logger: "silent" });
     const initialize = async (token?: string) => {
-      const response = await app.fetch(new Request("http://localhost:8787/mcp", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json, text/event-stream",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {
-          protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "template-test", version: "1" },
-        } }),
-      }));
+      const response = await app.fetch(
+        new Request("http://localhost:8787/mcp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "initialize",
+            params: {
+              protocolVersion: "2025-03-26",
+              capabilities: {},
+              clientInfo: { name: "template-test", version: "1" },
+            },
+          }),
+        }),
+      );
       await response.body?.cancel();
       return response;
     };
     try {
-      expect(app.describeConfig().auth.map(provider => provider.kind)).toEqual(["access_token"]);
+      expect(app.describeConfig().auth.map((provider) => provider.kind)).toEqual(["access_token"]);
       expect((await app.fetch(new Request("http://localhost:8787/health"))).status).toBe(200);
       expect((await initialize()).status).toBe(401);
       expect((await initialize(staticToken)).status).toBe(401);
@@ -309,7 +319,9 @@ describe("deployment shapes", () => {
     expect(read("src", "connecta.config.ts")).not.toContain("CONNECTA_TOKEN");
     expect(read("src", "provision-token.ts")).toContain('manager.create(name, "local-provisioning")');
     expect(read("package.json")).toContain('"provision-token": "tsx src/provision-token.ts"');
-    expect(read("README.md")).toContain('docker compose run --rm --no-deps connecta npm run --silent provision-token -- "container-machine"');
+    expect(read("README.md")).toContain(
+      'docker compose run --rm --no-deps connecta npm run --silent provision-token -- "container-machine"',
+    );
   });
 
   // A copied deployment installs its own dependencies, and an optional peer
@@ -324,9 +336,7 @@ describe("deployment shapes", () => {
     };
     for (const [specifier, packageName] of Object.entries(peers)) {
       if (!source.includes(`from "${specifier}"`)) continue;
-      expect(readme).toMatch(
-        new RegExp(`npm install[^\\n]*${packageName.replace("/", "\\/")}`),
-      );
+      expect(readme).toMatch(new RegExp(`npm install[^\\n]*${packageName.replace("/", "\\/")}`));
     }
   });
 
@@ -340,9 +350,7 @@ describe("deployment shapes", () => {
   });
 
   it("packs the container files with the template", () => {
-    const manifest = JSON.parse(
-      readFileSync(join(ROOT, "package.json"), "utf8"),
-    ) as { files: string[] };
+    const manifest = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { files: string[] };
     const files = manifest.files;
     expect(files).toContain("templates");
     expect(files).not.toContain("examples/node");

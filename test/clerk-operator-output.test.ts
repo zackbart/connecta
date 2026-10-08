@@ -20,31 +20,48 @@ const secretKey = "sk_test_fake";
 const SENTINEL = "planted-clerk-upstream-7f3a9c";
 
 function captureOutput() {
-  return ["log", "info", "warn", "error", "debug"].map(method =>
+  return ["log", "info", "warn", "error", "debug"].map((method) =>
     vi.spyOn(console, method as "log").mockImplementation(() => {}),
   );
 }
 function output(spies: ReturnType<typeof captureOutput>) {
-  return JSON.stringify(spies.flatMap(spy => spy.mock.calls));
+  return JSON.stringify(spies.flatMap((spy) => spy.mock.calls));
 }
 
 async function session(userId = "user_123") {
-  const pair = await crypto.subtle.generateKey({
-    name: "RSASSA-PKCS1-v1_5", modulusLength: 2048,
-    publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256",
-  }, true, ["sign", "verify"]) as CryptoKeyPair;
-  const privateKey = await crypto.subtle.exportKey("jwk", pair.privateKey) as JsonWebKey;
-  const publicKey = await crypto.subtle.exportKey("jwk", pair.publicKey) as JsonWebKey;
+  const pair = (await crypto.subtle.generateKey(
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    true,
+    ["sign", "verify"],
+  )) as CryptoKeyPair;
+  const privateKey = (await crypto.subtle.exportKey("jwk", pair.privateKey)) as JsonWebKey;
+  const publicKey = (await crypto.subtle.exportKey("jwk", pair.publicKey)) as JsonWebKey;
   const kid = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
-  const token = await signJwt({
-    sub: userId, sid: "sess_test", iss: FRONTEND, azp: BASE,
-    exp: now + 300, nbf: now - 5, iat: now - 5,
-  }, privateKey, { algorithm: "RS256", header: { typ: "JWT", kid } });
+  const token = await signJwt(
+    {
+      sub: userId,
+      sid: "sess_test",
+      iss: FRONTEND,
+      azp: BASE,
+      exp: now + 300,
+      nbf: now - 5,
+      iat: now - 5,
+    },
+    privateKey,
+    { algorithm: "RS256", header: { typ: "JWT", kid } },
+  );
   return { token, privateKey, kid, jwks: { keys: [{ ...publicKey, kid, alg: "RS256", use: "sig" }] } };
 }
 
-function auth() { return clerkAuth({ publishableKey, secretKey, publicUrl: BASE }); }
+function auth() {
+  return clerkAuth({ publishableKey, secretKey, publicUrl: BASE });
+}
 function browser(nonce?: string) {
   return new Request(`${BASE}/connect/service${nonce ? `?__clerk_handshake_nonce=${nonce}` : ""}`, {
     headers: { Accept: "text/html", "Sec-Fetch-Dest": "document" },
@@ -56,18 +73,35 @@ async function assertDenialSinks(
   request: Request,
   status: number,
   spies: ReturnType<typeof captureOutput>,
-  context?: { waitUntil(promise: Promise<unknown>): void; access: { aud: string; getIdentity(): Promise<Record<string, unknown>> } },
+  context?: {
+    waitUntil(promise: Promise<unknown>): void;
+    access: { aud: string; getIdentity(): Promise<Record<string, unknown>> };
+  },
   options: { pools?: Record<string, ConnectaPoolConfig>; reason?: string; canaries?: string[] } = {},
 ) {
   const lines: unknown[][] = [];
-  const sink = (...args: unknown[]) => { lines.push(args); };
+  const sink = (...args: unknown[]) => {
+    lines.push(args);
+  };
   const record = vi.fn();
   const storage = memoryStorage();
   const call = vi.fn(async () => null);
-  const app = createTestConnecta({ publicUrl: BASE, auth: provider, pools: options.pools,
-    connectors: [{ id: "service", kind: "mcp", description: "Service", listTools: async () => [],
-      callTool: call, status: async () => ({ state: "ok" }) }],
-    accessTokens: accessTokens(storage), activity: activityHistory({ store: { record } }),
+  const app = createTestConnecta({
+    publicUrl: BASE,
+    auth: provider,
+    pools: options.pools,
+    connectors: [
+      {
+        id: "service",
+        kind: "mcp",
+        description: "Service",
+        listTools: async () => [],
+        callTool: call,
+        status: async () => ({ state: "ok" }),
+      },
+    ],
+    accessTokens: accessTokens(storage),
+    activity: activityHistory({ store: { record } }),
     logger: { debug: sink, info: sink, warn: sink, error: sink },
   });
   try {
@@ -75,19 +109,31 @@ async function assertDenialSinks(
     expect(response.status).toBe(status);
     const health = await app.fetch(new Request(`${BASE}/health`));
     const connectorStatus = await app.registry.statusFor("service", BASE);
-    const operatorData = JSON.stringify({ lines, activity: record.mock.calls, connectorStatus,
-      config: app.describeConfig(), health: await health.json(), refusal: await response.text() });
-    for (const canary of [SENTINEL, ...options.canaries ?? []]) {
+    const operatorData = JSON.stringify({
+      lines,
+      activity: record.mock.calls,
+      connectorStatus,
+      config: app.describeConfig(),
+      health: await health.json(),
+      refusal: await response.text(),
+    });
+    for (const canary of [SENTINEL, ...(options.canaries ?? [])]) {
       expect(operatorData).not.toContain(canary);
       expect(output(spies)).not.toContain(canary);
     }
     if (options.reason) expect(lines).toEqual([["[connecta] MCP pool request denied", { reason: options.reason }]]);
     expect(record).not.toHaveBeenCalled();
     expect(call).not.toHaveBeenCalled();
-  } finally { await app.close(); }
+  } finally {
+    await app.close();
+  }
 }
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
 
 describe("Clerk operator output with the real SDK", () => {
   it("INV-6: checks inbound denial reasons against the operator record allowlist", () => {
@@ -99,53 +145,114 @@ describe("Clerk operator output with the real SDK", () => {
     expect(failureRecord({ userId: "denied-canary@example.test" } as never)).toEqual({});
   });
 
-  it.each(["domain-denied", "unverified-email", "missing-email", "malformed-email", "lookup-failed", "gate-denied", "gate-failed"])(
-    "INV-6: Clerk %s exposes no provider identity in logs, activity, or status", async denial => {
-      const spies = captureOutput();
-      const userId = `${SENTINEL}-user`;
-      const domain = `${SENTINEL}.example.com`;
-      const email = `${SENTINEL}@${domain}`;
-      const { token, privateKey, kid, jwks } = await session(userId);
-      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+  it.each([
+    "domain-denied",
+    "unverified-email",
+    "missing-email",
+    "malformed-email",
+    "lookup-failed",
+    "gate-denied",
+    "gate-failed",
+  ])("INV-6: Clerk %s exposes no provider identity in logs, activity, or status", async (denial) => {
+    const spies = captureOutput();
+    const userId = `${SENTINEL}-user`;
+    const domain = `${SENTINEL}.example.com`;
+    const email = `${SENTINEL}@${domain}`;
+    const { token, privateKey, kid, jwks } = await session(userId);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
         const url = new URL(String(input));
         if (url.pathname === "/v1/jwks") return Response.json(jwks);
         expect(url.pathname).toBe(`/v1/users/${userId}`);
         if (denial === "lookup-failed") throw new Error(`${userId} ${email} ${domain}`);
-        return Response.json({ object: "user", id: userId, primary_email_address_id: "primary",
-          email_addresses: denial === "missing-email" ? [] : [{ object: "email_address", id: "primary",
-            linked_to: [],
-            email_address: denial === "malformed-email" ? `${email}\nforged` : email,
-            verification: { status: denial === "unverified-email" ? "unverified" : "verified" } }],
-          phone_numbers: [], web3_wallets: [], external_accounts: [],
+        return Response.json({
+          object: "user",
+          id: userId,
+          primary_email_address_id: "primary",
+          email_addresses:
+            denial === "missing-email"
+              ? []
+              : [
+                  {
+                    object: "email_address",
+                    id: "primary",
+                    linked_to: [],
+                    email_address: denial === "malformed-email" ? `${email}\nforged` : email,
+                    verification: { status: denial === "unverified-email" ? "unverified" : "verified" },
+                  },
+                ],
+          phone_numbers: [],
+          web3_wallets: [],
+          external_accounts: [],
         });
-      }));
-      const provider = clerkAuth({ publishableKey, secretKey, publicUrl: BASE,
-        ...(denial.startsWith("gate-") ? { gate: () => {
-          if (denial === "gate-failed") throw new Error(`${userId} ${email} ${domain}`);
-          return false;
-        } } : { allowedDomains: ["allowed.example.com"] }),
-      });
-      await assertDenialSinks(provider, new Request(`${BASE}/ui/access-tokens`, {
+      }),
+    );
+    const provider = clerkAuth({
+      publishableKey,
+      secretKey,
+      publicUrl: BASE,
+      ...(denial.startsWith("gate-")
+        ? {
+            gate: () => {
+              if (denial === "gate-failed") throw new Error(`${userId} ${email} ${domain}`);
+              return false;
+            },
+          }
+        : { allowedDomains: ["allowed.example.com"] }),
+    });
+    await assertDenialSinks(
+      provider,
+      new Request(`${BASE}/ui/access-tokens`, {
         headers: { Authorization: `Bearer ${token}` },
-      }), 403, spies);
-      const now = Math.floor(Date.now() / 1000);
-      const oauthToken = await signJwt({ sub: userId, iss: FRONTEND, client_id: "client_connecta",
-        scope: "openid profile email", aud: `${BASE}/mcp`, exp: now + 300, nbf: now - 5, iat: now - 5,
-      }, privateKey, { algorithm: "RS256", header: { typ: "at+jwt", kid } });
-      await assertDenialSinks(provider, new Request(`${BASE}/mcp`, { method: "POST",
-        headers: { Authorization: `Bearer ${oauthToken}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+      }),
+      403,
+      spies,
+    );
+    const now = Math.floor(Date.now() / 1000);
+    const oauthToken = await signJwt(
+      {
+        sub: userId,
+        iss: FRONTEND,
+        client_id: "client_connecta",
+        scope: "openid profile email",
+        aud: `${BASE}/mcp`,
+        exp: now + 300,
+        nbf: now - 5,
+        iat: now - 5,
+      },
+      privateKey,
+      { algorithm: "RS256", header: { typ: "at+jwt", kid } },
+    );
+    await assertDenialSinks(
+      provider,
+      new Request(`${BASE}/mcp`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${oauthToken}`,
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+        },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
-      }), 403, spies);
-      const reasons: Record<string, string> = { "domain-denied": "email_domain_denied",
-        "unverified-email": "verified_email_invalid", "missing-email": "verified_email_invalid",
-        "malformed-email": "verified_email_invalid", "lookup-failed": "email_lookup_failed",
-        "gate-denied": "gate_denied", "gate-failed": "gate_failed" };
-      expect(output(spies)).toContain(`"reason":"${reasons[denial]}"`);
-    },
-  );
+      }),
+      403,
+      spies,
+    );
+    const reasons: Record<string, string> = {
+      "domain-denied": "email_domain_denied",
+      "unverified-email": "verified_email_invalid",
+      "missing-email": "verified_email_invalid",
+      "malformed-email": "verified_email_invalid",
+      "lookup-failed": "email_lookup_failed",
+      "gate-denied": "gate_denied",
+      "gate-failed": "gate_failed",
+    };
+    expect(output(spies)).toContain(`"reason":"${reasons[denial]}"`);
+  });
 
   it.each(["service", "missing-human", "identity-failed", "invalid-aud", "explicit-header"])(
-    "INV-6: Access %s exposes no provider identity in logs, activity, or status", async denial => {
+    "INV-6: Access %s exposes no provider identity in logs, activity, or status",
+    async (denial) => {
       const spies = captureOutput();
       const identity = { user_uuid: `${SENTINEL}-user`, email: `${SENTINEL}@${SENTINEL}.example.com` };
       const getIdentity = vi.fn(async () => {
@@ -157,63 +264,121 @@ describe("Clerk operator output with the real SDK", () => {
       const request = new Request(`${BASE}/ui/access-tokens`, {
         headers: denial === "explicit-header" ? { Authorization: `Basic ${SENTINEL}` } : {},
       });
-      await assertDenialSinks(cloudflareAccessAuth(), request,
-        ["identity-failed", "invalid-aud", "explicit-header"].includes(denial) ? 401 : 403, spies, context);
-      await assertDenialSinks(cloudflareAccessAuth(), new Request(`${BASE}/mcp`, { method: "POST",
-        headers: { ...Object.fromEntries(request.headers), "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
-      }), ["identity-failed", "invalid-aud", "explicit-header"].includes(denial) ? 401 : 403, spies, context);
+      await assertDenialSinks(
+        cloudflareAccessAuth(),
+        request,
+        ["identity-failed", "invalid-aud", "explicit-header"].includes(denial) ? 401 : 403,
+        spies,
+        context,
+      );
+      await assertDenialSinks(
+        cloudflareAccessAuth(),
+        new Request(`${BASE}/mcp`, {
+          method: "POST",
+          headers: {
+            ...Object.fromEntries(request.headers),
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+        }),
+        ["identity-failed", "invalid-aud", "explicit-header"].includes(denial) ? 401 : 403,
+        spies,
+        context,
+      );
       if (["invalid-aud", "explicit-header"].includes(denial)) expect(getIdentity).not.toHaveBeenCalled();
     },
   );
 
-  it.each(["clerk", "access-uuid", "access-email"].flatMap(provider =>
-    ["pool_not_declared", "pool_grant_denied", "pool_grant_threw"].map(reason => ({ provider, reason })),
-  ))("INV-4 INV-6: $provider $reason exposes no provider identity in pool refusal sinks", async ({ provider: kind, reason }) => {
-    const spies = captureOutput();
-    const userId = `${SENTINEL}-user`;
-    const email = "denied-canary@example.test";
-    const name = `${SENTINEL}-name`;
-    const identity = { ...(kind === "access-uuid" ? { user_uuid: userId } : {}), email, name };
-    const getIdentity = vi.fn(async () => identity);
-    const context = kind === "clerk" ? undefined : { waitUntil() {}, access: { aud: "app", getIdentity } };
-    const headers = new Headers({ "Content-Type": "application/json", Accept: "application/json, text/event-stream" });
-    if (kind === "clerk") {
-      const { privateKey, kid, jwks } = await session(userId);
-      vi.stubGlobal("fetch", vi.fn(async () => Response.json(jwks)));
-      const now = Math.floor(Date.now() / 1000);
-      const token = await signJwt({ sub: userId, iss: FRONTEND, client_id: "client_connecta",
-        scope: "openid profile email", aud: `${BASE}/mcp/support`, exp: now + 300, nbf: now - 5, iat: now - 5,
-      }, privateKey, { algorithm: "RS256", header: { typ: "at+jwt", kid } });
-      headers.set("Authorization", `Bearer ${token}`);
-    }
-    const grant = vi.fn((_caller: Parameters<NonNullable<ConnectaPoolConfig["grant"]>>[0]) => {
-      if (reason === "pool_grant_threw") throw new Error(`${userId} ${email} ${name}`);
-      return false;
-    });
-    await assertDenialSinks(kind === "clerk" ? auth() : cloudflareAccessAuth(), new Request(`${BASE}/mcp/support`, {
-      method: "POST", headers,
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
-    }), 404, spies, context, {
-      pools: reason === "pool_not_declared" ? {} : { support: { tools: ["service"], grant } },
-      reason, canaries: [userId, email, "example.test", name],
-    });
-    expect(grant).toHaveBeenCalledTimes(reason === "pool_not_declared" ? 0 : 1);
-    if (reason !== "pool_not_declared") expect(grant.mock.calls[0]![0].principal?.id).toBe(kind === "access-email" ? email : userId);
-    if (context) expect(getIdentity).toHaveBeenCalledTimes(1);
-  });
+  it.each(
+    ["clerk", "access-uuid", "access-email"].flatMap((provider) =>
+      ["pool_not_declared", "pool_grant_denied", "pool_grant_threw"].map((reason) => ({ provider, reason })),
+    ),
+  )(
+    "INV-4 INV-6: $provider $reason exposes no provider identity in pool refusal sinks",
+    async ({ provider: kind, reason }) => {
+      const spies = captureOutput();
+      const userId = `${SENTINEL}-user`;
+      const email = "denied-canary@example.test";
+      const name = `${SENTINEL}-name`;
+      const identity = { ...(kind === "access-uuid" ? { user_uuid: userId } : {}), email, name };
+      const getIdentity = vi.fn(async () => identity);
+      const context = kind === "clerk" ? undefined : { waitUntil() {}, access: { aud: "app", getIdentity } };
+      const headers = new Headers({
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      });
+      if (kind === "clerk") {
+        const { privateKey, kid, jwks } = await session(userId);
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(async () => Response.json(jwks)),
+        );
+        const now = Math.floor(Date.now() / 1000);
+        const token = await signJwt(
+          {
+            sub: userId,
+            iss: FRONTEND,
+            client_id: "client_connecta",
+            scope: "openid profile email",
+            aud: `${BASE}/mcp/support`,
+            exp: now + 300,
+            nbf: now - 5,
+            iat: now - 5,
+          },
+          privateKey,
+          { algorithm: "RS256", header: { typ: "at+jwt", kid } },
+        );
+        headers.set("Authorization", `Bearer ${token}`);
+      }
+      const grant = vi.fn((_caller: Parameters<NonNullable<ConnectaPoolConfig["grant"]>>[0]) => {
+        if (reason === "pool_grant_threw") throw new Error(`${userId} ${email} ${name}`);
+        return false;
+      });
+      await assertDenialSinks(
+        kind === "clerk" ? auth() : cloudflareAccessAuth(),
+        new Request(`${BASE}/mcp/support`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+        }),
+        404,
+        spies,
+        context,
+        {
+          pools: reason === "pool_not_declared" ? {} : { support: { tools: ["service"], grant } },
+          reason,
+          canaries: [userId, email, "example.test", name],
+        },
+      );
+      expect(grant).toHaveBeenCalledTimes(reason === "pool_not_declared" ? 0 : 1);
+      if (reason !== "pool_not_declared")
+        expect(grant.mock.calls[0]![0].principal?.id).toBe(kind === "access-email" ? email : userId);
+      if (context) expect(getIdentity).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it.each(["/ui/access-tokens", "/connect/service", "/oauth/callback/service", "/mcp", "/mcp/support"])(
-    "INV-4: explicit Authorization owns %s with another user's real session cookie", async path => {
+    "INV-4: explicit Authorization owns %s with another user's real session cookie",
+    async (path) => {
       captureOutput();
       const { token: cookie, privateKey, kid, jwks } = await session("cookie_user");
       const now = Math.floor(Date.now() / 1000);
       const isMcp = path.startsWith("/mcp");
-      const headerToken = await signJwt({
-        sub: "header_user", iss: FRONTEND, exp: now + 300, nbf: now - 5, iat: now - 5,
-        ...(isMcp ? { client_id: "client_connecta", scope: "openid profile email", aud: `${BASE}${path}` }
-          : { sid: "sess_header", azp: BASE }),
-      }, privateKey, { algorithm: "RS256", header: { typ: isMcp ? "at+jwt" : "JWT", kid } });
+      const headerToken = await signJwt(
+        {
+          sub: "header_user",
+          iss: FRONTEND,
+          exp: now + 300,
+          nbf: now - 5,
+          iat: now - 5,
+          ...(isMcp
+            ? { client_id: "client_connecta", scope: "openid profile email", aud: `${BASE}${path}` }
+            : { sid: "sess_header", azp: BASE }),
+        },
+        privateKey,
+        { algorithm: "RS256", header: { typ: isMcp ? "at+jwt" : "JWT", kid } },
+      );
       const fetcher = vi.fn(async (_input: RequestInfo | URL) => Response.json(jwks));
       vi.stubGlobal("fetch", fetcher);
       const provider = auth();
@@ -222,19 +387,38 @@ describe("Clerk operator output with the real SDK", () => {
       const getIdentity = vi.fn(async () => ({ user_uuid: "ambient_access_user" }));
       const context = { waitUntil() {}, access: { aud: "app", getIdentity } };
       const providers = [manager.auth, cloudflareAccessAuth(), provider];
-      const verify = (request: Request) => isMcp ? authorizeIdentity(request, BASE, providers, context)
-        : authorizeUiIdentity(request, BASE, providers, "human route", context);
+      const verify = (request: Request) =>
+        isMcp
+          ? authorizeIdentity(request, BASE, providers, context)
+          : authorizeUiIdentity(request, BASE, providers, "human route", context);
       for (const scheme of ["Bearer", "bearer", "bEaReR"]) {
-        const request = new Request(`${BASE}${path}`, { headers: { Authorization: `${scheme} ${headerToken}`, Cookie: `__session=${cookie}; __client_uat=${now - 10}; __clerk_db_jwt=dev-browser` } });
+        const request = new Request(`${BASE}${path}`, {
+          headers: {
+            Authorization: `${scheme} ${headerToken}`,
+            Cookie: `__session=${cookie}; __client_uat=${now - 10}; __clerk_db_jwt=dev-browser`,
+          },
+        });
         const result = await verify(request);
         expect(result.ok, scheme).toBe(true);
         if (result.ok) expect(result.identity.principal).toEqual({ namespace: FRONTEND, id: "header_user" });
         expect(await provider.authorize(request, BASE)).toEqual({ ok: true, userId: "header_user" });
       }
-      for (const header of ["", "Basic unknown", "Unknown unknown", "Bearer", "Bearer ", `Bearer  ${headerToken}`,
-        `Bearer\t${headerToken}`, `Bearer ${headerToken}, Bearer ${cookie}`, "bearer invalid"] ) {
+      for (const header of [
+        "",
+        "Basic unknown",
+        "Unknown unknown",
+        "Bearer",
+        "Bearer ",
+        `Bearer  ${headerToken}`,
+        `Bearer\t${headerToken}`,
+        `Bearer ${headerToken}, Bearer ${cookie}`,
+        "bearer invalid",
+      ]) {
         const request = new Request(`${BASE}${path}?__clerk_handshake_nonce=ambient`, {
-          headers: { Authorization: header, Cookie: `__session=${cookie}; __client_uat=${now - 10}; __clerk_db_jwt=dev-browser` },
+          headers: {
+            Authorization: header,
+            Cookie: `__session=${cookie}; __client_uat=${now - 10}; __clerk_db_jwt=dev-browser`,
+          },
         });
         const result = await verify(request);
         expect(result.ok, header).toBe(false);
@@ -246,20 +430,32 @@ describe("Clerk operator output with the real SDK", () => {
         expect(direct.ok).toBe(false);
         if (!direct.ok) expect(direct.response.status).toBe(401);
       }
-      const machineResult = await verify(new Request(`${BASE}${path}`, {
-        headers: { Authorization: `bEaReR ${machine.token}`, Cookie: `__session=${cookie}; __client_uat=${now - 10}; __clerk_db_jwt=dev-browser` },
-      }));
+      const machineResult = await verify(
+        new Request(`${BASE}${path}`, {
+          headers: {
+            Authorization: `bEaReR ${machine.token}`,
+            Cookie: `__session=${cookie}; __client_uat=${now - 10}; __clerk_db_jwt=dev-browser`,
+          },
+        }),
+      );
       if (isMcp) {
         expect(machineResult.ok).toBe(true);
-        if (machineResult.ok) expect(machineResult.actor).toMatchObject({ kind: "access_token", id: machine.accessToken.id });
+        if (machineResult.ok)
+          expect(machineResult.actor).toMatchObject({ kind: "access_token", id: machine.accessToken.id });
       } else {
         expect(machineResult.ok).toBe(false);
         if (!machineResult.ok) expect(machineResult.response.status).toBe(403);
-        const cookieResult = await authorizeUiIdentity(new Request(`${BASE}${path}`, {
-          headers: { Cookie: `__session=${cookie}; __client_uat=${now - 10}; __clerk_db_jwt=dev-browser` },
-        }), BASE, [provider], "human route");
+        const cookieResult = await authorizeUiIdentity(
+          new Request(`${BASE}${path}`, {
+            headers: { Cookie: `__session=${cookie}; __client_uat=${now - 10}; __clerk_db_jwt=dev-browser` },
+          }),
+          BASE,
+          [provider],
+          "human route",
+        );
         expect(cookieResult.ok).toBe(true);
-        if (cookieResult.ok) expect(cookieResult.identity.principal).toEqual({ namespace: FRONTEND, id: "cookie_user" });
+        if (cookieResult.ok)
+          expect(cookieResult.identity.principal).toEqual({ namespace: FRONTEND, id: "cookie_user" });
       }
       expect(getIdentity).not.toHaveBeenCalled();
       expect(fetcher.mock.calls.every(([input]) => new URL(String(input)).pathname === "/v1/jwks")).toBe(true);
@@ -270,30 +466,54 @@ describe("Clerk operator output with the real SDK", () => {
     captureOutput();
     const { token: cookie, privateKey, kid, jwks } = await session("cookie_user");
     const now = Math.floor(Date.now() / 1000);
-    const headerToken = await signJwt({ sub: "header_user", sid: "sess_header", iss: FRONTEND,
-      azp: BASE, exp: now + 300, nbf: now - 5, iat: now - 5,
-    }, privateKey, { algorithm: "RS256", header: { typ: "JWT", kid } });
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json(jwks)));
+    const headerToken = await signJwt(
+      { sub: "header_user", sid: "sess_header", iss: FRONTEND, azp: BASE, exp: now + 300, nbf: now - 5, iat: now - 5 },
+      privateKey,
+      { algorithm: "RS256", header: { typ: "JWT", kid } },
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json(jwks)),
+    );
     const storage = memoryStorage();
     const permission = vi.fn(({ principal }) => principal?.id === "header_user");
-    const app = createTestConnecta({ connectors: [], publicUrl: BASE, auth: auth(),
-      accessTokens: accessTokens(storage), identity: { accessTokenManagement: permission }, logger: "silent" });
+    const app = createTestConnecta({
+      connectors: [],
+      publicUrl: BASE,
+      auth: auth(),
+      accessTokens: accessTokens(storage),
+      identity: { accessTokenManagement: permission },
+      logger: "silent",
+    });
     try {
-      const response = await app.fetch(new Request(`${BASE}/ui/access-tokens`, {
-        headers: { Authorization: `bEaReR ${headerToken}`,
-          Cookie: `__session=${cookie}; __client_uat=${now - 10}; __clerk_db_jwt=dev-browser` },
-      }));
+      const response = await app.fetch(
+        new Request(`${BASE}/ui/access-tokens`, {
+          headers: {
+            Authorization: `bEaReR ${headerToken}`,
+            Cookie: `__session=${cookie}; __client_uat=${now - 10}; __clerk_db_jwt=dev-browser`,
+          },
+        }),
+      );
       expect(response.status).toBe(200);
-      expect(permission).toHaveBeenCalledWith(expect.objectContaining({ principal: { namespace: FRONTEND, id: "header_user" } }));
-    } finally { await app.close(); }
+      expect(permission).toHaveBeenCalledWith(
+        expect.objectContaining({ principal: { namespace: FRONTEND, id: "header_user" } }),
+      );
+    } finally {
+      await app.close();
+    }
   });
 
   it("INV-6: withholds handshake HTTP 400 error code, message, long_message, and headers", async () => {
     const spies = captureOutput();
-    const upstream = Response.json({
-      errors: [{ code: `${SENTINEL}-code`, message: `${SENTINEL}-message`, long_message: `${SENTINEL}-long-message` }],
-      clerk_trace_id: `${SENTINEL}-trace`,
-    }, { status: 400, statusText: `${SENTINEL}-status`, headers: { "cf-ray": `${SENTINEL}-ray` } });
+    const upstream = Response.json(
+      {
+        errors: [
+          { code: `${SENTINEL}-code`, message: `${SENTINEL}-message`, long_message: `${SENTINEL}-long-message` },
+        ],
+        clerk_trace_id: `${SENTINEL}-trace`,
+      },
+      { status: 400, statusText: `${SENTINEL}-status`, headers: { "cf-ray": `${SENTINEL}-ray` } },
+    );
     const nativeJson = vi.spyOn(upstream, "json");
     const fetcher = vi.fn(async (_input: RequestInfo | URL) => upstream);
     vi.stubGlobal("fetch", fetcher);
@@ -329,9 +549,18 @@ describe("Clerk operator output with the real SDK", () => {
   it("INV-6: rejects a JWKS failure with planted error text and Content-Type using a fixed reason", async () => {
     const spies = captureOutput();
     const { token } = await session();
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-      errors: [{ code: "clerk_key_invalid", message: SENTINEL, long_message: SENTINEL }],
-    }), { status: 400, headers: { "Content-Type": `application/${SENTINEL}` } })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              errors: [{ code: "clerk_key_invalid", message: SENTINEL, long_message: SENTINEL }],
+            }),
+            { status: 400, headers: { "Content-Type": `application/${SENTINEL}` } },
+          ),
+      ),
+    );
     const request = browser();
     request.headers.set("Authorization", `Bearer ${token}`);
     expect((await auth().authorize(request, BASE)).ok).toBe(false);
@@ -350,27 +579,46 @@ describe("Clerk operator output with the real SDK", () => {
       return Response.json({ directives: [cookie] });
     });
     vi.stubGlobal("fetch", fetcher);
-    expect(await auth().authorize(browser("valid-nonce"), BASE)).toEqual({ ok: true, userId: "user_123", sessionCookies: [cookie] });
+    expect(await auth().authorize(browser("valid-nonce"), BASE)).toEqual({
+      ok: true,
+      userId: "user_123",
+      sessionCookies: [cookie],
+    });
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(output(spies)).toBe("[]");
   });
 
   it("INV-4 INV-6: verifies valid, invalid, expired and wrong-audience OAuth JWTs through the bundled SDK", async () => {
     const spies = captureOutput();
-    const pair = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]) as CryptoKeyPair;
-    const privateKey = await crypto.subtle.exportKey("jwk", pair.privateKey) as JsonWebKey;
-    const publicKey = await crypto.subtle.exportKey("jwk", pair.publicKey) as JsonWebKey;
+    const pair = (await crypto.subtle.generateKey(
+      { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      true,
+      ["sign", "verify"],
+    )) as CryptoKeyPair;
+    const privateKey = (await crypto.subtle.exportKey("jwk", pair.privateKey)) as JsonWebKey;
+    const publicKey = (await crypto.subtle.exportKey("jwk", pair.publicKey)) as JsonWebKey;
     const kid = crypto.randomUUID();
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ keys: [{ ...publicKey, kid, alg: "RS256", use: "sig" }] })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ keys: [{ ...publicKey, kid, alg: "RS256", use: "sig" }] })),
+    );
     const now = Math.floor(Date.now() / 1000);
     const provider = auth();
     for (const verdict of ["valid", "invalid", "expired", "wrong-audience"]) {
-      let token = await signJwt({ sub: "user_123", iss: FRONTEND, client_id: "client_connecta",
-        scope: "openid profile email", iat: now - 300, nbf: now - 300,
-        exp: verdict === "expired" ? now - 60 : now + 300,
-        aud: verdict === "wrong-audience" ? "https://other.test/mcp" : `${BASE}/mcp`,
-      }, privateKey, { algorithm: "RS256", header: { typ: "at+jwt", kid } });
+      let token = await signJwt(
+        {
+          sub: "user_123",
+          iss: FRONTEND,
+          client_id: "client_connecta",
+          scope: "openid profile email",
+          iat: now - 300,
+          nbf: now - 300,
+          exp: verdict === "expired" ? now - 60 : now + 300,
+          aud: verdict === "wrong-audience" ? "https://other.test/mcp" : `${BASE}/mcp`,
+        },
+        privateKey,
+        { algorithm: "RS256", header: { typ: "at+jwt", kid } },
+      );
       if (verdict === "invalid") {
         const parts = token.split(".");
         parts[2] = (parts[2]!.startsWith("a") ? "b" : "a") + parts[2]!.slice(1);
@@ -397,10 +645,19 @@ describe("Clerk operator output with the real SDK", () => {
     const nativeReaders: ReturnType<typeof vi.spyOn>[] = [];
     const fetcher = vi.fn(async (_input: RequestInfo | URL) => {
       const response = Response.json({
-        object: "clerk_idp_oauth_access_token", id: "oat_verified", client_id: "client_connecta",
-        subject: "user_123", type: "oauth_token", scopes: ["openid"], revoked: false,
-        revocation_reason: null, expired: false, expiration: Date.now() + 300_000,
-        created_at: Date.now(), updated_at: Date.now(), aud: `${BASE}/mcp`,
+        object: "clerk_idp_oauth_access_token",
+        id: "oat_verified",
+        client_id: "client_connecta",
+        subject: "user_123",
+        type: "oauth_token",
+        scopes: ["openid"],
+        revoked: false,
+        revocation_reason: null,
+        expired: false,
+        expiration: Date.now() + 300_000,
+        created_at: Date.now(),
+        updated_at: Date.now(),
+        aud: `${BASE}/mcp`,
       });
       nativeReaders.push(vi.spyOn(response, "json"), vi.spyOn(response, "text"));
       responses.push(response);
@@ -411,13 +668,15 @@ describe("Clerk operator output with the real SDK", () => {
     expect(await auth().authorize(request, BASE)).toEqual({ ok: true, userId: "user_123" });
     expect(fetcher).toHaveBeenCalledTimes(2);
     for (const spy of nativeReaders) expect(spy).not.toHaveBeenCalled();
-    expect(responses.every(response => response.bodyUsed)).toBe(true);
+    expect(responses.every((response) => response.bodyUsed)).toBe(true);
     expect(output(spies)).toBe("[]");
   });
 
   it("INV-6: contains handshake network and malformed-directive errors before SDK diagnostics", async () => {
     for (const fetcher of [
-      vi.fn(async () => { throw new Error(SENTINEL); }),
+      vi.fn(async () => {
+        throw new Error(SENTINEL);
+      }),
       vi.fn(async () => Response.json({ directives: [SENTINEL + "\r\ninjected"] })),
     ]) {
       const spies = captureOutput();
@@ -431,16 +690,42 @@ describe("Clerk operator output with the real SDK", () => {
 
   it("INV-6: byte-reads backend text responses and preserves normal user deserialization", async () => {
     const spies = captureOutput();
-    const upstream = new Response(JSON.stringify({
-      object: "user", id: "user_123", first_name: "Ada", last_name: "Lovelace",
-      email_addresses: [], phone_numbers: [], web3_wallets: [], external_accounts: [],
-    }), { headers: { "Content-Type": `application/json; sentinel=${SENTINEL}` } });
+    const upstream = new Response(
+      JSON.stringify({
+        object: "user",
+        id: "user_123",
+        first_name: "Ada",
+        last_name: "Lovelace",
+        email_addresses: [],
+        phone_numbers: [],
+        web3_wallets: [],
+        external_accounts: [],
+      }),
+      { headers: { "Content-Type": `application/json; sentinel=${SENTINEL}` } },
+    );
     // Preserve the SDK's existing exact Content-Type comparison. A parameter
     // makes it select text; a normal JSON response still yields a User.
-    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL) => upstream));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL) => upstream),
+    );
     expect(await auth().activityActorLabel!("user_123")).toBeUndefined();
     expect(output(spies)).not.toContain(SENTINEL);
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ object: "user", id: "user_123", first_name: "Ada", last_name: "Lovelace", email_addresses: [], phone_numbers: [], web3_wallets: [], external_accounts: [] })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          object: "user",
+          id: "user_123",
+          first_name: "Ada",
+          last_name: "Lovelace",
+          email_addresses: [],
+          phone_numbers: [],
+          web3_wallets: [],
+          external_accounts: [],
+        }),
+      ),
+    );
     expect(await auth().activityActorLabel!("user_123")).toBe("Ada Lovelace");
   });
 
@@ -464,9 +749,11 @@ describe("Clerk operator output with the real SDK", () => {
       const after: unknown = Reflect.get(isolated, key);
       expect(after, key).toBeDefined();
       if (typeof before !== "object" || before === null || key === "telemetry") continue;
-      const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(before))
-        .filter(name => name !== "constructor" && typeof (before as unknown as Record<string, unknown>)[name] === "function");
-      for (const method of methods) expect(typeof (after as unknown as Record<string, unknown>)[method], `${key}.${method}`).toBe("function");
+      const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(before)).filter(
+        (name) => name !== "constructor" && typeof (before as unknown as Record<string, unknown>)[name] === "function",
+      );
+      for (const method of methods)
+        expect(typeof (after as unknown as Record<string, unknown>)[method], `${key}.${method}`).toBe("function");
     }
   });
 
@@ -477,7 +764,11 @@ describe("Clerk operator output with the real SDK", () => {
     const adapter = cloudflareAccessAuth();
     const request = new Request(BASE, { headers: { "Cf-Access-Jwt-Assertion": SENTINEL } });
     expect((await adapter.authorize(request, BASE)).ok).toBe(false);
-    expect(await adapter.authorize(request, BASE, { access: { aud: "access-app", getIdentity: async () => ({ user_uuid: "access-user" }) } })).toEqual({ ok: true, userId: "access-user", subjectId: "access-user" });
+    expect(
+      await adapter.authorize(request, BASE, {
+        access: { aud: "access-app", getIdentity: async () => ({ user_uuid: "access-user" }) },
+      }),
+    ).toEqual({ ok: true, userId: "access-user", subjectId: "access-user" });
     expect(fetcher).not.toHaveBeenCalled();
     expect(output(spies)).not.toContain(SENTINEL);
   });

@@ -3,11 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
 import type { ToolDef } from "../../types.js";
-import {
-  itClassifiesLikeARelease,
-  mockRemoteMcp,
-  servedTools,
-} from "../../../test/fixtures/hosted-provider.js";
+import { itClassifiesLikeARelease, mockRemoteMcp, servedTools } from "../../../test/fixtures/hosted-provider.js";
 
 const mcpMocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
@@ -19,20 +15,11 @@ vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
   remoteMcp: mcpMocks.remoteMcp,
 }));
 
-import {
-  VERCEL_API_BASE_URL,
-  VERCEL_MCP_ENDPOINT,
-  VERCEL_MCP_VETTED_CATALOG,
-  vercel,
-} from "./index.js";
+import { VERCEL_API_BASE_URL, VERCEL_MCP_ENDPOINT, VERCEL_MCP_VETTED_CATALOG, vercel } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { classifyTool } from "../../tool-safety.js";
 import { silentLogger } from "../../../test/helpers.js";
-import type {
-  Connector,
-  ConnectorContext,
-  ConnectorUsageGuide,
-} from "../../types.js";
+import type { Connector, ConnectorContext, ConnectorUsageGuide } from "../../types.js";
 
 const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
 
@@ -63,8 +50,7 @@ beforeEach(() => {
   calls.length = 0;
   mockRemoteMcp(mcpMocks);
   globalThis.fetch = vi.fn(async (input: unknown, init: RequestInit = {}) => {
-    const text =
-      responses[0]?.text ?? JSON.stringify(responses[0]?.body ?? {});
+    const text = responses[0]?.text ?? JSON.stringify(responses[0]?.body ?? {});
     const next = responses.shift() ?? {};
     const headers = new Headers(init.headers);
     calls.push({
@@ -73,7 +59,9 @@ beforeEach(() => {
       headers: Object.fromEntries(headers.entries()),
       body:
         typeof init.body === "string" && init.body
-          ? headers.get("content-type")?.includes("application/json") ? JSON.parse(init.body) : init.body
+          ? headers.get("content-type")?.includes("application/json")
+            ? JSON.parse(init.body)
+            : init.body
           : undefined,
     });
     return new Response([204, 205, 304].includes(next.status ?? 200) ? null : text, {
@@ -101,7 +89,8 @@ function context(token: string | null = "vercel-token"): ConnectorContext {
 
 function connection(overrides: Record<string, unknown> = {}): Connector {
   return vercel("hosting", {
-    surface: "api", purpose: "Production web applications",
+    surface: "api",
+    purpose: "Production web applications",
     teamId: "team_default",
     ...overrides,
   } as Parameters<typeof vercel>[1]);
@@ -129,12 +118,10 @@ function guide(connector: Connector): ConnectorUsageGuide {
 
 describe("vercel() construction", () => {
   it("rejects blank purpose and invalid page defaults", () => {
-    expect(() => vercel("hosting", { purpose: "   " })).toThrow(
-      "a non-empty purpose",
+    expect(() => vercel("hosting", { purpose: "   " })).toThrow("a non-empty purpose");
+    expect(() => vercel("hosting", { surface: "api", purpose: "apps", defaultPageSize: 101 })).toThrow(
+      "between 1 and 100",
     );
-    expect(() =>
-      vercel("hosting", { surface: "api", purpose: "apps", defaultPageSize: 101 }),
-    ).toThrow("between 1 and 100");
   });
 
   it("ships a dependency-free static API surface with split safety", async () => {
@@ -144,28 +131,17 @@ describe("vercel() construction", () => {
     expect(connector.title).toBe("Vercel");
     expect(connector.credential?.label).toBe("Vercel access token");
     expect(tools).toHaveLength(10);
-    expect(tools.every((tool) => tool.inputSchema && tool.outputSchema)).toBe(
-      true,
-    );
-    expect(
-      isRead(
-        tools.find((tool) => tool.name === "vercel_api_get")!,
-      ),
-    ).toBe(true);
-    expect(
-      isRead(
-        tools.find((tool) => tool.name === "vercel_api_mutate")!,
-      ),
-    ).toBe(false);
-    expect(
-      tools.find((tool) => tool.name === "delete_deployment")?.annotations,
-    ).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    expect(tools.every((tool) => tool.inputSchema && tool.outputSchema)).toBe(true);
+    expect(isRead(tools.find((tool) => tool.name === "vercel_api_get")!)).toBe(true);
+    expect(isRead(tools.find((tool) => tool.name === "vercel_api_mutate")!)).toBe(false);
+    expect(tools.find((tool) => tool.name === "delete_deployment")?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
   });
 
   it("carries account scope and the raw-hatch boundary in its guide", () => {
-    const content = guide(
-      connection({ instructions: "Never promote the docs project." }),
-    ).content;
+    const content = guide(connection({ instructions: "Never promote the docs project." })).content;
     expect(content).toContain("Production web applications");
     expect(content).toContain("team_default");
     expect(content).toContain("vercel_api_get");
@@ -222,18 +198,10 @@ describe("vercel() MCP surface", () => {
       additive: 2,
       destructive: 15,
     });
-    expect(
-      VERCEL_MCP_VETTED_CATALOG.tools.get("get_purchase_quote")?.verdict,
-    ).toBe("read-only");
-    expect(
-      VERCEL_MCP_VETTED_CATALOG.tools.get("deploy_to_vercel")?.verdict,
-    ).toBe("destructive");
-    expect(
-      VERCEL_MCP_VETTED_CATALOG.tools.get("web_fetch_vercel_url")?.verdict,
-    ).toBe("destructive");
-    expect(
-      VERCEL_MCP_VETTED_CATALOG.tools.get("reply_to_toolbar_thread")?.verdict,
-    ).toBe("additive");
+    expect(VERCEL_MCP_VETTED_CATALOG.tools.get("get_purchase_quote")?.verdict).toBe("read-only");
+    expect(VERCEL_MCP_VETTED_CATALOG.tools.get("deploy_to_vercel")?.verdict).toBe("destructive");
+    expect(VERCEL_MCP_VETTED_CATALOG.tools.get("web_fetch_vercel_url")?.verdict).toBe("destructive");
+    expect(VERCEL_MCP_VETTED_CATALOG.tools.get("reply_to_toolbar_thread")?.verdict).toBe("additive");
     for (const record of VERCEL_MCP_VETTED_CATALOG.tools.values()) {
       expect(record.schemaDigest).toBeUndefined();
     }
@@ -247,9 +215,7 @@ describe("vercel() MCP surface", () => {
   });
 });
 
-
 describe("Vercel domains and environment variables", () => {
-
   it("never asks Vercel to decrypt environment values and never returns one", async () => {
     queue({
       body: {
@@ -323,8 +289,20 @@ describe("Vercel domains and environment variables", () => {
   });
 
   it("INV-9: creates without overwriting when upsert is false and strips the returned value", async () => {
-    queue({ body: { created: { id: "env_new", key: "NEW", value: "must-not-return", type: "sensitive", target: ["production"] }, failed: [] } });
-    const result = await call(connection(), "upsert_project_env_var", { projectId: "p", key: "NEW", value: "write-only", type: "sensitive", targets: ["production"], upsert: false });
+    queue({
+      body: {
+        created: { id: "env_new", key: "NEW", value: "must-not-return", type: "sensitive", target: ["production"] },
+        failed: [],
+      },
+    });
+    const result = await call(connection(), "upsert_project_env_var", {
+      projectId: "p",
+      key: "NEW",
+      value: "write-only",
+      type: "sensitive",
+      targets: ["production"],
+      upsert: false,
+    });
     expect(url().searchParams.get("upsert")).toBe("false");
     expect(result).toEqual({ id: "env_new", key: "NEW", type: "sensitive", target: ["production"] });
     expect(JSON.stringify(result)).not.toContain("must-not-return");
@@ -378,7 +356,10 @@ describe("Vercel raw API hatches and lifecycle calls", () => {
   it.each([
     ["vercel_api_get", { path: "/v6/user/tokens" }],
     ["vercel_api_mutate", { method: "POST", path: "/v1/example" }],
-    ["vercel_api_upload", { method: "POST", path: "/v1/uncovered-upload", contentType: "text/plain", textBody: "uploaded" }],
+    [
+      "vercel_api_upload",
+      { method: "POST", path: "/v1/uncovered-upload", contentType: "text/plain", textBody: "uploaded" },
+    ],
   ])("preserves a text response through %s", async (name, args) => {
     queue({ text: "endpoint response", headers: { "content-type": "text/plain" } });
     await expect(call(connection(), name as string, args)).resolves.toEqual({ result: "endpoint response" });
@@ -426,37 +407,31 @@ describe("Vercel raw API hatches and lifecycle calls", () => {
       base64Body: "aGk=",
     });
     expect(calls[0]?.method).toBe("POST");
-    expect(calls[0]?.headers["content-type"]).toBe(
-      "application/octet-stream",
-    );
+    expect(calls[0]?.headers["content-type"]).toBe("application/octet-stream");
     expect(calls[0]?.headers["x-vercel-digest"]).toBe("sha1-value");
     expect(result).toEqual({ result: { url: "file.txt" } });
   });
 
-  it.each([
-    "authorization",
-    "cookie",
-    "host",
-    "content-length",
-    "content-type",
-    "transfer-encoding",
-  ])("refuses connector-owned upload header %s", async (name) => {
-    await expect(
-      call(connection(), "vercel_api_upload", {
-        method: "POST",
-        path: "/v1/uncovered-upload",
-        contentType: "application/octet-stream",
-        headers: [{ name, value: "caller-owned" }],
-        textBody: "hi",
-      }),
-    ).rejects.toMatchObject({ code: "invalid_args" });
-    expect(globalThis.fetch).not.toHaveBeenCalled();
-  });
+  it.each(["authorization", "cookie", "host", "content-length", "content-type", "transfer-encoding"])(
+    "refuses connector-owned upload header %s",
+    async (name) => {
+      await expect(
+        call(connection(), "vercel_api_upload", {
+          method: "POST",
+          path: "/v1/uncovered-upload",
+          contentType: "application/octet-stream",
+          headers: [{ name, value: "caller-owned" }],
+          textBody: "hi",
+        }),
+      ).rejects.toMatchObject({ code: "invalid_args" });
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    },
+  );
 
   it("confines arbitrary paths beneath the configured API base", async () => {
-    await expect(
-      call(connection(), "vercel_api_get", { path: "https://evil.example/v2/user" }),
-    ).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(call(connection(), "vercel_api_get", { path: "https://evil.example/v2/user" })).rejects.toMatchObject({
+      code: "invalid_args",
+    });
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 });
@@ -464,7 +439,9 @@ describe("Vercel raw API hatches and lifecycle calls", () => {
 describe("Vercel typed failures and credential test", () => {
   it.each(["list_project_env_vars", "delete_deployment"])("refuses a successful HTML response for %s", async (name) => {
     queue({ text: "<html>synthetic gateway page</html>", headers: { "content-type": "text/html" } });
-    await expect(call(connection(), name, name === "delete_deployment" ? { deploymentId: "dpl_1" } : { projectId: "prj_1" })).rejects.toMatchObject({
+    await expect(
+      call(connection(), name, name === "delete_deployment" ? { deploymentId: "dpl_1" } : { projectId: "prj_1" }),
+    ).rejects.toMatchObject({
       code: "connector_call_failed",
       retryable: false,
     });
@@ -473,7 +450,10 @@ describe("Vercel typed failures and credential test", () => {
 
   it("preserves a valid no-content mutation response", async () => {
     queue({ status: 204 });
-    await expect(call(connection(), "delete_deployment", { deploymentId: "dpl_1" })).resolves.toEqual({ deleted: true, deploymentId: "dpl_1" });
+    await expect(call(connection(), "delete_deployment", { deploymentId: "dpl_1" })).resolves.toEqual({
+      deleted: true,
+      deploymentId: "dpl_1",
+    });
   });
 
   it.each([
@@ -481,20 +461,17 @@ describe("Vercel typed failures and credential test", () => {
     [404, "not_found", "not_found", false],
     [400, "bad_request", "invalid_args", false],
     [503, "unavailable", "unavailable", true],
-  ] as const)(
-    "maps HTTP %s (%s) to %s",
-    async (status, providerCode, code, retryable) => {
-      queue({
-        status,
-        body: { error: { code: providerCode, message: "provider detail" } },
-      });
-      const error = await call(connection(), "list_project_env_vars", {
-        projectId: "missing",
-      }).catch((caught) => caught as ConnectorCallError);
-      expect(error).toMatchObject({ code, retryable });
-      expect(error.message).toContain(providerCode);
-    },
-  );
+  ] as const)("maps HTTP %s (%s) to %s", async (status, providerCode, code, retryable) => {
+    queue({
+      status,
+      body: { error: { code: providerCode, message: "provider detail" } },
+    });
+    const error = await call(connection(), "list_project_env_vars", {
+      projectId: "missing",
+    }).catch((caught) => caught as ConnectorCallError);
+    expect(error).toMatchObject({ code, retryable });
+    expect(error.message).toContain(providerCode);
+  });
 
   it("tests the token against the current user and names the identity", async () => {
     queue({ body: { user: { id: "usr_1", username: "zack" } } });
@@ -536,18 +513,30 @@ describe("Vercel canonical routing", () => {
     ["POST", "/v2/files", "MCP upload_file"],
   ])("INV-9: refuses a second implementation of %s %s before dispatch", async (method, path, replacement) => {
     const name = method === "GET" ? "vercel_api_get" : "vercel_api_mutate";
-    await expect(call(connection(), name, { path, ...(method === "GET" ? {} : { method }) })).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining(replacement) });
+    await expect(call(connection(), name, { path, ...(method === "GET" ? {} : { method }) })).rejects.toMatchObject({
+      code: "invalid_args",
+      message: expect.stringContaining(replacement),
+    });
     expect(calls).toHaveLength(0);
   });
 
   it("INV-9: the upload hatch also refuses a JSON project-creation duplicate", async () => {
-    await expect(call(connection(), "vercel_api_upload", { method: "POST", path: "/v11/projects", contentType: "application/json", textBody: '{"name":"duplicate"}' })).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("MCP create_project") });
+    await expect(
+      call(connection(), "vercel_api_upload", {
+        method: "POST",
+        path: "/v11/projects",
+        contentType: "application/json",
+        textBody: '{"name":"duplicate"}',
+      }),
+    ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("MCP create_project") });
     expect(calls).toHaveLength(0);
   });
 
   it("INV-9: keeps the verified project-deletion REST gap instead of treating every project mutation as hosted", async () => {
     queue({ status: 204 });
-    await expect(call(connection(), "vercel_api_mutate", { method: "DELETE", path: "/v9/projects/prj_1" })).resolves.toEqual({ result: null });
+    await expect(
+      call(connection(), "vercel_api_mutate", { method: "DELETE", path: "/v9/projects/prj_1" }),
+    ).resolves.toEqual({ result: null });
     expect(calls).toHaveLength(1);
     expect(calls[0]!.method).toBe("DELETE");
   });
@@ -558,14 +547,25 @@ describe("Vercel canonical routing", () => {
     expect(result).toEqual({ result: { drives: [{ name: "assets" }] } });
     expect(calls).toHaveLength(1);
     expect(url().pathname).toBe("/v2/sandboxes/drives");
-    await expect(call(connection(), "vercel_api_get", { path: "/v2/sandboxes/site" })).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("MCP get_named_sandbox") });
+    await expect(call(connection(), "vercel_api_get", { path: "/v2/sandboxes/site" })).rejects.toMatchObject({
+      code: "invalid_args",
+      message: expect.stringContaining("MCP get_named_sandbox"),
+    });
     expect(calls).toHaveLength(1);
   });
 
-  it.each([2, 3, 4])("INV-9: directs version %s sandbox creation to that version's actual hosted contract", async (version) => {
-    await expect(call(connection(), "vercel_api_mutate", { method: "POST", path: `/v${version}/sandboxes` })).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining(`MCP create_sandboxes_v${version}`) });
-    expect(calls).toHaveLength(0);
-  });
+  it.each([2, 3, 4])(
+    "INV-9: directs version %s sandbox creation to that version's actual hosted contract",
+    async (version) => {
+      await expect(
+        call(connection(), "vercel_api_mutate", { method: "POST", path: `/v${version}/sandboxes` }),
+      ).rejects.toMatchObject({
+        code: "invalid_args",
+        message: expect.stringContaining(`MCP create_sandboxes_v${version}`),
+      });
+      expect(calls).toHaveLength(0);
+    },
+  );
 
   it("INV-1: retains vendor schemas/results and rejects API-owned MCP tools even by direct name", async () => {
     const schema = { type: "object", properties: { vendorOnly: { type: "string" } } };
@@ -579,13 +579,20 @@ describe("Vercel canonical routing", () => {
     expect(await connector.listTools(context())).toEqual([tool]);
     expect(await connector.callTool("get_project", { vendorOnly: "kept" }, context())).toBe(result);
     expect(downstreamCall).toHaveBeenCalledTimes(1);
-    await expect(connector.callTool("filter_project_envs", {}, context())).rejects.toMatchObject({ code: "invalid_args" });
-    await expect(connector.callTool("create_project_env", {}, context())).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(connector.callTool("filter_project_envs", {}, context())).rejects.toMatchObject({
+      code: "invalid_args",
+    });
+    await expect(connector.callTool("create_project_env", {}, context())).rejects.toMatchObject({
+      code: "invalid_args",
+    });
     expect(downstreamCall).toHaveBeenCalledTimes(1);
   });
 
   it("INV-8: refuses a duplicated retained vendor tool name", async () => {
     mcpMocks.listTools.mockResolvedValue([{ name: "get_project" }, { name: "get_project" }]);
-    await expect(vercel("hosted", { purpose: "Projects" }).listTools(context())).rejects.toMatchObject({ code: "connector_call_failed", retryable: false });
+    await expect(vercel("hosted", { purpose: "Projects" }).listTools(context())).rejects.toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+    });
   });
 });

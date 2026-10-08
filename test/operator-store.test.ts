@@ -45,8 +45,6 @@ function uiData(identity: string): UiData {
   };
 }
 
-
-
 /**
  * A fake browser, then a fresh copy of the store module. The store reads its
  * configuration and its globals at import time, so the globals go up first and
@@ -63,9 +61,7 @@ async function loadStore(
 ) {
   const fetchMock = vi.fn();
   const windowListeners = new Map<string, () => void>();
-  let clerkListener:
-    | ((resources: { session?: FakeSession | null }) => void)
-    | undefined;
+  let clerkListener: ((resources: { session?: FakeSession | null }) => void) | undefined;
   const clerk = {
     user: { id: "user_a" },
     session,
@@ -93,10 +89,15 @@ async function loadStore(
   vi.stubGlobal("fetch", fetchMock);
   vi.resetModules();
   vi.doMock("../src/operator-ui/app/config.js", () => ({
-    auth: browserAuth, initialPage: page, mcpUrl: PAGE_CONSTANTS.MCP_URL,
-    homeUrl: PAGE_CONSTANTS.HOME_URL, titleSuffix: PAGE_CONSTANTS.TITLE_SUFFIX,
-    productName: PAGE_CONSTANTS.PRODUCT_NAME, productDescription: PAGE_CONSTANTS.PRODUCT_DESCRIPTION,
-    productOperatorLabel: PAGE_CONSTANTS.PRODUCT_OPERATOR_LABEL, TOKEN_KEY: "connecta:token",
+    auth: browserAuth,
+    initialPage: page,
+    mcpUrl: PAGE_CONSTANTS.MCP_URL,
+    homeUrl: PAGE_CONSTANTS.HOME_URL,
+    titleSuffix: PAGE_CONSTANTS.TITLE_SUFFIX,
+    productName: PAGE_CONSTANTS.PRODUCT_NAME,
+    productDescription: PAGE_CONSTANTS.PRODUCT_DESCRIPTION,
+    productOperatorLabel: PAGE_CONSTANTS.PRODUCT_OPERATOR_LABEL,
+    TOKEN_KEY: "connecta:token",
   }));
   const store = await import("../src/operator-ui/app/store.js");
   return {
@@ -115,9 +116,7 @@ async function loadStore(
 
 /** The Authorization header the nth request carried. */
 function bearerOf(fetchMock: ReturnType<typeof vi.fn>, index: number): unknown {
-  const init = fetchMock.mock.calls[index]?.[1] as
-    | { headers?: Record<string, string> }
-    | undefined;
+  const init = fetchMock.mock.calls[index]?.[1] as { headers?: Record<string, string> } | undefined;
   return init?.headers?.Authorization;
 }
 
@@ -202,9 +201,7 @@ describe("operator store identity wiring", () => {
     });
     // The refetch asked as the new identity, not with the token that was
     // current when the listener fired.
-    expect(bearerOf(fetchMock, fetchMock.mock.calls.length - 1)).toBe(
-      "Bearer token-b",
-    );
+    expect(bearerOf(fetchMock, fetchMock.mock.calls.length - 1)).toBe("Bearer token-b");
   });
 
   it("drops a response the previous identity asked for", async () => {
@@ -226,9 +223,7 @@ describe("operator store identity wiring", () => {
     fetchMock.mockImplementationOnce(() => new Promise<Response>(() => {}));
     changeSession({ id: "sess_b", getToken: async () => "token-b" });
 
-    slow.resolve(
-      Response.json({ events: [{ connectorId: "identity-a client" }] }),
-    );
+    slow.resolve(Response.json({ events: [{ connectorId: "identity-a client" }] }));
     await inFlight;
 
     // The fence, not a race: identity-a's tokens never land on identity-b's
@@ -248,10 +243,7 @@ describe("operator store identity wiring", () => {
   });
 
   it("uses the same-origin Access session without a browser-readable token", async () => {
-    const loaded = await loadStore(
-      { id: "unused", getToken: async () => "unused" },
-      { kind: "cloudflare-access" },
-    );
+    const loaded = await loadStore({ id: "unused", getToken: async () => "unused" }, { kind: "cloudflare-access" });
     loaded.fetchMock.mockResolvedValueOnce(Response.json(uiData("access-user")));
 
     await loaded.store.boot();
@@ -279,9 +271,7 @@ describe("operator store action notices", () => {
 
     let answer: () => Response = () => Response.json({});
     fetchMock.mockImplementation(async (path: string) =>
-      path.startsWith("/ui/connectors/")
-        ? Response.json({ error: "unknown connector" }, { status: 404 })
-        : answer(),
+      path.startsWith("/ui/connectors/") ? Response.json({ error: "unknown connector" }, { status: 404 }) : answer(),
     );
     const land = async (
       act: () => Promise<void>,
@@ -433,7 +423,6 @@ describe("operator store load failures", () => {
   });
 });
 
-
 describe("managed token secret lifetime", () => {
   it("drops an issued secret when the requesting identity changes", async () => {
     const { store, fetchMock, changeSession } = await loadStore({ id: "a", getToken: async () => "a" });
@@ -454,9 +443,7 @@ describe("managed token secret lifetime", () => {
   });
 });
 
-
 describe("operator collection ordering", () => {
-
   it("loads existing tokens and keeps issuance when an earlier list finishes later", async () => {
     const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
     const old = deferred<Response>();
@@ -473,27 +460,29 @@ describe("operator collection ordering", () => {
     expect(store.getState().tokenPhase).toBe("ready");
   });
 
-  it.each(["rename", "revoke"])("keeps a local %s when a pending list captured the new token earlier", async action => {
-    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
-    const old = deferred<Response>();
-    fetchMock.mockReturnValueOnce(old.promise);
-    const listing = store.loadAccessTokens();
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    const issued = { id: "issued", name: "client" };
-    fetchMock.mockResolvedValueOnce(Response.json({ token: "secret", accessToken: issued }));
-    expect(await store.createAccessToken("client")).toBe(true);
-    const existing = { id: "existing", name: "older client" };
-    const snapshot = Response.json({ accessTokens: [issued, existing] });
-    const updated = action === "rename"
-      ? { ...issued, name: "renamed client" }
-      : { ...issued, revokedAt: "2026-10-01T00:00:00Z" };
-    fetchMock.mockResolvedValueOnce(Response.json({ accessToken: updated }));
-    if (action === "rename") await store.saveAccessTokenName(issued.id, updated.name);
-    else await store.revokeAccessToken(issued.id);
-    old.resolve(snapshot);
-    await listing;
-    expect(store.getState().tokens).toEqual([updated, existing]);
-  });
+  it.each(["rename", "revoke"])(
+    "keeps a local %s when a pending list captured the new token earlier",
+    async (action) => {
+      const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
+      const old = deferred<Response>();
+      fetchMock.mockReturnValueOnce(old.promise);
+      const listing = store.loadAccessTokens();
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      const issued = { id: "issued", name: "client" };
+      fetchMock.mockResolvedValueOnce(Response.json({ token: "secret", accessToken: issued }));
+      expect(await store.createAccessToken("client")).toBe(true);
+      const existing = { id: "existing", name: "older client" };
+      const snapshot = Response.json({ accessTokens: [issued, existing] });
+      const updated =
+        action === "rename" ? { ...issued, name: "renamed client" } : { ...issued, revokedAt: "2026-10-01T00:00:00Z" };
+      fetchMock.mockResolvedValueOnce(Response.json({ accessToken: updated }));
+      if (action === "rename") await store.saveAccessTokenName(issued.id, updated.name);
+      else await store.revokeAccessToken(issued.id);
+      old.resolve(snapshot);
+      await listing;
+      expect(store.getState().tokens).toEqual([updated, existing]);
+    },
+  );
 
   it("keeps an existing token's local rename while a creation exposes its card during a pending read", async () => {
     const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
@@ -517,22 +506,25 @@ describe("operator collection ordering", () => {
   });
 });
 
-
 describe("operator recovery races", () => {
-  it.each(["disconnect", "remove"])("reloads connector state after a partially applied %s fails", async action => {
+  it.each(["disconnect", "remove"])("reloads connector state after a partially applied %s fails", async (action) => {
     const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
     const connected = { id: "svc", status: "ok", tools: [{ name: "read" }], toolCount: 1 };
-    fetchMock.mockImplementation(async (path: string) => path === "/ui/data"
-      ? Response.json({ ...uiData("operator"), connectors: [connected] })
-      : Response.json(connected));
+    fetchMock.mockImplementation(async (path: string) =>
+      path === "/ui/data"
+        ? Response.json({ ...uiData("operator"), connectors: [connected] })
+        : Response.json(connected),
+    );
     await store.boot();
     await vi.waitFor(() => expect(store.getState().data?.connectors[0]?.status).toBe("ok"));
     fetchMock.mockClear();
     // The server retired the grant, then its cleanup failed. Re-reading is
     // how the operator learns that a failed click still disconnected it.
-    fetchMock.mockImplementation(async (path: string) => path.startsWith("/ui/connectors/")
-      ? Response.json({ ...connected, status: "auth_required", tools: [], toolCount: 0 })
-      : Response.json({ problem: "storage_failed" }, { status: 500 }));
+    fetchMock.mockImplementation(async (path: string) =>
+      path.startsWith("/ui/connectors/")
+        ? Response.json({ ...connected, status: "auth_required", tools: [], toolCount: 0 })
+        : Response.json({ problem: "storage_failed" }, { status: 500 }),
+    );
     if (action === "disconnect") await store.disconnectOAuth("svc");
     else await store.removeCredential("svc");
     await vi.waitFor(() => expect(store.getState().data?.connectors[0]?.status).toBe("auth_required"));
@@ -556,7 +548,6 @@ describe("operator recovery races", () => {
   });
 });
 
-
 describe("operator unreadable collections", () => {
   it("keeps the operator retry available when /ui/data returns JSON null", async () => {
     const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
@@ -565,22 +556,24 @@ describe("operator unreadable collections", () => {
     expect(store.getState()).toMatchObject({ session: "ready", loadFailure: "server" });
   });
 
-  it.each(["truncated JSON", "null", "{}"])("reports an unreadable token collection instead of no tokens: %s", async body => {
-    const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
-    fetchMock.mockResolvedValueOnce(new Response(body, { status: 200 }));
-    await store.loadAccessTokens();
-    expect(store.getState().tokenPhase).toBe("error");
-    expect(store.getState().tokenNotice?.tone).toBe("error");
-    fetchMock.mockResolvedValueOnce(Response.json({ accessTokens: [{ id: "recovered", name: "Client" }] }));
-    await store.loadAccessTokens();
-    expect(store.getState().tokenPhase).toBe("ready");
-    expect(store.getState().tokens[0]?.id).toBe("recovered");
-  });
+  it.each(["truncated JSON", "null", "{}"])(
+    "reports an unreadable token collection instead of no tokens: %s",
+    async (body) => {
+      const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
+      fetchMock.mockResolvedValueOnce(new Response(body, { status: 200 }));
+      await store.loadAccessTokens();
+      expect(store.getState().tokenPhase).toBe("error");
+      expect(store.getState().tokenNotice?.tone).toBe("error");
+      fetchMock.mockResolvedValueOnce(Response.json({ accessTokens: [{ id: "recovered", name: "Client" }] }));
+      await store.loadAccessTokens();
+      expect(store.getState().tokenPhase).toBe("ready");
+      expect(store.getState().tokens[0]?.id).toBe("recovered");
+    },
+  );
 });
 
-
 describe("activity collection recovery", () => {
-  it.each(["truncated JSON", "null", "{}"])("offers retry for an unreadable activity page: %s", async body => {
+  it.each(["truncated JSON", "null", "{}"])("offers retry for an unreadable activity page: %s", async (body) => {
     const { store, fetchMock } = await loadStore({ id: "session", getToken: async () => "token" });
     fetchMock.mockResolvedValueOnce(Response.json(uiData("operator")));
     await store.boot();

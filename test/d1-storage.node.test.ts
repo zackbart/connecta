@@ -20,9 +20,7 @@ let db: D1Database;
 
 beforeAll(async () => {
   proxy = await getPlatformProxy<Env>({
-    configPath: fileURLToPath(
-      new URL("./fixtures/d1-storage/wrangler.jsonc", import.meta.url),
-    ),
+    configPath: fileURLToPath(new URL("./fixtures/d1-storage/wrangler.jsonc", import.meta.url)),
     persist: false,
   });
   db = proxy.env.CONNECTA_DB;
@@ -42,10 +40,18 @@ async function open() {
     storage: () => d1Storage(db),
     activity: (options?: { retentionDays?: number }) => d1ActivityStore(db, options),
     async exec(sql: string, ...params: (string | number | null)[]) {
-      await db.prepare(sql).bind(...params).run();
+      await db
+        .prepare(sql)
+        .bind(...params)
+        .run();
     },
     async rows<Row>(sql: string, ...params: (string | number | null)[]) {
-      return (await db.prepare(sql).bind(...params).all<Row>()).results;
+      return (
+        await db
+          .prepare(sql)
+          .bind(...params)
+          .all<Row>()
+      ).results;
     },
   };
 }

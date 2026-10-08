@@ -48,8 +48,7 @@ describe("unavailableCallError", () => {
     const reason = new Error("owner left");
     controller.abort(reason);
     expect(unavailableCallError(reason, undefined, undefined, controller.signal).cause).toBe(reason);
-    expect(unavailableCallError(new Error("other"), undefined, undefined, controller.signal).cause)
-      .toBeUndefined();
+    expect(unavailableCallError(new Error("other"), undefined, undefined, controller.signal).cause).toBeUndefined();
     expect(unavailableCallError(reason).cause).toBeUndefined();
   });
 });
@@ -62,20 +61,14 @@ describe("ConnectorCallError", () => {
     expect(new ConnectorCallError("auth_required", "x").retryable).toBe(false);
     expect(new ConnectorCallError("invalid_args", "x").retryable).toBe(false);
     expect(new ConnectorCallError("not_found", "x").retryable).toBe(false);
-    expect(new ConnectorCallError("connector_call_failed", "x").retryable).toBe(
-      false,
-    );
+    expect(new ConnectorCallError("connector_call_failed", "x").retryable).toBe(false);
   });
 
   it("carries not_found through classification without a recovery envelope", () => {
     // The point of the code is that a program can branch on it: it survives
     // classification as itself, non-retryable, with nothing for a caller to
     // recover — the next move is re-addressing, which only the caller can do.
-    expect(
-      classifyCallError(
-        new ConnectorCallError("not_found", "Zone 4 does not exist."),
-      ),
-    ).toEqual({
+    expect(classifyCallError(new ConnectorCallError("not_found", "Zone 4 does not exist."))).toEqual({
       code: "not_found",
       message: "Zone 4 does not exist.",
       retryable: false,
@@ -91,25 +84,11 @@ describe("ConnectorCallError", () => {
   });
 
   it("carries an optional retryAfterMs and ignores nonsense values", () => {
-    expect(
-      new ConnectorCallError("rate_limited", "x", { retryAfterMs: 2_500 })
-        .retryAfterMs,
-    ).toBe(2_500);
-    expect(new ConnectorCallError("rate_limited", "x").retryAfterMs).toBe(
-      undefined,
-    );
-    expect(
-      new ConnectorCallError("rate_limited", "x", { retryAfterMs: -1 })
-        .retryAfterMs,
-    ).toBe(undefined);
-    expect(
-      new ConnectorCallError("rate_limited", "x", { retryAfterMs: Number.NaN })
-        .retryAfterMs,
-    ).toBe(undefined);
-    expect(
-      new ConnectorCallError("rate_limited", "x", { retryAfterMs: 1_200.7 })
-        .retryAfterMs,
-    ).toBe(1_200);
+    expect(new ConnectorCallError("rate_limited", "x", { retryAfterMs: 2_500 }).retryAfterMs).toBe(2_500);
+    expect(new ConnectorCallError("rate_limited", "x").retryAfterMs).toBe(undefined);
+    expect(new ConnectorCallError("rate_limited", "x", { retryAfterMs: -1 }).retryAfterMs).toBe(undefined);
+    expect(new ConnectorCallError("rate_limited", "x", { retryAfterMs: Number.NaN }).retryAfterMs).toBe(undefined);
+    expect(new ConnectorCallError("rate_limited", "x", { retryAfterMs: 1_200.7 }).retryAfterMs).toBe(1_200);
   });
 
   it("honors an explicit retryable override and keeps the cause", () => {
@@ -129,9 +108,7 @@ describe("classifyCallError", () => {
   it("treats a typed error as authoritative — no message sniffing", () => {
     // The motivating bug: legitimate error text mentioning "timeout" must not
     // be reclassified as a retryable timeout when the connector typed it.
-    const details = classifyCallError(
-      new ConnectorCallError("invalid_args", 'invalid field: "timeout"'),
-    );
+    const details = classifyCallError(new ConnectorCallError("invalid_args", 'invalid field: "timeout"'));
     expect(details).toEqual({
       code: "invalid_args",
       message: 'invalid field: "timeout"',
@@ -173,9 +150,7 @@ describe("classifyCallError", () => {
     expect(details.validation?.truncated).toBe(true);
     expect(details.validation?.issues[0]?.path.length).toBeLessThanOrEqual(256);
     expect(details.validation?.issues[0]?.code.length).toBeLessThanOrEqual(64);
-    expect(
-      details.validation?.issues[0]?.expected.length,
-    ).toBeLessThanOrEqual(128);
+    expect(details.validation?.issues[0]?.expected.length).toBeLessThanOrEqual(128);
   });
 
   it("INV-6: untyped prose never decides code or retryability", () => {
@@ -206,13 +181,13 @@ describe("classifyCallError", () => {
       retryable: true,
       retryAfterMs: 30_000,
     });
-    expect(
-      classifyCallError(new ConnectorCallError("rate_limited", "slow down")),
-    ).toEqual({ code: "rate_limited", message: "slow down", retryable: true });
+    expect(classifyCallError(new ConnectorCallError("rate_limited", "slow down"))).toEqual({
+      code: "rate_limited",
+      message: "slow down",
+      retryable: true,
+    });
     // The heuristic path has no window to report.
-    expect(classifyCallError(new Error("HTTP 429"))).not.toHaveProperty(
-      "retryAfterMs",
-    );
+    expect(classifyCallError(new Error("HTTP 429"))).not.toHaveProperty("retryAfterMs");
   });
 
   it("classifies an aborted call as a retryable timeout", () => {
@@ -227,11 +202,10 @@ describe("classifyCallError", () => {
       retryable: true,
     });
     // Runtimes word it differently; the name is what's stable.
-    expect(
-      classifyCallError(
-        new DOMException("This operation was aborted", "AbortError"),
-      ),
-    ).toMatchObject({ code: "timeout", retryable: true });
+    expect(classifyCallError(new DOMException("This operation was aborted", "AbortError"))).toMatchObject({
+      code: "timeout",
+      retryable: true,
+    });
     // Same for the reason an AbortController hands its listeners.
     const controller = new AbortController();
     controller.abort();
@@ -273,9 +247,7 @@ describe("framingError", () => {
       "destructive_tool_requires_approval",
       "result_processing_failed",
     ] as const) {
-      expect(
-        framingError(code, `Unknown address "temporary-503-service.read"`),
-      ).toEqual({
+      expect(framingError(code, `Unknown address "temporary-503-service.read"`)).toEqual({
         code,
         message: 'Unknown address "temporary-503-service.read"',
         retryable: false,
@@ -284,15 +256,10 @@ describe("framingError", () => {
   });
 
   it("INV-6: framing codes never infer retryability from names or prose", () => {
-    expect(
-      framingError("catalog_lookup_failed", "upstream 503 while paging"),
-     ).toMatchObject({ retryable: false });
-    expect(
-      framingError("catalog_lookup_failed", "field shape mismatch"),
-    ).toMatchObject({ retryable: false });
+    expect(framingError("catalog_lookup_failed", "upstream 503 while paging")).toMatchObject({ retryable: false });
+    expect(framingError("catalog_lookup_failed", "field shape mismatch")).toMatchObject({ retryable: false });
   });
 });
-
 
 describe("unavailable diagnostics", () => {
   it("sanitizes and forwards only bounded origin and runtime code fields", () => {
@@ -300,50 +267,75 @@ describe("unavailable diagnostics", () => {
       details: { host: "https://user:password@example.com:8443/private?q=secret#fragment", code: "ECONNREFUSED" },
     });
     expect(classifyCallError(error)).toEqual({
-      code: "unavailable", message: "unreachable", retryable: true,
+      code: "unavailable",
+      message: "unreachable",
+      retryable: true,
       details: { host: "https://example.com:8443", code: "ECONNREFUSED" },
     });
   });
 
-  it.each(["https://private/path", "ECONNREFUSED secret", "E" + "X".repeat(32), "not-an-errno"])("drops invalid diagnostic code %s", (code) => {
-    expect(classifyCallError(new ConnectorCallError("unavailable", "x", {
-      details: { host: "not a URL", code },
-    }))).not.toHaveProperty("details");
-  });
+  it.each(["https://private/path", "ECONNREFUSED secret", "E" + "X".repeat(32), "not-an-errno"])(
+    "drops invalid diagnostic code %s",
+    (code) => {
+      expect(
+        classifyCallError(
+          new ConnectorCallError("unavailable", "x", {
+            details: { host: "not a URL", code },
+          }),
+        ),
+      ).not.toHaveProperty("details");
+    },
+  );
 
   it("drops oversized and opaque origins instead of clipping them", () => {
     for (const host of ["https://" + "a".repeat(254) + ".test/private", "data:text/plain,secret", "file:///private"]) {
-      expect(classifyCallError(new ConnectorCallError("unavailable", "x", {
-        details: { host, code: "timeout" },
-      }))).toHaveProperty("details", { code: "timeout" });
+      expect(
+        classifyCallError(
+          new ConnectorCallError("unavailable", "x", {
+            details: { host, code: "timeout" },
+          }),
+        ),
+      ).toHaveProperty("details", { code: "timeout" });
     }
   });
 
   it("omits absent diagnostics and diagnostics on other failure classes", () => {
     expect(classifyCallError(new ConnectorCallError("unavailable", "x"))).not.toHaveProperty("details");
-    expect(classifyCallError(new ConnectorCallError("invalid_args", "timeout", {
-      details: { host: "https://example.com", code: "ECONNRESET" },
-    }))).toEqual({ code: "invalid_args", message: "timeout", retryable: false });
+    expect(
+      classifyCallError(
+        new ConnectorCallError("invalid_args", "timeout", {
+          details: { host: "https://example.com", code: "ECONNRESET" },
+        }),
+      ),
+    ).toEqual({ code: "invalid_args", message: "timeout", retryable: false });
   });
 });
 
-
 it("reads runtime codes without consulting messages or unstructured causes", () => {
   expect(networkErrorCode(Object.assign(new Error("private"), { code: "ECONNRESET" }))).toBe("ECONNRESET");
-  expect(networkErrorCode(new TypeError("fetch failed", { cause: { code: "UND_ERR_CONNECT_TIMEOUT" } }))).toBe("UND_ERR_CONNECT_TIMEOUT");
+  expect(networkErrorCode(new TypeError("fetch failed", { cause: { code: "UND_ERR_CONNECT_TIMEOUT" } }))).toBe(
+    "UND_ERR_CONNECT_TIMEOUT",
+  );
   expect(networkErrorCode(new DOMException("deadline", "TimeoutError"))).toBe("timeout");
-  for (const error of [new Error("ECONNREFUSED timeout"), new Error("fetch failed", { cause: "ENOTFOUND" }), { code: "https://secret/private" }]) {
+  for (const error of [
+    new Error("ECONNREFUSED timeout"),
+    new Error("fetch failed", { cause: "ENOTFOUND" }),
+    { code: "https://secret/private" },
+  ]) {
     expect(networkErrorCode(error)).toBeUndefined();
   }
 });
 
-
 it("INV-6: runtime facts classify transport errors independently of prose", () => {
   for (const message of ["safe", "timeout temporarily rate limit 429 503"]) {
-    expect(classifyCallError(Object.assign(new Error(message), { code: "ECONNRESET" })))
-      .toMatchObject({ code: "unavailable", retryable: true });
-    expect(classifyCallError(Object.assign(new Error(message), { code: "ETIMEDOUT" })))
-      .toMatchObject({ code: "timeout", retryable: true });
+    expect(classifyCallError(Object.assign(new Error(message), { code: "ECONNRESET" }))).toMatchObject({
+      code: "unavailable",
+      retryable: true,
+    });
+    expect(classifyCallError(Object.assign(new Error(message), { code: "ETIMEDOUT" }))).toMatchObject({
+      code: "timeout",
+      retryable: true,
+    });
     expect(classifyCallError(new Error(message))).toMatchObject({ code: "connector_call_failed", retryable: false });
   }
 });

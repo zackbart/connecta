@@ -5,12 +5,7 @@ import { memoryStorage } from "../src/storage/memory.js";
 import { classifyTool } from "../src/tool-safety.js";
 import type { Connector, ToolDef } from "../src/types.js";
 import { createTestConnecta } from "./helpers.js";
-import {
-  fakeClerkAuth,
-  makeDeployment,
-  mcpRpc,
-  readJsonRpc,
-} from "./fixtures/http.js";
+import { fakeClerkAuth, makeDeployment, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 
 const isRead = (tool: import("../src/types.js").ToolDef) => classifyTool(tool) === "read";
 
@@ -156,21 +151,14 @@ function boundaryConfig(connectors: Connector[]) {
   };
 }
 
-async function callerRpc(
-  connecta: Deployment,
-  method: string,
-  token: string,
-): Promise<unknown> {
+async function callerRpc(connecta: Deployment, method: string, token: string): Promise<unknown> {
   const response = await mcpRpc(connecta, method, {}, { token });
   expect(response.status, method).toBe(200);
   return readJsonRpc(response) as Promise<unknown>;
 }
 
 /** Exactly what a caller may call: the tool list `/mcp` serves that caller. */
-async function callerToolScope(
-  connecta: Deployment,
-  token: string,
-): Promise<unknown> {
+async function callerToolScope(connecta: Deployment, token: string): Promise<unknown> {
   const body = (await callerRpc(connecta, "tools/list", token)) as {
     result?: { tools?: unknown };
   };
@@ -195,14 +183,9 @@ function describeTool(tool: ToolDef) {
  * Every structure an operator route must leave alone, rendered as text so the
  * comparison is byte-for-byte rather than "deeply equal enough".
  */
-async function declaredSurface(
-  connecta: Deployment,
-  token: string,
-): Promise<string> {
+async function declaredSurface(connecta: Deployment, token: string): Promise<string> {
   const connectors = [];
-  for (const connector of [...connecta.registry.listConnectors()].sort(
-    (a, b) => a.id.localeCompare(b.id),
-  )) {
+  for (const connector of [...connecta.registry.listConnectors()].sort((a, b) => a.id.localeCompare(b.id))) {
     const tools = await connecta.registry.getTools(connector.id, BASE);
     connectors.push({
       id: connector.id,
@@ -215,11 +198,7 @@ async function declaredSurface(
       tools: tools.map(describeTool),
     });
   }
-  return JSON.stringify(
-    { connectors, callerToolScope: await callerToolScope(connecta, token) },
-    null,
-    2,
-  );
+  return JSON.stringify({ connectors, callerToolScope: await callerToolScope(connecta, token) }, null, 2);
 }
 
 function operatorHeaders(): Record<string, string> {
@@ -237,10 +216,7 @@ type Mutation = {
 };
 
 /** Every connector-scoped operator route, driven against one connector. */
-function credentialAndOAuthMutations(
-  connecta: Deployment,
-  id: string,
-): Mutation[] {
+function credentialAndOAuthMutations(connecta: Deployment, id: string): Mutation[] {
   return [
     {
       label: `${id}: credential set`,
@@ -280,7 +256,7 @@ function credentialAndOAuthMutations(
             headers: operatorHeaders(),
           }),
         );
-        const link = (await response.json() as { authorizationUrl: string }).authorizationUrl;
+        const link = ((await response.json()) as { authorizationUrl: string }).authorizationUrl;
         return connecta.fetch(new Request(link, { headers: operatorHeaders() }));
       },
     },
@@ -289,10 +265,7 @@ function credentialAndOAuthMutations(
       status: 200,
       run: () =>
         connecta.fetch(
-          new Request(
-            `${BASE}/oauth/callback/${id}?code=auth-code&state=valid-state`,
-            { headers: operatorHeaders() },
-          ),
+          new Request(`${BASE}/oauth/callback/${id}?code=auth-code&state=valid-state`, { headers: operatorHeaders() }),
         ),
     },
     {
@@ -323,18 +296,13 @@ function credentialAndOAuthMutations(
 describe("the operator boundary", () => {
   it("manages authentication material without moving a declared structure", async () => {
     const catalog = { listings: 0 };
-    const connecta = makeDeployment(boundaryConfig([
-      oauthConnector(),
-      plainConnector(),
-      dynamicConnector(catalog),
-    ]));
+    const connecta = makeDeployment(boundaryConfig([oauthConnector(), plainConnector(), dynamicConnector(catalog)]));
     const before = await declaredSurface(connecta, OPERATOR_TOKEN);
     // A snapshot that silently captured nothing would pass every comparison
     // below, so establish that it holds all three connectors, both safety
     // classes, a live catalog, and the caller's whole tool scope before
     // anything mutates.
-    expect((await callerToolScope(connecta, OPERATOR_TOKEN)) as unknown[])
-      .toHaveLength(6);
+    expect((await callerToolScope(connecta, OPERATOR_TOKEN)) as unknown[]).toHaveLength(6);
     expect(catalog.listings).toBeGreaterThan(0);
     for (const marker of [
       '"id": "alpha"',
@@ -357,7 +325,6 @@ describe("the operator boundary", () => {
       // against a catalog that `invalidateStored()` really re-loads.
       ...credentialAndOAuthMutations(connecta, "alpha"),
       ...credentialAndOAuthMutations(connecta, "gamma"),
-
     ];
 
     for (const mutation of mutations) {
@@ -373,8 +340,6 @@ describe("the operator boundary", () => {
       // that did not call `listTools` again was served from somewhere frozen.
       expect(catalog.listings, mutation.label).toBeGreaterThan(listedBefore);
       if (after !== before) drifted.push(mutation.label);
-
-
     }
 
     expect(drifted).toEqual([]);
@@ -407,9 +372,7 @@ describe("the operator boundary", () => {
       credential: { label: "API token" },
       async listTools(ctx) {
         const stored = await ctx.credential?.get();
-        return stored
-          ? [read, { ...read, name: "read_more", description: "Read more" }]
-          : [read];
+        return stored ? [read, { ...read, name: "read_more", description: "Read more" }] : [read];
       },
       async callTool() {
         return {};

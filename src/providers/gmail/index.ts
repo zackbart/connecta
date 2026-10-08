@@ -82,9 +82,7 @@ const MAX_RECIPIENTS = 100;
 type JsonRecord = Record<string, any>;
 
 function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
 
 function asArray(value: unknown): unknown[] {
@@ -92,9 +90,7 @@ function asArray(value: unknown): unknown[] {
 }
 
 function compact<T extends object>(value: T): T {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined),
-  ) as T;
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
 function text(value: unknown): string | undefined {
@@ -128,12 +124,8 @@ const ENTITIES: Readonly<Record<string, string>> = {
 function decodeEntities(value: string): string {
   return value.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (entity, name: string) => {
     if (name[0] === "#") {
-      const code = name[1] === "x" || name[1] === "X"
-        ? parseInt(name.slice(2), 16)
-        : parseInt(name.slice(1), 10);
-      return Number.isFinite(code) && code > 0 && code <= 0x10ffff
-        ? String.fromCodePoint(code)
-        : entity;
+      const code = name[1] === "x" || name[1] === "X" ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : entity;
     }
     return ENTITIES[name.toLowerCase()] ?? entity;
   });
@@ -292,7 +284,6 @@ async function readBody(
   // Uncut: the caller caps it, by characters and by the result's bytes.
   return { text: format === "html" ? htmlToText(decoded) : decoded, bodyFormat: format };
 }
-
 
 /**
  * Gmail's ids are short opaque tokens — message and thread ids are sixteen
@@ -453,7 +444,6 @@ async function projectMessage(
   return result;
 }
 
-
 // --- Cursors -------------------------------------------------------------------------
 
 /**
@@ -547,12 +537,7 @@ async function resumeAt(ids: readonly string[], claims: CursorClaims | undefined
   return seen;
 }
 
-async function cursorAfter(
-  ids: readonly string[],
-  seen: number,
-  tool: string,
-  call: string,
-): Promise<string> {
+async function cursorAfter(ids: readonly string[], seen: number, tool: string, call: string): Promise<string> {
   return encodeCursor({ v: 1, t: tool, c: call, n: seen, f: await digest(JSON.stringify(ids.slice(0, seen))) });
 }
 
@@ -620,11 +605,7 @@ function projectDraftSummary(value: unknown): JsonRecord {
 }
 
 /** Run `work` over `items`, at most `limit` at a time, keeping order. */
-async function mapLimited<T, R>(
-  items: readonly T[],
-  limit: number,
-  work: (item: T) => Promise<R>,
-): Promise<R[]> {
+async function mapLimited<T, R>(items: readonly T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = [];
   let next = 0;
   const lanes = Array.from({ length: Math.min(limit, items.length) }, async () => {
@@ -685,9 +666,7 @@ function encodedWords(value: string): string {
     size += bytes;
   }
   if (chunk) words.push(chunk);
-  return words
-    .map((word) => `=?UTF-8?B?${base64(encoder.encode(word))}?=`)
-    .join("\r\n ");
+  return words.map((word) => `=?UTF-8?B?${base64(encoder.encode(word))}?=`).join("\r\n ");
 }
 
 /** `Name <addr>` or `addr`, display name encoded or quoted as needed. */
@@ -1008,7 +987,8 @@ const CURSOR_PROPERTY: JsonSchema = {
   minLength: 1,
   maxLength: MAX_CURSOR_LENGTH,
   pattern: "^[A-Za-z0-9_-]+$",
-  description: "Opaque page.nextCursor from the previous page of this same call; another call's cursor is refused. Pass it back unchanged.",
+  description:
+    "Opaque page.nextCursor from the previous page of this same call; another call's cursor is refused. Pass it back unchanged.",
 };
 
 const LIMIT_PROPERTY: JsonSchema = {
@@ -1021,7 +1001,8 @@ const LIMIT_PROPERTY: JsonSchema = {
 const QUERY_PROPERTY: JsonSchema = {
   type: "string",
   maxLength: 2048,
-  description: "Gmail search syntax, as in the Gmail search box: from:, to:, subject:, label:, is:unread, has:attachment, newer_than:7d, in:inbox. Omit for everything.",
+  description:
+    "Gmail search syntax, as in the Gmail search box: from:, to:, subject:, label:, is:unread, has:attachment, newer_than:7d, in:inbox. Omit for everything.",
 };
 
 function bodyCharsProperty(fallback: number): JsonSchema {
@@ -1050,7 +1031,8 @@ const SUBJECT_PROPERTY: JsonSchema = {
   type: "string",
   maxLength: 900,
   pattern: "^[^\\r\\n]*$",
-  description: "Subject line; any language. A reply defaults to Re: and the original subject, which Gmail needs to keep it in the thread.",
+  description:
+    "Subject line; any language. A reply defaults to Re: and the original subject, which Gmail needs to keep it in the thread.",
 };
 
 const BODY_PROPERTY: JsonSchema = {
@@ -1155,14 +1137,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
     return { hasMore: true, nextCursor: cursor };
   };
 
-  const compose = async (
-    args: JsonRecord,
-    ctx: ConnectorContext,
-    kept: Kept,
-  ) => {
-    const reply = args["replyToMessageId"]
-      ? await replyThreading(client, String(args["replyToMessageId"]), ctx)
-      : kept;
+  const compose = async (args: JsonRecord, ctx: ConnectorContext, kept: Kept) => {
+    const reply = args["replyToMessageId"] ? await replyThreading(client, String(args["replyToMessageId"]), ctx) : kept;
     // What the caller states wins; then what the draft already had; then
     // what a reply defaults to. A new draft has nothing kept.
     const raw = buildRawMessage({
@@ -1352,7 +1328,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           maxBodyChars: bodyCharsProperty(DEFAULT_MESSAGE_BODY_CHARS),
           raw: {
             type: "boolean",
-            description: "Return Gmail's untouched message resource (every header, base64url part bodies) instead of the projection. Refused past connecta's 192 KiB result limit.",
+            description:
+              "Return Gmail's untouched message resource (every header, base64url part bodies) instead of the projection. Refused past connecta's 192 KiB result limit.",
           },
         },
         ["messageId"],
@@ -1391,7 +1368,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         {
           cursor: {
             ...CURSOR_PROPERTY,
-            description: "Opaque page.nextCursor from the previous page. Gmail returns every label at once; connecta pages them so thousands still fit, and answers conflict if the list changed.",
+            description:
+              "Opaque page.nextCursor from the previous page. Gmail returns every label at once; connecta pages them so thousands still fit, and answers conflict if the list changed.",
           },
         },
         [],
@@ -1463,10 +1441,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       description:
         "List the user's Gmail drafts, newest first, with subject, recipients, and snippet. Use get_draft for a body.",
       annotations: readOnly,
-      inputSchema: input(
-        { query: QUERY_PROPERTY, limit: LIMIT_PROPERTY, cursor: CURSOR_PROPERTY },
-        [],
-      ),
+      inputSchema: input({ query: QUERY_PROPERTY, limit: LIMIT_PROPERTY, cursor: CURSOR_PROPERTY }, []),
       outputSchema: {
         type: "object",
         properties: {
@@ -1625,7 +1600,10 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           bcc: ADDRESSES("Bcc; omit to keep the current"),
           subject: { ...SUBJECT_PROPERTY, description: "Subject line; omit to keep the current one." },
           body: { ...BODY_PROPERTY, description: "The new plain-text body, replacing the old one entirely." },
-          htmlBody: { ...HTML_BODY_PROPERTY, description: "Optional HTML alternative; omitting it drops any HTML the draft had." },
+          htmlBody: {
+            ...HTML_BODY_PROPERTY,
+            description: "Optional HTML alternative; omitting it drops any HTML the draft had.",
+          },
           replyToMessageId: REPLY_PROPERTY,
         },
         ["draftId", "body"],
@@ -1663,10 +1641,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
           replyTo: addressEntries("The draft's Reply-To", oneLine(header(payload, "Reply-To"))),
           ...defined({ to: keep("To", "to"), cc: keep("Cc", "cc"), bcc: keep("Bcc", "bcc") }),
         };
-        const draft = await client.json(
-          { method: "PUT", path: draftPath, body: await compose(args, ctx, kept) },
-          ctx,
-        );
+        const draft = await client.json({ method: "PUT", path: draftPath, body: await compose(args, ctx, kept) }, ctx);
         return projectSavedDraft(draft);
       },
     },
@@ -1722,7 +1697,12 @@ export const gmail = asProviderFactory<GmailOptions>({
   title: "Gmail",
   kind: "api",
   readme: "Gmail",
-  bundle: {"baselineGzip":27085,"maxGzip":87085,"note":"./providers/gmail starts at 27,085 B gzip (#678): a hand-written api() surface over the guarded transport plus the shared Google Workspace delegation layer — Web Crypto RS256 signing, an in-memory token cache, result-size budgeting, bound cursors, and request-outcome tracking, with no OAuth client and no MCP SDK. The other Workspace products share that layer and should land in the same class. The cap uses the existing baseline + 60,000 B policy."},
+  bundle: {
+    "baselineGzip": 27085,
+    "maxGzip": 87085,
+    "note":
+      "./providers/gmail starts at 27,085 B gzip (#678): a hand-written api() surface over the guarded transport plus the shared Google Workspace delegation layer — Web Crypto RS256 signing, an in-memory token cache, result-size budgeting, bound cursors, and request-outcome tracking, with no OAuth client and no MCP SDK. The other Workspace products share that layer and should land in the same class. The cap uses the existing baseline + 60,000 B policy.",
+  },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
   create: gmailConnector,
@@ -1750,7 +1730,8 @@ function gmailConnector(id: string, options: GmailOptions): Connector {
     description: `Gmail as the signed-in Workspace user: read mail and write drafts, never send — ${connection.purpose}`,
     usageGuide: {
       content: usageGuide(connection.purpose, options.instructions),
-      summary: "Each caller's own mailbox: Gmail search syntax, capped bodies, reply threading, drafts that never send.",
+      summary:
+        "Each caller's own mailbox: Gmail search syntax, capped bodies, reply threading, drafts that never send.",
       // Required: whose mailbox it is, and that update_draft replaces the
       // body, are conventions no schema can carry.
       required: true,

@@ -28,9 +28,7 @@ import { build, transform } from "esbuild";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-const budget = JSON.parse(
-  readFileSync(join(root, "scripts", "bundle-budget.json"), "utf8"),
-).entries;
+const budget = JSON.parse(readFileSync(join(root, "scripts", "bundle-budget.json"), "utf8")).entries;
 
 const NODE_ENTRIES = new Set(["./node", "./quickjs", "./sqlite"]);
 const OPTIONAL_PEERS = Object.keys(manifest.peerDependencies ?? {});
@@ -98,17 +96,13 @@ async function measure({ name, entry, platform, extraPlugins = [] }) {
   });
   const output = result.outputFiles.find((file) => file.path.endsWith(".js"));
   const bytes = output.contents;
-  const meta = Object.values(result.metafile.outputs).find(
-    (candidate) => candidate.entryPoint !== undefined,
-  );
+  const meta = Object.values(result.metafile.outputs).find((candidate) => candidate.entryPoint !== undefined);
   const attributed = Object.fromEntries(CATEGORIES.map((key) => [key, 0]));
   for (const [input, { bytesInOutput }] of Object.entries(meta.inputs)) {
     attributed[categoryOf(input)] += bytesInOutput;
   }
   const nodeImports = neutral
-    ? meta.imports
-        .filter((item) => item.external && item.path.startsWith("node:"))
-        .map((item) => item.path)
+    ? meta.imports.filter((item) => item.external && item.path.startsWith("node:")).map((item) => item.path)
     : [];
   return {
     name,
@@ -141,21 +135,32 @@ for (const target of targets) results.push(await measure(target));
 
 // Sum individual compressed HTTP payloads, including the locally hosted font
 // and dependency notices. The ./ui entry also pays for its embedded manifest.
-const generated = await transform(readFileSync(join(root, "src/operator-ui/generated.ts"), "utf8"), { loader: "ts", format: "esm" });
-const { OPERATOR_UI_ASSETS } = await import(`data:text/javascript;base64,${Buffer.from(generated.code).toString("base64")}`);
-let assetRaw = 0, assetGzip = 0;
+const generated = await transform(readFileSync(join(root, "src/operator-ui/generated.ts"), "utf8"), {
+  loader: "ts",
+  format: "esm",
+});
+const { OPERATOR_UI_ASSETS } = await import(
+  `data:text/javascript;base64,${Buffer.from(generated.code).toString("base64")}`
+);
+let assetRaw = 0,
+  assetGzip = 0;
 for (const asset of Object.values(OPERATOR_UI_ASSETS)) {
   const bytes = Buffer.from(asset.body, asset.binary ? "base64" : "utf8");
   assetRaw += bytes.length;
   assetGzip += gzipSync(bytes, { level: 9 }).length;
 }
-results.push({ name: "operator-ui/assets", platform: "neutral", raw: assetRaw,
-  gzip: assetGzip, attributed: Object.fromEntries(CATEGORIES.map(key => [key, 0])), nodeImports: [] });
+results.push({
+  name: "operator-ui/assets",
+  platform: "neutral",
+  raw: assetRaw,
+  gzip: assetGzip,
+  attributed: Object.fromEntries(CATEGORIES.map((key) => [key, 0])),
+  nodeImports: [],
+});
 
 const kb = (bytes) => `${(bytes / 1000).toFixed(1)} KB`;
 const exact = (bytes) => `${bytes.toLocaleString("en-US")} B`;
-const signed = (bytes) =>
-  `${bytes >= 0 ? "+" : "−"}${Math.abs(bytes).toLocaleString("en-US")} B`;
+const signed = (bytes) => `${bytes >= 0 ? "+" : "−"}${Math.abs(bytes).toLocaleString("en-US")} B`;
 
 const failures = [];
 const rows = results.map((result) => {
@@ -168,12 +173,11 @@ const rows = results.map((result) => {
       cap = "missing";
     } else {
       delta = signed(result.gzip - limits.baselineGzip);
-      if (limits.maxRaw && result.raw > limits.maxRaw) failures.push(`${result.name}: ${result.raw} B exceeds raw cap ${limits.maxRaw} B`);
+      if (limits.maxRaw && result.raw > limits.maxRaw)
+        failures.push(`${result.name}: ${result.raw} B exceeds raw cap ${limits.maxRaw} B`);
       cap = exact(limits.maxGzip);
       if (result.gzip > limits.maxGzip) {
-        failures.push(
-          `${result.name}: ${result.gzip} B gzip exceeds its ${limits.maxGzip} B cap`,
-        );
+        failures.push(`${result.name}: ${result.gzip} B gzip exceeds its ${limits.maxGzip} B cap`);
       }
     }
     for (const path of result.nodeImports) {
@@ -195,14 +199,7 @@ for (const name of Object.keys(budget)) {
   }
 }
 
-const header = [
-  "entry",
-  "raw",
-  "gzip",
-  "Δ gzip",
-  "cap",
-  ...CATEGORIES.map((key) => `${key} (raw)`),
-];
+const header = ["entry", "raw", "gzip", "Δ gzip", "cap", ...CATEGORIES.map((key) => `${key} (raw)`)];
 const table = [
   `| ${header.join(" | ")} |`,
   `|${header.map((_, index) => (index === 0 ? "---" : "---:")).join("|")}|`,
@@ -219,9 +216,6 @@ if (process.env.GITHUB_STEP_SUMMARY) {
   appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${report}\n`);
 }
 if (failures.length) {
-  console.error(
-    `bundle-size: ${failures.length} failure(s):\n` +
-      failures.map((failure) => `  ${failure}`).join("\n"),
-  );
+  console.error(`bundle-size: ${failures.length} failure(s):\n` + failures.map((failure) => `  ${failure}`).join("\n"));
   process.exit(1);
 }

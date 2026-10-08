@@ -70,8 +70,15 @@ type FailureStep =
   | "handler";
 
 const STEPS: ReadonlySet<string> = new Set<FailureStep>([
-  "MCP handshake", "tools/list", "tools/call", "resources/read", "OAuth discovery",
-  "OAuth client registration", "OAuth token request", "OAuth flow", "handler",
+  "MCP handshake",
+  "tools/list",
+  "tools/call",
+  "resources/read",
+  "OAuth discovery",
+  "OAuth client registration",
+  "OAuth token request",
+  "OAuth flow",
+  "handler",
 ]);
 
 /**
@@ -79,17 +86,36 @@ const STEPS: ReadonlySet<string> = new Set<FailureStep>([
  * (RFC 6749, 6750, 7591, 8707, 9449) and RFC 7591's software-statement pair.
  */
 export const OAUTH_ERROR_CODES: ReadonlySet<string> = new Set([
-  "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client",
-  "unsupported_grant_type", "invalid_scope", "access_denied", "server_error",
-  "temporarily_unavailable", "unsupported_response_type", "unsupported_token_type",
-  "invalid_token", "method_not_allowed", "too_many_requests",
-  "invalid_client_metadata", "invalid_redirect_uri", "insufficient_scope",
-  "invalid_target", "invalid_dpop_proof", "use_dpop_nonce",
-  "invalid_software_statement", "unapproved_software_statement",
+  "invalid_request",
+  "invalid_client",
+  "invalid_grant",
+  "unauthorized_client",
+  "unsupported_grant_type",
+  "invalid_scope",
+  "access_denied",
+  "server_error",
+  "temporarily_unavailable",
+  "unsupported_response_type",
+  "unsupported_token_type",
+  "invalid_token",
+  "method_not_allowed",
+  "too_many_requests",
+  "invalid_client_metadata",
+  "invalid_redirect_uri",
+  "insufficient_scope",
+  "invalid_target",
+  "invalid_dpop_proof",
+  "use_dpop_nonce",
+  "invalid_software_statement",
+  "unapproved_software_statement",
 ]);
 
 const SOURCES: ReadonlySet<string> = new Set([
-  "call_tool", "call_destructive_tool", "batch_call", "execute_code", "resume_execution",
+  "call_tool",
+  "call_destructive_tool",
+  "batch_call",
+  "execute_code",
+  "resume_execution",
 ]);
 
 const MODES: ReadonlySet<string> = new Set(["continue", "restart"]);
@@ -118,11 +144,22 @@ export type AuthDenialReason =
   | "pool_grant_threw";
 
 const AUTH_DENIAL_REASONS: ReadonlySet<AuthDenialReason> = new Set([
-  "authentication_failed", "authorization_header_invalid", "token_type_mismatch",
-  "oauth_verification_failed", "oauth_client_not_allowed", "oauth_binding_mismatch",
-  "session_origin_mismatch", "user_missing", "email_lookup_failed",
-  "verified_email_invalid", "email_domain_denied", "gate_denied", "gate_failed",
-  "pool_not_declared", "pool_grant_denied", "pool_grant_threw",
+  "authentication_failed",
+  "authorization_header_invalid",
+  "token_type_mismatch",
+  "oauth_verification_failed",
+  "oauth_client_not_allowed",
+  "oauth_binding_mismatch",
+  "session_origin_mismatch",
+  "user_missing",
+  "email_lookup_failed",
+  "verified_email_invalid",
+  "email_domain_denied",
+  "gate_denied",
+  "gate_failed",
+  "pool_not_declared",
+  "pool_grant_denied",
+  "pool_grant_threw",
 ]);
 
 /** The registry's connector id grammar (src/registry.ts). */
@@ -227,10 +264,7 @@ function origin(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   try {
     const url = new URL(value);
-    return (url.protocol === "https:" || url.protocol === "http:") &&
-      url.origin.length <= 253
-      ? url.origin
-      : undefined;
+    return (url.protocol === "https:" || url.protocol === "http:") && url.origin.length <= 253 ? url.origin : undefined;
   } catch {
     return undefined;
   }
@@ -394,9 +428,10 @@ function classification(failure: unknown): object {
   } else if (failure !== null && typeof failure === "object" && classifications.has(failure)) {
     typed = failure as typeof typed;
   }
-  const details = typed?.details !== null && typeof typed?.details === "object"
-    ? (typed.details as { host?: unknown; code?: unknown })
-    : undefined;
+  const details =
+    typed?.details !== null && typeof typed?.details === "object"
+      ? (typed.details as { host?: unknown; code?: unknown })
+      : undefined;
   return {
     ...defined("code", classificationCode(typed?.code)),
     ...defined("retryable", typeof typed?.retryable === "boolean" ? typed.retryable : undefined),
@@ -526,10 +561,22 @@ const ownStatuses = new WeakMap<object, OwnStatus>();
 
 function snapshot(status: ConnectorStatus, failure?: unknown): OwnStatus {
   return {
-    state: member(status.state, STATUS_STATES) as ConnectorStatus["state"] | undefined ?? "error",
+    state: (member(status.state, STATUS_STATES) as ConnectorStatus["state"] | undefined) ?? "error",
     ...(typeof status.message === "string" ? { message: status.message } : {}),
-    ...(["cimd", "dcr", "static"].includes(status.registrationPath ?? "") ? { registrationPath: status.registrationPath } : {}),
-    ...(status.resourceTemplateRefusals ? { resourceTemplateRefusals: [...new Set(status.resourceTemplateRefusals.filter(code => code === "resource_template_ambiguous" || code === "resource_match_budget_exceeded"))] } : {}),
+    ...(["cimd", "dcr", "static"].includes(status.registrationPath ?? "")
+      ? { registrationPath: status.registrationPath }
+      : {}),
+    ...(status.resourceTemplateRefusals
+      ? {
+          resourceTemplateRefusals: [
+            ...new Set(
+              status.resourceTemplateRefusals.filter(
+                (code) => code === "resource_template_ambiguous" || code === "resource_match_budget_exceeded",
+              ),
+            ),
+          ],
+        }
+      : {}),
     ...(failure === undefined ? {} : { failure }),
   };
 }
@@ -567,7 +614,7 @@ export function boundedStatus(status: ConnectorStatus): ConnectorStatus {
     ownStatuses.set(rebuilt, own);
     return rebuilt;
   }
-  return { state: member(status?.state, STATUS_STATES) as ConnectorStatus["state"] | undefined ?? "error" };
+  return { state: (member(status?.state, STATUS_STATES) as ConnectorStatus["state"] | undefined) ?? "error" };
 }
 
 /** The failure connecta saw behind a status it described, if any. */

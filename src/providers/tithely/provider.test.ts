@@ -7,11 +7,7 @@ import { TITHELY_API_BASE_URLS, tithely } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { classifyTool } from "../../tool-safety.js";
 import { silentLogger } from "../../../test/helpers.js";
-import type {
-  Connector,
-  ConnectorContext,
-  ConnectorUsageGuide,
-} from "../../types.js";
+import type { Connector, ConnectorContext, ConnectorUsageGuide } from "../../types.js";
 
 const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
 
@@ -62,15 +58,13 @@ afterEach(() => {
 
 const KEYS = { publicKey: "pub_abc123", privateKey: "pri_def456" };
 
-function context(
-  values: Record<string, string> | null = KEYS,
-): ConnectorContext {
+function context(values: Record<string, string> | null = KEYS): ConnectorContext {
   return {
     storage: memoryStorage(),
     logger: silentLogger,
     baseUrl: "https://connecta.example",
     credential: {
-      get: async (field?: string) => (field ? values?.[field] ?? null : null),
+      get: async (field?: string) => (field ? (values?.[field] ?? null) : null),
       getAll: async () => values,
     },
   };
@@ -148,18 +142,16 @@ const FULL_CHARGE = {
 
 describe("tithely() construction", () => {
   it("rejects a blank purpose, a missing environment, and invalid page sizes (H1, P4)", () => {
-    expect(() => tithely("giving", { purpose: "  ", environment: "live" })).toThrow(
-      "a non-empty account purpose",
+    expect(() => tithely("giving", { purpose: "  ", environment: "live" })).toThrow("a non-empty account purpose");
+    expect(() => tithely("giving", { purpose: "reports" } as Parameters<typeof tithely>[1])).toThrow(
+      'environment: "live"',
     );
-    expect(() =>
-      tithely("giving", { purpose: "reports" } as Parameters<typeof tithely>[1]),
-    ).toThrow('environment: "live"');
-    expect(() =>
-      tithely("giving", { purpose: "reports", environment: "sandbox" as "live" }),
-    ).toThrow('environment: "live"');
-    expect(() =>
-      tithely("giving", { purpose: "reports", environment: "test", defaultPageSize: 100 }),
-    ).toThrow("between 1 and 99");
+    expect(() => tithely("giving", { purpose: "reports", environment: "sandbox" as "live" })).toThrow(
+      'environment: "live"',
+    );
+    expect(() => tithely("giving", { purpose: "reports", environment: "test", defaultPageSize: 100 })).toThrow(
+      "between 1 and 99",
+    );
   });
 
   it("names the environment in the title, description, and guide's first line (P3)", () => {
@@ -170,7 +162,9 @@ describe("tithely() construction", () => {
     expect(live.description).toContain("live donors and real money");
     expect(test.description).toContain("no real money");
     const firstLine = (connector: Connector) =>
-      guide(connector).content.split("\n").filter((line) => line.trim() && !line.startsWith("#"))[0];
+      guide(connector)
+        .content.split("\n")
+        .filter((line) => line.trim() && !line.startsWith("#"))[0];
     expect(firstLine(live)).toContain("Live Tithe.ly (tithe.ly)");
     expect(firstLine(test)).toContain("Test Tithe.ly (tithelydev.com)");
     expect(guide(live).summary).toMatch(/^Live giving/);
@@ -231,12 +225,12 @@ describe("transport and authentication", () => {
   });
 
   it("confines hatch paths below /api/v1, so the undocumented v2 is unreachable", async () => {
-    await expect(
-      call(connection(), "tithely_api_get", { path: "/../v2/transactions" }),
-    ).rejects.toMatchObject({ code: "invalid_args" });
-    await expect(
-      call(connection(), "tithely_api_get", { path: "https://evil.example/x" }),
-    ).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(call(connection(), "tithely_api_get", { path: "/../v2/transactions" })).rejects.toMatchObject({
+      code: "invalid_args",
+    });
+    await expect(call(connection(), "tithely_api_get", { path: "https://evil.example/x" })).rejects.toMatchObject({
+      code: "invalid_args",
+    });
     expect(calls).toHaveLength(0);
   });
 });
@@ -280,7 +274,14 @@ describe("testCredentials (H12)", () => {
 
 describe("named reads (H9, H10)", () => {
   it("projects organizations to funds and drops bank and legal details unless raw", async () => {
-    queue({ body: { status: "success", organization_id: "org_1", type: "Organization", object: { ...ORGANIZATION, organization_id: undefined } } });
+    queue({
+      body: {
+        status: "success",
+        organization_id: "org_1",
+        type: "Organization",
+        object: { ...ORGANIZATION, organization_id: undefined },
+      },
+    });
     const lean = await call(connection(), "get_organization", { organizationId: "org_1" });
     expect(url().pathname).toBe("/api/v1/organizations/org_1");
     expect(lean).toEqual({
@@ -462,18 +463,20 @@ describe("named reads (H9, H10)", () => {
     const listed = await call(connection(), "list_recurring_charges", { organizationId: "org_1" });
     expect(url().pathname).toBe("/api/v1/recurring-list");
     expect(listed).toEqual({
-      recurringCharges: [{
-        recurringId: "rc_1",
-        amountCents: 1000,
-        currency: "USD",
-        fund: "Missions",
-        term: "monthly",
-        startAt: "2017-06-16T17:01:12.000Z",
-        organizationId: "org_1",
-        organizationName: "Grace Church",
-        accountId: "user_jane",
-        donor: { firstName: "Jane", lastName: "Doe", email: "jane@example.com" },
-      }],
+      recurringCharges: [
+        {
+          recurringId: "rc_1",
+          amountCents: 1000,
+          currency: "USD",
+          fund: "Missions",
+          term: "monthly",
+          startAt: "2017-06-16T17:01:12.000Z",
+          organizationId: "org_1",
+          organizationName: "Grace Church",
+          accountId: "user_jane",
+          donor: { firstName: "Jane", lastName: "Doe", email: "jane@example.com" },
+        },
+      ],
       page: { hasMore: false, nextCursor: null },
     });
 
@@ -497,13 +500,15 @@ describe("named reads (H9, H10)", () => {
     queue({ body: { status: "success", type: "List", data: [account] } });
     const all = await call(connection(), "list_accounts");
     expect(url().pathname).toBe("/api/v1/accounts-list-all");
-    expect(all.accounts).toEqual([{
-      accountId: "user_1",
-      firstName: "Mike",
-      lastName: "Rogers",
-      email: "mike@example.com",
-      createdAt: "2017-02-22T19:47:11.000Z",
-    }]);
+    expect(all.accounts).toEqual([
+      {
+        accountId: "user_1",
+        firstName: "Mike",
+        lastName: "Rogers",
+        email: "mike@example.com",
+        createdAt: "2017-02-22T19:47:11.000Z",
+      },
+    ]);
 
     queue({ body: { status: "success", type: "List", data: [] } });
     await call(connection(), "list_accounts", { scope: "api" });
@@ -596,9 +601,9 @@ describe("escape hatches (H14)", () => {
   });
 
   it("refuses a method outside POST and DELETE before any request", async () => {
-    await expect(
-      call(connection(), "tithely_api_mutate", { method: "PUT", path: "/charges" }),
-    ).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(call(connection(), "tithely_api_mutate", { method: "PUT", path: "/charges" })).rejects.toMatchObject({
+      code: "invalid_args",
+    });
     expect(calls).toHaveLength(0);
   });
 });
@@ -612,16 +617,58 @@ describe("typed failures (H11)", () => {
     retryAfterMs?: number;
     message?: string;
   }> = [
-    { name: "401", response: { status: 401, body: { status: "fail", reason: "Bad keys" } }, code: "auth_required", retryable: false, message: "other environment" },
-    { name: "403", response: { status: 403, body: {} }, code: "provider_permission_denied", retryable: false, message: "does not say which" },
-    { name: "404", response: { status: 404, text: "Not Found" }, code: "connector_call_failed", retryable: false, message: "does not distinguish" },
-    { name: "400", response: { status: 400, body: { status: "fail", reason: "amount is required" } }, code: "invalid_args", retryable: false, message: "amount is required" },
+    {
+      name: "401",
+      response: { status: 401, body: { status: "fail", reason: "Bad keys" } },
+      code: "auth_required",
+      retryable: false,
+      message: "other environment",
+    },
+    {
+      name: "403",
+      response: { status: 403, body: {} },
+      code: "provider_permission_denied",
+      retryable: false,
+      message: "does not say which",
+    },
+    {
+      name: "404",
+      response: { status: 404, text: "Not Found" },
+      code: "connector_call_failed",
+      retryable: false,
+      message: "does not distinguish",
+    },
+    {
+      name: "400",
+      response: { status: 400, body: { status: "fail", reason: "amount is required" } },
+      code: "invalid_args",
+      retryable: false,
+      message: "amount is required",
+    },
     { name: "422", response: { status: 422, body: {} }, code: "invalid_args", retryable: false },
-    { name: "429", response: { status: 429, body: {}, headers: { "Retry-After": "7" } }, code: "rate_limited", retryable: true, retryAfterMs: 7_000 },
+    {
+      name: "429",
+      response: { status: 429, body: {}, headers: { "Retry-After": "7" } },
+      code: "rate_limited",
+      retryable: true,
+      retryAfterMs: 7_000,
+    },
     { name: "503", response: { status: 503, text: "<html>down</html>" }, code: "unavailable", retryable: true },
     { name: "418", response: { status: 418, body: {} }, code: "connector_call_failed", retryable: false },
-    { name: "in-band fail", response: { body: { status: "fail", reason: "There was a problem using that payment method." } }, code: "connector_call_failed", retryable: false, message: "There was a problem using that payment method." },
-    { name: "non-JSON success", response: { text: "<html>login</html>" }, code: "connector_call_failed", retryable: false, message: "not JSON" },
+    {
+      name: "in-band fail",
+      response: { body: { status: "fail", reason: "There was a problem using that payment method." } },
+      code: "connector_call_failed",
+      retryable: false,
+      message: "There was a problem using that payment method.",
+    },
+    {
+      name: "non-JSON success",
+      response: { text: "<html>login</html>" },
+      code: "connector_call_failed",
+      retryable: false,
+      message: "not JSON",
+    },
   ];
 
   it.each(cases)("maps $name", async ({ response, code, retryable, retryAfterMs, message }) => {

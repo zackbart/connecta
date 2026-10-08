@@ -7,11 +7,7 @@ import { failureRecord, logFailure } from "../operator-record.js";
 import { oauthFlowKeys } from "../storage/keys.js";
 import type { ConnectorContext } from "../types.js";
 import { escapeHtml, renderPage, resolveBranding, STATUS_ICONS } from "../branding.js";
-import {
-  oauthCallbackOutcome,
-  providerErrorReason,
-  type OAuthCallbackReason,
-} from "../oauth-callback-outcome.js";
+import { oauthCallbackOutcome, providerErrorReason, type OAuthCallbackReason } from "../oauth-callback-outcome.js";
 import {
   authorizeUiIdentity,
   withSessionCookies,
@@ -104,10 +100,7 @@ function html(
  * turning it into a 500 would hand back exactly the distinguishable response
  * this whole path exists to deny.
  */
-async function equalizeRefusalCost(
-  context: ConnectorContext,
-  state: string | null,
-): Promise<void> {
+async function equalizeRefusalCost(context: ConnectorContext, state: string | null): Promise<void> {
   try {
     await context.storage.get(oauthFlowKeys.flow(await oauthStateDigest(state ?? "")));
   } catch {
@@ -125,17 +118,17 @@ async function equalizeRefusalCost(
  * behind a catalog still cached as unauthorized, or a consumed handoff with no
  * exchange behind it. A caller that hangs up mid-exchange loses only the page.
  */
-export function routeOAuthCallback(
-  context: RouteContext,
-): Effect.Effect<Response | null> {
+export function routeOAuthCallback(context: RouteContext): Effect.Effect<Response | null> {
   if (!context.path.startsWith("/oauth/callback/")) return Effect.succeed(null);
   // Downstream OAuth uses query-mode redirects; form_post is not supported.
-  if (context.request.method !== "GET") return Effect.succeed(new Response(null, {
-    status: 405, headers: { Allow: "GET" },
-  }));
-  return Effect.uninterruptible(
-    Effect.promise(() => finishOAuthCallback(context)),
-  );
+  if (context.request.method !== "GET")
+    return Effect.succeed(
+      new Response(null, {
+        status: 405,
+        headers: { Allow: "GET" },
+      }),
+    );
+  return Effect.uninterruptible(Effect.promise(() => finishOAuthCallback(context)));
 }
 
 /**
@@ -159,9 +152,7 @@ const TOKEN_ERROR_CODES: ReadonlySet<string> = new Set([
 /** ` with OAuth error <code>` for a known code; nothing for anything else. */
 function exchangeErrorCode(err: unknown): string {
   const code = (err as { code?: unknown } | null)?.code;
-  return typeof code === "string" && TOKEN_ERROR_CODES.has(code)
-    ? ` with OAuth error ${code}`
-    : "";
+  return typeof code === "string" && TOKEN_ERROR_CODES.has(code) ? ` with OAuth error ${code}` : "";
 }
 
 /** The provider's own refusal of a duplicate callback, wherever it is wrapped. */
@@ -174,9 +165,7 @@ function claimedByAnotherCallback(err: unknown): boolean {
   return false;
 }
 
-async function finishOAuthCallback(
-  context: RouteContext,
-): Promise<Response> {
+async function finishOAuthCallback(context: RouteContext): Promise<Response> {
   const { path, url, baseUrl, opts } = context;
   const error = url.searchParams.get("error");
   const code = url.searchParams.get("code");
@@ -200,16 +189,29 @@ async function finishOAuthCallback(
   }
   try {
     const expectedPrincipalKey = callbackTarget?.principalKey;
-    const browserIdentity = await authorizeUiIdentity(context.request, baseUrl, opts.config.auth, "OAuth callback", context.runtimeContext, opts.config.identity);
+    const browserIdentity = await authorizeUiIdentity(
+      context.request,
+      baseUrl,
+      opts.config.auth,
+      "OAuth callback",
+      context.runtimeContext,
+      opts.config.identity,
+    );
     if (!browserIdentity.ok) {
-      if (browserIdentity.response.status === 401 && authorizationCredential(context.request).kind !== "absent") return browserIdentity.response;
+      if (browserIdentity.response.status === 401 && authorizationCredential(context.request).kind !== "absent")
+        return browserIdentity.response;
       // A Clerk browser handshake refreshes its session and returns to this
       // exact callback. It grants no identity and exchanges no code yet.
-      if (browserIdentity.response.status === 307 && browserIdentity.response.headers.has("location")) return browserIdentity.response;
+      if (browserIdentity.response.status === 307 && browserIdentity.response.headers.has("location"))
+        return browserIdentity.response;
       return refused();
     }
     if (!expectedPrincipalKey || browserIdentity.principalKey !== expectedPrincipalKey) return refused();
-    try { validateAuthPermissions(browserIdentity, opts.registry); } catch { return refused(); }
+    try {
+      validateAuthPermissions(browserIdentity, opts.registry);
+    } catch {
+      return refused();
+    }
     if (!mayManageConnector(browserIdentity, connector)) return refused();
     // CSRF / login-fixation guard: this route is intentionally public, so verify
     // the `state` matches the flow connecta started BEFORE exchanging the code.
@@ -249,21 +251,23 @@ async function finishOAuthCallback(
     }
     // Error responses are callbacks too: neither their code nor their copy is
     // interpreted until the state and the consent's issuer have been validated.
-    if (["state", "iss", "code", "error"].some(name => url.searchParams.getAll(name).length > 1)) return refused();
+    if (["state", "iss", "code", "error"].some((name) => url.searchParams.getAll(name).length > 1)) return refused();
     try {
       const issuer = url.searchParams.get("iss");
       if (connector.verifyCallbackIssuer) {
-        if (!await connector.verifyCallbackIssuer(issuer, connectorContext)) return refused();
+        if (!(await connector.verifyCallbackIssuer(issuer, connectorContext))) return refused();
       } else if (issuer !== null) {
         // A custom connector with no issuer validator cannot vouch for this response.
         return refused();
       }
-    } catch { return refused(); }
+    } catch {
+      return refused();
+    }
     if (error === null && !code) return refused();
     if (error !== null && !connector.consumeAuthError) return refused();
     {
       try {
-        if (!await opts.registry.consumeOAuthHandoff(id, state, expectedPrincipalKey)) return refused();
+        if (!(await opts.registry.consumeOAuthHandoff(id, state, expectedPrincipalKey))) return refused();
       } catch (err) {
         logFailure(
           opts.config.logger,

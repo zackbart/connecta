@@ -148,12 +148,16 @@ try {
   for (const [name, source] of Object.entries(prototypes)) {
     await writeFile(join(work, `${name}.mjs`), source);
   }
-  await writeFile(join(work, "probe.mjs"), probeSource
-    .replace("__CONNECTA_ENTRY__", JSON.stringify(pathToFileURL(join(root, "dist/index.js")).href))
-    .replaceAll("__EVALUATION_DIR__", work));
-  await writeFile(join(work, "measure.mjs"), measureSource
-    .replace("__ROOT__", JSON.stringify(root))
-    .replace("__WORK__", JSON.stringify(work)));
+  await writeFile(
+    join(work, "probe.mjs"),
+    probeSource
+      .replace("__CONNECTA_ENTRY__", JSON.stringify(pathToFileURL(join(root, "dist/index.js")).href))
+      .replaceAll("__EVALUATION_DIR__", work),
+  );
+  await writeFile(
+    join(work, "measure.mjs"),
+    measureSource.replace("__ROOT__", JSON.stringify(root)).replace("__WORK__", JSON.stringify(work)),
+  );
   execFileSync(process.execPath, [join(work, "probe.mjs")], { encoding: "utf8", timeout: 60_000 });
   execFileSync(process.execPath, [join(work, "measure.mjs")], { encoding: "utf8", timeout: 60_000 });
   const observations = JSON.parse(await readFile(join(work, "results.json"), "utf8"));

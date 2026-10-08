@@ -5,16 +5,32 @@ import { machineAuth } from "../helpers/machine-auth.js";
 import { activityHistory } from "../../src/activity.js";
 import { accessTokens } from "../../src/access-tokens.js";
 import { memoryStorage } from "../../src/storage/memory.js";
-import { createOperatorVisualFixture, VISUAL_NOW, VISUAL_ORIGIN, VISUAL_STATES, VISUAL_TOKEN, type OperatorVisualFixture, type VisualState, VISUAL_VARIANTS, operatorVisualVariant, type VisualVariant } from "../fixtures/operator-visual.js";
+import {
+  createOperatorVisualFixture,
+  VISUAL_NOW,
+  VISUAL_ORIGIN,
+  VISUAL_STATES,
+  VISUAL_TOKEN,
+  type OperatorVisualFixture,
+  type VisualState,
+  VISUAL_VARIANTS,
+  operatorVisualVariant,
+  type VisualVariant,
+} from "../fixtures/operator-visual.js";
 
 test.describe.configure({ mode: "parallel" });
 
 const pages = [
-  ["overview", "/", "Overview"], ["connectors", "/connectors", "Connectors"],
-  ["connector-config", "/connectors/github#config", "GitHub"], ["connector-tools", "/connectors/github#tools", "GitHub"],
-  ["connector-auth", "/connectors/slot#auth", "Empty slot"], ["connector-activity", "/connectors/github#activity", "GitHub"],
+  ["overview", "/", "Overview"],
+  ["connectors", "/connectors", "Connectors"],
+  ["connector-config", "/connectors/github#config", "GitHub"],
+  ["connector-tools", "/connectors/github#tools", "GitHub"],
+  ["connector-auth", "/connectors/slot#auth", "Empty slot"],
+  ["connector-activity", "/connectors/github#activity", "GitHub"],
   ["connector-diagnostics", "/connectors/github#diagnostics", "GitHub"],
-  ["tools", "/tools", "Tools"], ["access", "/access", "Access"], ["tokens", "/tokens", "Access tokens"],
+  ["tools", "/tools", "Tools"],
+  ["access", "/access", "Access"],
+  ["tokens", "/tokens", "Access tokens"],
   ["activity", "/activity", "Activity"],
   ["config", "/config", "Config"],
 ] as const;
@@ -26,63 +42,165 @@ test.beforeAll(async () => {
   for (const state of VISUAL_STATES) fixtures.set(state, await createOperatorVisualFixture(state));
   fixtures.set("empty-detail", await createOperatorVisualFixture("empty", true));
   const storage = memoryStorage();
-  app = createTestConnecta({ connectors: [], publicUrl: VISUAL_ORIGIN, auth: machineAuth(VISUAL_TOKEN), storage, logger: "silent", accessTokens: accessTokens(storage), activity: activityHistory({ store: { record() {}, list: async () => ({ events: [] }) } }) });
-  brandedApp = createTestConnecta({ connectors: [], publicUrl: VISUAL_ORIGIN, auth: machineAuth(VISUAL_TOKEN), logger: "silent", ui: operatorUi({ branding: { productName: "Acme Tools", ownerName: "Acme & Co.", ownerUrl: "https://acme.example", description: "Manage Acme agent connections.", theme: { accent: "#0a7d55", radius: 4 } } }) });
+  app = createTestConnecta({
+    connectors: [],
+    publicUrl: VISUAL_ORIGIN,
+    auth: machineAuth(VISUAL_TOKEN),
+    storage,
+    logger: "silent",
+    accessTokens: accessTokens(storage),
+    activity: activityHistory({ store: { record() {}, list: async () => ({ events: [] }) } }),
+  });
+  brandedApp = createTestConnecta({
+    connectors: [],
+    publicUrl: VISUAL_ORIGIN,
+    auth: machineAuth(VISUAL_TOKEN),
+    logger: "silent",
+    ui: operatorUi({
+      branding: {
+        productName: "Acme Tools",
+        ownerName: "Acme & Co.",
+        ownerUrl: "https://acme.example",
+        description: "Manage Acme agent connections.",
+        theme: { accent: "#0a7d55", radius: 4 },
+      },
+    }),
+  });
 });
-test.afterAll(async () => { await app.close(); await brandedApp.close(); });
+test.afterAll(async () => {
+  await app.close();
+  await brandedApp.close();
+});
 
-async function installFixture(page: Page, name: string, state: VisualState, scheme: string, override?: OperatorVisualFixture, branded = false) {
-  const fixture = override ?? fixtures.get(state === "empty" ? name.startsWith("connector-") ? "empty-detail" : state : state)!;
+async function installFixture(
+  page: Page,
+  name: string,
+  state: VisualState,
+  scheme: string,
+  override?: OperatorVisualFixture,
+  branded = false,
+) {
+  const fixture =
+    override ?? fixtures.get(state === "empty" ? (name.startsWith("connector-") ? "empty-detail" : state) : state)!;
   const collection = ["activity", "connector-activity", "tokens"].includes(name);
   let release!: () => void;
-  const held = new Promise<void>(resolve => { release = resolve; });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   await page.clock.setFixedTime(new Date(VISUAL_NOW));
   await page.addInitScript(`localStorage.setItem("connecta:token", ${JSON.stringify(VISUAL_TOKEN)});
     localStorage.setItem("connecta:scheme", ${JSON.stringify(scheme)});
     window.__csp = []; document.addEventListener("securitypolicyviolation", event => window.__csp.push(event.effectiveDirective));`);
-  await page.route(`${VISUAL_ORIGIN}/**`, async route => {
+  await page.route(`${VISUAL_ORIGIN}/**`, async (route) => {
     const path = new URL(route.request().url()).pathname;
     let json: unknown;
     let target = false;
     if (path === "/ui/data") json = fixture.data;
-    else if (path === "/ui/api/config") { json = fixture.contract; target = !collection; }
-    else if (path.startsWith("/ui/connectors/")) json = fixture.data.connectors.find(c => c.id === path.split("/").pop());
+    else if (path === "/ui/api/config") {
+      json = fixture.contract;
+      target = !collection;
+    } else if (path.startsWith("/ui/connectors/"))
+      json = fixture.data.connectors.find((c) => c.id === path.split("/").pop());
     else if (path === "/health") json = { status: "ok" };
-    else if (path === "/ui/api/activity") { json = fixture.activity; target = name.includes("activity"); }
-    else if (path === "/ui/access-tokens") { json = fixture.tokens; target = name === "tokens"; }
+    else if (path === "/ui/api/activity") {
+      json = fixture.activity;
+      target = name.includes("activity");
+    } else if (path === "/ui/access-tokens") {
+      json = fixture.tokens;
+      target = name === "tokens";
+    }
     if (json !== undefined) {
       if (target && state === "loading") await held;
       if (target && state === "error") return route.fulfill({ status: 503, json: { error: "fixture failure" } });
-      if (state === "restricted" && path === "/ui/access-tokens") return route.fulfill({ status: 403, json: { error: "forbidden" } });
+      if (state === "restricted" && path === "/ui/access-tokens")
+        return route.fulfill({ status: 403, json: { error: "forbidden" } });
       return route.fulfill({ json });
     }
-    const response = await (branded ? brandedApp : app).fetch(new Request(route.request().url(), { headers: route.request().headers() }));
-    return route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body: Buffer.from(await response.arrayBuffer()) });
+    const response = await (branded ? brandedApp : app).fetch(
+      new Request(route.request().url(), { headers: route.request().headers() }),
+    );
+    return route.fulfill({
+      status: response.status,
+      headers: Object.fromEntries(response.headers),
+      body: Buffer.from(await response.arrayBuffer()),
+    });
   });
   return release;
 }
 
 async function ready(page: Page, name: string, state: VisualState) {
   if (state === "loading") {
-    await expect(page.getByText(name.includes("activity") ? "Loading activity…" : name === "tokens" ? "Loading access tokens…" : "Loading configuration…", { exact: true }).first()).toBeVisible();
+    await expect(
+      page
+        .getByText(
+          name.includes("activity")
+            ? "Loading activity…"
+            : name === "tokens"
+              ? "Loading access tokens…"
+              : "Loading configuration…",
+          { exact: true },
+        )
+        .first(),
+    ).toBeVisible();
   } else if (state === "error") {
-    await expect(page.getByText(name.includes("activity") ? "Activity couldn't be loaded" : name === "tokens" ? "Try loading access tokens again" : "Configuration couldn't be loaded", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText(
+        name.includes("activity")
+          ? "Activity couldn't be loaded"
+          : name === "tokens"
+            ? "Try loading access tokens again"
+            : "Configuration couldn't be loaded",
+        { exact: true },
+      ),
+    ).toBeVisible();
   } else if (state === "restricted") {
-    if (name === "tokens") await expect(page.getByText("Token management requires an interactive sign-in and explicit permission.")).toBeVisible();
-    else if (name.includes("activity")) await expect(page.getByText(/Activity.*not available to this session/)).toBeVisible();
-    else if (name === "connector-auth") await expect(page.getByText("Authentication for this connection is managed by your deployment.")).toBeVisible();
+    if (name === "tokens")
+      await expect(
+        page.getByText("Token management requires an interactive sign-in and explicit permission."),
+      ).toBeVisible();
+    else if (name.includes("activity"))
+      await expect(page.getByText(/Activity.*not available to this session/)).toBeVisible();
+    else if (name === "connector-auth")
+      await expect(page.getByText("Authentication for this connection is managed by your deployment.")).toBeVisible();
     else await expect(page.locator("#app")).toBeVisible();
   } else if (name.includes("activity")) {
-    await expect(state === "empty" ? page.getByText("No connector tool calls recorded yet.") : page.locator("#activityList")).toBeVisible();
+    await expect(
+      state === "empty" ? page.getByText("No connector tool calls recorded yet.") : page.locator("#activityList"),
+    ).toBeVisible();
   } else if (name === "tokens") {
-    await expect(state === "empty" ? page.getByText("No access tokens yet. Name the first MCP client above.") : page.getByRole("heading", { name: "Claude desktop", exact: true })).toBeVisible();
+    await expect(
+      state === "empty"
+        ? page.getByText("No access tokens yet. Name the first MCP client above.")
+        : page.getByRole("heading", { name: "Claude desktop", exact: true }),
+    ).toBeVisible();
   } else {
     await expect(page.getByText("Loading configuration…", { exact: true })).toHaveCount(0);
     await expect(page.locator("#app")).toBeVisible();
-    if (name === "access") await expect(state === "empty" ? page.getByText("No access tokens yet. Name the first MCP client above.") : page.getByRole("heading", { name: "Claude desktop", exact: true })).toBeVisible();
+    if (name === "access")
+      await expect(
+        state === "empty"
+          ? page.getByText("No access tokens yet. Name the first MCP client above.")
+          : page.getByRole("heading", { name: "Claude desktop", exact: true }),
+      ).toBeVisible();
   }
   if (!["loading", "error"].includes(state) && !["tokens", "activity", "connector-activity"].includes(name)) {
-    await expect(page.locator(name === "overview" ? "#attentionHeading" : name === "connectors" ? "#connectorLedgerHeading" : name === "config" ? ".snapshot-tree" : name === "access" ? "#poolsHeading" : name.startsWith("connector-") ? ".conn-head" : 'input[aria-label="Filter tools"]').first()).toBeVisible();
+    await expect(
+      page
+        .locator(
+          name === "overview"
+            ? "#attentionHeading"
+            : name === "connectors"
+              ? "#connectorLedgerHeading"
+              : name === "config"
+                ? ".snapshot-tree"
+                : name === "access"
+                  ? "#poolsHeading"
+                  : name.startsWith("connector-")
+                    ? ".conn-head"
+                    : 'input[aria-label="Filter tools"]',
+        )
+        .first(),
+    ).toBeVisible();
   }
   await page.evaluate("document.fonts.ready");
 }
@@ -98,15 +216,23 @@ for (const [name, path, heading] of pages) {
           const href = name === "connector-auth" && state === "empty" ? "/connectors/github#auth" : path;
           await page.goto(VISUAL_ORIGIN + href);
           if (!["loading", "restricted"].includes(state) && !(name.startsWith("connector-") && state === "error")) {
-            await expect(page.getByRole("heading", { name: name === "connector-auth" && state === "empty" ? "GitHub" : heading, exact: true }).first()).toBeVisible();
+            await expect(
+              page
+                .getByRole("heading", {
+                  name: name === "connector-auth" && state === "empty" ? "GitHub" : heading,
+                  exact: true,
+                })
+                .first(),
+            ).toBeVisible();
           }
           await ready(page, name, state);
           expect(await page.evaluate("window.__csp")).toEqual([]);
           // Baselines are Linux Chromium only. macOS still exercises fixture
           // routing and readiness, without manufacturing Darwin goldens.
           await screenshot(page, `${name}-${state}-${scheme}`);
-
-        } finally { release(); }
+        } finally {
+          release();
+        }
       });
     }
   }
@@ -115,7 +241,8 @@ for (const [name, path, heading] of pages) {
 async function screenshot(page: Page, name: string) {
   if (process.platform === "linux") await expect(page).toHaveScreenshot(`${name}.png`, { fullPage: true });
   else test.info().annotations.push({ type: "snapshot", description: "Linux Chromium comparison runs in CI" });
-  if (process.env.OPERATOR_VISUAL_INSPECT) await page.screenshot({ path: test.info().outputPath(`${name}.png`), fullPage: true, animations: "disabled" });
+  if (process.env.OPERATOR_VISUAL_INSPECT)
+    await page.screenshot({ path: test.info().outputPath(`${name}.png`), fullPage: true, animations: "disabled" });
 }
 
 function variantPath(variant: VisualVariant): string {
@@ -127,48 +254,56 @@ function variantPath(variant: VisualVariant): string {
   if (variant === "config-provenance") return "/config";
   return "/";
 }
-for (const variant of VISUAL_VARIANTS) for (const scheme of ["light", "dark"]) {
-  test(`detail: ${variant}, ${scheme}`, async ({ page }) => {
-    const fixture = operatorVisualVariant(fixtures.get("populated")!, variant);
-    const path = variantPath(variant);
-    const name = variant === "legacy-activity" ? "activity" : "detail";
-    const release = await installFixture(page, name, "populated", scheme, fixture, variant === "branded");
-    try {
-      if (variant.startsWith("narrow-")) await page.setViewportSize({ width: 390, height: 844 });
-      if (variant === "narrow-gate") await page.addInitScript('localStorage.removeItem("connecta:token")');
-      await page.goto(VISUAL_ORIGIN + path);
-      if (variant === "narrow-gate") await expect(page.getByLabel("Bearer token")).toBeVisible();
-      else {
-        await expect(page.locator("#app")).toBeVisible();
-        await expect(page.getByText("Loading configuration…", { exact: true })).toHaveCount(0);
-        if (variant === "client-setup") {
-          await page.getByRole("button", { name: "Client setup", exact: true }).click();
-          await expect(page.getByRole("dialog", { name: "Client setup", exact: true })).toBeVisible();
-        } else if (variant === "schema") {
-          await page.getByRole("button", { name: "github.read", exact: true }).click();
-          await expect(page.getByRole("dialog", { name: "github.read", exact: true })).toBeVisible();
-        } else if (variant.startsWith("tools-")) {
-          await page.getByLabel("Tool classification").selectOption(variant === "tools-read" ? "read" : "write");
-          await page.getByLabel("Filter tools", { exact: true }).fill("github.");
-        } else if (variant === "config-provenance") {
-          await page.locator("summary").filter({ hasText: /^calls$/ }).click();
-          await expect(page.locator('code[title="config.limits.calls.maxResultBytes"]')).toBeVisible();
-        } else if (variant === "legacy-activity") await expect(page.locator("#activityList")).toBeVisible();
-        else if (variant.startsWith("drift-")) await expect(page.locator("#drift-github")).toBeVisible();
-        else if (variant.startsWith("oauth-")) await expect(page.getByRole("button", { name: "Disconnect Slack", exact: true })).toBeVisible();
-        else if (variant === "branded") await expect(page.locator("#attentionHeading")).toBeVisible();
+for (const variant of VISUAL_VARIANTS)
+  for (const scheme of ["light", "dark"]) {
+    test(`detail: ${variant}, ${scheme}`, async ({ page }) => {
+      const fixture = operatorVisualVariant(fixtures.get("populated")!, variant);
+      const path = variantPath(variant);
+      const name = variant === "legacy-activity" ? "activity" : "detail";
+      const release = await installFixture(page, name, "populated", scheme, fixture, variant === "branded");
+      try {
+        if (variant.startsWith("narrow-")) await page.setViewportSize({ width: 390, height: 844 });
+        if (variant === "narrow-gate") await page.addInitScript('localStorage.removeItem("connecta:token")');
+        await page.goto(VISUAL_ORIGIN + path);
+        if (variant === "narrow-gate") await expect(page.getByLabel("Bearer token")).toBeVisible();
         else {
-          await expect(page.locator("#credential-slot")).toBeVisible();
-          if (variant === "narrow-auth") {
-            await page.getByRole("button", { name: "Add credential", exact: true }).click();
-            await expect(page.getByRole("textbox", { name: "API key", exact: true })).toBeVisible();
+          await expect(page.locator("#app")).toBeVisible();
+          await expect(page.getByText("Loading configuration…", { exact: true })).toHaveCount(0);
+          if (variant === "client-setup") {
+            await page.getByRole("button", { name: "Client setup", exact: true }).click();
+            await expect(page.getByRole("dialog", { name: "Client setup", exact: true })).toBeVisible();
+          } else if (variant === "schema") {
+            await page.getByRole("button", { name: "github.read", exact: true }).click();
+            await expect(page.getByRole("dialog", { name: "github.read", exact: true })).toBeVisible();
+          } else if (variant.startsWith("tools-")) {
+            await page.getByLabel("Tool classification").selectOption(variant === "tools-read" ? "read" : "write");
+            await page.getByLabel("Filter tools", { exact: true }).fill("github.");
+          } else if (variant === "config-provenance") {
+            await page
+              .locator("summary")
+              .filter({ hasText: /^calls$/ })
+              .click();
+            await expect(page.locator('code[title="config.limits.calls.maxResultBytes"]')).toBeVisible();
+          } else if (variant === "legacy-activity") await expect(page.locator("#activityList")).toBeVisible();
+          else if (variant.startsWith("drift-")) await expect(page.locator("#drift-github")).toBeVisible();
+          else if (variant.startsWith("oauth-"))
+            await expect(page.getByRole("button", { name: "Disconnect Slack", exact: true })).toBeVisible();
+          else if (variant === "branded") await expect(page.locator("#attentionHeading")).toBeVisible();
+          else {
+            await expect(page.locator("#credential-slot")).toBeVisible();
+            if (variant === "narrow-auth") {
+              await page.getByRole("button", { name: "Add credential", exact: true }).click();
+              await expect(page.getByRole("textbox", { name: "API key", exact: true })).toBeVisible();
+            }
           }
         }
+        await page.evaluate("document.fonts.ready");
+        expect(await page.evaluate("window.__csp")).toEqual([]);
+        if (variant.startsWith("narrow-"))
+          expect(await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")).toBe(true);
+        await screenshot(page, `${variant}-${scheme}`);
+      } finally {
+        release();
       }
-      await page.evaluate("document.fonts.ready");
-      expect(await page.evaluate("window.__csp")).toEqual([]);
-      if (variant.startsWith("narrow-")) expect(await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")).toBe(true);
-      await screenshot(page, `${variant}-${scheme}`);
-    } finally { release(); }
-  });
-}
+    });
+  }

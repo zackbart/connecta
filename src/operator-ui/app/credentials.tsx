@@ -1,12 +1,6 @@
 import { useState } from "react";
 import type { UiConnector } from "../model.js";
-import {
-  confirmCopy,
-  credentialProblemCopy,
-  credentialStateLabel,
-  formatDate,
-  type Notice,
-} from "../view.js";
+import { confirmCopy, credentialProblemCopy, credentialStateLabel, formatDate, type Notice } from "../view.js";
 import {
   askConfirm,
   cancelConfirm,
@@ -20,15 +14,7 @@ import { ConfirmBar, FixPrompt, focusableId, NoticeLine } from "./parts.js";
 
 type Credential = NonNullable<UiConnector["credential"]>;
 
-function CredentialForm({
-  connector,
-  credential,
-  busy,
-}: {
-  connector: string;
-  credential: Credential;
-  busy: boolean;
-}) {
+function CredentialForm({ connector, credential, busy }: { connector: string; credential: Credential; busy: boolean }) {
   const fields = credential.fields ?? [];
   const [values, setValues] = useState<Record<string, string>>({});
   const single = fields.length === 0;
@@ -43,10 +29,7 @@ function CredentialForm({
     for (const field of fields) {
       const value = (values[field.name] ?? "").trim();
       if (!value) {
-        return refuseCredential(
-          connector,
-          "Complete every credential field before saving.",
-        );
+        return refuseCredential(connector, "Complete every credential field before saving.");
       }
       entries[field.name] = value;
     }
@@ -68,9 +51,7 @@ function CredentialForm({
             autoCapitalize="none"
             spellCheck={false}
             value={values.value ?? ""}
-            onInput={(event) =>
-              setValues({ value: event.currentTarget.value })
-            }
+            onInput={(event) => setValues({ value: event.currentTarget.value })}
           />
         </>
       ) : (
@@ -84,11 +65,7 @@ function CredentialForm({
                   id={id}
                   type={field.inputType || "password"}
                   placeholder={field.placeholder || field.label}
-                  autoComplete={
-                    (field.inputType ?? "password") === "password"
-                      ? "new-password"
-                      : "off"
-                  }
+                  autoComplete={(field.inputType ?? "password") === "password" ? "new-password" : "off"}
                   autoCapitalize="none"
                   spellCheck={false}
                   value={values[field.name] ?? ""}
@@ -108,12 +85,7 @@ function CredentialForm({
         <button className="btn primary" type="button" disabled={busy} onClick={submit}>
           {busy ? "Saving…" : "Save"}
         </button>
-        <button
-          className="btn quiet"
-          type="button"
-          disabled={busy}
-          onClick={() => editCredential(null)}
-        >
+        <button className="btn quiet" type="button" disabled={busy} onClick={() => editCredential(null)}>
           Cancel
         </button>
       </div>
@@ -142,18 +114,12 @@ export function CredentialCard({
   const configured = Boolean(credential.configured);
   const removable = configured || Boolean(credential.removable);
   return (
-    <section
-      className="subcard"
-      id={`credential-${connector.id}`}
-      aria-labelledby={`credential-title-${connector.id}`}
-    >
+    <section className="subcard" id={`credential-${connector.id}`} aria-labelledby={`credential-title-${connector.id}`}>
       <div className="subcard-head">
         <h3 id={`credential-title-${connector.id}`}>{credential.label}</h3>
         <span className="meta">{credentialStateLabel(credential)}</span>
       </div>
-      {credential.description ? (
-        <p className="meta">{credential.description}</p>
-      ) : null}
+      {credential.description ? <p className="meta">{credential.description}</p> : null}
       {credential.fields?.length ? (
         <div className="credential-field-summary">
           {credential.fields.map((field) => (
@@ -162,9 +128,7 @@ export function CredentialCard({
               <span className="meta">
                 {field.configured
                   ? `configured · ••••${field.lastFour ?? ""}${
-                      field.updatedAt
-                        ? ` · updated ${formatDate(field.updatedAt)}`
-                        : ""
+                      field.updatedAt ? ` · updated ${formatDate(field.updatedAt)}` : ""
                     }`
                   : "not configured"}
               </span>
@@ -174,21 +138,13 @@ export function CredentialCard({
       ) : null}
       {/* The payload's error text can name a vault failure; the page says a
           fixed sentence keyed by the problem instead. */}
-      {credential.error ? (
-        <p className="msg">{credentialProblemCopy(credential.problem)}</p>
-      ) : null}
+      {credential.error ? <p className="msg">{credentialProblemCopy(credential.problem)}</p> : null}
       {credential.error && credential.problem ? (
-        <FixPrompt
-          kind={credential.problem}
-          connectorId={connector.id}
-          name={connector.title || connector.id}
-        />
+        <FixPrompt kind={credential.problem} connectorId={connector.id} name={connector.title || connector.id} />
       ) : null}
       {/* Leftover stored fields are not an error — the credential still works,
           so this stays muted copy rather than the msg block a failure earns. */}
-      {credential.notice ? (
-        <p className="meta">{credential.notice}</p>
-      ) : null}
+      {credential.notice ? <p className="meta">{credential.notice}</p> : null}
       <div className="actions">
         <button
           className={removable ? "btn" : "btn primary"}
@@ -200,12 +156,7 @@ export function CredentialCard({
           {removable ? "Replace" : "Add credential"}
         </button>
         {configured && credential.testable ? (
-          <button
-            className="btn"
-            type="button"
-            disabled={busy}
-            onClick={() => void testCredential(connector.id)}
-          >
+          <button className="btn" type="button" disabled={busy} onClick={() => void testCredential(connector.id)}>
             {busy ? "Working…" : "Test"}
           </button>
         ) : null}
@@ -227,19 +178,11 @@ export function CredentialCard({
           {...confirmCopy("credential_remove", name)}
           onConfirm={() => void removeCredential(connector.id)}
           onCancel={() =>
-            cancelConfirm(
-              focusableId(`remove-credential-${connector.id}`, `conn-toggle-${connector.id}`),
-            )
+            cancelConfirm(focusableId(`remove-credential-${connector.id}`, `conn-toggle-${connector.id}`))
           }
         />
       ) : null}
-      {editing ? (
-        <CredentialForm
-          connector={connector.id}
-          credential={credential}
-          busy={busy}
-        />
-      ) : null}
+      {editing ? <CredentialForm connector={connector.id} credential={credential} busy={busy} /> : null}
       <NoticeLine id={`credentialNotice-${connector.id}`} notice={notice} />
     </section>
   );

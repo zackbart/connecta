@@ -19,16 +19,44 @@ const coverage = JSON.parse(readFileSync(new URL("../spec/coverage.json", import
 // extensions, linked in coverage.sources. Update with a spec revision, not just
 // when deleting an inconvenient row. Deprecated features remain explicit.
 const FEATURES = [
-  "json-rpc", "version-negotiation", "request-metadata", "stateless-requests",
-  "icons", "server-discovery", "streamable-http", "stdio", "authorization",
-  "authorization-server-discovery", "client-registration", "authorization-security",
-  "tools-list", "tools-call", "tool-annotations", "tool-input-schema",
-  "tool-output-schema", "tool-content", "resources", "prompts", "elicitation",
-  "multi-round-trip-requests", "subscriptions", "cancellation", "progress",
-  "caching", "pagination", "completion", "json-schema", "trace-context",
-  "sampling", "roots", "logging", "legacy-lifecycle",
-  "io.modelcontextprotocol/ui", "io.modelcontextprotocol/skills",
-  "io.modelcontextprotocol/tasks", "io.modelcontextprotocol/oauth-client-credentials",
+  "json-rpc",
+  "version-negotiation",
+  "request-metadata",
+  "stateless-requests",
+  "icons",
+  "server-discovery",
+  "streamable-http",
+  "stdio",
+  "authorization",
+  "authorization-server-discovery",
+  "client-registration",
+  "authorization-security",
+  "tools-list",
+  "tools-call",
+  "tool-annotations",
+  "tool-input-schema",
+  "tool-output-schema",
+  "tool-content",
+  "resources",
+  "prompts",
+  "elicitation",
+  "multi-round-trip-requests",
+  "subscriptions",
+  "cancellation",
+  "progress",
+  "caching",
+  "pagination",
+  "completion",
+  "json-schema",
+  "trace-context",
+  "sampling",
+  "roots",
+  "logging",
+  "legacy-lifecycle",
+  "io.modelcontextprotocol/ui",
+  "io.modelcontextprotocol/skills",
+  "io.modelcontextprotocol/tasks",
+  "io.modelcontextprotocol/oauth-client-credentials",
   "io.modelcontextprotocol/enterprise-managed-authorization",
 ];
 
@@ -46,8 +74,9 @@ describe("MCP specification coverage", () => {
       if (["supported", "partial"].includes(feature.status)) {
         expect(feature.tests?.length ?? 0, feature.id).toBeGreaterThan(0);
       } else {
-        expect(feature.issue ?? feature.decision, feature.id)
-          .toMatch(/^https:\/\/github\.com\/zackbart\/connecta\/(?:issues|pull)\/\d+(?:#.*)?$/);
+        expect(feature.issue ?? feature.decision, feature.id).toMatch(
+          /^https:\/\/github\.com\/zackbart\/connecta\/(?:issues|pull)\/\d+(?:#.*)?$/,
+        );
       }
       // The end-of-run reporter checks these against passing runner cases.
       for (const reference of feature.tests ?? []) {

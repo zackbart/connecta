@@ -1,9 +1,30 @@
 import { useLocation } from "@tanstack/react-router";
 import type { UiConnector } from "../model.js";
-import { confirmCopy, connectorLoadFailureCopy, driftCounts, driftState, driftSummary, formatDate, permissionLabel, registrationPathLabel, problemCopy, problemTone, safeHttpHref, type OperatorState } from "../view.js";
+import {
+  confirmCopy,
+  connectorLoadFailureCopy,
+  driftCounts,
+  driftState,
+  driftSummary,
+  formatDate,
+  permissionLabel,
+  registrationPathLabel,
+  problemCopy,
+  problemTone,
+  safeHttpHref,
+  type OperatorState,
+} from "../view.js";
 import { productName } from "./config.js";
 import { CredentialCard } from "./credentials.js";
-import { ConfirmBar, FixPrompt, FixPromptButton, FixPromptPreview, NoticeLine, StateBlock, focusableId } from "./parts.js";
+import {
+  ConfirmBar,
+  FixPrompt,
+  FixPromptButton,
+  FixPromptPreview,
+  NoticeLine,
+  StateBlock,
+  focusableId,
+} from "./parts.js";
 import { askConfirm, cancelConfirm, disconnectOAuth, refreshConnector, startOAuth } from "./store.js";
 
 const DRIFT_HEADING: Record<ReturnType<typeof driftState>, string> = {
@@ -25,32 +46,24 @@ function DriftPanel({ connector }: { connector: UiConnector }) {
   const state = driftState(drift);
   return (
     <>
-    {/* Kept outside the counted panel, so the panel stays counts only. */}
-    <div
-      id={`drift-${connector.id}`}
-      className={`connector-drift ${state}`}
-      data-drift={state}
-    >
-      <p className="cap">{DRIFT_HEADING[state]}</p>
-      <p className="meta">{driftSummary(drift)}</p>
-      {state === "unavailable" ? null : (
-        <ul className="drift-counts">
-          {driftCounts(drift).map(({ key, label, count }) => (
-            <li key={key} className={count > 0 ? "drift-count flagged" : "drift-count"}>
-              <span className="drift-count-value">{count}</span>
-              <span className="drift-count-label">{label}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-    {state === "warning" ? (
-      <FixPrompt
-        kind="catalog_drift"
-        connectorId={connector.id}
-        name={connector.title || connector.id}
-      />
-    ) : null}
+      {/* Kept outside the counted panel, so the panel stays counts only. */}
+      <div id={`drift-${connector.id}`} className={`connector-drift ${state}`} data-drift={state}>
+        <p className="cap">{DRIFT_HEADING[state]}</p>
+        <p className="meta">{driftSummary(drift)}</p>
+        {state === "unavailable" ? null : (
+          <ul className="drift-counts">
+            {driftCounts(drift).map(({ key, label, count }) => (
+              <li key={key} className={count > 0 ? "drift-count flagged" : "drift-count"}>
+                <span className="drift-count-value">{count}</span>
+                <span className="drift-count-label">{label}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      {state === "warning" ? (
+        <FixPrompt kind="catalog_drift" connectorId={connector.id} name={connector.title || connector.id} />
+      ) : null}
     </>
   );
 }
@@ -74,8 +87,13 @@ function AuthActions({
   if (connector.status === "loading") return null;
   if (handoff && manage && connector.oauth) {
     const target = new URL(`/connect/${encodeURIComponent(id)}`, window.location.origin);
-    target.searchParams.set("h", handoff); target.searchParams.set("start", "1");
-    return <a className="btn primary" href={target.href} target="_blank" rel="noopener noreferrer">Continue requested authorization</a>;
+    target.searchParams.set("h", handoff);
+    target.searchParams.set("start", "1");
+    return (
+      <a className="btn primary" href={target.href} target="_blank" rel="noopener noreferrer">
+        Continue requested authorization
+      </a>
+    );
   }
   // No lifecycle hooks, or no right to use them: a pending link is still the
   // one thing this identity can do.
@@ -90,13 +108,7 @@ function AuthActions({
   // it returned is the action.
   if (state.oauthBlocked === id && authorization) {
     return (
-      <a
-        id={`authorize-${id}`}
-        className="btn primary"
-        href={authorization}
-        target="_blank"
-        rel="noopener noreferrer"
-      >
+      <a id={`authorize-${id}`} className="btn primary" href={authorization} target="_blank" rel="noopener noreferrer">
         Open authorization page
       </a>
     );
@@ -151,30 +163,117 @@ export function ConnectorAuth({ connector, state }: { connector: UiConnector; st
   const oauthConfirm = confirming && confirming.action !== "credential_remove" ? confirming : null;
   const local = state.connectorFailures[id];
   const problem = !local && connector.status !== "loading" ? problemCopy(connector.problem) : null;
-  return <div className="collection" data-connector={id}>
-    {connector.registrationPath ? <p className="meta">OAuth client: {registrationPathLabel(connector.registrationPath)}</p> : null}
-    {connector.status === "loading" ? <StateBlock>Loading authentication details…</StateBlock> : null}
-    {problem && connector.problem ? <p className={problemTone(connector.problem) === "warn" ? "msg warn" : "msg"} data-problem={connector.problem}>{problem}</p> : null}
-    {local ? <p className="msg warn" data-load-failure={local}>{connectorLoadFailureCopy(local, productName)}</p> : null}
-    <p className="meta">{permissionLabel(connector)}</p>
-    <div className="actions">{local ? null : <AuthActions connector={connector} name={name} manage={manage} state={state} />}<button className={local ? "btn primary" : "btn quiet"} type="button" aria-label={`Refresh ${name}`} disabled={connector.status === "loading"} onClick={() => void refreshConnector(id)}>Refresh</button></div>
-    {oauthConfirm ? <ConfirmBar id={id} {...confirmCopy(oauthConfirm.action, name)} onConfirm={() => { if (oauthConfirm.action === "oauth_restart") void startOAuth(id, "restart"); else void disconnectOAuth(id); }} onCancel={() => cancelConfirm(focusableId(oauthConfirm.action === "oauth_restart" ? `reconnect-${id}` : `disconnect-${id}`, `auth-${id}`))} /> : null}
-    <NoticeLine id={`oauthNotice-${id}`} notice={state.oauthNoticeFor === id ? state.oauthNotice : null} />
-    {connector.credential ? <CredentialCard connector={connector} credential={connector.credential} editing={state.credentialEditing === id} busy={state.credentialBusy === id} confirming={confirming?.action === "credential_remove"} notice={state.credentialNoticeFor === id ? state.credentialNotice : null} /> : <p className="meta">No operator-managed credential slot is visible. Credentials configured in code stay in the deployment.</p>}
-  </div>;
+  return (
+    <div className="collection" data-connector={id}>
+      {connector.registrationPath ? (
+        <p className="meta">OAuth client: {registrationPathLabel(connector.registrationPath)}</p>
+      ) : null}
+      {connector.status === "loading" ? <StateBlock>Loading authentication details…</StateBlock> : null}
+      {problem && connector.problem ? (
+        <p className={problemTone(connector.problem) === "warn" ? "msg warn" : "msg"} data-problem={connector.problem}>
+          {problem}
+        </p>
+      ) : null}
+      {local ? (
+        <p className="msg warn" data-load-failure={local}>
+          {connectorLoadFailureCopy(local, productName)}
+        </p>
+      ) : null}
+      <p className="meta">{permissionLabel(connector)}</p>
+      <div className="actions">
+        {local ? null : <AuthActions connector={connector} name={name} manage={manage} state={state} />}
+        <button
+          className={local ? "btn primary" : "btn quiet"}
+          type="button"
+          aria-label={`Refresh ${name}`}
+          disabled={connector.status === "loading"}
+          onClick={() => void refreshConnector(id)}
+        >
+          Refresh
+        </button>
+      </div>
+      {oauthConfirm ? (
+        <ConfirmBar
+          id={id}
+          {...confirmCopy(oauthConfirm.action, name)}
+          onConfirm={() => {
+            if (oauthConfirm.action === "oauth_restart") void startOAuth(id, "restart");
+            else void disconnectOAuth(id);
+          }}
+          onCancel={() =>
+            cancelConfirm(
+              focusableId(
+                oauthConfirm.action === "oauth_restart" ? `reconnect-${id}` : `disconnect-${id}`,
+                `auth-${id}`,
+              ),
+            )
+          }
+        />
+      ) : null}
+      <NoticeLine id={`oauthNotice-${id}`} notice={state.oauthNoticeFor === id ? state.oauthNotice : null} />
+      {connector.credential ? (
+        <CredentialCard
+          connector={connector}
+          credential={connector.credential}
+          editing={state.credentialEditing === id}
+          busy={state.credentialBusy === id}
+          confirming={confirming?.action === "credential_remove"}
+          notice={state.credentialNoticeFor === id ? state.credentialNotice : null}
+        />
+      ) : (
+        <p className="meta">
+          No operator-managed credential slot is visible. Credentials configured in code stay in the deployment.
+        </p>
+      )}
+    </div>
+  );
 }
 
 export function ConnectorDiagnostics({ connector, state }: { connector: UiConnector; state: OperatorState }) {
   const problem = problemCopy(connector.problem);
   const failure = state.connectorFailures[connector.id];
   const fixKind = connector.problem && problemTone(connector.problem) === "danger" ? connector.problem : null;
-  return <div className="collection">
-    {problem ? <p className={connector.problem && problemTone(connector.problem) === "warn" ? "msg warn" : "msg"} data-problem={connector.problem}>{problem}</p> : null}
-    {failure ? <p className="msg warn" data-load-failure={failure}>{connectorLoadFailureCopy(failure, productName)}</p> : null}
-    <div className="actions"><button className="btn" type="button" aria-label={`Refresh ${connector.title || connector.id}`} disabled={connector.status === "loading"} onClick={() => void refreshConnector(connector.id)}>Refresh diagnostics</button>{fixKind ? <FixPromptButton kind={fixKind} connectorId={connector.id} name={connector.title || connector.id} /> : null}</div>
-    {fixKind ? <FixPromptPreview kind={fixKind} connectorId={connector.id} standalone /> : null}
-    <DriftPanel connector={connector} />
-    {connector.resourceTemplateRefusals?.map(code => <p className="meta" key={code}>Resource dispatch refusal: {code}</p>)}
-    {connector.catalogAccess ? <p className="meta">Catalog cache {connector.catalogAccess.state} · {formatDate(connector.catalogAccess.observedAt)}</p> : null}
-  </div>;
+  return (
+    <div className="collection">
+      {problem ? (
+        <p
+          className={connector.problem && problemTone(connector.problem) === "warn" ? "msg warn" : "msg"}
+          data-problem={connector.problem}
+        >
+          {problem}
+        </p>
+      ) : null}
+      {failure ? (
+        <p className="msg warn" data-load-failure={failure}>
+          {connectorLoadFailureCopy(failure, productName)}
+        </p>
+      ) : null}
+      <div className="actions">
+        <button
+          className="btn"
+          type="button"
+          aria-label={`Refresh ${connector.title || connector.id}`}
+          disabled={connector.status === "loading"}
+          onClick={() => void refreshConnector(connector.id)}
+        >
+          Refresh diagnostics
+        </button>
+        {fixKind ? (
+          <FixPromptButton kind={fixKind} connectorId={connector.id} name={connector.title || connector.id} />
+        ) : null}
+      </div>
+      {fixKind ? <FixPromptPreview kind={fixKind} connectorId={connector.id} standalone /> : null}
+      <DriftPanel connector={connector} />
+      {connector.resourceTemplateRefusals?.map((code) => (
+        <p className="meta" key={code}>
+          Resource dispatch refusal: {code}
+        </p>
+      ))}
+      {connector.catalogAccess ? (
+        <p className="meta">
+          Catalog cache {connector.catalogAccess.state} · {formatDate(connector.catalogAccess.observedAt)}
+        </p>
+      ) : null}
+    </div>
+  );
 }

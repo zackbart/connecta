@@ -11,24 +11,9 @@ import { bindActivityRequest } from "../activity-request.js";
 import { resolveDiscoveryConcurrency } from "../concurrency.js";
 import type { DeferredWork } from "../connector-scope.js";
 import type { CredentialVault } from "../credential-contract.js";
-import {
-  credentialTestRule,
-  describeUndeclaredCredentialFields,
-  storedCredentialShape,
-} from "../credential-rules.js";
-import type {
-  CredentialManagementCapability,
-  UiConnector,
-  UiData,
-  UiTool,
-} from "../operator-ui/model.js";
-import {
-  failureRecord,
-  failureStatus,
-  logFailure,
-  recordedToolName,
-  statusFailure,
-} from "../operator-record.js";
+import { credentialTestRule, describeUndeclaredCredentialFields, storedCredentialShape } from "../credential-rules.js";
+import type { CredentialManagementCapability, UiConnector, UiData, UiTool } from "../operator-ui/model.js";
+import { failureRecord, failureStatus, logFailure, recordedToolName, statusFailure } from "../operator-record.js";
 import type { RegistryView } from "../registry.js";
 import { closeScope } from "../runtime/connector-scope.js";
 import { withDeadlineEffect } from "../runtime/run.js";
@@ -65,11 +50,7 @@ function attempt<A>(operation: () => Promise<A>): Effect.Effect<A, unknown> {
   return Effect.tryPromise({ try: operation, catch: (error) => error });
 }
 
-export function uiData(
-  registry: RegistryView,
-  baseUrl: string,
-  options: UiDataOptions,
-): Effect.Effect<UiData> {
+export function uiData(registry: RegistryView, baseUrl: string, options: UiDataOptions): Effect.Effect<UiData> {
   return Effect.suspend(() => {
     const requestScope = {};
     if (options.activityContext) bindActivityRequest(requestScope, options.activityContext);
@@ -83,11 +64,7 @@ export function uiData(
      * `status()` can quote a downstream error body, which can quote the
      * secret it just rejected (INV-6). An `ok` status is simply dropped.
      */
-    const logStatus = (
-      id: string,
-      state: ConnectorStatus["state"] | "failed",
-      failure: unknown,
-    ) => {
+    const logStatus = (id: string, state: ConnectorStatus["state"] | "failed", failure: unknown) => {
       if (state === "ok") return;
       const logger = registry.contextFor(id, baseUrl, requestScope).logger;
       logFailure(
@@ -101,11 +78,7 @@ export function uiData(
     // Status first, then the catalog only when status is ok. A failed status
     // read is an error status, not a failed row: the row still reports the
     // connector's credential.
-    const observe = (
-      c: Connector,
-      drift: string | undefined,
-      signal: AbortSignal,
-    ): Effect.Effect<Observed> => {
+    const observe = (c: Connector, drift: string | undefined, signal: AbortSignal): Effect.Effect<Observed> => {
       if (drift) {
         return Effect.succeed({
           status: { state: "auth_required", message: drift },
@@ -115,7 +88,10 @@ export function uiData(
       }
       return Effect.gen(function* () {
         const status = yield* attempt(() =>
-          registry.statusFor(c.id, baseUrl, requestScope, { signal, ...(options.defer ? { defer: options.defer } : {}) }),
+          registry.statusFor(c.id, baseUrl, requestScope, {
+            signal,
+            ...(options.defer ? { defer: options.defer } : {}),
+          }),
         );
         if (status.state !== "ok" || signal.aborted) {
           return { status, tools: [], catalogFailed: false };
@@ -125,23 +101,22 @@ export function uiData(
         // A name outside MCP's tool-name grammar is withheld here as in every
         // record (INV-6), and so is the address built from it.
         return yield* attempt(async () =>
-          (await registry.getTools(c.id, baseUrl, requestScope, { signal, ...(options.defer ? { defer: options.defer } : {}) })).map(
-            (t): UiTool => ({
-              name: recordedToolName(t),
-              address: `${c.id}.${recordedToolName(t)}`,
-              ...(t.description ? { description: t.description } : {}),
-              safety: uiToolSafety(
-                t,
-              ),
-            }),
-          ),
+          (
+            await registry.getTools(c.id, baseUrl, requestScope, {
+              signal,
+              ...(options.defer ? { defer: options.defer } : {}),
+            })
+          ).map((t): UiTool => ({
+            name: recordedToolName(t),
+            address: `${c.id}.${recordedToolName(t)}`,
+            ...(t.description ? { description: t.description } : {}),
+            safety: uiToolSafety(t),
+          })),
         ).pipe(
           Effect.map((tools) => ({ status, tools, catalogFailed: false })),
           // The registry owns the failed catalog observation; the page only
           // needs to know there was one.
-          Effect.catch(() =>
-            Effect.succeed({ status, tools: [], catalogFailed: !signal.aborted }),
-          ),
+          Effect.catch(() => Effect.succeed({ status, tools: [], catalogFailed: !signal.aborted })),
         );
       }).pipe(
         Effect.catch((error) =>
@@ -156,21 +131,16 @@ export function uiData(
 
     // The credential card, for someone who may manage this connector's auth.
     // Never fails: a vault that cannot be read is the card's own error.
-    const credentialFor = (
-      c: Connector,
-    ): Effect.Effect<UiConnector["credential"]> => {
+    const credentialFor = (c: Connector): Effect.Effect<UiConnector["credential"]> => {
       const mayManageAuth =
-        options.mayManage?.(c.id) ??
-        (c.authScope === "personal" ? Boolean(owner) : options.oauthManagement);
+        options.mayManage?.(c.id) ?? (c.authScope === "personal" ? Boolean(owner) : options.oauthManagement);
       const declared = c.credential;
       if (!declared || !vault || !mayManageAuth) return Effect.succeed(undefined);
       // One rule, shared with the test route: only the hook matching the
       // declared credential shape can run, so the button is offered only
       // where a click can succeed (src/credentials.ts).
       const testRule = credentialTestRule(c);
-      const credentialFields = (
-        metadata?: Awaited<ReturnType<CredentialVault["metadata"]>>,
-      ) =>
+      const credentialFields = (metadata?: Awaited<ReturnType<CredentialVault["metadata"]>>) =>
         declared.fields?.map((field) => {
           const fieldMetadata = metadata?.fields?.[field.name];
           return {
@@ -194,10 +164,7 @@ export function uiData(
         ...(declared.placeholder ? { placeholder: declared.placeholder } : {}),
       };
       return attempt(async (): Promise<UiConnector["credential"]> => {
-        const metadata = await vault.metadata(
-          c.id,
-          c.authScope === "personal" ? owner : undefined,
-        );
+        const metadata = await vault.metadata(c.id, c.authScope === "personal" ? owner : undefined);
         const fields = credentialFields(metadata);
         const shape = storedCredentialShape(declared, metadata?.fields ?? null);
         return {
@@ -205,13 +172,9 @@ export function uiData(
           ...(fields?.length ? { fields } : {}),
           configured: shape.state === "valid",
           removable: Boolean(metadata),
-          ...(metadata
-            ? { lastFour: metadata.lastFour, updatedAt: metadata.updatedAt }
-            : {}),
+          ...(metadata ? { lastFour: metadata.lastFour, updatedAt: metadata.updatedAt } : {}),
           testable: testRule.mode !== null && shape.state !== "mismatch",
-          ...(shape.state === "mismatch"
-            ? { error: shape.message, problem: "credential_mismatch" as const }
-            : {}),
+          ...(shape.state === "mismatch" ? { error: shape.message, problem: "credential_mismatch" as const } : {}),
           // A dropped field leaves its secret in the vault, and the field
           // list below only renders fields the connector still declares —
           // so without this line there is nowhere an operator could see it.
@@ -298,13 +261,7 @@ export function uiData(
         Effect.catchDefect((defect) => Effect.fail(defect)),
         Effect.catch((error) => unavailable(c, error)),
         Effect.ensuring(
-          Effect.suspend(() =>
-            closeScope(
-              c,
-              registry.contextFor(c.id, baseUrl, requestScope),
-              options.defer,
-            ),
-          ),
+          Effect.suspend(() => closeScope(c, registry.contextFor(c.id, baseUrl, requestScope), options.defer)),
         ),
       );
 

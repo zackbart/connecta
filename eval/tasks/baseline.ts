@@ -89,7 +89,7 @@ async function pageAll(call: ReferenceContext["call"], truncated: string): Promi
 }
 
 function resultPagingUses(trace: Parameters<typeof uses>[0]) {
-  return uses(trace, "execute_code").filter(use => String(use.input.code).includes("connecta.result("));
+  return uses(trace, "execute_code").filter((use) => String(use.input.code).includes("connecta.result("));
 }
 
 // ------------------------------------------------------------------ the tasks
@@ -173,20 +173,46 @@ function staleCloseChecks(world: World): Check[] {
     (call) =>
       call.kind === "write" &&
       call.service === "tracker" &&
-      !(STALE.includes(String(call.args.id ?? "").toUpperCase()) &&
-        (call.tool === "close_issue" || call.tool === "add_comment")),
+      !(
+        STALE.includes(String(call.args.id ?? "").toUpperCase()) &&
+        (call.tool === "close_issue" || call.tool === "add_comment")
+      ),
   );
   const { checks, text } = singlePost(world, "eng");
-  const mentioned = [...new Set((text.toUpperCase().match(/\b(?:WEB|API|MOB)-\d+\b/g) ?? []))].sort();
+  const mentioned = [...new Set(text.toUpperCase().match(/\b(?:WEB|API|MOB)-\d+\b/g) ?? [])].sort();
   const lastClose = Math.max(0, ...closeCalls.map((call) => call.seq));
   const post = world.ledger.calls.find((call) => call.tool === "post_message" && call.args.channel !== undefined);
   return [
-    check("closed-exactly-stale", `closed exactly ${STALE.join(", ")}`, JSON.stringify(closed) === JSON.stringify(STALE), `closed: ${closed.join(", ") || "none"}`),
-    check("each-write-once", "every close_issue landed exactly once", repeated.length === 0, repeated.length ? repeated.map(([id, count]) => `${id}×${count}`).join(", ") : undefined),
-    check("no-other-tracker-writes", "no tracker writes outside the stale set", strayWrites.length === 0, strayWrites.map((call) => `${call.tool} ${JSON.stringify(call.args)}`).join(", ") || undefined),
+    check(
+      "closed-exactly-stale",
+      `closed exactly ${STALE.join(", ")}`,
+      JSON.stringify(closed) === JSON.stringify(STALE),
+      `closed: ${closed.join(", ") || "none"}`,
+    ),
+    check(
+      "each-write-once",
+      "every close_issue landed exactly once",
+      repeated.length === 0,
+      repeated.length ? repeated.map(([id, count]) => `${id}×${count}`).join(", ") : undefined,
+    ),
+    check(
+      "no-other-tracker-writes",
+      "no tracker writes outside the stale set",
+      strayWrites.length === 0,
+      strayWrites.map((call) => `${call.tool} ${JSON.stringify(call.args)}`).join(", ") || undefined,
+    ),
     ...checks,
-    check("summary-lists-closed", "the summary lists exactly the closed keys", JSON.stringify(mentioned) === JSON.stringify(STALE), `mentioned: ${mentioned.join(", ") || "none"}`),
-    check("summary-after-writes", "the summary was posted after the last close", post !== undefined && post.seq > lastClose),
+    check(
+      "summary-lists-closed",
+      "the summary lists exactly the closed keys",
+      JSON.stringify(mentioned) === JSON.stringify(STALE),
+      `mentioned: ${mentioned.join(", ") || "none"}`,
+    ),
+    check(
+      "summary-after-writes",
+      "the summary was posted after the last close",
+      post !== undefined && post.seq > lastClose,
+    ),
   ];
 }
 
@@ -239,9 +265,7 @@ const authRequiredRecovery: ActiveTask = {
   followUps: [
     {
       before: async ({ trace, deployment, world, note }) => {
-        const asked = uses(trace, "authorize_connector").some(
-          (use) => use.input.connector === "billing",
-        );
+        const asked = uses(trace, "authorize_connector").some((use) => use.input.connector === "billing");
         if (!asked) {
           note("Operator: nothing to act on — authorize_connector was never called for billing. Conversation ends.");
           return false;
@@ -261,11 +285,31 @@ const authRequiredRecovery: ActiveTask = {
     const { checks, text } = singlePost(world, "finance");
     const amount = normalizeMoney(text);
     return [
-      check("handed-off", "called authorize_connector for billing", authorize.length > 0, `${authorize.length} call(s)`),
-      check("handed-off-once", "called authorize_connector for billing only once", authorize.length === 1, `${authorize.length} call(s)`, true),
-      check("retried-read", "read Northwind Traders' invoices after the credential was saved", invoices.some((call) => call.args.customerId === "cus_N7")),
+      check(
+        "handed-off",
+        "called authorize_connector for billing",
+        authorize.length > 0,
+        `${authorize.length} call(s)`,
+      ),
+      check(
+        "handed-off-once",
+        "called authorize_connector for billing only once",
+        authorize.length === 1,
+        `${authorize.length} call(s)`,
+        true,
+      ),
+      check(
+        "retried-read",
+        "read Northwind Traders' invoices after the credential was saved",
+        invoices.some((call) => call.args.customerId === "cus_N7"),
+      ),
       ...checks,
-      check("correct-total", "the post states $5,650.50", /5650\.50?\b/.test(amount) && !/9750/.test(amount), quote(text)),
+      check(
+        "correct-total",
+        "the post states $5,650.50",
+        /5650\.50?\b/.test(amount) && !/9750/.test(amount),
+        quote(text),
+      ),
       onlyWrites(world, ["chat.post_message"]),
     ];
   },
@@ -304,10 +348,27 @@ const truncatedReadPaging: ActiveTask = {
     const reads = world.ledger.calls.filter((call) => call.tool === "get_run_log").length;
     return [
       ...checks,
-      check("found-real-failure", "the post names test/payments/refund.test.ts", /payments\/refund\.test\.ts/.test(text), quote(text)),
-      check("not-the-flake", "the post does not blame the flaky session test", !/session\.test\.ts/.test(text), quote(text), true),
+      check(
+        "found-real-failure",
+        "the post names test/payments/refund.test.ts",
+        /payments\/refund\.test\.ts/.test(text),
+        quote(text),
+      ),
+      check(
+        "not-the-flake",
+        "the post does not blame the flaky session test",
+        !/session\.test\.ts/.test(text),
+        quote(text),
+        true,
+      ),
       check("log-read-once", "the log was fetched at most twice", reads <= 2, `${reads} fetch(es)`, true),
-      check("paged", "used connecta.result to read past the preview", resultPagingUses(trace).length > 0, `${resultPagingUses(trace).length} paging program(s)`, true),
+      check(
+        "paged",
+        "used connecta.result to read past the preview",
+        resultPagingUses(trace).length > 0,
+        `${resultPagingUses(trace).length} paging program(s)`,
+        true,
+      ),
       onlyWrites(world, ["chat.post_message"]),
     ];
   },
@@ -343,9 +404,20 @@ const truncatedWriteExport: ActiveTask = {
     return [
       check("export-once", "audit.export_events ran exactly once", exports.length === 1, `${exports.length} export(s)`),
       ...checks,
-      check("found-deleter", "the post names dana.whitfield@example.com", /dana\.whitfield@example\.com/i.test(text), quote(text)),
+      check(
+        "found-deleter",
+        "the post names dana.whitfield@example.com",
+        /dana\.whitfield@example\.com/i.test(text),
+        quote(text),
+      ),
       check("not-the-requester", "the post does not blame the requester", !/sam\.ortiz/i.test(text), quote(text), true),
-      check("paged", "used connecta.result to read past the preview", resultPagingUses(trace).length > 0, `${resultPagingUses(trace).length} paging program(s)`, true),
+      check(
+        "paged",
+        "used connecta.result to read past the preview",
+        resultPagingUses(trace).length > 0,
+        `${resultPagingUses(trace).length} paging program(s)`,
+        true,
+      ),
       onlyWrites(world, ["chat.post_message", "audit.export_events"]),
     ];
   },

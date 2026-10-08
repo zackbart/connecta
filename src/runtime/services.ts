@@ -16,9 +16,7 @@ import type { KVStorage, Logger as LoggerShape } from "../types.js";
  * A registry's KVStorage partition. Every adapter implements `list` and
  * `compareAndSet`.
  */
-export class Storage extends Context.Service<Storage, KVStorage>()(
-  "connecta/Storage",
-) {}
+export class Storage extends Context.Service<Storage, KVStorage>()("connecta/Storage") {}
 
 /**
  * Connecta's diagnostic logger, already resolved: the configured Logger, a
@@ -26,6 +24,4 @@ export class Storage extends Context.Service<Storage, KVStorage>()(
  * own logger is never used (test/purity.node.test.ts), because it honors neither
  * `"silent"` nor the line format a deployment greps for.
  */
-export class Logger extends Context.Service<Logger, LoggerShape>()(
-  "connecta/Logger",
-) {}
+export class Logger extends Context.Service<Logger, LoggerShape>()("connecta/Logger") {}

@@ -23,12 +23,13 @@
 // boolean, never a shared promise: a request that sees it unset runs the
 // statements itself (INV-7).
 
-import type {
-  ActivityPage,
-  ActivityStore,
-  ToolCallActivityEvent,
+import type { ActivityPage, ActivityStore, ToolCallActivityEvent } from "../activity.js";
+import {
+  activityBehaviorFacts,
+  activityPackageVersion,
+  activityClientFact,
+  InvalidActivityCursorError,
 } from "../activity.js";
-import { activityBehaviorFacts, activityPackageVersion, activityClientFact, InvalidActivityCursorError } from "../activity.js";
 import { assertKnownOptions, ConfigError, keys, optionsOf } from "../config-schema.js";
 import { agentFrictionForCode } from "../activity-friction.js";
 import type { KVStorage } from "../types.js";
@@ -80,11 +81,7 @@ const textColumn = (column: string) =>
 const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 /** A text column's value, from its bytes when the read selected them. */
-function textOf(
-  text: string | null,
-  bytes: TextBytes | null | undefined,
-  what: string,
-): string | null {
+function textOf(text: string | null, bytes: TextBytes | null | undefined, what: string): string | null {
   if (bytes == null) return text;
   try {
     return utf8.decode(bytes instanceof Uint8Array ? bytes : Uint8Array.from(bytes));
@@ -94,10 +91,7 @@ function textOf(
 }
 
 /** Run `ddl` once per store object; a failure leaves it to the next call. */
-function schemaOnce(
-  driver: SqlDriver,
-  ddl: (driver: SqlDriver) => Promise<void>,
-): () => Promise<void> {
+function schemaOnce(driver: SqlDriver, ddl: (driver: SqlDriver) => Promise<void>): () => Promise<void> {
   let ready = false;
   return async () => {
     if (ready) return;
@@ -152,14 +146,9 @@ export function sqlStorage(driver: SqlDriver, kind: SqlKind): KVStorage {
   const expiryValue = `(${now} + ?)`;
   const current = async (key: string) => {
     const [row] = await driver.all<{ value: string; value_bytes: TextBytes | null }>(
-      sql(
-        `SELECT ${textColumn("value")} FROM connecta_kv WHERE key = ? AND ${live}`,
-        key,
-      ),
+      sql(`SELECT ${textColumn("value")} FROM connecta_kv WHERE key = ? AND ${live}`, key),
     );
-    return row
-      ? textOf(row.value, row.value_bytes, `the stored value of ${JSON.stringify(key)}`)
-      : null;
+    return row ? textOf(row.value, row.value_bytes, `the stored value of ${JSON.stringify(key)}`) : null;
   };
   return {
     describe: () => ({ kind }),
@@ -220,11 +209,9 @@ export function sqlStorage(driver: SqlDriver, kind: SqlKind): KVStorage {
         return (await current(key)) === null;
       }
       if (next === null) {
-        return (await driver.run(sql(
-          `DELETE FROM connecta_kv WHERE key = ? AND ${live} AND value = ?`,
-          key,
-          expected,
-        ))) > 0;
+        return (
+          (await driver.run(sql(`DELETE FROM connecta_kv WHERE key = ? AND ${live} AND value = ?`, key, expected))) > 0
+        );
       }
       let expiry: number | null;
       try {
@@ -238,26 +225,34 @@ export function sqlStorage(driver: SqlDriver, kind: SqlKind): KVStorage {
       if (expected === null) {
         // Insert, or take over a row that has expired. A live row makes the
         // upsert's WHERE false, so nothing changes and the claim is refused.
-        return (await driver.run(sql(
-          `INSERT INTO connecta_kv (key, value, expires_at_ms)
+        return (
+          (await driver.run(
+            sql(
+              `INSERT INTO connecta_kv (key, value, expires_at_ms)
            VALUES (?, ?, ${expiryValue})
            ON CONFLICT (key) DO UPDATE SET
              value = excluded.value, expires_at_ms = excluded.expires_at_ms
            WHERE connecta_kv.expires_at_ms IS NOT NULL
              AND connecta_kv.expires_at_ms <= ${now}`,
-          key,
-          next,
-          expiry,
-        ))) > 0;
+              key,
+              next,
+              expiry,
+            ),
+          )) > 0
+        );
       }
-      return (await driver.run(sql(
-        `UPDATE connecta_kv SET value = ?, expires_at_ms = ${expiryValue}
+      return (
+        (await driver.run(
+          sql(
+            `UPDATE connecta_kv SET value = ?, expires_at_ms = ${expiryValue}
          WHERE key = ? AND ${live} AND value = ?`,
-        next,
-        expiry,
-        key,
-        expected,
-      ))) > 0;
+            next,
+            expiry,
+            key,
+            expected,
+          ),
+        )) > 0
+      );
     },
   };
 }
@@ -307,15 +302,20 @@ export async function copyIntoSql(
         value: string;
         value_bytes: TextBytes | null;
         expires_at_ms: number | null;
-      }>(sql(
-        `SELECT key, ${textColumn("value")}, expires_at_ms FROM connecta_kv
+      }>(
+        sql(
+          `SELECT key, ${textColumn("value")}, expires_at_ms FROM connecta_kv
          WHERE key IN (${chunk.map(() => "?").join(", ")}) AND ${live}`,
-        ...chunk,
-        now,
-      ));
+          ...chunk,
+          now,
+        ),
+      );
       // The message names no key: a copy's errors reach operator output.
       for (const row of rows) {
-        values.set(row.key, { value: textOf(row.value, row.value_bytes, "a stored value") ?? "", expiresAtMs: row.expires_at_ms });
+        values.set(row.key, {
+          value: textOf(row.value, row.value_bytes, "a stored value") ?? "",
+          expiresAtMs: row.expires_at_ms,
+        });
       }
     }
     return values;
@@ -345,8 +345,8 @@ export async function copyIntoSql(
               entry.value,
               entry.expiresAtMs,
             )
-          // Absent when read; a live row written since is kept, not replaced.
-          : sql(
+          : // Absent when read; a live row written since is kept, not replaced.
+            sql(
               `INSERT INTO connecta_kv (key, value, expires_at_ms)
                VALUES (?, ?, ?)
                ON CONFLICT (key) DO UPDATE SET
@@ -375,10 +375,7 @@ export async function copyIntoSql(
     batchBytes = 0;
   };
   for (const write of writes) {
-    if (
-      batch.length > 0 &&
-      (batch.length >= COPY_BATCH_STATEMENTS || batchBytes + write.bytes > COPY_BATCH_BYTES)
-    ) {
+    if (batch.length > 0 && (batch.length >= COPY_BATCH_STATEMENTS || batchBytes + write.bytes > COPY_BATCH_BYTES)) {
       await flush();
     }
     batch.push(write);
@@ -393,9 +390,8 @@ export async function copyIntoSql(
     for (const index of raced) {
       const entry = entries[index]!;
       const current = after.get(entry.key);
-      outcomes[index] = current?.value === entry.value && current.expiresAtMs === entry.expiresAtMs
-        ? "unchanged"
-        : "conflict";
+      outcomes[index] =
+        current?.value === entry.value && current.expiresAtMs === entry.expiresAtMs ? "unchanged" : "conflict";
     }
   }
   return outcomes;
@@ -447,7 +443,23 @@ const ACTIVITY_SCHEMA: readonly string[] = [
 ];
 
 /** Columns added after the table first shipped, in the order they arrived. */
-const LATER_ACTIVITY_COLUMNS = ["actor_namespace", "friction", "approval", "client_name", "client_version", "package_version", "classification", "result_bytes", "event_kind", "drift_kind", "added_tools", "removed_tools", "changed_tools", "pool_name", "actor_basis"];
+const LATER_ACTIVITY_COLUMNS = [
+  "actor_namespace",
+  "friction",
+  "approval",
+  "client_name",
+  "client_version",
+  "package_version",
+  "classification",
+  "result_bytes",
+  "event_kind",
+  "drift_kind",
+  "added_tools",
+  "removed_tools",
+  "changed_tools",
+  "pool_name",
+  "actor_basis",
+];
 
 interface ActivityRow {
   classification: string | null;
@@ -485,9 +497,29 @@ interface ActivityRow {
 
 /** Every activity column but the three integers, read through `textOf`. */
 const ACTIVITY_TEXT_COLUMNS = [
-  "id", "request_id", "actor_kind", "actor_id", "actor_namespace",
-  "connector_id", "tool_name", "source", "outcome", "error_code", "friction",
-  "approval", "package_version", "server_name", "server_version", "client_name", "client_version", "deployment_id", "classification", "event_kind", "drift_kind", "pool_name", "actor_basis",
+  "id",
+  "request_id",
+  "actor_kind",
+  "actor_id",
+  "actor_namespace",
+  "connector_id",
+  "tool_name",
+  "source",
+  "outcome",
+  "error_code",
+  "friction",
+  "approval",
+  "package_version",
+  "server_name",
+  "server_version",
+  "client_name",
+  "client_version",
+  "deployment_id",
+  "classification",
+  "event_kind",
+  "drift_kind",
+  "pool_name",
+  "actor_basis",
 ] as const;
 
 const ACTIVITY_SELECT = `SELECT occurred_at_ms, duration_ms, attempts, result_bytes, added_tools, removed_tools, changed_tools,
@@ -499,7 +531,10 @@ function activityRow(read: Record<string, unknown>): ActivityRow {
     occurred_at_ms: read.occurred_at_ms,
     duration_ms: read.duration_ms,
     attempts: read.attempts,
-    result_bytes: read.result_bytes, added_tools: read.added_tools, removed_tools: read.removed_tools, changed_tools: read.changed_tools,
+    result_bytes: read.result_bytes,
+    added_tools: read.added_tools,
+    removed_tools: read.removed_tools,
+    changed_tools: read.changed_tools,
   };
   for (const column of ACTIVITY_TEXT_COLUMNS) {
     row[column] = textOf(
@@ -515,8 +550,7 @@ function rowToEvent(row: ActivityRow): ToolCallActivityEvent {
   // Rows written before `friction` had a column derive it from the code.
   // Friction without a code — an oversized but successful result — exists
   // only in the column, which is why the column exists.
-  const friction = row.friction ??
-    agentFrictionForCode(row.error_code ?? undefined);
+  const friction = row.friction ?? agentFrictionForCode(row.error_code ?? undefined);
   const packageVersion = activityPackageVersion(row.package_version);
   const clientName = activityClientFact(row.client_name, "name");
   const clientVersion = activityClientFact(row.client_version, "version");
@@ -525,8 +559,19 @@ function rowToEvent(row: ActivityRow): ToolCallActivityEvent {
     id: row.id,
     occurredAt: new Date(row.occurred_at_ms).toISOString(),
     requestId: row.request_id,
-    ...activityBehaviorFacts({ classification: row.classification, resultBytes: row.result_bytes, kind: row.event_kind, pool: row.pool_name, actorBasis: row.actor_basis,
-      drift: { kind: row.drift_kind, addedTools: row.added_tools, removedTools: row.removed_tools, changedTools: row.changed_tools } }),
+    ...activityBehaviorFacts({
+      classification: row.classification,
+      resultBytes: row.result_bytes,
+      kind: row.event_kind,
+      pool: row.pool_name,
+      actorBasis: row.actor_basis,
+      drift: {
+        kind: row.drift_kind,
+        addedTools: row.added_tools,
+        removedTools: row.removed_tools,
+        changedTools: row.changed_tools,
+      },
+    }),
     actor: {
       kind: row.actor_kind as ToolCallActivityEvent["actor"]["kind"],
       ...(row.actor_id ? { id: row.actor_id } : {}),
@@ -565,12 +610,7 @@ function decodeCursor(value: string): { occurredAtMs: number; id: string } {
   const separator = decoded.indexOf(":");
   const occurredAtMs = Number(decoded.slice(0, separator));
   const id = decoded.slice(separator + 1);
-  if (
-    separator < 1 ||
-    !Number.isSafeInteger(occurredAtMs) ||
-    occurredAtMs < 0 ||
-    !/^[0-9a-f-]{36}$/i.test(id)
-  ) {
+  if (separator < 1 || !Number.isSafeInteger(occurredAtMs) || occurredAtMs < 0 || !/^[0-9a-f-]{36}$/i.test(id)) {
     throw new InvalidActivityCursorError();
   }
   return { occurredAtMs, id };
@@ -595,11 +635,7 @@ const RETENTION_SWEEP_ROWS = 16;
  * results, generated code, or raw error messages — the store never has a
  * payload to leak.
  */
-export function sqlActivityStore(
-  driver: SqlDriver,
-  kind: SqlKind,
-  options: SqlActivityOptions = {},
-): ActivityStore {
+export function sqlActivityStore(driver: SqlDriver, kind: SqlKind, options: SqlActivityOptions = {}): ActivityStore {
   const factory = kind === "d1" ? "d1ActivityStore()" : "sqliteActivityStore()";
   const { retentionDays = 90 } = assertKnownOptions(options, factory, SQL_ACTIVITY_OPTIONS);
   if (typeof retentionDays !== "number" || !(retentionDays > 0) || !Number.isFinite(retentionDays)) {
@@ -608,10 +644,10 @@ export function sqlActivityStore(
   const retentionMs = retentionDays * 24 * 60 * 60 * 1000;
   const ensure = schemaOnce(driver, async (d) => {
     await d.batch(ACTIVITY_SCHEMA.map((statement) => sql(statement)));
-    const columns = async () => new Set(
-      (await d.all<{ name: string }>(sql("PRAGMA table_info(tool_call_activity)")))
-        .map((column) => column.name),
-    );
+    const columns = async () =>
+      new Set(
+        (await d.all<{ name: string }>(sql("PRAGMA table_info(tool_call_activity)"))).map((column) => column.name),
+      );
     // Isolates and processes upgrade an old table concurrently, each from its
     // own read of the columns. One column per statement, and a refused ALTER
     // re-reads the table: if another upgrader added the column, this one
@@ -620,7 +656,11 @@ export function sqlActivityStore(
     for (const name of LATER_ACTIVITY_COLUMNS) {
       if (present.has(name)) continue;
       try {
-        await d.run(sql(`ALTER TABLE tool_call_activity ADD COLUMN ${name} ${["result_bytes", "added_tools", "removed_tools", "changed_tools"].includes(name) ? "INTEGER" : "TEXT"}`));
+        await d.run(
+          sql(
+            `ALTER TABLE tool_call_activity ADD COLUMN ${name} ${["result_bytes", "added_tools", "removed_tools", "changed_tools"].includes(name) ? "INTEGER" : "TEXT"}`,
+          ),
+        );
       } catch (error) {
         present = await columns();
         if (!present.has(name)) throw error;
@@ -666,8 +706,15 @@ export function sqlActivityStore(
           activityClientFact(event.clientName, "name") ?? null,
           activityClientFact(event.clientVersion, "version") ?? null,
           event.deploymentId ?? null,
-          facts.classification ?? null, facts.resultBytes ?? null, facts.kind ?? null, facts.drift?.kind ?? null,
-          facts.drift?.addedTools ?? null, facts.drift?.removedTools ?? null, facts.drift?.changedTools ?? null, facts.pool ?? null, facts.actorBasis ?? null,
+          facts.classification ?? null,
+          facts.resultBytes ?? null,
+          facts.kind ?? null,
+          facts.drift?.kind ?? null,
+          facts.drift?.addedTools ?? null,
+          facts.drift?.removedTools ?? null,
+          facts.drift?.changedTools ?? null,
+          facts.pool ?? null,
+          facts.actorBasis ?? null,
         ),
         sql(
           `DELETE FROM tool_call_activity WHERE id IN (
@@ -686,24 +733,28 @@ export function sqlActivityStore(
       const pageSize = boundedLimit + 1;
       const position = cursor ? decodeCursor(cursor) : undefined;
       await ensure();
-      const rows = (await driver.all<Record<string, unknown>>(position
-        ? sql(
-            `${ACTIVITY_SELECT}
+      const rows = (
+        await driver.all<Record<string, unknown>>(
+          position
+            ? sql(
+                `${ACTIVITY_SELECT}
              WHERE occurred_at_ms < ?
                 OR (occurred_at_ms = ? AND id < ?)
              ORDER BY occurred_at_ms DESC, id DESC
              LIMIT ?`,
-            position.occurredAtMs,
-            position.occurredAtMs,
-            position.id,
-            pageSize,
-          )
-        : sql(
-            `${ACTIVITY_SELECT}
+                position.occurredAtMs,
+                position.occurredAtMs,
+                position.id,
+                pageSize,
+              )
+            : sql(
+                `${ACTIVITY_SELECT}
              ORDER BY occurred_at_ms DESC, id DESC
              LIMIT ?`,
-            pageSize,
-          ))).map(activityRow);
+                pageSize,
+              ),
+        )
+      ).map(activityRow);
       const hasMore = rows.length > boundedLimit;
       const visible = hasMore ? rows.slice(0, boundedLimit) : rows;
       const last = visible.at(-1);

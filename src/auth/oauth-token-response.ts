@@ -23,17 +23,15 @@ export function isOAuthCredentialRequest(init: RequestInit | undefined): boolean
   if (tokenGrantType(init) !== undefined) return true;
   if ((init?.method ?? "GET").toUpperCase() !== "POST") return false;
   const body = init?.body;
-  const form = body instanceof URLSearchParams ? body : typeof body === "string" ? new URLSearchParams(body) : undefined;
+  const form =
+    body instanceof URLSearchParams ? body : typeof body === "string" ? new URLSearchParams(body) : undefined;
   return form?.has("token") === true;
 }
 
 function sdkAcceptsOAuthTokens(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const candidate = value as Record<string, unknown>;
-  if (
-    typeof candidate.access_token !== "string" ||
-    typeof candidate.token_type !== "string"
-  ) {
+  if (typeof candidate.access_token !== "string" || typeof candidate.token_type !== "string") {
     return false;
   }
   for (const key of ["id_token", "scope", "refresh_token"] as const) {
@@ -138,11 +136,7 @@ const SDK_TOKEN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
  * the form it refused would put the refresh token and client secret in the
  * host's console, below any logger the deployment configured.
  */
-function sdkTokenFailure(
-  original: Response,
-  code: string,
-  status = original.status,
-): Response {
+function sdkTokenFailure(original: Response, code: string, status = original.status): Response {
   void original.body?.cancel().catch(() => {});
   const retryAfter = original.headers.get("retry-after");
   const known = code in SDK_TOKEN_ERROR_DESCRIPTIONS ? code : "invalid_request";
@@ -164,7 +158,10 @@ function sdkTokenFailure(
  * the registered set becomes `invalid_request`, and a body without a string
  * code becomes `server_error`, the classes the SDK already gave them.
  */
-export async function sdkSafeTokenResponse(response: Response, accept?: (tokens: OAuthTokens) => Promise<void>): Promise<Response> {
+export async function sdkSafeTokenResponse(
+  response: Response,
+  accept?: (tokens: OAuthTokens) => Promise<void>,
+): Promise<Response> {
   if (response.status >= 300 && response.status < 400) {
     return sdkTokenFailure(response, "invalid_request", 400);
   }
@@ -235,7 +232,11 @@ export async function refreshResponseOutcome(
     return {
       failure,
       verdict: { kind: "dead" },
-      forSdk: sdkTokenFailure(response, code === "invalid_client" || code === "unauthorized_client" ? code : "invalid_grant", 400),
+      forSdk: sdkTokenFailure(
+        response,
+        code === "invalid_client" || code === "unauthorized_client" ? code : "invalid_grant",
+        400,
+      ),
     };
   }
   // A successful HTTP status may have consumed the token even when its

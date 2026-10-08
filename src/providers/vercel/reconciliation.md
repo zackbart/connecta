@@ -18,14 +18,14 @@ reviewed canonical names have reasons in the definition; other live tools keep
 registry fail-closed classification. The top-level drift parser's current
 failure remains visible, rather than accepting its empty inventory as evidence.
 
-| Capability | Canonical owner | Retained API reason |
-| --- | --- | --- |
-| Teams/projects/deployments, build/runtime logs, domain listing/adding, cancellation, file upload | Hosted MCP | Current categories document equivalents |
-| Project environment metadata and writes | API `list_project_env_vars`, `upsert_project_env_var`, `update_project_env_var`, `delete_project_env_var` | Values never appear in results; `upsert: false` preserves create-only writes; hosted filter/get can decrypt and create/edit do not promise value-safe results |
-| Domain verification/removal | API `verify_project_domain`, `remove_project_domain` | No equivalent published in reviewed projects/domains categories |
-| Deployment promotion | Hosted `request_promote` | Current rolling-releases category and OpenAPI cover the original REST route |
-| Deployment deletion | API `delete_deployment` | No equivalent in the 28 published categories |
-| Remaining REST GET/JSON/raw-body operations | API `vercel_api_get`, `vercel_api_mutate`, `vercel_api_upload` | Generic gaps and explicit endpoint headers; migrated fixed operations and env routes are refused |
+| Capability                                                                                       | Canonical owner                                                                                           | Retained API reason                                                                                                                                           |
+| ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Teams/projects/deployments, build/runtime logs, domain listing/adding, cancellation, file upload | Hosted MCP                                                                                                | Current categories document equivalents                                                                                                                       |
+| Project environment metadata and writes                                                          | API `list_project_env_vars`, `upsert_project_env_var`, `update_project_env_var`, `delete_project_env_var` | Values never appear in results; `upsert: false` preserves create-only writes; hosted filter/get can decrypt and create/edit do not promise value-safe results |
+| Domain verification/removal                                                                      | API `verify_project_domain`, `remove_project_domain`                                                      | No equivalent published in reviewed projects/domains categories                                                                                               |
+| Deployment promotion                                                                             | Hosted `request_promote`                                                                                  | Current rolling-releases category and OpenAPI cover the original REST route                                                                                   |
+| Deployment deletion                                                                              | API `delete_deployment`                                                                                   | No equivalent in the 28 published categories                                                                                                                  |
+| Remaining REST GET/JSON/raw-body operations                                                      | API `vercel_api_get`, `vercel_api_mutate`, `vercel_api_upload`                                            | Generic gaps and explicit endpoint headers; migrated fixed operations and env routes are refused                                                              |
 
 The hosted connector filters `filter_project_envs`, `get_project_env`,
 `create_project_env`, and `edit_project_env`, and refuses direct calls to them.
@@ -43,19 +43,19 @@ contracts resolve before generalized versions and wildcard ids. The concrete
 `GET /v2/sandboxes/drives` REST gap remains available; the named-sandbox tool
 cannot consume it.
 
-| Removed API duplicate | Canonical hosted tool |
-| --- | --- |
-| `list_teams` | `list_teams` |
-| `list_projects` | `list_projects` |
-| `get_project` | `get_project` |
-| `list_deployments` | `list_deployments` |
-| `get_deployment` | `get_deployment` |
-| `get_build_logs` | `list_deployment_events` |
-| `get_runtime_logs` | `get_runtime_logs` |
-| `list_project_domains` | `list_project_domains` |
-| `add_project_domain` | `add_project_domain` |
-| `cancel_deployment` | `cancel_deployment` |
-| `promote_deployment` | `request_promote` |
+| Removed API duplicate  | Canonical hosted tool    |
+| ---------------------- | ------------------------ |
+| `list_teams`           | `list_teams`             |
+| `list_projects`        | `list_projects`          |
+| `get_project`          | `get_project`            |
+| `list_deployments`     | `list_deployments`       |
+| `get_deployment`       | `get_deployment`         |
+| `get_build_logs`       | `list_deployment_events` |
+| `get_runtime_logs`     | `get_runtime_logs`       |
+| `list_project_domains` | `list_project_domains`   |
+| `add_project_domain`   | `add_project_domain`     |
+| `cancel_deployment`    | `cancel_deployment`      |
+| `promote_deployment`   | `request_promote`        |
 
 `reconciliation-before.json` records both registry catalogs at `cf592d7b`;
 `reconciliation-after.json` records the reconciled catalogs. Hosted names use

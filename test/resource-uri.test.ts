@@ -58,19 +58,19 @@ it.each([
   expect(resourceUriMatchesTemplates(uri, [{ uriTemplate: template }])).toEqual({ matched: true });
 });
 
-it.each([
-  "%252E%252E", "%25%32%45%25%32%45",
-  "%25E2%2580%25A8", "%25EF%25BC%258F", "%250A", "%25FF",
-])("INV-3 INV-4: encoded-percent data cannot hide nested unsafe escapes %s", encoded => {
-  for (const [template, uri] of [
-    ["https://h/{p}", `https://h/${encoded}`],
-    ["https://h/50%25off/{p}", `https://h/50%25off/${encoded}`],
-    [`https://h/50%25off/${encoded}/{p}`, `https://h/50%25off/${encoded}/a`],
-    ["https://h/{+p}", `https://h/50%25off/${encoded}`],
-  ] as const) {
-    expect(resourceUriMatchesTemplate(uri, template)).toBe(false);
-  }
-});
+it.each(["%252E%252E", "%25%32%45%25%32%45", "%25E2%2580%25A8", "%25EF%25BC%258F", "%250A", "%25FF"])(
+  "INV-3 INV-4: encoded-percent data cannot hide nested unsafe escapes %s",
+  (encoded) => {
+    for (const [template, uri] of [
+      ["https://h/{p}", `https://h/${encoded}`],
+      ["https://h/50%25off/{p}", `https://h/50%25off/${encoded}`],
+      [`https://h/50%25off/${encoded}/{p}`, `https://h/50%25off/${encoded}/a`],
+      ["https://h/{+p}", `https://h/50%25off/${encoded}`],
+    ] as const) {
+      expect(resourceUriMatchesTemplate(uri, template)).toBe(false);
+    }
+  },
+);
 
 it.each([
   ["https://h/100%/{p}", "https://h/100%/a"],
@@ -121,32 +121,39 @@ it.each([
   expect(resourceUriMatchesTemplates(uri, [{ uriTemplate: template }])).toEqual({ matched: false });
 });
 
-it.each(["http", "https", "ftp", "ws", "wss"])("INV-3 INV-4: refuses a WHATWG host absent from the RFC 3986 %s template", scheme => {
-  // The final ! makes the capture boundary deterministic, so host checking
-  // must refuse this after expansion rather than at template parsing.
-  const uri = `${scheme}:/evil.com/static!`;
-  const uriTemplate = `${scheme}:{/a}/static!`;
-  expect(new URL(uri).host).toBe("evil.com");
-  expect(resourceUriMatchesTemplate(uri, uriTemplate)).toBe(false);
-  expect(resourceUriMatchesTemplates(uri, [{ uriTemplate }])).toEqual({ matched: false });
-  expect(resourceUriMatchesTemplate(`${scheme}:/evil.com/static`, `${scheme}:{/a}/static`)).toBe(false);
-});
+it.each(["http", "https", "ftp", "ws", "wss"])(
+  "INV-3 INV-4: refuses a WHATWG host absent from the RFC 3986 %s template",
+  (scheme) => {
+    // The final ! makes the capture boundary deterministic, so host checking
+    // must refuse this after expansion rather than at template parsing.
+    const uri = `${scheme}:/evil.com/static!`;
+    const uriTemplate = `${scheme}:{/a}/static!`;
+    expect(new URL(uri).host).toBe("evil.com");
+    expect(resourceUriMatchesTemplate(uri, uriTemplate)).toBe(false);
+    expect(resourceUriMatchesTemplates(uri, [{ uriTemplate }])).toEqual({ matched: false });
+    expect(resourceUriMatchesTemplate(`${scheme}:/evil.com/static`, `${scheme}:{/a}/static`)).toBe(false);
+  },
+);
 
 it("INV-3 INV-4: refuses backslash normalization in a literal authority", () => {
   expect(resourceUriMatchesTemplate("https://h\\evil.com/safe", "https://h\\evil.com{/x}")).toBe(false);
 });
 
-it.each(["%E2%80%A8", "%C2%A0", "%EF%BC%8F", "%E3%80%80", "%EF%BC%8E", "%EF%BC%85"])("INV-3 INV-4: refuses Unicode separators and URI syntax lookalikes at each decoding layer %s", encoded => {
-  for (const expression of ["{page}", "{+page}", "{/page*}", "{?page}"]) {
-    const template = "docs://manual/entry" + expression;
-    for (let depth = 0, value = decodeURIComponent(encoded); depth < 8; depth++) {
-      const uri = "docs://manual/entry" + (expression === "{/page*}" ? "/" : expression === "{?page}" ? "?page=" : "") + value;
-      expect(resourceUriMatchesTemplate(uri, template)).toBe(false);
-      expect(resourceUriMatchesTemplates(uri, [{ uriTemplate: template }])).toEqual({ matched: false });
-      value = encodeURIComponent(value);
+it.each(["%E2%80%A8", "%C2%A0", "%EF%BC%8F", "%E3%80%80", "%EF%BC%8E", "%EF%BC%85"])(
+  "INV-3 INV-4: refuses Unicode separators and URI syntax lookalikes at each decoding layer %s",
+  (encoded) => {
+    for (const expression of ["{page}", "{+page}", "{/page*}", "{?page}"]) {
+      const template = "docs://manual/entry" + expression;
+      for (let depth = 0, value = decodeURIComponent(encoded); depth < 8; depth++) {
+        const uri =
+          "docs://manual/entry" + (expression === "{/page*}" ? "/" : expression === "{?page}" ? "?page=" : "") + value;
+        expect(resourceUriMatchesTemplate(uri, template)).toBe(false);
+        expect(resourceUriMatchesTemplates(uri, [{ uriTemplate: template }])).toEqual({ matched: false });
+        value = encodeURIComponent(value);
+      }
     }
-  }
-});
+  },
+);
 
 it.each([
   ["https://h/.{x}/", "https://h/./"],
@@ -163,13 +170,25 @@ it.each([
   expect(resourceUriMatchesTemplates(uri, [{ uriTemplate: template }])).toEqual({ matched: false });
 });
 
-
 it.each([
   ["http:{/a}{/b}/static", "http://evil.com/static"],
   ["http:{/a,b}/static", "http://evil.com/static"],
   ["http:{+path}", "http://evil.com/static"],
-  ...["%E2%80%AE", "%E2%80%8B", "%E2%80%8D", "%EF%BB%BF", "%25E2%2580%25AE"].map(value => ["docs://manual/{page}", `docs://manual/${value}`]),
-  ...["../a", "a/./b", "a/../b", "a/%2e%2e/b", "a/%252e/b", "a/%5cb", "a/\\b", "/evil.com/a", "http://evil.com/a"].flatMap(value => [
+  ...["%E2%80%AE", "%E2%80%8B", "%E2%80%8D", "%EF%BB%BF", "%25E2%2580%25AE"].map((value) => [
+    "docs://manual/{page}",
+    `docs://manual/${value}`,
+  ]),
+  ...[
+    "../a",
+    "a/./b",
+    "a/../b",
+    "a/%2e%2e/b",
+    "a/%252e/b",
+    "a/%5cb",
+    "a/\\b",
+    "/evil.com/a",
+    "http://evil.com/a",
+  ].flatMap((value) => [
     ["file:///{+path}", `file:///${value}`],
     ["file://{/p*}", `file:///${value}`],
   ]),
@@ -177,17 +196,29 @@ it.each([
   expect(resourceUriMatchesTemplate(uri, template)).toBe(false);
 });
 
-it.each([
-  "x:{a},{b},{c}!", "x:{a*},{b*}!", "x:{a}{/b}", "x:{+a}/{b}",
-])("INV-3 INV-7: refuses ambiguous boundaries with a typed code in %s", uriTemplate => {
-  expect(resourceUriMatchesTemplates("x:a,b,c!", [{ uriTemplate }])).toEqual({ matched: false, refusal: "resource_template_ambiguous" });
-});
+it.each(["x:{a},{b},{c}!", "x:{a*},{b*}!", "x:{a}{/b}", "x:{+a}/{b}"])(
+  "INV-3 INV-7: refuses ambiguous boundaries with a typed code in %s",
+  (uriTemplate) => {
+    expect(resourceUriMatchesTemplates("x:a,b,c!", [{ uriTemplate }])).toEqual({
+      matched: false,
+      refusal: "resource_template_ambiguous",
+    });
+  },
+);
 
 it.each([
   ["three list expressions", [{ uriTemplate: "x:{a},{b},{c}!" }], "resource_template_ambiguous"],
   ["two exploded expressions", [{ uriTemplate: "x:{a*},{b*}!" }], "resource_template_ambiguous"],
-  ["sixteen expressions", [{ uriTemplate: "x:" + Array.from({ length: 16 }, (_, i) => `{v${i}}`).join("/") + "!" }], undefined],
-  ["hundreds of same-scheme templates", Array.from({ length: 500 }, (_, i) => ({ uriTemplate: `x:{value}/literal${i}!` })), "resource_match_budget_exceeded"],
+  [
+    "sixteen expressions",
+    [{ uriTemplate: "x:" + Array.from({ length: 16 }, (_, i) => `{v${i}}`).join("/") + "!" }],
+    undefined,
+  ],
+  [
+    "hundreds of same-scheme templates",
+    Array.from({ length: 500 }, (_, i) => ({ uriTemplate: `x:{value}/literal${i}!` })),
+    "resource_match_budget_exceeded",
+  ],
 ] as const)("INV-3 INV-7: bounds matching at the 8192-character URI limit with %s", (_label, templates, refusal) => {
   const uri = "x:" + ",".repeat(8189) + "?";
   const start = performance.now();
@@ -217,10 +248,13 @@ it("INV-3 INV-7: scans almost the full match budget before an end-of-URI mismatc
   expect(templates.length * (uri.length + uriTemplate.length)).toBe(254_138);
   const refusals: string[] = [];
   const start = performance.now();
-  const result = resourceUriMatchesTemplates(uri, templates, code => refusals.push(code));
+  const result = resourceUriMatchesTemplates(uri, templates, (code) => refusals.push(code));
   const elapsed = performance.now() - start;
   expect(result).toEqual({ matched: false });
   expect(refusals).toEqual([]);
   expect(elapsed).toBeLessThan(50);
-  expect(resourceUriMatchesTemplates(uri, [...templates, { uriTemplate }])).toEqual({ matched: false, refusal: "resource_match_budget_exceeded" });
+  expect(resourceUriMatchesTemplates(uri, [...templates, { uriTemplate }])).toEqual({
+    matched: false,
+    refusal: "resource_match_budget_exceeded",
+  });
 });

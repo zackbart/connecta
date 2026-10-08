@@ -19,8 +19,13 @@ export function brandExecutor<T extends Executor>(executor: T, lifecycle: Execut
 export function assertExecutor(executor: Executor): void {
   const descriptor = Object.getOwnPropertyDescriptor(executor, EXECUTOR_BRAND);
   const brand = descriptor?.value;
-  if (typeof executor.execute === "function" && descriptor?.enumerable === false &&
-      brand?.version === 1 && (brand.lifecycle === "leased" || brand.lifecycle === "self-managed")) return;
+  if (
+    typeof executor.execute === "function" &&
+    descriptor?.enumerable === false &&
+    brand?.version === 1 &&
+    (brand.lifecycle === "leased" || brand.lifecycle === "self-managed")
+  )
+    return;
   throw new Error(
     "ConnectaConfig.executor must declare its lifecycle. Unbranded executors, including " +
       "upstream DynamicWorkerExecutor, are unsupported because request-owned resources " +
@@ -58,10 +63,12 @@ export function customExecutor(executor: Executor, options: CustomExecutorOption
     ...(name ? { name } : {}),
     execute: executor.execute.bind(executor),
     ...(executor.close ? { close: executor.close.bind(executor) } : {}),
-    ...(isAdmittingExecutor(executor) ? {
-      acquire: executor.acquire.bind(executor),
-      ...(executor.admissionSnapshot ? { admissionSnapshot: executor.admissionSnapshot.bind(executor) } : {}),
-    } : {}),
+    ...(isAdmittingExecutor(executor)
+      ? {
+          acquire: executor.acquire.bind(executor),
+          ...(executor.admissionSnapshot ? { admissionSnapshot: executor.admissionSnapshot.bind(executor) } : {}),
+        }
+      : {}),
   };
   return brandExecutor(wrapper, "self-managed");
 }

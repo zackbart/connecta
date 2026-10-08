@@ -41,13 +41,16 @@ function expectedGuide(name: Name, content: string): string {
   const usage = usageGuideChanges as Partial<Record<Name, string[][]>>;
   const repairs = errorGuideChanges as Partial<Record<Name, string[][]>>;
   const changes = Object.hasOwn(configChanges, name) ? [] : guideChanges[name];
-  for (const [from, to] of [...changes, ...repairs[name] ?? [], ...usage[name] ?? []]) content = content.replaceAll(from!, to!);
+  for (const [from, to] of [...changes, ...(repairs[name] ?? []), ...(usage[name] ?? [])])
+    content = content.replaceAll(from!, to!);
   return content;
 }
 
-const registryFor = (connector: Connector) => new Registry([connector], {
-  storage: memoryStorage(), logger: silentLogger,
-});
+const registryFor = (connector: Connector) =>
+  new Registry([connector], {
+    storage: memoryStorage(),
+    logger: silentLogger,
+  });
 
 describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name) => {
   const recorded = before.providers[name];
@@ -56,15 +59,23 @@ describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name
     const configs = configChanges[name as keyof typeof configChanges] ?? recorded.configs;
     for (const [label, row] of Object.entries(configs)) {
       const connector = construct(name, row.options);
-      const metadata = JSON.parse(JSON.stringify({
-        title: connector.title, description: connector.description, kind: connector.kind,
-        authScope: connector.authScope ?? null, maxResultBytes: connector.maxResultBytes ?? null,
-        callAdmission: connector.callAdmission ?? null, credential: connector.credential ?? null,
-        usageGuide: connector.usageGuide, describeSha256: await hash(connector.describe?.()),
-      }));
+      const metadata = JSON.parse(
+        JSON.stringify({
+          title: connector.title,
+          description: connector.description,
+          kind: connector.kind,
+          authScope: connector.authScope ?? null,
+          maxResultBytes: connector.maxResultBytes ?? null,
+          callAdmission: connector.callAdmission ?? null,
+          credential: connector.credential ?? null,
+          usageGuide: connector.usageGuide,
+          describeSha256: await hash(connector.describe?.()),
+        }),
+      );
       const expected = structuredClone(row.metadata);
       // #734 removed precomputed classifications from raw API descriptions.
-      if (!Object.hasOwn(configChanges, name)) expected.describeSha256 = upstreamContracts[name]?.[label]?.describe ?? expected.describeSha256;
+      if (!Object.hasOwn(configChanges, name))
+        expected.describeSha256 = upstreamContracts[name]?.[label]?.describe ?? expected.describeSha256;
       // Phase 4 adds factory option-presence metadata to describe(); all other metadata stays exact.
       expected.describeSha256 = provenanceContracts[name]?.[label]?.describe ?? expected.describeSha256;
       expected.usageGuide.content = expectedGuide(name, expected.usageGuide.content);
@@ -83,10 +94,14 @@ describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name
   it("INV-1: preserves every reviewed verdict and digest with a frozen per-tool reason", () => {
     const classify = factories[name].definition.classify!;
     const fixture = providerFixtures.find((fixture) => fixture.name === name)!;
-    const connector = fixture.create("fixture", ["notion", "vercel", "cloudflare"].includes(name)
-      ? { surface: "mcp" } as never : {});
+    const connector = fixture.create(
+      "fixture",
+      ["notion", "vercel", "cloudflare"].includes(name) ? ({ surface: "mcp" } as never) : {},
+    );
     const review = catalogReviewOf(connector)!;
-    expect(Object.fromEntries([...review.tools].filter(([name]) => Object.hasOwn(recorded.verdicts, name)))).toEqual(recorded.verdicts);
+    expect(Object.fromEntries([...review.tools].filter(([name]) => Object.hasOwn(recorded.verdicts, name)))).toEqual(
+      recorded.verdicts,
+    );
     expect(Object.isFrozen(classify.tools)).toBe(true);
     expect(connector.classification).toEqual(classify);
     for (const entry of Object.values(classify.tools)) {
@@ -102,8 +117,10 @@ describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name
     const names = [...Object.keys(recorded.verdicts), "unknown_silent", "unknown_read"];
     for (const [index, hints] of before.variants.entries()) {
       const annotations = hints as ToolAnnotations | null;
-      const real = fixture.create("fixture", ["notion", "vercel", "cloudflare"].includes(name)
-        ? { surface: "mcp" } as never : {});
+      const real = fixture.create(
+        "fixture",
+        ["notion", "vercel", "cloudflare"].includes(name) ? ({ surface: "mcp" } as never) : {},
+      );
       const facts = names.map((name) => ({ name, ...(annotations ? { annotations } : {}) }));
       const connector = { ...real, listTools: async () => structuredClone(facts) };
       const registry = registryFor(connector);

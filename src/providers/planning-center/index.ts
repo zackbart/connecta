@@ -247,9 +247,7 @@ interface Resource {
 type Included = Map<string, Resource>;
 
 function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
 
 function asArray(value: unknown): unknown[] {
@@ -257,9 +255,7 @@ function asArray(value: unknown): unknown[] {
 }
 
 function compact<T extends object>(value: T): T {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined),
-  ) as T;
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
 function isResource(value: unknown): value is Resource {
@@ -406,9 +402,7 @@ function errorDetail(payload: unknown, status: number): string {
     const text = [title, detail].filter(Boolean).join(": ");
     if (text) parts.push(`${text}${at}`);
   }
-  return parts.length > 0
-    ? `Planning Center: ${parts.join("; ")}`
-    : `Planning Center returned HTTP ${status}.`;
+  return parts.length > 0 ? `Planning Center: ${parts.join("; ")}` : `Planning Center returned HTTP ${status}.`;
 }
 
 /**
@@ -423,11 +417,7 @@ function errorDetail(payload: unknown, status: number): string {
  * - **404** is absence — Planning Center answers a permission gap with 403 —
  *   but a person id that used to work was most often merged into another.
  */
-function planningCenterFailure(
-  status: number,
-  headers: Headers,
-  payload: unknown,
-): ConnectorCallError {
+function planningCenterFailure(status: number, headers: Headers, payload: unknown): ConnectorCallError {
   const detail = errorDetail(payload, status);
   if (status === 429) {
     const wait = retryAfterMs(headers);
@@ -474,10 +464,7 @@ function planningCenterFailure(
 
 type Call = (request: PlanningCenterRequest, ctx: ConnectorContext) => Promise<any>;
 
-function planningCenterCall(
-  send: GuardedTransport,
-  versions: Readonly<Record<PlanningCenterApp, string>>,
-): Call {
+function planningCenterCall(send: GuardedTransport, versions: Readonly<Record<PlanningCenterApp, string>>): Call {
   return async (request, ctx) => {
     const app = appForPath(request.path);
     return await send(
@@ -492,11 +479,7 @@ function planningCenterCall(
       async (response) => {
         const parsed = await response.jsonResult();
         if (!response.ok) {
-          throw planningCenterFailure(
-            response.status,
-            response.headers,
-            "value" in parsed ? parsed.value : undefined,
-          );
+          throw planningCenterFailure(response.status, response.headers, "value" in parsed ? parsed.value : undefined);
         }
         if ("parseError" in parsed) {
           throw new ConnectorCallError(
@@ -523,17 +506,11 @@ const BOOLEAN = { type: "boolean" } as const;
 const ARRAY = { type: "array" } as const;
 const OBJECT = { type: "object" } as const;
 
-function record(
-  properties: Record<string, JsonSchema>,
-  required: string[] = ["id"],
-): JsonSchema {
+function record(properties: Record<string, JsonSchema>, required: string[] = ["id"]): JsonSchema {
   return { type: "object", properties, required };
 }
 
-function input(
-  properties: Record<string, JsonSchema>,
-  required: string[] = [],
-): JsonSchema {
+function input(properties: Record<string, JsonSchema>, required: string[] = []): JsonSchema {
   return { type: "object", properties, required, additionalProperties: false };
 }
 
@@ -603,7 +580,8 @@ function listOutput(key: string, item: JsonSchema): JsonSchema {
 
 const QUERY_PROPERTY: JsonSchema = {
   type: "array",
-  description: "Query parameters as name/value pairs, e.g. where[status]=active, include=emails, order=-created_at, per_page, offset.",
+  description:
+    "Query parameters as name/value pairs, e.g. where[status]=active, include=emails, order=-created_at, per_page, offset.",
   items: {
     type: "object",
     properties: {
@@ -621,7 +599,8 @@ const QUERY_PROPERTY: JsonSchema = {
 const HATCH_PATH_PROPERTY: JsonSchema = {
   type: "string",
   minLength: 1,
-  description: "Path beginning /<app>/v2, as Planning Center documents it: /people/v2/people/1/emails. No host or query string.",
+  description:
+    "Path beginning /<app>/v2, as Planning Center documents it: /people/v2/people/1/emails. No host or query string.",
 };
 
 const VERSION_PROPERTY: JsonSchema = {
@@ -678,8 +657,20 @@ const PERSON_SCHEMA = record({
   households: ARRAY,
 });
 
-const EMAIL_SCHEMA = record({ id: STRING, address: STRING, location: NULLABLE_STRING, primary: BOOLEAN, person_id: STRING });
-const PHONE_SCHEMA = record({ id: STRING, number: STRING, location: NULLABLE_STRING, primary: BOOLEAN, person_id: STRING });
+const EMAIL_SCHEMA = record({
+  id: STRING,
+  address: STRING,
+  location: NULLABLE_STRING,
+  primary: BOOLEAN,
+  person_id: STRING,
+});
+const PHONE_SCHEMA = record({
+  id: STRING,
+  number: STRING,
+  location: NULLABLE_STRING,
+  primary: BOOLEAN,
+  person_id: STRING,
+});
 
 const CARD_SCHEMA = record({
   id: STRING,
@@ -778,7 +769,10 @@ function personSummary(person: Resource, index: Included): JsonRecord {
 }
 
 function emailRecord(email: Resource): JsonRecord {
-  return compact({ ...pick(email, ["address", "location", "primary"]), person_id: relId(email, "person") ?? undefined });
+  return compact({
+    ...pick(email, ["address", "location", "primary"]),
+    person_id: relId(email, "person") ?? undefined,
+  });
 }
 
 function phoneRecord(phone: Resource): JsonRecord {
@@ -1005,10 +999,21 @@ const PERSON_WRITE_PROPERTIES: Record<string, JsonSchema> = {
   lastName: { type: "string", minLength: 1, description: "Last name." },
   nickname: { type: ["string", "null"], description: "Nickname; null clears it." },
   middleName: { type: ["string", "null"], description: "Middle name; null clears it." },
-  birthdate: { type: ["string", "null"], pattern: "^\\d{4}-\\d{2}-\\d{2}$", description: "Birthdate, YYYY-MM-DD; null clears it." },
-  anniversary: { type: ["string", "null"], pattern: "^\\d{4}-\\d{2}-\\d{2}$", description: "Anniversary, YYYY-MM-DD; null clears it." },
+  birthdate: {
+    type: ["string", "null"],
+    pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+    description: "Birthdate, YYYY-MM-DD; null clears it.",
+  },
+  anniversary: {
+    type: ["string", "null"],
+    pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+    description: "Anniversary, YYYY-MM-DD; null clears it.",
+  },
   gender: { type: ["string", "null"], description: "Gender as the organization records it, e.g. Male or Female." },
-  membership: { type: ["string", "null"], description: "Membership type, one of the organization's own values such as Member or Visitor." },
+  membership: {
+    type: ["string", "null"],
+    description: "Membership type, one of the organization's own values such as Member or Visitor.",
+  },
   child: { type: "boolean", description: "Whether the person is a child." },
   primaryCampusId: { type: "string", pattern: "^[0-9]+$", description: "Campus id from /people/v2/campuses." },
 };
@@ -1029,15 +1034,7 @@ function personAttributes(args: JsonRecord): JsonRecord {
   };
 }
 
-const WORKFLOW_CARD_ACTIONS = [
-  "promote",
-  "go_back",
-  "skip_step",
-  "snooze",
-  "unsnooze",
-  "remove",
-  "restore",
-] as const;
+const WORKFLOW_CARD_ACTIONS = ["promote", "go_back", "skip_step", "snooze", "unsnooze", "remove", "restore"] as const;
 
 function tools(call: Call, defaultPageSize: number): ApiTool[] {
   const perPage = (args: JsonRecord) => args["perPage"] ?? defaultPageSize;
@@ -1049,10 +1046,7 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
       description:
         "Call any Planning Center GET endpoint in any product and return its untouched JSON:API body. Prefer a named read; this one does not flatten or resolve includes.",
       annotations: READ,
-      inputSchema: input(
-        { path: HATCH_PATH_PROPERTY, query: QUERY_PROPERTY, version: VERSION_PROPERTY },
-        ["path"],
-      ),
+      inputSchema: input({ path: HATCH_PATH_PROPERTY, query: QUERY_PROPERTY, version: VERSION_PROPERTY }, ["path"]),
       outputSchema: {
         type: "object",
         properties: { result: { description: "Planning Center's untouched response body." } },
@@ -1087,7 +1081,8 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
           query: QUERY_PROPERTY,
           body: {
             type: "object",
-            description: 'JSON:API document, never flat attributes: {"data":{"type":"Email","attributes":{...}}}. Omit for DELETE and bodiless actions.',
+            description:
+              'JSON:API document, never flat attributes: {"data":{"type":"Email","attributes":{...}}}. Omit for DELETE and bodiless actions.',
           },
           version: VERSION_PROPERTY,
         },
@@ -1212,7 +1207,11 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
         {
           personId: PERSON_ID,
           ...PERSON_WRITE_PROPERTIES,
-          status: { type: "string", enum: ["active", "inactive"], description: "inactive archives the profile; active restores it." },
+          status: {
+            type: "string",
+            enum: ["active", "inactive"],
+            description: "inactive archives the profile; active restores it.",
+          },
         },
         ["personId"],
       ),
@@ -1276,7 +1275,11 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
         {
           personId: PERSON_ID,
           number: { type: "string", minLength: 3, description: "Phone number as dialed; Planning Center formats it." },
-          location: { type: "string", minLength: 1, description: "Label such as Mobile, Home, or Work. Defaults to Mobile." },
+          location: {
+            type: "string",
+            minLength: 1,
+            description: "Label such as Mobile, Home, or Work. Defaults to Mobile.",
+          },
           primary: { type: "boolean", description: "Make this the primary number." },
         },
         ["personId", "number"],
@@ -1323,7 +1326,15 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
       path: () => "/people/v2/lists",
       query: (args) => ({ "where[name]": args["name"], order: args["order"] }),
       project: (row) =>
-        pick(row, ["name", "description", "total_people", "status", "refreshed_at", "auto_refresh", "automations_active"]),
+        pick(row, [
+          "name",
+          "description",
+          "total_people",
+          "status",
+          "refreshed_at",
+          "auto_refresh",
+          "automations_active",
+        ]),
     }),
     list({
       name: "list_list_people",
@@ -1398,7 +1409,11 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
       item: CARD_SCHEMA,
       properties: {
         workflowId: idProperty("Workflow id from list_workflows."),
-        stage: { type: "string", minLength: 1, description: "Card stage as Planning Center reports it, e.g. ready, snoozed, completed, removed." },
+        stage: {
+          type: "string",
+          minLength: 1,
+          description: "Card stage as Planning Center reports it, e.g. ready, snoozed, completed, removed.",
+        },
         stepId: idProperty("Only cards on this step (list_workflows steps[].id)."),
         assigneeId: idProperty("Only cards assigned to this person id."),
         overdue: { type: "boolean", description: "Only overdue (true) or on-time (false) cards." },
@@ -1458,9 +1473,15 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
           action: {
             type: "string",
             enum: [...WORKFLOW_CARD_ACTIONS],
-            description: "promote completes the step; skip_step moves on without completing it; go_back returns to the previous step.",
+            description:
+              "promote completes the step; skip_step moves on without completing it; go_back returns to the previous step.",
           },
-          snoozeDays: { type: "integer", minimum: 1, maximum: 365, description: "Days to snooze; required with action snooze and refused otherwise." },
+          snoozeDays: {
+            type: "integer",
+            minimum: 1,
+            maximum: 365,
+            description: "Days to snooze; required with action snooze and refused otherwise.",
+          },
         },
         ["personId", "cardId", "action"],
       ),
@@ -1591,7 +1612,8 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
     }),
     list({
       name: "list_forms",
-      description: "List People forms with their submission counts and public URLs. Archived forms are excluded unless asked for.",
+      description:
+        "List People forms with their submission counts and public URLs. Archived forms are excluded unless asked for.",
       key: "forms",
       item: record({
         id: STRING,
@@ -1647,9 +1669,16 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
     // --- Services -----------------------------------------------------------
     list({
       name: "list_service_types",
-      description: "List Services service types — the recurring services such as Sunday Morning. Supplies serviceTypeId for plans and teams.",
+      description:
+        "List Services service types — the recurring services such as Sunday Morning. Supplies serviceTypeId for plans and teams.",
       key: "serviceTypes",
-      item: record({ id: STRING, name: STRING, frequency: NULLABLE_STRING, sequence: NULLABLE_INTEGER, parent_id: NULLABLE_STRING }),
+      item: record({
+        id: STRING,
+        name: STRING,
+        frequency: NULLABLE_STRING,
+        sequence: NULLABLE_INTEGER,
+        parent_id: NULLABLE_STRING,
+      }),
       path: () => "/services/v2/service_types",
       query: () => ({ order: "sequence" }),
       project: (row) => ({ ...pick(row, ["name", "frequency", "sequence"]), parent_id: relId(row, "parent") ?? null }),
@@ -1672,7 +1701,11 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
       }),
       properties: {
         serviceTypeId: SERVICE_TYPE_ID,
-        when: { type: "string", enum: ["future", "past", "all"], description: "future (default) sorts soonest first; past sorts most recent first." },
+        when: {
+          type: "string",
+          enum: ["future", "past", "all"],
+          description: "future (default) sorts soonest first; past sorts most recent first.",
+        },
       },
       required: ["serviceTypeId"],
       path: (args) => `/services/v2/service_types/${segment(args["serviceTypeId"])}/plans`,
@@ -1700,7 +1733,10 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
       description:
         "Get one plan with its times, order of service, and scheduled team in a single call. Flags a section past 100 rows rather than dropping it silently.",
       annotations: READ,
-      inputSchema: input({ serviceTypeId: SERVICE_TYPE_ID, planId: PLAN_ID, raw: RAW_PROPERTY }, ["serviceTypeId", "planId"]),
+      inputSchema: input({ serviceTypeId: SERVICE_TYPE_ID, planId: PLAN_ID, raw: RAW_PROPERTY }, [
+        "serviceTypeId",
+        "planId",
+      ]),
       outputSchema: {
         type: "object",
         properties: {
@@ -1714,11 +1750,16 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
       },
       handler: async (args: JsonRecord, ctx) => {
         const base = `/services/v2/service_types/${segment(args["serviceTypeId"])}/plans/${segment(args["planId"])}`;
-        const [planDocument, itemDocument, teamDocument] = (await Promise.all([
-          call({ method: "GET", path: base, query: { include: "plan_times" } }, ctx),
-          call({ method: "GET", path: `${base}/items`, query: { per_page: MAX_PAGE_SIZE } }, ctx),
-          call({ method: "GET", path: `${base}/team_members`, query: { include: "team", per_page: MAX_PAGE_SIZE } }, ctx),
-        ])).map(asRecord) as [JsonRecord, JsonRecord, JsonRecord];
+        const [planDocument, itemDocument, teamDocument] = (
+          await Promise.all([
+            call({ method: "GET", path: base, query: { include: "plan_times" } }, ctx),
+            call({ method: "GET", path: `${base}/items`, query: { per_page: MAX_PAGE_SIZE } }, ctx),
+            call(
+              { method: "GET", path: `${base}/team_members`, query: { include: "team", per_page: MAX_PAGE_SIZE } },
+              ctx,
+            ),
+          ])
+        ).map(asRecord) as [JsonRecord, JsonRecord, JsonRecord];
         const plan = created(planDocument, "plan record");
         const items = resources(itemDocument["data"]);
         const members = resources(teamDocument["data"]);
@@ -1738,14 +1779,20 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
         const teamIndex = indexIncluded(teamDocument);
         return {
           plan: {
-            ...pick(plan, ["title", "series_title", "dates", "sort_date", "total_length", "needed_positions_count", "planning_center_url"]),
+            ...pick(plan, [
+              "title",
+              "series_title",
+              "dates",
+              "sort_date",
+              "total_length",
+              "needed_positions_count",
+              "planning_center_url",
+            ]),
             times: relatedMany(plan, "plan_times", planIndex).map((time) =>
               pick(time, ["name", "time_type", "starts_at", "ends_at"]),
             ),
           },
-          items: items
-            .map(itemRecord)
-            .sort((a, b) => Number(a["sequence"] ?? 0) - Number(b["sequence"] ?? 0)),
+          items: items.map(itemRecord).sort((a, b) => Number(a["sequence"] ?? 0) - Number(b["sequence"] ?? 0)),
           teamMembers: members.map((member) => planPersonRecord(member, teamIndex)),
           ...truncation,
         };
@@ -1753,7 +1800,8 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
     },
     list({
       name: "list_teams",
-      description: "List one service type's teams with their positions. Supplies teamId and position names for schedule_plan_person.",
+      description:
+        "List one service type's teams with their positions. Supplies teamId and position names for schedule_plan_person.",
       key: "teams",
       item: record({ id: STRING, name: STRING, archived_at: NULLABLE_STRING, positions: ARRAY }),
       properties: { serviceTypeId: SERVICE_TYPE_ID },
@@ -1787,9 +1835,20 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
       },
       required: ["personId"],
       path: (args) => `/services/v2/people/${segment(args["personId"])}/schedules`,
-      query: (args) => ({ filter: args["when"] ?? "future", order: args["when"] === "past" ? "-starts_at" : "starts_at" }),
+      query: (args) => ({
+        filter: args["when"] ?? "future",
+        order: args["when"] === "past" ? "-starts_at" : "starts_at",
+      }),
       project: (row) => ({
-        ...pick(row, ["dates", "sort_date", "service_type_name", "team_name", "team_position_name", "status", "decline_reason"]),
+        ...pick(row, [
+          "dates",
+          "sort_date",
+          "service_type_name",
+          "team_name",
+          "team_position_name",
+          "status",
+          "decline_reason",
+        ]),
         plan_id: relId(row, "plan") ?? null,
       }),
     }),
@@ -1804,9 +1863,16 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
           planId: PLAN_ID,
           personId: PERSON_ID,
           teamId: idProperty("Team id from list_teams."),
-          teamPositionName: { type: "string", minLength: 1, description: "Position name from list_teams positions[].name." },
+          teamPositionName: {
+            type: "string",
+            minLength: 1,
+            description: "Position name from list_teams positions[].name.",
+          },
           status: { type: "string", enum: ["U", "C"], description: "U unconfirmed (default) or C confirmed." },
-          prepareNotification: { type: "boolean", description: "Queue Planning Center's scheduling notification for this person." },
+          prepareNotification: {
+            type: "boolean",
+            description: "Queue Planning Center's scheduling notification for this person.",
+          },
           notes: { type: "string", description: "Note shown to the person." },
         },
         ["serviceTypeId", "planId", "personId", "teamId"],
@@ -1856,7 +1922,11 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
           keyId: idProperty("Key id from list_song_arrangements keys[].id."),
           length: { type: "integer", minimum: 0, maximum: 86_400, description: "Length in seconds." },
           sequence: { type: "integer", minimum: 0, description: "Position in the order; omit to append." },
-          servicePosition: { type: "string", enum: ["pre", "during", "post"], description: "Before, during, or after the service. Defaults to during." },
+          servicePosition: {
+            type: "string",
+            enum: ["pre", "during", "post"],
+            description: "Before, during, or after the service. Defaults to during.",
+          },
           description: { type: "string", description: "Item description." },
         },
         ["serviceTypeId", "planId", "title"],
@@ -1890,7 +1960,8 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
     },
     list({
       name: "list_songs",
-      description: "Search the Services song library by title, author, CCLI number, or theme. Lyrics and chord charts live on arrangements.",
+      description:
+        "Search the Services song library by title, author, CCLI number, or theme. Lyrics and chord charts live on arrangements.",
       key: "songs",
       item: record({
         id: STRING,
@@ -1920,7 +1991,8 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
     }),
     list({
       name: "list_song_arrangements",
-      description: "List one song's arrangements with tempo, meter, sequence, and keys. Supplies arrangementId and keyId for add_plan_item.",
+      description:
+        "List one song's arrangements with tempo, meter, sequence, and keys. Supplies arrangementId and keyId for add_plan_item.",
       key: "arrangements",
       item: record({
         id: STRING,
@@ -1945,7 +2017,8 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
     // --- Groups -------------------------------------------------------------
     list({
       name: "list_groups",
-      description: "List Groups groups with type, schedule, and member count. Archived groups are excluded unless asked for; the API cannot create a group.",
+      description:
+        "List Groups groups with type, schedule, and member count. Archived groups are excluded unless asked for; the API cannot create a group.",
       key: "groups",
       item: record({
         id: STRING,
@@ -1960,24 +2033,37 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
       properties: {
         name: { type: "string", minLength: 1, description: "Exact group name; end it with % for a prefix match." },
         groupTypeId: idProperty("Only groups of this type (/groups/v2/group_types)."),
-        archived: { type: "string", enum: ["exclude", "include", "only"], description: "Archived groups: exclude (default), include, or only." },
+        archived: {
+          type: "string",
+          enum: ["exclude", "include", "only"],
+          description: "Archived groups: exclude (default), include, or only.",
+        },
         order: orderProperty(["name", "created_at", "memberships_count"]),
       },
       path: () => "/groups/v2/groups",
       query: (args) => ({
         "where[name]": args["name"],
         "where[group_type][id]": args["groupTypeId"],
-        "where[archive_status]": args["archived"] === "include" || args["archived"] === "only" ? args["archived"] : undefined,
+        "where[archive_status]":
+          args["archived"] === "include" || args["archived"] === "only" ? args["archived"] : undefined,
         order: args["order"],
       }),
       project: (row) => ({
-        ...pick(row, ["name", "memberships_count", "schedule", "contact_email", "archived_at", "public_church_center_web_url"]),
+        ...pick(row, [
+          "name",
+          "memberships_count",
+          "schedule",
+          "contact_email",
+          "archived_at",
+          "public_church_center_web_url",
+        ]),
         group_type_id: relId(row, "group_type") ?? null,
       }),
     }),
     list({
       name: "list_group_memberships",
-      description: "List one group's members and leaders with their names and join dates. Contact details come from get_person with person_id.",
+      description:
+        "List one group's members and leaders with their names and join dates. Contact details come from get_person with person_id.",
       key: "memberships",
       item: MEMBERSHIP_SCHEMA,
       properties: {
@@ -1993,7 +2079,8 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
     }),
     {
       name: "add_group_member",
-      description: "Add a person to a group as a member or leader. Fails when they already belong; change a role or remove someone with pco_api_mutate.",
+      description:
+        "Add a person to a group as a member or leader. Fails when they already belong; change a role or remove someone with pco_api_mutate.",
       annotations: ADDITIVE,
       inputSchema: input(
         {
@@ -2026,7 +2113,8 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
     },
     list({
       name: "list_group_events",
-      description: "List Groups meetings in a date range, for one group or all groups. Read-only: the API cannot create events or record attendance.",
+      description:
+        "List Groups meetings in a date range, for one group or all groups. Read-only: the API cannot create events or record attendance.",
       key: "events",
       item: record({
         id: STRING,
@@ -2044,7 +2132,7 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
         startsBefore: dateProperty("Only events starting before this time."),
         includeCanceled: { type: "boolean", description: "Include canceled events." },
       },
-      path: (args) => args["groupId"] ? `/groups/v2/groups/${segment(args["groupId"])}/events` : "/groups/v2/events",
+      path: (args) => (args["groupId"] ? `/groups/v2/groups/${segment(args["groupId"])}/events` : "/groups/v2/events"),
       query: (args) => ({
         ...range(["starts_at"], args["startsAfter"], args["startsBefore"]),
         filter: args["includeCanceled"] === true ? undefined : "not_canceled",
@@ -2059,7 +2147,8 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
     // --- Check-Ins (read-only product) ---------------------------------------
     list({
       name: "list_check_in_events",
-      description: "List Check-Ins events, the recurring things people check in to. Supplies eventId for event periods and check-ins.",
+      description:
+        "List Check-Ins events, the recurring things people check in to. Supplies eventId for event periods and check-ins.",
       key: "events",
       item: record({ id: STRING, name: STRING, frequency: NULLABLE_STRING, archived_at: NULLABLE_STRING }),
       properties: {
@@ -2067,7 +2156,10 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
         includeArchived: { type: "boolean", description: "Include archived events." },
       },
       path: () => "/check-ins/v2/events",
-      query: (args) => ({ "where[name]": args["name"], filter: args["includeArchived"] === true ? undefined : "not_archived" }),
+      query: (args) => ({
+        "where[name]": args["name"],
+        filter: args["includeArchived"] === true ? undefined : "not_archived",
+      }),
       project: (row) => pick(row, ["name", "frequency", "archived_at"]),
     }),
     list({
@@ -2094,7 +2186,15 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
       path: (args) => `/check-ins/v2/events/${segment(args["eventId"])}/event_periods`,
       query: (args) => ({ ...range(["starts_at"], args["startsAfter"], args["startsBefore"]), order: "-starts_at" }),
       project: (row) =>
-        pick(row, ["starts_at", "ends_at", "regular_count", "guest_count", "volunteer_count", "unique_total_count", "note"]),
+        pick(row, [
+          "starts_at",
+          "ends_at",
+          "regular_count",
+          "guest_count",
+          "volunteer_count",
+          "unique_total_count",
+          "note",
+        ]),
     }),
     list({
       name: "list_check_ins",
@@ -2121,14 +2221,24 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
         kind: { type: "string", enum: ["regular", "guest", "volunteer"], description: "Only this kind of check-in." },
         order: orderProperty(["created_at", "last_name", "first_name"]),
       },
-      path: (args) => args["eventId"] ? `/check-ins/v2/events/${segment(args["eventId"])}/check_ins` : "/check-ins/v2/check_ins",
+      path: (args) =>
+        args["eventId"] ? `/check-ins/v2/events/${segment(args["eventId"])}/check_ins` : "/check-ins/v2/check_ins",
       query: (args) => ({
         ...range(["event_period", "starts_at"], args["serviceAfter"], args["serviceBefore"]),
         filter: args["kind"],
         order: args["order"],
       }),
       project: (row) => ({
-        ...pick(row, ["first_name", "last_name", "kind", "number", "security_code", "created_at", "checked_out_at", "one_time_guest"]),
+        ...pick(row, [
+          "first_name",
+          "last_name",
+          "kind",
+          "number",
+          "security_code",
+          "created_at",
+          "checked_out_at",
+          "one_time_guest",
+        ]),
         person_id: relId(row, "person") ?? null,
         event_period_id: relId(row, "event_period") ?? null,
       }),
@@ -2164,7 +2274,16 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
         order: "starts_at",
       }),
       project: (row) => ({
-        ...pick(row, ["name", "starts_at", "ends_at", "all_day_event", "location", "kind", "recurrence_description", "church_center_url"]),
+        ...pick(row, [
+          "name",
+          "starts_at",
+          "ends_at",
+          "all_day_event",
+          "location",
+          "kind",
+          "recurrence_description",
+          "church_center_url",
+        ]),
         event_id: relId(row, "event") ?? null,
       }),
     }),
@@ -2172,7 +2291,8 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
     // --- Registrations (read-only product) ----------------------------------
     list({
       name: "list_signups",
-      description: "List Registrations signups (registration events) with open, close, and capacity state. Read-only: the API cannot register anyone.",
+      description:
+        "List Registrations signups (registration events) with open, close, and capacity state. Read-only: the API cannot register anyone.",
       key: "signups",
       item: record({
         id: STRING,
@@ -2187,16 +2307,31 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
         new_registration_url: NULLABLE_STRING,
       }),
       properties: {
-        archived: { type: "string", enum: ["unarchived", "archived", "all"], description: "unarchived (default), archived, or all." },
+        archived: {
+          type: "string",
+          enum: ["unarchived", "archived", "all"],
+          description: "unarchived (default), archived, or all.",
+        },
       },
       path: () => "/registrations/v2/signups",
       query: (args) => ({ filter: args["archived"] === "all" ? undefined : (args["archived"] ?? "unarchived") }),
       project: (row) =>
-        pick(row, ["name", "open", "closed", "open_at", "close_at", "maximum_capacity", "at_maximum_capacity", "archived", "new_registration_url"]),
+        pick(row, [
+          "name",
+          "open",
+          "closed",
+          "open_at",
+          "close_at",
+          "maximum_capacity",
+          "at_maximum_capacity",
+          "archived",
+          "new_registration_url",
+        ]),
     }),
     list({
       name: "list_signup_attendees",
-      description: "List one signup's attendees with active, waitlisted, and canceled state. person_id joins them to People.",
+      description:
+        "List one signup's attendees with active, waitlisted, and canceled state. person_id joins them to People.",
       key: "attendees",
       item: record({
         id: STRING,
@@ -2210,7 +2345,11 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
       }),
       properties: {
         signupId: idProperty("Signup id from list_signups."),
-        status: { type: "string", enum: ["active", "waitlist", "canceled"], description: "Only attendees in this state." },
+        status: {
+          type: "string",
+          enum: ["active", "waitlist", "canceled"],
+          description: "Only attendees in this state.",
+        },
       },
       required: ["signupId"],
       path: (args) => `/registrations/v2/signups/${segment(args["signupId"])}/attendees`,
@@ -2237,7 +2376,8 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
         succeededOnly: { type: "boolean", description: "Exclude pending and failed card or ACH payments." },
         order: orderProperty(["received_at", "created_at", "updated_at"]),
       },
-      path: (args) => args["personId"] ? `/giving/v2/people/${segment(args["personId"])}/donations` : "/giving/v2/donations",
+      path: (args) =>
+        args["personId"] ? `/giving/v2/people/${segment(args["personId"])}/donations` : "/giving/v2/donations",
       query: (args) => ({
         ...range(["received_at"], args["receivedAfter"], args["receivedBefore"]),
         "where[fund_id]": args["fundId"],
@@ -2251,13 +2391,21 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
       name: "list_funds",
       description: "List Giving funds with ledger codes and visibility. Supplies fundId for donation filters.",
       key: "funds",
-      item: record({ id: STRING, name: STRING, ledger_code: NULLABLE_STRING, visibility: STRING, default: BOOLEAN, description: NULLABLE_STRING }),
+      item: record({
+        id: STRING,
+        name: STRING,
+        ledger_code: NULLABLE_STRING,
+        visibility: STRING,
+        default: BOOLEAN,
+        description: NULLABLE_STRING,
+      }),
       path: () => "/giving/v2/funds",
       project: (row) => pick(row, ["name", "ledger_code", "visibility", "default", "description"]),
     }),
     list({
       name: "list_batches",
-      description: "List Giving batches with totals and commit state, most recently updated first. Committing a batch is pco_api_mutate.",
+      description:
+        "List Giving batches with totals and commit state, most recently updated first. Committing a batch is pco_api_mutate.",
       key: "batches",
       item: record({
         id: STRING,
@@ -2271,18 +2419,31 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
         batch_group_id: NULLABLE_STRING,
       }),
       properties: {
-        status: { type: "string", enum: ["committed", "in_progress"], description: "Only committed or in-progress batches." },
+        status: {
+          type: "string",
+          enum: ["committed", "in_progress"],
+          description: "Only committed or in-progress batches.",
+        },
       },
       path: () => "/giving/v2/batches",
       query: (args) => ({ filter: args["status"], order: "-updated_at" }),
       project: (row) => ({
-        ...pick(row, ["description", "status", "donations_count", "total_cents", "total_currency", "committed_at", "created_at"]),
+        ...pick(row, [
+          "description",
+          "status",
+          "donations_count",
+          "total_cents",
+          "total_currency",
+          "committed_at",
+          "created_at",
+        ]),
         batch_group_id: relId(row, "batch_group") ?? null,
       }),
     }),
     list({
       name: "list_pledge_campaigns",
-      description: "List Giving pledge campaigns with goal and received totals in cents. Supplies pledgeCampaignId for list_pledges.",
+      description:
+        "List Giving pledge campaigns with goal and received totals in cents. Supplies pledgeCampaignId for list_pledges.",
       key: "campaigns",
       item: record({
         id: STRING,
@@ -2330,7 +2491,8 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
     }),
     list({
       name: "list_recurring_donations",
-      description: "List Giving recurring donations with schedule, status, next occurrence, and fund designations. Read-only; amounts in cents.",
+      description:
+        "List Giving recurring donations with schedule, status, next occurrence, and fund designations. Read-only; amounts in cents.",
       key: "recurringDonations",
       item: record({
         id: STRING,
@@ -2343,12 +2505,21 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
         person_id: NULLABLE_STRING,
         designations: DESIGNATIONS,
       }),
-      properties: { status: { type: "string", minLength: 1, description: "Status as Planning Center reports it, e.g. active." } },
+      properties: {
+        status: { type: "string", minLength: 1, description: "Status as Planning Center reports it, e.g. active." },
+      },
       path: () => "/giving/v2/recurring_donations",
       query: (args) => ({ "where[status]": args["status"] }),
       include: "designations,designations.fund",
       project: (row, index) => ({
-        ...pick(row, ["amount_cents", "amount_currency", "schedule", "status", "next_occurrence", "last_donation_received_at"]),
+        ...pick(row, [
+          "amount_cents",
+          "amount_currency",
+          "schedule",
+          "status",
+          "next_occurrence",
+          "last_donation_received_at",
+        ]),
         person_id: relId(row, "person") ?? null,
         designations: designations(row, index),
       }),
@@ -2363,12 +2534,23 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
       inputSchema: input({ perPage: perPageProperty(defaultPageSize), offset: OFFSET_PROPERTY }),
       outputSchema: listOutput(
         "subscriptions",
-        record({ id: STRING, name: STRING, url: STRING, active: BOOLEAN, application_id: NULLABLE_STRING, created_at: STRING }),
+        record({
+          id: STRING,
+          name: STRING,
+          url: STRING,
+          active: BOOLEAN,
+          application_id: NULLABLE_STRING,
+          created_at: STRING,
+        }),
       ),
       handler: async (args: JsonRecord, ctx) => {
         const document = asRecord(
           await call(
-            { method: "GET", path: "/webhooks/v2/webhook_subscriptions", query: { per_page: perPage(args), offset: args["offset"] } },
+            {
+              method: "GET",
+              path: "/webhooks/v2/webhook_subscriptions",
+              query: { per_page: perPage(args), offset: args["offset"] },
+            },
             ctx,
           ),
         );
@@ -2392,15 +2574,15 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
 function usageGuide(purpose: string, instructions: string | undefined): string {
   const organizationInstructions = instructions?.trim();
   return `${skill.fragments.guide_0}${purpose}${skill.fragments.guide_1}${PLANNING_CENTER_APPS.map((app) => `${app} ${PLANNING_CENTER_API_VERSIONS[app]}`).join(", ")}${skill.fragments.guide_2}${
-    organizationInstructions
-      ? `\n## ${skill.instructionsHeading}\n\n${organizationInstructions}\n`
-      : ""
+    organizationInstructions ? `\n## ${skill.instructionsHeading}\n\n${organizationInstructions}\n` : ""
   }`;
 }
 
-
 /** The closed options planningCenter() accepts; see `assertKnownOptions`. */
-const PLANNING_CENTER_OPTIONS = optionsOf<PlanningCenterOptions>()({ ...PROVIDER_COMMON, ...keys("userAgent", "defaultPageSize", "baseUrl") });
+const PLANNING_CENTER_OPTIONS = optionsOf<PlanningCenterOptions>()({
+  ...PROVIDER_COMMON,
+  ...keys("userAgent", "defaultPageSize", "baseUrl"),
+});
 
 /** A maintained Planning Center Online connection over the REST API. */
 export const planningCenter = asProviderFactory<PlanningCenterOptions>({
@@ -2408,7 +2590,12 @@ export const planningCenter = asProviderFactory<PlanningCenterOptions>({
   title: "Planning Center",
   kind: "api",
   readme: "Planning Center",
-  bundle: {"baselineGzip":26970,"maxGzip":86970,"note":"./providers/planning-center starts at 26,970 B gzip. It is api() over the guarded transport with no hosted-MCP surface, so neither the MCP client nor the Effect core is in its graph; the cap uses the existing baseline + 60,000 B policy."},
+  bundle: {
+    "baselineGzip": 26970,
+    "maxGzip": 86970,
+    "note":
+      "./providers/planning-center starts at 26,970 B gzip. It is api() over the guarded transport with no hosted-MCP surface, so neither the MCP client nor the Effect core is in its graph; the cap uses the existing baseline + 60,000 B policy.",
+  },
   skill,
   options: PLANNING_CENTER_OPTIONS,
   create: planningCenterConnector,
@@ -2421,9 +2608,7 @@ function planningCenterConnector(id: string, options: PlanningCenterOptions): Co
   }
   const defaultPageSize = options.defaultPageSize ?? DEFAULT_PAGE_SIZE;
   if (!Number.isInteger(defaultPageSize) || defaultPageSize < 1 || defaultPageSize > MAX_PAGE_SIZE) {
-    throw new Error(
-      `planningCenter() defaultPageSize must be a whole number between 1 and ${MAX_PAGE_SIZE}.`,
-    );
+    throw new Error(`planningCenter() defaultPageSize must be a whole number between 1 and ${MAX_PAGE_SIZE}.`);
   }
   const userAgent = options.userAgent?.trim() ?? DEFAULT_USER_AGENT;
   if (!userAgent || /[\r\n]/.test(userAgent)) {
@@ -2452,7 +2637,7 @@ function planningCenterConnector(id: string, options: PlanningCenterOptions): Co
             {
               ...ctx,
               credential: {
-                get: async (field?: string) => (field ? values[field] ?? null : null),
+                get: async (field?: string) => (field ? (values[field] ?? null) : null),
                 getAll: async () => values,
               },
             },

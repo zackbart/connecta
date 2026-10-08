@@ -18,27 +18,39 @@ import type { Connector, ConnectorContext, ToolDef } from "../src/types.js";
 const TOKEN = "r5-failed-catalog-bearer-credential";
 const BASE = "https://connecta.test";
 const KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 it("INV-5: a downstream 400 catalog diagnostic cannot disclose its sent vault token", async () => {
   const storage = memoryStorage();
   const vault = new CredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
   await vault.set("catalog", TOKEN, "operator");
   const records: unknown[] = [];
-  const record = (...args: unknown[]) => { records.push(args); };
+  const record = (...args: unknown[]) => {
+    records.push(args);
+  };
   const logger = { debug: record, info: record, warn: record, error: record };
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     // Ordinary 4xx error response includes the authorization it received.
     return Response.json({ message: `Catalog refused: ${request.headers.get("authorization")}` }, { status: 400 });
   });
-  const transport = guardedFetch({ provider: "Catalog", baseUrl: "https://catalog.test", maxResponseBytes: 65536,
-    authenticate: async ctx => ({ Authorization: `Bearer ${await ctx.credential!.get()}` }) });
+  const transport = guardedFetch({
+    provider: "Catalog",
+    baseUrl: "https://catalog.test",
+    maxResponseBytes: 65536,
+    authenticate: async (ctx) => ({ Authorization: `Bearer ${await ctx.credential!.get()}` }),
+  });
   const contexts: ConnectorContext[] = [];
-  const connector: Connector = { id: "catalog", kind: "api", credential: { label: "API token" },
+  const connector: Connector = {
+    id: "catalog",
+    kind: "api",
+    credential: { label: "API token" },
     async listTools(ctx) {
       contexts.push(ctx);
-      return transport({ method: "GET", path: "/tools" }, ctx, async response => {
+      return transport({ method: "GET", path: "/tools" }, ctx, async (response) => {
         const parsed = await response.jsonResult();
         if ("parseError" in parsed) throw new ConnectorCallError("connector_call_failed", "Malformed catalog");
         const payload = parsed.value as { message: string; tools: ToolDef[] };
@@ -46,7 +58,9 @@ it("INV-5: a downstream 400 catalog diagnostic cannot disclose its sent vault to
         return payload.tools;
       });
     },
-    async callTool() { return null; }
+    async callTool() {
+      return null;
+    },
   };
   const registry = makeRegistry([connector], { storage, credentialVault: vault, logger });
   const host = (await buildSandboxProviders(registry, "https://connecta.test", silentLogger))[0]!.fns;
@@ -55,7 +69,7 @@ it("INV-5: a downstream 400 catalog diagnostic cannot disclose its sent vault to
   const description = await host.describe!({ addresses: ["catalog.read"], format: "json" });
   const call = await createMetaTools(registry, "https://connecta.test").callTool({ address: "catalog.read" });
   // Confirm registration succeeded, and no raw operator text or cache was written.
-  expect(contexts.every(ctx => sentSecretsFor(ctx).text(TOKEN) === "[redacted]")).toBe(true);
+  expect(contexts.every((ctx) => sentSecretsFor(ctx).text(TOKEN) === "[redacted]")).toBe(true);
   expect(await storage.list("catalog:catalog")).toEqual([]);
   expect(JSON.stringify(records)).not.toContain(TOKEN);
   expect.soft(JSON.stringify(description)).not.toContain(TOKEN);
@@ -68,83 +82,104 @@ it("INV-5: failed search_tools listings register credentials in the search reque
   await vault.set("catalog", TOKEN, "operator");
   const contexts: ConnectorContext[] = [];
   const connector: Connector = {
-    id: "catalog", kind: "api", credential: { label: "Token" },
+    id: "catalog",
+    kind: "api",
+    credential: { label: "Token" },
     async listTools(ctx) {
       contexts.push(ctx);
       const token = await ctx.credential!.get();
       throw new ConnectorCallError("invalid_args", `Catalog refused ${token}`, { cause: new Error(String(token)) });
     },
-    async callTool() { return null; },
+    async callTool() {
+      return null;
+    },
   };
-  const result = await createMetaTools(makeRegistry([connector], { storage, credentialVault: vault }), BASE).searchTools({ connector: "catalog" });
+  const result = await createMetaTools(
+    makeRegistry([connector], { storage, credentialVault: vault }),
+    BASE,
+  ).searchTools({ connector: "catalog" });
   expect(result.structuredContent).toMatchObject({ catalogErrors: [{ connector: "catalog", code: "invalid_args" }] });
   expect(JSON.stringify(result)).not.toContain(TOKEN);
   expect(sentSecretsForRequest(contexts[0]!.requestScope!).text(TOKEN)).toBe("[redacted]");
   expect(await storage.list("catalog:catalog")).toEqual([]);
 });
 
-it.each([false, true])("INV-5: independent failed listings sanitize their own failure intake, synchronous=%s", async (synchronous) => {
-  const gate = deferred<void>();
-  const entered = deferred<void>();
-  let calls = 0;
-  const storage = memoryStorage();
-  const scopesSeen: object[] = [];
-  const connector: Connector = {
-    id: "catalog", kind: "api",
-    listTools(ctx) {
-      calls++;
-      scopesSeen.push(ctx.requestScope!);
-      sentSecretsFor(ctx).add(TOKEN);
-      if (synchronous) throw new ConnectorCallError("invalid_args", TOKEN);
-      entered.resolve();
-      return gate.promise.then(() => { throw new ConnectorCallError("invalid_args", TOKEN, { cause: new Error(TOKEN) }); });
-    },
-    async callTool() { return null; },
-  };
-  const registry = makeRegistry([connector], { storage });
-  if (synchronous) {
-    await expect(registry.getTools("catalog", BASE, {})).rejects.toThrow("[redacted]");
-  } else {
-    const firstScope = {};
-    const secondScope = {};
-    const first = registry.getTools("catalog", BASE, firstScope).catch(error => error);
-    await entered.promise;
-    const second = registry.getTools("catalog", BASE, secondScope).catch(error => error);
-    // Both request-owned listings must enter before either fails.
-    await new Promise(resolve => setTimeout(resolve, 0));
-    gate.resolve();
-    const failures = await Promise.all([first, second]);
-    expect(calls).toBe(2);
-    expect(sentSecretsForRequest(secondScope).text(TOKEN)).toBe("[redacted]");
-    for (const failure of failures) {
-      expect(failure).toBeInstanceOf(ConnectorCallError);
-      expect(failure.message).toBe("[redacted]");
-      expect(JSON.stringify(Object.getOwnPropertyDescriptors(failure))).not.toContain(TOKEN);
+it.each([false, true])(
+  "INV-5: independent failed listings sanitize their own failure intake, synchronous=%s",
+  async (synchronous) => {
+    const gate = deferred<void>();
+    const entered = deferred<void>();
+    let calls = 0;
+    const storage = memoryStorage();
+    const scopesSeen: object[] = [];
+    const connector: Connector = {
+      id: "catalog",
+      kind: "api",
+      listTools(ctx) {
+        calls++;
+        scopesSeen.push(ctx.requestScope!);
+        sentSecretsFor(ctx).add(TOKEN);
+        if (synchronous) throw new ConnectorCallError("invalid_args", TOKEN);
+        entered.resolve();
+        return gate.promise.then(() => {
+          throw new ConnectorCallError("invalid_args", TOKEN, { cause: new Error(TOKEN) });
+        });
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const registry = makeRegistry([connector], { storage });
+    if (synchronous) {
+      await expect(registry.getTools("catalog", BASE, {})).rejects.toThrow("[redacted]");
+    } else {
+      const firstScope = {};
+      const secondScope = {};
+      const first = registry.getTools("catalog", BASE, firstScope).catch((error) => error);
+      await entered.promise;
+      const second = registry.getTools("catalog", BASE, secondScope).catch((error) => error);
+      // Both request-owned listings must enter before either fails.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      gate.resolve();
+      const failures = await Promise.all([first, second]);
+      expect(calls).toBe(2);
+      expect(sentSecretsForRequest(secondScope).text(TOKEN)).toBe("[redacted]");
+      for (const failure of failures) {
+        expect(failure).toBeInstanceOf(ConnectorCallError);
+        expect(failure.message).toBe("[redacted]");
+        expect(JSON.stringify(Object.getOwnPropertyDescriptors(failure))).not.toContain(TOKEN);
+      }
     }
-  }
-  const later = await createMetaTools(registry, BASE).callTool({ address: "catalog.read" });
-  expect(later.isError).toBe(true);
-  expect(JSON.stringify(later)).not.toContain(TOKEN);
-  expect(await storage.list("catalog:catalog")).toEqual([]);
-  expect(scopesSeen.at(-1)).not.toBe(scopesSeen[0]);
-});
+    const later = await createMetaTools(registry, BASE).callTool({ address: "catalog.read" });
+    expect(later.isError).toBe(true);
+    expect(JSON.stringify(later)).not.toContain(TOKEN);
+    expect(await storage.list("catalog:catalog")).toEqual([]);
+    expect(scopesSeen.at(-1)).not.toBe(scopesSeen[0]);
+  },
+);
 
 it("INV-5 INV-6: a later failed listing preserves classification without a stale fallback or inherited secrets", async () => {
   const storage = memoryStorage();
   let calls = 0;
   const connector: Connector = {
-    id: "catalog", kind: "api",
+    id: "catalog",
+    kind: "api",
     async listTools(ctx) {
       sentSecretsFor(ctx).add(TOKEN);
       if (++calls > 1) throw new ConnectorCallError("invalid_args", `Refresh refused ${TOKEN}`);
       return [{ name: "read", description: `Read ${TOKEN}`, annotations: { readOnlyHint: true } }];
     },
-    async callTool() { return null; },
+    async callTool() {
+      return null;
+    },
   };
   const registry = makeRegistry([connector], { storage });
   expect((await registry.getTools("catalog", BASE, {}))[0]?.description).toBe("Read [redacted]");
   const requestScope = {};
-  await expect(registry.getTools("catalog", BASE, requestScope)).rejects.toMatchObject({ code: "invalid_args", message: "Refresh refused [redacted]" });
+  await expect(registry.getTools("catalog", BASE, requestScope)).rejects.toMatchObject({
+    code: "invalid_args",
+    message: "Refresh refused [redacted]",
+  });
   expect(sentSecretsForRequest({}).text(TOKEN)).toBe(TOKEN);
   expect(await storage.list("catalog:")).toEqual([]);
 });
@@ -154,7 +189,8 @@ it("INV-5: listing credentials redact a later unauthenticated result before stas
   const contexts: ConnectorContext[] = [];
   let calls = 0;
   const connector: Connector = {
-    id: "catalog", kind: "api",
+    id: "catalog",
+    kind: "api",
     async listTools(ctx) {
       contexts.push(ctx);
       sentSecretsFor(ctx).add(TOKEN);
@@ -168,7 +204,7 @@ it("INV-5: listing credentials redact a later unauthenticated result before stas
   const registry = makeRegistry([connector], { storage, maxResultBytes: 1_024 });
   const tools = createMetaTools(registry, BASE);
   const result = await tools.callTool({ address: "catalog.read", resultMode: "value" });
-  const notice = (result.structuredContent!.data as { resultId: string });
+  const notice = result.structuredContent!.data as { resultId: string };
   expect(notice.resultId).toBeTypeOf("string");
   expect(contexts[0]!.requestScope).toBe(contexts[1]!.requestScope);
   expect(sentSecretsFor(contexts[1]!).text(TOKEN)).toBe(TOKEN);
@@ -193,10 +229,21 @@ it("INV-5: api handler errors redact the header credential on direct and guest e
     expect(new Request(input, init).headers.get("x-api-key")).toBe(TOKEN);
     return Response.json({ message: `Handler refused ${TOKEN}` }, { status: 400 });
   });
-  const connector = api("api", { tools: [{ name: "read", description: "Read", annotations: { readOnlyHint: true }, handler: async (_args, ctx) => {
-    const body = await (await ctx.fetch("https://api.test/read", { headers: { "X-API-Key": TOKEN } })).json() as { message: string };
-    throw new ConnectorCallError("invalid_args", body.message, { cause: new Error(TOKEN) });
-  } }] });
+  const connector = api("api", {
+    tools: [
+      {
+        name: "read",
+        description: "Read",
+        annotations: { readOnlyHint: true },
+        handler: async (_args, ctx) => {
+          const body = (await (
+            await ctx.fetch("https://api.test/read", { headers: { "X-API-Key": TOKEN } })
+          ).json()) as { message: string };
+          throw new ConnectorCallError("invalid_args", body.message, { cause: new Error(TOKEN) });
+        },
+      },
+    ],
+  });
   const registry = makeRegistry([connector]);
   const direct = await createMetaTools(registry, BASE).callTool({ address: "api.read" });
   expect(direct.isError).toBe(true);
@@ -206,50 +253,85 @@ it("INV-5: api handler errors redact the header credential on direct and guest e
   await expect(guest.call!("api.read", {})).rejects.toThrow("Handler refused [redacted]");
 });
 
-it.each(["http", "throw"])("INV-5: OAuth refresh %s errors register and redact the refresh credential", async (mode) => {
-  const storage = memoryStorage();
-  const tokenEndpoint = "https://oauth.api.test/token";
-  const refresh = "request-refresh-credential/+echo";
-  await seedGrant(storage, { issuer: tokenEndpoint, tokens: { access_token: TOKEN, refresh_token: refresh, token_type: "bearer" } }, undefined, scopes.connector("api"));
-  let refreshes = 0;
-  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-    if (String(input) !== tokenEndpoint) return new Response("", { status: 401 });
-    refreshes++;
-    expect(new URLSearchParams(init?.body as URLSearchParams).get("refresh_token")).toBe(refresh);
-    if (mode === "throw") throw new ConnectorCallError("invalid_args", `Refresh refused ${refresh}`);
-    return Response.json({ error: "invalid_grant", error_description: `Refresh refused ${refresh}` }, { status: 400 });
-  });
-  const connector = api("api", {
-    oauth: { authorizationEndpoint: "https://oauth.api.test/authorize", tokenEndpoint, clientId: "client", apiOrigins: ["https://api.test"] },
-    tools: [{ name: "read", description: "Read", annotations: { readOnlyHint: true }, handler: async (_args, ctx) => ctx.oauth!.fetch("https://api.test/read") }],
-  });
-  const requestScope = {};
-  const result = await createMetaTools(makeRegistry([connector], { storage }), BASE, { requestScope }).callTool({ address: "api.read" });
-  expect(result.isError).toBe(true);
-  expect(refreshes).toBe(1);
-  expect(sentSecretsForRequest(requestScope).text(refresh)).toBe("[redacted]");
-  expect(JSON.stringify(result)).not.toContain(refresh);
-});
+it.each(["http", "throw"])(
+  "INV-5: OAuth refresh %s errors register and redact the refresh credential",
+  async (mode) => {
+    const storage = memoryStorage();
+    const tokenEndpoint = "https://oauth.api.test/token";
+    const refresh = "request-refresh-credential/+echo";
+    await seedGrant(
+      storage,
+      { issuer: tokenEndpoint, tokens: { access_token: TOKEN, refresh_token: refresh, token_type: "bearer" } },
+      undefined,
+      scopes.connector("api"),
+    );
+    let refreshes = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) !== tokenEndpoint) return new Response("", { status: 401 });
+      refreshes++;
+      expect(new URLSearchParams(init?.body as URLSearchParams).get("refresh_token")).toBe(refresh);
+      if (mode === "throw") throw new ConnectorCallError("invalid_args", `Refresh refused ${refresh}`);
+      return Response.json(
+        { error: "invalid_grant", error_description: `Refresh refused ${refresh}` },
+        { status: 400 },
+      );
+    });
+    const connector = api("api", {
+      oauth: {
+        authorizationEndpoint: "https://oauth.api.test/authorize",
+        tokenEndpoint,
+        clientId: "client",
+        apiOrigins: ["https://api.test"],
+      },
+      tools: [
+        {
+          name: "read",
+          description: "Read",
+          annotations: { readOnlyHint: true },
+          handler: async (_args, ctx) => ctx.oauth!.fetch("https://api.test/read"),
+        },
+      ],
+    });
+    const requestScope = {};
+    const result = await createMetaTools(makeRegistry([connector], { storage }), BASE, { requestScope }).callTool({
+      address: "api.read",
+    });
+    expect(result.isError).toBe(true);
+    expect(refreshes).toBe(1);
+    expect(sentSecretsForRequest(requestScope).text(refresh)).toBe("[redacted]");
+    expect(JSON.stringify(result)).not.toContain(refresh);
+  },
+);
 
 it("INV-5: every meta-tool output and guest bridge entry uses the request boundary", async () => {
   const connector = api("contract", {
-    tools: [{ name: "read", description: `Read ${TOKEN}`, annotations: { readOnlyHint: true }, handler: async () => ({ echo: TOKEN }) }],
+    tools: [
+      {
+        name: "read",
+        description: `Read ${TOKEN}`,
+        annotations: { readOnlyHint: true },
+        handler: async () => ({ echo: TOKEN }),
+      },
+    ],
   });
   connector.usageGuide = `Guide ${TOKEN}`;
-  connector.readResource = async uri => ({ contents: [{ uri, text: TOKEN }] });
+  connector.readResource = async (uri) => ({ contents: [{ uri, text: TOKEN }] });
   connector.startAuth = async () => ({ state: "auth_required" });
   const registry = makeRegistry([connector]);
   const requestScope = {};
   const secrets = sentSecretsForRequest(requestScope);
   secrets.add(TOKEN);
   const tools = createMetaTools(registry, BASE, {
-    requestScope, canManageAuth: () => true, oauthConnectUrl: async () => `https://oauth.test/${TOKEN}`,
+    requestScope,
+    canManageAuth: () => true,
+    oauthConnectUrl: async () => `https://oauth.test/${TOKEN}`,
   });
   const outputs: Record<keyof typeof tools, () => Promise<unknown>> = {
     skills: () => tools.skills({ name: "connector:contract" }),
     searchTools: () => tools.searchTools({ connector: "contract", fullDescriptions: true }),
     callTool: () => tools.callTool({ address: "contract.read", resultMode: "value" }),
-    callDestructiveTool: () => tools.callDestructiveTool({ address: "contract.read", reason: "Contract test", resultMode: "value" }),
+    callDestructiveTool: () =>
+      tools.callDestructiveTool({ address: "contract.read", reason: "Contract test", resultMode: "value" }),
     readResult: () => tools.readResult({ id: TOKEN }),
     authorizeConnector: () => tools.authorizeConnector({ connector: "contract" }),
   };
@@ -259,7 +341,8 @@ it("INV-5: every meta-tool output and guest bridge entry uses the request bounda
     expect(result, name).not.toContain(TOKEN);
     expect(result, name).toContain("[redacted]");
   }
-  const bridge = (await buildSandboxProviders(registry, BASE, silentLogger, undefined, { sentSecrets: secrets }))[0]!.fns;
+  const bridge = (await buildSandboxProviders(registry, BASE, silentLogger, undefined, { sentSecrets: secrets }))[0]!
+    .fns;
   const entries: Record<string, () => Promise<unknown>> = {
     call: () => bridge.call!("contract.read", {}),
     result: () => bridge.result!(TOKEN),
@@ -271,18 +354,24 @@ it("INV-5: every meta-tool output and guest bridge entry uses the request bounda
   };
   expect(Object.keys(bridge).sort()).toEqual(Object.keys(entries).sort());
   for (const [name, run] of Object.entries(entries)) {
-    const result = await run().catch(error => ({ message: error.message }));
+    const result = await run().catch((error) => ({ message: error.message }));
     expect(JSON.stringify(result), name).not.toContain(TOKEN);
   }
 });
 
 it("INV-5: future operation-table entries and thrown errors pass through the same output function", async () => {
-  const operations = agentOutputOperations(scope => {
+  const operations = agentOutputOperations((scope) => {
     const ctx = { storage: memoryStorage(), logger: silentLogger, baseUrl: BASE, requestScope: scope };
     return {
       async futureResult() {
         sentSecretsFor(ctx).add(TOKEN);
-        return { content: [{ type: "text", text: TOKEN.slice(0, 12) }, { type: "text", text: TOKEN.slice(12) }], structuredContent: { echo: TOKEN } };
+        return {
+          content: [
+            { type: "text", text: TOKEN.slice(0, 12) },
+            { type: "text", text: TOKEN.slice(12) },
+          ],
+          structuredContent: { echo: TOKEN },
+        };
       },
       async futureError() {
         sentSecretsFor(ctx).add(TOKEN);
@@ -290,49 +379,72 @@ it("INV-5: future operation-table entries and thrown errors pass through the sam
       },
     };
   });
-  expect(await operations.futureResult()).toMatchObject({ content: [{ text: "[redacted]" }, { text: "" }], structuredContent: { echo: "[redacted]" } });
+  expect(await operations.futureResult()).toMatchObject({
+    content: [{ text: "[redacted]" }, { text: "" }],
+    structuredContent: { echo: "[redacted]" },
+  });
   await expect(operations.futureError()).rejects.toThrow("[redacted]");
 });
 
-it.each(["modern", "legacy"])("INV-5: %s MCP wire responses redact failed listings in text and structured content", async (protocol) => {
-  vi.stubGlobal("fetch", async () => Response.json({ message: `Catalog refused ${TOKEN}` }, { status: 400 }));
-  const transport = guardedFetch({ provider: "Catalog", baseUrl: "https://catalog.test", maxResponseBytes: 65_536, authenticate: async () => ({ Authorization: `Bearer ${TOKEN}` }) });
-  const connector: Connector = {
-    id: "catalog", kind: "api",
-    async listTools(ctx) {
-      return transport({ method: "GET", path: "/tools" }, ctx, async response => {
-        const parsed = await response.jsonResult();
-        if ("parseError" in parsed) throw new Error("Bad fixture");
-        throw new ConnectorCallError("invalid_args", (parsed.value as { message: string }).message);
-      });
-    },
-    async callTool() { return null; },
-  };
-  const app = createTestConnecta({ connectors: [connector], storage: memoryStorage(), logger: silentLogger });
-  try {
-    const request = mcpRpc("tools/call", {
-      name: "call_tool", arguments: { address: "catalog.read" },
-      ...(protocol === "modern" ? { _meta: {
-        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-        "io.modelcontextprotocol/clientCapabilities": {},
-      } } : {}),
+it.each(["modern", "legacy"])(
+  "INV-5: %s MCP wire responses redact failed listings in text and structured content",
+  async (protocol) => {
+    vi.stubGlobal("fetch", async () => Response.json({ message: `Catalog refused ${TOKEN}` }, { status: 400 }));
+    const transport = guardedFetch({
+      provider: "Catalog",
+      baseUrl: "https://catalog.test",
+      maxResponseBytes: 65_536,
+      authenticate: async () => ({ Authorization: `Bearer ${TOKEN}` }),
     });
-    if (protocol === "modern") {
-      request.headers.set("Mcp-Protocol-Version", "2026-07-28");
-      request.headers.set("Mcp-Method", "tools/call");
-      request.headers.set("Mcp-Name", "call_tool");
-      request.headers.set("Mcp-Param-Address", "catalog.read");
+    const connector: Connector = {
+      id: "catalog",
+      kind: "api",
+      async listTools(ctx) {
+        return transport({ method: "GET", path: "/tools" }, ctx, async (response) => {
+          const parsed = await response.jsonResult();
+          if ("parseError" in parsed) throw new Error("Bad fixture");
+          throw new ConnectorCallError("invalid_args", (parsed.value as { message: string }).message);
+        });
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const app = createTestConnecta({ connectors: [connector], storage: memoryStorage(), logger: silentLogger });
+    try {
+      const request = mcpRpc("tools/call", {
+        name: "call_tool",
+        arguments: { address: "catalog.read" },
+        ...(protocol === "modern"
+          ? {
+              _meta: {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+              },
+            }
+          : {}),
+      });
+      if (protocol === "modern") {
+        request.headers.set("Mcp-Protocol-Version", "2026-07-28");
+        request.headers.set("Mcp-Method", "tools/call");
+        request.headers.set("Mcp-Name", "call_tool");
+        request.headers.set("Mcp-Param-Address", "catalog.read");
+      }
+      const response = await app.fetch(request);
+      const body = await response.text();
+      expect(body).not.toContain(TOKEN);
+      const rpc = JSON.parse(body) as {
+        result: { isError: boolean; content: { text: string }[]; structuredContent: { error: { message: string } } };
+      };
+      expect(rpc.result, body).toBeDefined();
+      expect(rpc.result.isError).toBe(true);
+      expect(rpc.result.content[0]!.text).toContain("Catalog refused [redacted]");
+      expect(rpc.result.structuredContent.error.message).toBe("Catalog refused [redacted]");
+    } finally {
+      await app.close();
     }
-    const response = await app.fetch(request);
-    const body = await response.text();
-    expect(body).not.toContain(TOKEN);
-    const rpc = JSON.parse(body) as { result: { isError: boolean; content: { text: string }[]; structuredContent: { error: { message: string } } } };
-    expect(rpc.result, body).toBeDefined();
-    expect(rpc.result.isError).toBe(true);
-    expect(rpc.result.content[0]!.text).toContain("Catalog refused [redacted]");
-    expect(rpc.result.structuredContent.error.message).toBe("Catalog refused [redacted]");
-  } finally { await app.close(); }
-});
+  },
+);
 
 it("INV-5: remote MCP OAuth refresh uses the tracked token send path", async () => {
   const issuer = "https://authorization.test";
@@ -340,15 +452,27 @@ it("INV-5: remote MCP OAuth refresh uses the tracked token send path", async () 
   const url = "https://downstream.test/mcp";
   const refresh = "remote-refresh-credential/+echo";
   const storage = memoryStorage();
-  await seedGrant(storage, {
-    issuer, client: { value: { client_id: "test-client", token_endpoint_auth_method: "none" } },
-    tokens: { access_token: TOKEN, refresh_token: refresh, token_type: "bearer" },
-    discovery: {
-      authorizationServerUrl: issuer,
-      authorizationServerMetadata: { issuer, authorization_endpoint: `${issuer}/authorize`, token_endpoint: tokenEndpoint, response_types_supported: ["code"], code_challenge_methods_supported: ["S256"] },
-      resourceMetadata: { resource: url, authorization_servers: [issuer] },
+  await seedGrant(
+    storage,
+    {
+      issuer,
+      client: { value: { client_id: "test-client", token_endpoint_auth_method: "none" } },
+      tokens: { access_token: TOKEN, refresh_token: refresh, token_type: "bearer" },
+      discovery: {
+        authorizationServerUrl: issuer,
+        authorizationServerMetadata: {
+          issuer,
+          authorization_endpoint: `${issuer}/authorize`,
+          token_endpoint: tokenEndpoint,
+          response_types_supported: ["code"],
+          code_challenge_methods_supported: ["S256"],
+        },
+        resourceMetadata: { resource: url, authorization_servers: [issuer] },
+      },
     },
-  }, undefined, scopes.connector("remote"));
+    undefined,
+    scopes.connector("remote"),
+  );
   let sent = 0;
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
     const target = input instanceof Request ? input.url : String(input);
@@ -356,11 +480,27 @@ it("INV-5: remote MCP OAuth refresh uses the tracked token send path", async () 
       sent++;
       expect(new URLSearchParams(init?.body as URLSearchParams).get("refresh_token")).toBe(refresh);
       expect(init?.redirect).toBe("manual");
-      return Response.json({ error: "invalid_grant", error_description: `Refresh refused ${refresh}` }, { status: 400 });
+      return Response.json(
+        { error: "invalid_grant", error_description: `Refresh refused ${refresh}` },
+        { status: 400 },
+      );
     }
-    if (target.includes(".well-known/oauth-protected-resource")) return Response.json({ resource: url, authorization_servers: [issuer] });
-    if (target.includes(".well-known/oauth-authorization-server")) return Response.json({ issuer, authorization_endpoint: `${issuer}/authorize`, token_endpoint: tokenEndpoint, response_types_supported: ["code"], code_challenge_methods_supported: ["S256"] });
-    return new Response("", { status: 401, headers: { "WWW-Authenticate": `Bearer resource_metadata="https://downstream.test/.well-known/oauth-protected-resource"` } });
+    if (target.includes(".well-known/oauth-protected-resource"))
+      return Response.json({ resource: url, authorization_servers: [issuer] });
+    if (target.includes(".well-known/oauth-authorization-server"))
+      return Response.json({
+        issuer,
+        authorization_endpoint: `${issuer}/authorize`,
+        token_endpoint: tokenEndpoint,
+        response_types_supported: ["code"],
+        code_challenge_methods_supported: ["S256"],
+      });
+    return new Response("", {
+      status: 401,
+      headers: {
+        "WWW-Authenticate": `Bearer resource_metadata="https://downstream.test/.well-known/oauth-protected-resource"`,
+      },
+    });
   });
   const connector = remoteMcp("remote", { url, auth: { type: "oauth" } });
   const registry = makeRegistry([connector], { storage });

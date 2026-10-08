@@ -1,5 +1,9 @@
 import { responseCacheKeys } from "../src/storage/keys.js";
-import { OPERATOR_UI_SCRIPT_PATH as SCRIPT_PATH, OPERATOR_UI_STYLE_PATH as STYLE_PATH, OPERATOR_UI_ASSETS } from "../src/operator-ui/generated.js";
+import {
+  OPERATOR_UI_SCRIPT_PATH as SCRIPT_PATH,
+  OPERATOR_UI_STYLE_PATH as STYLE_PATH,
+  OPERATOR_UI_ASSETS,
+} from "../src/operator-ui/generated.js";
 import { connectRequest, oauthVault } from "./fixtures/oauth.js";
 import { fetchTestUiDetails } from "./helpers.js";
 import { activityHistory } from "../src/activity.js";
@@ -20,11 +24,7 @@ import {
 } from "../src/ui.js";
 import { CONNECTA_FAVICON_ICO } from "../src/favicon.js";
 import { CONNECTA_VERSION } from "../src/version.js";
-import type {
-  ActivityReadPage,
-  ActivityStore,
-  ToolCallActivityEvent,
-} from "../src/activity.js";
+import type { ActivityReadPage, ActivityStore, ToolCallActivityEvent } from "../src/activity.js";
 import { InvalidActivityCursorError } from "../src/activity.js";
 import type { Connector, InboundAuth } from "../src/types.js";
 import { createTestConnecta, required, makeRegistry } from "./helpers.js";
@@ -91,9 +91,7 @@ function scriptSrcs(body: string): string[] {
 describe("status UI", () => {
   it("serves direct, page-specific, data-free operator shells", async () => {
     const c = makeDeployment(uiDeploymentConfig());
-    for (const [path, page, label] of [
-      ["/", "overview", "Overview"],
-    ] as const) {
+    for (const [path, page, label] of [["/", "overview", "Overview"]] as const) {
       const res = await c.fetch(new Request(`${BASE}${path}`));
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type")).toContain("text/html");
@@ -120,26 +118,14 @@ describe("status UI", () => {
     const c = makeDeployment(uiDeploymentConfig());
     for (const path of ["/"]) {
       const get = await c.fetch(new Request(`${BASE}${path}`));
-      const head = await c.fetch(
-        new Request(`${BASE}${path}`, { method: "HEAD" }),
-      );
+      const head = await c.fetch(new Request(`${BASE}${path}`, { method: "HEAD" }));
       expect(head.status).toBe(get.status);
       expect(await head.text()).toBe("");
-      expect(head.headers.get("content-type")).toBe(
-        get.headers.get("content-type"),
-      );
-      expect(head.headers.get("x-content-type-options")).toBe(
-        get.headers.get("x-content-type-options"),
-      );
-      expect(head.headers.get("x-frame-options")).toBe(
-        get.headers.get("x-frame-options"),
-      );
-      expect(head.headers.get("referrer-policy")).toBe(
-        get.headers.get("referrer-policy"),
-      );
-      expect(head.headers.get("content-security-policy")).toMatch(
-        /^script-src 'self';/,
-      );
+      expect(head.headers.get("content-type")).toBe(get.headers.get("content-type"));
+      expect(head.headers.get("x-content-type-options")).toBe(get.headers.get("x-content-type-options"));
+      expect(head.headers.get("x-frame-options")).toBe(get.headers.get("x-frame-options"));
+      expect(head.headers.get("referrer-policy")).toBe(get.headers.get("referrer-policy"));
+      expect(head.headers.get("content-security-policy")).toMatch(/^script-src 'self';/);
     }
   });
 
@@ -164,9 +150,7 @@ describe("status UI", () => {
       deploymentInfo: { id: "SENTINEL_DEPLOYMENT" },
     });
     for (const path of ["/"]) {
-      const body = await (
-        await c.fetch(new Request(`${BASE}${path}`))
-      ).text();
+      const body = await (await c.fetch(new Request(`${BASE}${path}`))).text();
       expect(body).not.toContain("sentinel_connector");
       expect(body).not.toContain("SENTINEL_CONNECTOR_DESCRIPTION");
       expect(body).not.toContain("SENTINEL_ACTOR");
@@ -206,16 +190,12 @@ describe("status UI", () => {
     const ico = await c.fetch(new Request(`${BASE}/favicon.ico`));
     expect(ico.headers.get("x-content-type-options")).toBe("nosniff");
     expect(ico.headers.get("content-security-policy")).toBe(csp);
-    expect(new Uint8Array(await ico.arrayBuffer())).toEqual(
-      CONNECTA_FAVICON_ICO,
-    );
+    expect(new Uint8Array(await ico.arrayBuffer())).toEqual(CONNECTA_FAVICON_ICO);
   });
 
   it("keeps OAuth result pages inside the shared Connecta shell", async () => {
     const c = makeDeployment(uiDeploymentConfig());
-    const res = await c.fetch(
-      new Request(`${BASE}/oauth/callback/unknown?code=test`),
-    );
+    const res = await c.fetch(new Request(`${BASE}/oauth/callback/unknown?code=test`));
     const body = await res.text();
 
     expect(res.status).toBe(400);
@@ -229,24 +209,24 @@ describe("status UI", () => {
   it("renders the operator shell through the shared page layout", async () => {
     const c = makeDeployment(uiDeploymentConfig());
     const shell = await (await c.fetch(new Request(`${BASE}/`))).text();
-    const callback = await (await c.fetch(
-      new Request(`${BASE}/oauth/callback/unknown?code=test`),
-    )).text();
+    const callback = await (await c.fetch(new Request(`${BASE}/oauth/callback/unknown?code=test`))).text();
     // One head and masthead, byte for byte, up to each page's own title and
     // stylesheet: the shell's bundle carries the same tokens the callback does.
-    const head = (page: string) => page
-      .replace(/<title>[^<]*<\/title>/, "")
-      .replace(/<style>[\s\S]*?<\/style>/, "")
-      .replace(/<link[^>]*href="\/ui\/assets\/[^>]*>\n?/g, "")
-      .replace('<body class="operator-shell">', "<body>")
-      .replace(/<a class="skip-link"[^>]*>[^<]*<\/a>\n/, "")
-      .replace(/\s*<div id="operatorNav"><\/div>/, "")
-      .split("</header>")[0]!.replace(/\s+/g, " ").trim();
+    const head = (page: string) =>
+      page
+        .replace(/<title>[^<]*<\/title>/, "")
+        .replace(/<style>[\s\S]*?<\/style>/, "")
+        .replace(/<link[^>]*href="\/ui\/assets\/[^>]*>\n?/g, "")
+        .replace('<body class="operator-shell">', "<body>")
+        .replace(/<a class="skip-link"[^>]*>[^<]*<\/a>\n/, "")
+        .replace(/\s*<div id="operatorNav"><\/div>/, "")
+        .split("</header>")[0]!
+        .replace(/\s+/g, " ")
+        .trim();
     expect(head(shell)).toBe(head(callback));
     for (const page of [OPERATOR_UI_ASSETS[STYLE_PATH]!.body, callback]) {
       expect(page).toContain("--surface-2:");
       expect(page).toContain("html[data-scheme=dark]");
-
     }
   });
 
@@ -266,8 +246,7 @@ describe("status UI", () => {
 
   it("the operator shell uses Clerk sign-in when configured", async () => {
     const domain = "clerk.example.com$";
-    const publishableKey =
-      "pk_test_" + Buffer.from(domain, "utf8").toString("base64");
+    const publishableKey = "pk_test_" + Buffer.from(domain, "utf8").toString("base64");
     const c = createTestConnecta({
       connectors: [calcApi(CALC_OPTIONS)],
       auth: [
@@ -294,7 +273,9 @@ describe("status UI", () => {
   it("operator shells allow same-origin scripts and deny framing", async () => {
     const c = makeDeployment(uiDeploymentConfig());
     const res = await c.fetch(new Request(`${BASE}/`));
-    expect(res.headers.get("content-security-policy")).toBe("script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    expect(res.headers.get("content-security-policy")).toBe(
+      "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+    );
     expect(res.headers.get("x-frame-options")).toBe("DENY");
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(scriptSrcs(await res.text())).toEqual([SCRIPT_PATH]);
@@ -304,7 +285,8 @@ describe("status UI", () => {
     const c = createTestConnecta({
       connectors: [calcApi(CALC_OPTIONS)],
       auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
-      storage: memoryStorage(), publicUrl: BASE,
+      storage: memoryStorage(),
+      publicUrl: BASE,
     });
     const res = await c.fetch(new Request(`${BASE}/`));
     const policy = res.headers.get("content-security-policy")!;
@@ -315,10 +297,10 @@ describe("status UI", () => {
     expect(policy).toContain("worker-src 'self' blob:;");
     expect(policy.split(";")[0]).not.toMatch(/unsafe-inline|unsafe-eval|\*/);
     const tags = (await res.text()).match(/<script[^>]*>/g) ?? [];
-    const clerkTag = tags.find(tag => tag.includes("data-clerk"));
+    const clerkTag = tags.find((tag) => tag.includes("data-clerk"));
     // The blocking loader settles before the deferred application boots.
     expect(clerkTag).not.toContain(" defer");
-    expect(tags.every(tag => !tag.includes("nonce="))).toBe(true);
+    expect(tags.every((tag) => !tag.includes("nonce="))).toBe(true);
   });
 
   it("/ui never fetches its sign-in loader from a non-https origin", async () => {
@@ -331,10 +313,7 @@ describe("status UI", () => {
     ]) {
       const c = createTestConnecta({
         connectors: [calcApi(CALC_OPTIONS)],
-        auth: [
-          machineAuth(TOKEN),
-          fakeClerkAuth({ ...CLERK_OPTIONS, frontendApiUrl }),
-        ],
+        auth: [machineAuth(TOKEN), fakeClerkAuth({ ...CLERK_OPTIONS, frontendApiUrl })],
         storage: memoryStorage(),
         publicUrl: BASE,
       });
@@ -376,10 +355,7 @@ describe("status UI", () => {
     ]) {
       const c = createTestConnecta({
         connectors: [calcApi(CALC_OPTIONS)],
-        auth: [
-          machineAuth(TOKEN),
-          fakeClerkAuth({ ...CLERK_OPTIONS, signInUrl: url, signUpUrl: url }),
-        ],
+        auth: [machineAuth(TOKEN), fakeClerkAuth({ ...CLERK_OPTIONS, signInUrl: url, signUpUrl: url })],
         storage: memoryStorage(),
         publicUrl: BASE,
       });
@@ -412,12 +388,8 @@ describe("status UI", () => {
       publicUrl: BASE,
     });
     const body = await (await c.fetch(new Request(`${BASE}/`))).text();
-    expect(body).toContain(
-      '"signInUrl":"https://accounts.example.com/sign-in"',
-    );
-    expect(body).toContain(
-      '"signUpUrl":"https://accounts.example.com/sign-up"',
-    );
+    expect(body).toContain('"signInUrl":"https://accounts.example.com/sign-in"');
+    expect(body).toContain('"signUpUrl":"https://accounts.example.com/sign-up"');
   });
 
   it("drops only the sign-in URL that failed, keeping the valid sibling", async () => {
@@ -437,13 +409,11 @@ describe("status UI", () => {
     const body = await (await c.fetch(new Request(`${BASE}/`))).text();
     expect(body).not.toContain('"signInUrl"');
     expect(body).not.toContain("alert(1)");
-    expect(body).toContain(
-      '"signUpUrl":"https://accounts.example.com/sign-up"',
-    );
+    expect(body).toContain('"signUpUrl":"https://accounts.example.com/sign-up"');
   });
 
   it("escapes inert JSON configuration without executable inline code", () => {
-    const value = 'https://example.test/</script><script>alert(1)</script>';
+    const value = "https://example.test/</script><script>alert(1)</script>";
     const html = renderUiHtml(undefined, value);
     const json = /<script id="operatorConfig" type="application\/json">([\s\S]*?)<\/script>/.exec(html)![1];
     expect(JSON.parse(json!).mcpUrl).toBe(value);
@@ -461,7 +431,9 @@ describe("status UI", () => {
 
   it("/ui/data with a machine token returns connectors with tools and isolates a broken one", async () => {
     const c = makeDeployment(uiDeploymentConfig());
-    const res = await fetchTestUiDetails(c, new Request(`${BASE}/ui/data`, {
+    const res = await fetchTestUiDetails(
+      c,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       }),
     );
@@ -472,9 +444,7 @@ describe("status UI", () => {
     expect(body.activityEnabled).toBe(false);
     expect(body.credentialManagement).toBe("requires_operator");
 
-    const byId = Object.fromEntries(
-      body.connectors.map((x: any) => [x.id, x]),
-    );
+    const byId = Object.fromEntries(body.connectors.map((x: any) => [x.id, x]));
     expect(byId.calc.status).toBe("ok");
     expect(byId.calc.title).toBe("Calculator");
     expect(byId.calc.toolCount).toBe(1);
@@ -493,7 +463,9 @@ describe("status UI", () => {
   it("/ui/data exposes only the credential capability allowed for this identity", async () => {
     const { connecta } = makeCredentialConnecta();
     const bearer = (await (
-      await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
+      await fetchTestUiDetails(
+        connecta,
+        new Request(`${BASE}/ui/data`, {
           headers: { Authorization: `Bearer ${TOKEN}` },
         }),
       )
@@ -502,7 +474,9 @@ describe("status UI", () => {
     expect(bearer.connectors[0].credential).toBeUndefined();
 
     const clerk = (await (
-      await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
+      await fetchTestUiDetails(
+        connecta,
+        new Request(`${BASE}/ui/data`, {
           headers: { Authorization: "Bearer clerk-token" },
         }),
       )
@@ -517,7 +491,9 @@ describe("status UI", () => {
       publicUrl: BASE,
     });
     const noSlots = (await (
-      await fetchTestUiDetails(withoutSlots, new Request(`${BASE}/ui/data`, {
+      await fetchTestUiDetails(
+        withoutSlots,
+        new Request(`${BASE}/ui/data`, {
           headers: { Authorization: "Bearer clerk-token" },
         }),
       )
@@ -551,12 +527,15 @@ describe("status UI", () => {
     const connecta = createTestConnecta({
       connectors: [connector],
       auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
-      storage, vault: oauthVault(storage),
+      storage,
+      vault: oauthVault(storage),
       publicUrl: BASE,
     });
 
     const bearer = (await (
-      await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
+      await fetchTestUiDetails(
+        connecta,
+        new Request(`${BASE}/ui/data`, {
           headers: { Authorization: `Bearer ${TOKEN}` },
         }),
       )
@@ -565,7 +544,9 @@ describe("status UI", () => {
     expect(bearer.connectors[0].oauth).toBe(true);
 
     const clerk = (await (
-      await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
+      await fetchTestUiDetails(
+        connecta,
+        new Request(`${BASE}/ui/data`, {
           headers: { Authorization: "Bearer clerk-token" },
         }),
       )
@@ -574,26 +555,15 @@ describe("status UI", () => {
     expect(clerk.connectors[0].oauth).toBe(true);
 
     await storage.set(responseCacheKeys.generation("oauth"), "stale catalog");
-    const disconnected = await credentialRequest(
-      connecta,
-      "/ui/oauth/oauth",
-      { method: "DELETE" },
-    );
+    const disconnected = await credentialRequest(connecta, "/ui/oauth/oauth", { method: "DELETE" });
     expect(disconnected.status).toBe(204);
     expect(disconnectAuth).toHaveBeenCalledOnce();
     expect(await storage.get(responseCacheKeys.generation("oauth"))).not.toBe("stale catalog");
 
-    const restarted = await connectRequest(
-      connecta,
-      "/ui/oauth/oauth",
-      { method: "POST" },
-    );
+    const restarted = await connectRequest(connecta, "/ui/oauth/oauth", { method: "POST" });
     expect(restarted.status).toBe(302);
     expect(restarted.headers.get("Location")).toBe("https://auth.example/reconnect?state=test-state");
-    expect(startAuth).toHaveBeenCalledWith(
-      expect.anything(),
-      { force: true },
-    );
+    expect(startAuth).toHaveBeenCalledWith(expect.anything(), { force: true });
   });
 
   it("invalidates cached OAuth state when physical disconnect cleanup fails", async () => {
@@ -617,16 +587,13 @@ describe("status UI", () => {
     const connecta = createTestConnecta({
       connectors: [connector],
       auth: fakeClerkAuth(CLERK_OPTIONS),
-      storage, vault: oauthVault(storage),
+      storage,
+      vault: oauthVault(storage),
       publicUrl: BASE,
     });
     await storage.set(responseCacheKeys.generation("oauth"), "stale catalog");
 
-    const disconnected = await credentialRequest(
-      connecta,
-      "/ui/oauth/oauth",
-      { method: "DELETE" },
-    );
+    const disconnected = await credentialRequest(connecta, "/ui/oauth/oauth", { method: "DELETE" });
 
     expect(disconnected.status).toBe(400);
     await expect(disconnected.json()).resolves.toEqual({
@@ -656,7 +623,8 @@ describe("status UI", () => {
     const connecta = createTestConnecta({
       connectors: [connector],
       auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
-      storage: memoryStorage(), vault: oauthVault(memoryStorage()),
+      storage: memoryStorage(),
+      vault: oauthVault(memoryStorage()),
       publicUrl: BASE,
     });
 
@@ -676,28 +644,17 @@ describe("status UI", () => {
     );
     expect(bearer.status).toBe(403);
 
-    const unknown = await credentialRequest(
-      connecta,
-      "/ui/oauth/missing",
-      { method: "DELETE" },
-    );
+    const unknown = await credentialRequest(connecta, "/ui/oauth/missing", { method: "DELETE" });
     expect(unknown.status).toBe(404);
 
-    const options = await connecta.fetch(
-      new Request(`${BASE}/ui/oauth/oauth`, { method: "OPTIONS" }),
-    );
+    const options = await connecta.fetch(new Request(`${BASE}/ui/oauth/oauth`, { method: "OPTIONS" }));
     expect(options.status).toBe(405);
     expect(options.headers.get("access-control-allow-origin")).toBeNull();
 
-    const restarted = await connectRequest(
-      connecta,
-      "/ui/oauth/oauth",
-      { method: "POST" },
-    );
+    const restarted = await connectRequest(connecta, "/ui/oauth/oauth", { method: "POST" });
     expect(restarted.status).toBe(502);
     await expect(restarted.json()).resolves.toEqual({
-      error:
-        "OAuth authorization requires consent but no safe URL is available",
+      error: "OAuth authorization requires consent but no safe URL is available",
     });
   });
 
@@ -724,33 +681,28 @@ describe("status UI", () => {
     const connecta = createTestConnecta({
       connectors: [connector],
       auth: fakeClerkAuth(CLERK_OPTIONS),
-      storage: memoryStorage(), vault: oauthVault(memoryStorage()),
+      storage: memoryStorage(),
+      vault: oauthVault(memoryStorage()),
       publicUrl: BASE,
     });
 
     expect(
-      (await credentialRequest(connecta, "/ui/oauth/oauth", {
-        method: "DELETE",
-      })).status,
+      (
+        await credentialRequest(connecta, "/ui/oauth/oauth", {
+          method: "DELETE",
+        })
+      ).status,
     ).toBe(204);
     expect(closeScope).toHaveBeenCalledTimes(1);
 
-    const restarted = await connectRequest(
-      connecta,
-      "/ui/oauth/oauth",
-      { method: "POST" },
-    );
+    const restarted = await connectRequest(connecta, "/ui/oauth/oauth", { method: "POST" });
     expect(restarted.status).toBe(502);
     await expect(restarted.json()).resolves.toEqual({
       error: "OAuth authorization could not start",
     });
     expect(closeScope).toHaveBeenCalledTimes(2);
 
-    const unsupported = await credentialRequest(
-      connecta,
-      "/ui/oauth/oauth",
-      { method: "PUT" },
-    );
+    const unsupported = await credentialRequest(connecta, "/ui/oauth/oauth", { method: "PUT" });
     expect(unsupported.status).toBe(405);
     expect(closeScope).toHaveBeenCalledTimes(2);
   });
@@ -820,7 +772,9 @@ describe("status UI", () => {
       publicUrl: BASE,
     });
 
-    const res = await fetchTestUiDetails(c, new Request(`${BASE}/ui/data`, {
+    const res = await fetchTestUiDetails(
+      c,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       }),
     );
@@ -860,10 +814,13 @@ describe("status UI", () => {
     });
 
     const res = await withAbortableTimeout(
-      () => fetchTestUiDetails(c, new Request(`${BASE}/ui/data`, {
-          headers: { Authorization: `Bearer ${TOKEN}` },
-        }),
-      ),
+      () =>
+        fetchTestUiDetails(
+          c,
+          new Request(`${BASE}/ui/data`, {
+            headers: { Authorization: `Bearer ${TOKEN}` },
+          }),
+        ),
       1_000,
       "/ui/data with hung teardown",
     );
@@ -903,28 +860,28 @@ describe("status UI", () => {
     });
 
     const res = await withAbortableTimeout(
-      () => fetchTestUiDetails(c, new Request(`${BASE}/ui/data`, {
-          headers: { Authorization: `Bearer ${TOKEN}` },
-        }),
-        undefined,
-        {
-          waitUntil(promise: Promise<unknown>) {
-            deferred.push(promise);
+      () =>
+        fetchTestUiDetails(
+          c,
+          new Request(`${BASE}/ui/data`, {
+            headers: { Authorization: `Bearer ${TOKEN}` },
+          }),
+          undefined,
+          {
+            waitUntil(promise: Promise<unknown>) {
+              deferred.push(promise);
+            },
           },
-        },
-      ),
+        ),
       1_000,
       "/ui/data with deferred teardown",
     );
 
     expect(res.status).toBe(200);
     expect(deferred).toHaveLength(1);
-    await expect(
-      Promise.race([
-        required(deferred[0]).then(() => "settled"),
-        Promise.resolve("pending"),
-      ]),
-    ).resolves.toBe("pending");
+    await expect(Promise.race([required(deferred[0]).then(() => "settled"), Promise.resolve("pending")])).resolves.toBe(
+      "pending",
+    );
     release();
     await expect(deferred[0]).resolves.toBeUndefined();
   });
@@ -932,34 +889,33 @@ describe("status UI", () => {
   it("/ui/data honors the discovery concurrency bound", async () => {
     let active = 0;
     let maxActive = 0;
-    const connectors = Array.from(
-      { length: 6 },
-      (_, index): Connector => ({
-        id: `ui_bounded_${index}`,
-        kind: "mcp",
-        description: `UI bounded ${index}`,
-        async status() {
-          active++;
-          maxActive = Math.max(maxActive, active);
-          await new Promise((resolve) => setTimeout(resolve, 5));
-          active--;
-          return { state: "ok" };
-        },
-        async listTools() {
-          return [{ name: "read" }];
-        },
-        async callTool() {
-          return null;
-        },
-      }),
-    );
+    const connectors = Array.from({ length: 6 }, (_, index): Connector => ({
+      id: `ui_bounded_${index}`,
+      kind: "mcp",
+      description: `UI bounded ${index}`,
+      async status() {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active--;
+        return { state: "ok" };
+      },
+      async listTools() {
+        return [{ name: "read" }];
+      },
+      async callTool() {
+        return null;
+      },
+    }));
     const c = createTestConnecta({
       connectors,
       auth: machineAuth(TOKEN),
       publicUrl: BASE,
       discovery: { concurrency: 2 },
     });
-    const response = await fetchTestUiDetails(c, new Request(`${BASE}/ui/data`, {
+    const response = await fetchTestUiDetails(
+      c,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       }),
     );
@@ -1027,10 +983,12 @@ describe("status UI", () => {
 
     releaseSlow();
     const settled = await loading;
-    expect(settled).toMatchObject({ connectors: [
-      { id: "rejecting", status: "error", problem: "connector_unavailable" },
-      { id: "slow", status: "ok" },
-    ] });
+    expect(settled).toMatchObject({
+      connectors: [
+        { id: "rejecting", status: "error", problem: "connector_unavailable" },
+        { id: "slow", status: "ok" },
+      ],
+    });
     // The rejection's text is classified, not shipped (see the status-message
     // tests in operator-ui-model.test.ts).
     expect(JSON.stringify(settled)).not.toContain("future unguarded rejection");
@@ -1071,11 +1029,13 @@ describe("status UI", () => {
       activity: activityHistory({ store: activity }),
     });
 
-    const data = await fetchTestUiDetails(c, new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(
+      c,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       }),
     );
-    expect((await data.json() as any).activityEnabled).toBe(true);
+    expect(((await data.json()) as any).activityEnabled).toBe(true);
 
     const denied = await c.fetch(new Request(`${BASE}/ui/activity`));
     expect(denied.status).toBe(401);
@@ -1106,17 +1066,11 @@ describe("status UI", () => {
           ? { ok: true, userId: "operator" }
           : {
               ok: false,
-              response: Response.json(
-                { error: "unauthorized" },
-                { status: 401 },
-              ),
+              response: Response.json({ error: "unauthorized" }, { status: 401 }),
             };
       },
     };
-    const event = (
-      id: string,
-      actor: ToolCallActivityEvent["actor"],
-    ): ToolCallActivityEvent => ({
+    const event = (id: string, actor: ToolCallActivityEvent["actor"]): ToolCallActivityEvent => ({
       schemaVersion: 1,
       id,
       occurredAt: "2026-07-23T12:00:00.000Z",
@@ -1198,11 +1152,9 @@ describe("status UI", () => {
       interactiveOperator: true,
       activityActorNamespace: "https://id-b.example",
       activityActorLabel: directoryB,
-      recognizesCredential: request => request.headers.get("authorization") === "Bearer operator",
+      recognizesCredential: (request) => request.headers.get("authorization") === "Bearer operator",
       authorize(request) {
-        return request.headers.get("authorization") === "Bearer operator"
-          ? { ok: true, userId: "operator" }
-          : denied();
+        return request.headers.get("authorization") === "Bearer operator" ? { ok: true, userId: "operator" } : denied();
       },
     };
     const providerBSecondGate: InboundAuth = {
@@ -1249,7 +1201,7 @@ describe("status UI", () => {
                   id: "event-legacy",
                   actor: {
                     interactiveOperator: true,
-        kind: "oidc",
+                    kind: "oidc",
                     id: "legacy-local-id",
                     label: "Forged Legacy Label",
                   } as ToolCallActivityEvent["actor"],
@@ -1289,17 +1241,12 @@ describe("status UI", () => {
       ok: false as const,
       response: Response.json({ error: "unauthorized" }, { status: 401 }),
     });
-    for (const ownerNamespace of [
-      "https://id-a.example",
-      undefined,
-    ]) {
+    for (const ownerNamespace of ["https://id-a.example", undefined]) {
       const wrongDirectory = vi.fn(async () => "Wrong Person");
       const ownerWithoutResolver: InboundAuth = {
         interactiveOperator: true,
         kind: "oidc",
-        ...(ownerNamespace
-          ? { activityActorNamespace: ownerNamespace }
-          : {}),
+        ...(ownerNamespace ? { activityActorNamespace: ownerNamespace } : {}),
         authorize: denied,
       };
       const otherDirectory: InboundAuth = {
@@ -1307,7 +1254,7 @@ describe("status UI", () => {
         kind: "oidc",
         activityActorNamespace: "https://id-b.example",
         activityActorLabel: wrongDirectory,
-        recognizesCredential: request => request.headers.get("authorization") === "Bearer operator",
+        recognizesCredential: (request) => request.headers.get("authorization") === "Bearer operator",
         authorize(request) {
           return request.headers.get("authorization") === "Bearer operator"
             ? { ok: true, userId: "operator" }
@@ -1372,7 +1319,7 @@ describe("status UI", () => {
         occurredAt: "2026-07-23T12:00:00.000Z",
         requestId: "request",
         actor: {
-        kind: "oidc",
+          kind: "oidc",
           id: "local-user",
           namespace: "https://identity.example",
         },
@@ -1408,7 +1355,8 @@ describe("status UI", () => {
       // Authorization now derives the identity partition before filtering.
       // Start the resolver before advancing its request-owned deadline.
       if ("activityActorLabel" in auth && vi.isMockFunction(auth.activityActorLabel)) {
-        for (let turn = 0; turn < 200 && auth.activityActorLabel.mock.calls.length === 0; turn++) await vi.advanceTimersByTimeAsync(1);
+        for (let turn = 0; turn < 200 && auth.activityActorLabel.mock.calls.length === 0; turn++)
+          await vi.advanceTimersByTimeAsync(1);
       }
       await vi.advanceTimersByTimeAsync(1_500);
       const response = await pending;
@@ -1430,8 +1378,7 @@ describe("status UI", () => {
             return { events: [] };
           },
         },
-        readGate: (actor) =>
-          actor.kind === "clerk" && Boolean(actor.id),
+        readGate: (actor) => actor.kind === "clerk" && Boolean(actor.id),
       }),
       publicUrl: BASE,
     });
@@ -1497,7 +1444,9 @@ describe("status UI", () => {
     };
     const c = makeDeployment(uiDeploymentConfig([connector]));
 
-    const res = await fetchTestUiDetails(c, new Request(`${BASE}/ui/data`, {
+    const res = await fetchTestUiDetails(
+      c,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       }),
     );
@@ -1510,18 +1459,20 @@ describe("status UI", () => {
   });
 
   it("keeps http(s) authorizationUrls but omits unsafe schemes", async () => {
-    const c = makeDeployment(uiDeploymentConfig([
-      authUrlConnector("safe", "https://provider.test/oauth?x=1"),
-      authUrlConnector("evil", "javascript:alert(document.cookie)"),
-    ]));
-    const res = await fetchTestUiDetails(c, new Request(`${BASE}/ui/data`, {
+    const c = makeDeployment(
+      uiDeploymentConfig([
+        authUrlConnector("safe", "https://provider.test/oauth?x=1"),
+        authUrlConnector("evil", "javascript:alert(document.cookie)"),
+      ]),
+    );
+    const res = await fetchTestUiDetails(
+      c,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       }),
     );
     const body = (await res.json()) as any;
-    const byId = Object.fromEntries(
-      body.connectors.map((x: any) => [x.id, x]),
-    );
+    const byId = Object.fromEntries(body.connectors.map((x: any) => [x.id, x]));
     expect(byId.safe.authorizationUrl).toBeUndefined();
     expect(byId.evil.authorizationUrl).toBeUndefined();
   });
@@ -1550,14 +1501,14 @@ describe("status UI", () => {
       },
     };
     const c = makeDeployment(uiDeploymentConfig([drifting]));
-    const res = await fetchTestUiDetails(c, new Request(`${BASE}/ui/data`, {
+    const res = await fetchTestUiDetails(
+      c,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       }),
     );
     const body = (await res.json()) as any;
-    const byId = Object.fromEntries(
-      body.connectors.map((x: any) => [x.id, x]),
-    );
+    const byId = Object.fromEntries(body.connectors.map((x: any) => [x.id, x]));
     expect(byId.drifting.catalogDrift).toEqual({
       observedAt: "2026-08-12T12:00:00.000Z",
       unclassifiedTools: 2,
@@ -1594,14 +1545,14 @@ describe("status UI", () => {
       },
     };
     const c = makeDeployment(uiDeploymentConfig([hostile]));
-    const res = await fetchTestUiDetails(c, new Request(`${BASE}/ui/data`, {
+    const res = await fetchTestUiDetails(
+      c,
+      new Request(`${BASE}/ui/data`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       }),
     );
     const body = (await res.json()) as any;
-    const connector = body.connectors.find(
-      (candidate: any) => candidate.id === "hostile_status",
-    );
+    const connector = body.connectors.find((candidate: any) => candidate.id === "hostile_status");
 
     expect(connector.catalogAccess).toBeUndefined();
     expect(JSON.stringify(body)).not.toContain("exfiltrate-this");
@@ -1609,16 +1560,11 @@ describe("status UI", () => {
 
   it("keeps credential controls in Connections and secrets out of every shell", async () => {
     const { connecta } = makeCredentialConnecta();
-    const connections = await (
-      await connecta.fetch(new Request(`${BASE}/`))
-    ).text();
-    const credentials = await (
-      await connecta.fetch(new Request(`${BASE}/`))
-    ).text();
+    const connections = await (await connecta.fetch(new Request(`${BASE}/`))).text();
+    const credentials = await (await connecta.fetch(new Request(`${BASE}/`))).text();
     // Everything between <body> and the bundle: the served markup, without the
     // stylesheet that names classes the app has not drawn yet.
-    const markup = (page: string) =>
-      page.slice(page.indexOf("<body>"), page.lastIndexOf("<script"));
+    const markup = (page: string) => page.slice(page.indexOf("<body>"), page.lastIndexOf("<script"));
 
     // Both shells are the same data-free mount point; the credential form only
     // exists in the bundle, and only the store decides when to draw it.

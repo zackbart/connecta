@@ -29,12 +29,18 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
   });
 
   let casDatabase: SqlFixture;
-  compareAndSetContract(async () => {
-    casDatabase = await open();
-    return casDatabase.storage();
-  }, async (ms) => {
-    await casDatabase.exec("UPDATE connecta_kv SET expires_at_ms = expires_at_ms - ? WHERE expires_at_ms IS NOT NULL", ms);
-  });
+  compareAndSetContract(
+    async () => {
+      casDatabase = await open();
+      return casDatabase.storage();
+    },
+    async (ms) => {
+      await casDatabase.exec(
+        "UPDATE connecta_kv SET expires_at_ms = expires_at_ms - ? WHERE expires_at_ms IS NOT NULL",
+        ms,
+      );
+    },
+  );
 
   it("keeps a live dispatched refresh with caller clock skew across SQL adapters (INV-5)", async () => {
     const db = await open();
@@ -64,8 +70,7 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
   it("rejects a NUL key before creating the KV schema", async () => {
     const db = await open();
     await expect(db.storage().get("a\0b")).rejects.toThrow(/U\+0000 \(NUL\)/);
-    expect(await db.rows("SELECT name FROM sqlite_master WHERE name = ?", "connecta_kv"))
-      .toEqual([]);
+    expect(await db.rows("SELECT name FROM sqlite_master WHERE name = ?", "connecta_kv")).toEqual([]);
   });
 
   it("stores every byte of a value holding NUL and reads values without one as text", async () => {
@@ -96,9 +101,7 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     const storage = db.storage();
     await storage.set("bad", "placeholder");
     await db.exec("UPDATE connecta_kv SET value = CAST(x'ff00' AS TEXT) WHERE key = ?", "bad");
-    await expect(storage.get("bad")).rejects.toThrow(
-      new TypeError('the stored value of "bad" is not valid UTF-8'),
-    );
+    await expect(storage.get("bad")).rejects.toThrow(new TypeError('the stored value of "bad" is not valid UTF-8'));
   });
 
   it("round-trips get, set, delete, and a sorted list", async () => {
@@ -147,8 +150,7 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     const first = db.storage();
     const second = db.storage();
     const claims = await Promise.all(
-      Array.from({ length: 20 }, (_, i) =>
-        (i % 2 ? first : second).compareAndSet("claim", null, `owner-${i}`)),
+      Array.from({ length: 20 }, (_, i) => (i % 2 ? first : second).compareAndSet("claim", null, `owner-${i}`)),
     );
     expect(claims.filter(Boolean)).toHaveLength(1);
     expect(await second.get("claim")).toBe(await first.get("claim"));
@@ -209,8 +211,9 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     const activity = db.activity();
     for (const value of [...INVALID_CLIENT_FACTS, "1.2.3\n", "1.2.3-" + "x".repeat(128)]) {
       await activity.record(event(1, { packageVersion: value as string }));
-      expect(await db.rows("SELECT package_version FROM tool_call_activity WHERE id = ?", id(1)))
-        .toEqual([{ package_version: null }]);
+      expect(await db.rows("SELECT package_version FROM tool_call_activity WHERE id = ?", id(1))).toEqual([
+        { package_version: null },
+      ]);
       expect((await activity.list!({ limit: 1 })).events[0]).not.toHaveProperty("packageVersion");
       await db.exec("DELETE FROM tool_call_activity");
     }
@@ -225,15 +228,17 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     const activity = db.activity();
     for (const [index, value] of INVALID_CLIENT_FACTS.entries()) {
       await activity.record(event(index, { clientName: value as string, clientVersion: value as string }));
-      expect(await db.rows("SELECT client_name, client_version FROM tool_call_activity WHERE id = ?", id(index)))
-        .toEqual([{ client_name: null, client_version: null }]);
+      expect(
+        await db.rows("SELECT client_name, client_version FROM tool_call_activity WHERE id = ?", id(index)),
+      ).toEqual([{ client_name: null, client_version: null }]);
       const stored = (await activity.list!({ limit: 1 })).events[0]!;
       expect(stored).not.toHaveProperty("clientName");
       expect(stored).not.toHaveProperty("clientVersion");
     }
     await activity.record(event(50, { clientName: "valid", clientVersion: "v".repeat(33) }));
-    expect(await db.rows("SELECT client_name, client_version FROM tool_call_activity WHERE id = ?", id(50)))
-      .toEqual([{ client_name: "valid", client_version: null }]);
+    expect(await db.rows("SELECT client_name, client_version FROM tool_call_activity WHERE id = ?", id(50))).toEqual([
+      { client_name: "valid", client_version: null },
+    ]);
     for (const [index, clientInfo] of VALID_CLIENT_IDENTITIES.entries()) {
       const full = event(100 + index, { clientName: clientInfo.name, clientVersion: clientInfo.version });
       await activity.record(full);
@@ -249,8 +254,13 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     const db = await open();
     const activity = db.activity();
     await activity.record(event(1));
-    for (const value of INVALID_CLIENT_FACTS.filter(value => typeof value === "string")) {
-      await db.exec("UPDATE tool_call_activity SET client_name = ?, client_version = ? WHERE id = ?", value, value, id(1));
+    for (const value of INVALID_CLIENT_FACTS.filter((value) => typeof value === "string")) {
+      await db.exec(
+        "UPDATE tool_call_activity SET client_name = ?, client_version = ? WHERE id = ?",
+        value,
+        value,
+        id(1),
+      );
       const stored = (await activity.list!({ limit: 1 })).events[0]!;
       expect(stored).not.toHaveProperty("clientName");
       expect(stored).not.toHaveProperty("clientVersion");
@@ -261,16 +271,40 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     const db = await open();
     const activity = db.activity();
     const modern = event(1, { classification: "write", resultBytes: 42, pool: "support", actorBasis: "principal" });
-    const drift = event(2, { kind: "catalog_drift", source: "catalog_refresh", toolName: "<catalog>", address: "notes.<catalog>", drift: { kind: "catalog_changed", addedTools: 1, removedTools: 2, changedTools: 3 } });
-    await activity.record(modern); await activity.record(drift);
+    const drift = event(2, {
+      kind: "catalog_drift",
+      source: "catalog_refresh",
+      toolName: "<catalog>",
+      address: "notes.<catalog>",
+      drift: { kind: "catalog_changed", addedTools: 1, removedTools: 2, changedTools: 3 },
+    });
+    await activity.record(modern);
+    await activity.record(drift);
     const rows = (await activity.list!({ limit: 10 })).events;
-    expect(rows).toContainEqual(modern); expect(rows).toContainEqual(drift);
-    await activity.record(event(3, { actorBasis: "payload" as "principal", classification: "payload" as "read", resultBytes: NaN, kind: "catalog_drift", drift: { kind: "payload" as "catalog_changed", addedTools: 1, removedTools: -1, changedTools: Infinity } }));
-    const invalid = (await activity.list!({ limit: 10 })).events.find(e => e.id === id(3));
-    for (const field of ["classification", "resultBytes", "kind", "drift", "actorBasis"]) expect(invalid).not.toHaveProperty(field);
-    await db.exec("UPDATE tool_call_activity SET classification = ?, result_bytes = ?, drift_kind = ?, actor_basis = ?", "downstream-text", -1, "payload", "subject");
+    expect(rows).toContainEqual(modern);
+    expect(rows).toContainEqual(drift);
+    await activity.record(
+      event(3, {
+        actorBasis: "payload" as "principal",
+        classification: "payload" as "read",
+        resultBytes: NaN,
+        kind: "catalog_drift",
+        drift: { kind: "payload" as "catalog_changed", addedTools: 1, removedTools: -1, changedTools: Infinity },
+      }),
+    );
+    const invalid = (await activity.list!({ limit: 10 })).events.find((e) => e.id === id(3));
+    for (const field of ["classification", "resultBytes", "kind", "drift", "actorBasis"])
+      expect(invalid).not.toHaveProperty(field);
+    await db.exec(
+      "UPDATE tool_call_activity SET classification = ?, result_bytes = ?, drift_kind = ?, actor_basis = ?",
+      "downstream-text",
+      -1,
+      "payload",
+      "subject",
+    );
     for (const row of (await activity.list!({ limit: 10 })).events) {
-      for (const field of ["classification", "resultBytes", "kind", "drift", "actorBasis"]) expect(row).not.toHaveProperty(field);
+      for (const field of ["classification", "resultBytes", "kind", "drift", "actorBasis"])
+        expect(row).not.toHaveProperty(field);
     }
   });
 
@@ -310,10 +344,12 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
 
   it("refuses a cursor it did not issue", async () => {
     const activity = (await open()).activity();
-    await expect(activity.list!({ limit: 1, cursor: "not a cursor" }))
-      .rejects.toBeInstanceOf(InvalidActivityCursorError);
-    await expect(activity.list!({ limit: 1, cursor: btoa("12:not-a-uuid") }))
-      .rejects.toBeInstanceOf(InvalidActivityCursorError);
+    await expect(activity.list!({ limit: 1, cursor: "not a cursor" })).rejects.toBeInstanceOf(
+      InvalidActivityCursorError,
+    );
+    await expect(activity.list!({ limit: 1, cursor: btoa("12:not-a-uuid") })).rejects.toBeInstanceOf(
+      InvalidActivityCursorError,
+    );
   });
 
   it("INV-6: upgrades old activity rows without inventing package or client facts and derives friction", async () => {
@@ -341,10 +377,12 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
       expect(entry).not.toHaveProperty("clientName");
       expect(entry).not.toHaveProperty("clientVersion");
     }
-    await activity.record(event(9, {
-      occurredAt: "2026-07-28T00:00:00.000Z",
-      actor: { kind: "clerk", namespace: "https://clerk.example" },
-    }));
+    await activity.record(
+      event(9, {
+        occurredAt: "2026-07-28T00:00:00.000Z",
+        actor: { kind: "clerk", namespace: "https://clerk.example" },
+      }),
+    );
     expect((await activity.list!({ limit: 1 })).events[0]?.actor.namespace).toBe("https://clerk.example");
   });
 
@@ -354,16 +392,32 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     // Separate stores stand in for isolates or processes: each reads the old
     // columns on first use, and all of them try to add the same ones.
     const stores = Array.from({ length: 8 }, () => db.activity());
-    await Promise.all(stores.map((store, index) => index % 2
-      ? store.list!({ limit: 1 })
-      : store.record(event(index, { actor: { kind: "clerk", namespace: `ns-${index}` } }))));
-    const columns = (await db.rows<{ name: string }>("PRAGMA table_info(tool_call_activity)"))
-      .map((column) => column.name);
-    for (const name of ["actor_namespace", "friction", "approval", "client_name", "client_version", "package_version"]) {
+    await Promise.all(
+      stores.map((store, index) =>
+        index % 2
+          ? store.list!({ limit: 1 })
+          : store.record(event(index, { actor: { kind: "clerk", namespace: `ns-${index}` } })),
+      ),
+    );
+    const columns = (await db.rows<{ name: string }>("PRAGMA table_info(tool_call_activity)")).map(
+      (column) => column.name,
+    );
+    for (const name of [
+      "actor_namespace",
+      "friction",
+      "approval",
+      "client_name",
+      "client_version",
+      "package_version",
+    ]) {
       expect(columns.filter((column) => column === name)).toHaveLength(1);
     }
-    expect((await db.activity().list!({ limit: 10 })).events.map((entry) => entry.actor.namespace))
-      .toEqual(["ns-6", "ns-4", "ns-2", "ns-0"]);
+    expect((await db.activity().list!({ limit: 10 })).events.map((entry) => entry.actor.namespace)).toEqual([
+      "ns-6",
+      "ns-4",
+      "ns-2",
+      "ns-0",
+    ]);
   });
 
   it("creates the tables from many first uses at once", async () => {
@@ -398,18 +452,14 @@ const LEGACY_ACTIVITY_TABLE = `CREATE TABLE tool_call_activity (
 )`;
 
 async function keys(db: SqlFixture): Promise<string[]> {
-  return (await db.rows<{ key: string }>("SELECT key FROM connecta_kv ORDER BY key"))
-    .map((row) => row.key);
+  return (await db.rows<{ key: string }>("SELECT key FROM connecta_kv ORDER BY key")).map((row) => row.key);
 }
 
 function id(index: number): string {
   return `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
 }
 
-function event(
-  index: number,
-  overrides: Partial<ToolCallActivityEvent> = {},
-): ToolCallActivityEvent {
+function event(index: number, overrides: Partial<ToolCallActivityEvent> = {}): ToolCallActivityEvent {
   return {
     schemaVersion: 1,
     id: id(index),

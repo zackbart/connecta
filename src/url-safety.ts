@@ -57,9 +57,7 @@ function ipv6Pieces(host: string): number[] | undefined {
   if (halves.length > 2) return undefined;
   const pieces = (part: string | undefined): number[] | undefined => {
     if (!part) return [];
-    const parsed = part.split(":").map((piece) =>
-      HEXTET.test(piece) ? Number.parseInt(piece, 16) : Number.NaN,
-    );
+    const parsed = part.split(":").map((piece) => (HEXTET.test(piece) ? Number.parseInt(piece, 16) : Number.NaN));
     return parsed.some(Number.isNaN) ? undefined : parsed;
   };
   const head = pieces(halves[0]);
@@ -95,10 +93,7 @@ function classifyIpv6(pieces: readonly number[]): HostClass {
  */
 function canonicalHost(hostname: string): string | undefined {
   if (/[/\\?#@]/.test(hostname)) return undefined;
-  const bracketed =
-    hostname.includes(":") && !hostname.startsWith("[")
-      ? `[${hostname}]`
-      : hostname;
+  const bracketed = hostname.includes(":") && !hostname.startsWith("[") ? `[${hostname}]` : hostname;
   try {
     return new URL(`http://${bracketed}/`).hostname;
   } catch {
@@ -143,19 +138,13 @@ export function isPrivateHost(hostname: string): boolean {
  * The reason names only the host, never the path, query, or credentials a
  * learned URL may carry.
  */
-export function learnedUrlRefusal(
-  configured: URL,
-  target: URL,
-): string | undefined {
+export function learnedUrlRefusal(configured: URL, target: URL): string | undefined {
   if (target.protocol !== "https:" && target.protocol !== "http:") {
     return `${target.host || "the target"} uses ${target.protocol}, not HTTPS`;
   }
   if (target.origin === configured.origin) return undefined;
   const targetClass = classifyHost(target.hostname);
-  if (
-    targetClass === "loopback" &&
-    classifyHost(configured.hostname) === "loopback"
-  ) {
+  if (targetClass === "loopback" && classifyHost(configured.hostname) === "loopback") {
     return undefined;
   }
   if (targetClass !== "public") {

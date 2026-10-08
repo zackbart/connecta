@@ -5,11 +5,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./query.js";
 import { ShellControls } from "./shell.js";
 import { Button, Input } from "./primitives.js";
-import {
-  useEffect,
-  useSyncExternalStore,
-  useState,
-} from "react";
+import { useEffect, useSyncExternalStore, useState } from "react";
 import {
   checkingCopy,
   gateCopy,
@@ -74,16 +70,11 @@ function OperatorNav() {
     <div className="mast-actions">
       <ShellControls pages={state.session === "ready" ? visiblePages(state) : []} />
       <nav className="page-nav" aria-label="Operator pages">
-        {(state.session === "ready" ? visiblePages(state) : []).map((page) =>
-            <PageLink
-              key={page}
-              page={page}
-              className="navlink"
-              current={state.page === page}
-            >
-              {PAGE_META[page].label}
-            </PageLink>,
-        )}
+        {(state.session === "ready" ? visiblePages(state) : []).map((page) => (
+          <PageLink key={page} page={page} className="navlink" current={state.page === page}>
+            {PAGE_META[page].label}
+          </PageLink>
+        ))}
       </nav>
       <div hidden={state.session !== "ready"} className="session-actions" aria-label="Session actions">
         {auth.kind === "clerk" || auth.kind === "cloudflare-access" ? (
@@ -111,67 +102,67 @@ function Gate({ state }: { state: OperatorState }) {
   const loading = state.session === "loading";
   return (
     <section id="gate" className="gate lead" aria-busy={loading ? "true" : "false"}>
-        <h1 id="gateHeading" tabIndex={-1}>
-          {PAGE_META[state.page].label}
-        </h1>
-        <div className="lead-copy">
-          <p>{pageDescription(state.page, productDescription)}</p>
-          {/* While the session is checked, the same block the signed-in page
+      <h1 id="gateHeading" tabIndex={-1}>
+        {PAGE_META[state.page].label}
+      </h1>
+      <div className="lead-copy">
+        <p>{pageDescription(state.page, productDescription)}</p>
+        {/* While the session is checked, the same block the signed-in page
               shows while it loads, so the words and the shape do not change
               when the check passes. */}
-          {loading ? (
-            <StateBlock id="gateCopy">{checkingCopy()}</StateBlock>
-          ) : (
-            <p id="gateCopy" className="meta">
-              {gateCopy(auth.kind, signedIn)}
-            </p>
-          )}
-          {loading ? null : auth.kind === "clerk" ? (
-            <div id="clerkGate" className="actions">
-              {signedIn ? (
-                <button className="btn" type="button" onClick={signOut}>
-                  Sign out
-                </button>
-              ) : (
-                <button id="signin" className="btn primary" type="button" onClick={signIn}>
-                  Team sign in
-                </button>
-              )}
-            </div>
-          ) : auth.kind === "cloudflare-access" ? (
-            <div className="actions">
+        {loading ? (
+          <StateBlock id="gateCopy">{checkingCopy()}</StateBlock>
+        ) : (
+          <p id="gateCopy" className="meta">
+            {gateCopy(auth.kind, signedIn)}
+          </p>
+        )}
+        {loading ? null : auth.kind === "clerk" ? (
+          <div id="clerkGate" className="actions">
+            {signedIn ? (
               <button className="btn" type="button" onClick={signOut}>
-                Sign out of Cloudflare Access
+                Sign out
               </button>
-            </div>
-          ) : (
-            <form
-              id="tokenGate"
-              className="row gate-form"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const value = token.trim();
-                if (!value) return;
-                setToken("");
-                signInWithBearer(value);
-              }}
-            >
-              <Input
-                id="token"
-                type="password"
-                placeholder="Bearer token"
-                autoComplete="off"
-                aria-label="Bearer token"
-                value={token}
-                onInput={(event) => setToken(event.currentTarget.value)}
-              />
-              <Button id="save" variant="primary" type="submit">
-                Open operator pages
-              </Button>
-            </form>
-          )}
-          <NoticeLine id="err" notice={state.gate} className="" />
-        </div>
+            ) : (
+              <button id="signin" className="btn primary" type="button" onClick={signIn}>
+                Team sign in
+              </button>
+            )}
+          </div>
+        ) : auth.kind === "cloudflare-access" ? (
+          <div className="actions">
+            <button className="btn" type="button" onClick={signOut}>
+              Sign out of Cloudflare Access
+            </button>
+          </div>
+        ) : (
+          <form
+            id="tokenGate"
+            className="row gate-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const value = token.trim();
+              if (!value) return;
+              setToken("");
+              signInWithBearer(value);
+            }}
+          >
+            <Input
+              id="token"
+              type="password"
+              placeholder="Bearer token"
+              autoComplete="off"
+              aria-label="Bearer token"
+              value={token}
+              onInput={(event) => setToken(event.currentTarget.value)}
+            />
+            <Button id="save" variant="primary" type="submit">
+              Open operator pages
+            </Button>
+          </form>
+        )}
+        <NoticeLine id="err" notice={state.gate} className="" />
+      </div>
     </section>
   );
 }
@@ -201,7 +192,11 @@ function OperatorApp() {
   useEffect(() => {
     if (!ready) return;
     if (state.data && state.contractPhase === "idle") void loadOperatorContract();
-    if ((state.page === "tokens" || (state.page === "access" && state.contract?.you.permissions.accessTokenManagement)) && state.data?.accessTokenManagement === "available" && state.tokenPhase === "idle") {
+    if (
+      (state.page === "tokens" || (state.page === "access" && state.contract?.you.permissions.accessTokenManagement)) &&
+      state.data?.accessTokenManagement === "available" &&
+      state.tokenPhase === "idle"
+    ) {
       void loadAccessTokens();
     }
     if (
@@ -226,10 +221,7 @@ function OperatorApp() {
       // notice's live region speaks and the operator stays where they are.
       const active = document.activeElement;
       const lost =
-        !active ||
-        active === document.body ||
-        !active.isConnected ||
-        (active as HTMLButtonElement).disabled === true;
+        !active || active === document.body || !active.isConnected || (active as HTMLButtonElement).disabled === true;
       if (lost) document.getElementById(state.focusIfLost)?.focus();
     }
     focusHandled();
@@ -254,11 +246,18 @@ function mount(id: string, view: ReactNode): void {
 
 mount("operatorNav", <OperatorNav />);
 const rootRoute = createRootRoute({ component: Outlet, notFoundComponent: OperatorApp });
-const routes = ["/", "/connectors", "/connectors/$id", "/tools", "/access", "/config", "/tokens", "/activity"].map(path =>
-  createRoute({ getParentRoute: () => rootRoute, path, component: OperatorApp }),
+const routes = ["/", "/connectors", "/connectors/$id", "/tools", "/access", "/config", "/tokens", "/activity"].map(
+  (path) => createRoute({ getParentRoute: () => rootRoute, path, component: OperatorApp }),
 );
 const router = createRouter({ routeTree: rootRoute.addChildren(routes), defaultPendingMinMs: 0 });
-configureNavigation(href => { void router.navigate({ to: href }); });
+configureNavigation((href) => {
+  void router.navigate({ to: href });
+});
 router.subscribe("onResolved", () => routeChanged(router.state.location.pathname));
-mount("operatorContent", <QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>);
+mount(
+  "operatorContent",
+  <QueryClientProvider client={queryClient}>
+    <RouterProvider router={router} />
+  </QueryClientProvider>,
+);
 void boot();

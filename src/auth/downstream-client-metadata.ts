@@ -12,7 +12,9 @@ export interface RemoteOAuthClient {
 }
 
 /** Normalize the deployment-selected default once, including revocation. */
-export function remoteClientAuthMethod(client: RemoteOAuthClient): "none" | "client_secret_basic" | "client_secret_post" {
+export function remoteClientAuthMethod(
+  client: RemoteOAuthClient,
+): "none" | "client_secret_basic" | "client_secret_post" {
   return client.tokenEndpointAuthMethod ?? (client.clientSecret === undefined ? "none" : "client_secret_basic");
 }
 
@@ -34,10 +36,14 @@ export function trackRemoteClientRequest(secrets: SentSecrets, input: RequestInf
           secrets.secret(secret);
         }
       }
-    } catch { /* The wire value is still registered below. */ }
+    } catch {
+      /* The wire value is still registered below. */
+    }
   }
-  if (headers.get("Content-Type")?.startsWith("application/x-www-form-urlencoded") &&
-      (typeof init?.body === "string" || init?.body instanceof URLSearchParams)) {
+  if (
+    headers.get("Content-Type")?.startsWith("application/x-www-form-urlencoded") &&
+    (typeof init?.body === "string" || init?.body instanceof URLSearchParams)
+  ) {
     const form = new URLSearchParams(init.body);
     const secret = form.get("client_secret");
     if (secret) {
@@ -54,22 +60,44 @@ export function trackRemoteClientRequest(secrets: SentSecrets, input: RequestInf
 export function assertRemoteOAuthClient(id: string, client: RemoteOAuthClient | undefined): void {
   if (client === undefined) return;
   let issuer: URL | undefined;
-  try { issuer = new URL(client.issuer); } catch { /* Fixed refusal below. */ }
+  try {
+    issuer = new URL(client.issuer);
+  } catch {
+    /* Fixed refusal below. */
+  }
   const method = remoteClientAuthMethod(client);
-  if (!issuer || issuer.protocol !== "https:" || issuer.username || issuer.password || issuer.hash || issuer.search ||
-    typeof client.clientId !== "string" || !client.clientId.trim() ||
+  if (
+    !issuer ||
+    issuer.protocol !== "https:" ||
+    issuer.username ||
+    issuer.password ||
+    issuer.hash ||
+    issuer.search ||
+    typeof client.clientId !== "string" ||
+    !client.clientId.trim() ||
     (client.clientSecret !== undefined && (typeof client.clientSecret !== "string" || !client.clientSecret.trim())) ||
     !["none", "client_secret_basic", "client_secret_post"].includes(method) ||
-    (method === "none") !== (client.clientSecret === undefined)) {
-    throw new Error(`[connecta] connector "${id}" OAuth client requires an HTTPS issuer, a nonempty clientId, and a matching client secret and authentication method.`);
+    (method === "none") !== (client.clientSecret === undefined)
+  ) {
+    throw new Error(
+      `[connecta] connector "${id}" OAuth client requires an HTTPS issuer, a nonempty clientId, and a matching client secret and authentication method.`,
+    );
   }
 }
 
 /** The one metadata definition used for DCR, binding, and the public document. */
-export function downstreamClientMetadata(redirectUri: string, scope?: string, clientName = "connecta", method = "none"): OAuthClientMetadata {
+export function downstreamClientMetadata(
+  redirectUri: string,
+  scope?: string,
+  clientName = "connecta",
+  method = "none",
+): OAuthClientMetadata {
   return {
-    redirect_uris: [redirectUri], client_name: clientName, application_type: "web",
-    grant_types: ["authorization_code", "refresh_token"], response_types: ["code"],
+    redirect_uris: [redirectUri],
+    client_name: clientName,
+    application_type: "web",
+    grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
     token_endpoint_auth_method: method,
     ...(scope !== undefined ? { scope } : {}),
   };
@@ -80,10 +108,20 @@ export function selfHostedClientUrl(publicUrl: string | undefined, id: string): 
   if (publicUrl === undefined) return undefined;
   try {
     const url = new URL(publicUrl);
-    if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash ||
-      url.pathname !== "/" || classifyHost(url.hostname) !== "public") return undefined;
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      url.pathname !== "/" ||
+      classifyHost(url.hostname) !== "public"
+    )
+      return undefined;
     return `${url.origin}/oauth/client-metadata/${id}`;
-  } catch { return undefined; }
+  } catch {
+    return undefined;
+  }
 }
 
 /** One canonical callback for the served document and the SDK's whole flow. */
@@ -97,11 +135,22 @@ const documents = new WeakMap<Connector, { scope?: string }>();
 export function declareSelfHostedClient(connector: Connector, scope?: string): void {
   documents.set(connector, scope === undefined ? {} : { scope });
 }
-export function selfHostedClientDocument(connector: Connector, publicUrl: string | undefined, clientName: string): (OAuthClientMetadata & { client_id: string }) | undefined {
+export function selfHostedClientDocument(
+  connector: Connector,
+  publicUrl: string | undefined,
+  clientName: string,
+): (OAuthClientMetadata & { client_id: string }) | undefined {
   const declaration = documents.get(connector);
   const clientId = selfHostedClientUrl(publicUrl, connector.id);
   if (!declaration || !clientId) return undefined;
-  return { client_id: clientId, ...downstreamClientMetadata(downstreamRedirectUri(publicUrl!, publicUrl, connector.id), declaration.scope, clientName) };
+  return {
+    client_id: clientId,
+    ...downstreamClientMetadata(
+      downstreamRedirectUri(publicUrl!, publicUrl, connector.id),
+      declaration.scope,
+      clientName,
+    ),
+  };
 }
 
 /** RFC 6749 client authentication; deployment-selected methods never downgrade. */

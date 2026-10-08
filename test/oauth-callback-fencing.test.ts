@@ -90,9 +90,17 @@ function authorizationServer() {
     fetchStub,
     tokenRequests,
     /** Consent at the server: a code it will redeem exactly once. */
-    issue(code: string) { issuedCodes.add(code); return code; },
+    issue(code: string) {
+      issuedCodes.add(code);
+      return code;
+    },
     /** Run `work` once a code exchange has reached the server, before it answers. */
-    onExchange(work: () => Promise<void>) { whileOnTheWire = async () => { whileOnTheWire = undefined; await work(); }; },
+    onExchange(work: () => Promise<void>) {
+      whileOnTheWire = async () => {
+        whileOnTheWire = undefined;
+        await work();
+      };
+    },
     /** Token requests that carried `code`. */
     carrying: (code: string) => tokenRequests.filter((params) => params.get("code") === code).length,
   };
@@ -107,7 +115,8 @@ function backingStore(remote: boolean): KVStorage {
   const storage = memoryStorage();
   if (!remote) return storage;
   const turn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
-  const hop = <A extends unknown[], R>(op: (...args: A) => Promise<R>) =>
+  const hop =
+    <A extends unknown[], R>(op: (...args: A) => Promise<R>) =>
     async (...args: A): Promise<R> => {
       await turn();
       const result = await op(...args);
@@ -129,8 +138,7 @@ const STORES = [
 ] as const;
 
 const scope = (storage: KVStorage): ConnectorContext => ({ ...ctx(storage), requestScope: {} });
-const connector = () =>
-  remoteMcp("svc", { url: mcpUrl, auth: { type: "oauth" }, versionNegotiation: "legacy" });
+const connector = () => remoteMcp("svc", { url: mcpUrl, auth: { type: "oauth" }, versionNegotiation: "legacy" });
 
 /** Start a fresh authorization and return its consent URL's state and epoch. */
 async function started(c: Connector, storage: KVStorage) {
@@ -147,8 +155,10 @@ async function verified(c: Connector, storage: KVStorage, state: string) {
   const callback = scope(storage);
   expect(await c.verifyState!(state, callback)).toBe(true);
   return (code: string) =>
-    c.finishAuth!(code, callback, new URLSearchParams({ code, state }))
-      .then(() => undefined, (error: unknown) => error);
+    c.finishAuth!(code, callback, new URLSearchParams({ code, state })).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
 }
 
 /** The tokens stored in `epoch`; none when another epoch is live. */
@@ -176,7 +186,8 @@ async function grantReadsBeforeClaim(): Promise<number> {
   const backing = memoryStorage();
   let counting = false;
   let reads = 0;
-  const storage: KVStorage = { ...backing,
+  const storage: KVStorage = {
+    ...backing,
     async get(key) {
       if (counting && key === GRANT) reads++;
       return backing.get(key);
@@ -205,7 +216,8 @@ function holdingGrantRead(backing: KVStorage, nth: number) {
   let reads = 0;
   const reached = deferred<void>();
   const release = deferred<void>();
-  const storage: KVStorage = { ...backing,
+  const storage: KVStorage = {
+    ...backing,
     async get(key) {
       const value = await backing.get(key);
       if (armed && key === GRANT && ++reads === nth) {
@@ -216,7 +228,14 @@ function holdingGrantRead(backing: KVStorage, nth: number) {
       return value;
     },
   };
-  return { storage, arm: () => { armed = true; }, reached: reached.promise, release: () => release.resolve() };
+  return {
+    storage,
+    arm: () => {
+      armed = true;
+    },
+    reached: reached.promise,
+    release: () => release.resolve(),
+  };
 }
 
 afterEach(() => {
@@ -268,7 +287,8 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
       let claimKey: string | undefined;
       const claimed = deferred<void>();
       const release = deferred<void>();
-      const storage: KVStorage = { ...backing,
+      const storage: KVStorage = {
+        ...backing,
         async compareAndSet(key, expected, next, options) {
           const won = await backing.compareAndSet(key, expected, next, options);
           if (key === claimKey) {
@@ -277,7 +297,8 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
             await release.promise;
           }
           return won;
-        } };
+        },
+      };
       const c = connector();
       const { state } = await started(c, backing);
       const finish = await verified(c, storage, state);
@@ -306,7 +327,8 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
       let claimKey: string | undefined;
       const reading = deferred<void>();
       const release = deferred<void>();
-      const storage: KVStorage = { ...backing,
+      const storage: KVStorage = {
+        ...backing,
         async get(key) {
           if (armed && key === GRANT) {
             armed = false;
@@ -349,7 +371,9 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
       const { state, epoch } = await started(c, storage);
       const finish = await verified(c, storage, state);
       let restarted: Awaited<ReturnType<typeof started>> | undefined;
-      server.onExchange(async () => { restarted = await started(c, storage); });
+      server.onExchange(async () => {
+        restarted = await started(c, storage);
+      });
 
       const error = await finish(server.issue("code-a"));
 
@@ -388,7 +412,9 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
       held.release();
 
       const error = await pending;
-      expect(String(error)).toMatch(/authorization callback was already used by another request; nothing was exchanged/);
+      expect(String(error)).toMatch(
+        /authorization callback was already used by another request; nothing was exchanged/,
+      );
       expect(classifyCallError(error)).toMatchObject({ code: "connector_call_failed", retryable: false });
       expect(server.carrying(code)).toBe(1);
       expect(await storedTokens(backing, epoch)).toEqual(completed);
@@ -396,23 +422,30 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
     },
   );
 
-  it.each(STORES)("redeems one code once when duplicate callbacks race to the exchange together, on %s", async (_label, remote) => {
-    // Neither is held: all reach the fence in the same turn, and the claim
-    // lets exactly one of them through.
-    const server = authorizationServer();
-    vi.stubGlobal("fetch", server.fetchStub);
-    const storage = backingStore(remote);
-    const c = connector();
-    const { state, epoch } = await started(c, storage);
-    const code = server.issue("code-a");
-    const callbacks = await Promise.all([verified(c, storage, state), verified(c, storage, state), verified(c, storage, state)]);
+  it.each(STORES)(
+    "redeems one code once when duplicate callbacks race to the exchange together, on %s",
+    async (_label, remote) => {
+      // Neither is held: all reach the fence in the same turn, and the claim
+      // lets exactly one of them through.
+      const server = authorizationServer();
+      vi.stubGlobal("fetch", server.fetchStub);
+      const storage = backingStore(remote);
+      const c = connector();
+      const { state, epoch } = await started(c, storage);
+      const code = server.issue("code-a");
+      const callbacks = await Promise.all([
+        verified(c, storage, state),
+        verified(c, storage, state),
+        verified(c, storage, state),
+      ]);
 
-    const outcomes = await Promise.all(callbacks.map((finish) => finish(code)));
+      const outcomes = await Promise.all(callbacks.map((finish) => finish(code)));
 
-    expect(outcomes.filter((outcome) => outcome === undefined)).toHaveLength(1);
-    expect(server.carrying(code)).toBe(1);
-    expect(await storedTokens(storage, epoch)).toMatchObject({ access_token: "access-1" });
-  });
+      expect(outcomes.filter((outcome) => outcome === undefined)).toHaveLength(1);
+      expect(server.carrying(code)).toBe(1);
+      expect(await storedTokens(storage, epoch)).toMatchObject({ access_token: "access-1" });
+    },
+  );
 
   it("never discards the winner's grant when another consent's exchange is refused after it", async () => {
     // A second consent in the same epoch binds before the first completes,
@@ -439,7 +472,7 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
     const completed = await storedTokens(backing, first.epoch);
     held.release();
 
-    expect((await loser as { code?: unknown }).code).toBe("downstream_oauth_required");
+    expect(((await loser) as { code?: unknown }).code).toBe("downstream_oauth_required");
     expect(server.carrying("never-issued")).toBe(1);
     expect(completed).toMatchObject({ access_token: "access-1" });
     expect(await storedTokens(backing, first.epoch)).toEqual(completed);
@@ -496,133 +529,161 @@ describe("a refused code exchange invalidates only what it began with", () => {
     expect(await storedTokens(storage, epoch)).toBeUndefined();
   });
 
-  it.each(STORES)("keeps the consent Continue started while an earlier callback's exchange was on the wire, on %s", async (_label, remote) => {
-    // A's claim spent its consent, so Continue starts consent B in the same
-    // epoch while A waits on the token endpoint. A then succeeds, and B is
-    // still the one Continue hands back.
-    const server = authorizationServer();
-    vi.stubGlobal("fetch", server.fetchStub);
-    const storage = backingStore(remote);
-    const c = connector();
-    const first = await started(c, storage);
-    const finish = await verified(c, storage, first.state);
-    const sent = deferred<void>();
-    const release = deferred<void>();
-    server.onExchange(async () => { sent.resolve(); await release.promise; });
+  it.each(STORES)(
+    "keeps the consent Continue started while an earlier callback's exchange was on the wire, on %s",
+    async (_label, remote) => {
+      // A's claim spent its consent, so Continue starts consent B in the same
+      // epoch while A waits on the token endpoint. A then succeeds, and B is
+      // still the one Continue hands back.
+      const server = authorizationServer();
+      vi.stubGlobal("fetch", server.fetchStub);
+      const storage = backingStore(remote);
+      const c = connector();
+      const first = await started(c, storage);
+      const finish = await verified(c, storage, first.state);
+      const sent = deferred<void>();
+      const release = deferred<void>();
+      server.onExchange(async () => {
+        sent.resolve();
+        await release.promise;
+      });
 
-    const completing = finish(server.issue("code-a"));
-    await sent.promise;
-    const continued = await c.startAuth!(scope(storage), { force: false });
-    const next = new URL(required(continued.authorizationUrl));
-    const nextState = required(next.searchParams.get("state") ?? undefined);
-    expect(nextState).not.toBe(first.state);
-    release.resolve();
-    expect(await completing).toBeUndefined();
+      const completing = finish(server.issue("code-a"));
+      await sent.promise;
+      const continued = await c.startAuth!(scope(storage), { force: false });
+      const next = new URL(required(continued.authorizationUrl));
+      const nextState = required(next.searchParams.get("state") ?? undefined);
+      expect(nextState).not.toBe(first.state);
+      release.resolve();
+      expect(await completing).toBeUndefined();
 
-    const again = await c.startAuth!(scope(storage), { force: false });
-    expect(again).toMatchObject({ authorizationUrl: next.href, authorizationReused: true });
-    expect(await (await verified(c, storage, nextState))(server.issue("code-b"))).toBeUndefined();
-    expect(await storedTokens(storage, first.epoch)).toMatchObject({ access_token: "access-2" });
-  });
+      const again = await c.startAuth!(scope(storage), { force: false });
+      expect(again).toMatchObject({ authorizationUrl: next.href, authorizationReused: true });
+      expect(await (await verified(c, storage, nextState))(server.issue("code-b"))).toBeUndefined();
+      expect(await storedTokens(storage, first.epoch)).toMatchObject({ access_token: "access-2" });
+    },
+  );
 
-  it.each(STORES)("does not hand a consent URL whose state an exchange spent back to Continue, on %s", async (_label, remote) => {
-    const server = authorizationServer();
-    vi.stubGlobal("fetch", server.fetchStub);
-    const storage = backingStore(remote);
-    const c = connector();
-    const first = await c.startAuth!(scope(storage), { force: true });
-    const state = required(new URL(required(first.authorizationUrl)).searchParams.get("state") ?? undefined);
-    const finish = await verified(c, storage, state);
-    expect((await finish("unknown-code") as { code?: unknown }).code).toBe("downstream_oauth_required");
+  it.each(STORES)(
+    "does not hand a consent URL whose state an exchange spent back to Continue, on %s",
+    async (_label, remote) => {
+      const server = authorizationServer();
+      vi.stubGlobal("fetch", server.fetchStub);
+      const storage = backingStore(remote);
+      const c = connector();
+      const first = await c.startAuth!(scope(storage), { force: true });
+      const state = required(new URL(required(first.authorizationUrl)).searchParams.get("state") ?? undefined);
+      const finish = await verified(c, storage, state);
+      expect(((await finish("unknown-code")) as { code?: unknown }).code).toBe("downstream_oauth_required");
 
-    const continued = await c.startAuth!(scope(storage), { force: false });
+      const continued = await c.startAuth!(scope(storage), { force: false });
 
-    expect(continued.authorizationReused).toBeUndefined();
-    const next = new URL(required(continued.authorizationUrl));
-    expect(next.searchParams.get("state")).not.toBe(state);
-    expect(next.searchParams.get("client_id")).toBe("client-1");
-    // The new consent completes.
-    const nextState = required(next.searchParams.get("state") ?? undefined);
-    expect(await (await verified(c, storage, nextState))(server.issue("code-b"))).toBeUndefined();
-  });
+      expect(continued.authorizationReused).toBeUndefined();
+      const next = new URL(required(continued.authorizationUrl));
+      expect(next.searchParams.get("state")).not.toBe(state);
+      expect(next.searchParams.get("client_id")).toBe("client-1");
+      // The new consent completes.
+      const nextState = required(next.searchParams.get("state") ?? undefined);
+      expect(await (await verified(c, storage, nextState))(server.issue("code-b"))).toBeUndefined();
+    },
+  );
 });
 
 describe("a completed exchange and a newer consent's records", () => {
-  it.each(STORES.flatMap(([label, remote]) =>
-    (["its flow record", "the grant's pointer to it"] as const).map((record) => [label, record, remote] as const),
-  ))("leaves a newer consent intact when it publishes while A completes, on %s, holding %s", async (_label, record, remote) => {
-    // A's exchange is on the wire when Continue starts consent B, which is
-    // held just before it publishes one of its two writes. A completes and
-    // stores its tokens; B then publishes. Both survive: A's write never
-    // touches a consent, and B's pointer write retries over A's tokens.
-    const server = authorizationServer();
-    vi.stubGlobal("fetch", server.fetchStub);
-    const backing = backingStore(remote);
-    const c = connector();
-    const first = await started(c, backing);
-    const finish = await verified(c, backing, first.state);
-    const sent = deferred<void>();
-    const answer = deferred<void>();
-    server.onExchange(async () => { sent.resolve(); await answer.promise; });
-    const completing = finish(server.issue("code-a"));
-    await sent.promise;
-    const begunB = deferred<void>();
-    const publishB = deferred<void>();
-    let holding = true;
-    const continuingStore: KVStorage = { ...backing,
-      async compareAndSet(key, expected, next, options) {
-        const target = record === "its flow record" ? key.startsWith("oauth:flow:") && expected === null : key === GRANT;
-        if (holding && target) {
-          holding = false;
-          begunB.resolve();
-          await publishB.promise;
-        }
-        return backing.compareAndSet(key, expected, next, options);
-      },
-    };
-    const continuing = c.startAuth!(scope(continuingStore), { force: false });
-    await begunB.promise;
-    answer.resolve();
-    expect(await completing).toBeUndefined();
-    publishB.resolve();
-    const next = new URL(required((await continuing).authorizationUrl));
-    const stateB = required(next.searchParams.get("state") ?? undefined);
-    const keyB = await consentKey(stateB);
-    const flowB = await backing.get(keyB);
+  it.each(
+    STORES.flatMap(([label, remote]) =>
+      (["its flow record", "the grant's pointer to it"] as const).map((record) => [label, record, remote] as const),
+    ),
+  )(
+    "leaves a newer consent intact when it publishes while A completes, on %s, holding %s",
+    async (_label, record, remote) => {
+      // A's exchange is on the wire when Continue starts consent B, which is
+      // held just before it publishes one of its two writes. A completes and
+      // stores its tokens; B then publishes. Both survive: A's write never
+      // touches a consent, and B's pointer write retries over A's tokens.
+      const server = authorizationServer();
+      vi.stubGlobal("fetch", server.fetchStub);
+      const backing = backingStore(remote);
+      const c = connector();
+      const first = await started(c, backing);
+      const finish = await verified(c, backing, first.state);
+      const sent = deferred<void>();
+      const answer = deferred<void>();
+      server.onExchange(async () => {
+        sent.resolve();
+        await answer.promise;
+      });
+      const completing = finish(server.issue("code-a"));
+      await sent.promise;
+      const begunB = deferred<void>();
+      const publishB = deferred<void>();
+      let holding = true;
+      const continuingStore: KVStorage = {
+        ...backing,
+        async compareAndSet(key, expected, next, options) {
+          const target =
+            record === "its flow record" ? key.startsWith("oauth:flow:") && expected === null : key === GRANT;
+          if (holding && target) {
+            holding = false;
+            begunB.resolve();
+            await publishB.promise;
+          }
+          return backing.compareAndSet(key, expected, next, options);
+        },
+      };
+      const continuing = c.startAuth!(scope(continuingStore), { force: false });
+      await begunB.promise;
+      answer.resolve();
+      expect(await completing).toBeUndefined();
+      publishB.resolve();
+      const next = new URL(required((await continuing).authorizationUrl));
+      const stateB = required(next.searchParams.get("state") ?? undefined);
+      const keyB = await consentKey(stateB);
+      const flowB = await backing.get(keyB);
 
-    expect(flowB).not.toBeNull();
-    const grant = required(await storedGrant(backing));
-    expect(grant.body?.tokens).toMatchObject({ access_token: "access-1" });
-    expect(grant.flow).toBe(keyB.slice("oauth:flow:".length));
-    expect(await c.startAuth!(scope(backing), { force: false })).toMatchObject({ authorizationUrl: next.href, authorizationReused: true });
-    expect(await backing.get(keyB)).toBe(flowB);
-    expect(await (await verified(c, backing, stateB))(server.issue("code-b"))).toBeUndefined();
-  });
+      expect(flowB).not.toBeNull();
+      const grant = required(await storedGrant(backing));
+      expect(grant.body?.tokens).toMatchObject({ access_token: "access-1" });
+      expect(grant.flow).toBe(keyB.slice("oauth:flow:".length));
+      expect(await c.startAuth!(scope(backing), { force: false })).toMatchObject({
+        authorizationUrl: next.href,
+        authorizationReused: true,
+      });
+      expect(await backing.get(keyB)).toBe(flowB);
+      expect(await (await verified(c, backing, stateB))(server.issue("code-b"))).toBeUndefined();
+    },
+  );
 
-  it.each(STORES)("leaves a newer consent alone after an exchange no callback verified, on %s", async (_label, remote) => {
-    // finishAuth driven without verifyState, over a consent too old to hand
-    // back: Continue starts consent B while A is on the wire. A names its
-    // consent by its callback's state and claims that one alone.
-    const server = authorizationServer();
-    vi.stubGlobal("fetch", server.fetchStub);
-    const storage = backingStore(remote);
-    const c = connector();
-    const first = await started(c, storage);
-    await age(storage, first.state);
-    const sent = deferred<void>();
-    const release = deferred<void>();
-    server.onExchange(async () => { sent.resolve(); await release.promise; });
-    const code = server.issue("code-a");
-    const completing = c.finishAuth!(code, scope(storage), new URLSearchParams({ code, state: first.state }));
-    await sent.promise;
-    const next = new URL(required((await c.startAuth!(scope(storage), { force: false })).authorizationUrl));
-    const stateB = required(next.searchParams.get("state") ?? undefined);
-    expect(stateB).not.toBe(first.state);
-    release.resolve();
-    await completing;
+  it.each(STORES)(
+    "leaves a newer consent alone after an exchange no callback verified, on %s",
+    async (_label, remote) => {
+      // finishAuth driven without verifyState, over a consent too old to hand
+      // back: Continue starts consent B while A is on the wire. A names its
+      // consent by its callback's state and claims that one alone.
+      const server = authorizationServer();
+      vi.stubGlobal("fetch", server.fetchStub);
+      const storage = backingStore(remote);
+      const c = connector();
+      const first = await started(c, storage);
+      await age(storage, first.state);
+      const sent = deferred<void>();
+      const release = deferred<void>();
+      server.onExchange(async () => {
+        sent.resolve();
+        await release.promise;
+      });
+      const code = server.issue("code-a");
+      const completing = c.finishAuth!(code, scope(storage), new URLSearchParams({ code, state: first.state }));
+      await sent.promise;
+      const next = new URL(required((await c.startAuth!(scope(storage), { force: false })).authorizationUrl));
+      const stateB = required(next.searchParams.get("state") ?? undefined);
+      expect(stateB).not.toBe(first.state);
+      release.resolve();
+      await completing;
 
-    expect(await (await verified(c, storage, stateB))(server.issue("code-b"))).toBeUndefined();
-  });
+      expect(await (await verified(c, storage, stateB))(server.issue("code-b"))).toBeUndefined();
+    },
+  );
 
   it("leaves another provider's consent alone when it verified none of its own", async () => {
     // A provider that neither verified a callback nor wrote a consent owns
@@ -680,61 +741,71 @@ describe("a layout 2 migration racing a restart", () => {
   it.each([
     ["an epoch an earlier release published", "v2:unbound-epoch"],
     ["the legacy generation, under the historical key names", "legacy"],
-  ] as const)("never replaces the restart's grant, and Disconnect leaves nothing of it, migrating %s", async (_label, generation) => {
-    // A passive call finds layout 2 and is held just before it writes the
-    // migrated record. A restart then migrates too, runs start to finish, and
-    // completes its consent. The held write lands last and loses its
-    // compare-and-set; a later Disconnect leaves no trace of the restart.
-    const server = authorizationServer();
-    vi.stubGlobal("fetch", server.fetchStub);
-    const backing = backingStore(false);
-    const epoch = generation === "legacy" ? null : generation;
-    if (epoch !== null) await backing.set(oauthV2Keys.generation, epoch);
-    for (const [field, value] of [
-      [oauthV2Keys.field.client, { client_id: "old-client", client_secret: "old-secret", redirect_uris: [REDIRECT] }],
-      [oauthV2Keys.field.tokens, { access_token: "old-access", token_type: "Bearer", refresh_token: "old-refresh" }],
-    ] as const) {
-      await backing.set(
-        oauthV2Keys.value(field, epoch),
-        JSON.stringify({ connectaOAuthVersion: 2, generation, issuer, value }),
+  ] as const)(
+    "never replaces the restart's grant, and Disconnect leaves nothing of it, migrating %s",
+    async (_label, generation) => {
+      // A passive call finds layout 2 and is held just before it writes the
+      // migrated record. A restart then migrates too, runs start to finish, and
+      // completes its consent. The held write lands last and loses its
+      // compare-and-set; a later Disconnect leaves no trace of the restart.
+      const server = authorizationServer();
+      vi.stubGlobal("fetch", server.fetchStub);
+      const backing = backingStore(false);
+      const epoch = generation === "legacy" ? null : generation;
+      if (epoch !== null) await backing.set(oauthV2Keys.generation, epoch);
+      for (const [field, value] of [
+        [oauthV2Keys.field.client, { client_id: "old-client", client_secret: "old-secret", redirect_uris: [REDIRECT] }],
+        [oauthV2Keys.field.tokens, { access_token: "old-access", token_type: "Bearer", refresh_token: "old-refresh" }],
+      ] as const) {
+        await backing.set(
+          oauthV2Keys.value(field, epoch),
+          JSON.stringify({ connectaOAuthVersion: 2, generation, issuer, value }),
+        );
+      }
+      let holding = true;
+      const migrating = deferred<void>();
+      const land = deferred<void>();
+      const storage: KVStorage = {
+        ...backing,
+        async compareAndSet(key, expected, next, options) {
+          if (holding && key === GRANT && expected === null) {
+            holding = false;
+            migrating.resolve();
+            await land.promise;
+          }
+          return backing.compareAndSet(key, expected, next, options);
+        },
+      };
+      const c = connector();
+
+      const passive = c.listTools(scope(storage)).then(
+        () => undefined,
+        (error: unknown) => error,
       );
-    }
-    let holding = true;
-    const migrating = deferred<void>();
-    const land = deferred<void>();
-    const storage: KVStorage = { ...backing,
-      async compareAndSet(key, expected, next, options) {
-        if (holding && key === GRANT && expected === null) {
-          holding = false;
-          migrating.resolve();
-          await land.promise;
-        }
-        return backing.compareAndSet(key, expected, next, options);
-      },
-    };
-    const c = connector();
+      await migrating.promise;
+      const restart = await started(c, backing);
+      expect(await (await verified(c, backing, restart.state))(server.issue("code-b"))).toBeUndefined();
+      expect(await storedTokens(backing, restart.epoch)).toMatchObject({ access_token: "access-1" });
+      land.resolve();
+      await passive;
+      // The migration's write lost: the restart's grant is the live one.
+      expect((await storedGrant(backing))?.epoch).toBe(restart.epoch);
+      expect(await storedTokens(backing, restart.epoch)).toBeDefined();
 
-    const passive = c.listTools(scope(storage)).then(() => undefined, (error: unknown) => error);
-    await migrating.promise;
-    const restart = await started(c, backing);
-    expect(await (await verified(c, backing, restart.state))(server.issue("code-b"))).toBeUndefined();
-    expect(await storedTokens(backing, restart.epoch)).toMatchObject({ access_token: "access-1" });
-    land.resolve();
-    await passive;
-    // The migration's write lost: the restart's grant is the live one.
-    expect((await storedGrant(backing))?.epoch).toBe(restart.epoch);
-    expect(await storedTokens(backing, restart.epoch)).toBeDefined();
+      await c.disconnectAuth!(scope(backing));
 
-    await c.disconnectAuth!(scope(backing));
-
-    const keys = await backing.list("");
-    for (const key of keys) {
-      if (!key.startsWith("oauth:refresh-spent:")) expect(key).not.toContain(restart.epoch);
-      if (!key.startsWith("oauth:refresh-spent:")) expect(await backing.get(key), key).not.toContain(restart.epoch);
-      expect(oauthV2Keys.family.prefixes.some((prefix) => key.startsWith(prefix)), key).toBe(false);
-    }
-    expect(keys).toEqual([GRANT, oauthRefreshSpentKeys.spent(await oauthStateDigest("refresh-1"))]);
-  });
+      const keys = await backing.list("");
+      for (const key of keys) {
+        if (!key.startsWith("oauth:refresh-spent:")) expect(key).not.toContain(restart.epoch);
+        if (!key.startsWith("oauth:refresh-spent:")) expect(await backing.get(key), key).not.toContain(restart.epoch);
+        expect(
+          oauthV2Keys.family.prefixes.some((prefix) => key.startsWith(prefix)),
+          key,
+        ).toBe(false);
+      }
+      expect(keys).toEqual([GRANT, oauthRefreshSpentKeys.spent(await oauthStateDigest("refresh-1"))]);
+    },
+  );
 });
 
 describe("the callback route and a duplicate callback", () => {
@@ -750,7 +821,8 @@ describe("the callback route and a duplicate callback", () => {
     let holding = false;
     const reached = deferred<void>();
     const release = deferred<void>();
-    const storage: KVStorage = { ...backing,
+    const storage: KVStorage = {
+      ...backing,
       async compareAndSet(key, expected, next, options) {
         if (holding && key.includes(":oauth:flow:") && expected !== null) {
           holding = false;
@@ -761,7 +833,13 @@ describe("the callback route and a duplicate callback", () => {
       },
     };
     const { logger, warnings } = spyLogger();
-    const connecta = createTestConnecta({ publicUrl: BASE, storage, logger, auth: callbackAuth, connectors: [connector()] });
+    const connecta = createTestConnecta({
+      publicUrl: BASE,
+      storage,
+      logger,
+      auth: callbackAuth,
+      connectors: [connector()],
+    });
     try {
       const c = required(connecta.registry.getConnector("svc"));
       const start = await c.startAuth!(connecta.registry.contextFor("svc", BASE), { force: true });
@@ -781,7 +859,9 @@ describe("the callback route and a duplicate callback", () => {
       expect(duplicate.status).toBe(400);
       expect(await duplicate.text()).toContain("Authorization could not be completed");
       expect(server.carrying("code-a")).toBe(1);
-      expect(warnings().join("\n")).toMatch(/with 400: another callback had already claimed its state\. No authorization code was exchanged\./);
+      expect(warnings().join("\n")).toMatch(
+        /with 400: another callback had already claimed its state\. No authorization code was exchanged\./,
+      );
       expect(warnings().join("\n")).not.toMatch(/with 500/);
     } finally {
       await connecta.close();

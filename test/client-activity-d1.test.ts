@@ -9,9 +9,11 @@ import { required, silentLogger } from "./helpers.js";
 const db = await (async () => {
   try {
     const testModule = "cloudflare:test";
-    const { env } = await import(/* @vite-ignore */ testModule) as { env: { KV_COPY_TARGET?: D1Database } };
+    const { env } = (await import(/* @vite-ignore */ testModule)) as { env: { KV_COPY_TARGET?: D1Database } };
     return env.KV_COPY_TARGET;
-  } catch { return undefined; }
+  } catch {
+    return undefined;
+  }
 })();
 
 describe.skipIf(!db)("client activity in Workers D1", () => {
@@ -25,41 +27,90 @@ describe.skipIf(!db)("client activity in Workers D1", () => {
     // both final-newline anchors and all reserved names. The recorder, SDK,
     // shared SQL contract, and D1 sink below keep the exhaustive value matrix.
     await checkClientActivity(activity, [
-      "\u001b[31mCLIENT\nforged", "1\r\nINJECT", "client\0payload", "client\n", "client\r",
-      "x".repeat(65), "__proto__", "constructor", "prototype", 42,
+      "\u001b[31mCLIENT\nforged",
+      "1\r\nINJECT",
+      "client\0payload",
+      "client\n",
+      "client\r",
+      "x".repeat(65),
+      "__proto__",
+      "constructor",
+      "prototype",
+      42,
     ]);
   });
 
   it("INV-6: migrates old D1 rows with unknown package and client facts, then persists new telemetry", async () => {
     const database = required(db);
     await database.prepare("DROP TABLE IF EXISTS tool_call_activity").run();
-    await database.prepare(`CREATE TABLE tool_call_activity (
+    await database
+      .prepare(`CREATE TABLE tool_call_activity (
       id TEXT PRIMARY KEY, occurred_at_ms INTEGER NOT NULL, request_id TEXT NOT NULL,
       actor_kind TEXT NOT NULL, actor_id TEXT, connector_id TEXT NOT NULL,
       tool_name TEXT NOT NULL, source TEXT NOT NULL, outcome TEXT NOT NULL,
       duration_ms INTEGER NOT NULL, attempts INTEGER NOT NULL, error_code TEXT,
       server_name TEXT NOT NULL, server_version TEXT NOT NULL, deployment_id TEXT
-    )`).run();
-    await database.prepare(`INSERT INTO tool_call_activity VALUES (
+    )`)
+      .run();
+    await database
+      .prepare(`INSERT INTO tool_call_activity VALUES (
       'old', ?, 'r', 'test', NULL, 'calc', 'add', 'call_tool', 'success', 1, 1,
       NULL, 'display', '999.0.0', NULL
-    )`).bind(Date.now()).run();
+    )`)
+      .bind(Date.now())
+      .run();
     const activity = d1ActivityStore(database);
     const old = (await activity.list!({ limit: 1 })).events[0]!;
     expect(old.serverVersion).toBe("999.0.0");
-    for (const field of ["packageVersion", "clientName", "clientVersion", "classification", "resultBytes", "drift", "kind", "pool", "actorBasis"]) expect(old).not.toHaveProperty(field);
-    const columns = await database.prepare("PRAGMA table_info(tool_call_activity)").all<{ name: string; notnull: number }>();
-    expect(columns.results.find(column => column.name === "package_version")?.notnull).toBe(0);
+    for (const field of [
+      "packageVersion",
+      "clientName",
+      "clientVersion",
+      "classification",
+      "resultBytes",
+      "drift",
+      "kind",
+      "pool",
+      "actorBasis",
+    ])
+      expect(old).not.toHaveProperty(field);
+    const columns = await database
+      .prepare("PRAGMA table_info(tool_call_activity)")
+      .all<{ name: string; notnull: number }>();
+    expect(columns.results.find((column) => column.name === "package_version")?.notnull).toBe(0);
     const writes: Promise<unknown>[] = [];
-    recordToolActivity({
-      sink: activity, actor: { kind: "test" }, requestId: "new",
-      serverInfo: { name: "display", version: "999.0.0" },
-      clientInfo: { name: "Claude Code", version: "2.1.0" },
-      logger: silentLogger, defer: pending => void writes.push(pending),
-    }, { connectorId: "calc", toolName: "add", address: "calc.add", source: "execute_code", classification: "write", resultBytes: 42, outcome: "error", errorCode: "auth_required", durationMs: 1, attempts: 1 });
+    recordToolActivity(
+      {
+        sink: activity,
+        actor: { kind: "test" },
+        requestId: "new",
+        serverInfo: { name: "display", version: "999.0.0" },
+        clientInfo: { name: "Claude Code", version: "2.1.0" },
+        logger: silentLogger,
+        defer: (pending) => void writes.push(pending),
+      },
+      {
+        connectorId: "calc",
+        toolName: "add",
+        address: "calc.add",
+        source: "execute_code",
+        classification: "write",
+        resultBytes: 42,
+        outcome: "error",
+        errorCode: "auth_required",
+        durationMs: 1,
+        attempts: 1,
+      },
+    );
     await Promise.all(writes);
-    expect((await activity.list!({ limit: 10 })).events.find(event => event.requestId === "new"))
-      .toMatchObject({ packageVersion: CONNECTA_VERSION, clientName: "Claude Code", clientVersion: "2.1.0", errorCode: "auth_required", classification: "write", resultBytes: 42 });
+    expect((await activity.list!({ limit: 10 })).events.find((event) => event.requestId === "new")).toMatchObject({
+      packageVersion: CONNECTA_VERSION,
+      clientName: "Claude Code",
+      clientVersion: "2.1.0",
+      errorCode: "auth_required",
+      classification: "write",
+      resultBytes: 42,
+    });
   });
 
   it("INV-6: withholds non-string and invalid client facts at the D1 sink itself", async () => {
@@ -68,17 +119,42 @@ describe.skipIf(!db)("client activity in Workers D1", () => {
     const activity = d1ActivityStore(database);
     let template!: ToolCallActivityEvent;
     const context: ActivityRequestContext = {
-      sink: { record: event => { template = event; } }, actor: { kind: "test" }, requestId: "r",
-      serverInfo: { name: "connecta", version: "0" }, logger: silentLogger,
+      sink: {
+        record: (event) => {
+          template = event;
+        },
+      },
+      actor: { kind: "test" },
+      requestId: "r",
+      serverInfo: { name: "connecta", version: "0" },
+      logger: silentLogger,
     };
-    recordToolActivity(context, { connectorId: "calc", toolName: "add", address: "calc.add", source: "call_tool", outcome: "success", durationMs: 1, attempts: 1 });
+    recordToolActivity(context, {
+      connectorId: "calc",
+      toolName: "add",
+      address: "calc.add",
+      source: "call_tool",
+      outcome: "success",
+      durationMs: 1,
+      attempts: 1,
+    });
     for (const value of [...INVALID_CLIENT_FACTS, "v".repeat(33)]) {
-      await activity.record({ ...template, id: crypto.randomUUID(), clientName: "valid", clientVersion: value as string });
-      const row = await database.prepare("SELECT client_name, client_version FROM tool_call_activity ORDER BY rowid DESC LIMIT 1").first();
+      await activity.record({
+        ...template,
+        id: crypto.randomUUID(),
+        clientName: "valid",
+        clientVersion: value as string,
+      });
+      const row = await database
+        .prepare("SELECT client_name, client_version FROM tool_call_activity ORDER BY rowid DESC LIMIT 1")
+        .first();
       expect(row).toEqual({ client_name: "valid", client_version: null });
     }
     // A row written by an older deployment must be checked on read too.
-    await database.prepare("UPDATE tool_call_activity SET client_name = ?, client_version = ?").bind("\u001b[31mCLIENT\nforged", "1\r\nINJECT").run();
+    await database
+      .prepare("UPDATE tool_call_activity SET client_name = ?, client_version = ?")
+      .bind("\u001b[31mCLIENT\nforged", "1\r\nINJECT")
+      .run();
     for (const event of (await activity.list!({ limit: 100 })).events) {
       expect(event).not.toHaveProperty("clientName");
       expect(event).not.toHaveProperty("clientVersion");
@@ -90,15 +166,33 @@ describe.skipIf(!db)("client activity in Workers D1", () => {
     await database.prepare("DROP TABLE IF EXISTS tool_call_activity").run();
     const activity = d1ActivityStore(database);
     const row: ToolCallActivityEvent = {
-      schemaVersion: 1, id: crypto.randomUUID(), requestId: "refresh", occurredAt: new Date().toISOString(), actor: { kind: "system" },
-      connectorId: "dynamic", toolName: "<catalog>", address: "dynamic.<catalog>", source: "catalog_refresh", outcome: "success", durationMs: 0, attempts: 1,
-      serverName: "test", serverVersion: "1", kind: "catalog_drift", pool: "support", actorBasis: "principal", drift: { kind: "catalog_changed", addedTools: 1, removedTools: 2, changedTools: 3 },
+      schemaVersion: 1,
+      id: crypto.randomUUID(),
+      requestId: "refresh",
+      occurredAt: new Date().toISOString(),
+      actor: { kind: "system" },
+      connectorId: "dynamic",
+      toolName: "<catalog>",
+      address: "dynamic.<catalog>",
+      source: "catalog_refresh",
+      outcome: "success",
+      durationMs: 0,
+      attempts: 1,
+      serverName: "test",
+      serverVersion: "1",
+      kind: "catalog_drift",
+      pool: "support",
+      actorBasis: "principal",
+      drift: { kind: "catalog_changed", addedTools: 1, removedTools: 2, changedTools: 3 },
     };
     await activity.record(row);
     expect((await activity.list!({ limit: 1 })).events).toEqual([row]);
-    await database.prepare("UPDATE tool_call_activity SET drift_kind = ?, result_bytes = ?, classification = ?, actor_basis = ?").bind("downstream-text", -1, "payload", "subject").run();
+    await database
+      .prepare("UPDATE tool_call_activity SET drift_kind = ?, result_bytes = ?, classification = ?, actor_basis = ?")
+      .bind("downstream-text", -1, "payload", "subject")
+      .run();
     const invalid = (await activity.list!({ limit: 1 })).events[0];
-    for (const field of ["kind", "drift", "resultBytes", "classification", "actorBasis"]) expect(invalid).not.toHaveProperty(field);
+    for (const field of ["kind", "drift", "resultBytes", "classification", "actorBasis"])
+      expect(invalid).not.toHaveProperty(field);
   });
-
 });

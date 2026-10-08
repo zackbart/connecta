@@ -27,14 +27,7 @@ interface Issue {
   closedBy?: "seed" | "agent";
 }
 
-type Seed = [
-  id: string,
-  status: Issue["status"],
-  label: string,
-  ageDays: number,
-  title: string,
-  customer?: string,
-];
+type Seed = [id: string, status: Issue["status"], label: string, ageDays: number, title: string, customer?: string];
 
 const SEED: Seed[] = [
   ["WEB-101", "open", "bug", 3, "Checkout button unresponsive on Safari", "initech.com"],
@@ -95,11 +88,7 @@ export function trackerState(now: number): TrackerState {
   const people = ["ana", "ben", "chioma", "dev", "eli"];
   return {
     issues: SEED.map(([id, status, label, ageDays, title, customer], index) => {
-      const project = id.startsWith("WEB")
-        ? "web"
-        : id.startsWith("API")
-          ? "api"
-          : "mobile";
+      const project = id.startsWith("WEB") ? "web" : id.startsWith("API") ? "api" : "mobile";
       return {
         id,
         project,
@@ -136,8 +125,7 @@ function cursorOffset(cursor: unknown): number {
 }
 
 export function trackerTools(state: TrackerState, now: () => number): FakeTool[] {
-  const find = (id: unknown) =>
-    state.issues.find((issue) => issue.id === String(id).toUpperCase());
+  const find = (id: unknown) => state.issues.find((issue) => issue.id === String(id).toUpperCase());
   return [
     {
       name: "list_projects",
@@ -149,17 +137,14 @@ export function trackerTools(state: TrackerState, now: () => number): FakeTool[]
           projects: Object.entries(PROJECTS).map(([id, project]) => ({
             id,
             ...project,
-            openIssues: state.issues.filter(
-              (issue) => issue.project === id && issue.status === "open",
-            ).length,
+            openIssues: state.issues.filter((issue) => issue.project === id && issue.status === "open").length,
           })),
         },
       }),
     },
     {
       name: "search_issues",
-      description:
-        "Search issues. Filters combine with AND. Results are sorted by id and paged with an opaque cursor.",
+      description: "Search issues. Filters combine with AND. Results are sorted by id and paged with an opaque cursor.",
       input: z.object({
         project: z.enum(["web", "api", "mobile"]).optional().describe("Project id"),
         status: z.enum(["open", "closed"]).optional(),
@@ -167,20 +152,22 @@ export function trackerTools(state: TrackerState, now: () => number): FakeTool[]
         customer: z.string().optional().describe("Customer domain, e.g. acme.com"),
         updatedBefore: z.string().optional().describe("ISO 8601 timestamp; only issues last updated before it"),
         text: z.string().optional().describe("Case-insensitive substring of the title"),
-        limit: z.number().int().min(1).max(PAGE_MAX).optional().describe(`Page size, default ${PAGE_DEFAULT}, max ${PAGE_MAX}`),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(PAGE_MAX)
+          .optional()
+          .describe(`Page size, default ${PAGE_DEFAULT}, max ${PAGE_MAX}`),
         cursor: z.string().optional().describe("nextCursor from the previous page"),
       }),
       annotations: { readOnlyHint: true, idempotentHint: true },
       run: (args) => {
-        const before =
-          typeof args.updatedBefore === "string"
-            ? Date.parse(args.updatedBefore)
-            : undefined;
+        const before = typeof args.updatedBefore === "string" ? Date.parse(args.updatedBefore) : undefined;
         if (before !== undefined && Number.isNaN(before)) {
           return { error: "updatedBefore must be an ISO 8601 timestamp" };
         }
-        const text =
-          typeof args.text === "string" ? args.text.toLowerCase() : undefined;
+        const text = typeof args.text === "string" ? args.text.toLowerCase() : undefined;
         const matches = state.issues.filter(
           (issue) =>
             (args.project === undefined || issue.project === args.project) &&

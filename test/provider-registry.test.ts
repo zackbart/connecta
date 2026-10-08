@@ -62,24 +62,41 @@ const providers: ProviderCase[] = [
     admissionIds: ["stripe_live", "stripe_sandbox"],
     meteredId: "stripe_live",
     staticCatalog: false,
-    factory: (storage: KVStorage) => deployment(storage, [
-      stripe("stripe_live", { mode: "production", purpose: "Revenue, disputes, and refunds for the real business", auth: { type: "headers", headers: { Authorization: "Bearer rk_live_example" } } }),
-      stripe("stripe_sandbox", { mode: "sandbox", purpose: "Rehearsing billing changes before they touch production", auth: { type: "headers", headers: { Authorization: "Bearer rk_test_example" } } }),
-    ]),
+    factory: (storage: KVStorage) =>
+      deployment(storage, [
+        stripe("stripe_live", {
+          mode: "production",
+          purpose: "Revenue, disputes, and refunds for the real business",
+          auth: { type: "headers", headers: { Authorization: "Bearer rk_live_example" } },
+        }),
+        stripe("stripe_sandbox", {
+          mode: "sandbox",
+          purpose: "Rehearsing billing changes before they touch production",
+          auth: { type: "headers", headers: { Authorization: "Bearer rk_test_example" } },
+        }),
+      ]),
   },
   {
     name: "linear",
     ids: ["linear_product", "linear_reporting"] as const,
     toolName: "list_issues",
     secondToolName: "list_projects",
-    descriptionMarks: ["Linear issue tracking and project planning — Product delivery planning", "Linear issue tracking and project planning (read-only) — Executive delivery reporting"],
+    descriptionMarks: [
+      "Linear issue tracking and project planning — Product delivery planning",
+      "Linear issue tracking and project planning (read-only) — Executive delivery reporting",
+    ],
     admissionIds: ["linear_reporting"],
     meteredId: "linear_reporting",
     staticCatalog: false,
-    factory: (storage: KVStorage) => deployment(storage, [
-      linear("linear_product", { purpose: "Product delivery planning", access: "read-write" }),
-      linear("linear_reporting", { purpose: "Executive delivery reporting", access: "read-only", callAdmission: { rules: [{ budget: { kind: "rolling-window", maxCalls: 500, windowMs: 3_600_000 } }] } }),
-    ]),
+    factory: (storage: KVStorage) =>
+      deployment(storage, [
+        linear("linear_product", { purpose: "Product delivery planning", access: "read-write" }),
+        linear("linear_reporting", {
+          purpose: "Executive delivery reporting",
+          access: "read-only",
+          callAdmission: { rules: [{ budget: { kind: "rolling-window", maxCalls: 500, windowMs: 3_600_000 } }] },
+        }),
+      ]),
   },
   {
     name: "mixpanel",
@@ -90,10 +107,11 @@ const providers: ProviderCase[] = [
     admissionIds: ["mixpanel_us"],
     meteredId: "mixpanel_us",
     staticCatalog: false,
-    factory: (storage: KVStorage) => deployment(storage, [
-      mixpanel("mixpanel_us", { purpose: "Production product decisions", callAdmission: budget }),
-      mixpanel("mixpanel_eu", { purpose: "EU product reporting", region: "eu" }),
-    ]),
+    factory: (storage: KVStorage) =>
+      deployment(storage, [
+        mixpanel("mixpanel_us", { purpose: "Production product decisions", callAdmission: budget }),
+        mixpanel("mixpanel_eu", { purpose: "EU product reporting", region: "eu" }),
+      ]),
   },
   {
     name: "revenuecat",
@@ -104,10 +122,19 @@ const providers: ProviderCase[] = [
     admissionIds: ["bepresent_ios", "biblescroll"],
     meteredId: "bepresent_ios",
     staticCatalog: false,
-    factory: (storage: KVStorage) => deployment(storage, [
-      revenuecat("bepresent_ios", { purpose: "Subscription state for the BePresent iOS project", auth: { type: "headers", headers: { Authorization: "Bearer sk_bepresent_example" } }, callAdmission: budget }),
-      revenuecat("biblescroll", { purpose: "Subscription state for the BibleScroll project", auth: { type: "headers", headers: { Authorization: "Bearer sk_biblescroll_example" } }, callAdmission: budget }),
-    ]),
+    factory: (storage: KVStorage) =>
+      deployment(storage, [
+        revenuecat("bepresent_ios", {
+          purpose: "Subscription state for the BePresent iOS project",
+          auth: { type: "headers", headers: { Authorization: "Bearer sk_bepresent_example" } },
+          callAdmission: budget,
+        }),
+        revenuecat("biblescroll", {
+          purpose: "Subscription state for the BibleScroll project",
+          auth: { type: "headers", headers: { Authorization: "Bearer sk_biblescroll_example" } },
+          callAdmission: budget,
+        }),
+      ]),
   },
   {
     name: "cloudflare",
@@ -118,10 +145,16 @@ const providers: ProviderCase[] = [
     admissionIds: ["cloudflare_prod", "cloudflare_staging"],
     meteredId: "cloudflare_prod",
     staticCatalog: true,
-    factory: (storage: KVStorage) => deployment(storage, [
-      cloudflare("cloudflare_prod", { surface: "api", purpose: "Production zones and edge cache", zoneId: "zone-prod", accountId: "acct-prod" }),
-      cloudflare("cloudflare_staging", { surface: "api", purpose: "Staging zones only", zoneId: "zone-staging" }),
-    ]),
+    factory: (storage: KVStorage) =>
+      deployment(storage, [
+        cloudflare("cloudflare_prod", {
+          surface: "api",
+          purpose: "Production zones and edge cache",
+          zoneId: "zone-prod",
+          accountId: "acct-prod",
+        }),
+        cloudflare("cloudflare_staging", { surface: "api", purpose: "Staging zones only", zoneId: "zone-staging" }),
+      ]),
   },
   {
     name: "notion",
@@ -132,10 +165,20 @@ const providers: ProviderCase[] = [
     admissionIds: ["notion_eng", "notion_ops"],
     meteredId: "notion_eng",
     staticCatalog: true,
-    factory: (storage: KVStorage) => deployment(storage, [
-      notion("notion_eng", { surface: "api", purpose: "Engineering runbooks and specs" }),
-      notion("notion_ops", { surface: "api", purpose: "Operations handbook", title: "Ops wiki", defaultPageSize: 50 }),
-    ], true),
+    factory: (storage: KVStorage) =>
+      deployment(
+        storage,
+        [
+          notion("notion_eng", { surface: "api", purpose: "Engineering runbooks and specs" }),
+          notion("notion_ops", {
+            surface: "api",
+            purpose: "Operations handbook",
+            title: "Ops wiki",
+            defaultPageSize: 50,
+          }),
+        ],
+        true,
+      ),
   },
   {
     name: "vercel",
@@ -146,10 +189,25 @@ const providers: ProviderCase[] = [
     admissionIds: ["vercel_prod", "vercel_preview"],
     meteredId: "vercel_prod",
     staticCatalog: true,
-    factory: (storage: KVStorage) => deployment(storage, [
-      vercel("vercel_prod", { surface: "api", purpose: "Production applications", teamId: "team_prod", callAdmission: budget }),
-      vercel("vercel_preview", { surface: "api", purpose: "Preview applications", teamId: "team_preview", callAdmission: budget }),
-    ], true),
+    factory: (storage: KVStorage) =>
+      deployment(
+        storage,
+        [
+          vercel("vercel_prod", {
+            surface: "api",
+            purpose: "Production applications",
+            teamId: "team_prod",
+            callAdmission: budget,
+          }),
+          vercel("vercel_preview", {
+            surface: "api",
+            purpose: "Preview applications",
+            teamId: "team_preview",
+            callAdmission: budget,
+          }),
+        ],
+        true,
+      ),
   },
   {
     name: "ccb",
@@ -160,10 +218,24 @@ const providers: ProviderCase[] = [
     admissionIds: ["ccb_church", "ccb_sandbox"],
     meteredId: "ccb_church",
     staticCatalog: true,
-    factory: (storage: KVStorage) => deployment(storage, [
-      ccb("ccb_church", { purpose: "Pastoral care for the main campus", environment: "production", mode: "system", clientId: "prod-client", clientSecret: "prod-secret" }),
-      ccb("ccb_sandbox", { purpose: "Rehearsing group changes", environment: "sandbox", mode: "identity", access: "read-write", clientId: "sandbox-client", clientSecret: "sandbox-secret" }),
-    ]),
+    factory: (storage: KVStorage) =>
+      deployment(storage, [
+        ccb("ccb_church", {
+          purpose: "Pastoral care for the main campus",
+          environment: "production",
+          mode: "system",
+          clientId: "prod-client",
+          clientSecret: "prod-secret",
+        }),
+        ccb("ccb_sandbox", {
+          purpose: "Rehearsing group changes",
+          environment: "sandbox",
+          mode: "identity",
+          access: "read-write",
+          clientId: "sandbox-client",
+          clientSecret: "sandbox-secret",
+        }),
+      ]),
   },
   {
     name: "planning-center",
@@ -174,10 +246,19 @@ const providers: ProviderCase[] = [
     admissionIds: ["pco_downtown", "pco_northside"],
     meteredId: "pco_downtown",
     staticCatalog: true,
-    factory: (storage: KVStorage) => deployment(storage, [
-      planningCenter("pco_downtown", { purpose: "Downtown campus staff" }),
-      planningCenter("pco_northside", { purpose: "Northside campus staff", title: "Northside PCO", callAdmission: budget }),
-    ], true),
+    factory: (storage: KVStorage) =>
+      deployment(
+        storage,
+        [
+          planningCenter("pco_downtown", { purpose: "Downtown campus staff" }),
+          planningCenter("pco_northside", {
+            purpose: "Northside campus staff",
+            title: "Northside PCO",
+            callAdmission: budget,
+          }),
+        ],
+        true,
+      ),
   },
   {
     name: "overflow",
@@ -188,39 +269,64 @@ const providers: ProviderCase[] = [
     admissionIds: ["overflow_church", "overflow_sandbox"],
     meteredId: "overflow_church",
     staticCatalog: true,
-    factory: (storage: KVStorage) => deployment(storage, [
-      overflow("overflow_church", { environment: "production", purpose: "Grace Church giving and deposits" }),
-      overflow("overflow_sandbox", { environment: "staging", purpose: "Integration rehearsal" }),
-    ], true),
+    factory: (storage: KVStorage) =>
+      deployment(
+        storage,
+        [
+          overflow("overflow_church", { environment: "production", purpose: "Grace Church giving and deposits" }),
+          overflow("overflow_sandbox", { environment: "staging", purpose: "Integration rehearsal" }),
+        ],
+        true,
+      ),
   },
   {
     name: "tithely",
     ids: ["tithely_grace", "tithely_rehearsal"] as const,
     toolName: "list_charges",
     secondToolName: "list_organizations",
-    descriptionMarks: ["live donors and real money — Grace Church giving", "test environment, no real money) — Rehearsing giving reports"],
+    descriptionMarks: [
+      "live donors and real money — Grace Church giving",
+      "test environment, no real money) — Rehearsing giving reports",
+    ],
     // Tithe.ly publishes no rate limit, so only an operator-supplied budget meters.
     admissionIds: ["tithely_grace"],
     meteredId: "tithely_grace",
     staticCatalog: true,
-    factory: (storage: KVStorage) => deployment(storage, [
-      tithely("tithely_grace", { purpose: "Grace Church giving", environment: "live", callAdmission: budget }),
-      tithely("tithely_rehearsal", { purpose: "Rehearsing giving reports", environment: "test" }),
-    ], true),
+    factory: (storage: KVStorage) =>
+      deployment(
+        storage,
+        [
+          tithely("tithely_grace", { purpose: "Grace Church giving", environment: "live", callAdmission: budget }),
+          tithely("tithely_rehearsal", { purpose: "Rehearsing giving reports", environment: "test" }),
+        ],
+        true,
+      ),
   },
   {
     name: "breeze",
     ids: ["breeze_main", "breeze_plant"] as const,
     toolName: "list_people",
     secondToolName: "list_contributions",
-    descriptionMarks: ["gracechurch.breezechms.com: Main campus pastoral care", "graceplant.breezechms.com: Church plant giving"],
+    descriptionMarks: [
+      "gracechurch.breezechms.com: Main campus pastoral care",
+      "graceplant.breezechms.com: Church plant giving",
+    ],
     admissionIds: ["breeze_main"],
     meteredId: "breeze_main",
     staticCatalog: true,
-    factory: (storage: KVStorage) => deployment(storage, [
-      breeze("breeze_main", { subdomain: "gracechurch", purpose: "Main campus pastoral care", callAdmission: budget }),
-      breeze("breeze_plant", { subdomain: "graceplant", purpose: "Church plant giving" }),
-    ], true),
+    factory: (storage: KVStorage) =>
+      deployment(
+        storage,
+        [
+          breeze("breeze_main", {
+            subdomain: "gracechurch",
+            purpose: "Main campus pastoral care",
+            callAdmission: budget,
+          }),
+          breeze("breeze_plant", { subdomain: "graceplant", purpose: "Church plant giving" }),
+        ],
+        true,
+      ),
   },
   {
     name: "basecamp",
@@ -231,102 +337,126 @@ const providers: ProviderCase[] = [
     admissionIds: ["basecamp_studio"],
     meteredId: "basecamp_studio",
     staticCatalog: false,
-    factory: (storage: KVStorage) => deployment(storage, [
-      basecamp("basecamp_studio", { purpose: "The studio's own projects", clientMetadataUrl: "https://connecta.example/oauth/basecamp-client", callAdmission: budget }),
-      basecamp("basecamp_client", { purpose: "The client-shared account", clientMetadataUrl: "https://connecta.example/oauth/basecamp-client", authScope: "personal" }),
-    ]),
+    factory: (storage: KVStorage) =>
+      deployment(storage, [
+        basecamp("basecamp_studio", {
+          purpose: "The studio's own projects",
+          clientMetadataUrl: "https://connecta.example/oauth/basecamp-client",
+          callAdmission: budget,
+        }),
+        basecamp("basecamp_client", {
+          purpose: "The client-shared account",
+          clientMetadataUrl: "https://connecta.example/oauth/basecamp-client",
+          authScope: "personal",
+        }),
+      ]),
   },
 ];
 
 const byName = (name: string) => providers.find((provider) => provider.name === name)!;
 
-describe.each(providers)("$name() inside a real deployment", ({ factory, ids, toolName, secondToolName, descriptionMarks, admissionIds, meteredId, staticCatalog }) => {
-  const realFetch = globalThis.fetch;
-  let fetchSpy: ReturnType<typeof vi.fn>;
+describe.each(providers)(
+  "$name() inside a real deployment",
+  ({ factory, ids, toolName, secondToolName, descriptionMarks, admissionIds, meteredId, staticCatalog }) => {
+    const realFetch = globalThis.fetch;
+    let fetchSpy: ReturnType<typeof vi.fn>;
 
-  beforeEach(() => {
-    fetchSpy = vi.fn(() => { throw new Error("network touched"); });
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
-  });
-  afterEach(() => { globalThis.fetch = realFetch; });
+    beforeEach(() => {
+      fetchSpy = vi.fn(() => {
+        throw new Error("network touched");
+      });
+      globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    });
+    afterEach(() => {
+      globalThis.fetch = realFetch;
+    });
 
-  it("boots two connectors without reaching the network", () => {
-    const { registry } = factory(memoryStorage());
-    expect(registry.listConnectors().map((connector) => connector.id)).toEqual(ids);
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
+    it("boots two connectors without reaching the network", () => {
+      const { registry } = factory(memoryStorage());
+      expect(registry.listConnectors().map((connector) => connector.id)).toEqual(ids);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
 
-  it("includes the provider-specific description marks", () => {
-    const { registry } = factory(memoryStorage());
-    expect(registry.getConnector(ids[0])?.description).toContain(descriptionMarks[0]);
-    expect(registry.getConnector(ids[1])?.description).toContain(descriptionMarks[1]);
-  });
+    it("includes the provider-specific description marks", () => {
+      const { registry } = factory(memoryStorage());
+      expect(registry.getConnector(ids[0])?.description).toContain(descriptionMarks[0]);
+      expect(registry.getConnector(ids[1])?.description).toContain(descriptionMarks[1]);
+    });
 
-  it("gives each connector its own address namespace", () => {
-    const { registry } = factory(memoryStorage());
-    expect(registry.resolveAddress(`${ids[0]}.${toolName}`)?.connector).toBe(registry.getConnector(ids[0]));
-    expect(registry.resolveAddress(`${ids[1]}.${toolName}`)?.connector).toBe(registry.getConnector(ids[1]));
-    expect(registry.getConnector(ids[0])).not.toBe(registry.getConnector(ids[1]));
-  });
+    it("gives each connector its own address namespace", () => {
+      const { registry } = factory(memoryStorage());
+      expect(registry.resolveAddress(`${ids[0]}.${toolName}`)?.connector).toBe(registry.getConnector(ids[0]));
+      expect(registry.resolveAddress(`${ids[1]}.${toolName}`)?.connector).toBe(registry.getConnector(ids[1]));
+      expect(registry.getConnector(ids[0])).not.toBe(registry.getConnector(ids[1]));
+    });
 
-  it("keeps catalogs and storage in separate namespaces", async () => {
-    const storage = memoryStorage();
-    const { registry } = factory(storage);
-    if (!staticCatalog) {
-      vi.spyOn(registry.getConnector(ids[0])!, "listTools").mockResolvedValue([{ name: toolName }]);
-      vi.spyOn(registry.getConnector(ids[1])!, "listTools").mockResolvedValue([{ name: secondToolName }]);
-    }
-    const firstNames = (await registry.getTools(ids[0], BASE_URL)).map((tool) => tool.name);
-    const secondNames = (await registry.getTools(ids[1], BASE_URL)).map((tool) => tool.name);
-    if (staticCatalog) {
-      expect(firstNames).toContain(toolName);
-      expect(secondNames).toContain(secondToolName);
-    } else {
-      expect(firstNames).toEqual([toolName]);
-      expect(secondNames).toEqual([secondToolName]);
-    }
-    const first = registry.contextFor(ids[0], BASE_URL);
-    const second = registry.contextFor(ids[1], BASE_URL);
-    await first.storage.set("namespace:probe", "first");
-    expect(await second.storage.get("namespace:probe")).toBeNull();
-    expect(await storage.get(`conn:${ids[0]}:namespace:probe`)).toBe("first");
-    expect(await storage.get(`conn:${ids[1]}:namespace:probe`)).toBeNull();
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
+    it("keeps catalogs and storage in separate namespaces", async () => {
+      const storage = memoryStorage();
+      const { registry } = factory(storage);
+      if (!staticCatalog) {
+        vi.spyOn(registry.getConnector(ids[0])!, "listTools").mockResolvedValue([{ name: toolName }]);
+        vi.spyOn(registry.getConnector(ids[1])!, "listTools").mockResolvedValue([{ name: secondToolName }]);
+      }
+      const firstNames = (await registry.getTools(ids[0], BASE_URL)).map((tool) => tool.name);
+      const secondNames = (await registry.getTools(ids[1], BASE_URL)).map((tool) => tool.name);
+      if (staticCatalog) {
+        expect(firstNames).toContain(toolName);
+        expect(secondNames).toContain(secondToolName);
+      } else {
+        expect(firstNames).toEqual([toolName]);
+        expect(secondNames).toEqual([secondToolName]);
+      }
+      const first = registry.contextFor(ids[0], BASE_URL);
+      const second = registry.contextFor(ids[1], BASE_URL);
+      await first.storage.set("namespace:probe", "first");
+      expect(await second.storage.get("namespace:probe")).toBeNull();
+      expect(await storage.get(`conn:${ids[0]}:namespace:probe`)).toBe("first");
+      expect(await storage.get(`conn:${ids[1]}:namespace:probe`)).toBeNull();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
 
-  it("meters and observes each connector separately", async () => {
-    const storage = memoryStorage();
-    const { registry } = factory(storage);
-    expect(Object.keys(registry.callAdmissionSnapshot()).sort()).toEqual([...admissionIds].sort());
-    const permit = await registry.admitCall(meteredId, { toolName, args: {} });
-    permit.release();
-    const snapshots = registry.callAdmissionSnapshot();
-    expect(snapshots[meteredId]?.totals.admitted).toBe(1);
-    const otherId = ids.find((id) => id !== meteredId)!;
-    if (admissionIds.includes(otherId)) {
-      expect(snapshots[otherId]?.totals.admitted).toBe(0);
-    } else {
-      const unmetered = await registry.admitCall(otherId, { toolName, args: {} });
-      unmetered.release();
-      expect(snapshots[otherId]).toBeUndefined();
-    }
-    const activity = activitySink();
-    await invokeTestCall(registry, activity, `${ids[0]}.${toolName}`);
-    expect(activityFor(activity.events, ids[0])?.outcome).toBe("error");
-    expect(activityFor(activity.events, ids[1])).toBeUndefined();
-  });
-});
+    it("meters and observes each connector separately", async () => {
+      const storage = memoryStorage();
+      const { registry } = factory(storage);
+      expect(Object.keys(registry.callAdmissionSnapshot()).sort()).toEqual([...admissionIds].sort());
+      const permit = await registry.admitCall(meteredId, { toolName, args: {} });
+      permit.release();
+      const snapshots = registry.callAdmissionSnapshot();
+      expect(snapshots[meteredId]?.totals.admitted).toBe(1);
+      const otherId = ids.find((id) => id !== meteredId)!;
+      if (admissionIds.includes(otherId)) {
+        expect(snapshots[otherId]?.totals.admitted).toBe(0);
+      } else {
+        const unmetered = await registry.admitCall(otherId, { toolName, args: {} });
+        unmetered.release();
+        expect(snapshots[otherId]).toBeUndefined();
+      }
+      const activity = activitySink();
+      await invokeTestCall(registry, activity, `${ids[0]}.${toolName}`);
+      expect(activityFor(activity.events, ids[0])?.outcome).toBe("error");
+      expect(activityFor(activity.events, ids[1])).toBeUndefined();
+    });
+  },
+);
 
 describe("provider-specific registry behavior", () => {
   it("boots one Stripe OAuth connector for mixed live and sandbox accounts", () => {
-    const connecta = deployment(memoryStorage(), [stripe("stripe", { purpose: "Live and sandbox organization billing" })]);
+    const connecta = deployment(memoryStorage(), [
+      stripe("stripe", { purpose: "Live and sandbox organization billing" }),
+    ]);
     const connector = connecta.registry.getConnector("stripe");
     expect(connector?.description).toContain("live and sandbox accounts");
-    expect(connector?.callAdmission?.rules[0]?.budget).toEqual({ kind: "rolling-window", maxCalls: 25, windowMs: 1_000 });
+    expect(connector?.callAdmission?.rules[0]?.budget).toEqual({
+      kind: "rolling-window",
+      maxCalls: 25,
+      windowMs: 1_000,
+    });
   });
 
   it("boots one RevenueCat OAuth connector and guides project resolution", () => {
-    const connecta = deployment(memoryStorage(), [revenuecat("revenuecat", { purpose: "Subscription state across every project we ship" })]);
+    const connecta = deployment(memoryStorage(), [
+      revenuecat("revenuecat", { purpose: "Subscription state across every project we ship" }),
+    ]);
     const connector = connecta.registry.getConnector("revenuecat")!;
     expect(connector.description).toContain("every project the account can reach");
     expect(connector.callAdmission).toBeUndefined();
@@ -336,9 +466,13 @@ describe("provider-specific registry behavior", () => {
   it("keeps Linear access-mode titles and descriptions byte-exact", () => {
     const { registry } = byName("linear").factory(memoryStorage());
     expect(registry.getConnector("linear_product")?.title).toBe("Linear");
-    expect(registry.getConnector("linear_product")?.description).toBe("Linear issue tracking and project planning — Product delivery planning");
+    expect(registry.getConnector("linear_product")?.description).toBe(
+      "Linear issue tracking and project planning — Product delivery planning",
+    );
     expect(registry.getConnector("linear_reporting")?.title).toBe("Linear (read-only)");
-    expect(registry.getConnector("linear_reporting")?.description).toBe("Linear issue tracking and project planning (read-only) — Executive delivery reporting");
+    expect(registry.getConnector("linear_reporting")?.description).toBe(
+      "Linear issue tracking and project planning (read-only) — Executive delivery reporting",
+    );
   });
 
   it("names each RevenueCat project in a distinct guide summary", () => {
@@ -383,8 +517,14 @@ describe("provider-specific registry behavior", () => {
   it("carries Cloudflare page bounds in search and compact describe", async () => {
     const { registry } = byName("cloudflare").factory(memoryStorage());
     const catalog = new CatalogService(registry, BASE_URL);
-    const search = await catalog.search({ connector: "cloudflare_prod", query: "list zones", includeSchemas: "compact" });
-    expect(search.entries.find((entry) => entry.tool.name === "list_zones")?.tool.inputSchema).toContain("perPage?: integer /* >= 5; <= 50 */");
+    const search = await catalog.search({
+      connector: "cloudflare_prod",
+      query: "list zones",
+      includeSchemas: "compact",
+    });
+    expect(search.entries.find((entry) => entry.tool.name === "list_zones")?.tool.inputSchema).toContain(
+      "perPage?: integer /* >= 5; <= 50 */",
+    );
     const described = await catalog.describe({ addresses: ["cloudflare_prod.list_zones"], format: "compact" });
     expect(described[0]?.inputSchema).toContain("perPage?: integer /* >= 5; <= 50 */");
   });
@@ -403,12 +543,20 @@ describe("provider-specific registry behavior", () => {
     const storage = memoryStorage();
     const { registry } = byName("planning-center").factory(storage);
     const vault = new CredentialVault(storage, CREDENTIAL_KEY);
-    await vault.setAll("pco_downtown", { applicationId: "app_downtown", secret: "secret_downtown" }, "operator@example.com");
+    await vault.setAll(
+      "pco_downtown",
+      { applicationId: "app_downtown", secret: "secret_downtown" },
+      "operator@example.com",
+    );
     expect(await registry.contextFor("pco_downtown", BASE_URL).credential?.get("applicationId")).toBe("app_downtown");
     expect(await registry.contextFor("pco_northside", BASE_URL).credential?.get("applicationId")).toBeNull();
     const downtown = registry.getConnector("pco_downtown")!;
     const northside = registry.getConnector("pco_northside")!;
-    expect(downtown.callAdmission?.rules[0]?.budget).toEqual({ kind: "rolling-window", maxCalls: 100, windowMs: 20_000 });
+    expect(downtown.callAdmission?.rules[0]?.budget).toEqual({
+      kind: "rolling-window",
+      maxCalls: 100,
+      windowMs: 20_000,
+    });
     expect(northside.callAdmission).toEqual(budget);
     expect(northside.title).toBe("Northside PCO");
     const guide = (connector: Connector) => (connector.usageGuide as { content: string }).content;

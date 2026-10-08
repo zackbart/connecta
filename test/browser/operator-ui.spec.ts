@@ -3,17 +3,10 @@ import { operatorAsset } from "../../src/operator-ui/assets.js";
 import { createServer, type Server } from "node:http";
 import { once } from "node:events";
 import { test, expect } from "@playwright/test";
-import {
-  operatorPageForPath,
-  renderUiHtml,
-  type UiData,
-} from "../../src/ui.js";
+import { operatorPageForPath, renderUiHtml, type UiData } from "../../src/ui.js";
 import { accessTokens, AccessTokenManager } from "../../src/access-tokens.js";
 import { api } from "../../src/connectors/api.js";
-import {
-  CredentialVault,
-  encryptedCredentialVault,
-} from "../../src/credentials.js";
+import { CredentialVault, encryptedCredentialVault } from "../../src/credentials.js";
 import { memoryStorage } from "../../src/storage/memory.js";
 import type { Connector } from "../../src/types.js";
 import { createTestConnecta } from "../helpers.js";
@@ -21,8 +14,7 @@ import { fakeClerkAuth } from "../fixtures/http.js";
 
 const TOKEN = "browser-operator-token";
 const CLERK_ORIGIN = "https://clerk.example.test";
-const CLERK_LOADER =
-  `${CLERK_ORIGIN}/npm/@clerk/clerk-js@6/dist/clerk.browser.js`;
+const CLERK_LOADER = `${CLERK_ORIGIN}/npm/@clerk/clerk-js@6/dist/clerk.browser.js`;
 
 interface RecordedRequest {
   method: string;
@@ -58,8 +50,7 @@ let oauthStartUrl: string | undefined;
  * `message` field — which the real server no longer sends, so this stands in
  * for an older or hostile one.
  */
-const LEAKY_STATUS_MESSAGE =
-  "fetch failed: 503 upstream connect error (token sk_live_abc123)";
+const LEAKY_STATUS_MESSAGE = "fetch failed: 503 upstream connect error (token sk_live_abc123)";
 let leakyStatus = false;
 /**
  * A real deployment behind this fake one. While set, the paths it names are
@@ -84,74 +75,72 @@ function data(): UiData {
     activityEnabled,
     ...(tokenManagement ? { accessTokenManagement: "available" as const } : {}),
     ...(pools.length ? { pools } : {}),
-    connectors: emptyDeployment ? [] : [
-      {
-        id: "vaulted",
-        permissions: { use: true, manageSharedAuth: authManagement, connectPersonal: false },
-        title: "Vaulted service",
-        status: credentialValue ? "ok" : "auth_required",
-        ...(credentialValue ? {} : { problem: "credential_required" as const }),
-        toolCount: credentialValue ? 1 : 0,
-        tools: credentialValue
-          ? [{ name: "read", address: "vaulted.read", safety: "runs_in_programs" }]
-          : [],
-        credential: {
-          label: "API token",
-          configured: Boolean(credentialValue),
-          removable: Boolean(credentialValue),
-          ...(credentialValue
-            ? { lastFour: credentialValue.slice(-4) }
-            : {}),
-          testable: true,
-        },
-        catalogDrift: {
-          observedAt: "2026-08-12T12:00:00.000Z",
-          unclassifiedTools: 0,
-          unservedTools: 0,
-          annotationConflicts: 0,
-          schemaChanges: 0,
-        },
-      },
-      {
-        id: "drifted",
-        permissions: { use: true, manageSharedAuth: authManagement, connectPersonal: false },
-        title: "Hosted proxy",
-        status: "ok",
-        toolCount: 0,
-        tools: [],
-        catalogDrift: {
-          observedAt: "2026-08-12T12:00:00.000Z",
-          unclassifiedTools: 2,
-          unservedTools: 0,
-          annotationConflicts: 0,
-          schemaChanges: 1,
-        },
-        ...(leakyStatus
-          ? {
-              status: "error" as const,
-              problem: "connector_unavailable" as const,
-              // Not a UiConnector field any more; widened so it can be sent.
-              ...({ message: LEAKY_STATUS_MESSAGE } as object),
-            }
-          : {}),
-      },
-      {
-        id: "oauth",
-        permissions: { use: true, manageSharedAuth: authManagement, connectPersonal: false },
-        title: "CRM",
-        status: oauthConnected ? "ok" : "auth_required",
-        ...(oauthConnected ? {} : { problem: "oauth_required" as const }),
-        toolCount: oauthConnected ? 2 : 0,
-        tools: oauthConnected
-          ? [
-              { name: "contacts", address: "oauth.contacts", safety: "needs_approval" },
-              { name: "note", address: "oauth.note", safety: "needs_approval" },
-            ]
-          : [],
-        oauth: true,
-        ...(oauthConnected ? { registrationPath: "cimd" as const } : {}),
-      },
-    ],
+    connectors: emptyDeployment
+      ? []
+      : [
+          {
+            id: "vaulted",
+            permissions: { use: true, manageSharedAuth: authManagement, connectPersonal: false },
+            title: "Vaulted service",
+            status: credentialValue ? "ok" : "auth_required",
+            ...(credentialValue ? {} : { problem: "credential_required" as const }),
+            toolCount: credentialValue ? 1 : 0,
+            tools: credentialValue ? [{ name: "read", address: "vaulted.read", safety: "runs_in_programs" }] : [],
+            credential: {
+              label: "API token",
+              configured: Boolean(credentialValue),
+              removable: Boolean(credentialValue),
+              ...(credentialValue ? { lastFour: credentialValue.slice(-4) } : {}),
+              testable: true,
+            },
+            catalogDrift: {
+              observedAt: "2026-08-12T12:00:00.000Z",
+              unclassifiedTools: 0,
+              unservedTools: 0,
+              annotationConflicts: 0,
+              schemaChanges: 0,
+            },
+          },
+          {
+            id: "drifted",
+            permissions: { use: true, manageSharedAuth: authManagement, connectPersonal: false },
+            title: "Hosted proxy",
+            status: "ok",
+            toolCount: 0,
+            tools: [],
+            catalogDrift: {
+              observedAt: "2026-08-12T12:00:00.000Z",
+              unclassifiedTools: 2,
+              unservedTools: 0,
+              annotationConflicts: 0,
+              schemaChanges: 1,
+            },
+            ...(leakyStatus
+              ? {
+                  status: "error" as const,
+                  problem: "connector_unavailable" as const,
+                  // Not a UiConnector field any more; widened so it can be sent.
+                  ...({ message: LEAKY_STATUS_MESSAGE } as object),
+                }
+              : {}),
+          },
+          {
+            id: "oauth",
+            permissions: { use: true, manageSharedAuth: authManagement, connectPersonal: false },
+            title: "CRM",
+            status: oauthConnected ? "ok" : "auth_required",
+            ...(oauthConnected ? {} : { problem: "oauth_required" as const }),
+            toolCount: oauthConnected ? 2 : 0,
+            tools: oauthConnected
+              ? [
+                  { name: "contacts", address: "oauth.contacts", safety: "needs_approval" },
+                  { name: "note", address: "oauth.note", safety: "needs_approval" },
+                ]
+              : [],
+            oauth: true,
+            ...(oauthConnected ? { registrationPath: "cimd" as const } : {}),
+          },
+        ],
   };
 }
 
@@ -164,11 +153,7 @@ async function requestBody(request: import("node:http").IncomingMessage) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
 }
 
-function sendJson(
-  response: import("node:http").ServerResponse,
-  status: number,
-  body: unknown,
-) {
+function sendJson(response: import("node:http").ServerResponse, status: number, body: unknown) {
   response.writeHead(status, {
     "Content-Type": "application/json",
     "Cache-Control": "no-store",
@@ -220,7 +205,10 @@ test.beforeAll(async () => {
       return;
     }
     if (method === "GET" && url.pathname === "/clerk") {
-      response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": `script-src 'self' ${CLERK_ORIGIN}` });
+      response.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Security-Policy": `script-src 'self' ${CLERK_ORIGIN}`,
+      });
       // Production only permits an HTTPS Clerk origin. This HTTP-only fixture
       // keeps the generated tag and rewrites its transport target to the local
       // server so Chromium follows a real redirect without external network.
@@ -246,16 +234,11 @@ test.beforeAll(async () => {
 
     const page = operatorPageForPath(url.pathname);
     if (method === "GET" && page) {
-      response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": "script-src 'self'" });
-      response.end(
-        renderUiHtml(
-          undefined,
-          `${origin}/mcp`,
-          undefined,
-          undefined,
-          page,
-        ),
-      );
+      response.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Security-Policy": "script-src 'self'",
+      });
+      response.end(renderUiHtml(undefined, `${origin}/mcp`, undefined, undefined, page));
       return;
     }
 
@@ -263,9 +246,7 @@ test.beforeAll(async () => {
     requests.push({
       method,
       path: url.pathname + url.search,
-      ...(request.headers.authorization !== undefined
-        ? { authorization: request.headers.authorization }
-        : {}),
+      ...(request.headers.authorization !== undefined ? { authorization: request.headers.authorization } : {}),
       body,
     });
     if (realRoutes?.paths.has(url.pathname)) {
@@ -275,7 +256,8 @@ test.beforeAll(async () => {
           headers: {
             ...(request.headers.authorization === `Bearer ${TOKEN}` ? { Authorization: "Bearer clerk-operator" } : {}),
             ...(request.headers.cookie ? { Cookie: request.headers.cookie } : {}),
-            Origin: REAL_BASE, "Content-Type": "application/json",
+            Origin: REAL_BASE,
+            "Content-Type": "application/json",
           },
           ...(body ? { body: JSON.stringify(body) } : {}),
         }),
@@ -306,46 +288,60 @@ test.beforeAll(async () => {
       sendJson(response, 200, {
         ...full,
         connectors: full.connectors.map(({ id, title, permissions, oauth }) => ({
-          id, title, permissions, oauth, status: "loading", toolCount: 0, tools: [],
+          id,
+          title,
+          permissions,
+          oauth,
+          status: "loading",
+          toolCount: 0,
+          tools: [],
         })),
       });
       return;
     }
-    if (method === "GET" && url.pathname === "/ui/api/config") { sendJson(response, 200, await fixtureContract(data())); return; }
+    if (method === "GET" && url.pathname === "/ui/api/config") {
+      sendJson(response, 200, await fixtureContract(data()));
+      return;
+    }
     const detailMatch = /^\/ui\/connectors\/([a-z0-9_-]+)$/.exec(url.pathname);
     if (method === "GET" && detailMatch) {
       await detailBarriers.get(detailMatch[1]!);
-      const connector = data().connectors.find(item => item.id === detailMatch[1]);
-      if (!connector) { sendJson(response, 404, { error: "unknown connector" }); return; }
+      const connector = data().connectors.find((item) => item.id === detailMatch[1]);
+      if (!connector) {
+        sendJson(response, 404, { error: "unknown connector" });
+        return;
+      }
       if (!authManagement) delete connector.credential;
       sendJson(response, 200, connector);
       return;
     }
     if (method === "GET" && url.pathname === "/ui/api/activity") {
       sendJson(response, 200, {
-        events: emptyDeployment ? [] : [
-          {
-            schemaVersion: 1,
-            id: "activity-1",
-            occurredAt: "2026-07-28T12:00:00.000Z",
-            requestId: "request-1",
-            actor: {
-              kind: "clerk",
-              id: "user_1",
-              namespace: "https://identity.example",
-              label: "Ada Lovelace",
-            },
-            connectorId: "oauth",
-            toolName: "contacts",
-            address: "oauth.contacts",
-            source: "call_tool",
-            outcome: "success",
-            durationMs: 4,
-            attempts: 1,
-            serverName: "browser-test",
-            serverVersion: "host",
-          },
-        ],
+        events: emptyDeployment
+          ? []
+          : [
+              {
+                schemaVersion: 1,
+                id: "activity-1",
+                occurredAt: "2026-07-28T12:00:00.000Z",
+                requestId: "request-1",
+                actor: {
+                  kind: "clerk",
+                  id: "user_1",
+                  namespace: "https://identity.example",
+                  label: "Ada Lovelace",
+                },
+                connectorId: "oauth",
+                toolName: "contacts",
+                address: "oauth.contacts",
+                source: "call_tool",
+                outcome: "success",
+                durationMs: 4,
+                attempts: 1,
+                serverName: "browser-test",
+                serverVersion: "host",
+              },
+            ],
       });
       return;
     }
@@ -362,10 +358,7 @@ test.beforeAll(async () => {
         return;
       }
     }
-    if (
-      method === "POST" &&
-      url.pathname === "/ui/credentials/vaulted/test"
-    ) {
+    if (method === "POST" && url.pathname === "/ui/credentials/vaulted/test") {
       sendJson(response, 200, { ok: true });
       return;
     }
@@ -432,10 +425,7 @@ test.beforeEach(() => {
   tokenManagement = false;
 });
 
-async function openAuthenticated(
-  page: import("@playwright/test").Page,
-  path = "/connectors",
-) {
+async function openAuthenticated(page: import("@playwright/test").Page, path = "/connectors") {
   await page.addInitScript((token) => {
     localStorage.setItem("connecta:token", token);
   }, TOKEN);
@@ -448,12 +438,17 @@ function connectorRow(page: import("@playwright/test").Page, _title: string) {
   return page.locator("#connectorView");
 }
 async function openRow(page: import("@playwright/test").Page, title: string, tab = "auth") {
-  const id = data().connectors.find(c => c.title === title)?.id;
+  const id = data().connectors.find((c) => c.title === title)?.id;
   if (!id) throw new Error(`Unknown fixture connector ${title}`);
-  if (new URL(page.url()).pathname !== "/connectors") await page.getByRole("link", { name: "Connectors", exact: true }).click();
+  if (new URL(page.url()).pathname !== "/connectors")
+    await page.getByRole("link", { name: "Connectors", exact: true }).click();
   await page.getByRole("link", { name: title, exact: true }).click();
-  await page.getByRole("tab", { name: tab === "auth" ? "Auth" : tab === "tools" ? "Tools" : "Diagnostics", exact: true }).click();
-  await expect(page.getByRole("tab", { name: tab === "auth" ? "Auth" : tab === "tools" ? "Tools" : "Diagnostics", exact: true })).toHaveAttribute("aria-selected", "true");
+  await page
+    .getByRole("tab", { name: tab === "auth" ? "Auth" : tab === "tools" ? "Tools" : "Diagnostics", exact: true })
+    .click();
+  await expect(
+    page.getByRole("tab", { name: tab === "auth" ? "Auth" : tab === "tools" ? "Tools" : "Diagnostics", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
   return connectorRow(page, title);
 }
@@ -461,14 +456,8 @@ async function openRow(page: import("@playwright/test").Page, title: string, tab
 test("waits for Clerk's redirected loader before booting", async ({ page }) => {
   await page.goto(origin + "/clerk");
 
-  expect(clerkLoaderRequests).toEqual([
-    "/clerk-loader",
-    "/clerk-loader-6.99.0",
-  ]);
-  expect(await page.evaluate("window.__clerkLoaderEvents")).toEqual([
-    "loader",
-    "load",
-  ]);
+  expect(clerkLoaderRequests).toEqual(["/clerk-loader", "/clerk-loader-6.99.0"]);
+  expect(await page.evaluate("window.__clerkLoaderEvents")).toEqual(["loader", "load"]);
   await page.getByRole("link", { name: "Connectors", exact: true }).click();
   await expect(page.getByRole("link", { name: "CRM", exact: true })).toBeVisible();
 });
@@ -478,34 +467,24 @@ test("reports a real Clerk loader failure", async ({ page }) => {
 
   await page.goto(origin + "/clerk");
 
-  await expect(page.locator("#err")).toHaveText(
-    "Clerk couldn't load. Check your connection and try again.",
-  );
-  expect(
-    requests.filter((request) => request.path === "/ui/data"),
-  ).toHaveLength(0);
+  await expect(page.locator("#err")).toHaveText("Clerk couldn't load. Check your connection and try again.");
+  expect(requests.filter((request) => request.path === "/ui/data")).toHaveLength(0);
   expect(clerkLoaderRequests).toEqual(["/clerk-loader"]);
 });
 
-test("keeps the shell open and loads private data only after authentication", async ({
-  page,
-}) => {
+test("keeps the shell open and loads private data only after authentication", async ({ page }) => {
   await page.goto(origin + "/");
 
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
   await expect(page.getByText("CRM")).toHaveCount(0);
-  expect(requests.filter((request) => request.path === "/ui/data")).toHaveLength(
-    0,
-  );
+  expect(requests.filter((request) => request.path === "/ui/data")).toHaveLength(0);
 
   await page.getByLabel("Bearer token").fill(TOKEN);
   await page.getByRole("button", { name: "Open operator pages" }).click();
 
   await page.getByRole("link", { name: "Connectors", exact: true }).click();
   await expect(page.getByRole("link", { name: "CRM", exact: true })).toBeVisible();
-  expect(
-    requests.find((request) => request.path === "/ui/data")?.authorization,
-  ).toBe(`Bearer ${TOKEN}`);
+  expect(requests.find((request) => request.path === "/ui/data")?.authorization).toBe(`Bearer ${TOKEN}`);
 });
 
 test("shows clean, warning, and unobserved drift without naming a tool", async ({ page }) => {
@@ -555,28 +534,34 @@ test("disconnects and reconnects downstream OAuth", async ({ page }) => {
 });
 
 for (const [path, label] of [
-  ["static", "Pre-registered client"], ["cimd", "Client metadata document (CIMD)"], ["dcr", "Dynamic registration (DCR)"],
+  ["static", "Pre-registered client"],
+  ["cimd", "Client metadata document (CIMD)"],
+  ["dcr", "Dynamic registration (DCR)"],
 ] as const) {
   test(`renders the ${path} OAuth client label in the ledger and Auth tab`, async ({ page }) => {
-    await page.route("**/ui/api/config", async route => {
-      const response = await route.fetch(); const facts = await response.json();
+    await page.route("**/ui/api/config", async (route) => {
+      const response = await route.fetch();
+      const facts = await response.json();
       facts.live.connectors.find((c: { id: string }) => c.id === "oauth").auth = { registrationPath: path };
       return route.fulfill({ json: facts });
     });
-    await page.route("**/ui/connectors/oauth", async route => {
-      const response = await route.fetch(); const connector = await response.json();
+    await page.route("**/ui/connectors/oauth", async (route) => {
+      const response = await route.fetch();
+      const connector = await response.json();
       return route.fulfill({ json: { ...connector, registrationPath: path } });
     });
     await openAuthenticated(page);
     await page.getByRole("link", { name: "Connectors", exact: true }).click();
-    await expect(page.getByRole("row").filter({ has: page.getByRole("link", { name: "CRM", exact: true }) })).toContainText(label);
+    await expect(
+      page.getByRole("row").filter({ has: page.getByRole("link", { name: "CRM", exact: true }) }),
+    ).toContainText(label);
     const row = await openRow(page, "CRM", "auth");
     await expect(row.getByText(`OAuth client: ${label}`, { exact: true })).toBeVisible();
   });
 }
 
 test("reports a typed revocation failure after local disconnect in the Auth tab", async ({ page }) => {
-  await page.route("**/ui/oauth/oauth", route => {
+  await page.route("**/ui/oauth/oauth", (route) => {
     if (route.request().method() !== "DELETE") return route.fallback();
     oauthConnected = false;
     return route.fulfill({ json: { ok: true, code: "oauth_revocation_failed", message: "raw-provider-secret" } });
@@ -584,15 +569,20 @@ test("reports a typed revocation failure after local disconnect in the Auth tab"
   await openAuthenticated(page);
   const row = await openRow(page, "CRM", "auth");
   await row.getByRole("button", { name: "Disconnect CRM" }).click();
-  await row.getByRole("group", { name: /Disconnect CRM\?/ }).getByRole("button", { name: "Disconnect", exact: true }).click();
-  await expect(row.locator("#oauthNotice-oauth")).toHaveText("Disconnected locally. Provider revocation could not be confirmed. Revoke the grant in the provider's console.");
+  await row
+    .getByRole("group", { name: /Disconnect CRM\?/ })
+    .getByRole("button", { name: "Disconnect", exact: true })
+    .click();
+  await expect(row.locator("#oauthNotice-oauth")).toHaveText(
+    "Disconnected locally. Provider revocation could not be confirmed. Revoke the grant in the provider's console.",
+  );
   await expect(row.getByText("OAuth client:", { exact: false })).toHaveCount(0);
   await expect(row.getByRole("button", { name: "Connect CRM", exact: true })).toBeVisible();
   await expect(page.locator("body")).not.toContainText("raw-provider-secret");
 });
 
 test("reloads retired OAuth state when disconnect reports an error", async ({ page }) => {
-  await page.route("**/ui/oauth/oauth", route => {
+  await page.route("**/ui/oauth/oauth", (route) => {
     if (route.request().method() !== "DELETE") return route.fallback();
     oauthConnected = false;
     return route.fulfill({ status: 500, json: { error: "cleanup failed after retirement" } });
@@ -600,16 +590,17 @@ test("reloads retired OAuth state when disconnect reports an error", async ({ pa
   await openAuthenticated(page);
   const row = await openRow(page, "CRM");
   await row.getByRole("button", { name: "Disconnect CRM" }).click();
-  await row.getByRole("group", { name: /Disconnect CRM\?/ }).getByRole("button", { name: "Disconnect", exact: true }).click();
+  await row
+    .getByRole("group", { name: /Disconnect CRM\?/ })
+    .getByRole("button", { name: "Disconnect", exact: true })
+    .click();
   await expect(row.locator("#oauthNotice-oauth")).toContainText("Disconnect didn't finish.");
   await expect(row.getByRole("button", { name: "Connect CRM", exact: true })).toBeVisible();
   await expect(row.locator(".conn-head")).toContainText("Authorization needed");
   await expect(row.getByText("oauth.contacts", { exact: true })).toHaveCount(0);
 });
 
-test("navigates to the activity list and back without a shell reload", async ({
-  page,
-}) => {
+test("navigates to the activity list and back without a shell reload", async ({ page }) => {
   await openAuthenticated(page);
 
   await page.getByRole("link", { name: "Activity" }).click();
@@ -618,10 +609,9 @@ test("navigates to the activity list and back without a shell reload", async ({
   await expect(activity.getByText("oauth.contacts")).toBeVisible();
   await expect(activity.getByText("Ada Lovelace (Clerk)")).toBeVisible();
   await expect(activity.getByText("Succeeded")).toBeVisible();
-  expect(
-    requests.find((request) => request.path.startsWith("/ui/api/activity"))
-      ?.authorization,
-  ).toBe(`Bearer ${TOKEN}`);
+  expect(requests.find((request) => request.path.startsWith("/ui/api/activity"))?.authorization).toBe(
+    `Bearer ${TOKEN}`,
+  );
 
   await page.goBack();
   await expect(page).toHaveURL(origin + "/connectors");
@@ -630,9 +620,13 @@ test("navigates to the activity list and back without a shell reload", async ({
 
 for (const body of ["truncated JSON", "null", "{}"]) {
   test(`offers Activity retry after an unreadable successful response: ${body}`, async ({ page }) => {
-    await page.route("**/ui/api/activity?**", route => route.fulfill({
-      status: 200, contentType: "application/json", body,
-    }));
+    await page.route("**/ui/api/activity?**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body,
+      }),
+    );
     await openAuthenticated(page);
     await page.getByRole("link", { name: "Activity" }).click();
     await expect(page.locator("#activityError")).toContainText("Activity couldn't be loaded");
@@ -644,9 +638,7 @@ for (const body of ["truncated JSON", "null", "{}"]) {
   });
 }
 
-test("keeps a rejected credential save on screen and retryable", async ({
-  page,
-}) => {
+test("keeps a rejected credential save on screen and retryable", async ({ page }) => {
   faults.set("PUT /ui/credentials/vaulted", "vault unavailable");
   await openAuthenticated(page);
   const row = await openRow(page, "Vaulted service");
@@ -668,35 +660,34 @@ test("keeps a rejected credential save on screen and retryable", async ({
   await expect(row.getByText("configured · ••••cret")).toBeVisible();
 });
 
-test("reports a failed OAuth restart and re-enables the control", async ({
-  page,
-}) => {
+test("reports a failed OAuth restart and re-enables the control", async ({ page }) => {
   faults.set("POST /ui/oauth/oauth", "downstream unavailable");
   await openAuthenticated(page);
   const row = await openRow(page, "CRM");
 
   await row.getByRole("button", { name: "Reconnect CRM" }).click();
   const popup = page.waitForEvent("popup");
-  await row.getByRole("group", { name: /Reconnect CRM\?/ })
-    .getByRole("button", { name: "Reconnect", exact: true }).click();
+  await row
+    .getByRole("group", { name: /Reconnect CRM\?/ })
+    .getByRole("button", { name: "Reconnect", exact: true })
+    .click();
   // The tab opened for the provider closes again when the route refuses.
   const tab = await popup;
   await expect.poll(() => tab.isClosed()).toBe(true);
-  await expect(row.locator("#oauthNotice-oauth")).toContainText(
-    "Authorization couldn't start.",
-  );
+  await expect(row.locator("#oauthNotice-oauth")).toContainText("Authorization couldn't start.");
   // Failure leaves the action retryable without reloading the connection list.
-  await expect(
-    row.getByRole("button", { name: "Reconnect CRM" }),
-  ).toBeEnabled();
-  expect(
-    requests.filter((request) => request.path === "/ui/data").length,
-  ).toBe(1);
+  await expect(row.getByRole("button", { name: "Reconnect CRM" })).toBeEnabled();
+  expect(requests.filter((request) => request.path === "/ui/data").length).toBe(1);
 });
 
 function holdDetails(id: string): () => void {
   let release!: () => void;
-  detailBarriers.set(id, new Promise<void>((resolve) => { release = resolve; }));
+  detailBarriers.set(
+    id,
+    new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  );
   releaseDetails.push(release);
   return release;
 }
@@ -725,7 +716,7 @@ test("acknowledges a credential save before its refreshed details arrive", async
 
   await expect(row.locator("#credentialNotice-vaulted")).toHaveText("Credential saved.");
   await expect(page.locator('input[aria-label="API token"]')).toHaveCount(0);
-  expect(requests.filter(request => request.path === "/ui/data")).toHaveLength(1);
+  expect(requests.filter((request) => request.path === "/ui/data")).toHaveLength(1);
 
   release();
   await expect(row.getByRole("button", { name: "Replace", exact: true })).toBeVisible();
@@ -739,13 +730,13 @@ test("shows effective access without exposing auth controls to a reader", async 
   for (const title of ["Vaulted service", "Hosted proxy", "CRM"]) {
     const row = await openRow(page, title);
     await expect(row.getByRole("button", { name: `Refresh ${title}` })).toBeVisible();
-    await expect(
-      row.getByText("Authentication for this connection is managed by your deployment."),
-    ).toBeVisible();
+    await expect(row.getByText("Authentication for this connection is managed by your deployment.")).toBeVisible();
   }
-  await expect(page.getByRole("button", { name: /credential|OAuth|authoriz|Connect|Disconnect|Reconnect/i })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: /credential|OAuth|authoriz|Connect|Disconnect|Reconnect/i }),
+  ).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Activity", exact: true })).toHaveCount(0);
-  expect(requests.some(request => request.path.startsWith("/ui/access-tokens"))).toBe(false);
+  expect(requests.some((request) => request.path.startsWith("/ui/access-tokens"))).toBe(false);
 });
 
 test("retries a failed connection without reloading the list", async ({ page }) => {
@@ -757,7 +748,7 @@ test("retries a failed connection without reloading the list", async ({ page }) 
   await row.getByRole("button", { name: "Refresh Hosted proxy" }).click();
   await expect(row.locator(".conn-head")).toContainText("Connected");
   await expect(row.locator("[data-problem]")).toHaveCount(0);
-  expect(requests.filter(request => request.path === "/ui/data")).toHaveLength(1);
+  expect(requests.filter((request) => request.path === "/ui/data")).toHaveLength(1);
 });
 
 test("copies a fix prompt that carries nothing from the failure", async ({ page, context }) => {
@@ -805,9 +796,7 @@ test("renders a classified description and never a connector's status message", 
 
   // A refresh lands the same details through the other store path.
   await row.getByRole("button", { name: "Refresh Hosted proxy" }).click();
-  await expect
-    .poll(() => requests.filter((request) => request.path === "/ui/connectors/drifted").length)
-    .toBe(2);
+  await expect.poll(() => requests.filter((request) => request.path === "/ui/connectors/drifted").length).toBe(2);
   await expect(row.locator('[data-problem="connector_unavailable"]')).toBeVisible();
   await assertAbsent();
 
@@ -825,11 +814,11 @@ test("attaches a fix prompt to a failed OAuth restart", async ({ page }) => {
 
   const row = await openRow(page, "CRM");
   await row.getByRole("button", { name: "Reconnect CRM" }).click();
-  await row.getByRole("group", { name: /Reconnect CRM\?/ })
-    .getByRole("button", { name: "Reconnect", exact: true }).click();
-  await expect(row.locator("#oauthNotice-oauth")).toContainText(
-    "Authorization couldn't start.",
-  );
+  await row
+    .getByRole("group", { name: /Reconnect CRM\?/ })
+    .getByRole("button", { name: "Reconnect", exact: true })
+    .click();
+  await expect(row.locator("#oauthNotice-oauth")).toContainText("Authorization couldn't start.");
   expect(await page.content()).not.toContain("abc123");
   const prompt = page.locator('[data-fix-prompt="oauth_action_failed"]');
   await prompt.getByText("Preview prompt").click();
@@ -837,16 +826,14 @@ test("attaches a fix prompt to a failed OAuth restart", async ({ page }) => {
   await expect(prompt.locator(".fix-prompt-text")).not.toContainText("abc123");
 });
 
-test("keeps a downstream's error text out of every action notice, end to end", async ({
-  page,
-}) => {
+test("keeps a downstream's error text out of every action notice, end to end", async ({ page }) => {
   // The real OAuth and credential Test routes, answering for connectors whose
   // downstream refuses with the secret it was sent.
   const SECRET = "sk_live_e2e_leak";
   const LEAK = `invalid_grant: token ${SECRET} was revoked`;
   const logged: string[] = [];
   const log = (...args: unknown[]) => {
-    logged.push(args.map((arg) => typeof arg === "string" ? arg : JSON.stringify(arg)).join(" "));
+    logged.push(args.map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg))).join(" "));
   };
   const key = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=";
   const storage = memoryStorage();
@@ -894,14 +881,18 @@ test("keeps a downstream's error text out of every action notice, end to end", a
 
   const crm = await openRow(page, "CRM");
   await crm.getByRole("button", { name: "Disconnect CRM" }).click();
-  await crm.getByRole("group", { name: /Disconnect CRM\?/ })
-    .getByRole("button", { name: "Disconnect", exact: true }).click();
+  await crm
+    .getByRole("group", { name: /Disconnect CRM\?/ })
+    .getByRole("button", { name: "Disconnect", exact: true })
+    .click();
   await expect(crm.locator("#oauthNotice-oauth")).toContainText("Disconnect didn't finish.");
   oauthConnected = false;
   const popup = page.waitForEvent("popup");
   await crm.getByRole("button", { name: "Reconnect CRM" }).click();
-  await crm.getByRole("group", { name: /Reconnect CRM\?/ })
-    .getByRole("button", { name: "Reconnect", exact: true }).click();
+  await crm
+    .getByRole("group", { name: /Reconnect CRM\?/ })
+    .getByRole("button", { name: "Reconnect", exact: true })
+    .click();
   const connectTab = await popup;
   await expect(connectTab.locator("body")).toContainText("OAuth authorization could not start");
   expect(await connectTab.content()).not.toContain(SECRET);
@@ -911,9 +902,7 @@ test("keeps a downstream's error text out of every action notice, end to end", a
   const vaulted = await openRow(page, "Vaulted service");
   await vaulted.getByRole("button", { name: "Test" }).click();
   await expect(vaulted.locator("#credentialNotice-vaulted")).toContainText("Credential test failed");
-  await expect(
-    page.locator('[data-fix-prompt="credential_test_failed"]'),
-  ).toBeVisible();
+  await expect(page.locator('[data-fix-prompt="credential_test_failed"]')).toBeVisible();
 
   // Not on the page, not in any answer the page received...
   expect(await page.content()).not.toContain(SECRET);
@@ -922,11 +911,13 @@ test("keeps a downstream's error text out of every action notice, end to end", a
   for (const body of realRoutes.answered) expect(body).not.toContain(SECRET);
   // ...nor in the host's log, which records each failure as typed facts (INV-6).
   expect(logged.join("\n")).not.toContain(SECRET);
-  expect(logged).toEqual(expect.arrayContaining([
-    '[connecta] OAuth disconnect failed {"connector":"oauth","errorClass":"Error"}',
-    '[connecta] OAuth start failed {"connector":"oauth","errorClass":"Error"}',
-    '[connecta] credential test failed {"connector":"vaulted"}',
-  ]));
+  expect(logged).toEqual(
+    expect.arrayContaining([
+      '[connecta] OAuth disconnect failed {"connector":"oauth","errorClass":"Error"}',
+      '[connecta] OAuth start failed {"connector":"oauth","errorClass":"Error"}',
+      '[connecta] credential test failed {"connector":"vaulted"}',
+    ]),
+  );
 });
 
 test("stays signed in with a retry when operator data fails, and gates only on 401", async ({ page }) => {
@@ -973,9 +964,9 @@ test("stays signed in with a retry when operator data fails, and gates only on 4
 
 test("recovers from a successful null operator-data response", async ({ page }) => {
   let malformed = true;
-  await page.route("**/ui/data", route => malformed
-    ? route.fulfill({ status: 200, contentType: "application/json", body: "null" })
-    : route.fallback());
+  await page.route("**/ui/data", (route) =>
+    malformed ? route.fulfill({ status: 200, contentType: "application/json", body: "null" }) : route.fallback(),
+  );
   await openAuthenticated(page);
   await expect(page.locator("#loadFailure")).toBeVisible();
   await expect(page.locator("#gate")).toHaveCount(0);
@@ -1049,9 +1040,9 @@ test("opens the authorization tab inside the click and sends it on once the rout
   await expect(crm.locator("#oauthNotice-oauth")).toHaveText(
     "Finish authorizing in the new tab. This page updates when you come back.",
   );
-  expect(
-    requests.filter((request) => request.path.startsWith("/ui/oauth/")).map((request) => request.path),
-  ).toEqual(["/ui/oauth/oauth?mode=continue"]);
+  expect(requests.filter((request) => request.path.startsWith("/ui/oauth/")).map((request) => request.path)).toEqual([
+    "/ui/oauth/oauth?mode=continue",
+  ]);
 });
 
 test("closes the authorization tab when the route refuses", async ({ page }) => {
@@ -1104,8 +1095,8 @@ test("re-reads status when the tab comes back, without starting authorization", 
   const since = requests.slice(before);
   // One passive read for the waiting connector — focus and visibility
   // coalesce — and nothing that could start authorization.
-  expect(since.filter(request => request.path.startsWith("/ui/oauth/"))).toHaveLength(0);
-  expect(since.some(request => request.path === "/ui/connectors/oauth")).toBe(true);
+  expect(since.filter((request) => request.path.startsWith("/ui/oauth/"))).toHaveLength(0);
+  expect(since.some((request) => request.path === "/ui/connectors/oauth")).toBe(true);
 });
 
 test("keeps inactive connector tabs out of sight and out of the tab order", async ({ page }) => {
@@ -1165,7 +1156,10 @@ test("backs out of a confirm with Escape, and keeps focus when its trigger is go
   const release = holdDetails("oauth");
   await crm.getByRole("button", { name: "Refresh CRM" }).click();
   await expect(crm.getByRole("button", { name: "Reconnect CRM" })).toHaveCount(0);
-  await crm.getByRole("group", { name: /Reconnect CRM\?/ }).getByRole("button", { name: "Cancel" }).click();
+  await crm
+    .getByRole("group", { name: /Reconnect CRM\?/ })
+    .getByRole("button", { name: "Cancel" })
+    .click();
   await expect(page.locator("#auth-oauth")).toBeFocused();
   release();
 });
@@ -1178,13 +1172,10 @@ test("ignores a failed background read instead of repainting the row", async ({ 
 
   faults.set("GET /ui/connectors/oauth", "upstream hiccup");
   await page.evaluate('document.dispatchEvent(new Event("visibilitychange"))');
-  await expect
-    .poll(() => requests.filter((request) => request.path === "/ui/connectors/oauth").length)
-    .toBe(2);
+  await expect.poll(() => requests.filter((request) => request.path === "/ui/connectors/oauth").length).toBe(2);
   await expect(crm.locator(".conn-head")).toContainText("Authorization needed");
   await expect(crm.locator('[data-problem="connector_unavailable"], [data-fix-prompt]')).toHaveCount(0);
 });
-
 
 test("creates, shows once, renames and revokes client tokens through real routes", async ({ page }) => {
   const storage = memoryStorage();
@@ -1200,11 +1191,15 @@ test("creates, shows once, renames and revokes client tokens through real routes
   realRoutes = { connecta, paths, answered: [] };
   tokenManagement = true;
   let releaseList!: () => void;
-  const listGate = new Promise<void>(resolve => { releaseList = resolve; });
+  const listGate = new Promise<void>((resolve) => {
+    releaseList = resolve;
+  });
   let listStarted!: () => void;
-  const listEntered = new Promise<void>(resolve => { listStarted = resolve; });
+  const listEntered = new Promise<void>((resolve) => {
+    listStarted = resolve;
+  });
   let held = false;
-  await page.route("**/ui/access-tokens", async route => {
+  await page.route("**/ui/access-tokens", async (route) => {
     if (route.request().method() !== "GET" || held) return route.continue();
     held = true;
     const response = await route.fetch();
@@ -1219,16 +1214,22 @@ test("creates, shows once, renames and revokes client tokens through real routes
     await page.getByLabel("Client name").fill("Desktop client");
     await page.getByRole("button", { name: "Create token", exact: true }).click();
     await expect(page.locator("#createdToken")).toContainText("cta_");
-    const listed = page.waitForResponse(response => response.url().endsWith("/ui/access-tokens") && response.request().method() === "GET");
+    const listed = page.waitForResponse(
+      (response) => response.url().endsWith("/ui/access-tokens") && response.request().method() === "GET",
+    );
     releaseList();
     await listed;
     await expect(page.getByRole("heading", { name: "Desktop client", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Existing client", exact: true })).toBeVisible();
     const secret = (await page.locator("#createdToken").textContent())!;
-    const record = (await manager.list()).find(token => token.name === "Desktop client");
+    const record = (await manager.list()).find((token) => token.name === "Desktop client");
     const card = page.locator(`.token-card[aria-labelledby="access-token-${record!.id}"]`);
     paths.add(`/ui/access-tokens/${record!.id}`);
-    const authenticate = () => manager.auth.authorize(new Request(REAL_BASE + "/mcp", { headers: { Authorization: `Bearer ${secret}` } }), REAL_BASE);
+    const authenticate = () =>
+      manager.auth.authorize(
+        new Request(REAL_BASE + "/mcp", { headers: { Authorization: `Bearer ${secret}` } }),
+        REAL_BASE,
+      );
     expect((await authenticate()).ok).toBe(true);
     await page.getByRole("button", { name: "I stored it" }).click();
     await expect(page.locator("#createdToken")).toHaveCount(0);
@@ -1239,9 +1240,11 @@ test("creates, shows once, renames and revokes client tokens through real routes
     await page.reload();
     await expect(page.getByRole("heading", { name: "Renamed desktop", exact: true })).toBeVisible();
     expect(await page.content()).not.toContain(secret);
-    page.once("dialog", dialog => dialog.accept());
+    page.once("dialog", (dialog) => dialog.accept());
     await card.getByRole("button", { name: "Revoke", exact: true }).click();
     await expect(card).toHaveClass(/revoked/);
     expect((await authenticate()).ok).toBe(false);
-  } finally { await connecta.close(); }
+  } finally {
+    await connecta.close();
+  }
 });

@@ -51,12 +51,8 @@ export function storedCredentialShape(
   stored: Readonly<Record<string, unknown>> | null,
 ): StoredCredentialShape {
   if (!stored) return { state: "missing" };
-  const mode: CredentialTestMode = config.fields?.length
-    ? "multiple"
-    : "single";
-  const declared = new Set(
-    mode === "multiple" ? config.fields!.map((field) => field.name) : ["value"],
-  );
+  const mode: CredentialTestMode = config.fields?.length ? "multiple" : "single";
+  const declared = new Set(mode === "multiple" ? config.fields!.map((field) => field.name) : ["value"]);
   const actual = Object.keys(stored);
   const present = new Set(actual);
   for (const field of declared) {
@@ -123,10 +119,7 @@ export interface CredentialTestRule {
  * says so at construction rather than under an operator's click.
  */
 export function credentialTestRule(
-  connector: Pick<
-    Connector,
-    "credential" | "testCredential" | "testCredentials"
-  >,
+  connector: Pick<Connector, "credential" | "testCredential" | "testCredentials">,
 ): CredentialTestRule {
   if (!connector.credential) return { mode: null };
   if (connector.credential.fields?.length) {
@@ -145,9 +138,7 @@ export function credentialTestRule(
  * One clause naming a mismatch, shared by the startup warning and the test
  * route's 400 so an operator reads the same explanation in both places.
  */
-export function describeCredentialTestMismatch(
-  mismatch: CredentialTestMismatch,
-): string {
+export function describeCredentialTestMismatch(mismatch: CredentialTestMismatch): string {
   return mismatch.shape === "multiple"
     ? "it declares named credential fields, which only " +
         "`testCredentials(values, ctx)` can test, but implements " +

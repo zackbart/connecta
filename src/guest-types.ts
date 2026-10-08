@@ -28,8 +28,7 @@ export interface GuestResultPage {
   format: "text";
   text: string;
 }
-export type GuestBlock = { type: "text"; text: string } |
-  { type: "image" | "audio"; data: string; mimeType: string };
+export type GuestBlock = { type: "text"; text: string } | { type: "image" | "audio"; data: string; mimeType: string };
 
 type SchemaFormat = "json" | "compact" | "typescript";
 
@@ -64,9 +63,12 @@ interface CatalogDescriptionFailureDetail extends CatalogFailureDetail {
 interface CatalogSearchFailure extends CatalogFailureDetail {
   connector: string;
   recovery?: CallErrorDetails["recovery"];
-  nextAction?: Extract<NonNullable<CallErrorDetails["nextAction"]>, {
-    tool: "authorize_connector";
-  }>;
+  nextAction?: Extract<
+    NonNullable<CallErrorDetails["nextAction"]>,
+    {
+      tool: "authorize_connector";
+    }
+  >;
   retry?: string;
 }
 export interface CatalogSearchPage {
@@ -100,11 +102,13 @@ export interface CatalogSearchPage {
   };
 }
 export type CatalogSearchResult = CatalogSearchPage & {
-  tools: Array<CatalogSearchTool & {
-    connectorTitle?: string;
-    guide?: string;
-    guideSummary?: string;
-  }>;
+  tools: Array<
+    CatalogSearchTool & {
+      connectorTitle?: string;
+      guide?: string;
+      guideSummary?: string;
+    }
+  >;
 };
 export interface CatalogDescription {
   address: string;
@@ -144,4 +148,3 @@ type CatalogSearchTool = {
   guideRequired?: true;
   guideRequiredReasons?: GuideRequiredReason[];
 };
-

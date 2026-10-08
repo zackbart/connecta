@@ -13,9 +13,7 @@ import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 export const DEFAULT_PROBE_TIMEOUT_MS = CONFIG_DEFAULTS.discovery.probeTimeoutMs;
 
 /** A finite, positive integer number of milliseconds, or undefined. */
-export function normalizeTimeoutMs(
-  value: number | undefined,
-): number | undefined {
+export function normalizeTimeoutMs(value: number | undefined): number | undefined {
   if (value === undefined || !Number.isFinite(value) || !(value > 0)) {
     return undefined;
   }
@@ -39,10 +37,7 @@ export interface DeadlineOptions {
  * the Promise face of `withDeadlineEffect` (src/runtime/run.ts), which owns
  * the contract; an Effect caller uses that directly.
  */
-export function withDeadline<T>(
-  operation: (signal: AbortSignal) => Promise<T>,
-  options: DeadlineOptions,
-): Promise<T> {
+export function withDeadline<T>(operation: (signal: AbortSignal) => Promise<T>, options: DeadlineOptions): Promise<T> {
   return runEdge(
     withDeadlineEffect(
       (signal) =>

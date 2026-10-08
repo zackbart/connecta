@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { CATALOG_SEARCH_RESULT_SCHEMA, CatalogService, flatSearchResult, type CatalogSearchArgs } from "../src/catalog-service.js";
+import {
+  CATALOG_SEARCH_RESULT_SCHEMA,
+  CatalogService,
+  flatSearchResult,
+  type CatalogSearchArgs,
+} from "../src/catalog-service.js";
 import { Validator, type Schema } from "../src/json-schema.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { buildSandboxProviders } from "../src/execute.js";
@@ -20,7 +25,7 @@ async function searchBoth(registry: RegistryView, args: CatalogSearchArgs) {
   const top = textOf(await createMetaTools(registry, BASE).searchTools(args)) as SearchResult;
   const providers = await buildSandboxProviders(registry, BASE, silentLogger);
   const guest = required(providers.find((provider) => provider.name === "connecta"));
-  const program = await required(guest.fns.search)(args) as SearchResult;
+  const program = (await required(guest.fns.search)(args)) as SearchResult;
   expect(program).toEqual(top);
   expect(top).not.toHaveProperty("connectors");
   expect(Object.keys(top)[0]).toBe("catalogErrors");
@@ -31,80 +36,145 @@ async function searchBoth(registry: RegistryView, args: CatalogSearchArgs) {
 
 describe("Phase 2 discovery usage-history regressions (#706, #703)", () => {
   it("exports a flat search schema that rejects connector groups and missing page fields", () => {
-    expect(searchValidator.validate({ connectors: [], total: 0, offset: 0, limit: 8, hasMore: false }).valid).toBe(false);
+    expect(searchValidator.validate({ connectors: [], total: 0, offset: 0, limit: 8, hasMore: false }).valid).toBe(
+      false,
+    );
     expect(searchValidator.validate({ catalogErrors: [], tools: [], total: 0, offset: 0, limit: 8 }).valid).toBe(false);
   });
-  it.each(["json", "compact", "typescript"] as const)("returns one flat page from both search paths with %s schemas", async (includeSchemas) => {
-    const registry = makeRegistry([
-      service("linear", [{ name: "get_issue", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } }], "Linear Work"),
-      service("mixpanel", [{ name: "get_report" }], "Mixpanel Production"),
-    ]);
-    const first = await searchBoth(registry, { limit: 1, includeSchemas });
-    expect(first).toMatchObject({ catalogErrors: [], total: 2, offset: 0, limit: 1, hasMore: true, nextOffset: 1 });
-    expect(first.tools[0]).toMatchObject({ address: "linear.get_issue", connectorTitle: "Linear Work", schemaFormat: includeSchemas === "json" ? "json" : "text" });
-    const last = await searchBoth(registry, { limit: 1, offset: required(first.nextOffset), includeSchemas });
-    expect(last).toMatchObject({ total: 2, hasMore: false });
-    expect(last.tools[0]).toMatchObject({ address: "mixpanel.get_report" });
-  });
+  it.each(["json", "compact", "typescript"] as const)(
+    "returns one flat page from both search paths with %s schemas",
+    async (includeSchemas) => {
+      const registry = makeRegistry([
+        service(
+          "linear",
+          [
+            {
+              name: "get_issue",
+              inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+            },
+          ],
+          "Linear Work",
+        ),
+        service("mixpanel", [{ name: "get_report" }], "Mixpanel Production"),
+      ]);
+      const first = await searchBoth(registry, { limit: 1, includeSchemas });
+      expect(first).toMatchObject({ catalogErrors: [], total: 2, offset: 0, limit: 1, hasMore: true, nextOffset: 1 });
+      expect(first.tools[0]).toMatchObject({
+        address: "linear.get_issue",
+        connectorTitle: "Linear Work",
+        schemaFormat: includeSchemas === "json" ? "json" : "text",
+      });
+      const last = await searchBoth(registry, { limit: 1, offset: required(first.nextOffset), includeSchemas });
+      expect(last).toMatchObject({ total: 2, hasMore: false });
+      expect(last.tools[0]).toMatchObject({ address: "mixpanel.get_report" });
+    },
+  );
 
-  it.each(["get_issue", "get issue", "please get_issue for the current project"])("ranks get_issue above get_issue_status for %s", async (query) => {
-    const registry = makeRegistry([service("linear", [
-      { name: "get_issue_status", description: "Get issue status for the current project, issue details and issue metadata" },
-      { name: "get_issue", description: "Read one ticket" },
-      { name: "list_issues", description: "Get issue details for the current project" },
-    ])]);
-    const page = await searchBoth(registry, { query, limit: 1, includeSchemas: "json" });
-    expect(page.tools[0]?.address).toBe("linear.get_issue");
-  });
+  it.each(["get_issue", "get issue", "please get_issue for the current project"])(
+    "ranks get_issue above get_issue_status for %s",
+    async (query) => {
+      const registry = makeRegistry([
+        service("linear", [
+          {
+            name: "get_issue_status",
+            description: "Get issue status for the current project, issue details and issue metadata",
+          },
+          { name: "get_issue", description: "Read one ticket" },
+          { name: "list_issues", description: "Get issue details for the current project" },
+        ]),
+      ]);
+      const page = await searchBoth(registry, { query, limit: 1, includeSchemas: "json" });
+      expect(page.tools[0]?.address).toBe("linear.get_issue");
+    },
+  );
 
   it("ranks a whole tool name or canonical address above its shorter name phrase", async () => {
-    const registry = makeRegistry([service("linear", [
-      { name: "get_issue", description: "Get issue status and get issue status details" },
-      { name: "get_issue_status" },
-    ])]);
+    const registry = makeRegistry([
+      service("linear", [
+        { name: "get_issue", description: "Get issue status and get issue status details" },
+        { name: "get_issue_status" },
+      ]),
+    ]);
     for (const query of ["get_issue_status", "linear.get_issue_status"]) {
       const page = await searchBoth(registry, { query, limit: 1, includeSchemas: "json" });
       expect(page.tools[0]?.address).toBe("linear.get_issue_status");
     }
   });
 
-  it.each(["get_issue", "get issue", "please get_issue"])("ranks an exact tool name above a connector identity for %s", async (query) => {
-    const registry = makeRegistry([
-      service("issue", [{ name: "get_issue_status" }]),
-      service("tracker", [{ name: "get_issue" }]),
-    ]);
-    const page = await searchBoth(registry, { query, includeSchemas: "json" });
-    expect(page.tools.map((tool) => tool.address)).toEqual(["tracker.get_issue", "issue.get_issue_status"]);
-  });
+  it.each(["get_issue", "get issue", "please get_issue"])(
+    "ranks an exact tool name above a connector identity for %s",
+    async (query) => {
+      const registry = makeRegistry([
+        service("issue", [{ name: "get_issue_status" }]),
+        service("tracker", [{ name: "get_issue" }]),
+      ]);
+      const page = await searchBoth(registry, { query, includeSchemas: "json" });
+      expect(page.tools.map((tool) => tool.address)).toEqual(["tracker.get_issue", "issue.get_issue_status"]);
+    },
+  );
 
-  it.each(["linear", "Linear Work"])("INV-4: browses granted tools for exact connector identity %s despite description mentions", async (query) => {
-    const registry = makeRegistry([
-      service("linear", [
-        { name: "search_issues", description: "Search Linear Work issues" },
-        { name: "get_issue", description: "Read one ticket" },
-        { name: "delete_issue", description: "Delete one ticket" },
-      ], "Linear Work"),
-      service("metrics", [{ name: "report", description: "Linear Work issue statistics" }]),
-    ]);
-    const scoped = registry.scoped({ connectorIds: ["linear", "metrics"], toolAccess: new Map([["linear", new Set(["search_issues", "get_issue"])]]) });
-    const page = await searchBoth(scoped, { query, limit: 1, includeSchemas: "json" });
-    expect(page.tools[0]?.address).toBe("linear.search_issues");
-    const next = await searchBoth(scoped, { query, limit: 1, offset: required(page.nextOffset), includeSchemas: "json" });
-    expect(next.tools[0]?.address).toBe("linear.get_issue");
-    expect(page.total).toBe(3);
-  });
+  it.each(["linear", "Linear Work"])(
+    "INV-4: browses granted tools for exact connector identity %s despite description mentions",
+    async (query) => {
+      const registry = makeRegistry([
+        service(
+          "linear",
+          [
+            { name: "search_issues", description: "Search Linear Work issues" },
+            { name: "get_issue", description: "Read one ticket" },
+            { name: "delete_issue", description: "Delete one ticket" },
+          ],
+          "Linear Work",
+        ),
+        service("metrics", [{ name: "report", description: "Linear Work issue statistics" }]),
+      ]);
+      const scoped = registry.scoped({
+        connectorIds: ["linear", "metrics"],
+        toolAccess: new Map([["linear", new Set(["search_issues", "get_issue"])]]),
+      });
+      const page = await searchBoth(scoped, { query, limit: 1, includeSchemas: "json" });
+      expect(page.tools[0]?.address).toBe("linear.search_issues");
+      const next = await searchBoth(scoped, {
+        query,
+        limit: 1,
+        offset: required(page.nextOffset),
+        includeSchemas: "json",
+      });
+      expect(next.tools[0]?.address).toBe("linear.get_issue");
+      expect(page.total).toBe(3);
+    },
+  );
 
-  it.each(["auth_required", "downstream_oauth_required", "provider_permission_denied", "unavailable"] as const)("INV-6: withholds catalog error text for %s on both search paths", async (code) => {
-    const registry = makeRegistry([connectorWith({
-      id: "private", tools: async () => { throw new ConnectorCallError(code, "DOWNSTREAM_PRIVATE_SENTINEL"); },
-    })]);
-    for (const connector of [undefined, "private"]) {
-      const page = await searchBoth(registry, { query: "get issue", ...(connector ? { connector } : {}), includeSchemas: "json" });
-      expect(JSON.stringify(page)).not.toContain("DOWNSTREAM_PRIVATE_SENTINEL");
-      expect(page.catalogErrors[0]).toMatchObject({ connector: "private", code, message: expect.stringContaining('Connector "private"') });
-      if (connector) expect(page.queryAnalysis?.catalogError).toEqual(expect.objectContaining({ code, message: page.catalogErrors[0]?.message }));
-    }
-  });
+  it.each(["auth_required", "downstream_oauth_required", "provider_permission_denied", "unavailable"] as const)(
+    "INV-6: withholds catalog error text for %s on both search paths",
+    async (code) => {
+      const registry = makeRegistry([
+        connectorWith({
+          id: "private",
+          tools: async () => {
+            throw new ConnectorCallError(code, "DOWNSTREAM_PRIVATE_SENTINEL");
+          },
+        }),
+      ]);
+      for (const connector of [undefined, "private"]) {
+        const page = await searchBoth(registry, {
+          query: "get issue",
+          ...(connector ? { connector } : {}),
+          includeSchemas: "json",
+        });
+        expect(JSON.stringify(page)).not.toContain("DOWNSTREAM_PRIVATE_SENTINEL");
+        expect(page.catalogErrors[0]).toMatchObject({
+          connector: "private",
+          code,
+          message: expect.stringContaining('Connector "private"'),
+        });
+        if (connector)
+          expect(page.queryAnalysis?.catalogError).toEqual(
+            expect.objectContaining({ code, message: page.catalogErrors[0]?.message }),
+          );
+      }
+    },
+  );
 
   it("ranks exact connector IDs and titles above cross-service description matches", async () => {
     const registry = makeRegistry([
@@ -120,17 +190,28 @@ describe("Phase 2 discovery usage-history regressions (#706, #703)", () => {
     expect(browse.tools.map((tool) => tool.address)).toEqual(["linear.get_issue_status", "linear.get_issue"]);
   });
 
-  it.each(["GitHub get issue", "github list repos", "GitHub pull request status"])("answers an absent service instead of Linear/Mixpanel/Supabase lookalikes for %s", async (query) => {
-    const registry = makeRegistry([
-      service("linear", [{ name: "get_issue", description: "Get issue details" }]),
-      service("mixpanel", [{ name: "list_projects", description: "List projects and request status" }]),
-      service("supabase", [{ name: "list_repos", description: "Get project status" }]),
-    ]);
-    const page = await searchBoth(registry, { query, includeSchemas: "json" });
-    expect(page).toMatchObject({ tools: [], total: 0, hasMore: false, catalogErrors: [], absence: {
-      service: "GitHub", message: 'No connector for "GitHub" is configured for this endpoint.', configuredConnectors: ["linear", "mixpanel", "supabase"],
-    } });
-  });
+  it.each(["GitHub get issue", "github list repos", "GitHub pull request status"])(
+    "answers an absent service instead of Linear/Mixpanel/Supabase lookalikes for %s",
+    async (query) => {
+      const registry = makeRegistry([
+        service("linear", [{ name: "get_issue", description: "Get issue details" }]),
+        service("mixpanel", [{ name: "list_projects", description: "List projects and request status" }]),
+        service("supabase", [{ name: "list_repos", description: "Get project status" }]),
+      ]);
+      const page = await searchBoth(registry, { query, includeSchemas: "json" });
+      expect(page).toMatchObject({
+        tools: [],
+        total: 0,
+        hasMore: false,
+        catalogErrors: [],
+        absence: {
+          service: "GitHub",
+          message: 'No connector for "GitHub" is configured for this endpoint.',
+          configuredConnectors: ["linear", "mixpanel", "supabase"],
+        },
+      });
+    },
+  );
 
   it("recognizes a configured service under a custom id and display title", async () => {
     const registry = makeRegistry([service("source", [{ name: "get_issue" }], "GitHub Engineering")]);
@@ -141,13 +222,24 @@ describe("Phase 2 discovery usage-history regressions (#706, #703)", () => {
 
   it("INV-4: absences and auth failures reveal only the pool and grant intersection", async () => {
     let hiddenProbes = 0;
-    const hidden = connectorWith({ id: "github", title: "GitHub Secret", tools: async () => {
-      hiddenProbes++;
-      throw new ConnectorCallError("downstream_oauth_required", "Hidden catalog needs auth");
-    } });
+    const hidden = connectorWith({
+      id: "github",
+      title: "GitHub Secret",
+      tools: async () => {
+        hiddenProbes++;
+        throw new ConnectorCallError("downstream_oauth_required", "Hidden catalog needs auth");
+      },
+    });
     const registry = makeRegistry([hidden, service("linear", [{ name: "get_issue" }, { name: "delete_issue" }])]);
-    const scoped = registry.scoped({ connectorIds: ["linear"], toolAccess: new Map([["linear", new Set(["get_issue"])]]) });
-    for (const args of [{ query: "GitHub get_issue" }, { connector: "github", query: "get_issue" }, { connector: "custom-service", query: "get_issue" }]) {
+    const scoped = registry.scoped({
+      connectorIds: ["linear"],
+      toolAccess: new Map([["linear", new Set(["get_issue"])]]),
+    });
+    for (const args of [
+      { query: "GitHub get_issue" },
+      { connector: "github", query: "get_issue" },
+      { connector: "custom-service", query: "get_issue" },
+    ]) {
       const page = await searchBoth(scoped, { ...args, includeSchemas: "json" });
       expect(page).toMatchObject({ tools: [], catalogErrors: [], absence: { configuredConnectors: ["linear"] } });
       expect(JSON.stringify(page)).not.toContain("GitHub Secret");
@@ -160,21 +252,46 @@ describe("Phase 2 discovery usage-history regressions (#706, #703)", () => {
 
   it("INV-10: puts catalog credential and permission failures first with recovery, without starting auth", async () => {
     let authStarts = 0;
-    const failing = (id: string, code: ConstructorParameters<typeof ConnectorCallError>[0], oauth = false) => connectorWith({
-      id, tools: async () => { throw new ConnectorCallError(code, `${id} catalog failed`); },
-      ...(oauth ? { startAuth: async () => { authStarts++; return { state: "ok" as const }; } } : {}),
-    });
+    const failing = (id: string, code: ConstructorParameters<typeof ConnectorCallError>[0], oauth = false) =>
+      connectorWith({
+        id,
+        tools: async () => {
+          throw new ConnectorCallError(code, `${id} catalog failed`);
+        },
+        ...(oauth
+          ? {
+              startAuth: async () => {
+                authStarts++;
+                return { state: "ok" as const };
+              },
+            }
+          : {}),
+      });
     const registry = makeRegistry([
-      failing("outage", "unavailable"), failing("oauth", "downstream_oauth_required", true),
-      failing("credential", "auth_required"), failing("permission", "provider_permission_denied"),
+      failing("outage", "unavailable"),
+      failing("oauth", "downstream_oauth_required", true),
+      failing("credential", "auth_required"),
+      failing("permission", "provider_permission_denied"),
       service("healthy", [{ name: "get_issue" }]),
     ]);
     const page = await searchBoth(registry, { query: "get issue", includeSchemas: "json" });
     expect(page.tools[0]?.address).toBe("healthy.get_issue");
     expect(page.catalogErrors.map((error) => error.connector)).toEqual(["oauth", "credential", "permission", "outage"]);
-    expect(page.catalogErrors[0]).toMatchObject({ code: "downstream_oauth_required", retryable: false, recovery: "oauth", nextAction: { tool: "authorize_connector", arguments: { connector: "oauth" } } });
-    expect(page.catalogErrors[1]).toMatchObject({ code: "auth_required", recovery: "unavailable", nextAction: { tool: "authorize_connector", arguments: { connector: "credential" } } });
-    expect(page.catalogErrors[2]).toMatchObject({ code: "provider_permission_denied", retry: expect.stringContaining("resource owner") });
+    expect(page.catalogErrors[0]).toMatchObject({
+      code: "downstream_oauth_required",
+      retryable: false,
+      recovery: "oauth",
+      nextAction: { tool: "authorize_connector", arguments: { connector: "oauth" } },
+    });
+    expect(page.catalogErrors[1]).toMatchObject({
+      code: "auth_required",
+      recovery: "unavailable",
+      nextAction: { tool: "authorize_connector", arguments: { connector: "credential" } },
+    });
+    expect(page.catalogErrors[2]).toMatchObject({
+      code: "provider_permission_denied",
+      retry: expect.stringContaining("resource owner"),
+    });
     expect(page.catalogErrors[2]).not.toHaveProperty("nextAction");
     expect(authStarts).toBe(0);
   });
@@ -184,9 +301,11 @@ describe("Phase 2 discovery usage-history regressions (#706, #703)", () => {
     const registry = makeRegistry([service("linear", [{ name: "get_issue", inputSchema }])]);
     const providers = await buildSandboxProviders(registry, BASE, silentLogger);
     const guest = required(providers.find((provider) => provider.name === "connecta"));
-    const page = await required(guest.fns.search)({ query: "get_issue" }) as SearchResult;
+    const page = (await required(guest.fns.search)({ query: "get_issue" })) as SearchResult;
     expect(page.tools[0]).toMatchObject({ inputSchema, schemaFormat: "json", requiredInputKeys: ["id"] });
-    const described = await required(guest.fns.describe)({ address: "linear.get_issue" }) as { tools: { inputSchema: unknown; schemaFormat: string }[] };
+    const described = (await required(guest.fns.describe)({ address: "linear.get_issue" })) as {
+      tools: { inputSchema: unknown; schemaFormat: string }[];
+    };
     expect(described.tools[0]).toMatchObject({ inputSchema, schemaFormat: "json" });
     const compact = flatSearchResult(await new CatalogService(registry, BASE).search({ includeSchemas: "compact" }));
     expect(compact.tools[0]).toMatchObject({ schemaFormat: "text", inputSchema: "{ id: string }" });

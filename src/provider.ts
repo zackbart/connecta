@@ -93,9 +93,7 @@ export interface ProviderContext {
    * Common connector options the deployment set, and only those, ready to
    * spread into `remoteMcp()` or `api()` options.
    */
-  readonly connectorOptions: Readonly<
-    Pick<ProviderOptions, "authScope" | "maxResultBytes" | "callAdmission">
-  >;
+  readonly connectorOptions: Readonly<Pick<ProviderOptions, "authScope" | "maxResultBytes" | "callAdmission">>;
   /**
    * Render the maintained skill with this connection's context and the
    * deployment's instructions. Instructions are appended; they never replace
@@ -156,9 +154,7 @@ function nonEmpty(value: unknown): value is string {
  * and common-value mistakes throw before `create` runs,
  * so a deployment never boots in the wrong shape (INV-11).
  */
-export function defineProvider<O extends ProviderOptions>(
-  definition: ProviderDefinition<O>,
-): ProviderFactory<O> {
+export function defineProvider<O extends ProviderOptions>(definition: ProviderDefinition<O>): ProviderFactory<O> {
   const label = `defineProvider("${String(definition?.name)}")`;
   if (!nonEmpty(definition?.name) || !PROVIDER_NAME.test(definition.name)) {
     throw new Error(`${label} name must be lowercase words joined by hyphens.`);
@@ -169,13 +165,8 @@ export function defineProvider<O extends ProviderOptions>(
   if (!KINDS.has(definition.kind)) {
     throw new Error(`${label} kind must be "mcp", "api", or "composed".`);
   }
-  if (
-    !nonEmpty(definition.skill?.content) ||
-    !nonEmpty(definition.skill.instructionsHeading)
-  ) {
-    throw new Error(
-      `${label} skill requires non-empty content and instructionsHeading.`,
-    );
+  if (!nonEmpty(definition.skill?.content) || !nonEmpty(definition.skill.instructionsHeading)) {
+    throw new Error(`${label} skill requires non-empty content and instructionsHeading.`);
   }
   if (definition.classify !== undefined && definition.kind === "api") {
     throw new Error(
@@ -189,10 +180,7 @@ export function defineProvider<O extends ProviderOptions>(
   // tools read and what every later connector classifies with, so nothing
   // reachable from it may change a verdict after review: neither the
   // caller's original object nor a write through `factory.definition`.
-  const classify =
-    definition.classify === undefined
-      ? undefined
-      : reviewedClassification(definition.classify, label);
+  const classify = definition.classify === undefined ? undefined : reviewedClassification(definition.classify, label);
   if (typeof definition.create !== "function") {
     throw new Error(`${label} requires a create function.`);
   }
@@ -224,11 +212,7 @@ export function defineProvider<O extends ProviderOptions>(
       if (options.instructions !== undefined && typeof options.instructions !== "string") {
         throw new Error(`${at} instructions must be a string when set.`);
       }
-      if (
-        options.authScope !== undefined &&
-        options.authScope !== "shared" &&
-        options.authScope !== "personal"
-      ) {
+      if (options.authScope !== undefined && options.authScope !== "shared" && options.authScope !== "personal") {
         throw new Error(`${at} authScope must be "shared" or "personal".`);
       }
       const resolved: Readonly<O> = { ...options, purpose: options.purpose.trim() };
@@ -237,12 +221,8 @@ export function defineProvider<O extends ProviderOptions>(
         ...(frozen.classify !== undefined ? { classify: frozen.classify } : {}),
         connectorOptions: {
           ...(options.authScope !== undefined ? { authScope: options.authScope } : {}),
-          ...(options.maxResultBytes !== undefined
-            ? { maxResultBytes: options.maxResultBytes }
-            : {}),
-          ...(options.callAdmission !== undefined
-            ? { callAdmission: options.callAdmission }
-            : {}),
+          ...(options.maxResultBytes !== undefined ? { maxResultBytes: options.maxResultBytes } : {}),
+          ...(options.callAdmission !== undefined ? { callAdmission: options.callAdmission } : {}),
         },
         usageGuide(input) {
           const heading = input.heading ?? `${frozen.title} usage`;
@@ -250,9 +230,7 @@ export function defineProvider<O extends ProviderOptions>(
           return {
             content:
               `# ${heading}\n\n${body}\n` +
-              (instructions
-                ? `\n## ${frozen.skill.instructionsHeading}\n\n${instructions}\n`
-                : ""),
+              (instructions ? `\n## ${frozen.skill.instructionsHeading}\n\n${instructions}\n` : ""),
             ...(input.summary !== undefined ? { summary: input.summary } : {}),
             ...(input.required === true ? { required: true } : {}),
           };
@@ -280,8 +258,7 @@ export function asProviderFactory<O extends ProviderOptions>(
 ): ProviderFactory<O> {
   const frozen = defineProvider(definition).definition;
   const create = definition.create;
-  const factory = (id: string, options: O): Connector =>
-    asProvider(frozen.name, frozen.options, id, options, create);
+  const factory = (id: string, options: O): Connector => asProvider(frozen.name, frozen.options, id, options, create);
   Object.defineProperty(factory, "name", {
     value: frozen.name.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase()),
   });
@@ -316,9 +293,10 @@ function asProvider<O, C extends { describe?(): ConnectorDescription }>(
   // Keep the receiver of prototype methods (including private fields). When
   // the description cannot be replaced, inherit the whole connector instead
   // of copying it: decorators may inherit their id, methods, and review.
-  const stamped = Object.isExtensible(connector) && (!ownDescribe || ownDescribe.configurable)
-    ? connector
-    : Object.create(connector) as C;
+  const stamped =
+    Object.isExtensible(connector) && (!ownDescribe || ownDescribe.configurable)
+      ? connector
+      : (Object.create(connector) as C);
   Object.defineProperty(stamped, "describe", {
     configurable: true,
     enumerable: false,
@@ -336,9 +314,13 @@ function providerConstructionError(provider: string, id: string, error: unknown)
   const at = `${provider}(${JSON.stringify(id)})`;
   // The same helper handles legacy provider validation and shared config
   // validation. Retain the original error class and the actionable detail.
-  const prefix = error.message.startsWith(at) ? at
-    : error.message.startsWith(`${provider}()`) ? `${provider}()` : "";
-  const detail = error.message.slice(prefix.length).trimStart().replace(/^\./, "").replace(/^requires\s+/, "").replace(/^must be /, "")
+  const prefix = error.message.startsWith(at) ? at : error.message.startsWith(`${provider}()`) ? `${provider}()` : "";
+  const detail = error.message
+    .slice(prefix.length)
+    .trimStart()
+    .replace(/^\./, "")
+    .replace(/^requires\s+/, "")
+    .replace(/^must be /, "")
     .replace(/^(.+) must be /, "$1 to be ")
     .replace(/^declares /, "a consistent declaration of ")
     .replace(/^with headers or credential auth requires /, "headers or credential auth to declare ");

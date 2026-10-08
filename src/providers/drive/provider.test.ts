@@ -10,12 +10,7 @@ import { DRIVE_API_BASE_URL, DRIVE_SCOPES, drive } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { classifyTool } from "../../tool-safety.js";
 import { silentLogger } from "../../../test/helpers.js";
-import type {
-  AuthenticatedIdentity,
-  Connector,
-  ConnectorContext,
-  ConnectorUsageGuide,
-} from "../../types.js";
+import type { AuthenticatedIdentity, Connector, ConnectorContext, ConnectorUsageGuide } from "../../types.js";
 
 const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
 
@@ -101,7 +96,10 @@ beforeEach(() => {
       return new Response(reply.payload, { status: reply.status ?? 200, headers });
     }
     if (reply.status === 204) return new Response(null, { status: 204 });
-    return Response.json(reply.body ?? {}, { status: reply.status ?? 200, ...(reply.headers ? { headers: reply.headers } : {}) });
+    return Response.json(reply.body ?? {}, {
+      status: reply.status ?? 200,
+      ...(reply.headers ? { headers: reply.headers } : {}),
+    });
   }) as unknown as typeof fetch;
 });
 
@@ -213,7 +211,10 @@ describe("drive() identity and surface (H1, H14)", () => {
     const connector = connection();
     const tools = await connector.listTools(context());
     const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
-    const reads = tools.filter((tool) => isRead(tool)).map((tool) => tool.name).sort();
+    const reads = tools
+      .filter((tool) => isRead(tool))
+      .map((tool) => tool.name)
+      .sort();
     expect(reads).toEqual([
       "get_file",
       "get_file_content",
@@ -267,9 +268,9 @@ describe("whose Drive a call acts as", () => {
       code: "auth_required",
       message: expect.stringContaining("no admitted caller"),
     });
-    await expect(
-      call(connector, "create_file", { name: "a.txt", content: "x" }),
-    ).rejects.toMatchObject({ code: "auth_required" });
+    await expect(call(connector, "create_file", { name: "a.txt", content: "x" })).rejects.toMatchObject({
+      code: "auth_required",
+    });
     expect(tokenCalls).toBe(0);
     expect(calls).toEqual([]);
   });
@@ -302,7 +303,9 @@ describe("whose Drive a call acts as", () => {
 
 describe("finding files (H9, H10)", () => {
   it("searches with Drive syntax, leaving trash out, and projects each file", async () => {
-    route = () => ({ body: { files: [FILE], nextPageToken: "next-1", incompleteSearch: true, kind: "drive#fileList" } });
+    route = () => ({
+      body: { files: [FILE], nextPageToken: "next-1", incompleteSearch: true, kind: "drive#fileList" },
+    });
     const args = { query: "name contains 'budget'", orderBy: "modifiedTime desc", limit: 5 };
     const result = await call(connection(), "search_files", args);
     expect(line(0)).toBe("GET /files");
@@ -429,7 +432,9 @@ describe("finding files (H9, H10)", () => {
   });
 
   it("lists shared drives and permissions, paged", async () => {
-    route = () => ({ body: { drives: [{ id: "sd-1", name: "Finance", hidden: false, kind: "drive#drive" }], nextPageToken: "d2" } });
+    route = () => ({
+      body: { drives: [{ id: "sd-1", name: "Finance", hidden: false, kind: "drive#drive" }], nextPageToken: "d2" },
+    });
     const drives = await call(connection(), "list_shared_drives", { query: "name contains 'Fin'" });
     expect(line(0)).toBe("GET /drives");
     expect(query(0)).toMatchObject({ q: "name contains 'Fin'", pageSize: "25" });
@@ -441,9 +446,22 @@ describe("finding files (H9, H10)", () => {
     route = () => ({
       body: {
         permissions: [
-          { id: "p1", type: "user", role: "writer", emailAddress: "ann@church.example", displayName: "Ann", photoLink: "x" },
+          {
+            id: "p1",
+            type: "user",
+            role: "writer",
+            emailAddress: "ann@church.example",
+            displayName: "Ann",
+            photoLink: "x",
+          },
           { id: "anyoneWithLink", type: "anyone", role: "reader", allowFileDiscovery: false },
-          { id: "p3", type: "group", role: "organizer", emailAddress: "staff@church.example", permissionDetails: [{ inherited: true }] },
+          {
+            id: "p3",
+            type: "group",
+            role: "organizer",
+            emailAddress: "staff@church.example",
+            permissionDetails: [{ inherited: true }],
+          },
         ],
       },
     });
@@ -589,18 +607,21 @@ describe("reading content", () => {
   function lazyBody(total: number, fill: number) {
     const CHUNK = 64 * 1024;
     const seen = { pulled: 0, cancelled: false };
-    const stream = new ReadableStream<Uint8Array>({
-      pull(controller) {
-        if (seen.pulled >= total) return controller.close();
-        const size = Math.min(CHUNK, total - seen.pulled);
-        seen.pulled += size;
-        controller.enqueue(new Uint8Array(size).fill(fill));
+    const stream = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (seen.pulled >= total) return controller.close();
+          const size = Math.min(CHUNK, total - seen.pulled);
+          seen.pulled += size;
+          controller.enqueue(new Uint8Array(size).fill(fill));
+        },
+        cancel() {
+          seen.cancelled = true;
+        },
+        // No read-ahead: every chunk pulled is one the reader asked for.
       },
-      cancel() {
-        seen.cancelled = true;
-      },
-      // No read-ahead: every chunk pulled is one the reader asked for.
-    }, { highWaterMark: 0 });
+      { highWaterMark: 0 },
+    );
     return { stream, seen, CHUNK };
   }
 
@@ -694,7 +715,11 @@ describe("reading content", () => {
     const body = new Uint8Array(2 * 1024 * 1024).fill(7);
     const meta = metadata({ mimeType: "application/pdf", size: "1" });
     route = (request) =>
-      meta(request) ?? { status: honors ? 206 : 200, payload: honors ? ranged(request, body) : body, contentType: "application/pdf" };
+      meta(request) ?? {
+        status: honors ? 206 : 200,
+        payload: honors ? ranged(request, body) : body,
+        contentType: "application/pdf",
+      };
     for (const [args, said] of [
       [{}, "does not fit"],
       [{ maxBytes: 4 * 1024 * 1024 }, "more than 1048576 bytes"],
@@ -764,7 +789,11 @@ describe("reading content", () => {
       const body = new TextEncoder().encode(smile.repeat(3));
       const meta = metadata({ mimeType: "text/plain", size: "12" });
       route = (request) =>
-        meta(request) ?? { status: honors ? 206 : 200, payload: honors ? ranged(request, body) : body, contentType: "text/plain" };
+        meta(request) ?? {
+          status: honors ? 206 : 200,
+          payload: honors ? ranged(request, body) : body,
+          contentType: "text/plain",
+        };
       const result = await call(connection(), "get_file_content", { fileId: "f1", maxChars: 1 });
       expect(calls[1]!.headers.get("range")).toBe("bytes=0-8");
       expect(result.content).toBe(
@@ -781,7 +810,11 @@ describe("reading content", () => {
     ["a drawing", { mimeType: "application/vnd.google-apps.drawing" }, "Drawings"],
     ["a form", { mimeType: "application/vnd.google-apps.form" }, "exports no text"],
     ["a shortcut", { mimeType: "application/vnd.google-apps.shortcut", shortcutDetails: { targetId: "t9" } }, "t9"],
-    ["a download-disabled file", { mimeType: "text/plain", size: "5", capabilities: { canDownload: false } }, "disabled download"],
+    [
+      "a download-disabled file",
+      { mimeType: "text/plain", size: "5", capabilities: { canDownload: false } },
+      "disabled download",
+    ],
   ])("returns metadata and a marker, never downloading, for %s", async (_kind, file, said) => {
     route = metadata(file);
     const result = await call(connection(), "get_file_content", { fileId: "f1" });
@@ -873,7 +906,12 @@ describe("writing files", () => {
 
   it("imports content as a Google Doc, and creates an empty Sheet with no upload", async () => {
     route = () => ({ body: { id: "d1" } });
-    await call(connection(), "create_file", { name: "Minutes", content: "# Minutes", mimeType: "text/markdown", convertTo: "document" });
+    await call(connection(), "create_file", {
+      name: "Minutes",
+      content: "# Minutes",
+      mimeType: "text/markdown",
+      convertTo: "document",
+    });
     const body = decode(calls[0]!.raw);
     expect(body).toContain('"mimeType":"application/vnd.google-apps.document"');
     expect(body).toContain("Content-Type: text/markdown\r\n\r\n# Minutes");
@@ -997,7 +1035,9 @@ describe("a write that may have landed says what to check before repeating it", 
 
   it("adds nothing to a refusal: Google said no, and nothing was made", async () => {
     route = () => GOOGLE_ERROR(400, "invalid", "Invalid parents field.");
-    const failure = await call(connection(), "create_folder", { name: "Elders", parentId: "nope" }).catch((error) => error);
+    const failure = await call(connection(), "create_folder", { name: "Elders", parentId: "nope" }).catch(
+      (error) => error,
+    );
     expect(failure.code).toBe("invalid_args");
     expect(failure.message).not.toContain("search_files");
   });
@@ -1036,7 +1076,12 @@ describe("sharing", () => {
     route = () => ({ body: { id: "p2" } });
     await call(connection(), "share_file", { fileId: "f1", type: "domain", role: "reader", domain: "church.example" });
     expect(query(0)["sendNotificationEmail"]).toBeUndefined();
-    expect(calls[0]!.body).toEqual({ type: "domain", role: "reader", domain: "church.example", allowFileDiscovery: false });
+    expect(calls[0]!.body).toEqual({
+      type: "domain",
+      role: "reader",
+      domain: "church.example",
+      allowFileDiscovery: false,
+    });
     await call(connection(), "share_file", { fileId: "f1", type: "anyone", role: "reader", allowFileDiscovery: true });
     expect(calls[1]!.body).toEqual({ type: "anyone", role: "reader", allowFileDiscovery: true });
   });
@@ -1108,7 +1153,9 @@ describe("every projection is what the output schema declares (H8, H9)", () => {
     const path = request.url.pathname;
     if (path.endsWith("/export")) return { payload: "a,b\n1,2", contentType: "text/csv" };
     if (path.endsWith("/drives")) {
-      return { body: { drives: [{ id: "sd-1", name: "Finance", hidden: true, colorRgb: "#000" }], nextPageToken: "d" } };
+      return {
+        body: { drives: [{ id: "sd-1", name: "Finance", hidden: true, colorRgb: "#000" }], nextPageToken: "d" },
+      };
     }
     if (path.includes("/permissions")) {
       return request.method === "GET" && path.endsWith("/permissions")
@@ -1125,8 +1172,7 @@ describe("every projection is what the output schema declares (H8, H9)", () => {
     }
     return { body: RICH_FILE };
   };
-  const empty: Route = (request) =>
-    request.method === "DELETE" ? { status: 204 } : { body: {} };
+  const empty: Route = (request) => (request.method === "DELETE" ? { status: 204 } : { body: {} });
 
   const CASES: [string, Record<string, unknown>][] = [
     ["search_files", {}],
@@ -1185,7 +1231,9 @@ describe("every projection is what the output schema declares (H8, H9)", () => {
         : Array.isArray(value)
           ? Array.from({ length: 12 }, (_, index) => swell(value[index % value.length]))
           : value && typeof value === "object"
-            ? Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, key === "nextPageToken" ? entry : swell(entry)]))
+            ? Object.fromEntries(
+                Object.entries(value).map(([key, entry]) => [key, key === "nextPageToken" ? entry : swell(entry)]),
+              )
             : value;
     return { ...reply, body: swell(reply.body) };
   };
@@ -1196,7 +1244,9 @@ describe("every projection is what the output schema declares (H8, H9)", () => {
     ["pathological", pathological],
   ] as const)("declares every key of a %s response, and omits nothing required", async (_kind, responses) => {
     const connector = connection();
-    const schemas = Object.fromEntries((await connector.listTools(context())).map((tool) => [tool.name, tool.outputSchema]));
+    const schemas = Object.fromEntries(
+      (await connector.listTools(context())).map((tool) => [tool.name, tool.outputSchema]),
+    );
     route = responses;
     const found: string[] = [];
     for (const [name, args] of CASES) {
@@ -1219,9 +1269,11 @@ describe("every projection is what the output schema declares (H8, H9)", () => {
     route = empty;
     expect(await call(connection(), "get_file", { fileId: "f1" })).toEqual({ id: "f1" });
     expect(await call(connection(), "trash_file", { fileId: "f1" })).toEqual({ id: "f1" });
-    expect(await call(connection(), "update_permission", { fileId: "f1", permissionId: "p1", role: "reader" })).toEqual({
-      id: "p1",
-    });
+    expect(await call(connection(), "update_permission", { fileId: "f1", permissionId: "p1", role: "reader" })).toEqual(
+      {
+        id: "p1",
+      },
+    );
   });
 });
 
@@ -1252,8 +1304,13 @@ describe("every default result crosses into execute_code", { timeout: 60_000 }, 
   });
 
   it("fits a default search or folder page of the longest names Drive allows", async () => {
-    route = () => ({ body: { files: Array.from({ length: 25 }, (_, index) => worstFile(index)), nextPageToken: "n".repeat(1024) } });
-    for (const [name, args] of [["search_files", {}], ["list_folder_items", { folderId: "root" }]] as const) {
+    route = () => ({
+      body: { files: Array.from({ length: 25 }, (_, index) => worstFile(index)), nextPageToken: "n".repeat(1024) },
+    });
+    for (const [name, args] of [
+      ["search_files", {}],
+      ["list_folder_items", { folderId: "root" }],
+    ] as const) {
       const result = await call(connection(), name, args);
       expect(result.files).toHaveLength(25);
       expect(result.files[0].truncatedFields).toEqual(["name"]);
@@ -1263,7 +1320,10 @@ describe("every default result crosses into execute_code", { timeout: 60_000 }, 
 
   it("cuts a name to 2 KiB in a listing and 32 KiB in get_file, and flags each cut", async () => {
     const name = "n".repeat(3_000);
-    route = (request) => (request.url.pathname.endsWith("/files") ? { body: { files: [{ id: "f1", name }] } } : { body: { id: "f1", name } });
+    route = (request) =>
+      request.url.pathname.endsWith("/files")
+        ? { body: { files: [{ id: "f1", name }] } }
+        : { body: { id: "f1", name } };
     const listedFile = (await call(connection(), "search_files")).files[0];
     expect(listedFile.truncatedFields).toEqual(["name"]);
     expect(listedFile.name.endsWith("…")).toBe(true);
@@ -1302,7 +1362,11 @@ describe("every default result crosses into execute_code", { timeout: 60_000 }, 
 
   it("stops a page that would outgrow maxBytes, and resumes at the first row left out", async () => {
     // A hundred rows of 1,000-character escaped names: about 600 KB in all.
-    const rows = Array.from({ length: 100 }, (_, index) => ({ ...worstFile(index), id: `r${index}`, name: worst(1_000) }));
+    const rows = Array.from({ length: 100 }, (_, index) => ({
+      ...worstFile(index),
+      id: `r${index}`,
+      name: worst(1_000),
+    }));
     route = (request) =>
       request.url.searchParams.get("pageToken") === "second"
         ? { body: { files: [{ id: "last" }] } }
@@ -1353,7 +1417,9 @@ describe("every default result crosses into execute_code", { timeout: 60_000 }, 
   it("holds the whole content result, name and metadata included, to maxBytes", async () => {
     // The longest name and the most text the schema allows, all escaped.
     const meta = (mimeType: string) => (request: ApiCall) =>
-      request.url.searchParams.get("fields") ? { body: { id: "f1", name: worst(32_767), mimeType, size: "999999999" } } : undefined;
+      request.url.searchParams.get("fields")
+        ? { body: { id: "f1", name: worst(32_767), mimeType, size: "999999999" } }
+        : undefined;
     for (const mimeType of ["text/plain", "application/vnd.google-apps.document"]) {
       const metaRoute = meta(mimeType);
       route = (request) => metaRoute(request) ?? { payload: worst(250_000), contentType: "text/plain" };
@@ -1369,7 +1435,11 @@ describe("every default result crosses into execute_code", { timeout: 60_000 }, 
         expect(result.content).toBe(result.content.toWellFormed());
       }
       // Raised for a direct call, maxChars binds instead.
-      const direct = await call(connection(), "get_file_content", { fileId: "f1", maxChars: 100_000, maxBytes: 4 * 1024 * 1024 });
+      const direct = await call(connection(), "get_file_content", {
+        fileId: "f1",
+        maxChars: 100_000,
+        maxBytes: 4 * 1024 * 1024,
+      });
       expect(direct.content).toContain("raise maxChars");
       expect(serialized(direct)).toBeLessThanOrEqual(4 * 1024 * 1024);
     }
@@ -1452,7 +1522,11 @@ describe("a cursor resumes only the listing, and the page, it was issued for", (
   it("lets maxBytes change between pages, since it only decides where a page stops", async () => {
     const connector = connection();
     const first = await firstPage(connector);
-    const rest = await call(connector, "search_files", { limit: 100, maxBytes: 4 * 1024 * 1024, cursor: first.page.nextCursor });
+    const rest = await call(connector, "search_files", {
+      limit: 100,
+      maxBytes: 4 * 1024 * 1024,
+      cursor: first.page.nextCursor,
+    });
     expect(rest.files[0].id).toBe(ids[first.files.length]);
     expect(first.files.length + rest.files.length).toBe(ids.length);
   });
@@ -1534,7 +1608,13 @@ describe("nothing is lost silently, and nothing outgrows its result", () => {
     route = () => ({
       body: {
         permissions: [
-          { id: "p1", type: "user", role: "reader", displayName: "D".repeat(5_000), permissionDetails: [{ inherited: true, inheritedFrom: "../x" }] },
+          {
+            id: "p1",
+            type: "user",
+            role: "reader",
+            displayName: "D".repeat(5_000),
+            permissionDetails: [{ inherited: true, inheritedFrom: "../x" }],
+          },
         ],
       },
     });
@@ -1545,8 +1625,14 @@ describe("nothing is lost silently, and nothing outgrows its result", () => {
   });
 
   it.each([
-    ["a shortcut whose target id is 300,000 characters", { mimeType: "application/vnd.google-apps.shortcut", shortcutDetails: { targetId: "t".repeat(300_000) } }],
-    ["an unsupported Google type 300,000 characters long", { mimeType: `application/vnd.google-apps.${"x".repeat(300_000)}` }],
+    [
+      "a shortcut whose target id is 300,000 characters",
+      { mimeType: "application/vnd.google-apps.shortcut", shortcutDetails: { targetId: "t".repeat(300_000) } },
+    ],
+    [
+      "an unsupported Google type 300,000 characters long",
+      { mimeType: `application/vnd.google-apps.${"x".repeat(300_000)}` },
+    ],
   ])("keeps a note a sentence for %s", async (_kind, file) => {
     route = () => ({ body: { id: "f1", name: "F", ...file } });
     const result = await call(connection(), "get_file_content", { fileId: "f1", maxBytes: 65_536 });
@@ -1568,7 +1654,9 @@ describe("nothing is lost silently, and nothing outgrows its result", () => {
     it("names maxBytes for a tool that has one", async () => {
       sizing.oversized = (value) => (value as any)?.format === "unavailable";
       route = () => ({ body: { id: "f1", mimeType: "application/vnd.google-apps.folder" } });
-      const failure = await call(connection(), "get_file_content", { fileId: "f1", maxBytes: 70_000 }).catch((error) => error);
+      const failure = await call(connection(), "get_file_content", { fileId: "f1", maxBytes: 70_000 }).catch(
+        (error) => error,
+      );
       expect(failure.message).toContain("this call's maxBytes of 70000");
       expect(failure.message).toContain("Raise maxBytes");
     });
@@ -1637,12 +1725,20 @@ describe("nothing is lost silently, and nothing outgrows its result", () => {
       const connector = connection();
       const first = await call(connector, "search_files", { limit: 100 });
       expect(first.page.nextCursor.length).toBeLessThanOrEqual(16_384);
-      const second = await call(connector, "search_files", { limit: 100, maxBytes: 65_536, cursor: first.page.nextCursor });
+      const second = await call(connector, "search_files", {
+        limit: 100,
+        maxBytes: 65_536,
+        cursor: first.page.nextCursor,
+      });
       expect(calls[1]!.url.searchParams.get("pageToken")).toBe(token);
       // Mid-page, beside a full page of rows: the widest cursor there is.
       expect(second.page.nextCursor.length).toBeLessThanOrEqual(16_384);
       expect(serializedOf(second)).toBeLessThanOrEqual(65_536);
-      const third = await call(connector, "search_files", { limit: 100, maxBytes: 65_536, cursor: second.page.nextCursor });
+      const third = await call(connector, "search_files", {
+        limit: 100,
+        maxBytes: 65_536,
+        cursor: second.page.nextCursor,
+      });
       expect(third.files[0].id).toBe(rows[second.files.length]!.id);
     });
 
@@ -1730,24 +1826,30 @@ describe("a redirected or rate-limited write never claims an outcome (shared upd
 
   it("covers every write", async () => {
     const tools = await connection().listTools(context());
-    const writes = tools.filter((tool) => !isRead(tool)).map((tool) => tool.name).sort();
+    const writes = tools
+      .filter((tool) => !isRead(tool))
+      .map((tool) => tool.name)
+      .sort();
     expect(WRITES.map(([name]) => name).sort()).toEqual(writes);
   });
 
-  it.each(WRITES)("a 3xx to %s leaves its outcome unknown, never applied, and is not followed", async (name, args, check) => {
-    route = (request) => (request.method === "GET" ? { body: { id: "f1", parents: ["p1"] } } : REDIRECT);
-    const failure = await call(connection(), name, args).catch((error) => error);
-    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
-    expect(failure.message).toContain("unknown");
-    expect(failure.message).not.toMatch(/probably applied|nothing was (applied|changed)/i);
-    // The guard's word, said only after a recorded 2xx, never here.
-    expect(failure.message).not.toContain(`${name} applied`);
-    if (check) expect(failure.message).toContain(check);
-    else expect(failure.message).not.toMatch(/search_files|list_permissions|second copy/);
-    // Sent once, and never to the redirect's host.
-    expect(calls.filter((entry) => entry.method !== "GET")).toHaveLength(1);
-    expect(calls.every((entry) => entry.url.hostname === "www.googleapis.com")).toBe(true);
-  });
+  it.each(WRITES)(
+    "a 3xx to %s leaves its outcome unknown, never applied, and is not followed",
+    async (name, args, check) => {
+      route = (request) => (request.method === "GET" ? { body: { id: "f1", parents: ["p1"] } } : REDIRECT);
+      const failure = await call(connection(), name, args).catch((error) => error);
+      expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(failure.message).toContain("unknown");
+      expect(failure.message).not.toMatch(/probably applied|nothing was (applied|changed)/i);
+      // The guard's word, said only after a recorded 2xx, never here.
+      expect(failure.message).not.toContain(`${name} applied`);
+      if (check) expect(failure.message).toContain(check);
+      else expect(failure.message).not.toMatch(/search_files|list_permissions|second copy/);
+      // Sent once, and never to the redirect's host.
+      expect(calls.filter((entry) => entry.method !== "GET")).toHaveLength(1);
+      expect(calls.every((entry) => entry.url.hostname === "www.googleapis.com")).toBe(true);
+    },
+  );
 
   it("a 503 with a rate-limit reason to a write that adds stays an unknown outcome, not a rate limit", async () => {
     route = () => GOOGLE_ERROR(503, "RATE_LIMIT_EXCEEDED", "Quota exceeded, or the backend fell over.");

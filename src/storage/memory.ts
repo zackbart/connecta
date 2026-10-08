@@ -31,7 +31,10 @@ export function memoryStorage(): KVStorage {
     // expired tail resident forever, and no request starts a background job.
     for (let i = 0; i < 16; i++) {
       const next = sweep.next();
-      if (next.done) { sweep = map.keys(); break; }
+      if (next.done) {
+        sweep = map.keys();
+        break;
+      }
       fresh(next.value);
     }
     map.set(key, {

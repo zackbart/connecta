@@ -7,14 +7,14 @@ esbuild measurement plugin. No dependency file was patched.
 
 After one synthetic request, `Runtime.getHeapUsage` reported:
 
-| Variant | Used V8 heap, bytes | Total V8 heap, bytes |
-| --- | --- | --- |
-| Original, run 1 | 23,184,168 | 37,535,744 |
-| Without preload, run 1 | 12,485,064 | 18,137,088 |
-| Original, run 2 | 22,998,196 | 37,273,600 |
-| Without preload, run 2 | 12,478,996 | 18,137,088 |
-| Original, run 3 | 22,846,584 | 37,273,600 |
-| Without preload, run 3 | 12,503,924 | 18,137,088 |
+| Variant                | Used V8 heap, bytes | Total V8 heap, bytes |
+| ---------------------- | ------------------- | -------------------- |
+| Original, run 1        | 23,184,168          | 37,535,744           |
+| Without preload, run 1 | 12,485,064          | 18,137,088           |
+| Original, run 2        | 22,998,196          | 37,273,600           |
+| Without preload, run 2 | 12,478,996          | 18,137,088           |
+| Original, run 3        | 22,846,584          | 37,273,600           |
+| Without preload, run 3 | 12,503,924          | 18,137,088           |
 
 The average used-heap difference was 10,520,321 bytes, about 10.03 MiB. This is
 cold-import allocation, without forced garbage collection. It does not establish

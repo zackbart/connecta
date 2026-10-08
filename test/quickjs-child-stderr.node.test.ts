@@ -47,21 +47,12 @@ class CrashingChild extends EventEmitter {
   ref = vi.fn();
   unref = vi.fn();
 
-  send(
-    message: unknown,
-    callback?: (error: Error | null) => void,
-  ): boolean {
+  send(message: unknown, callback?: (error: Error | null) => void): boolean {
     callback?.(null);
-    if (
-      message &&
-      typeof message === "object" &&
-      (message as { type?: unknown }).type === "run"
-    ) {
+    if (message && typeof message === "object" && (message as { type?: unknown }).type === "run") {
       queueMicrotask(() => {
         this.emit("exit", 17, null);
-        this.stderr.write(
-          `HEAD_SENTINEL${"x".repeat(20_000)}TAIL_SENTINEL`,
-        );
+        this.stderr.write(`HEAD_SENTINEL${"x".repeat(20_000)}TAIL_SENTINEL`);
         this.stderr.end();
         this.connected = false;
         this.emit("close", 17, null);
@@ -89,9 +80,7 @@ describe("QuickJS child stderr diagnostics", () => {
     const executor = quickJsExecutor();
     await expect(executor.execute("async () => 1", [])).rejects.toThrow("QuickJS child exited unexpectedly");
 
-    expect(process.env.CONNECTA_QUICKJS_PARENT_SENTINEL).toBe(
-      "deployment-secret",
-    );
+    expect(process.env.CONNECTA_QUICKJS_PARENT_SENTINEL).toBe("deployment-secret");
     expect(process.env.NODE_OPTIONS).toBe("--inspect=127.0.0.1:0");
     expect(forkMock).toHaveBeenCalledWith(
       expect.stringMatching(/quickjs-child\.ts$/),
@@ -109,11 +98,9 @@ describe("QuickJS child stderr diagnostics", () => {
     });
 
     const executor = quickJsExecutor();
-    const error = await executor.execute("async () => 1", []).catch((err: Error) => err) as Error;
+    const error = (await executor.execute("async () => 1", []).catch((err: Error) => err)) as Error;
 
-    expect(error.message).toContain(
-      "QuickJS child exited unexpectedly (code 17).",
-    );
+    expect(error.message).toContain("QuickJS child exited unexpectedly (code 17).");
     expect(error.message).toContain("TAIL_SENTINEL");
     expect(error.message).not.toContain("HEAD_SENTINEL");
     expect(Buffer.byteLength(error.message)).toBeLessThan(8_400);
@@ -138,7 +125,9 @@ it.each(["serialize", "send", "callback"] as const)("settles a host-result %s fa
       queueMicrotask(() => {
         child.emit("message", { type: "log", jobId: run.id, payloadJson: JSON.stringify("before IPC failure") });
         child.emit("message", {
-          type: "host-call", jobId: run.id, callId: 1,
+          type: "host-call",
+          jobId: run.id,
+          callId: 1,
           payloadJson: JSON.stringify({ namespace: "test", functionName: "read", args: [] }),
         });
       });
@@ -151,10 +140,13 @@ it.each(["serialize", "send", "callback"] as const)("settles a host-result %s fa
         return true;
       }
       callback?.(null);
-      queueMicrotask(() => child.emit("message", {
-        type: "result", jobId: message.jobId,
-        payloadJson: JSON.stringify({ outcome: { result: reply.error } }),
-      }));
+      queueMicrotask(() =>
+        child.emit("message", {
+          type: "result",
+          jobId: message.jobId,
+          payloadJson: JSON.stringify({ outcome: { result: reply.error } }),
+        }),
+      );
     }
     return true;
   };
@@ -165,17 +157,21 @@ it.each(["serialize", "send", "callback"] as const)("settles a host-result %s fa
   envelopeFault.fail = fault === "serialize";
   const executor = quickJsExecutor();
   let settled = false;
-  const execution = executor.execute("async () => test.read()", [
-    { name: "test", fns: { read: async () => 1 } },
-  ]).catch((error: unknown) => error).then((outcome) => {
-    settled = true;
-    return outcome;
-  });
+  const execution = executor
+    .execute("async () => test.read()", [{ name: "test", fns: { read: async () => 1 } }])
+    .catch((error: unknown) => error)
+    .then((outcome) => {
+      settled = true;
+      return outcome;
+    });
   try {
     await vi.waitFor(() => expect(settled).toBe(true));
     expect(replies).toHaveLength(1);
     if (fault === "serialize") {
-      expect(await execution).toEqual({ result: "QuickJS host-result IPC envelope could not be serialized within the 1048576-byte IPC limit.", logs: ["before IPC failure"] });
+      expect(await execution).toEqual({
+        result: "QuickJS host-result IPC envelope could not be serialized within the 1048576-byte IPC limit.",
+        logs: ["before IPC failure"],
+      });
     } else {
       expect(await execution).toBeInstanceOf(Error);
       expect(await execution).toMatchObject({
@@ -200,7 +196,8 @@ it.each([false, true])("preserves streamed logs after a real child crash (over c
   // keeps a loaded host from ending the program before the crash it stages.
   const executor = quickJsExecutor({ cpuTimeMs: 5_000 });
   const connector = connectorWith({
-    id: "crash", kind: "api",
+    id: "crash",
+    kind: "api",
     tools: [{ name: "read", annotations: { readOnlyHint: true } }],
     call: async () => {
       // This call follows the logs on the same IPC channel. No timing guess.
@@ -210,12 +207,18 @@ it.each([false, true])("preserves streamed logs after a real child crash (over c
   });
   try {
     const out = await createExecuteTool(
-      makeRegistry([connector]), "https://connecta.test", executor, silentLogger,
-    )({ code: `async () => {
+      makeRegistry([connector]),
+      "https://connecta.test",
+      executor,
+      silentLogger,
+    )({
+      code: `async () => {
       console.log("before crash");
       ${large ? 'for (let i = 0; i < 200; i++) console.log("x".repeat(8_000));' : 'console.warn("second");'}
       await connecta.call("crash.read");
-    }`, diagnostics: true });
+    }`,
+      diagnostics: true,
+    });
     expect(out.isError).toBe(true);
     expect(out.structuredContent).toMatchObject({ error: { code: "executor_failed" } });
     const logs = out.structuredContent?.logs as string;
@@ -234,7 +237,9 @@ it.each(["deadline", "shutdown", "malformed result"])("attaches bounded streamed
   if (failure === "deadline") vi.useFakeTimers();
   const child = new CrashingChild();
   let started!: () => void;
-  const running = new Promise<void>((resolve) => { started = resolve; });
+  const running = new Promise<void>((resolve) => {
+    started = resolve;
+  });
   child.kill = () => {
     child.connected = false;
     queueMicrotask(() => child.emit("exit", 0, null));

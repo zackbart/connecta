@@ -119,17 +119,22 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
       return;
     }
     if (event.type === "eval_url_elicitation") {
-      urlElicitations.push({ connector: String(event.connector), url: String(event.url), action: String(event.action) });
+      urlElicitations.push({
+        connector: String(event.connector),
+        url: String(event.url),
+        action: String(event.action),
+      });
       return;
     }
     if (event.type === "codex_usage") {
       const total = event.total as Record<string, number> | undefined;
-      if (total) tokens = {
-        input: Math.max(0, (total.inputTokens ?? 0) - (total.cachedInputTokens ?? 0)),
-        output: total.outputTokens ?? 0,
-        cacheRead: total.cachedInputTokens ?? 0,
-        cacheCreation: total.cacheWriteInputTokens ?? 0,
-      };
+      if (total)
+        tokens = {
+          input: Math.max(0, (total.inputTokens ?? 0) - (total.cachedInputTokens ?? 0)),
+          output: total.outputTokens ?? 0,
+          cacheRead: total.cachedInputTokens ?? 0,
+          cacheCreation: total.cacheWriteInputTokens ?? 0,
+        };
       return;
     }
     if (event.type === "codex_denial") {
@@ -141,9 +146,13 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
       const blocks = Array.isArray(message?.content) ? message.content : [];
       if (event.type === "assistant") {
         // One completed message is the answer; earlier commentary is display-only.
-        finalAnswer = message?.phase === "commentary" ? "" : blocks
-          .filter(block => (block as Record<string, unknown>).type === "text")
-          .map(block => String((block as Record<string, unknown>).text ?? "")).join("\n");
+        finalAnswer =
+          message?.phase === "commentary"
+            ? ""
+            : blocks
+                .filter((block) => (block as Record<string, unknown>).type === "text")
+                .map((block) => String((block as Record<string, unknown>).text ?? ""))
+                .join("\n");
       }
       for (const raw of blocks) {
         const block = raw as Record<string, unknown>;
@@ -179,13 +188,16 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
           if (use) {
             use.isError = isError;
             use.resultText = text;
-            use.resultBlocks = Array.isArray(block.content) ? block.content.map(raw => {
-              const value = raw as Record<string, unknown>;
-              const source = value.source as Record<string, unknown> | undefined;
-              // Claude represents a received MCP image in its native format.
-              return value.type === "image" && source?.type === "base64" ?
-                { type: "image", data: source.data, mimeType: source.media_type } : value;
-            }) : [];
+            use.resultBlocks = Array.isArray(block.content)
+              ? block.content.map((raw) => {
+                  const value = raw as Record<string, unknown>;
+                  const source = value.source as Record<string, unknown> | undefined;
+                  // Claude represents a received MCP image in its native format.
+                  return value.type === "image" && source?.type === "base64"
+                    ? { type: "image", data: source.data, mimeType: source.media_type }
+                    : value;
+                })
+              : [];
           }
           transcript.push({
             kind: "tool_result",

@@ -23,11 +23,13 @@ export function byteReadResponse(response: Response): Response {
   if (!Object.isExtensible(response)) {
     // A custom fetch that froze its response: shadow a copy instead, which
     // keeps everything but `url` and `redirected`.
-    return byteReadResponse(new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    }));
+    return byteReadResponse(
+      new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      }),
+    );
   }
   const arrayBuffer = response.arrayBuffer.bind(response);
   const clone = response.clone.bind(response);

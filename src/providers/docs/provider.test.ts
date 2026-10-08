@@ -31,7 +31,9 @@ interface ApiCall {
 
 type Route = (
   call: ApiCall,
-) => { status?: number; body?: unknown; raw?: string; unreachable?: boolean; brokenBody?: boolean; oversized?: boolean } | undefined;
+) =>
+  | { status?: number; body?: unknown; raw?: string; unreachable?: boolean; brokenBody?: boolean; oversized?: boolean }
+  | undefined;
 
 const calls: ApiCall[] = [];
 let tokenCalls = 0;
@@ -58,7 +60,10 @@ beforeEach(() => {
     if (reply.unreachable) throw new TypeError("fetch failed: connection reset");
     if (reply.oversized) {
       // A 2xx that declares more than the 24 MiB response ceiling.
-      return new Response("{}", { status: 200, headers: { "content-type": "application/json", "content-length": String(25 * 1024 * 1024) } });
+      return new Response("{}", {
+        status: 200,
+        headers: { "content-type": "application/json", "content-length": String(25 * 1024 * 1024) },
+      });
     }
     if (reply.brokenBody) {
       // The status arrives; the body stream then dies, as a reset socket does.
@@ -126,7 +131,11 @@ function paragraph(startIndex: number, pieces: unknown[], extra: Record<string, 
   return {
     startIndex,
     endIndex: last.endIndex,
-    paragraph: { elements: pieces, paragraphStyle: { namedStyleType: "NORMAL_TEXT", direction: "LEFT_TO_RIGHT" }, ...extra },
+    paragraph: {
+      elements: pieces,
+      paragraphStyle: { namedStyleType: "NORMAL_TEXT", direction: "LEFT_TO_RIGHT" },
+      ...extra,
+    },
   };
 }
 
@@ -141,7 +150,11 @@ function heading(startIndex: number, content: string, style: string) {
 }
 
 function cell(startIndex: number, content: string) {
-  return { startIndex, endIndex: startIndex + content.length + 1, content: [paragraph(startIndex + 1, [run(content, startIndex + 1)])] };
+  return {
+    startIndex,
+    endIndex: startIndex + content.length + 1,
+    content: [paragraph(startIndex + 1, [run(content, startIndex + 1)])],
+  };
 }
 
 const FIRST_TAB_BODY = {
@@ -149,7 +162,12 @@ const FIRST_TAB_BODY = {
     { endIndex: 1, sectionBreak: { sectionStyle: {} } },
     heading(1, "Elders meeting\n", "TITLE"),
     heading(16, "Agenda\n", "HEADING_2"),
-    paragraph(23, [run("See the ", 23), run("plan", 31, "https://example.org/plan"), run(" doc", 35, "https://example.org/plan"), run(" now.\n", 39)]),
+    paragraph(23, [
+      run("See the ", 23),
+      run("plan", 31, "https://example.org/plan"),
+      run(" doc", 35, "https://example.org/plan"),
+      run(" now.\n", 39),
+    ]),
     paragraph(45, [run("Budget\n", 45)], { bullet: { listId: "kix.ol", nestingLevel: 0 } }),
     paragraph(52, [run("Q3 | Q4\n", 52)], { bullet: { listId: "kix.ol", nestingLevel: 1 } }),
     paragraph(60, [run("Prayer\n", 60)], { bullet: { listId: "kix.ul", nestingLevel: 0 } }),
@@ -157,8 +175,16 @@ const FIRST_TAB_BODY = {
       run("Footnoted", 67),
       { startIndex: 76, endIndex: 77, footnoteReference: { footnoteId: "kix.fn1", footnoteNumber: "1" } },
       { startIndex: 77, endIndex: 78, inlineObjectElement: { inlineObjectId: "kix.img" } },
-      { startIndex: 78, endIndex: 79, person: { personProperties: { name: "Ann Elder", email: "ann@church.example" } } },
-      { startIndex: 79, endIndex: 80, richLink: { richLinkProperties: { title: "Budget sheet", uri: "https://docs.google.com/spreadsheets/d/s1" } } },
+      {
+        startIndex: 78,
+        endIndex: 79,
+        person: { personProperties: { name: "Ann Elder", email: "ann@church.example" } },
+      },
+      {
+        startIndex: 79,
+        endIndex: 80,
+        richLink: { richLinkProperties: { title: "Budget sheet", uri: "https://docs.google.com/spreadsheets/d/s1" } },
+      },
       run("\n", 80),
     ]),
     {
@@ -196,7 +222,11 @@ const DOCUMENT = {
         },
         footnotes: { "kix.fn1": { footnoteId: "kix.fn1", content: [paragraph(0, [run(" Per the bylaws.\n", 0)])] } },
         inlineObjects: {
-          "kix.img": { inlineObjectProperties: { embeddedObject: { title: "Roof photo", imageProperties: { contentUri: "https://lh3.example/x" } } } },
+          "kix.img": {
+            inlineObjectProperties: {
+              embeddedObject: { title: "Roof photo", imageProperties: { contentUri: "https://lh3.example/x" } },
+            },
+          },
         },
       },
       childTabs: [
@@ -347,7 +377,12 @@ describe("reading a document (H9)", () => {
     });
 
     route = () => ({
-      body: { documentId: "d", tabs: [{ tabProperties: { tabId: "t.0" }, documentTab: { body: { content: [paragraph(1, [run("a🙏b\n", 1)])] } } }] },
+      body: {
+        documentId: "d",
+        tabs: [
+          { tabProperties: { tabId: "t.0" }, documentTab: { body: { content: [paragraph(1, [run("a🙏b\n", 1)])] } } },
+        ],
+      },
     });
     const emoji = await call(connection(), "get_document", { documentId: "d", maxChars: 2 });
     expect(emoji.tabs[0].text.startsWith("a\n[… 3 more")).toBe(true);
@@ -358,7 +393,9 @@ describe("reading a document (H9)", () => {
     const one = await call(connection(), "get_document", { documentId: "doc-1", tabId: "t.child" });
     expect(one.tabs.map((tab: any) => tab.tabId)).toEqual(["t.child"]);
 
-    const failure = await call(connection(), "get_document", { documentId: "doc-1", tabId: "t.nope" }).catch((error) => error);
+    const failure = await call(connection(), "get_document", { documentId: "doc-1", tabId: "t.nope" }).catch(
+      (error) => error,
+    );
     expect(failure).toMatchObject({ code: "not_found" });
     expect(failure.message).toContain("t.0, t.child");
   });
@@ -377,7 +414,12 @@ describe("reading a document (H9)", () => {
 
   it("reads a response without tabs as one tab holding the legacy body", async () => {
     route = () => ({
-      body: { documentId: "doc-2", title: "Old", revisionId: "r", body: { content: [paragraph(1, [run("Hello\n", 1)])] } },
+      body: {
+        documentId: "doc-2",
+        title: "Old",
+        revisionId: "r",
+        body: { content: [paragraph(1, [run("Hello\n", 1)])] },
+      },
     });
     const result = await call(connection(), "get_document", { documentId: "doc-2" });
     expect(result.tabs).toEqual([{ endIndex: 7, text: "Hello", textTruncated: false }]);
@@ -387,7 +429,11 @@ describe("reading a document (H9)", () => {
     const tab = (id: string, count: number) => ({
       tabProperties: { tabId: id },
       documentTab: {
-        body: { content: Array.from({ length: count }, (_, index) => paragraph(index + 1, [run(`${id} row ${index}\n`, index + 1)])) },
+        body: {
+          content: Array.from({ length: count }, (_, index) =>
+            paragraph(index + 1, [run(`${id} row ${index}\n`, index + 1)]),
+          ),
+        },
       },
     });
     route = () => ({ body: { documentId: "big", revisionId: "r", tabs: [tab("t.0", 1_500), tab("t.1", 1_500)] } });
@@ -427,7 +473,7 @@ describe("reading a document (H9)", () => {
   it("delivers a worst-case default read across the 256 KiB execute_code bridge", async () => {
     // Three-byte characters, JSON-escaped quotes, a hundred titled tabs, and
     // more index rows than one page holds: every default limit at once.
-    const heavy = "中\"".repeat(10_000);
+    const heavy = '中"'.repeat(10_000);
     const tabs = Array.from({ length: 100 }, (_, index) => ({
       tabProperties: { tabId: `t.${index}`, title: "題".repeat(100), parentTabId: "t.0", nestingLevel: 1 },
       documentTab: {
@@ -450,9 +496,21 @@ describe("reading a document (H9)", () => {
   it("keeps the explicit maximum inside what a direct call can stash and page", async () => {
     const text = "中".repeat(1_100_000);
     route = () => ({
-      body: { documentId: "max", tabs: [{ tabProperties: { tabId: "t.0" }, documentTab: { body: { content: [paragraph(1, [run(`${text}\n`, 1)])] } } }] },
+      body: {
+        documentId: "max",
+        tabs: [
+          {
+            tabProperties: { tabId: "t.0" },
+            documentTab: { body: { content: [paragraph(1, [run(`${text}\n`, 1)])] } },
+          },
+        ],
+      },
     });
-    const result = await call(connection(), "get_document", { documentId: "max", maxChars: 1_000_000, withIndexes: true });
+    const result = await call(connection(), "get_document", {
+      documentId: "max",
+      maxChars: 1_000_000,
+      withIndexes: true,
+    });
     expect(result.tabs[0].textTruncated).toBe(true);
     expect(new TextEncoder().encode(JSON.stringify(result)).length).toBeLessThan(8 * 1024 * 1024);
   });
@@ -477,7 +535,10 @@ describe("editing a document", () => {
       request.url.pathname.endsWith(":batchUpdate")
         ? { body: { documentId: "new-1", replies: [{}], writeControl: { requiredRevisionId: "r1" } } }
         : { body: { documentId: "new-1", title: "Minutes", revisionId: "r0" } };
-    const result = await call(connection(), "create_document", { title: "Minutes", text: "Opened in prayer.\nQuorum present." });
+    const result = await call(connection(), "create_document", {
+      title: "Minutes",
+      text: "Opened in prayer.\nQuorum present.",
+    });
     expect(path(1)).toBe("/documents/new-1:batchUpdate");
     expect(calls[1]!.body).toEqual({
       requests: [{ insertText: { text: "Opened in prayer.\nQuorum present.", endOfSegmentLocation: {} } }],
@@ -490,7 +551,9 @@ describe("editing a document", () => {
       request.url.pathname.endsWith(":batchUpdate")
         ? { status: 400, body: { error: { code: 400, message: "Invalid text.", status: "INVALID_ARGUMENT" } } }
         : { body: { documentId: "new-1", title: "Minutes" } };
-    const failure = await call(connection(), "create_document", { title: "Minutes", text: "x" }).catch((error) => error);
+    const failure = await call(connection(), "create_document", { title: "Minutes", text: "x" }).catch(
+      (error) => error,
+    );
     expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
     expect(failure.message).toContain("Created document new-1");
     expect(failure.message).toContain("add the text with append_text on new-1");
@@ -525,7 +588,11 @@ describe("editing a document", () => {
 
   it("replaces all text with match options and tab criteria, reporting the count", async () => {
     route = () => ({
-      body: { documentId: "doc-1", replies: [{ replaceAllText: { occurrencesChanged: 3 } }], writeControl: { requiredRevisionId: "rev-9" } },
+      body: {
+        documentId: "doc-1",
+        replies: [{ replaceAllText: { occurrencesChanged: 3 } }],
+        writeControl: { requiredRevisionId: "rev-9" },
+      },
     });
     const result = await call(connection(), "replace_all_text", {
       documentId: "doc-1",
@@ -564,7 +631,11 @@ describe("editing a document", () => {
       { createNamedRange: { name: "agenda", range: { startIndex: 1, endIndex: 4 } } },
     ];
     route = () => ({
-      body: { documentId: "doc-1", replies: [{}, { createNamedRange: { namedRangeId: "kix.nr1" } }], writeControl: { requiredRevisionId: "rev-3" } },
+      body: {
+        documentId: "doc-1",
+        replies: [{}, { createNamedRange: { namedRangeId: "kix.nr1" } }],
+        writeControl: { requiredRevisionId: "rev-3" },
+      },
     });
     const result = await call(connection(), "batch_update_document", {
       documentId: "doc-1",
@@ -593,7 +664,10 @@ describe("editing a document", () => {
         documentId: "doc-1",
         writeControl: { requiredRevisionId: "r2" },
         replies: Array.from({ length: 100 }, (_, index) => ({
-          addDocumentTab: { tabProperties: { tabId: `t.${index}`, title: "題".repeat(2_000), index }, echo: ["x".repeat(5_000)] },
+          addDocumentTab: {
+            tabProperties: { tabId: `t.${index}`, title: "題".repeat(2_000), index },
+            echo: ["x".repeat(5_000)],
+          },
         })),
       },
     });
@@ -611,7 +685,9 @@ describe("editing a document", () => {
       body: {
         documentId: "doc-1",
         replies: Array.from({ length: 100 }, (_, index) => ({
-          createNamedRange: Object.fromEntries(Array.from({ length: 10 }, (_, key) => [`id${key}`, `${index}-${"n".repeat(480)}`])),
+          createNamedRange: Object.fromEntries(
+            Array.from({ length: 10 }, (_, key) => [`id${key}`, `${index}-${"n".repeat(480)}`]),
+          ),
         })),
       },
     });
@@ -644,11 +720,21 @@ describe("editing a document", () => {
       ["append_text", { documentId: "doc-1", text: "" }],
       ["create_document", { title: "Two\nlines" }],
       ["batch_update_document", { documentId: "doc-1", requests: [], requiredRevisionId: "r" }],
-      ["batch_update_document", { documentId: "doc-1", requests: [{ insertText: {}, deleteContentRange: {} }], requiredRevisionId: "r" }],
+      [
+        "batch_update_document",
+        { documentId: "doc-1", requests: [{ insertText: {}, deleteContentRange: {} }], requiredRevisionId: "r" },
+      ],
       // An unknown kind, and a Developer Preview one, are refused by name.
       ["batch_update_document", { documentId: "doc-1", requests: [{ deleteEverything: {} }], requiredRevisionId: "r" }],
       ["batch_update_document", { documentId: "doc-1", requests: [{ insertComment: {} }], requiredRevisionId: "r" }],
-      ["batch_update_document", { documentId: "doc-1", requests: Array.from({ length: 101 }, () => ({ insertText: {} })), requiredRevisionId: "r" }],
+      [
+        "batch_update_document",
+        {
+          documentId: "doc-1",
+          requests: Array.from({ length: 101 }, () => ({ insertText: {} })),
+          requiredRevisionId: "r",
+        },
+      ],
       // Raw edits are planned against a read: the revision is required.
       ["batch_update_document", { documentId: "doc-1", requests: [{ insertText: {} }] }],
       ["replace_all_text", { documentId: "doc-1", find: "x" }],
@@ -694,7 +780,10 @@ describe("failures, mapped to what the caller does next (H11)", () => {
       expect(calls.map((entry) => entry.method)).toEqual(["POST"]);
     }
     // Unguarded, FAILED_PRECONDITION means something else and is not relabeled.
-    route = () => ({ status: 400, body: { error: { code: 400, message: "Precondition check failed.", status: "FAILED_PRECONDITION" } } });
+    route = () => ({
+      status: 400,
+      body: { error: { code: 400, message: "Precondition check failed.", status: "FAILED_PRECONDITION" } },
+    });
     const unguarded = await call(connection(), "insert_text", { documentId: "doc-1", index: 5, text: "x" }).catch(
       (error) => error,
     );
@@ -736,9 +825,11 @@ describe("failures, mapped to what the caller does next (H11)", () => {
     }
 
     // A revision makes the repeat safe to offer; without one there is none.
-    const guarded = await call(connection(), "append_text", { documentId: "d", text: "x", requiredRevisionId: "r" }).catch(
-      (error) => error,
-    );
+    const guarded = await call(connection(), "append_text", {
+      documentId: "d",
+      text: "x",
+      requiredRevisionId: "r",
+    }).catch((error) => error);
     expect(guarded.message).toContain("same requiredRevisionId is safe");
     const bare = await call(connection(), "append_text", { documentId: "d", text: "x" }).catch((error) => error);
     expect(bare.message).toContain("can duplicate it");
@@ -746,7 +837,10 @@ describe("failures, mapped to what the caller does next (H11)", () => {
   });
 
   it("keeps a 4xx refusal as mapped: nothing applied, nothing uncertain", async () => {
-    route = () => ({ status: 403, body: { error: { code: 403, message: "The caller does not have permission", status: "PERMISSION_DENIED" } } });
+    route = () => ({
+      status: 403,
+      body: { error: { code: 403, message: "The caller does not have permission", status: "PERMISSION_DENIED" } },
+    });
     const failure = await call(connection(), "append_text", { documentId: "d", text: "x" }).catch((error) => error);
     expect(failure.code).toBe("provider_permission_denied");
     expect(failure.message).toContain("may lack access");
@@ -775,8 +869,18 @@ describe("failures, mapped to what the caller does next (H11)", () => {
 
   it.each([
     ["no answer", { unreachable: true }, "whether its initial text was written is unknown", "only if it is missing"],
-    ["a broken 2xx body", { brokenBody: true }, "whether its initial text was written is unknown", "only if it is missing"],
-    ["an oversized 2xx", { oversized: true }, "whether its initial text was written is unknown", "only if it is missing"],
+    [
+      "a broken 2xx body",
+      { brokenBody: true },
+      "whether its initial text was written is unknown",
+      "only if it is missing",
+    ],
+    [
+      "an oversized 2xx",
+      { oversized: true },
+      "whether its initial text was written is unknown",
+      "only if it is missing",
+    ],
     [
       "an explicit 4xx refusal",
       { status: 400, body: { error: { code: 400, message: "Invalid text.", status: "INVALID_ARGUMENT" } } },
@@ -792,7 +896,9 @@ describe("failures, mapped to what the caller does next (H11)", () => {
   ])("after creating, advises on its initial text by outcome: %s", async (_kind, reply, says, advice) => {
     route = (request) =>
       request.url.pathname.endsWith(":batchUpdate") ? reply : { body: { documentId: "new-1", title: "Minutes" } };
-    const failure = await call(connection(), "create_document", { title: "Minutes", text: "x" }).catch((error) => error);
+    const failure = await call(connection(), "create_document", { title: "Minutes", text: "x" }).catch(
+      (error) => error,
+    );
     expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
     expect(failure.message).toContain(`Created document new-1, but ${says}`);
     expect(failure.message).toContain(advice);
@@ -807,7 +913,7 @@ describe("failures, mapped to what the caller does next (H11)", () => {
     const failure = await call(connection(), "create_document", { title: "Minutes" }).catch((error) => error);
     expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
     expect(failure.message).toContain("Whether the document was created is unknown");
-    expect(failure.message).toContain('Drive search for that title');
+    expect(failure.message).toContain("Drive search for that title");
     expect(calls.map((entry) => entry.method)).toEqual(["POST"]);
   });
 
@@ -833,14 +939,20 @@ describe("failures, mapped to what the caller does next (H11)", () => {
   });
 
   it("states the 404 ambiguity: a document id that is unknown or not shared look alike", async () => {
-    route = () => ({ status: 404, body: { error: { code: 404, message: "Requested entity was not found.", status: "NOT_FOUND" } } });
+    route = () => ({
+      status: 404,
+      body: { error: { code: 404, message: "Requested entity was not found.", status: "NOT_FOUND" } },
+    });
     const failure = await call(connection(), "get_document", { documentId: "nope" }).catch((error) => error);
     expect(failure.code).toBe("connector_call_failed");
     expect(failure.message).toContain("not visible to this account");
   });
 
   it("maps a permission refusal, a missing scope, and a rate limit by their fix", async () => {
-    route = () => ({ status: 403, body: { error: { code: 403, message: "The caller does not have permission", status: "PERMISSION_DENIED" } } });
+    route = () => ({
+      status: 403,
+      body: { error: { code: 403, message: "The caller does not have permission", status: "PERMISSION_DENIED" } },
+    });
     await expect(call(connection(), "get_document", { documentId: "d" })).rejects.toMatchObject({
       code: "provider_permission_denied",
       message: expect.stringContaining("may lack access"),
@@ -848,14 +960,24 @@ describe("failures, mapped to what the caller does next (H11)", () => {
 
     route = () => ({
       status: 403,
-      body: { error: { code: 403, message: "Insufficient scopes.", status: "PERMISSION_DENIED", details: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }] } },
+      body: {
+        error: {
+          code: 403,
+          message: "Insufficient scopes.",
+          status: "PERMISSION_DENIED",
+          details: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }],
+        },
+      },
     });
     await expect(call(connection(), "get_document", { documentId: "d" })).rejects.toMatchObject({
       code: "provider_permission_denied",
       message: expect.stringContaining("https://www.googleapis.com/auth/documents"),
     });
 
-    route = () => ({ status: 429, body: { error: { code: 429, message: "Quota exceeded.", status: "RESOURCE_EXHAUSTED" } } });
+    route = () => ({
+      status: 429,
+      body: { error: { code: 429, message: "Quota exceeded.", status: "RESOURCE_EXHAUSTED" } },
+    });
     await expect(call(connection(), "append_text", { documentId: "d", text: "x" })).rejects.toMatchObject({
       code: "rate_limited",
     });
@@ -919,11 +1041,14 @@ async function check(connector: Connector, name: string, result: unknown): Promi
 }
 
 describe("every output is declared (H8, H9)", () => {
-
   it("declares every key each tool emits, on realistic and on empty resources", async () => {
     const connector = connection();
     route = () => ({ body: DOCUMENT });
-    await check(connector, "get_document", await call(connector, "get_document", { documentId: "doc-1", withIndexes: true }));
+    await check(
+      connector,
+      "get_document",
+      await call(connector, "get_document", { documentId: "doc-1", withIndexes: true }),
+    );
     await check(connector, "get_document", await call(connector, "get_document", { documentId: "doc-1", maxChars: 3 }));
     await check(connector, "get_document", await call(connector, "get_document", { documentId: "doc-1", raw: true }));
 
@@ -952,7 +1077,11 @@ describe("every output is declared (H8, H9)", () => {
         : { body: { documentId: "d", title: "T", revisionId: "r1" } };
     await check(connector, "create_document", await call(connector, "create_document", { title: "T", text: "x" }));
     await check(connector, "append_text", await call(connector, "append_text", { documentId: "d", text: "x" }));
-    await check(connector, "insert_text", await call(connector, "insert_text", { documentId: "d", index: 1, text: "x" }));
+    await check(
+      connector,
+      "insert_text",
+      await call(connector, "insert_text", { documentId: "d", index: 1, text: "x" }),
+    );
     await check(
       connector,
       "replace_all_text",
@@ -1113,13 +1242,23 @@ describe("raw reads (H9)", () => {
     expect(empty).toEqual({ documentId: "doc-0", url: "https://docs.google.com/document/d/doc-0/edit", raw: {} });
     const tool = (await connection().listTools(context())).find((candidate) => candidate.name === "get_document")!;
     expect(new Validator(tool.outputSchema as any, "2020-12", false).validate(empty).errors).toEqual([]);
-    expect(new Validator(tool.outputSchema as any, "2020-12", false).validate({ documentId: "d", raw: DOCUMENT }).errors).toEqual([]);
+    expect(
+      new Validator(tool.outputSchema as any, "2020-12", false).validate({ documentId: "d", raw: DOCUMENT }).errors,
+    ).toEqual([]);
   });
 
   it("refuses a raw document past its ceiling by naming the way out, and raw beside rendering options", async () => {
     const huge = "x".repeat(4 * 1024 * 1024);
     route = () => ({
-      body: { documentId: "big", tabs: [{ tabProperties: { tabId: "t.0" }, documentTab: { body: { content: [paragraph(1, [run(`${huge}\n`, 1)])] } } }] },
+      body: {
+        documentId: "big",
+        tabs: [
+          {
+            tabProperties: { tabId: "t.0" },
+            documentTab: { body: { content: [paragraph(1, [run(`${huge}\n`, 1)])] } },
+          },
+        ],
+      },
     });
     const failure = await call(connection(), "get_document", { documentId: "big", raw: true }).catch((error) => error);
     expect(failure).toMatchObject({ code: "invalid_args" });
@@ -1198,7 +1337,12 @@ describe("every inline element renders as something, or is named (H9)", () => {
     route = () => ({
       body: {
         documentId: "d",
-        tabs: [{ tabProperties: { tabId: "t.0" }, documentTab: { body: { content: [paragraph(1, [run(`${body}\n`, 1)])] } } }],
+        tabs: [
+          {
+            tabProperties: { tabId: "t.0" },
+            documentTab: { body: { content: [paragraph(1, [run(`${body}\n`, 1)])] } },
+          },
+        ],
       },
     });
     const result = await call(connection(), "get_document", { documentId: "d", withIndexes: true });
@@ -1223,7 +1367,14 @@ describe("round-3 review: outcomes by observed status, bounded copies, one final
   };
   const RATE_LIMITED_503 = {
     status: 503,
-    body: { error: { code: 503, message: "Quota exceeded.", status: "UNAVAILABLE", details: [{ reason: "RATE_LIMIT_EXCEEDED" }] } },
+    body: {
+      error: {
+        code: 503,
+        message: "Quota exceeded.",
+        status: "UNAVAILABLE",
+        details: [{ reason: "RATE_LIMIT_EXCEEDED" }],
+      },
+    },
   };
 
   const SURPRISES: [string, { status: number; body?: unknown }][] = [
@@ -1253,7 +1404,10 @@ describe("round-3 review: outcomes by observed status, bounded copies, one final
   });
 
   it("keeps a 429 on a write a rate limit: a 4xx refusal, nothing applied", async () => {
-    route = () => ({ status: 429, body: { error: { code: 429, message: "Slow down.", status: "RESOURCE_EXHAUSTED" } } });
+    route = () => ({
+      status: 429,
+      body: { error: { code: 429, message: "Slow down.", status: "RESOURCE_EXHAUSTED" } },
+    });
     for (const [name, values] of Object.entries(EDITS)) {
       const failure = await call(connection(), name, values).catch((error) => error);
       expect(failure.code, name).toBe("rate_limited");
@@ -1265,7 +1419,13 @@ describe("round-3 review: outcomes by observed status, bounded copies, one final
     const huge = "r".repeat(9 * 1024 * 1024);
     route = (request) =>
       request.url.pathname.endsWith(":batchUpdate")
-        ? { body: { documentId: "d", replies: [{ replaceAllText: { occurrencesChanged: 1 } }], writeControl: { requiredRevisionId: huge } } }
+        ? {
+            body: {
+              documentId: "d",
+              replies: [{ replaceAllText: { occurrencesChanged: 1 } }],
+              writeControl: { requiredRevisionId: huge },
+            },
+          }
         : request.method === "POST"
           ? { body: { documentId: "new-1", title: huge, revisionId: huge } }
           : {
@@ -1273,7 +1433,12 @@ describe("round-3 review: outcomes by observed status, bounded copies, one final
                 documentId: "d",
                 title: "T".repeat(3 * 1024 * 1024),
                 revisionId: huge,
-                tabs: [{ tabProperties: { tabId: "t 0 has spaces", title: "題".repeat(5_000), parentTabId: "p".repeat(200) }, documentTab: {} }],
+                tabs: [
+                  {
+                    tabProperties: { tabId: "t 0 has spaces", title: "題".repeat(5_000), parentTabId: "p".repeat(200) },
+                    documentTab: {},
+                  },
+                ],
               },
             };
     const connector = connection();
@@ -1311,7 +1476,10 @@ describe("round-3 review: outcomes by observed status, bounded copies, one final
     const small = Array.from({ length: 99 }, (_, index) => ({ createNamedRange: { namedRangeId: `kix.${index}` } }));
     const value = "n".repeat(500);
     const shown = new Set<number>();
-    for (const [keys, step] of [[380, 37], [385, 1]] as const) {
+    for (const [keys, step] of [
+      [380, 37],
+      [385, 1],
+    ] as const) {
       const big = {
         createNamedRange: {
           ...Object.fromEntries(Array.from({ length: keys }, (_, key) => [`k${key}`, value])),
@@ -1321,7 +1489,11 @@ describe("round-3 review: outcomes by observed status, bounded copies, one final
       route = () => ({ body: { documentId: "d", replies: [big, ...small] } });
       for (let tail = 0; tail <= 512; tail += step) {
         big.createNamedRange.tail = "t".repeat(tail);
-        const result = await connector.callTool("batch_update_document", { documentId: "d", requests: [{ insertText: {} }], requiredRevisionId: "r" }, ctx) as { replies: unknown[]; notice: string };
+        const result = (await connector.callTool(
+          "batch_update_document",
+          { documentId: "d", requests: [{ insertText: {} }], requiredRevisionId: "r" },
+          ctx,
+        )) as { replies: unknown[]; notice: string };
         expect(bytes(result), `keys ${keys}, tail ${tail}`).toBeLessThanOrEqual(BUDGET);
         expect(result.notice).toContain(`${result.replies.length} of 100 replies`);
         shown.add(result.replies.length);
@@ -1336,7 +1508,9 @@ describe("round-3 review: outcomes by observed status, bounded copies, one final
   it("routes large reads and uncertain creates the same way in schema, guide, and messages", async () => {
     const connector = connection();
     const tool = (await connector.listTools(context())).find((candidate) => candidate.name === "get_document")!;
-    expect((tool.inputSchema as any).properties.maxChars.description).toContain("call directly (call_tool, connecta.result to page)");
+    expect((tool.inputSchema as any).properties.maxChars.description).toContain(
+      "call directly (call_tool, connecta.result to page)",
+    );
     const content = guide(connector).content;
     expect(content).toContain("Read it with a direct `call_tool`, paged");
     expect(content).toContain("straight away only when\n  Google refused it; otherwise read the document first");

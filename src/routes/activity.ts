@@ -31,16 +31,11 @@ import { privateJson, type RouteContext } from "./shared.js";
  * seconds in all: whatever has resolved by then is used, and the rest are
  * abandoned, as they are when the reader leaves.
  */
-function enrichActivityActorLabels(
-  page: ActivityPage,
-  auth: readonly InboundAuth[],
-): Effect.Effect<ActivityReadPage> {
+function enrichActivityActorLabels(page: ActivityPage, auth: readonly InboundAuth[]): Effect.Effect<ActivityReadPage> {
   return Effect.suspend(() => {
     const labels = new Map<string, string>();
     const resolve = ({ key, id, provider }: LabelLookup) =>
-      Effect.tryPromise(() =>
-        Promise.resolve(provider.activityActorLabel!(id)),
-      ).pipe(
+      Effect.tryPromise(() => Promise.resolve(provider.activityActorLabel!(id))).pipe(
         Effect.map(cleanActorLabel),
         Effect.orElseSucceed(() => undefined),
         Effect.map((label) => {
@@ -48,7 +43,10 @@ function enrichActivityActorLabels(
         }),
       );
     return Effect.forEach(
-      labelLookups(page.events.map((event) => event.actor), auth),
+      labelLookups(
+        page.events.map((event) => event.actor),
+        auth,
+      ),
       resolve,
       {
         concurrency: ACTOR_LABEL_CONCURRENCY,
@@ -59,20 +57,27 @@ function enrichActivityActorLabels(
       Effect.map(() => ({
         ...page,
         events: page.events.map((event) => {
-          const resolved = event.actor.id
-            ? labels.get(actorKey(event.actor))
-            : undefined;
+          const resolved = event.actor.id ? labels.get(actorKey(event.actor)) : undefined;
           // Never trust or echo a `label` supplied by storage. The persisted event
           // schema has no label; only this authenticated read path may add one.
           const actor: ActivityActor = {
             kind: event.actor.kind,
             ...(event.actor.id ? { id: event.actor.id } : {}),
-            ...(event.actor.namespace
-              ? { namespace: event.actor.namespace }
-              : {}),
+            ...(event.actor.namespace ? { namespace: event.actor.namespace } : {}),
           };
           // Re-check stored client facts, including custom readers and old rows.
-          const { packageVersion: suppliedPackageVersion, clientName: suppliedName, clientVersion: suppliedVersion, classification: _classification, resultBytes: _resultBytes, kind: _kind, drift: _drift, pool: _pool, actorBasis: _actorBasis, ...record } = event;
+          const {
+            packageVersion: suppliedPackageVersion,
+            clientName: suppliedName,
+            clientVersion: suppliedVersion,
+            classification: _classification,
+            resultBytes: _resultBytes,
+            kind: _kind,
+            drift: _drift,
+            pool: _pool,
+            actorBasis: _actorBasis,
+            ...record
+          } = event;
           const packageVersion = activityPackageVersion(suppliedPackageVersion);
           const clientName = activityClientFact(suppliedName, "name");
           const clientVersion = activityClientFact(suppliedVersion, "version");
@@ -106,19 +111,28 @@ function activityRead(context: RouteContext): Effect.Effect<Response, Answer> {
     if (!list) return yield* refuse("activity history is not configured", 404);
     const admittedPools = new Set<string>();
     for (const [name, pool] of opts.pools) {
-      if (yield* Effect.promise(async () => { try { return await pool.grant(authz.identity) === true; } catch { return false; } })) admittedPools.add(name);
+      if (
+        yield* Effect.promise(async () => {
+          try {
+            return (await pool.grant(authz.identity)) === true;
+          } catch {
+            return false;
+          }
+        })
+      )
+        admittedPools.add(name);
     }
-    const visible = (event: ActivityPage["events"][number]) => activityEventVisible(context, authz, registry, admittedPools, event);
+    const visible = (event: ActivityPage["events"][number]) =>
+      activityEventVisible(context, authz, registry, admittedPools, event);
     const cursor = url.searchParams.get("cursor") ?? undefined;
     if (cursor && cursor.length > 500) return yield* refuse("invalid cursor", 400);
     const requestedLimit = Number(url.searchParams.get("limit") ?? "50");
-    const limit = Number.isFinite(requestedLimit)
-      ? Math.min(100, Math.max(1, Math.trunc(requestedLimit)))
-      : 50;
-    const readPage = (cursor: string | undefined, limit: number) => Effect.tryPromise({
-      try: () => list({ ...(cursor !== undefined ? { cursor } : {}), limit }),
-      catch: error => error,
-    });
+    const limit = Number.isFinite(requestedLimit) ? Math.min(100, Math.max(1, Math.trunc(requestedLimit))) : 50;
+    const readPage = (cursor: string | undefined, limit: number) =>
+      Effect.tryPromise({
+        try: () => list({ ...(cursor !== undefined ? { cursor } : {}), limit }),
+        catch: (error) => error,
+      });
     return yield* Effect.gen(function* () {
       let page = yield* readPage(cursor, limit);
       const events = page.events.filter(visible);
@@ -152,9 +166,7 @@ function activityRead(context: RouteContext): Effect.Effect<Response, Answer> {
   });
 }
 
-export async function routeActivity(
-  context: RouteContext,
-): Promise<Response | null> {
+export async function routeActivity(context: RouteContext): Promise<Response | null> {
   const { path, request } = context;
   if (path !== "/ui/activity" && path !== "/ui/api/activity") return null;
   if (request.method !== "GET") {

@@ -39,10 +39,7 @@ export interface GuardedRequest {
    * array repeats its key once per element, in order — the spelling of the key
    * itself (`ids` or `ids[]`) is the provider's convention, not the helper's.
    */
-  query?: Record<
-    string,
-    string | number | boolean | readonly (string | number | boolean)[] | undefined
-  >;
+  query?: Record<string, string | number | boolean | readonly (string | number | boolean)[] | undefined>;
   /**
    * Per-request headers. `undefined` values are dropped, and a header that
    * collides with an authentication header is refused rather than allowed to
@@ -117,10 +114,7 @@ export function retryAfterMs(headers: Headers): number | undefined {
  * own typed failure. This is where status codes acquire meaning, and it is
  * always the provider's code.
  */
-type GuardedResponseMapper<T> = (
-  response: GuardedResponse,
-  ctx: ConnectorContext,
-) => T | Promise<T>;
+type GuardedResponseMapper<T> = (response: GuardedResponse, ctx: ConnectorContext) => T | Promise<T>;
 
 export interface GuardedFetchOptions {
   /**
@@ -138,9 +132,7 @@ export interface GuardedFetchOptions {
    * a typed `auth_required` from here is the documented way to report a
    * missing credential — the helper has no opinion about what a credential is.
    */
-  authenticate: (
-    ctx: ConnectorContext,
-  ) => Record<string, string> | Promise<Record<string, string>>;
+  authenticate: (ctx: ConnectorContext) => Record<string, string> | Promise<Record<string, string>>;
   /**
    * What actually sends a request, after confinement, framing, and
    * authentication. Defaults to the global `fetch`. A connector that declares
@@ -161,11 +153,7 @@ export interface GuardedFetchOptions {
 }
 
 /** Sends one already-guarded request on behalf of one call's context. */
-type GuardedFetcher = (
-  url: string,
-  init: RequestInit,
-  ctx: ConnectorContext,
-) => Promise<Response>;
+type GuardedFetcher = (url: string, init: RequestInit, ctx: ConnectorContext) => Promise<Response>;
 
 /**
  * The transport half of a guarded connector that authenticates through its
@@ -180,9 +168,7 @@ type GuardedFetcher = (
  * once it is provably beneath `baseUrl`; the grant's origin check is the second
  * fence, not the only one.
  */
-export function oauthBearer(
-  provider: string,
-): Pick<GuardedFetchOptions, "authenticate" | "fetch"> {
+export function oauthBearer(provider: string): Pick<GuardedFetchOptions, "authenticate" | "fetch"> {
   const send: GuardedFetcher = (url, init, ctx) => {
     const grant = (ctx as ApiHandlerContext).oauth;
     if (!grant) {
@@ -225,24 +211,17 @@ function confinementBase(provider: string, baseUrl: string): URL {
   } catch {
     throw new Error(`${provider} baseUrl must be an absolute URL: ${baseUrl}`);
   }
-  const loopback =
-    base.hostname === "localhost" ||
-    base.hostname === "127.0.0.1" ||
-    base.hostname === "[::1]";
+  const loopback = base.hostname === "localhost" || base.hostname === "127.0.0.1" || base.hostname === "[::1]";
   if (base.protocol !== "https:" && !(base.protocol === "http:" && loopback)) {
     throw new Error(
       `${provider} baseUrl must be https (http is allowed only for a loopback proxy or test double): ${baseUrl}`,
     );
   }
   if (base.username || base.password) {
-    throw new Error(
-      `${provider} baseUrl must not embed URL credentials; authentication belongs in headers.`,
-    );
+    throw new Error(`${provider} baseUrl must not embed URL credentials; authentication belongs in headers.`);
   }
   if (base.search || base.hash) {
-    throw new Error(
-      `${provider} baseUrl must not carry a query or fragment: ${baseUrl}`,
-    );
+    throw new Error(`${provider} baseUrl must not carry a query or fragment: ${baseUrl}`);
   }
   return base;
 }
@@ -255,12 +234,7 @@ function confinementBase(provider: string, baseUrl: string): URL {
  * the origin and prefix are re-checked *after* normalization rather than
  * before it.
  */
-function confinedUrl(
-  provider: string,
-  base: URL,
-  basePath: string,
-  request: GuardedRequest,
-): URL {
+function confinedUrl(provider: string, base: URL, basePath: string, request: GuardedRequest): URL {
   const path = request.path;
   if (!path.startsWith("/")) {
     throw new ConnectorCallError(
@@ -278,19 +252,10 @@ function confinedUrl(
   try {
     url = new URL(`${base.origin}${basePath}${path}`);
   } catch {
-    throw new ConnectorCallError(
-      "invalid_args",
-      `A ${provider} request path did not resolve to a valid URL.`,
-    );
+    throw new ConnectorCallError("invalid_args", `A ${provider} request path did not resolve to a valid URL.`);
   }
-  if (
-    url.origin !== base.origin ||
-    !`${url.pathname}/`.startsWith(`${basePath}/`)
-  ) {
-    throw new ConnectorCallError(
-      "invalid_args",
-      `A ${provider} request path escaped the connector's base URL.`,
-    );
+  if (url.origin !== base.origin || !`${url.pathname}/`.startsWith(`${basePath}/`)) {
+    throw new ConnectorCallError("invalid_args", `A ${provider} request path escaped the connector's base URL.`);
   }
   for (const [key, value] of Object.entries(request.query ?? {})) {
     if (value === undefined) continue;
@@ -304,11 +269,7 @@ function confinedUrl(
   return url;
 }
 
-function oversized(
-  provider: string,
-  limit: number,
-  detail: string,
-): ConnectorCallError {
+function oversized(provider: string, limit: number, detail: string): ConnectorCallError {
   return new ConnectorCallError(
     "connector_call_failed",
     `${provider} returned ${detail}, past this connector's ${limit}-byte response ceiling.`,
@@ -319,17 +280,11 @@ function oversized(
 /** The response body as a `ReadableStream`, or null when there is none to read. */
 function readableBody(response: Response): ReadableStream<Uint8Array> | null {
   const body: unknown = response.body;
-  return body && typeof (body as ReadableStream).getReader === "function"
-    ? (body as ReadableStream<Uint8Array>)
-    : null;
+  return body && typeof (body as ReadableStream).getReader === "function" ? (body as ReadableStream<Uint8Array>) : null;
 }
 
 /** Read a stream to the ceiling and stop there — never past it. */
-async function drain(
-  provider: string,
-  stream: ReadableStream<Uint8Array>,
-  limit: number,
-): Promise<Uint8Array> {
+async function drain(provider: string, stream: ReadableStream<Uint8Array>, limit: number): Promise<Uint8Array> {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -369,11 +324,7 @@ async function drain(
  * with a parse error and turns a response nobody was allowed to read into an
  * empty success.
  */
-function boundedResponse(
-  provider: string,
-  response: Response,
-  limit: number,
-): GuardedResponse {
+function boundedResponse(provider: string, response: Response, limit: number): GuardedResponse {
   if (BODILESS_STATUSES.has(response.status)) {
     const emptyJson = async (): Promise<unknown> => undefined;
     return {
@@ -476,9 +427,7 @@ async function readPrefix(
   return { bytes, truncated };
 }
 
-async function jsonResult(
-  read: () => Promise<unknown>,
-): Promise<{ value: unknown } | { parseError: unknown }> {
+async function jsonResult(read: () => Promise<unknown>): Promise<{ value: unknown } | { parseError: unknown }> {
   try {
     return { value: await read() };
   } catch (cause) {
@@ -495,9 +444,7 @@ async function jsonResult(
 export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
   const { provider, maxResponseBytes: limit } = options;
   if (!Number.isInteger(limit) || limit < 1) {
-    throw new Error(
-      `${provider} maxResponseBytes must be a whole number of bytes >= 1; received ${String(limit)}.`,
-    );
+    throw new Error(`${provider} maxResponseBytes must be a whole number of bytes >= 1; received ${String(limit)}.`);
   }
   const base = confinementBase(provider, options.baseUrl);
   // "" for a root base, so joining never doubles the separator.
@@ -507,9 +454,7 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
 
   return async function guarded(request, ctx, map) {
     if (request.body !== undefined && request.rawBody !== undefined) {
-      throw new Error(
-        `A ${provider} request cannot carry both a JSON body and a raw body.`,
-      );
+      throw new Error(`A ${provider} request cannot carry both a JSON body and a raw body.`);
     }
     const url = confinedUrl(provider, base, basePath, request);
 
@@ -555,12 +500,7 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
       response = await send(url.toString(), init, ctx);
     } catch (cause) {
       if (cause instanceof ConnectorCallError) throw cause;
-      throw unavailableCallError(
-        cause,
-        url.href,
-        `Could not reach the ${provider} API.`,
-        ctx.signal,
-      );
+      throw unavailableCallError(cause, url.href, `Could not reach the ${provider} API.`, ctx.signal);
     }
     if (REDIRECT_STATUSES.has(response.status)) {
       await response.body?.cancel().catch(() => {});
@@ -582,10 +522,7 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
 }
 
 /** The stored spelling of a header already present, case-insensitively. */
-function hasHeader(
-  headers: Record<string, string>,
-  name: string,
-): string | undefined {
+function hasHeader(headers: Record<string, string>, name: string): string | undefined {
   const wanted = name.toLowerCase();
   return Object.keys(headers).find((key) => key.toLowerCase() === wanted);
 }

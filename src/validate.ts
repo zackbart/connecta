@@ -1,10 +1,6 @@
 import { Validator } from "@cfworker/json-schema";
 import { boundedEchoText, ConnectorCallError } from "./errors.js";
-import type {
-  ArgumentRepairDetails,
-  ArgumentValidationDetails,
-  ArgumentValidationIssue,
-} from "./errors.js";
+import type { ArgumentRepairDetails, ArgumentValidationDetails, ArgumentValidationIssue } from "./errors.js";
 import { MAX_ARGUMENT_VALIDATION_ISSUES } from "./errors.js";
 import { failureRecord, logFailure, type FailureSubject } from "./operator-record.js";
 import type { JsonSchema, Logger } from "./types.js";
@@ -44,8 +40,7 @@ export interface CompileValidatorOptions {
 // breaking a working tool). A WeakMap so schemas belonging to a discarded
 // connector are collectable, the same pattern compactSchema uses.
 const validators = new WeakMap<JsonSchema, Validator | null>();
-const REQUIRED_PROPERTY_RE =
-  /^Instance does not have required property "([^"]+)"\.$/;
+const REQUIRED_PROPERTY_RE = /^Instance does not have required property "([^"]+)"\.$/;
 
 interface ValidationUnit {
   keyword: string;
@@ -91,18 +86,10 @@ function argumentPath(location: string): string {
 }
 
 function validationUnitKey(unit: ValidationUnit): string {
-  return JSON.stringify([
-    unit.keyword,
-    unit.keywordLocation,
-    unit.instanceLocation,
-    unit.error,
-  ]);
+  return JSON.stringify([unit.keyword, unit.keywordLocation, unit.instanceLocation, unit.error]);
 }
 
-function childPropertyName(
-  parentLocation: string,
-  childLocation: string,
-): string | undefined {
+function childPropertyName(parentLocation: string, childLocation: string): string | undefined {
   const prefix = parentLocation === "#" ? "#/" : `${parentLocation}/`;
   if (!childLocation.startsWith(prefix)) return undefined;
   const encoded = childLocation.slice(prefix.length);
@@ -124,11 +111,7 @@ function schemaDeclaresProperty(schema: unknown, property: string): boolean {
     return true;
   }
   const patterns = record.patternProperties;
-  if (
-    patterns === null ||
-    typeof patterns !== "object" ||
-    Array.isArray(patterns)
-  ) {
+  if (patterns === null || typeof patterns !== "object" || Array.isArray(patterns)) {
     return false;
   }
   for (const pattern of Object.keys(patterns)) {
@@ -142,11 +125,7 @@ function schemaDeclaresProperty(schema: unknown, property: string): boolean {
   return false;
 }
 
-function isDuplicateAdditionalPropertiesBranch(
-  schema: JsonSchema,
-  units: ValidationUnit[],
-  index: number,
-): boolean {
+function isDuplicateAdditionalPropertiesBranch(schema: JsonSchema, units: ValidationUnit[], index: number): boolean {
   const unit = units[index];
   const wrapper = units[index - 1];
   if (
@@ -156,25 +135,13 @@ function isDuplicateAdditionalPropertiesBranch(
   ) {
     return false;
   }
-  const property = childPropertyName(
-    wrapper.instanceLocation,
-    unit.instanceLocation,
-  );
+  const property = childPropertyName(wrapper.instanceLocation, unit.instanceLocation);
   if (property === undefined) return false;
-  const parentSchemaLocation = wrapper.keywordLocation.slice(
-    0,
-    -"/additionalProperties".length,
-  );
-  return schemaDeclaresProperty(
-    pointerValue(schema, parentSchemaLocation || "#"),
-    property,
-  );
+  const parentSchemaLocation = wrapper.keywordLocation.slice(0, -"/additionalProperties".length);
+  return schemaDeclaresProperty(pointerValue(schema, parentSchemaLocation || "#"), property);
 }
 
-function normalizedValidationUnits(
-  schema: JsonSchema,
-  units: ValidationUnit[],
-): ValidationUnit[] {
+function normalizedValidationUnits(schema: JsonSchema, units: ValidationUnit[]): ValidationUnit[] {
   const seen = new Set<string>();
   return units.filter((unit, index) => {
     if (CONTAINER_VALIDATION_KEYWORDS.has(unit.keyword)) return false;
@@ -188,9 +155,7 @@ function normalizedValidationUnits(
   });
 }
 
-const JSON_TYPES: ReadonlySet<string> = new Set([
-  "string", "number", "integer", "boolean", "object", "array", "null",
-]);
+const JSON_TYPES: ReadonlySet<string> = new Set(["string", "number", "integer", "boolean", "object", "array", "null"]);
 
 /** A schema's `type`, when it names JSON types and nothing else. */
 function declaredType(value: unknown): string | undefined {
@@ -210,10 +175,9 @@ function expectedType(schema: JsonSchema, unit: ValidationUnit): string | undefi
     const missing = REQUIRED_PROPERTY_RE.exec(unit.error)?.[1];
     if (!missing) return undefined;
     const parentLocation = unit.keywordLocation.replace(/\/required$/, "");
-    return declaredType(pointerValue(
-      schema,
-      `${parentLocation}/properties/${encodePointerPart(missing)}/type`,
-    )) ?? "present";
+    return (
+      declaredType(pointerValue(schema, `${parentLocation}/properties/${encodePointerPart(missing)}/type`)) ?? "present"
+    );
   }
   const fixed: Record<string, string> = {
     additionalProperties: "no additional properties",
@@ -228,16 +192,10 @@ function expectedType(schema: JsonSchema, unit: ValidationUnit): string | undefi
   return fixed[unit.keyword];
 }
 
-function validationDetails(
-  schema: JsonSchema,
-  units: ValidationUnit[],
-): ArgumentValidationDetails {
+function validationDetails(schema: JsonSchema, units: ValidationUnit[]): ArgumentValidationDetails {
   const issues: ArgumentValidationIssue[] = [];
   for (const unit of units) {
-    const missing =
-      unit.keyword === "required"
-        ? REQUIRED_PROPERTY_RE.exec(unit.error)?.[1]
-        : undefined;
+    const missing = unit.keyword === "required" ? REQUIRED_PROPERTY_RE.exec(unit.error)?.[1] : undefined;
     const path =
       missing !== undefined
         ? `${argumentPath(unit.instanceLocation).replace(/\/$/, "")}/${encodePointerPart(missing)}`
@@ -245,16 +203,12 @@ function validationDetails(
     const code = unit.keyword === "false" ? "additionalProperties" : unit.keyword;
     const expected =
       expectedType(schema, unit) ??
-      (code === "additionalProperties"
-        ? "no additional properties"
-        : "the declared schema constraint");
+      (code === "additionalProperties" ? "no additional properties" : "the declared schema constraint");
     const issue = { path, code, expected };
     if (
       !issues.some(
         (existing) =>
-          existing.path === issue.path &&
-          existing.code === issue.code &&
-          existing.expected === issue.expected,
+          existing.path === issue.path && existing.code === issue.code && existing.expected === issue.expected,
       )
     ) {
       issues.push(issue);
@@ -262,30 +216,37 @@ function validationDetails(
   }
   return {
     issues: issues.slice(0, MAX_ARGUMENT_VALIDATION_ISSUES),
-    ...(issues.length > MAX_ARGUMENT_VALIDATION_ISSUES
-      ? { truncated: true as const }
-      : {}),
+    ...(issues.length > MAX_ARGUMENT_VALIDATION_ISSUES ? { truncated: true as const } : {}),
   };
 }
 
 function schemaObject(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown> : {};
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 function receivedType(value: unknown): string {
-  return value === undefined ? "missing" : value === null ? "null"
-    : Array.isArray(value) ? "array" : typeof value;
+  return value === undefined ? "missing" : value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
 }
 
 const BOUND_KEYWORDS = [
-  "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
-  "minLength", "maxLength", "minItems", "maxItems", "minProperties", "maxProperties",
+  "minimum",
+  "maximum",
+  "exclusiveMinimum",
+  "exclusiveMaximum",
+  "multipleOf",
+  "minLength",
+  "maxLength",
+  "minItems",
+  "maxItems",
+  "minProperties",
+  "maxProperties",
 ] as const;
 
 /** No caller values are used to invent an example. A candidate must validate. */
 function exampleCandidate(
-  schema: unknown, root: JsonSchema, depth = 0,
+  schema: unknown,
+  root: JsonSchema,
+  depth = 0,
   budget = { remaining: 128, active: new Set<object>() },
 ): unknown {
   if (--budget.remaining < 0) throw new Error("Example synthesis budget exhausted");
@@ -302,8 +263,10 @@ function exampleCandidate(
     const type = Array.isArray(node.type) ? node.type[0] : node.type;
     const variants = Array.isArray(node.oneOf) ? node.oneOf : node.anyOf;
     if (Array.isArray(variants) && variants.length) {
-      return mergeExample(exampleCandidate({ ...node, oneOf: undefined, anyOf: undefined }, root, depth + 1, budget),
-        exampleCandidate(variants[0], root, depth + 1, budget));
+      return mergeExample(
+        exampleCandidate({ ...node, oneOf: undefined, anyOf: undefined }, root, depth + 1, budget),
+        exampleCandidate(variants[0], root, depth + 1, budget),
+      );
     }
     if (Array.isArray(node.examples) && node.examples.length) return node.examples[0];
     if (Object.hasOwn(node, "default")) return node.default;
@@ -311,8 +274,12 @@ function exampleCandidate(
     if (type === "object" || node.properties || node.required || node.allOf) {
       const properties = schemaObject(node.properties);
       const required = Array.isArray(node.required) ? node.required : [];
-      candidate = Object.fromEntries(required.filter((key): key is string => typeof key === "string")
-        .slice(0, 30).map((key) => [key, exampleCandidate(properties[key], root, depth + 1, budget)]));
+      candidate = Object.fromEntries(
+        required
+          .filter((key): key is string => typeof key === "string")
+          .slice(0, 30)
+          .map((key) => [key, exampleCandidate(properties[key], root, depth + 1, budget)]),
+      );
       if (Array.isArray(node.allOf)) {
         for (const branch of node.allOf.slice(0, 20)) {
           candidate = mergeExample(candidate, exampleCandidate(branch, root, depth + 1, budget));
@@ -324,7 +291,12 @@ function exampleCandidate(
         if (Object.hasOwn(object, key) && Array.isArray(needs)) {
           for (const need of needs.slice(0, 30)) {
             if (typeof need === "string" && !Object.hasOwn(object, need)) {
-              Object.defineProperty(object, need, { value: exampleCandidate(properties[need], root, depth + 1, budget), enumerable: true, configurable: true, writable: true });
+              Object.defineProperty(object, need, {
+                value: exampleCandidate(properties[need], root, depth + 1, budget),
+                enumerable: true,
+                configurable: true,
+                writable: true,
+              });
             }
           }
         }
@@ -332,7 +304,10 @@ function exampleCandidate(
       if (node.if) {
         try {
           const matches = new Validator(node.if as never, "2020-12", false).validate(candidate).valid;
-          candidate = mergeExample(candidate, exampleCandidate(matches ? node.then : node.else, root, depth + 1, budget));
+          candidate = mergeExample(
+            candidate,
+            exampleCandidate(matches ? node.then : node.else, root, depth + 1, budget),
+          );
         } catch {
           // An unevaluable branch cannot establish a valid example.
         }
@@ -346,23 +321,35 @@ function exampleCandidate(
     } else if (type === "array") {
       const count = typeof node.minItems === "number" ? node.minItems : 0;
       candidate = Array.from({ length: Math.min(count, 20) }, (_, index) =>
-        exampleCandidate(Array.isArray(node.prefixItems) ? node.prefixItems[index] : node.items, root, depth + 1, budget));
+        exampleCandidate(
+          Array.isArray(node.prefixItems) ? node.prefixItems[index] : node.items,
+          root,
+          depth + 1,
+          budget,
+        ),
+      );
     } else if (type === "number" || type === "integer") {
       let number = typeof node.minimum === "number" ? node.minimum : 0;
       if (typeof node.exclusiveMinimum === "number") number = node.exclusiveMinimum + (type === "integer" ? 1 : 0.5);
       if (typeof node.maximum === "number") number = Math.min(number, node.maximum);
       if (typeof node.exclusiveMaximum === "number") number = Math.min(number, node.exclusiveMaximum - 1);
-      if (typeof node.multipleOf === "number" && node.multipleOf > 0) number = Math.ceil(number / node.multipleOf) * node.multipleOf;
+      if (typeof node.multipleOf === "number" && node.multipleOf > 0)
+        number = Math.ceil(number / node.multipleOf) * node.multipleOf;
       candidate = type === "integer" ? Math.ceil(number) : number;
     } else if (type === "boolean") candidate = false;
     else if (type === "null") candidate = null;
     else if (type === "string") {
       const formats: Record<string, string> = {
-        date: "2000-01-01", "date-time": "2000-01-01T00:00:00Z",
-        email: "a@example.com", uri: "https://example.com", uuid: "00000000-0000-4000-8000-000000000000",
+        date: "2000-01-01",
+        "date-time": "2000-01-01T00:00:00Z",
+        email: "a@example.com",
+        uri: "https://example.com",
+        uuid: "00000000-0000-4000-8000-000000000000",
       };
-      candidate = typeof node.format === "string" && formats[node.format]
-        ? formats[node.format] : "x".repeat(Math.min(typeof node.minLength === "number" ? node.minLength : 0, 128));
+      candidate =
+        typeof node.format === "string" && formats[node.format]
+          ? formats[node.format]
+          : "x".repeat(Math.min(typeof node.minLength === "number" ? node.minLength : 0, 128));
     }
     return candidate;
   } finally {
@@ -371,7 +358,14 @@ function exampleCandidate(
 }
 
 function mergeExample(a: unknown, b: unknown): unknown {
-  if (a !== null && b !== null && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) {
+  if (
+    a !== null &&
+    b !== null &&
+    typeof a === "object" &&
+    typeof b === "object" &&
+    !Array.isArray(a) &&
+    !Array.isArray(b)
+  ) {
     return { ...a, ...b };
   }
   return b === undefined ? a : b;
@@ -381,8 +375,11 @@ function mergeExample(a: unknown, b: unknown): unknown {
 function minimizeExample(example: unknown, validator: Validator): void {
   let attempts = 0;
   const valid = () => {
-    try { return validator.validate(example).valid; }
-    catch { return false; }
+    try {
+      return validator.validate(example).valid;
+    } catch {
+      return false;
+    }
   };
   const visit = (value: unknown, depth: number) => {
     if (depth > 12 || value === null || typeof value !== "object" || attempts >= 60) return;
@@ -390,7 +387,10 @@ function minimizeExample(example: unknown, validator: Validator): void {
       for (const item of value.slice(0, 20)) visit(item, depth + 1);
       while (value.length > 0 && attempts++ < 60) {
         const last = value.pop();
-        if (!valid()) { value.push(last); break; }
+        if (!valid()) {
+          value.push(last);
+          break;
+        }
       }
       return;
     }
@@ -408,25 +408,36 @@ function minimizeExample(example: unknown, validator: Validator): void {
   visit(example, 0);
 }
 
-function repairDetails(schema: JsonSchema, args: unknown, units: ValidationUnit[], validator: Validator): ArgumentRepairDetails {
+function repairDetails(
+  schema: JsonSchema,
+  args: unknown,
+  units: ValidationUnit[],
+  validator: Validator,
+): ArgumentRepairDetails {
   const root = schemaObject(schema);
-  const keys = (node: Record<string, unknown>) => Object.entries(schemaObject(node.properties))
-    .filter(([, value]) => value !== false).map(([key]) => key);
+  const keys = (node: Record<string, unknown>) =>
+    Object.entries(schemaObject(node.properties))
+      .filter(([, value]) => value !== false)
+      .map(([key]) => key);
   const issues = units.slice(0, MAX_ARGUMENT_VALIDATION_ISSUES).map((unit) => {
     const missing = unit.keyword === "required" ? REQUIRED_PROPERTY_RE.exec(unit.error)?.[1] : undefined;
-    const location = missing === undefined ? unit.instanceLocation
-      : `${unit.instanceLocation}/${encodePointerPart(missing)}`;
+    const location =
+      missing === undefined ? unit.instanceLocation : `${unit.instanceLocation}/${encodePointerPart(missing)}`;
     const parentLocation = unit.keywordLocation.replace(/\/[^/]+$/, "");
     const parent = schemaObject(pointerValue(schema, parentLocation));
     const node = missing === undefined ? parent : schemaObject(schemaObject(parent.properties)[missing]);
-    const bounds = Object.fromEntries(BOUND_KEYWORDS.flatMap((key) =>
-      typeof node[key] === "number" ? [[key, node[key]]] : []));
+    const bounds = Object.fromEntries(
+      BOUND_KEYWORDS.flatMap((key) => (typeof node[key] === "number" ? [[key, node[key]]] : [])),
+    );
     // A false subschema under additionalProperties names its parent object's keys.
-    const closedParent = unit.keyword === "false" && unit.keywordLocation.endsWith("/additionalProperties")
-      ? schemaObject(pointerValue(schema, unit.keywordLocation.slice(0, -"/additionalProperties".length))) : node;
+    const closedParent =
+      unit.keyword === "false" && unit.keywordLocation.endsWith("/additionalProperties")
+        ? schemaObject(pointerValue(schema, unit.keywordLocation.slice(0, -"/additionalProperties".length)))
+        : node;
     const acceptedKeys = keys(closedParent);
     return {
-      path: argumentPath(location), receivedType: receivedType(pointerValue(args, location)),
+      path: argumentPath(location),
+      receivedType: receivedType(pointerValue(args, location)),
       ...(acceptedKeys.length ? { acceptedKeys } : {}),
       ...(Array.isArray(node.enum) ? { enumValues: node.enum } : {}),
       ...(Object.keys(bounds).length ? { bounds } : {}),
@@ -447,13 +458,17 @@ function repairDetails(schema: JsonSchema, args: unknown, units: ValidationUnit[
         conditionalRequirements.push({ path, condition: { required: [key] }, required });
       }
     }
-    for (const [branch, condition] of [[node.then, node.if], [node.else, node.if ? { not: node.if } : undefined]]) {
+    for (const [branch, condition] of [
+      [node.then, node.if],
+      [node.else, node.if ? { not: node.if } : undefined],
+    ]) {
       const required = schemaObject(branch).required;
       if (condition && Array.isArray(required) && required.every((key) => typeof key === "string")) {
         conditionalRequirements.push({ path, condition, required });
       }
     }
-    for (const [key, child] of Object.entries(schemaObject(node.properties))) visit(child, `${path === "/" ? "" : path}/${encodePointerPart(key)}`, depth + 1);
+    for (const [key, child] of Object.entries(schemaObject(node.properties)))
+      visit(child, `${path === "/" ? "" : path}/${encodePointerPart(key)}`, depth + 1);
     // Alternatives can make a dependency branch-specific. Do not state its
     // requirements without proving the complete branch condition.
     for (const key of ["allOf"]) {
@@ -476,9 +491,12 @@ function repairDetails(schema: JsonSchema, args: unknown, units: ValidationUnit[
     // Unsatisfiable or complex schemas do not get a made-up valid example.
   }
   return {
-    ...(root.properties ? { acceptedKeys: keys(root) } : {}), issues,
+    ...(root.properties ? { acceptedKeys: keys(root) } : {}),
+    issues,
     ...(conditionalRequirements.length ? { conditionalRequirements } : {}),
-    ...(valid ? { example } : { exampleUnavailable: "No valid example could be synthesized. Inspect the published inputSchema." }),
+    ...(valid
+      ? { example }
+      : { exampleUnavailable: "No valid example could be synthesized. Inspect the published inputSchema." }),
     ...(units.length > MAX_ARGUMENT_VALIDATION_ISSUES ? { truncated: true as const } : {}),
   };
 }
@@ -504,12 +522,7 @@ function unusableSchema(address: string, detail: string): Error {
  * schema, so the log records only the tool's catalog entry and the error's
  * class.
  */
-function disableValidation(
-  schema: JsonSchema,
-  subject: FailureSubject,
-  logger: Logger,
-  err: unknown,
-): void {
+function disableValidation(schema: JsonSchema, subject: FailureSubject, logger: Logger, err: unknown): void {
   validators.set(schema, null);
   logFailure(logger, "input schema unusable; arguments are not validated", failureRecord(subject, err));
 }
@@ -588,13 +601,9 @@ export function validateCatalogToolInput(
     // Told from the reviewed findings, never the validator's own sentences,
     // which quote the schema's types, enums, and patterns.
     const validation = validationDetails(schema, units);
-    const shown = nestedUnits.length > 0
-      ? validationDetails(schema, nestedUnits)
-      : validation;
+    const shown = nestedUnits.length > 0 ? validationDetails(schema, nestedUnits) : validation;
     const detail = boundedEchoText(
-      shown.issues
-        .map((issue) => `${issue.path}: expected ${issue.expected} (${issue.code})`)
-        .join("; "),
+      shown.issues.map((issue) => `${issue.path}: expected ${issue.expected} (${issue.code})`).join("; "),
       256,
     );
     return new ConnectorCallError(
@@ -618,10 +627,7 @@ export function validateCatalogToolInput(
  * still slips through here — the validator resolves those lazily — and is
  * caught at call time by the caller's `failClosed`.
  */
-export function compileValidator(
-  schema: JsonSchema,
-  opts: CompileValidatorOptions,
-): void {
+export function compileValidator(schema: JsonSchema, opts: CompileValidatorOptions): void {
   const cached = validators.get(schema);
   if (cached) return;
   // null marks a schema an earlier call already found unusable; recompiling it
@@ -632,9 +638,6 @@ export function compileValidator(
   try {
     validators.set(schema, new Validator(schema as never, "2020-12", false));
   } catch (err) {
-    throw unusableSchema(
-      opts.address,
-      err instanceof Error ? err.message : String(err),
-    );
+    throw unusableSchema(opts.address, err instanceof Error ? err.message : String(err));
   }
 }

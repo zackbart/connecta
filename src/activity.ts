@@ -45,9 +45,11 @@ export function activityClientFact(value: unknown, field: "name" | "version"): s
 
 /** Stored package versions use a bounded release-version grammar, including prereleases. */
 export function activityPackageVersion(value: unknown): string | undefined {
-  return typeof value === "string" && value.length <= 128 &&
+  return typeof value === "string" &&
+    value.length <= 128 &&
     /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?(?![\s\S])/.test(value)
-    ? value : undefined;
+    ? value
+    : undefined;
 }
 
 /** Two names and the dot between them. */
@@ -129,18 +131,38 @@ export function activityCount(value: unknown): number | undefined {
 }
 
 export function activityBehaviorFacts(event: {
-  classification?: unknown; resultBytes?: unknown; kind?: unknown; drift?: unknown; pool?: unknown; actorBasis?: unknown;
+  classification?: unknown;
+  resultBytes?: unknown;
+  kind?: unknown;
+  drift?: unknown;
+  pool?: unknown;
+  actorBasis?: unknown;
 }): Pick<ToolCallActivityEvent, "classification" | "resultBytes" | "kind" | "drift" | "pool" | "actorBasis"> {
-  const classification = event.classification === "read" || event.classification === "write" ? event.classification : undefined;
+  const classification =
+    event.classification === "read" || event.classification === "write" ? event.classification : undefined;
   const resultBytes = activityCount(event.resultBytes);
   const change = event.drift as Partial<ActivityCatalogChange> | undefined;
-  const drift = event.kind === "catalog_drift" && change?.kind === "catalog_changed" &&
-    activityCount(change.addedTools) !== undefined && activityCount(change.removedTools) !== undefined && activityCount(change.changedTools) !== undefined
-    ? { kind: "catalog_changed" as const, addedTools: change.addedTools!, removedTools: change.removedTools!, changedTools: change.changedTools! } : undefined;
+  const drift =
+    event.kind === "catalog_drift" &&
+    change?.kind === "catalog_changed" &&
+    activityCount(change.addedTools) !== undefined &&
+    activityCount(change.removedTools) !== undefined &&
+    activityCount(change.changedTools) !== undefined
+      ? {
+          kind: "catalog_changed" as const,
+          addedTools: change.addedTools!,
+          removedTools: change.removedTools!,
+          changedTools: change.changedTools!,
+        }
+      : undefined;
   // Pool names come from matched deployment config, whose grammar has no size
   // ceiling. Invalid stored scope stays withheld rather than becoming root scope.
-  const pool = event.pool === undefined || event.pool === null ? undefined
-    : typeof event.pool === "string" && /^[a-z0-9_-]+(?![\s\S])/.test(event.pool) ? event.pool : "<withheld>";
+  const pool =
+    event.pool === undefined || event.pool === null
+      ? undefined
+      : typeof event.pool === "string" && /^[a-z0-9_-]+(?![\s\S])/.test(event.pool)
+        ? event.pool
+        : "<withheld>";
   return {
     ...(event.actorBasis === "principal" ? { actorBasis: "principal" as const } : {}),
     ...(classification !== undefined ? { classification } : {}),
@@ -244,9 +266,7 @@ export class InvalidActivityCursorError extends Error {
   }
 }
 
-export type ActivityReadGate = (
-  actor: ActivityActor,
-) => boolean | Promise<boolean>;
+export type ActivityReadGate = (actor: ActivityActor) => boolean | Promise<boolean>;
 
 /**
  * Default destination for catalog changes. Request attribution overrides it
@@ -307,10 +327,7 @@ export type ActivityEventInput = Pick<
  * Workers attach async sinks to waitUntil; synchronous sinks such as Analytics
  * Engine complete inline; Node promises remain detached from the response.
  */
-export function recordToolActivity(
-  context: ActivityRequestContext | undefined,
-  input: ActivityEventInput,
-): void {
+export function recordToolActivity(context: ActivityRequestContext | undefined, input: ActivityEventInput): void {
   if (!context) return;
   // A caller-supplied class wins because it knows something the code table
   // cannot: friction that belongs to a call which did not fail.
@@ -326,8 +343,13 @@ export function recordToolActivity(
     id: crypto.randomUUID(),
     occurredAt: new Date().toISOString(),
     requestId: context.requestId,
-    actor: input.personal || input.privateCatalog ? context.principalActor ?? { kind: context.actor.kind } : context.actor,
-    ...activityBehaviorFacts({ ...input, pool: context.pool, actorBasis: input.privateCatalog || input.personal && context.principalActor ? "principal" : undefined }),
+    actor:
+      input.personal || input.privateCatalog ? (context.principalActor ?? { kind: context.actor.kind }) : context.actor,
+    ...activityBehaviorFacts({
+      ...input,
+      pool: context.pool,
+      actorBasis: input.privateCatalog || (input.personal && context.principalActor) ? "principal" : undefined,
+    }),
     connectorId: boundedEchoText(input.connectorId, MAX_ACTIVITY_NAME_BYTES),
     toolName: boundedEchoText(input.toolName, MAX_ACTIVITY_NAME_BYTES),
     address: boundedEchoText(input.address, MAX_ACTIVITY_ADDRESS_BYTES),
@@ -342,9 +364,7 @@ export function recordToolActivity(
     serverVersion: context.serverInfo.version,
     ...(clientName !== undefined ? { clientName } : {}),
     ...(clientVersion !== undefined ? { clientVersion } : {}),
-    ...(context.deploymentId
-      ? { deploymentId: context.deploymentId }
-      : {}),
+    ...(context.deploymentId ? { deploymentId: context.deploymentId } : {}),
   };
   try {
     const result = context.sink.record(event);
@@ -367,15 +387,26 @@ export function recordCatalogChangeActivity(
   request?: ActivityRequestContext,
 ): void {
   if (!context) return;
-  recordToolActivity(request ?? {
-    ...context, actor: { kind: "system" }, requestId: crypto.randomUUID(),
-  }, {
-    connectorId: input.connectorId, toolName: "<catalog>", address: `${input.connectorId}.<catalog>`,
-    source: "catalog_refresh", outcome: "success", durationMs: 0, attempts: 1,
-    kind: "catalog_drift", drift: input.drift,
-    ...(input.personal ? { personal: true } : {}),
-    ...(input.privateCatalog ? { privateCatalog: true } : {}),
-  });
+  recordToolActivity(
+    request ?? {
+      ...context,
+      actor: { kind: "system" },
+      requestId: crypto.randomUUID(),
+    },
+    {
+      connectorId: input.connectorId,
+      toolName: "<catalog>",
+      address: `${input.connectorId}.<catalog>`,
+      source: "catalog_refresh",
+      outcome: "success",
+      durationMs: 0,
+      attempts: 1,
+      kind: "catalog_drift",
+      drift: input.drift,
+      ...(input.personal ? { personal: true } : {}),
+      ...(input.privateCatalog ? { privateCatalog: true } : {}),
+    },
+  );
 }
 
 export interface ActivityHistoryOptions {

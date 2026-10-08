@@ -5,6 +5,12 @@
   "main": "worker-fakes.ts",
   "compatibility_date": "2025-01-01",
   "compatibility_flags": ["nodejs_compat"],
-  "d1_databases": [{ "binding": "CONNECTA_DB", "database_name": "connecta-eval", "database_id": "00000000-0000-4000-8000-0000000000e1" }],
-  "worker_loaders": [{ "binding": "LOADER" }]
+  "d1_databases": [
+    {
+      "binding": "CONNECTA_DB",
+      "database_name": "connecta-eval",
+      "database_id": "00000000-0000-4000-8000-0000000000e1",
+    },
+  ],
+  "worker_loaders": [{ "binding": "LOADER" }],
 }

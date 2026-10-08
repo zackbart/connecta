@@ -19,18 +19,8 @@ import { calcConnector, makeRegistry, required, silentLogger } from "./helpers.j
 
 const BASE = "https://connecta.test";
 
-function emitHandler(
-  executor: Executor,
-  config: Parameters<typeof createExecuteTool>[5] = {},
-) {
-  return createExecuteTool(
-    makeRegistry([calcConnector]),
-    BASE,
-    executor,
-    silentLogger,
-    undefined,
-    config,
-  );
+function emitHandler(executor: Executor, config: Parameters<typeof createExecuteTool>[5] = {}) {
+  return createExecuteTool(makeRegistry([calcConnector]), BASE, executor, silentLogger, undefined, config);
 }
 
 describe("EmitCollector validation (M1)", () => {
@@ -48,10 +38,7 @@ describe("EmitCollector validation (M1)", () => {
       [{ type: "image", data: 7, mimeType: "image/png" }, '"data" must be a string'],
       [{ type: "text", text: "x", annotations: {} }, "annotations"],
       [{ type: "text", text: "x", _meta: {} }, "_meta"],
-      [
-        { type: "audio", data: "aGk=", mimeType: "audio/wav", extra: 1 },
-        '"extra"',
-      ],
+      [{ type: "audio", data: "aGk=", mimeType: "audio/wav", extra: 1 }, '"extra"'],
     ];
     for (const [block, fragment] of invalid) {
       const sink = collector();
@@ -62,24 +49,41 @@ describe("EmitCollector validation (M1)", () => {
     }
   });
 
-  it.each(["", "%%%invalid%%", "aGk", "aGk=\n", "a Gk=", "aGk===", "-_==", "AB==", "AAF=", "data:image/png;base64,aGk="])("INV-3: rejects malformed image base64 %j before collection", (data) => {
+  it.each([
+    "",
+    "%%%invalid%%",
+    "aGk",
+    "aGk=\n",
+    "a Gk=",
+    "aGk===",
+    "-_==",
+    "AB==",
+    "AAF=",
+    "data:image/png;base64,aGk=",
+  ])("INV-3: rejects malformed image base64 %j before collection", (data) => {
     const sink = collector();
     expect(() => sink.accept({ type: "image", data, mimeType: "image/png" })).toThrow(/strict base64/);
     expect(sink.blocks).toEqual([]);
     expect(sink.bytes).toBe(0);
   });
 
-  it.each(["text/html", "image/svg+xml", "image/jpg", "IMAGE/PNG"])("INV-3: refuses unsupported image MIME %s", (mimeType) => {
-    const sink = collector();
-    expect(() => sink.accept({ type: "image", data: "aGk=", mimeType })).toThrow(/image mimeType/);
-    expect(sink.blocks).toEqual([]);
-  });
+  it.each(["text/html", "image/svg+xml", "image/jpg", "IMAGE/PNG"])(
+    "INV-3: refuses unsupported image MIME %s",
+    (mimeType) => {
+      const sink = collector();
+      expect(() => sink.accept({ type: "image", data: "aGk=", mimeType })).toThrow(/image mimeType/);
+      expect(sink.blocks).toEqual([]);
+    },
+  );
 
-  it.each(["image/png", "image/jpeg", "image/gif", "image/webp"])("INV-3: accepts supported image MIME %s with canonical base64", (mimeType) => {
-    const sink = collector();
-    sink.accept({ type: "image", data: "aGk=", mimeType });
-    expect(sink.blocks).toEqual([{ type: "image", data: "aGk=", mimeType }]);
-  });
+  it.each(["image/png", "image/jpeg", "image/gif", "image/webp"])(
+    "INV-3: accepts supported image MIME %s with canonical base64",
+    (mimeType) => {
+      const sink = collector();
+      sink.accept({ type: "image", data: "aGk=", mimeType });
+      expect(sink.blocks).toEqual([{ type: "image", data: "aGk=", mimeType }]);
+    },
+  );
 
   it("accepts exactly the three block shapes", () => {
     const sink = collector();
@@ -107,9 +111,9 @@ describe("EmitCollector budgets (M5)", () => {
     const smallSize = JSON.stringify(small).length;
     const sink = new EmitCollector(smallSize + 5, 10);
     sink.accept(small);
-    expect(() =>
-      sink.accept({ type: "text", text: "x".repeat(100) }),
-    ).toThrowError(new RegExp(`5 of ${smallSize + 5} remaining`));
+    expect(() => sink.accept({ type: "text", text: "x".repeat(100) })).toThrowError(
+      new RegExp(`5 of ${smallSize + 5} remaining`),
+    );
     expect(sink.blocks).toHaveLength(1);
     expect(sink.bytes).toBe(smallSize);
   });
@@ -117,32 +121,21 @@ describe("EmitCollector budgets (M5)", () => {
 
 describe("connecta.emit provider (M7, M8)", () => {
   it("fails loudly when no collector is configured", async () => {
-    const providers = await buildSandboxProviders(
-      makeRegistry([calcConnector]),
-      BASE,
-      silentLogger,
-    );
-    const emit = required(
-      providers.find((p) => p.name === "connecta")?.fns.emit,
-    );
-    await expect(emit({ type: "text", text: "x" })).rejects.toThrowError(
-      /no emission collector/,
-    );
+    const providers = await buildSandboxProviders(makeRegistry([calcConnector]), BASE, silentLogger);
+    const emit = required(providers.find((p) => p.name === "connecta")?.fns.emit);
+    await expect(emit({ type: "text", text: "x" })).rejects.toThrowError(/no emission collector/);
   });
 
   it("spends no host-call budget", async () => {
     const sink = new EmitCollector(10_000, 10);
     let terminalCode: string | undefined;
-    const providers = await buildSandboxProviders(
-      makeRegistry([calcConnector]),
-      BASE,
-      silentLogger,
-      undefined,
-      {
-        maxHostCalls: 1, emitCollector: sink,
-        onHostCallBudgetExceeded: (failure) => { terminalCode = failure.details.code; },
+    const providers = await buildSandboxProviders(makeRegistry([calcConnector]), BASE, silentLogger, undefined, {
+      maxHostCalls: 1,
+      emitCollector: sink,
+      onHostCallBudgetExceeded: (failure) => {
+        terminalCode = failure.details.code;
       },
-    );
+    });
     const fns = required(providers.find((p) => p.name === "connecta")).fns;
     const emit = required(fns.emit);
     const call = required(fns.call);
@@ -153,7 +146,12 @@ describe("connecta.emit provider (M7, M8)", () => {
     // The next call ends the host run instead of rejecting into the guest.
     let settled = false;
     void call("calc.add", { a: 1, b: 2 }).then(
-      () => { settled = true; }, () => { settled = true; },
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
     );
     await Promise.resolve();
     expect(settled).toBe(false);
@@ -179,8 +177,16 @@ describe("createExecuteTool delivery (M2, M3, M4, M10)", () => {
     expect(out.isError).toBeUndefined();
     expect(out.content).toHaveLength(3);
     const envelope = JSON.parse(required(out.content[0]).text ?? "");
-    expect(envelope).toEqual({ result: { ok: true }, emitted: 2, hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 } });
-    expect(out.structuredContent).toEqual({ result: { ok: true }, emitted: 2, hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 } });
+    expect(envelope).toEqual({
+      result: { ok: true },
+      emitted: 2,
+      hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 },
+    });
+    expect(out.structuredContent).toEqual({
+      result: { ok: true },
+      emitted: 2,
+      hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 },
+    });
     expect(out.content[1]).toEqual({ type: "text", text: "caption" });
     expect(out.content[2]).toEqual({
       type: "image",
@@ -197,9 +203,7 @@ describe("createExecuteTool delivery (M2, M3, M4, M10)", () => {
   });
 
   it("honors configured budgets and falls back on invalid ones", async () => {
-    const script = async (
-      fns: Record<string, (...args: unknown[]) => Promise<unknown>>,
-    ) => {
+    const script = async (fns: Record<string, (...args: unknown[]) => Promise<unknown>>) => {
       const out: Record<string, unknown> = { delivered: 0 };
       await required(fns.emit)({ type: "text", text: "one" });
       out.delivered = 1;
@@ -215,9 +219,7 @@ describe("createExecuteTool delivery (M2, M3, M4, M10)", () => {
       maxEmittedBlocks: 1,
     })({ code: "ignored" });
     const cappedEnvelope = JSON.parse(required(capped.content[0]).text ?? "");
-    expect(String(cappedEnvelope.result.refused)).toContain(
-      "block-count budget",
-    );
+    expect(String(cappedEnvelope.result.refused)).toContain("block-count budget");
     expect(capped.content).toHaveLength(2);
 
     // Zero is not a budget; both knobs fall back to their defaults.
@@ -225,9 +227,7 @@ describe("createExecuteTool delivery (M2, M3, M4, M10)", () => {
       maxEmittedBlocks: 0,
       maxEmittedBytes: Number.NaN,
     })({ code: "ignored" });
-    const fallbackEnvelope = JSON.parse(
-      required(fallback.content[0]).text ?? "",
-    );
+    const fallbackEnvelope = JSON.parse(required(fallback.content[0]).text ?? "");
     expect(fallbackEnvelope.result).toEqual({ delivered: 2 });
     expect(fallback.content).toHaveLength(3);
   });

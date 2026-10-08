@@ -23,23 +23,10 @@ import {
   MAX_EXECUTE_RESULT_CHARS,
   truncateExecuteText,
 } from "./executor-result.js";
-import {
-  ExecutorAdmissionError,
-  ExecutorExecutionError,
-  isAdmittingExecutor,
-} from "./executor-admission.js";
+import { ExecutorAdmissionError, ExecutorExecutionError, isAdmittingExecutor } from "./executor-admission.js";
 import { boundedEchoText, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
-import {
-  DEFAULT_MAX_WRITES,
-  ProgramWrites,
-  writeStateOf,
-} from "./program-writes.js";
-import {
-  InvocationFailure,
-  InvocationService,
-  timed,
-  type WriteDecision,
-} from "./invocation.js";
+import { DEFAULT_MAX_WRITES, ProgramWrites, writeStateOf } from "./program-writes.js";
+import { InvocationFailure, InvocationService, timed, type WriteDecision } from "./invocation.js";
 import { guestPrelude, programError, wrapGuestProgram } from "./guest-runtime.js";
 import { EXECUTE_OUTPUT } from "./meta-output.js";
 import { normalizeProgramSource } from "./program-source.js";
@@ -56,14 +43,7 @@ import {
   hasConnectorGuides,
   SkillsRegistry,
 } from "./skills.js";
-import type {
-  AdmittingExecutor,
-  ExecuteResult,
-  Executor,
-  ExecutorLease,
-  ExecutorProvider,
-  Logger,
-} from "./types.js";
+import type { AdmittingExecutor, ExecuteResult, Executor, ExecutorLease, ExecutorProvider, Logger } from "./types.js";
 
 /** Keep one model-written program from amplifying into an unbounded fan-out. */
 const EXECUTE_MAX_HOST_CALLS = CONFIG_DEFAULTS.execute.maxHostCalls;
@@ -88,7 +68,8 @@ export const CONNECTOR_INVENTORY_MAX_BYTES = 256;
  */
 export const EXECUTE_MAX_EMITTED_BYTES = CONFIG_DEFAULTS.execute.maxEmittedBytes;
 export const EXECUTE_MAX_EMITTED_BLOCKS = CONFIG_DEFAULTS.execute.maxEmittedBlocks;
-const CALL_SIGNATURE = "Use connecta.call(address, args?, { timeoutMs? }) or connecta.call({ address, args?, timeoutMs? }). address must be a canonical connector.tool string.";
+const CALL_SIGNATURE =
+  "Use connecta.call(address, args?, { timeoutMs? }) or connecta.call({ address, args?, timeoutMs? }). address must be a canonical connector.tool string.";
 const diagnosticsEncoder = new TextEncoder();
 
 type ExecuteDiagnosticOperation = "search" | "describe" | "call" | "read";
@@ -105,10 +86,7 @@ interface ExecuteOperationDiagnostics {
 
 class ExecuteDiagnostics {
   private readonly started = Date.now();
-  private readonly operations = new Map<
-    ExecuteDiagnosticOperation,
-    ExecuteOperationDiagnostics
-  >();
+  private readonly operations = new Map<ExecuteDiagnosticOperation, ExecuteOperationDiagnostics>();
   admissionMs = 0;
   setupMs = 0;
   executorWallMs = 0;
@@ -137,12 +115,7 @@ class ExecuteDiagnostics {
     return stats;
   }
 
-  recordCatalog(
-    operation: "search" | "describe",
-    durationMs: number,
-    ok: boolean,
-    result?: unknown,
-  ): void {
+  recordCatalog(operation: "search" | "describe", durationMs: number, ok: boolean, result?: unknown): void {
     const stats = this.stats(operation);
     stats.count++;
     stats.failures += ok ? 0 : 1;
@@ -151,14 +124,12 @@ class ExecuteDiagnostics {
     if (ok) stats.resultBytes += serializedDiagnosticBytes(result);
   }
 
-  recordCall(
-    outcome: {
-      ok: boolean;
-      durationMs: number;
-      timing: { catalogMs: number; connectorMs: number };
-      value?: unknown;
-    },
-  ): void {
+  recordCall(outcome: {
+    ok: boolean;
+    durationMs: number;
+    timing: { catalogMs: number; connectorMs: number };
+    value?: unknown;
+  }): void {
     const stats = this.stats("call");
     stats.count++;
     if (outcome.ok) stats.resultBytes += serializedDiagnosticBytes(outcome.value);
@@ -197,10 +168,7 @@ class ExecuteDiagnostics {
         setupMs: this.setupMs,
         executorWallMs: this.executorWallMs,
         catalogMs: operations.reduce((sum, item) => sum + item.catalogMs, 0),
-        connectorMs: operations.reduce(
-          (sum, item) => sum + item.connectorMs,
-          0,
-        ),
+        connectorMs: operations.reduce((sum, item) => sum + item.connectorMs, 0),
       },
       operations,
       ...(this.emitted ? { emitted: this.emitted } : {}),
@@ -218,8 +186,7 @@ export type EmittedBlock =
   | { type: "image"; data: string; mimeType: string }
   | { type: "audio"; data: string; mimeType: string };
 
-const EMIT_SHAPE_HINT =
-  '{ type: "text", text } or { type: "image" | "audio", data (base64), mimeType }';
+const EMIT_SHAPE_HINT = '{ type: "text", text } or { type: "image" | "audio", data (base64), mimeType }';
 
 /**
  * Strict M1 validation: required fields present and string-valued, nothing
@@ -229,10 +196,7 @@ const EMIT_SHAPE_HINT =
  */
 function requireEmittedBlock(raw: unknown): EmittedBlock {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    throw guestFailure(
-      "invalid_args",
-      `connecta.emit accepts exactly one content block: ${EMIT_SHAPE_HINT}`,
-    );
+    throw guestFailure("invalid_args", `connecta.emit accepts exactly one content block: ${EMIT_SHAPE_HINT}`);
   }
   const block = raw as Record<string, unknown>;
   const fields =
@@ -249,10 +213,7 @@ function requireEmittedBlock(raw: unknown): EmittedBlock {
   }
   for (const field of fields) {
     if (typeof block[field] !== "string") {
-      throw guestFailure(
-        "invalid_args",
-        `connecta.emit block field "${field}" must be a string: ${EMIT_SHAPE_HINT}`,
-      );
+      throw guestFailure("invalid_args", `connecta.emit block field "${field}" must be a string: ${EMIT_SHAPE_HINT}`);
     }
   }
   const extra = Object.keys(block).filter((key) => !fields.includes(key));
@@ -264,14 +225,23 @@ function requireEmittedBlock(raw: unknown): EmittedBlock {
   }
   if (block.type === "image") {
     if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(block.mimeType as string)) {
-      throw guestFailure("invalid_args", "connecta.emit image mimeType must be image/png, image/jpeg, image/gif, or image/webp.");
+      throw guestFailure(
+        "invalid_args",
+        "connecta.emit image mimeType must be image/png, image/jpeg, image/gif, or image/webp.",
+      );
     }
     const data = block.data as string;
     // RFC 4648 alphabet, complete quads and canonical padding, including zero
     // pad bits. Decode only the last quad; validation does not copy the image.
-    if (!data.length || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data) ||
-      btoa(atob(data.slice(-4))) !== data.slice(-4)) {
-      throw guestFailure("invalid_args", "connecta.emit image data must be nonempty, strict base64 with canonical padding.");
+    if (
+      !data.length ||
+      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data) ||
+      btoa(atob(data.slice(-4))) !== data.slice(-4)
+    ) {
+      throw guestFailure(
+        "invalid_args",
+        "connecta.emit image data must be nonempty, strict base64 with canonical padding.",
+      );
     }
   }
   return raw as EmittedBlock;
@@ -306,32 +276,27 @@ export class EmitCollector {
     const textChars = block.type === "text" ? JSON.stringify(block).length : 0;
     // Reserve space for a reduced result envelope even if text fills the budget.
     if (this.textChars + textChars > MAX_EXECUTE_RESULT_CHARS - 512) {
-      throw guestFailure("result_too_large", "Emitted text shares the 24,000-character program result limit. Reduce the text before emitting it.");
+      throw guestFailure(
+        "result_too_large",
+        "Emitted text shares the 24,000-character program result limit. Reduce the text before emitting it.",
+      );
     }
     this.textChars += textChars;
     this.blocks.push(block);
     this.bytes += size;
     this.diagnostics?.recordEmitted(this.blocks.length, this.bytes);
   }
-
 }
 
 /** A positive whole-number budget, or the default when the value is unusable. */
-function resolveBudget(
-  value: number | undefined,
-  fallback: number,
-): number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 1
-    ? Math.trunc(value)
-    : fallback;
+function resolveBudget(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 1 ? Math.trunc(value) : fallback;
 }
 
 function serializedDiagnosticBytes(value: unknown): number {
   try {
     const text = JSON.stringify(value);
-    return text === undefined
-      ? 0
-      : diagnosticsEncoder.encode(text).byteLength;
+    return text === undefined ? 0 : diagnosticsEncoder.encode(text).byteLength;
   } catch {
     // The executor's normal result guard owns the error. Diagnostics must
     // never turn measurement into a second failure path.
@@ -339,11 +304,7 @@ function serializedDiagnosticBytes(value: unknown): number {
   }
 }
 
-function guestFailure(
-  code: string,
-  message: string,
-  retryable = false,
-): InvocationFailure {
+function guestFailure(code: string, message: string, retryable = false): InvocationFailure {
   return new InvocationFailure({ code, message, retryable });
 }
 
@@ -377,9 +338,7 @@ function boundedGuestFailure(failure: InvocationFailure): InvocationFailure {
       code: details.code,
       message: details.message,
       retryable: details.retryable,
-      ...(details.retryAfterMs !== undefined
-        ? { retryAfterMs: details.retryAfterMs }
-        : {}),
+      ...(details.retryAfterMs !== undefined ? { retryAfterMs: details.retryAfterMs } : {}),
     };
   }
   return new InvocationFailure(details);
@@ -433,12 +392,15 @@ interface SandboxLimits {
 
 /** Numeric accounting only; no addresses, arguments, or results. */
 class HostCallBudgetExceeded extends InvocationFailure {
-  constructor(readonly hostCalls: {
-    attempted: number;
-    admitted: number;
-    succeeded: number;
-    failed: number;
-  }, maxHostCalls: number) {
+  constructor(
+    readonly hostCalls: {
+      attempted: number;
+      admitted: number;
+      succeeded: number;
+      failed: number;
+    },
+    maxHostCalls: number,
+  ) {
     super({
       code: "budget_exceeded",
       message: `execute_code host-call budget exceeded (${maxHostCalls} calls maximum)`,
@@ -447,7 +409,12 @@ class HostCallBudgetExceeded extends InvocationFailure {
   }
 }
 
-interface HostCalls { attempted: number; admitted: number; succeeded: number; failed: number }
+interface HostCalls {
+  attempted: number;
+  admitted: number;
+  succeeded: number;
+  failed: number;
+}
 
 type SettleWrite = (state: ReturnType<typeof writeStateOf>) => void;
 
@@ -484,19 +451,14 @@ function sandboxProvider(
     defer: limits.defer,
   });
   const invocation = new InvocationService(registry, catalog, activity);
-  const maxHostCalls = Math.max(
-    1,
-    Math.trunc(limits.maxHostCalls ?? EXECUTE_MAX_HOST_CALLS),
-  );
-  const hostCallTimeoutMs = Math.max(
-    1,
-    Math.trunc(limits.hostCallTimeoutMs ?? EXECUTE_HOST_CALL_TIMEOUT_MS),
-  );
+  const maxHostCalls = Math.max(1, Math.trunc(limits.maxHostCalls ?? EXECUTE_MAX_HOST_CALLS));
+  const hostCallTimeoutMs = Math.max(1, Math.trunc(limits.hostCallTimeoutMs ?? EXECUTE_HOST_CALL_TIMEOUT_MS));
   const { signal, diagnostics, programWrites } = limits;
   const hostCalls = limits.hostCalls ?? { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
   let budgetFailure: InvocationFailure | undefined;
   let emitAttempts = 0;
-  const maxEmitAttempts = Math.max(EXECUTE_MAX_EMITTED_BLOCKS, limits.emitCollector?.maxBlocks ?? EXECUTE_MAX_EMITTED_BLOCKS) * 4;
+  const maxEmitAttempts =
+    Math.max(EXECUTE_MAX_EMITTED_BLOCKS, limits.emitCollector?.maxBlocks ?? EXECUTE_MAX_EMITTED_BLOCKS) * 4;
   // A rejected bridge promise is catchable in both sandboxes. End the host
   // run instead and leave that bridge pending: an awaiting guest cannot catch
   // the refusal and loop. Later calls, including emit, lose host access too.
@@ -556,37 +518,48 @@ function sandboxProvider(
       let timeout: unknown;
       if (address !== null && typeof address === "object" && !Array.isArray(address)) {
         const request = address as Record<string, unknown>;
-        if (args !== undefined || options !== undefined || Object.keys(request).some((key) => !["address", "args", "timeoutMs"].includes(key))) {
+        if (
+          args !== undefined ||
+          options !== undefined ||
+          Object.keys(request).some((key) => !["address", "args", "timeoutMs"].includes(key))
+        ) {
           return yield* Effect.fail(guestFailure("invalid_args", CALL_SIGNATURE));
         }
         address = request.address;
         args = request.args;
         timeout = request.timeoutMs;
       } else if (options !== undefined) {
-        if (!options || typeof options !== "object" || Array.isArray(options) || Object.keys(options).some((key) => key !== "timeoutMs")) {
+        if (
+          !options ||
+          typeof options !== "object" ||
+          Array.isArray(options) ||
+          Object.keys(options).some((key) => key !== "timeoutMs")
+        ) {
           return yield* Effect.fail(guestFailure("invalid_args", CALL_SIGNATURE));
         }
         timeout = (options as { timeoutMs?: unknown }).timeoutMs;
       }
-      if (typeof address !== "string" || (timeout !== undefined && (typeof timeout !== "number" || !Number.isSafeInteger(timeout) || timeout < 1))) {
+      if (
+        typeof address !== "string" ||
+        (timeout !== undefined && (typeof timeout !== "number" || !Number.isSafeInteger(timeout) || timeout < 1))
+      ) {
         return yield* Effect.fail(guestFailure("invalid_args", CALL_SIGNATURE));
       }
-      const requestedMs = normalizeTimeoutMs(timeout as number | undefined) ?? normalizeTimeoutMs(limits.defaultToolTimeoutMs) ?? hostCallTimeoutMs;
+      const requestedMs =
+        normalizeTimeoutMs(timeout as number | undefined) ??
+        normalizeTimeoutMs(limits.defaultToolTimeoutMs) ??
+        hostCallTimeoutMs;
       const timeoutMs = Math.min(requestedMs, Math.max(1, (limits.programDeadlineAt ?? Infinity) - Date.now()));
       // A trusted-pool write settles here — unknown if the call never returned an
       // outcome.
       const sending: { settle?: SettleWrite } = {};
-      const outcome = yield* invocation.pipeline(
-        address,
-        sentSecrets.redact(args ?? {}),
-        invocationContext(sending, timeoutMs),
-      ).pipe(
-        Effect.onExit((exit) =>
-          Effect.sync(() =>
-            sending.settle?.(Exit.isSuccess(exit) ? writeStateOf(exit.value) : "unknown"),
+      const outcome = yield* invocation
+        .pipeline(address, sentSecrets.redact(args ?? {}), invocationContext(sending, timeoutMs))
+        .pipe(
+          Effect.onExit((exit) =>
+            Effect.sync(() => sending.settle?.(Exit.isSuccess(exit) ? writeStateOf(exit.value) : "unknown")),
           ),
-        ),
-      );
+        );
       diagnostics?.recordCall(outcome);
       return outcome.ok
         ? { data: outcome.value, format: outcome.format }
@@ -598,32 +571,20 @@ function sandboxProvider(
   // `cancelled` instead of holding the program until its probe deadline.
   // Policy failures use the same thrown vocabulary as calls and utilities;
   // the transport below reconstructs their code inside the guest.
-  const discovery = <T>(
-    operation: "search" | "describe",
-    read: () => Promise<T>,
-  ): Effect.Effect<unknown, unknown> =>
+  const discovery = <T>(operation: "search" | "describe", read: () => Promise<T>): Effect.Effect<unknown, unknown> =>
     Effect.suspend(() => {
       const started = Date.now();
-      const cancelled = () =>
-        guestFailure(
-          "cancelled",
-          `connecta.${operation} was cancelled because the run ended.`,
-        );
+      const cancelled = () => guestFailure("cancelled", `connecta.${operation} was cancelled because the run ended.`);
       const reading = Effect.tryPromise({
         try: read,
-        catch: (err) =>
-          err instanceof DiscoveryPolicyError
-            ? guestFailure(err.code, err.message)
-            : err,
+        catch: (err) => (err instanceof DiscoveryPolicyError ? guestFailure(err.code, err.message) : err),
       });
-      return (!hostAccessSignal
-        ? reading
-        : hostAccessSignal.aborted
-          ? Effect.fail(cancelled())
-          : Effect.raceAllFirst([
-              reading,
-              fromSignal(hostAccessSignal).pipe(Effect.mapError(cancelled)),
-            ])
+      return (
+        !hostAccessSignal
+          ? reading
+          : hostAccessSignal.aborted
+            ? Effect.fail(cancelled())
+            : Effect.raceAllFirst([reading, fromSignal(hostAccessSignal).pipe(Effect.mapError(cancelled))])
       ).pipe(
         Effect.onExit((exit) =>
           Effect.sync(() =>
@@ -639,49 +600,86 @@ function sandboxProvider(
     });
 
   const meta = createMetaTools(registry, baseUrl, { trust: limits.trust, requestScope });
-  const operations: Record<
-    string,
-    (...args: unknown[]) => Effect.Effect<unknown, unknown>
-  > = {
+  const operations: Record<string, (...args: unknown[]) => Effect.Effect<unknown, unknown>> = {
     call,
-    result: (id, options, signal) => Effect.tryPromise({
-      try: async () => {
-        if (typeof id !== "string" || !options && options !== undefined || options !== undefined && (typeof options !== "object" || Array.isArray(options))) {
-          throw guestFailure("invalid_args", "Use connecta.result(id, { offset?, maxBytes? }).");
-        }
-        const args = (options ?? {}) as Record<string, unknown>;
-        if (Object.keys(args).some((key) => !["offset", "maxBytes"].includes(key)) ||
-          args.offset !== undefined && (typeof args.offset !== "number" || !Number.isSafeInteger(args.offset) || args.offset < 0) ||
-          args.maxBytes !== undefined && (typeof args.maxBytes !== "number" || !Number.isSafeInteger(args.maxBytes) || args.maxBytes < 1)) {
-          throw guestFailure("invalid_args", "Use connecta.result(id, { offset?, maxBytes? }) with whole byte offsets >= 0 and maxBytes >= 1.");
-        }
-        const page = await meta.readResult({ id, ...args }, { signal: signal as AbortSignal | undefined });
-        if (page.isError) throw new InvocationFailure((page.structuredContent?.error ?? {
-          code: "not_found", message: page.content[0]?.text ?? "Result unavailable.", retryable: false,
-        }) as CallErrorDetails);
-        return page.structuredContent;
-      },
-      catch: (err) => err,
-    }),
-    skill: (name, _options, utilitySignal) => Effect.tryPromise({
-      try: async () => {
-        if (typeof name !== "string") throw guestFailure("invalid_args", "Use connecta.skill(name) with an exact skill name.");
-        const skills = new SkillsRegistry(registry, baseUrl, { requestScope, requestSignal: utilitySignal as AbortSignal | undefined ?? hostAccessSignal, probeTimeoutMs: limits.probeTimeoutMs, defer: limits.defer });
-        return { name, format: "text", text: await skills.text(name) };
-      },
-      catch: (err) => err instanceof ConnectorCallError ? guestFailure(err.code, err.message, err.code === "unavailable") : err,
-    }),
-    read: (uri) => Effect.suspend(() => {
-      const started = Date.now();
-      let connectorMs = 0;
-      return readResource(registry, uri, {
-        baseUrl, requestScope, sentSecrets, timeoutMs: hostCallTimeoutMs,
-        onConnectorTime: elapsed => { connectorMs += elapsed; },
-        ...(hostAccessSignal ? { signal: hostAccessSignal } : {}),
-      }).pipe(Effect.onExit(exit => Effect.sync(() => diagnostics?.recordRead(
-        Date.now() - started, connectorMs, Exit.isSuccess(exit), Exit.isSuccess(exit) ? exit.value : undefined,
-      ))));
-    }),
+    result: (id, options, signal) =>
+      Effect.tryPromise({
+        try: async () => {
+          if (
+            typeof id !== "string" ||
+            (!options && options !== undefined) ||
+            (options !== undefined && (typeof options !== "object" || Array.isArray(options)))
+          ) {
+            throw guestFailure("invalid_args", "Use connecta.result(id, { offset?, maxBytes? }).");
+          }
+          const args = (options ?? {}) as Record<string, unknown>;
+          if (
+            Object.keys(args).some((key) => !["offset", "maxBytes"].includes(key)) ||
+            (args.offset !== undefined &&
+              (typeof args.offset !== "number" || !Number.isSafeInteger(args.offset) || args.offset < 0)) ||
+            (args.maxBytes !== undefined &&
+              (typeof args.maxBytes !== "number" || !Number.isSafeInteger(args.maxBytes) || args.maxBytes < 1))
+          ) {
+            throw guestFailure(
+              "invalid_args",
+              "Use connecta.result(id, { offset?, maxBytes? }) with whole byte offsets >= 0 and maxBytes >= 1.",
+            );
+          }
+          const page = await meta.readResult({ id, ...args }, { signal: signal as AbortSignal | undefined });
+          if (page.isError)
+            throw new InvocationFailure(
+              (page.structuredContent?.error ?? {
+                code: "not_found",
+                message: page.content[0]?.text ?? "Result unavailable.",
+                retryable: false,
+              }) as CallErrorDetails,
+            );
+          return page.structuredContent;
+        },
+        catch: (err) => err,
+      }),
+    skill: (name, _options, utilitySignal) =>
+      Effect.tryPromise({
+        try: async () => {
+          if (typeof name !== "string")
+            throw guestFailure("invalid_args", "Use connecta.skill(name) with an exact skill name.");
+          const skills = new SkillsRegistry(registry, baseUrl, {
+            requestScope,
+            requestSignal: (utilitySignal as AbortSignal | undefined) ?? hostAccessSignal,
+            probeTimeoutMs: limits.probeTimeoutMs,
+            defer: limits.defer,
+          });
+          return { name, format: "text", text: await skills.text(name) };
+        },
+        catch: (err) =>
+          err instanceof ConnectorCallError ? guestFailure(err.code, err.message, err.code === "unavailable") : err,
+      }),
+    read: (uri) =>
+      Effect.suspend(() => {
+        const started = Date.now();
+        let connectorMs = 0;
+        return readResource(registry, uri, {
+          baseUrl,
+          requestScope,
+          sentSecrets,
+          timeoutMs: hostCallTimeoutMs,
+          onConnectorTime: (elapsed) => {
+            connectorMs += elapsed;
+          },
+          ...(hostAccessSignal ? { signal: hostAccessSignal } : {}),
+        }).pipe(
+          Effect.onExit((exit) =>
+            Effect.sync(() =>
+              diagnostics?.recordRead(
+                Date.now() - started,
+                connectorMs,
+                Exit.isSuccess(exit),
+                Exit.isSuccess(exit) ? exit.value : undefined,
+              ),
+            ),
+          ),
+        );
+      }),
     // Emission is a provider function, never an ExecuteResult field —
     // that is what keeps the Executor contract untouched and parity
     // structural (M8). It spends no host-call budget (M7); its own
@@ -734,10 +732,7 @@ function sandboxProvider(
           fullDescriptions?: boolean;
         };
         const result = { tools: await catalog.describe({ ...args, format: args.format ?? "json" }) };
-        boundedDiscoveryText(
-          result,
-          'Split the address list or use format: "compact".',
-        );
+        boundedDiscoveryText(result, 'Split the address list or use format: "compact".');
         return result;
       }),
   };
@@ -761,7 +756,10 @@ function sandboxProvider(
           // Invalid emits still allocate guest promises and typed rejections.
           // Bound those attempts without consuming the invocation budget or discarding identities.
           if (name === "emit" && ++emitAttempts > maxEmitAttempts) {
-            budgetFailure = guestFailure("budget_exceeded", `execute_code emission-attempt budget exceeded (${maxEmitAttempts} attempts maximum).`);
+            budgetFailure = guestFailure(
+              "budget_exceeded",
+              `execute_code emission-attempt budget exceeded (${maxEmitAttempts} attempts maximum).`,
+            );
             programWrites?.close();
             limits.dispatchController?.abort();
             limits.onHostCallBudgetExceeded?.(budgetFailure);
@@ -782,23 +780,41 @@ function sandboxProvider(
           const started = Date.now();
           const utility = name === "result" || name === "skill";
           const invoke = Effect.suspend(() => operation(...args));
-          const guarded = utility ? withDeadlineEffect((utilitySignal) => Effect.suspend(() => operation(args[0], args[1], utilitySignal)), {
-            timeoutMs: hostCallTimeoutMs,
-            ...(hostAccessSignal ? { signal: hostAccessSignal } : {}),
-            timeoutError: guestFailure("timeout", `connecta.${name} timed out.`),
-          }) : invoke;
-          const settled = runEdge(guarded.pipe(Effect.catch((error) => {
-            if (utility && hostAccessSignal?.aborted) return typedFailure(guestFailure("cancelled", `connecta.${name} was cancelled because the run ended.`));
-            if (utility && error instanceof InvocationFailure && error.code === "timeout") {
-              const elapsedMs = Date.now() - started;
-              const message = `Operation "connecta.${name}" timed out during ${name === "result" ? "result storage" : "skill lookup"} after ${elapsedMs}ms (effective deadline ${hostCallTimeoutMs}ms).`;
-              return typedFailure(new InvocationFailure({
-                code: "timeout", message, retryable: true,
-                details: { operation: `connecta.${name}`, stage: name === "result" ? "result storage" : "skill lookup", elapsedMs, deadlineMs: hostCallTimeoutMs },
-              }));
-            }
-            return typedFailure(error);
-          }))).then(
+          const guarded = utility
+            ? withDeadlineEffect((utilitySignal) => Effect.suspend(() => operation(args[0], args[1], utilitySignal)), {
+                timeoutMs: hostCallTimeoutMs,
+                ...(hostAccessSignal ? { signal: hostAccessSignal } : {}),
+                timeoutError: guestFailure("timeout", `connecta.${name} timed out.`),
+              })
+            : invoke;
+          const settled = runEdge(
+            guarded.pipe(
+              Effect.catch((error) => {
+                if (utility && hostAccessSignal?.aborted)
+                  return typedFailure(
+                    guestFailure("cancelled", `connecta.${name} was cancelled because the run ended.`),
+                  );
+                if (utility && error instanceof InvocationFailure && error.code === "timeout") {
+                  const elapsedMs = Date.now() - started;
+                  const message = `Operation "connecta.${name}" timed out during ${name === "result" ? "result storage" : "skill lookup"} after ${elapsedMs}ms (effective deadline ${hostCallTimeoutMs}ms).`;
+                  return typedFailure(
+                    new InvocationFailure({
+                      code: "timeout",
+                      message,
+                      retryable: true,
+                      details: {
+                        operation: `connecta.${name}`,
+                        stage: name === "result" ? "result storage" : "skill lookup",
+                        elapsedMs,
+                        deadlineMs: hostCallTimeoutMs,
+                      },
+                    }),
+                  );
+                }
+                return typedFailure(error);
+              }),
+            ),
+          ).then(
             (value) => {
               if (counted) hostCalls.succeeded++;
               return budgetFailure ? stopped : redactAgentOutput(sentSecrets, value);
@@ -876,14 +892,7 @@ function awaitExecutor<A>(
     // which the executor's promise chain can still lose to.)
     fromSignal(signal).pipe(
       Effect.catch(() => Effect.sleep(Duration.millis(1))),
-      Effect.andThen(
-        Effect.fail(
-          new ExecutorAdmissionError(
-            "executor_cancelled",
-            "Execution was cancelled.",
-          ),
-        ),
-      ),
+      Effect.andThen(Effect.fail(new ExecutorAdmissionError("executor_cancelled", "Execution was cancelled."))),
     ),
   ];
   if (options.terminal) contenders.push(options.terminal);
@@ -893,10 +902,9 @@ function awaitExecutor<A>(
       Effect.sleep(Duration.millis(watchdog.ms)).pipe(
         Effect.andThen(
           Effect.suspend(() => {
-            watchdog.logger.warn(
-              "[connecta] execute_code executor did not settle; run abandoned",
-              { watchdogMs: watchdog.ms },
-            );
+            watchdog.logger.warn("[connecta] execute_code executor did not settle; run abandoned", {
+              watchdogMs: watchdog.ms,
+            });
             const elapsedMs = Date.now() - started;
             return Effect.fail(
               new InvocationFailure({
@@ -919,9 +927,7 @@ function awaitExecutor<A>(
  * caller's, and aborting it on the way out is what releases outstanding host
  * waits and tells cooperative connectors to stop.
  */
-function runSignal(
-  caller: AbortSignal | undefined,
-): Effect.Effect<AbortSignal, never, Scope.Scope> {
+function runSignal(caller: AbortSignal | undefined): Effect.Effect<AbortSignal, never, Scope.Scope> {
   return Effect.acquireRelease(
     Effect.sync(() => {
       const controller = new AbortController();
@@ -947,10 +953,7 @@ function runSignal(
  * this request's providers and run its program in the releasing request —
  * which workerd refuses for any I/O. Awaiting the promise resumes it here.
  */
-function leased(
-  executor: AdmittingExecutor,
-  signal: AbortSignal,
-): Effect.Effect<ExecutorLease, unknown, Scope.Scope> {
+function leased(executor: AdmittingExecutor, signal: AbortSignal): Effect.Effect<ExecutorLease, unknown, Scope.Scope> {
   return Effect.acquireRelease(
     awaitExecutor(() => executor.acquire({ signal, wait: true }), signal, {
       late: (lease) => lease.release(),
@@ -997,10 +1000,7 @@ export function createExecuteTool(
     ms: resolveBudget(config.watchdogMs, EXECUTE_WATCHDOG_MS),
     logger,
   };
-  const hostCallTimeoutMs = resolveBudget(
-    config.hostCallTimeoutMs,
-    EXECUTE_HOST_CALL_TIMEOUT_MS,
-  );
+  const hostCallTimeoutMs = resolveBudget(config.hostCallTimeoutMs, EXECUTE_HOST_CALL_TIMEOUT_MS);
 
   const play = (
     program: string,
@@ -1010,9 +1010,7 @@ export function createExecuteTool(
   ): Effect.Effect<ToolResult> =>
     Effect.suspend(() => {
       const sentSecrets = sentSecretsForRequest(requestScope);
-      const diagnostics = diagnosticsRequested
-        ? new ExecuteDiagnostics()
-        : undefined;
+      const diagnostics = diagnosticsRequested ? new ExecuteDiagnostics() : undefined;
       const emitted = new EmitCollector(
         resolveBudget(config.maxEmittedBytes, EXECUTE_MAX_EMITTED_BYTES),
         resolveBudget(config.maxEmittedBlocks, EXECUTE_MAX_EMITTED_BLOCKS),
@@ -1032,61 +1030,69 @@ export function createExecuteTool(
         // Per-call signals cancel individual fetches, but do not close the
         // shared transport. Close its scope after the run's signal ends, on
         // every exit, using the existing bounded cleanup and deferred tail.
-        yield* Effect.addFinalizer(() => Effect.forEach(
-          registry.listConnectors(),
-          (connector) => closeScope(
-            connector,
-            registry.contextFor(connector.id, baseUrl, requestScope),
-            config.defer,
+        yield* Effect.addFinalizer(() =>
+          Effect.forEach(
+            registry.listConnectors(),
+            (connector) =>
+              closeScope(connector, registry.contextFor(connector.id, baseUrl, requestScope), config.defer),
+            { concurrency: "unbounded", discard: true },
           ),
-          { concurrency: "unbounded", discard: true },
-        ));
+        );
         const signal = yield* runSignal(callerSignal);
         // Admission comes before provider construction: queued calls retain
         // no catalogs or provider closures.
         let lease: ExecutorLease | undefined;
         if (isAdmittingExecutor(executor)) {
-          lease = yield* timed((elapsed) => {
-            if (diagnostics) diagnostics.admissionMs = elapsed;
-          }, leased(executor, signal));
+          lease = yield* timed(
+            (elapsed) => {
+              if (diagnostics) diagnostics.admissionMs = elapsed;
+            },
+            leased(executor, signal),
+          );
           if ((lease.waitMs ?? 0) > 0) {
             logger.debug("[connecta] execute_code admitted after queue wait", {
               waitMs: lease.waitMs,
             });
           }
         }
-        const provider = yield* timed((elapsed) => {
-          if (diagnostics) diagnostics.setupMs = elapsed;
-        }, Effect.sync(() =>
-          sandboxProvider(registry, baseUrl, activity, {
-            sentSecrets,
-            signal,
-            hostCalls,
-            onHostCallBudgetExceeded: (failure) => {
-              budgetFailure = failure;
-              Deferred.doneUnsafe(terminal, Effect.fail(failure));
-            },
-            emitCollector: emitted,
-            ...(diagnostics ? { diagnostics } : {}),
-            discoveryConcurrency: config.discoveryConcurrency,
-            probeTimeoutMs: config.probeTimeoutMs,
-            maxHostCalls: config.maxHostCalls,
-            hostCallTimeoutMs,
-            defaultToolTimeoutMs: config.defaultToolTimeoutMs,
-            programDeadlineAt: Date.now() + watchdog.ms,
-            defer: config.defer,
-            trust: config.trust,
-            maxWrites: config.maxWrites,
-            programWrites,
-            dispatchController,
-          }, requestScope),
-        ));
+        const provider = yield* timed(
+          (elapsed) => {
+            if (diagnostics) diagnostics.setupMs = elapsed;
+          },
+          Effect.sync(() =>
+            sandboxProvider(
+              registry,
+              baseUrl,
+              activity,
+              {
+                sentSecrets,
+                signal,
+                hostCalls,
+                onHostCallBudgetExceeded: (failure) => {
+                  budgetFailure = failure;
+                  Deferred.doneUnsafe(terminal, Effect.fail(failure));
+                },
+                emitCollector: emitted,
+                ...(diagnostics ? { diagnostics } : {}),
+                discoveryConcurrency: config.discoveryConcurrency,
+                probeTimeoutMs: config.probeTimeoutMs,
+                maxHostCalls: config.maxHostCalls,
+                hostCallTimeoutMs,
+                defaultToolTimeoutMs: config.defaultToolTimeoutMs,
+                programDeadlineAt: Date.now() + watchdog.ms,
+                defer: config.defer,
+                trust: config.trust,
+                maxWrites: config.maxWrites,
+                programWrites,
+                dispatchController,
+              },
+              requestScope,
+            ),
+          ),
+        );
         if (signal.aborted) {
           return yield* Effect.fail(
-            new ExecutorAdmissionError(
-              "executor_cancelled",
-              "Execution was cancelled during sandbox setup.",
-            ),
+            new ExecutorAdmissionError("executor_cancelled", "Execution was cancelled during sandbox setup."),
           );
         }
         const admitted = lease;
@@ -1094,84 +1100,108 @@ export function createExecuteTool(
         // close, so a write gated after this is not sent, then let the ones
         // already dispatched finish before the scope aborts them — an
         // abandoned write would be one whose outcome nobody knows.
-        return yield* timed((elapsed) => {
-          if (diagnostics) diagnostics.executorWallMs = elapsed;
-        }, awaitExecutor(
-          () => (admitted
-            ? admitted.execute(wrapGuestProgram(program), [provider])
-            : executor.execute(wrapGuestProgram(program), [provider])
-          ).then(
-            (outcome) => {
-              executorLogs = sentSecrets.redact(outcome?.logs);
-              return sentSecrets.redact(outcome);
-            },
-            (err: unknown) => {
-              if (err !== null && typeof err === "object" && "logs" in err) {
-                executorLogs = sentSecrets.redact(err.logs);
-              }
-              throw sentSecrets.redact(err);
-            },
+        return yield* timed(
+          (elapsed) => {
+            if (diagnostics) diagnostics.executorWallMs = elapsed;
+          },
+          awaitExecutor(
+            () =>
+              (admitted
+                ? admitted.execute(wrapGuestProgram(program), [provider])
+                : executor.execute(wrapGuestProgram(program), [provider])
+              ).then(
+                (outcome) => {
+                  executorLogs = sentSecrets.redact(outcome?.logs);
+                  return sentSecrets.redact(outcome);
+                },
+                (err: unknown) => {
+                  if (err !== null && typeof err === "object" && "logs" in err) {
+                    executorLogs = sentSecrets.redact(err.logs);
+                  }
+                  throw sentSecrets.redact(err);
+                },
+              ),
+            signal,
+            { watchdog, terminal: Deferred.await(terminal) },
+          ).pipe(
+            Effect.ensuring(
+              Effect.suspend(() => {
+                programWrites.close();
+                dispatchController.abort();
+                return programWrites.drain();
+              }),
+            ),
           ),
-          signal,
-          { watchdog, terminal: Deferred.await(terminal) },
-        ).pipe(Effect.ensuring(Effect.suspend(() => {
-          programWrites.close();
-          dispatchController.abort();
-          return programWrites.drain();
-        }))));
+        );
       });
       const reported = { emitted, diagnostics, program };
-      const exited = Effect.exit(Effect.scoped(run)).pipe(Effect.flatMap((exit) =>
-        // Releasing a QuickJS lease ends its child and rejects execute() with
-        // the retained log prefix. Give that report one timer turn, just as
-        // cancellation does in awaitExecutor; never wait on a Worker isolate.
-        budgetFailure
-          ? Effect.sleep(Duration.millis(1)).pipe(Effect.as(exit))
-          : Effect.succeed(exit),
-      ));
-      return Effect.map(Effect.map(exited, (exit) => {
-        // A synchronous fire-and-forget burst can also settle its executor in
-        // this turn. The host's terminal refusal always wins over that value.
-        if (budgetFailure instanceof HostCallBudgetExceeded) {
-          const failed = failureResponse(budgetFailure.details.message, {
-            code: budgetFailure.details,
-            logs: executeLogs(executorLogs),
-            emitted,
-            diagnostics,
-          });
-          return failed;
-        }
-        if (Exit.isFailure(exit)) {
-          return failedRun(sentSecrets.redact(Cause.squash(exit.cause)), logger, reported);
-        }
-        return finishedRun(sentSecrets.redact(exit.value), reported);
-      }), (unfinished) => {
-        // Every run response passes through write accounting.
-        const response = programWrites.finish(unfinished);
-        // Calls abandoned by the guest are failed when the run cancels them.
-        const counts = { ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded };
-        response.structuredContent = { ...response.structuredContent, hostCalls: counts };
-        if (response.content[0]?.type === "text") response.content[0].text = JSON.stringify(response.structuredContent);
-        return response;
-      }).pipe(Effect.map((result) => redactAgentOutput(sentSecrets, result)));
+      const exited = Effect.exit(Effect.scoped(run)).pipe(
+        Effect.flatMap((exit) =>
+          // Releasing a QuickJS lease ends its child and rejects execute() with
+          // the retained log prefix. Give that report one timer turn, just as
+          // cancellation does in awaitExecutor; never wait on a Worker isolate.
+          budgetFailure ? Effect.sleep(Duration.millis(1)).pipe(Effect.as(exit)) : Effect.succeed(exit),
+        ),
+      );
+      return Effect.map(
+        Effect.map(exited, (exit) => {
+          // A synchronous fire-and-forget burst can also settle its executor in
+          // this turn. The host's terminal refusal always wins over that value.
+          if (budgetFailure instanceof HostCallBudgetExceeded) {
+            const failed = failureResponse(budgetFailure.details.message, {
+              code: budgetFailure.details,
+              logs: executeLogs(executorLogs),
+              emitted,
+              diagnostics,
+            });
+            return failed;
+          }
+          if (Exit.isFailure(exit)) {
+            return failedRun(sentSecrets.redact(Cause.squash(exit.cause)), logger, reported);
+          }
+          return finishedRun(sentSecrets.redact(exit.value), reported);
+        }),
+        (unfinished) => {
+          // Every run response passes through write accounting.
+          const response = programWrites.finish(unfinished);
+          // Calls abandoned by the guest are failed when the run cancels them.
+          const counts = { ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded };
+          response.structuredContent = { ...response.structuredContent, hostCalls: counts };
+          if (response.content[0]?.type === "text")
+            response.content[0].text = JSON.stringify(response.structuredContent);
+          return response;
+        },
+      ).pipe(Effect.map((result) => redactAgentOutput(sentSecrets, result)));
     });
 
-  return agentOutputOperations((requestScope) => ({
-    execute: ({ code, diagnostics }: { code: string; diagnostics?: boolean }, options: { signal?: AbortSignal } = {}) => {
-    // A code-unit count above the cap is already too large in UTF-8. Check
-    // that first so a huge direct-call string is never encoded in full.
-    if (code.length > EXECUTE_MAX_CODE_BYTES ||
-      new TextEncoder().encode(code).byteLength > EXECUTE_MAX_CODE_BYTES) {
-      const message = `execute_code code exceeds the ${EXECUTE_MAX_CODE_BYTES}-byte UTF-8 limit.`;
-      const response = failureResponse(message, { code: { code: "invalid_args", message, retryable: false } });
-      response.structuredContent = { ...response.structuredContent, hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 } };
-      response.content[0]!.text = JSON.stringify(response.structuredContent);
-      return Promise.resolve(response);
-    }
-    return runEdge(Effect.suspend(() =>
-      play(normalizeProgramSource(code), diagnostics, options.signal, requestScope)));
-    },
-  }), config.requestScope).execute;
+  return agentOutputOperations(
+    (requestScope) => ({
+      execute: (
+        { code, diagnostics }: { code: string; diagnostics?: boolean },
+        options: { signal?: AbortSignal } = {},
+      ) => {
+        // A code-unit count above the cap is already too large in UTF-8. Check
+        // that first so a huge direct-call string is never encoded in full.
+        if (
+          code.length > EXECUTE_MAX_CODE_BYTES ||
+          new TextEncoder().encode(code).byteLength > EXECUTE_MAX_CODE_BYTES
+        ) {
+          const message = `execute_code code exceeds the ${EXECUTE_MAX_CODE_BYTES}-byte UTF-8 limit.`;
+          const response = failureResponse(message, { code: { code: "invalid_args", message, retryable: false } });
+          response.structuredContent = {
+            ...response.structuredContent,
+            hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 },
+          };
+          response.content[0]!.text = JSON.stringify(response.structuredContent);
+          return Promise.resolve(response);
+        }
+        return runEdge(
+          Effect.suspend(() => play(normalizeProgramSource(code), diagnostics, options.signal, requestScope)),
+        );
+      },
+    }),
+    config.requestScope,
+  ).execute;
 }
 
 interface RunReport {
@@ -1181,16 +1211,17 @@ interface RunReport {
 }
 
 /** An execution that never produced an ExecuteResult, as the model sees it. */
-function failedRun(
-  err: unknown,
-  logger: Logger,
-  { emitted, diagnostics, program }: RunReport,
-): ToolResult {
-  const logs = err !== null && typeof err === "object" && "logs" in err
-    ? executeLogs(err.logs)
-    : undefined;
-  if (err instanceof InvocationFailure) return failureResponse(err.details.message, { logs, emitted, diagnostics, code: err.details });
-  if (err instanceof SyntaxError) return failureResponse(err.message, { logs, emitted, diagnostics, code: programError({ name: "SyntaxError", message: err.message }, program) });
+function failedRun(err: unknown, logger: Logger, { emitted, diagnostics, program }: RunReport): ToolResult {
+  const logs = err !== null && typeof err === "object" && "logs" in err ? executeLogs(err.logs) : undefined;
+  if (err instanceof InvocationFailure)
+    return failureResponse(err.details.message, { logs, emitted, diagnostics, code: err.details });
+  if (err instanceof SyntaxError)
+    return failureResponse(err.message, {
+      logs,
+      emitted,
+      diagnostics,
+      code: programError({ name: "SyntaxError", message: err.message }, program),
+    });
   if (err instanceof ExecutorAdmissionError) {
     if (err.code === "executor_overloaded") {
       logger.warn("[connecta] execute_code admission rejected", {
@@ -1206,9 +1237,7 @@ function failedRun(
         code: err.code,
         message: err.message,
         retryable: err.retryable,
-        ...(err.retryAfterMs !== undefined
-          ? { retryAfterMs: err.retryAfterMs }
-          : {}),
+        ...(err.retryAfterMs !== undefined ? { retryAfterMs: err.retryAfterMs } : {}),
       },
     });
   }
@@ -1221,10 +1250,7 @@ function failedRun(
 }
 
 /** The response for an ExecuteResult: the program's error or its value. */
-function finishedRun(
-  outcome: ExecuteResult,
-  { emitted, diagnostics, program }: RunReport,
-): ToolResult {
+function finishedRun(outcome: ExecuteResult, { emitted, diagnostics, program }: RunReport): ToolResult {
   if (outcome === null || typeof outcome !== "object" || Array.isArray(outcome)) {
     return failureResponse("Executor failed: expected an ExecuteResult object.", {
       emitted,
@@ -1246,18 +1272,33 @@ function finishedRun(
     if (outcome.failure?.timeout) {
       const { elapsedMs, deadlineMs } = outcome.failure.timeout;
       const message = `Operation "execute_code" timed out during sandbox after ${elapsedMs}ms (effective deadline ${deadlineMs}ms).`;
-      return failureResponse(message, { logs, emitted, diagnostics, code: {
-        code: "timeout", message, retryable: false,
-        details: { operation: "execute_code", stage: "sandbox", elapsedMs, deadlineMs },
-      } });
+      return failureResponse(message, {
+        logs,
+        emitted,
+        diagnostics,
+        code: {
+          code: "timeout",
+          message,
+          retryable: false,
+          details: { operation: "execute_code", stage: "sandbox", elapsedMs, deadlineMs },
+        },
+      });
     }
     return failureResponse(failure?.message ?? outcome.error, {
-      logs, emitted, diagnostics,
-      code: failure ?? programError({
-        name: outcome.failure?.name ?? /^(SyntaxError|ReferenceError|TypeError|RangeError):/.exec(outcome.error)?.[1],
-        message: outcome.error || "Execution failed without an error message.",
-        ...(outcome.failure?.line !== undefined ? { line: outcome.failure.line - 1 } : {}),
-      }, program),
+      logs,
+      emitted,
+      diagnostics,
+      code:
+        failure ??
+        programError(
+          {
+            name:
+              outcome.failure?.name ?? /^(SyntaxError|ReferenceError|TypeError|RangeError):/.exec(outcome.error)?.[1],
+            message: outcome.error || "Execution failed without an error message.",
+            ...(outcome.failure?.line !== undefined ? { line: outcome.failure.line - 1 } : {}),
+          },
+          program,
+        ),
     });
   }
   // A result crossing back as a host BigInt (or otherwise unserializable
@@ -1285,9 +1326,7 @@ function finishedRun(
     // Emitted image/audio blocks are valid MCP content that ToolResult's
     // text-only typing does not model — the same acknowledged gap
     // guardContent lives with for downstream block passthrough.
-    response.content.push(
-      ...(emitted.blocks as unknown as typeof response.content),
-    );
+    response.content.push(...(emitted.blocks as unknown as typeof response.content));
   }
   return response;
 }
@@ -1324,26 +1363,18 @@ function failureResponse(
 function discardedEmits(emitted: EmitCollector): {
   emittedDiscarded?: number;
 } {
-  return emitted.blocks.length > 0
-    ? { emittedDiscarded: emitted.blocks.length }
-    : {};
+  return emitted.blocks.length > 0 ? { emittedDiscarded: emitted.blocks.length } : {};
 }
 
-function connectorInventory(
-  connectors: ReturnType<RegistryView["listConnectors"]>,
-): string {
+function connectorInventory(connectors: ReturnType<RegistryView["listConnectors"]>): string {
   const prefix = "Connectors: ";
   if (connectors.length === 0) return `${prefix}none.`;
   const entries = connectors.map((connector) => {
     const address = connector.id;
     const title = connector.title?.replace(/\s+/g, " ").trim();
-    const label = title && title !== connector.id
-      ? `${address}: ${boundedEchoText(title, 45)}`
-      : address;
+    const label = title && title !== connector.id ? `${address}: ${boundedEchoText(title, 45)}` : address;
     if (!connectorGuide(connector)) return label;
-    const requirement = connectorGuideRequired(connector)
-      ? "required guide"
-      : "guide";
+    const requirement = connectorGuideRequired(connector) ? "required guide" : "guide";
     return `${label} (${requirement} ${connectorSkillName(connector.id)})`;
   });
   const shown: string[] = [];
@@ -1354,9 +1385,7 @@ function connectorInventory(
     const omitted = entries.length - index - 1;
     const suffix = omitted > 0 ? `; +${omitted} more.` : ".";
     const serialized = prefix + candidate + suffix;
-    if (
-      boundedEchoText(serialized, CONNECTOR_INVENTORY_MAX_BYTES) !== serialized
-    ) {
+    if (boundedEchoText(serialized, CONNECTOR_INVENTORY_MAX_BYTES) !== serialized) {
       break;
     }
     shown.push(entry);
@@ -1396,12 +1425,7 @@ const EXECUTE_INPUT = advertisedSchema(
       .describe(
         "One complete zero-argument JavaScript async arrow: async () => { ... }. Use the provided connecta global to discover, call, and return the reduced answer. At most 65,536 UTF-8 bytes.",
       ),
-    diagnostics: z
-      .boolean()
-      .optional()
-      .describe(
-        "Add request-local, payload-free timing and result-size summaries.",
-      ),
+    diagnostics: z.boolean().optional().describe("Add request-local, payload-free timing and result-size summaries."),
   }),
 );
 
@@ -1448,49 +1472,39 @@ export function registerExecuteTool(
   // the budgets this deployment actually enforces.
   const emitBudgets = {
     maxBytes: resolveBudget(ctx.maxEmittedBytes, EXECUTE_MAX_EMITTED_BYTES),
-    maxBlocks: resolveBudget(
-      ctx.maxEmittedBlocks,
-      EXECUTE_MAX_EMITTED_BLOCKS,
-    ),
+    maxBlocks: resolveBudget(ctx.maxEmittedBlocks, EXECUTE_MAX_EMITTED_BLOCKS),
   };
   // Same rule for host-call limits: the description advertises exactly what
   // the sandbox enforces, so a raised deadline is visible to the model.
   const hostLimits = {
     maxHostCalls: resolveBudget(ctx.maxHostCalls, EXECUTE_MAX_HOST_CALLS),
-    hostCallTimeoutMs: resolveBudget(
-      ctx.hostCallTimeoutMs,
-      EXECUTE_HOST_CALL_TIMEOUT_MS,
-    ),
+    hostCallTimeoutMs: resolveBudget(ctx.hostCallTimeoutMs, EXECUTE_HOST_CALL_TIMEOUT_MS),
   };
   const connectors = registry.listConnectors();
   const maxWrites = resolveBudget(ctx.maxWrites, DEFAULT_MAX_WRITES);
-  const execute = createExecuteTool(
-    registry,
-    ctx.baseUrl,
-    ctx.executor,
-    ctx.logger,
-    ctx.activity,
-    {
-      defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,
-      discoveryConcurrency: ctx.discoveryConcurrency,
-      probeTimeoutMs: ctx.probeTimeoutMs,
-      maxEmittedBytes: emitBudgets.maxBytes,
-      maxEmittedBlocks: emitBudgets.maxBlocks,
-      maxHostCalls: hostLimits.maxHostCalls,
-      hostCallTimeoutMs: hostLimits.hostCallTimeoutMs,
-      watchdogMs: ctx.watchdogMs,
-      defer: ctx.defer,
-      trust: ctx.trust,
-      maxWrites,
-      requestScope: ctx.requestScope,
-    },
-  );
+  const execute = createExecuteTool(registry, ctx.baseUrl, ctx.executor, ctx.logger, ctx.activity, {
+    defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,
+    discoveryConcurrency: ctx.discoveryConcurrency,
+    probeTimeoutMs: ctx.probeTimeoutMs,
+    maxEmittedBytes: emitBudgets.maxBytes,
+    maxEmittedBlocks: emitBudgets.maxBlocks,
+    maxHostCalls: hostLimits.maxHostCalls,
+    hostCallTimeoutMs: hostLimits.hostCallTimeoutMs,
+    watchdogMs: ctx.watchdogMs,
+    defer: ctx.defer,
+    trust: ctx.trust,
+    maxWrites,
+    requestScope: ctx.requestScope,
+  });
   server.registerTool(
     "execute_code",
     {
       description: executeDescription(
         emitBudgets,
-        { ...hostLimits, hostCallTimeoutMs: normalizeTimeoutMs(ctx.defaultToolTimeoutMs) ?? hostLimits.hostCallTimeoutMs },
+        {
+          ...hostLimits,
+          hostCallTimeoutMs: normalizeTimeoutMs(ctx.defaultToolTimeoutMs) ?? hostLimits.hostCallTimeoutMs,
+        },
         hasConnectorGuides(connectors),
         connectors,
         maxWrites,
@@ -1507,13 +1521,13 @@ export function registerExecuteTool(
     },
     (args, extra) => {
       if (ctx.client) bindMcpClient(extra, ctx.client, ctx.activity);
-      const run = () => underAnySignal([extra.mcpReq.signal, ctx.requestSignal], (signal) =>
-        execute(args as { code: string; diagnostics?: boolean }, {
-          signal,
-        }));
-      return ctx.authElicitation
-        ? ctx.authElicitation.run("execute_code", args, extra, run)
-        : run();
+      const run = () =>
+        underAnySignal([extra.mcpReq.signal, ctx.requestSignal], (signal) =>
+          execute(args as { code: string; diagnostics?: boolean }, {
+            signal,
+          }),
+        );
+      return ctx.authElicitation ? ctx.authElicitation.run("execute_code", args, extra, run) : run();
     },
   );
 }

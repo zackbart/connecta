@@ -1,15 +1,19 @@
 import { markCatalogFreshness, carryCatalogFreshness } from "./catalog-freshness.js";
 import { activityRequest } from "./activity-request.js";
 import type { CatalogDriftActivityContext } from "./activity.js";
-import { attachCatalogCache, catalogExpiry, customCatalogFallback, storeCustomCatalogFallback, catalogFetchedAt, invalidateCatalogCache, observeUncachedCatalogRefresh, type CatalogToolFingerprint } from "./catalog-cache.js";
+import {
+  attachCatalogCache,
+  catalogExpiry,
+  customCatalogFallback,
+  storeCustomCatalogFallback,
+  catalogFetchedAt,
+  invalidateCatalogCache,
+  observeUncachedCatalogRefresh,
+  type CatalogToolFingerprint,
+} from "./catalog-cache.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { assertStaticToolNames, hasControlCharacters } from "./tool-name.js";
-import {
-  Clock,
-  Duration,
-  Effect,
-  Random,
-} from "effect";
+import { Clock, Duration, Effect, Random } from "effect";
 import type { CredentialVault } from "./credential-contract.js";
 import type {
   CatalogAccessObservation,
@@ -21,17 +25,9 @@ import type {
   Logger,
   ToolDef,
 } from "./types.js";
-import {
-  storedCredentialShape,
-} from "./credential-rules.js";
+import { storedCredentialShape } from "./credential-rules.js";
 import { ConnectorCallError } from "./errors.js";
-import {
-  boundedStatus,
-  failureRecord,
-  failureStatus,
-  logFailure,
-  ownStatus,
-} from "./operator-record.js";
+import { boundedStatus, failureRecord, failureStatus, logFailure, ownStatus } from "./operator-record.js";
 import {
   ConnectorCallAdmissionController,
   aggregateCallAdmissionSnapshots,
@@ -48,23 +44,14 @@ import {
 import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "./catalog-limits.js";
 import { ObservedOutputSchemas } from "./result-shapes.js";
 import { redactCatalog, sentSecretsFor, sentSecretsForRequest, trackCredentialReads } from "./sent-secrets.js";
-import {
-  GUIDE_SUMMARY_LENGTH,
-  normalizeGuideSummary,
-} from "./skills.js";
+import { GUIDE_SUMMARY_LENGTH, normalizeGuideSummary } from "./skills.js";
 import { attachOAuthSealer, vaultOAuthSealer } from "./oauth-sealing.js";
 import { attachOAuthPartition, oauthPartitionIdle } from "./oauth-partition.js";
 import { attachCaller, type ConnectorCaller } from "./connector-caller.js";
 import { runEdge } from "./runtime/run.js";
 import { SharedRead } from "./runtime/shared-read.js";
 import { type Storage } from "./runtime/services.js";
-import {
-  runOnPartition,
-  storageCompareAndSet,
-  storageDelete,
-  storageGet,
-  storageSet,
-} from "./runtime/storage.js";
+import { runOnPartition, storageCompareAndSet, storageDelete, storageGet, storageSet } from "./runtime/storage.js";
 import {
   jsonCodec,
   OAUTH_HANDOFF_TTL_SECONDS,
@@ -86,9 +73,7 @@ const encoder = new TextEncoder();
  * activity for — a connector id an agent invented is the most common address
  * mistake, and the one an operator most needs to see.
  */
-export function splitAddress(
-  address: string,
-): { connectorId: string; toolName: string } | null {
+export function splitAddress(address: string): { connectorId: string; toolName: string } | null {
   const dot = address.indexOf(".");
   if (dot <= 0 || dot === address.length - 1) return null;
   return {
@@ -128,13 +113,8 @@ export function isValidMaxResultBytes(value: number): boolean {
  * cap (`Registry.assertResultCaps`); the resolution stays total so no call
  * site has to cope with a broken one.
  */
-export function resolveMaxResultBytes(
-  value: number | undefined,
-  inherited: number,
-): number {
-  return value !== undefined && isValidMaxResultBytes(value)
-    ? value
-    : inherited;
+export function resolveMaxResultBytes(value: number | undefined, inherited: number): number {
+  return value !== undefined && isValidMaxResultBytes(value) ? value : inherited;
 }
 
 /** Freeze registry-owned facts so review digest memoization remains valid. */
@@ -173,7 +153,6 @@ export interface RegistryOptions {
    */
   maxResultBytes?: number | undefined;
   results?: { maxStashBytes?: number; maxStashEntries?: number } | undefined;
-
 }
 
 function namespaced(storage: KVStorage, prefix: string): KVStorage {
@@ -181,19 +160,12 @@ function namespaced(storage: KVStorage, prefix: string): KVStorage {
     get: (k) => storage.get(prefix + k),
     set: (k, v, o) => storage.set(prefix + k, v, o),
     delete: (k) => storage.delete(prefix + k),
-    list: async (keyPrefix) =>
-      (await storage.list(prefix + keyPrefix)).map((key) =>
-        key.slice(prefix.length),
-      ),
-    compareAndSet: (k, expected, next, o) =>
-      storage.compareAndSet(prefix + k, expected, next, o),
+    list: async (keyPrefix) => (await storage.list(prefix + keyPrefix)).map((key) => key.slice(prefix.length)),
+    compareAndSet: (k, expected, next, o) => storage.compareAndSet(prefix + k, expected, next, o),
   };
 }
 
-export type ConnectorOperationOptions = Pick<
-  ConnectorContext,
-  "signal" | "timeoutMs" | "defer"
->;
+export type ConnectorOperationOptions = Pick<ConnectorContext, "signal" | "timeoutMs" | "defer">;
 
 /**
  * The registry surface a per-connection MCP server consumes: every meta-tool
@@ -222,9 +194,7 @@ export interface RegistryView {
   getConnector(id: string): Connector | undefined;
   /** Only whole-connector grants authorize resource reads. */
   getResourceConnector(id: string): Connector | undefined;
-  resolveAddress(
-    address: string,
-  ): { connector: Connector; toolName: string } | null;
+  resolveAddress(address: string): { connector: Connector; toolName: string } | null;
   getTools(
     id: string,
     baseUrl: string,
@@ -238,10 +208,7 @@ export interface RegistryView {
     callOptions?: ConnectorOperationOptions,
   ): ConnectorContext;
   /** Acquire the connector's shared downstream-call permit. */
-  admitCall(
-    id: string,
-    input: { toolName: string; args: unknown; signal?: AbortSignal },
-  ): Promise<CallAdmissionPermit>;
+  admitCall(id: string, input: { toolName: string; args: unknown; signal?: AbortSignal }): Promise<CallAdmissionPermit>;
   resultsStorage(): KVStorage;
   resultIdentity(): ResultIdentity;
   /** Recheck live auth/grants and pool admission before exposing stored data. */
@@ -251,16 +218,9 @@ export interface RegistryView {
   /** Local declared-vs-stored credential mismatch, with no downstream I/O. */
   credentialDriftFor(id: string): Promise<string | undefined>;
   /** Value-free shape learned from successful calls, never a provider declaration. */
-  observedOutputSchema(
-    connectorId: string,
-    definition: ToolDef,
-  ): ToolDef["outputSchema"] | undefined;
+  observedOutputSchema(connectorId: string, definition: ToolDef): ToolDef["outputSchema"] | undefined;
   /** Passively learn one successful unwrapped result; failures stay isolated. */
-  observeOutputShape(
-    connectorId: string,
-    definition: ToolDef,
-    value: unknown,
-  ): void;
+  observeOutputShape(connectorId: string, definition: ToolDef, value: unknown): void;
   /** Age of the complete cached catalog; null for static or unobserved catalogs. */
   catalogAgeMs(id: string): number | null;
   statusFor(
@@ -334,11 +294,16 @@ function liveStashCharges(raw: string | null, now: number): StashCharge[] {
   }
   const entries = (parsed as { v?: unknown; entries?: unknown } | null)?.entries;
   if (!Array.isArray(entries)) return [];
-  return entries.filter((entry): entry is StashCharge =>
-    Array.isArray(entry) && entry.length === 3 &&
-    typeof entry[0] === "string" &&
-    Number.isSafeInteger(entry[1]) && entry[1] >= 0 &&
-    typeof entry[2] === "number" && entry[2] > now);
+  return entries.filter(
+    (entry): entry is StashCharge =>
+      Array.isArray(entry) &&
+      entry.length === 3 &&
+      typeof entry[0] === "string" &&
+      Number.isSafeInteger(entry[1]) &&
+      entry[1] >= 0 &&
+      typeof entry[2] === "number" &&
+      entry[2] > now,
+  );
 }
 
 /**
@@ -349,8 +314,7 @@ function liveStashCharges(raw: string | null, now: number): StashCharge[] {
  * once the attempts run out.
  */
 function swapStashLedger<A>(
-  plan: (live: StashCharge[], now: number) =>
-    { readonly entries?: StashCharge[]; readonly result: A },
+  plan: (live: StashCharge[], now: number) => { readonly entries?: StashCharge[]; readonly result: A },
 ): Effect.Effect<A | undefined, unknown, Storage> {
   return Effect.gen(function* () {
     const ledger = stashLedgerKeys.ledger;
@@ -372,12 +336,8 @@ function swapStashLedger<A>(
 }
 
 async function sha256Hex(value: string): Promise<string> {
-  const bytes = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", encoder.encode(value)),
-  );
-  return [...bytes]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value)));
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 /**
@@ -387,18 +347,12 @@ async function sha256Hex(value: string): Promise<string> {
  */
 export class Registry implements RegistryView {
   private readonly connectors = new Map<string, Connector>();
-  private readonly callAdmission = new Map<
-    string,
-    ConnectorCallAdmissionController
-  >();
+  private readonly callAdmission = new Map<string, ConnectorCallAdmissionController>();
   /** Coalesce listings only within one request and authorization partition. */
   private readonly requestCatalogLoads = new WeakMap<object, Map<string, SharedRead<ToolDef[]>>>();
   private readonly catalogObservedAt = new Map<string, number>();
   /** Last payload-free agent catalog access in this runtime. */
-  private readonly catalogAccess = new Map<
-    string,
-    CatalogAccessObservation
-  >();
+  private readonly catalogAccess = new Map<string, CatalogAccessObservation>();
   /** Count-only intake findings, including catalogs loaded from storage. */
   private droppedToolNames = new Map<string, { count: number; observedAt: string }>();
   /**
@@ -423,10 +377,7 @@ export class Registry implements RegistryView {
   ) {
     this.configuredConnectors = [...connectors];
     this.observedOutputSchemas = new ObservedOutputSchemas();
-    this.maxResultBytes = resolveMaxResultBytes(
-      opts.maxResultBytes,
-      DEFAULT_MAX_RESULT_BYTES,
-    );
+    this.maxResultBytes = resolveMaxResultBytes(opts.maxResultBytes, DEFAULT_MAX_RESULT_BYTES);
     for (const c of connectors) {
       assertStaticToolNames(c.staticTools ?? [], `Connector(${JSON.stringify(c.id)}).staticTools`);
       if ("handleRequest" in c) {
@@ -436,30 +387,17 @@ export class Registry implements RegistryView {
         );
       }
       if (!ID_RE.test(c.id)) {
-        throw new Error(
-          `Invalid connector id "${c.id}": must match ${ID_RE.source}`,
-        );
+        throw new Error(`Invalid connector id "${c.id}": must match ${ID_RE.source}`);
       }
       if (this.connectors.has(c.id)) {
         throw new Error(`Duplicate connector id "${c.id}"`);
       }
-      if (
-        c.authScope !== undefined &&
-        c.authScope !== "shared" &&
-        c.authScope !== "personal"
-      ) {
-        throw new Error(
-          `Invalid authScope on connector "${c.id}": expected "shared" or "personal"`,
-        );
+      if (c.authScope !== undefined && c.authScope !== "shared" && c.authScope !== "personal") {
+        throw new Error(`Invalid authScope on connector "${c.id}": expected "shared" or "personal"`);
       }
       const configuredGuideSummary =
-        typeof c.usageGuide === "object"
-          ? normalizeGuideSummary(c.usageGuide.summary ?? "")
-          : undefined;
-      if (
-        configuredGuideSummary !== undefined &&
-        configuredGuideSummary.length > GUIDE_SUMMARY_LENGTH
-      ) {
+        typeof c.usageGuide === "object" ? normalizeGuideSummary(c.usageGuide.summary ?? "") : undefined;
+      if (configuredGuideSummary !== undefined && configuredGuideSummary.length > GUIDE_SUMMARY_LENGTH) {
         throw new Error(
           `Connector "${c.id}" usageGuide.summary is ` +
             `${configuredGuideSummary.length} characters after whitespace ` +
@@ -471,21 +409,23 @@ export class Registry implements RegistryView {
       // connector object.
       if (catalogReviewOf(c) && c.staticTools) {
         throw new Error(
-          `Connector "${c.id}" declares both staticTools and a classification; ` +
-            "annotate static tools directly.",
+          `Connector "${c.id}" declares both staticTools and a classification; ` + "annotate static tools directly.",
         );
       }
       this.connectors.set(c.id, c);
       if (c.callAdmission) {
-        this.callAdmission.set(
-          c.id,
-          new ConnectorCallAdmissionController(c.id, c.callAdmission),
-        );
+        this.callAdmission.set(c.id, new ConnectorCallAdmissionController(c.id, c.callAdmission));
       }
     }
-    this.classification = Object.assign(Object.create(null),
-      Object.fromEntries(Object.entries(opts.classification ?? {}).map(([id, tools]) =>
-        [id, Object.freeze(Object.assign(Object.create(null), tools))])));
+    this.classification = Object.assign(
+      Object.create(null),
+      Object.fromEntries(
+        Object.entries(opts.classification ?? {}).map(([id, tools]) => [
+          id,
+          Object.freeze(Object.assign(Object.create(null), tools)),
+        ]),
+      ),
+    );
     Object.freeze(this.classification);
     for (const [id, overrides] of Object.entries(this.classification)) {
       for (const [name, verdict] of Object.entries(overrides)) {
@@ -514,24 +454,26 @@ export class Registry implements RegistryView {
       // Eviction must not reset a live rolling budget or orphan queued calls.
       // OAuth status/start work bypasses both gates, and accepted rotations
       // may still be saving after their caller leaves. Preserve its partition.
-      const idle = [...this.personalRegistries].find(([, candidate]) =>
-        [...candidate.callAdmission.values()].every(admission => admission.isIdle()) &&
-        oauthPartitionIdle(candidate.oauthPartition),
+      const idle = [...this.personalRegistries].find(
+        ([, candidate]) =>
+          [...candidate.callAdmission.values()].every((admission) => admission.isIdle()) &&
+          oauthPartitionIdle(candidate.oauthPartition),
       );
       if (!idle) {
-        throw new Error("Personal connector capacity is exhausted; retry after calls, rolling budgets, and catalog refreshes drain.");
+        throw new Error(
+          "Personal connector capacity is exhausted; retry after calls, rolling budgets, and catalog refreshes drain.",
+        );
       }
       idle[1].closeCallAdmission();
       this.personalRegistries.delete(idle[0]);
     }
     const registry = new Registry(
-      this.configuredConnectors.filter(
-        (connector) => connector.authScope === "personal",
-      ),
+      this.configuredConnectors.filter((connector) => connector.authScope === "personal"),
       {
         ...this.opts,
-        classification: Object.fromEntries(Object.entries(this.classification).filter(([id]) =>
-          this.connectors.get(id)?.authScope === "personal")),
+        classification: Object.fromEntries(
+          Object.entries(this.classification).filter(([id]) => this.connectors.get(id)?.authScope === "personal"),
+        ),
         storage: namespaced(this.opts.storage, scopes.principal(principalKey)),
         credentialOwner: principalKey,
         catalogStorage: this.opts.catalogStorage ?? this.opts.storage,
@@ -548,14 +490,10 @@ export class Registry implements RegistryView {
 
   /** Build the only connector view an authenticated request receives. */
   scoped(scope: RegistryScope): RegistryView {
-    const requested = scope.connectorIds === "all"
-      ? new Set(this.connectors.keys())
-      : new Set(scope.connectorIds);
+    const requested = scope.connectorIds === "all" ? new Set(this.connectors.keys()) : new Set(scope.connectorIds);
     for (const id of requested) {
       if (!this.connectors.has(id)) {
-        throw new Error(
-          `Identity access resolver returned unknown connector "${id}"`,
-        );
+        throw new Error(`Identity access resolver returned unknown connector "${id}"`);
       }
     }
     return new ScopedRegistryView(this, requested, scope);
@@ -580,39 +518,32 @@ export class Registry implements RegistryView {
       if (oldest !== undefined) this.warnedAbsentGrants.delete(oldest);
     }
     if (hasControlCharacters(toolName)) {
-      logFailure(this.opts.logger, "connectorAccess grant is unreachable",
-        failureRecord({ connector: connectorId }));
+      logFailure(this.opts.logger, "connectorAccess grant is unreachable", failureRecord({ connector: connectorId }));
       return;
     }
     // Grant names are operator data but may carry any non-control character;
     // quote them so a line terminator a log reader honours cannot forge a line.
-    const quoted = JSON.stringify(key).replace(
-      /[\u2028\u2029]/g,
-      (ch) => `\\u${ch.charCodeAt(0).toString(16)}`,
-    );
+    const quoted = JSON.stringify(key).replace(/[\u2028\u2029]/g, (ch) => `\\u${ch.charCodeAt(0).toString(16)}`);
     this.opts.logger.warn(
       `connectorAccess grants ${quoted} but connector "${connectorId}" lists no such tool; the grant is unreachable`,
     );
   }
 
-  async storeOAuthHandoff(
-    connectorId: string,
-    state: string,
-    principalKey: string,
-  ): Promise<void> {
+  async storeOAuthHandoff(connectorId: string, state: string, principalKey: string): Promise<void> {
     const key = oauthHandoffKeys.handoff(connectorId, await sha256Hex(state));
     for (let attempt = 0; attempt < 32; attempt++) {
       const existing = await this.opts.storage.get(key);
       if (existing && existing !== principalKey) {
-        throw new Error(
-          `Connector "${connectorId}" reused one OAuth state across principals`,
-        );
+        throw new Error(`Connector "${connectorId}" reused one OAuth state across principals`);
       }
       // Bind ownership atomically, including renewal of the same owner's
       // handoff. Two owners reading a miss must not overwrite each other.
-      if (await this.opts.storage.compareAndSet(key, existing, principalKey, {
-        ttlSeconds: OAUTH_HANDOFF_TTL_SECONDS,
-      })) return;
+      if (
+        await this.opts.storage.compareAndSet(key, existing, principalKey, {
+          ttlSeconds: OAUTH_HANDOFF_TTL_SECONDS,
+        })
+      )
+        return;
     }
     throw new Error(`OAuth handoff for "${connectorId}" is busy; retry authorization`);
   }
@@ -625,26 +556,23 @@ export class Registry implements RegistryView {
     principalKey?: string;
   } | null> {
     if (!state) return null;
-    const principalKey = await this.opts.storage.get(
-      oauthHandoffKeys.handoff(connectorId, await sha256Hex(state)),
-    );
+    const principalKey = await this.opts.storage.get(oauthHandoffKeys.handoff(connectorId, await sha256Hex(state)));
     const connector = this.connectors.get(connectorId);
     if (!connector || !principalKey) return null;
     return {
-      registry: connector.authScope === "personal" ? this.scoped({
-        connectorIds: [connectorId],
-        subjectKey: principalKey,
-        principalKey,
-      }) : this,
+      registry:
+        connector.authScope === "personal"
+          ? this.scoped({
+              connectorIds: [connectorId],
+              subjectKey: principalKey,
+              principalKey,
+            })
+          : this,
       principalKey,
     };
   }
 
-  async consumeOAuthHandoff(
-    connectorId: string,
-    state: string | null,
-    principalKey: string,
-  ): Promise<boolean> {
+  async consumeOAuthHandoff(connectorId: string, state: string | null, principalKey: string): Promise<boolean> {
     if (!state) return false;
     const key = oauthHandoffKeys.handoff(connectorId, await sha256Hex(state));
     return this.opts.storage.compareAndSet(key, principalKey, null);
@@ -757,16 +685,28 @@ export class Registry implements RegistryView {
     attachCaller(context, scope?.caller);
     attachCatalogCache(context, {
       storage: this.opts.catalogStorage ?? this.opts.storage,
-      partition: JSON.stringify([scope?.principalKey ?? this.opts.credentialOwner ?? null,
-        scope?.subjectKey ?? null, scope?.caller?.identity ?? null, scope?.caller?.authenticated ?? false,
-        scope?.caller?.pool ?? null]),
+      partition: JSON.stringify([
+        scope?.principalKey ?? this.opts.credentialOwner ?? null,
+        scope?.subjectKey ?? null,
+        scope?.caller?.identity ?? null,
+        scope?.caller?.authenticated ?? false,
+        scope?.caller?.pool ?? null,
+      ]),
       sharedPartition: JSON.stringify([baseUrl, this.opts.publicUrl ?? null, scope?.caller?.pool ?? null]),
       defaultTtlMs: (this.opts.toolCacheTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds) * 1000,
       minTtlMs: (this.opts.catalogMinTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogMinTtlSeconds) * 1000,
       maxTtlMs: (this.opts.catalogMaxTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogMaxTtlSeconds) * 1000,
-      ...(this.opts.catalogDriftActivity?.recordChange ? {
-        onCompletedCatalogRefresh: (refresh, ctx) => this.recordCatalogDrift(refresh.previous, refresh.next, { id, connector: this.connectors.get(id)!, ctx, privateCatalog: refresh.private }),
-      } : {}),
+      ...(this.opts.catalogDriftActivity?.recordChange
+        ? {
+            onCompletedCatalogRefresh: (refresh, ctx) =>
+              this.recordCatalogDrift(refresh.previous, refresh.next, {
+                id,
+                connector: this.connectors.get(id)!,
+                ctx,
+                privateCatalog: refresh.private,
+              }),
+          }
+        : {}),
     });
     sentSecretsFor(context);
     trackCredentialReads(context);
@@ -776,12 +716,7 @@ export class Registry implements RegistryView {
     return this.opts.credentialVault
       ? attachOAuthSealer(
           context,
-          vaultOAuthSealer(
-            this.opts.credentialVault,
-            id,
-            this.opts.credentialOwner,
-            this.opts.logger,
-          ),
+          vaultOAuthSealer(this.opts.credentialVault, id, this.opts.credentialOwner, this.opts.logger),
         )
       : context;
   }
@@ -806,9 +741,7 @@ export class Registry implements RegistryView {
         snapshots.get(id)?.push(admission.snapshot());
       }
     }
-    return Object.fromEntries([...snapshots].map(([id, values]) => [
-      id, aggregateCallAdmissionSnapshots(values),
-    ]));
+    return Object.fromEntries([...snapshots].map(([id, values]) => [id, aggregateCallAdmissionSnapshots(values)]));
   }
 
   /**
@@ -818,16 +751,16 @@ export class Registry implements RegistryView {
    */
   private catalogDriftOf(connector: Connector): CatalogDriftReport | undefined {
     const report = boundedCatalogDrift(
-      catalogReviewOf(connector)
-        ? observedCatalogDrift(connector)
-        : connector.catalogDrift?.(),
+      catalogReviewOf(connector) ? observedCatalogDrift(connector) : connector.catalogDrift?.(),
     );
     const dropped = this.droppedToolNames.get(connector.id);
     if (!dropped) return report;
     return {
       ...(report ?? {
-        unclassifiedTools: 0, unservedTools: 0,
-        annotationConflicts: 0, schemaChanges: 0,
+        unclassifiedTools: 0,
+        unservedTools: 0,
+        annotationConflicts: 0,
+        schemaChanges: 0,
       }),
       observedAt: dropped.observedAt,
       ...(dropped.count > 0 ? { droppedTools: dropped.count } : {}),
@@ -863,51 +796,56 @@ export class Registry implements RegistryView {
     ttlSeconds: number,
     partition: string = scopes.results,
   ): Promise<boolean> {
-    return runOnPartition(Effect.gen({ self: this }, function* () {
-      const maxBytes = this.opts.results?.maxStashBytes ?? CONFIG_DEFAULTS.results.maxStashBytes;
-      const maxEntries = this.opts.results?.maxStashEntries ?? CONFIG_DEFAULTS.results.maxStashEntries;
-      // The paging envelope is ASCII, so its string length is its stored byte count.
-      const bytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-      if (bytes > maxBytes || maxEntries === 0) return false;
-      const keys = chunks.map((_, index) => partition + resultKeys.chunk(id, index));
-      const charge = keys[0]!;
-      // One deadline for the charge and every chunk under it. Writes take
-      // time, so a chunk's TTL is whatever remains of the deadline when it is
-      // written, never a fresh `ttlSeconds`, and no single write may take
-      // longer than the grace: no chunk outlives the charge that bounds it.
-      const deadline = yield* swapStashLedger((live, now) => {
-        const used = live.reduce((sum, entry) => sum + entry[1], 0);
-        if (live.length >= maxEntries || used + bytes > maxBytes) return { result: undefined };
-        const end = now + ttlSeconds * 1000;
-        return { entries: [...live, [charge, bytes, end + STASH_LEDGER_GRACE_MS]], result: end };
-      });
-      if (deadline === undefined) return false;
-      // A failed write may still have persisted. Delete every key it could
-      // have written and release the charge only when all of them are gone;
-      // otherwise the charge stays booked until it expires, by which time the
-      // storage TTL has removed whatever did land.
-      const release = Effect.gen(function* () {
-        for (const key of keys) yield* storageDelete(key);
-        yield* swapStashLedger((live) => live.some((entry) => entry[0] === charge)
-          ? { entries: live.filter((entry) => entry[0] !== charge), result: undefined }
-          : { result: undefined });
-      }).pipe(Effect.ignore);
-      // Trailing chunks first: the header chunk is what makes an id readable, so
-      // a write that fails midway leaves no envelope pointing at absent chunks.
-      const written = yield* Effect.gen(function* () {
-        for (let index = keys.length - 1; index >= 0; index--) {
-          const before = yield* Clock.currentTimeMillis;
-          const remaining = Math.floor((deadline - before) / 1000);
-          // Zero would mean no expiry: a stash that outlasts its deadline fails.
-          if (remaining < 1) return false;
-          yield* storageSet(keys[index]!, chunks[index]!, { ttlSeconds: remaining });
-          if ((yield* Clock.currentTimeMillis) - before > STASH_LEDGER_GRACE_MS) return false;
-        }
-        return true;
-      }).pipe(Effect.onError(() => release));
-      if (!written) yield* release;
-      return written;
-    }), this.opts);
+    return runOnPartition(
+      Effect.gen({ self: this }, function* () {
+        const maxBytes = this.opts.results?.maxStashBytes ?? CONFIG_DEFAULTS.results.maxStashBytes;
+        const maxEntries = this.opts.results?.maxStashEntries ?? CONFIG_DEFAULTS.results.maxStashEntries;
+        // The paging envelope is ASCII, so its string length is its stored byte count.
+        const bytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+        if (bytes > maxBytes || maxEntries === 0) return false;
+        const keys = chunks.map((_, index) => partition + resultKeys.chunk(id, index));
+        const charge = keys[0]!;
+        // One deadline for the charge and every chunk under it. Writes take
+        // time, so a chunk's TTL is whatever remains of the deadline when it is
+        // written, never a fresh `ttlSeconds`, and no single write may take
+        // longer than the grace: no chunk outlives the charge that bounds it.
+        const deadline = yield* swapStashLedger((live, now) => {
+          const used = live.reduce((sum, entry) => sum + entry[1], 0);
+          if (live.length >= maxEntries || used + bytes > maxBytes) return { result: undefined };
+          const end = now + ttlSeconds * 1000;
+          return { entries: [...live, [charge, bytes, end + STASH_LEDGER_GRACE_MS]], result: end };
+        });
+        if (deadline === undefined) return false;
+        // A failed write may still have persisted. Delete every key it could
+        // have written and release the charge only when all of them are gone;
+        // otherwise the charge stays booked until it expires, by which time the
+        // storage TTL has removed whatever did land.
+        const release = Effect.gen(function* () {
+          for (const key of keys) yield* storageDelete(key);
+          yield* swapStashLedger((live) =>
+            live.some((entry) => entry[0] === charge)
+              ? { entries: live.filter((entry) => entry[0] !== charge), result: undefined }
+              : { result: undefined },
+          );
+        }).pipe(Effect.ignore);
+        // Trailing chunks first: the header chunk is what makes an id readable, so
+        // a write that fails midway leaves no envelope pointing at absent chunks.
+        const written = yield* Effect.gen(function* () {
+          for (let index = keys.length - 1; index >= 0; index--) {
+            const before = yield* Clock.currentTimeMillis;
+            const remaining = Math.floor((deadline - before) / 1000);
+            // Zero would mean no expiry: a stash that outlasts its deadline fails.
+            if (remaining < 1) return false;
+            yield* storageSet(keys[index]!, chunks[index]!, { ttlSeconds: remaining });
+            if ((yield* Clock.currentTimeMillis) - before > STASH_LEDGER_GRACE_MS) return false;
+          }
+          return true;
+        }).pipe(Effect.onError(() => release));
+        if (!written) yield* release;
+        return written;
+      }),
+      this.opts,
+    );
   }
 
   /**
@@ -926,7 +864,9 @@ export class Registry implements RegistryView {
     return namespaced(this.opts.storage, scopes.results);
   }
 
-  credentialUiAvailable(): boolean { return Boolean(this.opts.credentialUi); }
+  credentialUiAvailable(): boolean {
+    return Boolean(this.opts.credentialUi);
+  }
 
   async bindOAuthHandoff(id: string, authorizationUrl: string, principalKey?: string): Promise<void> {
     const state = new URL(authorizationUrl).searchParams.get("state");
@@ -934,25 +874,16 @@ export class Registry implements RegistryView {
     await this.storeOAuthHandoff(id, state, principalKey);
   }
 
-  observedOutputSchema(
-    connectorId: string,
-    definition: ToolDef,
-  ): ToolDef["outputSchema"] | undefined {
+  observedOutputSchema(connectorId: string, definition: ToolDef): ToolDef["outputSchema"] | undefined {
     return this.observedOutputSchemas.get(connectorId, definition);
   }
 
-  observeOutputShape(
-    connectorId: string,
-    definition: ToolDef,
-    value: unknown,
-  ): void {
+  observeOutputShape(connectorId: string, definition: ToolDef, value: unknown): void {
     this.observedOutputSchemas.observe(connectorId, definition, value);
   }
 
   /** Resolve "<connectorId>.<toolName>" → connector + tool name. */
-  resolveAddress(
-    address: string,
-  ): { connector: Connector; toolName: string } | null {
+  resolveAddress(address: string): { connector: Connector; toolName: string } | null {
     const parts = splitAddress(address);
     if (!parts) return null;
     const connector = this.connectors.get(parts.connectorId);
@@ -968,17 +899,22 @@ export class Registry implements RegistryView {
   ): void {
     if (!previous) return;
     const { id, connector, ctx, privateCatalog } = attribution;
-    const before = new Map(previous.map(tool => [tool.name, tool.fact]));
-    const after = new Map(next.map(tool => [tool.name, tool.fact]));
-    const addedTools = [...after.keys()].filter(name => !before.has(name)).length;
-    const removedTools = [...before.keys()].filter(name => !after.has(name)).length;
+    const before = new Map(previous.map((tool) => [tool.name, tool.fact]));
+    const after = new Map(next.map((tool) => [tool.name, tool.fact]));
+    const addedTools = [...after.keys()].filter((name) => !before.has(name)).length;
+    const removedTools = [...before.keys()].filter((name) => !after.has(name)).length;
     const changedTools = [...after].filter(([name, fact]) => before.has(name) && before.get(name) !== fact).length;
-    if (addedTools || removedTools || changedTools) this.opts.catalogDriftActivity?.recordChange?.(
-      { ...this.opts.catalogDriftActivity, logger: this.opts.logger, ...(ctx.defer ? { defer: ctx.defer } : {}) },
-      { connectorId: id, drift: { kind: "catalog_changed", addedTools, removedTools, changedTools },
-        privateCatalog, ...(connector.authScope === "personal" ? { personal: true } : {}) },
-      activityRequest(ctx.requestScope),
-    );
+    if (addedTools || removedTools || changedTools)
+      this.opts.catalogDriftActivity?.recordChange?.(
+        { ...this.opts.catalogDriftActivity, logger: this.opts.logger, ...(ctx.defer ? { defer: ctx.defer } : {}) },
+        {
+          connectorId: id,
+          drift: { kind: "catalog_changed", addedTools, removedTools, changedTools },
+          privateCatalog,
+          ...(connector.authScope === "personal" ? { personal: true } : {}),
+        },
+        activityRequest(ctx.requestScope),
+      );
   }
 
   private async loadDownstreamTools(
@@ -996,13 +932,23 @@ export class Registry implements RegistryView {
     try {
       listed = await connector.listTools(ctx);
     } catch (error) {
-      const fallback = error instanceof ConnectorCallError && error.code === "unavailable" ? await customCatalogFallback(ctx, id).catch(() => undefined) : undefined;
+      const fallback =
+        error instanceof ConnectorCallError && error.code === "unavailable"
+          ? await customCatalogFallback(ctx, id).catch(() => undefined)
+          : undefined;
       if (!fallback) throw sentSecretsForRequest(ctx.requestScope ?? ctx).redact(error);
       listed = fallback;
     }
     const tools = redactCatalog(ctx, listed).map(({ classification: _ignored, ...fact }) => fact);
-    if (tools.length > MAX_CATALOG_TOOLS || encoder.encode(JSON.stringify(tools)).byteLength > MAX_SERIALIZED_CATALOG_BYTES) {
-      throw new ConnectorCallError("connector_call_failed", "Downstream catalog exceeds the complete-catalog ceiling.", { retryable: false });
+    if (
+      tools.length > MAX_CATALOG_TOOLS ||
+      encoder.encode(JSON.stringify(tools)).byteLength > MAX_SERIALIZED_CATALOG_BYTES
+    ) {
+      throw new ConnectorCallError(
+        "connector_call_failed",
+        "Downstream catalog exceeds the complete-catalog ceiling.",
+        { retryable: false },
+      );
     }
     const facts = frozenFacts(structuredClone(tools));
     const accepted = this.acceptToolNames(facts);
@@ -1010,15 +956,24 @@ export class Registry implements RegistryView {
     const review = catalogReviewOf(connector);
     if (review) await observeReviewedDrift(connector, review, accepted, this.opts.logger);
     if (catalogFetchedAt(ctx) === undefined) {
-      try { await storeCustomCatalogFallback(ctx, id, facts); }
-      catch (error) { logFailure(this.opts.logger, "catalog refresh observation failed", failureRecord({ connector: id }, error)); }
-      try { await observeUncachedCatalogRefresh(ctx, id, facts); }
-      catch (error) { logFailure(this.opts.logger, "catalog refresh observation failed", failureRecord({ connector: id }, error)); }
+      try {
+        await storeCustomCatalogFallback(ctx, id, facts);
+      } catch (error) {
+        logFailure(this.opts.logger, "catalog refresh observation failed", failureRecord({ connector: id }, error));
+      }
+      try {
+        await observeUncachedCatalogRefresh(ctx, id, facts);
+      } catch (error) {
+        logFailure(this.opts.logger, "catalog refresh observation failed", failureRecord({ connector: id }, error));
+      }
     }
     this.catalogObservedAt.set(id, catalogFetchedAt(ctx) ?? Date.now());
     const provenance = catalogExpiry(ctx);
     const freshUntil = provenance && !provenance.staleFallback ? provenance.expiresAt : 0;
-    this.catalogAccess.set(id, { state: freshUntil > Date.now() ? "fresh" : "stale", observedAt: new Date().toISOString() });
+    this.catalogAccess.set(id, {
+      state: freshUntil > Date.now() ? "fresh" : "stale",
+      observedAt: new Date().toISOString(),
+    });
     return markCatalogFreshness(facts, freshUntil);
   }
 
@@ -1050,46 +1005,54 @@ export class Registry implements RegistryView {
     callOptions: ConnectorOperationOptions = {},
     scope?: RegistryScope,
   ): Promise<ToolDef[]> {
-    const tools = await this.loadDownstreamTools(
-      id,
-      baseUrl,
-      requestScope,
-      callOptions,
-      scope,
-    );
+    const tools = await this.loadDownstreamTools(id, baseUrl, requestScope, callOptions, scope);
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
     const accepted = this.acceptToolNames(tools);
     const overrides = this.classification[id];
     this.validateClassification(id, accepted, overrides);
     const review = catalogReviewOf(connector);
-    return carryCatalogFreshness(tools, review
-      ? await classifyCatalog(review, id, accepted, this.opts.logger, this.verifiedFacts, overrides)
-      : accepted.map(tool => this.publishUnreviewedTool(id, tool)));
+    return carryCatalogFreshness(
+      tools,
+      review
+        ? await classifyCatalog(review, id, accepted, this.opts.logger, this.verifiedFacts, overrides)
+        : accepted.map((tool) => this.publishUnreviewedTool(id, tool)),
+    );
   }
 
   private publishUnreviewedTool(id: string, tool: ToolDef): ToolDef {
     const override = this.classification[id]?.[tool.name];
-    return { ...structuredClone(tool), classification: classifyTool(tool, override),
-      ...(override !== undefined ? { annotations: { ...structuredClone(tool.annotations),
-        readOnlyHint: override === "read", destructiveHint: override === "write",
-      } } : {}),
+    return {
+      ...structuredClone(tool),
+      classification: classifyTool(tool, override),
+      ...(override !== undefined
+        ? {
+            annotations: {
+              ...structuredClone(tool.annotations),
+              readOnlyHint: override === "read",
+              destructiveHint: override === "write",
+            },
+          }
+        : {}),
     };
   }
 
   /** Construction-only view for the secret-free static config description. */
   describeStaticTools(id: string): ToolDef[] | undefined {
     const tools = this.connectors.get(id)?.staticTools;
-    return tools?.map(tool => this.publishUnreviewedTool(id, tool));
+    return tools?.map((tool) => this.publishUnreviewedTool(id, tool));
   }
 
-  private validateClassification(id: string, tools: readonly ToolDef[], overrides?: Readonly<Record<string, "read" | "write">>): void {
-    const known = new Set(tools.map(tool => tool.name));
+  private validateClassification(
+    id: string,
+    tools: readonly ToolDef[],
+    overrides?: Readonly<Record<string, "read" | "write">>,
+  ): void {
+    const known = new Set(tools.map((tool) => tool.name));
     for (const name of Object.keys(overrides ?? {})) {
       if (!known.has(name)) throw new Error(`ConnectaConfig.classification: connector "${id}" has no tool "${name}"`);
     }
   }
-
 
   async getTools(
     id: string,
@@ -1101,13 +1064,7 @@ export class Registry implements RegistryView {
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
     if (!requestScope) {
-      return this.loadTools(
-        id,
-        baseUrl,
-        requestScope,
-        callOptions,
-        scope,
-      );
+      return this.loadTools(id, baseUrl, requestScope, callOptions, scope);
     }
 
     let loads = this.requestCatalogLoads.get(requestScope);
@@ -1120,14 +1077,7 @@ export class Registry implements RegistryView {
     let load = requestLoads.get(key);
     if (!load) {
       const started: SharedRead<ToolDef[]> = new SharedRead(
-        (signal) =>
-          this.loadTools(
-            id,
-            baseUrl,
-            requestScope,
-            { ...callOptions, signal },
-            scope,
-          ),
+        (signal) => this.loadTools(id, baseUrl, requestScope, { ...callOptions, signal }, scope),
         // Settled or cancelled, the read leaves the map before any caller
         // resumes, so the next one asks the caches afresh.
         () => {
@@ -1197,7 +1147,7 @@ export class Registry implements RegistryView {
     // or a plugin status would otherwise report success. Never probe an empty slot.
     if (connector.credential) {
       try {
-        const values = await this.opts.credentialVault?.getAll(id, this.opts.credentialOwner) ?? null;
+        const values = (await this.opts.credentialVault?.getAll(id, this.opts.credentialOwner)) ?? null;
         const shape = storedCredentialShape(connector.credential, values);
         if (shape.state === "missing") return withObservations(ownStatus({ state: "credential_required" }));
         if (shape.state === "mismatch") return withObservations(ownStatus({ state: "auth_required" }));
@@ -1221,7 +1171,9 @@ export class Registry implements RegistryView {
   }
 
   /** Rotate the storage generation; in-flight old readers cannot republish it. */
-  invalidate(id: string): void { void this.invalidateStored(id); }
+  invalidate(id: string): void {
+    void this.invalidateStored(id);
+  }
 
   async invalidateStored(id: string): Promise<void> {
     this.catalogObservedAt.delete(id);
@@ -1231,7 +1183,6 @@ export class Registry implements RegistryView {
       logFailure(this.opts.logger, "catalog invalidation failed", failureRecord({ connector: id }, error));
     }
   }
-
 }
 
 class ScopedRegistryView implements RegistryView {
@@ -1240,9 +1191,7 @@ class ScopedRegistryView implements RegistryView {
   private readonly admissionPersonal: Registry | undefined;
 
   private get personal(): Registry | undefined {
-    return this.scope.principalKey
-      ? this.root.personalRegistry(this.scope.principalKey)
-      : undefined;
+    return this.scope.principalKey ? this.root.personalRegistry(this.scope.principalKey) : undefined;
   }
 
   constructor(
@@ -1253,9 +1202,7 @@ class ScopedRegistryView implements RegistryView {
     this.maxResultBytes = root.maxResultBytes;
     // Check capacity at construction, then resolve the current registry on
     // use. A retained view must not revive one evicted while it was idle.
-    this.admissionPersonal = scope.principalKey
-      ? root.personalRegistry(scope.principalKey)
-      : undefined;
+    this.admissionPersonal = scope.principalKey ? root.personalRegistry(scope.principalKey) : undefined;
   }
 
   private registryFor(id: string, admission = false): Registry | undefined {
@@ -1267,14 +1214,13 @@ class ScopedRegistryView implements RegistryView {
   }
 
   listConnectors(): Connector[] {
-    return this.root.listConnectors().filter(
-      (connector) => this.registryFor(connector.id) !== undefined,
-    );
+    return this.root.listConnectors().filter((connector) => this.registryFor(connector.id) !== undefined);
   }
 
   canReadConnectorSkills(id: string): boolean {
-    return this.registryFor(id) !== undefined &&
-      !this.scope.toolAccess?.has(id) && !this.scope.guardedToolAccess?.has(id);
+    return (
+      this.registryFor(id) !== undefined && !this.scope.toolAccess?.has(id) && !this.scope.guardedToolAccess?.has(id)
+    );
   }
 
   getConnector(id: string): Connector | undefined {
@@ -1286,9 +1232,7 @@ class ScopedRegistryView implements RegistryView {
     return this.getConnector(id);
   }
 
-  resolveAddress(
-    address: string,
-  ): { connector: Connector; toolName: string } | null {
+  resolveAddress(address: string): { connector: Connector; toolName: string } | null {
     const parsed = splitAddress(address);
     if (!parsed) return null;
     const connector = this.getConnector(parsed.connectorId);
@@ -1307,9 +1251,9 @@ class ScopedRegistryView implements RegistryView {
     // Every consumer — search, describe, call_tool, and a program's
     // connecta.call — resolves through this list, so an ungranted tool is
     // indistinguishable from one the connector never had.
-    const visible = tools.filter((tool) =>
-      granted.has(tool.name) &&
-      (!guarded?.has(tool.name) || tool.classification === "read"));
+    const visible = tools.filter(
+      (tool) => granted.has(tool.name) && (!guarded?.has(tool.name) || tool.classification === "read"),
+    );
     if (visible.length < granted.size) {
       const present = new Set(tools.map((tool) => tool.name));
       for (const name of granted) {
@@ -1319,17 +1263,13 @@ class ScopedRegistryView implements RegistryView {
     return carryCatalogFreshness(tools, visible);
   }
 
-  contextFor(
-    ...args: Parameters<RegistryView["contextFor"]>
-  ): ConnectorContext {
+  contextFor(...args: Parameters<RegistryView["contextFor"]>): ConnectorContext {
     const registry = this.registryFor(args[0]);
     if (!registry) throw new Error(`Unknown connector "${args[0]}"`);
     return registry.contextFor(args[0], args[1], args[2], args[3], this.scope);
   }
 
-  admitCall(
-    ...args: Parameters<RegistryView["admitCall"]>
-  ): Promise<CallAdmissionPermit> {
+  admitCall(...args: Parameters<RegistryView["admitCall"]>): Promise<CallAdmissionPermit> {
     const registry = this.registryFor(args[0], true);
     if (!registry) {
       return Promise.reject(new Error(`Unknown connector "${args[0]}"`));
@@ -1338,8 +1278,12 @@ class ScopedRegistryView implements RegistryView {
   }
 
   stashResult(id: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean> {
-    return this.root.stashResult(id, chunks, ttlSeconds,
-      this.scope.subjectKey ? scopes.subject(this.scope.subjectKey) : scopes.results);
+    return this.root.stashResult(
+      id,
+      chunks,
+      ttlSeconds,
+      this.scope.subjectKey ? scopes.subject(this.scope.subjectKey) : scopes.results,
+    );
   }
 
   resultIdentity(): ResultIdentity {
@@ -1356,47 +1300,27 @@ class ScopedRegistryView implements RegistryView {
   }
 
   resultsStorage(): KVStorage {
-    return this.scope.subjectKey
-      ? this.root.scopedStorage(this.scope.subjectKey)
-      : this.root.resultsStorage();
+    return this.scope.subjectKey ? this.root.scopedStorage(this.scope.subjectKey) : this.root.resultsStorage();
   }
 
   credentialDriftFor(id: string): Promise<string | undefined> {
     const registry = this.registryFor(id);
-    return registry
-      ? registry.credentialDriftFor(id)
-      : Promise.resolve(undefined);
+    return registry ? registry.credentialDriftFor(id) : Promise.resolve(undefined);
   }
 
-  observedOutputSchema(
-    connectorId: string,
-    definition: ToolDef,
-  ): ToolDef["outputSchema"] | undefined {
-    return this.registryFor(connectorId)?.observedOutputSchema(
-      connectorId,
-      definition,
-    );
+  observedOutputSchema(connectorId: string, definition: ToolDef): ToolDef["outputSchema"] | undefined {
+    return this.registryFor(connectorId)?.observedOutputSchema(connectorId, definition);
   }
 
-  observeOutputShape(
-    connectorId: string,
-    definition: ToolDef,
-    value: unknown,
-  ): void {
-    this.registryFor(connectorId)?.observeOutputShape(
-      connectorId,
-      definition,
-      value,
-    );
+  observeOutputShape(connectorId: string, definition: ToolDef, value: unknown): void {
+    this.registryFor(connectorId)?.observeOutputShape(connectorId, definition, value);
   }
 
   catalogAgeMs(id: string): number | null {
     return this.registryFor(id)?.catalogAgeMs(id) ?? null;
   }
 
-  statusFor(
-    ...args: Parameters<RegistryView["statusFor"]>
-  ): Promise<ConnectorStatus> {
+  statusFor(...args: Parameters<RegistryView["statusFor"]>): Promise<ConnectorStatus> {
     const registry = this.registryFor(args[0]);
     return registry
       ? registry.statusFor(args[0], args[1], args[2], args[3], this.scope)
@@ -1408,7 +1332,9 @@ class ScopedRegistryView implements RegistryView {
     return registry ? registry.invalidateStored(id) : Promise.resolve();
   }
 
-  credentialUiAvailable(): boolean { return this.root.credentialUiAvailable(); }
+  credentialUiAvailable(): boolean {
+    return this.root.credentialUiAvailable();
+  }
 
   async bindOAuthHandoff(id: string, authorizationUrl: string, principalKey?: string): Promise<void> {
     await this.root.bindOAuthHandoff(id, authorizationUrl, principalKey ?? this.scope.principalKey);
