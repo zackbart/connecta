@@ -9,6 +9,9 @@ import { startNodeDeployment } from "../deploy/node.js";
 import { connectMcp, type ListedTool } from "../support/mcp.js";
 import type { ActiveTask, Check } from "../tasks/types.js";
 import { runCodex } from "./codex.js";
+import { runClaude } from "./claude.js";
+import { assertSurface } from "./surface.js";
+import { startAuthHost } from "./auth-host.js";
 import { infraError, stopsBatch } from "./infra.js";
 import {
   countBy,
@@ -60,6 +63,8 @@ export interface TrialResult {
     permissionDenials: unknown[];
   };
   transcript: TranscriptEntry[];
+  finalAnswer?: string;
+  urlElicitations?: AgentTraceElicitations;
   ledger: (Omit<CallRecord, "args"> & { args: string })[];
   codex?: {
     requestedModel: string;
@@ -72,17 +77,21 @@ export interface TrialResult {
     argv: string[];
     loadedTools: string[];
   };
-  /** Historical results only. New runs never invoke Claude Code. */
+  /** Claude Code runner metadata; historical results remain readable. */
   claude?: Record<string, unknown>;
   startedAt: string;
 }
 
 interface TrialOptions {
+  runner?: "codex" | "claude";
+  maxBudgetUsd?: number;
   timeoutMs: number;
   signal?: AbortSignal;
   effort?: string;
   onEvent?(event: StreamEvent): void;
 }
+
+type AgentTraceElicitations = NonNullable<ReturnType<typeof parseTrace>["urlElicitations"]>;
 
 const MAX_NUDGES = 2;
 const NUDGE = "Yes, go ahead.";
@@ -119,9 +128,12 @@ async function runTrial(
   const world = new World(task.world);
   await world.start();
   for (const { service, fault } of task.faults ?? []) world.service(service).faults.push(fault);
-  const deployment = await startNodeDeployment(world.connectorSpecs(), task.deployment);
+  const deployment = await startNodeDeployment(world.connectorSpecs(), task.deployment, task.world?.oauth ? world.oauth : undefined);
+  const hostEvents: StreamEvent[] = [];
+  const host = task.host ? await startAuthHost(deployment, task.host.urlElicitation === "capable", e => hostEvents.push(e)) : undefined;
   try {
     const surface = await surfaceOf(deployment.mcpUrl, deployment.token);
+    assertSurface(surface.map(tool => tool.name));
     const deny = task.approvals?.deny ?? [];
     const allow = (task.approvals?.allow ?? surface.map((tool) => tool.name)).filter(
       (tool) => !deny.includes(tool),
@@ -131,9 +143,11 @@ async function runTrial(
     const notes: { beforeTurn: number; text: string }[] = [];
     let followUpsSent = 0;
     let nudges = 0;
-    const run = await runCodex({
+    const runAgent = options.runner === "claude" ? runClaude : runCodex;
+    const run = await runAgent({
       model,
-      mcpUrl: deployment.mcpUrl,
+      ...(options.maxBudgetUsd === undefined ? {} : { maxBudgetUsd: options.maxBudgetUsd }),
+      mcpUrl: host?.mcpUrl ?? deployment.mcpUrl,
       token: deployment.token,
       allowedTools: allow,
       deniedTools: deny,
@@ -176,6 +190,7 @@ async function runTrial(
       },
     });
     const trace = parseTrace(run.events, run.turnStarts, prompts);
+    trace.urlElicitations = parseTrace(hostEvents, [], []).urlElicitations ?? [];
     for (const note of notes) {
       const at = trace.transcript.findIndex(
         (entry) => entry.kind === "user" && entry.turn === note.beforeTurn,
@@ -198,7 +213,7 @@ async function runTrial(
       confirmationNudges: nudges,
       downstream: downstreamMetrics(world.ledger.calls, world.ledger.requests),
     };
-    const error = run.aborted ? "interrupted by operator" : run.timedOut ? "Codex trial timed out" :
+    const error = run.aborted ? "interrupted by operator" : run.timedOut ? `${options.runner ?? "codex"} trial timed out` :
       infraError(run.events, run.exitCode, trace.loadedTools);
     const completed = check(
       "conversation-completed",
@@ -247,11 +262,13 @@ async function runTrial(
         permissionDenials: trace.permissionDenials,
       },
       transcript: trace.transcript,
+      finalAnswer: trace.finalAnswer ?? "",
+      urlElicitations: trace.urlElicitations ?? [],
       ledger: world.ledger.calls.map((call) => ({ ...call, args: clipArgs(call.args) })),
-      codex: {
+      [options.runner === "claude" ? "claude" : "codex"]: {
         requestedModel: model,
         servedModel: run.model,
-        version: trace.agentVersion,
+        version: trace.agentVersion ?? trace.claudeCodeVersion,
         exitCode: run.exitCode,
         timedOut: run.timedOut,
         resultSubtypes: trace.resultSubtypes,
@@ -262,6 +279,7 @@ async function runTrial(
       startedAt,
     };
   } finally {
+    await host?.close();
     await deployment.close();
     await world.stop();
   }

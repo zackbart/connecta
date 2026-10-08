@@ -1,7 +1,8 @@
 /**
- * `npm run eval:agent -- [options]` runs fake-only tasks through Codex.
+ * `npm run eval:agent -- [options]` runs fake-only tasks through Codex or Claude Code.
  *
- *   --models       Codex model ids, comma-separated (default gpt-6-sol)
+ *   --runner       codex (default) or claude
+ *   --models       comma-separated model ids; see eval/README.md for defaults
  *   --repeats      trials per task × model (default 3)
  *   --tasks        comma-separated task ids (default every active task)
  *   --concurrency  parallel trials (default 1)
@@ -11,12 +12,13 @@
  *   --report       also write an HTML report
  *   --baseline     previous result file for that report
  *
- * Uses the existing Codex CLI sign-in. Each trial creates a separate Codex
+ * Codex uses its existing CLI sign-in; Claude requires ANTHROPIC_API_KEY. Each trial creates a separate Codex
  * home containing only its fake MCP endpoint. Completed trials are written
  * atomically as they finish.
  */
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { claudeVersion, CLAUDE_MODELS } from "./agent/claude.js";
 import { codexVersion } from "./agent/codex.js";
 import { runBatch } from "./agent/run.js";
 import { renderReport } from "./report/html.js";
@@ -25,33 +27,43 @@ import { flags, ROOT, runMeta, stamp } from "./support/meta.js";
 import { ACTIVE_TASKS, PLANNED } from "./tasks/index.js";
 
 const args = flags(process.argv.slice(2));
-if (args.has("max-budget-usd") || args.has("mcp-output-tokens") || args.has("max-utilization")) {
-  throw new Error("Codex app-server does not support --max-budget-usd, --mcp-output-tokens, or --max-utilization");
+const runner = args.get("runner") ?? "codex";
+if (runner !== "codex" && runner !== "claude") throw new Error("--runner must be codex or claude");
+if ((runner === "codex" && args.has("max-budget-usd")) || args.has("mcp-output-tokens") || args.has("max-utilization")) {
+  throw new Error("Unsupported runner option; --max-budget-usd is Claude-only, and MCP output/utilization flags are retired");
 }
-const models = (args.get("models") ?? "gpt-6-sol")
+const models = (args.get("models") ?? (runner === "claude" ? CLAUDE_MODELS.join(",") : "gpt-6-sol"))
   .split(",").map(model => model.trim()).filter(Boolean);
 const repeats = Number(args.get("repeats") ?? 3);
 const concurrency = Number(args.get("concurrency") ?? 1);
 const timeoutMs = Number(args.get("timeout-min") ?? 8) * 60_000;
 const effort = args.get("effort");
+if (runner === "claude" && effort) throw new Error("--effort is Codex-only");
+const maxBudgetUsd = args.has("max-budget-usd") ? Number(args.get("max-budget-usd")) : undefined;
+if (maxBudgetUsd !== undefined && (!Number.isFinite(maxBudgetUsd) || maxBudgetUsd <= 0)) throw new Error("--max-budget-usd must be positive");
+const skipFlags = new Set((args.get("include-skipped") ?? "").split(",").filter(Boolean));
+const eligible = ACTIVE_TASKS.filter(task => !task.skip || skipFlags.has(task.skip.flag));
+const skipped = ACTIVE_TASKS.filter(task => task.skip && !skipFlags.has(task.skip.flag)).map(task => ({ id: task.id, ...task.skip! }));
 const wanted = args.get("tasks")?.split(",").map(id => id.trim());
-const tasks = wanted ? ACTIVE_TASKS.filter(task => wanted.includes(task.id)) : ACTIVE_TASKS;
+const tasks = wanted ? eligible.filter(task => wanted.includes(task.id)) : eligible;
 if (wanted && tasks.length !== wanted.length) {
-  throw new Error(`Unknown task in --tasks. Active tasks: ${ACTIVE_TASKS.map(task => task.id).join(", ")}`);
+  throw new Error(`Unknown task in --tasks. Eligible tasks: ${eligible.map(task => task.id).join(", ")}. Skipped tasks need --include-skipped <flag>`);
 }
 if (!Number.isInteger(repeats) || repeats < 1) throw new Error("--repeats must be a positive integer");
 if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error("--concurrency must be a positive integer");
 if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("--timeout-min must be a finite positive number");
-if (!models.length) throw new Error("--models must name at least one Codex model");
+if (!models.length) throw new Error("--models must name at least one model");
 
 const out = resolve(args.get("out") ?? join(ROOT, "eval", "results", `agent-${stamp()}.json`));
-const version = await codexVersion();
+const version = await (runner === "claude" ? claudeVersion() : codexVersion());
+if (version === "unavailable") throw new Error(`${runner} CLI is unavailable`);
+if (runner === "claude" && !process.env.ANTHROPIC_API_KEY) throw new Error("Claude eval requires ANTHROPIC_API_KEY");
 const file: AgentResultFile = {
-  kind: "connecta-eval/agent", version: 1, meta: runMeta(), codexVersion: version,
-  config: { runner: "codex", models, repeats, tasks: tasks.map(task => task.id),
+  kind: "connecta-eval/agent", version: 1, meta: runMeta(), [runner === "claude" ? "claudeVersion" : "codexVersion"]: version,
+  config: { runner, models, repeats, tasks: tasks.map(task => task.id),
     concurrency, timeoutMs, ...(effort ? { effort } : {}) },
   tasks: tasks.map(({ id, title, measures, introducedIn }) => ({ id, title, measures, introducedIn })),
-  planned: PLANNED,
+  planned: PLANNED, skipped,
   trials: [],
 };
 await mkdir(dirname(out), { recursive: true });
@@ -67,7 +79,8 @@ process.once("SIGINT", () => interrupted.abort());
 process.once("SIGTERM", () => interrupted.abort());
 let saving = Promise.resolve();
 const { trials, stopped } = await runBatch(tasks, models, repeats, {
-  concurrency, timeoutMs, signal: interrupted.signal,
+  runner, concurrency, timeoutMs, signal: interrupted.signal,
+  ...(maxBudgetUsd === undefined ? {} : { maxBudgetUsd }),
   ...(effort ? { effort } : {}),
   onTrial: async (trial, done, total) => {
     file.trials.push(trial);

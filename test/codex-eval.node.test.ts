@@ -24,7 +24,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   } else if (m.method === 'thread/start') {
     send({ id: m.id, result: { model: m.params.model, thread: { id: 'thread-1' } } });
   } else if (m.method === 'mcpServerStatus/list') {
-    send({ id: m.id, result: { data: [{ name: 'connecta', tools: { execute_code: {} } }] } });
+    send({ id: m.id, result: { data: [{ name: 'connecta', tools: Object.fromEntries(["execute_code", "call_tool", "call_destructive_tool", "search_tools", "authorize_connector", "skills"].map(t => [t, {}])) }] } });
   } else if (m.method === 'turn/start') {
     send({ id: m.id, result: { turn: { id: 'turn-1' } } });
     if (mode === 'complete') {
@@ -46,7 +46,7 @@ async function fixture(mode: "complete" | "hang", signal?: AbortSignal,
     await writeFile(auth, "{}");
     return await runCodex({
       model: "gpt-6-sol", mcpUrl: "http://127.0.0.1:1/mcp", token: "fake-secret",
-      allowedTools: ["execute_code"], deniedTools: [], timeoutMs,
+      allowedTools: ["execute_code", "call_tool", "call_destructive_tool", "search_tools", "authorize_connector", "skills"], deniedTools: [], timeoutMs,
       firstPrompt: "test", nextTurn,
       ...(signal ? { signal } : {}),
       testHost: { executable: process.execPath, args: [script, mode], authFile: auth, version: "fake-codex" },
@@ -66,7 +66,7 @@ describe("Codex eval app-server", () => {
     expect(trace.modelTurns).toBeUndefined();
     expect(trace.apiMs).toBeUndefined();
     expect(run.model).toBe("gpt-6-sol");
-    expect(run.loadedTools).toEqual(["mcp__connecta__execute_code"]);
+    expect(run.loadedTools).toHaveLength(6);
   });
 
   it("terminates an active turn when interrupted", async () => {

@@ -25,6 +25,7 @@ import { listen } from "@zackbart/connecta/node";
 import { sqliteStorage } from "@zackbart/connecta/sqlite";
 import { quickJsExecutor } from "@zackbart/connecta/quickjs";
 import { operatorUi } from "@zackbart/connecta/ui";
+import type { FakeOAuth } from "../fakes/oauth.js";
 import type { ArtifactSnapshot, ConnectorSpec } from "../fakes/world.js";
 import { freePort } from "../support/serve.js";
 
@@ -48,6 +49,7 @@ export interface Deployment {
   mcpUrl: string;
   token: string;
   /** The operator saving a credential in the connection page. */
+  openConnect(url: string): Promise<void>;
   setCredential(connectorId: string, value: string): Promise<void>;
   /** Present when the task switched the artifacts module on. */
   artifacts?: {
@@ -125,8 +127,9 @@ async function snapshotOf(store: ArtifactStore): Promise<ArtifactSnapshot> {
 export async function startNodeDeployment(
   connectors: ConnectorSpec[],
   extra: Record<string, unknown> = {},
+  oauth?: FakeOAuth,
 ): Promise<Deployment> {
-  const { artifacts: artifactOptions, ...passthrough } = extra as {
+  const { artifacts: artifactOptions, pool, ...passthrough } = extra as {
     artifacts?: ArtifactsTaskOptions;
   } & Record<string, unknown>;
   const dir = await mkdtemp(join(tmpdir(), "connecta-eval-"));
@@ -141,6 +144,7 @@ export async function startNodeDeployment(
   const connecta = createConnecta({
     storage,
     accessTokens: accessTokens(storage),
+    ...(oauth ? { auth: oauth.inbound() } : {}),
     identity: {
       credentialAdministration: () => "all",
       personalConnection: () => "all",
@@ -150,17 +154,18 @@ export async function startNodeDeployment(
     vault,
     ui: operatorUi(),
     logger: quiet,
-    connectors: connectors.map((spec) =>
+    connectors: [...(oauth ? [oauth.connector()] : []), ...connectors.map((spec) =>
       remoteMcp(spec.id, {
         url: spec.url,
         title: spec.title,
         description: spec.description,
+        ...(spec.usageGuide ? { usageGuide: spec.usageGuide } : {}),
         logger: quiet,
         ...(spec.credential
           ? { auth: { type: "credential" as const, credential: { label: spec.credential.label } } }
           : {}),
       }),
-    ),
+    )],
     ...(artifactsModule ? { artifacts: artifactsModule } : {}),
     ...(passthrough as Partial<Parameters<typeof createConnecta>[0]>),
   });
@@ -182,8 +187,17 @@ export async function startNodeDeployment(
   return {
     kind: "node-template-shape",
     origin,
-    mcpUrl: `${origin}/mcp`,
-    token,
+    mcpUrl: `${origin}/mcp${typeof pool === "string" ? `/${pool}` : ""}`,
+    token: oauth?.token ?? token,
+    openConnect: async url => {
+      const target = new URL(url);
+      if (target.origin !== origin || target.pathname !== "/connect/oauth" || !oauth) throw new Error("Unexpected eval connection URL");
+      target.searchParams.set("start", "1");
+      const response = await fetch(target, { headers: { Cookie: `__session=${oauth.token}` }, redirect: "manual" });
+      await response.body?.cancel();
+      if (response.status >= 400 || !oauth.connected) throw new Error(`Fake /connect visit failed: ${response.status}`);
+      oauth.visits += 1;
+    },
     setCredential: async (connectorId, value) => {
       await vault.set(connectorId, value, "operator");
     },

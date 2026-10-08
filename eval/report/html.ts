@@ -189,7 +189,7 @@ function agentSection(file: AgentResultFile, base: AgentResultFile | undefined):
     <p class="note">${file.trials.length} trials · models ${file.config.models.map(shortModel).join(", ")} · ${file.config.repeats} repeat(s) · concurrency ${file.config.concurrency} · ${esc(file.codexVersion ?? file.claudeVersion ?? "unknown runner")}${file.config.effort ? ` · effort ${esc(file.config.effort)}` : ""}${file.config.runner === "codex" ? "" : ` · MCP output cap ${esc(file.config.mcpOutputTokens ?? "host default")}`}${file.stopped ? ` · <b class="worse">stopped early: ${esc(file.stopped)}</b>` : ""}</p>
     ${matrix(file)}
     ${base ? `<h2>Baseline vs current</h2>${comparison(file, base)}` : ""}
-    <h2>Trials</h2>${tasks}${planned}`;
+    <h2>Trials</h2>${tasks}${planned}${file.skipped?.length ? `<h2>Skipped tasks</h2><ul>${file.skipped.map(task => `<li>${esc(task.id)}: ${esc(task.reason)} Enable with --include-skipped ${esc(task.flag)}.</li>`).join("")}</ul>` : ""}`;
 }
 
 // -------------------------------------------------------------- perf / smoke

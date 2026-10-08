@@ -11,11 +11,14 @@ import { startNodeDeployment } from "./deploy/node.js";
 import { connectMcp } from "./support/mcp.js";
 import type { AgentTrace, ToolUse } from "./agent/trace.js";
 import { ACTIVE_TASKS } from "./tasks/index.js";
+import { startAuthHost } from "./agent/auth-host.js";
+import { parseTrace, type StreamEvent } from "./agent/trace.js";
+import { flags } from "./support/meta.js";
 import type { ActiveTask, Check } from "./tasks/types.js";
 
-function emptyTrace(toolUses: ToolUse[]): AgentTrace {
+function emptyTrace(toolUses: ToolUse[], finalAnswer = ""): AgentTrace {
   return {
-    transcript: [],
+    finalAnswer, transcript: [],
     toolUses,
     tokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
     costUsd: undefined,
@@ -30,16 +33,19 @@ function emptyTrace(toolUses: ToolUse[]): AgentTrace {
   };
 }
 
-async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<Check[]> {
+async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<{ correct: Check[]; wrongDestination: Check[]; missingEvidence: Check[] }> {
   const world = new World(task.world);
   await world.start();
   for (const { service, fault } of task.faults ?? []) world.service(service).faults.push(fault);
-  const deployment = await startNodeDeployment(world.connectorSpecs(), task.deployment);
-  const session = await connectMcp(deployment.mcpUrl, { Authorization: `Bearer ${deployment.token}` });
+  const deployment = await startNodeDeployment(world.connectorSpecs(), task.deployment, task.world?.oauth ? world.oauth : undefined);
+  const hostEvents: StreamEvent[] = [];
+  const host = task.host ? await startAuthHost(deployment, task.host.urlElicitation === "capable", e => hostEvents.push(e)) : undefined;
+  const session = await connectMcp(host?.mcpUrl ?? deployment.mcpUrl, { Authorization: `Bearer ${deployment.token}` });
   const toolUses: ToolUse[] = [];
   let turn = 1;
+  let finalAnswer = "";
   try {
-    if (!/^cta_[A-Za-z0-9_-]{43}$/.test(deployment.token)) {
+    if (!task.world?.oauth && !/^cta_[A-Za-z0-9_-]{43}$/.test(deployment.token)) {
       throw new Error("Node eval did not provision a managed machine token");
     }
     for (const headers of [{}, { Authorization: "Bearer eval-provisioning" }]) {
@@ -50,6 +56,7 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<Check
     if (mode === "reference") {
       await task.reference({
         world,
+        answer: text => { finalAnswer = text; },
         call: async (tool, args) => {
           const result = await session.call(tool, args);
           toolUses.push({
@@ -59,6 +66,7 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<Check
             input: args,
             isError: result.isError,
             resultText: result.text,
+            resultBlocks: result.content,
           });
           return result;
         },
@@ -76,9 +84,25 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<Check
       });
     }
     if (deployment.artifacts) world.artifacts = await deployment.artifacts.snapshot();
-    return task.grade({ world, trace: emptyTrace(toolUses) });
+    const trace = emptyTrace(toolUses, finalAnswer);
+    trace.urlElicitations = parseTrace(hostEvents, [], []).urlElicitations ?? [];
+    const correct = task.grade({ world, trace });
+    const missingEvidence = task.grade({ world, trace: { ...trace, finalAnswer: "Completed." } });
+    // Keep the successful state and answer, but attribute every source call
+    // to another destination. This isolates source enforcement from evidence.
+    for (const call of world.ledger.calls) call.service = "wrong_destination";
+    const wrongUses = toolUses.map(use => ({ ...use, input: {
+      ...use.input,
+      ...(typeof use.input.address === "string" ? { address: use.input.address.replace(/^[^.]+/, "wrong_destination") } : {}),
+      ...(typeof use.input.connector === "string" ? { connector: "wrong_destination" } : {}),
+      ...(typeof use.input.query === "string" ? { query: "wrong_destination" } : {}),
+      ...(typeof use.input.code === "string" ? { code: use.input.code.replace(/tracker|ci|assets|oauth|mixpanel|supabase|revenuecat|artifacts|github/gi, "wrong_destination") } : {}),
+    } }));
+    const wrongDestination = task.grade({ world, trace: { ...trace, toolUses: wrongUses } });
+    return { correct, missingEvidence, wrongDestination };
   } finally {
     await session.close();
+    await host?.close();
     await deployment.close();
     await world.stop();
   }
@@ -86,12 +110,23 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<Check
 
 const required = (checks: Check[]) => checks.filter((item) => !item.advisory);
 let failures = 0;
+const args = flags(process.argv.slice(2));
+const include = new Set((args.get("include-skipped") ?? "").split(","));
 for (const task of ACTIVE_TASKS) {
-  const reference = await play(task, "reference");
+  if (task.skip && !include.has(task.skip.flag)) {
+    console.log(`skip ${task.id}: ${task.skip.reason} Enable with --include-skipped ${task.skip.flag}.`);
+    continue;
+  }
+  const played = await play(task, "reference");
+  const reference = played.correct;
   const refFailed = required(reference).filter((item) => !item.pass);
-  const noop = await play(task, "noop");
+  const noop = (await play(task, "noop")).correct;
   const noopPassed = required(noop).every((item) => item.pass);
-  const ok = refFailed.length === 0 && !noopPassed;
+  const destinationRejected = played.wrongDestination.some(c => c.id === "correct-destination" && !c.pass) &&
+    played.wrongDestination.some(c => c.id === "answer-evidence" && c.pass);
+  const evidenceRejected = played.missingEvidence.some(c => c.id === "answer-evidence" && !c.pass) &&
+    played.missingEvidence.some(c => c.id === "correct-destination" && c.pass);
+  const ok = refFailed.length === 0 && !noopPassed && destinationRejected && evidenceRejected;
   if (!ok) failures += 1;
   console.log(`${ok ? "ok  " : "FAIL"} ${task.id}`);
   for (const item of refFailed) {
@@ -100,6 +135,8 @@ for (const task of ACTIVE_TASKS) {
   for (const item of reference.filter((entry) => entry.advisory && !entry.pass)) {
     console.log(`       reference advisory miss ${item.id}${item.detail ? ` (${item.detail})` : ""}`);
   }
+  if (!destinationRejected) console.log("       wrong-destination answer did not fail the destination check independently");
+  if (!evidenceRejected) console.log("       right-destination answer without facts did not fail evidence independently");
   if (noopPassed) console.log("       a no-op agent passed the grader");
 }
 if (failures) {

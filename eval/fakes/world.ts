@@ -2,6 +2,8 @@
  * A world is one trial's downstream universe: six fake services sharing one
  * ledger and one clock, started fresh and thrown away afterwards.
  */
+import { FakeOAuth } from "./oauth.js";
+import { assetTools, mixpanelTools, revenuecatTools, supabaseTools, PREREQUISITE_GUIDES } from "./prerequisites.js";
 import { FakeService, Ledger } from "./service.js";
 import {
   analyticsTools,
@@ -15,7 +17,7 @@ import {
 } from "./services.js";
 import { trackerState, trackerTools, type TrackerState } from "./tracker.js";
 
-export type ServiceId = "tracker" | "chat" | "analytics" | "billing" | "ci" | "audit";
+export type ServiceId = "tracker" | "chat" | "analytics" | "billing" | "ci" | "audit" | "mixpanel" | "revenuecat" | "supabase" | "assets";
 
 /**
  * How a deployment should wire one fake. Deliberately connecta-agnostic: the
@@ -27,6 +29,7 @@ export interface ConnectorSpec {
   title: string;
   description: string;
   url: string;
+  usageGuide?: string;
   /** A credential the operator manages; absent means the fake is open. */
   credential?: { label: string; value?: string };
 }
@@ -58,6 +61,9 @@ export interface ArtifactSnapshot {
 }
 
 export interface WorldOptions {
+  prerequisites?: boolean;
+  assets?: boolean;
+  oauth?: boolean;
   /** Whether the billing API key is already saved when the trial starts. */
   billingCredential?: "preset" | "missing";
 }
@@ -65,6 +71,10 @@ export interface WorldOptions {
 const BILLING_TOKEN = "sk_eval_billing_7f3a91";
 
 const META: Record<ServiceId, { title: string; description: string }> = {
+  mixpanel: { title: "Mixpanel", description: "Production event analytics" },
+  revenuecat: { title: "RevenueCat", description: "Production subscription access" },
+  supabase: { title: "Supabase", description: "Production database orders" },
+  assets: { title: "Brand assets", description: "Launch badges and images" },
   tracker: { title: "Issue tracker", description: "Issues across the web, api and mobile projects" },
   chat: { title: "Team chat", description: "Channels and messages" },
   analytics: { title: "Product analytics", description: "Customer accounts, revenue and usage metrics" },
@@ -81,6 +91,7 @@ export class World {
   readonly audit: AuditState = { exports: [] };
   readonly services: Map<ServiceId, FakeService>;
   readonly billingToken = BILLING_TOKEN;
+  readonly oauth = new FakeOAuth(this.ledger);
   /** Set by the runner before grading, when the deployment has artifacts. */
   artifacts?: ArtifactSnapshot;
 
@@ -97,6 +108,12 @@ export class World {
       ["billing", make("billing", billingTools(this.now), () => BILLING_TOKEN)],
       ["ci", make("ci", ciTools(this.now))],
       ["audit", make("audit", auditTools(this.audit, clock))],
+      ...(options.prerequisites ? [
+        ["mixpanel", make("mixpanel", mixpanelTools())],
+        ["revenuecat", make("revenuecat", revenuecatTools())],
+        ["supabase", make("supabase", supabaseTools())],
+      ] as [ServiceId, FakeService][] : []),
+      ...(options.assets ? [["assets", make("assets", assetTools())]] as [ServiceId, FakeService][] : []),
     ]);
   }
 
@@ -118,6 +135,7 @@ export class World {
       return {
         id,
         ...META[id],
+        ...(id in PREREQUISITE_GUIDES ? { usageGuide: PREREQUISITE_GUIDES[id as keyof typeof PREREQUISITE_GUIDES] } : {}),
         url: service.url,
         ...(id === "billing"
           ? {

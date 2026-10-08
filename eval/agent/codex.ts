@@ -6,6 +6,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { StreamEvent } from "./trace.js";
+import { assertSurface } from "./surface.js";
 
 export interface CodexRun {
   events: StreamEvent[];
@@ -67,7 +68,8 @@ function codexEvent(event: { method?: string; params?: Record<string, any> }): S
     return [{ type: "user", message: { content: [{
       type: "tool_result", tool_use_id: item.id,
       is_error: item.status !== "completed" || Boolean(item.error) || item.result?.isError === true,
-      content: [{ type: "text", text: item.error ? JSON.stringify(item.error) : mcpResultText(item.result) }],
+      content: item.error ? [{ type: "text", text: JSON.stringify(item.error) }] :
+        item.result?.content ?? [{ type: "text", text: mcpResultText(item.result) }],
     }] } }];
   }
   if (event.method === "item/completed" && item?.type === "agentMessage" && item.text) {
@@ -285,9 +287,7 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
       })))}`);
     }
     loadedTools = Object.keys(servers[0].tools).map(tool => `mcp__connecta__${tool}`);
-    if (!loadedTools.includes("mcp__connecta__execute_code")) {
-      throw new Error("Codex did not load the fake connecta MCP tools");
-    }
+    assertSurface(loadedTools);
     push({ type: "system", subtype: "init", model,
       agent_version: options.testHost?.version ?? await codexVersion(), tools: loadedTools });
     let prompt: string | undefined = options.firstPrompt;

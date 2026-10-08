@@ -1,7 +1,7 @@
 /**
  * Turn agent events into a bounded transcript and the
- * per-trial numbers the report compares. Nothing here reads the answer the
- * agent wrote; graders look at the fakes instead.
+ * per-trial numbers the report compares. Correctness graders read the final
+ * answer separately from the clipped display transcript.
  */
 import type { CallRecord, RequestRecord } from "../fakes/service.js";
 const SERVER_NAME = "connecta";
@@ -22,6 +22,7 @@ export type TranscriptEntry =
   | { kind: "turn_end"; turn: number; subtype: string; isError: boolean; numTurns?: number; durationMs?: number };
 
 export interface ToolUse {
+  resultBlocks?: Record<string, unknown>[];
   id: string;
   turn: number;
   tool: string;
@@ -38,6 +39,8 @@ export interface Tokens {
 }
 
 export interface AgentTrace {
+  finalAnswer?: string;
+  urlElicitations?: { connector: string; url: string; action: string }[];
   transcript: TranscriptEntry[];
   toolUses: ToolUse[];
   tokens: Tokens;
@@ -84,9 +87,12 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
   let agentVersion: string | undefined;
   let loadedTools: string[] = [];
   let rateLimit: Record<string, unknown> | undefined;
+  let finalAnswer = "";
+  const urlElicitations: { connector: string; url: string; action: string }[] = [];
   events.forEach((event, index) => {
     const startedTurn = turnStarts.indexOf(index);
     if (startedTurn >= 0) {
+      finalAnswer = "";
       turn = startedTurn + 1;
       transcript.push({ kind: "user", turn, text: clip(prompts[startedTurn] ?? "", MAX_TEXT_CHARS) });
     }
@@ -99,6 +105,10 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
     }
     if (event.type === "rate_limit_event") {
       rateLimit = event.rate_limit_info as Record<string, unknown>;
+      return;
+    }
+    if (event.type === "eval_url_elicitation") {
+      urlElicitations.push({ connector: String(event.connector), url: String(event.url), action: String(event.action) });
       return;
     }
     if (event.type === "codex_usage") {
@@ -122,8 +132,10 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
         const block = raw as Record<string, unknown>;
         if (block.type === "text" && event.type === "assistant") {
           const text = String(block.text ?? "");
+          finalAnswer += `${text}\n`;
           if (text.trim()) transcript.push({ kind: "assistant", turn, text: clip(text, MAX_TEXT_CHARS) });
         } else if (block.type === "tool_use") {
+          finalAnswer = "";
           const name = String(block.name ?? "");
           const input = (block.input ?? {}) as Record<string, unknown>;
           const serialized = JSON.stringify(input);
@@ -151,6 +163,7 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
           if (use) {
             use.isError = isError;
             use.resultText = text;
+            use.resultBlocks = Array.isArray(block.content) ? block.content as Record<string, unknown>[] : [];
           }
           transcript.push({
             kind: "tool_result",
@@ -192,6 +205,8 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
     }
   });
   return {
+    finalAnswer: finalAnswer.trim(),
+    urlElicitations,
     transcript,
     toolUses: [...toolUses.values()],
     tokens,

@@ -20,6 +20,7 @@ interface ToolAnnotations {
 }
 
 type FakeResult =
+  | { content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[] }
   | { json: unknown }
   | { text: string }
   | { error: string };
@@ -83,6 +84,7 @@ function isWrite(annotations: ToolAnnotations): boolean {
 }
 
 function toMcpResult(result: FakeResult) {
+  if ("content" in result) return result;
   if ("error" in result) {
     return {
       content: [{ type: "text" as const, text: result.error }],
@@ -104,6 +106,7 @@ function toMcpResult(result: FakeResult) {
 }
 
 function resultBytes(result: FakeResult): number {
+  if ("content" in result) return Buffer.byteLength(JSON.stringify(result.content));
   if ("error" in result) return Buffer.byteLength(result.error);
   if ("text" in result) return Buffer.byteLength(result.text);
   return Buffer.byteLength(JSON.stringify(result.json));
@@ -143,6 +146,14 @@ export class FakeService {
   async start(): Promise<void> {
     const handler = createMcpHandler(() => {
       const server = new McpServer({ name: `fake-${this.name}`, version: "1.0.0" });
+      if (this.name === "assets") {
+        server.registerResource("launch-note", "docs://launch/note", { mimeType: "text/plain" }, async uri => {
+          const text = "Brand assets launch badge: approved, revision 7";
+          this.ledger.calls.push({ seq: this.ledger.next(), at: Date.now(), service: this.name, tool: "resources/read",
+            args: { uri: uri.href }, kind: "read", outcome: "ok", resultBytes: Buffer.byteLength(text) });
+          return { contents: [{ uri: uri.href, mimeType: "text/plain", text }] };
+        });
+      }
       for (const tool of this.tools) {
         server.registerTool(
           tool.name,
