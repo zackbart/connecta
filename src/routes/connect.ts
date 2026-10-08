@@ -1,4 +1,5 @@
 import { ConnectorCallError } from "../errors.js";
+import { authorizationCredential } from "../inbound-credential.js";
 import { Effect } from "effect";
 import { escapeHtml, renderPage } from "../branding.js";
 import { htmlSecurityHeaders } from "../html-security.js";
@@ -68,7 +69,7 @@ async function connect(context: RouteContext): Promise<Response> {
   const authz = await authorizeUiIdentity(request, baseUrl, opts.config.auth, "OAuth connection", runtimeContext, opts.config.identity);
   if (!authz.ok) {
     // Access sign-in is enforced at the edge. Clerk needs its own sign-in page.
-    if (authz.response.status === 401 && !runtimeContext?.access) {
+    if (authz.response.status === 401 && authorizationCredential(request).kind === "absent" && !runtimeContext?.access) {
       const signIn = clerkSignIn(context);
       if (signIn) return signIn;
     }

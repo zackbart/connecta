@@ -2,6 +2,7 @@ import { operatorAsset } from "../operator-ui/assets.js";
 import { isSafeHttpsUrl } from "../branding.js";
 import { htmlSecurityHeaders } from "../html-security.js";
 import { oauthConnectUrl, oauthConnectUnavailable } from "../oauth-handoff.js";
+import { authorizationCredential } from "../inbound-credential.js";
 import { Effect } from "effect";
 import { CONNECTA_VERSION } from "../version.js";
 import { CONNECTA_FAVICON_ICO } from "../favicon.js";
@@ -106,7 +107,7 @@ export async function routeUi(
     }
     // Open shell — carries no operator data; everything comes from the
     // authenticated /ui/* APIs after the browser establishes a session.
-    const ambient = runtimeContext?.access
+    const ambient = authorizationCredential(request).kind === "absent" && runtimeContext?.access
       ? opts.config.auth.find(
           (provider) => provider.uiAuth?.kind === "cloudflare-access",
         )?.uiAuth

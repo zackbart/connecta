@@ -70,11 +70,13 @@ describe("OAuth browser token policy", () => {
       const rpc = await readJsonRpc(await mcpRpc(app, "tools/call", { name: "authorize_connector", arguments: { connector: "service" } }, { token: "mcp-oauth-token" }));
       const link = JSON.parse(rpc.result.content[0].text).authorizationUrl;
       const refusedStart = await app.fetch(new Request(link, { headers: { Authorization: "Bearer mcp-oauth-token" } }));
-      expect(refusedStart.status).toBe(200);
-      expect(await refusedStart.text()).toContain("window.Clerk.mountSignIn");
+      expect(refusedStart.status).toBe(401);
+      expect(refusedStart.headers.get("WWW-Authenticate")).toContain('scope="openid profile email"');
       expect((await app.fetch(new Request(link, { headers: { Cookie: "__session=alice" } }))).status).toBe(302);
       const callback = `${BASE}/oauth/callback/service?code=code&state=flow-state`;
-      expect((await app.fetch(new Request(callback, { headers: { Authorization: "Bearer mcp-oauth-token" } }))).status).toBe(400);
+      const refusedCallback = await app.fetch(new Request(callback, { headers: { Authorization: "Bearer mcp-oauth-token" } }));
+      expect(refusedCallback.status).toBe(401);
+      expect(refusedCallback.headers.get("WWW-Authenticate")).toContain('scope="openid profile email"');
       expect(finishAuth).not.toHaveBeenCalled();
       for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
         const result = await app.fetch(new Request(callback, { method, headers: { Authorization: "Bearer mcp-oauth-token" } }));

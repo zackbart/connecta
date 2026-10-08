@@ -850,6 +850,9 @@ export interface InboundAuth {
    * it or doing I/O. The first recognizing provider owns the verdict, including
    * refusals. Human routes reject recognized machine credentials without
    * consulting storage or another identity. A throw fails closed.
+   * Explicit Authorization headers are normalized and exclude cookies and
+   * Access context. Without recognition, the first eligible provider owns
+   * that header's verdict; a refusal never falls back to another provider.
    */
   recognizesCredential?(request: Request, runtimeContext?: InboundAuthRuntimeContext): boolean;
   /**

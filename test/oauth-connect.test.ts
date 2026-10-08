@@ -243,6 +243,34 @@ it("refuses browser OAuth when no inbound provider is configured", async () => {
 });
 
 describe("OAuth identity and signature boundaries", () => {
+  it.each(["clerk", "access"] as const)("INV-4: explicit header refusals stay 401 on %s connect and callback routes", async provider => {
+    const flow = setup(provider, "personal");
+    const { authorizationUrl } = await flow.authorize();
+    const headers = ["", "Basic unknown", "Unknown unknown", "Bearer", "Bearer  malformed", "bearer invalid", "Bearer a, Bearer b"];
+    const challenge = provider === "clerk" ? "Bearer" : 'Bearer scope="openid email"';
+    for (const authorization of headers) {
+      const response = await flow.app.fetch(new Request(authorizationUrl, {
+        headers: { Authorization: authorization, Cookie: "__session=alice" },
+      }), undefined, flow.runtime("alice"));
+      expect(response.status).toBe(401);
+      expect(response.headers.get("WWW-Authenticate")).toBe(challenge);
+      expect(response.headers.has("location")).toBe(false);
+    }
+    expect(flow.startAuth).not.toHaveBeenCalled();
+    const begun = await flow.browser(authorizationUrl, "alice");
+    expect(begun.status).toBe(302);
+    const state = new URL(begun.headers.get("Location")!).searchParams.get("state")!;
+    for (const authorization of headers) {
+      const response = await flow.app.fetch(new Request(`${BASE}/oauth/callback/service?code=code&state=${state}`, {
+        headers: { Authorization: authorization, Cookie: "__session=alice" },
+      }), undefined, flow.runtime("alice"));
+      expect(response.status).toBe(401);
+      expect(response.headers.get("WWW-Authenticate")).toBe(challenge);
+    }
+    expect(flow.finishAuth).not.toHaveBeenCalled();
+    expect((await flow.callback("alice")).status).toBe(200);
+  });
+
   it.each(["personal", "shared"] as const)("refuses Access service identities for %s starts and callbacks", async scope => {
     const flow = setup("access", scope);
     const { authorizationUrl } = await flow.authorize();
@@ -285,7 +313,7 @@ describe("OAuth identity and signature boundaries", () => {
     deployments.push(app);
     const rpc = await readJsonRpc(await mcpRpc(app, "tools/call", { name: "authorize_connector", arguments: { connector: "service" } }, { token }));
     expect(JSON.parse(rpc.result.content[0].text).recovery).toBe("unavailable");
-    const humanRpc = await readJsonRpc(await app.fetch(mcpRpc("tools/call", { name: "authorize_connector", arguments: { connector: "service" } }, { token: "alice" }), undefined, runtime(true)));
+    const humanRpc = await readJsonRpc(await app.fetch(mcpRpc("tools/call", { name: "authorize_connector", arguments: { connector: "service" } }, provider === "clerk" ? { token: "alice" } : {}), undefined, runtime(true)));
     const link = JSON.parse(humanRpc.result.content[0].text).authorizationUrl;
     for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
       const response = await app.fetch(new Request(link, { method, headers: { Authorization: `Bearer ${token}` } }), undefined, runtime());

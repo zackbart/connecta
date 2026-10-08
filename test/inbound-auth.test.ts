@@ -50,7 +50,8 @@ describe("inbound credential ownership", () => {
 
   it("INV-4 INV-7: gives custom providers one normalized header verdict without ambient credentials or consuming the route body", async () => {
     const later = vi.fn(() => ({ ok: true as const, userId: "ambient" }));
-    const first: InboundAuth = { kind: "header", interactiveOperator: true, authorize: (req, _base, runtime) => {
+    const first: InboundAuth = { kind: "header", interactiveOperator: true,
+      challenge: () => 'Bearer scope="header"', authorize: (req, _base, runtime) => {
       expect(req.headers.get("Authorization")).toBe("Bearer explicit");
       expect(req.headers.has("cookie")).toBe(false);
       expect(runtime?.access).toBeUndefined();
@@ -60,6 +61,7 @@ describe("inbound credential ownership", () => {
       headers: { Authorization: "bEaReR explicit", Cookie: "__session=ambient" } });
     const result = await authorize(req, BASE, [first, { kind: "other", authorize: later }], context);
     expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.response.headers.get("WWW-Authenticate")).toBe('Bearer scope="header"');
     expect(later).not.toHaveBeenCalled();
     expect(await req.text()).toBe("route body");
   });

@@ -104,8 +104,12 @@ export function fakeClerkAuth(options: {
   signUpUrl?: string;
   unauthorized?: () => Response;
 } = {}): InboundAuth {
+  const matches = (request: Request) => request.headers.has("authorization")
+    ? request.headers.get("authorization") === `Bearer ${options.token ?? "clerk-operator"}`
+    : Boolean(request.headers.get("cookie")?.split(/;\s*/).includes(`__session=${options.token ?? "clerk-operator"}`));
   return {
     kind: "clerk",
+    recognizesCredential: matches,
     activityActorNamespace: options.frontendApiUrl ?? "https://clerk.example.test",
     interactiveOperator: true,
     uiAuth: {
@@ -116,9 +120,7 @@ export function fakeClerkAuth(options: {
       ...(options.signUpUrl === undefined ? {} : { signUpUrl: options.signUpUrl }),
     },
     authorize(request) {
-      if (request.headers.get("authorization") ===
-        `Bearer ${options.token ?? "clerk-operator"}` ||
-        request.headers.get("cookie")?.split(/;\s*/).includes(`__session=${options.token ?? "clerk-operator"}`)) {
+      if (matches(request)) {
         return { ok: true, userId: options.userId ?? "user_operator" };
       }
       return {

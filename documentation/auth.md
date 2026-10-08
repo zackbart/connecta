@@ -19,6 +19,8 @@ excluded from that request. Access cannot verify caller headers and refuses
 them. If no provider recognizes a valid header, the first eligible provider
 owns its verdict. Without an Authorization header, providers are tried in
 configuration order until admission or a response other than 401.
+Browser OAuth starts and callbacks retain the 401 challenge for an explicit
+header refusal.
 Custom providers can omit recognition when they supply no distinct credential
 syntax; providers with credentials should implement it. A recognition throw
 refuses the request without logging the thrown text.

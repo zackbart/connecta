@@ -1219,6 +1219,7 @@ describe("status UI", () => {
       interactiveOperator: true,
       activityActorNamespace: "https://id-b.example",
       activityActorLabel: directoryB,
+      recognizesCredential: request => request.headers.get("authorization") === "Bearer operator",
       authorize(request) {
         return request.headers.get("authorization") === "Bearer operator"
           ? { ok: true, userId: "operator" }
@@ -1327,6 +1328,7 @@ describe("status UI", () => {
         kind: "oidc",
         activityActorNamespace: "https://id-b.example",
         activityActorLabel: wrongDirectory,
+        recognizesCredential: request => request.headers.get("authorization") === "Bearer operator",
         authorize(request) {
           return request.headers.get("authorization") === "Bearer operator"
             ? { ok: true, userId: "operator" }

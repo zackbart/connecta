@@ -110,8 +110,14 @@ async function providerChallenge(
   request: Request,
   baseUrl: string,
   auth: readonly InboundAuth[],
+  refusingProvider?: InboundAuth,
 ): Promise<Response> {
   if (response.status !== 401) return response;
+  if (!response.headers.has("WWW-Authenticate")) {
+    const headers = new Headers(response.headers);
+    headers.set("WWW-Authenticate", refusingProvider?.challenge?.(request, baseUrl) ?? "Bearer");
+    response = new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+  }
   const path = new URL(request.url).pathname;
   const pool = /^\/mcp\/([a-z0-9_-]+)$/.exec(path)?.[1];
   const metadataRequest = new Request(new URL(
@@ -223,7 +229,7 @@ export async function authorize(
   }
   let lastResponse: Response | null = null;
   const eligible = auth.filter(provider => (!interactiveOnly || provider.interactiveOperator) &&
-    (!explicit || machineCredential || provider.kind !== "access_token"));
+    (!explicit || machineCredential || provider.kind !== "access_token" || !provider.recognizesCredential));
   // A header owns one verdict even for adapters without a recognition hook.
   const candidates = recognized ? [recognized] : explicit ? eligible.slice(0, 1) : eligible;
   for (const provider of candidates) {
@@ -315,7 +321,7 @@ export async function authorize(
     ok: false,
     response: await providerChallenge(lastResponse ?? privateJson({ error: "unauthorized" }, {
       status: 401, headers: { "WWW-Authenticate": "Bearer" },
-    }), request, baseUrl, auth),
+    }), request, baseUrl, auth, explicit ? candidates[0] : undefined),
   };
 }
 

@@ -200,5 +200,11 @@ describe("cloudflareAccessAuth", () => {
       '"auth":{"kind":"cloudflare-access"}',
     );
     expect(accessShell).not.toContain("clerk.browser.js");
+    const explicit = await deployment.fetch(
+      new Request(`${BASE}/`, { headers: { Authorization: "Basic unknown" } }),
+      undefined,
+      workerRuntime({ user_uuid: "operator-1" }),
+    );
+    expect(await explicit.text()).toContain('const AUTH = {"kind":"clerk"');
   });
 });
