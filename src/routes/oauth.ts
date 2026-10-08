@@ -179,9 +179,7 @@ async function finishOAuthCallback(
 ): Promise<Response> {
   const { path, url, baseUrl, opts } = context;
   const error = url.searchParams.get("error");
-  if (error) return html(providerErrorReason(error), opts);
   const code = url.searchParams.get("code");
-  if (!code) return html("invalid_callback", opts);
   const id = path.slice("/oauth/callback/".length);
   const state = url.searchParams.get("state");
   const callbackTarget = await opts.registry.oauthCallbackView(id, state);
@@ -249,6 +247,19 @@ async function finishOAuthCallback(
       );
       return refused();
     }
+    // Error responses are callbacks too: neither their code nor their copy is
+    // interpreted until the state and the consent's issuer have been validated.
+    if (["state", "iss", "code", "error"].some(name => url.searchParams.getAll(name).length > 1)) return refused();
+    try {
+      const issuer = url.searchParams.get("iss");
+      if (connector.verifyCallbackIssuer) {
+        if (!await connector.verifyCallbackIssuer(issuer, connectorContext)) return refused();
+      } else if (issuer !== null) {
+        // A custom connector with no issuer validator cannot vouch for this response.
+        return refused();
+      }
+    } catch { return refused(); }
+    if (!error && !code) return refused();
     {
       try {
         if (!await opts.registry.consumeOAuthHandoff(id, state, expectedPrincipalKey)) return refused();
@@ -261,8 +272,9 @@ async function finishOAuthCallback(
         return html("handoff_failed", opts, connector);
       }
     }
+    if (error) return withSessionCookies(html(providerErrorReason(error), opts), browserIdentity.sessionCookies);
     try {
-      await connector.finishAuth(code, connectorContext, url.searchParams);
+      await connector.finishAuth(code!, connectorContext, url.searchParams);
       await callbackRegistry!.invalidateStored(id);
       return withSessionCookies(html("connected", opts, connector), browserIdentity.sessionCookies);
     } catch (err) {

@@ -496,6 +496,8 @@ export interface Connector {
    * pending URL could complete consent with their own account.
    */
   verifyState?(state: string | null, ctx: ConnectorContext): Promise<boolean>;
+  /** Validate a callback issuer against its verified consent, including error responses. */
+  verifyCallbackIssuer?(issuer: string | null, ctx: ConnectorContext): Promise<boolean>;
   /**
    * Optional: complete a downstream OAuth flow (called by
    * /oauth/callback/<id>). `callbackParams` preserves the authorization

@@ -229,8 +229,9 @@ describe("OAuth callback page", () => {
       logger: silentLogger,
       connectors: [oauthConnector(async () => {})],
     });
+    await bindCallback(connecta, "svc", "good-state");
     const res = await connecta.fetch(
-      new Request(`${BASE}/oauth/callback/svc?error=${encodeURIComponent(LEAKS[2]!)}`),
+      new Request(`${BASE}/oauth/callback/svc?state=good-state&error=${encodeURIComponent(LEAKS[2]!)}`),
     );
     expect(res.status).toBe(400);
     const body = await res.text();
@@ -348,12 +349,13 @@ describe("OAuth callback page", () => {
     await bindCallback(connecta, "broken", "good-state");
     const outcomes: Array<[string, string, string]> = [
       ["/oauth/callback/svc?code=abc&state=good-state", "connected", "status-mark ok"],
-      ["/oauth/callback/svc?error=access_denied", "denied", 'status-mark"'],
-      ["/oauth/callback/svc?error=server_error", "provider_error", "status-mark danger"],
+      ["/oauth/callback/svc?error=access_denied&state=good-state", "denied", 'status-mark"'],
+      ["/oauth/callback/svc?error=server_error&state=good-state", "provider_error", "status-mark danger"],
       ["/oauth/callback/svc?code=abc&state=stale", "invalid_callback", "status-mark danger"],
       ["/oauth/callback/broken?code=abc&state=good-state", "exchange_failed", "status-mark danger"],
     ];
     for (const [path, reason, mark] of outcomes) {
+      if (reason === "denied" || reason === "provider_error") await bindCallback(connecta, "svc", "good-state");
       const body = await (await connecta.fetch(new Request(`${BASE}${path}`))).text();
       expect(body, reason).toContain(`data-oauth-callback="${reason}"`);
       expect(body, reason).toContain('<html lang="en" data-scheme="dark">');

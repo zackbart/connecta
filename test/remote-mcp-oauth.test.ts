@@ -1878,11 +1878,11 @@ describe("/oauth/callback/<id> route", () => {
     expect(JSON.stringify(warn.mock.calls)).not.toContain("x".repeat(10));
   });
 
-  it("error param → 400", async () => {
+  it("INV-4: an error parameter without validated state is a generic 400", async () => {
     const { connecta } = makeConnecta(vi.fn());
     const res = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?error=access_denied`));
     expect(res.status).toBe(400);
-    expect(await res.text()).toContain('data-oauth-callback="denied"');
+    expect(await res.text()).toContain('data-oauth-callback="invalid_callback"');
   });
 
   it("missing code → 400", async () => {

@@ -869,7 +869,12 @@ at the edge. Protect `/connect/*` and `/oauth/callback/*` with the MCP endpoint'
 
 For both connector scopes, the browser must match the initiating principal and retain `personalConnection` or
 shared `credentialAdministration` permission. Connecta saves that principal against downstream state. The
-callback checks state, identity, and permission before consuming the handoff and exchanging the code. Reissue
+callback checks state, identity, permission, and RFC 9207 `iss` before consuming
+the handoff, interpreting an error, or exchanging a code. A supplied issuer must
+exactly match the consent. A server advertising issuer-response support also
+requires `iss`; missing or mismatched values produce the generic refusal. Custom
+connectors receiving `iss` need `verifyCallbackIssuer`. Verified error callbacks
+consume their handoff once and display only fixed copy for a known reason. Reissue
 pending consent links after upgrading; callbacks without a saved initiating user cannot complete.
 
 `compareAndSet` atomically claims link nonces, callback handoffs, and consents, with one concurrent winner,

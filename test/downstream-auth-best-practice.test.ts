@@ -137,4 +137,24 @@ describe("downstream OAuth best practice", () => {
     expect(JSON.stringify(flow.lines)).not.toMatch(/SENTINEL/);
   });
 
+  it.each(["bad-state", "wrong-iss", "missing-iss"])("INV-4 INV-6: refuses callback %s before interpreting an error parameter", async kind => {
+    const flow = setup({ issRequired: kind === "missing-iss" });
+    const status = await flow.start();
+    const params = { error: "access_denied", error_description: TEXT, ...(kind === "bad-state" ? { state: "wrong" } : {}), ...(kind === "missing-iss" ? {} : { iss: kind === "wrong-iss" ? "https://wrong.example" : ISSUER }) };
+    const response = await flow.callback(status.authorizationUrl!, params);
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain('data-oauth-callback="invalid_callback"');
+    expect(flow.sent.some(request => request.url.endsWith("/token"))).toBe(false);
+    expect(JSON.stringify(flow.lines)).not.toContain(TEXT);
+  });
+
+  it("INV-4: interprets a verified callback error once without exchanging a code", async () => {
+    const flow = setup();
+    const status = await flow.start();
+    const params = { error: "access_denied", iss: ISSUER };
+    expect(await (await flow.callback(status.authorizationUrl!, params)).text()).toContain('data-oauth-callback="denied"');
+    expect(await (await flow.callback(status.authorizationUrl!, params)).text()).toContain('data-oauth-callback="invalid_callback"');
+    expect(flow.sent.some(request => request.url.endsWith("/token"))).toBe(false);
+  });
+
 });

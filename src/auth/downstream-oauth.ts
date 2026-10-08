@@ -581,6 +581,7 @@ interface StoredGrant {
 }
 
 interface FlowBinding {
+  issRequired?: true;
   issuer?: string | undefined;
   clientId?: string | undefined;
   tokenEndpoint?: string | undefined;
@@ -591,6 +592,7 @@ async function discoveryBinding(state: OAuthDiscoveryState | undefined): Promise
   return state ? {
     issuer: discoveryIssuer(state),
     tokenEndpoint: state.authorizationServerMetadata?.token_endpoint,
+    ...(state.authorizationServerMetadata?.authorization_response_iss_parameter_supported === true ? { issRequired: true as const } : {}),
     discovery: await oauthStateDigest(JSON.stringify(state)),
   } : {};
 }
@@ -981,7 +983,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
   /** Validate RFC 9207 against the server this consent selected. */
   validateCallbackIssuer(issuer: string | null): void {
-    if (issuer !== null && issuer !== this.callback?.flow.binding?.issuer) {
+    if (!this.callback || (issuer === null ? this.callback.flow.binding?.issRequired === true : issuer !== this.callback.flow.binding?.issuer)) {
       throw new ConnectorCallError(
         "connector_call_failed",
         `Connector "${this.connectorId}" authorization callback issuer does not match its consent; nothing was exchanged.`,

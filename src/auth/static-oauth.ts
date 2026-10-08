@@ -667,6 +667,12 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     startAuth: retainingOAuthPartition(startAuth, 0),
     disconnectAuth: retainingOAuthPartition(disconnectAuth, 0),
     verifyState: retainingOAuthPartition(verifyState, 1),
+    verifyCallbackIssuer: retainingOAuthPartition(async (issuer: string | null, ctx: ConnectorContext) => {
+      const provider = callbackProviders.get(scopeOf(ctx));
+      if (!provider) return false;
+      provider.validateCallbackIssuer(issuer);
+      return true;
+    }, 1),
     finishAuth: retainingOAuthPartition(finishAuth, 1),
     access: (ctx) => ({
       fetch: (input, init) => authorizedFetch(ctx, input, init),

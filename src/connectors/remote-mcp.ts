@@ -2443,6 +2443,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       return newProvider(ctx, state).verifyState(oauthState);
     };
 
+    connector.verifyCallbackIssuer = async (issuer, ctx) => {
+      newProvider(ctx, stateFor(ctx)).validateCallbackIssuer(issuer);
+      return true;
+    };
+
     connector.disconnectAuth = async (ctx) => {
       await disconnectAuthorization(ctx, stateFor(ctx), true);
     };
@@ -2539,6 +2544,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     connector.startAuth = retain(connector.startAuth!, 0);
     connector.disconnectAuth = retain(connector.disconnectAuth!, 0);
     connector.verifyState = retain(connector.verifyState!, 1);
+    connector.verifyCallbackIssuer = retain(connector.verifyCallbackIssuer!, 1);
     connector.finishAuth = retain(connector.finishAuth!, 1);
   }
   connector.listTools = payloadFree(connector.listTools);
