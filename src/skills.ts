@@ -497,14 +497,14 @@ export class SkillsRegistry {
         const secrets = sentSecretsForRequest(this.scope);
         if (secrets.containsUrl(entry.uri)) throw new ConnectorCallError("unavailable", "Downstream skill URI contains sent credentials.");
         files.set(uri, entry.uri);
-        const resources = entry.resources === "dynamic" ? "dynamic" : entry.resources.map(file => {
+        const resources: ConnectorSkill["resources"] = entry.resources === "dynamic" ? "dynamic" : entry.resources.map(file => {
           const uri = downstreamSkillUri(connector.id, file.uri);
           if (secrets.containsUrl(file.uri)) throw new ConnectorCallError("unavailable", "Downstream skill URI contains sent credentials.");
           files.set(uri, file.uri);
           return { ...file, uri };
         });
         if (records.some(record => record.entry.uri === uri)) throw new ConnectorCallError("unavailable", "Downstream skills listing contains duplicate entries.");
-        const mapped = { ...entry, uri, resources };
+        const mapped: ConnectorSkill = { ...entry, uri, resources };
         catalogBytes += jsonBytes(mapped) + 1;
         if (catalogBytes > MAX_SKILL_CATALOG_BYTES) throw new ConnectorCallError("unavailable", "Skills listing exceeds its byte bound.");
         records.push({ entry: mapped, aliases: [], connector, files });
