@@ -498,7 +498,7 @@
       "id": "caching",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching",
-      "notes": "Private upward tools/list and server/discover hints and SQL-backed SDK tools/list ResponseCacheStore honor downstream ttlMs/cacheScope, bounded legacy TTL, intake redaction, and principal/pool separation. Resource caching remains planned.",
+      "notes": "Private upward tools/list and server/discover hints and SQL-backed SDK tools/list ResponseCacheStore honor downstream ttlMs/cacheScope, bounded legacy TTL, intake redaction, and principal/pool separation. Notification generations fence late listings; cancellation and scope teardown stop subsequent cache I/O. Resource caching remains planned.",
       "tests": [
         {
           "file": "test/server.test.ts",
@@ -511,6 +511,10 @@
         {
           "file": "test/mcp-core.test.ts",
           "title": "advertises served extensions, identity, and private discovery cache hints"
+        },
+        {
+          "file": "test/catalog-cache.test.ts",
+          "title": "INV-7 INV-8: starts no cache I/O after deadline while a chunk write is pending"
         }
       ],
       "issue": "https://github.com/zackbart/connecta/issues/707"

@@ -19,6 +19,7 @@ import {
   UrlElicitationRequiredError,
   isInputRequiredResult,
   isJSONRPCErrorResponse,
+  isJSONRPCNotification,
   specTypeSchemas,
   StreamableHTTPClientTransport,
   UnauthorizedError,
@@ -43,7 +44,7 @@ import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
 import { byteReadResponse } from "../byte-read-response.js";
 import { redactCatalog, redactSentSecrets, sentSecretsFor, shortSecretWarning, trackCredentialReads, type SentSecrets } from "../sent-secrets.js";
 import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "../catalog-limits.js";
-import { catalogClientOptions, catalogIntake, observeCatalogFetch } from "../catalog-cache.js";
+import { catalogClientOptions, catalogIntake, closeCatalogCacheScope, observeCatalogChange, observeCatalogFetch } from "../catalog-cache.js";
 import { reviewedClassification } from "../catalog-drift.js";
 import { connectorScopeCleanupClaimed } from "../connector-scope.js";
 import {
@@ -843,10 +844,13 @@ function wireErrorKey(code: unknown, message: unknown): string {
  * `onmessage` it finds there ahead of its own for every message, and whose
  * version probe restores it when the probe is done.
  */
-function recordWireErrors(transport: Transport): void {
+function recordWireErrors(transport: Transport, catalogChanged: () => void): void {
   const seen = new Set<string>();
   wireErrors.set(transport, seen);
   transport.onmessage = (message) => {
+    // The public transport observer runs before SDK 2.3.1's delete-based
+    // eviction. Ordinary opposite-scope cleanup never rotates this fence.
+    if (isJSONRPCNotification(message) && message.method === "notifications/tools/list_changed") catalogChanged();
     if (isJSONRPCErrorResponse(message) && seen.size < MAX_WIRE_ERRORS) {
       seen.add(wireErrorKey(message.error.code, message.error.message));
     }
@@ -2025,7 +2029,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         }
         state.transport = t;
         held.transport = t;
-        recordWireErrors(t);
+        recordWireErrors(t, () => observeCatalogChange(ctx, id));
         yield* promised(async () => {
           try {
             await c.connect(t, { signal: handshakeAbort.signal, ...(prior ? { prior } : {}) });
@@ -2041,7 +2045,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             c = makeClient();
             t = buildTransport(ctx, provider, credentialFramed, connectionAbort.signal, credentialValue);
             state.transport = held.transport = t;
-            recordWireErrors(t);
+            recordWireErrors(t, () => observeCatalogChange(ctx, id));
             await c.connect(t, { signal: handshakeAbort.signal, prior: { kind: "legacy" } });
           }
         }).pipe(
@@ -2410,9 +2414,17 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // from here on sees the scope ended. A duplicate teardown finds it
       // closed and has nothing to run.
       const release = Scope.closeUnsafe(state.scope, Exit.void);
+      const cacheClosing = closeCatalogCacheScope(ctx, id);
+      // Storage cannot cancel an already-started write. Bound the join in
+      // parallel with transport cleanup so it adds no unbounded teardown tail.
+      const cacheClosed = cacheClosing && runEdge(Effect.raceAllFirst([
+        Effect.promise(() => cacheClosing),
+        Effect.sleep(Duration.millis(LOCAL_CLOSE_BUDGET_MS)),
+      ]));
       reset(state);
       // Runs the live connection's lease finalizer, if there is one.
       if (release) await runEdge(release);
+      await cacheClosed;
     },
 
     async status(ctx): Promise<ConnectorStatus> {

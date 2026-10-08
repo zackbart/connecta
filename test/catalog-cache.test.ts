@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Client } from "@modelcontextprotocol/client";
-import { catalogClientOptions, attachCatalogCache, catalogIntake } from "../src/catalog-cache.js";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { Server } from "@modelcontextprotocol/server";
+import { catalogClientOptions, attachCatalogCache, catalogIntake, observeCatalogChange } from "../src/catalog-cache.js";
+import { CatalogService } from "../src/catalog-service.js";
+import { MAX_CATALOG_CHUNK_BYTES } from "../src/catalog-limits.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { callerOf } from "../src/connector-caller.js";
 import { d1Storage } from "../src/d1.js";
@@ -9,15 +12,15 @@ import { sqlStorage, type SqlStatement, type SqlDriver } from "../src/storage/sq
 import { sentSecretsFor, sentSecretsForRequest } from "../src/sent-secrets.js";
 import { responseCacheKeys } from "../src/storage/keys.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
-import { connectorContext } from "./fixtures/misc.js";
+import { connectorContext, deferred, waitFor } from "./fixtures/misc.js";
 import { silentLogger } from "./helpers.js";
-import type { KVStorage } from "../src/types.js";
+import type { ConnectorContext, KVStorage } from "../src/types.js";
 
 const BASE = "https://connecta.test";
 const TOKEN_A = "principal-a-secret/+=";
 const TOKEN_B = "principal-b-secret/+=";
 const closers: Array<() => void | Promise<void>> = [];
-afterEach(async () => { for (const close of closers.splice(0)) await close(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(async () => { vi.useRealTimers(); for (const close of closers.splice(0)) await close(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 // One portable suite, real D1 in workerd and the same SQL KV on node:sqlite.
 async function storage(): Promise<KVStorage> {
@@ -42,7 +45,7 @@ async function storage(): Promise<KVStorage> {
     return sqlStorage(driver, "sqlite");
   }
 }
-async function fixture(options: { ttl?: number; scope?: "public" | "private"; legacy?: boolean; min?: number; max?: number; fallback?: number; sharedCredential?: boolean; nextPage?: { ttl: number; scope: "public" | "private" } } = {}) {
+async function fixture(options: { ttl?: number; scope?: "public" | "private"; legacy?: boolean; min?: number; max?: number; fallback?: number; sharedCredential?: boolean; description?: string; nextPage?: { ttl: number; scope: "public" | "private" } } = {}) {
   const store = await storage();
   const id = `catalog_${crypto.randomUUID().replaceAll("-", "")}`;
   let listings = 0; let mode: "ok" | "name" | "error" | "partial" | "header" | "paged" = "ok";
@@ -61,7 +64,7 @@ async function fixture(options: { ttl?: number; scope?: "public" | "private"; le
         ...((body.params?.cursor ? options.nextPage?.ttl : options.ttl) === undefined ? {} : { ttlMs: body.params?.cursor ? options.nextPage?.ttl : options.ttl }),
         ...(options.legacy && options.scope === undefined ? {} : { cacheScope: (body.params?.cursor ? options.nextPage?.scope : options.scope) ?? "private" }),
         ...(mode === "partial" || (mode === "paged" && !body.params?.cursor) ? { nextCursor: "second" } : {}),
-        tools: [{ name: body.params?.cursor ? "read_next" : mode === "name" ? `read_${token}` : mode === "header" ? "downstream-private-name" : "read", description: `Read ${token}`, inputSchema: { type: "object", properties: { [token]: { const: encodeURIComponent(token) }, ...(mode === "header" ? { bad: { type: "object", "x-mcp-header": "bad private declaration" } } : {}) } }, annotations: { readOnlyHint: true } }],
+        tools: [{ name: body.params?.cursor ? "read_next" : mode === "name" ? `read_${token}` : mode === "header" ? "downstream-private-name" : "read", description: options.description ?? `Read ${token}`, inputSchema: { type: "object", properties: { [token]: { const: encodeURIComponent(token) }, ...(mode === "header" ? { bad: { type: "object", "x-mcp-header": "bad private declaration" } } : {}) } }, annotations: { readOnlyHint: true } }],
       } });
     }
     return server.fetch(input instanceof Request ? input.url : input, init);
@@ -234,5 +237,159 @@ describe("SQL-backed SDK catalog cache", () => {
     expect(await fresh.responseCacheStore!.get(key)).toBeUndefined();
     sentSecretsFor(ctx).add(TOKEN_A);
     await expect(fresh.responseCacheStore!.set(key, { value: value.replace('"read"', JSON.stringify(TOKEN_A)), expiresAt: Date.now() + 60_000, scope: "private" })).rejects.toThrow("tool name");
+  });
+
+  it.each(([
+    { oldScope: "private", newScope: "private" },
+    { oldScope: "private", newScope: "public" },
+    { oldScope: "public", newScope: "private" },
+    { oldScope: "public", newScope: "public" },
+  ] as const).flatMap(scopes => (["legacy", "auto"] as const).map(versionNegotiation => ({ ...scopes, versionNegotiation }))))("INV-4 INV-6 INV-8: real $versionNegotiation SDK list_changed fences late $oldScope publication after a $newScope listing", async ({ oldScope, newScope, versionNegotiation }) => {
+    const store = await storage();
+    const id = `notification_${crypto.randomUUID().replaceAll("-", "")}`;
+    // Both clients start in one established generation. The first refresh
+    // must pin it even though the SDK deliberately skips all cache reads.
+    await new Registry([], { storage: store, logger: silentLogger }).invalidateStored(id);
+    const entered = deferred<void>(); const release = deferred<void>();
+    const servers: Server[] = [];
+    let listings = 0; let deletes = 0;
+    const sdkList = Client.prototype.listTools;
+    let first = true;
+    vi.spyOn(Client.prototype, "listTools").mockImplementation(function (this: Client, params, options) {
+      // A refresh skips cache reads. Its first eventual publication must
+      // already belong to the generation from before the wire request.
+      const refresh = first; first = false;
+      return sdkList.call(this, params, refresh ? { ...options, cacheMode: "refresh" } : options);
+    });
+    const deletion = store.delete.bind(store);
+    vi.spyOn(store, "delete").mockImplementation(async key => { await deletion(key); deletes++; });
+    const connector = remoteMcp(id, {
+      url: "https://downstream.test/mcp", versionNegotiation,
+      _transportFactory: () => {
+        const [client, peer] = InMemoryTransport.createLinkedPair();
+        const server = new Server({ name: "downstream", version: "1" }, { capabilities: { tools: { listChanged: true } } });
+        const index = servers.length; servers.push(server);
+        server.setRequestHandler("tools/list", async () => {
+          listings++;
+          if (index === 0) { entered.resolve(); await release.promise; }
+          return { tools: [{ name: index === 0 ? "old_catalog" : "new_catalog", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }], ttlMs: 60_000, cacheScope: index === 0 ? oldScope : newScope };
+        });
+        const connected = server.connect(peer);
+        closers.push(async () => { await connected; await server.close(); });
+        return client;
+      },
+    });
+    const context = (principal: string) => {
+      const ctx = { ...connectorContext(store), requestScope: {} };
+      attachCatalogCache(ctx, { storage: store, partition: `${principal}/pool`, defaultTtlMs: 300_000, minTtlMs: 0, maxTtlMs: 86_400_000 });
+      closers.push(() => connector.closeScope!(ctx));
+      return ctx;
+    };
+    const old = connector.listTools(context("a"));
+    try {
+      await entered.promise;
+      expect((await connector.listTools(context("b"))).map(tool => tool.name)).toEqual(["new_catalog"]);
+      const generation = await store.get(responseCacheKeys.generation(id));
+      deletes = 0;
+      await servers[1]!.notification({ method: "notifications/tools/list_changed" });
+      // Wait for the real SDK eviction to finish before releasing the old wire
+      // response. SDK 2.3.1 deletes both slots; a rotated generation also makes
+      // them unreachable, without depending on an arbitrary sleep.
+      await waitFor(async () => deletes === 2 || await store.get(responseCacheKeys.generation(id)) !== generation);
+      release.resolve();
+      expect((await old).map(tool => tool.name)).toEqual(["old_catalog"]);
+      expect((await connector.listTools(context("a"))).map(tool => tool.name)).toEqual(["new_catalog"]);
+      expect(listings).toBe(3);
+      expect((await connector.listTools(context("a"))).map(tool => tool.name)).toEqual(["new_catalog"]);
+      expect(listings).toBe(3);
+      const warning = vi.spyOn(silentLogger, "warn");
+      const writing = store.set.bind(store);
+      vi.spyOn(store, "set").mockImplementation((key, ...args) => key === responseCacheKeys.generation(id)
+        ? Promise.reject(new Error(`Fence refused ${TOKEN_A}`)) : writing(key, ...args));
+      await servers[1]!.notification({ method: "notifications/tools/list_changed" });
+      await waitFor(() => warning.mock.calls.length > 0);
+      expect(JSON.stringify(warning.mock.calls)).not.toContain(TOKEN_A);
+      expect(JSON.stringify(warning.mock.calls)).not.toContain("Fence refused");
+      expect((await connector.listTools(context("a"))).map(tool => tool.name)).toEqual(["new_catalog"]);
+    } finally { release.resolve(); await old.catch(() => {}); }
+  });
+
+  it.each(["deadline", "teardown"] as const)("INV-7 INV-8: starts no cache I/O after %s while a chunk write is pending", async ending => {
+    const f = await fixture({ ttl: 60_000, description: "x".repeat(MAX_CATALOG_CHUNK_BYTES + 100) });
+    const entered = deferred<void>(); const release = deferred<void>(); const settled = deferred<void>();
+    let ctx: ConnectorContext | undefined; let closed = false; let chunks = 0;
+    const late: string[] = [];
+    const start = (operation: string) => { if (closed || ctx?.signal?.aborted) late.push(operation); };
+    const listTools = f.connector.listTools.bind(f.connector);
+    vi.spyOn(f.connector, "listTools").mockImplementation(async context => {
+      ctx = context;
+      try { return await listTools(context); } finally { settled.resolve(); }
+    });
+    const get = f.store.get.bind(f.store); const set = f.store.set.bind(f.store);
+    const deletion = f.store.delete.bind(f.store); const cas = f.store.compareAndSet.bind(f.store);
+    vi.spyOn(f.store, "get").mockImplementation(key => { start("get"); return get(key); });
+    vi.spyOn(f.store, "delete").mockImplementation(key => { start("delete"); return deletion(key); });
+    const publication = vi.spyOn(f.store, "compareAndSet").mockImplementation((...args) => { start("compareAndSet"); return cas(...args); });
+    vi.spyOn(f.store, "set").mockImplementation(async (key, ...args) => {
+      start("set");
+      if (key.includes(":chunk:") && ++chunks === 1) { entered.resolve(); await release.promise; }
+      return set(key, ...args);
+    });
+    const root = f.registry(); const requestScope = {};
+    const search = ending === "deadline"
+      ? new CatalogService(root, BASE, { requestScope, probeTimeoutMs: 1_000 }).search({ connector: f.id })
+      : f.connector.listTools(root.contextFor(f.id, BASE, requestScope));
+    try {
+      await entered.promise;
+      if (ending === "deadline") {
+        const result = await search as Awaited<ReturnType<CatalogService["search"]>>;
+        expect(result.queryAnalysis?.catalogError?.code).toBe("timeout");
+        expect(ctx?.signal?.aborted).toBe(true);
+      }
+      closed = true;
+      await f.connector.closeScope!(root.contextFor(f.id, BASE, requestScope));
+      release.resolve();
+      await settled.promise;
+      await search;
+      expect(chunks).toBe(1);
+      expect(late).toEqual([]);
+      expect(publication.mock.calls.filter(([key]) => key.startsWith(responseCacheKeys.prefix(f.id)) && !key.endsWith(":generation"))).toEqual([]);
+      const keys = await f.store.list(responseCacheKeys.prefix(f.id));
+      expect(keys.filter(key => !key.includes(":chunk:") && !key.endsWith(":generation"))).toEqual([]);
+      vi.restoreAllMocks();
+      await f.read(f.registry());
+      expect(f.listings()).toBe(2);
+    } finally { release.resolve(); await settled.promise; await search.catch(() => {}); }
+  });
+
+  it("INV-7: bounds teardown while notification invalidation storage is blocked", async () => {
+    const f = await fixture({ ttl: 60_000 });
+    const ctx = f.registry().contextFor(f.id, BASE, {});
+    await f.connector.listTools(ctx);
+    closers.push(() => f.connector.closeScope!(ctx));
+    const entered = deferred<void>(); const release = deferred<void>(); const settled = deferred<void>();
+    const set = f.store.set.bind(f.store);
+    let writes = 0;
+    vi.spyOn(f.store, "set").mockImplementation(async (key, ...args) => {
+      if (key === responseCacheKeys.generation(f.id)) {
+        writes++; entered.resolve(); await release.promise;
+        try { return await set(key, ...args); } finally { settled.resolve(); }
+      }
+      return set(key, ...args);
+    });
+    // The real notification path is exercised above. Block the same observer's
+    // storage I/O here so teardown's own deadline is the only possible exit.
+    observeCatalogChange(ctx, f.id);
+    await entered.promise;
+    vi.useFakeTimers();
+    const closing = f.connector.closeScope!(ctx);
+    try {
+      await vi.advanceTimersByTimeAsync(2_000);
+      await closing;
+      observeCatalogChange(ctx, f.id);
+      expect(writes).toBe(1);
+    } finally {
+      release.resolve(); vi.useRealTimers(); await settled.promise; await closing;
+    }
   });
 });
