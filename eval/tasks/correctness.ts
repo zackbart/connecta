@@ -80,8 +80,8 @@ export function statesAbsence(answer: string, service: string): boolean {
     `\\b(?:unavailable|absent|(?:not|isn['’]t|is not|aren['’]t)\\s+(?:[\\w’']+\\s+){0,2}(?:connected|configured|available)|inaccessible)\\b[^.!?;\\n]*\\b${name}\\b`, "i").test(answer);
 }
 
-/** The last ANSWER line supplies the absence result independently of prose. */
-export function structuredAbsence(answer: string): boolean {
+/** The last ANSWER line supplies the expected result independently of prose. */
+export function structuredAnswer(answer: string, expected: string): boolean {
   // Markdown emphasis or code may wrap the whole line or just the label; an
   // empty trailing ANSWER line still counts as the last answer.
   const unwrap = (text: string) => text.trim().replace(/^[*_`"']+|[*_`"'.]+$/g, "").trim();
@@ -89,7 +89,11 @@ export function structuredAbsence(answer: string): boolean {
     const match = /^answer\s*[*_`]*\s*:\s*[*_`]*\s*(.*)$/i.exec(unwrap(line));
     return match ? [unwrap(match[1]!)] : [];
   });
-  return values.at(-1)?.toLowerCase() === "unavailable";
+  return values.at(-1)?.toLowerCase() === expected.toLowerCase();
+}
+
+export function structuredAbsence(answer: string): boolean {
+  return structuredAnswer(answer, "unavailable");
 }
 
 export function called(world: World, address: string, args: Record<string, unknown> = {}): boolean {

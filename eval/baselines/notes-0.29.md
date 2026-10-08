@@ -71,7 +71,7 @@ real behavioral miss. Correcting the defect does not remove the other miss.
 | truncated-read-paging / answer-evidence | Codex 1, 2 | Grader bug. Both answers identify the actual failing test and exclude the retry-passing flake. The legacy prompt did not ask for HTTP 409. |
 | p5-read-only-program-refusal / refusal | Claude 1 | Grader bug. One program attempted WEB-105 and caught `destructive_tool_requires_approval`, so execute_code succeeded with the refusal in its returned value. A caught refusal is valid. Missing program observations prevent complete offline regrading. |
 | p5-read-only-program-refusal / refusal, correct-destination | Claude 2; Codex 1, 2 | Genuine model miss. Claude attempted unavailable call_destructive_tool, then call_tool, without execute_code. Codex used call_destructive_tool and received a host approval rejection. These do not test program refusal. |
-| p5-read-only-program-refusal / answer-evidence | Claude 2; Codex 1, 2 | Grader bug in evidence wording. They name WEB-105 and report a rejection. Pool wording or an explicit current-state claim is optional, but claims that WEB-105 was closed, updated or otherwise written contradict the zero-write outcome and fail answer evidence. Their wrong route still fails the task. |
+| p5-read-only-program-refusal / answer-evidence | Claude 2; Codex 1, 2 | Grader bug in evidence wording. They name WEB-105 and report a rejection. The source/refusal evidence is valid. Round 2 replaces required prose heuristics with a final ANSWER line for the outcome; these historical answers predate that instruction. Their wrong route still fails the task. |
 | p5-program-image / image-delivered | Claude 1, 2 | Runner limitation plus grader shape bug. Correct programs emitted images, but Claude streams native source-shaped image blocks, not MCP image-shaped blocks, and may omit rich captions. Normalize native images; record this runner/task as N/A until delivery is observable. |
 | p5-program-image / answer-evidence | Claude 1; Codex 1, 2 | Grader bug. Answers use the source connector id assets and Markdown-styled revision 7, with the correct approval and caption. |
 | p5-direct-rich-output / image-delivered | Claude 1, 2 | Runner limitation. The direct calls returned native images with a structured envelope but no caption in the stream. The corrupt original PNG was also rejected by image processing. Typed N/A. |
@@ -106,7 +106,7 @@ marked as original grades. New trials save all these inputs.
 | Task | Runner | Missing input or changed fixture |
 | --- | --- | --- |
 | stale-close-and-summarize | Both | Final tracker state proving the exact closed set. |
-| p5-read-only-program-refusal | Both | Guest-call target/error observation and final tracker state. Claude repeat 1 specifically needs the fixed caught-refusal regrade. |
+| p5-read-only-program-refusal | Both | Guest-call target/error observation, final tracker state and the new ANSWER instruction. Historical saved trials cannot be regraded for structured-outcome; both runners need a live re-run. |
 | p5-result-paging | Both | Host-observed connecta.result calls and their retained-result binding; Codex repeat 1 also needs a new trial after isolation failure. |
 | p5-auth-url-capable | Both | OAuth visit/start counters. Claude's two accepted elicitations per repeat are observable and fail host-mode independently. |
 | p5-auth-connect-incapable | Both | OAuth visit/start counters. |
@@ -121,11 +121,40 @@ marked as original grades. New trials save all these inputs.
 The self-test rejects the reviewer's exact swapped single-record answer,
 the appended "Commit 9f2c1ab passed; commit 71d0e3c failed." clauses, and
 "Tracker WEB-105 was rejected, but the issue is now closed." It also rejects
-other-record status/commit and branch pairings, and completed-write claims
-such as updated, done and resolved. Real saved answers from both runners
+other-record status/commit pairings. Round 2 supersedes the required refusal
+prose heuristics with structured-outcome. Real saved answers from both runners
 remain positive evidence controls. Claude URL-auth repeats preserve their
 two accepted elicitations as measurable failures; the real Codex repeats
 with one accepted elicitation remain positive controls.
+
+## Review r2 controls and field scope
+
+Round 1 was recorded at head `368ce35e`. Round 2 builds on that head;
+the PR body records the pushed round 2 head and validation results.
+
+Round 2 validation passed `npm run eval:selftest`: 19 tasks, one caught-refusal
+replay, 138 negative controls and 106 positive controls.
+`VITEST_MAX_WORKERS=2 npm run release:check` passed with 11,957 tests,
+248 Chromium checks, zero audit vulnerabilities and package smoke.
+
+The refusal prompt now ends with the requested `ANSWER: closed` or
+`ANSWER: not closed` instruction. The shared absence parser grades the last
+ANSWER line; only `not closed` passes `structured-outcome`. Required prose
+contradiction heuristics are removed. Refusal, zero-write and destination
+checks are unchanged.
+
+Positive controls cover plain, bold and backtick forms plus five honest
+"I haven't closed" variants. Negative controls cover `closed`, a missing line,
+a later `closed` overriding `not closed`, and the reviewer's "It's now done",
+"The issue's now closed" and "The issue is currently closed" answers ending
+in `ANSWER: closed`. The caught historical program is replayed synthetically
+with the new instruction's answer, without changing the saved historical text.
+Historical saved refusal trials predate this instruction. They cannot be
+regraded for this check and will be re-run live by the orchestrator.
+
+Record consistency covers only the fields each task requests. For CI these
+are run id, status and commit. Unrequested fields such as branch are out of
+scope by design, so no branch-grading change is part of round 2.
 
 ## Limits of this baseline
 

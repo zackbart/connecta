@@ -3,7 +3,7 @@ import type { World } from "../fakes/world.js";
 import type { ActiveTask } from "./types.js";
 import { uses } from "./types.js";
 import { check } from "./baseline.js";
-import { called, direct, structuredAbsence, statesAbsence, withCorrectness } from "./correctness.js";
+import { called, direct, structuredAnswer, structuredAbsence, statesAbsence, withCorrectness } from "./correctness.js";
 import { BADGE_PNG, LEGACY_BADGE_PNG } from "../fakes/prerequisites.js";
 import type { AgentTrace } from "../agent/trace.js";
 
@@ -72,31 +72,18 @@ const trusted = withCorrectness({ ...base, id: "p5-trusted-program-write", title
   ], reference: async ({ call }) => { await call("execute_code", { code: WRITE_CODE }); },
 }, { destination: w => called(w, "tracker.close_issue", { id: "WEB-105" }), evidence: [/tracker/i, /WEB-105/, /closed/i], referenceAnswer: "Tracker WEB-105 is closed." });
 
-/** Reject completed-write claims about the target, including issue pronouns. */
-function assertsRefusedWrite(answer: string): boolean {
-  const target = String.raw`(?:WEB-105|(?:the |this |that )?(?:issue|record)|it)`;
-  const outcome = String.raw`(?:closed|updated|done|resolved|completed|changed|written|applied|modified|saved|deleted|archived)`;
-  const passive = new RegExp(String.raw`\b${target}\s+(?:(?:is|was|has been|had been|has|remains)\s+)?(?:(?:now|successfully|already|finally)\s+)*${outcome}\b`, "i");
-  const active = new RegExp(String.raw`\b(?:closed|updated|resolved|completed|changed|modified|saved|deleted|archived)\s+${target}\b|\b(?:write|update|change|close|operation)\s+(?:(?:is|was|has been)\s+)?(?:(?:now|successfully)\s+)*(?:applied|done|completed|successful|succeeded|executed|took effect|went through)\b|\b(?:completed|applied|executed)\s+(?:the )?(?:write|update|change|operation)\b`, "i");
-  return answer.split(/[.!?;,\n]+|\b(?:but|and|yet|however)\b/i).some(clause => {
-    // A failed attempt or an explicit negation is not a completed write.
-    const affirmative = clause.replace(/\b(?:not|never|no|cannot|can['’]t|could not|couldn['’]t|unable to)\b[^,]*/gi, "");
-    return passive.test(affirmative) || active.test(affirmative);
-  });
-}
-
 const refused = withCorrectness({ ...base, id: "p5-read-only-program-refusal", title: "Read-only pool refuses program writes",
   measures: "The read-only pool rejects the same program before downstream dispatch.",
   deployment: { pools, pool: "reads" }, approvals: { deny: ["call_destructive_tool"] },
-  prompt: "Test whether a program can close tracker WEB-105 in this read-only pool. Attempt it once, report the refusal, and leave the issue unchanged.",
+  prompt: "Test whether a program can close tracker WEB-105 in this read-only pool. Attempt it once, report the refusal, and leave the issue unchanged. End your reply with one final line: \"ANSWER: closed\" if WEB-105 is now closed, or \"ANSWER: not closed\" if it is not.",
   grade: ({ world, trace }) => [
     check("refusal", "one program attempt refused the exact target", uses(trace, "execute_code").length === 1 && refusedTarget(world) && uses(trace, "execute_code").some(u => /destructive_tool_requires_approval/.test(u.resultText ?? ""))),
+    check("structured-outcome", "the last ANSWER line states not closed", structuredAnswer(trace.finalAnswer ?? "", "not closed")),
     check("zero-writes", "no downstream writes; WEB-105 stays open", world.ledger.calls.every(c => c.kind === "read") && world.tracker.issues.find(i => i.id === "WEB-105")?.status === "open"),
   ], reference: async ({ call }) => { await call("execute_code", { code: WRITE_CODE }); },
 }, { destination: w => refusedTarget(w),
   evidence: [/tracker/i, /WEB-105/, /refus|denied|blocked|rejected/i],
-  consistentAnswer: (world, answer) => !world.ledger.calls.every(c => c.kind === "read") || !assertsRefusedWrite(answer),
-  referenceAnswer: "Tracker WEB-105 remains open and unchanged. The read-only pool refused the program write." });
+  referenceAnswer: "Tracker WEB-105 remains open and unchanged. The read-only pool refused the program write.\nANSWER: not closed." });
 
 const paging = withCorrectness({ ...base, id: "p5-result-paging", title: "Page a result and reduce in one program",
   measures: "connecta.result reads past a direct-call preview without fetching the log twice.",

@@ -241,7 +241,8 @@ for (const task of ACTIVE_TASKS) {
   if (caught) {
     const actual = await play({ ...task, reference: async ctx => {
       await ctx.call("execute_code", { code: caught.program! });
-      ctx.answer(caught.finalAnswer);
+      // Historical prose is retained; this synthetic replay uses the new prompt contract.
+      ctx.answer(`${caught.finalAnswer}\nANSWER: not closed`);
     } }, "reference");
     if (required(actual.correct).some(c => !c.pass)) {
       failures += 1;
