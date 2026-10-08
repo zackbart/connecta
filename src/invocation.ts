@@ -38,8 +38,7 @@ import { splitAddress, type RegistryView } from "./registry.js";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { validateCatalogToolInput } from "./validate.js";
 import { sentSecretsFor, sentSecretsForRequest, trackCredentialReads, type SentSecrets } from "./sent-secrets.js";
-import { invocationDispatchCount, recordInvocationCompletion, trackInvocationDispatch } from "./downstream-dispatch.js";
-import type { ConnectorContext } from "./types.js";
+import { recordAuthFailure, recordWriteEntry, resolveInvocationAuth } from "./invocation-auth.js";
 
 function defined<T extends object>(
   values: T,
@@ -325,7 +324,7 @@ export class InvocationService {
       let attempts = 0;
       let resultBytes: number | undefined;
       let dispatchedToConnector = false;
-      let invocationContext: ConnectorContext | undefined;
+      let preInvocationAuthFailure = false;
       let answered = false;
       const sentSecrets = sentSecretsForRequest(this.catalog.requestScope);
       context.sentSecrets?.include(sentSecrets);
@@ -406,8 +405,7 @@ export class InvocationService {
         if (error.code === "auth_required" && target.connector.startAuth) {
           error = { ...error, code: "downstream_oauth_required" };
         }
-        const sentWrite = resolved?.definition.classification === "write" &&
-          invocationContext !== undefined && invocationDispatchCount(invocationContext) > 0;
+        const enteredWrite = resolved?.definition.classification === "write" && dispatchedToConnector;
         switch (error.code) {
           case "destructive_tool_requires_approval": {
             const echoed = echoedCallArgs(args);
@@ -438,7 +436,7 @@ export class InvocationService {
                 target.connector,
                 this.catalog.baseUrl,
               ),
-              ...(sentWrite
+              ...(enteredWrite
                 ? { reconciliationRequired: true as const, retryable: false } : {}),
               nextAction: {
                 tool: "authorize_connector" as const,
@@ -447,7 +445,7 @@ export class InvocationService {
                   "Give the URL and instructions it returns to the operator.",
               },
               retry:
-                sentWrite
+                enteredWrite
                   ? "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
                   : `Retry ${target.connector.id}.${target.toolName} after the operator completes recovery.`,
             };
@@ -483,6 +481,11 @@ export class InvocationService {
       const failed = (error: CallErrorDetails): InvocationOutcome<T> => {
         const diagnostics = timing();
         const target = resolved ?? activityTarget;
+        if (target && (error.code === "auth_required" || error.code === "downstream_oauth_required")) {
+          recordAuthFailure(this.catalog.requestScope, target.connector.id,
+            resolved?.definition.classification === "read" || preInvocationAuthFailure ||
+            (!resolved && context.source === "call_tool"));
+        }
         // Attach host deadline facts before write recovery changes the code.
         if (isTimeoutFailure(error)) {
           const elapsedMs = Date.now() - started;
@@ -626,32 +629,39 @@ export class InvocationService {
 
           if (callSignal?.aborted) return yield* Effect.fail(callSignal.reason);
           attempts = 1;
-          const call = () => {
+          const call = async () => {
             const connectorContext = this.registry.contextFor(
               target.connector.id,
               this.catalog.baseUrl,
               this.catalog.requestScope,
               defined({ signal: callSignal, timeoutMs: context.timeoutMs, defer: this.catalog.defer }),
             );
-            invocationContext = connectorContext;
-            trackInvocationDispatch(connectorContext, write);
             if (context.source === "execute_code") markProgramCall(connectorContext);
             trackCredentialReads(connectorContext);
             sentSecrets.include(sentSecretsFor(connectorContext));
-            if (
-              target.connector.credential &&
-              !connectorContext.credential
-            ) {
-              throw new ConnectorCallError(
-                "auth_required",
-                "Operator-managed credential storage is not configured. Call " +
-                  `authorize_connector({ connector: "${target.connector.id}" }).`,
-              );
+            try {
+              if (target.connector.credential) {
+                if (!connectorContext.credential) {
+                  throw new ConnectorCallError("auth_required",
+                    "Operator-managed credential storage is not configured. Call " +
+                    `authorize_connector({ connector: "${target.connector.id}" }).`);
+                }
+                if (!await connectorContext.credential.getAll()) {
+                  throw new ConnectorCallError("auth_required",
+                    `Connector "${target.connector.id}" has no stored credential. Call authorize_connector.`);
+                }
+              }
+              await resolveInvocationAuth(target.connector, connectorContext);
+            } catch (error) {
+              const code = classifyCallError(error).code;
+              preInvocationAuthFailure = code === "auth_required" || code === "downstream_oauth_required";
+              throw error;
             }
             // Cancellation can arrive during admission or context construction.
             if (admissionSignal?.aborted) throw admissionSignal.reason;
             dispatchedToConnector = true;
-            return target.connector.callTool(
+            if (write) recordWriteEntry(this.catalog.requestScope);
+            return await target.connector.callTool(
               target.toolName,
               args ?? {},
               connectorContext,
@@ -685,7 +695,6 @@ export class InvocationService {
               // reports the same downstream-failure wording, and the throw lands
               // inside the attempt where it feeds health.
               assertRawMcpSuccess(target.connector.kind, raw);
-              if (invocationContext) recordInvocationCompletion(invocationContext);
               return { raw, observed: sentSecrets.redact(downstreamValue(target.connector.kind, raw)) };
             }),
           ));

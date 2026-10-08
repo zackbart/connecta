@@ -41,7 +41,6 @@ import {
 import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
 import { byteReadResponse } from "../byte-read-response.js";
 import { redactCatalog, redactSentSecrets, sentSecretsFor, shortSecretWarning, trackCredentialReads, type SentSecrets } from "../sent-secrets.js";
-import { recordDownstreamDispatch } from "../downstream-dispatch.js";
 import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
 import { reviewedClassification } from "../catalog-drift.js";
 import { connectorScopeCleanupClaimed } from "../connector-scope.js";
@@ -68,6 +67,7 @@ import { CONNECTA_VERSION } from "../version.js";
 import { learnedUrlRefusal } from "../url-safety.js";
 import { oauthSealerFor } from "../oauth-sealing.js";
 import { retainingOAuthPartition } from "../oauth-partition.js";
+import { registerInvocationAuth } from "../invocation-auth.js";
 import { detach, runEdge } from "../runtime/run.js";
 import { assertKnownOptions, keys, optionsOf } from "../config-schema.js";
 import { describedEndpoint, describedUrl } from "../described.js";
@@ -1132,7 +1132,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       if (opts.auth?.type === "oauth") trackRemoteClientRequest(secrets, input, init);
       else secrets.request(input, init);
     }
-    recordDownstreamDispatch(active?.size ? [...active] : [ctx]);
   };
   const connectingWaiters = new WeakMap<Deferred.Deferred<Client, unknown>, number>();
   const isOauth = opts.auth?.type === "oauth";
@@ -2602,5 +2601,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   connector.callTool = payloadFree(connector.callTool);
   if (connector.startAuth) connector.startAuth = payloadFree(connector.startAuth);
   if (connector.finishAuth) connector.finishAuth = payloadFree(connector.finishAuth);
+  if (isOauth) registerInvocationAuth(connector, retainingOAuthPartition(async ctx => {
+    // Only inspect local grant state here. Discovery, refresh, and MCP
+    // transports remain inside callTool and cannot establish retry safety.
+    const provider = newProvider(ctx, stateFor(ctx));
+    if (await provider.operatorDisconnected()) throw operatorDisconnectedError();
+    if (!await provider.tokens()) throw authRequiredError();
+  }, 0));
   return connector;
 }

@@ -11,7 +11,7 @@ import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { closeScope } from "./runtime/connector-scope.js";
 import type { DeferredWork } from "./connector-scope.js";
 import { storedCredentialShape } from "./credential-rules.js";
-import { requestDispatches } from "./downstream-dispatch.js";
+import { authRecoveryFacts } from "./invocation-auth.js";
 
 const TTL_MS = 10 * 60_000;
 const MAX_ROUNDS = 3;
@@ -182,10 +182,9 @@ export class AuthElicitation {
     const id = authFailure ? error.connector : explicit ? args.connector : undefined;
     // Every accepted retry owns new request-local facts. Handler-authored
     // errors and program write summaries cannot establish replay eligibility.
-    const dispatches = requestDispatches(this.options.requestScope);
-    const wrote = dispatches.writes > 0 || dispatches.completedWrites > 0 ||
-      (tool === "call_destructive_tool" && dispatches.count > 0);
-    if (authFailure && wrote) {
+    const facts = authRecoveryFacts(this.options.requestScope, String(id));
+    const blocked = !explicit && (!facts.eligible || facts.writeEntered);
+    if (authFailure && (facts.writeEntered || (tool !== "call_tool" && !facts.eligible))) {
       const structuredContent = { ...result.structuredContent, error: {
         ...error, retryable: false, reconciliationRequired: true,
         retry: "This write may have partially run. Reconcile its target before retrying after the operator completes recovery.",
@@ -202,7 +201,7 @@ export class AuthElicitation {
     const elicitation = object(capabilities) ? capabilities.elicitation : undefined;
     const capable = envelope?.[PROTOCOL_VERSION_META_KEY] === "2026-07-28" &&
       object(elicitation) && Object.hasOwn(elicitation, "url") && object(elicitation.url);
-    if (wrote || !capable || !vault?.requestStateKey || !vault.seal || !vault.open) {
+    if (blocked || !capable || !vault?.requestStateKey || !vault.seal || !vault.open) {
       if (!authFailure) return result;
       const structuredContent = { ...result.structuredContent, error: {
         ...(result.structuredContent?.error as Record<string, unknown>), authorizationUrl: (await this.options.connectLink(id)).url,

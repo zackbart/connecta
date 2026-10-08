@@ -14,7 +14,6 @@
  */
 import { ConnectorCallError, unavailableCallError } from "../errors.js";
 import { sentSecretsFor } from "../sent-secrets.js";
-import { recordDownstreamDispatch } from "../downstream-dispatch.js";
 import type { ConnectorContext } from "../types.js";
 import type { ApiHandlerContext } from "./api-connector.js";
 
@@ -168,10 +167,6 @@ type GuardedFetcher = (
   ctx: ConnectorContext,
 ) => Promise<Response>;
 
-// OAuth resolves a grant before sending; its final sentSecretsFetch boundary
-// records dispatch. Entering this adapter is not evidence of a sent request.
-const deferredFetches = new WeakSet<GuardedFetcher>();
-
 /**
  * The transport half of a guarded connector that authenticates through its
  * own `api()` OAuth grant: no header of the helper's making, and every request
@@ -201,7 +196,6 @@ export function oauthBearer(
     }
     return grant.fetch(url, init);
   };
-  deferredFetches.add(send);
   return { authenticate: () => ({}), fetch: send };
 }
 
@@ -558,7 +552,6 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         ...(ctx.signal ? { signal: ctx.signal } : {}),
       };
       sentSecretsFor(ctx).request(url, init);
-      if (!deferredFetches.has(send)) recordDownstreamDispatch([ctx]);
       response = await send(url.toString(), init, ctx);
     } catch (cause) {
       if (cause instanceof ConnectorCallError) throw cause;

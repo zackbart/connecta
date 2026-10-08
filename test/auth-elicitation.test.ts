@@ -203,8 +203,10 @@ describe("auth URL elicitation", () => {
   });
 
   it("INV-2 INV-4: destructive calls and explicit authorize_connector share the auth elicitation", async () => {
+    const credentialFlow = setup({ credential: true });
+    expect((await credentialFlow.rpc("call_destructive_tool", { address: "service.needs_auth", args: {} })).result.resultType).toBe("input_required");
+    expect(credentialFlow.call).not.toHaveBeenCalled();
     const flow = setup();
-    expect((await flow.rpc("call_destructive_tool", { address: "service.needs_auth", args: {} })).result.resultType).toBe("input_required");
     const args = { connector: "service", force: true };
     const first = (await flow.rpc("authorize_connector", args)).result;
     expect(first.resultType).toBe("input_required");

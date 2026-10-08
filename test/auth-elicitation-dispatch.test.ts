@@ -4,9 +4,8 @@ import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { guardedFetch, oauthBearer } from "../src/connectors/guarded-fetch.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { ConnectorCallError } from "../src/errors.js";
-import { requestDispatches } from "../src/downstream-dispatch.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { Connector } from "../src/types.js";
+import type { Connector, ConnectorContext } from "../src/types.js";
 import { createTestConnecta, required } from "./helpers.js";
 import { fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { guestErrorText, guestFailureFacts } from "./fixtures/misc.js";
@@ -22,16 +21,19 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-function setup(connector: Connector) {
+function setup(connector: Connector, options: { additional?: Connector[]; program?: (call: (address: string, args: unknown) => Promise<unknown>) => Promise<unknown> } = {}) {
   const storage = memoryStorage();
+  const connectors = [connector, ...(options.additional ?? [])];
+  const vault = encryptedCredentialVault(storage, CREDENTIAL_KEY);
   const app = createTestConnecta({
-    connectors: [connector], storage, vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
+    connectors, storage, vault,
     publicUrl: BASE, logger: "silent", auth: [fakeClerkAuth({ token: "alice", userId: "alice" })],
     identity: { credentialAdministration: () => "all" },
-    pools: { trusted: { tools: ["service"], grant: () => true, trust: "trusted" } },
+    pools: { trusted: { tools: connectors.map(item => item.id), grant: () => true, trust: "trusted" } },
     executor: { execute: async (_code, providers) => {
       const call = required(providers.find(provider => provider.name === "connecta")).fns.call!;
       try {
+        if (options.program) return { result: await options.program(call) };
         await call("service.write", {});
         return { result: await call("service.read", {}) };
       }
@@ -63,14 +65,14 @@ function setup(connector: Connector) {
     expect(await connector.verifyState!(state, callback)).toBe(true);
     await connector.finishAuth!("consented", callback, new URLSearchParams({ code: "consented", state }));
   };
-  return { app, rpc, connect };
+  return { app, rpc, connect, vault };
 }
 
 function apiFlow(options: { plain?: boolean; guarded?: boolean; resetScope?: boolean } = {}) {
   let items = 0;
   let audits = 0;
+  let entries = 0;
   let rejectAudit = true;
-  let invocationScope: object | undefined;
   const sends = vi.fn(async (input: RequestInfo | URL) => {
     const url = input instanceof Request ? input.url : String(input);
     if (url === TOKEN) return Response.json({ access_token: "service-access-token", token_type: "Bearer" });
@@ -89,7 +91,7 @@ function apiFlow(options: { plain?: boolean; guarded?: boolean; resetScope?: boo
       name, description: name === "write" ? "Create an item and read its audit" : "Read the audit",
       annotations: { readOnlyHint: name === "read" },
       handler: async (_args, ctx) => {
-        invocationScope = ctx.requestScope;
+        entries++;
         if (options.resetScope) ctx.requestScope = {};
         if (options.guarded) {
           if (name === "write") await transport({ method: "POST", path: "/items" }, ctx, response => response.json());
@@ -106,8 +108,8 @@ function apiFlow(options: { plain?: boolean; guarded?: boolean; resetScope?: boo
       },
     })),
   });
-  return { ...setup(connector), sends, items: () => items, audits: () => audits,
-    dispatches: () => requestDispatches(required(invocationScope)), allowAudit: () => { rejectAudit = false; } };
+  return { ...setup(connector), sends, items: () => items, audits: () => audits, entries: () => entries,
+    allowAudit: () => { rejectAudit = false; } };
 }
 
 function expectReconciliation(result: any) {
@@ -121,7 +123,78 @@ function expectReconciliation(result: any) {
   });
 }
 
-describe("auth recovery dispatch eligibility", () => {
+describe("auth recovery invocation eligibility", () => {
+  it.each([["api", false], ["custom", false], ["api", true], ["custom", true]] as const)(
+    "INV-9: raw fetch in a %s connector write cannot elicit or replay a completed item (program %s)", async (kind, program) => {
+      let items = 0;
+      const send = vi.fn(async (input: RequestInfo | URL) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (url === `${API}/items`) { items++; return Response.json({ id: items }); }
+        return Response.json({}, { status: 401 });
+      });
+      vi.stubGlobal("fetch", send);
+      const handler = async (_args: unknown, ctx: ConnectorContext) => {
+        // Both sends bypass Connecta's fetch wrappers. Replacing the scope
+        // must not detach the host's invocation facts either.
+        ctx.requestScope = {};
+        await fetch(`${API}/items`, { method: "POST" });
+        const response = await fetch(`${API}/audit`);
+        if (response.status === 401) throw new ConnectorCallError("auth_required", "Audit needs auth");
+        return response.json();
+      };
+      const definition = { name: "write", description: "Create item and get audit", annotations: { readOnlyHint: false } };
+      const connector: Connector = kind === "api"
+        ? api("service", { tools: [{ ...definition, handler }] })
+        : { id: "service", kind: "api", staticTools: [definition], listTools: async () => [definition],
+            callTool: (_name, args, ctx) => handler(args, ctx) };
+      connector.startAuth = async () => ({ state: "auth_required", authorizationUrl: "https://auth.service.test/authorize" });
+      const flow = setup(connector);
+      expectReconciliation(await flow.rpc(program ? "execute_code" : undefined));
+      expect(items).toBe(1);
+      expect(send).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each([false, true])("INV-9: pre-invocation missing credential slots elicit without entering a write (named %s)", async named => {
+    let writes = 0;
+    const connector = api("service", { credential: { label: "Token",
+      ...(named ? { fields: [{ name: "apiKey", label: "API key" }] } : {}) },
+      tools: [{ name: "write", description: "Create an item", annotations: { readOnlyHint: false },
+        handler: () => { writes++; return { id: writes }; } }],
+    });
+    const flow = setup(connector);
+    // A previously declared slot cannot satisfy the current named slot.
+    if (named) await flow.vault.set("service", "old-token", "alice");
+    const first = await flow.rpc();
+    expect(first.resultType).toBe("input_required");
+    expect(writes).toBe(0);
+    if (named) await flow.vault.setAll("service", { apiKey: "current-token" }, "alice");
+    else await flow.vault.set("service", "current-token", "alice");
+    expect((await flow.rpc(undefined, first.requestState)).isError).toBeFalsy();
+    expect(writes).toBe(1);
+  });
+
+  it("INV-2 INV-9: a program cannot elicit after an earlier write handler entered and a read lacks credentials", async () => {
+    let entries = 0;
+    let reads = 0;
+    const service = api("service", { tools: [{ name: "write", description: "Enter a write", annotations: { readOnlyHint: false },
+      handler: () => { entries++; throw new ConnectorCallError("invalid_args", "Write refused inside handler"); } }],
+    });
+    const protectedRead = api("protected", { credential: { label: "Read token" },
+      tools: [{ name: "read", description: "Read an item", annotations: { readOnlyHint: true }, handler: () => { reads++; return {}; } }],
+    });
+    const flow = setup(service, { additional: [protectedRead], program: async call => {
+      try { await call("service.write", {}); } catch { /* Continue to the protected read. */ }
+      return call("protected.read", {});
+    } });
+    const result = await flow.rpc("execute_code");
+    expect(result.resultType).not.toBe("input_required");
+    expect(result.structuredContent.error).toMatchObject({ code: "auth_required", retryable: false, reconciliationRequired: true,
+      authorizationUrl: expect.stringContaining(`${BASE}/connect/protected?h=`) });
+    expect(entries).toBe(1);
+    expect(reads).toBe(0);
+  });
+
   it.each([{}, { plain: true }, { guarded: true }, { plain: true, guarded: true }])(
     "INV-9: a direct write followed by an auth failure cannot elicit or replay (%j)", async options => {
       const flow = apiFlow(options);
@@ -134,15 +207,17 @@ describe("auth recovery dispatch eligibility", () => {
     },
   );
 
-  it.each([false, true])("INV-9: a write whose auth fails before any send elicits and succeeds once (guarded %s)", async guarded => {
+  it.each([false, true])("INV-9: a write with a pre-invocation missing grant elicits and succeeds once (guarded %s)", async guarded => {
     const flow = apiFlow({ guarded });
     const first = await flow.rpc();
     expect(first.resultType).toBe("input_required");
     expect(flow.sends).not.toHaveBeenCalled();
+    expect(flow.entries()).toBe(0);
     await flow.connect();
     flow.allowAudit();
     expect((await flow.rpc(undefined, first.requestState)).isError).toBeFalsy();
     expect(flow.items()).toBe(1);
+    expect(flow.entries()).toBe(1);
   });
 
   it("INV-9: an accept retry that dispatches a write and then fails auth cannot elicit another round", async () => {
@@ -158,11 +233,61 @@ describe("auth recovery dispatch eligibility", () => {
     expect(flow.items()).toBe(1);
   });
 
-  it("INV-4 INV-9: a handler cannot reset its dispatch facts by replacing its context scope", async () => {
+  it("INV-9: each accepted write round rechecks pre-invocation eligibility before handler entry", async () => {
+    const flow = apiFlow();
+    const first = await flow.rpc();
+    const second = await flow.rpc(undefined, first.requestState);
+    expect(second.resultType).toBe("input_required");
+    expect(second.requestState).not.toBe(first.requestState);
+    expect(flow.entries()).toBe(0);
+    expect(flow.sends).not.toHaveBeenCalled();
+    await flow.connect();
+    expectReconciliation(await flow.rpc(undefined, second.requestState));
+    expect(flow.items()).toBe(1);
+    expect(flow.entries()).toBe(1);
+    expect((await flow.rpc(undefined, second.requestState)).structuredContent.error.code).toBe("invalid_request_state");
+    expect(flow.items()).toBe(1);
+  });
+
+  it("INV-9: a read using raw fetch elicits after a mid-handler 401 and re-runs", async () => {
+    let authorized = false;
+    let entries = 0;
+    vi.stubGlobal("fetch", async () => Response.json({}, { status: authorized ? 200 : 401 }));
+    const connector = api("service", { tools: [{ name: "read", description: "Read an audit", annotations: { readOnlyHint: true },
+      handler: async () => {
+        entries++;
+        const response = await fetch(`${API}/audit`);
+        if (response.status === 401) throw new ConnectorCallError("auth_required", "Audit needs auth");
+        return response.json();
+      } }],
+    });
+    connector.startAuth = async () => ({ state: "auth_required", authorizationUrl: "https://auth.service.test/authorize" });
+    const flow = setup(connector);
+    const first = await flow.rpc("call_tool", undefined, "service.read");
+    expect(first.resultType).toBe("input_required");
+    expect(entries).toBe(1);
+    authorized = true;
+    expect((await flow.rpc("call_tool", first.requestState, "service.read")).isError).toBeFalsy();
+    expect(entries).toBe(2);
+  });
+
+  it.each([false, true])("INV-9: custom write auth errors before any send cannot elicit (program %s)", async program => {
+    let entries = 0;
+    const definition = { name: "write", annotations: { readOnlyHint: false } };
+    const connector: Connector = { id: "service", kind: "api", staticTools: [definition], listTools: async () => [definition],
+      callTool: () => { entries++; throw new ConnectorCallError("auth_required", "Connect first"); },
+      startAuth: async () => ({ state: "auth_required", authorizationUrl: "https://auth.service.test/authorize" }),
+    };
+    const flow = setup(connector);
+    expectReconciliation(await flow.rpc(program ? "execute_code" : undefined));
+    expect(entries).toBe(1);
+  });
+
+  it("INV-4 INV-9: a handler cannot reset invocation facts by replacing its context scope", async () => {
     const flow = apiFlow({ plain: true, resetScope: true });
+    await flow.connect();
     expectReconciliation(await flow.rpc());
     expect(flow.items()).toBe(1);
-    expect(flow.dispatches()).toEqual({ count: 2, writes: 2, completedWrites: 0 });
   });
 
   it("INV-9: a read with a mid-handler 401 elicits and can re-run after connection", async () => {
@@ -177,7 +302,7 @@ describe("auth recovery dispatch eligibility", () => {
     expect(flow.items()).toBe(0);
   });
 
-  it.each([false, true])("INV-2 INV-9: programs use downstream write dispatch facts (connected %s)", async connected => {
+  it.each([false, true])("INV-2 INV-9: programs use write handler entry facts (connected %s)", async connected => {
     const flow = apiFlow();
     if (connected) await flow.connect();
     const result = await flow.rpc("execute_code");
