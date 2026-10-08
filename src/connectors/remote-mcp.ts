@@ -2030,7 +2030,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }
       const writeContinuation = downstreamWriteContinuation(ctx.requestScope ?? ctx) &&
         init?.method === "POST" && skillObject(rpc) && rpc.method === "tools/call";
-      const response = await fetch(input, writeContinuation ? { ...init, redirect: "manual" } : init);
+      const response = writeContinuation
+        ? await fetch(input, { ...init, redirect: "manual" })
+        : await fetch(input, init);
       if (writeContinuation && (response.status === 401 || response.status >= 300 && response.status < 400)) {
         await response.body?.cancel().catch(() => {});
         // Stop before the SDK can refresh auth or follow a redirect and resend
