@@ -484,6 +484,9 @@ The guest JSON codec, Object prototype, and Promise prototype are immutable.
 Promise race and species are protected too. Host completion uses captured array
 iteration and immutable frames, so a program cannot intercept or change a private
 frame during bridge decoding, async return adoption, or serialization.
+Worker guest modules contain only the user callback. Trusted wrappers and
+preludes stay in private module helpers, outside exported function source and
+the guest's lexical scope, including when a program imports and reflects on modules.
 Program diagnostic fields are bounded before transport, including escaped text;
 a large custom error name cannot turn a failure into a truncated success.
 

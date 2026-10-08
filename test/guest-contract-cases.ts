@@ -869,6 +869,29 @@ return fs;
     },
   },
   {
+    clauses: "E6, X11",
+    name: "INV-6: imported Worker module functions contain no private frame literals",
+    code: `async () => {
+      if (typeof process === "undefined") return { privateLiterals: false, privateBindings: false };
+      const executorModule = await import("./executor.js");
+      const guestModule = await import("./connecta-guest.js");
+      const sources = [guestModule.default.toString()];
+      for (const value of Object.values(executorModule)) {
+        if (typeof value !== "function") continue;
+        sources.push(value.toString());
+        for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value.prototype || {}))) {
+          if (typeof descriptor.value === "function") sources.push(descriptor.value.toString());
+        }
+      }
+      return { privateLiterals: /__connecta_run_[a-f0-9]{32}|connecta-error:[a-f0-9]{32}:/.test(sources.join("\\n")),
+        privateBindings: typeof __connecta_program !== "undefined" || typeof __connecta_initialize_0 !== "undefined" || typeof __connecta_user_program !== "undefined" };
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({ privateLiterals: false, privateBindings: false });
+    },
+  },
+  {
     clauses: "P1",
     name: "TypeScript syntax is not JavaScript and does not run",
     code: `async () => {

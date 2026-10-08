@@ -18,6 +18,17 @@ export function wrapGuestProgram(code: string, secret: string): string {
   return `async () => globalThis[${key}]()(async (connecta) => await (\n${code}\n)(), new Error().stack)`;
 }
 
+/** Separate user source from the trusted wrapper before publishing Worker modules. */
+export function isolateGuestProgram(code: string): { program: string; wrapper: string } | undefined {
+  const start = code.indexOf("async (connecta) => await (\n");
+  const end = code.lastIndexOf("\n)(), new Error().stack)");
+  if (start < 0 || end < start) return undefined;
+  return {
+    program: code.slice(start, end + "\n)()".length),
+    wrapper: code.slice(0, start) + "__connecta_user_program" + code.slice(end + "\n)()".length),
+  };
+}
+
 /**
  * The frame is retained by Error identity, not by its message or public fields.
  * Emissions are acknowledged before success, even when the guest omits await.
@@ -184,7 +195,11 @@ export function programError(raw: { name?: unknown; message?: unknown; stack?: u
   // Compare QuickJS/V8 locations to the wrapper baseline after the source.
   const location = /:(\d+)(?::\d+)?\)?(?:\n|$)/.exec(stack);
   const baseline = typeof raw.baseline === "string" ? /:(\d+)(?::\d+)?\)?(?:\n|$)/.exec(raw.baseline) : null;
+  // Workers publish only the user callback in this module, with one prefix line.
+  // Its trusted wrapper and baseline live in a separate, private module scope.
+  const workerLocation = /connecta-guest\.js:(\d+):\d+/.exec(stack);
   const line = typeof raw.line === "number" && Number.isFinite(raw.line) ? Math.max(1, raw.line)
+    : workerLocation ? Math.max(1, Number(workerLocation[1]) - 1)
     : location && baseline ? Math.max(1, Number(location[1]) - Number(baseline[1]) + code.split("\n").length + 1) : null;
   let hint = "Use plain JavaScript in one async () => { ... } expression and the connecta global.";
   if (/require|\bimport\b|\bfs\b|filesystem|node:/.test(message) || name === "SyntaxError" && /\bimport\b/.test(code)) {

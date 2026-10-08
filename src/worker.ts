@@ -8,6 +8,7 @@ import {
 } from "./executor-admission.js";
 import type { AdmittingExecutor, ExecuteResult, ExecutorLease, ExecutorProvider } from "./types.js";
 import { brandExecutor } from "./executor-contract.js";
+import { isolateGuestProgram } from "./guest-runtime.js";
 
 interface WorkerExecutorOptions {
   loader: DynamicWorkerExecutorOptions["loader"];
@@ -76,16 +77,35 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
             if (typeof source !== "string" || !executableCode || !hostProviders) throw new Error("Worker executable module was unavailable.");
             const index = source.indexOf(executableCode);
             if (index < 0) throw new Error("Worker executable module did not contain the program.");
-            const prelude = hostProviders.find(provider => provider.prelude)?.prelude;
-            const before = prelude ? source.indexOf(prelude) : source.indexOf("    try {\n      const result = await Promise.race");
-            if (before < 0) throw new Error("Worker provider setup was unavailable.");
+            const guest = isolateGuestProgram(executableCode);
+            if (guest) normalizationLines = 0;
+            const names = hostProviders.map(provider => provider.name).join(", ");
             const globals = hostProviders.map(provider => `globalThis[${JSON.stringify(provider.name)}] = ${provider.name};`).join("\n");
-            const isolated = source.slice(0, index) + "__connecta_program" + source.slice(index + executableCode.length);
-            const main = 'import __connecta_program from "./connecta-guest.js";\n' + isolated.slice(0, before) + globals + "\n" + isolated.slice(before);
+            let isolated = source.slice(0, index) + "__connecta_program" + source.slice(index + executableCode.length);
+            const helpers: string[] = [];
+            let firstInitializer: string | undefined;
+            for (const [providerIndex, provider] of hostProviders.entries()) {
+              if (!provider.prelude) continue;
+              const name = `__connecta_initialize_${providerIndex}`;
+              const call = `${name}(${names});`;
+              if (!isolated.includes(provider.prelude)) throw new Error("Worker provider setup was unavailable.");
+              helpers.push(`const ${name} = (${names}) => {\n${provider.prelude}\n};`);
+              isolated = isolated.replace(provider.prelude, call);
+              firstInitializer ??= call;
+            }
+            const before = firstInitializer ? isolated.indexOf(firstInitializer) : isolated.indexOf("    try {\n      const result = await Promise.race");
+            if (before < 0) throw new Error("Worker provider setup was unavailable.");
+            // Exported class methods and the guest callback must contain no
+            // secret literals: guests can import modules and inspect function source.
+            const imports = guest
+              ? 'import __connecta_user_program from "./connecta-guest.js";\n'
+              : 'import __connecta_program from "./connecta-guest.js";\n';
+            const wrapper = guest ? `const __connecta_program = (${guest.wrapper});\n` : "";
+            const main = imports + helpers.join("\n") + "\n" + wrapper + isolated.slice(0, before) + globals + "\n" + isolated.slice(before);
             return track(Reflect.apply(Reflect.get(target, key), target, [{ ...definition, modules: {
               ...definition.modules,
               "executor.js": main,
-              "connecta-guest.js": `export default (${executableCode});`,
+              "connecta-guest.js": `export default (${guest?.program ?? executableCode});`,
             } }, ...args.slice(1)]));
           };
           const value = Reflect.get(target, key);
