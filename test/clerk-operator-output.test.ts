@@ -3,8 +3,11 @@ import { signJwt } from "@clerk/backend/jwt";
 import { clerkAuth } from "../src/auth/clerk.js";
 import { createByteReadingClerkClient } from "../src/auth/clerk-transport.js";
 import { createClerkClient } from "@clerk/backend";
-import { authorize as authorizeIdentity } from "../src/routes/shared.js";
+import { authorize as authorizeIdentity, authorizeUiIdentity } from "../src/routes/shared.js";
 import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
+import { accessTokens, AccessTokenManager } from "../src/access-tokens.js";
+import { memoryStorage } from "../src/storage/memory.js";
+import { createTestConnecta } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const FRONTEND = "https://clerk.example.com";
@@ -21,7 +24,7 @@ function output(spies: ReturnType<typeof captureOutput>) {
   return JSON.stringify(spies.flatMap(spy => spy.mock.calls));
 }
 
-async function session() {
+async function session(userId = "user_123") {
   const pair = await crypto.subtle.generateKey({
     name: "RSASSA-PKCS1-v1_5", modulusLength: 2048,
     publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256",
@@ -31,10 +34,10 @@ async function session() {
   const kid = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
   const token = await signJwt({
-    sub: "user_123", sid: "sess_test", iss: FRONTEND, azp: BASE,
-    exp: now + 300, nbf: now - 5,
+    sub: userId, sid: "sess_test", iss: FRONTEND, azp: BASE,
+    exp: now + 300, nbf: now - 5, iat: now - 5,
   }, privateKey, { algorithm: "RS256", header: { typ: "JWT", kid } });
-  return { token, jwks: { keys: [{ ...publicKey, kid, alg: "RS256", use: "sig" }] } };
+  return { token, privateKey, kid, jwks: { keys: [{ ...publicKey, kid, alg: "RS256", use: "sig" }] } };
 }
 
 function auth() { return clerkAuth({ publishableKey, secretKey, publicUrl: BASE }); }
@@ -47,6 +50,91 @@ function browser(nonce?: string) {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("Clerk operator output with the real SDK", () => {
+  it.each(["/ui/access-tokens", "/connect/service", "/oauth/callback/service", "/mcp", "/mcp/support"])(
+    "INV-4: explicit Authorization owns %s with another user's real session cookie", async path => {
+      captureOutput();
+      const { token: cookie, privateKey, kid, jwks } = await session("cookie_user");
+      const now = Math.floor(Date.now() / 1000);
+      const isMcp = path.startsWith("/mcp");
+      const headerToken = await signJwt({
+        sub: "header_user", iss: FRONTEND, exp: now + 300, nbf: now - 5, iat: now - 5,
+        ...(isMcp ? { client_id: "client_connecta", scope: "openid profile email", aud: `${BASE}${path}` }
+          : { sid: "sess_header", azp: BASE }),
+      }, privateKey, { algorithm: "RS256", header: { typ: isMcp ? "at+jwt" : "JWT", kid } });
+      const fetcher = vi.fn(async (_input: RequestInfo | URL) => Response.json(jwks));
+      vi.stubGlobal("fetch", fetcher);
+      const provider = auth();
+      const manager = new AccessTokenManager(memoryStorage());
+      const machine = await manager.create("machine", "operator");
+      const getIdentity = vi.fn(async () => ({ user_uuid: "ambient_access_user" }));
+      const context = { waitUntil() {}, access: { aud: "app", getIdentity } };
+      const providers = [manager.auth, cloudflareAccessAuth(), provider];
+      const verify = (request: Request) => isMcp ? authorizeIdentity(request, BASE, providers, context)
+        : authorizeUiIdentity(request, BASE, providers, "human route", context);
+      for (const scheme of ["Bearer", "bearer", "bEaReR"]) {
+        const request = new Request(`${BASE}${path}`, { headers: { Authorization: `${scheme} ${headerToken}`, Cookie: `__session=${cookie}; __client_uat=${now - 10}; __clerk_db_jwt=dev-browser` } });
+        const result = await verify(request);
+        expect(result.ok, scheme).toBe(true);
+        if (result.ok) expect(result.identity.principal).toEqual({ namespace: FRONTEND, id: "header_user" });
+        expect(await provider.authorize(request, BASE)).toEqual({ ok: true, userId: "header_user" });
+      }
+      for (const header of ["", "Basic unknown", "Unknown unknown", "Bearer", "Bearer ", `Bearer  ${headerToken}`,
+        `Bearer\t${headerToken}`, `Bearer ${headerToken}, Bearer ${cookie}`, "bearer invalid"] ) {
+        const request = new Request(`${BASE}${path}?__clerk_handshake_nonce=ambient`, {
+          headers: { Authorization: header, Cookie: `__session=${cookie}; __client_uat=${now - 10}; __clerk_db_jwt=dev-browser` },
+        });
+        const result = await verify(request);
+        expect(result.ok, header).toBe(false);
+        if (!result.ok) {
+          expect(result.response.status).toBe(401);
+          expect(result.response.headers.get("WWW-Authenticate")).toBe(provider.challenge!(request, BASE));
+        }
+        const direct = await provider.authorize(request, BASE);
+        expect(direct.ok).toBe(false);
+        if (!direct.ok) expect(direct.response.status).toBe(401);
+      }
+      const machineResult = await verify(new Request(`${BASE}${path}`, {
+        headers: { Authorization: `bEaReR ${machine.token}`, Cookie: `__session=${cookie}; __client_uat=${now - 10}; __clerk_db_jwt=dev-browser` },
+      }));
+      if (isMcp) {
+        expect(machineResult.ok).toBe(true);
+        if (machineResult.ok) expect(machineResult.actor).toMatchObject({ kind: "access_token", id: machine.accessToken.id });
+      } else {
+        expect(machineResult.ok).toBe(false);
+        if (!machineResult.ok) expect(machineResult.response.status).toBe(403);
+        const cookieResult = await authorizeUiIdentity(new Request(`${BASE}${path}`, {
+          headers: { Cookie: `__session=${cookie}; __client_uat=${now - 10}; __clerk_db_jwt=dev-browser` },
+        }), BASE, [provider], "human route");
+        expect(cookieResult.ok).toBe(true);
+        if (cookieResult.ok) expect(cookieResult.identity.principal).toEqual({ namespace: FRONTEND, id: "cookie_user" });
+      }
+      expect(getIdentity).not.toHaveBeenCalled();
+      expect(fetcher.mock.calls.every(([input]) => new URL(String(input)).pathname === "/v1/jwks")).toBe(true);
+    },
+  );
+
+  it("INV-4: the real /ui/access-tokens route grants the header principal with a different cookie principal", async () => {
+    captureOutput();
+    const { token: cookie, privateKey, kid, jwks } = await session("cookie_user");
+    const now = Math.floor(Date.now() / 1000);
+    const headerToken = await signJwt({ sub: "header_user", sid: "sess_header", iss: FRONTEND,
+      azp: BASE, exp: now + 300, nbf: now - 5, iat: now - 5,
+    }, privateKey, { algorithm: "RS256", header: { typ: "JWT", kid } });
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(jwks)));
+    const storage = memoryStorage();
+    const permission = vi.fn(({ principal }) => principal?.id === "header_user");
+    const app = createTestConnecta({ connectors: [], publicUrl: BASE, auth: auth(),
+      accessTokens: accessTokens(storage), identity: { accessTokenManagement: permission }, logger: "silent" });
+    try {
+      const response = await app.fetch(new Request(`${BASE}/ui/access-tokens`, {
+        headers: { Authorization: `bEaReR ${headerToken}`,
+          Cookie: `__session=${cookie}; __client_uat=${now - 10}; __clerk_db_jwt=dev-browser` },
+      }));
+      expect(response.status).toBe(200);
+      expect(permission).toHaveBeenCalledWith(expect.objectContaining({ principal: { namespace: FRONTEND, id: "header_user" } }));
+    } finally { await app.close(); }
+  });
+
   it("INV-6: withholds handshake HTTP 400 error code, message, long_message, and headers", async () => {
     const spies = captureOutput();
     const upstream = Response.json({

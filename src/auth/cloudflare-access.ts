@@ -1,4 +1,4 @@
-import { isMachineCredential } from "../inbound-credential.js";
+import { authorizationCredential } from "../inbound-credential.js";
 import type { AuthResult, InboundAuth } from "../types.js";
 import { validIdentityReference } from "../identity.js";
 
@@ -30,12 +30,13 @@ export function cloudflareAccessAuth(): InboundAuth {
   return {
     kind: "cloudflare-access",
     interactiveOperator: true,
-    recognizesCredential: (request, context) => !isMachineCredential(request) && Boolean(context?.access),
+    recognizesCredential: (request, context) => authorizationCredential(request).kind === "absent" && Boolean(context?.access),
+    challenge: () => 'Bearer scope="openid email"',
     activityActorNamespace: "cloudflare-access",
     uiAuth: { kind: "cloudflare-access" },
 
     async authorize(request, _baseUrl, runtimeContext): Promise<AuthResult> {
-      if (isMachineCredential(request)) return unauthorized();
+      if (authorizationCredential(request).kind !== "absent") return unauthorized();
       const access = runtimeContext?.access;
       if (!access || typeof access.aud !== "string" || !/^[\x21-\x7e]{1,256}$/.test(access.aud)) return unauthorized();
 

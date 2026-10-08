@@ -1,4 +1,4 @@
-import { isMachineCredential } from "../inbound-credential.js";
+import { authorizationCredential, authorizationRequest, isMachineCredential } from "../inbound-credential.js";
 import type { ActivityActor } from "../activity.js";
 import type { DeferredWork } from "../connector-scope.js";
 import { htmlSecurityHeaders } from "../html-security.js";
@@ -174,11 +174,21 @@ export async function authorize(
     }
   | { ok: false; response: Response }
 > {
+  const credential = authorizationCredential(request);
+  const explicit = credential.kind !== "absent";
+  if (credential.kind === "invalid") {
+    const challenge = auth.find(provider => provider.kind !== "access_token")?.challenge?.(request, baseUrl) ?? "Bearer";
+    return { ok: false, response: await providerChallenge(privateJson({ error: "unauthorized" }, {
+      status: 401, headers: { "WWW-Authenticate": challenge },
+    }), request, baseUrl, auth) };
+  }
+  request = authorizationRequest(request);
+  if (explicit && runtimeContext) runtimeContext = { waitUntil: runtimeContext.waitUntil.bind(runtimeContext) };
   const machineCredential = isMachineCredential(request);
   if (interactiveOnly && machineCredential) {
     return { ok: false, response: privateJson({ error: "authenticated user required" }, { status: 403 }) };
   }
-  if (auth.length === 0 && !interactiveOnly && !machineCredential) {
+  if (auth.length === 0 && !interactiveOnly && !explicit) {
     const actor = { kind: "anonymous" } as const;
     const identity: AuthenticatedIdentity = { actor, interactive: false };
     let access: ConnectorAccess;
@@ -212,7 +222,10 @@ export async function authorize(
     return { ok: false, response: privateJson({ error: "authenticated user required" }, { status: 403 }) };
   }
   let lastResponse: Response | null = null;
-  const candidates = recognized ? [recognized] : auth.filter(provider => !interactiveOnly || provider.interactiveOperator);
+  const eligible = auth.filter(provider => (!interactiveOnly || provider.interactiveOperator) &&
+    (!explicit || machineCredential || provider.kind !== "access_token"));
+  // A header owns one verdict even for adapters without a recognition hook.
+  const candidates = recognized ? [recognized] : explicit ? eligible.slice(0, 1) : eligible;
   for (const provider of candidates) {
     const result = await provider.authorize(request, baseUrl, runtimeContext);
     if (result.ok) {

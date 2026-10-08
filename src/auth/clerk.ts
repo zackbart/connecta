@@ -1,4 +1,4 @@
-import { isMachineCredential } from "../inbound-credential.js";
+import { authorizationCredential, authorizationRequest, isMachineCredential } from "../inbound-credential.js";
 // Clerk as the OAuth 2.1 authorization server; connecta is the resource server.
 // Single tenant, no tenant-tag requirement, optional allowedDomains/gate() with
 // ~60s identity caching.
@@ -474,7 +474,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   };
 
   const challenge = (request: Request, baseUrl: string): string => {
-    const tokenPresent = Boolean(request.headers.get("authorization"));
+    const tokenPresent = authorizationCredential(request).kind !== "absent";
     const error = tokenPresent ? `error="invalid_token", ` : "";
     // A pool endpoint is its own protected resource: the challenge names the
     // metadata document whose `resource` matches the URL the client used, or
@@ -579,8 +579,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     kind: "clerk",
     interactiveOperator: true,
     recognizesCredential: request => {
-      const authorization = request.headers.get("authorization");
-      if (authorization) return !isMachineCredential(request);
+      if (authorizationCredential(request).kind !== "absent") return !isMachineCredential(request);
       return /(?:^|;\s*)__session(?:_[^=;]+)?=/.test(request.headers.get("cookie") ?? "") ||
         new URL(request.url).searchParams.has("__clerk_synced");
     },
@@ -633,14 +632,18 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     },
 
     async authorize(request, baseUrl): Promise<AuthResult> {
-      const tokenPresent = Boolean(request.headers.get("authorization"));
+      const credential = authorizationCredential(request);
+      const tokenPresent = credential.kind !== "absent";
+      if (credential.kind === "invalid" || isMachineCredential(request)) {
+        return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };
+      }
       const browserOAuthRoute = /^\/(?:connect|oauth\/callback)\//.test(new URL(request.url).pathname);
       let userId: string | undefined;
       let sessionCookies: string[] | undefined;
       try {
         const pathname = new URL(request.url).pathname;
         const isMcp = pathname === "/mcp" || pathname.startsWith("/mcp/");
-        const state = await clerk.authenticateRequest(request, {
+        const state = await clerk.authenticateRequest(authorizationRequest(request), {
           acceptsToken: isMcp ? "oauth_token" : "session_token",
         });
         const browserOAuth = !tokenPresent && browserOAuthRoute;

@@ -34,6 +34,14 @@ machines without token-storage reads. Metadata routing and 401 selection use
 the same actual protected-resource metadata answer, and Clerk's challenge
 includes scopes. Clients discover the AS directly at Clerk's advertised origin.
 
+An explicit Authorization header alone determines authentication on every
+protected route. One shared parser normalizes the case-insensitive Bearer
+scheme and rejects unsupported schemes, malformed spacing, empty tokens, and
+combined duplicate headers. Verification receives the normalized header with
+cookies and browser handshake credentials removed; Access context is never
+consulted. A refusal cannot fall back to an ambient human. Without that header,
+Clerk cookie sessions and trusted Access context retain their existing behavior.
+
 ## Consequences
 
 Static bearer secrets and asserted-principal headers are removed. Operators

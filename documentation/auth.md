@@ -10,8 +10,15 @@ An `InboundAuth` provider recognizes credential syntax or trusted runtime
 context with synchronous `recognizesCredential(request, runtimeContext)`.
 Recognition does no verification or I/O. The first recognizing provider owns
 the request, including refusals, so an invalid machine credential cannot fall
-back to an ambient browser identity. If none recognizes a credential, providers
-are tried in configuration order until admission or a response other than 401.
+back to an ambient browser identity. An explicit Authorization header is
+decisive on every protected route. A shared parser normalizes the
+case-insensitive Bearer scheme; unsupported schemes, malformed spacing, empty
+values, combined duplicate headers, and verification failures return 401.
+Cookies, Clerk browser handshake credentials, and trusted Access context are
+excluded from that request. Access cannot verify caller headers and refuses
+them. If no provider recognizes a valid header, the first eligible provider
+owns its verdict. Without an Authorization header, providers are tried in
+configuration order until admission or a response other than 401.
 Custom providers can omit recognition when they supply no distinct credential
 syntax; providers with credentials should implement it. A recognition throw
 refuses the request without logging the thrown text.
