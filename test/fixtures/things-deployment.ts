@@ -64,8 +64,8 @@ export function thingsDeployment(
     call,
     async searched(safety: "readOnly" | "approvalRequired"): Promise<string[]> {
       const result = await call("search_tools", { connector: "things", query: "", safety });
-      return (result.structuredContent?.connectors ?? []).flatMap(
-        (entry: { tools: Array<{ address: string }> }) => entry.tools.map((tool) => tool.address),
+      return (result.structuredContent?.tools ?? []).map(
+        (tool: { address: string }) => tool.address,
       ).sort();
     },
     run(program: Program) {

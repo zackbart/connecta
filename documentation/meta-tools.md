@@ -24,7 +24,7 @@ visibility or tool grants.
 | Tool | Arguments | Returns |
 | --- | --- | --- |
 | `execute_code` | `code`, `diagnostics?` | the program's reduced return value, plus a `diagnostics` block when asked |
-| `search_tools` | `query?`, `connector?`, `safety?`, `limit?`, `offset?`, `fullDescriptions?`, `includeSchemas?: "compact" \| "json" \| "typescript"` | `{ connectors: [{ id, tools }], total, offset, limit, hasMore }`, plus `queryAnalysis` on a partial or failed search |
+| `search_tools` | `query?`, `connector?`, `safety?`, `limit?`, `offset?`, `fullDescriptions?`, `includeSchemas?: "compact" \| "json" \| "typescript"` | `{ catalogErrors, tools, total, offset, limit, hasMore }`, plus `queryAnalysis` on a partial or failed search |
 | `call_tool` | `address`, `args?`, `resultMode?: "mcp" \| "value"`, `timeoutMs?`, `diagnostics?` | the downstream result, bounded as [result representation](#result-representation) describes |
 | `call_destructive_tool` | the same, plus `reason?` | the same |
 | `authorize_connector` | `connector`, `force?` | the class-specific handoff in [authorization recovery](#authorization-recovery) |
@@ -82,16 +82,15 @@ A `read-only` pool refuses writes before validation or dispatch with
 own top-level call. Connecta never pauses, replays, or approves a program.
 Top-level discovery remains available for catalog inspection and write routing.
 
-The three discovery routes use deliberately different envelopes. These are their
-smallest successful one-tool shapes:
+Both search routes use one page envelope. Describe returns an ordered tool list
+without pagination. These examples omit optional row metadata:
 
 ```js
-// Top-level search_tools
-{ connectors: [{ id: "ci", tools: [{ name: "get_run", address: "ci.get_run" }] }], total: 1, offset: 0, limit: 8, hasMore: false }
+// search_tools and connecta.search with includeSchemas: "json"
+{ catalogErrors: [], tools: [{ name: "get_run", address: "ci.get_run", schemaFormat: "json", inputSchema: { type: "object" } }], total: 1, offset: 0, limit: 8, hasMore: false }
 
-// Inside execute_code
-{ tools: [{ name: "get_run", address: "ci.get_run" }], total: 1, offset: 0, limit: 8, hasMore: false } // connecta.search
-{ tools: [{ name: "get_run", address: "ci.get_run", inputSchema: "{ runId: integer }" }] } // connecta.describe
+// connecta.describe defaults to JSON
+{ tools: [{ name: "get_run", address: "ci.get_run", schemaFormat: "json", inputSchema: { type: "object" } }] }
 ```
 
 Live connector probing is not a fourth: the operator pages and `/health` own it.
@@ -107,8 +106,7 @@ account and environment hints cannot eat the inventory. It reads only the
 configured registry: no catalog load, no credential probe, no capability, and no
 replacement for canonical discovery or addressing. Program search results carry
 the same bounded `connectorTitle` per tool, so choosing an account or
-environment costs no provider read. Context, not a ranking input and not proof
-of live access.
+environment costs no provider read. The inventory does not probe live access.
 
 Read-only lookup belongs in `connecta.search` inside the program; top-level
 `search_tools` stays for explicit catalog inspection and approval-required
@@ -420,61 +418,80 @@ without storage error prose. For read-only work, reduce the result inside
 
 ## Lexical discovery
 
-`search_tools` tokenizes tool names and descriptions at punctuation and
-camel-case boundaries. Exact whole-token matches carry the most weight, and a
-small set of inflectional variants preserves singular/plural and verb-form
-recall without admitting arbitrary mid-word substrings. Each query term is
-weighted by its document frequency across the catalogs available to that search,
-so a rare domain term outranks a ubiquitous action while action terms still
-distinguish `get`, `list`, `search`, and write operations. Complete matches rank
-before ordinary partial matches; a partial candidate whose complete normalized
-tool name occurs in the normalized raw query competes with complete matches by
-score, and other candidates covering at least two terms fill the remaining page.
-Conversational cleanup applies to scoring terms only, never to the exact-name
-phrase check. If no tool covers every non-conversational term, the same scorer
-preserves the wider any-term fallback and marks the result
-`matchMode: "partial"`.
+`search_tools` and in-program `connecta.search` return the same flat discovery
+page. Select from `page.tools`, never from the page itself or connector groups.
+With the same schema format, schema-key option, and scoped registry, both paths
+return identical data. Top-level search omits schemas unless requested; programs
+default to JSON schemas and schema-key metadata.
 
-Tool rows expose neither lexical scores nor per-result query coverage. Select
-from the returned purpose, address, schema, safety, and output shape; page-level
-`queryAnalysis` is the recovery path when no single result covers every term or
-none exists. It reports `representedTerms` (in the current page),
-`otherResultTerms` (only in another result), and `unmatchedTerms` (no lexical
-match in the catalogs that answered), covers at most eight distinct terms of at
-most 64 displayed characters each while marking longer input `truncated`, and
-never changes lexical ranking. A non-empty query that normalizes to no ASCII
-lexical terms returns no tools rather than unrelated browse results, with the
-clipped raw query in `unmatchedTerms`; a mixed query searches with its ASCII
-terms, and unsupported characters become neither false matches nor coverage
-terms.
+```json
+{
+  "catalogErrors": [],
+  "tools": [
+    {
+      "name": "get_issue",
+      "address": "linear.get_issue",
+      "connectorTitle": "Linear Production",
+      "classification": "read",
+      "schemaFormat": "json",
+      "inputSchema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"] }
+    }
+  ],
+  "total": 1,
+  "offset": 0,
+  "limit": 8,
+  "hasMore": false
+}
+```
 
-What the analysis says next depends on why the page is thin:
+`catalogErrors` is always present and serialized before tools. It contains
+bounded typed failures from visible catalogs, including on an unscoped search
+with healthy matches. Credential and permission failures appear first. OAuth
+and operator credential failures carry the codes and `recovery`, `nextAction`,
+and retry instructions described below. `provider_permission_denied` asks the
+resource owner to grant access and carries no reconnect action. Discovery never
+starts recovery. Other failures retain `code`, `message`, `retryable`, and any
+`retryAfterMs`. A scoped search also keeps its bounded failure subset under
+`queryAnalysis.catalogError` for clients that already use it.
 
-| Case | Fields and guidance |
-| --- | --- |
-| Partial match | no single tool covered every term; split distinct intents |
-| True negative | no matching capability is configured; refine, connector-scope, or browse |
-| True negative naming a configured connector | the same, plus up to three such connectors named by id and a pointer to a scoped browse |
-| Unscoped search or browse with some connector unavailable | `unavailableConnectorCount` alone |
-| Scoped to an unavailable connector | `unavailableConnectorCount`, `catalogError`, guidance |
-| Scoped to an unconfigured id | `connectorScope`, `unknownConnector`, omit-the-connector guidance |
-| Connector configured and genuinely exposing no tools | no analysis |
+Tool rows carry the address, configured display title when present, guide and
+guide summary when available, and stored classification. Requested schemas have
+`schemaFormat: "json"` for JSON Schema values or `schemaFormat: "text"` for
+compact schema strings and TypeScript signatures. Compact schemas are text;
+`inputSchema.properties` is meaningful only in JSON mode. Pagination counts
+tools across connectors: `nextOffset` is present only when another page remains.
 
-Three of those rows earn their asymmetry. An unavailable catalog downgrades the
-claim, because a search may not report that nothing is configured when it does
-not know. Connector identity is deliberately absent from the lexical index —
-indexing it would move ranking for every query that already matches tools — so a
-query naming one gets exactly one extra sentence and nothing else: no ranking
-change, no result, no new field. And a browse scoped to an unavailable connector
-must not serialize like a connector that genuinely has no tools, or the advice to
-browse lands in silence that reads like an answer.
+Search tokenizes tool names and descriptions at punctuation and camel-case
+boundaries. Whole-token matches and a small set of inflectional variants preserve
+recall without admitting arbitrary mid-word substrings. Document frequency weights
+rare domain terms above ubiquitous action terms. Exact configured connector IDs,
+full display titles, and recognized service names rank first; exact tool-name
+phrases rank next, so `get_issue` beats `get_issue_status`. Complete lexical
+matches then precede partial matches, with score and catalog order breaking ties.
+An identity-only query browses that connector's tools. Connector identity terms
+that never occur in its tools need not be repeated in every tool description.
 
-`catalogError` is the bounded classified failure — `code`, `message`,
-`retryable`, and any `retryAfterMs` — so a caller can tell a transient outage
-from one an operator must clear, and nothing else the call-path classifier knows,
-because a discovery read is not a call. Only an explicitly scoped search gets it:
-one connector's failure is not another search's context, and a scope that was
-never configured gets neither it nor a count, since nothing was attempted.
+An explicit unknown `connector` scope returns no tools and an `absence` record:
+`{ service, message, configuredConnectors }`. The message says
+`No connector for "X" is configured for this endpoint.` Unscoped queries naming
+recognized services such as GitHub, Linear, Mixpanel, Supabase, or PostHog do the
+same when no visible connector ID or title names that service. This service-name
+vocabulary is query interpretation, not an inventory of configured providers.
+For other service names, use the explicit `connector` scope. An unavailable
+catalog is a catalog failure, never an absence. Absence records and catalog
+errors use only the endpoint/pool and grant intersection; a connector hidden by
+that intersection is indistinguishable from an unconfigured one.
+
+If no tool covers every search term, wider any-term fallback remains available
+for ordinary action/object searches and the page carries `matchMode: "partial"`.
+A service absence suppresses that fallback, so `GitHub get issue` cannot return
+Linear issues or Mixpanel/Supabase projects. Tool rows expose no scores or
+per-result query coverage. `queryAnalysis` partitions at most eight terms of at
+most 64 characters into `representedTerms`, `otherResultTerms`, and
+`unmatchedTerms`, marking longer input `truncated`. Its guidance distinguishes
+partial matches, unavailable catalogs, unknown scopes, and genuine no-match
+results. A non-empty query with no ASCII lexical terms returns no tools with
+bounded no-match analysis. An empty or whitespace-only query browses.
 
 ## Authorization recovery
 

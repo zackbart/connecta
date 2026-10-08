@@ -10,7 +10,7 @@ import {
   CatalogService,
   DEFAULT_SEARCH_LIMIT,
   DiscoveryPolicyError,
-  groupedSearchResult,
+  flatSearchResult,
   MAX_DESCRIBE_ADDRESSES,
   MAX_DISCOVERY_RESULT_BYTES,
   MAX_SEARCH_LIMIT,
@@ -833,7 +833,7 @@ export function createMetaTools(
       }
       return discoveryResult(
         async () =>
-          groupedSearchResult(
+          flatSearchResult(
             await catalog.search({
               ...args,
               includeSchemaKeys: args.includeSchemas !== undefined,
@@ -1070,7 +1070,7 @@ export function createMetaTools(
   };
 }
 
-const SEARCH_DESC = `Use top-level search for catalog inspection or approval-required work before call_destructive_tool. Unknown-address read-only work belongs in one execute_code program that searches, calls, and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" finds tools that run unasked; "approvalRequired" finds the fail-closed complement. These filters grant no authority. Empty query browses.`;
+const SEARCH_DESC = `Use top-level search for catalog inspection or approval-required work before call_destructive_tool. Unknown-address read-only work belongs in one execute_code program that searches, calls, and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" finds tools that run unasked; "approvalRequired" finds the fail-closed complement. These filters grant no authority. Empty query browses. Returns { catalogErrors, tools, total, offset, limit, hasMore }; read catalogErrors and absence before selecting a tool. Compact schemas have schemaFormat="text".`;
 const CALL_DESC =
   'Call one known-address tool explicitly annotated readOnlyHint: true. Use execute_code for unknown-address, multiple, dependent, or reduced read-only work. Unannotated or write-capable tools fail closed to call_destructive_tool. A truncated result carries a get_result action.';
 const CALL_DESTRUCTIVE_DESC =

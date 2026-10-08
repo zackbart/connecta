@@ -1,4 +1,4 @@
-import type { groupedSearchResult } from "../../src/catalog-service.js";
+import type { flatSearchResult } from "../../src/catalog-service.js";
 import {
   authConnector,
   brokenConnector,
@@ -23,4 +23,14 @@ export function registry() {
   ]);
 }
 
-export type SearchResult = ReturnType<typeof groupedSearchResult>;
+export type SearchResult = ReturnType<typeof flatSearchResult>;
+
+export function connectorIds(page: { tools: { address: string }[] }): string[] {
+  return [...new Set(page.tools.map((tool) => tool.address.split(".")[0]!))];
+}
+
+export function toolsByConnector<T extends { address: string }>(page: { tools: T[] }): Record<string, { tools: T[] }> {
+  return Object.fromEntries(connectorIds(page).map((id) => [id, {
+    tools: page.tools.filter((tool) => tool.address.startsWith(`${id}.`)),
+  }]));
+}

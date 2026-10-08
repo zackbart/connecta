@@ -335,7 +335,7 @@ describe("trusted-pool programs (#706)", () => {
     expect(refused.isError).toBe(true);
     expect(w.writes()).toEqual([]);
     const search = value(await tools.searchTools({ connector: "tracker", safety: "approvalRequired" }));
-    expect(search.connectors[0].tools.every((tool: ToolDef) => tool.classification === "write")).toBe(true);
+    expect(search.tools.every((tool: ToolDef) => tool.classification === "write")).toBe(true);
     expect(JSON.stringify(search)).not.toContain('"approval":"exempt"');
   });
 

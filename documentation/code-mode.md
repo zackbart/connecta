@@ -183,15 +183,17 @@ const page = await connecta.search({
   limit: 8,                         // 1–100, default 8
   offset: 0,
   fullDescriptions: false,
-  includeSchemas: "compact",        // or "json" / "typescript"
+  includeSchemas: "json",           // default; or "compact" / "typescript"
   includeSchemaKeys: true,          // default true in code mode
 });
 ```
 
-**S1.** Returns one flat page: `{ tools, total, offset, limit, hasMore }`, plus
-`nextOffset` when more remains and `matchMode: "partial"` when no tool matched
-every term. Top-level `search_tools` is different — it returns
-`{ connectors: [{ id, tools }], total, offset, limit, hasMore }`. Ranking is
+**S1.** Returns the same flat page as top-level `search_tools`:
+`{ catalogErrors, tools, total, offset, limit, hasMore }`, plus `nextOffset`
+when more remains and `matchMode: "partial"` when no tool matched every term.
+Read `catalogErrors` and any `absence` before selecting a tool. Catalog failures
+carry recovery actions at the top of the page; an absent service returns no
+lookalikes. Both paths use only the caller's endpoint/pool and grants. Ranking is
 [lexical discovery](./meta-tools.md#lexical-discovery)'s, and rows expose
 neither lexical scores nor per-result coverage. An empty or whitespace-only
 query browses; non-empty input with no ASCII lexical terms returns no tools plus
@@ -206,6 +208,10 @@ bounded `guideSummary`, requested or not. An output shape learned under `S9`
 also carries `outputSchemaSource: "observed"`; provider declarations carry no
 source marker.
 
+Programs default to `includeSchemas: "json"`: `inputSchema` and available
+`outputSchema` are JSON Schema values, labeled `schemaFormat: "json"`.
+Explicit `includeSchemas: "compact"` returns strings labeled
+`schemaFormat: "text"`; TypeScript signatures carry the same text label.
 Compact shapes omit property prose and put required fields first, under these
 bounds:
 
@@ -279,12 +285,14 @@ hint and the stable `code`, `retryable`, and `details` fields (`E1`).
 const one = await connecta.describe({ address: "ci.get_run" });
 const many = await connecta.describe({
   addresses: ["ci.get_run", "ci.get_job_logs"],  // ≤ 100
-  format: "compact",                             // or "json" / "typescript"
+  format: "json",                                // default; or "compact" / "typescript"
   fullDescriptions: false,
 });
 ```
 
-**S4.** Returns `{ tools }` in order, one entry per address; one bad address
+**S4.** Defaults to JSON Schema values with `schemaFormat: "json"`.
+Explicit compact schemas and TypeScript signatures have `schemaFormat: "text"`.
+Returns `{ tools }` in order, one entry per address; one bad address
 never fails the whole call. An unknown address or failed catalog returns `error`
 plus typed `errorDetails` (`code`, `message`, `retryable`). Misses carry a
 route-aware `nextAction`, a close miss may add three canonical `suggestions`,

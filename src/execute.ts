@@ -673,6 +673,7 @@ function sandboxProvider(
         const result = flatSearchResult(
           await catalog.search({
             ...args,
+            includeSchemas: args.includeSchemas ?? "json",
             includeSchemaKeys: args.includeSchemaKeys !== false,
           }),
         );
@@ -690,7 +691,7 @@ function sandboxProvider(
           format?: "compact" | "json" | "typescript";
           fullDescriptions?: boolean;
         };
-        const result = { tools: await catalog.describe(args) };
+        const result = { tools: await catalog.describe({ ...args, format: args.format ?? "json" }) };
         boundedDiscoveryText(
           result,
           'Split the address list or use format: "compact".',

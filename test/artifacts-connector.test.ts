@@ -195,7 +195,7 @@ describe("the artifacts slot", () => {
     const found = json(
       await call("search_tools", { query: "artifact", connector: "artifacts", limit: 20 }),
     );
-    const rows = found.connectors[0].tools as { name: string; guideRequiredReasons?: string[] }[];
+    const rows = found.tools as { name: string; guideRequiredReasons?: string[] }[];
     const reasons = Object.fromEntries(rows.map((row) => [row.name, row.guideRequiredReasons]));
     expect(reasons.get_artifact).toBeUndefined();
     expect(reasons.list_artifacts).toBeUndefined();

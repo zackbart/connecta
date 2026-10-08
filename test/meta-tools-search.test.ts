@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
 import {
   BASE,
+  connectorIds,
+  toolsByConnector,
   registry,
   type SearchResult,
   textOf,
@@ -242,32 +244,32 @@ describe("search_tools", () => {
     expect(maxActive).toBe(4);
   });
 
-  it("substring-matches over name + description, grouped by connector", async () => {
+  it("matches name and description into flat tool rows", async () => {
     const mt = createMetaTools(registry(), BASE);
     const parsed = textOf(
       await mt.searchTools({ query: "echo" }),
     ) as SearchResult;
-    // A single matching tool → a single connector group.
-    expect(parsed.connectors).toHaveLength(1);
-    expect(required(parsed.connectors[0]).id).toBe("remote");
-    expect(required(parsed.connectors[0]).tools.map((t) => t.address)).toEqual([
+    // A single matching tool carries its canonical connector address.
+    expect(connectorIds(parsed)).toHaveLength(1);
+    expect(required(connectorIds(parsed)[0])).toBe("remote");
+    expect(parsed.tools.map((t) => t.address)).toEqual([
       "remote.echo",
     ]);
     expect(parsed.total).toBe(1);
   });
 
-  it("empty query browses all healthy tools grouped per connector (broken skipped)", async () => {
+  it("empty query browses healthy tools and reports unavailable catalogs", async () => {
     const mt = createMetaTools(registry(), BASE);
     const parsed = textOf(await mt.searchTools({})) as SearchResult;
     const whitespace = textOf(
       await mt.searchTools({ query: " \n\t " }),
     ) as SearchResult;
-    // Two healthy connectors with matches → two groups; broken is skipped.
-    expect(parsed.connectors.map((c) => c.id).sort()).toEqual([
+    // Healthy connector tools are returned in one page; failures are separate.
+    expect(connectorIds(parsed).sort()).toEqual([
       "calc",
       "remote",
     ]);
-    const byId = Object.fromEntries(parsed.connectors.map((c) => [c.id, c]));
+    const byId = toolsByConnector(parsed);
     expect(required(byId.calc).tools.map((t) => t.address)).toEqual(["calc.add"]);
     expect(required(byId.remote).tools.map((t) => t.address)).toEqual(["remote.echo"]);
     expect(parsed.total).toBe(2);
@@ -284,7 +286,7 @@ describe("search_tools", () => {
     ) as SearchResult;
 
     expect(parsed).toMatchObject({
-      connectors: [],
+      tools: [],
       total: 0,
       hasMore: false,
       queryAnalysis: {
@@ -312,7 +314,7 @@ describe("search_tools", () => {
       required(parsed.queryAnalysis).unmatchedTerms[0],
     );
 
-    expect(parsed.connectors).toEqual([]);
+    expect(parsed.tools).toEqual([]);
     expect(unmatched).toBe(`${"😀".repeat(63)}…`);
     expect([...unmatched]).toHaveLength(64);
     expect(required(parsed.queryAnalysis).truncated).toBe(true);
@@ -325,7 +327,7 @@ describe("search_tools", () => {
         BASE,
       ).searchTools({ query: `${"界".repeat(80)} add` }),
     ) as SearchResult;
-    const tools = parsed.connectors.flatMap((group) => group.tools);
+    const tools = parsed.tools;
 
     expect(tools).toHaveLength(1);
     expect(required(tools[0])).toMatchObject({
@@ -369,9 +371,7 @@ describe("search_tools", () => {
       const page = textOf(
         await mt.searchTools({ ...(safety ? { safety } : {}), limit: 10 }),
       ) as SearchResult;
-      return page.connectors.flatMap((group) =>
-        group.tools.map((tool) => tool.address),
-      );
+      return page.tools.map((tool) => tool.address);
     };
 
     expect(await addresses("readOnly")).toEqual([
@@ -423,7 +423,7 @@ describe("search_tools", () => {
     const complete = textOf(
       await mt.searchTools({ query: "create" }),
     ) as SearchResult;
-    expect(complete.connectors.flatMap((group) => group.tools)).toHaveLength(1);
+    expect(complete.tools).toHaveLength(1);
   });
 
   it("respects the connector filter → a single group", async () => {
@@ -431,9 +431,9 @@ describe("search_tools", () => {
     const parsed = textOf(
       await mt.searchTools({ connector: "calc" }),
     ) as SearchResult;
-    expect(parsed.connectors).toHaveLength(1);
-    expect(required(parsed.connectors[0]).id).toBe("calc");
-    expect(required(parsed.connectors[0]).tools.map((t) => t.address)).toEqual([
+    expect(connectorIds(parsed)).toHaveLength(1);
+    expect(required(connectorIds(parsed)[0])).toBe("calc");
+    expect(parsed.tools.map((t) => t.address)).toEqual([
       "calc.add",
     ]);
     expect(parsed.total).toBe(1);
@@ -459,7 +459,7 @@ describe("search_tools", () => {
       await mt.searchTools({ query: "read", connector: "wanted" }),
     ) as SearchResult;
 
-    expect(parsed.connectors.map((group) => group.id)).toEqual(["wanted"]);
+    expect(connectorIds(parsed)).toEqual(["wanted"]);
     expect(loads).toEqual({ wanted: 1, unrelated: 0 });
   });
 
@@ -469,7 +469,7 @@ describe("search_tools", () => {
     expect(parsed.total).toBe(2);
     expect(parsed.hasMore).toBe(true);
     expect(parsed.nextOffset).toBe(1);
-    const shown = parsed.connectors.flatMap((c) => c.tools);
+    const shown = parsed.tools;
     expect(shown).toHaveLength(1);
 
     const next = textOf(
@@ -481,7 +481,7 @@ describe("search_tools", () => {
     expect(next.total).toBe(2);
     expect(next.offset).toBe(1);
     expect(next.hasMore).toBe(false);
-    expect(next.connectors.flatMap((c) => c.tools)).toHaveLength(1);
+    expect(next.tools).toHaveLength(1);
   });
 
   it("defaults to eight results and preserves the remaining page", async () => {
@@ -499,9 +499,9 @@ describe("search_tools", () => {
 
     expect(first.limit).toBe(8);
     expect(first.total).toBe(12);
-    expect(first.connectors.flatMap((group) => group.tools)).toHaveLength(8);
+    expect(first.tools).toHaveLength(8);
     expect(
-      first.connectors.flatMap((group) => group.tools)[0],
+      first.tools[0],
     ).not.toHaveProperty("queryCoverage");
     expect(first.nextOffset).toBe(8);
 
@@ -509,7 +509,7 @@ describe("search_tools", () => {
       await mt.searchTools({ offset: required(first.nextOffset) }),
     ) as SearchResult;
     expect(second.limit).toBe(8);
-    expect(second.connectors.flatMap((group) => group.tools)).toHaveLength(4);
+    expect(second.tools).toHaveLength(4);
     expect(second.hasMore).toBe(false);
   });
 
@@ -532,7 +532,7 @@ describe("search_tools", () => {
       const result = await mt.searchTools({ limit });
       expect(result.isError).toBeFalsy();
       const parsed = textOf(result) as SearchResult;
-      expect(parsed.connectors.flatMap((group) => group.tools)).toHaveLength(
+      expect(parsed.tools).toHaveLength(
         limit,
       );
     }
@@ -573,7 +573,7 @@ describe("search_tools", () => {
         ...(limit === undefined ? {} : { limit }),
       });
       const parsed = textOf(result) as SearchResult;
-      const tools = parsed.connectors.flatMap((group) => group.tools);
+      const tools = parsed.tools;
 
       expect(tools).toHaveLength(limit ?? 8);
       expect(tools.every((tool) => !("queryCoverage" in tool))).toBe(true);
@@ -611,8 +611,8 @@ describe("search_tools", () => {
       ) as SearchResult;
       expect(page.total).toBe(total);
       expect(page.offset).toBe(offset);
-      expect(required(page.connectors[0]).tools).toHaveLength(MAX_SEARCH_LIMIT);
-      for (const tool of required(page.connectors[0]).tools) {
+      expect(page.tools).toHaveLength(MAX_SEARCH_LIMIT);
+      for (const tool of page.tools) {
         expect(seen.has(tool.address)).toBe(false);
         seen.add(tool.address);
       }
@@ -671,7 +671,7 @@ describe("search_tools", () => {
       await mt.searchTools({ query: "fetch article document" }),
     ) as SearchResult;
 
-    expect(required(parsed.connectors[0]).tools.map((t) => t.name)).toEqual([
+    expect(parsed.tools.map((t) => t.name)).toEqual([
       "article-fetch",
       "article-search",
     ]);
@@ -705,9 +705,7 @@ describe("search_tools", () => {
     ) as SearchResult;
 
     expect(
-      parsed.connectors.flatMap((group) =>
-        group.tools.map((tool) => tool.name),
-      ),
+      parsed.tools.map((tool) => tool.name),
     ).toEqual(["list_issues"]);
     expect(parsed.matchMode).toBeUndefined();
   });
@@ -743,9 +741,7 @@ describe("search_tools", () => {
 
     expect(
       new Set(
-        parsed.connectors.flatMap((group) =>
-          group.tools.map((tool) => tool.address),
-        ),
+        parsed.tools.map((tool) => tool.address),
       ),
     ).toEqual(new Set(["files.search_files", "files.share_file"]));
     expect(parsed.matchMode).toBe("partial");
@@ -826,7 +822,7 @@ describe("search_tools", () => {
       await mt.searchTools({ query: "calendar availability" }),
     ) as SearchResult;
     expect(absent).toMatchObject({
-      connectors: [],
+      tools: [],
       total: 0,
       queryAnalysis: {
         representedTerms: [],
@@ -873,7 +869,7 @@ describe("search_tools", () => {
     });
   });
 
-  it("names the connector a no-match query already identified", async () => {
+  it("browses an exact connector identity and explains partial identity misses", async () => {
     const inventory: Connector = connectorWith({
       id: "inventory",
       title: "Warehouse stock",
@@ -895,14 +891,12 @@ describe("search_tools", () => {
     const byId = textOf(
       await mt.searchTools({ query: "inventory" }),
     ) as SearchResult;
-    expect(byId.total).toBe(0);
-    const byIdGuidance = required(required(byId.queryAnalysis).guidance);
-    expect(byIdGuidance).not.toContain("is configured in this deployment");
-    expect(byIdGuidance).toContain('connector "inventory"');
-    expect(byIdGuidance).toContain("browse with an empty query");
+    expect(byId.tools.map((tool) => tool.address)).toEqual([
+      "inventory.list_skus", "inventory.get_sku",
+    ]);
+    expect(byId.queryAnalysis).toBeUndefined();
 
-    // A title word is displayed, never indexed, so it must reach the same
-    // correction rather than the false negative.
+    // A partial title word still receives identity guidance.
     const byTitle = textOf(
       await mt.searchTools({ query: "warehouse" }),
     ) as SearchResult;
@@ -943,19 +937,15 @@ describe("search_tools", () => {
       'connector "inventory"',
     );
 
-    // Identity never enters ranking: a query that matches tools is answered
-    // by the same tools, in the same order, with no identity advice.
+    // Exact identity contributes ranking without requiring tool descriptions
+    // to repeat the connector's name.
     const matched = textOf(
       await mt.searchTools({ query: "inventory sku" }),
     ) as SearchResult;
     expect(
-      matched.connectors.flatMap((group) =>
-        group.tools.map((tool) => tool.address),
-      ),
+      matched.tools.map((tool) => tool.address),
     ).toEqual(["inventory.get_sku", "inventory.list_skus"]);
-    expect(
-      required(required(matched.queryAnalysis).guidance),
-    ).toContain("Split distinct intents");
+    expect(matched.queryAnalysis).toBeUndefined();
   });
 
   it("bounds query analysis independently of long search input", async () => {
@@ -1004,9 +994,7 @@ describe("search_tools", () => {
     ) as SearchResult;
 
     expect(
-      parsed.connectors.flatMap((group) =>
-        group.tools.map((tool) => tool.name),
-      ),
+      parsed.tools.map((tool) => tool.name),
     ).toEqual(["send_message"]);
     expect(parsed.matchMode).toBeUndefined();
   });
@@ -1037,9 +1025,7 @@ describe("search_tools", () => {
     ) as SearchResult;
 
     expect(
-      parsed.connectors.flatMap((group) =>
-        group.tools.map((tool) => tool.name),
-      ),
+      parsed.tools.map((tool) => tool.name),
     ).toEqual(["phrase"]);
     expect(parsed.matchMode).toBeUndefined();
   });
@@ -1065,7 +1051,7 @@ describe("search_tools", () => {
       }),
     ) as SearchResult;
 
-    expect(parsed.connectors).toEqual([]);
+    expect(parsed.tools).toEqual([]);
     expect(parsed.total).toBe(0);
     expect(parsed.matchMode).toBeUndefined();
   });
@@ -1111,7 +1097,7 @@ describe("search_tools", () => {
     ) as SearchResult;
 
     expect(
-      required(first.connectors[0]).tools.map((tool) => tool.name),
+      first.tools.map((tool) => tool.name),
     ).toEqual([
       "List-Organizations",
       ...Array.from({ length: 7 }, (_, index) => `business_context_${index}`),
@@ -1123,7 +1109,7 @@ describe("search_tools", () => {
     });
     expect(first.matchMode).toBeUndefined();
     expect(
-      required(first.connectors[0]).tools.every(
+      first.tools.every(
         (tool) => !("queryCoverage" in tool) && !("score" in tool),
       ),
     ).toBe(true);
@@ -1135,13 +1121,13 @@ describe("search_tools", () => {
         offset: required(first.nextOffset),
       }),
     ) as SearchResult;
-    expect(required(second.connectors[0]).tools.map((tool) => tool.name)).toEqual([
+    expect(second.tools.map((tool) => tool.name)).toEqual([
       "business_context_7",
       "List-All-Organizations",
     ]);
     expect(second).toMatchObject({ total: 10, hasMore: false });
     expect(
-      second.connectors.flatMap((group) => group.tools).every(
+      second.tools.every(
         (tool) => !("queryCoverage" in tool) && !("score" in tool),
       ),
     ).toBe(true);
@@ -1153,7 +1139,7 @@ describe("search_tools", () => {
       }),
     ) as SearchResult;
     expect(
-      required(rawPhrase.connectors[0]).tools.map((tool) => tool.name),
+      rawPhrase.tools.map((tool) => tool.name),
     ).toEqual([
       "List-All-Organizations",
       ...Array.from({ length: 7 }, (_, index) => `business_context_${index}`),
@@ -1165,7 +1151,7 @@ describe("search_tools", () => {
     });
     expect(rawPhrase.matchMode).toBeUndefined();
     expect(
-      rawPhrase.connectors.flatMap((group) => group.tools).every(
+      rawPhrase.tools.every(
         (tool) => !("queryCoverage" in tool) && !("score" in tool),
       ),
     ).toBe(true);
@@ -1200,7 +1186,7 @@ describe("search_tools", () => {
     ) as SearchResult;
 
     expect(first.matchMode).toBe("partial");
-    const firstTools = first.connectors.flatMap((group) => group.tools);
+    const firstTools = first.tools;
     expect(firstTools.map((t) => t.name))
       .toEqual(["get_experiment", "get_results"]);
     expect(
@@ -1231,7 +1217,7 @@ describe("search_tools", () => {
       }),
     ) as SearchResult;
     expect(second.matchMode).toBe("partial");
-    expect(required(second.connectors[0]).tools.map((tool) => tool.name)).toEqual([
+    expect(second.tools.map((tool) => tool.name)).toEqual([
       "list_experiments",
     ]);
   });
@@ -1256,7 +1242,7 @@ describe("search_tools", () => {
       }),
     ) as SearchResult;
     expect(partial.matchMode).toBe("partial");
-    expect(partial.connectors.map((group) => group.id)).toEqual(["wanted"]);
+    expect(connectorIds(partial)).toEqual(["wanted"]);
 
     const none = textOf(
       await mt.searchTools({
@@ -1264,7 +1250,7 @@ describe("search_tools", () => {
         query: "calendar availability",
       }),
     ) as SearchResult;
-    expect(none).toMatchObject({ connectors: [], total: 0, hasMore: false });
+    expect(none).toMatchObject({ tools: [], total: 0, hasMore: false });
     expect(none.matchMode).toBeUndefined();
   });
 
@@ -1282,11 +1268,11 @@ describe("search_tools", () => {
       await mt.searchTools({ fullDescriptions: true }),
     ) as SearchResult;
 
-    expect(required(required(concise.connectors[0]).tools[0]).description!.length).toBeLessThan(
+    expect(required(concise.tools[0]).description!.length).toBeLessThan(
       longDescription.length,
     );
-    expect(required(required(concise.connectors[0]).tools[0]).description).toMatch(/…$/);
-    expect(required(required(full.connectors[0]).tools[0]).description).toBe(longDescription);
+    expect(required(concise.tools[0]).description).toMatch(/…$/);
+    expect(required(full.tools[0]).description).toBe(longDescription);
   });
 
   it("keeps a representative compact page within an agent-context budget", async () => {
@@ -1326,8 +1312,8 @@ describe("search_tools", () => {
     });
     const compactText = required(compactResult.content[0]).text;
     const compact = textOf(compactResult) as SearchResult;
-    const tools = required(compact.connectors[0]).tools as Array<
-      SearchResult["connectors"][number]["tools"][number] & {
+    const tools = compact.tools as Array<
+      SearchResult["tools"][number] & {
         inputSchema: string;
         inputSchemaTruncated?: true;
       }
@@ -1424,20 +1410,8 @@ describe("search_tools", () => {
         makeRegistry([apiConnector, mcpConnector]),
         BASE,
       ).searchTools({ includeSchemas: "compact" }),
-    ) as {
-      connectors: Array<{
-        id: string;
-        tools: Array<{
-          inputSchema: string;
-          outputSchema?: string;
-          inputKeys?: string[];
-          requiredInputKeys?: string[];
-          outputKeys?: string[];
-          annotations?: Record<string, unknown>;
-        }>;
-      }>;
-    };
-    const byId = Object.fromEntries(parsed.connectors.map((c) => [c.id, c]));
+    ) as SearchResult;
+    const byId = toolsByConnector(parsed);
     expect(required(required(byId.weather).tools[0]).inputSchema).toBe("{ city: string }");
     expect(required(required(byId.weather).tools[0])).toMatchObject({
       inputKeys: ["city"],
@@ -1476,11 +1450,11 @@ describe("search_tools", () => {
     });
     const parsed = textOf(
       await createMetaTools(makeRegistry([titled]), BASE).searchTools({}),
-    ) as { connectors: Array<{ id: string; title?: string }> };
+    ) as SearchResult;
 
-    expect(parsed.connectors[0]).toMatchObject({
-      id: "billing",
-      title: "Acme Billing",
+    expect(parsed.tools[0]).toMatchObject({
+      address: "billing.list",
+      connectorTitle: "Acme Billing",
     });
   });
 
@@ -1727,7 +1701,7 @@ describe("compact schema rendering", () => {
     const shapes = (rows: Array<Record<string, unknown>>) =>
       rows.map(({ address, inputSchema, outputSchema, inputSchemaTruncated, outputSchemaTruncated }) =>
         ({ address, inputSchema, outputSchema, inputSchemaTruncated, outputSchemaTruncated }));
-    const topRows = required(topLevel.connectors[0]).tools as Array<Record<string, unknown>>;
+    const topRows = topLevel.tools as Array<Record<string, unknown>>;
     expect(topRows).toHaveLength(PROVIDER_CORPUS.length);
     expect(shapes(program.tools)).toEqual(shapes(topRows));
 
@@ -1878,7 +1852,7 @@ describe("compact schema rendering", () => {
         includeSchemas: "json",
       }),
     ) as any;
-    expect(required(required(search.connectors[0]).tools[0]).inputSchema).toEqual(
+    expect(required(search.tools[0]).inputSchema).toEqual(
       schema,
     );
 

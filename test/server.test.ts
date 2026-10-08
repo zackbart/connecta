@@ -774,7 +774,7 @@ describe("server /mcp end-to-end", () => {
     await c.close();
   });
 
-  it("tools/call search_tools returns its grouped discovery envelope", async () => {
+  it("tools/call search_tools returns its flat discovery envelope", async () => {
     const c = makeDeployment();
     const res = await mcpRpc(
       c,
@@ -785,24 +785,18 @@ describe("server /mcp end-to-end", () => {
     const body = await readJsonRpc(res);
     expect(body.result.isError).toBeFalsy();
     const payload = JSON.parse(body.result.content[0].text) as {
-      connectors: { id: string; tools: { address: string }[] }[];
+      tools: { address: string }[];
       total: number;
     };
     expect(payload).toEqual({
-      connectors: [
-        {
-          id: "calc",
-          tools: [
-            {
-              name: "add",
-              address: "calc.add",
-              classification: "read",
-              description: "Add two numbers",
-              annotations: { readOnlyHint: true },
-            },
-          ],
-        },
-      ],
+      catalogErrors: [],
+      tools: [{
+        name: "add",
+        address: "calc.add",
+        classification: "read",
+        description: "Add two numbers",
+        annotations: { readOnlyHint: true },
+      }],
       total: 1,
       offset: 0,
       limit: 8,
@@ -812,8 +806,8 @@ describe("server /mcp end-to-end", () => {
     expect(body.result.content[0].text).toBe(
       JSON.stringify(body.result.structuredContent),
     );
-    expect(required(payload.connectors[0]).id).toBe("calc");
-    expect(required(payload.connectors[0]).tools.map((t) => t.address)).toEqual([
+    expect(payload.tools).toHaveLength(1);
+    expect(payload.tools.map((t) => t.address)).toEqual([
       "calc.add",
     ]);
     expect(payload.total).toBe(1);
@@ -924,7 +918,7 @@ describe("server /mcp end-to-end", () => {
     );
     const body = await readJsonRpc(res);
     expect(body.result.isError).toBeFalsy();
-    const tool = body.result.structuredContent.connectors[0].tools[0];
+    const tool = body.result.structuredContent.tools[0];
     expect(tool.inputSchema).toBe("{ a: number, b: number }");
     expect(tool.inputKeys).toEqual(["a", "b"]);
     expect(tool.requiredInputKeys).toEqual(["a", "b"]);
@@ -1483,7 +1477,7 @@ describe("server /mcp end-to-end", () => {
     );
     const body = await readJsonRpc(response);
     const payload = JSON.parse(body.result.content[0].text) as {
-      connectors: Array<{ id: string }>;
+      tools: Array<{ address: string }>;
       queryAnalysis?: { unavailableConnectorCount?: number };
     };
 
@@ -1491,7 +1485,7 @@ describe("server /mcp end-to-end", () => {
     // catalog rather than waiting on the one that never answers, and reports
     // the connector it could not reach.
     expect(Date.now() - started).toBeLessThan(2_000);
-    const ids = payload.connectors.map((connector) => connector.id);
+    const ids = payload.tools.map((tool) => tool.address.split(".")[0]);
     expect(ids).toContain("calc");
     expect(ids).not.toContain("hang");
     expect(payload.queryAnalysis).toMatchObject({
@@ -2039,7 +2033,7 @@ describe("execute_code registration (code mode)", () => {
     const payload = JSON.parse(body.result.content[0].text);
     expect(payload.result).toEqual({
       address: "calc.add",
-      schema: "{ a: number, b: number }",
+      schema: { type: "object", properties: { a: { type: "number" }, b: { type: "number" } }, required: ["a", "b"] },
       value: { sum: 9 },
     });
     await c.close();

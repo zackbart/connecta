@@ -1,3 +1,4 @@
+import { connectorIds, toolsByConnector } from "./fixtures/meta-tools.js";
 import { CredentialVault } from "../src/credentials.js";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
@@ -523,17 +524,10 @@ Prefer \`notion.search\` over listing databases.
       makeRegistry([guided("notion", NOTION_GUIDE), guided("plain")]),
       BASE,
     );
-    const searched = textOf(await mt.searchTools({ query: "search" })) as {
-      connectors: Array<{
-        id: string;
-        guide?: string;
-        guideSummary?: string;
-        tools: Array<{ guideRequired?: true; guideRequiredReasons?: string[] }>;
-      }>;
-    };
-    const byId = Object.fromEntries(searched.connectors.map((c) => [c.id, c]));
-    expect(required(byId.notion).guide).toBe("connector:notion");
-    expect(required(byId.notion).guideSummary).toBe(
+    const searched = textOf(await mt.searchTools({ query: "search" })) as SearchResult;
+    const byId = toolsByConnector(searched);
+    expect(required(required(byId.notion).tools[0]).guide).toBe("connector:notion");
+    expect(required(required(byId.notion).tools[0]).guideSummary).toBe(
       "Prefer `notion.search` over listing databases.",
     );
     expect(required(byId.notion).tools[0]).not.toHaveProperty(
@@ -542,10 +536,10 @@ Prefer \`notion.search\` over listing databases.
     expect(required(byId.notion).tools[0]).not.toHaveProperty(
       "guideRequired",
     );
-    expect(byId.plain).not.toHaveProperty("guide");
+    expect(required(byId.plain).tools[0]).not.toHaveProperty("guide");
     expect(
       textFrom(
-        await mt.skills({ name: required(required(byId.notion).guide) }),
+        await mt.skills({ name: required(required(required(byId.notion).tools[0]).guide) }),
       ),
     ).toBe(NOTION_GUIDE);
   });
@@ -570,19 +564,14 @@ Prefer \`notion.search\` over listing databases.
     const mt = createMetaTools(makeRegistry([connector]), BASE);
     const searched = textOf(
       await mt.searchTools({ query: "invoke", includeSchemas: "compact" }),
-    ) as {
-      connectors: Array<{
-        guideSummary?: string;
-        tools: Array<{ guideRequired?: true; guideRequiredReasons?: string[] }>;
-      }>;
-    };
-    expect(required(searched.connectors[0]).guideSummary).toBe(
+    ) as SearchResult;
+    expect(required(searched.tools[0]).guideSummary).toBe(
       "Generic operation aliases and argument shapes.",
     );
-    expect(required(required(searched.connectors[0]).tools[0]).guideRequired).toBe(
+    expect(required(searched.tools[0]).guideRequired).toBe(
       true,
     );
-    expect(required(required(searched.connectors[0]).tools[0]).guideRequiredReasons).toEqual(
+    expect(required(searched.tools[0]).guideRequiredReasons).toEqual(
       ["connector_required", "approval_required"],
     );
 
@@ -592,17 +581,8 @@ Prefer \`notion.search\` over listing databases.
         query: "list open invoices",
         includeSchemas: "compact",
       }),
-    ) as {
-      connectors: unknown[];
-      queryAnalysis?: {
-        guide?: string;
-        guideSummary?: string;
-        guideRequired?: true;
-        guideRequiredReasons?: string[];
-        guidance?: string;
-      };
-    };
-    expect(missed.connectors).toEqual([]);
+    ) as SearchResult;
+    expect(missed.tools).toEqual([]);
     expect(missed.queryAnalysis).toMatchObject({
       guide: "connector:generic",
       guideSummary: "Generic operation aliases and argument shapes.",
@@ -616,16 +596,8 @@ Prefer \`notion.search\` over listing databases.
     const mt = createMetaTools(makeRegistry([wideGuided()]), BASE);
     const searched = textOf(
       await mt.searchTools({ query: "read", includeSchemas: "compact" }),
-    ) as {
-      connectors: Array<{
-        tools: Array<{
-          inputSchemaTruncated?: true;
-          guideRequired?: true;
-          guideRequiredReasons?: string[];
-        }>;
-      }>;
-    };
-    const tool = required(required(searched.connectors[0]).tools[0]);
+    ) as SearchResult;
+    const tool = required(searched.tools[0]);
     expect(tool.inputSchemaTruncated).toBe(true);
     expect(tool.guideRequired).toBe(true);
     expect(tool.guideRequiredReasons).toEqual(["schema_truncated"]);
@@ -683,15 +655,9 @@ Prefer \`notion.search\` over listing databases.
     // schema_truncated is a fact about a rendered schema; with none rendered
     // there is nothing to cap and nothing to report.
     const mt = createMetaTools(makeRegistry([wideGuided()]), BASE);
-    const searched = textOf(await mt.searchTools({ query: "read" })) as {
-      connectors: Array<{
-        guide?: string;
-        tools: Array<Record<string, unknown>>;
-      }>;
-    };
-    const connector = required(searched.connectors[0]);
-    expect(connector.guide).toBe("connector:wide");
-    const tool = required(connector.tools[0]);
+    const searched = textOf(await mt.searchTools({ query: "read" })) as SearchResult;
+    const tool = required(searched.tools[0]);
+    expect(tool.guide).toBe("connector:wide");
     expect(tool).not.toHaveProperty("inputSchemaTruncated");
     expect(tool).not.toHaveProperty("guideRequired");
     expect(tool).not.toHaveProperty("guideRequiredReasons");
@@ -1237,7 +1203,7 @@ describe("probe timeout", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(settled).toBe(true);
     const parsed = textOf(await pending) as SearchResult;
-    const ids = parsed.connectors.map((c) => c.id);
+    const ids = connectorIds(parsed);
     expect(ids).toContain("calc");
     expect(ids).not.toContain("hang");
     expect(parsed.queryAnalysis).toMatchObject({
@@ -1356,7 +1322,7 @@ describe("empty-query browse of an unavailable catalog", () => {
     const browsed = textOf(
       await mt.searchTools({ connector: "billing", query: "" }),
     ) as SearchResult;
-    expect(browsed.connectors).toEqual([]);
+    expect(browsed.tools).toEqual([]);
     const analysis = required(browsed.queryAnalysis);
     // No terms were supplied, so the term partitions say nothing — the failure
     // fields carry the whole message.
@@ -1395,20 +1361,20 @@ describe("empty-query browse of an unavailable catalog", () => {
     });
   });
 
-  it("keeps an unscoped browse to the count alone", async () => {
+  it("reports unavailable catalogs above an unscoped browse", async () => {
     const mt = createMetaTools(
       makeRegistry([unavailable(), calcConnector]),
       BASE,
     );
     const browsed = textOf(await mt.searchTools({ query: "" })) as SearchResult;
     // The healthy connector still browses.
-    expect(browsed.connectors.map((group) => group.id)).toEqual(["calc"]);
+    expect(connectorIds(browsed)).toEqual(["calc"]);
     const analysis = required(browsed.queryAnalysis);
     expect(analysis.unavailableConnectorCount).toBe(1);
     expect(analysis.catalogError).toBeUndefined();
     expect(analysis.guide).toBeUndefined();
     expect(required(analysis.guidance)).toContain("browse is incomplete");
-    expect(JSON.stringify(browsed)).not.toContain("503");
+    expect(browsed.catalogErrors).toMatchObject([{ connector: "billing", code: "unavailable", retryable: true }]);
   });
 
   it("distinguishes an unavailable catalog from a genuinely empty one", async () => {
@@ -1420,8 +1386,8 @@ describe("empty-query browse of an unavailable catalog", () => {
       await mt.searchTools({ connector: "billing", query: "" }),
     ) as SearchResult;
     // Both return no entries, and that is where the resemblance ends.
-    expect(empty.connectors).toEqual([]);
-    expect(broken.connectors).toEqual([]);
+    expect(empty.tools).toEqual([]);
+    expect(broken.tools).toEqual([]);
     expect(empty.queryAnalysis).toBeUndefined();
     expect(required(broken.queryAnalysis).catalogError).toBeDefined();
     expect(JSON.stringify(empty)).not.toEqual(JSON.stringify(broken));
@@ -1432,7 +1398,7 @@ describe("empty-query browse of an unavailable catalog", () => {
     const browsed = textOf(
       await mt.searchTools({ connector: "calc", query: "" }),
     ) as SearchResult;
-    expect(browsed.connectors.map((group) => group.id)).toEqual(["calc"]);
+    expect(connectorIds(browsed)).toEqual(["calc"]);
     expect(browsed.total).toBeGreaterThan(0);
     expect(browsed.queryAnalysis).toBeUndefined();
   });
@@ -1452,7 +1418,7 @@ describe("empty-query browse of an unconfigured connector", () => {
     const browsed = textOf(
       await mt.searchTools({ connector: "ghost", query: "" }),
     ) as SearchResult;
-    expect(browsed.connectors).toEqual([]);
+    expect(browsed.tools).toEqual([]);
     expect(browsed.total).toBe(0);
     const analysis = required(browsed.queryAnalysis);
     // No terms were supplied, so the term partitions say nothing — the scope
@@ -1514,8 +1480,8 @@ describe("empty-query browse of an unconfigured connector", () => {
       await mt.searchTools({ connector: "ghost", query: "" }),
     ) as SearchResult;
     // Both return no entries, and that is where the resemblance ends.
-    expect(empty.connectors).toEqual([]);
-    expect(unknown.connectors).toEqual([]);
+    expect(empty.tools).toEqual([]);
+    expect(unknown.tools).toEqual([]);
     // A connector that correctly exposes nothing invents no analysis.
     expect(empty.queryAnalysis).toBeUndefined();
     expect(required(unknown.queryAnalysis).unknownConnector).toBe(true);
@@ -1541,11 +1507,11 @@ describe("empty-query browse of an unconfigured connector", () => {
     const scoped = textOf(
       await mt.searchTools({ connector: "calc", query: "" }),
     ) as SearchResult;
-    expect(scoped.connectors.map((group) => group.id)).toEqual(["calc"]);
+    expect(connectorIds(scoped)).toEqual(["calc"]);
     expect(scoped.total).toBeGreaterThan(0);
     expect(scoped.queryAnalysis).toBeUndefined();
     const unscoped = textOf(await mt.searchTools({ query: "" })) as SearchResult;
-    expect(unscoped.connectors.map((group) => group.id)).toEqual(["calc"]);
+    expect(connectorIds(unscoped)).toEqual(["calc"]);
     expect(unscoped.queryAnalysis).toBeUndefined();
   });
 });
