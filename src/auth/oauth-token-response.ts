@@ -164,7 +164,7 @@ function sdkTokenFailure(
  * the registered set becomes `invalid_request`, and a body without a string
  * code becomes `server_error`, the classes the SDK already gave them.
  */
-export async function sdkSafeTokenResponse(response: Response): Promise<Response> {
+export async function sdkSafeTokenResponse(response: Response, accept?: (tokens: OAuthTokens) => Promise<void>): Promise<Response> {
   if (response.status >= 300 && response.status < 400) {
     return sdkTokenFailure(response, "invalid_request", 400);
   }
@@ -175,7 +175,10 @@ export async function sdkSafeTokenResponse(response: Response): Promise<Response
     // Not JSON, or too large to be a token response: only the status is left.
     return sdkTokenFailure(response, "server_error");
   }
-  if (response.ok && sdkAcceptsOAuthTokens(parsed)) return response;
+  if (response.ok && sdkAcceptsOAuthTokens(parsed)) {
+    await accept?.(parsed as OAuthTokens);
+    return response;
+  }
   return sdkTokenFailure(response, oauthErrorCode(parsed) ?? "server_error");
 }
 

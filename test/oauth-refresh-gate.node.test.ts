@@ -24,7 +24,7 @@ function method(node: ts.Node): string | undefined {
   return undefined;
 }
 
-it("routes every production refresh send through the epoch-scoped spent CAS gate without redirects (INV-5) (INV-9)", () => {
+it("routes every production refresh send through the fingerprint resolution CAS gate without redirects (INV-5) (INV-9)", () => {
   const coordinator = source("auth/downstream-oauth.ts");
   const calls = nodes(coordinator).filter(ts.isCallExpression);
   const sends = calls.filter((call) => call.expression.getText() === "baseFetch");
@@ -51,12 +51,14 @@ it("routes every production refresh send through the epoch-scoped spent CAS gate
   const gateCalls = nodes(gate).filter(ts.isCallExpression);
   expect(gateCalls.filter((call) => call.expression.getText() === "send")).toHaveLength(1);
   const spent = gateCalls.find((call) => call.expression.getText() === "this.storage.compareAndSet" && call.arguments[0]?.getText() === "lease.spentKey")!;
-  expect(spent.arguments[1]!.kind).toBe(ts.SyntaxKind.NullKeyword);
+  expect(spent.arguments[1]!.getText()).toBe("lease.spentExpected");
   expect(spent.arguments).toHaveLength(3); // No TTL.
-  expect(spent.arguments[2]!.getText()).toBe("JSON.stringify({ connectaOAuthRefreshSpent: 1 })");
+  expect(spent.arguments[2]!.getText()).toBe("lease.spentRaw");
+  expect(gate.getText()).toContain('state: "outstanding"');
+  expect(coordinator.getText()).toContain('consent.resolution !== spentExpected');
   expect(gate.getText()).toContain("if (!unspent)");
   expect(gate.getText().indexOf("if (!unspent)")).toBeLessThan(gate.getText().indexOf("const sent = send()"));
-  expect(coordinator.getText()).toContain("oauthRefreshSpentKeys.spent(epoch, digest)");
+  expect(coordinator.getText()).toContain("oauthRefreshSpentKeys.spent(digest)");
 
   // OAuth forms come from the SDK. A new direct refresh form is a new send path.
   const production = files("").map((path) => ({ path, nodes: nodes(source(path)) }));

@@ -89,7 +89,13 @@ export default async function setup(project: TestProject) {
             json({ access_token: "new-access", refresh_token: "old-refresh", token_type: "Bearer" }, Number(session.mode.slice("sdk-redirect-".length)), { location: `${issuer}/token-final` });
             return;
           }
-          json({ access_token: form.get("grant_type") === "authorization_code" ? "old-access" : "new-access", refresh_token: form.get("grant_type") === "authorization_code" ? "old-refresh" : "new-refresh", token_type: "Bearer" });
+          const firstRefresh = form.get("grant_type") === "refresh_token" && session.requests.filter((r) => r.grant === "refresh_token").length === 1;
+          if (session.mode === "sdk-pending-first" && firstRefresh) await session.released;
+          if (session.mode === "sdk-ambiguous-first" && firstRefresh) {
+            response.writeHead(200, { "content-type": "application/json" }).end("{");
+            return;
+          }
+          json({ access_token: form.get("grant_type") === "authorization_code" ? "consent-access" : "new-access", refresh_token: form.get("grant_type") === "authorization_code" ? (session.mode === "sdk-consent-different" ? "different-refresh" : "old-refresh") : "new-refresh", token_type: "Bearer" });
           return;
         }
       }

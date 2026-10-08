@@ -473,17 +473,36 @@ A crash during cleanup cannot restore the disconnected grant.
 
 A refresh token is spent when dispatch begins. Every refresh request passes
 through `KvOAuthProvider.dispatchRefresh`. Before sending, the gate wins the
-lease's `claimed` to `dispatched` CAS and a separate create-only CAS at
-`oauth:refresh-spent:<epoch>:<sha256(refresh_token)>`. The latter must succeed
-before any HTTP request leaves. Connector and owner storage namespaces partition both
-records. Spent records have **no TTL**, contain no token, and are never cleared
+lease's `claimed` to `dispatched` CAS and a separate fingerprint CAS at
+`oauth:refresh-spent:<sha256(refresh_token)>`. The latter must succeed before
+any HTTP request leaves. Connector and owner storage namespaces partition both
+records. Spent records have **no TTL**, contain no token, and are never deleted
 by completion, failure, migration cleanup, Restart, Disconnect, or epoch sweeps.
-The key includes the grant epoch. Reintroducing the same token within that
-epoch cannot permit another send,
-even after a reset swept its lease. A deliberate re-consent in a new epoch
-can use a byte-identical refresh token returned by the provider. Reset never
-deletes spent records or moves old credentials into a new epoch. Copy these
-durable records during storage migration.
+Copy these durable records during storage migration.
+
+Each fingerprint record names its dispatch epoch, holder, and resolution state:
+
+| State | Send gate |
+| --- | --- |
+| `outstanding` | Dispatched without a definitive outcome yet. Refuse the fingerprint in every epoch. |
+| `ambiguous` | The sent request's outcome is unknowable. Refuse the fingerprint in every epoch, including when re-consent returns it again. |
+| `resolved` | The tokens were committed or a definitive failure was recorded. Refuse another send in the same epoch. A later epoch may send once only when its code exchange completed after the resolution was recorded. |
+
+Resolution writes use CAS against the exact outstanding record and record a
+`resolvedAt` timestamp with a resolved outcome. When accepting a code response,
+the coordinator reads the returned refresh token's fingerprint record. Consent
+stores the exact resolved record it observed with the grant's tokens. That
+receipt proves resolution preceded consent completion without comparing
+isolate clocks. A delayed SDK save cannot acquire a newer receipt. The send
+CAS compares against that same resolved record and replaces it with the new
+outstanding dispatch. An earlier consent cannot become eligible merely because
+the pending refresh later resolves. Competing epochs cannot both replace the
+same record, and a late answer cannot turn an ambiguous record into resolved.
+
+An ambiguous token stays blocked even if re-consent returns identical bytes.
+Recovery requires re-consent that yields a different refresh token, or
+revocation at the provider. Restart never deletes spent records or moves old
+credentials into a new epoch.
 
 Credential-bearing token-endpoint requests never follow redirects, regardless
 of `remoteMcp()`'s `redirects` setting. The send gate uses `redirect: "manual"`
@@ -491,15 +510,16 @@ and bypasses the resource redirect wrapper for refresh, authorization-code,
 and client-credentials grants and token revocation. Static `api()` OAuth uses
 the same gate and manual fetch. Any 3xx is a definitive failure, even if its
 body contains tokens. Fetch has already sent the request body; a refresh
-fingerprint stays spent in its epoch and the grant requires re-consent. A
+fingerprint is resolved as a definitive failure and the grant requires re-consent. A
 redirected code exchange is refused and its SDK retry cannot resend the code.
 
 | Outcome after dispatch | Result |
 | --- | --- |
-| Valid tokens durably committed | Release waiters with the committed tokens. Only a new refresh fingerprint can be dispatched next. |
-| Provider failure of any status, network or response-body loss, malformed or oversized success, deadline expiry, or process crash | `auth_required`. Record re-consent and conditionally remove the spent token's grant. This includes every 3xx without following it, complete 5xx, 408, 425, and 429 responses. |
-| Valid rotation whose grant commit retries are exhausted | `auth_required`. Keep the fingerprint spent and conditionally remove its grant tokens. Never return uncommitted tokens to the SDK. |
-| Epoch changed during commit | Drop the response tokens. Restart, Disconnect, or issuer replacement determines the newer grant. |
+| Valid tokens durably committed | Mark the fingerprint resolved and release waiters with committed tokens. Within the epoch only a new fingerprint can be dispatched next. |
+| Definitive provider failure | `auth_required`. Mark the fingerprint resolved and conditionally remove its grant tokens. Includes every 3xx without following it and complete failures such as 5xx, 408, 425, and 429. |
+| Network or response-body loss, malformed or oversized success, deadline expiry, or process crash | `auth_required`. Mark the fingerprint ambiguous and conditionally remove its grant tokens. Identical-token re-consent cannot reopen it. |
+| Valid rotation whose grant commit retries are exhausted | `auth_required`. Record the definitive commit failure as resolved and conditionally remove its grant tokens. Never return uncommitted tokens to the SDK. |
+| Epoch changed during commit | Drop the response tokens and record the definitive failure as resolved. Restart, Disconnect, or issuer replacement determines the newer grant. A consent that completed before this resolution cannot reuse its fingerprint. |
 
 Refreshes coalesce per owner and epoch within a runtime. Across isolates, a
 shared-storage record at `oauth:refresh:<epoch>:<sha256(refresh_token)>` is
@@ -544,7 +564,9 @@ If a dispatched holder crashes, shared-storage liveness expiry records
 re-consent and conditionally removes its grant tokens. A late response cannot
 restore them. Spent records already prohibit replay, including when refusal
 recording or token cleanup fails. Restart and Disconnect sweep obsolete lease
-and liveness records while retaining every spent record. The SDK receives
+records while retaining every spent record. Holder liveness remains until
+completion or storage-owned TTL expiry, so reset cannot turn a live request
+into an ambiguous one. The SDK receives
 sanitized failure responses, and provider hooks preserve the re-consent verdict
 for passive calls. A source-level guard pins both OAuth adapters to this single
 send gate, manual token fetches, and a separate resource redirect path.
@@ -601,8 +623,8 @@ To prevent a downstream from targeting the host's private network:
 A refused URL is never requested. Discovery, registration, and code exchange
 fail with a non-retryable `connector_call_failed` naming the host and nothing
 else from the URL. A refused refresh never reaches the token endpoint. If the
-send gate already recorded its fingerprint, that fingerprint stays spent in
-its epoch and the grant requires re-consent. Redirects cannot route around the
+send gate already recorded its fingerprint, that fingerprint remains blocked
+and the grant requires re-consent. Redirects cannot route around the
 rule; token requests never follow them, and resource redirects follow only
 same-origin hops.
 

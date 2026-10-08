@@ -90,7 +90,7 @@ describe("storage key families", () => {
     within(oauthFlowKeys.family, oauthFlowKeys.flow("digest"));
     within(oauthFlowKeys.family, oauthFlowKeys.prefix);
     within(oauthRefreshKeys.family, oauthRefreshKeys.lease("epoch", "digest"));
-    within(oauthRefreshSpentKeys.family, oauthRefreshSpentKeys.spent("epoch", "digest"));
+    within(oauthRefreshSpentKeys.family, oauthRefreshSpentKeys.spent("digest"));
     within(oauthRefreshActiveKeys.family, oauthRefreshActiveKeys.holder("epoch", "holder"));
     within(oauthV2Keys.family, oauthV2Keys.generation);
     within(oauthV2Keys.family, oauthV2Keys.value(oauthV2Keys.field.tokens, "v2:epoch"));
@@ -134,7 +134,7 @@ describe("storage key families", () => {
       [connector(oauthGrantKeys.grant), "oauth-grant"],
       [personal(connector(oauthFlowKeys.flow("digest"))), "oauth-flow"],
       [connector(oauthRefreshKeys.lease("epoch", "digest")), "oauth-refresh"],
-      [personal(connector(oauthRefreshSpentKeys.spent("epoch", "digest"))), "oauth-refresh-spent"],
+      [personal(connector(oauthRefreshSpentKeys.spent("digest"))), "oauth-refresh-spent"],
       [personal(connector(oauthRefreshActiveKeys.holder("epoch", "holder"))), "oauth-refresh-active"],
       [connector(oauthConnectKeys.used("nonce")), "oauth-connect"],
       [kvCopyKeys.cursor("token"), "kv-copy"],
