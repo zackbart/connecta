@@ -871,14 +871,15 @@ separate HKDF-derived HMAC-SHA256 key held inside `encryptedCredentialVault`.
 The ten-minute state is authenticated, not encrypted. Its secret-free payload
 binds the admitted principal, canonical endpoint including pool, connector,
 meta-tool, address, SHA-256 digest of arguments or code, round, expiry, and
-the opaque browser-link nonces issued in that flow.
+the opaque browser-link nonces issued in that flow. Entered reads also bind
+their addresses and classification digests.
 Arguments and program source never enter the payload. The absolute expiry
 survives every round. Rotation invalidates outstanding states.
 Each state admits one retry through a connector-scoped storage CAS, including
 decline and cancel. Concurrent or repeated consumption is refused before
 dispatch, so retries cannot fork into sibling forced connection links.
-The host records auth failure origins and write handler entry in private
-invocation state, using the registry's classification. Writes may elicit only
+The host records each entered call's classification, catalog freshness and
+classification digest in private invocation state, along with auth failure origins. Writes may elicit only
 when Connecta's own credential resolution fails before invoking the connector:
 a missing grant, a missing credential slot, or consent required before refresh.
 Auth failures inside handlers or transports cannot elicit for writes, including
@@ -887,7 +888,14 @@ Programs also stop automatic recovery once any write-classified call enters
 its handler, even if it sends nothing or fails. Each accepted retry checks
 these facts for its own round. Later auth failures
 carry `reconciliationRequired: true` and manual connection guidance because the
-write may have partially run. Read-classified calls may re-run after dispatch.
+call may have partially run. Post-entry recovery requires every entered call
+to have a read classification from a catalog accepted within its TTL. Stale
+fallbacks, including a failed listing followed by cached annotations, cannot
+authorize a re-run. Normal calls retain their existing stale-fallback behavior.
+Before an accepted retry restarts any call, it rechecks every entered read.
+A write classification, changed classification digest, or stale catalog returns
+`auth_replay_refused` with reconciliation guidance, including in trusted programs.
+Pre-invocation credential-resolution eligibility is unchanged.
 Custom vaults may implement the host-only `requestStateKey` method; without it, the
 deployment retains the ordinary handoff. It must return a stable,
 purpose-specific deployment key of at least 32 bytes. Only the MCP boundary

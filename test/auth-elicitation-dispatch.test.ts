@@ -21,7 +21,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-function setup(connector: Connector, options: { additional?: Connector[]; program?: (call: (address: string, args: unknown) => Promise<unknown>) => Promise<unknown> } = {}) {
+function setup(connector: Connector, options: { additional?: Connector[]; catalogTtlSeconds?: number; program?: (call: (address: string, args: unknown) => Promise<unknown>) => Promise<unknown> } = {}) {
   const storage = memoryStorage();
   const connectors = [connector, ...(options.additional ?? [])];
   const vault = encryptedCredentialVault(storage, CREDENTIAL_KEY);
@@ -29,6 +29,7 @@ function setup(connector: Connector, options: { additional?: Connector[]; progra
     connectors, storage, vault,
     publicUrl: BASE, logger: "silent", auth: [fakeClerkAuth({ token: "alice", userId: "alice" })],
     identity: { credentialAdministration: () => "all" },
+    ...(options.catalogTtlSeconds === undefined ? {} : { discovery: { catalogTtlSeconds: options.catalogTtlSeconds } }),
     pools: { trusted: { tools: connectors.map(item => item.id), grant: () => true, trust: "trusted" } },
     executor: { execute: async (_code, providers) => {
       const call = required(providers.find(provider => provider.name === "connecta")).fns.call!;
@@ -123,7 +124,163 @@ function expectReconciliation(result: any) {
   });
 }
 
+function remoteReadFlow(program: boolean) {
+  let readOnly = true;
+  let listingFails = false;
+  let authFails = true;
+  let schemaVersion = 1;
+  let calls = 0;
+  let items = 0;
+  let failedListings = 0;
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    if (request.method !== "POST") return new Response(null, { status: 405 });
+    const message = await request.json() as any;
+    if (message.method === "notifications/initialized") return new Response(null, { status: 202 });
+    if (message.method === "tools/list" && listingFails) {
+      failedListings++;
+      return new Response(null, { status: 503 });
+    }
+    if (message.method === "tools/call") {
+      calls++;
+      if (!readOnly) items++;
+      if (authFails) return new Response(null, { status: 401 });
+    }
+    const result = message.method === "initialize"
+      ? { protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "service", version: "1" } }
+      : message.method === "tools/list"
+        ? { tools: [{ name: "read", annotations: { readOnlyHint: readOnly },
+            inputSchema: { type: "object", properties: { version: { type: "number", default: schemaVersion } } } }] }
+        : { content: [{ type: "text", text: "{}" }] };
+    return Response.json({ jsonrpc: "2.0", id: message.id, result });
+  });
+  const connector = remoteMcp("service", { url: `${API}/mcp`, versionNegotiation: "legacy" });
+  connector.startAuth = async () => ({ state: "auth_required", authorizationUrl: "https://auth.service.test/authorize" });
+  const flow = setup(connector, { catalogTtlSeconds: 1, program: call => call("service.read", {}) });
+  return { ...flow,
+    request: (state?: string) => flow.rpc(program ? "execute_code" : "call_tool", state, "service.read"),
+    change: (options: { readOnly?: boolean; listingFails?: boolean; authFails?: boolean; schemaVersion?: number }) => {
+      readOnly = options.readOnly ?? readOnly;
+      listingFails = options.listingFails ?? listingFails;
+      authFails = options.authFails ?? authFails;
+      schemaVersion = options.schemaVersion ?? schemaVersion;
+    },
+    counts: () => ({ calls, items, failedListings }),
+  };
+}
+
 describe("auth recovery invocation eligibility", () => {
+  it.each([false, true])("INV-9: stale remote MCP read fallback cannot elicit after committing a write (program %s)", async program => {
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const flow = remoteReadFlow(program);
+    await flow.app.registry.getTools("service", BASE);
+    now += 1100;
+    flow.change({ readOnly: false, listingFails: true });
+    expectReconciliation(await flow.request());
+    expect(flow.counts()).toEqual({ calls: 1, items: 1, failedListings: 1 });
+    // Restoring listing availability cannot authorize a recovery prompt.
+    flow.change({ listingFails: false, authFails: false });
+    expect(flow.counts().items).toBe(1);
+  });
+
+  it.each([false, true])("INV-9: fresh remote MCP reads elicit and re-run after HTTP 401 (program %s)", async program => {
+    const flow = remoteReadFlow(program);
+    const first = await flow.request();
+    expect(first.resultType).toBe("input_required");
+    expect(flow.counts().calls).toBe(1);
+    flow.change({ authFails: false });
+    expect((await flow.request(first.requestState)).isError).toBeFalsy();
+    expect(flow.counts()).toMatchObject({ calls: 2, items: 0 });
+  });
+
+  it.each([false, true])("INV-9: normal stale-fallback calls retain their existing behavior (program %s)", async program => {
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const flow = remoteReadFlow(program);
+    await flow.app.registry.getTools("service", BASE);
+    now += 1100;
+    flow.change({ readOnly: false, listingFails: true, authFails: false });
+    expect((await flow.request()).isError).toBeFalsy();
+    expect(flow.counts()).toEqual({ calls: 1, items: 1, failedListings: 1 });
+  });
+
+  it("INV-9: an earlier stale program read blocks recovery of a later pre-invocation auth failure", async () => {
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    let listingFails = false;
+    let items = 0;
+    const service: Connector = { id: "service", kind: "api",
+      listTools: async () => {
+        if (listingFails) throw new ConnectorCallError("unavailable", "Listing unavailable");
+        return [{ name: "read", annotations: { readOnlyHint: true } }];
+      },
+      callTool: async () => { items++; return {}; },
+    };
+    const protectedRead = api("protected", { credential: { label: "Token" }, tools: [
+      { name: "read", description: "Read a record", annotations: { readOnlyHint: true }, handler: () => ({}) },
+    ] });
+    const flow = setup(service, { additional: [protectedRead], catalogTtlSeconds: 1, program: async call => {
+      await call("service.read", {});
+      return call("protected.read", {});
+    } });
+    await flow.app.registry.getTools("service", BASE);
+    now += 1100;
+    listingFails = true;
+    const result = await flow.rpc("execute_code");
+    expect(result.resultType).not.toBe("input_required");
+    expect(result.structuredContent.error).toMatchObject({ code: "auth_required", retryable: false, reconciliationRequired: true,
+      authorizationUrl: expect.stringContaining(`${BASE}/connect/protected?h=`) });
+    expect(items).toBe(1);
+  });
+
+  it("INV-9: accept rechecks earlier program reads before restarting any call", async () => {
+    let firstIsRead = true;
+    const entries: string[] = [];
+    const service: Connector = { id: "service", kind: "api",
+      listTools: async () => [
+        { name: "first", annotations: { readOnlyHint: firstIsRead } },
+        { name: "read", annotations: { readOnlyHint: true } },
+      ],
+      callTool: async name => {
+        entries.push(name);
+        if (name === "read") throw new ConnectorCallError("auth_required", "Connect first");
+        return {};
+      },
+      startAuth: async () => ({ state: "auth_required", authorizationUrl: "https://auth.service.test/authorize" }),
+    };
+    const flow = setup(service, { program: async call => {
+      await call("service.first", {});
+      return call("service.read", {});
+    } });
+    const first = await flow.rpc("execute_code");
+    expect(first.resultType).toBe("input_required");
+    firstIsRead = false;
+    await flow.app.registry.invalidateStored("service");
+    const accepted = await flow.rpc("execute_code", first.requestState);
+    expect(accepted.structuredContent.error).toMatchObject({ code: "auth_replay_refused", reconciliationRequired: true });
+    expect(entries).toEqual(["first", "read"]);
+  });
+
+  it.each([[false, "write"], [true, "write"], [false, "schema"], [true, "schema"], [false, "stale"], [true, "stale"]] as const)(
+    "INV-1 INV-9: accept refuses an entered read on program %s with changed %s classification", async (program, change) => {
+      let now = Date.now();
+      vi.spyOn(Date, "now").mockImplementation(() => now);
+      const flow = remoteReadFlow(program);
+      const first = await flow.request();
+      expect(first.resultType).toBe("input_required");
+      now += 1100;
+      flow.change({ authFails: false, ...(change === "write" ? { readOnly: false } :
+        change === "schema" ? { schemaVersion: 2 } : { listingFails: true }) });
+      const accepted = await flow.request(first.requestState);
+      expect(accepted.resultType).not.toBe("input_required");
+      expect(accepted.structuredContent.error).toMatchObject({ code: "auth_replay_refused", retryable: false,
+        reconciliationRequired: true, authorizationUrl: expect.stringContaining(`${BASE}/connect/service?h=`) });
+      expect(flow.counts()).toMatchObject({ calls: 1, items: 0 });
+      expect((await flow.request(first.requestState)).structuredContent.error.code).toBe("invalid_request_state");
+    },
+  );
+
   it.each([["api", false], ["custom", false], ["api", true], ["custom", true]] as const)(
     "INV-9: raw fetch in a %s connector write cannot elicit or replay a completed item (program %s)", async (kind, program) => {
       let items = 0;

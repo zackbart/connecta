@@ -503,11 +503,13 @@ bounded no-match analysis. An empty or whitespace-only query browses.
 On MCP 2026-07-28, a host declaring `elicitation.url` receives
 `resultType: "input_required"` when an eligible call or program needs recoverable
 connector authentication and the admitted identity may manage that connector.
-Read-classified calls may re-run after a mid-handler auth failure. A write may
+Read-classified calls may re-run after a mid-handler auth failure only when
+their classification came from a catalog accepted within its TTL. Stale
+fallback catalogs cannot authorize post-entry recovery. A write may
 elicit only when Connecta's own pre-invocation credential resolution
 reports a missing grant, a missing credential slot, or required consent before
 refresh. Its handler and transport have not been entered. Programs also require
-that no write-classified call has entered its handler during this run.
+that every entered call has a fresh read classification during this run.
 The `connecta_auth` input request uses `elicitation/create`,
 `mode: "url"`, fixed copy, and an identity-checked `/connect/<id>` link built
 from configured `publicUrl`. OAuth consent stays in the browser; a credential
@@ -523,8 +525,13 @@ Each state can be consumed once; concurrent or repeated retries are refused
 before dispatch. A Continue link from a pending restart requires that restart
 to start successfully before the browser can consume it.
 Host-owned invocation facts record the auth failure's origin and entry into
-write-classified calls. Raw fetches and custom connector transports cannot
-establish recovery eligibility. Each accept retry checks its own round.
+all calls, including each classification, catalog freshness and classification
+digest. Raw fetches and custom connector transports cannot establish recovery
+eligibility. Each accept retry rechecks all previously entered reads before
+restarting a program or direct call. A write classification, changed digest, or
+stale catalog returns `auth_replay_refused` and reconciliation guidance.
+Each round also checks its own invocation facts. Normal stale-fallback calls
+retain their existing behavior.
 An auth failure after a write handler or transport was entered keeps its
 ordinary error code,
 `retryable: false`, `reconciliationRequired: true`, and manual `/connect` guidance

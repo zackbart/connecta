@@ -1,3 +1,4 @@
+import { carryCatalogFreshness, catalogIsFresh } from "./catalog-freshness.js";
 import { hasControlCharacters } from "./tool-name.js";
 import { Effect, Result } from "effect";
 import {
@@ -602,6 +603,8 @@ export interface ResolvedCatalogTool {
   connector: Connector;
   toolName: string;
   definition: ToolDef;
+  /** Registry provenance at classification, private to the host. */
+  classificationFresh?: boolean;
 }
 
 interface OutputSchemaResolution {
@@ -746,7 +749,7 @@ export class CatalogService {
               this.requestScope,
               { signal, timeoutMs: this.probeTimeoutMs, ...(this.defer ? { defer: this.defer } : {}) },
               this.readOptions,
-            ).then((tools) => structuredClone(tools)),
+            ).then((tools) => carryCatalogFreshness(tools, structuredClone(tools))),
           (succeeded) => {
             // Evicted before the read resumes anyone, so an asker that
             // retries on hearing of the failure starts a fresh read.
@@ -758,7 +761,7 @@ export class CatalogService {
         this.catalogs.set(id, started);
         read = started;
       }
-      return Effect.map(read.join(callOptions.signal), (tools) => structuredClone(tools));
+      return Effect.map(read.join(callOptions.signal), (tools) => carryCatalogFreshness(tools, structuredClone(tools)));
     });
   }
 
@@ -895,7 +898,7 @@ export class CatalogService {
           }
           return {
             ok: true,
-            resolved: { connector, toolName, definition },
+            resolved: { connector, toolName, definition, classificationFresh: catalogIsFresh(tools) },
             catalogMs: Date.now() - started,
           };
         },

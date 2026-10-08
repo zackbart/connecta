@@ -11,7 +11,8 @@ import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { closeScope } from "./runtime/connector-scope.js";
 import type { DeferredWork } from "./connector-scope.js";
 import { storedCredentialShape } from "./credential-rules.js";
-import { authRecoveryFacts } from "./invocation-auth.js";
+import { authRecoveryFacts, bindReplayReads, classificationDigest, type ReplayRead } from "./invocation-auth.js";
+import { CatalogService } from "./catalog-service.js";
 
 const TTL_MS = 10 * 60_000;
 const MAX_ROUNDS = 3;
@@ -29,6 +30,7 @@ interface AuthRequestState {
   round: number;
   expiresAt: number;
   browserNonces: string[];
+  reads: ReplayRead[];
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -101,6 +103,8 @@ export class AuthElicitation {
         typeof state.digest !== "string" || !/^[a-f0-9]{64}$/.test(state.digest) ||
         !Array.isArray(state.browserNonces) || state.browserNonces.length !== state.round ||
         !state.browserNonces.every(nonce => typeof nonce === "string" && /^[a-f0-9-]{36}$/.test(nonce)) ||
+        !Array.isArray(state.reads) || !state.reads.every(read => object(read) &&
+          typeof read.address === "string" && typeof read.digest === "string" && /^[a-f0-9]{64}$/.test(read.digest)) ||
         (state.address !== undefined && typeof state.address !== "string")) return invalidState();
     if (context.mcpReq.method !== "tools/call" ||
         context.http?.req?.headers.get("Mcp-Name") !== state.tool) return invalidState();
@@ -163,6 +167,28 @@ export class AuthElicitation {
       if (response.action === "decline") return failure("auth_declined", "Connection was declined. The request was not retried.");
       if (response.action === "cancel") return failure("auth_cancelled", "Connection was cancelled. The request was not retried.");
     }
+    if (previous?.reads.length) {
+      const catalog = new CatalogService(this.options.registry, this.options.publicUrl!, {
+        requestScope: this.options.requestScope,
+        requestSignal: AbortSignal.any([context.mcpReq.signal, this.options.requestSignal]),
+      });
+      // Recheck every entered read before restarting any part of a program.
+      // A trusted pool cannot authorize replay of a newly classified write.
+      for (const read of previous.reads) {
+        const current = await catalog.resolveTool(read.address, { signal: context.mcpReq.signal });
+        if (!current.ok || current.resolved.classificationFresh !== true ||
+            current.resolved.definition.classification !== "read" ||
+            await classificationDigest(current.resolved.definition) !== read.digest) {
+          const structuredContent = { ok: false, error: {
+            code: "auth_replay_refused", retryable: false, reconciliationRequired: true,
+            message: "An entered read no longer has the same fresh classification. Reconcile its target before starting a new request.",
+            authorizationUrl: (await this.options.connectLink(previous.connector)).url,
+          } };
+          return { isError: true, structuredContent, content: [{ type: "text", text: JSON.stringify(structuredContent) }] };
+        }
+      }
+      bindReplayReads(this.options.requestScope, previous.reads);
+    }
     const browser = previous && tool === "authorize_connector" ? await this.browserProgress(previous) : undefined;
     if (browser?.completed && previous) {
       // Retire unspent links before the status read. A browser claim racing
@@ -184,10 +210,10 @@ export class AuthElicitation {
     // errors and program write summaries cannot establish replay eligibility.
     const facts = authRecoveryFacts(this.options.requestScope, String(id));
     const blocked = !explicit && (!facts.eligible || facts.writeEntered);
-    if (authFailure && (facts.writeEntered || (tool !== "call_tool" && !facts.eligible))) {
+    if (authFailure && (facts.unsafeEntered || (tool !== "call_tool" && !facts.eligible))) {
       const structuredContent = { ...result.structuredContent, error: {
         ...error, retryable: false, reconciliationRequired: true,
-        retry: "This write may have partially run. Reconcile its target before retrying after the operator completes recovery.",
+        retry: "This call may have partially run. Reconcile its target before retrying after the operator completes recovery.",
       } };
       result = { ...result, structuredContent, content: [{ type: "text", text: JSON.stringify(structuredContent) }] };
     }
@@ -221,13 +247,21 @@ export class AuthElicitation {
       round: (previous?.round ?? 0) + 1,
       expiresAt: previous?.expiresAt ?? Date.now() + TTL_MS,
       browserNonces: [...(previous?.browserNonces ?? []), link.nonce],
+      reads: [...new Map([...(previous?.reads ?? []), ...facts.reads].map(read => [read.address, read])).values()],
     };
+    const wire = await (await this.stateCodec()).mint(state, context);
+    if (wire.length > 8192) {
+      const structuredContent = { ...result.structuredContent, error: {
+        ...(result.structuredContent?.error as Record<string, unknown>), authorizationUrl: link.url,
+      } };
+      return { ...result, structuredContent, content: [{ type: "text", text: JSON.stringify(structuredContent) }] };
+    }
     return inputRequired({
       inputRequests: { [INPUT_KEY]: inputRequired.elicitUrl({
         message: MESSAGE,
         url: link.url,
       }) },
-      requestState: await (await this.stateCodec()).mint(state, context),
+      requestState: wire,
     });
   }
 }

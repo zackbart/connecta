@@ -57,6 +57,7 @@ export type ClassificationCode =
   | "catalog_lookup_failed"
   | "result_too_large"
   | "destructive_tool_requires_approval"
+  | "auth_replay_refused"
   | "write_outcome_unknown"
   | "result_processing_failed"
   | "budget_exceeded"
@@ -72,6 +73,7 @@ const CLASSIFICATION_CODE_TABLE = {
   cancelled: true, unknown_address: true, unknown_tool: true,
   ambiguous_tool_alias: true, catalog_lookup_failed: true,
   result_too_large: true, destructive_tool_requires_approval: true,
+  auth_replay_refused: true,
   write_outcome_unknown: true, result_processing_failed: true,
   budget_exceeded: true, executor_failed: true, program_error: true,
 } as const satisfies Record<ClassificationCode, true>;

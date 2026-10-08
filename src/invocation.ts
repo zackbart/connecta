@@ -38,7 +38,7 @@ import { splitAddress, type RegistryView } from "./registry.js";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { validateCatalogToolInput } from "./validate.js";
 import { sentSecretsFor, sentSecretsForRequest, trackCredentialReads, type SentSecrets } from "./sent-secrets.js";
-import { recordAuthFailure, recordWriteEntry, resolveInvocationAuth } from "./invocation-auth.js";
+import { classificationDigest, recordAuthFailure, recordCallEntry, replayClassificationMatches, resolveInvocationAuth } from "./invocation-auth.js";
 
 function defined<T extends object>(
   values: T,
@@ -483,7 +483,7 @@ export class InvocationService {
         const target = resolved ?? activityTarget;
         if (target && (error.code === "auth_required" || error.code === "downstream_oauth_required")) {
           recordAuthFailure(this.catalog.requestScope, target.connector.id,
-            resolved?.definition.classification === "read" || preInvocationAuthFailure ||
+            (resolved?.definition.classification === "read" && resolved.classificationFresh === true) || preInvocationAuthFailure ||
             (!resolved && context.source === "call_tool"));
         }
         // Attach host deadline facts before write recovery changes the code.
@@ -587,6 +587,13 @@ export class InvocationService {
           activityTarget = target;
 
           const write = target.definition.classification !== "read";
+          const callDigest = yield* Effect.promise(() => classificationDigest(target.definition));
+          const canonicalAddress = `${target.connector.id}.${target.toolName}`;
+          if (!replayClassificationMatches(this.catalog.requestScope, canonicalAddress, callDigest, target.classificationFresh === true)) {
+            return { ...framingError("auth_replay_refused",
+              "An entered read no longer has the same fresh classification. Reconcile its target before starting a new request."),
+              reconciliationRequired: true as const };
+          }
           if (!surfaceAllowsTool(target.definition.classification, context.source, context.trust)) {
             const canonicalAddress = `${target.connector.id}.${target.toolName}`;
             return framingError(
@@ -660,7 +667,8 @@ export class InvocationService {
             // Cancellation can arrive during admission or context construction.
             if (admissionSignal?.aborted) throw admissionSignal.reason;
             dispatchedToConnector = true;
-            if (write) recordWriteEntry(this.catalog.requestScope);
+            recordCallEntry(this.catalog.requestScope, { address: canonicalAddress, digest: callDigest,
+              classification: write ? "write" : "read", fresh: target.classificationFresh === true });
             return await target.connector.callTool(
               target.toolName,
               args ?? {},
