@@ -2,6 +2,789 @@
 
 All notable changes to this package are documented here.
 
+## 0.29.0 — 2026-10-08
+
+Connecta 0.29.0 adopts the MCP 2026-07-28 request envelope, binding client capabilities and client identity to each request. `server/discover` advertises the extensions served and private cache hints. Connecta-owned access, pool and deadline refusals return JSON-RPC errors; admission codes move to `-33001` and `-33002`. Modern clients must preserve the protocol-version and declared argument headers. `tools.listChanged` is false, and `subscriptions/listen` remains unsupported.
+
+The tool list is six: `execute_code`, `call_tool`, `call_destructive_tool`, `search_tools`, `authorize_connector` and `skills`. `get_result` is removed; programs page retained direct-call results with `connecta.result(id, options)`. `resume_execution` remains removed, with no paused programs to resume. Guest calls return `{ data, format: "json" | "text" }`, programs report host-call counts, and `connecta.emit` delivers media without requiring `await`. All six tools advertise output schemas.
+
+One fail-closed classifier decides `read` or `write`, with exact deployment overrides ahead of provider review and downstream annotations. Per-tool approval exemptions are gone. Root and named pools independently default to `read-only`; `trusted` pools allow program writes and annotate `execute_code` as a write. Approval belongs to the MCP host. Trust widens no connector or identity grant. Dispatched writes are never automatically replayed, and unknown outcomes require reconciliation.
+
+Errors distinguish host authentication, downstream OAuth and provider permissions. Routing, argument and recoverable authentication failures carry a repair `nextAction`; other failures retain typed retry or reconciliation guidance. Argument refusals include bounded schema repair details. Discovery returns one flat page with catalog failures before tools, ranks exact tool names and addresses first, and reports endpoint-scoped service absences without substituting lookalikes. Program discovery defaults to JSON Schema; compact schemas are labeled as text.
+
+Humans authenticate through Clerk or Cloudflare Access. Access requires trusted direct Worker context; Node uses Clerk. Machines use stored `cta_` tokens, and the generic static bearer adapter is retired. Downstream OAuth starts through an identity-checked, single-use `/connect/<id>` page. Capable hosts receive MRTR URL elicitation; other hosts receive a connection handoff. Public HTTPS deployments default to self-hosted CIMD where the authorization server supports it, with DCR fallback and issuer-bound static clients available. Disconnect removes local authorization and attempts revocation once when the saved server advertises it. State is one grant record per connector and owner, plus one expiring flow record per consent.
+
+Direct calls relay downstream `input_required` through connecta's sealed state, bound to the principal, pool, target and original arguments. Only declared form and URL input capabilities are forwarded. Programs receive direct-call repair guidance instead. A consumed continuation cannot be resent; continuation failures are not retryable. The Skills extension serves connecta guides, connector guides and opted-in downstream skills through one caller-scoped registry, shared with `skills` and `connecta.skill()`. Upward resource reads remain skill-only.
+
+Downstream clients reuse SDK negotiation verdicts and complete SQL-backed catalog caches. Host-computed identity, credential and pool partitions bound sharing; downstream cache hints cannot widen it. Programs read advertised downstream resources with `connecta.read("resource://<connectorId>/<encodedUri>")`. URI template matching uses bounded forward scans and refuses ambiguous matches, authority changes and unsafe paths before dispatch.
+
+Persistent storage is one SQL key-value store with D1 on Workers and SQLite on Node. Workers KV, the JSON file store and optional compare-and-set paths are removed. Result-stash bounds now apply across processes or isolates sharing the store. One configuration schema supplies types, validation and defaults; unknown keys and invalid values fail construction. `describeConfig()` supplies a secret-free snapshot for the operator UI and doctor.
+
+Maintained providers use `defineProvider` and folders containing implementation, `SKILL.md`, drift evidence and tests; exports and check inventories are generated. Hosted MCP implementations are reviewed presets. Notion, Vercel and Cloudflare default to hosted MCP with explicit REST complements. The GitHub provider combines hosted tools and a REST complement through a GitHub App, supporting organization and repository scopes together with repository-narrowed installation tokens. It acts as the App; repository creation and forks are absent, and workflow-file writes are off by default. Provider drift checks run locally, on provider pull requests and weekly, reporting findings without filing issues. Google Workspace providers retain domain-wide delegation, including draft-only Gmail and Slides comments.
+
+The operator UI is rebuilt on React, Radix and Tailwind with hashed immutable assets on both runtimes. It shows caller-scoped configuration, catalogs, access and activity; capability changes remain in deployment code. Activity records the real package version independently of display `serverInfo`, validated client name and version, call classification and result size, without payloads. Shipped executors carry lifecycle brands; custom sandboxes explicitly accept cleanup responsibility through `customExecutor(executor, { lifecycle: "self-managed" })`.
+
+The built-in artifacts feature, package subpath, pages, scheduled refresh and agent tools are removed. A leftover `artifacts:` or `artifactOrigin` option throws `ConfigError`. Existing artifact data is ignored and untouched. Deployments without the built-in feature need no artifact migration; dedicated downstream publishing services remain ordinary connectors.
+
+Agent evals now use the 0.29 tools and guest API with correctness grading for destination, evidence and final answers. Sonnet 5.5 and GPT-6-Luna baselines and their measured failures are recorded in `eval/baselines/notes-0.29.md`. Runner limitations are explicit N/A outcomes. These diagnostic trials do not establish a model ranking or native CLI URL-elicitation support.
+
+Security fixes harden Clerk audience binding and downstream OAuth completion binding. Credential redaction and payload-free operator records cover shared request boundaries. GitHub grants bind to repository IDs, catalog sharing respects host auth partitions, and resource URI validation is tightened. OAuth token requests refuse redirects, and refresh coordination preserves one-time dispatch across cancellation and grant resets.
+
+Contributors use oxfmt through `npm run format`; `npm run format:check` joins the verification gates. Generated files, fixtures, baseline data and released changelog history retain their existing serialization. Deployments need no formatting migration.
+
+Before upgrading an existing deployment, back up its state and database, preserve the credential-encryption key and identity namespaces, and prepare the replacement configuration and imports. Delete `discovery.persistCatalog` and `discovery.staleCatalogSeconds`. Replace the old registry freshness policy with `discovery.catalogMinTtlSeconds` and `discovery.catalogMaxTtlSeconds`, defaulting to 0 and 86400; `catalogTtlSeconds` remains the 300-second fallback when a downstream omits TTL hints. Explicit zero hints disable reuse. Delete `execute.approval`, `Connector.approval`, `execute.resumableWrites` and `execute.pausedRunTtlSeconds`. Set root `trust` and each `pools.<name>.trust` deliberately; named pools do not inherit root trust. Remove artifacts configuration, the `@zackbart/connecta/artifacts` import, artifact bindings and refresh jobs. Replace legacy `credentials` with `vault`, move root branding into `operatorUi({ branding })`, and replace boolean or object `accessTokens` configuration with `accessTokens(storage)`. Fix rejected options before starting the new version.
+
+Move persistent storage before reopening traffic. On Node 22.13 or later, stop the old server and run `connecta migrate-state <state.json> <connecta.sqlite>` once, then use `sqliteStorage` and `sqliteActivityStore` from `@zackbart/connecta/sqlite`. Replace `CONNECTA_STATE_FILE` and `CONNECTA_ACTIVITY_FILE` with `CONNECTA_DATABASE`; the old JSONL activity log is not imported. Workers use `d1Storage` and `d1ActivityStore` from `@zackbart/connecta/d1`, replacing copied KV/D1 adapters. Existing `connecta_kv` and `tool_call_activity` tables remain readable; the example uses `CONNECTA_DB` for both. `fileStorage` is no longer exported from `/node`, and custom stores must implement `list` and `compareAndSet`. Deployments using `memoryStorage()` can ignore the persistent-store conversion.
+
+For Workers KV, use the Worker example's `scripts/copy-kv-to-d1.mjs` or `copyKvToD1` from `/d1` under maintenance. Back up values with expiration metadata and D1, stop background writers, and drain requests, callbacks and refreshes. Wait at least 60 seconds or the longest KV cache TTL after the last write, and require stable listing/hash passes. Copy before switching to D1, resolve invalid entries and conflicts, and verify exact value hashes and absolute expiries. Preserve the existing vault key. Keep maintenance through startup and credential checks, then mark the source live with `--mark-live` or `markKvToD1Live` before reopening traffic. Later copies refuse stale KV state. Keep backups until the upgrade is verified. OAuth layout migration runs automatically on each owner's first grant read; issuer-stamped grants carry over, pending links and pre-issuer-binding grants need Connect again. Rolling back after that migration requires consent again.
+
+Replace `@zackbart/connecta/auth/bearer`, `bearerToken` and `assertedPrincipal` with `accessTokens(storage)`. Provision a separate stored token per machine or represented human, update grants to its metadata ID and `access_token` actor, then rotate clients to `Authorization: Bearer cta_…` and remove the static secret and `X-Connecta-Principal`. Keep exact principal namespaces and IDs when preserving personal state; existing unrevoked `cta_` tokens survive the storage copy. Worker machines also need Access service credentials at the edge. Protect `/connect/*` and `/oauth/callback/*` with the intended Worker Access application. Clerk deployments enable `aud_claim_enabled`, reconnect using the advertised endpoint URL as `resource`, and verify refresh. Custom auth adapters replace `final` and `finalRefusals` with synchronous credential recognition; consolidate Access wrappers that depended on refusal fallthrough.
+
+Replace upstream `DynamicWorkerExecutor` construction with `workerExecutor({ loader: env.LOADER })` from `@zackbart/connecta/worker`, keeping the optional `@cloudflare/codemode` peer. Wrap custom executors with `customExecutor(..., { lifecycle: "self-managed" })` and implement termination and cleanup. Existing `quickJsExecutor()` configurations need no change. Public provider import names survive the folder move. Existing Notion integration workflows select `surface: "api"` and rename REST tools to `integration_*`; Vercel and Cloudflare users migrate removed operations to live hosted schemas and configure retained REST complements under separate connector IDs. Follow `documentation/provider-migration-0.29.md`. Update client workflows to the flat discovery page and `{ data, format }` guest results, page direct results through `connecta.result`, and remove calls to `get_result` or `resume_execution`.
+
+Start the upgraded deployment under maintenance and run `connecta doctor` with its required machine and edge credentials. Doctor checks health, SDK protocol negotiation, the exact current six-tool set and an actual executor program, and reports the negotiated revision and package version. With the UI enabled, `doctor --config` prints the caller-scoped secret-free snapshot instead of running diagnostics. Check existing OAuth and vault credentials, intended identity and pool grants, token revocation and activity, reissue pending connection links, then reopen traffic. UI, provider and contributor changes require no additional migration for deployments that do not use them. These notes apply whenever a deployment chooses to upgrade; the release includes no owner deployment cutover.
+
+### Added
+
+- Add seven Google Slides comment tools: `list_comments`, `create_comment`, `create_comment_reply`, `update_comment_thread`, `update_comment_post`, `delete_comment`, and `delete_comment_reply` (#696). Reads include authors, replies and anchors, with revision/content-bound cursors and raw thread paging. Comment mutations are writes; trusted pools may run them in programs, and the host controls approval. The raw batch hatch accepts comment requests and preserves reply ids ahead of text under its result budget. Oversized direct write results can be paged with program `connecta.result` on trusted endpoints. Read-only endpoints return an inline truncation notice and preview without a write stash. Results distinguish batch acceptance from comment save confirmation; a comment write without `ALL_SAVED` reports `commentUpdateState` and instructs callers to re-read instead of repeating it.
+- **`Connector.classification`: connectors report facts, the registry
+  classifies** ([#705](https://github.com/zackbart/connecta/issues/705)). A
+  connector may carry a reviewed `ToolClassification` as the readonly
+  `classification` field. `remoteMcp({ classify })` and maintained providers set
+  it to a deep-frozen copy, and their `listTools` now returns the downstream's
+  listing unclassified. The registry validates the field when it first reads a
+  connector, rejects it beside `staticTools`, and keeps request-local classified entries built from intake-redacted listing facts.
+  The SQL-backed SDK cache stores complete intake-redacted facts without registry
+  classification verdicts, and each request classifies them into fresh objects. It also observes catalog drift for such connectors itself, and
+  ignores their `catalogDrift()`. A decorator that filters, copies, or annotates a
+  listing, or mutates tools it listed or was handed, cannot turn a reviewed write
+  into a read. Wrappers keep the review only by forwarding the field:
+  `{ ...connector }`, `Object.assign`, and `Object.create` do; a forwarding class
+  that omits it serves an unreviewed connector, whose downstream annotations fail
+  closed when absent. Exact deployment-level overrides
+  ([#706](https://github.com/zackbart/connecta/issues/706)) apply ahead of review
+  and downstream annotations, regardless of wrapping.
+  
+  Request-scoped catalogs own their definitions and serve deep copies to
+  discovery and invocation. Each connector dispatch also receives a fresh deep
+  copy of its definition. Mutating a dispatched definition or a discovery
+  result cannot change later discovery, schema validation, or write accounting
+  within the same program.
+- Add a GitHub provider with mixed org and repository scopes through a GitHub App, owner-routed and repository-narrowed installation tokens, exact hosted-tool allowlisting, scope discovery, confined search, release writes, and workflow-file writes disabled unless explicitly configured. Add request-local Bearer authentication and an opt-in classification allowlist that hides unlisted tools.
+- `copyKvToD1(kv, db, { source, cursor, overwriteFamilies, maxKeys, verify })`
+  on `@zackbart/connecta/d1` copies a 0.28 Workers KV deployment's state into D1
+  during a maintenance window, preserving OAuth grants, vault credentials,
+  `cta_` tokens, and absolute expiries. It skips oversized UTF-8 strings/rows,
+  bounds buffered bytes, and reports invalid/conflict/verification counts by
+  family only. Resume tokens require the same source id and an atomic claim;
+  error labels use class identity. Overwrite requires an explicit family list.
+  `markKvToD1Live` seals the source in D1 before traffic reopens, refusing later
+  copies unless explicitly overridden. The Worker runbook backs up and drains
+  writers, waits for stable KV, copies and verifies before deployment, checks
+  existing credentials under maintenance, then reopens traffic (#709).
+- **Google Docs connection.** `@zackbart/connecta/providers/docs` exports
+  `docs(id, options)` with the same Workspace options as `gmail()`, plus
+  `DOCS_SCOPES` (exactly `documents`) and `DOCS_API_BASE_URL`
+  ([#681](https://github.com/zackbart/connecta/issues/681)). Six hand-written
+  tools: `get_document` (every tab, or one, rendered as markdown-ish text —
+  headings, lists, links, tables as pipe rows, footnotes, and every inline chip
+  by what it shows, a dropdown's selected value included — capped by
+  `maxChars` with an explicit marker, with `title`, `revisionId`, on
+  `withIndexes` the UTF-16 start and end index of every paragraph, table, and
+  table of contents, paged by cursor in 64 KiB pages so a default read always
+  fits the 256 KiB `execute_code` bridge, and a per-tab `notRendered` naming headers, footers,
+  floating images, unmarked suggestions, or unknown elements the text leaves
+  out; `raw: true` returns Google's resource instead, up to 4 MB),
+  `create_document` (title and an optional body; a body that fails after the
+  document exists names its id instead of inviting a duplicate), `append_text`
+  and `insert_text` (additive), `replace_all_text` (string or RE2, by tab,
+  reporting the count), and `batch_update_document`, a raw
+  `documents.batchUpdate` passthrough annotated as destructive and classified as a write, takes 1–100
+  requests of known generally available kinds (contents unvalidated), returns
+  Google's replies within the shared result budget (projected to ids and
+  counts, then cut to a counted prefix, still saying the batch applied), and
+  requires `requiredRevisionId`. Every other edit takes it optionally, and a
+  write naming one is revision-guarded, so a stale revision fails `conflict`
+  on Google's own reason code. Failures are classified by how far the request
+  got, from the shared client's outcome facts: a 4xx refusal passes through
+  as mapped and applied nothing; an edit sent with no answer back, answered
+  with a 5xx (whatever reason it carries), or redirected says its outcome is
+  unknown, non-retryably, because no Docs write is safe to send twice; only a
+  2xx whose reply broke off, overflowed, or would not parse says the edit was
+  applied; and a create that may have left a document behind never invites a
+  second one. Ids Google sends back are copied only if a tool could take them
+  as input again, and otherwise dropped whole and named in `dropped`; titles
+  are clamped; and every result passes one final size check, which a read
+  answers with its way out and a write with a small acknowledgment that it
+  applied. There is no search or
+  list tool: finding a document is Drive's job, and `documents` cannot list. A
+  404 stays `connector_call_failed`, because Google answers it for an id that
+  is unknown and for one not shared with the caller alike. Setup, including
+  the Admin console scope, is documented on `docs()`; drift is checked against
+  the Docs Discovery document.
+  
+  Trusted pools permit program writes; read-only pools use `call_destructive_tool`.
+  The MCP host controls approval.
+- **Draft-only Gmail connection.** `@zackbart/connecta/providers/gmail`
+  exports `gmail(id, { purpose, serviceAccount, subject, title?,
+  instructions?, callAdmission?, maxResultBytes?, baseUrl? })`, plus
+  `GMAIL_SCOPES` and `GMAIL_API_BASE_URL`. Eight hand-written tools:
+  `search_threads` (Gmail search syntax, cursor-paged, each thread summarized),
+  `get_thread`, `get_message` (the message's own body — never an attached or
+  forwarded email's — decoded from its charset, HTML converted only when no
+  text part exists, fetched from the attachments endpoint when Gmail stored it
+  apart, reported as `bodyFormat: "unavailable"` rather than empty when too
+  large to read, capped by `maxBodyChars` with an explicit marker, and
+  metadata only for attachments, which include unnamed inline images and any
+  other part that is not body text), `list_labels`, `list_drafts`,
+  `get_draft`, `create_draft`
+  (To/Cc/Bcc, RFC 2047-encoded headers, an optional HTML alternative, and
+  `replyToMessageId`, which sets the thread, `In-Reply-To`, `References`, a
+  `Re:` subject, and every recipient of the replied message's Reply-To or
+  From, parsed as an RFC 5322 address list), and `update_draft` (replaces the
+  body; keeps From, To, Cc, Bcc, Reply-To, Subject, the thread, and the reply
+  headers unless restated, and no other header; refuses, unchanged, a draft
+  with attachments, inline images, or anything else Gmail's whole-message
+  update would delete, and one nested deeper than it inspects). Every result
+  is built to stay under 192 KiB of JSON, so it reaches a program through
+  `execute_code`'s 256 KiB bridge as well as `call_tool` — the whole result,
+  wrapper and cursor included, measured as sent rather than estimated:
+  `get_thread` and `list_labels` page by cursor when a thread or label set is
+  larger, every string field is bounded, an identifier far past any Gmail id
+  is dropped rather than cut and the drop is said — `omittedIds` names the
+  field, `labelIdsOmitted`, `labelsOmitted`, and `attachmentsOmitted` count
+  what a list left out — a saved draft whose id Gmail returned unusably still
+  reads `saved: true` with a note pointing to `list_drafts`, a body past
+  the limit ends with a marker at any `maxBodyChars`, and an untouched
+  `raw: true` message past it is refused with the way forward. Every cursor is
+  bound to the tool and arguments that issued it, and a thread or label page
+  resumes by the identity of what came before: a message or label added or
+  removed before that point answers `conflict` rather than repeating or
+  skipping one. There is no send, delete, or label tool and no raw
+  hatch; `gmail.compose` technically permits sending, and the tool surface is
+  what forbids it. `create_draft` is an additive write and `update_draft` a
+  destructive one. Both classify as writes; trusted pools permit them in programs,
+  and the host controls approval. The transport is confined beneath `users/me`, so the
+  token's subject is the only mailbox a request can reach. Setup — Cloud
+  project, API, service account with no IAM roles, JSON key (and the
+  `iam.disableServiceAccountKeyCreation` override some organizations need), and
+  the Admin console's domain-wide delegation entry with exactly
+  `gmail.readonly` and `gmail.compose` — is documented on `gmail()` itself.
+- **Google Drive connection.** `@zackbart/connecta/providers/drive` exports
+  `drive(id, options)` with the same Workspace delegation options, plus
+  `DRIVE_SCOPES` (exactly `https://www.googleapis.com/auth/drive`) and
+  `DRIVE_API_BASE_URL`. Seventeen hand-written tools, every one reaching shared
+  drives as well as My Drive. Reads: `search_files` (Drive query syntax, trash
+  left out unless asked, `user`/`drive`/`allDrives`/`domain` corpora, Drive's
+  own `incompleteSearch` surfaced), `list_folder_items`, `get_file`,
+  `get_file_content` (Docs exported as Markdown, Sheets as CSV of the first
+  sheet only, Slides as text, text files read by range and cut at `maxChars`
+  code points, never inside a character, binaries as base64 when the encoded
+  file fits the result and never past 1 MiB, and anything else — a larger
+  binary, a drawing, a form, a folder, a shortcut — as `format: "unavailable"`
+  with a note rather than an empty success; the caps hold on the bytes the
+  download returns, never on the size metadata reported, so a file that grew,
+  shrank, or emptied between the two reads is still read right — a download
+  is read only one byte past its cap and the rest of the stream cancelled
+  unread, even from a server that ignores the range, and a range answered
+  `416` with `Content-Range: bytes */0` is a verified empty file — and Drive's
+  10 MB export limit is named from Google's own reason code),
+  `list_permissions`, and `list_shared_drives`. Every read is built to stay
+  under `maxBytes` of JSON, envelope and cursor included: 192 KiB by default,
+  which a program inside `execute_code` always receives, from 64 KiB to 4 MiB
+  on request, above the default for a direct `call_tool` only. A final guard
+  around every tool refuses any result past that bound rather than returning
+  it; a write it stops has applied, and says to re-read rather than repeat. A listing that would outgrow it stops early with a
+  cursor that resumes at the first row left out, and fails `conflict` rather
+  than skip or repeat a row if that Drive page has changed since — the cursor
+  carries fingerprints of Drive's raw ids for that page, in order, and of the
+  last one returned. A cursor is never issued that could not be accepted back:
+  a Drive page token too long to carry fails, saying so.
+  Every cursor is bound to its tool and the arguments that decide its rows,
+  and refused elsewhere. Content is cut with a marker naming the bound that
+  cut it. Names are cut at 2 KiB in listings and content results and 32 KiB in
+  `get_file`, descriptions at 64 KiB, other strings Drive does not bound at
+  1 KiB, and owners and parents at ten; identifiers are never cut, and one that
+  is malformed is left out. Every such field is named in the result's
+  `truncatedFields`.
+  Additive writes:
+  `create_folder` and `restore_file`. Destructive writes: `create_file` (text
+  or base64 content as one multipart upload, or an empty file; `convertTo`
+  imports it as a Google Doc, Sheet, or Slides file) and `copy_file`, because
+  a new file takes its folder's sharing and so discloses its content to
+  everyone a shared destination reaches. These classify as writes, as do `update_file_content`,
+  `update_file` (rename, description), `move_file` (a move changes inherited
+  sharing), `trash_file`, `share_file` (user, group, domain, or anyone with
+  the link, up to writer or organizer, emailing no one unless
+  `sendNotificationEmail`), `update_permission`, and `delete_permission`.
+  A create, copy, or share that may have landed — sent with no answer,
+  answered with a redirect it never follows, answered 5xx (a rate-limit reason
+  on a 5xx included), or accepted with a reply that broke — is never
+  retryable and names the read to check before repeating it, since a repeat
+  makes a second one. Only a write Google answered 2xx is ever said to have
+  applied. Writes that set fixed values (`update_file_content`, `update_file`,
+  `trash_file`, `restore_file`, `update_permission`) are sent as idempotent, so
+  a 5xx to them stays a retryable outage.
+  There is no permanent delete,
+  no empty-trash, no ownership transfer, and no raw hatch. A 404 says the file
+  may be missing or hidden from this account, because Drive does not say
+  which. Setup — the Google Drive API and the one scope on the delegation
+  entry — is documented on `drive()` itself.
+  
+  Trusted pools permit program writes; read-only pools use `call_destructive_tool`.
+  The MCP host controls approval.
+- **Google Sheets connection** ([#682](https://github.com/zackbart/connecta/issues/682)).
+  `@zackbart/connecta/providers/sheets` exports `sheets(id, options)` with the
+  same Workspace options as `gmail()`, plus `SHEETS_SCOPES` and
+  `SHEETS_API_BASE_URL`. Nine hand-written tools: `get_spreadsheet` (title,
+  sheets with ids and grid sizes, named ranges as A1 with the sheet title
+  always quoted, never cell values; `raw: true` for Google's untouched
+  metadata) and `get_values` (one to twenty A1 ranges through
+  `values:batchGet`, value and date render options, paged by whole rows under
+  `maxCells` and `maxBytes` — never more, an oversized row is refused — with
+  the default byte budget sized to what `execute_code` can receive and at most
+  4 MiB for a direct `call_tool` read, which the result stash can still page,
+  and a cursor bound to the call's spreadsheet, ranges, and render options
+  that only ever continues the caller's own ranges; cells over 5,000 characters cut with a marker, and
+  `maxCellChars` up to 50,000 to read one whole) are read-only;
+  `create_spreadsheet`, `add_sheet`, and `append_values` (pinned to
+  `INSERT_ROWS`, so nothing below the table is overwritten) are additive
+  writes; `update_values`, `batch_update_values`, `clear_values`, and
+  `batch_update_spreadsheet` — Google's own `batchUpdate` requests, passed
+  through untouched and classified as a write, its replies cut to their kind,
+  ids, and counts when too large to deliver — are destructive. Writes take a
+  required `RAW` or `USER_ENTERED` and at most 50,000 cells per call. Value
+  updates and clears of fixed ranges are idempotent, so a 5xx stays
+  retryable; an append or create whose outcome is unknown says what to read
+  before repeating it — the table, or a Drive search for the title. A 404
+  never claims absence, since a spreadsheet is a Drive file that may simply not
+  be shared with the caller. Listing and finding spreadsheets is Drive's job.
+  The one scope, `https://www.googleapis.com/auth/spreadsheets`, and its setup
+  are documented on `sheets()`.
+  
+  Trusted pools permit program writes; read-only pools use `call_destructive_tool`.
+  The MCP host controls approval.
+- **Google Forms connection.** `@zackbart/connecta/providers/forms` exports
+  `forms(id, options)`, taking the same Workspace options as `gmail()`, plus
+  `FORMS_SCOPES` and `FORMS_API_BASE_URL`. Six hand-written tools: `get_form`
+  (title, description, quiz and publish state, `revisionId`, and every item
+  with the question ids answers are keyed by — one per grid row — their types,
+  options, and required flags; long descriptions and option lists cut with
+  explicit markers; `raw: true` for Google's whole Form), `list_responses`
+  (cursor-paged, an optional exclusive `submittedAfter` instant, each answer
+  labeled with its question's title in form order, with any quiz grade and
+  grader feedback, answers and feedback over 2,000 characters cut) and
+  `get_response` (one whole, with file ids, quiz grades, and feedback text and
+  links; `questionIds` narrows it), `create_form` (title, Drive file name,
+  optionally unpublished — all Google accepts at creation), `update_form_info`
+  (replaces the title or description), and `batch_update_form` (Google's own
+  batchUpdate requests, each exactly one of its six kinds, all or none, under a
+  required `requiredRevisionId` so an edit never lands on a form someone
+  changed since it was read; a stale revision fails `conflict`). Every result
+  stays inside 192 KiB, under `execute_code`'s 256 KiB host-result bridge,
+  measured whole, cursor included: a response page ends early and continues
+  after the last response it returned, only while Google's page still holds
+  the same responses in the same order (otherwise `conflict`), every
+  projected text is bounded in bytes as well as characters and cut without
+  splitting a surrogate pair, a large form pages its items under a cursor
+  bound to its revision — continuing inside a grid too large for one page, so
+  every question id is reachable — a response too large to read whole names the answers
+  it left out in `omittedQuestionIds`, `raw: true` refuses a form too large
+  for one result, and a batch reply too large to return whole drops question
+  ids, then everything but counts, marked `truncated` and still reported as
+  applied. `create_form` is additive; the other two writes are
+  destructive. A write Google may have applied — no answer, a 5xx or redirect after it
+  arrived, or a reply that broke — is reported as not retryable (no Forms
+  write is sent as idempotent), and a create says to look in Drive before
+  creating again. There is no list, delete, share, publish, or watch tool: Drive
+  lists forms, and this connection requests no Drive scope. A form is a Drive
+  file, so a 404 is reported as unknown-or-not-visible, never as absence.
+  Setup, with exactly `forms.body` and `forms.responses.readonly` for the
+  domain-wide delegation entry, is documented on `forms()` itself.
+- **Google Workspace domain-wide delegation, shared by every Workspace
+  provider.** `serviceAccount` is `{ clientEmail, privateKey, clientId? }` or
+  the downloaded JSON key's text, from deployment secrets rather than the vault,
+  because one key serves every Workspace connector; anything but a complete,
+  exactly-encoded PKCS#8 RSA key of at least 2048 bits throws at construction,
+  and no key ever appears in
+  a message. `subject` is a function from the authenticated
+  `AuthenticatedIdentity` to a Workspace address — sync or async, for a
+  directory lookup, with the call's abort signal — or one fixed address for
+  shared or scheduled use. The function is never called for an open
+  deployment's anonymous requests or a call no request admitted; those, and an
+  `undefined` answer, fail `auth_required` before any request leaves.
+  Arguments, headers, and programs cannot choose the subject. The RS256
+  JWT-bearer assertion is signed with Web Crypto, so it runs unchanged on Node
+  and Workers with no new dependency. Access tokens are cached in memory only —
+  never in storage — per service account, key, subject, and scope set,
+  replaced a minute before expiry, and bounded at 512. Concurrent callers share
+  one mint through plain outcomes and a deadline, never another request's
+  signal, so a cancelled owner sends a waiting caller in another Worker request
+  to mint for itself. A 401 forgets only the token it rejected and replays the
+  request once, so a streamed request body is refused up front. A write that
+  names the revision it was made against passes `{ revisionGuarded: true }`,
+  and a stale revision — FAILED_PRECONDITION or ABORTED on HTTP 400 or 409 —
+  then arrives as `conflict` with fixed words to re-read and retry, unless
+  Google names a more specific reason — a disabled API, a quota, a missing
+  scope, or a precise permission refusal — which always decides first; otherwise
+  a refused precondition is reported neutrally in Google's own words. A
+  product can read Google's reason codes for any mapped failure — sanitized
+  tokens only, never its prose — and `exportSizeLimitExceeded`,
+  `domainPolicy`, and `insufficientFilePermissions`/`forbidden` refusals
+  name themselves precisely. A download or export can pass `{ maxBytes }` to
+  read only a prefix: the body is streamed, the rest is cancelled unread, and
+  the result says whether it was `truncated`, with its HTTP status and
+  `Content-Range`, so an empty file's 416 arrives as an empty result. A write
+  is never told to retry when it may have landed: one Google accepted whose
+  reply broke off or overflowed, one answered with a redirect, one sent with
+  no answer at all, and one Google answered with any 5xx — whatever reason it
+  named — fail as non-retryable with words saying to re-read its target first,
+  the verdict core's `write_outcome_unknown` gives a trusted-pool program write.
+  Only a 429, or a 4xx naming a quota, is a rate limit for a write. A read
+  stays retryable, as does a write the provider marks `{ idempotent: true }`.
+  An error status is a refusal even when its body cannot be read. A product
+  can ask how far any failed request got: before sending, awaiting a
+  response, reading an accepted reply, redirected, a server error on a write,
+  or refused. Google's
+  refusals map to what fixes them: `unauthorized_client`
+  names the client ID and the exact scopes to authorize, `invalid_grant` names an
+  unknown or suspended user, a deleted key, or clock skew, and a disabled API or
+  a missing scope says so.
+- **Google Slides connection.** `@zackbart/connecta/providers/slides` exports
+  `slides(id, options)` with the same Workspace delegation options as `gmail()`,
+  plus `SLIDES_SCOPES` and `SLIDES_API_BASE_URL`. It requests exactly
+  `https://www.googleapis.com/auth/presentations`. Fifteen hand-written
+  tools, seven of them for comments (below). Of the other eight, four are
+  reads: `get_presentation` (title, page size, `revisionId`, a
+  layout preview, and each slide's text in reading order — top to bottom,
+  then left to right, rotated and nested groups composed — with table cells,
+  alt text, linked charts' spreadsheet ids, speaker notes, and empty
+  placeholders' ids for filling a new slide, under a field mask that leaves
+  styles behind, capped per slide), `get_page` (any slide, layout, master,
+  notes page, or the notes master by objectId: every element in reading order with its group and
+  placeholder type, index, and parent — what `placeholderIdMappings` needs —
+  and text continued across pages), `list_layouts` (masters, each followed by
+  its layouts), and `get_slide_thumbnail` (the short-lived link and size,
+  never the image). `create_presentation` and `create_slide` are additive
+  writes; `replace_all_text` (literal, case-sensitive by default, several
+  replacements in one atomic batch, optionally at a required revision) and
+  `batch_update_presentation` (1 to 100 raw Slides requests, each refused
+  locally unless it is one known Request kind, always at a required
+  `revisionId`, its replies bounded — every id at every depth kept whole,
+  large fields named in `cut`, overflow counted, and the write reported as
+  applied) are annotated as destructive and classified as writes. Every write result is size-checked too: copied
+  ids and revisions are whole or flagged, never cut, and a result that still
+  cannot be delivered after Google's 2xx is refused with "applied — do not
+  repeat it; re-read". A write refused because the deck changed since its
+  revision is a `conflict`, and a create whose outcome is unknown says what to
+  look for before creating again.
+  Every read result is built under the shared Workspace result budget, so it
+  is deliverable inside a program and directly alike, and nothing it cannot
+  carry is lost: cut text carries the `get_page` cursor that continues it
+  character by character, a crowded slide names the cursor for the elements
+  not shown, the layout preview continues in `list_layouts`, and `raw: true`
+  pages Slides' own JSON, sending an element too large for one result in
+  chunks that concatenate and parse. Every cursor is bound to the deck, page,
+  mode, and the revision it was read at — or, for a viewer Slides gives no
+  revision, a SHA-256 of the exact content its paging depends on — so a deck that
+  changed between pages is a `conflict` to restart, never a skipped or
+  repeated slide. Slides cannot list decks, and the guide says that is
+  Drive's job. A 404 is reported as unknown-or-not-visible, because a deck is
+  a Drive file. Setup is documented on `slides()`.
+  
+  Trusted pools permit program writes; read-only pools use `call_destructive_tool`.
+  The MCP host controls approval.
+- **Google Discovery drift checks.** `npm run providers:check -- --provider
+  gmail` reads Gmail's credential-free Discovery document and digests the nine
+  methods the tools call like any other touched endpoint, and also reports a
+  touched method that stops accepting the provider's delegated scopes. A
+  manifest with `"format": "google-discovery"` and a `scopes` list is all a
+  further Workspace product needs.
+- `Connecta.describeConfig()` returns a secret-free snapshot of the running
+  configuration — limits with their `default`/`config` source, auth providers,
+  identity rules, pools, modules (with the activity store's kind and
+  retention), the storage adapter's kind, branding, and each
+  connector's source, endpoint, auth mode, credential slot labels, call
+  admission, and static tools — for the operator UI and `connecta doctor`.
+  `Connector.describe()` reports a connector's own facts and is implemented by
+  `remoteMcp()`, `api()`, and every provider. Every URL
+  either reports keeps origin and path only (a root-relative favicon, its path),
+  and a URL of any scheme but http(s) is omitted.
+  `defineConfig((env) => …)` declares a deployment's configuration as a
+  function of its environment (#705).
+- Evaluate hosted Google Workspace and Planning Center capabilities while retaining delegated/PAT API providers, and report public provider contract drift on provider pull requests and weekly without blocking the check gate.
+- `@zackbart/connecta/d1` exports `d1Storage(db)` and
+  `d1ActivityStore(db, { retentionDays })`; `@zackbart/connecta/sqlite`
+  (Node-only, on the built-in `node:sqlite`) exports `openSqlite(path)`,
+  `sqliteStorage(db | path)`, `sqliteActivityStore(db | path, { retentionDays })`,
+  and `importStateFile(db, statePath)`. Both drivers share one SQL store; each
+  creates its tables on first use and reads a 0.28 `connecta_kv` or
+  `tool_call_activity` table as is, adding activity columns it lacks. Activity
+  writes prune a bounded batch past the retention window, 90 days by default, so
+  no cron is needed. `connecta migrate-state <state.json> <connecta.sqlite>`
+  copies a 0.28 `fileStorage` state file into SQLite once, keeping any key the
+  database already holds. Every storage key is built in `src/storage/keys.ts`,
+  which lists each key family's scope, version, codec, and TTL (#705).
+- Relay downstream form and URL input requests on direct MCP calls using encrypted, signed, single-use state bound to the principal, pool, target, and original arguments. Gate elicitation by the host's declared capabilities, bound rounds and payloads, and keep program input requests unsupported with direct-call guidance.
+  
+  Refuse private-state echoes before publishing prompts, results, or catalogs, and prevent OAuth refresh or redirects from resending write continuations.
+- Ask MCP 2026-07-28 hosts with URL elicitation support to connect a service when a call needs authentication. Authenticate retries with a deployment-held key and bind them to the principal, endpoint, connector, tool, arguments or code, round, and expiry. Decline and cancel stop without dispatch. Writes elicit only for Connecta-owned credential resolution failures before connector invocation. Programs also stop recovery after any write-classified handler was entered; each retry checks its own round. Raw fetches and custom transports cannot establish retry eligibility. These failures require reconciliation before retrying and retain manual connection guidance. Reads may re-run after dispatch only when classified from a catalog accepted within its TTL. The host records every entered call's classification and freshness; stale-fallback entries block program recovery. Accept rechecks every entered read before restarting any call and refuses changed classifications or digests with `auth_replay_refused` and reconciliation guidance. Normal stale-fallback calls retain their existing behavior. Other hosts receive the existing recovery envelope with a connection link.
+- Programs can read downstream MCP resources with `connecta.read("resource://<connectorId>/<encodeURIComponent(downstreamUri)>")`. Reads require a whole-connector grant, share host-call and connector admission limits, and redact credential echoes before reaching the guest or agent.
+- Serve usage, connector guides and opted-in downstream skills through one caller-scoped registry. Advertise the Skills extension and skill-only resources, with private cache hints, five-entry skill pages and preserved downstream digests. Both the skills meta-tool and connecta.skill read the same documents. Connector guide bodies gain Agent Skills frontmatter; connector:<id> remains a one-release lookup alias. Sent credential echoes pass through the existing agent redaction boundary, including binary supporting files.
+  
+  Downstream Skills listing and file reads bypass the SDK response cache while sharing request-scoped auth with ordinary resource reads. Negotiation reuse includes the Skills opt-in.
+- Record the build-time package version independently of display serverInfo on every activity event. Persist package and validated client facts in SQL history, migrate old tables with a nullable column, and expose them read-only at /ui/api/activity and in Activity row details. Older calls without request IDs remain separate rows. Doctor uses and reports the same generated package version.
+- Add the typed operator UI contract and read-only `/ui/api/config` endpoint with a caller-scoped config snapshot, classified live tools, catalog age, payload-free last-call facts, and effective grants, pools, trust tiers, and permissions. `connecta doctor --config` prints the same secret-free snapshot as JSON.
+- Add operator pages for deployment health, connectors, tool catalogs, access, request activity, and configuration on the typed, viewer-scoped contract. Preserve factory option presence so omitted token and transport options are marked as defaults.
+
+### Changed
+
+- **Breaking:** **`defineProvider()` and `remoteMcp({ classify })`**
+  ([#705](https://github.com/zackbart/connecta/issues/705)). The root entry
+  exports `defineProvider()`, the one shape for a maintained provider: name,
+  title, kind, maintained skill, optional reviewed classification, and a
+  synchronous `create`. It validates the options every provider shares, renders
+  the usage guide with deployment instructions appended, and exposes its
+  `definition` on the factory. It imports neither transport, so `api()`
+  providers built with it gain no MCP or Effect graph. `remoteMcp()` accepts
+  `classify: { tools: { name: "read" | "write" | "destructive" | { verdict,
+  reason?, schemaDigest? } } }`, validated at construction. It fails closed,
+  and catalog drift is reported against it. Linear is the first provider
+  converted. Its tool names, verdicts, titles, descriptions, credential slot,
+  guides, and drift counts match 0.28 (`test/linear-snapshot.test.ts`). The one
+  change is stricter: a reviewed Linear create such as `create_issue_label`
+  now stays a write even when the downstream annotates it `readOnlyHint: true`.
+  `linear()` reports a blank purpose as `linear("<id>") requires a non-empty
+  purpose`, and rejects a blank `title`, a non-string `instructions`, and an
+  unknown `authScope` at construction. `LINEAR_VETTED_CATALOG` is deprecated in
+  favor of `linear.definition.classify`.
+- **Reviewed hosted writes stay writes**
+  ([#705](https://github.com/zackbart/connecta/issues/705)). The Basecamp,
+  Cloudflare, Mixpanel, Notion, RevenueCat, Stripe, and Vercel providers now
+  apply the same rule as Linear: a tool their release reviewed as a write stays
+  a write when the downstream annotates it `readOnlyHint: true`. Before, such a
+  create was served as a read and ran unapproved. Their reads, destructive
+  tools, unlisted tools, and drift counts are unchanged.
+- Contributors: CI runs Chromium only for relevant PR paths and always on `main` and publish, with a versioned browser cache and bounded installation retries; local `check` still runs the full suite (#705).
+- Validate Clerk OAuth audiences on `/mcp` and pool endpoints for both JWT
+  and opaque tokens. Enable Clerk's `aud_claim_enabled` setting and request the
+  endpoint's canonical URL as `resource`. Omitted or empty `allowedOAuthClientIds`
+  requires bound tokens; an explicit list admits unbound tokens from dedicated
+  clients only. Clerk browser session tokens authenticate operator routes only.
+  Rejections log fixed reason codes, and the MCP `401` metadata challenge is
+  unchanged.
+- Reject direct upstream `DynamicWorkerExecutor` construction, including
+  subclasses, before creating runtime resources. The error names the required
+  `/worker` import and configuration migration; custom executors remain
+  supported (#704).
+- Require a non-enumerable, versioned lifecycle brand on executors before
+  creating runtime resources. `/worker` and `/quickjs` carry the brand across
+  package copies and bundles; unbranded executors fail with all migration
+  options. Custom sandboxes opt in with
+  `customExecutor(myExecutor, { lifecycle: "self-managed" })` (#704).
+- Replace the contributor ethos with principles, decision history, and test-backed
+  invariant and MCP coverage records. Evidence comes from passing cases in the
+  full Node run, so fixtures, non-registering calls, and runtime skips cannot
+  certify coverage. Deferred MCP features remain declined for 0.29.0 (#705).
+- Upgrade `@modelcontextprotocol/client` and `@modelcontextprotocol/server` to 2.3.1. The SDK binds stored credentials to their issuing authorization server and propagates token-save failures. Resource transport redirects remain confined to the same origin; credential-bearing OAuth token requests refuse every redirect. Connecta overrides the server SDK's 4 MiB request-body default on both protocol legs, preserving `listen()`'s `maxBodyBytes` and the Workers platform bound. The SDK owns the closed-transport legacy-handshake race, removing connecta's workaround for typescript-sdk#2864. Teardown regressions cover workerd rejection handling.
+- **A 2026-07-28 request must carry `MCP-Protocol-Version`.** The 2026-07-28
+  transport requires the header on every POST and has the server reject a
+  request without it, so an intermediary routing on the header and the server
+  executing the body cannot disagree; server 2.0.0 served such a request
+  anyway. A client breaks here only if it puts the
+  `io.modelcontextprotocol/protocolVersion` claim in the request's `_meta`,
+  sends `Mcp-Method`, and omits `MCP-Protocol-Version` — a hand-rolled modern
+  client, or a proxy that strips the header. It must send the header with the
+  same value as the claim. Defaulting the header for it is not open to
+  connecta: the spec's allowance to assume `2025-03-26` covers only clients
+  older than 2025-06-18, which send no 2026-07-28 claim and are still served
+  on the legacy leg.
+- **A JSON-RPC batch holds at most 100 messages.** The cap is the server
+  SDK's, not the protocol's: batching left the protocol in 2025-06-18, which
+  sets no size for the 2025-03-26 clients that may still send one. Server 2.1.0
+  answers a longer batch `400` with `-32600` and dispatches none of it; the cap
+  is a constant with no option, and connecta keeps it rather than reimplement
+  the SDK's body handling. A client that batches more must split the batch.
+- **Breaking:** `api()`, `remoteMcp()`, every maintained provider, `operatorUi()`,
+  `accessTokens()`, `activityHistory()`, `d1ActivityStore()`, and
+  `sqliteActivityStore()` refuse an unknown
+  option at construction, naming its path — `api("crm").maxResultByte`,
+  `operatorUi().branding.theme.accentColor` — instead of accepting and ignoring
+  it. A discriminated option with a missing or unrecognized discriminant —
+  `remoteMcp()`'s `auth.type`, a provider's `auth.type` or `surface` — throws
+  with the valid values instead of constructing with no authentication.
+  Configuration and factory options are read once, by property descriptor, into
+  the plain copy core resolves: a getter or setter on a configuration object or
+  array refuses to construct and is never run, and no Proxy trap is invoked
+  beyond inspection. An array or class instance where an options object belongs
+  (`remoteMcp([...])`, `callAdmission: []`) throws with its path, and every
+  string map (static `headers`, `authorizationParams`, `tokenRequestHeaders`)
+  must hold string values. An `api()` tool is checked in place and passed
+  through as given, so a class-instance tool keeps its prototype handler and
+  private fields; a tool without a handler function refuses to construct. Pool names and `classification` map keys such as `__proto__` and
+  `constructor` are ordinary entries (#705).
+  
+  Provider definitions declare a closed `options` shape with `optionsOf<T>()`.
+  `defineProvider()` and the remaining providers use one descriptor-validation
+  path and stamp the maintained name onto `describe().source.provider`. The root
+  exports the option-shape combinators and `PROVIDER_COMMON` for provider authors.
+  `remoteMcp()` accepts `classify`; its review is still validated by the shared
+  classification validator and applied only by the registry. Custom connectors
+  remain opaque, preserving `Connector.classification` (#705).
+- Depend on `effect` through `^4.0.0` instead of exactly `4.0.0`, so a
+  deployment that also uses Effect resolves one copy. The root still imports
+  only the stable `effect` module (#705).
+- **Breaking:** Validate `ConnectaConfig` against one schema that also produces its TypeScript
+  type and every default, under one policy: a wrong value refuses to construct,
+  naming its path. `execute.*` limits, `discovery.*`, `calls.maxResultBytes`, and
+  a connector's own `maxResultBytes` used to warn and fall back to a default;
+  they now throw. `connectors`, `auth`, `storage`, `logger`, `publicUrl`,
+  `deploymentInfo`, and `serverInfo` are checked by shape too (`storage` must
+  implement all five `KVStorage` methods, the same refusal #722 added, now
+  reported by the schema);
+  `serverInfo.websiteUrl` and a `remoteMcp()` `url` must be http(s). An explicitly
+  `undefined` optional value counts as omitted at any depth, and a misspelled
+  pool option is reported as `ConnectaConfig.pools.<name>.<key>` with the other
+  unknown options (#705).
+- **Breaking:** Both deployment shapes keep their configuration in `src/connecta.config.ts`
+  and start it from an entry under 30 lines; optional modules are type-checked
+  code switched on by the environment instead of commented blocks. The Node
+  template turns Clerk on with both `CLERK_PUBLISHABLE_KEY` and
+  `CLERK_SECRET_KEY` (one alone refuses to start), the vault with
+  `CONNECTA_CREDENTIAL_KEY`, and activity with `CONNECTA_ACTIVITY=on`, all in its one `CONNECTA_DATABASE` SQLite file;
+  it always serves `cta_` access tokens and depends on `@clerk/backend`. The
+  Worker example's vault follows the `CREDENTIAL_ENCRYPTION_KEY` secret, and
+  activity follows the `CONNECTA_ACTIVITY`
+  var (`"on"`), in `CONNECTA_DB`. Activity in both shapes keeps 90 days
+  (`retentionDays`), pruned on write (#705).
+- Contributors add changelog fragments in `.changes/`; release authors assemble
+  them with a hand-written narrative using `npm run changelog:assemble`.
+  Vitest runs every suite on Node and excludes `*.node.test.ts` from Workers,
+  with each Node-only reason recorded in the file instead of shared suite lists (#705).
+- Convert the eight hosted MCP implementations to reviewed `defineProvider()` presets. Preserve authentication, endpoint choices, tool classifications, schema digests, results, and API defaults. Add usage prerequisites and pool-trust guidance. Hosted factories now reject blank titles and malformed common options at construction. Remove the internal `withVettedCatalog` helper; public `*_VETTED_CATALOG` exports remain deprecated aliases of each provider definition's classification.
+- Contributors get `npm run check:fast`, a partial inner loop that runs the
+  static checks concurrently with Vitest suites related to the branch's changes
+  and the always-on package guards; `npm run check` remains the gate. Pull
+  requests audit dependencies when root or nested npm manifests, lockfiles,
+  shrinkwraps, or configuration change; a nightly workflow and publishing still run `npm audit`. The Chromium
+  install retry waits for a leftover apt process instead of failing on its lock,
+  and repository skills for providers, spec features, releases, and CI triage
+  live in `.claude/skills/` (#705).
+- Give all maintained providers their own folders and generate provider exports, build registrations, package smoke fixtures, conventions, and the README inventory. Preserve provider metadata, guides, registry classifications, public import names, and reviewed bundle caps. Standardize construction errors and report public-contract parser failures per provider, including an explicit manual review record for Breeze.
+- **Breaking:** Make hosted MCP the default for Notion, Vercel and Cloudflare, and remove duplicate named REST operations. `surface: "api"` now selects a documented REST complement. Configure complements under distinct connector ids with their own credentials; hosted OAuth never falls back to an integration token or replays a write. Notion retains every internal-integration capability under explicit `integration_*` names because hosted user OAuth is not equivalent, including headless content writes, full REST pagination and exact JSON blocks. Vercel retains value-safe environment tools and verified deletion/domain gaps; deployment promotion moves to hosted `request_promote`. Cloudflare retains read-only-program reads, byte/header-compatible uploads and legacy Global API Key and R2 jurisdiction mutations; `execute` remains a write. Existing Notion bot workflows must select `surface: "api"` and migrate names to `integration_*`; Cloudflare writes move to hosted `execute` while REST reads can keep their explicit API connector. See `documentation/provider-migration-0.29.md`.
+- **Breaking:** The result stash's byte and entry bounds are booked in one ledger record in
+  storage by compare-and-set, so they bound the deployment rather than each
+  isolate or process. Every chunk expires by its charge's deadline, concurrent
+  stashes retry a lost swap instead of refusing, and a stash write that fails
+  releases its charge once it has deleted what it may have written. `engines.node` is `>=22.13.0`, the first
+  Node 22 with `node:sqlite` unflagged (#705).
+- **Breaking:** Classify tools once per request-scoped catalog entry, with exact deployment overrides ahead of provider review and downstream annotations. Add read-only and trusted pool tiers, defaulting to read-only, and annotate execute_code as a write on trusted endpoints. Remove connector and execute approval exemptions while preserving write budgets and unknown-outcome accounting. Deployments must explicitly enable trusted pools for program writes.
+- **Breaking:** Discovery returns one flat `{ catalogErrors, tools, total, offset, limit, hasMore }` page from both `search_tools` and `connecta.search`, replacing top-level connector groups. Exact tool names and canonical addresses rank before connector identities, then partial matches. Exact connector ID or title queries browse that connector's tools even when individual descriptions mention its identity. Unknown connector scopes and recognized absent services return an explicit endpoint-scoped absence instead of lookalikes. Catalog credential and permission failures appear before tools with recovery instructions and fixed messages derived only from error codes and connector IDs. Program search and describe default to JSON Schema values; compact schemas and TypeScript signatures are labeled `schemaFormat: "text"`.
+- **Breaking:** Make call errors actionable with agent-only schema keys, enum values, bounds, received types, validated examples and known conditional requirements. List only the current endpoint's configured connectors on address failures. Distinguish host authentication (`host_auth_required`), downstream OAuth (`downstream_oauth_required`) and provider permission (`provider_permission_denied`) recovery. A dispatched write timeout returns `write_outcome_unknown`, never invites an automatic retry, and echoes bounded arguments only to its caller.
+  
+  Decide retryability from HTTP status, registered OAuth codes, typed SDK errors and runtime network facts, never prose (#700). Untyped errors whose text mentions timeout, 429, 502, 503, 504, rate limits, temporary failures or cross-request cancellation are now generic non-retryable failures; typed and structured transport failures retain their verdicts. A 400 registration refusal saying "temporarily unavailable" is non-retryable; 429/502/503/504 refusals remain retryable regardless of body or URL wording. An SDK `RequestTimeout` is a timeout regardless of message wording. An OAuth token endpoint HTTP 403 is now `provider_permission_denied`, keeps the stored grant, and does not start consent. Drop downstream `ProtocolError.data` on errors rethrown by connecta. Operator records remain payload-free (INV-6).
+  
+  Preserve complete error envelopes in MCP structured content and agent-readable text in every direct-call result mode. Maintained API providers distinguish permission refusals from invalid credentials, including Workspace delegation and insufficient scopes, with provider-specific recovery guidance.
+- **Breaking:** Complete the JavaScript guest API with `connecta.result(id, options)` and `connecta.skill(name)`, support object-form calls, and remove the `get_result` meta-tool. Guest calls now return `{ data, format: "json" | "text" }`; direct results also declare their format. Every program reports host-call counts, and guest failures use `program_error` with source locations and fixed repair hints. Uncaught host errors retain their type through executor-owned Error identities and host outcome channels. Programs and direct calls share configurable deadlines and report operation, stage, elapsed time, and effective deadline. Unawaited emission delivers MCP media content; emitted text shares the program result cap. All six meta-tools advertise output schemas. The shared discovery and doctor tool-name set excludes `get_result`, retaining negotiated doctor checks. Spec coverage records tool calls with both address headers and output schemas.
+  
+  Result paging binds stashes to the admitted identity, endpoint, origin, connector, and tool, and rechecks current grants, pool membership, and trust before returning data. Legacy unbound stashes are unavailable after upgrade. Truncated direct writes on read-only pools return inline notices and bounded previews without storing results or advertising unavailable paging. Refresh refusals retain write accounting, including uncertain outcomes.
+  
+  Worker guest modules cannot resolve runner modules through dynamic imports or builtin module loaders. A private runner module captures its references before guest module evaluation, and the adapter refuses splices containing more than one expression before loading. Worker typed failure details stay in a per-run host map; the runner retains only random failure IDs by Error identity, and unknown IDs attach no host details. The Worker codec reads only own binary-envelope properties, and completion captures safe array iteration even without a guest prelude. QuickJS checks interrupt and deadline facts before safely describing rejections without guest getters, serialization hooks, or Proxy traps, including interruptions during private diagnostic initialization. Images require a supported MIME type and canonical base64 before collection. Catalog search advertises the shared flat schema; eval programs and graders use typed data and result paging.
+  
+  Worker startup refuses upstream binary codec changes that would bypass own-property checks. Required-field validation messages retain ordinary JavaScript guidance. Bundle baselines record Acorn for the Worker import router and single-expression validation; the parser remains outside the root import graph.
+- Teach the guest global, positional calls, discovery envelopes, JSON and text results, partial failures, and terminal host-call budgets in a shorter usage guide. Route single known reads and writes directly. Check every JavaScript example on QuickJS and Workers, and keep the tool's API notation aligned with the shipped guest declaration.
+- **Breaking:** Use SDK Client.listTools aggregation and a SQL-backed ResponseCacheStore for complete, intake-redacted remote MCP catalogs. Honor bounded downstream ttlMs and public/private scope within host-computed auth partitions; request tokens and personal auth remain private even under public hints. Partition private entries by admitted principal and pool even with shared auth, preserve original fetch age, and refuse invalid header declarations before SDK logging. Replace the registry's memory/stale/persist cache with request-local reads. Remove discovery.persistCatalog and discovery.staleCatalogSeconds; add catalogMinTtlSeconds and catalogMaxTtlSeconds (defaults 0 and 86400). catalogTtlSeconds remains the legacy fallback. Retired registry catalogs are ignored. Transient first-page tool listing failures may use complete SQL-backed facts in the same auth partition for five minutes after expiry. Expiry provenance survives classification; stale fallback and zero-TTL classifications cannot authorize post-entry auth recovery.
+- Default downstream OAuth to per-connector client metadata documents on public HTTPS deployments, retain DCR fallback, support issuer-bound static remote MCP clients, and report the selected registration path. Basecamp no longer requires an external metadata document.
+  
+  Validate callback state and issuer before interpreting authorization errors, then atomically consume the verified consent and discard its PKCE verifier. Error and code callbacks share one claim; Continue starts a new consent after an error.
+  
+  On Disconnect, remove local authorization first and attempt issuer-bound RFC 7009 revocation once when advertised. Failed revocation reports `oauth_revocation_failed` without provider text or credentials.
+  
+  Register raw confidential client IDs and secrets before token and revocation dispatch, including form-encoded Basic credentials, so downstream echoes remain redacted after refresh.
+- Cache downstream protocol verdicts for five minutes within the connector, credential generation, admitted identity and pool. Modern verdicts skip discovery on later requests. Legacy verdicts skip the probe while retaining a fresh initialize handshake. Automatic negotiation retries a probe HTTP 5xx with a fresh legacy transport.
+- **Breaking:** Support Clerk and Cloudflare Access for inbound human authentication, with Access limited to trusted direct Worker context. Machines use stored `cta_` tokens. Remove `/auth/bearer`, `bearerToken`, and request-selected `assertedPrincipal` identities. Install `accessTokens(storage)`, provision a token per machine or human owner, update actor-id grants, rotate clients, and delete old secrets. Access service credentials satisfy the edge only and need a `cta_` token inside connecta. Replace custom auth `final`/`finalRefusals` with synchronous `recognizesCredential`. Select 401 challenges from the provider that actually serves protected-resource metadata, include Clerk scopes, and remove the Clerk authorization-server metadata proxy. See the exact migration steps in `documentation/auth.md`.
+- **Breaking:** **Downstream OAuth state is one grant record per owner and one flow record per
+  consent.** Each OAuth connector's owner has one `oauth:grant` record (epoch,
+  the latest consent's state digest, and one authorization server's client,
+  tokens, and discovery, sealed as one body with the vault), and each consent
+  has an `oauth:flow:<sha256(state)>` record expiring with its link. Every grant
+  write is a compare-and-set against the record it read, and Restart and
+  Disconnect replace the epoch in one, so the epoch namespaces, cleanup lineage
+  (`oauth:generation`, `oauth:cleanup:`, `oauth:cleanup-at:`), grace sweeps, and
+  flow-entry grant retirement are gone. A grant holds one server: saving
+  discovery, a client, or tokens for another replaces it. The refresh
+  coordinator stores an accepted rotation before releasing anyone and hands
+  later readers that result; the 503 "previous credentials commit" answer is
+  gone. The first read of each owner's grant migrates the 0.28 layout once and
+  deletes it: issuer-stamped client, tokens, and discovery carry over (sealed
+  values reopen under their old keys); a disconnected connector stays
+  disconnected; grants from v0.8.1 and earlier and pending consents do not, so
+  reissue pending Connect links after upgrading. Rolling back needs consent
+  again. A programmatic `finishAuth` names its consent by the callback's
+  `state`; one that names no pending consent is refused before anything is sent
+  (#707).
+- **Breaking:** Bind modern MCP client capabilities and identity to request-local meta-tool context; record only allowlisted ASCII client name/version facts in activity, including SQLite and D1 storage. Client names are bounded to 64 characters and versions to 32; invalid values are absent at recording, storage write/read, and operator UI boundaries. Advertise the served extension map and private discovery cache hints, declare direct-call address headers, and make doctor negotiate through the SDK and report its revision using the exported META_TOOL_NAMES set. Connecta-owned 403, pool 404, and deadline 504 refusals now return JSON-RPC error bodies with unknown request IDs omitted. Admission codes change from -31001/-31002 to -33001/-33002; deadline, pool, and access refusal codes are -33003/-33004/-33005.
+- Test operator pages with typed visual fixtures and real-server sign-in, OAuth connect, and credential save/test flows. Generate and compare screenshot baselines on Linux Chromium, with a CI workflow for snapshot updates.
+- Rebuild the operator shell on React, Radix and Tailwind v4 with an Inter token layer, light/dark sidebar, accessible dialogs, tabs, tables and a ⌘K command palette. Serve hashed immutable assets on Node and Workers with same-origin script CSP and generate the asset manifest before build and test. Clerk pages admit its validated loader origin and the exact Cloudflare CAPTCHA host, with Clerk image and worker permissions. Apply common HTML security headers to status and error pages, including browser 404s (#708).
+- Use signed-in Claude Code and Codex CLI logins for agent evals, default to Sonnet 5.5 and GPT-6-Luna, and activate the merged resource-read task.
+  Grade record facts together across prose, lists and tables, reject conflicting record facts, and require structured absent-service answers backed by genuine discovery.
+- Adopt oxfmt for repository formatting. Contributors should run `npm run format` before committing; `format:check` runs in the fast and full CI checks.
+
+### Fixed
+
+- **Breaking:** Sanitize connector failures at shared request boundaries (#695). Transport, parser and unexpected handler failures expose checked failure facts and fixed descriptions instead of downstream-derived causes or nested errors. Agent-facing downstream refusals retain their classification and pass through request credential redaction. Callers that inspected error causes must use typed details instead.
+- **Breaking:** Make logs, status and activity payload-free (INV-6, #695, #716). Failure records contain checked typed facts instead of messages, stacks or raw downstream error text. `ActivityEventInput.errorCode` is a closed union, and call-failure logs replace `message` with those facts. Status text and tool names follow the same disclosure checks. Downstream body reads use UTF-8 byte decoding, and catalog drift timestamps are validated before disclosure.
+- Return fixed OAuth registration and discovery failure descriptions with checked origin, status, error code and step facts (#695). Google delegated-token failures use the same rule. Downstream response text does not enter these diagnostics; classification and retryability remain intact.
+- **The test gate fails for behavior, not for load.** On a busy machine —
+  several `npm run check` runs at once, or a crowded CI runner — suites failed
+  with default workers that passed alone, which teaches a rerun-until-green
+  habit that hides real regressions
+  ([#692](https://github.com/zackbart/connecta/issues/692)). Request
+  lifetimes, probe deadlines, refresh claims, and the QuickJS runtime's own
+  wall deadline are now tested on a fake clock that moves only when a test
+  advances it, each pinned a tick either side of its boundary. A QuickJS pool
+  run that outlives its deadline may end at the child's own report or at the
+  parent's termination after its fixed grace, and pool cases accept either.
+  QuickJS suites not about the guest CPU budget run under a generous one,
+  because QuickJS charges that budget by wall clock and a loaded host billed
+  its own contention to the guest; the heap-cap case allocates a bounded
+  amount, so only an enforced cap fails it, and the event-loop checks derive
+  their bound from the guest budget. Real subprocesses, local workerd I/O,
+  whole-tree walks, and worst-case payload sweeps keep hang guards sized for a
+  loaded host instead of vitest's 5s default. Nothing that ships changes.
+- **Breaking:** Bind downstream OAuth completion to the initiating user for personal and
+  shared connectors. Return connecta `/connect` links to agents and operator
+  actions; keep status reads passive.
+- Drop downstream tools whose names contain C0, DEL, or C1 control characters at fresh and cached catalog intake. Report only the dropped count in connector drift and keep space and non-ASCII names callable with withheld operator records.
+  
+  Reject control characters in configured static tool names at construction, before startup logs, with a path error that omits the tool name.
+- Keep Clerk SDK upstream error text and workerd native body-reader diagnostics out of operator output. Read all Clerk SDK responses as bytes, route SDK diagnostics through checked failure records, and preserve browser handshake and JWT authentication. Verify response-wrapper fidelity on Node and Workers.
+  
+  The bundled gate client has Connecta-owned declarations for user lookup. The optional Clerk peer accepts compatible 3.x releases independently of the generator's exact internal SDK dependency.
+- Record Clerk authentication and admission denials with checked fixed reason codes. Exclude provider user IDs, email addresses, and email domains from denial logs, including email lookup failures. Add denial canaries for Clerk and Cloudflare Access across logs, activity, and status.
+- Make explicit Authorization headers decisive across inbound auth providers and protected routes. Normalize the case-insensitive Bearer scheme with one shared parser, reject malformed and unsupported headers with a 401 challenge, and exclude ambient cookies, Clerk browser handshake credentials, and Access context. Preserve explicit-header 401 challenges on OAuth starts and callbacks. Keep cookie-only human authentication and stored machine-token ownership.
+- Record undeclared, denied, and throwing pool grants with checked fixed reason codes. Keep identity-provider text out of operator logs and status, while preserving typed activity actors. Cover Clerk OAuth and Access UUID/email pool refusals on Node and Workers. Preserve the operator shell sign-in and CSP contracts after rebasing.
+- Keep downstream public catalog hints within host-computed credential and pool partitions. Request tokens and personal auth always use private cache entries, and OAuth credential changes fence cache reuse even within one epoch. Validate remote resource reads against complete, partitioned advertised resources and URI templates before dispatch; refuse unmatched URIs and encoded traversal with a fixed typed failure. Add a completed SDK catalog refresh hook with previous and new digests for drift-event integration.
+- Keep downstream catalog notifications active for the connection after a successful resource read or listing. Give temporary remote connector instances separate cache lifetimes within the same request. Bind SDK cache I/O and cleanup to each serialized listing's cancellation and generation, let later listings publish a fresh redacted catalog after invalidation, and stop cancelled storage waits from blocking the next listing.
+- Preserve Cloudflare R2 bucket storage-class updates through the REST complement with a validated cf-r2-storage-class header, without requiring jurisdiction for ordinary buckets.
+- **One completed OAuth MCP call no longer aborts its siblings.** A shared
+  downstream transport and OAuth provider retained the first call's deadline
+  signal, which ends even on success. Subsequent calls and pending parallel
+  calls could therefore fail with "The operation was aborted" well before
+  their deadlines. The connection now owns that signal; each call keeps its
+  own SDK cancellation. A cancelled handshake waiter leaves other waiters
+  alone, and the last cancelled waiter still abandons the connection and its
+  refresh (#704).
+- Preserve downstream tool definitions in the complete SQL-backed SDK catalog cache. Output-schema validation, `Mcp-Param-*` header mirroring, and refusal of tools requiring task-based execution use those definitions on warm reads as well as after a same-request listing. Registry manifests v2/v3 are retired and refreshed rather than reused (#704).
+- **Tool catalog changes are no longer advertised.** Modern `server/discover`
+  and legacy `initialize` report `tools.listChanged: false`, because a fresh
+  server per request cannot publish those notifications. Modern
+  `subscriptions/listen` requests receive HTTP 404 with JSON-RPC `-32601`
+  (Method not found), without acquiring a request-admission permit or opening
+  an SSE stream. Authentication and SDK protocol/header validation still run.
+  Legacy listens remain unsupported (#704).
+- End `execute_code` at the first host call beyond its budget with one typed
+  `budget_exceeded` error, even when the program catches and ignores failures.
+  The host suspends the refusing bridge call, closes further host access, and
+  releases the sandbox lease. The failure reports payload-free attempted,
+  admitted, succeeded, and failed host-call counts (#704).
+- Require consent again for historical OAuth credentials without consistent issuer stamps. The one-shot legacy migration carries only issuer-bound grants and does not adopt unstamped credentials under newly discovered metadata.
+- Keep each OAuth grant bound to one issuer by construction. Flow entry binds the current epoch; reads, writes and consent completion remain fenced to that epoch, so superseded flows cannot change a newer grant or return its consent URL. On the first grant read, the one-shot layout-2 migration preserves consistently issuer-stamped credentials, rejects unstamped or inconsistent credentials, and discards pending consents.
+- Sanitize OAuth token-endpoint failures before they reach the SDK or its console diagnostics. Failures retain the HTTP status, registered OAuth error code and `Retry-After`, with fixed descriptions instead of downstream response text. Invalid code-exchange responses receive the same treatment, and migrated grants retain their issuer stamps.
+- Retry accepted OAuth refresh rotations through bounded grant-commit attempts without sending another refresh request. Exhausted commits require re-consent; waiter deadlines remain retryable `unavailable` failures. Failed credential writes return fixed text without storage error causes.
+- **A token endpoint cannot stamp its own issuer.** A refresh answer carrying
+  `issuer` had that field kept when connecta persisted a rotation for a
+  cancelled caller with no issuer to stamp. Only the client binds a grant, so
+  the field is dropped, as the SDK drops it.
+- Make the optional-module probe deadline test deterministic by waiting for its timer before advancing fake time and awaiting response settlement at the deadline. Preserve the deadline boundary and verify connector scope cleanup.
+- Provider description stamping preserves connector prototypes and inherited
+  classification. It defines `describe()` in place when possible, keeping class
+  method receivers, and otherwise inherits through a wrapper with only its own
+  `describe()` property. Discovery and calls retain the reviewed classification.
+- Changelog assembly requires committed inputs and prints the git restore command
+  for recovery after a failure or interruption. The suite guard checks Vitest's
+  actual Node and Workers collection, including excluded directories and symlink
+  targets (#705).
+- Fence late downstream catalog publications when the SDK receives tools/list_changed, including first cache refreshes. Stop subsequent cache storage operations after cancellation or scope teardown, preserving complete catalogs and ordinary public/private cache hits.
+- Keep core-protocol JSON-RPC refusals, server discovery, registered meta-tool results, and both MCP transports behind the request-scoped credential-echo redaction boundary. Modern direct-call security tests send the required mirrored address header and keep their credential-echo assertions.
+- Complete dispatched downstream OAuth refreshes after caller cancellation and retain their grant commits through Workers waitUntil. Permanently refuse refresh fingerprints after ambiguous network, response-body, or deadline outcomes so later requests and isolates require re-consent without resending the token.
+- Fence downstream OAuth refresh dispatch with a durable CAS state and a 20-second HTTP deadline. Expired unsent claims can be taken over; ambiguous dispatched tokens require re-consent and are never resent. Waiter timeouts, including blocked storage reads and local joiners, return retryable unavailable while keeping the grant. SQLite and D1 create and check TTLs with database time so isolate clock skew cannot expire a live holder.
+- Block outstanding and ambiguous downstream OAuth refresh fingerprints across Restart and re-consent. A resolved fingerprint can be used once in a later epoch only when the code exchange observed its resolution before completing. Preserve pending holder liveness across resets and CAS-guard every resolution transition.
+- Record downstream OAuth refresh-token fingerprints before dispatch with outstanding, ambiguous, and resolved state across grant epochs. Retry valid rotation commits without another HTTP request and require re-consent after every dispatched failure or exhausted commit. Waiter deadlines remain retryable without permitting token replay within the epoch or while the outcome remains outstanding or ambiguous.
+- Bind downstream OAuth consents to their issuer, client, token endpoint, and discovery; advance the epoch when the issuer changes. Coordinate refresh redemption across isolates with shared CAS leases. Retry layout-2 credential cleanup after interrupted migration or reset, and require callback state for both OAuth adapters.
+- **A downstream OAuth callback can no longer redeem its code after a restart,
+  and a duplicate can no longer destroy the grant another completed.** The
+  exchange claims its consent by compare-and-set after every read it depends
+  on, then re-reads the epoch and sends the code in the reaction to that read:
+  of duplicate callbacks exactly one sends, the rest get the flat 400 for an
+  already-used link, and a restart published before the send fails the callback
+  with nothing sent. A refused code invalidates only the client or tokens the
+  exchange began with, and consumption is recorded on that consent alone, so a
+  delayed duplicate never deletes or invalidates a newer consent Continue
+  published (#697). A forced restart still reuses an issuer-bound registration
+  and recovers from a refused one by registering again (#611).
+- Preserve discrete catalog-change activity after SDK cache refreshes. Compare hash-only baselines per host-computed cache partition, retain request, owner, pool and deferred-write attribution, and disclose private catalog changes only to their admitted owner. Initial, identical, rejected and abandoned catalogs emit no change event.
+- Match advertised resource URI templates with deterministic forward scans. Refuse ambiguous expression boundaries with resource_template_ambiguous and cap each read at 262144 template-plus-URI characters with resource_match_budget_exceeded. Operator diagnostics retain each typed refusal once without URI or template text. Keep scheme and authority literal, reject Unicode controls and format characters at every decoding layer, and allow safe multi-segment reserved and exploded paths.
+- Show empty credential slots as credential_required. Permit Activity reads for authenticated non-interactive principals explicitly granted activityAccess, with connector, tool, personal-owner and pool disclosure checks. Record call-time classification, result byte counts and discrete catalog changes in nullable activity columns, retaining request grouping and legacy rows.
+- Correct agent eval destination aliases and final-answer evidence grading, record runner limitations as typed N/A skips, and support offline regrading with complete saved grading inputs for future trials. Reject contradictory requested record facts and require a structured refusal outcome, and grade simulated URL-auth behavior for both runners. Commit sanitized final live Sonnet 5.5 and GPT-6-Luna baselines with per-task scores, concrete failure triage and the legacy join prompt ambiguity.
+- Mark failed downstream input continuations as not retryable once their single-use nonce is consumed. Read failures without existing recovery prerequisites direct a fresh input round through the original call. Write reconciliation and auth recovery guidance stay unchanged; spent continuations must not be resent. Typed failure codes and first-call retryability are preserved.
+- Classify a reviewed read as a write when its live schema digest changes or cannot be checked (#705). `call_tool` refuses it toward `call_destructive_tool`; `execute_code` refuses it before dispatch in read-only pools, while trusted programs may dispatch it. Legacy discovery filters such as `approval-required` select write classification, not host approval policy. Digests cover the whole schema, and oversized unchecked schemas fail closed. Request-local entries classify intake-redacted facts using the running release's review and deployment overrides. Complete SQL-backed SDK caches retain facts, not classification verdicts; retired registry catalogs are refreshed instead of preserving old read claims.
+- Storage keys and list prefixes reject U+0000 (NUL) with `TypeError` on D1,
+  SQLite, and memory storage before any storage access. Key builders reject
+  unencoded NUL components, and state-file migration validates every key before
+  importing. This prevents Node 22's `node:sqlite` TEXT results from truncating
+  keys at NUL while preserving the existing `connecta_kv` TEXT table (#705).
+- Use plain positional SQL parameters with values bound in statement order on
+  both storage drivers. Node's SQLite driver prepares the shared SQL unchanged,
+  without rewriting quoted text, on every supported Node version (#705).
+
+### Removed
+
+- **Breaking:** Workers KV, `fileStorage` from `@zackbart/connecta/node`, and the Worker
+  example's copied `cloudflare-kv.ts`, `d1-storage.ts`, `d1-activity.ts`, and
+  `d1-activity-row.ts` are removed, as is the Node template's
+  `src/file-activity.ts`. `KVStorage.list` and `KVStorage.compareAndSet` are
+  required, and `createConnecta` refuses storage missing either at construction.
+  Every fallback for stores without compare-and-set is gone: downstream OAuth
+  grant discard, stale-write cleanup, and generation fencing; OAuth handoffs and
+  single-use connect links; and access-token rename and revocation.
+  The Worker example binds one D1 database, `CONNECTA_DB`; the Node template
+  keeps everything, activity included, in `CONNECTA_DATABASE` (default
+  `./.connecta.sqlite`, `/data/connecta.sqlite` in the container), replacing
+  `CONNECTA_STATE_FILE` and `CONNECTA_ACTIVITY_FILE` (#705).
+- **Breaking:** Remove catalog drift counts from `/health`, `connecta doctor`, and activity. Remove the old optional drift-count channel and its event type. Keep discrete catalog-change events in the ordinary activity timeline. Authenticated connector status and the maintainer-run provider check retain drift observations.
+- **Breaking:** Remove built-in artifacts: the `connecta/artifacts` subpath, `artifacts:` config
+  slot and `artifactOrigin`, operator pages and navigation, scheduled refresh,
+  and agent tools and guide. Publishing belongs in dedicated services.
+  
+  Delete the `connecta/artifacts` import and `artifacts:` configuration, plus
+  `artifactOrigin` if set; a configuration that still contains either key fails
+  at construction with a `ConfigError`. Remove `CONNECTA_ARTIFACTS` and refresh timers or cron
+  handlers. Dedicated artifact bindings or storage can optionally be dropped.
+  Existing artifact data is left untouched and ignored; nothing migrates, reads,
+  or deletes it as part of this removal (#709).
+
+### Security
+
+- Bind GitHub repository grants to repository IDs and narrow installation tokens with `repository_ids`. Renames retain their grants; transfers and replacement repositories at reused names cannot inherit cached access. Verify discovery and search repository IDs before returning data.
+- Collect sent credentials across every connector context in one upstream request
+  and redact meta-tool, guest bridge, and serialized MCP outputs at one shared
+  boundary. Redact failed catalog listings before shared refresh publication and
+  keep catalogs and result stashes sanitized before caching.
+- Refuse credential echoes in normalized downstream OAuth metadata and saved authorization URLs, and restrict operator failure origins. Use an eight-character floor for all echo matching and warn once when configured secrets are below it.
+- Resource URI template matches now re-check the final authority, host interpretation, and path. Matching refuses Unicode separators, URI syntax lookalikes, and dot segments while preserving encoded-percent literals, ordinary percent-encoded UTF-8 path segments, and bounded matching.
+- Redact credentials used by a call from agent-facing downstream diagnostics,
+  tool results, and nested errors across all connectors and guest program calls.
+  The per-call secret set stays in memory and covers credential slots, auth
+  headers, bearer tokens, URL encodings, and base64 forms. Register final outgoing
+  requests, including auxiliary OAuth headers and query credentials. Redact mixed
+  JSON escapes and joined text blocks after unwrapping and before paging, emits,
+  or program returns. Cache one matcher per secret set. Match
+  credentials of at least eight characters to avoid corrupting ordinary text with
+  short Basic usernames; Connecta's own messages never quote credential values.
+- Register credentials sent during remote MCP discovery and retries, and redact every catalog metadata string before retaining definitions or caching catalogs. Refuse the complete catalog when redaction would change a tool name, preserving dispatch names and catalog completeness.
+- Refuse redirects for credential-bearing OAuth token requests in remote MCP and static API connectors. A redirected refresh requires re-consent without another send. Keep spent fingerprints across grant epochs. A new consent can use a byte-identical refresh token only after the earlier dispatch resolved and the consent observed that resolution.
+
 ## 0.28.1 — 2026-10-05
 
 This patch adds six maintained connections for church operations and the
