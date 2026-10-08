@@ -205,6 +205,6 @@ describe("cloudflareAccessAuth", () => {
       undefined,
       workerRuntime({ user_uuid: "operator-1" }),
     );
-    expect(await explicit.text()).toContain('const AUTH = {"kind":"clerk"');
+    expect(await explicit.text()).toContain('"auth":{"kind":"clerk"');
   });
 });
