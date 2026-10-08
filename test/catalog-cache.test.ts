@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Server } from "@modelcontextprotocol/server";
-import { catalogClientOptions, attachCatalogCache, catalogIntake, invalidateCatalogCache, type CompletedCatalogRefresh } from "../src/catalog-cache.js";
+import { catalogClientOptions, attachCatalogCache, catalogIntake, invalidateCatalogCache, observeCompletedCatalogRefresh, type CompletedCatalogRefresh } from "../src/catalog-cache.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { MAX_CATALOG_CHUNK_BYTES } from "../src/catalog-limits.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
@@ -74,10 +74,10 @@ async function fixture(options: { ttl?: number; scope?: "public" | "private"; le
   });
   const connector = remoteMcp(id, { url: server.url, versionNegotiation: options.legacy ? "legacy" : "auto", auth: options.operatorShared ? { type: "headers", headers: { Authorization: `Bearer ${TOKEN_A}` } } : { type: "request", token: async ctx => !options.sharedCredential && callerOf(ctx)?.identity.actor.id === "b" ? TOKEN_B : tokenA } });
   const registry = () => new Registry([connector], { storage: store, logger: silentLogger, toolCacheTtlSeconds: options.fallback ?? 300, catalogMinTtlSeconds: options.min ?? 0, catalogMaxTtlSeconds: options.max ?? 86_400 });
-  const read = async (root: Registry, principal = "a", pool = "one", requestScope = {}) => {
+  const read = async (root: Registry, principal = "a", pool = "one", requestScope = {}, baseUrl = BASE) => {
     const view = root.scoped({ connectorIds: [id], principalKey: principal, caller: { identity: { actor: { kind: "human", id: principal, namespace: "test" }, interactive: true }, authenticated: true, pool } });
-    try { return await view.getTools(id, BASE, requestScope); }
-    finally { await connector.closeScope?.(view.contextFor(id, BASE, requestScope)); }
+    try { return await view.getTools(id, baseUrl, requestScope); }
+    finally { await connector.closeScope?.(view.contextFor(id, baseUrl, requestScope)); }
   };
   return { store, id, connector, registry, read, requests, rotate: (token: string) => { tokenA = token; }, listings: () => listings, mode: (value: typeof mode) => { mode = value; } };
 }
@@ -127,7 +127,7 @@ describe("SQL-backed SDK catalog cache", () => {
     const cache = await catalogClientOptions(ctx, id, "oauth-configuration", "same-epoch", undefined, undefined, "private", async () => identity);
     const key = { method: "tools/list", partition: JSON.stringify(["server", cache.cachePartition]) };
     const value = JSON.stringify({ tools: [{ name: "read", inputSchema: { type: "object" } }], ttlMs: 60_000, cacheScope: "private" });
-    await cache.withListing(ctx, () => cache.responseCacheStore!.set(key, { value, expiresAt: Date.now() + 60_000, scope: "private" }));
+    await cache.withListing(ctx, async () => cache.responseCacheStore!.set(key, { value, expiresAt: Date.now() + 60_000, scope: "private" }));
     await cache.withListing(ctx, async () => { expect(await cache.responseCacheStore!.get(key)).toBeDefined(); });
     identity = "credential-digest-b";
     await cache.withListing(ctx, async () => { expect(await cache.responseCacheStore!.get(key)).toBeUndefined(); });
@@ -145,7 +145,10 @@ describe("SQL-backed SDK catalog cache", () => {
       attachCatalogCache(ctx, { storage: store, partition: "principal/pool", defaultTtlMs: 300_000, minTtlMs: 0, maxTtlMs: 86_400_000,
         onCompletedCatalogRefresh: value => { refreshes.push(value); } });
       const cache = await catalogClientOptions(ctx, id, "configuration", "grant");
-      await cache.withListing(ctx, () => cache.completedCatalogRefresh({ tools: [{ name, inputSchema: { type: "object" } }], ttlMs: 0 }));
+      await cache.withListing(ctx, async () => {
+        const digests = await cache.completeCatalogRefresh({ tools: [{ name, inputSchema: { type: "object" } }], ttlMs: 0 });
+        if (digests) await observeCompletedCatalogRefresh(ctx, digests);
+      });
     };
     await refresh("old"); await invalidateCatalogCache(store, id); await refresh("new");
     expect(refreshes).toHaveLength(2);
@@ -396,9 +399,10 @@ describe("SQL-backed SDK catalog cache", () => {
     f.mode("error");
     await expect(f.read(f.registry(), "b", "Q")).rejects.toMatchObject({ code: "provider_permission_denied" });
     await expect(f.read(f.registry(), "a", "Q")).rejects.toMatchObject({ code: "provider_permission_denied" });
-    expect(f.listings()).toBe(3);
+    await expect(f.read(f.registry(), "a", "P", {}, "https://other-connecta.test")).rejects.toMatchObject({ code: "provider_permission_denied" });
+    expect(f.listings()).toBe(4);
     await expect(f.read(f.registry(), "a", "P")).resolves.toMatchObject([{ description: "Private Alice workspace: acquisition-budget-2027" }]);
-    expect(f.listings()).toBe(3);
+    expect(f.listings()).toBe(4);
   });
 
   it("INV-4 INV-5: a rotated request token cannot reuse the same principal's public-hinted catalog", async () => {

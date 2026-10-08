@@ -141,7 +141,14 @@ describe.each(cases)("downstream definitions from $cache via $caller in $view", 
       identity: { connectorAccess: () => allowed },
       pools: { readers: { tools: allowed, grant: () => true } },
     }) : undefined;
-    if (deployment) closers.push(() => deployment.close());
+    if (deployment) {
+      closers.push(() => deployment.close());
+      // Warm the admitted pool's own host partition. A root catalog cannot
+      // seed a different pool, even when the downstream marks it public.
+      const warmed = await mcpRpc(deployment, "tools/call", { name: "search_tools", arguments: { query: "numeric" } }, { query: "/readers", token: "reader" });
+      expect(warmed.status).toBe(200);
+      expect((await readJsonRpc(warmed)).result).not.toMatchObject({ isError: true });
+    }
     const invoke = async (address: string, args: Record<string, unknown>): Promise<ToolResult> => {
       target = { address, args };
       const code = `async () => await connecta.call(${JSON.stringify(address)}, ${JSON.stringify(args)})`;
@@ -262,7 +269,7 @@ describe.each([
     expect(required(tools[1]).icons).toEqual([]);
     expect(numeric.icons[0]?.src.length).toBeGreaterThan(iconBytes);
 
-    const roots = (await storage.list("response-cache:v1:down:")).filter(key => !key.includes(":chunk:") && !key.endsWith(":generation"));
+    const roots = (await storage.list("response-cache:v1:down:")).filter(key => !key.includes(":chunk:") && !key.endsWith(":generation") && !key.includes(":refresh-digest:"));
     expect(roots).toHaveLength(1);
     const root = required(roots[0]);
     const manifest = JSON.parse((await storage.get(root))!) as { revision: string; chunkCount: number };

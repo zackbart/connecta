@@ -412,8 +412,18 @@ implements `readResource`. The routing URI is exactly
 UTF-8 bytes. The downstream URI must have a scheme and no control characters.
 Encode it once, including any path, query and fragment. Bare URLs, malformed
 encoding, routing userinfo, ports and extra routing query or fragment fields
-fail with `invalid_args`. Connecta passes the decoded URI as an opaque MCP
-`resources/read` argument to the configured endpoint. It never fetches that
+fail with `invalid_args`. Remote MCP connectors first load the complete,
+paginated resources and URI-template inventories through the same host-auth
+partitioned catalog cache. The decoded URI must exactly match an advertised
+resource or match an advertised URI template. An unmatched URI fails with a
+fixed `not_found` message before any downstream read. Template matching keeps
+the scheme and authority fixed and supports bounded RFC 6570 scalar and list
+expansions, including prefix modifiers. Variables cannot supply slashes,
+backslashes, dot traversal, a scheme change, query delimiters or control
+characters, including through repeated percent encoding. Ambiguous adjacent
+expressions, mixed exploded composites and path-list explosions fail closed.
+Connecta passes an admitted decoded URI as an opaque MCP `resources/read`
+argument to the configured endpoint. It never fetches that
 URI or creates a connector from it.
 
 Resources are protocol reads in both `read-only` and `trusted` pools. A read
@@ -436,8 +446,8 @@ resource miss is `not_found`; a mid-call input request is
 contract, including credential recovery. Values and failures cross the same
 credential redaction boundary as `call`. Diagnostics use the fixed operation
 name `read`; resource URIs and bodies enter no activity or diagnostic record.
-This function provides no resource listing, templates, subscriptions or upward
-proxy. Native upward skill resources are separate
+This function exposes no resource listing, template discovery, subscriptions
+or upward proxy to programs. Native upward skill resources are separate
 [Phase 3](https://github.com/zackbart/connecta/issues/707) work.
 
 ### connecta.emit

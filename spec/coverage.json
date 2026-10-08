@@ -357,7 +357,7 @@
       "id": "resources",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/resources",
-      "notes": "Programs read downstream resources with connector-qualified connecta.read URIs, whole-connector grants, request-scoped auth, admission, deadlines and credential redaction. Resource listing, templates, subscriptions and native upward skill resources remain unimplemented; no general upward resource proxy is claimed.",
+      "notes": "Programs read downstream resources with connector-qualified connecta.read URIs, whole-connector grants, request-scoped auth, admission, deadlines and credential redaction. Remote reads require exact advertised resources or bounded, traversal-safe RFC 6570 template matches from complete paginated, host-auth-partitioned inventories. Program-facing listing/template discovery, subscriptions and native upward skill resources remain unimplemented; no general upward resource proxy is claimed.",
       "issue": "https://github.com/zackbart/connecta/issues/707",
       "tests": [
         {
@@ -367,6 +367,10 @@
         {
           "file": "test/resource-read.test.ts",
           "title": "INV-3, INV-4: hidden connectors and exact-tool grants cannot grant resource reads"
+        },
+        {
+          "file": "test/resource-read.test.ts",
+          "title": "INV-3 INV-4 INV-8: reads exact resources and templates from the complete paginated inventory"
         }
       ]
     },
@@ -498,7 +502,7 @@
       "id": "caching",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching",
-      "notes": "Private upward tools/list and server/discover hints and SQL-backed SDK tools/list ResponseCacheStore honor downstream ttlMs/cacheScope, bounded legacy TTL, intake redaction, and principal/pool separation. Connection-owned notifications fence late listings even after a successful operation ends. Each serialized SDK listing pins its own generation and cancellation through cache cleanup; cancelled storage waits cannot starve the next listing or start later I/O. Resource caching remains planned.",
+      "notes": "Private upward tools/list and server/discover hints and SQL-backed SDK tool/resource/template listing ResponseCacheStore honor bounded downstream TTL and intake redaction. Host auth mode constrains sharing; public hints never remove private credential, principal, pool or endpoint partitions. OAuth credential changes fence reuse within one epoch. Connection-owned notifications fence late listings, and serialized listings preserve cancellation through cleanup. Resource read payloads are never cached. Completed wire tool refreshes expose previous/new digest observations for the planned Phase 4 drift-event integration.",
       "tests": [
         {
           "file": "test/server.test.ts",
@@ -519,6 +523,10 @@
         {
           "file": "test/catalog-cache.test.ts",
           "title": "INV-7 INV-8: an ended listing stops publication and cleanup without starving a live concurrent listing"
+        },
+        {
+          "file": "test/catalog-cache.test.ts",
+          "title": "INV-4 INV-5: public hints cannot share Alice's private workspace with Bob or another pool"
         }
       ],
       "issue": "https://github.com/zackbart/connecta/issues/707"

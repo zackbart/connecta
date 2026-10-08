@@ -439,6 +439,7 @@ export type FailureEvent =
   | "catalog read failed"
   | "catalog persistence failed"
   | "catalog invalidation failed"
+  | "catalog refresh observation failed"
   | "catalog refresh failed; serving stale catalog"
   | "deferred catalog refresh failed"
   | "deferred catalog refresh could not attach to the runtime"

@@ -212,7 +212,7 @@ function retainingDecorator(): { decorate: Decorator; claimAllRead: () => void }
 }
 
 async function persistedTools(storage: KVStorage): Promise<ToolDef[]> {
-  const roots = (await storage.list("response-cache:v1:things:")).filter(key => !key.includes(":chunk:") && !key.endsWith(":generation"));
+  const roots = (await storage.list("response-cache:v1:things:")).filter(key => !key.includes(":chunk:") && !key.endsWith(":generation") && !key.includes(":refresh-digest:"));
   expect(roots).toHaveLength(1);
   const root = roots[0]!;
   const manifest = JSON.parse((await storage.get(root))!) as { revision: string; chunkCount: number };

@@ -139,6 +139,7 @@ describe("public package boundary", () => {
     // option-shapes.ts holds the closed option shapes those factories and the
     // providers walk for unknown keys; it builds nothing.
     // negotiation-cache.ts stores redacted protocol verdicts, without a client.
+    // resource-uri.ts matches advertised templates without fetching any URI.
     expect(readdirSync(join(ROOT, "src", "connectors")).sort()).toEqual([
       "api-connector.ts",
       "api.ts",
@@ -146,6 +147,7 @@ describe("public package boundary", () => {
       "negotiation-cache.ts",
       "option-shapes.ts",
       "remote-mcp.ts",
+      "resource-uri.ts",
     ]);
   });
 

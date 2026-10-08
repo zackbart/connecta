@@ -1,7 +1,7 @@
 // Inverse RFC 6570 expansion for advertised resource templates. Captures stay
 // inside the template's URI structure, including under reserved expansion.
 const atom = "(?:[A-Za-z0-9_.~!$'()*+@-]|%[0-9A-Fa-f]{2})";
-const variable = "(?:[A-Za-z0-9_]|%[0-9A-Fa-f]{2})(?:[A-Za-z0-9_.]|%[0-9A-Fa-f]{2})*";
+const variable = "(?:[A-Za-z0-9_]|%[0-9A-Fa-f]{2})+(?:\\.(?:[A-Za-z0-9_]|%[0-9A-Fa-f]{2})+)*";
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 interface Capture { name: string; separator?: string | undefined; prefix?: number | undefined }
@@ -93,13 +93,15 @@ export function resourceUriMatchesTemplate(uri: string, template: string): boole
 }
 
 function safeValue(raw: string, prefix?: number): string | undefined {
-  let value = raw;
+  let expanded: string;
+  try { expanded = decodeURIComponent(raw); } catch { return undefined; }
+  let value = expanded;
   // Reject encoded and multiply-encoded traversal, separators and URI syntax.
   // Residual encoding after the bound is refused rather than guessed at.
   for (let depth = 0; depth < 8; depth++) {
     if (/[\\/:?#&;=]/.test(value) || value === "." || value.includes("..") ||
         Array.from(value).some(character => { const code = character.charCodeAt(0); return code < 32 || (code >= 127 && code <= 159); })) return undefined;
-    if (!value.includes("%")) return prefix === undefined || Array.from(value).length <= prefix ? value : undefined;
+    if (!value.includes("%")) return prefix === undefined || Array.from(expanded).length <= prefix ? expanded : undefined;
     try { value = decodeURIComponent(value); } catch { return undefined; }
   }
   return undefined;

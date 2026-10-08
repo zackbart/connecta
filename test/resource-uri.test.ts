@@ -44,6 +44,7 @@ it.each([
   ["docs://manual/{page}", "docs://manual/%0aprivate"],
   ["docs://manual/{page}", "docs://manual/%ZZ"],
   ["docs://manual/{bad:0}", "docs://manual/a"],
+  ["docs://manual/{bad..name}", "docs://manual/a"],
   ["docs://manual/{page", "docs://manual/a"],
   ["docs://manual/{a}{b}", "docs://manual/ab"],
 ])("INV-3 INV-4: refuses unsafe or malformed expansion %s as %s", (template, uri) => {

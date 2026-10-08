@@ -44,7 +44,7 @@ import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
 import { byteReadResponse } from "../byte-read-response.js";
 import { redactCatalog, redactSentSecrets, sentSecretsFor, shortSecretWarning, trackCredentialReads, type SentSecrets } from "../sent-secrets.js";
 import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "../catalog-limits.js";
-import { catalogClientOptions, catalogItems, type CatalogMethod, type CatalogResult, closeCatalogCacheScope, observeCatalogChange, observeCatalogFetch } from "../catalog-cache.js";
+import { catalogClientOptions, catalogItems, observeCompletedCatalogRefresh, type CatalogMethod, type CatalogResult, closeCatalogCacheScope, observeCatalogChange, observeCatalogFetch } from "../catalog-cache.js";
 import { reviewedClassification } from "../catalog-drift.js";
 import { connectorScopeCleanupClaimed } from "../connector-scope.js";
 import {
@@ -1573,7 +1573,13 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     client.listTools = (params, options) => cache.withListing(listingContext(options), async () => {
       const before = toolPages;
       const result = await listTools(params, options);
-      if (toolPages !== before && params?.cursor === undefined) await cache.completedCatalogRefresh(result);
+      if (toolPages !== before && params?.cursor === undefined) {
+        const refresh = await cache.completeCatalogRefresh(result);
+        if (refresh) {
+          try { await observeCompletedCatalogRefresh(cache.currentContext(), refresh); }
+          catch (error) { logFailure(cache.currentContext().logger, "catalog refresh observation failed", failureRecord({ connector: id }, error)); }
+        }
+      }
       return result;
     });
     const listResources = client.listResources.bind(client);
@@ -2035,7 +2041,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           provider ? async () => digestOf(JSON.stringify(await provider.tokens())) : undefined));
         if (!owned()) return yield* Effect.fail(scopeEndedError());
         const makeClient = () => {
-          const { intake: _intake, completedCatalogRefresh: _refresh, withListing: _listing, currentContext: _context, ...clientOptions } = cacheOptions;
+          const { intake: _intake, completeCatalogRefresh: _refresh, withListing: _listing, currentContext: _context, ...clientOptions } = cacheOptions;
           const client = new Client(
             { name: "connecta", version: CONNECTA_VERSION },
             {

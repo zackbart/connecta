@@ -192,7 +192,7 @@ or hands out, and a change usually belongs in exactly one of them:
 | Module | Owns |
 | --- | --- |
 | `src/registry.ts` | The connector set, identity-scoped views, personal storage partitions, address resolution, request-local complete-catalog reads, connector health, per-connector call limiters, and drift. Construction-time refusals live here. |
-| `src/catalog-cache.ts` | SQL-backed SDK tools/list response cache, intake redaction, TTL bounds, principal/pool partitions, and invalidation generations. |
+| `src/catalog-cache.ts` | SQL-backed SDK tools/resource/template listing cache, intake redaction, TTL bounds, host auth partitions, invalidation generations, and completed-refresh observations. |
 | `src/catalog-service.ts` | Request-local listing, search, and describe. Caches catalogs inside one request and fans discovery probes out under deadlines. |
 | `src/invocation.ts` | One tool call: argument validation, call admission, one-attempt timeout, provider retry hints, result unwrapping, size capping, and the activity record. |
 | `src/catalog.ts` | Ranking, description summarizing, and the compact and TypeScript schema renderers discovery shows. |
@@ -355,14 +355,21 @@ the file (INV-6).
 Remote MCP catalogs use the SDK `ResponseCacheStore` over this same SQL KV.
 The `response-cache:v1:` family binds connector id, a hash of its configured
 endpoint/auth/protocol settings and TTL policy, an invalidation generation,
-and a hash of the SDK cache partition. Later pages can only narrow the
-aggregate TTL and public scope grant. Private partitions include the admitted
-principal, subject, identity, pool, downstream credential digest, and OAuth
-epoch; `authScope: "shared"` does not collapse them. Public entries omit the
-principal partition only when the downstream explicitly declares `public`.
+and a hash of the listing method and host-computed auth partition. Later pages
+can only narrow the aggregate TTL and sharing within that partition. Request
+tokens and personal OAuth or credential auth always use private entries,
+including when the downstream declares `public`. Private partitions bind the
+admitted principal, subject, identity, pool, endpoint, credential digest, and
+OAuth epoch. Operator-shared credentials and unauthenticated connectors may
+share public-hinted listings across principals within the same admitted pool
+and endpoint. Private hints retain principal isolation even with shared auth.
+The adapter refuses the SDK's empty shared slot for private auth modes. OAuth
+listings resolve the current credential digest even within one epoch; a
+credential change during a walk prevents publication under the old digest.
 Each remote connector instance owns its request's cache lifetime separately,
 so closing a temporary client does not end another instance with the same id.
-Only complete, intake-redacted tools/list successes are stored. SDK default
+Only complete, intake-redacted tools/list, resources/list and
+resources/templates/list successes are stored. Resource payloads are not cached. SDK default
 in-memory caching is replaced, so raw catalogs never enter it.
 
 `discovery.catalogTtlSeconds` (300 by default) is the fallback for legacy
@@ -383,7 +390,7 @@ again. Remote clients pin that generation before listing, including SDK cache
 refreshes. Each new listing pins the current generation, so a live client can
 publish a new catalog after invalidation without letting an older listing
 adopt its generation. A public transport observer starts a generation rotation
-before the SDK processes `notifications/tools/list_changed`; its lifetime is
+before the SDK processes tool or resource list-changed notifications; its lifetime is
 the connection's, including after a successful resource read or listing ends.
 Opposite-scope cleanup only deletes its entry. SDK listings serialize per client
 because the cache store has no per-call options. Their operation binding lasts
@@ -394,6 +401,17 @@ I/O when an already-dispatched storage operation settles. Teardown waits a
 bounded time for generation rotations already started. Catalog age remains the
 original fetch age across process restarts and cache hits.
 `test/catalog-cache.test.ts` runs against real SQLite and D1.
+
+`observeCompletedCatalogRefresh` in `src/catalog-cache.ts` is the single hook
+for the planned Phase 4 drift-event integration. The SDK tools/list wrapper
+calls it once after a complete wire refresh, including zero-TTL results. Cache
+hits and failed or fenced walks do not call it. Its record contains connector
+id, the previous digest when known, and the new digest. A hash-only baseline
+uses the same auth/config partition, survives catalog expiry and invalidation,
+and expires after 48 hours. An initial or expired baseline has no previous
+digest. `attachCatalogCache` accepts an internal `onCompletedCatalogRefresh`
+callback; no activity event or public configuration option is added here.
+
 
 Result paging stores each oversized result for 15 minutes, chunked so a page
 reads only what it covers. Its bounds (`results.maxStashBytes`,

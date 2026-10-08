@@ -152,6 +152,7 @@ interface CacheOperation {
   ctx: ConnectorContext;
   generation: Listing["generation"];
   credentialIdentity?: string | undefined;
+  listing?: Listing | undefined;
   stopped: () => boolean;
   io: <T>(read: () => Promise<T>) => Promise<T>;
 }
@@ -168,12 +169,12 @@ export async function catalogClientOptions(
   resolveCredentialIdentity?: () => Promise<string>,
 ): Promise<Pick<ClientOptions, "responseCacheStore" | "cachePartition" | "defaultCacheTtlMs"> & {
   intake: (ctx: ConnectorContext, method: CatalogMethod, result: CatalogResult) => CatalogResult & { ttlMs: number; cacheScope: "public" | "private" };
-  completedCatalogRefresh: (result: ListToolsResult) => Promise<void>;
+  completeCatalogRefresh: (result: ListToolsResult) => Promise<CompletedCatalogRefresh | undefined>;
   withListing: <T>(ctx: ConnectorContext, read: () => Promise<T>) => Promise<T>;
   currentContext: () => ConnectorContext;
 }> {
   const policy = settings.get(ctx);
-  const partition = JSON.stringify([policy?.partition ?? JSON.stringify([ctx.baseUrl, ctx.publicUrl, callerOf(ctx)]), authPartition]);
+  const partition = JSON.stringify([policy?.partition ?? JSON.stringify(callerOf(ctx) ?? null), ctx.baseUrl, ctx.publicUrl, authPartition]);
   const sharedPartition = JSON.stringify(["host-shared", policy?.sharedPartition ?? JSON.stringify([ctx.baseUrl, ctx.publicUrl, callerOf(ctx)?.pool]), authPartition]);
   const storage = policy?.storage ?? ctx.storage;
   const configHash = (await fingerprintSerializedCatalog(JSON.stringify([config, policy?.defaultTtlMs ?? 300_000, policy?.minTtlMs ?? 0, policy?.maxTtlMs ?? MAX_CACHE_TTL_MS]))).fingerprint;
@@ -191,6 +192,7 @@ export async function catalogClientOptions(
       ctx: listing?.ctx ?? ctx,
       generation: listing?.generation ?? { ...connectionGeneration },
       credentialIdentity: listing?.credentialIdentity,
+      listing,
       stopped: () => unavailable || ended(),
       io: read => new Promise((resolve, reject) => {
         const cleanup = () => { for (const signal of signals) signal.removeEventListener("abort", abort); };
@@ -262,14 +264,16 @@ export async function catalogClientOptions(
     return { ...clean, ttlMs: catalogTtlMs(ctx, body.ttlMs), cacheScope: body.cacheScope === "public" ? "public" as const : "private" as const };
   };
   let lastCompletedDigest: string | undefined;
-  const completedCatalogRefresh = async (result: ListToolsResult) => {
+  const completeCatalogRefresh = async (result: ListToolsResult) => {
     const listing = active;
     const operation = capture();
     const { stopped, io } = operation;
-    if (!listing || stopped()) return;
+    if (!listing) return;
+    const live = () => !scope.closed && !listing.ended && !connectionSignal?.aborted && !listing.ctx.signal?.aborted;
+    if (!live()) return;
     const clean = intake(listing.ctx, "tools/list", result);
     const digest = (await fingerprintSerializedCatalog(JSON.stringify(clean))).fingerprint;
-    if (stopped()) return;
+    if (!live()) return;
     let previousDigest = listing.previousDigest ?? lastCompletedDigest;
     try {
       // A digest baseline survives cache expiry and invalidation, while keeping
@@ -278,7 +282,7 @@ export async function catalogClientOptions(
         clean.cacheScope === "public" ? sharedPartition : partition, operation.credentialIdentity ?? null,
       ]))).fingerprint;
       const key = responseCacheKeys.refreshDigest(connectorId, configHash, partitionDigest);
-      for (let attempt = 0; attempt < 16; attempt++) {
+      for (let attempt = 0; !unavailable && attempt < 16; attempt++) {
         if (stopped() || !await namespace(operation) || stopped()) return;
         const previous = await io(() => storage.get(key));
         if (stopped()) return;
@@ -287,12 +291,12 @@ export async function catalogClientOptions(
         if (attempt === 15) throw new Error("Catalog refresh digest is busy.");
       }
     } catch (error) {
-      if (stopped()) return;
+      if (!live()) return;
       logFailure(listing.ctx.logger, "catalog refresh observation failed", failureRecord({ connector: connectorId }, error));
     }
-    if (stopped()) return;
+    if (!live()) return;
     lastCompletedDigest = digest;
-    await observeCompletedCatalogRefresh(listing.ctx, { connectorId, ...(previousDigest ? { previousDigest } : {}), digest });
+    return { connectorId, ...(previousDigest ? { previousDigest } : {}), digest };
   };
   const store: ResponseCacheStore = {
     async get(key) {
@@ -301,7 +305,7 @@ export async function catalogClientOptions(
       const root = await address(key, operation);
       if (!root || stopped()) return undefined;
       const m = manifest(await io(() => storage.get(root)));
-      if (key.method === "tools/list" && active && m) active.previousDigest ??= m.fingerprint;
+      if (!stopped() && key.method === "tools/list" && operation.listing && m) operation.listing.previousDigest ??= m.fingerprint;
       if (stopped() || !m || m.expiresAt <= Date.now()) return undefined;
       const chunks: string[] = [];
       for (let i = 0; i < m.chunkCount; i++) {
@@ -337,7 +341,7 @@ export async function catalogClientOptions(
       // the request path, where a secret-bearing name refuses the entire list.
       const value = JSON.stringify(intake(ctx, method, result));
       const fingerprint = await fingerprintSerializedCatalog(value);
-      if (method === "tools/list" && active) active.previousDigest ??= manifest(await io(() => storage.get(root)))?.fingerprint;
+      if (method === "tools/list" && operation.listing) operation.listing.previousDigest ??= manifest(await io(() => storage.get(root)))?.fingerprint;
       const expiresAt = Math.min(entry.expiresAt ?? Date.now(), (catalogFetchedAt(ctx) ?? Date.now()) + catalogTtlMs(ctx, result.ttlMs));
       if (stopped() || expiresAt <= Date.now() || !await namespace(operation) || stopped()) return 0;
       const revision = crypto.randomUUID();
@@ -421,7 +425,7 @@ export async function catalogClientOptions(
     tail = pending.then(() => {}, () => {});
     return pending;
   };
-  return { intake, completedCatalogRefresh, responseCacheStore: store, cachePartition: partition, defaultCacheTtlMs: policy?.defaultTtlMs ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds * 1000, withListing, currentContext: () => active?.ctx ?? ctx };
+  return { intake, completeCatalogRefresh, responseCacheStore: store, cachePartition: partition, defaultCacheTtlMs: policy?.defaultTtlMs ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds * 1000, withListing, currentContext: () => active?.ctx ?? ctx };
 }
 
 function isCatalogMethod(method: string): method is CatalogMethod {
