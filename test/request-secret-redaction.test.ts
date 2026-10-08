@@ -253,6 +253,7 @@ it("INV-5: every meta-tool output and guest bridge entry uses the request bounda
     tools: [{ name: "read", description: `Read ${TOKEN}`, annotations: { readOnlyHint: true }, handler: async () => ({ echo: TOKEN }) }],
   });
   connector.usageGuide = `Guide ${TOKEN}`;
+  connector.readResource = async uri => ({ contents: [{ uri, text: TOKEN }] });
   connector.startAuth = async () => ({ state: "auth_required" });
   const registry = makeRegistry([connector]);
   const requestScope = {};
@@ -280,6 +281,7 @@ it("INV-5: every meta-tool output and guest bridge entry uses the request bounda
     call: () => bridge.call!("contract.read", {}),
     result: () => bridge.result!(TOKEN),
     skill: () => bridge.skill!("connector:contract"),
+    read: () => bridge.read!("resource://contract/" + encodeURIComponent("docs://manual")),
     search: () => bridge.search!({ connector: "contract", fullDescriptions: true }),
     describe: () => bridge.describe!({ address: "contract.read", fullDescriptions: true }),
     emit: () => bridge.emit!({ type: TOKEN }),

@@ -124,7 +124,7 @@ export interface ConnectorRollingWindowBudget {
  * pretending multi-rule admission is already atomic.
  */
 export interface ConnectorCallAdmissionRule {
-  /** Maximum simultaneous Connector.callTool attempts in one partition. */
+  /** Maximum simultaneous tool calls and resource reads in one partition. */
   maxConcurrency?: number;
   /** Callers allowed to wait behind the concurrency bound. Default 32. */
   maxQueueSize?: number;
@@ -375,7 +375,7 @@ export interface Connector {
    */
   maxResultBytes?: number;
   /**
-   * Optional per-runtime admission policy for downstream tool calls. It covers
+   * Optional per-runtime admission policy for downstream tool calls and resource reads. It covers
    * call_tool, call_destructive_tool, and every execute_code host call, but
    * not catalog/status/auth operations.
    */
@@ -459,6 +459,13 @@ export interface Connector {
     /** A fresh deep copy of the catalog definition for this dispatch. */
     options?: { definition?: ToolDef },
   ): Promise<unknown>;
+  /**
+   * Optional read-only downstream resource operation. The URI is an opaque
+   * argument to this configured connector, never a destination to fetch.
+   * Return the MCP-shaped `{ contents }` result. Programs require a grant to
+   * the whole connector; an exact-tool grant does not authorize resources.
+   */
+  readResource?(uri: string, ctx: ConnectorContext): Promise<unknown>;
   /**
    * Optional best-effort teardown for resources retained under
    * `ctx.requestScope`. The core calls this at most once when a probe or

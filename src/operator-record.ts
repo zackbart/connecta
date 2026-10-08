@@ -62,6 +62,7 @@ type FailureStep =
   | "MCP handshake"
   | "tools/list"
   | "tools/call"
+  | "resources/read"
   | "OAuth discovery"
   | "OAuth client registration"
   | "OAuth token request"
@@ -69,7 +70,7 @@ type FailureStep =
   | "handler";
 
 const STEPS: ReadonlySet<string> = new Set<FailureStep>([
-  "MCP handshake", "tools/list", "tools/call", "OAuth discovery",
+  "MCP handshake", "tools/list", "tools/call", "resources/read", "OAuth discovery",
   "OAuth client registration", "OAuth token request", "OAuth flow", "handler",
 ]);
 

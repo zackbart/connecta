@@ -373,6 +373,8 @@ export interface RegistryView {
   readonly maxResultBytes: number;
   listConnectors(): Connector[];
   getConnector(id: string): Connector | undefined;
+  /** Only whole-connector grants authorize resource reads. */
+  getResourceConnector(id: string): Connector | undefined;
   resolveAddress(
     address: string,
   ): { connector: Connector; toolName: string } | null;
@@ -888,6 +890,10 @@ export class Registry implements RegistryView {
 
   getConnector(id: string): Connector | undefined {
     return this.connectors.get(id);
+  }
+
+  getResourceConnector(id: string): Connector | undefined {
+    return this.getConnector(id);
   }
 
   contextFor(
@@ -2256,6 +2262,11 @@ class ScopedRegistryView implements RegistryView {
 
   getConnector(id: string): Connector | undefined {
     return this.registryFor(id)?.getConnector(id);
+  }
+
+  getResourceConnector(id: string): Connector | undefined {
+    if (this.scope.toolAccess?.has(id) || this.scope.guardedToolAccess?.has(id)) return undefined;
+    return this.getConnector(id);
   }
 
   resolveAddress(

@@ -449,6 +449,11 @@ function contractConnectors(state: ContractState): Connector[] {
     kind: "api",
     description: "Reader",
     usageGuide: "# Reader usage\n\nRead one value at a time.",
+    async readResource(uri) {
+      count("reader.resources/read");
+      if (uri === "docs://missing") throw new ConnectorCallError("not_found", "Resource missing.");
+      return { contents: [{ uri, text: "manual" }] };
+    },
     async listTools() {
       return [
         readOnly("text"),
@@ -1340,6 +1345,39 @@ return fs;
       expect(required(follow).value.error).toMatchObject({ code: "unknown_address" });
     },
   })),
+  {
+    clauses: "S10, INV-3, INV-4",
+    name: "reads connector-qualified resources and catches typed failures",
+    code: `async () => {
+      const page = await connecta.read("resource://reader/" + encodeURIComponent("docs://manual/start"));
+      const failures = [];
+      for (const uri of ["resource://reader/" + encodeURIComponent("docs://missing"), "resource://absent/" + encodeURIComponent("docs://manual/start"), "https://arbitrary.example/read"]) {
+        try { await connecta.read(uri); }
+        catch (error) { failures.push({ code: error.code, retryable: error.retryable, detailCode: error.details.code }); }
+      }
+      return { page, failures };
+    }`,
+    check(outcome, state) {
+      expect(record(outcome)).toEqual({
+        page: { contents: [{ uri: "docs://manual/start", text: "manual" }] },
+        failures: [
+          { code: "not_found", retryable: false, detailCode: "not_found" },
+          { code: "unknown_address", retryable: false, detailCode: "unknown_address" },
+          { code: "invalid_args", retryable: false, detailCode: "invalid_args" },
+        ],
+      });
+      expect(state.calls["reader.resources/read"]).toBe(2);
+    },
+  },
+  {
+    clauses: "S10, E1",
+    name: "uncaught resource failures retain their type",
+    code: `async () => await connecta.read("resource://reader/" + encodeURIComponent("docs://missing"))`,
+    check(outcome) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.value).toMatchObject({ error: { code: "not_found", retryable: false } });
+    },
+  },
   {
     clauses: "P1",
     name: "TypeScript syntax is not JavaScript and does not run",

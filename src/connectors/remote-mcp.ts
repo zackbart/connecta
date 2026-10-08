@@ -1317,7 +1317,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const atMcpBoundary = (
     ctx: ConnectorContext,
     err: unknown,
-    step: "MCP handshake" | "tools/list" | "tools/call",
+    step: "MCP handshake" | "tools/list" | "tools/call" | "resources/read",
     transport: Transport | undefined,
     signals: readonly (AbortSignal | undefined)[],
   ): unknown => {
@@ -2435,6 +2435,32 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }
     },
 
+    async readResource(uri, ctx) {
+      const state = stateFor(ctx);
+      const client = await ensureConnected(ctx, state);
+      try {
+        const result = await client.readResource({ uri }, {
+          ...requestOptions(ctx), cacheMode: "bypass", allowInputRequired: true,
+        }).catch((err: unknown) => {
+          if (err instanceof ResourceNotFoundError) {
+            throw new ConnectorCallError("not_found", "The downstream resource does not exist.");
+          }
+          throw atMcpBoundary(ctx, err, "resources/read", client.transport, [ctx.signal]);
+        });
+        if (isInputRequiredResult(result)) {
+          throw new ConnectorCallError("input_required_unsupported", "Resource reads inside programs cannot request mid-call input.");
+        }
+        return result;
+      } catch (err) {
+        if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
+        if (requiresAuthorization(err)) {
+          if (state.client === client) state.authRequired = true;
+          if (err instanceof UnauthorizedError) throw carryFailureFacts(err, authRequiredError());
+        }
+        throw downstreamCallError(err, undefined, undefined, undefined, sentSecretsFor(ctx));
+      }
+    },
+
     async closeScope(ctx) {
       // A scope closed before its first use gets an entry too, closed at once,
       // so it cannot spring into existence later.
@@ -2617,6 +2643,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     withActiveSecrets(ctx, () => callTool(name, args, ctx, options));
   const listTools = connector.listTools;
   connector.listTools = (ctx) => withActiveSecrets(ctx, () => listTools(ctx));
+  const readResource = connector.readResource!;
+  connector.readResource = (uri, ctx) => withActiveSecrets(ctx, () => readResource(uri, ctx));
 
   if (isOauth && !staticClient && clientMetadataUrl === undefined) declareSelfHostedClient(connector, oauthScope);
   if (isOauth) {
@@ -2631,6 +2659,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     const retain = retainingOAuthPartition;
     connector.listTools = retain(connector.listTools, 0);
     connector.callTool = retain(connector.callTool, 2);
+    connector.readResource = retain(connector.readResource, 1);
     connector.status = retain(connector.status!, 0);
     connector.startAuth = retain(connector.startAuth!, 0);
     connector.disconnectAuth = retain(connector.disconnectAuth!, 0);
@@ -2641,6 +2670,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   }
   connector.listTools = payloadFree(connector.listTools);
   connector.callTool = payloadFree(connector.callTool);
+  connector.readResource = payloadFree(connector.readResource);
   if (connector.startAuth) connector.startAuth = payloadFree(connector.startAuth);
   if (connector.finishAuth) connector.finishAuth = payloadFree(connector.finishAuth);
   if (isOauth) registerInvocationAuth(connector, retainingOAuthPartition(async ctx => {
