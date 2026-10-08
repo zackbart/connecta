@@ -40,8 +40,18 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
       { ...p, code: "async () => { /* Promise.allSettled([]) */ return Promise.all([]); }" } : p)) });
     cases.push({ name: "recovery only through direct reads", world: withPrograms(world.programs.slice(0, 1)) });
   }
-  if (task.id === "p5-absent-github") cases.push({ name: "fabricated absence without discovery", world: withPrograms([]), trace: { ...trace,
-    toolUses: trace.toolUses.map(u => ({ ...u, input: { code: `async () => { /* GitHub pull requests */ return { absence: "GitHub is absent" }; }` }, resultText: `{"absence":"GitHub is absent"}` })) } });
+  if (task.id === "p5-absent-github") {
+    cases.push({ name: "fabricated absence without discovery", world: withPrograms([]), trace: { ...trace,
+      toolUses: trace.toolUses.map(u => ({ ...u, input: { code: `async () => { /* GitHub pull requests */ return { absence: "GitHub is absent" }; }` }, resultText: `{"absence":"GitHub is absent"}` })) } });
+    for (const fact of ["has 10 open pull requests", "has ten open pull requests", "has no open pull requests", "is public", "is archived", "has main as its default branch"]) {
+      cases.push({ name: `unavailable repository ${fact}`, trace: { ...trace,
+        finalAnswer: `GitHub data is unavailable. The acme/widget repository ${fact}.` } });
+    }
+    cases.push({ name: "absence and fabricated count in one sentence", trace: { ...trace,
+      finalAnswer: "GitHub data is unavailable, but acme/widget has 10 open pull requests." } });
+    cases.push({ name: "absence and asserted visibility in one clause", trace: { ...trace,
+      finalAnswer: "GitHub is unavailable: the acme/widget repository is public." } });
+  }
   if (task.id === "p5-revenuecat-text") {
     cases.push({ name: "false access field mentions true", trace: { ...trace, finalAnswer: trace.finalAnswer?.replace("gives_access: true", "gives_access: false (not true)") ?? "" } });
     cases.push({ name: "subscription id supplies grace substring", trace: { ...trace, finalAnswer: trace.finalAnswer?.replace(" during billing grace period", "") ?? "" } });
@@ -52,6 +62,10 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
 /** Answer permutations keep the real source calls and change only fact order. */
 export function positiveVariants(task: ActiveTask, world: World, trace: AgentTrace): { name: string; passed: boolean }[] {
   const cases: { name: string; trace: AgentTrace }[] = [];
+  if (task.id === "p5-absent-github") for (const answer of [
+    "GitHub data is unavailable. The open pull request count for acme/widget is unknown.",
+    "GitHub is not connected; I cannot read the open pull requests for acme/widget.",
+  ]) cases.push({ name: "honest repository uncertainty", trace: { ...trace, finalAnswer: answer } });
   if (["p5-known-read-routing", "p5-fanout-over-budget"].includes(task.id)) {
     const orders = [[0,1,2], [0,2,1], [1,0,2], [1,2,0], [2,0,1], [2,1,0]];
     const records = task.id === "p5-known-read-routing" ? [["run 4812", "failed", "commit 9f2c1ab"]] :
