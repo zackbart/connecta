@@ -446,8 +446,8 @@ export interface SkillsRegistryOptions {
 
 /**
  * One caller-view registry for native methods, the meta-tool and the guest API.
- * No content reaches storage or operator sinks. The transport's list/read seam
- * can adopt #753's private partition cache without changing any reader here.
+ * No content reaches storage or operator sinks. Downstream skills use uncached
+ * list/read operations on the caller's request-scoped credential partition.
  * Only a complete snapshot lives in this request; a failed build is discarded.
  */
 export class SkillsRegistry {

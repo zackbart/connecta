@@ -3,6 +3,9 @@ import { remoteMcp, type RemoteMcpOptions } from "../src/connectors/remote-mcp.j
 import type { ConnectorContext, ConnectorSkill } from "../src/types.js";
 import { connectorContext, deferred } from "./fixtures/misc.js";
 import { silentLogger } from "./helpers.js";
+import { attachCatalogCache } from "../src/catalog-cache.js";
+import { attachCaller } from "../src/connector-caller.js";
+import { memoryStorage } from "../src/storage/memory.js";
 
 const EXTENSION = "io.modelcontextprotocol/skills";
 const MAX_BYTES = 16 * 1024 * 1024;
@@ -97,6 +100,55 @@ describe("remote MCP Skills transport", () => {
     await f.downstream.list(f.context());
     expect(f.requests.filter(({ rpc }) => rpc.method === "server/discover")).toHaveLength(2);
     expect(f.requests.filter(({ rpc }) => rpc.method === "skills/list")).toHaveLength(6);
+  });
+
+  it("INV-5 INV-6 INV-8 INV-10: caches ordinary inventories in personal credential partitions while Skills catalogs and all bodies stay uncached", async () => {
+    const store = memoryStorage();
+    const ordinaryUri = "docs://ordinary/read";
+    const f = fixture((rpc, request) => {
+      const owner = request.headers.get("authorization")!.slice("Bearer token-".length);
+      if (rpc.method === "skills/list") return complete({ cacheScope: "public", skills: [{ ...skill(), frontmatter: { name: "example", description: `manifest-${owner}` } }] });
+      if (rpc.method === "resources/list") return complete({ cacheScope: "public", resources: [{ uri: ordinaryUri, name: `inventory-${owner}` }] });
+      if (rpc.method === "resources/templates/list") return complete({ cacheScope: "public", resourceTemplates: [] });
+      if (rpc.method === "resources/read") return complete({ cacheScope: "public", contents: [{ uri: rpc.params!.uri, text: `body-${owner}` }] });
+      throw new Error(`Unexpected method ${rpc.method}`);
+    }, { remote: { authScope: "personal", auth: { type: "credential" } } });
+    const context = (principal: string, credential = principal) => {
+      const ctx = f.context({ storage: store, credential: { get: async () => `token-${credential}`, getAll: async () => ({ value: `token-${credential}` }) } });
+      attachCaller(ctx, { identity: { actor: { kind: "human", id: principal, namespace: "test" }, principal: { id: principal, namespace: "test" }, interactive: true }, authenticated: true, pool: "one" });
+      attachCatalogCache(ctx, { storage: store, partition: `${principal}/one`, sharedPartition: "one", defaultTtlMs: 300_000, minTtlMs: 0, maxTtlMs: 86_400_000 });
+      return ctx;
+    };
+    for (const [principal, credential] of [["a", "a"], ["b", "b"], ["a", "a"], ["a", "a-rotated"]]) {
+      const ctx = context(principal!, credential!);
+      expect(await f.downstream.list(ctx)).toMatchObject([{ frontmatter: { description: `manifest-${credential}` } }]);
+      expect(await f.downstream.read(skill().uri, ctx)).toEqual([{ uri: skill().uri, text: `body-${credential}` }]);
+      expect(await f.connector.readResource!(ordinaryUri, ctx)).toMatchObject({ contents: [{ uri: ordinaryUri, text: `body-${credential}` }] });
+      await f.connector.closeScope!(ctx);
+    }
+    const count = (method: string) => f.requests.filter(({ rpc }) => rpc.method === method).length;
+    expect(count("skills/list")).toBe(4);
+    expect(count("resources/list")).toBe(3);
+    expect(count("resources/templates/list")).toBe(3);
+    expect(count("resources/read")).toBe(8);
+    const stored = await Promise.all((await store.list("")).map(key => store.get(key)));
+    const serialized = JSON.stringify(stored);
+    expect(serialized).toContain("inventory-a");
+    for (const value of ["manifest-a", "manifest-b", "body-a", "body-b", "token-a", "token-b"]) expect(serialized).not.toContain(value);
+  });
+
+  it("INV-5 INV-10: partitions cached negotiation by the Skills declaration without caching skill catalogs", async () => {
+    const store = memoryStorage();
+    const f = fixture(rpc => complete(rpc.method === "tools/list" ? { tools: [] } : { skills: [skill()] }), { capabilities: { tools: {}, resources: {}, extensions: { [EXTENSION]: {} } } });
+    const withoutSkills = remoteMcp("remote", { url: "https://skills.test/mcp", skills: false, logger: silentLogger });
+    const plain = f.context({ storage: store });
+    closers.push(async () => { await withoutSkills.closeScope!(plain); });
+    await withoutSkills.listTools(plain);
+    await withoutSkills.closeScope!(plain);
+    await f.downstream.list(f.context({ storage: store }));
+    await f.downstream.list(f.context({ storage: store }));
+    expect(f.requests.filter(({ rpc }) => rpc.method === "server/discover")).toHaveLength(2);
+    expect(f.requests.filter(({ rpc }) => rpc.method === "skills/list")).toHaveLength(2);
   });
 
   it.each([1, 7, 65_535])("INV-8: consumes fragmented JSON responses without retaining borrowed input buffers of size %i", async size => {
