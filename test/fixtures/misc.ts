@@ -1,3 +1,4 @@
+import { InvocationFailure } from "../../src/invocation.js";
 import { vi } from "vitest";
 import { memoryStorage } from "../../src/storage/memory.js";
 import type {
@@ -67,6 +68,7 @@ export function scriptedExecutor(
         return {
           result: undefined,
           error: err instanceof Error ? err.message : String(err),
+          failure: { name: err instanceof Error ? err.name : "Error", ...(err instanceof InvocationFailure ? { call: err.details } : {}) },
         };
       }
     },
@@ -92,7 +94,7 @@ export function fakeExecutor(outcome: {
 /** Extract source from the host-authored runner for closure-based, non-evaluating test executors. */
 export function guestSource(code: string): string {
   const start = "()(async (connecta) => await (\n";
-  const end = "\n)(), new Error().stack)";
+  const end = "\n)())";
   const from = code.indexOf(start);
   const to = code.lastIndexOf(end);
   return from >= 0 && to > from ? code.slice(from + start.length, to).trim() : code.trim();

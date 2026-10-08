@@ -104,7 +104,7 @@ export const resultKeys = {
     name: "result",
     scope: "partition",
     prefixes: ["result:"],
-    version: { number: 3, in: "value" },
+    version: { number: 4, in: "value" },
     codec: textCodec,
     ttl: { kind: "fixed", seconds: RESULT_TTL_SECONDS },
     durable: false,

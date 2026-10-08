@@ -1,4 +1,5 @@
 import { machineAuth } from "./helpers/machine-auth.js";
+import { InvocationFailure } from "../src/invocation.js";
 import { fetchTestUiDetails } from "./helpers.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { describe, expect, it } from "vitest";
@@ -358,7 +359,7 @@ describe("identity-scoped tools", () => {
         try {
           outcomes.call = await fns.call!("notes.delete", {});
         } catch (error) {
-          outcomes.call = String(error);
+          outcomes.call = error instanceof InvocationFailure ? error.details : String(error);
         }
         return { result: null };
       },
@@ -368,7 +369,7 @@ describe("identity-scoped tools", () => {
     const searched = JSON.stringify(outcomes.search);
     expect(searched).toContain("notes.search");
     expect(searched).not.toContain("notes.delete");
-    expect(JSON.stringify(outcomes.call)).toContain("unknown_tool");
+    expect(outcomes.call).toMatchObject({ code: "unknown_tool" });
     expect(deleted.count).toBe(0);
   });
 
@@ -468,7 +469,7 @@ describe("guarded read-only identity grants", () => {
         observations.search = await fns.search!({ connector: "notes", query: "", limit: 20 });
         observations.describe = await fns.describe!({ address: "notes.write" });
         try { await fns.call!("notes.write", {}); }
-        catch (error) { observations.call = String(error); }
+        catch (error) { observations.call = error instanceof InvocationFailure ? error.details : String(error); }
         return { result: null };
       } },
       storage: memoryStorage(), publicUrl: BASE,
@@ -486,7 +487,7 @@ describe("guarded read-only identity grants", () => {
     expect(JSON.stringify(observations.search)).toContain("notes.read");
     expect(JSON.stringify(observations.search)).not.toContain("notes.write");
     expect(JSON.stringify(observations.describe)).toContain("unknown_tool");
-    expect(String(observations.call)).toContain("unknown_tool");
+    expect(observations.call).toMatchObject({ code: "unknown_tool" });
     const ui = await fetchTestUiDetails(connecta, request("/ui/data", "alice"));
     const data = await ui.json() as any;
     expect(data.connectors.find((item: { id: string }) => item.id === "notes").tools.map((tool: { name: string }) => tool.name)).toEqual(["read"]);

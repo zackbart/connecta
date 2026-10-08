@@ -368,6 +368,14 @@ export interface CatalogReadOptions {
  * consume registry behavior without depending on the concrete implementation
  * or its construction-only methods.
  */
+/** Host-admitted identity and endpoint bindings for result paging. */
+export interface ResultIdentity {
+  subject: string | null;
+  principal: string | null;
+  endpoint: string;
+  origin: string | null;
+}
+
 export interface RegistryView {
   credentialUiAvailable(): boolean;
   /** Deployment-wide result-size cap threaded to the meta-tools. */
@@ -396,6 +404,9 @@ export interface RegistryView {
     input: { toolName: string; args: unknown; signal?: AbortSignal },
   ): Promise<CallAdmissionPermit>;
   resultsStorage(): KVStorage;
+  resultIdentity(): ResultIdentity;
+  /** Recheck live auth/grants and pool admission before exposing stored data. */
+  recheckResultAccess(address: string, classification: "read" | "write", signal?: AbortSignal): Promise<boolean>;
   /** Reserve deployment-wide capacity before writing a paging envelope's chunks. */
   stashResult(id: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean>;
   /** Local declared-vs-stored credential mismatch, with no downstream I/O. */
@@ -437,6 +448,9 @@ export interface RegistryScope {
   guardedToolAccess?: ToolAccess;
   subjectKey?: string;
   principalKey?: string;
+  endpoint?: string;
+  origin?: string | null;
+  currentResultAccess?: (address: string, classification: "read" | "write", signal?: AbortSignal) => Promise<boolean>;
   /** The admitted caller, readable only by built-in connectors; see connector-caller.ts. */
   caller?: ConnectorCaller;
 }
@@ -1137,6 +1151,14 @@ export class Registry implements RegistryView {
    * Storage namespaced to the root result partition, kept separate from any
    * connector's namespace. Backs connecta.result.
    */
+  resultIdentity(): ResultIdentity {
+    return { subject: null, principal: null, endpoint: "/mcp", origin: null };
+  }
+
+  recheckResultAccess(_address: string, _classification: "read" | "write", _signal?: AbortSignal): Promise<boolean> {
+    return Promise.resolve(true);
+  }
+
   resultsStorage(): KVStorage {
     return namespaced(this.opts.storage, scopes.results);
   }
@@ -2328,6 +2350,19 @@ class ScopedRegistryView implements RegistryView {
   stashResult(id: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean> {
     return this.root.stashResult(id, chunks, ttlSeconds,
       this.scope.subjectKey ? scopes.subject(this.scope.subjectKey) : scopes.results);
+  }
+
+  resultIdentity(): ResultIdentity {
+    return {
+      subject: this.scope.subjectKey ?? null,
+      principal: this.scope.principalKey ?? null,
+      endpoint: this.scope.endpoint ?? "/mcp",
+      origin: this.scope.origin ?? null,
+    };
+  }
+
+  recheckResultAccess(address: string, classification: "read" | "write", signal?: AbortSignal): Promise<boolean> {
+    return this.scope.currentResultAccess?.(address, classification, signal) ?? Promise.resolve(true);
   }
 
   resultsStorage(): KVStorage {

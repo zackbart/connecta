@@ -615,7 +615,7 @@ function sandboxProvider(
       );
     });
 
-  const meta = createMetaTools(registry, baseUrl);
+  const meta = createMetaTools(registry, baseUrl, { trust: limits.trust });
   const operations: Record<
     string,
     (...args: unknown[]) => Effect.Effect<unknown, unknown>

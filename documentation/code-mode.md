@@ -345,11 +345,16 @@ it can reach.
 ### connecta.result and connecta.skill
 
 `await connecta.result(id, { offset?, maxBytes? })` reads a stashed direct-call
-result in the admitted subject's partition. It returns
+result bound to the admitted subject, principal, endpoint/pool, request origin,
+connector, and tool. It returns
 `{ resultId, offset, bytes, totalBytes, hasMore, nextOffset?, format: "text", text }`.
 Offsets and sizes are UTF-8 bytes; the page cap is the original call's inline cap.
 Follow `nextOffset`, reassemble inside the program, and return a reduced value.
-An unknown or expired id is `not_found`; a storage failure is `unavailable`.
+Before returning a page, the host rechecks current authentication, connector/tool
+grants, pool membership, and endpoint trust against both the original and current
+tool classification. A read-only endpoint cannot page a write result. Binding
+mismatches, revoked access, and old entries without bindings are `not_found`, as
+are unknown or expired ids; a storage failure is `unavailable`. IDs are random UUIDs.
 The `get_result` meta-tool is removed.
 
 `await connecta.skill(name)` resolves the same exact built-in or `connector:id`

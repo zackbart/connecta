@@ -285,7 +285,11 @@ user id, independently of activity configuration, under the provider's namespace
 when it has one and `connecta:auth:<provider kind>` otherwise. Keep subject ids
 distinct within that namespace. An explicit principal is the fallback subject
 when neither id is supplied, and open deployments and auth providers that supply
-no identity share one partition.
+no identity share one partition. Each new stash also binds the principal,
+endpoint/pool, request origin, connector, tool, and classification. A page must
+match those bindings and pass current auth, connector/tool grants, pool membership,
+and trust checks. Old entries lacking bindings fail closed. A random UUID is a
+handle, never an access grant.
 
 New entries store UTF-8 bytes in a base64 envelope split across storage keys,
 48 KiB of result text per chunk — widening past roughly 1.5 MB so no result
@@ -400,7 +404,9 @@ A page is `{ resultId, offset, bytes, totalBytes, hasMore, nextOffset?,
 format: "text", text }`. The page size is clamped to the original call's inline
 cap, with UTF-8 alignment and forward progress. Reassemble inside the sandbox;
 returning pages unchanged can hit the program result cap. The admitted subject
-owns the stash, and caller arguments cannot select another partition.
+and principal, endpoint/pool, request origin, connector, and tool bindings must
+match. The host rechecks current access and trust before returning each page; a
+read-only endpoint cannot read a write stash. Caller arguments select no partition.
 
 A refused stash write cannot undo a downstream success. Both call tools return
 a paging-unavailable notice, without a handle or recovery action. A write's

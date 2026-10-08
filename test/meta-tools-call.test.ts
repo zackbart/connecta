@@ -2268,29 +2268,20 @@ describe("bounded result stash", () => {
     expect(text).toBe(full);
   });
 
-  // A deployment that upgrades mid-TTL still holds entries in the shapes that
-  // came before chunking: v1's single inline envelope, and raw text before that.
-  // Neither may decode into something other than what was stashed.
-  it("still pages entries stashed in the pre-chunk formats", async () => {
-    const stashed = JSON.stringify("aé界😀".repeat(400)); // 4,002 bytes
+  it("INV-3 INV-4: refuses pre-binding stashes after an upgrade", async () => {
+    const stashed = JSON.stringify("aé界😀".repeat(400));
     const bytes = new TextEncoder().encode(stashed);
     const storage = memoryStorage();
-    await storage.set("results:result:inline",
-      `connecta-result-v1:${bytes.length}:${btoa(String.fromCharCode(...bytes))}`);
+    await storage.set("results:result:inline", `connecta-result-v1:${bytes.length}:${btoa(String.fromCharCode(...bytes))}`);
     await storage.set("results:result:raw", stashed);
     const mt = createMetaTools(makeRegistry([calcConnector], { storage }), BASE);
     for (const id of ["inline", "raw"]) {
-      let text = "";
-      let offset: number | undefined = 0;
-      while (offset !== undefined) {
-        const page = pageOf(await mt.readResult({ id, offset, maxBytes: 777 }));
-        expect(page.totalBytes).toBe(4_002);
-        text += page.text;
-        offset = page.nextOffset;
-      }
-      expect(text).toBe(stashed);
+      const page = await mt.readResult({ id, offset: 0, maxBytes: 777 });
+      expect(page.isError).toBe(true);
+      expect(JSON.stringify(page)).not.toContain(stashed);
     }
   });
+
 });
 
 describe("truncated results lead with their connecta.result handle", () => {
@@ -2635,14 +2626,14 @@ describe("connecta.result pages raw text, clamped to the result's cap", () => {
     expect(byteLength(required(result.content[0]).text)).toBeLessThanOrEqual(cap + 400);
   });
 
-  it("pages an entry stashed before the cap was recorded at the deployment cap", async () => {
+  it("INV-3 INV-4: refuses an entry stashed before authority was recorded", async () => {
     const stashed = LINES.slice(0, 3_000);
     const bytes = new TextEncoder().encode(stashed);
     const storage = memoryStorage();
     await storage.set("results:result:old", `connecta-result-v2:${bytes.length}:49152:${btoa(String.fromCharCode(...bytes))}`);
     const mt = createMetaTools(makeRegistry([calcConnector], { storage, maxResultBytes: 1_000 }), BASE);
-    const { header, body } = rawPage(await mt.readResult({ id: "old", offset: 0, maxBytes: 5_000 }));
-    expect(header.bytes).toBe(1_000);
-    expect(body).toBe(stashed.slice(0, 1_000));
+    const page = await mt.readResult({ id: "old", offset: 0, maxBytes: 5_000 });
+    expect(page.isError).toBe(true);
+    expect(JSON.stringify(page)).not.toContain(stashed);
   });
 });

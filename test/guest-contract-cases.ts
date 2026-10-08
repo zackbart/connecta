@@ -9,10 +9,96 @@ import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activ
 import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { createMetaTools, type ToolResult } from "../src/meta-tools.js";
+import { createConnecta } from "../src/index.js";
+import { customExecutor } from "../src/executor-contract.js";
+import { memoryStorage } from "../src/storage/memory.js";
+import { readJsonRpc } from "./fixtures/http.js";
 import type { Connector, Executor, ToolDef } from "../src/types.js";
 import { makeRegistry, required, silentLogger } from "./helpers.js";
 
 export const CONTRACT_BASE = "https://connecta.contract";
+
+/** Every executor pages through the admitted route and rechecks live authority. */
+export async function checkStashAuthority(executor: Executor): Promise<void> {
+  let granted = true;
+  let member = true;
+  let zero = false;
+  let toolOnly = false;
+  let mode: "grant" | "pool" = "grant";
+  const storage = memoryStorage();
+  const secret = "stash-disclosure-sentinel-".repeat(100);
+  const docs: Connector = {
+    id: "docs", kind: "api",
+    async listTools() { return [{ name: "write", annotations: { readOnlyHint: false } }, readOnly("read")]; },
+    async callTool() { return secret; },
+  };
+  const control: Connector = {
+    id: "control", kind: "api",
+    async listTools() { return [readOnly("revoke")]; },
+    async callTool() { if (mode === "grant") granted = false; else member = false; return true; },
+  };
+  const build = (trust: "trusted" | "read-only") => createConnecta({
+    connectors: [docs, control], storage, logger: "silent", calls: { maxResultBytes: 512 },
+    allowedOrigins: ["https://first.test", "https://second.test"],
+    executor: customExecutor({ execute: executor.execute.bind(executor) }, { lifecycle: "self-managed" }),
+    auth: { kind: "stash-test", activityActorNamespace: "stash-test", authorize(request) {
+      const token = request.headers.get("Authorization")?.slice(7) ?? "alice";
+      return { ok: true, subjectId: token === "other" ? "other" : "shared",
+        principal: { namespace: "owners", id: token === "bob" ? "bob" : "alice" } };
+    } },
+    identity: { connectorAccess: () => zero ? [] : toolOnly ? ["docs.read", "control"] : granted ? ["docs", "control"] : ["control"] },
+    pools: {
+      admin: { tools: ["docs", "control"], trust, grant: () => member },
+      empty: { tools: ["control"], trust: "trusted", grant: () => true },
+    },
+  });
+  const app = build("trusted");
+  const readonly = build("read-only");
+  const rpc = async (name: string, args: unknown, options: { app?: typeof app; path?: string; token?: string; origin?: string } = {}) => {
+    const response = await (options.app ?? app).fetch(new Request(`${CONTRACT_BASE}${options.path ?? "/mcp/admin"}`, {
+      method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream",
+        Authorization: `Bearer ${options.token ?? "alice"}`, Origin: options.origin ?? "https://first.test" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+    }));
+    expect(response.status).toBe(200);
+    return (await readJsonRpc(response)).result as ToolResult;
+  };
+  try {
+    const direct = await rpc("call_destructive_tool", { address: "docs.write" });
+    const id = JSON.parse(required(direct.content[0]).text.split("\n")[0]!).resultId;
+    expect(id).toMatch(/^[a-f0-9-]{36}$/);
+    const code = `async () => await connecta.result(${JSON.stringify(id)}, { maxBytes: 20 })`;
+    const visible = await rpc("execute_code", { code });
+    expect(visible.isError).toBeFalsy();
+    expect(visible.structuredContent).toMatchObject({ result: { text: JSON.stringify(secret).slice(0, 20) } });
+    const deny = async (options: Parameters<typeof rpc>[2] = {}, prefix = "") => {
+      const result = await rpc("execute_code", { code: prefix ? `async () => { ${prefix}; return await connecta.result(${JSON.stringify(id)}, { maxBytes: 20 }); }` : code }, options);
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({ error: { code: "not_found" } });
+      expect(JSON.stringify(result)).not.toContain("stash-disclosure-sentinel");
+    };
+    zero = true;
+    await deny({ path: "/mcp/empty" });
+    zero = false;
+    await deny({ token: "bob" });
+    await deny({ token: "other" });
+    await deny({ origin: "https://second.test" });
+    await deny({ app: readonly });
+    toolOnly = true;
+    await deny();
+    toolOnly = false;
+    granted = false;
+    await deny();
+    granted = true;
+    await deny({}, 'await connecta.call("control.revoke")');
+    granted = true;
+    mode = "pool";
+    await deny({}, 'await connecta.call("control.revoke")');
+  } finally {
+    await app.close();
+    await readonly.close();
+  }
+}
 
 /** Provider preludes run together before a guest's callback in both sandboxes. */
 export async function checkSharedPreludes(executor: Executor): Promise<void> {

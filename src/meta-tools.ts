@@ -31,6 +31,7 @@ import {
   MIN_MAX_RESULT_BYTES,
   resolveMaxResultBytes,
   type RegistryView,
+  type ResultIdentity,
 } from "./registry.js";
 import {
   hasConnectorGuides,
@@ -173,19 +174,17 @@ export function alignEndToCharBoundary(
   return e;
 }
 
-/** Prefix of the chunked paging envelope; `v1`'s single inline key still reads. */
-const RESULT_ENVELOPE_V2 = "connecta-result-v2:";
+/** Every readable stash carries host-admitted bindings; older entries fail closed. */
+const RESULT_ENVELOPE_V4 = "connecta-result-v4:";
+const RESULT_ENVELOPE_V4_HEADER = /^connecta-result-v4:([A-Za-z0-9+/=]+):(\d+):(\d+):(\d+):/;
 
-/**
- * The current envelope: v2's header plus the inline cap of the call that
- * stashed it, `<total>:<chunk>:<cap>:`, so connecta.result can clamp a page to the
- * connector's own cap without the stash carrying connector identity.
- */
-const RESULT_ENVELOPE_V3 = "connecta-result-v3:";
-const RESULT_ENVELOPE_V3_HEADER = new RegExp(`^${RESULT_ENVELOPE_V3}(\\d+):(\\d+):(\\d+):`);
-
-/** `<total bytes>:<bytes per chunk>:` follow the prefix, then chunk 0's base64. */
-const RESULT_ENVELOPE_V2_HEADER = new RegExp(`^${RESULT_ENVELOPE_V2}(\\d+):(\\d+):`);
+interface ResultBinding {
+  identity: ResultIdentity;
+  baseUrl: string;
+  connector: string;
+  tool: string;
+  classification: "read" | "write";
+}
 
 /**
  * Smallest chunk of result text stored under one key. A multiple of three so
@@ -245,6 +244,7 @@ function base64Of(bytes: Uint8Array): string {
 interface ResultStash {
   secrets?: SentSecrets;
   set: RegistryView["stashResult"];
+  binding: ResultBinding;
   warn: () => void;
   /**
    * The call was not explicitly read-only, so it may have changed something
@@ -328,7 +328,8 @@ async function stashResult(
     // the whole result (issue #540). Chunk 0 carries the header; the connecta.result
     // reader below maps a byte offset back to chunk index and base64 quad.
     const chunkBytes = resultChunkBytes(totalBytes);
-    const chunks = [`${RESULT_ENVELOPE_V3}${totalBytes}:${chunkBytes}:${results.cap}:`];
+    const binding = base64Of(enc.encode(JSON.stringify(results.binding)));
+    const chunks = [`${RESULT_ENVELOPE_V4}${binding}:${totalBytes}:${chunkBytes}:${results.cap}:`];
     for (let offset = 0; offset < bytes.length; offset += chunkBytes) {
       const chunk = base64Of(bytes.subarray(offset, offset + chunkBytes));
       if (offset === 0) chunks[0] += chunk;
@@ -615,6 +616,8 @@ function metaToolsForRequest(
   opts: {
     /** Deadline applied when a call passes no `timeoutMs`. Off when unset. */
     defaultToolTimeoutMs?: number | undefined;
+    /** Current endpoint trust for program result paging. */
+    trust?: import("./tool-safety.js").PoolTrust | undefined;
     /** Per-connector deadline for the search/describe probe fan-out. Default 30_000. */
     probeTimeoutMs?: number | undefined;
     /** Maximum simultaneous connector discovery operations. Default 4. */
@@ -707,6 +710,11 @@ function metaToolsForRequest(
           );
           const results: ResultStash = {
             secrets,
+            binding: {
+              identity: registry.resultIdentity(), baseUrl,
+              connector: resolved.connector.id, tool: resolved.definition.name,
+              classification: resolved.definition.classification === "read" ? "read" : "write",
+            },
             write: resolved.definition.classification !== "read",
             cap,
             set: (id, value, ttlSeconds) => registry.stashResult(id, value, ttlSeconds),
@@ -935,31 +943,45 @@ function metaToolsForRequest(
       if (stored === null) {
         return errorResult(`Unknown or expired result id "${boundedEchoText(args.id)}"`);
       }
+      const denied = () => errorResult(`Unknown or expired result id "${boundedEchoText(args.id)}"`);
+      const header = RESULT_ENVELOPE_V4_HEADER.exec(stored);
+      if (!header) return denied();
+      let binding: ResultBinding;
+      try { binding = JSON.parse(dec.decode(Uint8Array.from(atob(header[1]!), char => char.charCodeAt(0)))); }
+      catch { return denied(); }
+      const identity = registry.resultIdentity();
+      if (!binding || binding.baseUrl !== baseUrl || !binding.identity ||
+        binding.identity.subject !== identity.subject || binding.identity.principal !== identity.principal ||
+        binding.identity.endpoint !== identity.endpoint || binding.identity.origin !== identity.origin ||
+        typeof binding.connector !== "string" || typeof binding.tool !== "string" ||
+        !["read", "write"].includes(binding.classification)) return denied();
+      const allowed = async (): Promise<boolean> => {
+        options.signal?.throwIfAborted();
+        try {
+          const address = `${binding.connector}.${binding.tool}`;
+          if (!await registry.recheckResultAccess(address, binding.classification, options.signal)) return false;
+          if (!registry.getConnector(binding.connector)) return false;
+          const tools = await registry.getTools(binding.connector, baseUrl, requestScope,
+            options.signal ? { signal: options.signal } : {});
+          const tool = tools.find(tool => tool.name === binding.tool);
+          return Boolean(tool && ((binding.classification === "read" && tool.classification === "read") || opts.trust === "trusted"));
+        } catch {
+          options.signal?.throwIfAborted();
+          return false;
+        }
+      };
+      if (!await allowed()) return denied();
       const requestedOffset = args.offset ?? 0;
-      // Read and decode only the chunks this page covers, plus a few bytes of
-      // UTF-8 boundary lookaround. Pre-upgrade entries stay readable for their
-      // short TTL: v2 is this format without the recorded cap, v1 inlined the
-      // whole envelope under one key, which is v2 with a single chunk as wide
-      // as the result, and raw text before that still pays one full encode
-      // per page.
-      const current = RESULT_ENVELOPE_V3_HEADER.exec(stored.slice(0, 96));
-      const chunked = current ?? RESULT_ENVELOPE_V2_HEADER.exec(stored.slice(0, 80));
-      const inline = chunked ? null : /^connecta-result-v1:(\d+):/.exec(stored.slice(0, 64));
-      const header = chunked ?? inline;
-      // A page never exceeds the inline cap of the call that stashed it — the
-      // connector's override when it had one — whatever maxBytes asks for.
-      // Clients cut an oversized page exactly as they cut the original result,
-      // so honouring a larger request would hand the agent an error in place
-      // of its data. Entries from before the cap was recorded use the
-      // deployment-wide one.
-      const cap = current ? Number(current[3]) : globalCap;
+      const cap = Number(header[4]);
+      if (!isValidMaxResultBytes(cap)) return denied();
       const maxBytes = Math.min(args.maxBytes ?? cap, cap);
       let bytes: Uint8Array;
       let total: number;
       let start = 0;
-      if (header) {
-        total = Number(header[1]);
-        const chunkBytes = chunked ? Number(chunked[2]) : Math.max(total, 1);
+      {
+        total = Number(header[2]);
+        const chunkBytes = Number(header[3]);
+        if (!Number.isSafeInteger(total) || total < 0 || !Number.isSafeInteger(chunkBytes) || chunkBytes < 3 || chunkBytes % 3 !== 0) return denied();
         start = Math.floor(Math.max(0, Math.min(requestedOffset, total) - 3) / 3) * 3;
         const end = Math.min(total, requestedOffset + maxBytes + 4);
         bytes = new Uint8Array(Math.max(0, end - start));
@@ -984,9 +1006,6 @@ function metaToolsForRequest(
             bytes[chunkStart + at - start] = binary.charCodeAt(at - from);
           }
         }
-      } else {
-        bytes = enc.encode(stored);
-        total = bytes.length;
       }
       // Validated above, so no coercion is needed here — only alignment. A
       // client that computes its own offsets can land inside a multi-byte
@@ -1022,6 +1041,7 @@ function metaToolsForRequest(
           ? { nextOffset: end }
           : {}),
       };
+      if (!await allowed()) return denied();
       const page = noticeFirst(pageHeader, slice);
       page.structuredContent = { ...pageHeader, text: slice, format: "text" };
       return page;

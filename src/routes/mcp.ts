@@ -711,6 +711,37 @@ export function createMcpRoute(
           ...(access.guardedToolAccess ? { guardedToolAccess: access.guardedToolAccess } : {}),
           ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
           ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
+          endpoint: new URL(request.url).pathname,
+          origin: request.headers.get("Origin"),
+          currentResultAccess: async (address, classification, signal) => {
+            signal?.throwIfAborted();
+            const current = await authorize(localRequest, baseUrl, opts.config.auth, runtimeContext, opts.config.identity);
+            if (!current.ok) {
+              await current.response.body?.cancel().catch(() => {});
+              return false;
+            }
+            if (current.subjectKey !== authz.subjectKey || current.principalKey !== authz.principalKey) return false;
+            validateAuthPermissions(current, opts.registry);
+            let currentAccess: ConnectorAccess = current;
+            let currentTrust = opts.config.trust;
+            if (poolName !== undefined) {
+              const pool = opts.pools.get(poolName);
+              if (!pool || await pool.grant(current.identity) !== true) return false;
+              currentAccess = intersectAccess(current, pool.access);
+              currentTrust = pool.trust;
+            }
+            const view = opts.registry.scoped({
+              ...currentAccess,
+              ...(current.subjectKey ? { subjectKey: current.subjectKey } : {}),
+              ...(current.principalKey ? { principalKey: current.principalKey } : {}),
+            });
+            const resolved = view.resolveAddress(address);
+            if (!resolved) return false;
+            const tool = (await view.getTools(resolved.connector.id, baseUrl, {}, signal ? { signal } : {}))
+              .find(tool => tool.name === resolved.toolName);
+            signal?.throwIfAborted();
+            return Boolean(tool && ((classification === "read" && tool.classification === "read") || currentTrust === "trusted"));
+          },
           caller: {
             identity: authz.identity,
             // `authorize` admits an open deployment's every request as the
