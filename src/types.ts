@@ -276,11 +276,13 @@ export interface ToolClassification {
 
 /**
  * How far a downstream catalog has moved away from the manifest a release
- * reviewed. Four numbers and nothing else: names, schemas, and prose stay out
+ * reviewed. Counts and nothing else: names, schemas, and prose stay out
  * of every surface this rides on, so a drift report can never become a payload
  * ([#343](https://github.com/zackbart/connecta/issues/343)).
  */
 export interface CatalogDriftCounts {
+  /** Downstream tools dropped because their names contain C0, DEL, or C1. */
+  droppedTools?: number;
   /** Live tools no release classified. Each one fails closed at call time. */
   unclassifiedTools: number;
   /** Classified names this catalog no longer serves — plan gating included. */

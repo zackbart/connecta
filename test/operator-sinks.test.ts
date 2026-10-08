@@ -1,7 +1,11 @@
 import { OAuthErrorCode } from "@modelcontextprotocol/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { recordToolActivity } from "../src/activity.js";
+import { createExecuteTool } from "../src/execute.js";
+import { snapshotCatalog } from "../src/catalog-fingerprint.js";
+import { Registry } from "../src/registry.js";
+import { recordCatalogDriftActivity, recordToolActivity } from "../src/activity.js";
 import { bearerToken } from "../src/auth/bearer.js";
+import { parseConnectorAccess } from "../src/connector-access.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
@@ -21,7 +25,8 @@ import {
   type FailureSubject,
 } from "../src/operator-record.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { Connector, JsonSchema, Logger } from "../src/types.js";
+import type { CatalogDriftActivityEvent } from "../src/activity.js";
+import type { Connector, JsonSchema, Logger, ToolDef } from "../src/types.js";
 import { activitySink, createTestConnecta, makeRegistry } from "./helpers.js";
 
 // INV-6 at the sinks (#695, #716). Every position a downstream controls gets
@@ -698,7 +703,7 @@ describe("a status decorator", () => {
 
 describe("a catalog name outside MCP's tool-name grammar", () => {
   it("INV-6: stays out of the paging and call-failure records and activity rows", async () => {
-    const name = `read\nAuthorization: Bearer ${planted("tool-name")}`;
+    const name = `read space ${planted("tool-name")}`;
     let calls = 0;
     vi.stubGlobal("fetch", downstream({
       tools: [{ name, inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }],
@@ -806,7 +811,7 @@ describe("ctx.oauth.fetch", () => {
 
 describe("the operator page's catalog", () => {
   it("INV-6: shows a description but withholds a name outside MCP's tool-name grammar", async () => {
-    const name = `read\nAuthorization: Bearer ${planted("ui-name")}`;
+    const name = `读取 ${planted("ui-name")}`;
     vi.stubGlobal("fetch", downstream({ tools: [
       { name, description: `Reads ${planted("ui-description")}`, inputSchema: { type: "object" } },
       { name: "list", description: "Lists things", inputSchema: { type: "object" } },
@@ -881,5 +886,184 @@ describe("a forwarded catalog drift report", () => {
     expect((await registry.statusFor("svc", BASE)).catalogDrift?.observedAt).toBe(
       "2026-08-12T00:00:00.000Z",
     );
+  });
+});
+
+
+describe("control-character tool names at catalog intake", () => {
+  it.each(["fresh", "v3 cache", "v2 cache"])("INV-6: drops names from %s without leaking into discovery, calls, or operator sinks", async (source) => {
+    const rejected = ["read\nAuthorization: Bearer planted-7f3a9c", "x\u0085y"];
+    const kept = ["read space", "读取"];
+    const tools: ToolDef[] = [...rejected, ...kept].map((name) => ({
+      name, inputSchema: { type: "object" }, annotations: { readOnlyHint: true },
+    }));
+    let calls = 0;
+    let listings = 0;
+    const serve = downstream({ tools, call: (id) => {
+      calls++;
+      return Response.json({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: "ok" }] } });
+    } });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = init?.body ? (JSON.parse(String(init.body)) as { method: string }).method : "";
+      if (method === "tools/list") listings++;
+      if (source === "v2 cache" && method === "tools/list") throw new Error("offline");
+      return serve(input, init);
+    });
+    const storage = memoryStorage();
+    if (source !== "fresh") {
+      const now = Date.now();
+      const snapshot = await snapshotCatalog(tools);
+      await storage.set(`catalog:svc:chunk:${snapshot.fingerprint}:0`, new TextDecoder().decode(snapshot.serializedBytes));
+      await storage.set("catalog:svc", JSON.stringify({
+        version: source === "v2 cache" ? 2 : 3, revision: snapshot.fingerprint,
+        toolCount: tools.length, byteCount: snapshot.serializedBytes.byteLength, chunkCount: 1,
+        fetchedAt: now, expiresAt: now + 600_000, staleUntil: now + 1_200_000,
+      }));
+    }
+    const { logger, lines } = capturingLogger();
+    const drift: CatalogDriftActivityEvent[] = [];
+    const connector = () => remoteMcp("svc", { url: MCP_URL, classify: { tools: Object.fromEntries(kept.map((name) => [name, "read" as const])) } });
+    const registry = new Registry([connector()], {
+      storage, logger, catalogDriftActivity: {
+        recordDrift: recordCatalogDriftActivity,
+        sink: { record() {}, recordCatalogDrift(event) { drift.push(event); } },
+        serverInfo: { name: "test", version: "0" },
+      },
+    });
+    const target = activitySink();
+    const mt = createMetaTools(registry, BASE, { activity: target.activity });
+    const search = await mt.searchTools({ query: "", connector: "svc" });
+    expect(search.isError).toBeFalsy();
+    expect(search.structuredContent?.total).toBe(2);
+    expect(listings).toBe(source === "v3 cache" ? 0 : 1);
+    expect(JSON.stringify(search)).not.toMatch(ANY_PLANTED);
+    expect(JSON.stringify(search)).not.toContain("x\u0085y");
+    expect((await registry.getTools("svc", BASE)).map((tool) => tool.name)).toEqual(kept);
+    expect((await registry.statusFor("svc", BASE)).catalogDrift?.droppedTools).toBe(2);
+    expect(drift).toHaveLength(1);
+    expect(drift[0]?.droppedTools).toBe(2);
+    for (const name of rejected) {
+      const result = await mt.callTool({ address: `svc.${name}` });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain("unknown_tool");
+      expect(JSON.stringify(result)).not.toContain(name);
+      expect(JSON.stringify(result)).not.toMatch(ANY_PLANTED);
+    }
+    for (const name of kept) expect((await mt.callTool({ address: `svc.${name}` })).isError).toBeFalsy();
+    const execute = createExecuteTool(registry, BASE, {
+      async execute(_code, providers) {
+        const fns = providers.find((provider) => provider.name === "connecta")!.fns;
+        const programSearch = await fns.search!({ query: "", connector: "svc" });
+        expect(JSON.stringify(programSearch)).not.toMatch(ANY_PLANTED);
+        expect(JSON.stringify(programSearch)).not.toContain("x\u0085y");
+        for (const name of rejected) {
+          await expect(fns.call!(`svc.${name}`, {})).rejects.toMatchObject({ code: "unknown_tool" });
+        }
+        for (const name of kept) expect(await fns.call!(`svc.${name}`, {})).toBe("ok");
+        return { result: "ok" };
+      },
+    }, logger);
+    expect((await execute({ code: "" })).isError).toBeFalsy();
+    expect(calls).toBe(4);
+    const app = createTestConnecta({ connectors: [connector()], auth: bearerToken("t"), storage, publicUrl: BASE, logger });
+    const ui = await (await app.fetch(new Request(`${BASE}/ui/connectors/svc`, { headers: { Authorization: "Bearer t" } }))).text();
+    const health = await (await app.fetch(new Request(`${BASE}/health`))).text();
+    const status = JSON.stringify(await registry.statusFor("svc", BASE));
+    for (const text of [...lines, ...consoleLines, JSON.stringify(target.events), JSON.stringify(drift), ui, health, status]) {
+      expect(text).not.toMatch(ANY_PLANTED);
+      expect(text).not.toContain("x\u0085y");
+    }
+    expect(target.events.filter((event) => event.outcome === "success").map((event) => event.toolName)).toEqual(["<withheld>", "<withheld>"]);
+    await app.close();
+  });
+
+  it("INV-6: drops every C0, DEL, and C1 boundary while retaining adjacent Unicode", async () => {
+    const controls = [...Array.from({ length: 32 }, (_, i) => i), 127, ...Array.from({ length: 32 }, (_, i) => i + 128)];
+    const names = controls.map((code) => `x${String.fromCharCode(code)}y`);
+    const registry = makeRegistry([{
+      id: "svc", async listTools() { return [...names, "x y", "x~y", "x\u00a0y", "读取"].map((name) => ({ name })); },
+      async callTool() { return null; },
+    }]);
+    expect((await registry.getTools("svc", BASE)).map((tool) => tool.name)).toEqual(["x y", "x~y", "x\u00a0y", "读取"]);
+    expect((await registry.statusFor("svc", BASE)).catalogDrift?.droppedTools).toBe(65);
+  });
+});
+
+
+describe("catalog intake finding lifecycle", () => {
+  it.each([false, true])("INV-6: stale reads cannot replace a deferred refresh finding, initially rejected: %s", async (initiallyRejected) => {
+    vi.useFakeTimers();
+    try {
+      let rejected = initiallyRejected;
+      const drift: CatalogDriftActivityEvent[] = [];
+      const connector: Connector = {
+        id: "svc", classification: { tools: { read: "read" } },
+        async listTools() { return [{ name: "read" }, ...(rejected ? [{ name: "x\u0085planted-7f3a9c" }] : [])]; },
+        async callTool() { return null; },
+      };
+      const registry = new Registry([connector], {
+        storage: memoryStorage(), logger: capturingLogger().logger,
+        toolCacheTtlSeconds: 1, toolCatalogStaleSeconds: 30, persistToolCatalog: false,
+        catalogDriftActivity: {
+          recordDrift: recordCatalogDriftActivity,
+          sink: { record() {}, recordCatalogDrift(event) { drift.push(event); } },
+          serverInfo: { name: "test", version: "0" },
+        },
+      });
+      await registry.getTools("svc", BASE);
+      vi.advanceTimersByTime(2_000);
+      rejected = !rejected;
+      const tails: Promise<unknown>[] = [];
+      const stale = await new CatalogService(registry, BASE, { defer: (promise) => tails.push(promise) }).loadConnector("svc");
+      expect(stale.map((tool) => tool.name)).toEqual(["read"]);
+      await Promise.all(tails);
+      expect((await registry.statusFor("svc", BASE)).catalogDrift?.droppedTools ?? 0).toBe(rejected ? 1 : 0);
+      expect(drift.map((event) => event.droppedTools ?? 0)).toEqual(initiallyRejected ? [1, 0] : [1]);
+      expect(JSON.stringify(drift)).not.toMatch(ANY_PLANTED);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("INV-6: personal connector findings reach root health without principal or name text", async () => {
+    const { logger, lines } = capturingLogger();
+    const app = createTestConnecta({
+      publicUrl: BASE, logger, storage: memoryStorage(),
+      connectors: [{
+        id: "svc", authScope: "personal", classification: { tools: {} },
+        async listTools() { return [{ name: "x\u0085planted-7f3a9c" }]; },
+        async callTool() { return null; },
+      }],
+    });
+    const scoped = app.registry.scoped({ connectorIds: ["svc"], principalKey: "private-principal", subjectKey: "private-subject" });
+    expect(await scoped.getTools("svc", BASE)).toEqual([]);
+    expect((await scoped.statusFor("svc", BASE)).catalogDrift?.droppedTools).toBe(1);
+    expect(app.registry.catalogDriftSnapshot().svc?.droppedTools).toBe(1);
+    const body = await (await app.fetch(new Request(`${BASE}/health`))).text();
+    const health = JSON.parse(body) as { catalogDrift: Record<string, { droppedTools?: number }> };
+    expect(Object.values(health.catalogDrift).map((report) => report.droppedTools)).toEqual([1]);
+    for (const text of [body, ...lines, ...consoleLines]) {
+      expect(text).not.toMatch(ANY_PLANTED);
+      expect(text).not.toContain("private-principal");
+      expect(text).not.toContain("private-subject");
+    }
+    await app.close();
+  });
+
+  it("INV-6: rejects control-character grants and bounds warnings even for a manually scoped C1 grant", async () => {
+    for (const name of ["read\nAuthorization: Bearer planted-7f3a9c", "x\u0085planted-7f3a9c"]) {
+      expect(() => parseConnectorAccess([`svc.${name}`])).toThrow("invalid connector permission");
+      expect(() => parseConnectorAccess([{ tool: `svc.${name}`, requireReadOnly: true }], { allowReadOnly: true })).toThrow("invalid connector permission");
+    }
+    const name = "x\u0085planted-7f3a9c";
+    const { logger, lines } = capturingLogger();
+    const registry = makeRegistry([{
+      id: "svc", async listTools() { return [{ name }]; }, async callTool() { return null; },
+    }], { logger });
+    const scoped = registry.scoped({ connectorIds: ["svc"], toolAccess: new Map([["svc", new Set([name])]]) });
+    expect(await scoped.getTools("svc", BASE)).toEqual([]);
+    expect(await scoped.getTools("svc", BASE)).toEqual([]);
+    expect(lines.filter((line) => line.includes("grant is unreachable"))).toHaveLength(1);
+    for (const text of [...lines, ...consoleLines]) expect(text).not.toMatch(ANY_PLANTED);
   });
 });

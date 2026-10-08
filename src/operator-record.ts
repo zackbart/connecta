@@ -16,7 +16,8 @@
 // grammar, a description, and input and output schemas may appear in the
 // authenticated operator page's catalog views, and such a name may be
 // logged. A name outside the grammar is withheld everywhere operator-facing,
-// the page included, until #725 drops it at intake.
+// the page included. Names containing C0, DEL, or C1 are dropped at catalog
+// intake; spaces and non-ASCII names remain callable with withheld records.
 //
 // INV-6 says logs carry no arguments, results, code, or raw downstream error
 // text. Filtering errors where they arise kept missing sources: a validator's
@@ -399,6 +400,7 @@ export function failureRecord(subject: FailureSubject, failure?: unknown): Failu
  * reviewed line here, never a string assembled at the call site.
  */
 export type FailureEvent =
+  | "connectorAccess grant is unreachable"
   | "call failed"
   | "input schema unusable; arguments are not validated"
   | "catalog read failed"

@@ -35,7 +35,7 @@ function observationTime(value: unknown): string | undefined {
 }
 
 /**
- * Rebuild a drift report as four counts and a canonical timestamp.
+ * Rebuild a drift report as bounded counts and a canonical timestamp.
  *
  * `Connector.catalogDrift()` sits on the open plugin seam, and what it returns
  * lands in the body of unauthenticated `/health`, on connector status, in the
@@ -60,6 +60,9 @@ export function boundedCatalogDrift(
     unservedTools: boundedCount(report.unservedTools),
     annotationConflicts: boundedCount(report.annotationConflicts),
     schemaChanges: boundedCount(report.schemaChanges),
+    ...(boundedCount(report.droppedTools ?? 0) > 0
+      ? { droppedTools: boundedCount(report.droppedTools ?? 0) }
+      : {}),
   };
 }
 

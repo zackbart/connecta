@@ -1,3 +1,4 @@
+import { hasControlCharacters } from "./tool-name.js";
 import { Cause, Effect, Exit, type Scope } from "effect";
 import {
   type ActivityCallSource,
@@ -353,10 +354,11 @@ export class InvocationService {
             }
           : attempted;
         if (!identity) return;
+        const toolName = hasControlCharacters(identity.toolName) ? "<unlisted>" : identity.toolName;
         this.activity?.recordTool?.(this.activity, {
           connectorId: identity.connectorId,
-          toolName: identity.toolName,
-          address: `${identity.connectorId}.${identity.toolName}`,
+          toolName,
+          address: `${identity.connectorId}.${toolName}`,
           source: context.source,
           outcome,
           durationMs: Date.now() - started,

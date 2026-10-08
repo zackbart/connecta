@@ -310,6 +310,7 @@ export function recordCatalogDriftActivity(
     unservedTools: input.unservedTools,
     annotationConflicts: input.annotationConflicts,
     schemaChanges: input.schemaChanges,
+    ...(input.droppedTools ? { droppedTools: input.droppedTools } : {}),
     serverName: context.serverInfo.name,
     serverVersion: context.serverInfo.version,
     ...(context.deploymentId ? { deploymentId: context.deploymentId } : {}),

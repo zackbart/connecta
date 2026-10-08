@@ -9,6 +9,7 @@ import { compileValidator, validateCatalogToolInput } from "../validate.js";
 import { array, assertKnownOptions, instance, keys, optionsOf, strings } from "../config-schema.js";
 import { describedEndpoint, describedOrigin, describedTools } from "../described.js";
 import { CALL_ADMISSION, CREDENTIAL, USAGE_GUIDE } from "./option-shapes.js";
+import { assertStaticToolNames } from "../tool-name.js";
 import type {
   Connector,
   ConnectorAuthDescription,
@@ -312,6 +313,7 @@ export function apiConnector(
   oauth?: ApiOAuthHooks,
 ): Connector {
   opts = assertKnownOptions(opts, `api(${JSON.stringify(id)})`, API_OPTIONS);
+  assertStaticToolNames(opts.tools, `api(${JSON.stringify(id)}).tools`);
   if (opts.oauth !== undefined && oauth === undefined) {
     throw new Error(
       `api() connector "${id}" declares oauth but was built without its grant; construct it with api().`,
