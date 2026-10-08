@@ -150,6 +150,10 @@ bodies with `Cache-Control: no-store` and the HTTP statuses below. They omit the
 unknown RPC id because the route refuses before decoding the RPC body. An aborted
 request releases its resources without cancelling a newly created deadline
 error body. Auth adapters continue to own their challenges and refusal bodies.
+Admission and Connecta-owned refusal bodies share the MCP exchange's
+request-scoped sent-credential set and pass through `redactAgentOutput` before
+serialization. The SDK's `server/discover` response and registered meta-tool
+results use that same set; connector contexts retain only an opaque scope.
 
 | Refusal | HTTP status | Application code | Previous code |
 | --- | --- | --- | --- |

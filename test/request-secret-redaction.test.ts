@@ -334,6 +334,7 @@ it.each(["modern", "legacy"])("INV-5: %s MCP wire responses redact failed listin
       request.headers.set("Mcp-Protocol-Version", "2026-07-28");
       request.headers.set("Mcp-Method", "tools/call");
       request.headers.set("Mcp-Name", "call_tool");
+      request.headers.set("Mcp-Param-Address", "catalog.read");
     }
     const response = await app.fetch(request);
     const body = await response.text();
