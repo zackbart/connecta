@@ -611,7 +611,7 @@ export function connectorStatusLabel(status: string, problem?: UiProblem): strin
   return "Unavailable";
 }
 
-export function toolCountLabel(count: number): string {
+function toolCountLabel(count: number): string {
   return `${count} ${count === 1 ? "tool" : "tools"}`;
 }
 

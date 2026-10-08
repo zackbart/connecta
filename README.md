@@ -112,13 +112,14 @@ facts, and the caller's grants and permissions. `CONNECTA_TOKEN=<bearer> connect
 doctor --config --url https://connecta.example` prints only the scoped snapshot
 as JSON, using the same serializer. It does not run the diagnostic program.
 
-The optional UI shows each person's connections and effective permissions.
-Authentication controls live inside each connection, with optional activity
-history. The configured connection list loads before downstream checks finish;
-a slow provider does not hold up the page. Connector selection and access rules
-remain in deployment code. It also explains which tools can run in programs or
-need approval, offers a fixed repair prompt for classified failures, and shows
-client setup commands for the endpoints the signed-in person can use.
+The optional UI has Overview, Connectors, Tools, Access, Activity, Artifacts and
+Config pages. Connector detail separates configuration, schemas, authentication,
+activity and diagnostics into tabs. Overview shows health, attention items and
+endpoint setup in a drawer; Config marks each snapshot value as default or
+configured. Catalog descriptions and schemas render as text. Activity filters
+stay in the URL and calls group by recorded request id. Authentication, history,
+artifacts and token controls use the signed-in person's existing permissions.
+Connector selection and access rules remain in deployment code.
 
 One deployment may serve several authenticated people inside the same tenant.
 Cloudflare Access supplies Worker identity; Node uses Clerk for human auth. Machine clients use connecta-issued `cta_`

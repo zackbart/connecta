@@ -124,14 +124,14 @@ describe("status UI filtering", () => {
 
 describe("operator page routing and capabilities", () => {
   it("maps only canonical shell paths and builds page-specific titles", () => {
-    expect(operatorPageForPath("/")).toBe("connections");
+    expect(operatorPageForPath("/")).toBe("overview");
     expect(operatorPageForPath("/credentials")).toBeUndefined();
     expect(operatorPageForPath("/tokens")).toBe("tokens");
     expect(operatorPageForPath("/activity")).toBe("activity");
     expect(operatorPageForPath("/ui")).toBeUndefined();
     expect(operatorPageForPath("/ui/data")).toBeUndefined();
     expect(operatorPageTitle("connections", "Acme Connecta")).toBe(
-      "Connections — Acme Connecta",
+      "Connectors — Acme Connecta",
     );
   });
 

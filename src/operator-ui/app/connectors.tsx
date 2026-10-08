@@ -7,7 +7,7 @@ import { Button, DataTable, Input } from "./primitives.js";
 import { ContractState } from "./overview.js";
 import { loadOperatorContract, navigate } from "./store.js";
 
-export function ConnectorLink({ id, name, tab }: { id: string; name?: string; tab?: string }) {
+function ConnectorLink({ id, name, tab }: { id: string; name?: string; tab?: string }) {
   const href = `/connectors/${encodeURIComponent(id)}${tab ? `#${tab}` : ""}`;
   return <a href={href} onClick={event => {
     if (event.button || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
@@ -36,7 +36,7 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
   const visible = rows.filter(row => [row.id, row.title, row.source, row.status].some(value => value.toLowerCase().includes(q)));
   return <section id="connectionsView"><div className="page-heading"><h1 id="connectionsHeading" tabIndex={-1}>Connectors</h1><Button disabled={state.contractPhase === "loading"} onClick={() => void loadOperatorContract()}>Refresh</Button></div>
     <p className="meta">Configured in code. Open a connector to inspect its catalog, authentication, and diagnostics.</p>
-    {!contract ? <ContractState state={state} /> : <section className="section" aria-labelledby="connectorLedgerHeading"><div className="section-head"><h2 id="connectorLedgerHeading">{rows.length} connectors</h2><Input id="filter" type="search" className="filter" value={query} onChange={e => setQuery(e.target.value)} placeholder="Filter connectors…" aria-label="Filter connectors" /></div>
+    {!contract ? <ContractState state={state} /> : <section className="section" aria-labelledby="connectorLedgerHeading"><div className="section-head"><h2 id="connectorLedgerHeading" tabIndex={-1}>{rows.length} connectors</h2><Input id="filter" type="search" className="filter" value={query} onChange={e => setQuery(e.target.value)} placeholder="Filter connectors…" aria-label="Filter connectors" /></div>
       {visible.length ? <DataTable data={visible} columns={columns} label="Connectors" /> : <StateBlock>{rows.length ? "No connectors match this filter." : "No connectors are visible to this session."}</StateBlock>}
     </section>}
   </section>;

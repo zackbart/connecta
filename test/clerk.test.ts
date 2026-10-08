@@ -72,7 +72,7 @@ describe("OAuth browser token policy", () => {
       const refusedStart = await app.fetch(new Request(link, { headers: { Authorization: "Bearer mcp-oauth-token" } }));
       expect(refusedStart.status).toBe(401);
       expect(refusedStart.headers.get("WWW-Authenticate")).toContain('scope="openid profile email"');
-      expect((await app.fetch(new Request(link, { headers: { Cookie: "__session=alice" } }))).status).toBe(302);
+      expect((await app.fetch(new Request(`${link}&start=1`, { headers: { Cookie: "__session=alice" } }))).status).toBe(302);
       const callback = `${BASE}/oauth/callback/service?code=code&state=flow-state`;
       const refusedCallback = await app.fetch(new Request(callback, { headers: { Authorization: "Bearer mcp-oauth-token" } }));
       expect(refusedCallback.status).toBe(401);
@@ -467,7 +467,7 @@ describe("clerkAuth inbound auth", () => {
       const handshake = await app.fetch(new Request(link, { headers: { Cookie: "__session=expired" } }));
       expect(handshake.status).toBe(307);
       expect(handshake.headers.get("Set-Cookie")).toContain("__clerk_hs=refresh");
-      const started = await app.fetch(new Request(link, { headers: { Cookie: "__session=fresh" } }));
+      const started = await app.fetch(new Request(`${link}&start=1`, { headers: { Cookie: "__session=fresh" } }));
       expect(started.status).toBe(302);
       expect(mocks.authenticateRequest).toHaveBeenLastCalledWith(expect.any(Request), { acceptsToken: "session_token" });
       expect(started.headers.get("Location")).toContain("https://consent.example/authorize?");

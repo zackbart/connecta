@@ -1,3 +1,4 @@
+import { fixtureContract } from "./operator-fixture.js";
 import { createServer, type Server } from "node:http";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
@@ -46,11 +47,13 @@ test.beforeAll(async () => {
 test.afterAll(async () => { await new Promise<void>(resolve => server.close(() => resolve())); });
 
 async function openShell(page: Page, scheme = "light", clerk = false) {
+  await page.route("**/ui/api/config", async route => route.fulfill({ json: await fixtureContract(fixture) }));
   await page.route("**/ui/data", route => route.fulfill({ json: { ...fixture, connectors: fixture.connectors.map(c => ({ ...c, status: "loading", toolCount: 0 })) } }));
   await page.route("**/ui/connectors/*", route => route.fulfill({ json: fixture.connectors.find(c => route.request().url().split("/").pop() === c.id) }));
   await page.addInitScript(`localStorage.setItem('connecta:token', ${JSON.stringify(TOKEN)}); localStorage.setItem('connecta:scheme', ${JSON.stringify(scheme)});`);
   await page.goto(origin + (clerk ? "/?clerk" : "/"));
-  await expect(page.getByRole("heading", { name: "GitHub", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
+  await expect(page.getByText("Slack", { exact: true })).toBeVisible();
   await page.evaluate("document.fonts.ready");
 }
 
@@ -81,7 +84,7 @@ test("command palette filters, traps focus and restores its trigger", async ({ p
   await expect(dialog).toBeVisible();
   await page.getByPlaceholder("Search pages…").fill("Act");
   await expect(page.getByRole("option", { name: "Activity" })).toBeVisible();
-  await expect(page.getByRole("option", { name: "Connections" })).toHaveCount(0);
+  await expect(page.getByRole("option", { name: "Connectors" })).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();
   await page.keyboard.press("Meta+k");

@@ -234,12 +234,13 @@ function OperatorApp() {
   useEffect(() => {
     if (!ready) return;
     if (!isArtifactPage(state.page) && state.data && state.contractPhase === "idle") void loadOperatorContract();
-    if ((state.page === "tokens" || state.page === "access") && state.data?.accessTokenManagement === "available" && state.tokenPhase === "idle") {
+    if ((state.page === "tokens" || (state.page === "access" && state.contract?.you.permissions.accessTokenManagement)) && state.data?.accessTokenManagement === "available" && state.tokenPhase === "idle") {
       void loadAccessTokens();
     }
     if (
       (state.page === "activity" || state.page === "connector") &&
       state.data?.activityEnabled &&
+      state.contract?.you.permissions.activity &&
       state.activityPhase === "idle"
     ) {
       void loadActivity(true);

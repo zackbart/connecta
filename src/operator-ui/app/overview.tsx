@@ -3,11 +3,12 @@ import type { OperatorState } from "../view.js";
 import { connectorStatusLabel, connectorStatusTone } from "../view.js";
 import { clientServerName, clientSetupCommands, poolEndpointUrl } from "../setup-commands.js";
 import { mcpUrl } from "./config.js";
-import { Badge, CopyButton, StateBlock } from "./parts.js";
+import { Badge, CopyButton, LoadFailure, StateBlock } from "./parts.js";
 import { Button, Dialog } from "./primitives.js";
 import { loadHealth, loadOperatorContract } from "./store.js";
 
 export function ContractState({ state }: { state: OperatorState }) {
+  if (state.loadFailure) return <LoadFailure state={state} />;
   return <StateBlock {...(state.contractPhase === "error" ? {
     title: "Configuration couldn't be loaded", action: { label: "Retry", onClick: () => void loadOperatorContract() },
   } : {})}>

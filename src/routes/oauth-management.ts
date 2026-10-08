@@ -67,7 +67,11 @@ function oauthManagementRequest(
         try: () => oauthConnectUrl(opts, baseUrl, connectorId, authz.principalKey, mode === "restart"),
         catch: () => new Answer(privateJson({ error: "OAuth connection link could not be created" }, { status: 502 })),
       });
-      return privateJson({ state: "auth_required", authorizationUrl });
+      // This POST is already an explicit connect action; the browser visit
+      // verifies the signed initiator and applies it without another UI hand-off.
+      const target = new URL(authorizationUrl);
+      if (opts.config.ui) target.searchParams.set("start", "1");
+      return privateJson({ state: "auth_required", authorizationUrl: target.href });
     }
 
     let ctx: ReturnType<typeof registry.contextFor> | undefined;

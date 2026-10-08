@@ -529,3 +529,11 @@ select { background: var(--surface); color: var(--text); border: 1px solid var(-
 .request-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: .75rem; padding: .5rem 1rem; background: var(--surface-2); border-bottom: 1px solid var(--border); font-size: var(--text-xs); }
 .request-head code { color: var(--muted); overflow-wrap: anywhere; }
 .request-group .activity-item + .activity-item { border-top: 1px solid var(--border); }
+#connectorView, .tabs-content, .collection { min-width: 0; }
+.tabs-list { overflow-x: auto; max-width: 100%; }
+.tabs-trigger { flex-shrink: 0; }
+@media (max-width: 760px) {
+  .snapshot-value { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) auto; gap: .5rem; }
+  .operator-shell .conn-head { align-items: flex-start; }
+}
+.page-heading { align-items: flex-start; }

@@ -374,7 +374,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   const handler = createFetchHandler({
     config: resolved,
     configDescription: description,
-    configValueSources: describeConfigSources(description, config),
+    configValueSources: describeConfigSources(description, input),
     registry,
     pools,
     executor,

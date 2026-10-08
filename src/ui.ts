@@ -274,7 +274,7 @@ export function operatorUi(
   options: { branding?: ConnectaBranding } = {},
 ): OperatorSurface {
   options = assertKnownOptions(options, "operatorUi()", OPERATOR_UI_OPTIONS);
-  const reservedPaths = ["/", "/ui", "/ui/*", "/favicon.svg", "/favicon.ico"];
+  const reservedPaths = ["/", "/connectors", "/connectors/*", "/tools", "/access", "/config", "/ui", "/ui/*", "/favicon.svg", "/favicon.ico"];
   return {
     ...options,
     reservedPaths,

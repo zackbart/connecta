@@ -1,8 +1,9 @@
+import { useLocation } from "@tanstack/react-router";
 import type { UiConnector } from "../model.js";
 import { confirmCopy, connectorLoadFailureCopy, driftCounts, driftState, driftSummary, formatDate, permissionLabel, problemCopy, problemTone, safeHttpHref, type OperatorState } from "../view.js";
 import { productName } from "./config.js";
 import { CredentialCard } from "./credentials.js";
-import { ConfirmBar, FixPrompt, FixPromptButton, FixPromptPreview, NoticeLine } from "./parts.js";
+import { ConfirmBar, FixPrompt, FixPromptButton, FixPromptPreview, NoticeLine, StateBlock, focusableId } from "./parts.js";
 import { askConfirm, cancelConfirm, disconnectOAuth, refreshConnector, startOAuth } from "./store.js";
 
 const DRIFT_HEADING: Record<ReturnType<typeof driftState>, string> = {
@@ -65,10 +66,17 @@ function AuthActions({
   manage: boolean;
   state: OperatorState;
 }) {
+  const location = useLocation();
+  const handoff = new URLSearchParams(location.searchStr).get("h");
   const id = connector.id;
   const authorization = safeHttpHref(connector.authorizationUrl);
   const busy = state.oauthBusy === id;
   if (connector.status === "loading") return null;
+  if (handoff && manage && connector.oauth) {
+    const target = new URL(`/connect/${encodeURIComponent(id)}`, window.location.origin);
+    target.searchParams.set("h", handoff); target.searchParams.set("start", "1");
+    return <a className="btn primary" href={target.href} target="_blank" rel="noopener noreferrer">Continue requested authorization</a>;
+  }
   // No lifecycle hooks, or no right to use them: a pending link is still the
   // one thing this identity can do.
   if (!connector.oauth || !manage) {
@@ -141,11 +149,16 @@ export function ConnectorAuth({ connector, state }: { connector: UiConnector; st
   const manage = Boolean(connector.permissions?.manageSharedAuth || connector.permissions?.connectPersonal);
   const confirming = state.confirming?.connectorId === id ? state.confirming : null;
   const oauthConfirm = confirming && confirming.action !== "credential_remove" ? confirming : null;
+  const local = state.connectorFailures[id];
+  const problem = !local && connector.status !== "loading" ? problemCopy(connector.problem) : null;
   return <div className="collection" data-connector={id}>
     {connector.registrationPath ? <p className="meta">OAuth client: {{ cimd: "Client metadata document (CIMD)", dcr: "Dynamic registration (DCR)", static: "Pre-registered client" }[connector.registrationPath]}</p> : null}
+    {connector.status === "loading" ? <StateBlock>Loading authentication details…</StateBlock> : null}
+    {problem && connector.problem ? <p className={problemTone(connector.problem) === "warn" ? "msg warn" : "msg"} data-problem={connector.problem}>{problem}</p> : null}
+    {local ? <p className="msg warn" data-load-failure={local}>{connectorLoadFailureCopy(local, productName)}</p> : null}
     <p className="meta">{permissionLabel(connector)}</p>
-    <div className="actions"><AuthActions connector={connector} name={name} manage={manage} state={state} /></div>
-    {oauthConfirm ? <ConfirmBar id={id} {...confirmCopy(oauthConfirm.action, name)} onConfirm={() => { if (oauthConfirm.action === "oauth_restart") void startOAuth(id, "restart"); else void disconnectOAuth(id); }} onCancel={() => cancelConfirm(`auth-${id}`)} /> : null}
+    <div className="actions">{local ? null : <AuthActions connector={connector} name={name} manage={manage} state={state} />}<button className={local ? "btn primary" : "btn quiet"} type="button" aria-label={`Refresh ${name}`} disabled={connector.status === "loading"} onClick={() => void refreshConnector(id)}>Refresh</button></div>
+    {oauthConfirm ? <ConfirmBar id={id} {...confirmCopy(oauthConfirm.action, name)} onConfirm={() => { if (oauthConfirm.action === "oauth_restart") void startOAuth(id, "restart"); else void disconnectOAuth(id); }} onCancel={() => cancelConfirm(focusableId(oauthConfirm.action === "oauth_restart" ? `reconnect-${id}` : `disconnect-${id}`, `auth-${id}`))} /> : null}
     <NoticeLine id={`oauthNotice-${id}`} notice={state.oauthNoticeFor === id ? state.oauthNotice : null} />
     {connector.credential ? <CredentialCard connector={connector} credential={connector.credential} editing={state.credentialEditing === id} busy={state.credentialBusy === id} confirming={confirming?.action === "credential_remove"} notice={state.credentialNoticeFor === id ? state.credentialNotice : null} /> : <p className="meta">No operator-managed credential slot is visible. Credentials configured in code stay in the deployment.</p>}
   </div>;
@@ -156,9 +169,9 @@ export function ConnectorDiagnostics({ connector, state }: { connector: UiConnec
   const failure = state.connectorFailures[connector.id];
   const fixKind = connector.problem && problemTone(connector.problem) === "danger" ? connector.problem : null;
   return <div className="collection">
-    {problem ? <p className="meta">{problem}</p> : null}
-    {failure ? <p className="msg warn">{connectorLoadFailureCopy(failure, productName)}</p> : null}
-    <div className="actions"><button className="btn" type="button" disabled={connector.status === "loading"} onClick={() => void refreshConnector(connector.id)}>Refresh diagnostics</button>{fixKind ? <FixPromptButton kind={fixKind} connectorId={connector.id} name={connector.title || connector.id} /> : null}</div>
+    {problem ? <p className={connector.problem && problemTone(connector.problem) === "warn" ? "msg warn" : "msg"} data-problem={connector.problem}>{problem}</p> : null}
+    {failure ? <p className="msg warn" data-load-failure={failure}>{connectorLoadFailureCopy(failure, productName)}</p> : null}
+    <div className="actions"><button className="btn" type="button" aria-label={`Refresh ${connector.title || connector.id}`} disabled={connector.status === "loading"} onClick={() => void refreshConnector(connector.id)}>Refresh diagnostics</button>{fixKind ? <FixPromptButton kind={fixKind} connectorId={connector.id} name={connector.title || connector.id} /> : null}</div>
     {fixKind ? <FixPromptPreview kind={fixKind} connectorId={connector.id} standalone /> : null}
     <DriftPanel connector={connector} />
     {connector.catalogAccess ? <p className="meta">Catalog cache {connector.catalogAccess.state} · {formatDate(connector.catalogAccess.observedAt)}</p> : null}

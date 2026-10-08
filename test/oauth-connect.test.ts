@@ -16,7 +16,7 @@ afterEach(async () => {
   await Promise.all(deployments.splice(0).map(app => app.close()));
 });
 
-function setup(provider: "clerk" | "access", authScope: "personal" | "shared", options: { vault?: boolean; interactive?: boolean; bobAdmin?: boolean; hostedSignIn?: boolean } = {}) {
+function setup(provider: "clerk" | "access", authScope: "personal" | "shared", options: { vault?: boolean; interactive?: boolean; bobAdmin?: boolean; hostedSignIn?: boolean; ui?: boolean } = {}) {
   const storage = memoryStorage();
   let state = "";
   let permitted = true;
@@ -38,7 +38,7 @@ function setup(provider: "clerk" | "access", authScope: "personal" | "shared", o
     ...fakeClerkAuth({ token: user, userId: user, ...(options.hostedSignIn === false ? {} : { signInUrl: "https://accounts.example/sign-in" }) }),
     activityActorNamespace: "https://clerk.example.test",
   }));
-  const app = createTestConnecta({ connectors: [connector], auth, storage, publicUrl: BASE, logger: "silent",
+  const app = createTestConnecta({ ...(options.ui === false ? { ui: undefined } : {}), connectors: [connector], auth, storage, publicUrl: BASE, logger: "silent",
     ...(options.vault === false ? {} : { vault: encryptedCredentialVault(storage, CREDENTIAL_KEY) }),
     identity: {
       credentialAdministration: identity => permitted && (identity.principal?.id === "alice" || options.bobAdmin) ? "all" : "none",
@@ -48,7 +48,17 @@ function setup(provider: "clerk" | "access", authScope: "personal" | "shared", o
   deployments.push(app);
   const runtime = (user?: string) => provider === "access" ? { waitUntil() {}, access: { aud: "test-app", getIdentity: async () => user ? { user_uuid: user } : undefined } } : undefined;
   const headers = (user?: string) => user && provider === "clerk" ? { Cookie: `__session=${user}` } : {};
-  const browser = (url: string, user?: string) => app.fetch(new Request(url, { headers: headers(user) }), undefined, runtime(user));
+  // Existing lifecycle cases continue from the new page's explicit Connect
+  // action. Playwright covers the initial page hand-off itself.
+  const browser = async (url: string, user?: string) => {
+    const response = await app.fetch(new Request(url, { headers: headers(user) }), undefined, runtime(user));
+    const location = response.headers.get("Location");
+    if (user && location && new URL(location).pathname === "/connectors/service") {
+      const start = new URL(url); start.searchParams.set("start", "1");
+      return app.fetch(new Request(start, { headers: headers(user) }), undefined, runtime(user));
+    }
+    return response;
+  };
   const authorize = async (user = "alice", force = false) => {
     const result = await readJsonRpc(await app.fetch(mcpRpc("tools/call", {
       name: "authorize_connector", arguments: { connector: "service", force },
@@ -209,7 +219,7 @@ it("requires Clerk or Cloudflare Access rather than a machine bearer", async () 
 });
 
 it("returns an unauthenticated Clerk browser from hosted sign-in to the same connect link", async () => {
-  const flow = setup("clerk", "personal");
+  const flow = setup("clerk", "personal", { ui: false });
   const link = await flow.authorize();
   const response = await flow.browser(link.authorizationUrl);
   expect(response.status).toBe(302);
@@ -220,7 +230,7 @@ it("returns an unauthenticated Clerk browser from hosted sign-in to the same con
 });
 
 it("serves local Clerk sign-in when no hosted page is configured", async () => {
-  const flow = setup("clerk", "personal", { hostedSignIn: false });
+  const flow = setup("clerk", "personal", { hostedSignIn: false, ui: false });
   const link = await flow.authorize();
   const response = await flow.browser(link.authorizationUrl);
   expect(response.status).toBe(200);
@@ -321,6 +331,8 @@ describe("OAuth identity and signature boundaries", () => {
     }
     expect(startAuth).not.toHaveBeenCalled();
     expect((await app.fetch(new Request(link, { headers: { Cookie: "__session=alice" } }), undefined, runtime(true))).status).toBe(302);
+    expect(startAuth).not.toHaveBeenCalled();
+    expect((await app.fetch(new Request(`${link}&start=1`, { headers: { Cookie: "__session=alice" } }), undefined, runtime(true))).status).toBe(302);
     const callback = `${BASE}/oauth/callback/service?code=code&state=${state}`;
     for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
       const response = await app.fetch(new Request(callback, { method, headers: { Authorization: `Bearer ${token}` } }), undefined, runtime());

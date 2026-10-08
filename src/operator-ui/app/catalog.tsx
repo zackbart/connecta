@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import type { OperatorTool } from "../contract.js";
 import { Badge, StateBlock } from "./parts.js";
@@ -13,11 +13,11 @@ export function Catalog({ tools }: { tools: CatalogRow[] }) {
   const q = query.trim().toLowerCase();
   const visible = tools.filter(t => (classification === "all" || t.classification === classification) &&
     [t.address, t.description, t.connectorId].some(value => value?.toLowerCase().includes(q)));
-  const columns: ColumnDef<CatalogRow>[] = [
+  const columns = useMemo<ColumnDef<CatalogRow>[]>(() => [
     { accessorKey: "address", header: "Tool", cell: ({ row }) => <div className="table-name"><Button variant="quiet" className="schema-trigger" onClick={event => { returnFocus.current = event.currentTarget; setSelected(row.original); }}><code>{row.original.address}</code></Button>{row.original.description ? <span className="td catalog-description">{row.original.description}</span> : null}</div> },
     { accessorKey: "connectorId", header: "Connector", cell: ({ row }) => <a href={`/connectors/${encodeURIComponent(row.original.connectorId)}#tools`}>{row.original.connectorId}</a> },
     { accessorKey: "classification", header: "Classification", cell: ({ row }) => <Badge tone={row.original.classification === "read" ? "ok" : "warn"}>{row.original.classification}</Badge> },
-  ];
+  ], []);
   return <div className="collection"><div className="row"><Input type="search" aria-label="Filter tools" placeholder="Filter tools…" value={query} onChange={e => setQuery(e.target.value)} /><label className="select-label">Classification<select aria-label="Tool classification" value={classification} onChange={e => setClassification(e.target.value)}><option value="all">All tools</option><option value="read">Read</option><option value="write">Write</option></select></label></div>
     <p className="meta">{visible.length} of {tools.length} tools. Select a tool to inspect its schema.</p>
     {visible.length ? <DataTable data={visible} columns={columns} label="Tool catalog" /> : <StateBlock>{tools.length ? "No tools match these filters." : "No live tools are visible. Check the connector's authentication and diagnostics."}</StateBlock>}

@@ -891,7 +891,7 @@ function loadCurrent(): Promise<void> {
  */
 export function retryLoad(): Promise<void> {
   set({
-    pendingFocus: state.page === "connections" ? "connectorLedgerHeading" : `${state.page}Heading`,
+    pendingFocus: `${state.page}Heading`,
   });
   return loadCurrent();
 }
@@ -899,7 +899,7 @@ export function retryLoad(): Promise<void> {
 /** Retry for a collection page, with focus kept on its heading. */
 export function retryCollection(): Promise<void> {
   set({ pendingFocus: `${state.page}Heading` });
-  if (state.page === "activity") return loadActivity(true);
+  if (state.page === "activity" || state.page === "connector") return loadActivity(true);
   if (state.page === "artifact") return loadArtifactView();
   return loadArtifacts(true);
 }

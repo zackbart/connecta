@@ -92,7 +92,7 @@ describe("status UI", () => {
   it("serves direct, page-specific, data-free operator shells", async () => {
     const c = makeDeployment(uiDeploymentConfig());
     for (const [path, page, label] of [
-      ["/", "connections", "Connections"],
+      ["/", "overview", "Overview"],
     ] as const) {
       const res = await c.fetch(new Request(`${BASE}${path}`));
       expect(res.status).toBe(200);
@@ -265,7 +265,7 @@ describe("status UI", () => {
     const body = await res.text();
 
     expect(body).toContain(
-      "<title>Connections — Connecta — Acme &amp; Co.</title>",
+      "<title>Overview — Connecta — Acme &amp; Co.</title>",
     );
     expect(body).toContain('href="https://example.com"');
     expect(body).toContain("Manage Acme agent connections.");
