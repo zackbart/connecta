@@ -4,6 +4,8 @@ const atom = "(?:[A-Za-z0-9_.~!$'()*+@-]|%[0-9A-Fa-f]{2})";
 const variable = "(?:[A-Za-z0-9_]|%[0-9A-Fa-f]{2})+(?:\\.(?:[A-Za-z0-9_]|%[0-9A-Fa-f]{2})+)*";
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+interface Variable { name: string; explode: boolean; prefix: number | undefined }
+interface Expression { operator: string; variables: Variable[] }
 interface Capture { name: string; separator?: string | undefined; prefix?: number | undefined }
 
 export function resourceUriMatchesTemplate(uri: string, template: string): boolean {
@@ -19,6 +21,7 @@ export function resourceUriMatchesTemplate(uri: string, template: string): boole
     if (/[{}]/.test(end < 0 ? rest : rest.slice(0, end))) return false;
   }
   const captures: Capture[] = [];
+  const parts: Array<string | Expression> = [];
   let pattern = "^"; let offset = 0; let expressions = 0;
   let ambiguous = false;
   const capture = (name: string, separator?: string, prefix?: number, reserved = false) => {
@@ -35,6 +38,7 @@ export function resourceUriMatchesTemplate(uri: string, template: string): boole
     // expression with a literal suffix remains supported.
     if (ambiguous && !/[/:?#&;=,]/.test(literal) && !/^[/?#&;]/.test(match[1]!)) return false;
     pattern += escape(literal);
+    parts.push(literal);
     const expression = match[1]!;
     const operator = /^[+#./;?&]/.test(expression) ? expression[0]! : "";
     const specs = expression.slice(operator.length).split(",");
@@ -46,6 +50,7 @@ export function resourceUriMatchesTemplate(uri: string, template: string): boole
     });
     if (variables.some(value => !value) || new Set(variables.map(value => value!.name)).size !== variables.length) return false;
     if (variables.length > 1 && variables.some(value => value!.explode)) return false;
+    parts.push({ operator, variables: variables as Variable[] });
     if (operator === "?" || operator === "&") {
       // Each alternative chooses the first defined variable. Following
       // variables remain optional and retain their declared order.
@@ -55,7 +60,11 @@ export function resourceUriMatchesTemplate(uri: string, template: string): boole
       });
       pattern += `(?:${escape(operator)}(?:${alternatives.join("|")}))?`;
     } else if (operator === ";") {
-      pattern += variables.map(value => `(?:;${escape(value!.name)}(?:=${capture(value!.name, value!.explode ? "," : undefined, value!.prefix)})?)?`).join("");
+      pattern += variables.map(value => {
+        const nonempty = capture(value!.name, value!.explode ? "," : undefined, value!.prefix);
+        captures.push({ name: value!.name, prefix: value!.prefix });
+        return `(?:;${escape(value!.name)}(?:=${nonempty}|()))?`;
+      }).join("");
     } else {
       const prefix = operator === "+" ? "" : operator;
       const separator = operator === "/" || operator === "." ? operator : ",";
@@ -68,6 +77,7 @@ export function resourceUriMatchesTemplate(uri: string, template: string): boole
   const tail = template.slice(offset);
   if (/[{}]/.test(tail)) return false;
   pattern += escape(tail) + "$";
+  parts.push(tail);
   const matched = new RegExp(pattern).exec(uri);
   if (!matched) return false;
   const values = new Map<string, Array<{ parts: string[]; prefix: number | undefined }>>();
@@ -83,13 +93,40 @@ export function resourceUriMatchesTemplate(uri: string, template: string): boole
   }
   // Repeated variable names denote the same value. Prefix modifiers must
   // agree with that value, rather than creating independent wildcards.
-  return [...values.values()].every(occurrences => {
+  const candidates = new Map<string, string[]>();
+  for (const [name, occurrences] of values) {
     const candidate = occurrences.find(value => value.prefix === undefined || Array.from(value.parts[0]!).length < value.prefix)
       ?? occurrences.reduce((a, b) => a.parts[0]!.length >= b.parts[0]!.length ? a : b);
-    return occurrences.every(value => value.prefix === undefined
+    if (!occurrences.every(value => value.prefix === undefined
       ? JSON.stringify(value.parts) === JSON.stringify(candidate.parts)
-      : value.parts.length === 1 && value.parts[0] === Array.from(candidate.parts[0]!).slice(0, value.prefix).join(""));
-  });
+      : value.parts.length === 1 && value.parts[0] === Array.from(candidate.parts[0]!).slice(0, value.prefix).join(""))) return false;
+    candidates.set(name, candidate.parts);
+  }
+  // Re-expand the inferred values. A wildcard match alone cannot establish
+  // RFC 6570 membership: absent variables, named empties and repeated names
+  // must produce the same URI at every occurrence.
+  const expanded = parts.map(part => typeof part === "string" ? part : expand(part, candidates)).join("");
+  const canonical = (text: string) => text.replace(/%[0-9a-f]{2}/gi, value => value.toUpperCase());
+  return canonical(expanded) === canonical(uri);
+}
+
+function expand({ operator, variables }: Expression, values: Map<string, string[]>): string {
+  const named = operator === ";" || operator === "?" || operator === "&";
+  const prefix = operator === "+" ? "" : operator;
+  const separator = operator === "/" || operator === "." || operator === ";" ? operator : named ? "&" : ",";
+  const encode = (value: string) => operator === "+" || operator === "#" ? value.split(/(%[0-9a-f]{2})/gi).map(part => /^%[0-9a-f]{2}$/i.test(part) ? part : encodeURI(part)).join("")
+    : encodeURIComponent(value).replace(/[!'()*]/g, character => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+  const nameValue = (name: string, value: string) => named ? name + (value || operator !== ";" ? `=${value}` : "") : value;
+  const expansions: string[] = [];
+  for (const variable of variables) {
+    const parts = values.get(variable.name);
+    if (!parts) continue;
+    const encoded = parts.map(value => encode(variable.prefix === undefined ? value : Array.from(value).slice(0, variable.prefix).join("")));
+    expansions.push(variable.explode && parts.length > 1
+      ? encoded.map(value => nameValue(variable.name, value)).join(separator)
+      : nameValue(variable.name, encoded.join(",")));
+  }
+  return expansions.length ? prefix + expansions.join(separator) : "";
 }
 
 function safeValue(raw: string, prefix?: number): string | undefined {

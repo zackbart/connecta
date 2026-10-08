@@ -3,6 +3,7 @@ import { resourceUriMatchesTemplate } from "../src/connectors/resource-uri.js";
 
 it.each([
   ["docs://manual/{id}/{id}", "docs://manual/a/a"],
+  ["docs://manual/{+id}/{id}", "docs://manual/%20/%20"],
   ["docs://manual/{id:1}/{id}", "docs://manual/a/abc"],
   ["docs://manual/entry{/a,b}", "docs://manual/entry/one"],
   ["docs://manual/{page}", "docs://manual/start"],
@@ -14,6 +15,7 @@ it.each([
   ["docs://manual/entry{/a,b}", "docs://manual/entry/one/two"],
   ["docs://manual/entry{.format}", "docs://manual/entry.json"],
   ["docs://manual/entry{;format}", "docs://manual/entry;format=json"],
+  ["docs://manual/entry{;format}", "docs://manual/entry;format"],
   ["docs://manual/entry{?page,format}", "docs://manual/entry?format=json"],
   ["docs://manual/entry{?page,format}", "docs://manual/entry?page=1&format=json"],
   ["docs://manual/entry?fixed=1{&format}", "docs://manual/entry?fixed=1&format=json"],
@@ -26,6 +28,10 @@ it.each([
 
 it.each([
   ["docs://manual/{id}/{id}", "docs://manual/a/b"],
+  ["docs://manual/{+id}/{id}", "docs://manual/%2520/%2520"],
+  ["docs://manual/entry{;id}/{id}", "docs://manual/entry;id/a"],
+  ["docs://manual/entry{#id}/{id}", "docs://manual/entry/a"],
+  ["docs://manual/entry{?id}/{id}", "docs://manual/entry/a"],
   ["docs://manual/{id:2}/{id}", "docs://manual/a/abc"],
   ["docs://manual/{page}", "docs://manual/start!"],
   ["docs://manual/{page:3}", "docs://manual/abcd"],

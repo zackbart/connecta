@@ -7,10 +7,14 @@ export interface GuestApi {
   describe(args?: CatalogDescribeArgs): Promise<{ tools: CatalogDescription[] }>;
   call(address: string, args?: unknown, options?: { timeoutMs?: number }): Promise<GuestResult>;
   call(request: { address: string; args?: unknown; timeoutMs?: number }): Promise<GuestResult>;
-  read(uri: string): Promise<{ contents: Array<{ uri: string; mimeType?: string } & ({ text: string } | { blob: string })> }>;
+  read(uri: string): Promise<GuestResourceResult>;
   result(id: string, options?: { offset?: number; maxBytes?: number }): Promise<GuestResultPage>;
   skill(name: string): Promise<{ name: string; text: string; format: "text" }>;
   emit(block: GuestBlock): PromiseLike<void>;
+}
+
+export interface GuestResourceResult {
+  contents: Array<{ uri: string; mimeType?: string } & ({ text: string } | { blob: string })>;
 }
 
 export type GuestResult = { data: unknown; format: "json" } | { data: string; format: "text" };

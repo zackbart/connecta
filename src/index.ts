@@ -426,7 +426,7 @@ export { validateToolInput } from "./validate.js";
 export type { ValidateToolInputOptions } from "./validate.js";
 export { memoryStorage } from "./storage/memory.js";
 export { CONNECTA_VERSION } from "./version.js";
-export type { GuestApi, GuestResult, GuestResultPage, GuestBlock } from "./guest-types.js";
+export type { GuestApi, GuestResourceResult, GuestResult, GuestResultPage, GuestBlock } from "./guest-types.js";
 // Registry is reachable through `Connecta.registry`, so its type is public;
 // the class itself, the credential vault, and the meta-tool/sandbox factories
 // are internal factoring and are deliberately not part of the API surface.
