@@ -213,16 +213,16 @@ export class DownstreamElicitation {
       const error = result.structuredContent.error;
       if (!stateObject(error)) return result;
       // The nonce is spent even when the downstream failure would normally
-      // allow a retry. Recovery must start a new direct-call input round.
+      // allow a retry. Preserve write reconciliation and auth prerequisites.
       const echoed = echoedCallArgs(args.args);
       const structuredContent = { ...result.structuredContent, error: {
         ...error, retryable: false,
-        nextAction: {
+        ...(state.tool === "call_tool" && error.nextAction === undefined && error.retry === undefined ? { nextAction: {
           tool: state.tool,
           arguments: { address: state.address, ...echoed },
           purpose: "Re-issue the original direct call without requestState or inputResponses to start a fresh input round. Do not resend this continuation." +
             (args.args !== undefined && !("args" in echoed) ? " Use the exact arguments you sent; they exceed the echo budget." : ""),
-        },
+        } } : {}),
       } };
       return { ...result, structuredContent, content: [{ type: "text", text: JSON.stringify(structuredContent) }] };
     }
