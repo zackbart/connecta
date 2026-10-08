@@ -186,7 +186,7 @@ describe("cloudflare() construction", () => {
     );
     expect(connector.kind).toBe("mcp");
     expect(structuredGuide(connector).content).toContain("search");
-    expect(structuredGuide(connector).content).toContain("classifies every `execute` call as a write");
+    expect(structuredGuide(connector).content).toContain("classifies `execute` as a write");
     expect(calls).toEqual([]);
   });
 

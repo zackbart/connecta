@@ -91,8 +91,8 @@
       "- Resolve account and zone ids independently. Defaults do not constrain token permissions. Distinguish missing or revoked credentials from missing product permissions, and honor supplied rate-limit waits.\n- The catalog contains `search` and `execute`."
     ],
     [
-      "Connecta routes every `execute` call through approval because the tool can",
-      "Connecta classifies every `execute` call as a write because the tool can"
+      "- Connecta routes every `execute` call through approval because the tool can\n  mix GET, POST, PUT, PATCH, and DELETE requests inside one program. The MCP\n  schema cannot establish that arbitrary code is read-only.",
+      "- Connecta classifies `execute` as a write because it can mix GET, POST,\n  PUT, PATCH, and DELETE requests inside one program. Read-only pools route\n  it through `call_destructive_tool`; trusted pools permit it in programs.\n  The host controls approval. The MCP schema cannot establish that arbitrary\n  code is read-only."
     ],
     [
       "Official whole-API MCP. Search the OpenAPI document, then approve each mixed-method execute program.",

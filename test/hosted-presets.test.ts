@@ -4,6 +4,8 @@
 import { describe, expect, it } from "vitest";
 import before from "./fixtures/hosted-presets-abc0d176.json";
 import guideChanges from "./fixtures/hosted-5c-guide-changes.json";
+import trustChanges from "./fixtures/providers-p2-item1-contract-changes.json";
+import { classifyTool } from "../src/tool-safety.js";
 import { providerFixtures } from "./providers.generated.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -21,6 +23,7 @@ import type { Connector, ToolAnnotations } from "../src/types.js";
 
 const factories = { basecamp, linear, mixpanel, revenuecat, stripe, notion, vercel, cloudflare };
 type Name = keyof typeof factories;
+const upstreamContracts = trustChanges as Record<string, Record<string, { describe?: string }>>;
 const construct = (name: Name, options: unknown): Connector => factories[name]("fixture", options as never);
 
 async function hash(value: unknown): Promise<string> {
@@ -51,6 +54,8 @@ describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name
         usageGuide: connector.usageGuide, describeSha256: await hash(connector.describe?.()),
       }));
       const expected = structuredClone(row.metadata);
+      // #734 removed precomputed classifications from raw API descriptions.
+      expected.describeSha256 = upstreamContracts[name]?.[label]?.describe ?? expected.describeSha256;
       expected.usageGuide.content = expectedGuide(name, expected.usageGuide.content);
       if (typeof expected.usageGuide.summary === "string") {
         expected.usageGuide.summary = expectedGuide(name, expected.usageGuide.summary);
@@ -94,6 +99,9 @@ describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name
       const served = await registry.getTools("fixture", "https://connecta.example");
       expect(served.map((tool) => tool.name)).toEqual(names);
       expect(await hash(served.map((tool) => [tool.name, tool.annotations ?? null]))).toBe(recorded.classified[index]);
+      for (const tool of served) {
+        expect(tool.classification).toBe(classifyTool(tool));
+      }
       // Repeated reads use cached facts and still return the same classification.
       expect(await registry.getTools("fixture", "https://connecta.example")).toEqual(served);
       expect(await connector.listTools()).toEqual(facts);
