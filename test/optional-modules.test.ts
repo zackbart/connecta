@@ -73,6 +73,7 @@ describe("optional deployment modules", () => {
     const slow = connector("slow"), fast = connector("fast");
     delete slow.credential; delete fast.credential;
     slow.status = vi.fn(() => new Promise<never>(() => {}));
+    slow.closeScope = vi.fn(async () => {});
     const app = createConnecta({ connectors: [slow, fast], executor, auth, ui: operatorUi(), logger: "silent", discovery: { probeTimeoutMs: 20 } });
     const list = await app.fetch(new Request(BASE + "/ui/data", { headers }));
     expect((await list.json() as any).connectors.map((c: any) => c.status)).toEqual(["loading", "loading"]);
@@ -83,11 +84,26 @@ describe("optional deployment modules", () => {
     void pending.finally(() => { settled = true; });
     const ready = await app.fetch(new Request(BASE + "/ui/connectors/fast", { headers }));
     expect((await ready.json() as any).status).toBe("ok");
+    // Identity hashing during authorization can let the fast request overtake
+    // the slow one. Wait for its probe timer without moving the fake clock:
+    // waitFor's default interval would advance it by 50ms on every poll.
+    const beforeProbe = Date.now();
+    await vi.waitFor(() => {
+      expect(slow.status).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(1);
+    }, { interval: 0 });
+    expect(Date.now()).toBe(beforeProbe);
     await vi.advanceTimersByTimeAsync(19);
     expect(settled).toBe(false);
+    expect(slow.closeScope).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
+    // Await the response's finalizers and Promise handlers at the same 20ms.
+    const response = await pending;
     expect(settled).toBe(true);
-    expect((await (await pending).json() as any).status).toBe("error");
+    expect(Date.now() - beforeProbe).toBe(20);
+    expect((await response.json() as any).status).toBe("error");
+    expect(slow.closeScope).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("bounds a stalled vault read and closes the connector request scope", async () => {
