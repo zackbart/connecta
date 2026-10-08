@@ -139,6 +139,12 @@ function isCallerCancellation(
  */
 class DownstreamToolError extends Error {}
 
+function isTimeoutFailure(error: CallErrorDetails): boolean {
+  const code = error.details?.code;
+  return error.code === "timeout" || (error.code === "unavailable" &&
+    (code === "timeout" || code === "ETIMEDOUT" || code?.endsWith("_TIMEOUT") === true));
+}
+
 function assertRawMcpSuccess(
   kind: ResolvedCatalogTool["connector"]["kind"],
   result: unknown,
@@ -371,16 +377,13 @@ export class InvocationService {
         target: typeof activityTarget,
       ): CallErrorDetails => {
         if (!target) return error;
-        const transportCode = error.details?.code;
-        const timedOut = error.code === "timeout" || (error.code === "unavailable" &&
-          (transportCode === "timeout" || transportCode === "ETIMEDOUT" || transportCode?.endsWith("_TIMEOUT")));
-        if (timedOut && dispatchedToConnector &&
+        if (isTimeoutFailure(error) && dispatchedToConnector &&
           resolved?.definition.classification === "write") {
           const echoed = argumentEcho;
           return {
             ...error,
             code: "write_outcome_unknown",
-            message: `The write ${target.connector.id}.${target.toolName} timed out after dispatch. Its outcome is unknown. Check the target before repeating this call.`,
+            message: `${error.message} Its outcome is unknown. Check the target before repeating this call.`,
             retryable: false,
             connector: target.connector.id,
             operation: `${target.connector.id}.${target.toolName}`,
@@ -468,13 +471,16 @@ export class InvocationService {
       const failed = (error: CallErrorDetails): InvocationOutcome<T> => {
         const diagnostics = timing();
         const target = resolved ?? activityTarget;
-        const details = sentSecrets.redact(enrich(error, target));
-        if (details.code === "timeout") {
+        // Attach host deadline facts before write recovery changes the code.
+        if (isTimeoutFailure(error)) {
           const elapsedMs = Date.now() - started;
-          const operation = sentSecrets.redact(boundedEchoText(address, 512));
-          details.message = `Operation "${operation}" timed out during ${stage} after ${elapsedMs}ms (effective deadline ${context.timeoutMs}ms).`;
-          details.details = { ...details.details, operation, stage, elapsedMs, ...defined({ deadlineMs: context.timeoutMs }) };
+          const operation = boundedEchoText(address, 512);
+          error = { ...error,
+            message: `Operation "${operation}" timed out during ${stage} after ${elapsedMs}ms (effective deadline ${context.timeoutMs}ms).`,
+            details: { ...error.details, operation, stage, elapsedMs, ...defined({ deadlineMs: context.timeoutMs }) },
+          };
         }
+        const details = sentSecrets.redact(enrich(error, target));
         const outcome = (): InvocationOutcome<T> => ({
           ok: false,
           durationMs: Date.now() - started,

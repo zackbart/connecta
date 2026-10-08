@@ -10,6 +10,7 @@ import {
   caseConfig,
   checkQueuedWriteAtExhaustion,
   checkSharedPreludes,
+  checkWriteDeadlineDiagnostics,
   CONTRACT_CASES,
   contractHarness,
 } from "./guest-contract-cases.js";
@@ -38,6 +39,9 @@ describe("guest API contract (QuickJS executor)", () => {
     await checkQueuedWriteAtExhaustion(executor);
   });
   for (const custom of [false, true]) {
+    it(`INV-6 INV-7 INV-9: ${custom ? "customExecutor: " : ""}dispatched write timeouts retain diagnostics through caught guest errors`, async () => {
+      await checkWriteDeadlineDiagnostics(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
+    });
     it(`INV-3: ${custom ? "customExecutor: " : ""}provider preludes retain shared lexical bindings`, async () => {
       await checkSharedPreludes(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
     });

@@ -103,16 +103,21 @@ export function guestPrelude(secret: string): string {
     const entry = { handled: false, settled: promiseThen(task,
       () => ({ ok: true }), error => ({ ok: false, error })) };
     push(pending, entry);
+    // Every derived promise owns propagated rejection; only an unhandled
+    // leaf fails the run, so a later catch also handles its ancestors.
     return freeze({
       then(resolve, reject) {
-        if (typeof reject === "function") entry.handled = true;
+        entry.handled = true;
         return trackEmission(promiseThen(task, resolve, reject));
       },
       catch(reject) {
-        if (typeof reject === "function") entry.handled = true;
+        entry.handled = true;
         return trackEmission(promiseCatch(task, reject));
       },
-      finally(callback) { return trackEmission(promiseFinally(task, callback)); }
+      finally(callback) {
+        entry.handled = true;
+        return trackEmission(promiseFinally(task, callback));
+      }
     });
   }
   const namespace = freeze({

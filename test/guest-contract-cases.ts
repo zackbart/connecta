@@ -24,6 +24,82 @@ export async function checkSharedPreludes(executor: Executor): Promise<void> {
   expect(result.result).toBe(5);
 }
 
+/** Host write accounting retains deadline facts even when guest code catches the error. */
+export async function checkWriteDeadlineDiagnostics(executor: Executor): Promise<void> {
+  let writes = 0;
+  const witnessed: unknown[] = [];
+  const warnings: unknown[] = [];
+  const events: ToolCallActivityEvent[] = [];
+  const logger = { ...silentLogger, warn: (...args: unknown[]) => { warnings.push(args); } };
+  const registry = makeRegistry([{
+    id: "deadline", kind: "api",
+    async listTools() {
+      return [{ name: "write", annotations: { readOnlyHint: false } }, readOnly("witness")];
+    },
+    async callTool(name, args) {
+      if (name === "write") {
+        writes++;
+        return await new Promise<never>(() => {});
+      }
+      witnessed.push(args);
+      return true;
+    },
+  }], { logger });
+  const activity: ActivityRequestContext = {
+    recordTool: recordToolActivity,
+    sink: { record: (event) => { events.push(event); } },
+    actor: { kind: "contract" }, requestId: "deadline-contract-request",
+    serverInfo: { name: "connecta-contract", version: "0" }, logger,
+  };
+  const direct = await createMetaTools(registry, CONTRACT_BASE, { activity }).callDestructiveTool({
+    address: "deadline.write", args: { private: "deadline-argument-sentinel" }, timeoutMs: 25, resultMode: "value",
+  });
+  const check = (error: unknown) => {
+    expect(error).toMatchObject({
+      code: "write_outcome_unknown", retryable: false,
+      details: { operation: "deadline.write", stage: "downstream", elapsedMs: expect.any(Number), deadlineMs: 25 },
+    });
+    expect((error as { details: { elapsedMs: number } }).details.elapsedMs).toBeGreaterThanOrEqual(24);
+  };
+  check(direct.structuredContent?.error);
+  for (const caught of [false, true]) {
+    const result = await createExecuteTool(registry, CONTRACT_BASE, executor, logger, activity, {
+      trust: "trusted", defaultToolTimeoutMs: 25,
+    })({ code: caught ? `async () => {
+      try { await connecta.call("deadline.write", { private: "deadline-argument-sentinel" }); }
+      catch (error) { await connecta.call("deadline.witness", error.details); }
+      return "caught";
+    }` : `async () => await connecta.call("deadline.write", { private: "deadline-argument-sentinel" })` });
+    expect(result.isError).toBe(true);
+    check(result.structuredContent?.error);
+    expect(result.structuredContent).toMatchObject({
+      error: { writes: { succeeded: 0, failed: 0, unknown: 1 } },
+      hostCalls: { attempted: caught ? 2 : 1, admitted: caught ? 2 : 1, succeeded: caught ? 1 : 0, failed: 1 },
+    });
+  }
+  const multiple = await createExecuteTool(registry, CONTRACT_BASE, executor, logger, activity, {
+    trust: "trusted", defaultToolTimeoutMs: 25,
+  })({ code: `async () => await Promise.allSettled([
+    connecta.call("deadline.write", { private: "deadline-argument-sentinel" }),
+    connecta.call("deadline.write", { private: "deadline-argument-sentinel" }),
+  ])` });
+  check(multiple.structuredContent?.error);
+  expect(multiple.structuredContent).toMatchObject({
+    error: { writes: { succeeded: 0, failed: 0, unknown: 2 }, timeouts: [
+      { operation: "deadline.write", stage: "downstream", elapsedMs: expect.any(Number), deadlineMs: 25 },
+      { operation: "deadline.write", stage: "downstream", elapsedMs: expect.any(Number), deadlineMs: 25 },
+    ] },
+    hostCalls: { attempted: 2, admitted: 2, succeeded: 0, failed: 2 },
+  });
+  expect(writes).toBe(5);
+  expect(witnessed).toHaveLength(1);
+  check(witnessed[0]);
+  const sinks = JSON.stringify([warnings, events]);
+  expect(sinks).not.toContain("deadline-argument-sentinel");
+  expect(sinks).not.toContain("uncertainCall");
+  expect(sinks).not.toContain("deadlineMs");
+}
+
 /** Review regression: a write passed its gate but is still in admission. */
 export async function checkQueuedWriteAtExhaustion(executor: Executor): Promise<void> {
   let releaseRead!: () => void;
@@ -777,6 +853,33 @@ return fs;
       expect(outcome.value.error).toMatchObject({ code: suffix.includes("catch") ? "program_error" : "result_too_large" });
     },
   })),
+  ...[".then(x => x)", ".finally(() => {})", ".catch(null)", ".then(x => x).finally(() => {})"].map((suffix): ContractCase => ({
+    clauses: "M1, M3",
+    name: `INV-7: caught emission chains handle propagated failures ${suffix}`,
+    code: `async () => {
+      let caught = false;
+      await connecta.emit({ type: "bad" })${suffix}.catch(error => { caught = error.code === "invalid_args"; });
+      return caught;
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toBe(true);
+    },
+  })),
+  {
+    clauses: "M1, M3",
+    name: "INV-7: catching one emit branch leaves a sibling rejection unhandled",
+    code: `async () => {
+      const emission = connecta.emit({ type: "bad" });
+      emission.then(x => x).catch(() => {});
+      emission.finally(() => {});
+      return "must fail";
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(true);
+      expect(outcome.value.error).toMatchObject({ code: "invalid_args" });
+    },
+  },
   {
     clauses: "M1, M3",
     name: "INV-7: replacing Promise.resolve cannot bypass emission failure delivery",

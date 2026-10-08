@@ -602,6 +602,8 @@ serialized block size reduces the return budget, and oversized text fails with
 reach the model as real MCP media content, including when `emit` is not awaited.
 The trusted runner waits for emission acknowledgments before returning success.
 An unobserved emission failure fails the run; an awaited failure remains catchable.
+Rejections propagated through `then` or `finally` can be caught later in that
+chain. A separate unhandled branch still fails the run.
 
 **M4.** A failed program delivers no blocks. The error result reports
 `emittedDiscarded: N` when N > 0 as a field on the structured envelope.
@@ -679,6 +681,10 @@ Programs and direct calls use the same invocation deadline and stages. A call's
 (default 15,000). A guest may request a longer individual call, but the sandbox
 and request ceilings still bound the whole run. Timeout details are agent-facing;
 INV-6 operator records retain only checked classifications and numeric facts.
+A dispatched write timeout becomes `write_outcome_unknown` and retains its
+deadline details even when the program catches the failure. The final program
+error includes the first timeout in `details`; multiple write timeouts also
+appear in `timeouts`, bounded to ten entries.
 
 **L3.** Every execution runs under a wall-clock deadline that includes time
 spent waiting on host calls. Expiry ends the run with an execution error and no
