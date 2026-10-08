@@ -232,6 +232,17 @@ for (const task of ACTIVE_TASKS) {
     continue;
   }
   const played = await play(task, "reference");
+  const caught = trialControls.find(c => c.task === task.id && c.program);
+  if (caught) {
+    const actual = await play({ ...task, reference: async ctx => {
+      await ctx.call("execute_code", { code: caught.program! });
+      ctx.answer(caught.finalAnswer);
+    } }, "reference");
+    if (required(actual.correct).some(c => !c.pass)) {
+      failures += 1;
+      console.log(`FAIL ${task.id}: replay of the real caught-refusal program against fresh fakes`);
+    } else console.log(`ok   ${task.id}: real caught-refusal program against fresh fakes`);
+  }
   const reference = played.correct;
   const refFailed = required(reference).filter((item) => !item.pass);
   const noop = (await play(task, "noop")).correct;
