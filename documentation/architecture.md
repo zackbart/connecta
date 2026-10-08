@@ -419,23 +419,28 @@ connection context `create` supplies, the maintained text, then deployment
 instructions, which append and never replace. `src/provider.ts` imports neither
 transport, so an `api()` provider gains no MCP client or Effect graph from it
 (`test/purity.node.test.ts`). The factory carries its `definition`, which build and
-check tools read instead of keeping provider lists. All nineteen providers
+check tools read instead of keeping provider lists. All twenty providers
 live in their own folders. The eight hosted implementations, including the
 MCP branches of Notion, Vercel, and Cloudflare, use reviewed presets over
 `remoteMcp({ classify })`. The eleven API-only factories retain an internal
-adapter to the same definition and description-stamping path. The mixed
-providers still select one interface; capability reconciliation is planned in
+adapter to the same definition and description-stamping path. GitHub composes hosted tools with a scope-enforced REST complement. The other
+mixed providers still select one interface; capability reconciliation is planned in
 [#705 item 5d](https://github.com/zackbart/connecta/issues/705).
 
 `remoteMcp({ classify })` is the public way to declare what a downstream's
 tools do: `{ tools: { name: "read" | "write" | "destructive" | { verdict,
-reason?, schemaDigest? } } }`, validated at construction. It fails closed
+reason?, schemaDigest? } }, unlisted?: "hide" }`, validated at construction. It fails closed
 (INV-1): a reviewed read fills silence but yields to an explicit write
 annotation, a reviewed write stays a write whatever the downstream claims, an
 unlisted tool is a read only when it says so, and a reviewed tool whose
 `schemaDigest` no longer matches, or cannot be checked, is a write on discovery
 and every invocation path until a release reviews it again. A digest covers
-the whole schema; one too large to hash whole is unchecked.
+the whole schema; one too large to hash whole is unchecked. `unlisted: "hide"`
+removes every unreviewed name, even an explicitly annotated read, on every
+registry read, including persisted catalogs. `remoteMcp` also refuses direct
+calls to unlisted names before authentication. Tool classification does not
+authorize targets; providers such as GitHub check arguments and configured
+scopes separately before minting credentials.
 
 Connectors report facts; the registry is the only classifier. A reviewed
 connector carries its review as data, the deep-frozen

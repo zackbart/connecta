@@ -30,6 +30,7 @@ export const USAGE_GUIDE = optionsOf<ConnectorUsageGuide>()(keys("content", "sum
 
 /** `remoteMcp()`'s `auth`, closed per `type`. */
 export const REMOTE_MCP_AUTH = variants("type", {
+  request: optionsOf<AuthCase<"request">>()({ ...keys("type", "token"), headers: strings() }).shape,
   headers: optionsOf<AuthCase<"headers">>()({ ...keys("type"), headers: strings() }).shape,
   credential: optionsOf<AuthCase<"credential">>()({
     ...keys("type", "header", "scheme"),

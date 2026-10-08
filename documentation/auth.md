@@ -998,3 +998,23 @@ configured token endpoint healthy without downstream probes and never start
 authorization. `oauth` and
 `credential` are exclusive per connector, giving `auth_required` one recovery.
 For providers offering both, deployment config chooses; handlers check `ctx.oauth`.
+
+## Request-local downstream Bearer tokens
+
+`remoteMcp({ auth: { type: "request", token: async (ctx) => … } })` resolves
+its token before connecting and before reusing a client. The callback receives
+the operation's cancellation context, never an agent-selected credential owner.
+Only shared ownership is accepted. Tokens remain inside the request's hardened
+transport, are not stored or described, and a changed token replaces the client.
+This mode refuses cleartext non-loopback origins. Optional `auth.headers` carry
+static protocol/catalog controls and cannot set Authorization.
+
+The GitHub provider validates each tool's owner/repo and scope access before
+resolving an installation token. It creates one token-bound MCP client for that
+operation and closes it before returning. Completed installation/token caches
+contain bounded runtime values only, partitioned by key fingerprint, owner
+installation, repositories and permissions. No request promise or transport
+is retained across requests, and rejected writes are never replayed. An omitted
+`app.privateKey` uses the encrypted connector vault's `privateKey` field;
+`describe()` includes neither the key nor the minted tokens. The maintained
+provider skill explains App permissions and installation prerequisites.

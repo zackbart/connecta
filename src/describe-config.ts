@@ -203,7 +203,7 @@ function endpointOf(value: unknown): DescribedEndpoint | undefined {
 const origins = (values: readonly unknown[]): string[] =>
   values.flatMap((value) => describedOrigin(value) ?? []);
 
-const AUTH_MODES = new Set(["none", "headers", "credential", "oauth"]);
+const AUTH_MODES = new Set(["none", "headers", "credential", "oauth", "request"]);
 const SOURCE_KINDS = new Set(["remote-mcp", "api", "builtin", "custom"]);
 
 /** Re-validate a connector's own description: a custom describe() may return anything. */

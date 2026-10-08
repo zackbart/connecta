@@ -21,6 +21,7 @@
     "src/providers/docs/index.ts",
     "src/providers/drive/index.ts",
     "src/providers/forms/index.ts",
+    "src/providers/github/index.ts",
     "src/providers/gmail/index.ts",
     "src/providers/linear/index.ts",
     "src/providers/mixpanel/index.ts",

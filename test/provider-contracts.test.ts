@@ -14,7 +14,8 @@ import { providerFixtures } from "./providers.generated.js";
 // separate so the original migration baseline still guards every other field.
 // Item 4 updates the permission recovery guides through a separate overlay.
 // Converted hosted providers have their subsequent baseline in hosted-presets.test.ts.
-describe.each(providerFixtures.filter((fixture) => !Object.hasOwn(hosted.providers, fixture.name)) as unknown as ContractFixture[])("$name provider contract", (fixture) => {
+// Providers added after the migration are covered by their own contract tests.
+describe.each(providerFixtures.filter((fixture) => Object.hasOwn(before, fixture.name) && !Object.hasOwn(hosted.providers, fixture.name)) as unknown as ContractFixture[])("$name provider contract", (fixture) => {
   it("INV-1: preserves provider contracts with explicit classifier, trust and error-guide changes", async () => {
     const actual = await providerContract(fixture);
     const snapshot = await Promise.all(actual.map(async (row) => Object.fromEntries(await Promise.all(
@@ -32,6 +33,9 @@ describe.each(providerFixtures.filter((fixture) => !Object.hasOwn(hosted.provide
     }));
     expect(snapshot).toEqual(expected);
   });
+});
+
+describe.each(providerFixtures as unknown as ContractFixture[])("$name provider construction", (fixture) => {
   it("INV-11: names the provider and id in construction refusals", () => {
     const factory = fixture.name.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
     expect(() => fixture.create("bad", { purpose: "" })).toThrow(`${factory}("bad") requires `);

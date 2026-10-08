@@ -276,6 +276,8 @@ export interface ReviewedTool {
  * claims. A listed tool whose `schemaDigest` no longer matches is a write.
  */
 export interface ToolClassification {
+  /** Hide every name absent from tools, including tools claiming to be reads. */
+  readonly unlisted?: "hide";
   readonly tools: Readonly<Record<string, ToolVerdict | ReviewedTool>>;
 }
 
@@ -512,7 +514,7 @@ export interface DescribedEndpoint {
 /** A connector's downstream authentication, without a single secret. */
 export interface ConnectorAuthDescription {
   /** `none` when the connector authenticates nothing itself. */
-  mode: "none" | "headers" | "credential" | "oauth";
+  mode: "none" | "headers" | "credential" | "oauth" | "request";
   /** Names of deployment-owned static headers; their values never appear. */
   headerNames?: string[];
   /** Header a stored credential rides. */

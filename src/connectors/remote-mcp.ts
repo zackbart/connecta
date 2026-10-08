@@ -118,6 +118,13 @@ interface RemoteMcpCredentialAuth {
 }
 
 export type RemoteMcpAuth =
+  | {
+      type: "request";
+      /** Resolve a Bearer token inside this request. Never persisted or described. */
+      token: (ctx: ConnectorContext) => Promise<string>;
+      /** Static protocol/catalog headers, never Authorization. */
+      headers?: Record<string, string>;
+    }
   | { type: "headers"; headers: Record<string, string> }
   | RemoteMcpCredentialAuth
   | {
@@ -1122,6 +1129,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         "`value` field only.",
     );
   }
+  const requestAuth = opts.auth?.type === "request" ? opts.auth : undefined;
+  if (requestAuth && (typeof requestAuth.token !== "function" || opts.authScope === "personal")) {
+    throw new Error(`remoteMcp(${JSON.stringify(id)}) requires a request token callback and shared authScope.`);
+  }
+  if (requestAuth?.headers) {
+    try {
+      if (Object.keys(requestAuth.headers).some((name) => name.toLowerCase() === "authorization")) throw new Error();
+      new Headers(requestAuth.headers);
+    } catch { throw new Error(`remoteMcp(${JSON.stringify(id)}) requires valid request auth headers without Authorization.`); }
+  }
   const credentialConfig: ConnectorCredentialConfig = credentialAuth?.credential ?? {
     label: "API key",
   };
@@ -1157,7 +1174,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const insecureDestination =
     destination.protocol !== "https:" && !isLoopbackHost(destination.hostname);
   if (insecureDestination) {
-    if (opts.requireHttps) {
+    if (opts.requireHttps || requestAuth) {
       throw new Error(
         `[connecta] connector "${id}" url ${opts.url} is not https:// (and not loopback) — refusing to connect (requireHttps).`,
       );
@@ -1270,6 +1287,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     }
     if (err instanceof InsufficientScopeError) {
       return attachFailureFacts(carryFailureFacts(err, verdict), facts);
+    }
+    if (requestAuth && httpStatus === 401) {
+      return attachFailureFacts(new ConnectorCallError("auth_required", "The downstream rejected this request's Bearer token."), facts);
     }
     if (
       ownAbortReason(err, signals) ||
@@ -1393,6 +1413,18 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    * without a redeploy. The value stays in the caller's local scope.
    */
   const readCredential = async (ctx: ConnectorContext): Promise<string> => {
+    if (requestAuth) {
+      let value: string;
+      try { value = await requestAuth.token(ctx); } catch (error) {
+        if (error instanceof ConnectorCallError) throw error;
+        throw new ConnectorCallError("auth_required", "The request token could not be resolved.");
+      }
+      ctx.signal?.throwIfAborted();
+      if (typeof value !== "string" || !value.trim() || Array.from(value).some((char) => { const code = char.charCodeAt(0); return code <= 32 || (code >= 127 && code <= 159); })) {
+        throw new ConnectorCallError("auth_required", "The request token is empty or cannot be sent as a Bearer header.");
+      }
+      return value;
+    }
     if (!ctx.credential) {
       throw new CredentialRequiredError(
         `Connector "${id}" needs an operator-managed credential, but ` +
@@ -1627,8 +1659,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     const headers =
       opts.auth?.type === "headers"
         ? opts.auth.headers
-        : credentialAuth && credentialFramed !== null
-          ? { [credentialHeader]: credentialFramed }
+        : (credentialAuth || requestAuth) && credentialFramed !== null
+          ? { ...requestAuth?.headers, [credentialHeader]: credentialFramed }
           : undefined;
     return new StreamableHTTPClientTransport(url, {
       ...(headers ? { requestInit: { headers } } : {}),
@@ -1726,7 +1758,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     let credentialValue: string | null = null;
     let credentialFramed: string | null = null;
     let credentialDigest: string | null = null;
-    if (credentialAuth) {
+    if (credentialAuth || requestAuth) {
       credentialValue = await readCredential(ctx);
       credentialFramed = credentialHeaderValue(
         credentialScheme,
@@ -1985,7 +2017,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // token even though the document itself is public.
   const describedClientMetadataUrl = describedUrl(clientMetadataUrl);
   const authDescription: ConnectorAuthDescription =
-    opts.auth?.type === "headers"
+    requestAuth
+      ? { mode: "request", header: "Authorization", scheme: "Bearer", ...(requestAuth.headers ? { headerNames: Object.keys(requestAuth.headers) } : {}) }
+      : opts.auth?.type === "headers"
       ? { mode: "headers", headerNames: Object.keys(opts.auth.headers) }
       : credentialAuth
         ? { mode: "credential", header: credentialHeader, scheme: credentialScheme }
@@ -2235,6 +2269,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     },
 
     async callTool(name, args, ctx, options) {
+      if (classification?.unlisted === "hide" && !Object.hasOwn(classification.tools, name)) {
+        throw new ConnectorCallError("invalid_args", "This tool is not in the connector allowlist.");
+      }
       const state = stateFor(ctx);
       const client = await ensureConnected(ctx, state);
       try {
