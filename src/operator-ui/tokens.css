@@ -1,9 +1,7 @@
 /*
  * The token layer every page connecta shows a person shares: the operator
- * pages, the OAuth callback, and browser-facing 404s and
- * Markdown pages. Custom properties and the two palettes only — no selector
- * here styles an element, so a document that must not inherit connecta's
- * base rules (a rendered Markdown page) can take the palette alone.
+ * pages, the OAuth callback, and browser-facing 404s. Custom properties
+ * and the two palettes only; no selector here styles an element.
  *
  * Every color, radius, and font resolves through a custom property here, so
  * `branding.theme` only has to append a `:root` block after this stylesheet

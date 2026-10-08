@@ -72,6 +72,8 @@ async function ready(page: Page, name: string, state: VisualState) {
     else if (name.includes("activity")) await expect(page.getByText(/Activity.*not available to this session/)).toBeVisible();
     else if (name === "connector-auth") await expect(page.getByText("Authentication for this connection is managed by your deployment.")).toBeVisible();
     else await expect(page.locator("#app")).toBeVisible();
+  } else if (name.includes("activity")) {
+    await expect(state === "empty" ? page.getByText("No connector tool calls recorded yet.") : page.locator("#activityList")).toBeVisible();
   } else if (name === "tokens") {
     await expect(state === "empty" ? page.getByText("No access tokens yet. Name the first MCP client above.") : page.getByRole("heading", { name: "Claude desktop", exact: true })).toBeVisible();
   } else {

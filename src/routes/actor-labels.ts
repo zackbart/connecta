@@ -1,5 +1,4 @@
-// Display labels for stored actors, shared by the activity page and the
-// activity history. An actor is stored as a stable id; a label is resolved at
+// Display labels for stored activity actors. An actor is stored as a stable id; a label is resolved at
 // read time from the one auth provider that owns the actor's directory, and
 // only on an authorized read path. Nothing here is persisted, and a label a
 // store happens to carry is never trusted or echoed.
@@ -91,51 +90,4 @@ export function labelLookups(
     if (provider) lookups.push({ key, id: identity.id, provider });
   }
   return lookups;
-}
-
-/**
- * Resolve labels for `actors`, best-effort: at most eight lookups at once,
- * 1.5 seconds in all, and whatever has resolved by then is the answer. A
- * provider outage yields no labels, never a failed read.
- */
-export async function resolveActorLabels(
-  actors: readonly ActivityActor[],
-  auth: readonly InboundAuth[],
-): Promise<Map<string, string>> {
-  const labels = new Map<string, string>();
-  const queue = labelLookups(actors, auth);
-  let cursor = 0;
-  let expired = false;
-  const worker = async () => {
-    while (!expired && cursor < queue.length) {
-      const lookup = queue[cursor++];
-      if (!lookup) return;
-      try {
-        const label = cleanActorLabel(
-          await Promise.resolve(lookup.provider.activityActorLabel?.(lookup.id)),
-        );
-        if (label && !expired) labels.set(lookup.key, label);
-      } catch {
-        // A failed lookup leaves the actor unlabeled.
-      }
-    }
-  };
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const budget = new Promise<void>((resolve) => {
-    timer = setTimeout(() => {
-      expired = true;
-      resolve();
-    }, ACTOR_LABEL_BUDGET_MS);
-  });
-  try {
-    await Promise.race([
-      Promise.all(
-        Array.from({ length: Math.min(ACTOR_LABEL_CONCURRENCY, queue.length) }, worker),
-      ),
-      budget,
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-  return new Map(labels);
 }

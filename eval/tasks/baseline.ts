@@ -18,10 +18,10 @@ export function check(id: string, description: string, pass: boolean, detail?: s
   };
 }
 
-export const quote = (text: string) => JSON.stringify(text.length > 200 ? `${text.slice(0, 200)}…` : text);
+const quote = (text: string) => JSON.stringify(text.length > 200 ? `${text.slice(0, 200)}…` : text);
 
 /** Exactly one agent post, in `channel`, and none anywhere else. */
-export function singlePost(world: World, channel: string): { checks: Check[]; text: string } {
+function singlePost(world: World, channel: string): { checks: Check[]; text: string } {
   const here = world.posts(channel);
   const elsewhere = world.posts().filter((post) => post.channel !== channel);
   return {

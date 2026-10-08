@@ -126,7 +126,7 @@ export async function routeUi(
         headers: htmlSecurityHeaders({
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-store",
-        }, { ...(clerkOrigin ? { clerkOrigin } : {}) }),
+        }, clerkOrigin ? { clerkOrigin } : {}),
       },
     );
   }
