@@ -408,6 +408,7 @@ describe("operator action notices", () => {
     const passing = { ok: true, message: LEAK };
     const notices = [
       oauthDoneNotice("oauth_disconnect", hostile),
+      oauthDoneNotice("oauth_disconnect", { ...hostile, code: "oauth_revocation_failed" }),
       oauthDoneNotice("oauth_reconnect", hostile),
       oauthDoneNotice("oauth_reconnect", { ...hostile, state: "ok" }),
       credentialTestNotice("svc", hostile),
@@ -424,6 +425,7 @@ describe("operator action notices", () => {
       expect(JSON.stringify(notice)).not.toContain(SECRET);
       if (notice.fix) expect(FIX_PROMPT_KINDS).toContain(notice.fix.kind);
     }
+    expect(oauthDoneNotice("oauth_disconnect", { code: "oauth_revocation_failed" }).message).toContain("Disconnected locally");
     expect(credentialTestNotice("svc", hostile)).toMatchObject({
       tone: "error",
       fix: { kind: "credential_test_failed", connectorId: "svc" },

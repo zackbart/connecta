@@ -88,6 +88,8 @@ export interface UiConnector {
   tools: UiTool[];
   /** This connector exposes manageable downstream OAuth lifecycle hooks. */
   oauth?: boolean;
+  /** Selected downstream client identity mechanism; never a client ID or secret. */
+  registrationPath?: "cimd" | "dcr" | "static";
   credential?: UiCredential;
   /**
    * Drift the last catalog refresh saw *in this runtime*

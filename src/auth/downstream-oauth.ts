@@ -9,6 +9,7 @@ import type {
   OAuthDiscoveryState,
   OAuthTokens,
 } from "@modelcontextprotocol/client";
+import { revokeDownstreamGrant } from "./downstream-revocation.js";
 import { authenticateRemoteClient, downstreamClientMetadata, type RemoteOAuthClient } from "./downstream-client-metadata.js";
 import { ConnectorCallError } from "../errors.js";
 import {
@@ -1776,7 +1777,14 @@ export class KvOAuthProvider implements OAuthClientProvider {
     return reset;
   }
 
-  private async performReset(operatorDisconnected: boolean, preserveClient: boolean): Promise<void> {
+  /** Remove the local grant before a bounded, best-effort RFC 7009 request. */
+  disconnectAuthorization(send: FetchLike): Promise<void> {
+    const reset = this.performReset(true, false, send);
+    this.onReset?.(reset);
+    return reset;
+  }
+
+  private async performReset(operatorDisconnected: boolean, preserveClient: boolean, revoke?: FetchLike): Promise<void> {
     const epoch = `${operatorDisconnected ? DISCONNECTED_EPOCH_PREFIX : ACTIVE_EPOCH_PREFIX}${crypto.randomUUID()}`;
     for (let attempt = 0; attempt < MAX_GRANT_WRITES; attempt++) {
       const { raw, grant } = await this.readGrant();
@@ -1790,9 +1798,13 @@ export class KvOAuthProvider implements OAuthClientProvider {
       }
       if (written) {
         this.refreshCoordinator?.retire(grant.epoch);
-        await this.cleanupV2(encoded);
-        await this.sweepConsents();
-        await this.sweepRefreshLeases();
+        try {
+          await this.cleanupV2(encoded);
+          await this.sweepConsents();
+          await this.sweepRefreshLeases();
+        } finally {
+          if (revoke) await revokeDownstreamGrant(grant.body, revoke, this.clientOptions?.client);
+        }
         return;
       }
     }

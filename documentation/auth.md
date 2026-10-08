@@ -412,6 +412,24 @@ Disconnect commits a tombstone with the marker and always removes historical
 keys for the connector and owner, including when a modern grant already exists.
 A crash during cleanup cannot restore the disconnected grant.
 
+Disconnect first removes the grant and fences its epoch with CAS. When that
+removed grant's saved authorization-server metadata advertises a revocation
+endpoint, Connecta makes one RFC 7009 request using that same issuer and client.
+It revokes the refresh token when present, otherwise the access token. It never
+rediscovers an issuer or sends credentials to a replacement server on Disconnect.
+The existing advertised-URL destination guard applies, and revocation never
+follows redirects. The request has its own twenty-second deadline; browser
+cancellation cannot undo local removal. It reads no provider response text.
+
+A revocation refusal, timeout, network failure, or unsafe advertised destination
+leaves the local grant removed. The management route returns HTTP 200 with
+`{ state: "auth_required", code: "oauth_revocation_failed" }` and logs that typed
+code. Revoke the old grant in the provider's console if removal there matters.
+With no advertised endpoint, Disconnect makes no request. Repeating Disconnect
+never retries revocation, because the removed grant is no longer available.
+Restart makes no revocation request. Static `api()` OAuth has no discovered
+revocation endpoint and continues to remove authorization locally.
+
 ## Refresh failures
 
 A refresh token is spent when dispatch begins. Every refresh request passes

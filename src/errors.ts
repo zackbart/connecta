@@ -14,6 +14,7 @@ export type ConnectorCallErrorCode =
   | "timeout"
   | "auth_required"
   | "downstream_oauth_required"
+  | "oauth_revocation_failed"
   | "provider_permission_denied"
   | "rate_limited"
   | "unavailable"
@@ -63,7 +64,7 @@ export type ClassificationCode =
 
 const CLASSIFICATION_CODE_TABLE = {
   timeout: true, auth_required: true, downstream_oauth_required: true,
-  provider_permission_denied: true, rate_limited: true, unavailable: true,
+  oauth_revocation_failed: true, provider_permission_denied: true, rate_limited: true, unavailable: true,
   invalid_args: true, not_found: true, conflict: true,
   input_required_unsupported: true, connector_call_failed: true,
   executor_overloaded: true, executor_cancelled: true, executor_closed: true,
@@ -376,7 +377,7 @@ const RETRYABLE_BY_CODE: Record<ConnectorCallErrorCode, boolean> = {
   unavailable: true,
   auth_required: false,
   downstream_oauth_required: false,
-  provider_permission_denied: false,
+  oauth_revocation_failed: false, provider_permission_denied: false,
   invalid_args: false,
   not_found: false,
   conflict: false,

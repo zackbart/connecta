@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { remoteMcp, type RemoteMcpAuth } from "../src/connectors/remote-mcp.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { createTestConnecta } from "./helpers.js";
+import { createTestConnecta, fetchTestUiDetails } from "./helpers.js";
 import { bindCallback, callbackAuth } from "./fixtures/oauth.js";
 
 const BASE = "https://connecta.example";
@@ -85,6 +85,8 @@ describe("downstream OAuth best practice", () => {
     expect(flow.registrations).toHaveLength(0);
     expect((await flow.callback(status.authorizationUrl!)).status).toBe(200);
     expect((await flow.app.registry.statusFor("svc", BASE)).registrationPath).toBe("cimd");
+    const data = await (await fetchTestUiDetails(flow.app, new Request(`${BASE}/ui/data`))).json() as { connectors: Array<{ registrationPath?: string }> };
+    expect(data.connectors[0]!.registrationPath).toBe("cimd");
   });
 
   it("INV-6: falls back to DCR and reports the selected path with matching client metadata", async () => {
@@ -157,4 +159,35 @@ describe("downstream OAuth best practice", () => {
     expect(flow.sent.some(request => request.url.endsWith("/token"))).toBe(false);
   });
 
+  it.each([false, true])("INV-5 INV-9: disconnect removes the local grant and revokes only when advertised (%s)", async revocation => {
+    const flow = setup({ revocation });
+    const status = await flow.start();
+    expect((await flow.callback(status.authorizationUrl!)).status).toBe(200);
+    await flow.connector.disconnectAuth!(flow.ctx());
+    const grant = JSON.parse((await flow.ctx().storage.get("oauth:grant"))!);
+    expect(grant.epoch).toMatch(/^disconnected:/);
+    expect(grant.body).toBeUndefined();
+    const requests = flow.sent.filter(request => request.url.endsWith("/revoke"));
+    expect(requests).toHaveLength(revocation ? 1 : 0);
+    if (revocation) {
+      expect(requests[0]!.form.get("token")).toBe("REFRESH_TOKEN_SENTINEL");
+      expect(requests[0]!.form.get("token_type_hint")).toBe("refresh_token");
+      expect(requests[0]!.init.redirect).toBe("manual");
+    }
+    await flow.connector.disconnectAuth!(flow.ctx());
+    expect(flow.sent.filter(request => request.url.endsWith("/revoke"))).toHaveLength(revocation ? 1 : 0);
+  });
+
+  it.each([302, 400, 500, "network"])("INV-5 INV-6 INV-9: revocation failure %s leaves the grant removed and reports only a typed code", async failure => {
+    const flow = setup({ revocation: true, ...(failure === "network" ? { revokeThrows: true } : { revokeStatus: failure as number }) });
+    const status = await flow.start();
+    expect((await flow.callback(status.authorizationUrl!)).status).toBe(200);
+    const response = await flow.app.fetch(new Request(`${BASE}/ui/oauth/svc`, { method: "DELETE", headers: { Origin: BASE } }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ state: "auth_required", code: "oauth_revocation_failed" });
+    expect(JSON.parse((await flow.ctx().storage.get("oauth:grant"))!).body).toBeUndefined();
+    expect(flow.sent.filter(request => request.url.endsWith("/revoke"))).toHaveLength(1);
+    expect(JSON.stringify(flow.lines)).toContain("oauth_revocation_failed");
+    expect(JSON.stringify(flow.lines)).not.toMatch(/SENTINEL/);
+  });
 });

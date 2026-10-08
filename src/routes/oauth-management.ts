@@ -1,3 +1,4 @@
+import { OAuthRevocationError } from "../auth/downstream-revocation.js";
 import { Effect, Result } from "effect";
 import { closeScope } from "../runtime/connector-scope.js";
 import { oauthConnectUrl, oauthConnectUnavailable } from "../oauth-handoff.js";
@@ -87,6 +88,9 @@ function oauthManagementRequest(
     if (Result.isFailure(operation) || Result.isFailure(invalidated)) {
       const error = Result.isFailure(operation) ? operation.failure : Result.isFailure(invalidated) ? invalidated.failure : undefined;
       logFailure(opts.config.logger, "OAuth disconnect failed", failureRecord({ connector: connectorId }, error));
+      if (error instanceof OAuthRevocationError && !Result.isFailure(invalidated)) {
+        return privateJson({ state: "auth_required", code: "oauth_revocation_failed" });
+      }
       return yield* refuse("OAuth disconnect failed", 400);
     }
     return new Response(null, { status: 204, headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });

@@ -191,7 +191,7 @@
       "id": "authorization-security",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/security-considerations",
-      "notes": "PKCE, state, issuer, origin, and Clerk resource-audience binding have regressions; callback error ordering and AS revocation still need work.",
+      "notes": "PKCE, state, issuer, origin, and Clerk resource-audience binding have regressions. Callback errors require validated state and issuer. Disconnect attempts advertised RFC 7009 revocation after local removal; failures are typed and payload-free.",
       "tests": [
         {
           "file": "test/downstream-oauth.test.ts",
@@ -208,6 +208,10 @@
         {
           "file": "test/clerk.test.ts",
           "title": "INV-4: does not treat the base resource audience as a pool audience"
+        },
+        {
+          "file": "test/downstream-auth-best-practice.test.ts",
+          "title": "INV-4: interprets a verified callback error once without exchanging a code"
         }
       ],
       "issue": "https://github.com/zackbart/connecta/issues/707"

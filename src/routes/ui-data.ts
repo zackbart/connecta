@@ -264,6 +264,7 @@ export function uiData(
             ? { authorizationUrl: yield* attempt(() => options.oauthConnectUrl!(c.id)) }
             : {}),
           oauth: Boolean(c.startAuth && c.disconnectAuth),
+          ...(status.registrationPath ? { registrationPath: status.registrationPath } : {}),
           ...(credential ? { credential } : {}),
         } satisfies UiConnector;
       });

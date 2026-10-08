@@ -2023,7 +2023,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // Publish the replacement epoch before waiting on or closing any
     // request-local transport. A hung connect therefore cannot delay the
     // fence, and every late OAuth write stays in the older namespace.
-    const reset = provider.resetAuthorization(operatorDisconnected, preserveClient);
+    const reset = operatorDisconnected
+      ? provider.disconnectAuthorization(learnedUrlSafeFetch(id, new URL(opts.url), fetch))
+      : provider.resetAuthorization(false, preserveClient);
     try {
       await reset;
     } finally {
