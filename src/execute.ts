@@ -38,7 +38,7 @@ import {
   timed,
   type WriteDecision,
 } from "./invocation.js";
-import { GUEST_FAILURE_FRAME, guestPrelude, guestSecret, programError, wrapGuestProgram } from "./guest-runtime.js";
+import { guestPrelude, guestSecret, programError, wrapGuestProgram } from "./guest-runtime.js";
 import { EXECUTE_OUTPUT } from "./meta-output.js";
 import { normalizeProgramSource } from "./program-source.js";
 import { agentOutputOperations, redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
@@ -324,7 +324,7 @@ function guestFailure(
 }
 
 /**
- * E1/X11: bound the serialized frame, including JSON escapes, before transport.
+ * E1/X11: bound typed host failure metadata, including JSON escapes, before transport.
  * Keep optional recovery whole: clipping an address or echoed args could turn
  * recovery into a different call. Oversized metadata is omitted instead.
  */
@@ -347,8 +347,7 @@ function boundedGuestFailure(failure: InvocationFailure): InvocationFailure {
     code: boundText(failure.details.code, 128),
     message: boundText(failure.details.message, 2_000),
   };
-  // 3,700 plus the prefix and 32-character secret stays below QuickJS's
-  // 4,000-character error bound, with room for bridge-added context.
+  // Keep typed metadata below the executor bridge bound.
   if (JSON.stringify(details).length > 3_700) {
     details = {
       code: details.code,
@@ -360,12 +359,6 @@ function boundedGuestFailure(failure: InvocationFailure): InvocationFailure {
     };
   }
   return new InvocationFailure(details);
-}
-
-function framedGuestFailure(secret: string, id: string, failure: InvocationFailure): InvocationFailure {
-  const framed = new InvocationFailure(failure.details);
-  framed.message = `${GUEST_FAILURE_FRAME}${secret}:${JSON.stringify({ id, details: failure.details })}`;
-  return framed;
 }
 
 /**
@@ -387,7 +380,6 @@ interface SandboxLimits {
   defaultToolTimeoutMs?: number | undefined;
   programDeadlineAt?: number | undefined;
   signal?: AbortSignal | undefined;
-  failureSecret?: string | undefined;
   hostCalls?: HostCalls | undefined;
   maxHostCalls?: number | undefined;
   hostCallTimeoutMs?: number | undefined;
@@ -441,8 +433,8 @@ type SettleWrite = (state: ReturnType<typeof writeStateOf>) => void;
  *
  * Building it is synchronous and loads nothing. Each function is a Promise
  * edge the executor awaits, and behind it one host call is one fiber: spend
- * the budget, do the operation, and turn a typed failure into the frame the
- * prelude rebuilds inside the guest. Nothing is shared between those fibers
+ * the budget, do the operation, and retain a typed failure for the
+ * executor bridge to rebuild inside the guest. Nothing is shared between those fibers
  * but the budget counters and this request's catalog. Budget exhaustion ends
  * the whole run, including calls the program never awaits.
  */
@@ -477,7 +469,6 @@ function sandboxProvider(
     1,
     Math.trunc(limits.hostCallTimeoutMs ?? EXECUTE_HOST_CALL_TIMEOUT_MS),
   );
-  const failureSecret = limits.failureSecret ?? guestSecret();
   const { signal, diagnostics, programWrites } = limits;
   const hostCalls = limits.hostCalls ?? { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
   let budgetFailure: InvocationFailure | undefined;
@@ -717,29 +708,27 @@ function sandboxProvider(
         return result;
       }),
   };
-  // Recoverable failures leave through the same frame, so the prelude can
-  // rebuild a typed error. Terminal host-budget exhaustion bypasses it.
+  // Recoverable failures remain typed at the host-owned executor bridge. Terminal host-budget exhaustion bypasses it.
   // Anything that is not an InvocationFailure crosses unchanged.
   const framed = (err: unknown): Effect.Effect<never, unknown> =>
     Effect.suspend(() => {
       if (!(err instanceof InvocationFailure)) return Effect.fail(err);
       const failure = boundedGuestFailure(sentSecrets.redact(err));
       const id = guestSecret();
-      const frame = framedGuestFailure(failureSecret, id, failure);
       limits.onInvocationFailure?.(failure, id);
-      return Effect.fail(frame);
+      return Effect.fail(failure);
     });
   return {
     name: "connecta",
     // Trusted host code the program runs after and cannot undo.
-    prelude: guestPrelude(failureSecret),
+    prelude: guestPrelude(),
     fns: Object.fromEntries(
       Object.entries(operations).map(([name, operation]) => [
         name,
         (...args: unknown[]) => {
           if (budgetFailure) return stopped;
-          // Invalid emits still allocate guest promises and authenticated frames.
-          // Bound those attempts without consuming the invocation budget or evicting frames.
+          // Invalid emits still allocate guest promises and typed rejections.
+          // Bound those attempts without consuming the invocation budget or discarding identities.
           if (name === "emit" && ++emitAttempts > maxEmitAttempts) {
             budgetFailure = guestFailure("budget_exceeded", `execute_code emission-attempt budget exceeded (${maxEmitAttempts} attempts maximum).`);
             programWrites?.close();
@@ -1019,7 +1008,6 @@ export function createExecuteTool(
         diagnostics,
       );
       const invocationFailures = new Map<string, InvocationFailure>();
-      const failureSecret = guestSecret();
       const hostCalls = { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
       const programWrites = new ProgramWrites();
       const dispatchController = new AbortController();
@@ -1063,7 +1051,6 @@ export function createExecuteTool(
           sandboxProvider(registry, baseUrl, activity, {
             sentSecrets,
             signal,
-            failureSecret,
             hostCalls,
             onHostCallBudgetExceeded: (failure) => {
               budgetFailure = failure;
@@ -1102,8 +1089,8 @@ export function createExecuteTool(
           if (diagnostics) diagnostics.executorWallMs = elapsed;
         }, awaitExecutor(
           () => (admitted
-            ? admitted.execute(wrapGuestProgram(program, failureSecret), [provider])
-            : executor.execute(wrapGuestProgram(program, failureSecret), [provider])
+            ? admitted.execute(wrapGuestProgram(program), [provider])
+            : executor.execute(wrapGuestProgram(program), [provider])
           ).then(
             (outcome) => {
               executorLogs = sentSecrets.redact(outcome?.logs);
@@ -1124,7 +1111,7 @@ export function createExecuteTool(
           return programWrites.drain();
         }))));
       });
-      const reported = { emitted, diagnostics, invocationFailures, failureSecret, program };
+      const reported = { emitted, diagnostics, invocationFailures, program };
       const exited = Effect.exit(Effect.scoped(run)).pipe(Effect.flatMap((exit) =>
         // Releasing a QuickJS lease ends its child and rejects execute() with
         // the retained log prefix. Give that report one timer turn, just as
@@ -1195,7 +1182,6 @@ interface RunReport {
   emitted: EmitCollector;
   diagnostics: ExecuteDiagnostics | undefined;
   invocationFailures: ReadonlyMap<string, InvocationFailure>;
-  failureSecret: string;
   program: string;
 }
 
@@ -1242,7 +1228,7 @@ function failedRun(
 /** The response for an ExecuteResult: the program's error or its value. */
 function finishedRun(
   outcome: ExecuteResult,
-  { emitted, diagnostics, invocationFailures, failureSecret, program }: RunReport,
+  { emitted, diagnostics, program }: RunReport,
 ): ToolResult {
   if (outcome === null || typeof outcome !== "object" || Array.isArray(outcome)) {
     return failureResponse("Executor failed: expected an ExecuteResult object.", {
@@ -1261,12 +1247,7 @@ function finishedRun(
     });
   }
   if (outcome.error !== undefined) {
-    const prefix = `${GUEST_FAILURE_FRAME}${failureSecret}:`;
-    // A custom bridge can retain the exact authenticated host frame. No substring matching.
-    let failure: InvocationFailure | undefined;
-    if (outcome.error.startsWith(prefix)) {
-      try { failure = invocationFailures.get(JSON.parse(outcome.error.slice(prefix.length)).id); } catch {}
-    }
+    const failure = outcome.failure?.call;
     if (outcome.failure?.timeout) {
       const { elapsedMs, deadlineMs } = outcome.failure.timeout;
       const message = `Operation "execute_code" timed out during sandbox after ${elapsedMs}ms (effective deadline ${deadlineMs}ms).`;
@@ -1275,24 +1256,15 @@ function finishedRun(
         details: { operation: "execute_code", stage: "sandbox", elapsedMs, deadlineMs },
       } });
     }
-    return failureResponse(failure?.details.message ?? outcome.error, {
+    return failureResponse(failure?.message ?? outcome.error, {
       logs, emitted, diagnostics,
-      code: failure?.details ?? programError({
+      code: failure ?? programError({
         name: outcome.failure?.name ?? /^(SyntaxError|ReferenceError|TypeError|RangeError):/.exec(outcome.error)?.[1],
         message: outcome.error || "Execution failed without an error message.",
         ...(outcome.failure?.line !== undefined ? { line: outcome.failure.line - 1 } : {}),
       }, program),
     });
   }
-  const frame = outcome.result !== null && typeof outcome.result === "object"
-    ? (outcome.result as { __connectaFailure?: { token?: string; hostId?: string; program?: { name?: unknown; message?: unknown; stack?: unknown; baseline?: unknown } } }).__connectaFailure
-    : undefined;
-  if (frame?.token === failureSecret) {
-    const failure = frame.hostId ? invocationFailures.get(frame.hostId) : undefined;
-    const error = failure?.details ?? programError(frame.program ?? {}, program);
-    return failureResponse(error.message, { logs, emitted, diagnostics, code: error });
-  }
-
   // A result crossing back as a host BigInt (or otherwise unserializable
   // value) makes JSON.stringify throw — keep that inside the structured
   // error path so captured logs survive instead of a raw SDK 500.

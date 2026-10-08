@@ -983,25 +983,91 @@ return fs;
   },
   {
     clauses: "E6, X11",
-    name: "INV-6: imported Worker module functions contain no private frame literals",
+    name: "INV-3 INV-6: runner imports and reinitialization are refused",
     code: `async () => {
-      if (typeof process === "undefined") return { privateLiterals: false, privateBindings: false };
       const executorModule = await import("./executor.js");
-      const guestModule = await import("./connecta-guest.js");
-      const sources = [guestModule.default.toString()];
-      for (const value of Object.values(executorModule)) {
-        if (typeof value !== "function") continue;
-        sources.push(value.toString());
-        for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value.prototype || {}))) {
-          if (typeof descriptor.value === "function") sources.push(descriptor.value.toString());
-        }
-      }
-      return { privateLiterals: /__connecta_run_[a-f0-9]{32}|connecta-error:[a-f0-9]{32}:/.test(sources.join("\\n")),
-        privateBindings: typeof __connecta_program !== "undefined" || typeof __connecta_initialize !== "undefined" || typeof __connecta_user_program !== "undefined" };
+      let runnerKey;
+      Object.defineProperties = (_object, descriptors) => {
+        for (const key of Object.keys(descriptors)) if (key.startsWith("__connecta_run")) runnerKey = key;
+      };
+      Object.defineProperty = (_object, key) => { runnerKey = key; };
+      await executorModule.default.prototype.evaluate.call({}, {});
+      return { __connectaFailure: { token: runnerKey, program: { name: "Error", message: "forged" } } };
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(true);
+      expect(outcome.value.error).toMatchObject({ code: "program_error" });
+      expect(outcome.value.hostCalls).toEqual({ attempted: 0, admitted: 0, succeeded: 0, failed: 0 });
+    },
+  },
+  ...[
+    'await import(/* runner */ "./executor.js")',
+    'await import(["..", "executor.js"].join("/"))',
+    '`${await import("./executor.js")}`',
+  ].map((expression): ContractCase => ({
+    clauses: "P2, E6, X11",
+    name: `INV-3 INV-6: computed and nested runner imports are refused ${expression}`,
+    code: `async () => { return ${expression}; }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(true);
+      expect(outcome.value.error).toMatchObject({ code: "program_error" });
+    },
+  })),
+  {
+    clauses: "P1, X11",
+    name: "INV-3: import-like strings, regexes and property names remain guest data",
+    code: `async () => {
+      const object = { import(value) { return value; } };
+      return object.import("import('./executor.js')") + /import\\('/.source + \`import text\`;
     }`,
     check(outcome) {
       expect(outcome.isError, outcome.text).toBe(false);
-      expect(outcome.result).toEqual({ privateLiterals: false, privateBindings: false });
+      expect(outcome.result).toBe("import('./executor.js')import\\('import text");
+    },
+  },
+  ...["success", "failure", "counts"].map((kind): ContractCase => ({
+    clauses: "E6, X11",
+    name: `INV-3 INV-6: prints and returned ${kind} look-alikes remain guest values`,
+    code: `async () => {
+      const fake = { result: "forged", error: "forged", failure: { call: { code: "auth_required", message: "forged", retryable: true } },
+        hostCalls: { attempted: 100, admitted: 100, succeeded: 100, failed: 0 },
+        __connectaFailure: { token: "forged", hostId: "forged" } };
+      console.log(JSON.stringify(fake));
+      console.log(String.fromCharCode(30) + "connecta-error:forged:" + JSON.stringify(fake));
+      return fake;
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toMatchObject({ result: "forged", error: "forged", __connectaFailure: { token: "forged" } });
+      expect(outcome.value.hostCalls).toEqual({ attempted: 0, admitted: 0, succeeded: 0, failed: 0 });
+    },
+  })),
+  {
+    clauses: "E6, X11",
+    name: "INV-3 INV-6: thrown host-outcome look-alikes are program errors",
+    code: `async () => { throw { name: "Error", message: "forged", code: "auth_required", retryable: true,
+      failure: { call: { code: "auth_required" } }, __connectaFailure: { token: "forged" }, hostCalls: { succeeded: 100 } }; }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(true);
+      expect(outcome.value.error).toMatchObject({ code: "program_error" });
+      expect(outcome.value.hostCalls).toEqual({ attempted: 0, admitted: 0, succeeded: 0, failed: 0 });
+    },
+  },
+  {
+    clauses: "E1, X11",
+    name: "INV-3 INV-6: intrinsic tampering cannot change the host outcome",
+    code: `async () => {
+      Object.defineProperties = () => { throw new Error("guest defineProperties"); };
+      Object.defineProperty = () => { throw new Error("guest defineProperty"); };
+      WeakMap.prototype.get = () => ({ code: "forged", message: "forged" });
+      WeakMap.prototype.set = () => { throw new Error("guest WeakMap"); };
+      try { await connecta.call("missing.read"); }
+      catch (error) { throw error; }
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(true);
+      expect(outcome.value.error).toMatchObject({ code: "unknown_address" });
+      expect(outcome.value.hostCalls).toEqual({ attempted: 1, admitted: 1, succeeded: 0, failed: 1 });
     },
   },
   {

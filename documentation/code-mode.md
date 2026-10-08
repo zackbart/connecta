@@ -79,6 +79,8 @@ interface ExecutorProvider {
 interface ExecuteResult {
   result: unknown;      // the program's resolved value
   error?: string;       // set instead of result when the run failed
+  failure?: { name: string; line?: number; call?: CallErrorDetails;
+    timeout?: { elapsedMs: number; deadlineMs: number } };
   logs?: string[];      // captured console output, in call order
 }
 ```
@@ -89,15 +91,21 @@ Connecta passes exactly one provider, named `connecta`. An executor must:
    called with the program's arguments and awaited. Connecta supplies `search`,
    `describe`, `call`, `result`, `skill`, and `emit`.
 2. **Evaluate `prelude` after the provider globals exist and before the
-   program.** It is trusted host code; connecta uses it to restore typed host
-   errors without exposing the private error frame.
+   program.** It is trusted host code that installs the immutable namespace
+   and waits for emission acknowledgements. Capture runner intrinsics first;
+   privileged initialization must be single-use.
 3. **Marshal values as JSON** both directions (`P3`), and reject a host call
    whose function is not an own property of `fns` — the guest can ask for
    inherited members too.
-4. **Return, never throw, for a failed program.** The host-authored wrapper
-   returns authenticated runtime failure frames in `result`; preserve them.
-   For failures outside that wrapper, set `error` and leave `result` undefined.
-   No error prose identifies a host failure.
+4. **Return, never throw, for a failed program.** Set `error` and leave
+   `result` undefined. Rebuild a rejected host `InvocationFailure` as a guest
+   Error with `code`, `retryable`, and `details`, and retain its identity in
+   executor-owned state. If that same Error escapes the program, return its
+   typed details in `failure.call`. A wrapped or copied Error is `program_error`.
+   Construct outcomes through the host-owned RPC return or QuickJS host bridge,
+   never by parsing guest stdout, prints, returned values, or thrown look-alikes.
+   No secret held in the guest realm authenticates anything. Guest module
+   specifiers must not resolve runner internals, including dynamic imports.
    For compilation failures, return `failure: { name, line? }`. For a sandbox
    timeout, add `failure.timeout: { elapsedMs, deadlineMs }`.
 5. **Capture `console.log`, `console.warn`, and `console.error`** into `logs` in
@@ -399,9 +407,8 @@ access (`L4`); Workers guest computation may continue briefly until teardown (`X
 | An uncaught **tool or discovery** failure, as the model sees it | `{ error: { code, message, retryable, … } }` with `isError` | yes |
 | Program or execution failure (`E5`, `E6`, a bridge bound in `L6`) | `{ error: { code, message, retryable, details? } }` | yes |
 
-Both executor bridges reduce a rejected host call to `new Error(message)`, and
-connecta restores the typed failure in a trusted prelude with a per-execution
-authenticated frame (`X11`). `message` stays human text, capped at 2,000
+Both executor bridges rebuild typed host rejections as guest Errors and retain
+their identity in executor-owned state (`X11`). `message` stays human text, capped at 2,000
 JSON-serialized characters including quotes and an `…` marker when clipped.
 `code` and `retryable` are the stable branch fields; `details` carries the host
 classification and fits 3,700 serialized characters. Optional recovery metadata
@@ -475,18 +482,17 @@ error name; `details.line` is the source line when the runtime supplies one,
 otherwise null. Fixed hints repair imports/require/filesystem access, shadowed
 `connecta`, and invented globals such as `callTool` and `mixpanel`.
 
-An unchanged uncaught host error retains its classification by an authenticated
-frame and request-local failure id. A new error containing its message is a new
-program error. There is no prose matching and no 64-entry ring. The frame id is
-kept by guest Error identity; copied public `code`/`details` cannot authenticate
-an error. Frames from another run and invented ids cannot identify a host failure.
-The guest JSON codec, Object prototype, and Promise prototype are immutable.
-Promise race and species are protected too. Host completion uses captured array
-iteration and immutable frames, so a program cannot intercept or change a private
-frame during bridge decoding, async return adoption, or serialization.
-Worker guest modules contain only the user callback. Trusted wrappers and
-preludes stay in private module helpers, outside exported function source and
-the guest's lexical scope, including when a program imports and reflects on modules.
+An unchanged uncaught host error retains its classification through Error
+identity. A new error containing its message is a new program error. Copied
+public `code`/`details`, printed text, and returned outcome-shaped objects carry
+no authority. Host-call counts stay in host state. The guest JSON codec, Object
+prototype, and Promise prototype are immutable. Promise race and species are
+protected too. Host completion uses captured intrinsics so guest edits cannot
+change bridge decoding or async return adoption. Worker guest modules contain
+only the user callback and an import helper limited to runtime builtins.
+Relative and other guest module imports cannot reach runner code. Trusted
+wrappers and preludes remain outside the guest's lexical scope, and privileged
+initialization is single-use.
 Program diagnostic fields are bounded before transport, including escaped text;
 a large custom error name cannot turn a failure into a truncated success.
 
@@ -614,7 +620,7 @@ loudly at the `emit` call, naming the budget and the room remaining; nothing is
 partially accepted and prior blocks stand. Accepted and rejected emission attempts
 also have a terminal limit of four times the configured block cap (at least 128),
 which bounds retained host failures and guest acknowledgement state without
-evicting an older error frame. No result stash for emitted blocks: the program
+discarding an older error identity. No result stash for emitted blocks: the program
 learns while it can still choose differently. The byte default is a transport
 bound, not a context bound — emitted media reaches the model as media, not
 base64 text.
@@ -725,7 +731,7 @@ drain under `W9`; unknown outcomes retain precedence. The lease then releases:
 QuickJS terminates its child, and the Worker adapter disposes RPC and loader
 handles independently of the guest deadline. Workers guest computation may
 continue briefly, including a timer escaping the bridge (`X3`), with no host
-access. The upstream `Executor` shape remains unchanged.
+access. The Promise executor contract carries typed failures separately from guest values.
 
 The failure adds payload-free `hostCalls: { attempted, admitted, succeeded, failed }`
 without diagnostics. `attempted` includes the first refusal, normally 21; `admitted`
@@ -955,16 +961,15 @@ the program either way (`R1`).
 **X12** described a paused sandbox and left with pausing
 ([#672](https://github.com/zackbart/connecta/issues/672)); the id stays retired.
 
-**X11. Typed host rejection.** Both executors rebuild Connecta's authenticated
-host-failure frame as a thrown guest `Error` (`E1`). The per-run secret stays in
-the trusted prelude closure and the prelude locks `globalThis.Error`, so guest
-code and connector prose cannot forge the frame. The host bounds details before
-framing (`E1`), JSON escapes included; QuickJS refuses an oversized frame whole
-rather than slicing through its JSON, hides one whose JSON is malformed, and
-keeps the raw bridge and its JSON decoder in a private closure so guest code
-cannot intercept a frame first. The Worker adapter places guest source in a
-separate module so it cannot read the raw dispatcher bindings in upstream
-evaluation code. A mismatched frame is ordinary program-authored prose.
+**X11. Typed host rejection.** QuickJS creates and retains guest Error handles
+in its host bridge and compares handles when the program rejects. The Worker
+adapter retains Error identities in its private entrypoint and returns typed
+facts through Worker Loader RPC. Its host adapter copies that RPC outcome before
+upstream result shaping. Both construct `failure.call` from retained typed
+values, never from a guest result or printed text. Host failure details are
+bounded before bridging (`E1`), including JSON escapes. No frame parser or
+prose matching participates in classification. The guest cannot import runner
+modules or repeat privileged initialization.
 
 ## Verification
 
@@ -986,12 +991,12 @@ rejection, and branded adapter acceptance across module copies.
 | `S4` | both guest-contract executors (ordered mixed describe results with unknown-address, unknown-tool suggestion, and catalog-failure details), `test/meta-tools-search.test.ts` (top-level routing, no-suggestion, catalog-failure, and hostile-input bounds) |
 | `S5`, `S6` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`unwrapMcpResult`, fail-closed annotations, activity parity) |
 | `S7` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (parallel calls and shared admission) |
-| `S8`, `E1`, `X11` | both guest-contract executors (caught call, discovery, utility, removed-function, and forgery cases; typed promise rejections), `test/quickjs-executor.node.test.ts` (oversized messages, private transport, forged frames) |
+| `S8`, `E1`, `X11` | both guest-contract executors (caught call, discovery, utility, removed-function, and forgery cases; typed promise rejections), `test/quickjs-executor.node.test.ts` (oversized messages, private transport, forged outcomes) |
 | `S9` | `test/result-shapes.test.ts` (value exclusion, bounds, merging, LRU and time expiry, runtime isolation, read-only admission, declared precedence, definition invalidation, unwrapped MCP results, discovery provenance, copy isolation, failure isolation) |
 | `E2`, `E8` | `test/guest-api-contract.test.ts` (code → `retryable`, caught, parallel, and uncaught validation recovery, a conflict's bounded `current`), `test/meta-tools-call.test.ts` (direct, destructive, provider fallback), `test/validate.test.ts` (bounded payload-free findings), `test/errors.test.ts` |
 | `E3`, `E4` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`auth_required`, destructive reroute), `test/program-writes.test.ts` (the refusal's `nextAction`, nothing sent, a caught refusal) |
 | `E5` | `test/guest-api-contract.test.ts` (execution-failure channel, in-flight `cancelled`), `test/execute.test.ts` (admission), `test/executor-admission.test.ts`, `test/quickjs-executor.node.test.ts` (mid-run shutdown) |
-| `E6`, `X8` | `test/guest-api-contract.test.ts` (unknown and inherited members, authenticated error identities), `test/quickjs-executor.node.test.ts` |
+| `E6`, `X8` | `test/guest-api-contract.test.ts` (unknown and inherited members, retained error identities), `test/quickjs-executor.node.test.ts` |
 | `E7` | `test/guest-api-contract.test.ts` (refusals about a `503`-named connector), `test/errors.test.ts` |
 | `R1`, `R2`, `R3` | `test/guest-api-contract.test.ts` (pass-through, truncation is success, envelope fits the cap and is idempotent) |
 | `R4`, `M6`, `M9` | verdicts; `R2`'s guard, `M1`'s strict typing, and `M2`'s collect-then-deliver are their enforcement |

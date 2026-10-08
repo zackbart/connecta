@@ -197,16 +197,11 @@ function nonNegativeWhole(
   return resolved;
 }
 
-function errorPayload(error: string): string {
-  // X11: a partial authenticated frame exposes its secret instead of decoding.
-  // Refuse it whole if a host ever bypasses execute.ts's framing bound.
-  const message =
-    error.length > MAX_ERROR_CHARS && error.includes("\u001econnecta-error:")
-      ? `Host failure exceeded the ${MAX_ERROR_CHARS}-character bridge limit.`
-      : error.slice(0, MAX_ERROR_CHARS);
+function errorPayload(error: unknown): string {
   return JSON.stringify({
     ok: false,
-    error: message,
+    error: msg(error).slice(0, MAX_ERROR_CHARS),
+    ...(error instanceof InvocationFailure ? { call: error.details } : {}),
   } satisfies HostResultPayload);
 }
 
@@ -792,7 +787,7 @@ class QuickJsChildPool implements AdmittingExecutor {
         payloadJson = errorPayload(detail);
       }
     } catch (err) {
-      payloadJson = errorPayload(msg(err));
+      payloadJson = errorPayload(err);
     }
     if (!child.connected || slot.active !== active) return;
     const response = {

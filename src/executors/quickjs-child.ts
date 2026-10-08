@@ -1,4 +1,5 @@
 import { prepareExecuteResultForTransport } from "../executor-result.js";
+import { InvocationFailure } from "../invocation.js";
 import { msg } from "../errors.js";
 import type { ExecutorProvider } from "../types.js";
 import {
@@ -144,7 +145,7 @@ process.on("message", (message: ParentToChildMessage) => {
     try {
       const result = JSON.parse(message.payloadJson) as HostResultPayload;
       if (result.ok) request.resolve(result.value);
-      else request.reject(new Error(result.error));
+      else request.reject(result.call ? new InvocationFailure(result.call) : new Error(result.error));
     } catch (err) {
       request.reject(new Error(`Invalid host result: ${msg(err)}`));
     }

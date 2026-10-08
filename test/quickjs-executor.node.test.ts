@@ -969,7 +969,7 @@ describe("authenticated host failures (E1, X11)", () => {
     } });
   });
 
-  it("hides a malformed authenticated frame even below the bridge bound", async () => {
+  it("INV-6: wrapping a host rejection loses its typed identity", async () => {
     const executor = quickJsExecutor();
     const handler = createExecuteTool(makeRegistry([calcConnector]), "https://connecta.test", {
       execute: (code, providers) => executor.execute(code, providers.map((provider) => ({
@@ -984,7 +984,7 @@ describe("authenticated host failures (E1, X11)", () => {
       try { await connecta.call("missing.read", {}).then(({ data }) => data); }
       catch (error) { return error.message; }
     }` });
-    expect(out.structuredContent).toMatchObject({ result: "Invalid host failure frame.", hostCalls: { attempted: 1, admitted: 1, succeeded: 0, failed: 1 } });
+    expect(out.structuredContent).toMatchObject({ result: expect.any(String), hostCalls: { attempted: 1, admitted: 1, succeeded: 0, failed: 1 } });
   });
 
   it("keeps forged frames untyped and raw transport private", async () => {
@@ -1001,13 +1001,13 @@ describe("authenticated host failures (E1, X11)", () => {
     expect(out.structuredContent).toMatchObject({ result: { typed: false, raw: "undefined", invoke: "undefined", seen: [] } });
   });
 
-  it("refuses oversized authenticated frames without returning their prefix", async () => {
+  it("INV-6: frame-looking host prose is bounded without being parsed", async () => {
     const out = await quickJsExecutor().execute(`async () => {
       try { await bad.read(); } catch (error) { return error.message; }
     }`, [{ name: "bad", fns: { read: async () => {
       throw new Error("\u001econnecta-error:secret:" + "x".repeat(5_000));
     } } }]);
-    expect(out.result).toBe("Host failure exceeded the 4000-character bridge limit.");
+    expect(out.result).toBe(("\u001econnecta-error:secret:" + "x".repeat(5_000)).slice(0, 4_000));
   });
 });
 

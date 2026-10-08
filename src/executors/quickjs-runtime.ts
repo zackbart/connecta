@@ -1,3 +1,4 @@
+import type { CallErrorDetails } from "../errors.js";
 // QuickJS-in-WebAssembly runtime used inside the disposable child process.
 //
 // Model-written code runs inside a QuickJS interpreter compiled to WASM:
@@ -12,8 +13,10 @@ import {
   getQuickJS,
   type QuickJSContext,
   type QuickJSDeferredPromise,
+  type QuickJSHandle,
 } from "quickjs-emscripten";
 import type { ExecuteResult, ExecutorProvider } from "../types.js";
+import { InvocationFailure } from "../invocation.js";
 import { msg } from "../errors.js";
 import { withoutProgramTerminator } from "../program-source.js";
 import {
@@ -105,8 +108,8 @@ export function normalizeCode(code: string): string {
  * and fail closed there.
  */
 function setupScript(providers: ExecutorProvider[]): string {
-  // X11: raw replies carry an authenticated frame. Capture the bridge and
-  // codec before guest code runs, and expose only the decoded provider calls.
+  // Capture the host bridge and codec before guest code runs.
+  // Rejections are native guest Errors created and retained by the host.
   const lines: string[] = [
     `(() => {
   const call = globalThis.__call;
@@ -125,7 +128,6 @@ function setupScript(providers: ExecutorProvider[]): string {
   })();
   const invoke = async (ns, fn, args) => {
     const r = parse(await call(ns, fn, stringify(args)));
-    if (!r.ok) throw new GuestError(r.error);
     return r.value;
   };
   const namespace = (ns) => freeze(new ProxyConstructor(create(null), {
@@ -139,8 +141,7 @@ function setupScript(providers: ExecutorProvider[]): string {
   for (const p of providers) {
     if (p.prelude) lines.push(p.prelude);
   }
-  lines.push(`const GuestError = globalThis.Error;
-})();`);
+  lines.push(`})();`);
   return lines.join("\n");
 }
 
@@ -168,6 +169,7 @@ interface HostBridge {
   aborted: boolean;
   wake: () => void;
   waitForSettle: Promise<void>;
+  failures: Array<{ error: QuickJSHandle; call: CallErrorDetails }>;
 }
 
 function armWake(bridge: HostBridge): void {
@@ -206,6 +208,7 @@ function installBridge(
     aborted: false,
     wake: () => {},
     waitForSettle: Promise.resolve(),
+    failures: [],
   };
   armWake(bridge);
 
@@ -255,7 +258,7 @@ function installBridge(
     ns: string,
     fn: string,
     argsJson: string,
-  ): Promise<string> => {
+  ): Promise<{ json: string } | { error: unknown }> => {
     try {
       const provider = byName.get(ns);
       const f =
@@ -281,9 +284,9 @@ function installBridge(
           `Host result from ${label} exceeds the ${MAX_HOST_RESULT_BYTES}-byte serialized bridge limit.`,
         );
       }
-      return json;
+      return { json };
     } catch (err) {
-      return JSON.stringify({ ok: false, error: msg(err) });
+      return { error: err };
     }
   };
 
@@ -293,15 +296,35 @@ function installBridge(
     const argsJson = ctx.getString(argsH);
     const deferred: QuickJSDeferredPromise = ctx.newPromise();
     bridge.pending++;
-    void invoke(ns, fn, argsJson).then((json) => {
+    void invoke(ns, fn, argsJson).then((reply) => {
       bridge.pending--;
       if (bridge.aborted) {
         // Context is (about to be) torn down — settle nothing, free our handles.
         deferred.dispose();
       } else {
-        const h = ctx.newString(json);
-        deferred.resolve(h);
-        h.dispose();
+        if ("json" in reply) {
+          const h = ctx.newString(reply.json);
+          deferred.resolve(h);
+          h.dispose();
+        } else {
+          const error = ctx.newError();
+          const message = ctx.unwrapResult(ctx.evalCode(JSON.stringify(msg(reply.error).slice(0, 4_000))));
+          ctx.setProp(error, "message", message);
+          message.dispose();
+          if (reply.error instanceof InvocationFailure) {
+            const call = reply.error.details;
+            // The error identity and typed facts stay in host state. A guest
+            // may edit public fields without changing the retained failure.
+            bridge.failures.push({ error: error.dup(), call });
+            for (const [key, value] of Object.entries({ code: call.code, retryable: call.retryable, details: call })) {
+              const property = ctx.unwrapResult(ctx.evalCode(`(${JSON.stringify(value)})`));
+              ctx.setProp(error, key, property);
+              property.dispose();
+            }
+          }
+          deferred.reject(error);
+          error.dispose();
+        }
       }
       bridge.wake();
     });
@@ -369,6 +392,8 @@ export async function executeQuickJs(
       const bridge = installBridge(ctx, providers, logs, onLog);
       const finish = <T extends ExecuteResult>(r: T): T => {
         bridge.aborted = true;
+        for (const failure of bridge.failures) failure.error.dispose();
+        bridge.failures.length = 0;
         // Outstanding host calls still hold deferred-promise handles; their
         // callbacks free them and wake the drain, which disposes the context
         // once the last straggler settles. Re-arm before every wait so the
@@ -395,6 +420,16 @@ export async function executeQuickJs(
         const stack = dumped && typeof dumped === "object" && "stack" in dumped && typeof dumped.stack === "string" ? dumped.stack : "";
         const location = /:(\d+)(?::\d+)?\)?(?:\n|$)/.exec(stack);
         return finish({ result: undefined, error, failure: { name, ...(location ? { line: Math.max(1, Number(location[1]) - 1) } : {}) } });
+      };
+      const rejected = (error: QuickJSHandle): ExecuteResult => {
+        const call = bridge.failures.find((failure) => ctx.eq(failure.error, error))?.call;
+        const dumped = ctx.dump(error);
+        const name = dumped && typeof dumped === "object" && typeof dumped.name === "string" ? dumped.name.slice(0, 64) : "Error";
+        const stack = dumped && typeof dumped === "object" && typeof dumped.stack === "string" ? dumped.stack : "";
+        const location = /:(\d+)(?::\d+)?\)?(?:\n|$)/.exec(stack);
+        return { result: undefined, error: formatGuestError(dumped).slice(0, 4_000), failure: {
+          name, ...(call ? { call } : {}), ...(location ? { line: Math.max(1, Number(location[1]) - 1) } : {}),
+        } };
       };
       const timedOut = (): QuickJsExecutionResult => ({
         result: undefined,
@@ -435,6 +470,7 @@ export async function executeQuickJs(
           }
           const jobs = runGuest(() => ctx.runtime.executePendingJobs());
           if (jobs.error) {
+            const rejection = rejected(jobs.error);
             const dumped = ctx.dump(jobs.error);
             jobs.error.dispose();
             if (isInterrupt(dumped) && wallInterrupted) {
@@ -443,7 +479,7 @@ export async function executeQuickJs(
             if (isInterrupt(dumped) && cpuInterrupted) {
               return { result: undefined, error: cpuTimeoutError };
             }
-            return { result: undefined, error: formatGuestError(dumped) };
+            return rejection;
           }
           const state = ctx.getPromiseState(promiseHandle);
           if (state.type === "fulfilled") {
@@ -452,6 +488,7 @@ export async function executeQuickJs(
             return { result };
           }
           if (state.type === "rejected") {
+            const rejection = rejected(state.error);
             const dumped = ctx.dump(state.error);
             state.error.dispose();
             if (isInterrupt(dumped) && wallInterrupted) {
@@ -460,7 +497,7 @@ export async function executeQuickJs(
             if (isInterrupt(dumped) && cpuInterrupted) {
               return { result: undefined, error: cpuTimeoutError };
             }
-            return { result: undefined, error: formatGuestError(dumped) };
+            return rejection;
           }
           if (bridge.pending === 0) {
             return {

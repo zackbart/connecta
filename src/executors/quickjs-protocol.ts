@@ -1,3 +1,4 @@
+import type { CallErrorDetails } from "../errors.js";
 import type { ExecuteResult } from "../types.js";
 import type { QuickJsRuntimeOptions } from "./quickjs-runtime.js";
 
@@ -47,7 +48,7 @@ export interface HostCallPayload {
 
 export type HostResultPayload =
   | { ok: true; value: unknown }
-  | { ok: false; error: string };
+  | { ok: false; error: string; call?: CallErrorDetails };
 
 export interface ExecutionPayload {
   outcome: ExecuteResult;
