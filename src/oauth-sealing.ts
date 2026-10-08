@@ -69,3 +69,13 @@ export async function deriveOAuthHandoffKey(raw: Uint8Array): Promise<CryptoKey>
     info: new TextEncoder().encode("browser-connect"),
   }, material, { name: "HMAC", hash: "SHA-256", length: 256 }, false, ["sign", "verify"]);
 }
+
+/** A purpose-specific MCP retry key, available only to the host's codec. */
+export async function deriveRequestStateKey(raw: Uint8Array): Promise<Uint8Array> {
+  const material = await crypto.subtle.importKey("raw", new Uint8Array(raw), "HKDF", false, ["deriveBits"]);
+  return new Uint8Array(await crypto.subtle.deriveBits({
+    name: "HKDF", hash: "SHA-256",
+    salt: new TextEncoder().encode("connecta:request-state:v1"),
+    info: new TextEncoder().encode("auth-elicitation"),
+  }, material, 256));
+}

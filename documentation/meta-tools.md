@@ -500,6 +500,53 @@ bounded no-match analysis. An empty or whitespace-only query browses.
 
 ## Authorization recovery
 
+On MCP 2026-07-28, a host declaring `elicitation.url` receives
+`resultType: "input_required"` when an eligible call or program needs recoverable
+connector authentication and the admitted identity may manage that connector.
+Read-classified calls may re-run after a mid-handler auth failure only when
+their classification came from a catalog accepted within its TTL. Stale
+fallback catalogs cannot authorize post-entry recovery. A write may
+elicit only when Connecta's own pre-invocation credential resolution
+reports a missing grant, a missing credential slot, or required consent before
+refresh. Its handler and transport have not been entered. Programs also require
+that every entered call has a fresh read classification during this run.
+The `connecta_auth` input request uses `elicitation/create`,
+`mode: "url"`, fixed copy, and an identity-checked `/connect/<id>` link built
+from configured `publicUrl`. OAuth consent stays in the browser; a credential
+slot uses the authenticated operator UI. `authorize_connector` uses the same
+flow for explicit connect and restart. There is no legacy shim.
+
+The host echoes `requestState` and its bare `inputResponses.connecta_auth`
+response on the original `tools/call`. Accept re-runs the original call; it
+does not prove browser consent completed. Decline or cancel ends without
+dispatch, with `auth_declined` or `auth_cancelled`. Three prompts are allowed
+within one ten-minute retry window, then `auth_round_limit` ends the flow.
+Each state can be consumed once; concurrent or repeated retries are refused
+before dispatch. A Continue link from a pending restart requires that restart
+to start successfully before the browser can consume it.
+Host-owned invocation facts record the auth failure's origin and entry into
+all calls, including each classification, catalog freshness and classification
+digest. Raw fetches and custom connector transports cannot establish recovery
+eligibility. Each accept retry rechecks all previously entered reads before
+restarting a program or direct call. A write classification, changed digest, or
+stale catalog returns `auth_replay_refused` and reconciliation guidance.
+Each round also checks its own invocation facts. Normal stale-fallback calls
+retain their existing behavior.
+An auth failure after a write handler or transport was entered keeps its
+ordinary error code,
+`retryable: false`, `reconciliationRequired: true`, and manual `/connect` guidance
+where available. The write may have partially run; reconcile its target before
+retrying after connection. Handler-authored error fields cannot clear this guard.
+
+State integrity, expiry, principal, endpoint, and tool failures produce the
+SDK's JSON-RPC `-32602` with `data.reason: "invalid_request_state"` before the
+handler runs. Changed arguments or code produce a typed `invalid_request_state`
+tool failure before dispatch. Retry state grants no access; each request still
+passes current identity, pool, connector visibility, and management checks.
+Hosts without URL support keep the recovery envelope below, with a `/connect`
+URL when this deployment can issue one. Without an interactive provider,
+signing vault, or configured public URL, automatic elicitation is unavailable.
+
 `downstream_oauth_required` means the connector needs an OAuth grant.
 `auth_required` means its operator-managed credentials or configuration need
 repair. Both carry the recovery envelope below. `provider_permission_denied`

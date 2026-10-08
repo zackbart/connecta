@@ -38,6 +38,7 @@ import { splitAddress, type RegistryView } from "./registry.js";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { validateCatalogToolInput } from "./validate.js";
 import { sentSecretsFor, sentSecretsForRequest, trackCredentialReads, type SentSecrets } from "./sent-secrets.js";
+import { classificationDigest, recordAuthFailure, recordCallEntry, replayClassificationDigest, resolveInvocationAuth } from "./invocation-auth.js";
 
 function defined<T extends object>(
   values: T,
@@ -323,6 +324,7 @@ export class InvocationService {
       let attempts = 0;
       let resultBytes: number | undefined;
       let dispatchedToConnector = false;
+      let preInvocationAuthFailure = false;
       let answered = false;
       const sentSecrets = sentSecretsForRequest(this.catalog.requestScope);
       context.sentSecrets?.include(sentSecrets);
@@ -403,6 +405,7 @@ export class InvocationService {
         if (error.code === "auth_required" && target.connector.startAuth) {
           error = { ...error, code: "downstream_oauth_required" };
         }
+        const enteredWrite = resolved?.definition.classification === "write" && dispatchedToConnector;
         switch (error.code) {
           case "destructive_tool_requires_approval": {
             const echoed = echoedCallArgs(args);
@@ -433,6 +436,8 @@ export class InvocationService {
                 target.connector,
                 this.catalog.baseUrl,
               ),
+              ...(enteredWrite
+                ? { reconciliationRequired: true as const, retryable: false } : {}),
               nextAction: {
                 tool: "authorize_connector" as const,
                 arguments: { connector: target.connector.id },
@@ -440,8 +445,9 @@ export class InvocationService {
                   "Give the URL and instructions it returns to the operator.",
               },
               retry:
-                `Retry ${target.connector.id}.${target.toolName} after ` +
-                "the operator completes recovery.",
+                enteredWrite
+                  ? "This write may have partially run. Reconcile its target before retrying after the operator completes recovery."
+                  : `Retry ${target.connector.id}.${target.toolName} after the operator completes recovery.`,
             };
           case "provider_permission_denied":
             return {
@@ -475,6 +481,11 @@ export class InvocationService {
       const failed = (error: CallErrorDetails): InvocationOutcome<T> => {
         const diagnostics = timing();
         const target = resolved ?? activityTarget;
+        if (target && (error.code === "auth_required" || error.code === "downstream_oauth_required")) {
+          recordAuthFailure(this.catalog.requestScope, target.connector.id,
+            (resolved?.definition.classification === "read" && resolved.classificationFresh === true) || preInvocationAuthFailure ||
+            (!resolved && context.source === "call_tool"));
+        }
         // Attach host deadline facts before write recovery changes the code.
         if (isTimeoutFailure(error)) {
           const elapsedMs = Date.now() - started;
@@ -576,6 +587,14 @@ export class InvocationService {
           activityTarget = target;
 
           const write = target.definition.classification !== "read";
+          const canonicalAddress = `${target.connector.id}.${target.toolName}`;
+          const expectedDigest = replayClassificationDigest(this.catalog.requestScope, canonicalAddress);
+          if (expectedDigest !== undefined && (target.classificationFresh !== true ||
+              (yield* Effect.promise(() => classificationDigest(target.definition))) !== expectedDigest)) {
+            return { ...framingError("auth_replay_refused",
+              "An entered read no longer has the same fresh classification. Reconcile its target before starting a new request."),
+              reconciliationRequired: true as const };
+          }
           if (!surfaceAllowsTool(target.definition.classification, context.source, context.trust)) {
             const canonicalAddress = `${target.connector.id}.${target.toolName}`;
             return framingError(
@@ -618,7 +637,7 @@ export class InvocationService {
 
           if (callSignal?.aborted) return yield* Effect.fail(callSignal.reason);
           attempts = 1;
-          const call = () => {
+          const call = async () => {
             const connectorContext = this.registry.contextFor(
               target.connector.id,
               this.catalog.baseUrl,
@@ -628,20 +647,30 @@ export class InvocationService {
             if (context.source === "execute_code") markProgramCall(connectorContext);
             trackCredentialReads(connectorContext);
             sentSecrets.include(sentSecretsFor(connectorContext));
-            if (
-              target.connector.credential &&
-              !connectorContext.credential
-            ) {
-              throw new ConnectorCallError(
-                "auth_required",
-                "Operator-managed credential storage is not configured. Call " +
-                  `authorize_connector({ connector: "${target.connector.id}" }).`,
-              );
+            try {
+              if (target.connector.credential) {
+                if (!connectorContext.credential) {
+                  throw new ConnectorCallError("auth_required",
+                    "Operator-managed credential storage is not configured. Call " +
+                    `authorize_connector({ connector: "${target.connector.id}" }).`);
+                }
+                if (!await connectorContext.credential.getAll()) {
+                  throw new ConnectorCallError("auth_required",
+                    `Connector "${target.connector.id}" has no stored credential. Call authorize_connector.`);
+                }
+              }
+              await resolveInvocationAuth(target.connector, connectorContext);
+            } catch (error) {
+              const code = classifyCallError(error).code;
+              preInvocationAuthFailure = code === "auth_required" || code === "downstream_oauth_required";
+              throw error;
             }
             // Cancellation can arrive during admission or context construction.
             if (admissionSignal?.aborted) throw admissionSignal.reason;
             dispatchedToConnector = true;
-            return target.connector.callTool(
+            recordCallEntry(this.catalog.requestScope, { address: canonicalAddress,
+              classification: write ? "write" : "read", fresh: target.classificationFresh === true }, target.definition);
+            return await target.connector.callTool(
               target.toolName,
               args ?? {},
               connectorContext,

@@ -10,6 +10,7 @@ import { array, assertKnownOptions, instance, keys, optionsOf, strings } from ".
 import { describedEndpoint, describedOrigin, describedTools } from "../described.js";
 import { CALL_ADMISSION, CREDENTIAL, USAGE_GUIDE } from "./option-shapes.js";
 import { assertStaticToolNames } from "../tool-name.js";
+import { registerInvocationAuth } from "../invocation-auth.js";
 import { redactCatalog, redactSentSecrets, sentSecretsFetch, trackCredentialReads } from "../sent-secrets.js";
 import type {
   Connector,
@@ -347,7 +348,7 @@ export function apiConnector(
   const byName = new Map(opts.tools.map((t) => [t.name, t]));
   const validateArgs = opts.validateArgs ?? true;
   const auth = describedApiAuth(opts);
-  return {
+  const connector: Connector = {
     id,
     ...defined({ title: opts.title }),
     kind: "api",
@@ -437,4 +438,13 @@ export function apiConnector(
       }
     },
   };
+  if (oauth) registerInvocationAuth(connector, async ctx => {
+    // The built-in static OAuth status only reads the stored grant. It never
+    // refreshes, invokes a handler, or sends a downstream request.
+    if ((await oauth.status(ctx)).state === "auth_required") {
+      throw new ConnectorCallError("downstream_oauth_required",
+        `Connector "${id}" requires authorization. Call authorize_connector.`);
+    }
+  });
+  return connector;
 }

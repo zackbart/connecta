@@ -402,13 +402,13 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       `${url.origin}${url.pathname}` !== settings.identity
     ) {
       trackRemoteClientRequest(sentSecretsFor(ctx), input, init);
-      return byteReadResponse(await fetch(input, { ...init, redirect: "manual" }));
+      return byteReadResponse(await sentSecretsFetch(ctx)(input, { ...init, redirect: "manual" }));
     }
     const headers = new Headers(init.headers);
     for (const [name, value] of settings.tokenRequestHeaders) headers.set(name, value);
     for (const [, value] of settings.tokenRequestHeaders) sentSecretsFor(ctx).header(value);
     trackRemoteClientRequest(sentSecretsFor(ctx), input, { ...init, headers });
-    return byteReadResponse(await fetch(input, { ...init, headers, redirect: "manual" }));
+    return byteReadResponse(await sentSecretsFetch(ctx)(input, { ...init, headers, redirect: "manual" }));
   };
 
   /**

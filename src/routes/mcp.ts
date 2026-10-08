@@ -1,7 +1,8 @@
 import { bindActivityRequest } from "../activity-request.js";
 import { closeConnectorScope } from "../connector-scope.js";
 import { executeLimits } from "../config.js";
-import { oauthConnectUrl, oauthConnectUnavailable } from "../oauth-handoff.js";
+import { oauthConnectUrl, oauthConnectLink, oauthConnectLinkProgress, closeOAuthConnectLinks, claimAuthRetry, oauthConnectUnavailable } from "../oauth-handoff.js";
+import { AuthElicitation } from "../auth-elicitation.js";
 import {
   classifyInboundRequest,
   createMcpHandler,
@@ -374,11 +375,31 @@ function serveMcp(
   // transport never does, and neither may stay wired to an ended request.
   const servers: McpServer[] = [];
   const createServer = (): McpServer => {
+    const authElicitation = new AuthElicitation({
+      vault: opts.config.vault,
+      publicUrl: opts.config.publicUrl,
+      endpoint: new URL(new URL(request.url).pathname, baseUrl).href,
+      principal: principalKey,
+      registry,
+      canManage: canManageAuth,
+      connectLink: (id, force, after) => oauthConnectLink(opts, opts.config.publicUrl ?? baseUrl, id, principalKey, force,
+        Boolean(opts.config.vault?.seal && opts.config.vault.open), after),
+      linkProgress: (id, nonce) => oauthConnectLinkProgress(opts, baseUrl, id, nonce),
+      closeLinks: (id, nonces) => closeOAuthConnectLinks(opts, baseUrl, id, nonces),
+      claimRetry: (id, nonce) => claimAuthRetry(opts, baseUrl, id, nonce),
+      unavailable: oauthConnectUnavailable(opts),
+      credentialUi: Boolean(opts.config.ui && opts.config.vault),
+      requestSignal,
+      requestScope,
+      defer: runtimeContext?.waitUntil?.bind(runtimeContext),
+    });
     const server = new McpServer(opts.config.serverInfo, {
       // A request-local server cannot publish catalog changes. Set this before
       // tool registration, whose SDK default otherwise advertises listChanged.
       capabilities: { tools: { listChanged: false }, extensions: {} },
       instructions: CONNECTA_INSTRUCTIONS,
+      inputRequired: { legacyShim: false },
+      requestState: { verify: (state, context) => authElicitation.verify(state, context) },
       cacheHints: {
         "server/discover": { ttlMs: 3_600_000, cacheScope: "private" },
         "tools/list": {
@@ -408,6 +429,7 @@ function serveMcp(
     if (activity) bindActivityRequest(requestScope, activity);
     const client: McpClientContext = {};
     registerMetaTools(server, registry, {
+      authElicitation,
       client,
       baseUrl,
       requestScope,
@@ -426,6 +448,7 @@ function serveMcp(
         : {}),
     });
     registerExecuteTool(server, registry, {
+      authElicitation,
       client,
       baseUrl,
       requestScope,

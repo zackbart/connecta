@@ -5,7 +5,7 @@ import { escapeHtml, renderPage } from "../branding.js";
 import { htmlSecurityHeaders } from "../html-security.js";
 import { closeConnectorScope } from "../connector-scope.js";
 import { drainOAuthStartResets } from "../auth/oauth-start-reset.js";
-import { consumeOAuthConnectLink, oauthConnectUnavailable, verifyOAuthHandoff } from "../oauth-handoff.js";
+import { finishOAuthConnectStart, consumeOAuthConnectLink, oauthConnectUnavailable, verifyOAuthHandoff } from "../oauth-handoff.js";
 import { failureRecord, logFailure } from "../operator-record.js";
 import { runEdge, withDeadlineEffect } from "../runtime/run.js";
 import {
@@ -87,14 +87,28 @@ async function connect(context: RouteContext): Promise<Response> {
   if (authz.principalKey !== handoff.principal || !mayManageConnector(authz, connector)) {
     return refuse("Sign in as the user who requested this connection and has permission to manage it.");
   }
-  if (!connector.startAuth) return refuse("unknown OAuth connector", 404);
+  if (!connector.startAuth) {
+    if (!connector.credential || !opts.config.ui || !opts.config.vault) return refuse("unknown OAuth connector", 404);
+    let target: URL;
+    try { target = new URL(opts.config.ui.credentialHandoffUrl(baseUrl), baseUrl); }
+    catch { return refuse("Credential management URL is unavailable", 503); }
+    if (target.origin !== new URL(baseUrl).origin || target.username || target.password) return refuse("Credential management URL is unavailable", 503);
+    if (!await consumeOAuthConnectLink(opts, handoff)) return refuse("Invalid or expired connection link. Request a new link from connecta.", 400);
+    if (!await finishOAuthConnectStart(opts, handoff, "started")) return refuse("Invalid or expired connection link. Request a new link from connecta.", 400);
+    // Credential entry stays in the authenticated operator UI on this origin.
+    return withSessionCookies(new Response(null, { status: 302, headers: {
+      Location: target.href, "Cache-Control": "no-store",
+    } }), authz.sessionCookies);
+  }
   if (opts.config.ui && context.url.searchParams.get("start") !== "1") return withSessionCookies(authPage(), authz.sessionCookies);
   const registry = opts.registry.scoped({ connectorIds: [id], principalKey: authz.principalKey, ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}) });
   const scope = {};
   let ctx = registry.contextFor(id, baseUrl, scope, context.defer ? { defer: context.defer } : {});
   const timeoutError = new ConnectorCallError("timeout", "OAuth authorization start timed out");
+  let claimed = false;
   try {
     if (!await consumeOAuthConnectLink(opts, handoff)) return refuse("Invalid or expired connection link. Request a new link from connecta.", 400);
+    claimed = true;
     const status = await runEdge(withDeadlineEffect(signal => Effect.tryPromise({
       try: async () => {
         ctx = registry.contextFor(id, baseUrl, scope, { signal, ...(context.defer ? { defer: context.defer } : {}) });
@@ -113,8 +127,12 @@ async function connect(context: RouteContext): Promise<Response> {
       },
       catch: error => error,
     }), { timeoutMs: START_TIMEOUT_MS, signal: request.signal, timeoutError }));
+    await drainOAuthStartResets(scope);
     if (handoff.force || (!status.authorizationReused && status.state !== "ok")) await registry.invalidateStored(id);
-    if (status.state === "ok") return withSessionCookies(new Response("This connector is already connected.", { headers: { "Cache-Control": "no-store" } }), authz.sessionCookies);
+    if (status.state === "ok") {
+      if (!await finishOAuthConnectStart(opts, handoff, "started")) return refuse("Invalid or expired connection link. Request a new link from connecta.", 400);
+      return withSessionCookies(new Response("This connector is already connected.", { headers: { "Cache-Control": "no-store" } }), authz.sessionCookies);
+    }
     if (status.state !== "auth_required" || !status.authorizationUrl) {
       // The start's message can be a downstream's refusal, which an agent
       // may read but a log may not (INV-6): the record keeps the checked
@@ -128,6 +146,7 @@ async function connect(context: RouteContext): Promise<Response> {
     }
     const target = new URL(status.authorizationUrl);
     if (!["https:", "http:"].includes(target.protocol) || target.username || target.password) return refuse("OAuth authorization returned no safe URL", 502);
+    if (!await finishOAuthConnectStart(opts, handoff, "started")) return refuse("Invalid or expired connection link. Request a new link from connecta.", 400);
     return withSessionCookies(new Response(null, { status: 302, headers: { Location: target.href, "Cache-Control": "no-store" } }), authz.sessionCookies);
   } catch (error) {
     await drainOAuthStartResets(scope);
@@ -136,6 +155,8 @@ async function connect(context: RouteContext): Promise<Response> {
     logFailure(opts.config.logger, "OAuth start failed", failureRecord({ connector: id }, error));
     return refuse("OAuth authorization could not start", 400);
   } finally {
+    await drainOAuthStartResets(scope);
     await closeConnectorScope(connector, ctx, context.defer);
+    if (claimed) await finishOAuthConnectStart(opts, handoff, "failed");
   }
 }

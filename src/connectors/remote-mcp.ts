@@ -67,6 +67,7 @@ import { CONNECTA_VERSION } from "../version.js";
 import { learnedUrlRefusal } from "../url-safety.js";
 import { oauthSealerFor } from "../oauth-sealing.js";
 import { retainingOAuthPartition } from "../oauth-partition.js";
+import { registerInvocationAuth } from "../invocation-auth.js";
 import { detach, runEdge } from "../runtime/run.js";
 import { assertKnownOptions, keys, optionsOf } from "../config-schema.js";
 import { describedEndpoint, describedUrl } from "../described.js";
@@ -1123,9 +1124,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // A cached transport may dispatch concurrent calls and listings. Register
   // its actual sent auth with every operation using that client, including
   // handshake/discovery requests and OAuth rotations. Remove settled users.
-  const activeSecrets = new WeakMap<ConnectionState, Set<SentSecrets>>();
+  const activeContexts = new WeakMap<ConnectionState, Set<ConnectorContext>>();
   const trackSentRequest = (ctx: ConnectorContext, input: RequestInfo | URL, init?: RequestInit): void => {
-    const recipients = new Set([sentSecretsFor(ctx), ...activeSecrets.get(entryFor(ctx)) ?? []]);
+    const active = activeContexts.get(entryFor(ctx));
+    const recipients = new Set([sentSecretsFor(ctx), ...[...(active ?? [])].map(sentSecretsFor)]);
     for (const secrets of recipients) {
       if (opts.auth?.type === "oauth") trackRemoteClientRequest(secrets, input, init);
       else secrets.request(input, init);
@@ -2561,12 +2563,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       for (const value of Object.values(opts.auth.headers)) secrets.header(value);
     }
     const state = entryFor(ctx);
-    let active = activeSecrets.get(state);
-    if (!active) { active = new Set(); activeSecrets.set(state, active); }
-    active.add(secrets);
+    let active = activeContexts.get(state);
+    if (!active) { active = new Set(); activeContexts.set(state, active); }
+    active.add(ctx);
     try { return redactSentSecrets(ctx, await run()); }
     catch (error) { throw redactSentSecrets(ctx, error); }
-    finally { active.delete(secrets); }
+    finally { active.delete(ctx); }
   };
   const callTool = connector.callTool;
   connector.callTool = (name, args, ctx, options) =>
@@ -2599,5 +2601,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   connector.callTool = payloadFree(connector.callTool);
   if (connector.startAuth) connector.startAuth = payloadFree(connector.startAuth);
   if (connector.finishAuth) connector.finishAuth = payloadFree(connector.finishAuth);
+  if (isOauth) registerInvocationAuth(connector, retainingOAuthPartition(async ctx => {
+    // Only inspect local grant state here. Discovery, refresh, and MCP
+    // transports remain inside callTool and cannot establish retry safety.
+    const provider = newProvider(ctx, stateFor(ctx));
+    if (await provider.operatorDisconnected()) throw operatorDisconnectedError();
+    if (!await provider.tokens()) throw authRequiredError();
+  }, 0));
   return connector;
 }

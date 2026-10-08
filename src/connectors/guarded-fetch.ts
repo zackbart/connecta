@@ -183,22 +183,20 @@ type GuardedFetcher = (
 export function oauthBearer(
   provider: string,
 ): Pick<GuardedFetchOptions, "authenticate" | "fetch"> {
-  return {
-    authenticate: () => ({}),
-    fetch: (url, init, ctx) => {
-      const grant = (ctx as ApiHandlerContext).oauth;
-      if (!grant) {
-        // A wiring bug, not an outage: the transport was built for a grant the
-        // connector does not have, so no request can be authenticated.
-        throw new ConnectorCallError(
-          "connector_call_failed",
-          `The ${provider} transport authenticates through the connector's OAuth grant, and this call's context carries none.`,
-          { retryable: false },
-        );
-      }
-      return grant.fetch(url, init);
-    },
+  const send: GuardedFetcher = (url, init, ctx) => {
+    const grant = (ctx as ApiHandlerContext).oauth;
+    if (!grant) {
+      // A wiring bug, not an outage: the transport was built for a grant the
+      // connector does not have, so no request can be authenticated.
+      throw new ConnectorCallError(
+        "connector_call_failed",
+        `The ${provider} transport authenticates through the connector's OAuth grant, and this call's context carries none.`,
+        { retryable: false },
+      );
+    }
+    return grant.fetch(url, init);
   };
+  return { authenticate: () => ({}), fetch: send };
 }
 
 /** Send one guarded request and map its response with provider knowledge. */

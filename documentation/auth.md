@@ -866,6 +866,62 @@ instead of a base64 stack on every route.
 
 ## Human authentication management
 
+Auth URL elicitation uses the SDK's `createRequestStateCodec`, backed by a
+separate HKDF-derived HMAC-SHA256 key held inside `encryptedCredentialVault`.
+The ten-minute state is authenticated, not encrypted. Its secret-free payload
+binds the admitted principal, canonical endpoint including pool, connector,
+meta-tool, address, SHA-256 digest of arguments or code, round, expiry, and
+the opaque browser-link nonces issued in that flow. Entered reads also bind
+their addresses and classification digests.
+Arguments and program source never enter the payload. The absolute expiry
+survives every round. Rotation invalidates outstanding states.
+Each state admits one retry through a connector-scoped storage CAS, including
+decline and cancel. Concurrent or repeated consumption is refused before
+dispatch, so retries cannot fork into sibling forced connection links.
+The host records each entered call's classification, catalog freshness and
+classification digest in private invocation state, along with auth failure origins. Writes may elicit only
+when Connecta's own credential resolution fails before invoking the connector:
+a missing grant, a missing credential slot, or consent required before refresh.
+Auth failures inside handlers or transports cannot elicit for writes, including
+raw fetches, custom connector errors, and refresh failures inside a handler.
+Programs also stop automatic recovery once any write-classified call enters
+its handler, even if it sends nothing or fails. Each accepted retry checks
+these facts for its own round. Later auth failures
+carry `reconciliationRequired: true` and manual connection guidance because the
+call may have partially run. Post-entry recovery requires every entered call
+to have a read classification from a catalog accepted within its TTL. Stale
+fallbacks, including a failed listing followed by cached annotations, cannot
+authorize a re-run. Normal calls retain their existing stale-fallback behavior.
+Before an accepted retry restarts any call, it rechecks every entered read.
+A write classification, changed classification digest, or stale catalog returns
+`auth_replay_refused` with reconciliation guidance, including in trusted programs.
+Pre-invocation credential-resolution eligibility is unchanged.
+Custom vaults may implement the host-only `requestStateKey` method; without it, the
+deployment retains the ordinary handoff. It must return a stable,
+purpose-specific deployment key of at least 32 bytes. Only the MCP boundary
+reads this key; connector contexts and guest APIs cannot reach the vault.
+Explicit authorization retries require a completed browser start (including
+its reset and consent binding), valid stored credential fields where declared,
+and a healthy passive connector status where available before completing.
+An in-progress start cannot complete against an old grant. A forced flow switches to
+Continue after that visit, so another prompt cannot restart pending consent.
+Failed starts remain single-use but do not block a later successful attempt.
+Before checking completion, unspent links in the retry flow are atomically
+retired so an older forced link cannot begin a reset during the status check.
+A Continue link issued during a pending forced start is bound to that
+predecessor and cannot be consumed unless the predecessor starts successfully.
+If it fails, the next prompt requests a fresh restart instead of reusing the old grant.
+
+The `/connect` link issued by the elicitation boundary encrypts its browser
+handoff with the vault's `seal`/`open` methods before signing it. The URL carries
+neither principal identifiers nor credentials and authenticates no browser.
+The same principal and management checks apply to OAuth and credential-slot
+links. A credential-slot visit consumes its link and redirects to the
+same-origin operator UI, where credential mutation requires its own identity
+and Origin checks. Vaults without sealing keep ordinary handoffs and cannot
+serve URL elicitation. See [authorization recovery](./meta-tools.md#authorization-recovery)
+for capability gating, retry termination, and dispatch restrictions.
+
 A verified `/connect` visit gives downstream OAuth work and its state handoff 30 seconds. The request signal
 and deadline reach discovery, registration, and other downstream fetches; expiry returns `504 OAuth
 authorization start timed out`. A restart's grant write, catalog invalidation, and scope close drain before

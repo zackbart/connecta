@@ -4,7 +4,7 @@ import type {
   KVStorage,
 } from "./types.js";
 
-import { deriveOAuthHandoffKey } from "./oauth-sealing.js";
+import { deriveOAuthHandoffKey, deriveRequestStateKey } from "./oauth-sealing.js";
 import { credentialKeys } from "./storage/keys.js";
 
 const KEY_BYTES = 32;
@@ -149,6 +149,7 @@ function validateValues(
 export class CredentialVault implements Vault {
   private readonly key: Promise<CryptoKey>;
   private readonly handoffKey: Promise<CryptoKey>;
+  private readonly retryKey: Promise<Uint8Array>;
 
   constructor(
     private readonly storage: KVStorage,
@@ -161,6 +162,7 @@ export class CredentialVault implements Vault {
       );
     }
     this.handoffKey = deriveOAuthHandoffKey(raw);
+    this.retryKey = deriveRequestStateKey(raw);
     this.key = crypto.subtle.importKey(
       "raw",
       raw,
@@ -174,6 +176,10 @@ export class CredentialVault implements Vault {
     return bytesToBase64(new Uint8Array(await crypto.subtle.sign(
       "HMAC", await this.handoffKey, encoder.encode(payload),
     )));
+  }
+
+  async requestStateKey(): Promise<Uint8Array> {
+    return new Uint8Array(await this.retryKey);
   }
 
   async verifyOAuthHandoff(payload: string, signature: string): Promise<boolean> {

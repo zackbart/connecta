@@ -369,17 +369,93 @@
     },
     {
       "id": "elicitation",
-      "status": "planned",
+      "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation",
-      "notes": "MRTR URL elicitation for auth and direct-call downstream relay arrive in Phase 3.",
-      "issue": "https://github.com/zackbart/connecta/issues/707"
+      "notes": "Auth URL elicitation on capable 2026-07-28 hosts, with identity-checked connect links, decline/cancel termination, and ordinary recovery fallback. Writes elicit only for Connecta-owned pre-invocation credential resolution failures. Programs also require that no write-classified handler was entered in that run. Raw fetches and custom transport errors after invocation are ineligible for writes. Reads may re-run after dispatch. Downstream input relay and general form elicitation remain outside this item.",
+      "issue": "https://github.com/zackbart/connecta/issues/707",
+      "tests": [
+        {
+          "file": "test/auth-elicitation.test.ts",
+          "title": "INV-4 INV-5 INV-6: asks capable hosts through a fixed same-origin URL elicitation"
+        },
+        {
+          "file": "test/auth-elicitation.test.ts",
+          "title": "INV-4: decline and cancel terminate without dispatch or another prompt"
+        },
+        {
+          "file": "test/auth-elicitation.test.ts",
+          "title": "INV-4 INV-5: credential completion requires fields compatible with the current declaration"
+        }
+      ]
     },
     {
       "id": "multi-round-trip-requests",
-      "status": "planned",
+      "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr",
-      "notes": "Seal requestState for auth and wrap downstream states on direct calls; programs cannot relay downstream input yet.",
-      "issue": "https://github.com/zackbart/connecta/issues/707"
+      "notes": "Auth retries use createRequestStateCodec with a deployment-held key, principal/endpoint/connector/tool/digest/round/expiry binding, and bounded rounds. Each accepted retry checks host-owned auth failure origins and write handler entry. Writes only elicit for pre-invocation credential resolution failures; programs stop elicitation after any write handler entry and retain reconciliation and manual connection guidance. Downstream state relay on direct calls remains planned in #707 item 5.",
+      "issue": "https://github.com/zackbart/connecta/issues/707",
+      "tests": [
+        {
+          "file": "test/auth-elicitation.test.ts",
+          "title": "INV-4 INV-5: rejects tampered, expired, cross-principal, and cross-pool state before dispatch"
+        },
+        {
+          "file": "test/auth-elicitation.test.ts",
+          "title": "INV-4: bounds rounds while accept does not claim consent completed"
+        },
+        {
+          "file": "test/auth-elicitation.test.ts",
+          "title": "INV-4 INV-5 INV-9: a claimed forced reconnect cannot complete against the old grant before reset finishes"
+        },
+        {
+          "file": "test/auth-elicitation.test.ts",
+          "title": "INV-4 INV-9: a failed browser start is terminal and does not block a later successful retry"
+        },
+        {
+          "file": "test/auth-elicitation.test.ts",
+          "title": "INV-4 INV-5 INV-9: retires unused forced links before the completion status check"
+        },
+        {
+          "file": "test/auth-elicitation.test.ts",
+          "title": "INV-4 INV-9: each requestState admits one retry and concurrent forks are refused"
+        },
+        {
+          "file": "test/auth-elicitation.test.ts",
+          "title": "INV-4 INV-5 INV-9: Continue cannot reuse the old grant when its forced predecessor fails"
+        },
+        {
+          "file": "test/auth-elicitation-dispatch.test.ts",
+          "title": "INV-9: an accept retry that dispatches a write and then fails auth cannot elicit another round"
+        },
+        {
+          "file": "test/auth-elicitation-dispatch.test.ts",
+          "title": "INV-4 INV-9: a handler cannot reset invocation facts by replacing its context scope"
+        },
+        {
+          "file": "test/auth-elicitation-dispatch.test.ts",
+          "title": "INV-9: a read with a mid-handler 401 elicits and can re-run after connection"
+        },
+        {
+          "file": "test/auth-elicitation-dispatch.test.ts",
+          "title": "INV-2 INV-9: completed local program writes remain guarded before a later auth failure"
+        },
+        {
+          "file": "test/auth-elicitation-dispatch.test.ts",
+          "title": "INV-9: raw fetch in a api connector write cannot elicit or replay a completed item (program false)"
+        },
+        {
+          "file": "test/auth-elicitation-dispatch.test.ts",
+          "title": "INV-9: raw fetch in a custom connector write cannot elicit or replay a completed item (program true)"
+        },
+        {
+          "file": "test/auth-elicitation-dispatch.test.ts",
+          "title": "INV-9: each accepted write round rechecks pre-invocation eligibility before handler entry"
+        },
+        {
+          "file": "test/auth-elicitation-dispatch.test.ts",
+          "title": "INV-2 INV-9: a program cannot elicit after an earlier write handler entered and a read lacks credentials"
+        }
+      ]
     },
     {
       "id": "subscriptions",

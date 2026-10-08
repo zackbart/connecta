@@ -1,3 +1,4 @@
+import { markCatalogFreshness, carryCatalogFreshness } from "./catalog-freshness.js";
 import { activityRequest, bindActivityRequest } from "./activity-request.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { assertStaticToolNames, hasControlCharacters } from "./tool-name.js";
@@ -1948,7 +1949,7 @@ export class Registry implements RegistryView {
     callOptions: ConnectorOperationOptions = {},
     readOptions?: CatalogReadOptions,
   ): Promise<ToolDef[]> {
-    const tools = await this.loadDownstreamTools(
+    const { tools, freshUntil } = await this.loadDownstreamTools(
       id,
       baseUrl,
       requestScope,
@@ -1961,9 +1962,9 @@ export class Registry implements RegistryView {
     const overrides = this.classification[id];
     this.validateClassification(id, accepted, overrides);
     const review = catalogReviewOf(connector);
-    return review
-      ? classifyCatalog(review, id, accepted, this.opts.logger, this.verifiedFacts, overrides)
-      : accepted.map(tool => this.publishUnreviewedTool(id, tool));
+    return markCatalogFreshness(review
+      ? await classifyCatalog(review, id, accepted, this.opts.logger, this.verifiedFacts, overrides)
+      : accepted.map(tool => this.publishUnreviewedTool(id, tool)), freshUntil);
   }
 
   private publishUnreviewedTool(id: string, tool: ToolDef): ToolDef {
@@ -1995,17 +1996,17 @@ export class Registry implements RegistryView {
     requestScope?: object,
     callOptions: ConnectorOperationOptions = {},
     readOptions?: CatalogReadOptions,
-  ): Promise<ToolDef[]> {
+  ): Promise<{ tools: ToolDef[]; freshUntil: number }> {
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
-    if (connector.staticTools) return connector.staticTools;
+    if (connector.staticTools) return { tools: connector.staticTools, freshUntil: Infinity };
 
     const now = Date.now();
     const requestGeneration = this.catalogGeneration(id);
     const hit = this.cache.get(id);
     if (hit && hit.exp > now) {
       if (readOptions?.defer) this.observeCatalogAccess(id, "fresh");
-      return hit.tools;
+      return { tools: hit.tools, freshUntil: hit.exp };
     }
 
     let stale =
@@ -2042,7 +2043,7 @@ export class Registry implements RegistryView {
         };
         if (usableCurrent.exp > reconciledAt) {
           if (readOptions?.defer) this.observeCatalogAccess(id, "fresh");
-          return usableCurrent.tools;
+          return { tools: usableCurrent.tools, freshUntil: usableCurrent.exp };
         }
       }
       if (
@@ -2062,7 +2063,7 @@ export class Registry implements RegistryView {
         });
         if (persisted.expiresAt > reconciledAt) {
           if (readOptions?.defer) this.observeCatalogAccess(id, "fresh");
-          return persisted.tools;
+          return { tools: persisted.tools, freshUntil: persisted.expiresAt };
         }
         stale = {
           tools: persisted.tools,
@@ -2093,7 +2094,7 @@ export class Registry implements RegistryView {
         !this.invalidated.has(id)
       ) {
         this.observeCatalogAccess(id, "stale");
-        return stale.tools;
+        return { tools: stale.tools, freshUntil: 0 };
       }
     }
 
@@ -2105,7 +2106,8 @@ export class Registry implements RegistryView {
         callOptions,
       );
       if (readOptions?.defer) this.observeCatalogAccess(id, "fresh");
-      return tools;
+      const accepted = this.cache.get(id);
+      return { tools, freshUntil: accepted?.tools === tools ? accepted.exp : 0 };
     } catch (err) {
       if (
         stale &&
@@ -2119,7 +2121,7 @@ export class Registry implements RegistryView {
           "catalog refresh failed; serving stale catalog",
           failureRecord({ connector: id }, err),
         );
-        return stale.tools;
+        return { tools: stale.tools, freshUntil: 0 };
       }
       throw err;
     }
@@ -2369,7 +2371,7 @@ class ScopedRegistryView implements RegistryView {
         if (!present.has(name)) this.root.noteAbsentGrant(args[0], name);
       }
     }
-    return visible;
+    return carryCatalogFreshness(tools, visible);
   }
 
   contextFor(
