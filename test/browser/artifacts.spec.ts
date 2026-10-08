@@ -314,7 +314,7 @@ test("a Markdown page follows the deployment's pinned scheme, not the OS", async
   const frame = page.frameLocator("#artifactFrame");
   await expect(frame.locator("#artifact-root")).toHaveText("Signups rose 12%.");
   // The dark palette's --surface, inside the frame and on the frame itself.
-  const surface = "rgb(21, 26, 33)";
+  const surface = "rgb(24, 25, 30)";
   await expect(frame.locator("body")).toHaveCSS("background-color", surface);
   await expect(page.locator("#artifactFrame")).toHaveCSS("background-color", surface);
   // The viewer's heading already names the page; the frame does not repeat it.
