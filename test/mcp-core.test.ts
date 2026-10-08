@@ -64,7 +64,7 @@ describe("2026-07-28 core", () => {
       sink: { record: event => { template = event; } }, actor: { kind: "test" }, requestId: "r",
       serverInfo: { name: "connecta", version: "0" }, logger: silentLogger,
     }, { connectorId: "calc", toolName: "add", address: "calc.add", source: "call_tool", outcome: "success", durationMs: 1, attempts: 1 });
-    const events = [...INVALID_CLIENT_FACTS, "v".repeat(33)].map(value => ({
+    const events: ToolCallActivityEvent[] = [...INVALID_CLIENT_FACTS, "v".repeat(33)].map(value => ({
       ...template, packageVersion: value as string, clientName: value as string, clientVersion: value as string,
     }));
     events.push(...VALID_CLIENT_IDENTITIES.map(clientInfo => ({ ...template, clientName: clientInfo.name, clientVersion: clientInfo.version })));
@@ -93,7 +93,7 @@ describe("2026-07-28 core", () => {
     for (const [operator, gate, status] of [[false, true, 403], [true, false, 403], [true, true, 200]] as const) {
       let reads = 0;
       const c = createTestConnecta({ connectors: [], logger: silentLogger,
-        auth: { kind: "test", interactiveOperator: true, authorize: () => ({ ok: true, userId: "operator" }) },
+        auth: { kind: "test", activityActorNamespace: "connecta:test", interactiveOperator: true, authorize: () => ({ ok: true, userId: "operator" }) },
         identity: { activityAccess: () => operator },
         activity: activityHistory({ readGate: () => gate, store: { record() {}, list: async () => { reads++; return { events: [] }; } } }),
       });

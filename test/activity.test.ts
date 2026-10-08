@@ -52,7 +52,7 @@ describe("activity delivery", () => {
       expect(event).toMatchObject({ packageVersion: CONNECTA_VERSION, serverVersion: "999.0.0", clientName: "Claude Code", clientVersion: "2.1.0" });
     }
     // Deployment observations have no request client unless supplied explicitly.
-    recordCatalogDriftActivity({ ...context, clientInfo: undefined }, counts);
+    recordCatalogDriftActivity({ sink: context.sink, serverInfo: context.serverInfo, logger: context.logger }, counts);
     expect(drifts.at(-1)).toMatchObject({ packageVersion: CONNECTA_VERSION });
     expect(drifts.at(-1)).not.toHaveProperty("clientName");
     expect(drifts.at(-1)).not.toHaveProperty("clientVersion");
