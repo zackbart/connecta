@@ -74,6 +74,22 @@ test("command palette filters, traps focus and restores its trigger", async ({ p
   await expect(trigger).toBeFocused();
 });
 
+for (const fromAppearance of [false, true]) {
+  test(`palette page selection leaves focus at the destination heading${fromAppearance ? " from Appearance" : ""}`, async ({ page }) => {
+    await page.route("**/ui/activity*", route => route.fulfill({ json: { events: [] } }));
+    await openShell(page);
+    if (fromAppearance) {
+      await page.getByRole("button", { name: "Appearance", exact: true }).click();
+      await page.keyboard.press("Meta+k");
+    } else await page.getByRole("button", { name: "Search pages" }).click();
+    await page.getByPlaceholder("Search pages…").fill("Activity");
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(origin + "/activity");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Activity", exact: true })).toBeFocused();
+  });
+}
+
 test("appearance tabs use arrow keys and persist the selected scheme", async ({ page }) => {
   await openShell(page);
   const trigger = page.getByRole("button", { name: "Appearance", exact: true });
@@ -97,7 +113,7 @@ test("closing a palette above Appearance restores both focus targets", async ({ 
   await trigger.click();
   await page.getByRole("tab", { name: "Light", exact: true }).focus();
   await page.keyboard.press("Meta+k");
-  await expect(page.getByRole("dialog", { name: "Go to page" })).toBeVisible();
+  await expect(page.getByPlaceholder("Search pages…")).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("tab", { name: "Light", exact: true })).toBeFocused();
   await page.keyboard.press("Escape");
