@@ -146,7 +146,7 @@ export class ArtifactRefreshService {
           documents: { [document]: { baseVersion, value: response.result } },
           by: { kind: "refresh" },
           op: "refresh", runId,
-          programVersion: run.programVersion,
+          programVersion: run.programVersion, signal,
           ...(render ? { render } : {}),
         });
         if (saved.ok) {

@@ -105,6 +105,33 @@ describe("artifact refresh", () => {
     } finally { finish(); await app.close(); }
   });
 
+  it("INV-7: refresh rechecks parent cancellation after storage yields and before publishing", async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    let stored!: () => void;
+    const finished = new Promise<void>(resolve => { stored = resolve; });
+    let bodies = 0;
+    const { app, operations, store, create, configure } = setup(async (code, providers) => {
+      if (code.includes("nested-parent")) return { result: await providers[0]!.fns.call!("artifacts.run_refresh", { id: "weekly" }) };
+      return { result: { value: 2 } };
+    }, undefined, undefined, { trust: "trusted", admission: { code: { concurrency: 2 } }, execute: { hostCallTimeoutMs: 100 } });
+    try {
+      await create();
+      await configure("async () => ({ value: 2 })");
+      const putBody = store.putBody.bind(store);
+      store.putBody = async (...args) => { bodies++; await blocked; return putBody(...args); };
+      const putRun = store.putRun.bind(store);
+      store.putRun = async (...args) => { await putRun(...args); if (args[1].finishedAt) stored(); };
+      const reply = await readJsonRpc(await mcpRpc(app, "tools/call", { name: "execute_code", arguments: { code: "async () => 'nested-parent'" } }));
+      expect(JSON.stringify(reply)).toContain("write_outcome_unknown");
+      expect(bodies).toBe(1);
+      release();
+      await finished;
+      expect(await operations.getDocument("weekly", "data")).toMatchObject({ ok: true, value: { value: 1 } });
+      expect((await store.runs("weekly", 1))[0]).toMatchObject({ status: "failed", errorCode: "unavailable" });
+    } finally { release(); await app.close(); }
+  });
+
   it("INV-7: request-bound refresh joins child cancellation and preserves last-good data", async () => {
     const { operations, create, configure } = setup(async () => ({ result: null }));
     await create();
