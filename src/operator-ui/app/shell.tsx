@@ -88,8 +88,12 @@ export function ShellControls({ pages, current }: { pages: OperatorPage[]; curre
             {pages.map(page => <Command.Item key={page} value={PAGE_META[page].label} onSelect={() => go(page)}>{PAGE_META[page].label}</Command.Item>)}
           </Command.Group>
           <Command.Group heading="Preferences"><Command.Item onSelect={() => {
-            if (!appearanceOpen) appearanceReturnFocus.current = commandReturnFocus.current;
-            commandReturnFocus.current = null;
+            if (!appearanceOpen) {
+              appearanceReturnFocus.current = commandReturnFocus.current;
+              // A newly mounted Appearance dialog supplies its own autofocus.
+              commandReturnFocus.current = null;
+            }
+            // If already mounted, restore the tab the palette interrupted.
             setCommandOpen(false); setAppearanceOpen(true);
           }}>Appearance</Command.Item></Command.Group>
         </Command.List>

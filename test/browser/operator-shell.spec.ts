@@ -90,6 +90,24 @@ for (const fromAppearance of [false, true]) {
   });
 }
 
+for (const alreadyOpen of [false, true]) {
+  test(`palette Appearance action focuses its tab${alreadyOpen ? " when already open" : ""}`, async ({ page }) => {
+    await openShell(page);
+    const trigger = page.getByRole("button", { name: alreadyOpen ? "Appearance" : "Search pages", exact: alreadyOpen });
+    await trigger.click();
+    if (alreadyOpen) {
+      await page.getByRole("tab", { name: "Light", exact: true }).focus();
+      await page.keyboard.press("Meta+k");
+    }
+    await page.getByPlaceholder("Search pages…").fill("Appearance");
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("dialog", { name: "Go to page" })).toHaveCount(0);
+    await expect(page.getByRole("tab", { name: "Light", exact: true })).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(trigger).toBeFocused();
+  });
+}
+
 test("appearance tabs use arrow keys and persist the selected scheme", async ({ page }) => {
   await openShell(page);
   const trigger = page.getByRole("button", { name: "Appearance", exact: true });
