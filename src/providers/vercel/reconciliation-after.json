@@ -71,14 +71,6 @@
       "classification": "write"
     },
     {
-      "name": "promote_deployment",
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": true
-      },
-      "classification": "write"
-    },
-    {
       "name": "delete_deployment",
       "annotations": {
         "readOnlyHint": false,
@@ -88,6 +80,14 @@
     }
   ],
   "mcp": [
+    {
+      "name": "request_promote",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true
+      },
+      "classification": "write"
+    },
     {
       "name": "list_project_domains",
       "annotations": {

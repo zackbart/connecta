@@ -22,5 +22,19 @@
     "update_dns_record": "execute",
     "delete_dns_record": "execute",
     "purge_cache": "execute"
+  },
+  "apiExceptions": {
+    "create_r2_bucket": {
+      "tool": "cloudflare_api_mutate",
+      "condition": "A bucket collection POST requires cf-r2-jurisdiction, which the hosted helper cannot send."
+    },
+    "update_r2_bucket": {
+      "tool": "cloudflare_api_mutate",
+      "condition": "A jurisdictional bucket mutation requires cf-r2-jurisdiction."
+    },
+    "delete_r2_bucket": {
+      "tool": "cloudflare_api_mutate",
+      "condition": "A jurisdictional bucket mutation requires cf-r2-jurisdiction."
+    }
   }
 }

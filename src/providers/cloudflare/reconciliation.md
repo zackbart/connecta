@@ -18,21 +18,35 @@ does not accept the legacy Global API Key/email pair.
 | Ordinary JSON mutation, including DNS, Workers, KV, R2, Pages, cache purge | Hosted `execute` | Whole-API coverage with bearer tokens/OAuth |
 | Named and arbitrary GET reads, including token/key verification and bulk KV read | API read tools | Preserve read-only-program access; `execute` is always a write, including GET-only code |
 | Raw/multipart uploads on reviewed body endpoint families | API `cloudflare_api_upload` | Explicit UTF-8/base64 bodies, multipart file fields and endpoint headers; other token-auth endpoints refused |
-| Legacy identity or R2 jurisdiction JSON mutations | API `cloudflare_api_mutate` | Global API Key/email auth, or R2 bucket endpoints requiring `cf-r2-jurisdiction`, unavailable in hosted helper |
+| Legacy identity or R2 jurisdiction JSON mutations | API `cloudflare_api_mutate` | Global API Key/email auth, or R2 bucket endpoints (including collection creation) requiring `cf-r2-jurisdiction`, unavailable in hosted helper |
 
 API-token JSON mutations outside the R2 jurisdiction exception are refused before transport;
 ordinary `Accept` headers and upload content-type assertions cannot bypass ownership.
+Upload ownership matches method and path: PUT Worker scripts/KV values/R2 objects;
+POST Worker versions/Images/Stream collection/Pages uploads. Stream metadata edits,
+copy and direct-upload URL creation belong to hosted `execute`.
 Use hosted `execute`. Mutations on a Global API Key deployment still use the
 explicit REST identity. Every removed named mutation has that explicit legacy-identity replacement
 as well as hosted `execute` for API-token/OAuth identities. Both raw writes
 retain destructive classification.
 No request is replayed against another implementation after failure.
 
+A jurisdictional creation uses the API complement explicitly:
+
+```js
+await cloudflare_rest.cloudflare_api_mutate({
+  method: "POST",
+  path: "/accounts/account-id/r2/buckets",
+  headers: [{ name: "cf-r2-jurisdiction", value: "eu" }],
+  body: { name: "assets" },
+});
+```
+
 | Removed API duplicate | Canonical hosted tool |
 | --- | --- |
 | `create_dns_record` | `execute` |
 | `create_kv_namespace` | `execute` |
-| `create_r2_bucket` | `execute` |
+| `create_r2_bucket` | `execute`; API `cloudflare_api_mutate` when a jurisdiction header is required |
 | `retry_pages_deployment` | `execute` |
 | `add_pages_domain` | `execute` |
 | `update_zone_setting` | `execute` |

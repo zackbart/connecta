@@ -1,4 +1,5 @@
 import { skill } from "./skill.generated.js";
+import { HOSTED_REST_OPERATIONS, UNCOVERED_REST_OPERATIONS } from "./mcp-ownership.js";
 /**
  * No `@vercel/sdk` on purpose — not a dependency and not an optional peer.
  * Direct fetch keeps the root Workers-safe, avoids shipping the SDK's generated
@@ -467,8 +468,9 @@ function rawRequest(
   } catch {
     throw new ConnectorCallError("invalid_args", "The REST path contains an invalid escape or URL.");
   }
-  const canonical = VERCEL_CANONICAL_ROUTES.find(([verb, pattern]) => verb === method && pattern.test(path));
-  if (canonical) {
+  const matches = ([verb, pattern]: readonly [string, RegExp, string | null]) => verb === method && pattern.test(path);
+  const canonical = VERCEL_EXACT_CANONICAL_ROUTES.find(matches) ?? VERCEL_CANONICAL_ROUTES.find(matches);
+  if (canonical?.[2]) {
     throw new ConnectorCallError("invalid_args", `Use ${canonical[2]} on its owning connector. The REST complement cannot repeat that operation.`);
   }
   const query = queryPairs(args["query"]);
@@ -492,10 +494,28 @@ function rawRequest(
   return { path: String(args["path"]), query };
 }
 
+function hostedRestRoute([method, path, name]: readonly [string, string, string], anyVersion: boolean): [string, RegExp, string] {
+  const pattern = path.replace(/\/+$/, "").split("/").map((segment, index) => {
+    if (anyVersion && index === 1 && /^v\d+$/.test(segment)) return "v\\d+";
+    if (/^\{[^}]+\}$/.test(segment)) return "[^/]+";
+    return segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }).join("/");
+  return [method, new RegExp(`^${pattern}\\/?$`), `MCP ${name}`];
+}
+
+// Resolve actual published method/path/version contracts first, including
+// uncovered concrete endpoints. An id wildcard cannot consume a REST gap.
+const VERCEL_EXACT_CANONICAL_ROUTES: readonly [string, RegExp, string | null][] = [
+  ...UNCOVERED_REST_OPERATIONS.map(([method, path]): [string, RegExp, null] => [method, hostedRestRoute([method, path, ""], false)[1], null]),
+  ...HOSTED_REST_OPERATIONS.map((operation) => hostedRestRoute(operation, false)),
+];
+
 // Version-independent matches keep a raw hatch from restoring a removed
 // duplicate by selecting an older REST version. Env routes also protect the
 // value-safe named API implementations from an unprojected response.
 const VERCEL_CANONICAL_ROUTES: readonly [string, RegExp, string][] = [
+  // Specific published routes precede generic id patterns (e.g. projects/traces).
+  ...HOSTED_REST_OPERATIONS.map((operation) => hostedRestRoute(operation, true)),
   ["GET", /^\/v\d+\/teams\/?$/, "MCP list_teams"],
   ["GET", /^\/v\d+\/projects\/?$/, "MCP list_projects"],
   ["GET", /^\/v\d+\/projects\/[^/]+\/?$/, "MCP get_project"],
@@ -509,7 +529,7 @@ const VERCEL_CANONICAL_ROUTES: readonly [string, RegExp, string][] = [
   ["POST", /^\/v\d+\/files\/?$/, "MCP upload_file"],
   ["POST", /^\/v\d+\/deployments\/?$/, "MCP create_deployment"],
   ["DELETE", /^\/v\d+\/deployments\/[^/]+\/?$/, "API delete_deployment"],
-  ["POST", /^\/v\d+\/projects\/[^/]+\/promote\/[^/]+\/?$/, "API promote_deployment"],
+  ["POST", /^\/v\d+\/projects\/[^/]+\/promote\/[^/]+\/?$/, "MCP request_promote"],
   ["POST", /^\/v\d+\/projects\/[^/]+\/domains\/[^/]+\/verify\/?$/, "API verify_project_domain"],
   ["DELETE", /^\/v\d+\/projects\/[^/]+\/domains\/[^/]+\/?$/, "API remove_project_domain"],
   ["GET", /^\/v\d+\/projects\/[^/]+\/env(?:\/[^/]+)?\/?$/, "API list_project_env_vars"],
@@ -866,21 +886,6 @@ function tools(
       },
     },
     {
-      name: "promote_deployment",
-      description:
-        "Promote an existing Vercel deployment to production without rebuilding it. The deployment must belong to the named project.",
-      annotations: destructive,
-      inputSchema: namedInput(
-        { projectId: PROJECT_ID_PROPERTY, deploymentId: DEPLOYMENT_ID_PROPERTY, teamId: TEAM_ID_PROPERTY },
-        ["projectId", "deploymentId"],
-      ),
-      outputSchema: { type: "object", properties: { promoted: { type: "boolean" }, deploymentId: { type: "string" } }, required: ["promoted", "deploymentId"] },
-      handler: async (args, ctx) => {
-        await callVercel(send, { method: "POST", path: `/v10/projects/${encodeURIComponent(args["projectId"])}/promote/${encodeURIComponent(args["deploymentId"])}`, query: team(args) }, ctx);
-        return { promoted: true, deploymentId: args["deploymentId"] };
-      },
-    },
-    {
       name: "delete_deployment",
       description:
         "Permanently delete one Vercel deployment and its deployment URL. This cannot be undone; use cancel_deployment for work still running.",
@@ -913,7 +918,7 @@ Account purpose: ${purpose}
 ${
   teamId
     ? `This connection defaults to team \`${teamId}${skill.fragments.guide_0}`
-    : "This connection defaults to the token owner's personal account. Call `list_teams`, then pass `teamId`, for team-owned resources."
+    : "This connection defaults to the token owner's personal account. Use hosted MCP `list_teams`, then pass `teamId`, for team-owned resources."
 }${skill.fragments.guide_1}${
     accountInstructions
       ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n`
@@ -929,6 +934,7 @@ ${
  */
 const VERCEL_MCP_CLASSIFICATION: ToolClassification = {
   tools: {
+    "request_promote": { verdict: "destructive", reason: "The rolling-releases MCP reference promotes an existing deployment to production; replaces the authored REST promotion write." },
     "list_project_domains": { verdict: "read", reason: "The projects MCP reference lists project-domain metadata; formerly the named REST read." },
     "add_project_domain": { verdict: "destructive", reason: "Attaches a domain to a project; preserves the former REST write classification." },
     "cancel_deployment": { verdict: "destructive", reason: "Cancels an existing deployment, even if the vendor claims read-only access." },

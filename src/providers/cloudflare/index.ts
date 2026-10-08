@@ -1184,14 +1184,23 @@ function rawSpec(
 // The hosted helper accepts contentType/rawBody but no R2 jurisdiction header.
 // Ordinary headers such as Accept are not a reason to restore JSON duplicates.
 function needsMutationHeaders(spec: Pick<GuardedRequest, "path" | "headers">): boolean {
-  return /^\/accounts\/[^/]+\/r2\/buckets\/[^/]+(?:\/|$)/.test(spec.path) &&
+  return /^\/accounts\/[^/]+\/r2\/buckets(?:\/|$)/.test(spec.path) &&
     Object.entries(spec.headers ?? {}).some(([name, value]) => name.toLowerCase() === "cf-r2-jurisdiction" && typeof value === "string" && value.trim().length > 0);
 }
 
 // Reviewed raw-body families, rather than a Content-Type assertion that could
 // send an ordinary JSON DNS/configuration mutation through the upload tool.
-function isUploadEndpoint(path: string): boolean {
-  return /^\/accounts\/[^/]+\/(?:workers\/scripts\/[^/]+|storage\/kv\/namespaces\/[^/]+\/values\/.+|r2\/buckets\/[^/]+\/objects\/.+|images\/v1|stream(?:\/.*)?|pages\/assets\/upload|pages\/projects\/[^/]+\/deployments)\/?$/.test(path);
+function isUploadEndpoint(method: unknown, path: string): boolean {
+  const match = /^\/accounts\/[^/]+(\/.*)$/.exec(path);
+  if (!match) return false;
+  const accountPath = match[1]!;
+  if (method === "PUT") {
+    return /^(?:\/workers\/scripts\/[^/]+|\/storage\/kv\/namespaces\/[^/]+\/values\/.+|\/r2\/buckets\/[^/]+\/objects\/.+)\/?$/.test(accountPath);
+  }
+  if (method === "POST") {
+    return /^(?:\/workers\/scripts\/[^/]+\/versions|\/images\/v1|\/stream|\/pages\/assets\/upload|\/pages\/projects\/[^/]+\/deployments)\/?$/.test(accountPath);
+  }
+  return false;
 }
 
 function r2Headers(args: JsonRecord): Record<string, string | undefined> {
@@ -1859,7 +1868,7 @@ function buildTools(
             },
       async (args: JsonRecord, ctx) => {
               const spec = rawSpec(args);
-              if (authentication === "apiToken" && !isUploadEndpoint(spec.path)) {
+              if (authentication === "apiToken" && !isUploadEndpoint(args["method"], spec.path)) {
                 throw new ConnectorCallError("invalid_args", "Use the Cloudflare MCP execute tool for this mutation. REST uploads are confined to Workers, KV values, R2 objects, Images, Stream and Pages upload endpoints.");
               }
               const upload = uploadBody(args);

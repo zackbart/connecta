@@ -713,7 +713,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     const cleanReport = JSON.parse(clean.output).docs[0];
     expect(cleanReport).toMatchObject({
       provider: "vercel",
-      documentedTools: 38,
+      documentedTools: 39,
       added: [],
       removed: [],
       findings: [],

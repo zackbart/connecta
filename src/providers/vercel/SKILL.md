@@ -25,9 +25,10 @@ not the removed REST argument shapes. Read deployment status before logs and
 narrow log windows.
 
 This complement retains `verify_project_domain`, `remove_project_domain`,
-`promote_deployment`, and `delete_deployment` because the reviewed category
-pages do not publish equivalent tools. `promote_deployment` moves an existing
-build to production and does not rebuild it. New deployments use hosted
+and `delete_deployment` because the reviewed category
+pages do not publish equivalent tools. Hosted `request_promote` moves an existing
+build to production and does not rebuild it (the rolling-releases category
+provides the equivalent that the deployments category does not list). New deployments use hosted
 `create_deployment` or `deploy_to_vercel`.
 
 ## Environment values
@@ -43,7 +44,10 @@ Environment changes apply to future deployments.
 ## REST gaps and uploads
 
 `vercel_api_get` and `vercel_api_mutate` reach uncovered endpoints. They refuse
-paths owned by the canonical hosted or value-safe named tools. Do not use a
+paths owned by the canonical hosted or value-safe named tools, including
+project creation/update, pause/unpause and protection bypass. Ownership covers
+the published tool categories, not just the old reviewed classifier names;
+unreviewed live tools remain fail-closed writes. Do not use a
 raw hatch to restore a removed duplicate. `upload_file` on MCP owns deployment
 file uploads; `vercel_api_upload` retains other raw-body endpoints and explicit
 headers. It never reads a local file. Paths include the API version and cannot

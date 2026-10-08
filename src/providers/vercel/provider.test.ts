@@ -143,7 +143,7 @@ describe("vercel() construction", () => {
     expect(connector.kind).toBe("api");
     expect(connector.title).toBe("Vercel");
     expect(connector.credential?.label).toBe("Vercel access token");
-    expect(tools).toHaveLength(11);
+    expect(tools).toHaveLength(10);
     expect(tools.every((tool) => tool.inputSchema && tool.outputSchema)).toBe(
       true,
     );
@@ -211,16 +211,16 @@ describe("vercel() MCP surface", () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-  it("classifies every tool in Vercel's published MCP reference", () => {
+  it("classifies the reviewed hosted contract names", () => {
     const counts = { "read-only": 0, additive: 0, destructive: 0 };
     for (const { verdict } of VERCEL_MCP_VETTED_CATALOG.tools.values()) {
       counts[verdict] += 1;
     }
-    expect(VERCEL_MCP_VETTED_CATALOG.tools.size).toBe(38);
+    expect(VERCEL_MCP_VETTED_CATALOG.tools.size).toBe(39);
     expect(counts).toEqual({
       "read-only": 22,
       additive: 2,
-      destructive: 14,
+      destructive: 15,
     });
     expect(
       VERCEL_MCP_VETTED_CATALOG.tools.get("get_purchase_quote")?.verdict,
@@ -376,7 +376,7 @@ describe("Vercel domains and environment variables", () => {
 
 describe("Vercel raw API hatches and lifecycle calls", () => {
   it.each([
-    ["vercel_api_get", { path: "/v13/deployments/dpl_1/files/file_1" }],
+    ["vercel_api_get", { path: "/v6/user/tokens" }],
     ["vercel_api_mutate", { method: "POST", path: "/v1/example" }],
     ["vercel_api_upload", { method: "POST", path: "/v1/uncovered-upload", contentType: "text/plain", textBody: "uploaded" }],
   ])("preserves a text response through %s", async (name, args) => {
@@ -513,9 +513,20 @@ describe("Vercel canonical routing", () => {
     ["GET", "/v10/projects/prj_1/./env", "API list_project_env_vars"],
     ["GET", "/v10/projects/prj_1/%2e/env", "API list_project_env_vars"],
     ["GET", "/v10/projects/prj_1/nested/%2e%2e/env", "API list_project_env_vars"],
+    ["POST", "/v11/projects", "MCP create_project"],
+    ["PATCH", "/v9/projects/prj_1", "MCP update_project"],
+    ["POST", "/v1/projects/prj_1/pause", "MCP pause_project"],
+    ["POST", "/v1/projects/prj_1/unpause", "MCP unpause_project"],
+    ["PATCH", "/v1/projects/prj_1/protection-bypass", "MCP update_project_protection_bypass"],
+    ["GET", "/v1/projects/traces", "MCP get_project_trace"],
+    ["GET", "/v1/drains", "MCP list_drains"],
+    ["PATCH", "/v1/security/firewall/config", "MCP update_firewall_config"],
+    ["GET", "/v2/user", "MCP get_auth_user"],
+    ["POST", "/v1/integrations/sso/token", "MCP exchange_sso_token"],
+    ["GET", "/v13/deployments/dpl_1/files/file_1", "MCP get_deployment_file_contents"],
     ["POST", "/v13/deployments", "MCP create_deployment"],
     ["DELETE", "/v13/deployments/dpl_1", "API delete_deployment"],
-    ["POST", "/v10/projects/prj_1/promote/dpl_1", "API promote_deployment"],
+    ["POST", "/v10/projects/prj_1/promote/dpl_1", "MCP request_promote"],
     ["POST", "/v9/projects/prj_1/domains/site.test/verify", "API verify_project_domain"],
     ["DELETE", "/v9/projects/prj_1/domains/site.test", "API remove_project_domain"],
     ["GET", "/v10/projects/prj_1/env", "API list_project_env_vars"],
@@ -526,6 +537,33 @@ describe("Vercel canonical routing", () => {
   ])("INV-9: refuses a second implementation of %s %s before dispatch", async (method, path, replacement) => {
     const name = method === "GET" ? "vercel_api_get" : "vercel_api_mutate";
     await expect(call(connection(), name, { path, ...(method === "GET" ? {} : { method }) })).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining(replacement) });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("INV-9: the upload hatch also refuses a JSON project-creation duplicate", async () => {
+    await expect(call(connection(), "vercel_api_upload", { method: "POST", path: "/v11/projects", contentType: "application/json", textBody: '{"name":"duplicate"}' })).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("MCP create_project") });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("INV-9: keeps the verified project-deletion REST gap instead of treating every project mutation as hosted", async () => {
+    queue({ status: 204 });
+    await expect(call(connection(), "vercel_api_mutate", { method: "DELETE", path: "/v9/projects/prj_1" })).resolves.toEqual({ result: null });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.method).toBe("DELETE");
+  });
+
+  it("INV-9: preserves the separate drive-list REST gap before the named-sandbox wildcard", async () => {
+    queue({ body: { drives: [{ name: "assets" }] } });
+    const result = await call(connection(), "vercel_api_get", { path: "/v2/sandboxes/drives" });
+    expect(result).toEqual({ result: { drives: [{ name: "assets" }] } });
+    expect(calls).toHaveLength(1);
+    expect(url().pathname).toBe("/v2/sandboxes/drives");
+    await expect(call(connection(), "vercel_api_get", { path: "/v2/sandboxes/site" })).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("MCP get_named_sandbox") });
+    expect(calls).toHaveLength(1);
+  });
+
+  it.each([2, 3, 4])("INV-9: directs version %s sandbox creation to that version's actual hosted contract", async (version) => {
+    await expect(call(connection(), "vercel_api_mutate", { method: "POST", path: `/v${version}/sandboxes` })).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining(`MCP create_sandboxes_v${version}`) });
     expect(calls).toHaveLength(0);
   });
 

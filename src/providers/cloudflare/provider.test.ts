@@ -1517,3 +1517,35 @@ describe("Cloudflare mutation bypass refusal", () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+
+describe("Cloudflare reviewed mutation exceptions", () => {
+  it("INV-9: creates a jurisdictional bucket through the explicit API header complement", async () => {
+    stubFetch({ body: { success: true, result: { name: "assets", jurisdiction: "eu" } } });
+    await connection().callTool("cloudflare_api_mutate", { method: "POST", path: "/accounts/acct-1/r2/buckets", headers: [{ name: "cf-r2-jurisdiction", value: "eu" }], body: { name: "assets" } }, contextWithToken());
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.init.method).toBe("POST");
+    expect(new Headers(calls[0]!.init.headers).get("cf-r2-jurisdiction")).toBe("eu");
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ name: "assets" });
+  });
+  it.each([
+    ["POST", "/accounts/acct-1/stream/video-id"],
+    ["POST", "/accounts/acct-1/stream/copy"],
+    ["POST", "/accounts/acct-1/stream/direct_upload"],
+    ["PUT", "/accounts/acct-1/stream"],
+    ["POST", "/accounts/acct-1/workers/scripts/site"],
+    ["POST", "/accounts/acct-1/storage/kv/namespaces/ns/values/key"],
+    ["POST", "/accounts/acct-1/r2/buckets/assets/objects/key"],
+    ["PUT", "/accounts/acct-1/images/v1"],
+    ["PUT", "/accounts/acct-1/pages/projects/site/deployments"],
+  ])("INV-9: refuses %s %s because it is not the reviewed upload operation", async (method, path) => {
+    await expect(connection().callTool("cloudflare_api_upload", { method, path, contentType: "application/json", textBody: '{"requireSignedURLs":true}' }, contextWithToken())).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(0);
+  });
+  it("INV-9: retains an actual Stream collection upload", async () => {
+    stubFetch({ body: { success: true, result: { uid: "video" } } });
+    await connection().callTool("cloudflare_api_upload", { method: "POST", path: "/accounts/acct-1/stream", files: [{ name: "file", fileName: "video.mp4", contentType: "video/mp4", base64: "AAEC" }] }, contextWithToken());
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.init.body).toBeInstanceOf(FormData);
+  });
+});

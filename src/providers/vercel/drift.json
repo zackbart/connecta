@@ -172,7 +172,8 @@
         "cancel_deployment",
         "upload_file",
         "create_deployment",
-        "list_deployment_events"
+        "list_deployment_events",
+        "request_promote"
       ]
     }
   ]

@@ -9,6 +9,7 @@
     "get_runtime_logs": "get_runtime_logs",
     "list_project_domains": "list_project_domains",
     "add_project_domain": "add_project_domain",
-    "cancel_deployment": "cancel_deployment"
+    "cancel_deployment": "cancel_deployment",
+    "promote_deployment": "request_promote"
   }
 }

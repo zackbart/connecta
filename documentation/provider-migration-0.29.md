@@ -45,7 +45,9 @@ For Vercel, authorize the owning teams in hosted OAuth, migrate discovery/logs,
 domain listing/adding, deployment cancellation and file uploads to live MCP
 schemas, and keep the independently authorized REST complement for value-safe
 project environment variables (including `upsert: false` create-only writes), domain verification/removal and deployment
-promotion/deletion. Raw hatches refuse migrated paths. Do not copy REST argument
+deletion. Promotion now uses hosted `request_promote` from the rolling-releases
+category. Raw hatches refuse all published REST counterparts, including project
+creation/update. Do not copy REST argument
 shapes into vendor tools, even when a tool name is unchanged.
 
 The per-provider tables map every removed name and explain retained API tools:
