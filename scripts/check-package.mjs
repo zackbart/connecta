@@ -234,6 +234,7 @@ try {
     "README.md",
     "LICENSE",
     "bin/connecta.mjs",
+    "bin/version.mjs",
     "documentation/code-mode.md",
     "templates/node/.dockerignore",
     "templates/node/.env.example",
