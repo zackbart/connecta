@@ -9,7 +9,10 @@ import {
   artifactKeys,
   catalogKeys,
   credentialKeys,
+  familyOfKey,
   KEY_FAMILIES,
+  kvCopyKeys,
+  kvCutoverKeys,
   oauthConnectKeys,
   oauthHandoffKeys,
   oauthKeys,
@@ -78,6 +81,7 @@ describe("storage key families", () => {
     within(accessTokenKeys.family, accessTokenKeys.active);
     within(oauthConnectKeys.family, oauthConnectKeys.used("nonce"));
     within(oauthKeys.family, oauthKeys.generation);
+    within(kvCopyKeys.family, kvCopyKeys.cursor("token"));
     within(oauthKeys.family, oauthKeys.value(oauthKeys.field.tokens, "v2:epoch"));
     within(oauthKeys.family, oauthKeys.cleanup("v2:epoch"));
     within(oauthKeys.family, oauthKeys.cleanupAt("v2:epoch"));
@@ -91,6 +95,46 @@ describe("storage key families", () => {
     expect(credentialKeys.credential("svc")).toBe(`${scopes.connector("svc")}credential:v1`);
     expect(credentialKeys.credential("svc", "owner"))
       .toBe(`${scopes.principal("owner")}${scopes.connector("svc")}credential:v1`);
+  });
+
+  it("name the family of every key their builders write, in every scope", () => {
+    const connector = (key: string) => `${scopes.connector("svc")}${key}`;
+    const personal = (key: string) => `${scopes.principal("ab12")}${key}`;
+    const artifact = artifactKeys.under("artifact:");
+    const cases: [key: string, family: string][] = [
+      [`${scopes.results}${resultKeys.chunk("id", 0)}`, "result"],
+      [`${scopes.subject("ab12")}${resultKeys.chunk("id", 2)}`, "result"],
+      [personal(`${scopes.results}${resultKeys.chunk("id", 0)}`), "result"],
+      [stashLedgerKeys.ledger, "result-stash-ledger"],
+      [catalogKeys.manifest("svc"), "catalog"],
+      [personal(catalogKeys.chunk("svc", "rev", 1)), "catalog"],
+      [oauthHandoffKeys.handoff("svc", "hash"), "oauth-handoff"],
+      [accessTokenKeys.record("id"), "access-token"],
+      [accessTokenKeys.lookup("hash"), "access-token"],
+      [accessTokenKeys.active, "access-token"],
+      [credentialKeys.credential("svc"), "credential"],
+      [credentialKeys.credential("svc", "ab12"), "credential"],
+      [artifact.head("a"), "artifact"],
+      [artifact.run("a", "0", "r"), "artifact"],
+      [connector(oauthKeys.value(oauthKeys.field.tokens, null)), "oauth"],
+      [connector(oauthKeys.value(oauthKeys.field.client, "v2:epoch")), "oauth"],
+      [personal(connector(oauthKeys.generation)), "oauth"],
+      [connector(oauthKeys.cleanup("v2:epoch")), "oauth"],
+      [connector(oauthKeys.cleanupAt("v2:epoch")), "oauth"],
+      [connector(oauthConnectKeys.used("nonce")), "oauth-connect"],
+      [kvCopyKeys.cursor("token"), "kv-copy"],
+      [kvCutoverKeys.source("namespace"), "kv-cutover"],
+      // A custom connector's own keys, and keys no family claims.
+      [connector("my:key"), "connector-owned"],
+      [personal(connector("my:key")), "connector-owned"],
+      [`${scopes.results}other`, "unclassified"],
+      [artifactKeys.under("pages:").head("a"), "unclassified"],
+      ["", "unclassified"],
+      // A family's key outside its scope is not that family's.
+      [oauthKeys.generation, "unclassified"],
+      [`${scopes.results}${catalogKeys.manifest("svc")}`, "unclassified"],
+    ];
+    for (const [key, family] of cases) expect(familyOfKey(key), key).toBe(family);
   });
 
   it("are the only place source spells a storage key prefix", () => {
@@ -129,6 +173,7 @@ describe("storage key families", () => {
       () => artifact.blob(bad),
       () => oauthKeys.value(oauthKeys.field.tokens, bad),
       () => oauthConnectKeys.used(bad),
+      () => kvCopyKeys.cursor(bad),
     ];
     for (const build of builders) {
       expect(build).toThrow(/U\+0000 \(NUL\)/);

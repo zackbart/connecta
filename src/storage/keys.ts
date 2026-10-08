@@ -247,6 +247,41 @@ export const artifactKeys = {
   },
 } as const satisfies Keyed;
 
+/** Seconds a Workers KV → D1 copy's resume point stays usable. */
+export const KV_COPY_CURSOR_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+/**
+ * Where a one-shot Workers KV → D1 copy (`copyKvToD1` in `src/d1.ts`) resumes,
+ * held in D1 under a random token. Workers KV's own list cursor can spell the
+ * last key it listed, so the caller holds the token and never the cursor.
+ */
+export const kvCopyKeys = {
+  family: {
+    name: "kv-copy",
+    scope: "root",
+    prefixes: ["kv-copy:v1:"],
+    version: { number: 1, in: "key" },
+    codec: textCodec,
+    ttl: { kind: "fixed", seconds: KV_COPY_CURSOR_TTL_SECONDS },
+    durable: false,
+  },
+  cursor: (token: string) => validateStorageKey(`kv-copy:v1:cursor:${token}`),
+} as const satisfies Keyed;
+
+/** Once traffic uses D1, copying stale KV state is refused. */
+export const kvCutoverKeys = {
+  family: {
+    name: "kv-cutover",
+    scope: "root",
+    prefixes: ["kv-cutover:v1:"],
+    version: { number: 1, in: "key" },
+    codec: textCodec,
+    ttl: { kind: "durable" },
+    durable: true,
+  },
+  source: (source: string) => validateStorageKey(`kv-cutover:v1:${encodeURIComponent(source)}`),
+} as const satisfies Keyed;
+
 // --- connector families ---------------------------------------------------
 
 /** The OAuth values a flow stores, each under its historical key. */
@@ -326,4 +361,41 @@ export const KEY_FAMILIES: readonly KeyFamily[] = [
   artifactKeys.family,
   oauthKeys.family,
   oauthConnectKeys.family,
+  kvCopyKeys.family,
+  kvCutoverKeys.family,
 ];
+
+// Principal, connector, and subject segments are hex digests and connector
+// ids, so none holds a colon.
+const PRINCIPAL_SCOPE = /^principal:[^:]*:/;
+const CONNECTOR_SCOPE = /^conn:[^:]*:/;
+const PARTITION_SCOPE = /^(?:results:|subject:[^:]*:)/;
+
+/**
+ * The family a physical key belongs to, for reports that count keys without
+ * naming them: one-shot migrations report per family, never per key. A key
+ * no family claims is `connector-owned` when a custom connector wrote it
+ * through its own `ctx.storage`, and `unclassified` otherwise (an artifact
+ * store under a custom root, a key an older release wrote).
+ */
+export function familyOfKey(key: string): string {
+  let rest = key.replace(PRINCIPAL_SCOPE, "");
+  let scope: KeyFamily["scope"] = "root";
+  for (const [pattern, nested] of [
+    [CONNECTOR_SCOPE, "connector"],
+    [PARTITION_SCOPE, "partition"],
+  ] as const) {
+    const match = pattern.exec(rest);
+    if (match) {
+      rest = rest.slice(match[0].length);
+      scope = nested;
+      break;
+    }
+  }
+  const family = KEY_FAMILIES.find((candidate) =>
+    candidate.scope === scope &&
+    candidate.prefixes.some((prefix) => rest.startsWith(prefix))
+  );
+  if (family) return family.name;
+  return scope === "connector" ? "connector-owned" : "unclassified";
+}

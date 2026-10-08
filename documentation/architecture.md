@@ -232,7 +232,15 @@ unchanged on each, and the same module carries the activity table beside it.
 Each store creates its tables on first use. `memoryStorage()` is the default
 and the test double. Workers KV and the 0.28 JSON file store are gone: KV is
 eventually consistent and cannot compare-and-set, and the file store rewrote
-its whole file on every write.
+its whole file on every write. Each has a one-shot copy into its replacement,
+`copyKvToD1` on `/d1` and `connecta migrate-state` on Node. Both copy live
+entries verbatim, because physical keys did not change, and both keep any key
+the target already holds. `copyKvToD1` reports counts per key family
+(`familyOfKey` in `src/storage/keys.ts`), never a key. It resumes through a
+source-bound, atomically claimed token, because Workers KV's own list cursor
+can spell a key. Copy under maintenance after KV stabilizes, verify hashes
+and expiries, and mark cutover before reopening traffic; the permanent D1
+marker refuses stale copies afterward.
 
 `KVStorage` is `get`/`set`/`delete`/`list(prefix)`/`compareAndSet`, all
 required, and `createConnecta` refuses storage missing one (INV-11).

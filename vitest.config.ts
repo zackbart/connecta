@@ -69,6 +69,10 @@ export default defineConfig({
               compatibilityDate: "2025-01-01",
               compatibilityFlags: ["nodejs_compat"],
               workerLoaders: { LOADER: {} },
+              // A real local Workers KV namespace and D1 database for the
+              // one-shot KV → D1 copy (test/kv-to-d1.test.ts).
+              kvNamespaces: ["KV_COPY_SOURCE"],
+              d1Databases: ["KV_COPY_TARGET"],
             },
           }),
         ],
