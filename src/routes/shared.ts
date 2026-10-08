@@ -91,6 +91,47 @@ export function activityActorNamespace(
     : undefined;
 }
 
+/** Metadata routing and challenge selection use the same first actual answer. */
+export async function authMetadata(
+  request: Request,
+  baseUrl: string,
+  auth: readonly InboundAuth[],
+): Promise<{ provider: InboundAuth; response: Response } | null> {
+  for (const provider of auth) {
+    const response = await provider.handleMetadata?.(request, baseUrl);
+    if (response) return { provider, response };
+  }
+  return null;
+}
+
+async function providerChallenge(
+  response: Response,
+  request: Request,
+  baseUrl: string,
+  auth: readonly InboundAuth[],
+): Promise<Response> {
+  if (response.status !== 401) return response;
+  const path = new URL(request.url).pathname;
+  const pool = /^\/mcp\/([a-z0-9_-]+)$/.exec(path)?.[1];
+  const metadataRequest = new Request(new URL(
+    `/.well-known/oauth-protected-resource${pool ? `/mcp/${pool}` : ""}`,
+    baseUrl,
+  ), { signal: request.signal });
+  const owner = await authMetadata(metadataRequest, baseUrl, auth);
+  if (!owner) return response;
+  // Metadata is an ordinary bounded response, never retained across requests.
+  await owner.response.body?.cancel();
+  const challenge = owner.provider.challenge?.(request, baseUrl);
+  if (!challenge) return response;
+  const headers = new Headers(response.headers);
+  headers.set("WWW-Authenticate", challenge);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+function recognizedProvider(request: Request, auth: readonly InboundAuth[], runtimeContext?: RuntimeExecutionContext): InboundAuth | undefined {
+  return auth.find(provider => provider.recognizesCredential?.(request, runtimeContext) === true);
+}
+
 export async function authorize(
   request: Request,
   baseUrl: string,
@@ -98,6 +139,7 @@ export async function authorize(
   runtimeContext?: RuntimeExecutionContext,
   identityConfig?: ConnectaIdentityConfig,
   partitionIdentity = true,
+  interactiveOnly = false,
 ): Promise<
   | {
       ok: true;
@@ -118,9 +160,9 @@ export async function authorize(
       /** Backward-compatible name used by operator views. */
       uiAdminEligible?: boolean;
     }
-  | { ok: false; response: Response; final?: true }
+  | { ok: false; response: Response }
 > {
-  if (auth.length === 0) {
+  if (auth.length === 0 && !interactiveOnly) {
     const actor = { kind: "anonymous" } as const;
     const identity: AuthenticatedIdentity = { actor, interactive: false };
     let access: ConnectorAccess;
@@ -137,10 +179,23 @@ export async function authorize(
     }
     return { ok: true, actor, identity, ...access, operator: false, accessTokenManagement: false, credentialAdministration: "none", personalConnection: "none" };
   }
+  let recognized: InboundAuth | undefined;
+  try {
+    recognized = recognizedProvider(request, auth, runtimeContext);
+  } catch {
+    return { ok: false, response: privateJson({ error: "credential recognition failed" }, { status: 403 }) };
+  }
+  if (interactiveOnly && recognized && !recognized.interactiveOperator) {
+    return { ok: false, response: privateJson({ error: "authenticated user required" }, { status: 403 }) };
+  }
   let lastResponse: Response | null = null;
-  for (const provider of auth) {
+  const candidates = recognized ? [recognized] : auth.filter(provider => !interactiveOnly || provider.interactiveOperator);
+  for (const provider of candidates) {
     const result = await provider.authorize(request, baseUrl, runtimeContext);
     if (result.ok) {
+      if (interactiveOnly && !result.userId) {
+        return { ok: false, response: privateJson({ error: "authenticated user required" }, { status: 403 }) };
+      }
       const subjectId = result.subjectId ?? result.userId;
       const actorNamespace = activityActorNamespace(provider);
       const derivedPrincipal = result.userId && actorNamespace
@@ -217,37 +272,18 @@ export async function authorize(
         ...(operator ? { uiAdminEligible: true } : {}),
       };
     }
-    // A recognized credential refused on its merits is the answer; asking the
-    // next provider could admit the same request as someone else.
-    if (result.final === true) {
-      return { ok: false, response: result.response, final: true };
-    }
     lastResponse = result.response;
+    if (recognized || result.response.status !== 401) break;
   }
   return {
     ok: false,
-    response:
-      lastResponse ??
-      new Response(JSON.stringify({ error: "unauthorized" }), {
-        status: 401,
-        headers: {
-          "Content-Type": "application/json",
-          "WWW-Authenticate": "Bearer",
-        },
-      }),
+    response: await providerChallenge(lastResponse ?? privateJson({ error: "unauthorized" }, {
+      status: 401, headers: { "WWW-Authenticate": "Bearer" },
+    }), request, baseUrl, auth),
   };
 }
 
-/**
- * An interactive human for operator, token, and OAuth routes. Only an
- * interactive provider can admit here. A non-interactive one is consulted only
- * when it declares `finalRefusals` — a bearer with an asserted principal — and
- * then only for that `final` refusal, which ends the walk as it does in
- * `authorize`; otherwise a later interactive provider could admit the very
- * request the refusal answered. Every other non-interactive provider is
- * skipped unasked, so its latency, storage reads, and failures stay off human
- * routes.
- */
+/** Human routes reject machine credentials before any verification or storage I/O. */
 export async function authorizeUiIdentity(
   request: Request,
   baseUrl: string,
@@ -255,45 +291,13 @@ export async function authorizeUiIdentity(
   purpose: string,
   runtimeContext?: RuntimeExecutionContext,
   identityConfig?: ConnectaIdentityConfig,
-): Promise<
-  | Extract<Awaited<ReturnType<typeof authorize>>, { ok: true }>
-  | { ok: false; response: Response; final?: true }
-> {
-  let lastResponse: Response | undefined;
-  for (const provider of auth) {
-    if (!provider.interactiveOperator) {
-      if (provider.finalRefusals !== true) continue;
-      const result = await provider.authorize(request, baseUrl, runtimeContext);
-      if (!result.ok && result.final === true) {
-        return { ok: false, response: result.response, final: true };
-      }
-      continue;
-    }
-    const authz = await authorize(
-      request,
-      baseUrl,
-      [provider],
-      runtimeContext,
-      identityConfig,
-    );
-    if (!authz.ok) {
-      if (authz.final === true) return authz;
-      lastResponse = authz.response;
-      continue;
-    }
-    if (authz.identity.interactive) return authz;
-    lastResponse = privateJson(
-      { error: "authenticated user required" },
-      { status: 403 },
-    );
+): Promise<Awaited<ReturnType<typeof authorize>>> {
+  if (!auth.some(provider => provider.interactiveOperator)) {
+    return { ok: false, response: privateJson(
+      { error: `${purpose} requires interactive user authentication` }, { status: 403 },
+    ) };
   }
-  return {
-    ok: false,
-    response: lastResponse ?? privateJson(
-      { error: `${purpose} requires interactive user authentication` },
-      { status: 403 },
-    ),
-  };
+  return authorize(request, baseUrl, auth, runtimeContext, identityConfig, true, true);
 }
 
 export function isSameOrigin(request: Request, baseUrl: string): boolean {

@@ -37,7 +37,7 @@ export interface ClerkAuthOptions {
    * (punycode for an internationalized domain) and are validated at
    * construction. Absent ⇒ every authenticated user passes this check, as
    * before the option existed. Governs Clerk sign-in only: a co-configured
-   * `bearerToken` has no email to read and is admitted without a domain check.
+   * A machine access token has no email to read and is admitted without a domain check.
    */
   allowedDomains?: readonly string[];
   /** Optional allow-list hook using Connecta's bundled user lookup client. */
@@ -386,6 +386,9 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   const allowedDomains = normalizeAllowedDomains(opts.allowedDomains);
   const allowedOAuthClientIds = normalizeOAuthClientIds(opts.allowedOAuthClientIds);
   const scopes = opts.scopes ?? ["openid", "profile", "email"];
+  if (!Array.isArray(scopes) || scopes.some(scope => typeof scope !== "string" || !/^[\x21\x23-\x5b\x5d-\x7e]+$/.test(scope))) {
+    throw new Error("clerkAuth: `scopes` must contain OAuth scope tokens without whitespace, quotes, or backslashes.");
+  }
   const gateCache = new Map<string, { allowed: boolean; exp: number }>();
   const activityLabelCache = new Map<
     string,
@@ -468,20 +471,25 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     return lookup;
   };
 
-  const unauthorized = (baseUrl: string, tokenPresent: boolean, request: Request): Response => {
+  const challenge = (request: Request, baseUrl: string): string => {
+    const tokenPresent = Boolean(request.headers.get("authorization"));
     const error = tokenPresent ? `error="invalid_token", ` : "";
     // A pool endpoint is its own protected resource: the challenge names the
     // metadata document whose `resource` matches the URL the client used, or
     // RFC 9728 tells it to reject the mismatch.
     const pool = mcpPoolSuffix(new URL(request.url).pathname);
     const meta = `${resolveBase(baseUrl)}/.well-known/oauth-protected-resource${pool ? `/mcp${pool}` : ""}`;
+    const quote = (value: string) => value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    return `Bearer ${error}resource_metadata="${quote(meta)}", scope="${scopes.join(" ")}"`;
+  };
+  const unauthorized = (baseUrl: string, _tokenPresent: boolean, request: Request): Response => {
     return new Response(
       JSON.stringify({ error: "unauthorized" }),
       {
         status: 401,
         headers: {
           "Content-Type": "application/json",
-          "WWW-Authenticate": `Bearer ${error}resource_metadata="${meta}"`,
+          "WWW-Authenticate": challenge(request, baseUrl),
         },
       },
     );
@@ -568,6 +576,13 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   return {
     kind: "clerk",
     interactiveOperator: true,
+    recognizesCredential: request => {
+      const authorization = request.headers.get("authorization");
+      if (authorization) return !/^Bearer\s+cta_/iu.test(authorization);
+      return /(?:^|;\s*)__session(?:_[^=;]+)?=/.test(request.headers.get("cookie") ?? "") ||
+        new URL(request.url).searchParams.has("__clerk_synced");
+    },
+    challenge,
     activityActorNamespace: frontendApiUrl,
     activityActorLabel: resolveActivityLabel,
     uiAuth: {
@@ -580,7 +595,13 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
 
     async handleMetadata(request, baseUrl) {
       const { pathname } = new URL(request.url);
-      if (!pathname.startsWith("/.well-known/")) return null;
+      const protectedResource = pathname === "/.well-known/oauth-protected-resource" ||
+        pathname === "/.well-known/oauth-protected-resource/mcp" ||
+        /^\/\.well-known\/oauth-protected-resource\/mcp\/[a-z0-9_-]+$/.test(pathname);
+      if (!protectedResource) return null;
+      if (request.method !== "GET" && request.method !== "HEAD" && request.method !== "OPTIONS") {
+        return new Response(null, { status: 405, headers: { ...CORS_HEADERS, Allow: "GET, HEAD, OPTIONS" } });
+      }
 
       if (request.method === "OPTIONS") {
         return new Response(null, { status: 204, headers: CORS_HEADERS });
@@ -606,26 +627,6 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
         );
       }
 
-      if (pathname === "/.well-known/oauth-authorization-server") {
-        try {
-          const upstream = await fetch(
-            `${frontendApiUrl}/.well-known/oauth-authorization-server`,
-          );
-          if (!upstream.ok) {
-            return Response.json(
-              { error: "upstream authorization server metadata unavailable" },
-              { status: 502, headers: CORS_HEADERS },
-            );
-          }
-          return Response.json(await byteReadResponse(upstream).json(), { headers: CORS_HEADERS });
-        } catch {
-          return Response.json(
-            { error: "upstream authorization server metadata unavailable" },
-            { status: 502, headers: CORS_HEADERS },
-          );
-        }
-      }
-
       return null;
     },
 
@@ -644,7 +645,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
         // Consent can outlast Clerk's session JWT. Preserve the SDK's browser
         // handshake, which returns here with a refreshed, verified session.
         if (browserOAuth && state.status === "handshake" && state.headers.has("location")) {
-          return { ok: false, final: true, response: new Response(null, {
+          return { ok: false, response: new Response(null, {
             status: 307, headers: state.headers,
           }) };
         }

@@ -135,10 +135,6 @@
       "baselineGzip": 35698,
       "maxGzip": 95698
     },
-    "./auth/bearer": {
-      "baselineGzip": 576,
-      "maxGzip": 60576
-    },
     "./artifacts": {
       "baselineGzip": 11247,
       "maxGzip": 71247

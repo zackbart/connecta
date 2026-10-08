@@ -189,6 +189,7 @@ export class AccessTokenManager {
     this.maxActive = maxActive;
     this.auth = {
       kind: "access_token",
+      recognizesCredential: request => /^Bearer\s+cta_/iu.test(request.headers.get("authorization") ?? ""),
       activityActorNamespace: "connecta:access-tokens:v1",
       activityActorLabel: async (id) => {
         try {

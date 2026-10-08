@@ -84,9 +84,9 @@ function isExactOrigin(value: unknown): value is string {
   }
 }
 
-/** Bearer providers are checked before Clerk (per spec). */
+/** Explicit machine credentials take precedence over ambient browser identity. */
 function normalizeAuth(auth: readonly InboundAuth[]): readonly InboundAuth[] {
-  const rank = (provider: InboundAuth) => (provider.kind === "bearer" ? 0 : 1);
+  const rank = (provider: InboundAuth) => (provider.kind === "access_token" ? 0 : 1);
   return Object.freeze([...auth].sort((a, b) => rank(a) - rank(b)));
 }
 

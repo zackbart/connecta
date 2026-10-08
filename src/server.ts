@@ -9,6 +9,7 @@ import {
 import { routeConnect } from "./routes/connect.js";
 import { runEdge } from "./runtime/run.js";
 import {
+  authMetadata,
   withSecurityHeaders,
   type RouteContext,
   type RuntimeExecutionContext,
@@ -41,23 +42,8 @@ export function createFetchHandler(
   const { auth, publicUrl } = opts.config;
   const routeMcp = createMcpRoute(opts);
 
-  // The first provider's metadata answer for this request, if any has one.
-  const metadata = (
-    request: Request,
-    baseUrl: string,
-  ): Effect.Effect<Response | null> =>
-    Effect.gen(function* () {
-      for (const provider of auth) {
-        const handleMetadata = provider.handleMetadata?.bind(provider);
-        if (handleMetadata) {
-          const response = yield* Effect.promise(async () =>
-            handleMetadata(request, baseUrl),
-          );
-          if (response) return response;
-        }
-      }
-      return null;
-    });
+  const metadata = (request: Request, baseUrl: string): Effect.Effect<Response | null> =>
+    Effect.promise(async () => (await authMetadata(request, baseUrl, auth))?.response ?? null);
 
   const health = async (): Promise<Response> => {
     // The executor is required, so code admission always has a shape to

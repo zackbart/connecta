@@ -13,7 +13,7 @@ function unauthorized(): AuthResult {
     ok: false,
     response: Response.json(
       { error: "Cloudflare Access authentication required" },
-      { status: 401 },
+      { status: 401, headers: { "WWW-Authenticate": 'Bearer scope="openid email"' } },
     ),
   };
 }
@@ -28,12 +28,13 @@ export function cloudflareAccessAuth(): InboundAuth {
   return {
     kind: "cloudflare-access",
     interactiveOperator: true,
+    recognizesCredential: (_request, context) => Boolean(context?.access),
     activityActorNamespace: "cloudflare-access",
     uiAuth: { kind: "cloudflare-access" },
 
     async authorize(_request, _baseUrl, runtimeContext): Promise<AuthResult> {
       const access = runtimeContext?.access;
-      if (!access) return unauthorized();
+      if (!access || typeof access.aud !== "string" || !/^[\x21-\x7e]{1,256}$/.test(access.aud)) return unauthorized();
 
       let identity: Record<string, unknown> | undefined;
       try {
@@ -41,35 +42,15 @@ export function cloudflareAccessAuth(): InboundAuth {
       } catch {
         return unauthorized();
       }
-      if (!identity) {
-        // Access service-token policies authenticate the request and attach
-        // ctx.access, but getIdentity() is a user-identity API and returns
-        // undefined. Cloudflare strips the service-token headers before the
-        // Worker, so the Access application audience is the only trusted,
-        // stable service attribution available without parsing a JWT.
-        return { ok: true, subjectId: access.aud };
-      }
-
-      const userId = identityString(identity, "user_uuid") ??
-        identityString(identity, "email");
-      const commonName = identityString(identity, "common_name");
-      const serviceTokenId = identityString(identity, "service_token_id");
-      if (
-        identity.service_token_status === true ||
-        serviceTokenId ||
-        (!userId && commonName)
-      ) {
-        const subjectId = serviceTokenId ?? commonName;
-        return subjectId
-          ? { ok: true, subjectId }
-          : {
-              ok: false,
-              response: Response.json(
-                { error: "Cloudflare Access service identity required" },
-                { status: 403 },
-              ),
-            };
-      }
+      // Access binds ctx.access.aud to its Worker application at the edge.
+      // Service credentials can pass that edge, but connecta machines must
+      // present a cta_ token to the machine provider instead.
+      const forbidden = (): AuthResult => ({ ok: false, response: Response.json(
+        { error: "Cloudflare Access human identity required" }, { status: 403 },
+      ) });
+      if (!identity || typeof identity !== "object" || Array.isArray(identity)) return forbidden();
+      const userId = identityString(identity, "user_uuid") ?? identityString(identity, "email");
+      if (identity.service_token_status === true || identityString(identity, "service_token_id") || identityString(identity, "common_name")) return forbidden();
 
       if (!userId) {
         return {

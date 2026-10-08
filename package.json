@@ -165,14 +165,6 @@
       "types": "./dist/activity.d.ts",
       "import": "./dist/activity.js"
     },
-    "./auth/bearer": {
-      "types": "./dist/auth/bearer.d.ts",
-      "import": "./dist/auth/bearer.js"
-    },
-    "./artifacts": {
-      "types": "./dist/artifacts.d.ts",
-      "import": "./dist/artifacts.js"
-    },
     "./auth/access-tokens": {
       "types": "./dist/access-tokens.d.ts",
       "import": "./dist/access-tokens.js"

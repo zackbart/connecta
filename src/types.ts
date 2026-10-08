@@ -693,12 +693,6 @@ export type AuthResult =
   | {
       ok: false;
       response: Response;
-      /**
-       * The provider recognized the credential and refuses the request
-       * anyway, so no later provider is consulted. Omit it for a non-match,
-       * which lets another configured provider admit the request.
-       */
-      final?: true;
     };
 
 /** Stable identity inside one configured authentication directory. */
@@ -846,18 +840,18 @@ export interface ConnectaTheme {
   colorScheme?: "system" | "light" | "dark";
 }
 
-/** An inbound authentication provider (bearer token, interactive identity, ...). */
+/** An inbound authentication provider (machine token or interactive identity). */
 export interface InboundAuth {
   kind: string;
   /** This provider may admit a human identity to operator mutation routes. */
   interactiveOperator?: true;
   /**
-   * This non-interactive provider may refuse a credential it recognizes with
-   * `final`. Human routes then consult it for that refusal alone — anything
-   * else it answers there is ignored, so the marker can only refuse. Without
-   * it a non-interactive provider is skipped on human routes entirely.
+   * Recognize credential syntax or trusted runtime context, without verifying
+   * it or doing I/O. The first recognizing provider owns the verdict, including
+   * refusals. Human routes reject recognized machine credentials without
+   * consulting storage or another identity. A throw fails closed.
    */
-  finalRefusals?: true;
+  recognizesCredential?(request: Request, runtimeContext?: InboundAuthRuntimeContext): boolean;
   /**
    * Stable, non-secret namespace of the identity directory behind
    * `activityActorLabel`. Stored with new activity actors so two providers with
@@ -877,7 +871,7 @@ export interface InboundAuth {
   ): string | undefined | Promise<string | undefined>;
   /**
    * Optional browser sign-in configuration. When present, operator pages use
-   * the provider instead of asking the operator to paste a static bearer secret.
+   * the provider's interactive sign-in flow.
    */
   uiAuth?: UiAuthConfig;
   /** Serve/short-circuit .well-known + OPTIONS. Return null when not handled. */
@@ -885,6 +879,8 @@ export interface InboundAuth {
     request: Request,
     baseUrl: string,
   ): Response | null | Promise<Response | null>;
+  /** 401 challenge, selected only when this provider serves the resource metadata. */
+  challenge?(request: Request, baseUrl: string): string;
   /** Attempt to authorize a request. */
   authorize(
     request: Request,

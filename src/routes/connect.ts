@@ -68,7 +68,7 @@ async function connect(context: RouteContext): Promise<Response> {
   const authz = await authorizeUiIdentity(request, baseUrl, opts.config.auth, "OAuth connection", runtimeContext, opts.config.identity);
   if (!authz.ok) {
     // Access sign-in is enforced at the edge. Clerk needs its own sign-in page.
-    if (!authz.final && authz.response.status === 401 && !runtimeContext?.access) {
+    if (authz.response.status === 401 && !runtimeContext?.access) {
       const signIn = clerkSignIn(context);
       if (signIn) return signIn;
     }
