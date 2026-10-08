@@ -219,7 +219,7 @@ describe.each([["memory", false], ["delayed", true]] as const)("round-1 OAuth re
     expect(await backing.list("oauth:")).toEqual([GRANT]);
   });
 
-  it("hands cross-isolate waiters the outage verdict without a second dispatch or stored raw text (INV-6)", async () => {
+  it("hands cross-isolate waiters the re-consent verdict without a second dispatch or stored raw text (INV-6)", async () => {
     const storage = backingStore(delayed);
     await seedGrant(storage, { issuer: A, tokens });
     const coordinators = Array.from({ length: 4 }, () => new OAuthRefreshCoordinator());
@@ -235,9 +235,9 @@ describe.each([["memory", false], ["delayed", true]] as const)("round-1 OAuth re
     gate.resolve();
     await Promise.all(requests);
     expect(fetch).toHaveBeenCalledTimes(1);
-    for (const p of providers) expect(p.refreshVerdict()).toMatchObject({ kind: "transient", reason: "answered HTTP 503" });
+    for (const p of providers) expect(p.refreshVerdict()).toEqual({ kind: "dead" });
     for (const key of await storage.list("oauth:refresh:")) expect(await storage.get(key)).not.toContain("DOWNSTREAM_SECRET_SENTINEL");
-    expect((await storedGrant(storage))!.body!.tokens).toEqual(tokens);
+    expect((await storedGrant(storage))!.body!.tokens).toBeUndefined();
   });
 
   it("requires re-consent if a crashed holder rotated before committing (INV-5)", async () => {

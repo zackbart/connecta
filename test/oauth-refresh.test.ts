@@ -3,7 +3,6 @@ import type { FetchLike, OAuthTokens } from "@modelcontextprotocol/client";
 import { describe, expect, it, vi } from "vitest";
 import { KvOAuthProvider, OAuthRefreshCoordinator } from "../src/auth/downstream-oauth.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
-import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import { identityStorageKey } from "../src/identity.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { oauthGrantKeys, scopes as keyScopes } from "../src/storage/keys.js";
@@ -16,8 +15,8 @@ import { seedGrant, storedGrant } from "./fixtures/oauth.js";
 // The refresh coordinator (#707): one token request per owner partition and
 // epoch, an accepted rotation stored by compare-and-set before anyone is
 // released, and joined scopes handed the owner's tokens or verdict. Every
-// interleaving is held on a deferred promise, never on a timer. The dead and
-// transient classification matrix lives with the remoteMcp() flows.
+// interleaving is held on a deferred promise, never on a timer. The dispatched
+// failure matrix lives with the remoteMcp() flows.
 
 const BASE = "https://connecta.test";
 const REDIRECT = `${BASE}/oauth/callback/svc`;
@@ -28,7 +27,6 @@ const TOKEN_URL = `${issuer}/token`;
 const mcpUrl = "https://downstream.example/mcp";
 const resourceMetadataUrl = "https://downstream.example/.well-known/oauth-protected-resource";
 const SUPERSEDED = 'Connector "svc" authorization changed while this request was in flight; try again.';
-const UNSTORED = 'Connector "svc" could not store its OAuth credentials; try again shortly.';
 
 const bearer = (access: string, refresh?: string): OAuthTokens => ({
   access_token: access,
@@ -191,10 +189,11 @@ describe("OAuthRefreshCoordinator", () => {
     const writes = vi.spyOn(storage, "compareAndSet");
     await Promise.all(flows.map((provider, i) => provider.saveTokens(bodies[i]!, ISSUER)));
     expect(writes).not.toHaveBeenCalled();
-    // The flight is gone: the next refresh is a request of its own.
+    // Only a new fingerprint permits another dispatch. A confirmed unchanged
+    // token can still hand the SDK its committed result.
     const next = await flow(storage, coordinator);
     expect((await refresh(coordinator, next, server.fetch, expected.refresh_token)).status).toBe(200);
-    expect(server.redeemed).toEqual(["refresh-old", expected.refresh_token]);
+    expect(server.redeemed).toEqual(expected.refresh_token === "refresh-old" ? ["refresh-old"] : ["refresh-old", expected.refresh_token]);
   });
 
   it.each([
@@ -295,55 +294,25 @@ describe("OAuthRefreshCoordinator", () => {
     expect((await storedGrant(storage))?.body).toEqual(body);
   });
 
-  it.each([
-    [
-      "an HTTP 503",
-      () => Response.json({ error: "server_error", error_description: "temporarily down" }, { status: 503 }),
-      "answered HTTP 503",
-    ],
-  ])("settles joined scopes with the owner's verdict on %s and lets a later refresh retry", async (_name, failure, reason) => {
+  it("settles joined scopes with re-consent after HTTP 503 and never resends (INV-5)", async () => {
     const storage = await grantStore();
     const coordinator = new OAuthRefreshCoordinator();
     const gate = deferred<void>();
-    const server = tokenServer(async (n) => {
-      if (n > 1) return Response.json(bearer("access-new", "refresh-new"));
-      await gate.promise;
-      return failure();
-    });
+    const server = tokenServer(async () => { await gate.promise; return Response.json({ error: "server_error" }, { status: 503 }); });
     const owner = await flow(storage, coordinator, { passive: true });
     const follower = await flow(storage, coordinator, { passive: true });
-    const owning = refresh(coordinator, owner, server.fetch).then((response) => ({ response }), (error: unknown) => ({ error }));
+    const owning = refresh(coordinator, owner, server.fetch);
     await server.entered;
-    const following = refresh(coordinator, follower, server.fetch).then(() => undefined, (error: unknown) => error);
+    const following = refresh(coordinator, follower, server.fetch).catch((error: unknown) => error);
     await drain();
     gate.resolve();
-    const owned = await owning;
-    const followed = await following;
-    expect(followed).toBeInstanceOf(Error);
-    if ("error" in owned) {
-      expect(followed).toBe(owned.error);
-    } else {
-      // What the owner's SDK parses is rebuilt with nothing the server wrote.
-      await expect(owned.response.json()).resolves.toEqual({
-        error: "server_error",
-        error_description: "The authorization server is temporarily unavailable.",
-      });
-    }
-    expect(server.redeemed).toEqual(["refresh-old"]);
-    // Both scopes end the same way: a retryable outage, never consent.
-    const outages = await Promise.all([owner, follower].map((provider) => provider.state().catch((error: unknown) => error)));
-    for (const outage of outages) {
-      expect(outage).toBeInstanceOf(ConnectorCallError);
-      expect((outage as Error).message).toBe(
-        `Connector "svc" could not refresh its OAuth grant: the authorization server ${reason}. The grant is kept; retry later.`,
-      );
-      expect(classifyCallError(outage)).toMatchObject({ retryable: true });
-    }
-    expect((await storedGrant(storage))?.body?.tokens).toMatchObject({ refresh_token: "refresh-old" });
+    expect(await (await owning).json()).toMatchObject({ error: "invalid_grant" });
+    expect(await following).toBeInstanceOf(Error);
+    for (const provider of [owner, follower]) await expect(provider.state()).rejects.toBeInstanceOf(UnauthorizedError);
+    expect((await storedGrant(storage))?.body?.tokens).toBeUndefined();
     const retry = await flow(storage, coordinator);
-    expect((await refresh(coordinator, retry, server.fetch)).status).toBe(200);
-    expect(server.redeemed).toEqual(["refresh-old", "refresh-old"]);
-    expect((await storedGrant(storage))?.body?.tokens).toMatchObject({ refresh_token: "refresh-new" });
+    expect((await refresh(coordinator, retry, server.fetch)).status).toBe(400);
+    expect(server.redeemed).toEqual(["refresh-old"]);
   });
 
   it("lets an aborted joiner leave without poisoning the owner's flight", async () => {
@@ -523,26 +492,26 @@ describe("OAuthRefreshCoordinator", () => {
     }
     const before = await storage.get(GRANT);
     gate.resolve();
-    const answered = (await (await owning).json()) as OAuthTokens;
-    await owner.saveTokens(answered, ISSUER);
+    if (landed === "another server's grant") {
+      await expect(owning).rejects.toBeInstanceOf(UnauthorizedError);
+    } else {
+      const answered = (await (await owning).json()) as OAuthTokens;
+      await owner.saveTokens(answered, ISSUER);
+    }
     expect(await storage.get(GRANT)).toBe(before);
     expect(before).not.toContain("refresh-slow");
   });
 
-  it("reports a rotation storage refuses as the retryable credential failure to owner and joiners, grant untouched", async () => {
+  it("retries a failed rotation commit and hands owner and joiners committed tokens (INV-5)", async () => {
     const backing = await grantStore();
     let refusal: Error | undefined;
-    const storage: KVStorage = {
-      ...backing,
-      compareAndSet: async (key, expected, next, options) => {
-        if (key === GRANT && refusal === undefined && next?.includes("access-new")) {
-          // A store whose error quotes the value it refused.
-          refusal = new Error(`write refused: ${next}`);
-          throw refusal;
-        }
-        return backing.compareAndSet(key, expected, next, options);
-      },
-    };
+    const storage: KVStorage = { ...backing, compareAndSet: async (key, expected, next, options) => {
+      if (key === GRANT && refusal === undefined && next?.includes("access-new")) {
+        refusal = new Error(`write refused: ${next}`);
+        throw refusal;
+      }
+      return backing.compareAndSet(key, expected, next, options);
+    } };
     const coordinator = new OAuthRefreshCoordinator();
     const gate = deferred<void>();
     const server = tokenServer(async () => { await gate.promise; return Response.json(bearer("access-new", "refresh-new")); });
@@ -550,28 +519,12 @@ describe("OAuthRefreshCoordinator", () => {
     const follower = await flow(storage, coordinator, { passive: true });
     const owning = refresh(coordinator, owner, server.fetch);
     await server.entered;
-    const following = refresh(coordinator, follower, server.fetch).then(() => undefined, (error: unknown) => error);
-    await drain();
-    gate.resolve();
-    const owned = (await (await owning).json()) as OAuthTokens;
-    const failures = [
-      await owner.saveTokens(owned, ISSUER).then(() => undefined, (error: unknown) => error),
-      await owner.state().catch((error: unknown) => error),
-      await following,
-      await follower.state().catch((error: unknown) => error),
-    ];
-    for (const failure of failures) {
-      expect(failure).toBeInstanceOf(ConnectorCallError);
-      expect(failure).toMatchObject({ code: "unavailable", message: UNSTORED });
-      expect((failure as Error).cause).toBeUndefined();
-      expect(classifyCallError(failure)).toMatchObject({ retryable: true });
-    }
+    const following = refresh(coordinator, follower, server.fetch);
+    await drain(); gate.resolve();
+    for (const response of await Promise.all([owning, following])) expect(await response.json()).toEqual(bearer("access-new", "refresh-new"));
     expect(refusal?.message).toContain("access-new");
-    expect((await storedGrant(backing))?.body?.tokens).toEqual(bearer("access-old", "refresh-old"));
-    expect(server.redeemed).toEqual(["refresh-old"]);
-    const retry = await flow(storage, coordinator);
-    expect((await refresh(coordinator, retry, server.fetch)).status).toBe(200);
     expect((await storedGrant(backing))?.body?.tokens).toMatchObject({ refresh_token: "refresh-new" });
+    expect(server.redeemed).toEqual(["refresh-old"]);
   });
 
   it.each(["the grant still holds them", "a consent landed meanwhile"])("drops refused tokens by compare-and-set before releasing joiners when %s", async (phase) => {

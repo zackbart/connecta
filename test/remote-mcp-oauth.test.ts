@@ -1903,11 +1903,10 @@ describe("/oauth/callback/<id> route", () => {
 });
 
 // ---------------------------------------------------------------------------
-// remoteMcp() refresh failures: a dead grant is an authorization problem, an
-// unreachable or throttled token endpoint is an outage. The SDK's own auth()
-// blurs the two (see KvOAuthProvider), so these run the whole path.
+// remoteMcp() refresh failures require re-consent once the token is spent.
+// These run the SDK and provider hooks through the whole path.
 // ---------------------------------------------------------------------------
-describe("remoteMcp() dead and transient refresh grants", () => {
+describe("remoteMcp() dispatched refresh grants", () => {
   type TokenAnswer = () => Response | Promise<Response>;
   type Sealer = ReturnType<typeof vaultOAuthSealer>;
 
@@ -2195,61 +2194,36 @@ describe("remoteMcp() dead and transient refresh grants", () => {
     await Promise.all(scopes.map((s) => c.closeScope?.(s)));
   });
 
-  const transientAnswers: [string, TokenAnswer, { code: string; retryAfterMs?: number }][] = [
-    [
-      "503 server_error",
-      () => Response.json({ error: "server_error", error_description: "down" }, { status: 503 }),
-      { code: "unavailable" },
-    ],
-    [
-      "503 temporarily_unavailable with Retry-After",
-      () => Response.json({ error: "temporarily_unavailable" }, { status: 503, headers: { "retry-after": "12" } }),
-      { code: "unavailable", retryAfterMs: 12_000 },
-    ],
-    ["502 with a non-OAuth body", () => new Response("Bad Gateway", { status: 502 }), { code: "unavailable" }],
-    ["500 invalid_grant", () => Response.json({ error: "invalid_grant" }, { status: 500 }), { code: "unavailable" }],
-    ["408", () => new Response(null, { status: 408 }), { code: "unavailable" }],
-    ["425", () => new Response(null, { status: 425 }), { code: "unavailable" }],
-    [
-      "429 with Retry-After",
-      () => Response.json({ error: "too_many_requests" }, { status: 429, headers: { "retry-after": "30" } }),
-      { code: "rate_limited", retryAfterMs: 30_000 },
-    ],
-    ["429 without Retry-After", () => new Response("slow down", { status: 429 }), { code: "rate_limited" }],
+  const failureAnswers: [string, TokenAnswer][] = [
+    ["503 server_error", () => Response.json({ error: "server_error", error_description: "down" }, { status: 503 })],
+    ["503 temporarily_unavailable with Retry-After", () => Response.json({ error: "temporarily_unavailable" }, { status: 503, headers: { "retry-after": "12" } })],
+    ["502 with a non-OAuth body", () => new Response("Bad Gateway", { status: 502 })],
+    ["500 invalid_grant", () => Response.json({ error: "invalid_grant" }, { status: 500 })],
+    ["408", () => new Response(null, { status: 408 })],
+    ["425", () => new Response(null, { status: 425 })],
+    ["429 with Retry-After", () => Response.json({ error: "too_many_requests" }, { status: 429, headers: { "retry-after": "30" } })],
+    ["429 without Retry-After", () => new Response("slow down", { status: 429 })],
   ];
 
-  it.each(transientAnswers)(
-    "%s stays a retryable outage, keeps the grant, and writes no consent",
-    async (_label, tokenAnswer, expected) => {
-      const storage = await seededStorage();
-      const answer = { current: tokenAnswer };
-      const server = downstream(answer);
-      const c = connector();
-      const passive = scope(storage);
-      const { classified } = await failureOf(c.listTools(passive));
-      expect(classified).toMatchObject({ ...expected, retryable: true });
-      if (expected.retryAfterMs === undefined) expect(classified.retryAfterMs).toBeUndefined();
-      expect(server.counts.token).toBe(1);
-      expect(server.counts.register).toBe(0);
-      expect(await reader(storage).pendingAuthorizationUrl()).toBeUndefined();
-      expect(await reader(storage).tokens()).toMatchObject({ access_token: "access-old", refresh_token: "refresh-old" });
-      // Nothing is latched: a status read in the same scope tries again,
-      // meets the same outage, and still reports it as one.
-      await expect(c.status!(passive)).resolves.toMatchObject({ state: "error" });
-      await c.closeScope?.(passive);
-      expect(server.counts.token).toBe(2);
-      expect(await reader(storage).pendingAuthorizationUrl()).toBeUndefined();
-
-      // The outage passes; the kept grant still works.
-      answer.current = () =>
-        Response.json({ access_token: "access-new", token_type: "Bearer", refresh_token: "refresh-new" });
-      const later = scope(storage);
-      await expect(c.listTools(later)).resolves.toEqual([]);
-      await c.closeScope?.(later);
-      expect(server.redeemed).toEqual(["refresh-old", "refresh-old", "refresh-old"]);
-      expect(await reader(storage).tokens()).toMatchObject({ refresh_token: "refresh-new" });
-    },
-  );
+  it.each(failureAnswers)("%s requires re-consent and never replays a dispatched token (INV-5)", async (_label, tokenAnswer) => {
+    const storage = await seededStorage();
+    const answer = { current: tokenAnswer };
+    const server = downstream(answer);
+    const c = connector();
+    const passive = scope(storage);
+    expect((await failureOf(c.listTools(passive))).classified).toMatchObject({ code: "auth_required", retryable: false });
+    expect(server.counts.token).toBe(1);
+    expect(server.counts.register).toBe(0);
+    expect(await reader(storage).pendingAuthorizationUrl()).toBeUndefined();
+    expect(await reader(storage).tokens()).toBeUndefined();
+    await expect(c.status!(passive)).resolves.toMatchObject({ state: "auth_required" });
+    await c.closeScope?.(passive);
+    answer.current = () => Response.json({ access_token: "access-new", token_type: "Bearer", refresh_token: "refresh-new" });
+    const later = scope(storage);
+    expect((await failureOf(c.listTools(later))).classified.code).toBe("auth_required");
+    await c.closeScope?.(later);
+    expect(server.redeemed).toEqual(["refresh-old"]);
+  });
 
   it("requires re-consent after a dispatched network failure and never resends the refresh token (INV-5)", async () => {
     const storage = await seededStorage();
@@ -2301,12 +2275,8 @@ describe("remoteMcp() dead and transient refresh grants", () => {
     await c.closeScope?.(passive);
   });
 
-  it("reports a redeemed rotation it could not store as a retryable outage in fixed text, not as consent", async () => {
-    // Through @modelcontextprotocol/client 2.0.0, `auth()` swallowed a
-    // `saveTokens` failure and fell through to a fresh authorization, which a
-    // passive call reported as auth_required: a grant the server had just
-    // honored, sent to consent. From 2.1.0 the failure propagates, so what it
-    // says is connecta's to decide.
+  it("requires re-consent in fixed text when rotation commit retries are exhausted (INV-5)", async () => {
+    // Uncommitted response tokens never reach the SDK or its output.
     const seeded = await seededStorage();
     let storageFailure: Error | undefined;
     const storage: KVStorage = {
@@ -2329,9 +2299,8 @@ describe("remoteMcp() dead and transient refresh grants", () => {
     const { error, classified } = await failureOf(c.listTools(passive));
     expect(storageFailure?.message).toContain("refresh-new");
     expect(classified).toMatchObject({
-      code: "unavailable",
-      retryable: true,
-      message: 'Connector "svc" could not store its OAuth credentials; try again shortly.',
+      code: "auth_required",
+      retryable: false,
     });
     for (const surface of [String(error), JSON.stringify(classified), output()]) {
       expect(surface).not.toMatch(/access-new|refresh-new/);
@@ -2339,8 +2308,7 @@ describe("remoteMcp() dead and transient refresh grants", () => {
     expect(server.counts.token).toBe(1);
     expect(server.counts.register).toBe(0);
     expect(await reader(seeded).pendingAuthorizationUrl()).toBeUndefined();
-    // Nothing was written over the grant it had.
-    expect(await reader(seeded).tokens()).toMatchObject({ refresh_token: "refresh-old" });
+    expect(await reader(seeded).tokens()).toBeUndefined();
     await c.closeScope?.(passive);
   });
 
@@ -2349,8 +2317,8 @@ describe("remoteMcp() dead and transient refresh grants", () => {
     [
       "an outage",
       () => new Response("Service Unavailable", { status: 503 }),
-      { code: "unavailable", retryable: true },
-      { refresh_token: "refresh-old" },
+      { code: "auth_required", retryable: false },
+      undefined,
     ],
   ])("classifies %s met by a tool call after connect", async (_label, tokenAnswer, expected, keptTokens) => {
     const storage = await seededStorage(undefined, "access-new");
@@ -2397,7 +2365,7 @@ describe("remoteMcp() dead and transient refresh grants", () => {
     return reads;
   }
 
-  it("gives every caller joined on a transient refresh flight the same retryable outage", async () => {
+  it("gives every caller joined on a dispatched failure the same re-consent verdict (INV-5)", async () => {
     const perCaller = await grantReadsBeforeRefresh();
     const seeded = await seededStorage();
     // Hold the owner's token request until every follower has joined its
@@ -2427,11 +2395,11 @@ describe("remoteMcp() dead and transient refresh grants", () => {
     gate.release();
     const failures = await calls;
     for (const { classified } of failures) {
-      expect(classified).toMatchObject({ code: "unavailable", retryable: true });
+      expect(classified).toMatchObject({ code: "auth_required", retryable: false });
     }
     expect(server.counts.token).toBe(1);
     expect(await reader(storage).pendingAuthorizationUrl()).toBeUndefined();
-    expect(await reader(storage).tokens()).toMatchObject({ refresh_token: "refresh-old" });
+    expect(await reader(storage).tokens()).toBeUndefined();
     await Promise.all(scopes.map((s) => c.closeScope?.(s)));
   });
 });

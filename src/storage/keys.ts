@@ -343,6 +343,20 @@ export const oauthRefreshKeys = {
     validateStorageKey(`oauth:refresh:${epoch}:${tokenDigest}`),
 } as const satisfies Keyed;
 
+/** A dispatched token is spent across all epochs. Never expire or delete these records. */
+export const oauthRefreshSpentKeys = {
+  family: {
+    name: "oauth-refresh-spent",
+    scope: "connector",
+    prefixes: ["oauth:refresh-spent:"],
+    version: { number: 1, in: "value" },
+    codec: jsonCodec,
+    ttl: { kind: "durable" },
+    durable: true,
+  },
+  spent: (tokenDigest: string) => validateStorageKey(`oauth:refresh-spent:${tokenDigest}`),
+} as const satisfies Keyed;
+
 /** Expiry is storage-owned; dispatched fingerprints themselves never expire. */
 export const oauthRefreshActiveKeys = {
   family: {
@@ -433,6 +447,7 @@ export const KEY_FAMILIES: readonly KeyFamily[] = [
   oauthGrantKeys.family,
   oauthFlowKeys.family,
   oauthRefreshKeys.family,
+  oauthRefreshSpentKeys.family,
   oauthRefreshActiveKeys.family,
   oauthV2Keys.family,
   oauthConnectKeys.family,

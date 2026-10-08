@@ -1,8 +1,7 @@
 import type { OAuthTokens } from "@modelcontextprotocol/client";
-import { retryAfterMs } from "../connectors/guarded-fetch.js";
 
 // The token endpoint's answers as downstream OAuth classifies them and the SDK
-// gets to parse them: a refresh's dead-or-outage verdict, and every failure
+// gets to parse them: a refresh's re-consent verdict, and every failure
 // rebuilt from its OAuth `error` code alone, so nothing else a token endpoint
 // wrote reaches the SDK's console output (#695).
 
@@ -89,71 +88,16 @@ async function readRefreshResponse(response: Response, signal?: AbortSignal, clo
   }
 }
 
-/**
- * What a failed refresh says about the grant.
- *
- * `dead`: the authorization server refused the refresh token or the client —
- * any 4xx except 408, 425, and 429, or a 2xx carrying an OAuth `error` the way
- * GitHub answers `bad_refresh_token`. Only consent repairs that, so the call is
- * `auth_required` and the refused token is never sent again.
- *
- * `transient`: a complete failure response — 5xx, 408, 425, or 429 —
- * without evidence of issued tokens. The grant is kept and the call is a
- * retryable outage; a passive call never turns it into consent.
- *
- * A sent request without a definitive response is permanently `dead` too:
- * network and body loss, malformed success, and deadline expiry may hide a
- * rotation. The coordinator records that refusal before removing the tokens.
- *
- * `unstored`: the server answered with a rotation storage would not keep.
- */
+/** A dispatched fingerprint has only a committed outcome or a re-consent verdict. */
 export type RefreshFailure =
   | { kind: "dead" }
   /** A waiter exhausted its deadline without changing the grant. */
-  | { kind: "contended" }
-  | {
-      kind: "transient";
-      /** Completes "the authorization server …" in the agent-facing message. */
-      reason: string;
-      status?: number;
-      retryAfterMs?: number;
-    }
-  /** A valid rotation storage refused to keep: retryable, grant untouched. */
-  | { kind: "unstored" };
-
-export type TransientRefreshFailure = Extract<RefreshFailure, { kind: "transient" }>;
-
-/** Client-error statuses that describe the moment, not the grant. */
-const TRANSIENT_CLIENT_STATUSES: ReadonlySet<number> = new Set([408, 425, 429]);
-
-/**
- * OAuth `error` codes on which the SDK's own `auth()` drops state and starts
- * over. Handing the SDK one of these is how a dead grant reaches consent on an
- * explicit authorization, and `auth_required` on a passive call.
- */
-const SDK_RESTARTING_CODES: ReadonlySet<string> = new Set([
-  "invalid_grant",
-  "invalid_client",
-  "unauthorized_client",
-]);
+  | { kind: "contended" };
 
 function oauthErrorCode(body: unknown): string | undefined {
   if (!body || typeof body !== "object" || Array.isArray(body)) return undefined;
   const code = (body as { error?: unknown }).error;
   return typeof code === "string" ? code : undefined;
-}
-
-function transientFailure(
-  reason: string,
-  response?: Response,
-): TransientRefreshFailure {
-  const wait = response ? retryAfterMs(response.headers) : undefined;
-  return {
-    kind: "transient",
-    reason,
-    ...(response ? { status: response.status } : {}),
-    ...(wait !== undefined ? { retryAfterMs: wait } : {}),
-  };
 }
 
 /**
@@ -242,21 +186,10 @@ export type RefreshResponseOutcome =
  * A failure also decides what the SDK gets to parse. Pinned against
  * `@modelcontextprotocol/client` 2.3.1, `src/client/auth.ts`: `authInternal()`
  * swallows a refresh failure that is not an `OAuthError`, or is `server_error`,
- * and falls through to `startAuthorization` (`state()`, `saveCodeVerifier()`,
- * `redirectToAuthorization()`); it rethrows every other `OAuthError`, and
- * `auth()` retries once after `invalidateCredentials()` only for
- * `invalid_grant` and `invalid_dpop_proof` (tokens) and
- * `invalid_client`/`unauthorized_client` (client and tokens). A `saveTokens`
- * failure after a successful refresh propagates instead of falling through,
- * as it has since 2.1.0. `executeTokenRequest()` turns a 2xx body carrying
- * `error` into an `OAuthError` with that code. So a dead grant the SDK would rethrow
- * (`bad_refresh_token`, `invalid_scope`, …) reaches it as `invalid_grant`, and
- * an outage whose body names any code but `server_error` reaches it as
- * `server_error` — a 5xx `invalid_grant` must not make the SDK drop a grant
- * nobody refused. Every failure reaches it rebuilt by `sdkTokenFailure`, so
- * nothing the server wrote but the code it chose is ever the SDK's to log.
- * The provider hooks below finish the job. If the SDK moves,
- * the tests under "remoteMcp() dead and transient refresh grants" fail first.
+ * and falls through to `startAuthorization`. All dispatched failures reach the
+ * SDK as `invalid_grant`, except client refusals that also clear registration.
+ * Provider hooks preserve the re-consent verdict for passive calls. Rebuilding
+ * the response keeps provider text out of SDK output.
  */
 export async function refreshResponseOutcome(
   response: Response,
@@ -272,29 +205,15 @@ export async function refreshResponseOutcome(
       }
       code = oauthErrorCode(body);
     } catch (error) {
-      // Complete non-JSON failures keep their status classification. A lost
-      // body or evidence of issued tokens cannot prove an unspent token.
+      // Complete non-JSON failures still require re-consent. A lost body or
+      // evidence of issued tokens cannot prove a committed outcome.
       if (!(error instanceof SyntaxError)) throw error;
     }
     const failure = new Error(`OAuth refresh failed with HTTP ${response.status}.`);
-    if (
-      response.status >= 400 &&
-      response.status < 500 &&
-      !TRANSIENT_CLIENT_STATUSES.has(response.status)
-    ) {
-      return {
-        failure,
-        verdict: { kind: "dead" },
-        forSdk:
-          code !== undefined && SDK_RESTARTING_CODES.has(code)
-            ? sdkTokenFailure(response, code)
-            : sdkTokenFailure(response, "invalid_grant", 400),
-      };
-    }
     return {
       failure,
-      verdict: transientFailure(`answered HTTP ${response.status}`, response),
-      forSdk: sdkTokenFailure(response, "server_error"),
+      verdict: { kind: "dead" },
+      forSdk: sdkTokenFailure(response, code === "invalid_client" || code === "unauthorized_client" ? code : "invalid_grant", 400),
     };
   }
   // A successful HTTP status may have consumed the token even when its

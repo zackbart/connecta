@@ -424,7 +424,7 @@ describe("an OAuth flow on a live client", () => {
 
   it.each(
     modes.flatMap((mode) => [
-      [mode, 500, "unavailable", true],
+      [mode, 500, "downstream_oauth_required", false],
       [mode, 400, "downstream_oauth_required", false],
     ] as const),
   )("keeps a refused refresh's body out of the verdict (%s, HTTP %i)", async (mode, status, code, retryable) => {
@@ -448,7 +448,7 @@ describe("an OAuth flow on a live client", () => {
       storage,
     );
     expect(classified).toMatchObject({ code, retryable });
-    if (status === 500) expect(error.message).toContain("could not refresh its OAuth grant");
+    expect(error.message).toContain("requires authorization");
   });
 
   it.each(modes)("tells concurrent flows' failures by each flow's own last request (%s)", async (mode) => {

@@ -56,7 +56,7 @@ describe.each([["memory", false], ["delayed", true]] as const)("refresh dispatch
     const entered = deferred<void>();
     const gate = deferred<void>();
     const send = vi.fn(async () => { entered.resolve(); await gate.promise; return Response.json(next); });
-    const first = a.fetch(send)(`${ISSUER}/token`, init);
+    const first = a.fetch(send)(`${ISSUER}/token`, init).catch((error: unknown) => error);
     await entered.promise;
     const key = await leaseKey(storage);
     expect(JSON.parse((await storage.get(key))!)).toMatchObject({ state: "dispatched" });
@@ -70,7 +70,8 @@ describe.each([["memory", false], ["delayed", true]] as const)("refresh dispatch
     }
     expect(send).toHaveBeenCalledTimes(1);
     gate.resolve();
-    expect((await first).status).toBe(200);
+    if (elapsed > OAUTH_REFRESH_LEASE_SECONDS * 1000) expect(await first).toBeInstanceOf(UnauthorizedError);
+    else expect((await first as Response).status).toBe(200);
     if (elapsed < OAUTH_REFRESH_LEASE_SECONDS * 1000) expect(await second).toBeInstanceOf(Response);
     else expect((await storedGrant(storage))!.body!.tokens).toBeUndefined();
     expect(send).toHaveBeenCalledTimes(1);

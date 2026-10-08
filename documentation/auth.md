@@ -471,73 +471,71 @@ A crash during cleanup cannot restore the disconnected grant.
 
 ## Refresh failures
 
-Refresh classification uses the token endpoint's answer, not the SDK's parsing:
+A refresh token is spent when dispatch begins. Every refresh request passes
+through `KvOAuthProvider.dispatchRefresh`. Before sending, the gate wins the
+lease's `claimed` to `dispatched` CAS and a separate create-only CAS at
+`oauth:refresh-spent:<sha256(refresh_token)>`. The latter must succeed before
+any HTTP request leaves. Connector and owner storage namespaces partition both
+records. Spent records have **no TTL**, contain no token, and are never cleared
+by completion, failure, migration cleanup, Restart, Disconnect, or epoch sweeps.
+The spent key excludes the epoch, so reintroducing the same token in a later
+grant cannot permit another send. Copy these durable records during storage
+migration.
 
-| Answer | Outcome |
+| Outcome after dispatch | Result |
 | --- | --- |
-| Dead grant: 4xx except 408, 425, 429; or 2xx with OAuth `error` | `auth_required`. Delete refused tokens before releasing refresh waiters, preventing requests or isolates from resending them; the next `authorize_connector` goes straight to consent. |
-| Outage: complete 5xx, 408, 425, or 429 failure response without evidence of issued tokens | Retryable `unavailable`, or `rate_limited` for 429, with `retryAfterMs` from `Retry-After` when present. Keep the grant; passive calls write no consent URL. |
-| Ambiguous after dispatch: network or response-body loss, malformed or oversized success, deadline expiry, failure response carrying tokens, or process crash | `auth_required`. Permanently refuse the refresh fingerprint by shared-storage CAS and conditionally delete its grant tokens. Newcomers cannot clear the refusal; re-consent is required. |
-| Valid refresh that cannot be stored | Retryable `unavailable` with fixed text; leave the stored grant untouched. |
+| Valid tokens durably committed | Release waiters with the committed tokens. Only a new refresh fingerprint can be dispatched next. |
+| Provider failure of any status, network or response-body loss, malformed or oversized success, deadline expiry, or process crash | `auth_required`. Record re-consent and conditionally remove the spent token's grant. This includes complete 5xx, 408, 425, and 429 responses. |
+| Valid rotation whose grant commit retries are exhausted | `auth_required`. Keep the fingerprint spent and conditionally remove its grant tokens. Never return uncommitted tokens to the SDK. |
+| Epoch changed during commit | Drop the response tokens. Restart, Disconnect, or issuer replacement determines the newer grant. |
 
 Refreshes coalesce per owner and epoch within a runtime. Across isolates, a
 shared-storage record at `oauth:refresh:<epoch>:<sha256(refresh_token)>` is
-claimed by CAS before dispatch. The connector and owner namespace partitions
-the key. The record moves from `claimed` to `dispatched` by CAS in the reaction
-that sends the HTTP request. Only an expired `claimed` record can be taken
-over: that holder has sent nothing, and its later dispatch CAS will fail.
+claimed by CAS before dispatch. Only an expired unsent claim can be taken
+over. Its old holder loses the dispatch CAS. A dispatched record cannot be
+reopened by a completed answer, a verdict, or a newcomer read.
 
-A dispatched record is durable. Its separate holder record under
-`oauth:refresh-active:<epoch>:<holder>` has a storage-owned 120-second TTL.
-SQLite and D1 create and check that expiry with the database clock inside each
-statement. Custom shared stores must use a storage-owned clock as well.
-Connecta never uses cross-isolate wall-clock comparisons to permit takeover
-of a dispatched record. The refresh HTTP request, including its response body,
-has a 20-second deadline. Contenders wait at most 35 seconds with 10 ms to
-250 ms backoff and read committed tokens or typed verdicts. A waiter that
-reaches its deadline returns retryable `unavailable`, keeping the grant and
-starting no consent. One deadline covers the initial epoch and grant reads,
-shared claim acquisition, dispatch preparation, and runtime-local joiners waiting
-for a holder's grant commit. Sending ends preparation's wait and cancellation
-scope; the holder's HTTP deadline applies next. Cancellation before sending
-settles the local flight without waiting for cleanup storage; an unsent claim
-left behind can expire and be taken over. Late preparation never sends.
+The separate holder record at `oauth:refresh-active:<epoch>:<holder>` has a
+storage-owned 120-second TTL. SQLite and D1 create and check expiry with the
+database clock inside each statement. Custom shared stores must also use a
+storage-owned clock. Cross-isolate clock comparisons never permit takeover of
+a dispatched record. The refresh HTTP request and response body have a
+20-second deadline. Contenders wait at most 35 seconds with 10 ms to 250 ms
+backoff. A waiter deadline returns retryable `unavailable`, keeps the grant,
+and starts no consent. It never permits resending a spent token.
 
-Once the request is dispatched, the holder detaches the HTTP exchange from
-both the caller's and the SDK's cancellation signals. The caller still receives
-its normal cancellation result. The exchange runs through its 20-second deadline
-and stores an accepted rotation by grant CAS before releasing waiters, even if
-the caller left before the response or the SDK redirects instead of saving.
-The runtime's deferred-work hook passes this completion, including the commit,
-to Workers `waitUntil`. Paths without that hook still finish in a background
-promise. The grant CAS keeps stale rotations from replacing newer grants.
-Release also uses CAS. A completion record hands waiting isolates the outcome
-even when the token response is byte-identical; a later request can claim a
-fresh attempt after that confirmed commit. Verdict records contain typed facts,
-never tokens or downstream text.
+One preparation deadline covers initial epoch and grant reads, claim acquisition,
+dispatch preparation, and local joiners waiting for a grant commit. Cancellation
+before sending settles the local flight without awaiting cleanup storage. An
+unsent claim can expire and be taken over. Late preparation never sends. If
+preparation recorded the fingerprint as spent, it stays spent even if the send
+was subsequently cancelled or a local destination guard refused it.
 
-A dispatched holder can crash after the authorization server consumed the
-refresh token and before the grant commit. Once its shared-storage liveness
-record expires, connecta records a permanent refusal for that fingerprint and
-conditionally removes the grant's tokens. It never resends that token. The
-connector reports `auth_required` with the normal `authorize_connector` recovery.
-A network failure after dispatch, a lost response body, and the 20-second HTTP
-deadline also have unknown outcomes. The holder records the permanent fingerprint
-refusal by CAS before removing its grant tokens. A newcomer never clears this
-refusal, including if a later grant write reintroduces that fingerprint in the
-same epoch. A complete failure response without evidence of token issuance keeps
-the existing outage classification. A failure response carrying issued tokens
-may hide a rotation and requires re-consent. A late answer cannot restore the
-discarded grant. No implementation can recover
-a rotating token response the authorization server sent but connecta did not
-commit. Restart and Disconnect advance the epoch and sweep stale refresh records.
-All in-flight joiners get the same verdict even if the sender is cancelled
-after the answer; newcomers join a refusal instead of resending its token. The
-SDK's parse failures and `server_error` otherwise fall through to consent;
-other OAuth errors rethrow as outages, resending dead grants. The coordinator
-adapts the answer for SDK classification and provider hooks finish the work,
-pinned beside `refreshResponseOutcome`. Explicit authorization during an outage
-still goes to consent.
+After dispatch, caller and SDK cancellation end only that caller's wait. The
+exchange and grant commit continue under the HTTP deadline. The runtime passes
+completion to Workers `waitUntil`; paths without that hook keep a background
+promise. The holder re-reads the grant and retries the commit with its in-memory
+response tokens up to 32 times after CAS contention or storage errors. Each
+attempt checks the epoch, issuer, and current refresh token. A changed epoch
+drops the response tokens. Another consent's credentials remain intact. A lost
+commit answer can be recovered by reading the committed grant. Exhausting the
+commit retries requires re-consent.
+
+Lease release uses CAS after the commit or re-consent decision. Completion
+records include a SHA-256 digest of the committed token response, excluding
+the local issuer stamp. Waiters can adopt that committed response even when
+it kept the refresh token or was byte-identical. A newcomer cannot clear the
+completion record to redeem that fingerprint again. Verdict records contain
+fixed typed facts, without tokens or downstream text.
+
+If a dispatched holder crashes, shared-storage liveness expiry records
+re-consent and conditionally removes its grant tokens. A late response cannot
+restore them. Spent records already prohibit replay, including when refusal
+recording or token cleanup fails. Restart and Disconnect sweep obsolete lease
+and liveness records while retaining every spent record. The SDK receives
+sanitized failure responses, and provider hooks preserve the re-consent verdict
+for passive calls. A source-level guard pins both OAuth adapters to this single
+send gate.
 
 Refresh and failed code-exchange answers are rebuilt from the OAuth `error`
 code alone with fixed text. The SDK logs descriptions below the configured
@@ -946,8 +944,8 @@ owner's access token as `Authorization: Bearer` with these rules:
   refresh through `remoteMcp()`'s coordinator. Persist rotation even when its
   owner is cancelled after the answer. Replay once; stream bodies are refused.
 - No grant, a second 401, or a [dead refresh](#refresh-failures) means
-  `auth_required`, directing `authorize_connector`. Outages mean retryable
-  `unavailable` and keep the grant. Latch second 401s for the request scope,
+  `auth_required`, directing `authorize_connector`. Refresh waiter deadlines
+  return retryable `unavailable`. Latch second 401s for the request scope,
   preventing repeated refreshes by later program calls.
 - Handlers can name no storage, sealing, or owner partition; the registry owns them.
 - The answer's `.text()` and `.json()`, clones' too, decode its bytes as UTF-8, so

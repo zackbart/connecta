@@ -1,10 +1,10 @@
 import type { FetchLike } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
+import { KvOAuthProvider, oauthStateDigest } from "../src/auth/downstream-oauth.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { classifyCallError } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { oauthGrantKeys, oauthV2Keys } from "../src/storage/keys.js";
+import { oauthGrantKeys, oauthRefreshSpentKeys, oauthV2Keys } from "../src/storage/keys.js";
 import type { Connector, ConnectorContext, KVStorage } from "../src/types.js";
 import { createTestConnecta, required } from "./helpers.js";
 import { connectorContext as ctx, deferred, spyLogger } from "./fixtures/misc.js";
@@ -733,7 +733,7 @@ describe("a layout 2 migration racing a restart", () => {
       expect(await backing.get(key), key).not.toContain(restart.epoch);
       expect(oauthV2Keys.family.prefixes.some((prefix) => key.startsWith(prefix)), key).toBe(false);
     }
-    expect(keys).toEqual([GRANT]);
+    expect(keys).toEqual([GRANT, oauthRefreshSpentKeys.spent(await oauthStateDigest("refresh-1"))]);
   });
 });
 

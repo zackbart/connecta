@@ -404,8 +404,8 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
 
   /**
    * The SDK's `auth()` over this provider. The token endpoint is fetched
-   * through the refresh coordinator — rotation, coalescing, and dead-versus-
-   * outage verdicts — above a fetch that refuses every redirect, as the
+   * through the refresh coordinator, with permanent spent fingerprints,
+   * rotation commits, and re-consent verdicts, above a fetch that refuses every redirect, as the
    * `remoteMcp()` default does.
    */
   const runAuth = (

@@ -641,7 +641,7 @@ describe("api() oauth refresh", () => {
     for (const key of consents) expect(await storage.get(key)).toContain('"consumed":true');
   });
 
-  it("keeps the grant through an authorization-server outage and reports it retryable", async () => {
+  it("requires re-consent after a dispatched outage and never replays the token (INV-5)", async () => {
     const provider = fakeProvider();
     install(provider);
     const connector = ccb();
@@ -652,11 +652,12 @@ describe("api() oauth refresh", () => {
     provider.control.refresh = "outage";
 
     const { classified } = await failure(connector.callTool("whoami", {}, ctx()));
-    expect(classified).toMatchObject({ code: "unavailable", retryable: true, retryAfterMs: 7000 });
-    expect((await connector.status!(ctx())).state).toBe("ok");
+    expect(classified).toMatchObject({ code: "auth_required", retryable: false });
+    expect((await connector.status!(ctx())).state).toBe("auth_required");
 
     provider.control.refresh = "rotate";
-    expect(await connector.callTool("whoami", {}, ctx())).toEqual({ status: 200, body: { owner: "alice" } });
+    expect((await failure(connector.callTool("whoami", {}, ctx()))).classified.code).toBe("auth_required");
+    expect(provider.tokenRequests.filter((r) => r.params.get("grant_type") === "refresh_token")).toHaveLength(1);
   });
 
   it("answers auth_required when the refreshed token is rejected too, once per request scope", async () => {

@@ -1,6 +1,6 @@
 import type { FetchLike } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
+import { KvOAuthProvider, oauthStateDigest } from "../src/auth/downstream-oauth.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import {
   classifyHost,
@@ -9,6 +9,7 @@ import {
 } from "../src/url-safety.js";
 import { classifyCallError } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { oauthRefreshSpentKeys } from "../src/storage/keys.js";
 import type { ConnectorContext, KVStorage } from "../src/types.js";
 import { connectorContext } from "./fixtures/misc.js";
 import { required } from "./helpers.js";
@@ -402,10 +403,10 @@ describe("remoteMcp() OAuth URLs the downstream advertises", () => {
     // matters is that it is not reported as a retryable outage.
     expect(classifyCallError(error)).toMatchObject({ retryable: false });
     expect(reached(server, "[fd00::53]")).toBe(0);
-    // Refusing to ask is not the authorization server refusing the grant.
-    expect(
-      (await new KvOAuthProvider("svc", storage, REDIRECT).tokens())?.refresh_token,
-    ).toBe("refresh-old");
+    // The fingerprint passed the dispatch gate before the local URL guard
+    // refused it. That gate never reopens, even without an HTTP exchange.
+    expect(await new KvOAuthProvider("svc", storage, REDIRECT).tokens()).toBeUndefined();
+    expect(await storage.get(oauthRefreshSpentKeys.spent(await oauthStateDigest("refresh-old")))).not.toBeNull();
   });
 
   it("keeps a public https authorization server working", async () => {

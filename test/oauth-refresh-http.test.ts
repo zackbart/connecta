@@ -2,7 +2,7 @@ import { UnauthorizedError } from "@modelcontextprotocol/client";
 import { describe, expect, inject, it, onTestFinished, vi } from "vitest";
 import { KvOAuthProvider, OAuthRefreshCoordinator, oauthStateDigest } from "../src/auth/downstream-oauth.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { oauthRefreshKeys, scopes } from "../src/storage/keys.js";
+import { oauthGrantKeys, oauthRefreshKeys, oauthRefreshSpentKeys, scopes } from "../src/storage/keys.js";
 import type { ConnectorContext, KVStorage } from "../src/types.js";
 import { seedGrant, storedGrant } from "./fixtures/oauth.js";
 import { api } from "../src/connectors/api.js";
@@ -127,12 +127,162 @@ describe.each([["memory", false], ["delayed", true]] as const)("native HTTP refr
     }
     expect(await server.sent()).toEqual([tokens.refresh_token]);
   });
+
+  it("spends and sends the same fingerprint if the caller mutates its form during preparation (INV-5)", async () => {
+    const storage = store(delayed);
+    await seedGrant(storage, { issuer: ISSUER, tokens });
+    const owner = await isolate(storage);
+    const server = await tokenServer("success");
+    const request = init();
+    const first = owner.coordinator.coordinatedFetch(owner.provider, fetch)(server.url, request);
+    request.body.set("refresh_token", "changed-during-preparation");
+    await vi.waitFor(async () => expect(await server.sent()).toEqual([tokens.refresh_token]));
+    await server.finish();
+    expect(await (await first).json()).toEqual(next);
+    expect(await storage.get(oauthRefreshSpentKeys.spent(await oauthStateDigest(tokens.refresh_token)))).not.toBeNull();
+    expect(await storage.get(oauthRefreshSpentKeys.spent(await oauthStateDigest("changed-during-preparation")))).toBeNull();
+  });
+
+  it.each(["lost spent answer", "refused spent write"])("never sends unless the spent CAS returns success, %s (INV-5) (INV-6)", async (failure) => {
+    const backing = store(delayed);
+    await seedGrant(backing, { issuer: ISSUER, tokens });
+    const spentKey = oauthRefreshSpentKeys.spent(await oauthStateDigest(tokens.refresh_token));
+    const storage: KVStorage = { ...backing, compareAndSet: async (key, expected, value, options) => {
+      if (key === spentKey) {
+        if (failure === "lost spent answer") await backing.compareAndSet(key, expected, value, options);
+        throw new Error("STORAGE_SECRET_SENTINEL");
+      }
+      return backing.compareAndSet(key, expected, value, options);
+    } };
+    const server = await tokenServer("success");
+    const owner = await isolate(storage);
+    await expect(owner.refresh(server.url)).rejects.toMatchObject({ name: "UnauthorizedError", message: "OAuth refresh dispatch could not be recorded; authorization required." });
+    expect((await storedGrant(backing))!.body!.tokens).toBeUndefined();
+    const newcomer = await isolate(storage);
+    expect((await newcomer.refresh(server.url)).status).toBe(400);
+    expect(await server.sent()).toEqual([]);
+    if (failure === "lost spent answer") expect(await backing.get(spentKey)).not.toBeNull();
+  });
+
+  it.each(["CAS false", "CAS error"])("requires re-consent after rotation commit exhaustion, %s, without newcomer replay (INV-5)", async (failure) => {
+    const backing = store(delayed);
+    await seedGrant(backing, { issuer: ISSUER, tokens });
+    let commits = 0;
+    const storage: KVStorage = { ...backing, compareAndSet: async (key, expected, value, options) => {
+      if (key === oauthGrantKeys.grant && value?.includes(next.refresh_token)) {
+        commits++;
+        if (failure === "CAS error") throw new Error(`refused ${value}`);
+        return false;
+      }
+      // The CAS-failure repro keeps the old grant because cleanup also fails.
+      if (failure === "CAS false" && key === oauthGrantKeys.grant) return false;
+      return backing.compareAndSet(key, expected, value, options);
+    } };
+    const server = await tokenServer("success");
+    const owner = await isolate(storage);
+    const local = await isolate(storage, owner.coordinator);
+    const waiter = await isolate(storage);
+    const first = owner.refresh(server.url).catch((error: unknown) => error);
+    await vi.waitFor(async () => expect(await server.sent()).toEqual([tokens.refresh_token]));
+    const spentKey = oauthRefreshSpentKeys.spent(await oauthStateDigest(tokens.refresh_token));
+    const spent = await backing.get(spentKey);
+    expect(JSON.parse(spent!)).toEqual({ connectaOAuthRefreshSpent: 1 });
+    const waiting = [local, waiter].map((isolate) => isolate.refresh(server.url).catch((error: unknown) => error));
+    await server.finish();
+    expect(await first).toBeInstanceOf(UnauthorizedError);
+    for (const answer of await Promise.all(waiting)) {
+      if (answer instanceof Response) expect(await answer.json()).toMatchObject({ error: "invalid_grant" });
+      else expect(answer).toBeInstanceOf(UnauthorizedError);
+    }
+    expect(commits).toBe(32);
+    expect((await storedGrant(backing))!.body!.tokens).toEqual(failure === "CAS false" ? tokens : undefined);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      // Include epoch sweeps and reinsertion after both reset operations.
+      const resetter = await isolate(backing);
+      if (attempt) await resetter.provider.resetAuthorization(attempt === 2);
+      const epoch = (await storedGrant(backing))!.epoch;
+      await seedGrant(backing, { issuer: ISSUER, tokens }, epoch.startsWith("disconnected:") ? `v3:reconnected-${attempt}` : epoch);
+      const newcomer = await isolate(storage);
+      await expect(newcomer.refresh(server.url)).rejects.toBeInstanceOf(UnauthorizedError);
+      expect((await storedGrant(backing))!.body!.tokens).toEqual(failure === "CAS false" ? tokens : undefined);
+      expect(await backing.get(spentKey)).toBe(spent);
+    }
+    expect(await server.sent()).toEqual([tokens.refresh_token]);
+  });
+
+  it.each(["contention", "error", "lost commit answer"])("commits the in-memory rotation after %s without another HTTP request (INV-5)", async (failure) => {
+    const backing = store(delayed);
+    await seedGrant(backing, { issuer: ISSUER, tokens });
+    let commits = 0;
+    const storage: KVStorage = { ...backing, compareAndSet: async (key, expected, value, options) => {
+      if (key === oauthGrantKeys.grant && value?.includes(next.refresh_token) && ++commits <= 2) {
+        if (failure === "error") throw new Error("commit unavailable");
+        if (failure === "lost commit answer") {
+          await backing.compareAndSet(key, expected, value, options);
+          throw new Error("commit answer lost");
+        }
+        // Another writer changes the consent pointer in the same epoch.
+        await backing.set(key, JSON.stringify({ ...JSON.parse((await backing.get(key))!), flow: `contention-${commits}` }));
+      }
+      return backing.compareAndSet(key, expected, value, options);
+    } };
+    const server = await tokenServer("success");
+    const owner = await isolate(storage);
+    const local = await isolate(storage, owner.coordinator);
+    const waiter = await isolate(storage);
+    const first = owner.refresh(server.url);
+    await vi.waitFor(async () => expect(await server.sent()).toEqual([tokens.refresh_token]));
+    const waiting = [local.refresh(server.url), waiter.refresh(server.url)];
+    await server.finish();
+    for (const answer of await Promise.all([first, ...waiting])) expect(await answer.json()).toEqual(next);
+    expect((await storedGrant(backing))!.body!.tokens).toMatchObject(next);
+    if (failure === "contention") expect((await storedGrant(backing))!.flow).toBe("contention-2");
+    expect(commits).toBe(failure === "lost commit answer" ? 1 : 3);
+    expect(await server.sent()).toEqual([tokens.refresh_token]);
+  });
+
+  it.each([false, true])("drops the rotation when %s Disconnect moves the epoch during commit (INV-5)", async (disconnect) => {
+    const backing = store(delayed);
+    await seedGrant(backing, { issuer: ISSUER, tokens });
+    const resetter = await isolate(backing);
+    let moved = false;
+    const storage: KVStorage = { ...backing, compareAndSet: async (key, expected, value, options) => {
+      if (!moved && key === oauthGrantKeys.grant && value?.includes(next.refresh_token)) {
+        moved = true;
+        await resetter.provider.resetAuthorization(disconnect);
+      }
+      return backing.compareAndSet(key, expected, value, options);
+    } };
+    const server = await tokenServer("success");
+    const owner = await isolate(storage);
+    const first = owner.refresh(server.url).catch((error: unknown) => error);
+    await vi.waitFor(async () => expect(await server.sent()).toEqual([tokens.refresh_token]));
+    await server.finish();
+    expect(await first).toBeInstanceOf(UnauthorizedError);
+    const grant = (await storedGrant(backing))!;
+    expect(grant.epoch).not.toBe("v3:seeded");
+    expect(grant.body?.tokens).toBeUndefined();
+    expect(await resetter.provider.operatorDisconnected()).toBe(disconnect);
+    const current = await backing.get(oauthGrantKeys.grant);
+    const newcomer = await isolate(storage);
+    await newcomer.refresh(server.url).catch(() => {});
+    expect(await backing.get(oauthGrantKeys.grant)).toBe(current);
+    expect(await server.sent()).toEqual([tokens.refresh_token]);
+    expect(await backing.get(oauthRefreshSpentKeys.spent(await oauthStateDigest(tokens.refresh_token)))).not.toBeNull();
+  });
+
 });
 
 
-it.each(["call_tool", "execute_code"])("threads Workers waitUntil through %s to an API refresh commit after caller cancellation (INV-5) (INV-7)", async (route) => {
+it.each([
+  ["call_tool", false], ["execute_code", false], ["call_tool", true], ["execute_code", true],
+] as const)("threads Workers waitUntil through %s with exhausted commit %s, without refresh replay (INV-5) (INV-7)", async (route, exhausted) => {
   const server = await tokenServer("success");
-  const storage = memoryStorage();
+  const backing = memoryStorage();
+  const storage: KVStorage = { ...backing, compareAndSet: async (key, expected, value, options) => {
+    if (exhausted && key === `${scopes.connector("svc")}${oauthGrantKeys.grant}` && value?.includes(next.refresh_token)) return false;
+    return backing.compareAndSet(key, expected, value, options);
+  } };
   const endpoint = `${ISSUER}/token`;
   const namespace = scopes.connector("svc");
   await seedGrant(storage, { issuer: endpoint, tokens }, "v3:seeded", namespace);
@@ -166,13 +316,24 @@ it.each(["call_tool", "execute_code"])("threads Workers waitUntil through %s to 
     : { name: route, arguments: { code: 'return await connecta.call("svc.read", {});' } };
   const first = mcpRpc(a, "tools/call", params, { signal: owner.signal, runtimeContext }).catch((error: unknown) => error);
   await vi.waitFor(async () => expect(await server.sent()).toEqual([tokens.refresh_token]));
-  owner.abort(new DOMException("Caller left", "AbortError"));
-  await first;
+  if (!exhausted) {
+    owner.abort(new DOMException("Caller left", "AbortError"));
+    await first;
+  }
   expect(tails.length).toBeGreaterThan(0);
   const second = mcpRpc(b, "tools/call", { name: "call_tool", arguments: { address: "svc.read", args: {} } }, { runtimeContext });
   await server.finish();
-  expect((await readJsonRpc(await second)).result.isError).not.toBe(true);
+  if (exhausted) {
+    expect((await readJsonRpc(await first as Response)).result.isError).toBe(true);
+    expect((await readJsonRpc(await second)).result.isError).toBe(true);
+    const newcomer = app();
+    onTestFinished(() => newcomer.close());
+    expect((await readJsonRpc(await mcpRpc(newcomer, "tools/call", params, { runtimeContext }))).result.isError).toBe(true);
+  } else {
+    expect((await readJsonRpc(await second)).result.isError).not.toBe(true);
+  }
   await Promise.all(tails);
-  expect((await storedGrant(storage, namespace))!.body!.tokens).toMatchObject(next);
+  if (exhausted) expect((await storedGrant(storage, namespace))!.body!.tokens).toBeUndefined();
+  else expect((await storedGrant(storage, namespace))!.body!.tokens).toMatchObject(next);
   expect(await server.sent()).toEqual([tokens.refresh_token]);
 });

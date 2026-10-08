@@ -30,10 +30,14 @@ rotation to the grant by CAS before releasing waiters, even when the owner
 cancels after dispatch. The HTTP exchange uses its own 20-second deadline,
 detached from caller cancellation, and the runtime passes its completion and
 commit to Workers `waitUntil`. Contenders read the committed tokens or typed
-verdict. An unsent claim can be taken over after expiry. Dispatch uses a CAS
-transition to a durable record and a 20-second HTTP deadline. A sent request
+verdict. An unsent claim can be taken over after expiry. Dispatch uses a lease CAS
+transition and a create-only CAS of the token fingerprint into permanent spent
+storage before sending. Spent records have no TTL, exclude the epoch, and survive
+Restart and Disconnect. The HTTP deadline is 20 seconds. A sent request
 whose 120-second storage-owned liveness record expired without a commit is
-never retried and requires re-consent. [Auth](./auth.md#refresh-failures) describes the lease and failure
+never retried and requires re-consent. Valid rotations retry their grant commit
+up to 32 times without another HTTP request; exhausted commits and all dispatched
+provider failures require re-consent. [Auth](./auth.md#refresh-failures) describes the lease and failure
 contracts.
 
 **Per request, and no longer.** The MCP server, its transport, downstream MCP
