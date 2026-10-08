@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 // write into the deployment's log (#695). This runs the sink suite in workerd
 // and reads what workerd itself printed.
 describe("workerd's native output", () => {
-  it("INV-6: carries no planted downstream text while the sink suite runs in workerd", async () => {
+  it("INV-6: carries no planted downstream text while the sink and Clerk auth suites run in workerd", async () => {
     const root = fileURLToPath(new URL("..", import.meta.url));
     const vitest = fileURLToPath(new URL("../node_modules/vitest/vitest.mjs", import.meta.url));
     // CI forces colour; plain output keeps the summary match literal.
@@ -18,7 +18,7 @@ describe("workerd's native output", () => {
     delete env.FORCE_COLOR;
     const { stdout, stderr } = await promisify(execFile)(
       process.execPath,
-      [vitest, "run", "--project", "workers", "test/operator-sinks.test.ts"],
+      [vitest, "run", "--project", "workers", "test/operator-sinks.test.ts", "test/clerk-operator-output.test.ts", "test/byte-read-response.test.ts"],
       { cwd: root, timeout: 120_000, maxBuffer: 16 * 1024 * 1024, env },
     );
     const output = `${stdout}\n${stderr}`;

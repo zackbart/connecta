@@ -2,15 +2,15 @@
 // Single tenant, no tenant-tag requirement, optional allowedDomains/gate() with
 // ~60s identity caching.
 
-import { createClerkClient } from "@clerk/backend";
+import type { ClerkGateClient, ClerkUser } from "./clerk-sdk/client.js";
+import { createByteReadingClerkClient } from "./clerk-transport.js";
 import { decodeJwt } from "@clerk/backend/jwt";
 import { byteReadResponse } from "../byte-read-response.js";
 import { failureRecord, logFailure } from "../operator-record.js";
 import { assertNoRetiredToolkitOptions } from "../retired-toolkits.js";
 import type { AuthResult, InboundAuth } from "../types.js";
 
-type ClerkClient = ReturnType<typeof createClerkClient>;
-type ClerkUser = Awaited<ReturnType<ClerkClient["users"]["getUser"]>>;
+export type { ClerkGateClient, ClerkUser } from "./clerk-sdk/client.js";
 
 export interface ClerkAuthOptions {
   publishableKey: string;
@@ -40,8 +40,8 @@ export interface ClerkAuthOptions {
    * `bearerToken` has no email to read and is admitted without a domain check.
    */
   allowedDomains?: readonly string[];
-  /** Optional allow-list hook. Return false to reject an authenticated user. */
-  gate?: (userId: string, clerk: ClerkClient) => boolean | Promise<boolean>;
+  /** Optional allow-list hook using Connecta's bundled user lookup client. */
+  gate?: (userId: string, clerk: ClerkGateClient) => boolean | Promise<boolean>;
   /** Advertised scopes in protected-resource metadata. */
   scopes?: string[];
   /** Optional hosted Account Portal sign-in URL for operator pages. Absolute https only. */
@@ -379,7 +379,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   // Before the Clerk client, so a malformed key fails as a connecta
   // configuration error rather than however the SDK happens to treat it.
   const frontendApiUrl = fapiUrl(opts.publishableKey);
-  const clerk = createClerkClient({
+  const clerk = createByteReadingClerkClient({
     secretKey: opts.secretKey,
     publishableKey: opts.publishableKey,
   });
