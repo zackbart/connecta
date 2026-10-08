@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createExecuteTool } from "../src/execute.js";
 import { snapshotCatalog } from "../src/catalog-fingerprint.js";
 import { Registry } from "../src/registry.js";
-import { recordCatalogDriftActivity, recordToolActivity } from "../src/activity.js";
+import { recordToolActivity } from "../src/activity.js";
 import { machineAuth } from "./helpers/machine-auth.js";
 import { parseConnectorAccess } from "../src/connector-access.js";
 import { CatalogService } from "../src/catalog-service.js";
@@ -25,7 +25,6 @@ import {
   type FailureSubject,
 } from "../src/operator-record.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { CatalogDriftActivityEvent } from "../src/activity.js";
 import type { Connector, JsonSchema, Logger, ToolDef } from "../src/types.js";
 import { activitySink, createTestConnecta, makeRegistry } from "./helpers.js";
 
@@ -921,14 +920,9 @@ describe("control-character tool names at catalog intake", () => {
       }));
     }
     const { logger, lines } = capturingLogger();
-    const drift: CatalogDriftActivityEvent[] = [];
     const connector = () => remoteMcp("svc", { url: MCP_URL, classify: { tools: Object.fromEntries(kept.map((name) => [name, "read" as const])) } });
     const registry = new Registry([connector()], {
-      storage, logger, catalogDriftActivity: {
-        recordDrift: recordCatalogDriftActivity,
-        sink: { record() {}, recordCatalogDrift(event) { drift.push(event); } },
-        serverInfo: { name: "test", version: "0" },
-      },
+      storage, logger,
     });
     const target = activitySink();
     const mt = createMetaTools(registry, BASE, { activity: target.activity });
@@ -940,8 +934,6 @@ describe("control-character tool names at catalog intake", () => {
     expect(JSON.stringify(search)).not.toContain("x\u0085y");
     expect((await registry.getTools("svc", BASE)).map((tool) => tool.name)).toEqual(kept);
     expect((await registry.statusFor("svc", BASE)).catalogDrift?.droppedTools).toBe(2);
-    expect(drift).toHaveLength(1);
-    expect(drift[0]?.droppedTools).toBe(2);
     for (const name of rejected) {
       const result = await mt.callTool({ address: `svc.${name}` });
       expect(result.isError).toBe(true);
@@ -969,7 +961,7 @@ describe("control-character tool names at catalog intake", () => {
     const ui = await (await app.fetch(new Request(`${BASE}/ui/connectors/svc`, { headers: { Authorization: "Bearer t" } }))).text();
     const health = await (await app.fetch(new Request(`${BASE}/health`))).text();
     const status = JSON.stringify(await registry.statusFor("svc", BASE));
-    for (const text of [...lines, ...consoleLines, JSON.stringify(target.events), JSON.stringify(drift), ui, health, status]) {
+    for (const text of [...lines, ...consoleLines, JSON.stringify(target.events), ui, health, status]) {
       expect(text).not.toMatch(ANY_PLANTED);
       expect(text).not.toContain("x\u0085y");
     }
@@ -991,41 +983,7 @@ describe("control-character tool names at catalog intake", () => {
 
 
 describe("catalog intake finding lifecycle", () => {
-  it.each([false, true])("INV-6: stale reads cannot replace a deferred refresh finding, initially rejected: %s", async (initiallyRejected) => {
-    vi.useFakeTimers();
-    try {
-      let rejected = initiallyRejected;
-      const drift: CatalogDriftActivityEvent[] = [];
-      const connector: Connector = {
-        id: "svc", classification: { tools: { read: "read" } },
-        async listTools() { return [{ name: "read" }, ...(rejected ? [{ name: "x\u0085planted-7f3a9c" }] : [])]; },
-        async callTool() { return null; },
-      };
-      const registry = new Registry([connector], {
-        storage: memoryStorage(), logger: capturingLogger().logger,
-        toolCacheTtlSeconds: 1, toolCatalogStaleSeconds: 30, persistToolCatalog: false,
-        catalogDriftActivity: {
-          recordDrift: recordCatalogDriftActivity,
-          sink: { record() {}, recordCatalogDrift(event) { drift.push(event); } },
-          serverInfo: { name: "test", version: "0" },
-        },
-      });
-      await registry.getTools("svc", BASE);
-      vi.advanceTimersByTime(2_000);
-      rejected = !rejected;
-      const tails: Promise<unknown>[] = [];
-      const stale = await new CatalogService(registry, BASE, { defer: (promise) => tails.push(promise) }).loadConnector("svc");
-      expect(stale.map((tool) => tool.name)).toEqual(["read"]);
-      await Promise.all(tails);
-      expect((await registry.statusFor("svc", BASE)).catalogDrift?.droppedTools ?? 0).toBe(rejected ? 1 : 0);
-      expect(drift.map((event) => event.droppedTools ?? 0)).toEqual(initiallyRejected ? [1, 0] : [1]);
-      expect(JSON.stringify(drift)).not.toMatch(ANY_PLANTED);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("INV-6: personal connector findings reach root health without principal or name text", async () => {
+  it("INV-6: personal connector findings stay out of health without principal or name text", async () => {
     const { logger, lines } = capturingLogger();
     const app = createTestConnecta({
       publicUrl: BASE, logger, storage: memoryStorage(),
@@ -1038,10 +996,8 @@ describe("catalog intake finding lifecycle", () => {
     const scoped = app.registry.scoped({ connectorIds: ["svc"], principalKey: "private-principal", subjectKey: "private-subject" });
     expect(await scoped.getTools("svc", BASE)).toEqual([]);
     expect((await scoped.statusFor("svc", BASE)).catalogDrift?.droppedTools).toBe(1);
-    expect(app.registry.catalogDriftSnapshot().svc?.droppedTools).toBe(1);
     const body = await (await app.fetch(new Request(`${BASE}/health`))).text();
-    const health = JSON.parse(body) as { catalogDrift: Record<string, { droppedTools?: number }> };
-    expect(Object.values(health.catalogDrift).map((report) => report.droppedTools)).toEqual([1]);
+    expect(JSON.parse(body)).not.toHaveProperty("catalogDrift");
     for (const text of [body, ...lines, ...consoleLines]) {
       expect(text).not.toMatch(ANY_PLANTED);
       expect(text).not.toContain("private-principal");

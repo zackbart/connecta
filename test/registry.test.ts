@@ -1449,7 +1449,7 @@ describe("catalog stale-while-revalidate", () => {
     await expect(registry.getTools("blocking_abort", BASE)).resolves.toMatchObject([
       { name: "complete" },
     ]);
-    expect(registry.catalogDriftSnapshot().blocking_abort).toMatchObject({
+    expect((await registry.statusFor("blocking_abort", BASE)).catalogDrift).toMatchObject({
       observedAt: "2026-08-13T12:00:00.000Z",
       schemaChanges: 1,
     });

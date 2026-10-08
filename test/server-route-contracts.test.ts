@@ -190,13 +190,12 @@ describe("server route contracts", () => {
     await connecta.close();
   });
 
-  it("keeps connector identities out of health while preserving doctor's drift signal", async () => {
+  it("INV-6: keeps connector identities and drift counts out of health", async () => {
     const connecta = createTestConnecta({ connectors: [{
       ...testConnector("private_connector_id"),
       callAdmission: { rules: [{ maxConcurrency: 1 }] },
       catalogDrift: () => ({ observedAt: "2026-09-16T00:00:00.000Z", unclassifiedTools: 2, unservedTools: 1, annotationConflicts: 0, schemaChanges: 3 }),
     }], auth: machineAuth(TOKEN), publicUrl: BASE });
-    let previous: unknown;
     for (let i = 0; i < 2; i++) {
       const response = await connecta.fetch(new Request(`${BASE}/health`, { headers: { Origin: "https://attacker.example" } }));
       expect(response.status).toBe(200);
@@ -204,11 +203,7 @@ describe("server route contracts", () => {
       expect(text).not.toContain("private_connector_id");
       const body = JSON.parse(text);
       expect(body.connectors).toBe(1);
-      expect(Object.keys(body.catalogDrift)).toHaveLength(1);
-      expect(Object.keys(body.catalogDrift)[0]).toMatch(/^[a-f0-9]{16}$/);
-      expect(Object.values(body.catalogDrift)).toEqual([{ observedAt: "2026-09-16T00:00:00.000Z", unclassifiedTools: 2, unservedTools: 1, annotationConflicts: 0, schemaChanges: 3 }]);
-      if (previous) expect(body.catalogDrift).toEqual(previous);
-      previous = body.catalogDrift;
+      expect(body).not.toHaveProperty("catalogDrift");
     }
     await connecta.close();
   });

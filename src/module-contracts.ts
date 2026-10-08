@@ -3,7 +3,6 @@ import type {
   ActivityStore,
   ActivityReadGate,
   recordToolActivity,
-  recordCatalogDriftActivity,
   recordCatalogChangeActivity,
 } from "./activity.js";
 import type { RouteContext } from "./routes/shared.js";
@@ -22,7 +21,6 @@ export interface ActivityModule {
   readonly readGate?: ActivityReadGate;
   handle(context: RouteContext): Promise<Response | null>;
   readonly recordTool: typeof recordToolActivity;
-  readonly recordDrift: typeof recordCatalogDriftActivity;
   readonly recordChange: typeof recordCatalogChangeActivity;
 }
 /**

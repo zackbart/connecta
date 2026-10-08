@@ -76,7 +76,7 @@ top to bottom.
 | 2 | MCP preflight | Allowed `OPTIONS` on `/mcp*`: 204 without admission or auth. |
 | 2 | Other `OPTIONS` | Auth metadata first, otherwise compatibility CORS preflight. |
 | 3 | `/.well-known/*` | Auth metadata, or 404. |
-| 4 | `/health` | Open and payload-free: health, executor, admission, and deployment metadata, with drift as stable short hashes. |
+| 4 | `/health` | Open and payload-free: health, executor, admission, and deployment metadata. |
 | 6 | `/mcp`, `/mcp/<pool>` | Admission, then auth, then a request-local MCP server. Body-confirmed modern listens skip admission and are refused after auth and SDK validation. An undeclared pool, a refusing grant, and a throwing grant are one identical 404; see [pools](./auth.md#pools). |
 | 7 | Other paths | 404. Custom HTTP routes belong to the deployment. |
 

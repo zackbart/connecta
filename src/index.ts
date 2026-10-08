@@ -284,7 +284,6 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     catalogDriftActivity: resolved.activity?.store
       ? {
           sink: resolved.activity.store,
-          recordDrift: resolved.activity.recordDrift,
           recordChange: resolved.activity.recordChange,
           serverInfo: resolved.serverInfo,
           ...(resolved.activity.deploymentId !== undefined
@@ -503,7 +502,6 @@ export type {
   ActivitySink,
   ActivityStore,
   AgentFriction,
-  CatalogDriftActivityEvent,
   ToolCallActivityEvent,
 } from "./activity.js";
 

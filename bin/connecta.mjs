@@ -295,35 +295,10 @@ async function doctor() {
     await client.close();
   }
 
-  // Drift is reported, never failed on. A downstream that grew a tool nobody
-  // has classified is a maintainer's next task, not a broken deployment: the
-  // unclassified tool already fails closed onto call_destructive_tool. These
-  // counts come from refreshes the deployment already served, so a deployment
-  // that has answered no catalog request yet reports nothing here (#343).
-  const drifted = Object.entries(health.catalogDrift ?? {}).filter(
-    ([, report]) =>
-      report.unclassifiedTools ||
-      report.unservedTools ||
-      report.annotationConflicts ||
-      report.schemaChanges,
-  );
-  for (const [connectorId, report] of drifted) {
-    console.warn(
-      `[connecta] catalog drift on "${connectorId}" (observed ` +
-        `${report.observedAt}): ${report.unclassifiedTools} unclassified, ` +
-        `${report.unservedTools} no longer served, ` +
-        `${report.annotationConflicts} annotation conflict(s), ` +
-        `${report.schemaChanges} schema change(s).`,
-    );
-  }
-
   console.log(
     `Connecta doctor passed: ${health.connectors} connector(s), ` +
       `${executorName ? `${executorName} executed` : "code executed"}, ` +
-      `prescribed ${META_TOOL_NAMES.length}-tool surface, MCP ${negotiatedVersion}, package ${CONNECTA_VERSION}` +
-      (drifted.length > 0
-        ? `, catalog drift on ${drifted.length} connector(s).`
-        : "."),
+      `prescribed ${META_TOOL_NAMES.length}-tool surface, MCP ${negotiatedVersion}, package ${CONNECTA_VERSION}.`,
   );
 }
 

@@ -4,7 +4,7 @@ import { routeActivity } from "./routes/activity.js";
 import type { ActivityModule } from "./module-contracts.js";
 import { boundedEchoText, classificationCode, type ClassificationCode } from "./errors.js";
 import { failureRecord, logFailure } from "./operator-record.js";
-import type { CatalogDriftCounts, Logger } from "./types.js";
+import type { Logger } from "./types.js";
 
 /**
  * How long an identity field may be before the store stops believing it.
@@ -197,32 +197,6 @@ export interface ToolCallActivityEvent {
   deploymentId?: string;
 }
 
-/**
- * A downstream catalog moved away from the manifest a release reviewed.
- *
- * Four integers and an id: the type has nowhere to put a tool name, a schema,
- * an argument, a result, or a downstream error string, which is the same
- * construction guarantee `ToolCallActivityEvent` makes. Which tool drifted is
- * deliberately absent — the runtime reports that something did, and the
- * maintainer-run check with a live catalog in front of it names names
- * ([#343](https://github.com/zackbart/connecta/issues/343),
- * [#351](https://github.com/zackbart/connecta/issues/351)).
- */
-export interface CatalogDriftActivityEvent extends CatalogDriftCounts {
-  schemaVersion: 1;
-  id: string;
-  occurredAt: string;
-  connectorId: string;
-  /** Real build version. Absent only in history written before telemetry existed. */
-  packageVersion?: string;
-  serverName: string;
-  serverVersion: string;
-  /** Self-declared client facts, when an explicit client context exists. */
-  clientName?: string;
-  clientVersion?: string;
-  deploymentId?: string;
-}
-
 export interface ActivityPage {
   events: ToolCallActivityEvent[];
   nextCursor?: string;
@@ -245,13 +219,7 @@ export interface ActivityReadPage {
 /** Write-only deployments can implement only this small, vendor-neutral seam. */
 export interface ActivitySink {
   record(event: ToolCallActivityEvent): void | Promise<void>;
-  /**
-   * Optional catalog-drift channel. Optional rather than a widened `record`,
-   * because a store written before drift existed already decided what a row
-   * looks like: a sink that does not implement this simply never hears about
-   * drift, and the operator still reads the same counts from connector status.
-   */
-  recordCatalogDrift?(event: CatalogDriftActivityEvent): void | Promise<void>;
+
 }
 
 /** Optional read side used by Connecta's authenticated Activity UI. */
@@ -287,7 +255,6 @@ export type ActivityReadGate = (
  * did, so it carries no actor and no request id to attribute it to one.
  */
 export interface CatalogDriftActivityContext {
-  recordDrift?: typeof recordCatalogDriftActivity;
   recordChange?: typeof recordCatalogChangeActivity;
   defer?: (promise: Promise<unknown>) => void;
   sink: ActivitySink;
@@ -394,48 +361,6 @@ export function recordToolActivity(
   }
 }
 
-/**
- * Record one catalog-drift observation, best-effort like every other activity
- * write: a store that is down, or a sink that never implemented the channel,
- * can never change what a refresh returned to the caller who paid for it.
- */
-export function recordCatalogDriftActivity(
-  context: CatalogDriftActivityContext | undefined,
-  input: { connectorId: string } & CatalogDriftCounts,
-): void {
-  if (!context?.sink.recordCatalogDrift) return;
-  const clientName = activityClientFact(context.clientInfo?.name, "name");
-  const clientVersion = activityClientFact(context.clientInfo?.version, "version");
-  const event: CatalogDriftActivityEvent = {
-    schemaVersion: 1,
-    id: crypto.randomUUID(),
-    occurredAt: new Date().toISOString(),
-    connectorId: boundedEchoText(input.connectorId, MAX_ACTIVITY_NAME_BYTES),
-    unclassifiedTools: input.unclassifiedTools,
-    unservedTools: input.unservedTools,
-    annotationConflicts: input.annotationConflicts,
-    schemaChanges: input.schemaChanges,
-    ...(input.droppedTools ? { droppedTools: input.droppedTools } : {}),
-    packageVersion: CONNECTA_VERSION,
-    serverName: context.serverInfo.name,
-    serverVersion: context.serverInfo.version,
-    ...(clientName !== undefined ? { clientName } : {}),
-    ...(clientVersion !== undefined ? { clientVersion } : {}),
-    ...(context.deploymentId ? { deploymentId: context.deploymentId } : {}),
-  };
-  try {
-    const result = context.sink.recordCatalogDrift(event);
-    if (!result || typeof (result as Promise<unknown>).then !== "function") {
-      return;
-    }
-    void Promise.resolve(result).catch((error) => {
-      logFailure(context.logger, "catalog drift record failed", failureRecord({}, error));
-    });
-  } catch (error) {
-    logFailure(context.logger, "catalog drift record failed", failureRecord({}, error));
-  }
-}
-
 /** A discrete catalog change, with no catalog names, descriptions or schemas. */
 export function recordCatalogChangeActivity(
   context: CatalogDriftActivityContext | undefined,
@@ -471,7 +396,6 @@ export function activityHistory(options: ActivityHistoryOptions): ActivityModule
     ...options,
     handle: routeActivity,
     recordTool: recordToolActivity,
-    recordDrift: recordCatalogDriftActivity,
     recordChange: recordCatalogChangeActivity,
   };
 }

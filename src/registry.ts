@@ -16,7 +16,6 @@ import {
 import type { CredentialVault } from "./credential-contract.js";
 import type {
   CatalogAccessObservation,
-  CatalogDriftCounts,
   CatalogDriftReport,
   Connector,
   ConnectorContext,
@@ -28,9 +27,6 @@ import type {
 import {
   type DeferredWork,
 } from "./connector-scope.js";
-import {
-  type CatalogDriftActivityContext,
-} from "./activity.js";
 import {
   storedCredentialShape,
 } from "./credential-rules.js";
@@ -325,14 +321,7 @@ export interface RegistryOptions {
    */
   maxResultBytes?: number | undefined;
   results?: { maxStashBytes?: number; maxStashEntries?: number } | undefined;
-  /**
-   * Where payload-free catalog-drift observations go. Present only when the
-   * deployment configured an activity store; drift is reported through
-   * connector status either way.
-   */
-  catalogDriftActivity?:
-    | Omit<CatalogDriftActivityContext, "logger">
-    | undefined;
+
 }
 
 function namespaced(storage: KVStorage, prefix: string): KVStorage {
@@ -580,8 +569,6 @@ export class Registry implements RegistryView {
   >();
   /** Count-only intake findings, including catalogs loaded from storage. */
   private droppedToolNames = new Map<string, { count: number; observedAt: string }>();
-  /** Last drift counts reported to activity, per connector, in this runtime. */
-  private readonly reportedDrift = new Map<string, CatalogDriftCounts>();
   /**
    * Schema digest verification per reviewed facts array. Only the registry's
    * own deep-frozen arrays are keys, so an entry stays true while they live.
@@ -983,27 +970,6 @@ export class Registry implements RegistryView {
   }
 
   /**
-   * Payload-free drift counts for the open health endpoint, so `connecta
-   * doctor` can report a stale allowlist without asking any downstream
-   * anything. Connectors with a reviewed refresh, an intake finding, or a
-   * plugin drift observation *in this runtime* appear — a process or isolate that has
-   * answered no catalog request yet honestly reports nothing, and drift is not
-   * persisted the way the catalog itself is.
-   *
-   * Every report is rebuilt by {@link boundedCatalogDrift} on the way out:
-   * `Connector.catalogDrift()` is the open plugin seam, and this snapshot is
-   * serialized into an unauthenticated response.
-   */
-  catalogDriftSnapshot(): Record<string, CatalogDriftReport> {
-    const snapshot: Record<string, CatalogDriftReport> = {};
-    for (const connector of this.connectors.values()) {
-      const report = this.catalogDriftOf(connector);
-      if (report) snapshot[connector.id] = report;
-    }
-    return snapshot;
-  }
-
-  /**
    * The drift a connector last showed in this runtime: the registry's own
    * observation against a connector's `classification`, otherwise whatever
    * the connector's `catalogDrift()` seam reports, bounded either way.
@@ -1024,53 +990,6 @@ export class Registry implements RegistryView {
       observedAt: dropped.observedAt,
       ...(dropped.count > 0 ? { droppedTools: dropped.count } : {}),
     };
-  }
-
-  /**
-   * Turn the observation a refresh just took into at most one activity event.
-   *
-   * Emitted on change rather than on every refresh: an identical report every
-   * TTL is a heartbeat, not news, and the current counts are already on
-   * connector status. A first observation that is clean is not an event
-   * either — nothing moved — but a later return to clean is, because "the
-   * drift is gone" is exactly what an operator watching the timeline is
-   * waiting for.
-   */
-  private observeCatalogDrift(connector: Connector): void {
-    const report = this.catalogDriftOf(connector);
-    if (!report) return;
-    const previous = this.reportedDrift.get(connector.id);
-    // Bounded counts, so a seam returning NaN cannot make every refresh look
-    // like a change and emit an event per refresh forever.
-    const counts: CatalogDriftCounts = {
-      unclassifiedTools: report.unclassifiedTools,
-      unservedTools: report.unservedTools,
-      annotationConflicts: report.annotationConflicts,
-      schemaChanges: report.schemaChanges,
-      ...(report.droppedTools ? { droppedTools: report.droppedTools } : {}),
-    };
-    const unchanged =
-      previous !== undefined &&
-      previous.unclassifiedTools === counts.unclassifiedTools &&
-      previous.unservedTools === counts.unservedTools &&
-      previous.annotationConflicts === counts.annotationConflicts &&
-      previous.schemaChanges === counts.schemaChanges &&
-      (previous.droppedTools ?? 0) === (counts.droppedTools ?? 0);
-    if (unchanged) return;
-    const clean =
-      counts.unclassifiedTools === 0 &&
-      counts.unservedTools === 0 &&
-      counts.annotationConflicts === 0 &&
-      counts.schemaChanges === 0 &&
-      (counts.droppedTools ?? 0) === 0;
-    this.reportedDrift.set(connector.id, counts);
-    if (previous === undefined && clean) return;
-    this.opts.catalogDriftActivity?.recordDrift?.(
-      this.opts.catalogDriftActivity
-        ? { ...this.opts.catalogDriftActivity, logger: this.opts.logger }
-        : undefined,
-      { connectorId: connector.id, ...counts },
-    );
   }
 
   /** Reject queued/future downstream admission; active permits release safely. */
@@ -1567,7 +1486,6 @@ export class Registry implements RegistryView {
     if (review) {
       await observeReviewedDrift(connector, review, accepted, this.opts.logger);
     }
-    this.observeCatalogDrift(connector);
     // A deferred deadline may close the owned scope while a connector that
     // ignores abort is still listing. The completed list remains a valid drift
     // observation, but must not overwrite a newer same-generation refresh.
@@ -2053,8 +1971,7 @@ export class Registry implements RegistryView {
       ) {
         const accepted = this.acceptToolNames(persisted.tools);
         this.observeDroppedToolNames(connector, persisted.tools.length - accepted.length);
-        this.observeCatalogDrift(connector);
-        this.cache.set(id, {
+            this.cache.set(id, {
           tools: persisted.tools,
           fingerprint: persisted.fingerprint,
           fetchedAt: persisted.fetchedAt,
