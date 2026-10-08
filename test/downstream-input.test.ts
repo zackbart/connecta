@@ -23,13 +23,13 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-function setup(options: { repeat?: boolean; key?: string; url?: string; message?: string; raw?: Record<string, unknown>; vault?: boolean; output?: boolean; authFirst?: boolean; programWrite?: boolean; failContinuationAuth?: boolean; opaque?: string } = {}) {
+function setup(options: { repeat?: boolean; key?: string; url?: string; message?: string; raw?: Record<string, unknown>; vault?: boolean; output?: boolean; invalidOutput?: boolean; authFirst?: boolean; programWrite?: boolean; failContinuationAuth?: boolean; opaque?: string } = {}) {
   const storage = memoryStorage();
   const vault = encryptedCredentialVault(storage, CREDENTIAL_KEY);
   const logs: unknown[] = [];
   const { logger } = spyLogger();
   for (const method of ["debug", "info", "warn", "error"] as const) logger[method] = (...args) => { logs.push(args); };
-  const activity = { record: vi.fn(async () => {}), query: async () => ({ items: [] }) };
+  const activity = { record: vi.fn(async () => {}) };
   const key = options.key ?? "question";
   const call = vi.fn();
   const requests: Record<string, any>[] = [];
@@ -59,6 +59,10 @@ function setup(options: { repeat?: boolean; key?: string; url?: string; message?
     const request = init?.method === "POST" ? JSON.parse(String(init.body)) : undefined;
     if (options.failContinuationAuth && request?.method === "tools/call" && request.params.requestState !== undefined) return new Response(null, { status: 401 });
     const reply = await downstream.fetch(input as string, init);
+    if (options.invalidOutput && request?.method === "tools/call" && request.params.requestState !== undefined) {
+      await reply.body?.cancel();
+      return Response.json({ jsonrpc: "2.0", id: request.id, result: { resultType: "complete", content: [{ type: "text", text: "bad" }], structuredContent: { done: "bad" } } });
+    }
     if (!options.raw || init?.method !== "POST") return reply;
     if (request.method !== "tools/call") return reply;
     if (!options.repeat && request.params.requestState !== undefined) return reply;
@@ -114,7 +118,7 @@ describe("downstream input relay", () => {
       const first = (await flow.rpc(opts)).result;
       expect(first.resultType).toBe("input_required");
       expect(JSON.stringify(first)).not.toContain(OPAQUE);
-      expect(atob(first.requestState.split(".")[0].slice(3).replace(/-/g, "+").replace(/_/g, "/"))).not.toContain(OPAQUE);
+      expect(atob(first.requestState.split(".")[1]!.replace(/-/g, "+").replace(/_/g, "/"))).not.toContain(OPAQUE);
       const key = Object.keys(first.inputRequests)[0]!;
       const response = { action, ...(action === "accept" ? { content: { name: "Ada" } } : {}) };
       const retry = (await flow.rpc({ ...opts, state: first.requestState, responses: { [key]: response } })).result;
@@ -167,9 +171,16 @@ describe("downstream input relay", () => {
   it("INV-4 INV-9: bounds downstream rounds and preserves the original expiry", async () => {
     const flow = setup({ repeat: true });
     let result = (await flow.rpc()).result;
+    const open = async (wire: string) => {
+      const wrapper = JSON.parse(atob(wire.split(".")[1]!.replace(/-/g, "+").replace(/_/g, "/"))).p;
+      return JSON.parse(await flow.vault.open!("service", "connecta:downstream-input:v1", wrapper.sealed));
+    };
+    const initial = await open(result.requestState);
     for (let round = 1; round < 3; round++) {
+      vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
       result = (await flow.rpc({ state: result.requestState, responses: { [Object.keys(result.inputRequests)[0]!]: { action: "accept" } } })).result;
       expect(result.resultType).toBe("input_required");
+      expect((await open(result.requestState)).expiresAt).toBe(initial.expiresAt);
     }
     result = (await flow.rpc({ state: result.requestState, responses: { [Object.keys(result.inputRequests)[0]!]: { action: "accept" } } })).result;
     expect(result.structuredContent.error.code).toBe("input_required_round_limit");
@@ -192,6 +203,7 @@ describe("downstream input relay", () => {
       [{ requestState: OPAQUE, inputRequests: { k: { method: "roots/list" } } }, { roots: {} }, "input_required_unsupported"],
       [{ requestState: OPAQUE, inputRequests: { k: { method: "elicitation/create", params: { mode: "form", message: 3 } } } }, { elicitation: { form: {} } }, "input_required_invalid"],
       [{ requestState: "x".repeat(70_000) }, {}, "input_required_limit"],
+      [{ requestState: OPAQUE, inputRequests: Object.fromEntries(Array.from({ length: 17 }, (_, i) => [String(i), { method: "elicitation/create", params: { mode: "url", message: "Open", url: "https://downstream.test/approve" } }])) }, { elicitation: { url: {} } }, "input_required_limit"],
     ] as const) {
       const flow = setup({ raw });
       const result = (await flow.rpc({ capabilities })).result;
@@ -300,10 +312,13 @@ describe("downstream input relay", () => {
   });
 
   it("INV-4: validates final output schemas while allowing input-required suspensions", async () => {
-    const flow = setup({ output: true });
-    const first = (await flow.rpc()).result;
-    expect(first.resultType).toBe("input_required");
-    const result = (await flow.rpc({ state: first.requestState, responses: { "downstream/service/0": { action: "accept" } } })).result;
-    expect(result.isError, JSON.stringify(result)).toBeFalsy();
+    for (const invalidOutput of [false, true]) {
+      const flow = setup({ output: true, invalidOutput });
+      const first = (await flow.rpc()).result;
+      expect(first.resultType).toBe("input_required");
+      const result = (await flow.rpc({ state: first.requestState, responses: { "downstream/service/0": { action: "accept" } } })).result;
+      expect(result.isError === true).toBe(invalidOutput);
+      if (invalidOutput) expect(result.structuredContent.error.code).toBe("connector_call_failed");
+    }
   });
 });
