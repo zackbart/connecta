@@ -1370,47 +1370,16 @@ describe("maxResultBytes validation", () => {
     expect(alignEndToCharBoundary(bytes, 3, 3, bytes.length)).toBe(7);
   });
 
-  it.each(BAD_CAPS)("ignores deployment cap %s", async (maxResultBytes) => {
-    const mt = createMetaTools(
-      makeRegistry([capped("c")], { maxResultBytes }),
-      BASE,
+  it.each(BAD_CAPS)("INV-11: refuses deployment cap %s at construction", (maxResultBytes) => {
+    expect(() => makeRegistry([capped("c")], { maxResultBytes })).toThrow(
+      "calls.maxResultBytes must be a whole number of bytes >= 1",
     );
-    const result = await mt.callTool({ address: "c.big" });
-    // Falls back to the built-in 24_000, so 502 bytes stay inline whole.
-    expect(required(result.content[0]).text, `cap ${String(maxResultBytes)}`).toBe(FULL);
   });
 
-  it.each(BAD_CAPS)("ignores connector override %s", async (override) => {
-    const mt = createMetaTools(
-      makeRegistry([capped("c", override)], { maxResultBytes: 400 }),
-      BASE,
+  it.each(BAD_CAPS)("INV-11: refuses connector override %s at construction", (override) => {
+    expect(() => makeRegistry([capped("c", override)], { maxResultBytes: 400 })).toThrow(
+      'Connector "c" maxResultBytes must be a whole number of bytes >= 1',
     );
-    const result = await mt.callTool({ address: "c.big" });
-    const [, head] = required(result.content[0]).text.split("\n");
-    // Inherits the deployment-wide 400 exactly as an unset override would.
-    expect(head, `override ${String(override)}`).toBe(FULL.slice(0, 400));
-  });
-
-  it("warns with the very cap a call then falls back to", async () => {
-    // The startup warning quotes a number; a call inheriting that fallback
-    // must truncate at exactly it, or the warning tells operators a fiction.
-    const warnings: string[] = [];
-    const registry = new Registry([capped("c", 0)], {
-      storage: memoryStorage(),
-      logger: {
-        ...silentLogger,
-        warn: (...args: unknown[]) => warnings.push(String(args[0])),
-      },
-      maxResultBytes: 400,
-    });
-    const warning = warnings.find((w) => w.includes("Ignoring the override"));
-    const warned = Number(/\((\d+)\)\.$/.exec(warning ?? "")?.[1]);
-    expect(warned).toBe(400);
-
-    const result = await createMetaTools(registry, BASE).callTool({
-      address: "c.big",
-    });
-    expect(required(result.content[0]).text.split("\n")[1]).toBe(FULL.slice(0, warned));
   });
 
   it("leaves valid caps byte-identical at every level", async () => {

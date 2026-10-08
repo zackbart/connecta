@@ -89,14 +89,14 @@ export function artifactRoutes(options: {
   /** The viewer's identity, or the Response that refuses it. */
   const admit = async (context: RouteContext) => {
     const { request, baseUrl, opts, runtimeContext } = context;
-    if (opts.auth.length === 0) {
+    if (opts.config.auth.length === 0) {
       // An open deployment has nobody to show a team page to.
       return privateJson(
         { error: "artifact pages need inbound authentication" },
         { status: 403 },
       );
     }
-    const authz = await authorize(request, baseUrl, opts.auth, runtimeContext, opts.identity, false);
+    const authz = await authorize(request, baseUrl, opts.config.auth, runtimeContext, opts.config.identity, false);
     if (!authz.ok) return authz.response;
     try {
       validateAuthPermissions(authz, opts.registry);
@@ -108,7 +108,7 @@ export function artifactRoutes(options: {
   };
 
   const labelsFor = async (context: RouteContext, actors: ActivityActor[]) => {
-    const labels = await resolveActorLabels(actors, context.opts.auth);
+    const labels = await resolveActorLabels(actors, context.opts.config.auth);
     return (actor: ActivityActor) => ({
       label: labels.get(actorKey(actor)) ?? actor.id ?? actor.kind,
     });
@@ -160,7 +160,7 @@ export function artifactRoutes(options: {
       }
       pin = { view: Number(pinned), documents };
     }
-    const theme = resolveBranding(context.opts.branding).theme;
+    const theme = resolveBranding(context.opts.config.ui?.branding).theme;
     const page = await ops.page(id, pin ?? {}, theme);
     if (!page.ok) return notFound();
     const origin = new URL(context.baseUrl).origin;
@@ -199,7 +199,7 @@ export function artifactRoutes(options: {
       if (!read) return privateJson({ error: "method not allowed" }, { status: 405 });
       const bootstrap = frameBootstrap(
         new URL(context.baseUrl).origin,
-        resolveBranding(context.opts.branding).theme,
+        resolveBranding(context.opts.config.ui?.branding).theme,
       );
       return new Response(request.method === "HEAD" ? null : bootstrap, {
         headers: {

@@ -65,6 +65,9 @@ import type {
   CredentialTestResult,
   JsonSchema,
 } from "../types.js";
+import { keys, optionsOf } from "../config-schema.js";
+import { PROVIDER_COMMON } from "../connectors/option-shapes.js";
+import { asProvider } from "../provider.js";
 
 /** Tithe.ly's two published v1 endpoints, one per environment. */
 export const TITHELY_API_BASE_URLS = {
@@ -1309,8 +1312,16 @@ async function testKeyPair(
   }
 }
 
+
+/** The closed options tithely() accepts; see `assertKnownOptions`. */
+const TITHELY_OPTIONS = optionsOf<TithelyOptions>()({ ...PROVIDER_COMMON, ...keys("environment", "defaultPageSize", "baseUrl") });
+
 /** A maintained Tithe.ly giving connection over the v1 REST API. */
 export function tithely(id: string, options: TithelyOptions): Connector {
+  return asProvider("tithely", TITHELY_OPTIONS, id, options, tithelyConnector);
+}
+
+function tithelyConnector(id: string, options: TithelyOptions): Connector {
   const purpose = options.purpose?.trim();
   if (!purpose) {
     throw new Error("tithely() requires a non-empty account purpose.");

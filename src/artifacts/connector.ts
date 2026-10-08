@@ -854,7 +854,12 @@ export function artifactsConnector(options: ArtifactsConnectorOptions): Connecto
       },
     ],
   });
-  return { ...connector, approval: "never" };
+  const describe = connector.describe!;
+  return {
+    ...connector,
+    approval: "never",
+    describe: () => ({ ...describe(), source: { kind: "builtin", provider: "artifacts" } }),
+  };
 }
 
 /** Every live document record on a head. */

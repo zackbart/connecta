@@ -3,14 +3,18 @@ import { describe, expect, it, vi } from "vitest";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import {
   defineProvider,
+  PROVIDER_COMMON,
+  keys,
+  optionsOf,
   type ProviderContext,
   type ProviderOptions,
 } from "../src/index.js";
-import type { Connector, ToolClassification } from "../src/types.js";
+import type { Connector, ConnectorDescription, ToolClassification, ToolDef } from "../src/types.js";
 import { observedCatalogDrift } from "../src/catalog-drift.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { servedTools } from "./fixtures/hosted-provider.js";
 import { connectorContext } from "./fixtures/misc.js";
+import { thingsDeployment } from "./fixtures/things-deployment.js";
 
 const SKILL = {
   content: "\n- Resolve ids before writing.\n- Page with cursors.\n",
@@ -32,6 +36,7 @@ function sample(create = createStub()) {
       title: "Acme CRM",
       kind: "api",
       skill: SKILL,
+      options: optionsOf<ProviderOptions & { region?: "us" | "eu" }>()({ ...PROVIDER_COMMON, ...keys("region") }),
       create,
     }),
   };
@@ -48,6 +53,149 @@ describe("defineProvider()", () => {
     // Common options arrive validated and trimmed.
     expect(create.mock.calls[0]?.[1]).toEqual({ purpose: "Sales pipeline" });
   });
+
+  it("INV-11: checks the declared shape before reading options and preserves behaviour objects", () => {
+    const { factory, create } = sample();
+    const purpose = vi.fn(() => "Sales");
+    expect(() => factory("crm", { get purpose() { return purpose(); }, regoin: "eu" } as never))
+      .toThrow('Unknown option: acmeCrm("crm").regoin.');
+    expect(purpose).not.toHaveBeenCalled();
+    expect(() => factory("crm", { get purpose() { return purpose(); } }))
+      .toThrow('acmeCrm("crm").purpose must be a plain value');
+    expect(purpose).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+
+    class Handler {
+      #value = "receiver";
+      read() { return this.#value; }
+    }
+    type Options = ProviderOptions & { handler: Handler; data: { region: string } };
+    const handler = new Handler();
+    const data = { region: "eu" };
+    let received: Readonly<Options> | undefined;
+    const custom = defineProvider<Options>({
+      name: "acme",
+      title: "Acme",
+      kind: "api",
+      skill: SKILL,
+      options: optionsOf<Options>()({
+        ...PROVIDER_COMMON,
+        ...keys("handler"),
+        data: optionsOf<Options["data"]>()(keys("region")),
+      }),
+      create(id, options) { received = options; return stub(id); },
+    });
+    custom("crm", { purpose: "Sales", handler, data });
+    expect(received?.handler).toBe(handler);
+    expect(received?.handler.read()).toBe("receiver");
+    expect(received?.data).toEqual(data);
+    expect(received?.data).not.toBe(data);
+    data.region = "us";
+    expect(received?.data.region).toBe("eu");
+  });
+
+  it("stamps the definition name onto describe() and keeps the connector review", () => {
+    const classification: ToolClassification = Object.freeze({ tools: Object.freeze({ list: "read" }) });
+    const factory = sample(vi.fn((id: string) => stub(id, {
+      classification,
+      describe: () => ({ source: { kind: "remote-mcp", provider: "old" }, endpoint: { origin: "https://api.example", path: "/mcp" } }),
+    }))).factory;
+    const connector = factory("crm", { purpose: "Sales" });
+    expect(connector.describe?.()).toEqual({
+      source: { kind: "remote-mcp", provider: "acme-crm" },
+      endpoint: { origin: "https://api.example", path: "/mcp" },
+    });
+    expect(connector.classification).toBe(classification);
+    expect(sample().factory("crm", { purpose: "Sales" }).describe?.()).toEqual({
+      source: { kind: "custom", provider: "acme-crm" },
+    });
+  });
+
+  it.each(["plain object", "class instance", "Object.create decorator", "frozen object", "non-configurable describe"])(
+    "INV-1: provider stamping preserves discovery, calls, and the review on a %s",
+    async (shape) => {
+      const tools: ToolDef[] = [
+        { name: "list_things", description: "List things" },
+        { name: "make_thing", description: "Make a thing", annotations: { readOnlyHint: true } },
+      ];
+      const calls: string[] = [];
+      let created!: Connector;
+      const factory = defineProvider<ProviderOptions>({
+        name: "acme-crm",
+        title: "Acme CRM",
+        kind: "mcp",
+        skill: SKILL,
+        options: optionsOf<ProviderOptions>()(PROVIDER_COMMON),
+        classify: { tools: { list_things: "read", make_thing: "write" } },
+        create(id, _options, provider) {
+          const base: Connector = {
+            id,
+            classification: provider.classify,
+            async listTools() { expect(this.id).toBe(id); return tools; },
+            async callTool(name) { calls.push(`${this.id}.${name}`); return "listed"; },
+            describe() {
+              expect(this.id).toBe(id);
+              return { source: { kind: "remote-mcp", provider: "old" }, endpoint: { origin: "https://api.example", path: "/mcp" } };
+            },
+          };
+          class PrivateConnector implements Connector {
+            #tools = tools;
+            #result = "listed";
+            readonly id = id;
+            readonly classification = provider.classify;
+            async listTools() { return this.#tools; }
+            async callTool(name: string) { calls.push(`${this.id}.${name}`); return this.#result; }
+            describe(): ConnectorDescription {
+              expect(this.#result).toBe("listed");
+              return base.describe!();
+            }
+          }
+          switch (shape) {
+            case "class instance": created = new PrivateConnector(); break;
+            case "Object.create decorator": created = Object.create(base) as Connector; break;
+            case "frozen object": created = Object.freeze(base); break;
+            case "non-configurable describe":
+              Object.defineProperty(base, "describe", { configurable: false, writable: false });
+              created = base;
+              break;
+            default: created = base;
+          }
+          return created;
+        },
+      });
+      const connector = factory("things", { purpose: "Inventory" });
+      if (shape === "frozen object" || shape === "non-configurable describe") {
+        expect(Object.getPrototypeOf(connector)).toBe(created);
+        expect(Object.getOwnPropertyNames(connector)).toEqual(["describe"]);
+        expect(created.describe?.().source.provider).toBe("old");
+      } else {
+        expect(connector).toBe(created);
+      }
+      expect(Object.getOwnPropertyDescriptor(connector, "describe")?.enumerable).toBe(false);
+      expect(connector.classification).toBe(factory.definition.classify);
+      expect(Object.isFrozen(connector.classification?.tools)).toBe(true);
+      const description = {
+        source: { kind: "remote-mcp", provider: "acme-crm" },
+        endpoint: { origin: "https://api.example", path: "/mcp" },
+      };
+      expect(connector.describe?.()).toEqual(description);
+      const app = thingsDeployment(connector);
+      try {
+        expect(app.connecta.describeConfig().connectors).toEqual([
+          expect.objectContaining({ id: "things", ...description }),
+        ]);
+        expect(await app.searched("readOnly")).toEqual(["things.list_things"]);
+        expect(await app.searched("approvalRequired")).toEqual(["things.make_thing"]);
+        const read = await app.call("call_tool", { address: "things.list_things", args: {}, resultMode: "value" });
+        expect(read.isError).toBeFalsy();
+        expect(read.structuredContent?.data).toBe("listed");
+        expect((await app.call("call_tool", { address: "things.make_thing", args: {} })).isError).toBe(true);
+        expect(calls).toEqual(["things.list_things"]);
+      } finally {
+        await app.connecta.close();
+      }
+    },
+  );
 
   it("hands create only the common connector options the deployment set", () => {
     const { factory, create } = sample();
@@ -72,6 +220,7 @@ describe("defineProvider()", () => {
       title: "Acme CRM",
       kind: "api",
       skill: SKILL,
+      options: optionsOf<ProviderOptions>()(PROVIDER_COMMON),
       create(id, options, provider) {
         guide = provider.usageGuide({
           context: ["EU region.", `Account purpose: ${options.purpose}`],
@@ -94,6 +243,7 @@ describe("defineProvider()", () => {
       title: "Acme CRM",
       kind: "api",
       skill: SKILL,
+      options: optionsOf<ProviderOptions>()(PROVIDER_COMMON),
       create(id, _options, provider) {
         guide = provider.usageGuide({ context: [], heading: "Acme CRM usage (EU)", required: true });
         return stub(id);
@@ -130,7 +280,7 @@ describe("defineProvider()", () => {
   });
 
   it("INV-11: rejects a malformed definition when the provider module loads", () => {
-    const base = { name: "acme", title: "Acme", kind: "mcp" as const, skill: SKILL, create: stub };
+    const base = { name: "acme", title: "Acme", kind: "mcp" as const, skill: SKILL, options: optionsOf<ProviderOptions>()(PROVIDER_COMMON), create: stub };
     const cases: Array<[object, string]> = [
       [{ name: "Acme" }, "name must be lowercase words"],
       [{ name: "acme_crm" }, "name must be lowercase words"],
@@ -139,6 +289,7 @@ describe("defineProvider()", () => {
       [{ skill: { content: "x" } }, "skill requires non-empty content and instructionsHeading"],
       [{ skill: { content: " ", instructionsHeading: "x" } }, "skill requires non-empty"],
       [{ create: undefined }, "requires a create function"],
+      [{ options: undefined }, "requires a closed options shape"],
       [{ kind: "api", classify: { tools: { a: "read" } } }, "is an api() provider"],
       [{ classify: { tools: { a: "safe" } } }, 'tool "a" needs verdict'],
     ];
@@ -156,6 +307,7 @@ describe("defineProvider()", () => {
         title: "Acme",
         kind,
         skill: SKILL,
+        options: optionsOf<ProviderOptions>()(PROVIDER_COMMON),
         classify,
         create,
       });
@@ -178,6 +330,7 @@ describe("defineProvider()", () => {
       title: "Acme",
       kind: "mcp",
       skill: SKILL,
+      options: optionsOf<ProviderOptions>()(PROVIDER_COMMON),
       classify: { tools },
       create,
     });
@@ -211,6 +364,7 @@ describe("defineProvider()", () => {
       title: "Acme",
       kind: "mcp",
       skill: SKILL,
+      options: optionsOf<ProviderOptions>()(PROVIDER_COMMON),
       classify: { tools: { save: "destructive" } },
       create,
     });

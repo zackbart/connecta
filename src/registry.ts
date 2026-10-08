@@ -1,3 +1,4 @@
+import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import {
   Cause,
   Clock,
@@ -93,10 +94,10 @@ import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs } from "./timeout.js";
 import { isExplicitlyReadOnly } from "./tool-safety.js";
 
 const ID_RE = /^[a-z0-9_-]+$/;
-const DEFAULT_TTL_SECONDS = 300;
-const DEFAULT_STALE_SECONDS = 3600;
+const DEFAULT_TTL_SECONDS = CONFIG_DEFAULTS.discovery.catalogTtlSeconds;
+const DEFAULT_STALE_SECONDS = CONFIG_DEFAULTS.discovery.staleCatalogSeconds;
 const CATALOG_CHUNK_TTL_GRACE_SECONDS = 300;
-const DEFAULT_MAX_RESULT_BYTES = 24_000;
+const DEFAULT_MAX_RESULT_BYTES = CONFIG_DEFAULTS.calls.maxResultBytes;
 const encoder = new TextEncoder();
 
 /**
@@ -144,10 +145,9 @@ export function isValidMaxResultBytes(value: number): boolean {
 
 /**
  * Resolve a configured cap against the value it inherits, dropping anything
- * `isValidMaxResultBytes` rejects. Operator-facing surfaces pair this with a
- * startup warning (see `Registry.checkResultCaps`) so the fallback is never
- * silent; the resolution itself stays total so no call site has to cope with
- * a broken cap.
+ * `isValidMaxResultBytes` rejects. Construction already refuses an unusable
+ * cap (`Registry.assertResultCaps`); the resolution stays total so no call
+ * site has to cope with a broken one.
  */
 export function resolveMaxResultBytes(
   value: number | undefined,
@@ -312,8 +312,8 @@ export interface RegistryOptions {
   toolCatalogStaleSeconds?: number | undefined;
   /**
    * Cap on inline result size before truncation + get_result paging. Must be a
-   * whole number of bytes >= 1; anything else warns at startup and falls back
-   * to the default 24_000.
+   * whole number of bytes >= 1; anything else throws at construction. Default
+   * 24_000.
    */
   maxResultBytes?: number | undefined;
   results?: { maxStashBytes?: number; maxStashEntries?: number } | undefined;
@@ -644,9 +644,9 @@ export class Registry implements RegistryView {
         );
       }
     }
+    this.assertResultCaps(opts.maxResultBytes);
     if (opts.constructionChecks !== false) {
       this.checkConventions(opts.logger);
-      this.checkResultCaps(opts.logger, opts.maxResultBytes);
     }
   }
 
@@ -793,40 +793,23 @@ export class Registry implements RegistryView {
   }
 
   /**
-   * Warn once per unusable result cap, at construction time — the same
-   * "runs fine but is surely unintended" channel as the insecure-config
-   * warnings in `createConnecta`. A rejected cap can't be honoured, and
-   * honouring it *approximately* is exactly the inversion issue #32 is about,
-   * so the value is dropped in favour of what it inherits and the operator is
-   * told which one is actually in force.
+   * Refuse an unusable result cap at construction, like every other
+   * structural mistake (INV-11). A rejected cap can't be honoured, and
+   * honouring it *approximately* is exactly the inversion issue #32 is about;
+   * falling back with a warning let a deployment boot on a value nobody
+   * chose.
    */
-  private checkResultCaps(
-    logger: Logger,
-    configured: number | undefined,
-  ): void {
+  private assertResultCaps(configured: number | undefined): void {
     if (configured !== undefined && !isValidMaxResultBytes(configured)) {
-      logger.warn(
-        `[connecta] calls.maxResultBytes ${configured} is not a whole number of ` +
-          `bytes >= ${MIN_MAX_RESULT_BYTES}: it would serve an empty, ` +
-          "oversized, or unguarded result instead of truncating. Using the " +
-          `default ${DEFAULT_MAX_RESULT_BYTES} instead.`,
+      throw new Error(
+        `ConnectaConfig.calls.maxResultBytes must be a whole number of bytes >= ${MIN_MAX_RESULT_BYTES}.`,
       );
     }
     for (const c of this.connectors.values()) {
-      if (
-        c.maxResultBytes !== undefined &&
-        !isValidMaxResultBytes(c.maxResultBytes)
-      ) {
-        // The number quoted here is `this.maxResultBytes` because that is
-        // literally what a call falls back to: meta-tools reads the inherited
-        // cap off `RegistryView.maxResultBytes`, so the warned value and the
-        // runtime value are the same field rather than two copies of it.
-        logger.warn(
-          `[connecta] connector "${c.id}" sets maxResultBytes ` +
-            `${c.maxResultBytes}, which is not a whole number of bytes >= ` +
-            `${MIN_MAX_RESULT_BYTES}. Ignoring the override — the connector ` +
-            `inherits the deployment-wide cap calls fall back to ` +
-            `(${this.maxResultBytes}).`,
+      if (c.maxResultBytes !== undefined && !isValidMaxResultBytes(c.maxResultBytes)) {
+        throw new Error(
+          `Connector "${c.id}" maxResultBytes must be a whole number of bytes >= ` +
+            `${MIN_MAX_RESULT_BYTES}; omit it to inherit the deployment-wide cap.`,
         );
       }
     }
@@ -1051,8 +1034,8 @@ export class Registry implements RegistryView {
     partition: string = scopes.results,
   ): Promise<boolean> {
     return runOnPartition(Effect.gen({ self: this }, function* () {
-      const maxBytes = this.opts.results?.maxStashBytes ?? 8 * 1024 * 1024;
-      const maxEntries = this.opts.results?.maxStashEntries ?? 64;
+      const maxBytes = this.opts.results?.maxStashBytes ?? CONFIG_DEFAULTS.results.maxStashBytes;
+      const maxEntries = this.opts.results?.maxStashEntries ?? CONFIG_DEFAULTS.results.maxStashEntries;
       // The paging envelope is ASCII, so its string length is its stored byte count.
       const bytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
       if (bytes > maxBytes || maxEntries === 0) return false;

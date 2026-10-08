@@ -133,10 +133,13 @@ describe("public package boundary", () => {
     // provider, and a provider-named file here would still be a failure.
     // api-connector.ts is api() itself without its OAuth grant, split so the
     // artifacts module and providers do not carry machinery they never use.
+    // option-shapes.ts holds the closed option shapes those factories and the
+    // providers walk for unknown keys; it builds nothing.
     expect(readdirSync(join(ROOT, "src", "connectors")).sort()).toEqual([
       "api-connector.ts",
       "api.ts",
       "guarded-fetch.ts",
+      "option-shapes.ts",
       "remote-mcp.ts",
     ]);
   });
@@ -152,6 +155,7 @@ describe("public package boundary", () => {
     expect(packageJson.exports?.["./d1"]).toEqual({ types: "./dist/d1.d.ts", import: "./dist/d1.js" });
     expect(packageJson.exports?.["./sqlite"]).toEqual({ types: "./dist/sqlite.d.ts", import: "./dist/sqlite.js" });
     expect(readdirSync(join(ROOT, "examples", "worker", "src")).sort()).toEqual([
+      "connecta.config.ts",
       "index.ts",
       "r2-artifact-blobs.ts",
     ]);
@@ -494,19 +498,26 @@ describe("Effect behind the published surface", () => {
     }, 60_000);
   });
 
-  it("depends on stable Effect v4 at one exact version", () => {
-    // Exact, never a range: unstable Effect APIs can break in minor releases, and
-    // a deployment that also uses Alchemy must resolve one Effect, not two.
-    // An upgrade is its own pull request.
-    const pinned = packageJson.dependencies?.effect;
-    expect(pinned, "effect is not a runtime dependency").toBeTruthy();
-    expect(pinned).toMatch(/^4\.\d+\.\d+$/);
+  it("depends on stable Effect v4 through a compatible range", () => {
+    // A caret range: the root import graph uses only the stable `effect`
+    // module (test/purity.test.ts), so a v4 minor cannot break it, and
+    // a deployment that also uses Effect (Alchemy, for one) dedupes to a
+    // single copy instead of installing a second beside an exact pin.
+    // Adopting an unstable subpath, or a new major, is its own pull request.
+    const range = packageJson.dependencies?.effect;
+    expect(range, "effect is not a runtime dependency").toBeTruthy();
+    expect(range).toMatch(/^\^4\.\d+\.\d+$/);
     expect(packageJson.peerDependencies).not.toHaveProperty("effect");
     expect(packageJson.devDependencies).not.toHaveProperty("effect");
     const lock = JSON.parse(
       readFileSync(join(ROOT, "package-lock.json"), "utf8"),
     ) as { packages?: Record<string, { version?: string }> };
-    expect(lock.packages?.["node_modules/effect"]?.version).toBe(pinned);
+    const locked = lock.packages?.["node_modules/effect"]?.version ?? "";
+    const [floorMinor = 0, floorPatch = 0] = range!.slice(3).split(".").map(Number);
+    const [major, minor = 0, patch = 0] = locked.split(".").map(Number);
+    expect(major, `locked effect ${locked}`).toBe(4);
+    expect(minor * 1e6 + patch, `locked effect ${locked} is below ${range}`)
+      .toBeGreaterThanOrEqual(floorMinor * 1e6 + floorPatch);
     const nested = Object.keys(lock.packages ?? {}).filter((path) =>
       path.endsWith("/node_modules/effect"),
     );

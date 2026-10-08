@@ -37,7 +37,8 @@ export function createFetchHandler(
   request: Request,
   runtimeContext?: RuntimeExecutionContext,
 ) => Promise<Response> {
-  const { auth, publicUrl, registry } = opts;
+  const { registry } = opts;
+  const { auth, publicUrl } = opts.config;
   const routeMcp = createMcpRoute(opts);
 
   // The first provider's metadata answer for this request, if any has one.
@@ -68,7 +69,7 @@ export function createFetchHandler(
     return Response.json({
       status: "ok",
       connectors: registry.listConnectors().length,
-      server: opts.serverInfo,
+      server: opts.config.serverInfo,
       // Which sandbox, not how it is tuned: `connecta doctor` reports the
       // executor it just exercised rather than assuming one, and a
       // deployment whose executor identifies as nothing omits the key
@@ -103,13 +104,13 @@ export function createFetchHandler(
         },
         reservedRoutes: [
           "/health",
-          ...(opts.ui?.reservedPaths ?? []),
-          ...(opts.ui && opts.activity?.list ? ["/activity"] : []),
-          ...(opts.ui && opts.accessTokens ? ["/tokens"] : []),
-          ...(opts.ui && opts.artifactsModule ? ["/artifacts", "/artifacts/*"] : []),
+          ...(opts.config.ui?.reservedPaths ?? []),
+          ...(opts.config.ui && opts.config.activity?.store.list ? ["/activity"] : []),
+          ...(opts.config.ui && opts.config.accessTokens ? ["/tokens"] : []),
+          ...(opts.config.ui && opts.config.artifacts ? ["/artifacts", "/artifacts/*"] : []),
         ],
       },
-      ...(opts.deploymentInfo ? { deployment: opts.deploymentInfo } : {}),
+      ...(opts.config.deploymentInfo ? { deployment: opts.config.deploymentInfo } : {}),
     });
   };
 
@@ -117,7 +118,7 @@ export function createFetchHandler(
     Effect.gen(function* () {
       const { request, path, baseUrl } = context;
       // Private mutations own OPTIONS so they never inherit wildcard CORS.
-      const ui = opts.ui;
+      const ui = opts.config.ui;
       if (ui) {
         const uiResponse = yield* Effect.promise(() => ui.handle(context));
         if (uiResponse) return uiResponse;
@@ -143,7 +144,7 @@ export function createFetchHandler(
       if (path.startsWith("/.well-known/")) {
         const response = yield* metadata(request, baseUrl);
         if (response) return response;
-        return notFoundResponse(request, opts);
+        return notFoundResponse(request, opts.config);
       }
 
       if (path === "/health") return yield* Effect.promise(health);
@@ -151,7 +152,7 @@ export function createFetchHandler(
       const mcp = yield* routeMcp.handle(context);
       if (mcp) return mcp;
 
-      return notFoundResponse(request, opts);
+      return notFoundResponse(request, opts.config);
     });
 
   const serve = (
@@ -169,20 +170,20 @@ export function createFetchHandler(
       // The artifact hostname has no MCP, health, OAuth, or operator routes.
       // Dispatch before MCP origin checks so even a hostile /mcp gets the same
       // 404 as any other unserved path.
-      if (opts.artifactOrigin && url.origin === new URL(opts.artifactOrigin).origin) {
-        if (!isArtifactPath(path) || !opts.ui || !opts.artifactsModule) {
-          return Effect.succeed(withSecurityHeaders(notFoundResponse(request, opts), url, path));
+      if (opts.config.artifactOrigin && url.origin === new URL(opts.config.artifactOrigin).origin) {
+        if (!isArtifactPath(path) || !opts.config.ui || !opts.config.artifacts) {
+          return Effect.succeed(withSecurityHeaders(notFoundResponse(request, opts.config), url, path));
         }
         const context: RouteContext = {
-          request, url, path, baseUrl: opts.artifactOrigin, opts, defer, runtimeContext,
+          request, url, path, baseUrl: opts.config.artifactOrigin, opts, defer, runtimeContext,
         };
-        return Effect.map(Effect.promise(() => opts.ui!.handle(context)), response =>
-          withSecurityHeaders(response ?? notFoundResponse(request, opts), url, path),
+        return Effect.map(Effect.promise(() => opts.config.ui!.handle(context)), response =>
+          withSecurityHeaders(response ?? notFoundResponse(request, opts.config), url, path),
         );
       }
 
-      if (opts.artifactOrigin && isArtifactPath(path) && opts.ui && opts.artifactsModule) {
-        const target = new URL(opts.artifactOrigin);
+      if (opts.config.artifactOrigin && isArtifactPath(path) && opts.config.ui && opts.config.artifacts) {
+        const target = new URL(opts.config.artifactOrigin);
         target.pathname = path;
         target.search = url.search;
         return Effect.succeed(withSecurityHeaders(new Response(null, {

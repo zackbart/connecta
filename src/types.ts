@@ -48,6 +48,12 @@ export interface KVStorage {
     next: string | null,
     options?: { ttlSeconds?: number },
   ): Promise<boolean>;
+  /**
+   * Which adapter this is, for `Connecta.describeConfig()`. The shipped
+   * adapters answer `"memory"`, `"d1"`, or `"sqlite"`; any other answer, or
+   * none, is described as `"custom"`. Never a path, binding, or value.
+   */
+  describe?(): { kind: string };
 }
 
 export interface Logger {
@@ -360,8 +366,7 @@ export interface Connector {
    * call_tool truncates and stashes the full text for get_result
    * paging. Overrides `ConnectaConfig.calls.maxResultBytes`;
    * omit to inherit it (which itself defaults to 24_000). Must be a whole
-   * number of bytes >= 1; anything else warns at startup and is ignored, so
-   * the connector inherits the deployment-wide cap.
+   * number of bytes >= 1; anything else refuses to construct.
    */
   maxResultBytes?: number;
   /**
@@ -429,6 +434,18 @@ export interface Connector {
    * that record, while serving a refresh the deployment already asked for.
    */
   catalogDrift?(): CatalogDriftReport | undefined;
+  /**
+   * Optional: what this connector is, for `Connecta.describeConfig()` and the
+   * operator surfaces built on it — where it points, how it authenticates,
+   * and its static tools. Never a probe and never a secret: header names but
+   * no values, a credential slot's labels but never its contents, an
+   * endpoint's origin and path but no query or userinfo. `remoteMcp()`,
+   * `api()`, the maintained providers, and the artifacts connector implement
+   * it; a custom connector without it is described as `{ source: { kind:
+   * "custom" } }`. Core copies only the fields named in
+   * `ConnectorDescription`, so anything else returned is dropped.
+   */
+  describe?(): ConnectorDescription;
   listTools(ctx: ConnectorContext): Promise<ToolDef[]>;
   callTool(
     name: string,
@@ -485,6 +502,73 @@ export interface Connector {
     ctx: ConnectorContext,
     callbackParams?: URLSearchParams,
   ): Promise<void>;
+}
+
+/** An endpoint as `describeConfig()` shows it: never a query, fragment, or userinfo. */
+export interface DescribedEndpoint {
+  origin: string;
+  path: string;
+}
+
+/** A connector's downstream authentication, without a single secret. */
+export interface ConnectorAuthDescription {
+  /** `none` when the connector authenticates nothing itself. */
+  mode: "none" | "headers" | "credential" | "oauth";
+  /** Names of deployment-owned static headers; their values never appear. */
+  headerNames?: string[];
+  /** Header a stored credential rides. */
+  header?: string;
+  /** Framing placed before a stored credential; null sends it verbatim. */
+  scheme?: string | null;
+  /** Requested OAuth scopes. */
+  scope?: string;
+  /** Public CIMD client metadata document. */
+  clientMetadataUrl?: string;
+  /** A declared authorization endpoint (`api()` OAuth). */
+  authorizationEndpoint?: DescribedEndpoint;
+  /** A declared token endpoint (`api()` OAuth). */
+  tokenEndpoint?: DescribedEndpoint;
+  /** Origins `ctx.oauth.fetch` sends the access token to. */
+  apiOrigins?: string[];
+  /** Token-endpoint client authentication method. */
+  tokenEndpointAuthMethod?: string;
+  /** Whether the client authenticates with a secret; the secret never appears. */
+  confidentialClient?: boolean;
+  /** Whether PKCE is used. */
+  pkce?: boolean;
+  /** Names of extra authorization-request parameters; values never appear. */
+  authorizationParamNames?: string[];
+  /** Names of extra token-request headers; values never appear. */
+  tokenRequestHeaderNames?: string[];
+}
+
+/** One statically known tool, with the classification core will apply. */
+export interface ConnectorToolDescription {
+  name: string;
+  description?: string;
+  annotations?: ToolAnnotations;
+  inputSchema?: JsonSchema;
+  outputSchema?: JsonSchema;
+  /** `read` only for an explicit `readOnlyHint: true` (INV-1). */
+  classification: "read" | "write";
+}
+
+/** What `Connector.describe()` reports. Every field is optional but `source`. */
+export interface ConnectorDescription {
+  source: {
+    kind: "remote-mcp" | "api" | "builtin" | "custom";
+    /** The maintained provider or built-in module that built the connector. */
+    provider?: string;
+  };
+  endpoint?: DescribedEndpoint;
+  auth?: ConnectorAuthDescription;
+  transport?: {
+    versionNegotiation?: "auto" | "legacy";
+    redirects?: "none" | "same-origin";
+    requireHttps?: boolean;
+  };
+  /** Static tools; omitted for a catalog that loads from the network. */
+  tools?: ConnectorToolDescription[];
 }
 
 export interface ConnectorUsageGuide {

@@ -14,12 +14,12 @@ interface Handoff {
   force: boolean;
 }
 
-export function oauthConnectUnavailable(opts: Pick<ServerOptions, "auth" | "credentialVault">): string | undefined {
-  if (!opts.auth.some(provider => provider.interactiveOperator &&
+export function oauthConnectUnavailable(opts: Pick<ServerOptions, "config">): string | undefined {
+  if (!opts.config.auth.some(provider => provider.interactiveOperator &&
     (provider.uiAuth?.kind === "clerk" || provider.uiAuth?.kind === "cloudflare-access"))) {
     return INTERACTIVE_OAUTH_REQUIRED;
   }
-  if (!opts.credentialVault?.signOAuthHandoff || !opts.credentialVault.verifyOAuthHandoff) {
+  if (!opts.config.vault?.signOAuthHandoff || !opts.config.vault.verifyOAuthHandoff) {
     return "Connecting OAuth connectors requires a credential vault with a handoff signing key. Configure encryptedCredentialVault(storage, key).";
   }
   return undefined;
@@ -46,7 +46,7 @@ export async function oauthConnectUrl(
     force,
   };
   const payload = btoa(JSON.stringify(handoff));
-  const signature = await opts.credentialVault!.signOAuthHandoff!(payload);
+  const signature = await opts.config.vault!.signOAuthHandoff!(payload);
   const url = new URL(`/connect/${connectorId}`, baseUrl);
   url.searchParams.set("h", `${payload}.${signature}`);
   return url.toString();
@@ -62,7 +62,7 @@ export async function verifyOAuthHandoff(
   const [payload, signature, ...rest] = token.split(".");
   if (!payload || !signature || rest.length) return null;
   try {
-    if (!await opts.credentialVault?.verifyOAuthHandoff?.(payload, signature)) return null;
+    if (!await opts.config.vault?.verifyOAuthHandoff?.(payload, signature)) return null;
     const h: Handoff = JSON.parse(atob(payload));
     const connector = opts.registry.getConnector(connectorId);
     if (!connector || h.connector !== connectorId || typeof h.principal !== "string" || !h.principal ||

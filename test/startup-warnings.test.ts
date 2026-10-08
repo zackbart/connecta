@@ -546,38 +546,32 @@ describe("credential test-hook mismatch warning", () => {
   ] as const)("%s", (_name, run) => run());
 });
 
-describe("unusable calls.maxResultBytes warning", () => {
+describe("unusable maxResultBytes", () => {
   it.each([0, -1, -50, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
-    "warns that deployment cap %s fell back to the default",
+    "INV-11: refuses deployment cap %s at construction instead of warning",
     (maxResultBytes) => {
-    const logger = spyLogger();
-    createTestConnecta({
-      connectors: [plainConnector],
-      auth: bearerToken("secret"),
-      publicUrl: BASE,
-      logger,
-      calls: { maxResultBytes },
-    });
-    const text = warnings(logger);
-    expect(text).toContain(`calls.maxResultBytes ${maxResultBytes}`);
-    expect(text).toContain("24000");
+      const logger = spyLogger();
+      expect(() => createTestConnecta({
+        connectors: [plainConnector],
+        auth: bearerToken("secret"),
+        publicUrl: BASE,
+        logger,
+        calls: { maxResultBytes },
+      })).toThrow("ConnectaConfig.calls.maxResultBytes must be a positive whole number");
+      expect(warnings(logger)).not.toContain("maxResultBytes");
     },
   );
 
   it.each([0, -1, -50, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
-    "warns and names a connector whose override %s cannot be honoured",
+    "INV-11: refuses a connector override %s at construction, naming the connector",
     (maxResultBytes) => {
-    const logger = spyLogger();
-    createTestConnecta({
-      connectors: [{ ...plainConnector, maxResultBytes }],
-      auth: bearerToken("secret"),
-      publicUrl: BASE,
-      logger,
-      calls: { maxResultBytes: 400 },
-    });
-    expect(warnings(logger)).toContain(
-      `connector "plain" sets maxResultBytes ${maxResultBytes}`,
-    );
+      expect(() => createTestConnecta({
+        connectors: [{ ...plainConnector, maxResultBytes }],
+        auth: bearerToken("secret"),
+        publicUrl: BASE,
+        logger: spyLogger(),
+        calls: { maxResultBytes: 400 },
+      })).toThrow('Connector "plain" maxResultBytes must be a whole number of bytes >= 1');
     },
   );
 

@@ -83,12 +83,12 @@ function activityRead(context: RouteContext): Effect.Effect<Response, Answer> {
     const authz = yield* authorized(context, false);
     if (!authz.operator) return yield* refuse("operator access required", 403);
     if (
-      opts.activityReadGate &&
-      !(yield* Effect.promise(async () => opts.activityReadGate!(authz.actor)))
+      opts.config.activity?.readGate &&
+      !(yield* Effect.promise(async () => opts.config.activity?.readGate!(authz.actor)))
     ) {
       return yield* refuse("forbidden", 403);
     }
-    const list = opts.activity?.list?.bind(opts.activity);
+    const list = opts.config.activity?.store.list?.bind(opts.config.activity?.store);
     if (!list) return yield* refuse("activity history is not configured", 404);
     const cursor = url.searchParams.get("cursor") ?? undefined;
     if (cursor && cursor.length > 500) return yield* refuse("invalid cursor", 400);
@@ -100,7 +100,7 @@ function activityRead(context: RouteContext): Effect.Effect<Response, Answer> {
       try: () => list({ ...(cursor !== undefined ? { cursor } : {}), limit }),
       catch: (error) => error,
     }).pipe(
-      Effect.flatMap((page) => enrichActivityActorLabels(page, opts.auth)),
+      Effect.flatMap((page) => enrichActivityActorLabels(page, opts.config.auth)),
       Effect.map((page) => privateJson(page)),
       // A page too malformed to label or serialize is the store's failure,
       // like any other.
@@ -109,7 +109,7 @@ function activityRead(context: RouteContext): Effect.Effect<Response, Answer> {
         if (error instanceof InvalidActivityCursorError) {
           return refuse(error.message, 400);
         }
-        logFailure(opts.logger, "activity read failed", failureRecord({}, error), "error");
+        logFailure(opts.config.logger, "activity read failed", failureRecord({}, error), "error");
         return refuse("activity history is temporarily unavailable", 503);
       }),
     );

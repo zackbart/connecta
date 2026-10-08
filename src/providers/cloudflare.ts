@@ -30,6 +30,9 @@ import type {
   ConnectorCredentialConfig,
   JsonSchema,
 } from "../types.js";
+import { keys, optionsOf, variants } from "../config-schema.js";
+import { CREDENTIAL, PROVIDER_COMMON, REMOTE_MCP_AUTH } from "../connectors/option-shapes.js";
+import { asProvider } from "../provider.js";
 
 /** Cloudflare's v4 REST base. Override only for a proxy or a test double. */
 export const CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4";
@@ -3867,8 +3870,30 @@ function cloudflareApi(
   });
 }
 
+
+/** The closed options cloudflare() accepts; see `assertKnownOptions`. */
+const CLOUDFLARE_OPTIONS = variants("surface", {
+  api: optionsOf<CloudflareApiOptions>()({
+    ...keys("title", "authScope", "purpose", "instructions", "maxResultBytes"),
+    ...keys("surface", "accountId", "zoneId", "baseUrl", "authentication", "maxConcurrency"),
+    credential: CREDENTIAL,
+  }).shape,
+  mcp: optionsOf<CloudflareMcpOptions>()({
+    ...PROVIDER_COMMON,
+    ...keys("surface"),
+    auth: REMOTE_MCP_AUTH,
+  }).shape,
+}, "api");
+
 /** A maintained Cloudflare connection using the selected provider interface. */
 export function cloudflare(
+  id: string,
+  options: CloudflareConnectionOptions,
+): Connector {
+  return asProvider("cloudflare", CLOUDFLARE_OPTIONS, id, options, cloudflareConnector);
+}
+
+function cloudflareConnector(
   id: string,
   options: CloudflareConnectionOptions,
 ): Connector {

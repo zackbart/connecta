@@ -91,10 +91,10 @@ export async function routeAccessTokens(
   const admin = await authorizeUiIdentity(
     request,
     baseUrl,
-    opts.auth,
+    opts.config.auth,
     "access token management",
     context.runtimeContext,
-    opts.identity,
+    opts.config.identity,
   );
   if (!admin.ok) return admin.response;
   if (!admin.accessTokenManagement || !admin.identity.principal) {

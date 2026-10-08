@@ -174,7 +174,7 @@ describe("the artifacts slot", () => {
     expect(() => createConnecta({ ...base, artifacts: module })).toThrow(/needs publicUrl/);
     expect(() => artifacts({ store: {} as ArtifactStore })).toThrow(/must be an ArtifactStore/);
     expect(() => artifacts({ store: kvArtifactStore(memoryStorage()), extra: 1 } as never)).toThrow(
-      /unknown option "extra"/,
+      "Unknown option: artifacts().extra.",
     );
     expect(() =>
       artifacts({ store: kvArtifactStore(memoryStorage()), allowlist: { scripts: ["http://x.test"] } }),

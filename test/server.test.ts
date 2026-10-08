@@ -1852,14 +1852,13 @@ describe("execute_code registration (code mode)", () => {
         maxWrites: 3,
       }),
     ).toContain("Limits: 7 host calls, 3 exempt writes, 45s/host call.");
-    // Unusable values fall back rather than advertise a limit nobody enforces.
-    expect(
-      await executeDescription({
-        maxHostCalls: 0,
-        hostCallTimeoutMs: Number.NaN,
-        maxWrites: -1,
-      }),
-    ).toContain("Limits: 20 host calls, 10 exempt writes, 15s/host call.");
+    // Unusable values refuse to construct rather than advertise a limit
+    // nobody chose (INV-11).
+    for (const execute of [{ maxHostCalls: 0 }, { hostCallTimeoutMs: Number.NaN }, { maxWrites: -1 }]) {
+      await expect(executeDescription(execute)).rejects.toThrow(
+        `ConnectaConfig.execute.${Object.keys(execute)[0]} must be a positive whole number`,
+      );
+    }
     const description = await executeDescription();
     expect(description).toContain(
       "Only readOnlyHint: true tools and config-exempt writes are available; any other write goes through call_destructive_tool.",

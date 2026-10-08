@@ -48,7 +48,9 @@ import {
   retryAfterMs,
   type GuardedRequest,
 } from "../../connectors/guarded-fetch.js";
+import { keys, optionsOf } from "../../config-schema.js";
 import { callerOf } from "../../connector-caller.js";
+import { CALL_ADMISSION } from "../../connectors/option-shapes.js";
 import { ConnectorCallError } from "../../errors.js";
 import type {
   AuthenticatedIdentity,
@@ -119,6 +121,14 @@ export interface GoogleWorkspaceOptions {
   /** API base override for a proxy or test double. */
   baseUrl?: string;
 }
+
+/** The closed options every Workspace provider accepts; see `assertKnownOptions`. */
+export const GOOGLE_WORKSPACE_OPTIONS = optionsOf<GoogleWorkspaceOptions>()({
+  ...keys("purpose", "subject", "title", "instructions", "maxResultBytes", "baseUrl"),
+  // A string is the key's JSON; only the object form has keys to check.
+  serviceAccount: optionsOf<GoogleServiceAccount>()(keys("clientEmail", "privateKey", "clientId")),
+  callAdmission: CALL_ADMISSION,
+});
 
 /** The checked, construction-time half of {@link GoogleWorkspaceOptions}. */
 export interface WorkspaceConnection {

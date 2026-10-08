@@ -662,7 +662,7 @@ describe("remoteMcp() connector", () => {
         url: "https://downstream.test/mcp",
         usageGuide: structured,
       }).usageGuide,
-    ).toBe(structured);
+    ).toEqual(structured);
   });
 
   it("listTools reflects the downstream server's tools", async () => {
@@ -713,7 +713,7 @@ describe("remoteMcp() connector", () => {
       url: "https://downstream.test/mcp",
       callAdmission,
     });
-    expect(limited.callAdmission).toBe(callAdmission);
+    expect(limited.callAdmission).toEqual(callAdmission);
   });
 
   it("keeps automatic version negotiation as the default", async () => {

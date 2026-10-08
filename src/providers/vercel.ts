@@ -26,6 +26,9 @@ import type {
   ConnectorContext,
   JsonSchema,
 } from "../types.js";
+import { keys, optionsOf, variants } from "../config-schema.js";
+import { PROVIDER_COMMON } from "../connectors/option-shapes.js";
+import { asProvider } from "../provider.js";
 
 /** Vercel's public REST origin. Override only for a proxy or test double. */
 export const VERCEL_API_BASE_URL = "https://api.vercel.com";
@@ -1610,8 +1613,22 @@ function vercelApi(
   });
 }
 
+
+/** The closed options vercel() accepts; see `assertKnownOptions`. */
+const VERCEL_OPTIONS = variants("surface", {
+  api: optionsOf<VercelApiOptions>()({
+    ...PROVIDER_COMMON,
+    ...keys("surface", "teamId", "baseUrl", "defaultPageSize"),
+  }).shape,
+  mcp: optionsOf<VercelMcpOptions>()({ ...PROVIDER_COMMON, ...keys("surface") }).shape,
+}, "api");
+
 /** A maintained Vercel connection using the selected provider surface. */
 export function vercel(id: string, options: VercelConnectionOptions): Connector {
+  return asProvider("vercel", VERCEL_OPTIONS, id, options, vercelConnector);
+}
+
+function vercelConnector(id: string, options: VercelConnectionOptions): Connector {
   const purpose = options.purpose.trim();
   if (!purpose) {
     throw new Error("vercel() requires a non-empty account purpose.");

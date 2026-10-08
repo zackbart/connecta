@@ -42,6 +42,9 @@ import type {
   ConnectorCredentialConfig,
   JsonSchema,
 } from "../types.js";
+import { keys, optionsOf } from "../config-schema.js";
+import { PROVIDER_COMMON } from "../connectors/option-shapes.js";
+import { asProvider } from "../provider.js";
 
 /**
  * Overflow's two published environments. They are separate deployments with
@@ -1806,6 +1809,10 @@ ${
 
 // --- Construction --------------------------------------------------------------
 
+
+/** The closed options overflow() accepts; see `assertKnownOptions`. */
+const OVERFLOW_OPTIONS = optionsOf<OverflowOptions>()({ ...PROVIDER_COMMON, ...keys("environment", "defaultPageSize", "baseUrl") });
+
 /**
  * A maintained Overflow connection.
  *
@@ -1823,6 +1830,10 @@ ${
  * the operator states it, and the title and the guide's first line repeat it.
  */
 export function overflow(id: string, options: OverflowOptions): Connector {
+  return asProvider("overflow", OVERFLOW_OPTIONS, id, options, overflowConnector);
+}
+
+function overflowConnector(id: string, options: OverflowOptions): Connector {
   const purpose = options.purpose?.trim();
   if (!purpose) {
     throw new Error("overflow() requires a non-empty nonprofit purpose.");

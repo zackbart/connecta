@@ -9,6 +9,9 @@
     "src/executors/quickjs-child.ts",
     "src/auth/clerk.ts",
     "src/artifacts.ts",
+    // A published subpath the Worker example now imports by name, which
+    // otherwise hides that it is an entry of its own.
+    "src/activity.ts",
     "src/providers/breeze.ts",
     "src/providers/basecamp.ts",
     "src/providers/cloudflare.ts",

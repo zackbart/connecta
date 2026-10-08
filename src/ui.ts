@@ -1,3 +1,4 @@
+import { assertKnownOptions, keys, optionsOf } from "./config-schema.js";
 import type { OperatorSurface } from "./module-contracts.js";
 import { routeUi } from "./routes/ui.js";
 import { routeCredentials } from "./routes/credentials.js";
@@ -20,6 +21,7 @@ import {
 import type { RegistryView } from "./registry.js";
 import type {
   ConnectaBranding,
+  ConnectaTheme,
   Connector,
   ConnectorStatus,
   ToolDef,
@@ -279,10 +281,20 @@ function ownsOperatorPath(reserved: readonly string[], path: string): boolean {
   );
 }
 
+/** The closed options operatorUi() accepts; see `assertKnownOptions`. */
+const OPERATOR_UI_OPTIONS = optionsOf<{ branding?: ConnectaBranding }>()({
+  branding: optionsOf<ConnectaBranding>()({
+    ...keys("productName", "productUrl", "ownerName", "ownerUrl", "description", "pageTitle", "themeColor"),
+    favicon: optionsOf<NonNullable<ConnectaBranding["favicon"]>>()(keys("svg", "ico", "href")),
+    theme: optionsOf<ConnectaTheme>()(keys("accent", "radius", "fontFamily", "monoFamily", "colorScheme")),
+  }),
+});
+
 /** Mount the connection UI without enabling any storage or activity module. */
 export function operatorUi(
   options: { branding?: ConnectaBranding } = {},
 ): OperatorSurface {
+  options = assertKnownOptions(options, "operatorUi()", OPERATOR_UI_OPTIONS);
   const reservedPaths = ["/", "/ui", "/ui/*", "/favicon.svg", "/favicon.ico"];
   return {
     ...options,
@@ -296,19 +308,19 @@ export function operatorUi(
       // not own. The Activity page is the one addition; the server reserves
       // it only when history is readable, and routeUi checks the same thing.
       // Artifact pages are the other: they exist only beside the module.
-      const artifacts = context.opts.artifactsModule;
+      const artifacts = context.opts.config.artifacts;
       const artifactPath = Boolean(artifacts) && isArtifactPath(context.path);
       if (!artifactPath && !ownsOperatorPath(reservedPaths, context.path)) return null;
       if (artifactPath && !operatorPageForPath(context.path)) {
         // The pages' JSON API and the sandboxed frame; the module owns both,
         // and this bundle imports none of it.
         return (await artifacts?.handle(context)) ??
-          notFoundResponse(context.request, context.opts);
+          notFoundResponse(context.request, context.opts.config);
       }
-      const tokenResponse = await context.opts.accessTokens?.handle(context);
+      const tokenResponse = await context.opts.config.accessTokens?.handle(context);
       if (tokenResponse) return tokenResponse;
       const routes = [
-        ...(context.opts.credentialVault ? [routeCredentials] : []),
+        ...(context.opts.config.vault ? [routeCredentials] : []),
         routeOAuthManagement,
         routeUi,
       ];
@@ -324,7 +336,7 @@ export function operatorUi(
           return response;
         }
       }
-      return context.opts.activityModule?.handle(context) ?? null;
+      return context.opts.config.activity?.handle(context) ?? null;
     },
   };
 }

@@ -41,10 +41,29 @@ export interface ArtifactsModule {
   handle(context: RouteContext): Promise<Response | null>;
   /** Bind the optional refresh runner after core has built its registry and executor. */
   bindRefresh?(runtime: ArtifactRefreshRuntime): void;
+  /**
+   * Start due refresh jobs. The deployment owns the timer that calls this
+   * (a Worker's `scheduled` handler, a Node interval); core starts none.
+   */
+  runDue?(): Promise<unknown>;
+  /** Resolved page policy for `describeConfig()`; never page data. */
+  describe?(): ArtifactsModuleDescription;
+}
+
+/** The artifacts module's resolved policy, as `describeConfig()` reports it. */
+export interface ArtifactsModuleDescription {
+  /** Exact origins pages may load scripts, stylesheets, and fonts from. */
+  allowlist: { scripts: string[]; styles: string[]; fonts: string[] };
+  /** Every resolved page limit, by name. */
+  limits: Record<string, number>;
+  /** Whether a render check beyond static validation runs. */
+  renderCheck: boolean;
 }
 
 /** Optional client-token authentication and operator lifecycle. */
 export interface AccessTokensModule {
   readonly auth: import("./types.js").InboundAuth;
   handle(context: RouteContext): Promise<Response | null>;
+  /** Token policy for `describeConfig()`; never token material. */
+  describe?(): { maxActive: number };
 }

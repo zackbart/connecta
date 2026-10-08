@@ -29,12 +29,14 @@ import { ConnectorCallError } from "../errors.js";
 import type { Connector, ConnectorContext, JsonSchema } from "../types.js";
 import {
   googleOutcomeOf,
+  GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
   type GoogleWorkspaceClient,
   type GoogleWorkspaceOptions,
 } from "./google/workspace.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "./google/result-size.js";
+import { asProvider } from "../provider.js";
 
 export type {
   GoogleServiceAccount,
@@ -1521,6 +1523,10 @@ ${extra ? `\n## Connection instructions\n\n${extra}\n` : ""}`;
  * destructive.
  */
 export function docs(id: string, options: DocsOptions): Connector {
+  return asProvider("docs", GOOGLE_WORKSPACE_OPTIONS, id, options, docsConnector);
+}
+
+function docsConnector(id: string, options: DocsOptions): Connector {
   const connection = workspaceConnection("docs", options);
   const client = googleWorkspaceClient({
     provider: "Google Docs",

@@ -86,7 +86,7 @@ function oauthManagementRequest(
     }));
     if (Result.isFailure(operation) || Result.isFailure(invalidated)) {
       const error = Result.isFailure(operation) ? operation.failure : Result.isFailure(invalidated) ? invalidated.failure : undefined;
-      logFailure(opts.logger, "OAuth disconnect failed", failureRecord({ connector: connectorId }, error));
+      logFailure(opts.config.logger, "OAuth disconnect failed", failureRecord({ connector: connectorId }, error));
       return yield* refuse("OAuth disconnect failed", 400);
     }
     return new Response(null, { status: 204, headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });

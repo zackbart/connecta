@@ -40,6 +40,7 @@ export function memoryStorage(): KVStorage {
     });
   };
   return {
+    describe: () => ({ kind: "memory" }),
     async get(key) {
       validateStorageKey(key);
       return fresh(key)?.value ?? null;

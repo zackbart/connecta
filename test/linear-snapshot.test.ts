@@ -93,6 +93,20 @@ describe("linear() before and after defineProvider", () => {
     }
   });
 
+  it("describes the maintained provider with its endpoint and auth mode", () => {
+    const connector = linear("tracker", {
+      purpose: "Delivery planning",
+      access: "read-only",
+      auth: { type: "headers", headers: { Authorization: "Bearer secret" } },
+    });
+    expect(connector.describe?.()).toEqual({
+      source: { kind: "remote-mcp", provider: "linear" },
+      endpoint: { origin: "https://mcp.linear.app", path: "/mcp/readonly" },
+      auth: { mode: "headers", headerNames: ["Authorization"] },
+      transport: { versionNegotiation: "auto", redirects: "none", requireHttps: true },
+    });
+  });
+
   it("keeps every reviewed tool name and verdict", () => {
     const tools = linear.definition.classify?.tools ?? {};
     expect(

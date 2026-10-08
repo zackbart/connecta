@@ -237,7 +237,7 @@ describe("overflow() construction", () => {
       budget: { kind: "rolling-window", maxCalls: 120, windowMs: 60_000 },
     });
     const custom = { rules: [{ budget: { kind: "rolling-window" as const, maxCalls: 30, windowMs: 60_000 } }] };
-    expect(connection({ callAdmission: custom }).callAdmission).toBe(custom);
+    expect(connection({ callAdmission: custom }).callAdmission).toEqual(custom);
   });
 
   it("states each write's money unit as Overflow's request schemas define it", async () => {

@@ -104,7 +104,7 @@ function sqliteDriver(database: SqliteDatabase): SqlDriver {
  * subsystem relies on. Each write commits one row; nothing rewrites the file.
  */
 export function sqliteStorage(database: SqliteDatabase): KVStorage {
-  return sqlStorage(sqliteDriver(database));
+  return sqlStorage(sqliteDriver(database), "sqlite");
 }
 
 /**
@@ -116,7 +116,7 @@ export function sqliteActivityStore(
   database: SqliteDatabase,
   options?: SqliteActivityOptions,
 ): ActivityStore {
-  return sqlActivityStore(sqliteDriver(database), options);
+  return sqlActivityStore(sqliteDriver(database), "sqlite", options);
 }
 
 export interface StateFileImport {

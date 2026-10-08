@@ -27,9 +27,12 @@
     "baseUrl": ".",
     "paths": {
       "@zackbart/connecta": ["./src/index.ts"],
-      // The one published subpath whose target is not `src/<subpath>.ts`.
-      // The eval harness (eval/) imports connecta only by its published names.
+      // The two published subpaths whose target is not `src/<subpath>.ts`.
+      // The eval harness (eval/) and the deployment shapes' configuration,
+      // which test/deployment-shapes.test.ts runs, import connecta only by
+      // its published names.
       "@zackbart/connecta/quickjs": ["./src/executors/quickjs.ts"],
+      "@zackbart/connecta/auth/access-tokens": ["./src/access-tokens.ts"],
       "@zackbart/connecta/*": ["./src/*"]
     }
   },

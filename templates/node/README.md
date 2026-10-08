@@ -71,9 +71,14 @@ reproducible `npm ci` path.
 
 ## Select optional modules
 
-For scheduled artifact pages, uncomment the `artifacts()` module and hourly
-`setInterval` block in `src/index.ts`. The module uses the same SQLite storage
-and exposes `runDue()` for the timer; core starts no job on its own.
+Every optional module is code in `src/connecta.config.ts`, switched by an
+environment variable: set it and the module is on, leave it empty and it is
+off. `.env.example` lists each one, and `npm run typecheck` checks every module
+whether or not it is switched on.
+
+For scheduled artifact pages, set `CONNECTA_ARTIFACTS=on`. The module uses the
+same SQLite storage, and `src/index.ts` runs its hourly `runDue()` timer; core
+starts no job on its own.
 Each tick starts at most 10 due pages. Refresh programs can call only shared
 connectors' explicitly read-only tools within the program owner's current
 grants. Revoking refresh or pool access stops future runs. Failed runs leave the last good data
@@ -94,18 +99,13 @@ their URLs, `description`, `pageTitle`, `favicon`, and `theme`. The theme is
 five tokens — `accent`, `radius`, `fontFamily`, `monoFamily`, and
 `colorScheme` — and every other color is mixed from them, so one accent themes
 the whole page. A value that fails its gate falls back to the default, and the
-startup warning names it. `src/index.ts` carries the full shape commented out
-above `ui: operatorUi()`.
+startup warning names it. Pass it to `operatorUi()` in `src/connecta.config.ts`.
 
 Connection management needs an interactive identity. A configured bearer is a
-client key and never authorizes browser credential mutations. To enable Clerk:
-
-```sh
-npm install @clerk/backend
-```
-
-Set `CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`, enable the corresponding
-`clerkAuth` import and auth entry in `src/index.ts`, and set `PUBLIC_URL`.
+client key and never authorizes browser credential mutations. `@clerk/backend`
+ships as a dependency of this template. To enable Clerk, set both
+`CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` (one without the other refuses to
+start) and set `PUBLIC_URL`.
 Enable `aud_claim_enabled: true` in Clerk's instance OAuth application settings
 (`PATCH /v1/instance/oauth_application_settings` in Clerk's Backend API), then
 read the setting back. Both JWT and opaque OAuth tokens are supported.
@@ -126,9 +126,9 @@ for standard host onboarding. Clerk session tokens work only on operator
 routes. [Inbound auth](https://github.com/zackbart/connecta/blob/main/documentation/auth.md#clerk-oauth-tokens-and-operator-sessions)
 explains configuration, verification, and fixed rejection reason codes.
 Machine clients use connecta-issued `cta_` access tokens
-through the optional `@zackbart/connecta/auth/access-tokens` module. Configure
-`accessTokens(storage)` and explicit `identity.accessTokenManagement` permissions
-to enable token management. The configured static bearer remains available
+through `accessTokens(storage)`, which `src/connecta.config.ts` configures on
+the database. Grant explicit `identity.accessTokenManagement` permissions to
+let a signed-in human mint them. The configured static bearer remains available
 until its Phase 3 retirement.
 
 Set the code-owned identity resolvers deliberately. `connectorAccess` governs
@@ -140,10 +140,9 @@ connector where each person should connect their own downstream account.
 
 ### Credential vault
 
-Import `encryptedCredentialVault` from `@zackbart/connecta/credentials`, then
-set `vault: encryptedCredentialVault(storage, credentialKey)` — `storage` is
-the `sqliteStorage` binding `src/index.ts` already passes to `createConnecta`. Set
-`CONNECTA_CREDENTIAL_KEY` to a base64 32-byte AES key:
+Set `CONNECTA_CREDENTIAL_KEY` to a base64 32-byte AES key and
+`src/connecta.config.ts` passes `encryptedCredentialVault(storage, key)` over the
+same database:
 
 ```sh
 node -e "console.log(crypto.randomBytes(32).toString('base64'))"
@@ -168,16 +167,14 @@ static credential recovery reports unavailable instead of offering a dead link.
 
 ### Activity history and diagnostics
 
-Import `activityHistory` from `@zackbart/connecta/activity` and
-`sqliteActivityStore` from `@zackbart/connecta/sqlite`, then set
-`activity: activityHistory({ store: sqliteActivityStore(database) })`. The
-Activity tab appears for authorized readers. Omit this option and its store
-wiring to record no activity.
+Set `CONNECTA_ACTIVITY=on` and `src/connecta.config.ts` records activity with
+`sqliteActivityStore(database, { retentionDays: 90 })` from
+`@zackbart/connecta/sqlite`. The Activity tab appears for authorized readers.
+Leave it empty to record no activity.
 
 Activity shares the one database file. Each write prunes a bounded batch of
-rows older than the retention window, 90 days by default
-(`sqliteActivityStore(database, { retentionDays })`), so nothing has to be
-scheduled. It records no arguments, results, generated code, or raw errors.
+rows older than `retentionDays`, so nothing has to be scheduled; change the
+number in `src/connecta.config.ts`. It records no arguments, results, generated code, or raw errors.
 
 Diagnostics are independent. Keep the default logger or provide your own;
 `logger: "silent"` suppresses diagnostic output explicitly.
@@ -188,7 +185,8 @@ team roster, or policy editor.
 
 ## Deployment contract
 
-- Edit `src/index.ts` for connectors, auth, storage, and the public URL.
+- Edit `src/connecta.config.ts` for connectors, auth, storage, the public URL,
+  and optional modules. `src/index.ts` only starts it.
 - Keep the required `executor: quickJsExecutor()` configuration; a deployment
   without an executor refuses to boot.
 - Keep secrets in environment variables or an external secret store.

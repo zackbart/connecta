@@ -4,6 +4,7 @@ import type {
   InboundAuth,
   KVStorage,
 } from "./types.js";
+import { assertKnownOptions, keys, optionsOf } from "./config-schema.js";
 import { routeAccessTokens } from "./routes/access-tokens.js";
 import type { AccessTokensModule } from "./module-contracts.js";
 import { validIdentityReference } from "./identity.js";
@@ -352,8 +353,17 @@ export class AccessTokenManager {
   }
 }
 
+/** The closed options accessTokens() accepts; see `assertKnownOptions`. */
+const ACCESS_TOKENS_OPTIONS = optionsOf<{ maxActive?: number }>()(keys("maxActive"));
+
 /** Opt in using the same storage namespace that held the v0.23 records. */
 export function accessTokens(storage: KVStorage, options: { maxActive?: number } = {}): AccessTokensModule {
+  options = assertKnownOptions(options, "accessTokens()", ACCESS_TOKENS_OPTIONS);
   const manager = new AccessTokenManager(storage, options);
-  return { auth: manager.auth, handle: context => routeAccessTokens(context, manager) };
+  const maxActive = options.maxActive ?? DEFAULT_MAX_ACTIVE;
+  return {
+    auth: manager.auth,
+    handle: context => routeAccessTokens(context, manager),
+    describe: () => ({ maxActive }),
+  };
 }

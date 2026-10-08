@@ -1,207 +1,27 @@
-import { operatorUi } from "@zackbart/connecta/ui";
-// import { activityHistory } from "@zackbart/connecta/activity";
-import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
 /**
- * connecta on Cloudflare Workers.
- *
- * One MCP endpoint aggregating a downstream remote MCP and an HTTP API, guarded
- * by Cloudflare Access. It needs three resources and nothing else: one D1
- * database (CONNECTA_DB) holding every piece of state, the Worker Loader
- * binding (LOADER) behind execute_code, and one secret
- * (CREDENTIAL_ENCRYPTION_KEY) sealing credentials in that database. Access
- * authenticates the request before this Worker runs and supplies the trusted
- * identity through ctx.access.
- *
- * The operator surface is wired here except for activity history, which is
- * commented below because retention is a decision for the deployment; it uses
- * the same database. README.md § "Select optional modules" walks through all
- * three.
- *
- * Setup (this example has no package.json of its own — it self-references the
- * installed `@zackbart/connecta` package):
- *   1. `npm install` in the connecta package root (../../ from here) so the
- *      package import and wrangler resolve. A copy in its own repository
- *      installs `@zackbart/connecta @cloudflare/codemode` instead. Codemode is
- *      an optional peer.
- *   2. `wrangler d1 create connecta` and put its id in wrangler.jsonc under
- *      `d1_databases`. connecta creates its tables on first use.
- *   3. Set secrets:
- *        wrangler secret put DOWNSTREAM_TOKEN
- *        wrangler secret put CREDENTIAL_ENCRYPTION_KEY
- *      and PUBLIC_URL as a plain var in wrangler.jsonc.
- *   4. Attach Cloudflare Access to this Worker. Enable Managed OAuth and
- *      Dynamic Client Registration. Its Allowed redirect URIs must include
- *      Claude's https://claude.ai/api/mcp/auth_callback plus ChatGPT's
- *      https://chatgpt.com/connector_platform_oauth_redirect and
- *      https://chatgpt.com/connector/oauth/* forms (see ../AGENTS.md).
- *   5. Use the Workers Paid plan required by the `worker_loaders` binding.
- *   6. `wrangler deploy` from this folder (examples/worker), where wrangler.jsonc
- *      lives. Point your MCP client at `<PUBLIC_URL>/mcp`.
+ * connecta on Cloudflare Workers. Configuration lives in connecta.config.ts,
+ * which also lists setup; this file only starts it.
  */
-import { workerExecutor } from "@zackbart/connecta/worker";
-import {
-  api,
-  createConnecta,
-  remoteMcp,
-} from "@zackbart/connecta";
-import { cloudflareAccessAuth } from "@zackbart/connecta/auth/cloudflare-access";
-import { d1Storage } from "@zackbart/connecta/d1";
-// import { artifacts, kvArtifactStore } from "@zackbart/connecta/artifacts";
-// Activity history, in the same database.
-// import { d1ActivityStore } from "@zackbart/connecta/d1";
-
-interface Env {
-  /** The one D1 database: OAuth grants, sealed credentials, catalogs, activity. */
-  CONNECTA_DB: D1Database;
-  /**
-   * Base64 32-byte AES key encrypting operator-managed credentials in D1.
-   * Unset means no vault: credential management is unavailable in the operator
-   * UI. Never put it in D1, since it is what protects D1.
-   */
-  CREDENTIAL_ENCRYPTION_KEY: string;
-  DOWNSTREAM_TOKEN: string;
-  PUBLIC_URL: string;
-  /**
-   * Worker Loader binding (wrangler.jsonc `worker_loaders`) powering
-   * execute_code. Dynamic Workers require the Workers Paid plan.
-   */
-  LOADER: WorkerLoader;
-}
-
-function build(env: Env) {
-  const storage = d1Storage(env.CONNECTA_DB);
-  // Optional refreshable pages live in the same database:
-  // const artifactModule = artifacts({ store: kvArtifactStore(storage) });
-  // scheduledArtifacts.module = artifactModule;
-  return createConnecta({
-    publicUrl: env.PUBLIC_URL,
-    storage,
-    // Required adapter owns each run's handles; direct upstream construction throws.
-    executor: workerExecutor({ loader: env.LOADER }),
-    auth: [
-      // Access owns admission policy. A human identity may use MCP and the
-      // operator pages; a service token may use MCP but cannot mutate operator
-      // state. Neither path asks connecta to parse a JWT.
-      cloudflareAccessAuth(),
-    ],
-    // Optional code-owned roster. Access proves the identity; connecta derives
-    // connector visibility and deployment-operator status from the stable id
-    // it supplies. A signed-in human may manage auth for every connector this
-    // view includes. Omit the block to keep every connector visible and every
-    // human a deployment operator.
-    // identity: {
-    //   connectorAccess: ({ principal }) =>
-    //     principal?.id === "ACCESS_USER_UUID"
-    //       ? ["notion", "echo"]
-    //       : ["echo"],
-    //   activityAccess: ({ id }) => id === "ACCESS_USER_UUID",
-    // },
-    // Connectors that declare a `credential` slot become editable by every
-    // signed-in human who can see that connector, inside its connection on /,
-    // encrypted with this key before anything reaches D1. A saved replacement takes
-    // effect on the next call — no redeploy, and no liveness probe:
-    // credentials fail at use.
-    //
-    // The key is the vault, not the form: a credential form appears only on a
-    // connector that declares a slot. Neither connector below does — Notion
-    // here carries a deployment-owned static header and echo has no secret at
-    // all — so this example ships the vault ready and nothing to fill in.
-    // Declare a slot (see the commented shape on `echo`, or use a provider
-    // connector like `notion()`, which declares its own) and the form appears
-    // on the next load.
-    vault: encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY),
-    // Branding is code too: name, owner, description, favicon, and five theme
-    // tokens that every other color is mixed from. A value that fails its
-    // check falls back to the default, and the startup warning names it.
-    // ui: operatorUi({
-    //   branding: {
-    //     productName: "Acme Tools",
-    //     ownerName: "Acme",
-    //     theme: {
-    //       accent: "#2f5fe0", // hex only
-    //       radius: 10, // pixels, or a CSS length such as "0.5rem"
-    //       fontFamily: "Inter, system-ui, sans-serif",
-    //       monoFamily: "ui-monospace, monospace",
-    //       colorScheme: "system", // or "light" | "dark"
-    //     },
-    //   },
-    // }),
-    ui: operatorUi(),
-    // artifacts: artifactModule,
-    identity: { credentialAdministration: () => "all", personalConnection: () => "all" },
-    // Payload-free activity at /activity, in CONNECTA_DB beside everything
-    // else. Commented because retention is yours to choose: 90 days by
-    // default, or `d1ActivityStore(env.CONNECTA_DB, { retentionDays })`.
-    // Uncomment these lines and the two imports above.
-    // activity: activityHistory({
-    //   store: d1ActivityStore(env.CONNECTA_DB),
-    //   deploymentId: "production",
-    // }),
-    connectors: [
-      remoteMcp("notion", {
-        url: "https://mcp.notion.com/mcp",
-        description: "Notion — pages, databases, comments (static token)",
-        auth: {
-          type: "headers",
-          headers: { Authorization: `Bearer ${env.DOWNSTREAM_TOKEN}` },
-          // The vault-backed alternative for a downstream that authenticates
-          // with a static key: the operator manages it inside its connection
-          // in the operator UI, so no Worker secret holds it.
-          //   type: "credential",
-          //   credential: { label: "Notion internal integration token" },
-        },
-        // Use `authScope: "personal"` with OAuth or credential auth when each
-        // Access user connects their own downstream account. Literal headers
-        // are deployment-owned and cannot be personal.
-      }),
-      api("echo", {
-        description: "Echo — text transforms",
-        // What a vault-backed connector adds — an operator edits this slot
-        // inside its connection in the operator UI and the handler reads it with
-        // `await ctx.credential?.get()`, so the secret never lives in source
-        // or in a Worker variable:
-        //   credential: { label: "API token" },
-        tools: [
-          {
-            name: "shout",
-            description: "Uppercase the given text.",
-            inputSchema: {
-              type: "object",
-              properties: {
-                text: { type: "string", description: "Text to uppercase." },
-              },
-              required: ["text"],
-            },
-            annotations: { readOnlyHint: true },
-            handler: async (args: { text: string }) => ({
-              shouted: args.text.toUpperCase(),
-            }),
-          },
-        ],
-      }),
-    ],
-  });
-}
+import { createConnecta, type Connecta, type ConnectaConfig } from "@zackbart/connecta";
+import connectaConfig, { type Env } from "./connecta.config.js";
 
 // Lazy per-isolate singleton: reuses the plain-data tool cache. Downstream MCP
 // clients are request-scoped internally so Worker I/O never crosses requests.
-let connecta: ReturnType<typeof build> | undefined;
-const scheduledArtifacts: { module?: { runDue(): Promise<unknown> } } = {};
+let started: { config: ConnectaConfig; connecta: Connecta } | undefined;
+function start(env: Env) {
+  if (!started) {
+    const config = connectaConfig(env);
+    started = { config, connecta: createConnecta(config) };
+  }
+  return started;
+}
 
 export default {
-  // Pass `ctx` through: connecta hands deferred work (activity sinks) to
-  // ctx.waitUntil so it settles after the response is returned instead of
-  // being cancelled with the request.
-  async fetch(
-    request: Request,
-    env: Env,
-    ctx: ExecutionContext,
-  ): Promise<Response> {
-    connecta ??= build(env);
-    return connecta.fetch(request, env, ctx);
-  },
+  // Pass `ctx` through: deferred work (activity sinks) settles on ctx.waitUntil.
+  fetch: (request: Request, env: Env, ctx: ExecutionContext) => start(env).connecta.fetch(request, env, ctx),
+  // The wrangler cron, off until enabled, refreshes due artifact pages.
+  // Activity needs no cron: each write prunes rows past its retention.
   async scheduled(_event: ScheduledController, env: Env): Promise<void> {
-    connecta ??= build(env);
-    await scheduledArtifacts.module?.runDue();
+    await start(env).config.artifacts?.runDue?.();
   },
 };

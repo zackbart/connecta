@@ -1,6 +1,7 @@
 import { staticOAuth } from "../auth/static-oauth.js";
 import type { Connector } from "../types.js";
-import { apiConnector } from "./api-connector.js";
+import { assertKnownOptions } from "../config-schema.js";
+import { API_OPTIONS, apiConnector } from "./api-connector.js";
 import type { ApiOptions } from "./api-connector.js";
 
 export type {
@@ -18,6 +19,8 @@ export type {
  * (`ctx.oauth`), managed exactly like a `remoteMcp()` grant.
  */
 export function api(id: string, opts: ApiOptions): Connector {
+  // Read the options once, as plain data, before choosing a grant from them.
+  opts = assertKnownOptions(opts, `api(${JSON.stringify(id)})`, API_OPTIONS);
   if (opts.oauth !== undefined && opts.credential !== undefined) {
     throw new Error(
       `api() connector "${id}" declares both oauth and credential. Declare ` +

@@ -2,7 +2,8 @@
 
 This repository is deployment configuration, not a copy of Connecta itself.
 
-- Edit `src/index.ts` for connectors, authentication, storage, and public URL.
+- Edit `src/connecta.config.ts` for connectors, authentication, storage, public
+  URL, and optional modules. `src/index.ts` only starts it.
 - Keep `executor: quickJsExecutor()` for the prescribed seven-tool code-first
   surface. Programs run read-only tools and any writes `execute.approval`
   exempts; every other write is its own `call_destructive_tool` call, which
@@ -14,9 +15,9 @@ This repository is deployment configuration, not a copy of Connecta itself.
   Do not copy or modify Connecta package internals here.
 - Prefer `api()` when the agent must see an exact reviewed capability surface;
   `remoteMcp()` follows the downstream server's evolving tool catalog.
-- The UI, encrypted credential vault, and activity history use explicit module
-  imports and typed `ui`, `vault`, and `activity` options in `src/index.ts`.
-  Follow README "Select optional modules". Auth management requires explicit
+- Optional modules (Clerk sign-in, credential vault, activity history,
+  artifacts) are type-checked code in `src/connecta.config.ts`, switched on by
+  their environment variables. Follow README "Select optional modules". Auth management requires explicit
   `credentialAdministration` or `personalConnection` permissions; visibility
   alone never grants it. Clerk supplies human identity; `cta_` access tokens cover machine clients.
   The static bearer adapter retires in Phase 3.
@@ -25,14 +26,13 @@ This repository is deployment configuration, not a copy of Connecta itself.
 - Brand the operator UI in `operatorUi({ branding })`: product and owner names,
   description, favicon, and `theme` (`accent`, `radius`, `fontFamily`,
   `monoFamily`, `colorScheme`). Ask the deployment's owner for their brand
-  rather than leaving the default. The commented block above
-  `ui: operatorUi()` in `src/index.ts` shows the shape; README "Select optional
-  modules" covers the rest.
+  rather than leaving the default. README "Select optional modules" shows the
+  shape.
 - Run `npm run typecheck` after configuration changes. With the server running,
   run `CONNECTA_TOKEN=... npm run doctor` before calling setup complete.
 - `Dockerfile` and `docker-compose.yml` containerize *this* source; they are
   the same deployment, not a second one. Configuration belongs in `.env` and
-  `src/index.ts`, never in a divergent container entrypoint.
+  `src/connecta.config.ts`, never in a divergent container entrypoint.
 - Moving this deployment to a newer Connecta is its own procedure, and it is
   not a re-`init` — `connecta init` refuses to merge into an existing path on
   purpose. Bump the exact `@zackbart/connecta` pin in `package.json`, then read

@@ -1,6 +1,7 @@
 // The deadline vocabulary shared by downstream discovery probes and tool calls.
 // One definition keeps those waits bounded consistently.
 
+import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { Effect } from "effect";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 
@@ -8,7 +9,7 @@ import { runEdge, withDeadlineEffect } from "./runtime/run.js";
  * Generous default bound for a single downstream probe/catalog call. High enough
  * to trip only on a pathological hang, not a realistically slow probe.
  */
-export const DEFAULT_PROBE_TIMEOUT_MS = 30_000;
+export const DEFAULT_PROBE_TIMEOUT_MS = CONFIG_DEFAULTS.discovery.probeTimeoutMs;
 
 /** A finite, positive integer number of milliseconds, or undefined. */
 export function normalizeTimeoutMs(

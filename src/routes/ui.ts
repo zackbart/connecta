@@ -68,7 +68,7 @@ export async function routeUi(
 ): Promise<Response | null> {
   const { request, url, path, baseUrl, opts, runtimeContext } = context;
   if (request.method === "GET" && path === "/favicon.svg") {
-    return new Response(opts.branding?.favicon?.svg ?? CONNECTA_FAVICON_SVG, {
+    return new Response(opts.config.ui?.branding?.favicon?.svg ?? CONNECTA_FAVICON_SVG, {
       headers: {
         "Content-Type": "image/svg+xml",
         "Cache-Control": "public, max-age=86400",
@@ -77,7 +77,7 @@ export async function routeUi(
     });
   }
   if (request.method === "GET" && path === "/favicon.ico") {
-    return new Response(opts.branding?.favicon?.ico ?? CONNECTA_FAVICON_ICO, {
+    return new Response(opts.config.ui?.branding?.favicon?.ico ?? CONNECTA_FAVICON_ICO, {
       headers: {
         "Content-Type": "image/x-icon",
         "Cache-Control": "public, max-age=86400",
@@ -100,9 +100,9 @@ export async function routeUi(
   const artifactPage = operatorPage === "artifacts" || operatorPage === "artifact";
   if (
     operatorPage &&
-    (operatorPage !== "activity" || opts.activity?.list) &&
-    (operatorPage !== "tokens" || opts.accessTokens) &&
-    (!artifactPage || opts.artifactsModule)
+    (operatorPage !== "activity" || opts.config.activity?.store.list) &&
+    (operatorPage !== "tokens" || opts.config.accessTokens) &&
+    (!artifactPage || opts.config.artifacts)
   ) {
     if (request.method !== "GET" && request.method !== "HEAD") {
       return privateJson({ error: "method not allowed" }, { status: 405 });
@@ -110,11 +110,11 @@ export async function routeUi(
     // Open shell — carries no operator data; everything comes from the
     // authenticated /ui/* APIs after the browser establishes a session.
     const ambient = runtimeContext?.access
-      ? opts.auth.find(
+      ? opts.config.auth.find(
           (provider) => provider.uiAuth?.kind === "cloudflare-access",
         )?.uiAuth
       : undefined;
-    const uiAuth = ambient ?? opts.auth.find(
+    const uiAuth = ambient ?? opts.config.auth.find(
       (provider) =>
         provider.uiAuth && provider.uiAuth.kind !== "cloudflare-access",
     )?.uiAuth;
@@ -128,17 +128,17 @@ export async function routeUi(
     const nonce = uiScriptNonce();
     // An artifact shell frames the sandboxed page from its own origin and
     // nothing else; Connections stays on the deployment's public origin.
-    const homeUrl = opts.publicUrl ? new URL("/", opts.publicUrl).toString() : "/";
+    const homeUrl = opts.config.publicUrl ? new URL("/", opts.config.publicUrl).toString() : "/";
     // The artifact host serves no favicon, so a shell there takes its icons
     // from the public origin, as the 404 does; on the main host they stay
     // root-relative.
-    const onArtifactHost = Boolean(opts.artifactOrigin) &&
-      url.origin === new URL(opts.artifactOrigin!).origin;
-    const iconOrigin = onArtifactHost ? opts.publicUrl : undefined;
+    const onArtifactHost = Boolean(opts.config.artifactOrigin) &&
+      url.origin === new URL(opts.config.artifactOrigin!).origin;
+    const iconOrigin = onArtifactHost ? opts.config.publicUrl : undefined;
     return new Response(
       request.method === "HEAD"
         ? null
-        : renderUiHtml(uiAuth, mcpUrl, opts.branding, nonce, operatorPage, { homeUrl, iconOrigin }),
+        : renderUiHtml(uiAuth, mcpUrl, opts.config.ui?.branding, nonce, operatorPage, { homeUrl, iconOrigin }),
       {
         status: 200,
         headers: {
@@ -175,9 +175,9 @@ function operatorView(
     manageSharedAuth: connector.authScope !== "personal" && mayManage(connector.id),
     connectPersonal: connector.authScope === "personal" && mayManage(connector.id),
   });
-  const activityEnabled = Boolean(opts.activity?.list) && authz.operator;
+  const activityEnabled = Boolean(opts.config.activity?.store.list) && authz.operator;
   const credentialManagement = visible.some(c => c.credential && mayManage(c.id))
-    ? opts.credentialVault ? "available" as const : "vault_not_configured" as const
+    ? opts.config.vault ? "available" as const : "vault_not_configured" as const
     : authz.identity.interactive && !visible.some(c => c.credential) ? "no_slots" as const : "requires_operator" as const;
   return { visible, mayManage, permissions, activityEnabled, credentialManagement };
 }
@@ -199,8 +199,8 @@ function connectorDetail(
       opts.registry.scoped(scopeFor(authz, [connector.id])),
       baseUrl,
       {
-        serverInfo: opts.serverInfo,
-        credentialVault: opts.credentialVault,
+        serverInfo: opts.config.serverInfo,
+        credentialVault: opts.config.vault,
         activityEnabled,
         credentialManagement,
         defer,
@@ -209,7 +209,7 @@ function connectorDetail(
         discoveryConcurrency: 1,
         personalCredentialOwner: authz.principalKey,
         mayManage,
-        timeoutMs: opts.probeTimeoutMs ?? 30_000,
+        timeoutMs: opts.config.discovery.probeTimeoutMs,
         signal: request.signal,
         approval: opts.approval,
       },
@@ -241,11 +241,11 @@ function summary(context: RouteContext): Effect.Effect<Response, Answer> {
     }
     return privateJson({
       ...(pools.length ? { pools } : {}),
-      serverInfo: opts.serverInfo,
+      serverInfo: opts.config.serverInfo,
       connectaVersion: CONNECTA_VERSION,
       activityEnabled,
-      ...(opts.accessTokens ? { accessTokenManagement: authz.accessTokenManagement && authz.identity.principal ? "available" : "requires_operator" } : {}),
-      ...(opts.artifactsModule && mayViewArtifacts(authz, opts.registry) ? { artifactsEnabled: true } : {}),
+      ...(opts.config.accessTokens ? { accessTokenManagement: authz.accessTokenManagement && authz.identity.principal ? "available" : "requires_operator" } : {}),
+      ...(opts.config.artifacts && mayViewArtifacts(authz, opts.registry) ? { artifactsEnabled: true } : {}),
       credentialManagement,
       oauthManagement: visible.some(c => mayManage(c.id)),
       connectors: visible.map(c => ({ id: c.id, ...(c.title ? { title: c.title } : {}), ...(c.description ? { description: c.description } : {}), authScope: c.authScope ?? "shared", status: "loading", toolCount: 0, tools: [], oauth: Boolean(c.startAuth && c.disconnectAuth), permissions: permissions(c) })),

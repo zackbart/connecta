@@ -15,7 +15,7 @@ Almost every bug in this codebase is a lifetime mistake, so the split is worth
 stating before anything else.
 
 **Per isolate, built once.** `createConnecta(config)` returns
-`{ fetch, registry, close }` (`src/index.ts`). The `Registry` owns the connector
+`{ fetch, registry, describeConfig, close }` (`src/index.ts`). The `Registry` owns the connector
 set, address resolution, catalog caches, observed output schemas, connector
 health, and the per-connector call limiters. It is built once and lives as long
 as the isolate — on Workers a lazy module-scope singleton, which is why both
@@ -324,20 +324,83 @@ schemas), but withholds a tool name outside the grammar as it does in records.
 `test/operator-record-sources.node.test.ts` is a secondary lint over every other
 log call in `src/`. Fix the sink, not the source: a filter at each source missed
 the next one.
+## Configuration
+
+`ConnectaConfig` is one schema (`src/config.ts`, combinators in
+`src/config-schema.ts`). The same value produces the TypeScript type a
+deployment writes, the unknown-key walk createConnecta runs before reading any
+value, every default (`src/config-defaults.ts`, which the enforcing modules
+read too), and one validation policy: a present value that is wrong throws
+with its path at construction (INV-11). Nothing warns and falls back. The walk
+reads property descriptors, never properties, and builds the plain copy that
+is resolved in place of the caller's object, so no getter or Proxy trap runs;
+an accessor on a config object or array is refused by path, as is an object
+that cannot be inspected. A closed object or record slot takes a plain object
+only: an array or a class instance there is refused by path, unread. String
+maps (static `headers`, `api()`'s `authorizationParams` and
+`tokenRequestHeaders`) are copied the same way and each value must be a
+string. A discriminated union (`remoteMcp()`'s `auth.type`,
+a provider's `surface`) with a missing or unrecognized discriminant throws
+with the valid values. Only plain data is copied. Connectors, modules,
+executors, storage, loggers, handlers, and schemas are opaque and never
+entered. An `api()` tool carries its handler, so it is checked in place (own
+keys declared, no accessor at a declared key, inherited ones included) and
+passed through as given: a class-instance tool keeps its prototype `handler()`
+and its private fields. Configuration is operator-authored and trusted, as in
+#698; the walk refuses mistakes by path and never echoes a value, and is not
+a sandbox for hostile objects. Records keyed by deployment
+names (pools, `execute.approval`) have no prototype, so `__proto__` is a name.
+Built-in factories (`api()`, `remoteMcp()`, every provider, and each module
+factory) walk their own options the same way, against shapes the compiler
+checks against their option types (`optionsOf<T>()`). Provider definitions
+declare their closed `options` shape; `defineProvider()` validates it by the
+same descriptor walk before `create` reads a value and stamps the definition
+name onto `describe().source.provider`. `classify` is accepted by the remote
+shape and validated by the shared reviewed-classification validator. Custom
+connectors remain opaque, including their `classification` field, which the
+registry validates. Checks
+that need the connector set — pool members, `execute.approval` addresses, a
+connector's own `maxResultBytes` — throw from `src/index.ts` and the registry
+under the same policy. `storage` stays opaque, but its check requires `list`
+and `compareAndSet` as well as `get`, `set`, and `delete`, so a leftover
+Workers KV adapter is refused at boot with the replacements named, not at the
+first OAuth callback.
+
+`resolveConfig` returns a frozen `ResolvedConfig`: defaults applied, auth
+ordered, the artifacts connector appended, `serverInfo` named and versioned.
+Routes and meta-tools read limits from it (`ServerOptions.config`) instead of
+from fields copied out one at a time. `Connecta.describeConfig()` is a
+secret-free snapshot of it, built once (`src/describe-config.ts`): an allowlist
+serializer that copies named fields and never spreads a config object, plus
+`Connector.describe()` on `remoteMcp()`, `api()`, the providers, and the
+artifacts connector. Header values, keys, client secrets, credentials, URL
+userinfo, queries, and fragments, and function bodies never appear; every URL
+a description emits, from `describeConfig()` or a direct `describe()`, passes
+through the sanitizers in `src/described.ts`, which keep http(s) URLs only
+(`blob:` wraps a URL with its userinfo in the path);
+`test/describe-config.test.ts` plants one in each position. Both deployment
+shapes write their configuration as `defineConfig((env) => …)` in
+`src/connecta.config.ts`, with optional modules as type-checked expressions
+switched by the environment, and keep their entries under 30 lines.
 
 ### Providers and reviewed classification
 
 A maintained provider is one `defineProvider()` call (`src/provider.ts`): a
 name, title, kind (`"mcp"`, `"api"`, or `"composed"`), a maintained skill, an
-optional reviewed classification, and a synchronous `create`. The factory
-validates options common to every provider (purpose, title, instructions,
-`authScope`) before `create` runs, and renders the guide: heading, the
+optional reviewed classification, a closed `options` shape declared with
+`optionsOf<O>()`, and a synchronous `create`. The root exports the option-shape
+combinators and `PROVIDER_COMMON` so provider authors use the same validation
+path. The factory refuses undeclared keys and accessors before reading any
+option, copies plain data, preserves behaviour objects, then validates common
+values (purpose, title, instructions, `authScope`) before `create` runs, and renders the guide: heading, the
 connection context `create` supplies, the maintained text, then deployment
 instructions, which append and never replace. `src/provider.ts` imports neither
 transport, so an `api()` provider gains no MCP client or Effect graph from it
 (`test/purity.node.test.ts`). The factory carries its `definition`, which build and
 check tools read instead of keeping provider lists; Linear is converted, and
-the other providers move in later #705 items.
+the other 18 providers use a thin internal adapter to the same validation and
+description-stamping path until their definitions and folders move in later
+#705 items.
 
 `remoteMcp({ classify })` is the public way to declare what a downstream's
 tools do: `{ tools: { name: "read" | "write" | "destructive" | { verdict,
@@ -541,7 +604,7 @@ shape from building, in someone else's repository rather than this one.
 
 ## Effect inside
 
-The core runs on stable Effect v4, exact-pinned to `4.0.0`; no API a deployment
+The core runs on stable Effect v4 through a compatible `^4.0.0` range; no API a deployment
 touches does. `createConnecta`,
 `remoteMcp()`, `api()`, the `Connector` contract, and every shipped `.d.ts`
 are Promise-shaped and name no Effect type, so a connector author never meets a
@@ -597,17 +660,13 @@ scope, where a Worker may not start work, and nothing logs through
 `Effect.log`: logging goes through the configured `Logger`, which is what
 honors `logger: "silent"`.
 
-Each Connecta also gets a runtime of its own (`src/runtime/services.ts`):
-`Storage`, `Vault`, `ActivityRecorder` (one that records nothing when the module
-is omitted), `Logger`, and `ResolvedConfig`. Creating it builds nothing, since
-a Worker constructs its Connecta at global scope; the first run that needs the
-services builds them, and `close()` disposes the runtime last. Two things
-deliberately do not run on it. The request pipeline runs on no runtime, so
-`/health` and a closed deployment's 503 keep answering after `close()`. And a
-registry provides its own storage and logger to its programs
+There is no per-Connecta runtime. createConnecta resolves its configuration
+into plain values once (`src/config.ts`), and nothing needs a service context
+built from them. The request pipeline runs on no runtime, so `/health` and a
+closed deployment's 503 keep answering after `close()`. A registry provides its
+own `Storage` and `Logger` services (`src/runtime/services.ts`) to its programs
 (`runOnPartition` in `src/runtime/storage.ts`), because a personal registry's
-storage is the root's namespaced to its principal and the runtime's `Storage`
-would be another partition's.
+storage is the root's namespaced to its principal.
 
 ### What runs on Effect
 
@@ -697,7 +756,7 @@ of Worker cold start for it, and that cost was accepted over deep imports at
 every call site. The catch is that a module the barrel reaches is paid for in
 full, however little of it is used. Effect Schema for config validation and the
 meta-tool inputs came to about +62 KB gzip and +13 ms of cold start in the
-root, for a validator no clearer than the hand-written `CONFIG_SCHEMA`; the
+root, for a validator no clearer than the hand-written schema in `src/config.ts`; the
 meta-tool inputs stay zod, which the MCP SDK bundles regardless. `HttpApi` for
 the operator and activity routes cost about +100 KB gzip on `./ui` and +130 KB
 on `./activity`, and matching the wire format meant opting out of most of what
@@ -706,7 +765,9 @@ it does: unowned paths fall through rather than 404, a wrong method is a JSON
 entry may import only `effect` itself (`test/purity.node.test.ts`). Effect v4's
 area imports, such as `effect/http-api` and `effect/ai`, would have to stay
 behind a subpath. APIs tagged `@stability unstable` can still change in minor
-releases, so stable v4 keeps the exact pin.
+releases, which is why the root may import only `effect` itself: that is what
+makes a caret range safe, and it lets a deployment that also uses Effect
+resolve a single copy. Adopting an unstable subpath is its own pull request.
 
 The stable `4.0.0` release was re-evaluated on 2026-10-01 with
 [`scripts/probes/effect-v4-evaluation.mjs`](https://github.com/zackbart/connecta/blob/main/scripts/probes/effect-v4-evaluation.mjs).
@@ -786,11 +847,12 @@ compiling and configuring the real thing.
   `OPTIONS` opts it into CORS preflight; reordering admission after auth makes
   the cheapest possible attack the most expensive request.
 - **`close()` is idempotent and ordered.** Both admission pools, then the
-  connector limiters, then the executor, then the Connecta's runtime; Node's `listen()` calls it on
+  connector limiters, then the executor; Node's `listen()` calls it on
   SIGTERM/SIGINT.
 - **Structural mistakes throw at construction.** A duplicate connector id, an
-  invalid admission rule, the old boolean `accessTokens` option, a missing executor,
-  or an executor without a lifecycle brand:
+  invalid admission rule or limit, an unknown option at any depth, the old
+  boolean `accessTokens` option, a missing executor, or an executor without a
+  lifecycle brand:
   all refuse to boot (`test/config.test.ts`, `test/registry.test.ts`). Starting
   in the wrong shape is worse than not starting.
   Shipped `/worker` and `/quickjs` executors carry a non-enumerable global-symbol

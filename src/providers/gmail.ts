@@ -27,12 +27,14 @@ import { apiConnector as api, defined, type ApiTool } from "../connectors/api-co
 import { ConnectorCallError } from "../errors.js";
 import type { Connector, ConnectorContext, JsonSchema } from "../types.js";
 import {
+  GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
   type GoogleWorkspaceClient,
   type GoogleWorkspaceOptions,
 } from "./google/workspace.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "./google/result-size.js";
+import { asProvider } from "../provider.js";
 
 export type {
   GoogleServiceAccount,
@@ -1757,6 +1759,10 @@ ${extra ? `\n## Connection instructions\n\n${extra}\n` : ""}`;
  * approves unless the deployment exempts `create_draft` in `execute.approval`.
  */
 export function gmail(id: string, options: GmailOptions): Connector {
+  return asProvider("gmail", GOOGLE_WORKSPACE_OPTIONS, id, options, gmailConnector);
+}
+
+function gmailConnector(id: string, options: GmailOptions): Connector {
   const connection = workspaceConnection("gmail", options);
   const client = googleWorkspaceClient({
     provider: "Gmail",

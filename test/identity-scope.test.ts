@@ -646,7 +646,7 @@ describe("named tool pools", () => {
     expect(attempt({ typo: { tools: ["notes.serach"] } })).toThrow('no tool "serach"');
     expect(attempt({ empty: { tools: [] } })).toThrow("at least one");
     expect(attempt({ shape: { tools: "wiki" } })).toThrow("must be an array");
-    expect(attempt({ typo: { tools: ["wiki"], grants: () => true } })).toThrow('unknown option "grants"');
+    expect(attempt({ typo: { tools: ["wiki"], grants: () => true } })).toThrow("ConnectaConfig.pools.typo.grants");
   });
 });
 

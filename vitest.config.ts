@@ -32,14 +32,19 @@ export default defineConfig({
     reporters: ["default", new CoverageReporter()],
     projects: [
       {
-        // The Node template is a consumer project: it imports the package by
-        // name, and `dist/` does not exist yet when tests run. Point that one
-        // exact specifier at the source entry so a suite may exercise template
-        // code directly. Anchored so subpath specifiers never match — those
-        // belong to the Node-only entries the template's own tsconfig maps.
+        // The deployment shapes are consumer projects: they import the package
+        // by name, and `dist/` does not exist yet when tests run. Point each
+        // specifier at its source module so a suite may run the template's and
+        // the example's configuration directly. The two published subpaths
+        // whose target is not `src/<subpath>.ts` come first.
         resolve: {
           alias: [
-            { find: "@zackbart/connecta/activity", replacement: fileURLToPath(new URL("./src/activity.ts", import.meta.url)) },
+            { find: "@zackbart/connecta/quickjs", replacement: fileURLToPath(new URL("./src/executors/quickjs.ts", import.meta.url)) },
+            { find: "@zackbart/connecta/auth/access-tokens", replacement: fileURLToPath(new URL("./src/access-tokens.ts", import.meta.url)) },
+            {
+              find: /^@zackbart\/connecta\/(.+)$/,
+              replacement: `${fileURLToPath(new URL("./src/", import.meta.url))}$1.ts`,
+            },
             {
               find: /^@zackbart\/connecta$/,
               replacement: fileURLToPath(new URL("./src/index.ts", import.meta.url)),

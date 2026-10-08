@@ -1,7 +1,8 @@
+import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { Effect } from "effect";
 import { runEdge } from "./runtime/run.js";
 
-const DEFAULT_DISCOVERY_CONCURRENCY = 4;
+const DEFAULT_DISCOVERY_CONCURRENCY = CONFIG_DEFAULTS.discovery.concurrency;
 
 export function resolveDiscoveryConcurrency(
   value: number | undefined,

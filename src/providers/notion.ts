@@ -13,6 +13,9 @@ import type {
   ConnectorContext,
   JsonSchema,
 } from "../types.js";
+import { keys, optionsOf, variants } from "../config-schema.js";
+import { PROVIDER_COMMON } from "../connectors/option-shapes.js";
+import { asProvider } from "../provider.js";
 
 /** Notion's REST origin. Every tool below speaks to exactly this host. */
 export const NOTION_API_BASE_URL = "https://api.notion.com";
@@ -2005,8 +2008,22 @@ function notionApi(
   });
 }
 
+
+/** The closed options notion() accepts; see `assertKnownOptions`. */
+const NOTION_OPTIONS = variants("surface", {
+  api: optionsOf<NotionApiOptions>()({
+    ...keys("title", "authScope", "purpose", "instructions", "maxResultBytes"),
+    ...keys("surface", "credentialLabel", "defaultPageSize"),
+  }).shape,
+  mcp: optionsOf<NotionMcpOptions>()({ ...PROVIDER_COMMON, ...keys("surface") }).shape,
+}, "api");
+
 /** A maintained Notion connection using the selected provider interface. */
 export function notion(id: string, options: NotionConnectionOptions): Connector {
+  return asProvider("notion", NOTION_OPTIONS, id, options, notionConnector);
+}
+
+function notionConnector(id: string, options: NotionConnectionOptions): Connector {
   const purpose = options.purpose.trim();
   if (!purpose) {
     throw new Error("notion() requires a non-empty workspace purpose.");

@@ -9,6 +9,9 @@ import type {
   Connector,
   ConnectorCallAdmissionPolicy,
 } from "../types.js";
+import { keys, optionsOf, strings, variants } from "../config-schema.js";
+import { CREDENTIAL } from "../connectors/option-shapes.js";
+import { asProvider } from "../provider.js";
 
 /** Which Stripe environment a static credential reaches. */
 export type StripeMode = "production" | "sandbox";
@@ -289,8 +292,26 @@ function sharedUsageGuide(rate: string): string {
 `;
 }
 
+
+/** The closed options stripe() accepts; see `assertKnownOptions`. */
+const STRIPE_OPTIONS = optionsOf<StripeOptions>()({
+  ...keys("title", "authScope", "purpose", "instructions", "maxResultBytes", "mode", "connectedAccount"),
+  auth: variants("type", {
+    oauth: keys("type"),
+    headers: optionsOf<Extract<RemoteMcpAuth, { type: "headers" }>>()({ ...keys("type"), headers: strings() }).shape,
+    credential: optionsOf<Extract<RemoteMcpAuth, { type: "credential" }>>()({
+      ...keys("type", "header", "scheme"),
+      credential: CREDENTIAL,
+    }).shape,
+  }),
+});
+
 /** A maintained Stripe hosted-MCP connection. */
 export function stripe(id: string, options: StripeOptions): Connector {
+  return asProvider("stripe", STRIPE_OPTIONS, id, options, stripeConnector);
+}
+
+function stripeConnector(id: string, options: StripeOptions): Connector {
   const purpose = options.purpose.trim();
   if (!purpose) {
     throw new Error("stripe() requires a non-empty account purpose.");

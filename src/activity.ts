@@ -1,3 +1,4 @@
+import { assertKnownOptions, keys, optionsOf } from "./config-schema.js";
 import { routeActivity } from "./routes/activity.js";
 import type { ActivityModule } from "./module-contracts.js";
 import { boundedEchoText, classificationCode, type ClassificationCode } from "./errors.js";
@@ -176,6 +177,11 @@ export interface ActivityReader {
 
 export interface ActivityStore extends ActivitySink {
   list?: ActivityReader["list"];
+  /**
+   * The adapter and its retention, for `Connecta.describeConfig()`. Kinds
+   * other than the shipped `"d1"` and `"sqlite"` are described as `"custom"`.
+   */
+  describe?(): { kind: string; retentionDays?: number };
 }
 
 /** Reader implementations throw this for an opaque cursor they cannot decode. */
@@ -327,7 +333,11 @@ export interface ActivityHistoryOptions {
   readGate?: ActivityReadGate;
 }
 /** Attach payload-free history without changing tool results on store failure. */
+/** The closed options activityHistory() accepts; see `assertKnownOptions`. */
+const ACTIVITY_HISTORY_OPTIONS = optionsOf<ActivityHistoryOptions>()(keys("store", "deploymentId", "readGate"));
+
 export function activityHistory(options: ActivityHistoryOptions): ActivityModule {
+  options = assertKnownOptions(options, "activityHistory()", ACTIVITY_HISTORY_OPTIONS);
   if (!options || typeof options.store?.record !== "function") {
     throw new Error("activityHistory.store must implement record(event)");
   }

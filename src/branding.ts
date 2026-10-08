@@ -377,15 +377,14 @@ function wantsHtml(request: Request): boolean {
 export function notFoundResponse(
   request: Request,
   opts: {
-    branding?: ConnectaBranding | undefined;
-    ui?: object | undefined;
+    ui?: { readonly branding?: ConnectaBranding | undefined } | undefined;
     publicUrl?: string | undefined;
   },
 ): Response {
   if (!wantsHtml(request)) {
     return new Response("Not Found", { status: 404, headers: { Vary: "Accept" } });
   }
-  const brand = resolveBranding(opts.branding);
+  const brand = resolveBranding(opts.ui?.branding);
   const uiMounted = Boolean(opts.ui);
   const homeHref = opts.publicUrl ? new URL("/", opts.publicUrl).toString() : "/";
   const home = uiMounted
@@ -403,7 +402,7 @@ export function notFoundResponse(
   </section>
 </main>`;
   return new Response(
-    renderPage(opts.branding, {
+    renderPage(opts.ui?.branding, {
       title: `Page not found — ${brand.pageTitle}`,
       uiMounted,
       // Same bytes on either host: the icons, like the home link, come from

@@ -1,3 +1,4 @@
+import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { Cause, Deferred, Duration, Effect, Exit, type Scope } from "effect";
 import { z } from "zod";
@@ -60,8 +61,8 @@ import type {
 } from "./types.js";
 
 /** Keep one model-written program from amplifying into an unbounded fan-out. */
-const EXECUTE_MAX_HOST_CALLS = 20;
-const EXECUTE_HOST_CALL_TIMEOUT_MS = 15_000;
+const EXECUTE_MAX_HOST_CALLS = CONFIG_DEFAULTS.execute.maxHostCalls;
+const EXECUTE_HOST_CALL_TIMEOUT_MS = CONFIG_DEFAULTS.execute.hostCallTimeoutMs;
 /** Above every program in the recorded evals, below the QuickJS IPC ceiling. */
 const EXECUTE_MAX_CODE_BYTES = 64 * 1024;
 /**
@@ -70,7 +71,7 @@ const EXECUTE_MAX_CODE_BYTES = 64 * 1024;
  * always reports its own timeout first and this fires only for one that
  * never settles at all.
  */
-const EXECUTE_WATCHDOG_MS = 120_000;
+const EXECUTE_WATCHDOG_MS = CONFIG_DEFAULTS.execute.watchdogMs;
 /** Complete entries plus an exact omission count, all inside this byte cap. */
 export const CONNECTOR_INVENTORY_MAX_BYTES = 256;
 /**
@@ -80,8 +81,8 @@ export const CONNECTOR_INVENTORY_MAX_BYTES = 256;
  * two or three real screenshots after base64's 4/3 inflation, well short of a
  * file-hosting ambition (design record M5).
  */
-export const EXECUTE_MAX_EMITTED_BYTES = 4_000_000;
-export const EXECUTE_MAX_EMITTED_BLOCKS = 32;
+export const EXECUTE_MAX_EMITTED_BYTES = CONFIG_DEFAULTS.execute.maxEmittedBytes;
+export const EXECUTE_MAX_EMITTED_BLOCKS = CONFIG_DEFAULTS.execute.maxEmittedBlocks;
 const diagnosticsEncoder = new TextEncoder();
 
 type ExecuteDiagnosticOperation = "search" | "describe" | "call";

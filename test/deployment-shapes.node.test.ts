@@ -1,8 +1,21 @@
-// Node-only: walks the template and example trees with Node filesystem APIs.
-import { readFileSync, readdirSync } from "node:fs";
+// Node-only: walks the template and example trees and runs the Node template's
+// configuration, which opens a SQLite file and a QuickJS pool.
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { createConnecta, customExecutor } from "../src/index.js";
+import nodeConfig from "../templates/node/src/connecta.config.js";
+import workerConfig from "../examples/worker/src/connecta.config.js";
+
+// The Worker executor needs workerd's `cloudflare:` modules, which Node cannot
+// load; this suite checks which modules the configuration switches on, not
+// the sandbox, so a self-managed stand-in takes its place.
+vi.mock("../src/worker.js", () => ({
+  workerExecutor: () =>
+    customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
+}));
 
 // There are two deployment shapes: the Node template `connecta init` copies —
 // Docker-ready, not Docker-only — and the Cloudflare Worker example. Three
@@ -11,8 +24,17 @@ import { describe, expect, it } from "vitest";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TEMPLATE = join(ROOT, "templates", "node");
 
+const WORKER = join(ROOT, "examples", "worker");
+
 const read = (...segments: string[]) =>
   readFileSync(join(TEMPLATE, ...segments), "utf8");
+const readWorker = (...segments: string[]) =>
+  readFileSync(join(WORKER, ...segments), "utf8");
+
+/** A syntactically valid Clerk publishable key; nothing here contacts Clerk. */
+const PUBLISHABLE_KEY =
+  "pk_test_" + Buffer.from("example.clerk.accounts.dev$", "utf8").toString("base64");
+const VAULT_KEY = Buffer.alloc(32, 7).toString("base64");
 
 describe("deployment shapes", () => {
   it("keeps the Worker as the only example", () => {
@@ -20,21 +42,31 @@ describe("deployment shapes", () => {
   });
 
   it("keeps the Worker sandbox loader-only", () => {
-    const source = readFileSync(
-      join(ROOT, "examples", "worker", "src", "index.ts"),
-      "utf8",
-    );
-    const options = [...source.matchAll(
+    const options = [...readWorker("src", "connecta.config.ts").matchAll(
       /workerExecutor\(\{([^}]*)\}\)/g,
     )].map((match) => match[1]?.trim());
     expect(options).toEqual(["loader: env.LOADER"]);
   });
 
+  // Configuration lives in each shape's connecta.config.ts as
+  // defineConfig((env) => …); the entry only starts it, so it stays short
+  // enough to review at a glance.
+  it("keeps both entries under 30 lines that only start their configuration", () => {
+    for (const entry of [join(TEMPLATE, "src", "index.ts"), join(WORKER, "src", "index.ts")]) {
+      const source = readFileSync(entry, "utf8");
+      expect(source.trimEnd().split("\n").length, entry).toBeLessThan(30);
+      expect(source, entry).toContain('from "./connecta.config.js"');
+      expect(source, entry).toContain("createConnecta(config)");
+    }
+    for (const config of [join(TEMPLATE, "src", "connecta.config.ts"), join(WORKER, "src", "connecta.config.ts")]) {
+      expect(readFileSync(config, "utf8"), config).toContain("export default defineConfig((env: Env) =>");
+    }
+  });
+
   it("pins hosted MCP callbacks in the Worker deployment instructions", () => {
-    const worker = join(ROOT, "examples", "worker");
-    const agents = readFileSync(join(worker, "AGENTS.md"), "utf8");
-    const readme = readFileSync(join(worker, "README.md"), "utf8");
-    const source = readFileSync(join(worker, "src", "index.ts"), "utf8");
+    const agents = readWorker("AGENTS.md");
+    const readme = readWorker("README.md");
+    const source = readWorker("src", "connecta.config.ts");
     const callbacks = [
       "https://claude.ai/api/mcp/auth_callback",
       "https://chatgpt.com/connector_platform_oauth_redirect",
@@ -91,9 +123,12 @@ describe("deployment shapes", () => {
   });
 
   it("configures the container's origin, state, and health from the source", () => {
-    const source = read("src", "index.ts");
-    expect(source).toContain("process.env.PUBLIC_URL");
-    expect(source).toContain("process.env.CONNECTA_DATABASE");
+    const source = read("src", "connecta.config.ts");
+    expect(source).toContain('set("PUBLIC_URL")');
+    expect(source).toContain('set("CONNECTA_DATABASE")');
+    // The database belongs on the volume.
+    expect(read("Dockerfile")).toContain("ENV CONNECTA_DATABASE=/data/connecta.sqlite");
+    expect(read(".gitignore")).toContain(".connecta.sqlite*");
     expect(read("Dockerfile")).toContain("HEALTHCHECK");
     // State belongs on the mounted volume, owned by the non-root user.
     expect(read("Dockerfile")).toContain("chown -R node:node /data");
@@ -101,83 +136,125 @@ describe("deployment shapes", () => {
   });
 
   // Both shapes carry the whole operator feature set — sign-in, vault, access
-  // tokens, activity — either wired or one uncommented block away (#345). A
-  // shape that quietly drops one is a deployment whose operator pages exist
-  // for things it cannot do.
-  it("offers the full operator surface in the Node template", () => {
-    const source = read("src", "index.ts");
-    for (const fragment of [
-      '// import { clerkAuth } from "@zackbart/connecta/auth/clerk";',
-      '// import { sqliteActivityStore } from "@zackbart/connecta/sqlite";',
-      "// clerkAuth({",
-      "// vault: encryptedCredentialVault(storage, process.env.CONNECTA_CREDENTIAL_KEY!),",
-      "ui: operatorUi(),",
-      "// activity: activityHistory({",
-    ]) {
-      expect(source).toContain(fragment);
+  // tokens, activity, artifacts — as type-checked code that the environment
+  // switches on (#345). A shape that quietly drops one is a deployment whose
+  // operator pages exist for things it cannot do; running the configuration
+  // proves each module is wired rather than described.
+  it("switches every Node template module on from the environment", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "connecta-template-"));
+    // Each configuration opens its own database, as separate deployments would.
+    let files = 0;
+    const base = () => ({ CONNECTA_TOKEN: "template-token", CONNECTA_DATABASE: join(dir, `state-${++files}.sqlite`) });
+    try {
+      expect(() => nodeConfig({})).toThrow("Refusing to start without inbound auth");
+      expect(() => nodeConfig({ ...base(), CLERK_SECRET_KEY: "sk_test_only" })).toThrow(
+        "needs both CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY",
+      );
+      // Compose passes an unset variable through as "", which is unset too.
+      const off = createConnecta({ ...nodeConfig({ ...base(), CONNECTA_CREDENTIAL_KEY: "" }), logger: "silent" });
+      const quiet = off.describeConfig();
+      expect(quiet.auth.map((provider) => provider.kind)).toEqual(["bearer", "access_token"]);
+      expect(quiet.modules).toMatchObject({
+        ui: { enabled: true },
+        accessTokens: { enabled: true },
+        vault: { enabled: false },
+        activity: { enabled: false },
+        artifacts: { enabled: false },
+      });
+      expect(quiet.storage).toEqual({ configured: true, kind: "sqlite" });
+      await off.close();
+
+      const on = createConnecta({
+        ...nodeConfig({
+          ...base(),
+          PUBLIC_URL: "https://connecta.example",
+          CLERK_PUBLISHABLE_KEY: PUBLISHABLE_KEY,
+          CLERK_SECRET_KEY: "sk_test_template",
+          CONNECTA_CREDENTIAL_KEY: VAULT_KEY,
+          CONNECTA_ACTIVITY: "on",
+          CONNECTA_ARTIFACTS: "on",
+        }),
+        logger: "silent",
+      });
+      const full = on.describeConfig();
+      expect(full.auth.map((provider) => provider.kind)).toEqual(["bearer", "access_token", "clerk"]);
+      expect(full.modules).toMatchObject({
+        vault: { enabled: true, sealsOAuth: true },
+        // Activity shares the one SQLite file, pruned on write.
+        activity: {
+          enabled: true,
+          readable: true,
+          deploymentId: "production",
+          store: { kind: "sqlite", retentionDays: 90 },
+        },
+        artifacts: { enabled: true, renderCheck: false },
+      });
+      expect(full.connectors.map((connector) => connector.id)).toEqual(["time", "artifacts"]);
+      await on.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
-    // Activity shares the one SQLite file the storage opens.
-    expect(source).toContain("//   store: sqliteActivityStore(database),");
     const env = read(".env.example");
     for (const variable of [
       "CLERK_PUBLISHABLE_KEY",
       "CLERK_SECRET_KEY",
       "CONNECTA_CREDENTIAL_KEY",
       "CONNECTA_DATABASE",
+      "CONNECTA_ACTIVITY",
+      "CONNECTA_ARTIFACTS",
     ]) {
       expect(env).toContain(variable);
-      // Compose passes every one through, or uncommenting a block would work
-      // from source and silently do nothing in the container.
+      // Compose passes every one through, or setting it would work from
+      // source and silently do nothing in the container.
       expect(read("docker-compose.yml")).toContain(variable);
     }
-    // The database belongs on the volume.
-    expect(read("Dockerfile")).toContain("ENV CONNECTA_DATABASE=/data/connecta.sqlite");
-    expect(read(".gitignore")).toContain(".connecta.sqlite*");
     expect(read("README.md")).toContain("## Select optional modules");
-    // A vault is not a page: the operator UI lists connector slots, and neither
-    // shape's shipped connectors need one. Both carry the slot's shape in
-    // place so nobody follows the vault step and finds a hidden page (#345).
-    expect(source).toContain('//   credential: { label: "API token" },');
-    expect(read("README.md")).toContain(
-      "Connections",
-    );
+    // Storage and activity come from the package; the template copies no adapter.
+    expect(readdirSync(join(TEMPLATE, "src")).sort()).toEqual(["connecta.config.ts", "index.ts"]);
   });
 
-  it("offers the full operator surface in the Worker example", () => {
-    const worker = readFileSync(
-      join(ROOT, "examples", "worker", "src", "index.ts"),
-      "utf8",
-    );
-    expect(worker).toContain("cloudflareAccessAuth()");
-    expect(worker).not.toContain("clerkAuth");
-    expect(worker).toContain("// identity: {");
-    expect(worker).toContain('// Use `authScope: "personal"`');
-    expect(worker).toContain(
-      "vault: encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY),",
-    );
-    expect(worker).toContain("ui: operatorUi(),");
-    expect(worker).toContain("// activity: activityHistory({");
-    expect(worker).toContain('// import { d1ActivityStore } from "@zackbart/connecta/d1";');
-    expect(worker).toContain("//   store: d1ActivityStore(env.CONNECTA_DB),");
-    // One D1 database, one Worker Loader, and nothing else: no KV, no
-    // second database.
-    const wrangler = readFileSync(join(ROOT, "examples", "worker", "wrangler.jsonc"), "utf8")
+  it("switches every Worker example module on from its environment", async () => {
+    // Construction and describeConfig() run no statement: tables are created
+    // on first use, so a binding that answers nothing is enough here.
+    const d1 = { prepare: () => ({ bind: () => ({}) }), batch: async () => [] };
+    const base = { CONNECTA_DB: d1, DOWNSTREAM_TOKEN: "downstream", PUBLIC_URL: "https://worker.example", LOADER: { get: () => ({}) } };
+    const env = (extra: Record<string, unknown>) => ({ ...base, ...extra }) as unknown as Parameters<typeof workerConfig>[0];
+    const off = createConnecta({ ...workerConfig(env({})), logger: "silent" });
+    const quiet = off.describeConfig();
+    expect(quiet.auth).toEqual([{ kind: "cloudflare-access", interactive: true, ui: "cloudflare-access" }]);
+    expect(quiet.modules).toMatchObject({
+      ui: { enabled: true },
+      vault: { enabled: false },
+      activity: { enabled: false },
+      artifacts: { enabled: false },
+    });
+    expect(quiet.storage).toEqual({ configured: true, kind: "d1" });
+    await off.close();
+    const on = createConnecta({
+      ...workerConfig(env({ CREDENTIAL_ENCRYPTION_KEY: VAULT_KEY, CONNECTA_ACTIVITY: "on", CONNECTA_ARTIFACTS: "on" })),
+      logger: "silent",
+    });
+    expect(on.describeConfig().modules).toMatchObject({
+      vault: { enabled: true },
+      activity: { enabled: true, deploymentId: "production", store: { kind: "d1", retentionDays: 90 } },
+      artifacts: { enabled: true },
+    });
+    await on.close();
+    // One D1 database, one Worker Loader, and nothing else: no KV, no second
+    // database, no copied adapter.
+    const wrangler = readWorker("wrangler.jsonc")
       .split("\n").filter((line) => !line.trimStart().startsWith("//")).join("\n");
     expect(wrangler).not.toContain("kv_namespaces");
     expect(wrangler.match(/"binding":/g)).toHaveLength(2);
     expect(wrangler).toContain('"binding": "CONNECTA_DB"');
     expect(wrangler).toContain('"binding": "LOADER"');
-    expect(worker).toContain('//   credential: { label: "API token" },');
-    const workerReadme = readFileSync(
-      join(ROOT, "examples", "worker", "README.md"),
-      "utf8",
-    );
+    // The vars that switch the modules on stay one uncommented line away.
+    expect(readWorker("wrangler.jsonc")).toContain('// "CONNECTA_ACTIVITY": "on",');
+    expect(readWorker("wrangler.jsonc")).toContain('// "CONNECTA_ARTIFACTS": "on",');
+    expect(readdirSync(join(WORKER, "src")).sort()).toEqual(["connecta.config.ts", "index.ts", "r2-artifact-blobs.ts"]);
+    const workerReadme = readWorker("README.md");
     expect(workerReadme).toContain("## Select optional modules");
-    // The walkthrough may not end on a check that fails as deployed: this
-    // example has no credential slot and its activity store is commented.
-    expect(workerReadme).toContain(
-      "Connections",
-    );
+    expect(workerReadme).toContain("Connections");
     expect(workerReadme).not.toContain(
       "checking that Credentials, Tokens, and Activity are live",
     );
@@ -193,7 +270,7 @@ describe("deployment shapes", () => {
       "CONNECTA_TOKEN: ${CONNECTA_TOKEN:?",
     );
     // Local `npm start` reads the same file and refuses for the same reason.
-    expect(read("src", "index.ts")).toContain(
+    expect(read("src", "connecta.config.ts")).toContain(
       "Refusing to start without inbound auth",
     );
   });
@@ -202,9 +279,8 @@ describe("deployment shapes", () => {
   // that never installs with connecta breaks the build if the README that
   // calls this example a starting template does not name it (#367).
   it("names every optional peer the Worker example imports", () => {
-    const worker = join(ROOT, "examples", "worker");
-    const source = readFileSync(join(worker, "src", "index.ts"), "utf8");
-    const readme = readFileSync(join(worker, "README.md"), "utf8");
+    const source = readWorker("src", "connecta.config.ts") + readWorker("src", "index.ts");
+    const readme = readWorker("README.md");
     const peers: Record<string, string> = {
       "@zackbart/connecta/auth/clerk": "@clerk/backend",
       "@cloudflare/codemode": "@cloudflare/codemode",

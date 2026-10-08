@@ -6,8 +6,12 @@ import {
 } from "../errors.js";
 import { attachFailureFacts, carryFailureFacts, errorLabel } from "../operator-record.js";
 import { compileValidator, validateCatalogToolInput } from "../validate.js";
+import { array, assertKnownOptions, instance, keys, optionsOf, strings } from "../config-schema.js";
+import { describedEndpoint, describedOrigin, describedTools } from "../described.js";
+import { CALL_ADMISSION, CREDENTIAL, USAGE_GUIDE } from "./option-shapes.js";
 import type {
   Connector,
+  ConnectorAuthDescription,
   ConnectorCallAdmissionPolicy,
   ConnectorCredentialConfig,
   ConnectorCredentialValues,
@@ -138,8 +142,8 @@ export interface ApiOptions {
    * Max inline result size (bytes) for this connector's tools before
    * call_tool truncates and stashes the full text for get_result
    * paging. Overrides the deployment's `calls.maxResultBytes`; omit to inherit
-   * it. Must be a whole number of bytes >= 1; anything else warns at startup
-   * and is ignored.
+   * it. Must be a whole number of bytes >= 1; anything else refuses to
+   * construct.
    */
   maxResultBytes?: number;
   /** Optional per-runtime downstream call-admission policy. */
@@ -206,7 +210,70 @@ function checkToolContract(id: string, tool: ApiTool): void {
         "from a tool name, description, schema, or other annotations.",
     );
   }
+  if (typeof tool.handler !== "function") {
+    throw new Error(`api() tool "${address}" needs a handler function.`);
+  }
   if (tool.inputSchema) compileValidator(tool.inputSchema, { address });
+}
+
+/** The closed options api() accepts; see `assertKnownOptions`. */
+export const API_OPTIONS = optionsOf<ApiOptions>()({
+  ...keys(
+    "title", "description", "authScope", "maxResultBytes", "testCredential", "testCredentials",
+    "validateArgs",
+  ),
+  callAdmission: CALL_ADMISSION,
+  usageGuide: USAGE_GUIDE,
+  credential: CREDENTIAL,
+  oauth: optionsOf<ApiOAuthConfig>()({
+    ...keys(
+      "authorizationEndpoint", "tokenEndpoint", "clientId", "clientSecret", "tokenEndpointAuthMethod",
+      "scope", "pkce", "apiOrigins",
+    ),
+    authorizationParams: strings(),
+    tokenRequestHeaders: strings(),
+  }),
+  // A tool's annotations stay open: MCP lets a tool carry hints Connecta
+  // does not interpret, and its schemas are JSON Schema, not options. A tool
+  // carries its handler, so it is checked in place and kept, never copied.
+  tools: array(
+    instance(optionsOf<ApiTool>()(
+      keys("name", "description", "inputSchema", "outputSchema", "annotations", "handler"),
+    )),
+  ),
+});
+
+/**
+ * How an `api()` connector authenticates, as names and public endpoints. The
+ * client id and secret, extra parameter values, and token-request header
+ * values never leave the options.
+ */
+function describedApiAuth(opts: ApiOptions): ConnectorAuthDescription {
+  const oauth = opts.oauth;
+  if (!oauth) return { mode: opts.credential ? "credential" : "none" };
+  const confidential = typeof oauth.clientSecret === "string" && oauth.clientSecret !== "";
+  const authorizationEndpoint = describedEndpoint(oauth.authorizationEndpoint);
+  const tokenEndpoint = describedEndpoint(oauth.tokenEndpoint);
+  const apiOrigins = Array.isArray(oauth.apiOrigins)
+    ? oauth.apiOrigins.flatMap((origin) => describedOrigin(origin) ?? [])
+    : [];
+  return {
+    mode: "oauth",
+    ...(authorizationEndpoint ? { authorizationEndpoint } : {}),
+    ...(tokenEndpoint ? { tokenEndpoint } : {}),
+    apiOrigins,
+    tokenEndpointAuthMethod:
+      oauth.tokenEndpointAuthMethod ?? (confidential ? "client_secret_basic" : "none"),
+    confidentialClient: confidential,
+    pkce: oauth.pkce ?? true,
+    ...(oauth.scope !== undefined ? { scope: oauth.scope } : {}),
+    ...(oauth.authorizationParams
+      ? { authorizationParamNames: Object.keys(oauth.authorizationParams) }
+      : {}),
+    ...(oauth.tokenRequestHeaders
+      ? { tokenRequestHeaderNames: Object.keys(oauth.tokenRequestHeaders) }
+      : {}),
+  };
 }
 
 /**
@@ -244,6 +311,7 @@ export function apiConnector(
   opts: ApiOptions,
   oauth?: ApiOAuthHooks,
 ): Connector {
+  opts = assertKnownOptions(opts, `api(${JSON.stringify(id)})`, API_OPTIONS);
   if (opts.oauth !== undefined && oauth === undefined) {
     throw new Error(
       `api() connector "${id}" declares oauth but was built without its grant; construct it with api().`,
@@ -270,10 +338,12 @@ export function apiConnector(
   }));
   const byName = new Map(opts.tools.map((t) => [t.name, t]));
   const validateArgs = opts.validateArgs ?? true;
+  const auth = describedApiAuth(opts);
   return {
     id,
     ...defined({ title: opts.title }),
     kind: "api",
+    describe: () => ({ source: { kind: "api" }, auth, tools: describedTools(defs) }),
     ...defined({
       description: opts.description,
       authScope: opts.authScope,
