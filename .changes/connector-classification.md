@@ -19,3 +19,9 @@ that omits it serves an unreviewed connector, whose downstream annotations fail
 closed when absent. Phase 2's deployment-level overrides
 ([#706](https://github.com/zackbart/connecta/issues/706)) will apply
 regardless of wrapping.
+
+Request-scoped catalogs own their definitions and serve deep copies to
+discovery and invocation. Each connector dispatch also receives a fresh deep
+copy of its definition. Mutating a dispatched definition or a discovery
+result cannot change later discovery, schema validation, or write accounting
+within the same program.

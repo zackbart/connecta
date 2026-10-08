@@ -434,7 +434,7 @@ export interface Connector {
     name: string,
     args: unknown,
     ctx: ConnectorContext,
-    /** The catalog definition, including when discovery used memory/storage. */
+    /** A fresh deep copy of the catalog definition for this dispatch. */
     options?: { definition?: ToolDef },
   ): Promise<unknown>;
   /**

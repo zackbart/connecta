@@ -472,7 +472,9 @@ export class CatalogService {
   // The request-scoped catalog cache: one shared read per connector asked
   // about, started by the first asker and joined by every later one. A
   // success stays for the rest of the request, so a search and the call after
-  // it see one catalog; a failure, or a read cancelled because every asker
+  // it see one catalog. The cache owns a deep copy and each asker receives
+  // another, so discovery, invocation, and guest code never hold its objects.
+  // A failure, or a read cancelled because every asker
   // left it, is dropped so the next ask reads again. The service lives and
   // dies with one request, so no read here is ever awaited from another.
   //
@@ -572,7 +574,7 @@ export class CatalogService {
               this.requestScope,
               { signal, timeoutMs: this.probeTimeoutMs },
               this.readOptions,
-            ),
+            ).then((tools) => structuredClone(tools)),
           (succeeded) => {
             // Evicted before the read resumes anyone, so an asker that
             // retries on hearing of the failure starts a fresh read.
@@ -584,7 +586,7 @@ export class CatalogService {
         this.catalogs.set(id, started);
         read = started;
       }
-      return read.join(callOptions.signal);
+      return Effect.map(read.join(callOptions.signal), (tools) => structuredClone(tools));
     });
   }
 

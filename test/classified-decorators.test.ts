@@ -305,6 +305,123 @@ describe.each(Object.keys(WRAPPERS) as Array<keyof typeof WRAPPERS>)(
   (wrapper) => {
     const wrap = WRAPPERS[wrapper];
 
+    it("INV-1 INV-2: a retained call definition cannot turn the next exempt write into a read or bypass its budget", async () => {
+      const calls: string[] = [];
+      const { decorate } = retainingDecorator();
+      const app = thingsDeployment(
+        decorate(wrap({ list_things: "read", make_thing: "write" }, calls)),
+        memoryStorage(),
+        { approval: { "things.make_thing": "never" }, maxWrites: 1 },
+      );
+      try {
+        const result = await app.run(async (connecta) => {
+          await connecta.call!("things.make_thing", {});
+          const reads = await connecta.search!({ connector: "things", safety: "readOnly" });
+          const writes = await connecta.search!({ connector: "things", safety: "approvalRequired" });
+          let second: string | undefined;
+          try {
+            await connecta.call!("things.make_thing", {});
+          } catch (error) {
+            second = (error as { code: string }).code;
+          }
+          return {
+            reads: reads.tools.map((tool: { address: string }) => tool.address).sort(),
+            writes: writes.tools.map((tool: { address: string }) => tool.address).sort(),
+            second,
+          };
+        });
+        expect(result.isError).toBeFalsy();
+        expect(result.structuredContent?.result).toEqual({
+          reads: ["things.list_things"],
+          writes: ["things.drop_thing", "things.make_thing"],
+          second: "budget_exceeded",
+        });
+        expect(calls).toEqual(["make_thing"]);
+      } finally {
+        await app.connecta.close();
+      }
+    });
+
+    it("INV-1 INV-3: nested call-definition mutations cannot change discovery or validation of the next call in one program", async () => {
+      const calls: string[] = [];
+      const definitions: ToolDef[] = [];
+      const inner = wrap({ list_things: "read", make_thing: "write" }, calls);
+      const app = thingsDeployment({
+        ...inner,
+        callTool: (name, args, ctx, options) => {
+          const definition = options!.definition!;
+          definitions.push(structuredClone(definition));
+          definition.annotations!.readOnlyHint = false;
+          definition.annotations!.destructiveHint = true;
+          const id = (definition.inputSchema!.properties as Record<string, { type: string }>).id!;
+          id.type = "number";
+          return inner.callTool(name, args, ctx, options);
+        },
+      });
+      try {
+        const result = await app.run(async (connecta) => {
+          await connecta.call!("things.list_things", { id: "first" });
+          const page = await connecta.search!({ connector: "things", safety: "readOnly", includeSchemas: "json" });
+          const described = await connecta.describe!({ addresses: ["things.list_things"], format: "json" });
+          await connecta.call!("things.list_things", { id: "second" });
+          return { tools: page.tools, described };
+        });
+        expect(result.isError).toBeFalsy();
+        expect(calls).toEqual(["list_things", "list_things"]);
+        expect(definitions).toHaveLength(2);
+        expect(definitions[1]).toEqual(definitions[0]);
+        expect(definitions[0]?.inputSchema?.properties).toMatchObject({ id: { type: "string" } });
+        const ran = result.structuredContent?.result;
+        expect(ran.tools).toHaveLength(1);
+        expect(ran.tools[0]).toMatchObject({
+          address: "things.list_things",
+          annotations: { readOnlyHint: true },
+          inputSchema: { properties: { id: { type: "string" } } },
+        });
+        expect(ran.described.tools).toEqual([expect.objectContaining({
+          address: "things.list_things",
+          annotations: expect.objectContaining({ readOnlyHint: true }),
+          inputSchema: expect.objectContaining({ properties: expect.objectContaining({ id: { type: "string" } }) }),
+        })]);
+      } finally {
+        await app.connecta.close();
+      }
+    });
+
+    it("INV-1 INV-3: guest mutations of discovery objects cannot change a later discovery or call in the same program", async () => {
+      const calls: string[] = [];
+      const app = thingsDeployment(wrap({ list_things: "read", make_thing: "write" }, calls));
+      try {
+        const result = await app.run(async (connecta) => {
+          const page = await connecta.search!({ connector: "things", includeSchemas: "json" });
+          const make = page.tools.find((tool: { address: string }) => tool.address === "things.make_thing");
+          make.annotations.readOnlyHint = true;
+          make.inputSchema.properties.id.type = "number";
+          const described = await connecta.describe!({ addresses: ["things.list_things"], format: "json" });
+          const read = described.tools[0];
+          read.annotations.readOnlyHint = false;
+          read.inputSchema.properties.id.type = "number";
+          await connecta.call!("things.list_things", { id: "still a string" });
+          const again = await connecta.search!({ connector: "things", safety: "readOnly", includeSchemas: "json" });
+          let write: string | undefined;
+          try {
+            await connecta.call!("things.make_thing", {});
+          } catch (error) {
+            write = (error as { code: string }).code;
+          }
+          return { tools: again.tools, write };
+        });
+        expect(result.isError).toBeFalsy();
+        expect(calls).toEqual(["list_things"]);
+        expect(result.structuredContent?.result).toMatchObject({
+          tools: [{ address: "things.list_things", inputSchema: { properties: { id: { type: "string" } } } }],
+          write: "destructive_tool_requires_approval",
+        });
+      } finally {
+        await app.connecta.close();
+      }
+    });
+
     it("INV-1: lists the downstream's tools unclassified and carries the review as data", async () => {
       const connector = wrap({ list_things: "read", make_thing: "write" }, []);
       const ctx = connectorContext();

@@ -144,8 +144,8 @@ export const catalogKeys = {
     name: "catalog",
     scope: "root",
     prefixes: ["catalog:"],
-    // The manifest records its own version (2); chunks follow it.
-    version: { number: 2, in: "value" },
+    // Version 3 stores raw listings; the reader still accepts version 2.
+    version: { number: 3, in: "value" },
     codec: textCodec,
     ttl: {
       kind: "configured",

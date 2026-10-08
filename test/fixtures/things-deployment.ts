@@ -3,7 +3,7 @@
 // call from inside `execute_code`. Programs are JavaScript closures run by a
 // scripted executor, not source strings: workerd forbids eval, and the suites
 // using this run in both projects.
-import { createConnecta, customExecutor } from "../../src/index.js";
+import { createConnecta, customExecutor, type ConnectaConfig } from "../../src/index.js";
 import { memoryStorage } from "../../src/storage/memory.js";
 import type {
   Connector,
@@ -37,12 +37,17 @@ function closureExecutor(programs: Map<string, Program>): Executor {
   };
 }
 
-export function thingsDeployment(connector: Connector, storage: KVStorage = memoryStorage()) {
+export function thingsDeployment(
+  connector: Connector,
+  storage: KVStorage = memoryStorage(),
+  execute?: ConnectaConfig["execute"],
+) {
   const programs = new Map<string, Program>();
   const connecta = createConnecta({
     connectors: [connector],
     storage,
     logger: "silent",
+    ...(execute ? { execute } : {}),
     executor: customExecutor(closureExecutor(programs), { lifecycle: "self-managed" }),
   });
   const call = async (name: string, args: Record<string, unknown>) =>

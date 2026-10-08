@@ -356,7 +356,11 @@ listing unclassified. The registry validates the field when it first reads a
 connector (INV-11), caches and persists exactly what `listTools` returned
 (manifest version 3), and classifies those facts on every read into fresh
 objects, so neither a cache layer nor a decorator holding a served or listed
-tool can carry a verdict. A restart onto a catalog persisted under an older
+tool can carry a verdict. The request-scoped catalog also owns a deep copy
+and returns fresh copies to discovery and invocation. Each connector call
+receives a separate deep copy of its definition, so mutations cannot change
+classification, schemas, or write accounting later in the same program.
+A restart onto a catalog persisted under an older
 review applies the current one; a 0.28 (version 2) catalog loses its
 read-only claims, which may be an older classifier's, and is refreshed on
 first read. During refreshes the deployment already asked for, the registry
