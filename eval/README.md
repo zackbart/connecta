@@ -102,10 +102,22 @@ when the agent does not use `call_tool` for the requested read, or uses
 `execute_code`, discovery or any other route. Repeating the identical
 `call_tool` read passes the task and misses only the advisory `one-read` check,
 which is recorded like `no-confirmation-needed` without changing pass/fail.
-CI fact evidence accepts any order within each line or semicolon-separated
-record, while keeping each record's id, status and commit together.
-Absent GitHub answers must report uncertainty without asserting a count or
-other repository facts.
+Record evidence uses one helper in `tasks/correctness.ts` for CI runs, project
+counts, and other tasks with multiple records. It splits final answers at sentence
+ends (`.`, `!`, or `?` followed by whitespace or end), semicolons, newlines,
+list bullets and table rows. Commas and ` and ` split between records after a
+complete set of fields, preserving commas within a record. Every record must
+have all its facts in at least one clause, in any order and case-insensitively.
+Hex commit SHAs match by their first seven characters. Any clause mixing a
+record's fact with a conflicting fact from another record fails, even if the
+answer also contains correct records. Shared facts such as `passed` are allowed.
+
+Absent-service answers must pass `states-absence` by saying the service is
+unavailable, absent, not connected, not configured or inaccessible.
+`no-repository-facts` rejects quantities only: any digit sequence outside the
+requested repository name, or the number words zero through twenty, thirty
+through ninety, hundred, dozen, several, a few or many. Wording about the user's
+lack of access passes. These are deliberately bounded acceptance rules.
 
 Auth tasks use a local fake OAuth connector and sign-in directory. A deterministic
 host adapter sends 2026-07-28 requests to the real Connecta auth boundary. A capable
@@ -139,9 +151,9 @@ and a right-source run without answer evidence. It also rejects a no-op, wrong-i
 refusals, comment-only paging/fan-out, another retained result, direct images
 substituted for program emissions, sequential budget exhaustion, direct-only
 recovery, swapped CI facts, missing/mismatched auth handoffs, fabricated
-repository facts after service absence, alternate known-read routes, and contradictory/missing
+quantities after service absence, alternate known-read routes, and contradictory/missing
 RevenueCat access evidence. Positive controls also verify both discovery routes
-and recovery after a schema-rejected program request, CI fact permutations,
+and recovery after a schema-rejected program request, CI fact permutations, sentence/comma/table/bullet formats,
 honest absence answers and advisory-only duplicate direct reads. The deployment
 adapter observes the real QuickJS provider bridge for paging and fan-out checks;
 source text alone cannot satisfy them.

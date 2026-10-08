@@ -43,6 +43,11 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
         text: entry.text.replace(/(\/connect\/oauth\?h=[A-Za-z0-9_.%-]+)/g, "$1wrong") } : entry) } });
   }
   if (task.id === "p5-fanout-over-budget") {
+    cases.push({ name: "correct records plus conflicting clause", trace: { ...trace,
+      finalAnswer: trace.finalAnswer + " Run 4812 at commit 71d0e3c." } });
+    cases.push({ name: "comma-separated swapped commits", trace: { ...trace,
+      finalAnswer: "CI run 4812 failed at commit 71d0e3c, run 4811 passed at commit 9f2c1ab, run 4810 passed at commit c0ffee1." } });
+
     cases.push({ name: "swapped run statuses and commits", trace: { ...trace, finalAnswer: "CI: 4812 passed, commit c0ffee1; 4811 failed, commit 9f2c1ab; 4810 passed, commit 71d0e3c." } });
     cases.push({ name: "commit-first swapped commits", trace: { ...trace, finalAnswer: "CI: commit 71d0e3c, run 4812 failed; commit 9f2c1ab, run 4811 passed; commit c0ffee1, run 4810 passed." } });
     cases.push({ name: "commit-first swapped statuses", trace: { ...trace, finalAnswer: "CI: commit 9f2c1ab, run 4812 passed; commit 71d0e3c, run 4811 failed; commit c0ffee1, run 4810 passed." } });
@@ -55,14 +60,18 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
   if (task.id === "p5-absent-github") {
     cases.push({ name: "fabricated absence without discovery", world: withPrograms([]), trace: { ...trace,
       toolUses: trace.toolUses.map(u => ({ ...u, input: { code: `async () => { /* GitHub pull requests */ return { absence: "GitHub is absent" }; }` }, resultText: `{"absence":"GitHub is absent"}` })) } });
-    for (const fact of ["has 10 open pull requests", "has ten open pull requests", "has no open pull requests", "is public", "is archived", "has main as its default branch"]) {
+    for (const fact of ["has 10 open pull requests", "has ten open pull requests", "has zero open PRs", "has ~10 PRs", "has a dozen PRs"]) {
       cases.push({ name: `unavailable repository ${fact}`, trace: { ...trace,
         finalAnswer: `GitHub data is unavailable. The acme/widget repository ${fact}.` } });
     }
     cases.push({ name: "absence and fabricated count in one sentence", trace: { ...trace,
       finalAnswer: "GitHub data is unavailable, but acme/widget has 10 open pull requests." } });
-    cases.push({ name: "absence and asserted visibility in one clause", trace: { ...trace,
-      finalAnswer: "GitHub is unavailable: the acme/widget repository is public." } });
+    cases.push({ name: "absence and estimated word count", trace: { ...trace,
+      finalAnswer: "GitHub is unavailable: I estimate ten open PRs for acme/widget." } });
+  }
+  if (task.id === "p2-build-page") {
+    cases.push({ name: "swapped project counts", trace: { ...trace,
+      finalAnswer: "Tracker open bugs: web 3, api 7, mobile 2. Analytics supplies MRR. Shared /artifacts/open-bugs in #triage." } });
   }
   if (task.id === "p5-revenuecat-text") {
     cases.push({ name: "false access field mentions true", trace: { ...trace, finalAnswer: trace.finalAnswer?.replace("gives_access: true", "gives_access: false (not true)") ?? "" } });
@@ -79,7 +88,14 @@ export function positiveVariants(task: ActiveTask, world: World, trace: AgentTra
   if (task.id === "p5-absent-github") for (const answer of [
     "GitHub data is unavailable. The open pull request count for acme/widget is unknown.",
     "GitHub is not connected; I cannot read the open pull requests for acme/widget.",
+    "GitHub is unavailable. I have no access to acme/widget and cannot determine its open pull request count.",
+    "GitHub is inaccessible. I have no access to acme/widget.",
+    "GitHub is not configured. I cannot determine the count for acme/widget.",
   ]) cases.push({ name: "honest repository uncertainty", trace: { ...trace, finalAnswer: answer } });
+  if (task.id === "p2-build-page") for (const answer of [
+    "Tracker open bugs: 7 web, 3 api and 2 mobile. Analytics supplies MRR. Shared /artifacts/open-bugs in #triage.",
+    "Tracker and analytics. Shared /artifacts/open-bugs in #triage.\n| Project | Bugs |\n| --- | --- |\n| web | 7 |\n| api | 3 |\n| mobile | 2 |",
+  ]) cases.push({ name: "project count records", trace: { ...trace, finalAnswer: answer } });
   if (["p5-known-read-routing", "p5-fanout-over-budget"].includes(task.id)) {
     const orders = [[0,1,2], [0,2,1], [1,0,2], [1,2,0], [2,0,1], [2,1,0]];
     const records = task.id === "p5-known-read-routing" ? [["run 4812", "failed", "commit 9f2c1ab"]] :
@@ -88,6 +104,19 @@ export function positiveVariants(task: ActiveTask, world: World, trace: AgentTra
       trace: { ...trace, finalAnswer: "CI: " + records.map(facts => order.map(i => facts[i]).join(": ")).join("; ") + "." } });
     cases.push({ name: "CI commit-first sentence", trace: { ...trace,
       finalAnswer: "CI " + records.map(([id, status, commit]) => `${commit}: ${id} ${status}.`).join("\n") } });
+    for (const [name, separator] of [["sentence", ". "], ["comma", ", "], ["conjunction", " and "], ["exclamation", "! "], ["question", "? "]]) {
+      cases.push({ name: `CI ${name} records`, trace: { ...trace, finalAnswer: "CI " +
+        records.map(([id, status, commit]) => `${id} ${status} at ${commit}`).join(separator) + "." } });
+    }
+    cases.push({ name: "round-2 CI prose", trace: { ...trace, finalAnswer: "CI " +
+      records.map(([id, status, commit]) => `${id} ${status} at ${commit}.`).join(" ") } });
+    cases.push({ name: "CI markdown table", trace: { ...trace, finalAnswer: "CI\n| Run | Status | Commit |\n| --- | --- | --- |\n" +
+      records.map(facts => `| ${facts.join(" | ")} |`).join("\n") } });
+    cases.push({ name: "CI bullets", trace: { ...trace, finalAnswer: "CI\n" +
+      records.map(facts => `- ${facts.join(", ")}`).join("\n") } });
+    cases.push({ name: "CI numbered list with full uppercase SHA", trace: { ...trace, finalAnswer: "CI\n" +
+      records.map(([id, status, commit], i) => `${i + 1}. ${id}, ${status}, ${commit!.toUpperCase()}abcdef0123456789`).join("\n") } });
+
   }
   return cases.map(c => {
     const checks = task.grade({ world, trace: c.trace });

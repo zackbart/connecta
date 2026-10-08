@@ -7,7 +7,66 @@ export interface Correctness {
   destination(world: World, trace: AgentTrace): boolean;
   /** Every expression must match the final answer, never the tool output. */
   evidence: RegExp[];
+  /** Facts belonging to separate records must stay together in one clause. */
+  records?: EvidenceRecord[];
   referenceAnswer: string;
+}
+
+type EvidenceRecord = { id: string } & Record<string, string>;
+
+function factPattern(fact: string): RegExp {
+  // Accept short or full hex SHAs by the same seven-character prefix.
+  const value = /^[a-f0-9]{7,40}$/i.test(fact) ? `${fact.slice(0, 7)}[a-f0-9]*` :
+    fact.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b${value}\\b`, "i");
+}
+
+/** Match complete records and reject cross-record contradictions anywhere. */
+function recordEvidence(answer: string, records: EvidenceRecord[]): boolean {
+  const patterns = records.map(record => Object.fromEntries(
+    Object.entries(record).map(([key, fact]) => [key, factPattern(fact)])));
+  const fields = [...new Set(patterns.flatMap(record => Object.keys(record)))];
+  const hasFields = (text: string) => fields.every(field => patterns.some(record => record[field]?.test(text)));
+  const hasId = (text: string) => patterns.some(record => record.id!.test(text));
+  const clauses: string[] = [];
+  // Newlines delimit markdown table rows; bullets also work on a single line.
+  for (const sentence of answer.replace(/(?:^|\n)\s*\d+[.)]\s+/g, "\n")
+    .split(/[.!?](?=\s|$)|[;\r\n]+|(?:^|\s)[*•-]\s+/)) {
+    let start = 0;
+    for (const separator of sentence.matchAll(/,\s*|\s+and\s+/gi)) {
+      const end = separator.index!;
+      const next = end + separator[0].length;
+      // Keep commas inside a record (including commit-first prose). Split
+      // only after a complete set of fields and before another record id.
+      if (hasFields(sentence.slice(start, end)) && hasId(sentence.slice(next))) {
+        clauses.push(sentence.slice(start, end));
+        start = next;
+      }
+    }
+    clauses.push(sentence.slice(start));
+  }
+  return patterns.every(record => clauses.some(clause => Object.values(record).every(pattern => pattern.test(clause)))) &&
+    clauses.every(clause => {
+      const matches = fields.map(field => ({ field, facts: patterns.flatMap(record =>
+        record[field]?.test(clause) ? [record[field]!] : []) })).filter(match => match.facts.length);
+      // Shared facts (such as two runs both passing) are compatible. Every
+      // fact in a clause must be consistent with at least one single record.
+      return !matches.length || patterns.some(record => matches.every(({ field, facts }) =>
+        facts.every(fact => fact.source === record[field]?.source)));
+    });
+}
+
+/** Absence is a service fact; wording about the user's access is allowed. */
+export function statesAbsence(answer: string, service: string): boolean {
+  const name = service.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b${name}\\b[^.!?;\\n]*\\b(?:unavailable|absent|not connected|not configured|inaccessible)\\b|` +
+    `\\b(?:unavailable|absent|not connected|not configured|inaccessible)\\b[^.!?;\\n]*\\b${name}\\b`, "i").test(answer);
+}
+
+/** An absent service supplies no quantities, whether written as digits or words. */
+export function noAbsentQuantities(answer: string, repository: string): boolean {
+  const text = answer.replace(new RegExp(repository.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), "");
+  return !/\d/.test(text) && !/\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|dozen|several|a\s+few|many)\b/i.test(text);
 }
 
 export function called(world: World, address: string, args: Record<string, unknown> = {}): boolean {
@@ -25,7 +84,7 @@ function correctnessChecks(spec: Correctness, world: World, trace: AgentTrace): 
   return [
     { id: "correct-destination", description: "used the requested connector, tool and target", pass: spec.destination(world, trace) },
     { id: "answer-evidence", description: "the final answer cites every required fake fact",
-      pass: spec.evidence.every(pattern => pattern.test(answer)), detail: answer.slice(0, 500) },
+      pass: spec.evidence.every(pattern => pattern.test(answer)) && (!spec.records || recordEvidence(answer, spec.records)), detail: answer.slice(0, 500) },
   ];
 }
 
@@ -47,12 +106,14 @@ export const EXISTING_CORRECTNESS: Record<string, Correctness> = {
   },
   "stale-close-and-summarize": {
     destination: w => ["WEB-103", "WEB-105", "WEB-107", "WEB-110"].every(id => called(w, "tracker.close_issue", { id })) && called(w, "chat.post_message", { channel: "eng" }),
-    evidence: [/tracker/i, /WEB-103/, /WEB-105/, /WEB-107/, /WEB-110/, /closed/i],
+    evidence: [/tracker/i, /closed/i],
+    records: ["WEB-103", "WEB-105", "WEB-107", "WEB-110"].map(id => ({ id })),
     referenceAnswer: "Tracker closed WEB-103, WEB-105, WEB-107 and WEB-110. Posted the closure summary to #eng.",
   },
   "auth-required-recovery": {
     destination: w => called(w, "billing.list_invoices", { customerId: "cus_N7" }) && called(w, "chat.post_message", { channel: "finance" }),
-    evidence: [/billing/i, /Northwind Traders/i, /5[,]?650\.50/, /in_1002/, /in_1003/, /in_1005/],
+    evidence: [/billing/i, /Northwind Traders/i, /5[,]?650\.50/],
+    records: ["in_1002", "in_1003", "in_1005"].map(id => ({ id })),
     referenceAnswer: "Billing Northwind Traders cus_N7 owes $5,650.50 on in_1002, in_1003 and in_1005. Posted to #finance.",
   },
   "truncated-read-paging": {
@@ -68,7 +129,8 @@ export const EXISTING_CORRECTNESS: Record<string, Correctness> = {
   "p2-build-page": {
     destination: w => called(w, "tracker.search_issues") && called(w, "analytics.get_account_metrics") &&
       called(w, "chat.post_message", { channel: "triage" }) && Boolean(w.artifacts?.artifacts.some(a => a.id === "open-bugs")),
-    evidence: [/tracker/i, /analytics/i, /\/artifacts\/open-bugs/, /7/, /3/, /2/],
+    evidence: [/tracker/i, /analytics/i, /\/artifacts\/open-bugs/],
+    records: [{ id: "web", count: "7" }, { id: "api", count: "3" }, { id: "mobile", count: "2" }],
     referenceAnswer: "Tracker open bugs: web 7, api 3, mobile 2. Analytics supplies MRR. Shared /artifacts/open-bugs in #triage.",
   },
   "p2-fix-chart-title": {

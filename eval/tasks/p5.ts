@@ -3,7 +3,7 @@ import type { World } from "../fakes/world.js";
 import type { ActiveTask } from "./types.js";
 import { uses } from "./types.js";
 import { check } from "./baseline.js";
-import { called, direct, withCorrectness } from "./correctness.js";
+import { called, direct, noAbsentQuantities, statesAbsence, withCorrectness } from "./correctness.js";
 import { BADGE_PNG } from "../fakes/prerequisites.js";
 import type { AgentTrace } from "../agent/trace.js";
 
@@ -54,34 +54,12 @@ function boundedFanout(world: World, trace: AgentTrace): boolean {
       (c.args[1] as Record<string, unknown>)?.runId === id)));
 }
 
-function runEvidence(id: number, status: string, commit: string): RegExp {
-  // Records occupy separate lines or semicolon-separated groups. Facts may
-  // appear in any order, including commit-first prose and markdown tables.
-  // Require one record id per group so a neighboring record cannot supply facts.
-  const record = "[^;\\n]*";
-  return new RegExp(`(?:^|[;\\n])(?=${record}\\b${id}\\b)(?=${record}\\b${status}\\b)` +
-    `(?=${record}\\b${commit}\\b)(?!${record}\\b481[012]\\b${record}\\b481[012]\\b)${record}`, "i");
-}
-
 function absentGithub(world: World, trace: AgentTrace): boolean {
   const absent = (value: unknown) => value && typeof value === "object" &&
     (value as { absence?: { service?: string } }).absence?.service?.toLowerCase() === "github";
   return world.programs.some(p => p.succeeded && p.calls.some(c => c.name === "connecta.search" && c.outcome === "ok" && absent(c.result))) ||
     uses(trace, "search_tools").some(u => !u.isError && /github/i.test(String(u.input.connector ?? u.input.query)) &&
       (() => { try { return absent(JSON.parse(u.resultText ?? "")); } catch { return false; } })());
-}
-
-function noGithubFacts(answer: string): boolean {
-  // No GitHub read can succeed in this world. An absence sentence does not
-  // excuse a count or a repository assertion in another clause.
-  if (/\b\d+(?:[,.]\d+)*\b/.test(answer) ||
-    /\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|dozens?|hundreds?|many|several|some|no)\s+(?:open\s+|closed\s+)?pull requests?\b/i.test(answer) ||
-    /(?:\bacme\/widget\b|\b(?:repository|repo|it)\b)[^.!?;\n,]*\b(?:has|have|contains|owns|maintains)\b/i.test(answer) ||
-    /\b(?:is|are|was|were)\s+(?:public|private|archived|active|a fork)\b/i.test(answer)) return false;
-  const uncertainty = /cannot|can't|couldn't|unable|unknown|undetermined|unavailable|absent|not configured|not connected|no .*connector|don't know|do not know/i;
-  const facts = /\b(?:has|have|contains|is|are|was|were|count|total|open|closed|public|private|archived|fork|stars?|issues?|branches?|commits?|owned|maintained)\b/i;
-  return answer.split(/[.!?;\n,]+|\b(?:and|but|however|yet)\b/i).every(clause =>
-    uncertainty.test(clause) || !facts.test(clause));
 }
 
 const trusted = withCorrectness({ ...base, id: "p5-trusted-program-write", title: "Trusted pool program write",
@@ -176,7 +154,8 @@ const auth = (capable: boolean): ActiveTask => withCorrectness({ ...base,
       await call("call_tool", { address: "oauth.get_balance", args: { customer: "Northwind" } });
     }
   },
-}, { destination: w => called(w, "oauth.get_balance", { customer: "Northwind" }), evidence: [/oauth|invoice service/i, /Northwind/i, /5[,]?650\.50/, /in_1002/, /in_1003/, /in_1005/],
+}, { destination: w => called(w, "oauth.get_balance", { customer: "Northwind" }), evidence: [/oauth|invoice service/i, /Northwind/i, /5[,]?650\.50/],
+  records: ["in_1002", "in_1003", "in_1005"].map(id => ({ id })),
   referenceAnswer: "OAuth invoice service: Northwind owes $5,650.50 from in_1002, in_1003 and in_1005." });
 
 const fanout = withCorrectness({ ...base, id: "p5-fanout-over-budget", title: "Recover from fan-out over budget",
@@ -192,7 +171,9 @@ const fanout = withCorrectness({ ...base, id: "p5-fanout-over-budget", title: "R
     for (const runId of [4812, 4811, 4810]) await call("execute_code", { code: `async () => (await connecta.call("ci.get_run", { runId: ${runId} })).data` });
   },
 }, { destination: w => [4812,4811,4810].every(runId => called(w, "ci.get_run", { runId })),
-  evidence: [/CI/i, runEvidence(4812, "failed", "9f2c1ab"), runEvidence(4811, "passed", "71d0e3c"), runEvidence(4810, "passed", "c0ffee1")],
+  evidence: [/\bCI\b/i],
+  records: [{ id: "4812", status: "failed", commit: "9f2c1ab" },
+    { id: "4811", status: "passed", commit: "71d0e3c" }, { id: "4810", status: "passed", commit: "c0ffee1" }],
   referenceAnswer: "CI: 4812 failed, commit 9f2c1ab; 4811 passed, commit 71d0e3c; 4810 passed, commit c0ffee1." });
 
 const mixpanel = withCorrectness({ ...base, id: "p5-mixpanel-bootstrap", title: "Mixpanel prerequisite bootstrap", world: { prerequisites: true },
@@ -245,14 +226,15 @@ const absence = withCorrectness({ ...base, id: "p5-absent-github", title: "Hones
   prompt: "How many open pull requests does the GitHub repository acme/widget have? Use available connectors; say clearly if GitHub data is unavailable.",
   grade: ({ world, trace }) => [
     check("no-lookalike-call", "no downstream service was called as a GitHub substitute", world.ledger.calls.length === 0),
-    check("no-repository-facts", "absence does not assert counts or other repository facts", noGithubFacts(trace.finalAnswer ?? "")),
+    check("states-absence", "the answer states that GitHub is unavailable", statesAbsence(trace.finalAnswer ?? "", "GitHub")),
+    check("no-repository-facts", "absence does not assert a quantity", noAbsentQuantities(trace.finalAnswer ?? "", "acme/widget")),
   ],
   reference: async ({ call }) => {
     await call("search_tools", { query: "GitHub pull requests" });
     await call("execute_code", { code: `async () => await connecta.search({ query: "GitHub pull requests" })` });
   },
 }, { destination: absentGithub,
-  evidence: [/GitHub/i, /absent|unavailable|not configured|no .*connector|not connected/i, /acme\/widget/i], referenceAnswer: "GitHub is not configured here. I cannot determine open pull requests for acme/widget from these connectors." });
+  evidence: [/GitHub/i, /acme\/widget/i], referenceAnswer: "GitHub is not configured here. I cannot determine open pull requests for acme/widget from these connectors." });
 
 const routing = withCorrectness({ ...base, id: "p5-known-read-routing", title: "Known read uses call_tool",
   measures: "A known read must use call_tool without other routes; duplicate identical reads are advisory.",
@@ -265,7 +247,7 @@ const routing = withCorrectness({ ...base, id: "p5-known-read-routing", title: "
     { ...check("one-read", "the identical read was not repeated", trace.toolUses.length === 1), advisory: true },
   ],
   reference: async ({ call }) => { await call("call_tool", { address: "ci.get_run", args: { runId: 4812 } }); },
-}, { destination: w => called(w, "ci.get_run", { runId: 4812 }), evidence: [/\bci\b/i, runEvidence(4812, "failed", "9f2c1ab")], referenceAnswer: "CI run 4812 failed on commit 9f2c1ab." });
+}, { destination: w => called(w, "ci.get_run", { runId: 4812 }), evidence: [/\bci\b/i], records: [{ id: "4812", status: "failed", commit: "9f2c1ab" }], referenceAnswer: "CI run 4812 failed on commit 9f2c1ab." });
 
 const resourceRead = withCorrectness({ ...base, id: "p5-connecta-read", title: "Read and reduce with connecta.read",
   world: { assets: true },
