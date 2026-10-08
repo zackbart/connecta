@@ -121,6 +121,9 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
     'goals = false',
     'hooks = false',
     'remote_plugin = false',
+    'plugins = false',
+    'skip_host_skill_discovery = true',
+    'daemon_auto_start = false',
     'shell_tool = false',
     'unified_exec = false',
     '[apps._default]',
@@ -291,6 +294,7 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
       const skills = skillResult.data[0].skills.map((s: any) => ({ name: String(s.name ?? "<unknown>"), enabled: s.enabled }));
       const plugins = pluginResult.marketplaces.flatMap((m: any) => m.plugins.map((p: any) =>
         ({ name: String(p.name ?? "<unknown>"), id: String(p.id ?? "<unknown>"), enabled: p.enabled })));
+      push({ type: "eval_inventory", skillInventory: skills, pluginInventory: plugins });
       const unexpected = { skills: skills.filter((s: any) => s.enabled !== false),
         plugins: plugins.filter((p: any) => p.enabled !== false) };
       if (unexpected.skills.length || unexpected.plugins.length) {

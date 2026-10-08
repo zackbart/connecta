@@ -22,4 +22,17 @@ describe("eval final-answer evidence", () => {
     const trace = parseTrace([{ type: "codex_usage", total: { inputTokens: 100, cachedInputTokens: 40, outputTokens: 10 } }], [], []);
     expect(trace.tokens).toEqual({ input: 60, cacheRead: 40, output: 10, cacheCreation: 0 });
   });
+  it("normalizes the native Claude image shape from the first baseline", () => {
+    const trace = parseTrace([
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "badge", name: "mcp__connecta__execute_code", input: {} }] } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "badge", content: [
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "png-data" } },
+        { type: "text", text: "Launch badge: approved, revision 7" },
+      ] }] } },
+    ], [0], ["Emit badge"]);
+    expect(trace.toolUses[0]?.resultBlocks).toEqual([
+      { type: "image", mimeType: "image/png", data: "png-data" },
+      { type: "text", text: "Launch badge: approved, revision 7" },
+    ]);
+  });
 });

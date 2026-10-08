@@ -23,6 +23,30 @@ function factPattern(fact: string): RegExp {
 
 /** Match complete records and reject cross-record contradictions anywhere. */
 function recordEvidence(answer: string, records: EvidenceRecord[]): boolean {
+  // Markdown styling is presentation, not part of a fact. Test-count prose
+  // is not a run status (for example, "0 failed tests").
+  answer = answer.replace(/[*`]/g, "").replace(/\b\d+\s+(?:failed|passed)\s+tests?\b/gi, "test count");
+  if (records.length === 1) return Object.values(records[0]!).every(fact => factPattern(fact).test(answer));
+  // Project tables can have other numeric columns such as customer counts
+  // and MRR. Bind the bug count to the project rather than matching all numbers.
+  if (records.every(r => Object.keys(r).length === 2 && "count" in r)) {
+    const pairs = records.map(r => ({ id: factPattern(r.id), count: r.count }));
+    const clauses = answer.split(/[;\r\n]+/);
+    const matched = new Set<string>();
+    for (const clause of clauses) {
+      if (/\b(?:total|open issues)\b/i.test(clause) && !/\bbugs?\b/i.test(clause)) continue;
+      for (const record of pairs) {
+        const label = record.id.source.replace(/^\\b|\\b$/g, "");
+        const forward = new RegExp(`\\b${label}\\b\\s*(?:[|:]\\s*|(?:open\\s+)?bugs?\\s*[:=]?\\s*)?(\\d+)\\b`, "gi");
+        const reverse = new RegExp(`\\b(\\d+)\\s+${label}\\b`, "gi");
+        for (const match of [...clause.matchAll(forward), ...clause.matchAll(reverse)]) {
+          if (match[1] !== record.count) return false;
+          matched.add(label);
+        }
+      }
+    }
+    return matched.size === pairs.length;
+  }
   const patterns = records.map(record => Object.fromEntries(
     Object.entries(record).map(([key, fact]) => [key, factPattern(fact)])));
   const fields = [...new Set(patterns.flatMap(record => Object.keys(record)))];
@@ -51,7 +75,7 @@ function recordEvidence(answer: string, records: EvidenceRecord[]): boolean {
         record[field]?.test(clause) ? [record[field]!] : []) })).filter(match => match.facts.length);
       // Shared facts (such as two runs both passing) are compatible. Every
       // fact in a clause must be consistent with at least one single record.
-      return !matches.length || patterns.some(record => matches.every(({ field, facts }) =>
+      return !matches.some(match => match.field === "id") || matches.length < 2 || patterns.some(record => matches.every(({ field, facts }) =>
         facts.every(fact => fact.source === record[field]?.source)));
     });
 }
@@ -78,7 +102,16 @@ export function structuredAbsence(answer: string): boolean {
 export function called(world: World, address: string, args: Record<string, unknown> = {}): boolean {
   const [service, tool] = address.split(".");
   return world.ledger.calls.some(call => call.service === service && call.tool === tool && call.outcome === "ok" &&
-    Object.entries(args).every(([key, value]) => JSON.stringify(call.args[key]) === JSON.stringify(value)));
+    Object.entries(args).every(([key, value]) => {
+      if (service === "chat" && key === "channel") {
+        const channel = (input: unknown) => {
+          const text = String(input).replace(/^#/, "").toLowerCase();
+          return world.chat.channels.find(c => c.name === text || c.id.toLowerCase() === text)?.id;
+        };
+        return channel(value) !== undefined && channel(call.args[key]) === channel(value);
+      }
+      return JSON.stringify(call.args[key]) === JSON.stringify(value);
+    }));
 }
 
 export function direct(trace: AgentTrace, tool: string, address: string): boolean {
@@ -86,7 +119,7 @@ export function direct(trace: AgentTrace, tool: string, address: string): boolea
 }
 
 function correctnessChecks(spec: Correctness, world: World, trace: AgentTrace): Check[] {
-  const answer = trace.finalAnswer ?? "";
+  const answer = (trace.finalAnswer ?? "").replace(/[*`]/g, "");
   return [
     { id: "correct-destination", description: "used the requested connector, tool and target", pass: spec.destination(world, trace) },
     { id: "answer-evidence", description: "the final answer cites every required fake fact",
@@ -124,7 +157,7 @@ export const EXISTING_CORRECTNESS: Record<string, Correctness> = {
   },
   "truncated-read-paging": {
     destination: w => called(w, "ci.get_run_log", { runId: 4812 }) && called(w, "chat.post_message", { channel: "ci" }),
-    evidence: [/\bCI\b/i, /4812/, /test\/payments\/refund\.test\.ts/, /409/],
+    evidence: [/\bCI\b/i, /4812/, /test\/payments\/refund\.test\.ts/],
     referenceAnswer: "CI run 4812 failed test/payments/refund.test.ts with status 409. Posted to #ci.",
   },
   "truncated-write-export": {

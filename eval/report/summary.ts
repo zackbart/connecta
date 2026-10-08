@@ -28,6 +28,7 @@ export interface AgentResultFile {
   trials: TrialResult[];
   skipped?: { id: string; flag: string; reason: string }[];
   stopped?: string;
+  regrade?: { source: string; meta: RunMeta };
 }
 
 export interface PerfResultFile {
@@ -82,6 +83,7 @@ export interface CellSummary {
   passed: number;
   failed: number;
   errored: number;
+  skipped: number;
   /** Passed over graded (errors excluded). */
   passRate: number | undefined;
   medianWallMs: number | undefined;
@@ -116,7 +118,7 @@ export function summarize(trials: TrialResult[]): CellSummary[] {
   }
   return [...cells.entries()].map(([key, group]) => {
     const [task, model] = key.split("\u0000") as [string, string];
-    const graded = group.filter((trial) => trial.status !== "error");
+    const graded = group.filter((trial) => trial.status !== "error" && trial.status !== "skipped");
     const metaTools: Record<string, number> = {};
     for (const trial of graded) {
       for (const [tool, count] of Object.entries(trial.metrics.metaTools)) {
@@ -140,6 +142,7 @@ export function summarize(trials: TrialResult[]): CellSummary[] {
       passed: group.filter((trial) => trial.status === "pass").length,
       failed: group.filter((trial) => trial.status === "fail").length,
       errored: group.filter((trial) => trial.status === "error").length,
+      skipped: group.filter(trial => trial.status === "skipped").length,
       passRate: graded.length ? graded.filter((trial) => trial.status === "pass").length / graded.length : undefined,
       medianWallMs: median(graded.map((trial) => trial.metrics.wallMs)),
       medianCostUsd: median(graded.flatMap((trial) => (trial.metrics.costUsd === undefined ? [] : [trial.metrics.costUsd]))),

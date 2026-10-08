@@ -25,6 +25,8 @@ export interface Check {
   detail?: string;
   /** Recorded and reported, but never decides pass/fail. */
   advisory?: boolean;
+  /** A legacy saved grade retained because its inputs were not saved. */
+  retained?: boolean;
 }
 
 interface TurnContext {
@@ -68,6 +70,7 @@ export interface ActiveTask {
   introducedIn: "baseline" | "P2" | "P3" | "P5";
   /** Omitted tasks stay visible in reports. Explicit opt-in is needed to run them. */
   skip?: { flag: string; reason: string };
+  runnerSkips?: Partial<Record<"claude" | "codex", { code: "runner-limitation"; reason: string }>>;
   host?: { urlElicitation: "capable" | "incapable" };
   /** What behaviour the task isolates, in one sentence. */
   measures: string;

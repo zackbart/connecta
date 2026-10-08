@@ -97,8 +97,8 @@ await save();
 console.error(`[eval] results: ${out}`);
 if (stopped) console.error(`[eval] stopped early: ${stopped}`);
 for (const cell of summarize(trials)) {
-  console.error(`[eval] ${cell.task.padEnd(28)} ${cell.model.padEnd(28)} ${cell.passed}/${cell.trials - cell.errored} pass` +
-    `${cell.errored ? ` (${cell.errored} error)` : ""}`);
+  console.error(`[eval] ${cell.task.padEnd(28)} ${cell.model.padEnd(28)} ${cell.passed}/${cell.trials - cell.errored - cell.skipped} pass` +
+    `${cell.errored ? ` (${cell.errored} error)` : ""}${cell.skipped ? ` (${cell.skipped} N/A)` : ""}`);
 }
 const reportPath = args.get("report");
 if (reportPath) {

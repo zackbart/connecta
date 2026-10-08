@@ -225,3 +225,69 @@ a general reliability guarantee. They did not establish failed tasks caused by
 unawaited host calls. Decision for #598: preserve normal-result semantics and
 the existing cancellation of outstanding work; reconsider a warning when a
 representative failed task shows that it would help. No warning was added.
+
+## First 0.29 baseline triage and offline regrading
+
+[The baseline notes](baselines/notes-0.29.md) classify the frozen `909b4937`
+trials. They are a two-repeat diagnostic, with provisional grades wherever
+inputs were not saved. The original JSON files stay unchanged.
+
+```sh
+npm run eval:regrade -- --in eval/results/sonnet-5-5.json --out eval/results/sonnet-5-5-regraded.json
+```
+
+Regrading starts no CLI, model, HTTP server, or saved program. It preserves the
+original run metadata and adds the grading commit and source filename under
+`regrade`. It writes JSON and an adjacent HTML report. New trials save full
+`toolUses`, final answers, result blocks, ledger arguments, guest-call
+observations, fake state, OAuth counters and artifact snapshots in `saved`.
+The bounded transcript and ledger remain display fields.
+
+Old files lack those snapshots and observations. Regrading checks only facts
+available in their ledger and transcript, plus the full final answer. Successful
+fake chat calls establish their posted channel/text without replaying a write.
+A clipped argument or result cannot establish a missing fact. Unsupported
+checks retain their original grade with `retained: true`; each trial lists
+`regrade.unavailable`, and the report marks the score as partial. These are
+provisional mixed scores, not fully regraded baselines. Errors need new trials.
+The notes list the tasks needing complete live reruns. No state or concurrency
+observation is inferred from program source text.
+
+Claude Code 2.1.292 cannot establish rich MCP delivery in the current stream
+adapter: it converts images to native source blocks and drops text when a
+structured result is present. Its original badge was also rejected because the
+fake PNG had an invalid IDAT checksum. `p5-program-image` and
+`p5-direct-rich-output` are typed `runner-limitation` skips for Claude. The
+capable-auth task is also N/A for Claude: saved trials recovered through
+`authorize_connector` without exercising the simulated URL/verified `/connect`
+path. This does not prove native URL elicitation is unsupported. Codex remains
+eligible for all tasks. Skips record their reason, appear as N/A in reports,
+and count as neither passes nor failures. Revalidate and remove these skips
+when the host adapter can observe the required behavior.
+
+The fake badge is now a valid 32x32 RGB PNG, with checksum and decompression
+controls in `eval:selftest`. Its old bytes remain accepted when grading saved
+historical delivery, so a fixture correction does not rewrite a past emission.
+Codex rich-output trials should be rerun against the corrected fixture.
+
+Codex's pre-turn isolation guard rejected enabled external Google Drive skills
+in two trials. The exact leak was not reproducible in inventory-only probes.
+The runner now disables `plugins` and `daemon_auto_start` and enables
+`skip_host_skill_discovery`, in addition to the
+existing remote-plugin disables. Both inventory checks remain fail-closed,
+complete sanitized inventories survive failures, and an isolation failure
+stops the batch. No inventory is silently accepted and no failed trial is
+retried with weaker isolation.
+
+Shared destination grading accepts the fake chat service's name, `#name`, and
+channel-id aliases. Artifact creation allows the chosen slug. Weekly-refresh
+destination grading accepts a successful direct or observed trusted-program
+configuration and independently checks bug counts. Evidence ignores Markdown
+styling, accepts the source connector id and prose access-field wording, keeps
+run-id lists and test counts out of record-conflict checks, and binds project
+counts independently of other table columns. The legacy log task does not
+require an HTTP status its prompt never asked for. An unavailable service needs
+no invented repository record id. Actual caught program refusals pass; direct
+approval refusals still fail the program task. The self-test includes exact
+saved answers and channel aliases from 37 failed baseline trial shapes, with
+wrong-destination and missing-evidence controls.

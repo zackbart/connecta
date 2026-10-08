@@ -3,7 +3,9 @@ import { z } from "zod";
 import type { FakeTool } from "./service.js";
 
 const read = { readOnlyHint: true, idempotentHint: true };
-export const BADGE_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS1sAAAAASUVORK5CYII=";
+// Valid 32x32 RGB PNG. The first baseline used a 1x1 image with a bad IDAT CRC.
+export const LEGACY_BADGE_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS1sAAAAASUVORK5CYII=";
+export const BADGE_PNG = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKklEQVR4nGNQKXChKWIYtWDUglELRi0YtWDUglELRi0YtWDUglELhooFAL8KYC6q5AcJAAAAAElFTkSuQmCC";
 
 export const PREREQUISITE_GUIDES = {
   mixpanel: "Start with List-Organizations, then Get-Projects with its organization_id. Resolve the project and workspace, read Get-Business-Context, and Get-Query-Schema before Run-Query. Never guess ids.",
