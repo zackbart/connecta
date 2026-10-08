@@ -21,6 +21,7 @@ function executorBundles() {
       return buildSync({
         stdin: { contents: source, resolveDir: fileURLToPath(new URL(".", import.meta.url)) },
         bundle: true, format: "esm", platform: "neutral", minify: true,
+        conditions: ["workerd", "browser"],
         external: ["cloudflare:workers"], write: false,
       }).outputFiles[0]?.text;
     },
