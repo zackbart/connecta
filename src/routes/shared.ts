@@ -1,3 +1,4 @@
+import { isMachineCredential } from "../inbound-credential.js";
 import type { ActivityActor } from "../activity.js";
 import type { DeferredWork } from "../connector-scope.js";
 import { htmlSecurityHeaders } from "../html-security.js";
@@ -132,7 +133,12 @@ function recognizedProvider(request: Request, auth: readonly InboundAuth[], runt
   for (const provider of auth) {
     if (!provider.recognizesCredential) continue;
     const recognized = provider.recognizesCredential(request, runtimeContext);
-    if (typeof recognized !== "boolean") throw new Error("invalid credential recognition verdict");
+    if (typeof recognized !== "boolean") {
+      // A misimplemented hook may return a rejected Promise. Refuse without
+      // letting its arbitrary rejection reach an unhandled-rejection sink.
+      void Promise.resolve(recognized).catch(() => {});
+      throw new Error("invalid credential recognition verdict");
+    }
     if (recognized) return provider;
   }
   return undefined;
@@ -168,7 +174,11 @@ export async function authorize(
     }
   | { ok: false; response: Response }
 > {
-  if (auth.length === 0 && !interactiveOnly) {
+  const machineCredential = isMachineCredential(request);
+  if (interactiveOnly && machineCredential) {
+    return { ok: false, response: privateJson({ error: "authenticated user required" }, { status: 403 }) };
+  }
+  if (auth.length === 0 && !interactiveOnly && !machineCredential) {
     const actor = { kind: "anonymous" } as const;
     const identity: AuthenticatedIdentity = { actor, interactive: false };
     let access: ConnectorAccess;
@@ -187,9 +197,16 @@ export async function authorize(
   }
   let recognized: InboundAuth | undefined;
   try {
-    recognized = recognizedProvider(request, auth, runtimeContext);
+    recognized = recognizedProvider(request, machineCredential
+      ? auth.filter(provider => provider.kind === "access_token")
+      : auth, runtimeContext);
   } catch {
     return { ok: false, response: privateJson({ error: "credential recognition failed" }, { status: 403 }) };
+  }
+  if (machineCredential && !recognized) {
+    return { ok: false, response: await providerChallenge(privateJson({ error: "unauthorized" }, {
+      status: 401, headers: { "WWW-Authenticate": "Bearer" },
+    }), request, baseUrl, auth) };
   }
   if (interactiveOnly && recognized && !recognized.interactiveOperator) {
     return { ok: false, response: privateJson({ error: "authenticated user required" }, { status: 403 }) };

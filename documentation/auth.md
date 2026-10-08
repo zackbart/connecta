@@ -16,6 +16,10 @@ Custom providers can omit recognition when they supply no distinct credential
 syntax; providers with credentials should implement it. A recognition throw
 refuses the request without logging the thrown text.
 
+The `cta_` syntax is reserved even without the optional token verifier: it
+refuses rather than becoming an ambient human or an open anonymous request.
+Async recognition hooks fail at construction; unexpected rejected promises
+are consumed before refusal so their text cannot reach runtime output.
 Human routes reject recognized machine credentials without consulting token
 storage, then ask only interactive providers. Replace custom `final` and
 `finalRefusals` handling with recognition; handshake redirects and admission

@@ -1,3 +1,4 @@
+import { isMachineCredential } from "../inbound-credential.js";
 import type { AuthResult, InboundAuth } from "../types.js";
 import { validIdentityReference } from "../identity.js";
 
@@ -29,11 +30,12 @@ export function cloudflareAccessAuth(): InboundAuth {
   return {
     kind: "cloudflare-access",
     interactiveOperator: true,
-    recognizesCredential: (_request, context) => Boolean(context?.access),
+    recognizesCredential: (request, context) => !isMachineCredential(request) && Boolean(context?.access),
     activityActorNamespace: "cloudflare-access",
     uiAuth: { kind: "cloudflare-access" },
 
-    async authorize(_request, _baseUrl, runtimeContext): Promise<AuthResult> {
+    async authorize(request, _baseUrl, runtimeContext): Promise<AuthResult> {
+      if (isMachineCredential(request)) return unauthorized();
       const access = runtimeContext?.access;
       if (!access || typeof access.aud !== "string" || !/^[\x21-\x7e]{1,256}$/.test(access.aud)) return unauthorized();
 

@@ -347,6 +347,9 @@ const connectaConfig = {
             `${Array.isArray(value) ? `${path}[${index}]` : path} must be an inbound auth adapter.`,
           );
         }
+        if (provider.recognizesCredential !== undefined && Object.prototype.toString.call(provider.recognizesCredential) === "[object AsyncFunction]") {
+          throw new ConfigError(`${Array.isArray(value) ? `${path}[${index}]` : path}.recognizesCredential must be synchronous.`);
+        }
         if ("finalRefusals" in provider) {
           throw new ConfigError(`${Array.isArray(value) ? `${path}[${index}]` : path}.finalRefusals is retired; use synchronous recognizesCredential.`);
         }

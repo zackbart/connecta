@@ -1,3 +1,4 @@
+import { isMachineCredential } from "../inbound-credential.js";
 // Clerk as the OAuth 2.1 authorization server; connecta is the resource server.
 // Single tenant, no tenant-tag requirement, optional allowedDomains/gate() with
 // ~60s identity caching.
@@ -579,7 +580,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     interactiveOperator: true,
     recognizesCredential: request => {
       const authorization = request.headers.get("authorization");
-      if (authorization) return !/^Bearer\s+cta_/iu.test(authorization);
+      if (authorization) return !isMachineCredential(request);
       return /(?:^|;\s*)__session(?:_[^=;]+)?=/.test(request.headers.get("cookie") ?? "") ||
         new URL(request.url).searchParams.has("__clerk_synced");
     },

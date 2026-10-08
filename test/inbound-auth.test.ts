@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { clerkAuth } from "../src/auth/clerk.js";
 import { accessTokens } from "../src/access-tokens.js";
 import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
+import { api } from "../src/connectors/api.js";
+import { encryptedCredentialVault } from "../src/credentials.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { authorize, authorizeUiIdentity } from "../src/routes/shared.js";
 import type { InboundAuth } from "../src/types.js";
@@ -31,6 +33,28 @@ describe("inbound credential ownership", () => {
     const result = await authorize(request("/mcp", "cta_bad"), BASE, [machine, cloudflareAccessAuth()], context);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.response.status).toBe(401);
+  });
+
+  it("INV-4: reserves cta_ credentials without the optional token verifier, even on open deployments", async () => {
+    for (const providers of [[], [cloudflareAccessAuth()], [clerk(), cloudflareAccessAuth()]]) {
+      const result = await authorize(request("/mcp", "cta_bad"), BASE, providers, context);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.response.status).toBe(401);
+    }
+    const storage = memoryStorage();
+    const app = createTestConnecta({ connectors: [api("secret", { credential: { label: "API token" }, tools: [] })],
+      auth: cloudflareAccessAuth(), storage, vault: encryptedCredentialVault(storage, btoa("x".repeat(32))), publicUrl: BASE, logger: "silent" });
+    try {
+      const result = await app.fetch(new Request(`${BASE}/ui/credentials/secret`, {
+        method: "PUT", headers: { Authorization: "Bearer cta_bad", Origin: BASE, "Content-Type": "application/json" },
+        body: JSON.stringify({ value: "should-never-save" }),
+      }), undefined, context);
+      expect(result.status).toBe(403);
+      expect(await storage.list("")).toEqual([]);
+      const human = await authorizeUiIdentity(request("/connect/service", "cta_bad"), BASE, [cloudflareAccessAuth()], "connect", context);
+      expect(human.ok).toBe(false);
+      if (!human.ok) expect(human.response.status).toBe(403);
+    } finally { await app.close(); }
   });
 
   it("INV-4: rejects recognized machine credentials on human routes without storage or human verification", async () => {
@@ -70,7 +94,21 @@ describe("inbound credential ownership", () => {
     for (const key of ["recognizesCredential", "handleMetadata", "challenge"]) {
       expect(() => createTestConnecta({ connectors: [], auth: { ...auth, [key]: "bad" } as never })).toThrow("inbound auth adapter");
     }
+    expect(() => createTestConnecta({ connectors: [], auth: { ...auth, recognizesCredential: async () => true } as never })).toThrow("must be synchronous");
     expect(() => createTestConnecta({ connectors: [], auth: { ...auth, finalRefusals: true } as never })).toThrow("finalRefusals is retired");
+  });
+
+  it("INV-6: consumes rejected recognition promises without exposing their text", async () => {
+    const warn = vi.spyOn(console, "warn");
+    const error = vi.spyOn(console, "error");
+    const result = await authorize(request(), BASE, [{ kind: "broken",
+      recognizesCredential: (() => Promise.reject(new Error("SECRET_TOKEN"))) as never,
+      authorize: () => ({ ok: true, userId: "wrong" }) }]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.response.status).toBe(403);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
   });
 
   it("INV-6: fails closed without logging thrown credential-recognition text", async () => {
