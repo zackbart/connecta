@@ -65,8 +65,8 @@ describe("built-in factory options", () => {
       'planningCenter("pco").pageSize'],
     ["a provider's other surface", () => cloudflare("cf", loose({ purpose: "Ops", surface: "mcp", accountId: "a" })),
       'cloudflare("cf").accountId'],
-    ["a provider surface default", () => notion("wiki", loose({ purpose: "Docs", callAdmission: { rules: [] } })),
-      'notion("wiki").callAdmission'],
+    ["a provider surface default", () => notion("wiki", loose({ purpose: "Docs", defaultPageSize: 5 })),
+      'notion("wiki").defaultPageSize'],
     ["a provider's narrowed auth", () => stripe("billing", loose({ purpose: "Revenue", auth: { type: "oauth", scope: "x" } })),
       'stripe("billing").auth.scope'],
     ["a Workspace service account", () => docs("docs", loose({

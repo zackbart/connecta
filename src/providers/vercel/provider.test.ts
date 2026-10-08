@@ -101,7 +101,7 @@ function context(token: string | null = "vercel-token"): ConnectorContext {
 
 function connection(overrides: Record<string, unknown> = {}): Connector {
   return vercel("hosting", {
-    purpose: "Production web applications",
+    surface: "api", purpose: "Production web applications",
     teamId: "team_default",
     ...overrides,
   } as Parameters<typeof vercel>[1]);
@@ -133,7 +133,7 @@ describe("vercel() construction", () => {
       "a non-empty purpose",
     );
     expect(() =>
-      vercel("hosting", { purpose: "apps", defaultPageSize: 101 }),
+      vercel("hosting", { surface: "api", purpose: "apps", defaultPageSize: 101 }),
     ).toThrow("between 1 and 100");
   });
 
@@ -143,7 +143,7 @@ describe("vercel() construction", () => {
     expect(connector.kind).toBe("api");
     expect(connector.title).toBe("Vercel");
     expect(connector.credential?.label).toBe("Vercel access token");
-    expect(tools).toHaveLength(21);
+    expect(tools).toHaveLength(10);
     expect(tools.every((tool) => tool.inputSchema && tool.outputSchema)).toBe(
       true,
     );
@@ -211,16 +211,16 @@ describe("vercel() MCP surface", () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-  it("classifies every tool in Vercel's published MCP reference", () => {
+  it("classifies the reviewed hosted contract names", () => {
     const counts = { "read-only": 0, additive: 0, destructive: 0 };
     for (const { verdict } of VERCEL_MCP_VETTED_CATALOG.tools.values()) {
       counts[verdict] += 1;
     }
-    expect(VERCEL_MCP_VETTED_CATALOG.tools.size).toBe(32);
+    expect(VERCEL_MCP_VETTED_CATALOG.tools.size).toBe(39);
     expect(counts).toEqual({
-      "read-only": 20,
+      "read-only": 22,
       additive: 2,
-      destructive: 10,
+      destructive: 15,
     });
     expect(
       VERCEL_MCP_VETTED_CATALOG.tools.get("get_purchase_quote")?.verdict,
@@ -247,363 +247,8 @@ describe("vercel() MCP surface", () => {
   });
 });
 
-describe("Vercel reads and projections", () => {
-  it("lists teams with opaque cursor pagination", async () => {
-    queue({
-      body: {
-        teams: [
-          {
-            id: "team_1",
-            slug: "acme",
-            name: "Acme",
-            createdAt: 10,
-            membership: { role: "OWNER", confirmed: true },
-            billing: { plan: "enterprise" },
-          },
-        ],
-        pagination: { next: 12345 },
-      },
-    });
-    const result = await call(connection(), "list_teams", {
-      limit: 5,
-      cursor: "67890",
-    });
-    expect(url().pathname).toBe("/v2/teams");
-    expect(url().searchParams.get("until")).toBe("67890");
-    expect(result).toEqual({
-      teams: [
-        {
-          id: "team_1",
-          slug: "acme",
-          name: "Acme",
-          createdAt: 10,
-          membership: "OWNER",
-        },
-      ],
-      page: { hasMore: true, nextCursor: "12345" },
-    });
-  });
-
-  it("searches projects under the default team and removes settings noise", async () => {
-    queue({
-      body: {
-        projects: [
-          {
-            id: "prj_1",
-            name: "site",
-            framework: "nextjs",
-            accountId: "team_default",
-            createdAt: 1,
-            updatedAt: 2,
-            link: {
-              type: "github",
-              org: "acme",
-              repo: "site",
-              repoId: 99,
-              productionBranch: "main",
-              gitCredentialId: "secret-noise",
-            },
-            targets: {
-              production: {
-                id: "dpl_prod",
-                url: "site.example",
-                readyState: "READY",
-                createdAt: 3,
-                alias: ["large", "array"],
-              },
-            },
-            security: { passwordProtection: "noise" },
-          },
-        ],
-        pagination: { next: "next-project" },
-      },
-    });
-    const result = await call(connection(), "list_projects", {
-      search: "site",
-      cursor: "current-project",
-    });
-    expect(url().pathname).toBe("/v10/projects");
-    expect(url().searchParams.get("teamId")).toBe("team_default");
-    expect(url().searchParams.get("search")).toBe("site");
-    expect(url().searchParams.get("from")).toBe("current-project");
-    expect(calls[0]?.headers["authorization"]).toBe("Bearer vercel-token");
-    expect(result.projects[0]).toEqual({
-      id: "prj_1",
-      name: "site",
-      accountId: "team_default",
-      framework: "nextjs",
-      createdAt: 1,
-      updatedAt: 2,
-      paused: false,
-      productionBranch: "main",
-      repository: {
-        type: "github",
-        org: "acme",
-        repo: "site",
-        repoId: 99,
-      },
-      productionDeployment: {
-        id: "dpl_prod",
-        url: "site.example",
-        state: "READY",
-        createdAt: 3,
-      },
-    });
-    expect(result.page).toEqual({
-      hasMore: true,
-      nextCursor: "next-project",
-    });
-  });
-
-  it("keeps raw list items inside the declared pagination envelope", async () => {
-    queue({
-      body: {
-        projects: [
-          { id: "prj_raw", name: "raw", security: { extra: true } },
-        ],
-        pagination: { next: "next-raw" },
-      },
-    });
-    const result = await call(connection(), "list_projects", { raw: true });
-    expect(result).toEqual({
-      projects: [
-        { id: "prj_raw", name: "raw", security: { extra: true } },
-      ],
-      page: { hasMore: true, nextCursor: "next-raw" },
-    });
-  });
-
-  it("overrides the default team and returns raw project responses on request", async () => {
-    queue({ body: { id: "prj_raw", name: "raw", security: { extra: true } } });
-    const result = await call(connection(), "get_project", {
-      projectId: "raw",
-      teamId: "team_other",
-      raw: true,
-    });
-    expect(url().pathname).toBe("/v9/projects/raw");
-    expect(url().searchParams.get("teamId")).toBe("team_other");
-    expect(result.security).toEqual({ extra: true });
-  });
-
-  it("lists deployments with stable Git projection and timestamp cursor", async () => {
-    queue({
-      body: {
-        deployments: [
-          {
-            uid: "dpl_1",
-            name: "site",
-            url: "site-abc.vercel.app",
-            readyState: "READY",
-            target: "production",
-            created: 100,
-            creator: { uid: "usr_1", username: "zack", extra: "drop" },
-            meta: {
-              githubCommitRef: "main",
-              githubCommitSha: "abc123",
-              githubCommitMessage: "Ship",
-              githubRepoVisibility: "private",
-            },
-          },
-        ],
-        pagination: { next: 99 },
-      },
-    });
-    const result = await call(connection(), "list_deployments", {
-      projectId: "prj_1",
-      state: "READY",
-      cursor: "120",
-    });
-    expect(url().pathname).toBe("/v7/deployments");
-    expect(url().searchParams.get("until")).toBe("120");
-    expect(result.deployments[0]).toMatchObject({
-      id: "dpl_1",
-      state: "READY",
-      creator: { id: "usr_1", username: "zack" },
-      git: { branch: "main", sha: "abc123", message: "Ship" },
-    });
-    expect(result.page.nextCursor).toBe("99");
-  });
-
-  it("gets finite build events and never enables follow mode", async () => {
-    queue({
-      body: [
-        {
-          type: "stdout",
-          created: 100,
-          payload: { text: "Build complete", deploymentId: "dpl_1" },
-        },
-      ],
-    });
-    const result = await call(connection(), "get_build_logs", {
-      deploymentId: "dpl_1",
-      direction: "backward",
-      limit: 10,
-    });
-    expect(url().pathname).toBe("/v3/deployments/dpl_1/events");
-    expect(url().searchParams.get("follow")).toBe("0");
-    expect(url().searchParams.get("builds")).toBe("1");
-    expect(result.events[0]).toEqual({
-      type: "stdout",
-      createdAt: 100,
-      message: "Build complete",
-      payload: { text: "Build complete", deploymentId: "dpl_1" },
-    });
-  });
-
-  it("wraps raw build events in the declared output envelope", async () => {
-    queue({
-      body: [
-        { type: "stdout", created: 100, payload: { text: "raw" }, extra: true },
-      ],
-    });
-    const result = await call(connection(), "get_build_logs", {
-      deploymentId: "dpl_1",
-      raw: true,
-    });
-    expect(result).toEqual({
-      events: [
-        { type: "stdout", created: 100, payload: { text: "raw" }, extra: true },
-      ],
-    });
-  });
-
-  it("accepts the expanded build-event variants without inventing a schema", async () => {
-    queue({
-      body: [
-        {
-          type: "stdout",
-          created: 100,
-          payload: {
-            text: "Building",
-            deploymentId: "dpl_1",
-            info: { type: "build", name: "web", serviceName: "frontend" },
-          },
-        },
-        {
-          type: "alias-assigned",
-          date: 101,
-          deploymentId: "dpl_1",
-          alias: ["app.example.com"],
-          aliasError: null,
-          aliasWarning: null,
-        },
-        {},
-      ],
-    });
-    const result = await call(connection(), "get_build_logs", {
-      deploymentId: "dpl_1",
-    });
-    expect(result.events).toEqual([
-      {
-        type: "stdout",
-        createdAt: 100,
-        message: "Building",
-        payload: {
-          text: "Building",
-          deploymentId: "dpl_1",
-          info: { type: "build", name: "web", serviceName: "frontend" },
-        },
-      },
-      { type: "alias-assigned", createdAt: 101 },
-      { type: "unknown" },
-    ]);
-  });
-
-  it("parses runtime stream JSON under either content type and caps rows", async () => {
-    queue({
-      text:
-        '{"level":"info","message":"ok","timestampInMs":1,"source":"serverless"}\n' +
-        '{"level":"error","message":"bad","timestampInMs":2,"source":"edge-function"}\n',
-      headers: { "content-type": "application/json" },
-    });
-    const result = await call(connection(), "get_runtime_logs", {
-      projectId: "prj_1",
-      deploymentId: "dpl_1",
-      limit: 1,
-    });
-    expect(url().pathname).toBe(
-      "/v1/projects/prj_1/deployments/dpl_1/runtime-logs",
-    );
-    expect(calls[0]?.headers["accept"]).toBe("application/stream+json");
-    expect(result.logs).toEqual([
-      { level: "info", message: "ok", timestampInMs: 1, source: "serverless" },
-    ]);
-  });
-});
 
 describe("Vercel domains and environment variables", () => {
-  it("projects domain verification state and cursor", async () => {
-    queue({
-      body: {
-        domains: [
-          {
-            name: "app.example.com",
-            apexName: "example.com",
-            projectId: "prj_1",
-            verified: false,
-            verification: [
-              {
-                type: "TXT",
-                domain: "_vercel.example.com",
-                value: "challenge",
-                reason: "pending",
-              },
-            ],
-          },
-        ],
-        pagination: { next: 7 },
-      },
-    });
-    const result = await call(connection(), "list_project_domains", {
-      projectId: "prj_1",
-      verified: false,
-    });
-    expect(url().searchParams.get("verified")).toBe("false");
-    expect(result.domains[0]).toMatchObject({
-      name: "app.example.com",
-      verified: false,
-      verification: [{ type: "TXT", value: "challenge" }],
-    });
-    expect(result.page.hasMore).toBe(true);
-  });
-
-  it("builds domain add, verify, and removal requests", async () => {
-    queue(
-      { body: { name: "preview.example.com", projectId: "prj_1", verified: true } },
-      { body: { name: "preview.example.com", projectId: "prj_1", verified: true } },
-      { body: {} },
-    );
-    const connector = connection();
-    await call(connector, "add_project_domain", {
-      projectId: "prj_1",
-      domain: "preview.example.com",
-      gitBranch: "feature",
-    });
-    await call(connector, "verify_project_domain", {
-      projectId: "prj_1",
-      domain: "preview.example.com",
-    });
-    const removed = await call(connector, "remove_project_domain", {
-      projectId: "prj_1",
-      domain: "preview.example.com",
-      removeRedirects: true,
-    });
-    expect(calls[0]).toMatchObject({
-      method: "POST",
-      body: { name: "preview.example.com", gitBranch: "feature" },
-    });
-    expect(new URL(calls[1]!.url).pathname.endsWith(
-      "/preview.example.com/verify",
-    )).toBe(true);
-    expect(calls[2]).toMatchObject({
-      method: "DELETE",
-      body: { removeRedirects: true },
-    });
-    expect(removed).toEqual({
-      removed: true,
-      domain: "preview.example.com",
-    });
-  });
 
   it("never asks Vercel to decrypt environment values and never returns one", async () => {
     queue({
@@ -677,7 +322,15 @@ describe("Vercel domains and environment variables", () => {
     });
   });
 
-  it("turns a successful HTTP env-write rejection into invalid_args", async () => {
+  it("INV-9: creates without overwriting when upsert is false and strips the returned value", async () => {
+    queue({ body: { created: { id: "env_new", key: "NEW", value: "must-not-return", type: "sensitive", target: ["production"] }, failed: [] } });
+    const result = await call(connection(), "upsert_project_env_var", { projectId: "p", key: "NEW", value: "write-only", type: "sensitive", targets: ["production"], upsert: false });
+    expect(url().searchParams.get("upsert")).toBe("false");
+    expect(result).toEqual({ id: "env_new", key: "NEW", type: "sensitive", target: ["production"] });
+    expect(JSON.stringify(result)).not.toContain("must-not-return");
+  });
+
+  it("refuses to overwrite in create-only mode and reports a value-safe conflict", async () => {
     queue({
       status: 201,
       body: {
@@ -700,11 +353,14 @@ describe("Vercel domains and environment variables", () => {
         value: "write-only",
         type: "sensitive",
         targets: ["production"],
+        upsert: false,
       }),
     ).rejects.toMatchObject({
       code: "invalid_args",
       message: "Vercel ENV_ALREADY_EXISTS: The variable already exists.",
     });
+    expect(url().searchParams.get("upsert")).toBe("false");
+    expect(calls).toHaveLength(1);
   });
 
   it("refuses an empty update before touching Vercel", async () => {
@@ -720,9 +376,9 @@ describe("Vercel domains and environment variables", () => {
 
 describe("Vercel raw API hatches and lifecycle calls", () => {
   it.each([
-    ["vercel_api_get", { path: "/v13/deployments/dpl_1/files/file_1" }],
+    ["vercel_api_get", { path: "/v6/user/tokens" }],
     ["vercel_api_mutate", { method: "POST", path: "/v1/example" }],
-    ["vercel_api_upload", { method: "POST", path: "/v2/files", contentType: "text/plain", textBody: "uploaded" }],
+    ["vercel_api_upload", { method: "POST", path: "/v1/uncovered-upload", contentType: "text/plain", textBody: "uploaded" }],
   ])("preserves a text response through %s", async (name, args) => {
     queue({ text: "endpoint response", headers: { "content-type": "text/plain" } });
     await expect(call(connection(), name as string, args)).resolves.toEqual({ result: "endpoint response" });
@@ -738,23 +394,6 @@ describe("Vercel raw API hatches and lifecycle calls", () => {
     expect(url().searchParams.get("teamId")).toBe("team_default");
     expect(url().searchParams.get("limit")).toBe("2");
     expect(result).toEqual({ result: { items: [1, 2] } });
-  });
-
-  it("can opt named and arbitrary calls into the personal account", async () => {
-    queue(
-      { body: { id: "prj_personal", name: "personal" } },
-      { body: { user: { id: "usr_1" } } },
-    );
-    await call(connection(), "get_project", {
-      projectId: "prj_personal",
-      teamId: null,
-    });
-    await call(connection(), "vercel_api_get", {
-      path: "/v2/user",
-      personalAccount: true,
-    });
-    expect(new URL(calls[0]!.url).searchParams.has("teamId")).toBe(false);
-    expect(new URL(calls[1]!.url).searchParams.has("teamId")).toBe(false);
   });
 
   it("sends JSON mutations and never permits GET through the write hatch", async () => {
@@ -781,7 +420,7 @@ describe("Vercel raw API hatches and lifecycle calls", () => {
     queue({ body: { url: "file.txt" } });
     const result = await call(connection(), "vercel_api_upload", {
       method: "POST",
-      path: "/v2/files",
+      path: "/v1/uncovered-upload",
       contentType: "application/octet-stream",
       headers: [{ name: "x-vercel-digest", value: "sha1-value" }],
       base64Body: "aGk=",
@@ -805,7 +444,7 @@ describe("Vercel raw API hatches and lifecycle calls", () => {
     await expect(
       call(connection(), "vercel_api_upload", {
         method: "POST",
-        path: "/v2/files",
+        path: "/v1/uncovered-upload",
         contentType: "application/octet-stream",
         headers: [{ name, value: "caller-owned" }],
         textBody: "hi",
@@ -820,64 +459,21 @@ describe("Vercel raw API hatches and lifecycle calls", () => {
     ).rejects.toMatchObject({ code: "invalid_args" });
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
-
-  it("promotes, cancels, and deletes deployments on their current versions", async () => {
-    queue(
-      { body: {} },
-      { body: { uid: "dpl_1", name: "site", readyState: "CANCELED" } },
-      { body: {} },
-    );
-    const connector = connection();
-    await call(connector, "promote_deployment", {
-      projectId: "prj_1",
-      deploymentId: "dpl_1",
-    });
-    const canceled = await call(connector, "cancel_deployment", {
-      deploymentId: "dpl_1",
-    });
-    await call(connector, "delete_deployment", { deploymentId: "dpl_1" });
-    expect(new URL(calls[0]!.url).pathname).toBe(
-      "/v10/projects/prj_1/promote/dpl_1",
-    );
-    expect(new URL(calls[1]!.url).pathname).toBe(
-      "/v12/deployments/dpl_1/cancel",
-    );
-    expect(new URL(calls[2]!.url).pathname).toBe("/v13/deployments/dpl_1");
-    expect(canceled.state).toBe("CANCELED");
-  });
 });
 
 describe("Vercel typed failures and credential test", () => {
-  it.each(["list_projects", "delete_deployment"])("refuses a successful HTML response for %s", async (name) => {
+  it.each(["list_project_env_vars", "delete_deployment"])("refuses a successful HTML response for %s", async (name) => {
     queue({ text: "<html>synthetic gateway page</html>", headers: { "content-type": "text/html" } });
-    await expect(call(connection(), name, name === "delete_deployment" ? { deploymentId: "dpl_1" } : {})).rejects.toMatchObject({
+    await expect(call(connection(), name, name === "delete_deployment" ? { deploymentId: "dpl_1" } : { projectId: "prj_1" })).rejects.toMatchObject({
       code: "connector_call_failed",
       retryable: false,
     });
     expect(calls).toHaveLength(1);
   });
 
-  it("refuses a malformed successful build-log stream instead of inventing rows", async () => {
-    queue({ text: '{"type":"stdout","payload":{"text":"valid"}}\nmalformed', headers: { "content-type": "application/stream+json" } });
-    await expect(call(connection(), "get_build_logs", { deploymentId: "dpl_1" })).rejects.toMatchObject({
-      code: "connector_call_failed",
-      retryable: false,
-    });
-  });
-
   it("preserves a valid no-content mutation response", async () => {
     queue({ status: 204 });
     await expect(call(connection(), "delete_deployment", { deploymentId: "dpl_1" })).resolves.toEqual({ deleted: true, deploymentId: "dpl_1" });
-  });
-
-  it("fails locally without a token", async () => {
-    await expect(
-      call(connection(), "list_projects", {}, context(null)),
-    ).rejects.toMatchObject({
-      code: "auth_required",
-      message: expect.stringMatching(/authorize_connector.*this connection in the operator UI/),
-    });
-    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -892,30 +488,13 @@ describe("Vercel typed failures and credential test", () => {
         status,
         body: { error: { code: providerCode, message: "provider detail" } },
       });
-      const error = await call(connection(), "get_project", {
+      const error = await call(connection(), "list_project_env_vars", {
         projectId: "missing",
       }).catch((caught) => caught as ConnectorCallError);
       expect(error).toMatchObject({ code, retryable });
       expect(error.message).toContain(providerCode);
     },
   );
-
-  it("uses Vercel's reset header for rate-limit recovery", async () => {
-    vi.spyOn(Date, "now").mockReturnValue(1_000_000);
-    queue({
-      status: 429,
-      body: { error: { code: "rate_limited", message: "slow down" } },
-      headers: { "x-ratelimit-reset": "1002" },
-    });
-    const error = await call(connection(), "get_project", {
-      projectId: "prj_1",
-    }).catch((caught) => caught as ConnectorCallError);
-    expect(error).toMatchObject({
-      code: "rate_limited",
-      retryAfterMs: 2_000,
-    });
-    vi.restoreAllMocks();
-  });
 
   it("tests the token against the current user and names the identity", async () => {
     queue({ body: { user: { id: "usr_1", username: "zack" } } });
@@ -924,5 +503,89 @@ describe("Vercel typed failures and credential test", () => {
     expect(url().pathname).toBe("/v2/user");
     expect(calls[0]?.headers["authorization"]).toBe("Bearer candidate");
     expect(result).toEqual({ ok: true, message: "Authenticated as zack." });
+  });
+});
+
+describe("Vercel canonical routing", () => {
+  it.each([
+    ["GET", "/v9/projects", "MCP list_projects"],
+    ["GET", "/v10/%70rojects/prj_1", "MCP get_project"],
+    ["GET", "/v10/projects/prj_1/./env", "API list_project_env_vars"],
+    ["GET", "/v10/projects/prj_1/%2e/env", "API list_project_env_vars"],
+    ["GET", "/v10/projects/prj_1/nested/%2e%2e/env", "API list_project_env_vars"],
+    ["POST", "/v11/projects", "MCP create_project"],
+    ["PATCH", "/v9/projects/prj_1", "MCP update_project"],
+    ["POST", "/v1/projects/prj_1/pause", "MCP pause_project"],
+    ["POST", "/v1/projects/prj_1/unpause", "MCP unpause_project"],
+    ["PATCH", "/v1/projects/prj_1/protection-bypass", "MCP update_project_protection_bypass"],
+    ["GET", "/v1/projects/traces", "MCP get_project_trace"],
+    ["GET", "/v1/drains", "MCP list_drains"],
+    ["PATCH", "/v1/security/firewall/config", "MCP update_firewall_config"],
+    ["GET", "/v2/user", "MCP get_auth_user"],
+    ["POST", "/v1/integrations/sso/token", "MCP exchange_sso_token"],
+    ["GET", "/v13/deployments/dpl_1/files/file_1", "MCP get_deployment_file_contents"],
+    ["POST", "/v13/deployments", "MCP create_deployment"],
+    ["DELETE", "/v13/deployments/dpl_1", "API delete_deployment"],
+    ["POST", "/v10/projects/prj_1/promote/dpl_1", "MCP request_promote"],
+    ["POST", "/v9/projects/prj_1/domains/site.test/verify", "API verify_project_domain"],
+    ["DELETE", "/v9/projects/prj_1/domains/site.test", "API remove_project_domain"],
+    ["GET", "/v10/projects/prj_1/env", "API list_project_env_vars"],
+    ["GET", "/v10/projects/prj_1/env/env_1", "API list_project_env_vars"],
+    ["POST", "/v9/projects/prj_1/domains", "MCP add_project_domain"],
+    ["PATCH", "/v12/deployments/dpl_1/cancel", "MCP cancel_deployment"],
+    ["POST", "/v2/files", "MCP upload_file"],
+  ])("INV-9: refuses a second implementation of %s %s before dispatch", async (method, path, replacement) => {
+    const name = method === "GET" ? "vercel_api_get" : "vercel_api_mutate";
+    await expect(call(connection(), name, { path, ...(method === "GET" ? {} : { method }) })).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining(replacement) });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("INV-9: the upload hatch also refuses a JSON project-creation duplicate", async () => {
+    await expect(call(connection(), "vercel_api_upload", { method: "POST", path: "/v11/projects", contentType: "application/json", textBody: '{"name":"duplicate"}' })).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("MCP create_project") });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("INV-9: keeps the verified project-deletion REST gap instead of treating every project mutation as hosted", async () => {
+    queue({ status: 204 });
+    await expect(call(connection(), "vercel_api_mutate", { method: "DELETE", path: "/v9/projects/prj_1" })).resolves.toEqual({ result: null });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.method).toBe("DELETE");
+  });
+
+  it("INV-9: preserves the separate drive-list REST gap before the named-sandbox wildcard", async () => {
+    queue({ body: { drives: [{ name: "assets" }] } });
+    const result = await call(connection(), "vercel_api_get", { path: "/v2/sandboxes/drives" });
+    expect(result).toEqual({ result: { drives: [{ name: "assets" }] } });
+    expect(calls).toHaveLength(1);
+    expect(url().pathname).toBe("/v2/sandboxes/drives");
+    await expect(call(connection(), "vercel_api_get", { path: "/v2/sandboxes/site" })).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("MCP get_named_sandbox") });
+    expect(calls).toHaveLength(1);
+  });
+
+  it.each([2, 3, 4])("INV-9: directs version %s sandbox creation to that version's actual hosted contract", async (version) => {
+    await expect(call(connection(), "vercel_api_mutate", { method: "POST", path: `/v${version}/sandboxes` })).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining(`MCP create_sandboxes_v${version}`) });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("INV-1: retains vendor schemas/results and rejects API-owned MCP tools even by direct name", async () => {
+    const schema = { type: "object", properties: { vendorOnly: { type: "string" } } };
+    const tool = { name: "get_project", description: "Vendor contract", inputSchema: schema, outputSchema: schema };
+    mcpMocks.listTools.mockResolvedValue([tool, { name: "filter_project_envs" }, { name: "create_project_env" }]);
+    const original = mcpMocks.remoteMcp.getMockImplementation() as (...args: unknown[]) => Connector;
+    const result = { content: [{ type: "text", text: "vendor bytes" }] };
+    const downstreamCall = vi.fn().mockResolvedValue(result);
+    mcpMocks.remoteMcp.mockImplementation((...args) => ({ ...original(...args), callTool: downstreamCall }));
+    const connector = vercel("hosted", { purpose: "Projects" });
+    expect(await connector.listTools(context())).toEqual([tool]);
+    expect(await connector.callTool("get_project", { vendorOnly: "kept" }, context())).toBe(result);
+    expect(downstreamCall).toHaveBeenCalledTimes(1);
+    await expect(connector.callTool("filter_project_envs", {}, context())).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(connector.callTool("create_project_env", {}, context())).rejects.toMatchObject({ code: "invalid_args" });
+    expect(downstreamCall).toHaveBeenCalledTimes(1);
+  });
+
+  it("INV-8: refuses a duplicated retained vendor tool name", async () => {
+    mcpMocks.listTools.mockResolvedValue([{ name: "get_project" }, { name: "get_project" }]);
+    await expect(vercel("hosted", { purpose: "Projects" }).listTools(context())).rejects.toMatchObject({ code: "connector_call_failed", retryable: false });
   });
 });

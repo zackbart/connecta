@@ -1,4 +1,5 @@
 import { skill } from "./skill.generated.js";
+import { HOSTED_REST_OPERATIONS, UNCOVERED_REST_OPERATIONS } from "./mcp-ownership.js";
 /**
  * No `@vercel/sdk` on purpose — not a dependency and not an optional peer.
  * Direct fetch keeps the root Workers-safe, avoids shipping the SDK's generated
@@ -20,7 +21,6 @@ import {
   type GuardedTransport,
 } from "../../connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../../errors.js";
-import { withDeadline } from "../../timeout.js";
 import type {
   Connector,
   ToolClassification,
@@ -40,9 +40,6 @@ export const VERCEL_MCP_ENDPOINT = "https://mcp.vercel.com";
 const MAX_PAGE_SIZE = 100;
 const DEFAULT_PAGE_SIZE = 20;
 const VERCEL_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
-const MAX_RUNTIME_LOG_ROWS = 500;
-const DEFAULT_RUNTIME_LOG_ROWS = 100;
-const RUNTIME_LOG_TIMEOUT_MS = 10_000;
 
 interface VercelCommonOptions {
   /** Human-readable display name; defaults identify the selected surface. */
@@ -61,19 +58,19 @@ interface VercelCommonOptions {
 
 /** Connecta's maintained hand-written Vercel REST surface. */
 export interface VercelApiOptions extends VercelCommonOptions {
-  /** Omit for backward compatibility; the hand-written API surface is the default. */
-  surface?: "api";
+  /** Select the REST complement explicitly; hosted MCP is the default. */
+  surface: "api";
   /** Default team id for scoped calls. Omit to use the token's personal account. */
   teamId?: string;
   /** API base override for a proxy or test double. */
   baseUrl?: string;
-  /** Default page size for list tools. Defaults to 20; Vercel's local cap is 100. */
+  /** @deprecated List pagination is owned by hosted MCP. Retained for configuration compatibility; no effect on the REST complement. */
   defaultPageSize?: number;
 }
 
 /** Vercel's official hosted MCP surface, authenticated through OAuth. */
 export interface VercelMcpOptions extends VercelCommonOptions {
-  surface: "mcp";
+  surface?: "mcp";
 }
 
 /** Backward-compatible API options; existing consumers may extend this interface. */
@@ -269,113 +266,6 @@ function teamQuery(
   };
 }
 
-function nextCursor(payload: unknown): string | null {
-  const pagination = asRecord(asRecord(payload)["pagination"]);
-  const next = pagination["next"];
-  return next === undefined || next === null || next === "" ? null : String(next);
-}
-
-function page(payload: unknown): { hasMore: boolean; nextCursor: string | null } {
-  const cursor = nextCursor(payload);
-  return { hasMore: cursor !== null, nextCursor: cursor };
-}
-
-function projectTeam(value: unknown): JsonRecord {
-  const team = asRecord(value);
-  return compact({
-    id: team["id"],
-    slug: team["slug"],
-    name: team["name"],
-    avatar: team["avatar"],
-    createdAt: team["createdAt"],
-    membership: asRecord(team["membership"])["role"],
-  });
-}
-
-function projectProject(value: unknown): JsonRecord {
-  const project = asRecord(value);
-  const link = asRecord(project["link"]);
-  const targets = asRecord(project["targets"]);
-  const production = asRecord(targets["production"]);
-  return compact({
-    id: project["id"],
-    name: project["name"],
-    accountId: project["accountId"],
-    framework: project["framework"],
-    createdAt: project["createdAt"],
-    updatedAt: project["updatedAt"],
-    paused: project["paused"] === true,
-    productionBranch: project["productionBranch"] ?? link["productionBranch"],
-    rootDirectory: project["rootDirectory"],
-    nodeVersion: project["nodeVersion"],
-    buildCommand: project["buildCommand"],
-    installCommand: project["installCommand"],
-    devCommand: project["devCommand"],
-    outputDirectory: project["outputDirectory"],
-    repository:
-      Object.keys(link).length === 0
-        ? undefined
-        : compact({
-            type: link["type"],
-            org: link["org"],
-            repo: link["repo"],
-            repoId: link["repoId"],
-          }),
-    productionDeployment:
-      Object.keys(production).length === 0
-        ? undefined
-        : compact({
-            id: production["id"] ?? production["uid"],
-            url: production["url"],
-            state: production["readyState"] ?? production["state"],
-            createdAt: production["createdAt"] ?? production["created"],
-          }),
-  });
-}
-
-function projectDeployment(value: unknown): JsonRecord {
-  const deployment = asRecord(value);
-  const creator = asRecord(deployment["creator"]);
-  const meta = asRecord(deployment["meta"]);
-  return compact({
-    id: deployment["uid"] ?? deployment["id"],
-    name: deployment["name"],
-    url: deployment["url"],
-    state: deployment["readyState"] ?? deployment["state"],
-    target: deployment["target"],
-    source: deployment["source"],
-    createdAt: deployment["createdAt"] ?? deployment["created"],
-    buildingAt: deployment["buildingAt"],
-    readyAt: deployment["ready"] ?? deployment["readyAt"],
-    projectId: deployment["projectId"],
-    creator:
-      Object.keys(creator).length === 0
-        ? undefined
-        : compact({
-            id: creator["uid"] ?? creator["id"],
-            username: creator["username"],
-            email: creator["email"],
-          }),
-    git:
-      meta["githubCommitRef"] || meta["gitlabCommitRef"] || meta["bitbucketCommitRef"]
-        ? compact({
-            branch:
-              meta["githubCommitRef"] ??
-              meta["gitlabCommitRef"] ??
-              meta["bitbucketCommitRef"],
-            sha:
-              meta["githubCommitSha"] ??
-              meta["gitlabCommitSha"] ??
-              meta["bitbucketCommitSha"],
-            message:
-              meta["githubCommitMessage"] ??
-              meta["gitlabCommitMessage"] ??
-              meta["bitbucketCommitMessage"],
-          })
-        : undefined,
-  });
-}
-
 function projectDomain(value: unknown): JsonRecord {
   const domain = asRecord(value);
   return compact({
@@ -410,11 +300,6 @@ function projectEnvironmentVariable(value: unknown): JsonRecord {
   });
 }
 
-const RAW_PROPERTY: JsonSchema = {
-  type: "boolean",
-  description: "Return Vercel's untouched response instead of the lean projection.",
-};
-
 const TEAM_ID_PROPERTY: JsonSchema = {
   type: ["string", "null"],
   minLength: 1,
@@ -431,99 +316,6 @@ const DEPLOYMENT_ID_PROPERTY: JsonSchema = {
   type: "string",
   minLength: 1,
   description: "Deployment id from list_deployments.",
-};
-
-const CURSOR_PROPERTY: JsonSchema = {
-  type: "string",
-  minLength: 1,
-  description: "Opaque nextCursor returned by the previous page. Pass it back unchanged.",
-};
-
-function limitProperty(defaultPageSize: number): JsonSchema {
-  return {
-    type: "integer",
-    minimum: 1,
-    maximum: MAX_PAGE_SIZE,
-    description: `Rows per request, 1 to ${MAX_PAGE_SIZE}. Defaults to this connector's ${defaultPageSize}.`,
-  };
-}
-
-const PAGE_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    hasMore: { type: "boolean" },
-    nextCursor: {
-      type: ["string", "null"],
-      description: "Pass back unchanged as cursor when hasMore is true.",
-    },
-  },
-  required: ["hasMore", "nextCursor"],
-};
-
-function listSchema(key: string, item: JsonSchema): JsonSchema {
-  return {
-    type: "object",
-    properties: {
-      [key]: { type: "array", items: item },
-      page: PAGE_SCHEMA,
-    },
-    required: [key, "page"],
-  };
-}
-
-const TEAM_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    id: { type: "string" },
-    slug: { type: "string" },
-    name: { type: "string" },
-    avatar: { type: ["string", "null"] },
-    createdAt: { type: "number" },
-    membership: { type: "string" },
-  },
-  required: ["id", "slug", "name"],
-};
-
-const PROJECT_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    id: { type: "string" },
-    name: { type: "string" },
-    accountId: { type: "string" },
-    framework: { type: ["string", "null"] },
-    createdAt: { type: "number" },
-    updatedAt: { type: "number" },
-    paused: { type: "boolean" },
-    productionBranch: { type: "string" },
-    rootDirectory: { type: ["string", "null"] },
-    nodeVersion: { type: "string" },
-    buildCommand: { type: ["string", "null"] },
-    installCommand: { type: ["string", "null"] },
-    devCommand: { type: ["string", "null"] },
-    outputDirectory: { type: ["string", "null"] },
-    repository: { type: "object" },
-    productionDeployment: { type: "object" },
-  },
-  required: ["id", "name"],
-};
-
-const DEPLOYMENT_SCHEMA: JsonSchema = {
-  type: "object",
-  properties: {
-    id: { type: "string" },
-    name: { type: "string" },
-    url: { type: ["string", "null"] },
-    state: { type: "string" },
-    target: { type: ["string", "null"] },
-    source: { type: "string" },
-    createdAt: { type: "number" },
-    buildingAt: { type: "number" },
-    readyAt: { type: "number" },
-    projectId: { type: "string" },
-    creator: { type: "object" },
-    git: { type: "object" },
-  },
-  required: ["id", "name", "state"],
 };
 
 const DOMAIN_SCHEMA: JsonSchema = {
@@ -669,6 +461,18 @@ function rawRequest(
   args: JsonRecord,
   defaultTeamId: string | undefined,
 ): Pick<GuardedRequest, "path" | "query"> {
+  const method = args["method"] ?? "GET";
+  let path: string;
+  try {
+    path = decodeURIComponent(new URL(`https://api.vercel.com${String(args["path"])}`).pathname).replace(/\/{2,}/g, "/");
+  } catch {
+    throw new ConnectorCallError("invalid_args", "The REST path contains an invalid escape or URL.");
+  }
+  const matches = ([verb, pattern]: readonly [string, RegExp, string | null]) => verb === method && pattern.test(path);
+  const canonical = VERCEL_EXACT_CANONICAL_ROUTES.find(matches) ?? VERCEL_CANONICAL_ROUTES.find(matches);
+  if (canonical?.[2]) {
+    throw new ConnectorCallError("invalid_args", `Use ${canonical[2]} on its owning connector. The REST complement cannot repeat that operation.`);
+  }
   const query = queryPairs(args["query"]);
   if (
     args["personalAccount"] === true &&
@@ -690,6 +494,71 @@ function rawRequest(
   return { path: String(args["path"]), query };
 }
 
+function hostedRestRoute([method, path, name]: readonly [string, string, string], anyVersion: boolean): [string, RegExp, string] {
+  const pattern = path.replace(/\/+$/, "").split("/").map((segment, index) => {
+    if (anyVersion && index === 1 && /^v\d+$/.test(segment)) return "v\\d+";
+    if (/^\{[^}]+\}$/.test(segment)) return "[^/]+";
+    return segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }).join("/");
+  return [method, new RegExp(`^${pattern}\\/?$`), `MCP ${name}`];
+}
+
+// Resolve actual published method/path/version contracts first, including
+// uncovered concrete endpoints. An id wildcard cannot consume a REST gap.
+const VERCEL_EXACT_CANONICAL_ROUTES: readonly [string, RegExp, string | null][] = [
+  ...UNCOVERED_REST_OPERATIONS.map(([method, path]): [string, RegExp, null] => [method, hostedRestRoute([method, path, ""], false)[1], null]),
+  ...HOSTED_REST_OPERATIONS.map((operation) => hostedRestRoute(operation, false)),
+];
+
+// Version-independent matches keep a raw hatch from restoring a removed
+// duplicate by selecting an older REST version. Env routes also protect the
+// value-safe named API implementations from an unprojected response.
+const VERCEL_CANONICAL_ROUTES: readonly [string, RegExp, string][] = [
+  // Specific published routes precede generic id patterns (e.g. projects/traces).
+  ...HOSTED_REST_OPERATIONS.map((operation) => hostedRestRoute(operation, true)),
+  ["GET", /^\/v\d+\/teams\/?$/, "MCP list_teams"],
+  ["GET", /^\/v\d+\/projects\/?$/, "MCP list_projects"],
+  ["GET", /^\/v\d+\/projects\/[^/]+\/?$/, "MCP get_project"],
+  ["GET", /^\/v\d+\/deployments\/?$/, "MCP list_deployments"],
+  ["GET", /^\/v\d+\/deployments\/[^/]+\/?$/, "MCP get_deployment"],
+  ["GET", /^\/v\d+\/deployments\/[^/]+\/events\/?$/, "MCP get_deployment_build_logs or list_deployment_events"],
+  ["GET", /^\/v\d+\/projects\/[^/]+\/deployments\/[^/]+\/runtime-logs\/?$/, "MCP get_runtime_logs"],
+  ["GET", /^\/v\d+\/projects\/[^/]+\/domains\/?$/, "MCP list_project_domains"],
+  ["POST", /^\/v\d+\/projects\/[^/]+\/domains\/?$/, "MCP add_project_domain"],
+  ["PATCH", /^\/v\d+\/deployments\/[^/]+\/cancel\/?$/, "MCP cancel_deployment"],
+  ["POST", /^\/v\d+\/files\/?$/, "MCP upload_file"],
+  ["POST", /^\/v\d+\/deployments\/?$/, "MCP create_deployment"],
+  ["DELETE", /^\/v\d+\/deployments\/[^/]+\/?$/, "API delete_deployment"],
+  ["POST", /^\/v\d+\/projects\/[^/]+\/promote\/[^/]+\/?$/, "MCP request_promote"],
+  ["POST", /^\/v\d+\/projects\/[^/]+\/domains\/[^/]+\/verify\/?$/, "API verify_project_domain"],
+  ["DELETE", /^\/v\d+\/projects\/[^/]+\/domains\/[^/]+\/?$/, "API remove_project_domain"],
+  ["GET", /^\/v\d+\/projects\/[^/]+\/env(?:\/[^/]+)?\/?$/, "API list_project_env_vars"],
+  ["POST", /^\/v\d+\/projects\/[^/]+\/env\/?$/, "API upsert_project_env_var"],
+  ["PATCH", /^\/v\d+\/projects\/[^/]+\/env\/[^/]+\/?$/, "API update_project_env_var"],
+  ["DELETE", /^\/v\d+\/projects\/[^/]+\/env\/[^/]+\/?$/, "API delete_project_env_var"],
+];
+
+const API_OWNED_MCP_TOOLS = new Set(["filter_project_envs", "get_project_env", "create_project_env", "edit_project_env"]);
+
+/** Preserve vendor contracts for retained tools and refuse hidden direct calls. */
+function vercelCatalog(connector: Connector): Connector {
+  return Object.assign(Object.create(connector) as Connector, connector, {
+    async listTools(ctx: ConnectorContext) {
+      const tools = (await connector.listTools(ctx)).filter((tool) => !API_OWNED_MCP_TOOLS.has(tool.name));
+      if (new Set(tools.map((tool) => tool.name)).size !== tools.length) {
+        throw new ConnectorCallError("connector_call_failed", "Vercel returned duplicate tool names.", { retryable: false });
+      }
+      return tools;
+    },
+    async callTool(name: string, args: unknown, ctx: ConnectorContext, options?: Parameters<Connector["callTool"]>[3]) {
+      if (API_OWNED_MCP_TOOLS.has(name)) {
+        throw new ConnectorCallError("invalid_args", "Project environment variables belong to the value-safe Vercel REST complement.");
+      }
+      return await connector.callTool(name, args, ctx, options);
+    },
+  });
+}
+
 const PERSONAL_ACCOUNT_PROPERTY: JsonSchema = {
   type: "boolean",
   description: "True omits the configured default team. Do not combine with a teamId or slug query parameter.",
@@ -697,13 +566,11 @@ const PERSONAL_ACCOUNT_PROPERTY: JsonSchema = {
 
 function tools(
   send: GuardedTransport,
-  defaultPageSize: number,
   defaultTeamId: string | undefined,
 ): ApiTool[] {
   const readOnly = { readOnlyHint: true } as const;
   const destructive = { readOnlyHint: false, destructiveHint: true } as const;
   const team = (args: JsonRecord) => teamQuery(args, defaultTeamId);
-  const limit = (args: JsonRecord) => args["limit"] ?? defaultPageSize;
   return [
     {
       name: "vercel_api_get",
@@ -846,328 +713,6 @@ function tools(
       }),
     },
     {
-      name: "list_teams",
-      description:
-        "List teams the access token can reach. Supplies teamId for project, deployment, domain, environment, and raw API calls.",
-      annotations: readOnly,
-      inputSchema: namedInput(
-        { limit: limitProperty(defaultPageSize), cursor: CURSOR_PROPERTY },
-        [],
-      ),
-      outputSchema: listSchema("teams", TEAM_SCHEMA),
-      handler: async (args, ctx) => {
-        const payload = await callVercel(
-          send,
-          { method: "GET", path: "/v2/teams", query: { limit: limit(args), until: args["cursor"] } },
-          ctx,
-        );
-        return { teams: asArray(asRecord(payload)["teams"]).map(projectTeam), page: page(payload) };
-      },
-    },
-    {
-      name: "list_projects",
-      description:
-        "List or search Vercel projects with repository, framework, and production-deployment identity. Returns lean project summaries.",
-      annotations: readOnly,
-      inputSchema: namedInput(
-        {
-          teamId: TEAM_ID_PROPERTY,
-          search: { type: "string", description: "Case-insensitive project-name search." },
-          limit: limitProperty(defaultPageSize),
-          cursor: CURSOR_PROPERTY,
-          raw: RAW_PROPERTY,
-        },
-        [],
-      ),
-      outputSchema: listSchema("projects", PROJECT_SCHEMA),
-      handler: async (args, ctx) => {
-        const payload = await callVercel(
-          send,
-          {
-            method: "GET",
-            path: "/v10/projects",
-            query: { ...team(args), search: args["search"], limit: limit(args), from: args["cursor"] },
-          },
-          ctx,
-        );
-        const projects = asArray(asRecord(payload)["projects"]);
-        return {
-          projects: args["raw"] === true ? projects : projects.map(projectProject),
-          page: page(payload),
-        };
-      },
-    },
-    {
-      name: "get_project",
-      description:
-        "Get one Vercel project by id or name, including build settings, Git identity, and current production deployment.",
-      annotations: readOnly,
-      inputSchema: namedInput(
-        { projectId: PROJECT_ID_PROPERTY, teamId: TEAM_ID_PROPERTY, raw: RAW_PROPERTY },
-        ["projectId"],
-      ),
-      outputSchema: PROJECT_SCHEMA,
-      handler: async (args, ctx) => {
-        const payload = await callVercel(
-          send,
-          { method: "GET", path: `/v9/projects/${encodeURIComponent(args["projectId"])}`, query: team(args) },
-          ctx,
-        );
-        return args["raw"] === true ? payload : projectProject(payload);
-      },
-    },
-    {
-      name: "list_deployments",
-      description:
-        "List Vercel deployments, filtered by project, target, state, branch, or commit SHA. Returns ids needed by log and lifecycle tools.",
-      annotations: readOnly,
-      inputSchema: namedInput(
-        {
-          teamId: TEAM_ID_PROPERTY,
-          projectId: { ...PROJECT_ID_PROPERTY, description: "Project id or name. Omit to list the whole account or team." },
-          target: { type: "string", description: "Deployment target, usually production or preview." },
-          state: {
-            type: "string",
-            enum: ["BUILDING", "ERROR", "INITIALIZING", "QUEUED", "READY", "CANCELED", "BLOCKED"],
-            description: "Exact Vercel deployment state.",
-          },
-          branch: { type: "string", description: "Git branch name." },
-          sha: { type: "string", description: "Git commit SHA." },
-          limit: limitProperty(defaultPageSize),
-          cursor: CURSOR_PROPERTY,
-          raw: RAW_PROPERTY,
-        },
-        [],
-      ),
-      outputSchema: listSchema("deployments", DEPLOYMENT_SCHEMA),
-      handler: async (args, ctx) => {
-        const payload = await callVercel(
-          send,
-          {
-            method: "GET",
-            path: "/v7/deployments",
-            query: {
-              ...team(args), projectId: args["projectId"], target: args["target"],
-              state: args["state"], branch: args["branch"], sha: args["sha"],
-              limit: limit(args), until: args["cursor"],
-            },
-          },
-          ctx,
-        );
-        const deployments = asArray(asRecord(payload)["deployments"]);
-        return {
-          deployments: args["raw"] === true
-            ? deployments
-            : deployments.map(projectDeployment),
-          page: page(payload),
-        };
-      },
-    },
-    {
-      name: "get_deployment",
-      description:
-        "Get one Vercel deployment by id or hostname, including its state, target, creator, Git commit, and timestamps.",
-      annotations: readOnly,
-      inputSchema: namedInput(
-        {
-          deploymentId: { ...DEPLOYMENT_ID_PROPERTY, description: "Deployment id or deployment hostname." },
-          teamId: TEAM_ID_PROPERTY,
-          raw: RAW_PROPERTY,
-        },
-        ["deploymentId"],
-      ),
-      outputSchema: DEPLOYMENT_SCHEMA,
-      handler: async (args, ctx) => {
-        const payload = await callVercel(
-          send,
-          { method: "GET", path: `/v13/deployments/${encodeURIComponent(args["deploymentId"])}`, query: team(args) },
-          ctx,
-        );
-        return args["raw"] === true ? payload : projectDeployment(payload);
-      },
-    },
-    {
-      name: "get_build_logs",
-      description:
-        "Get bounded build events for one deployment, including stdout, stderr, command, exit, and deployment-state records. Does not follow live output.",
-      annotations: readOnly,
-      inputSchema: namedInput(
-        {
-          deploymentId: DEPLOYMENT_ID_PROPERTY,
-          teamId: TEAM_ID_PROPERTY,
-          direction: { type: "string", enum: ["forward", "backward"], description: "Chronological direction. Defaults to forward." },
-          limit: { type: "integer", minimum: 1, maximum: 1000, description: "Events per request, 1 to this connector's 1,000-event cap. Defaults to 100." },
-          since: { type: "number", description: "Only events at or after this JavaScript timestamp." },
-          until: { type: "number", description: "Only events at or before this JavaScript timestamp." },
-          raw: RAW_PROPERTY,
-        },
-        ["deploymentId"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          events: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                type: { type: "string" }, createdAt: { type: "number" },
-                message: { type: "string" }, payload: { type: "object" },
-              },
-              required: ["type"],
-            },
-          },
-        },
-        required: ["events"],
-      },
-      handler: async (args, ctx) => {
-        const payload = await callVercel(
-          send,
-          {
-            method: "GET",
-            path: `/v3/deployments/${encodeURIComponent(args["deploymentId"])}/events`,
-            query: {
-              ...team(args), direction: args["direction"] ?? "forward", follow: 0,
-              builds: 1, limit: args["limit"] ?? 100, since: args["since"], until: args["until"],
-            },
-          },
-          ctx,
-        );
-        if (args["raw"] === true) return { events: asArray(payload) };
-        const events = asArray(payload).map((value) => {
-          const event = asRecord(value);
-          const eventPayload = asRecord(event["payload"]);
-          return compact({
-            type: event["type"] ?? "unknown",
-            createdAt: event["created"] ?? event["date"],
-            message: eventPayload["text"] ?? eventPayload["message"],
-            payload: Object.keys(eventPayload).length === 0 ? undefined : eventPayload,
-          });
-        });
-        return { events };
-      },
-    },
-    {
-      name: "get_runtime_logs",
-      description:
-        "Get a bounded runtime-log snapshot for one deployment. Returns at most 500 rows and stops a stream that stays open past 10 seconds.",
-      annotations: readOnly,
-      inputSchema: namedInput(
-        {
-          projectId: PROJECT_ID_PROPERTY,
-          deploymentId: DEPLOYMENT_ID_PROPERTY,
-          teamId: TEAM_ID_PROPERTY,
-          limit: {
-            type: "integer",
-            minimum: 1,
-            maximum: MAX_RUNTIME_LOG_ROWS,
-            description: `Rows returned, 1 to ${MAX_RUNTIME_LOG_ROWS}. Defaults to ${DEFAULT_RUNTIME_LOG_ROWS}.`,
-          },
-        },
-        ["projectId", "deploymentId"],
-      ),
-      outputSchema: {
-        type: "object",
-        properties: {
-          logs: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                level: { type: "string" }, message: { type: "string" },
-                timestampInMs: { type: "number" }, source: { type: "string" },
-                domain: { type: "string" }, requestMethod: { type: "string" },
-                requestPath: { type: "string" }, responseStatusCode: { type: "number" },
-                messageTruncated: { type: "boolean" },
-              },
-              required: ["level", "message", "timestampInMs", "source"],
-            },
-          },
-        },
-        required: ["logs"],
-      },
-      handler: async (args, ctx) => {
-        const payload = await withDeadline(
-          (signal) => callVercel(
-            send,
-            {
-              method: "GET",
-              path: `/v1/projects/${encodeURIComponent(args["projectId"])}/deployments/${encodeURIComponent(args["deploymentId"])}/runtime-logs`,
-              query: team(args), headers: { Accept: "application/stream+json" },
-            },
-            { ...ctx, signal },
-            { parse: parseStreamRows },
-          ),
-          {
-            timeoutMs: RUNTIME_LOG_TIMEOUT_MS,
-            ...(ctx.signal ? { signal: ctx.signal } : {}),
-            timeoutError: new ConnectorCallError(
-              "unavailable",
-              `Vercel's runtime-log stream stayed open past this connector's ${RUNTIME_LOG_TIMEOUT_MS / 1_000}-second bound. Retry for a fresh snapshot.`,
-            ),
-          },
-        );
-        const requested = args["limit"] ?? DEFAULT_RUNTIME_LOG_ROWS;
-        return { logs: asArray(payload).slice(0, requested) };
-      },
-    },
-    {
-      name: "list_project_domains",
-      description:
-        "List domains assigned to one Vercel project, including verification challenges, redirects, branch bindings, and custom-environment bindings.",
-      annotations: readOnly,
-      inputSchema: namedInput(
-        {
-          projectId: PROJECT_ID_PROPERTY, teamId: TEAM_ID_PROPERTY,
-          verified: { type: "boolean", description: "Filter by verification state." },
-          limit: limitProperty(defaultPageSize), cursor: CURSOR_PROPERTY, raw: RAW_PROPERTY,
-        },
-        ["projectId"],
-      ),
-      outputSchema: listSchema("domains", DOMAIN_SCHEMA),
-      handler: async (args, ctx) => {
-        const payload = await callVercel(
-          send,
-          {
-            method: "GET", path: `/v9/projects/${encodeURIComponent(args["projectId"])}/domains`,
-            query: { ...team(args), verified: args["verified"], limit: limit(args), until: args["cursor"] },
-          },
-          ctx,
-        );
-        const domains = asArray(asRecord(payload)["domains"]);
-        return {
-          domains: args["raw"] === true ? domains : domains.map(projectDomain),
-          page: page(payload),
-        };
-      },
-    },
-    {
-      name: "add_project_domain",
-      description:
-        "Add a domain, redirect, Git-branch domain, or custom-environment domain to a Vercel project. An unverified result includes its DNS challenge.",
-      annotations: destructive,
-      inputSchema: namedInput(
-        {
-          projectId: PROJECT_ID_PROPERTY, teamId: TEAM_ID_PROPERTY,
-          domain: { type: "string", minLength: 1, description: "Domain name to add." },
-          gitBranch: { type: "string", description: "Bind this domain to one Git branch." },
-          customEnvironmentId: { type: "string", description: "Bind this domain to one custom environment." },
-          redirect: { type: "string", description: "Target domain for a redirect." },
-          redirectStatusCode: { type: "integer", enum: [301, 302, 307, 308], description: "Redirect status; only valid with redirect." },
-        },
-        ["projectId", "domain"],
-      ),
-      outputSchema: DOMAIN_SCHEMA,
-      handler: async (args, ctx) => projectDomain(await callVercel(
-        send,
-        {
-          method: "POST", path: `/v10/projects/${encodeURIComponent(args["projectId"])}/domains`, query: team(args),
-          body: compact({ name: args["domain"], gitBranch: args["gitBranch"], customEnvironmentId: args["customEnvironmentId"], redirect: args["redirect"], redirectStatusCode: args["redirectStatusCode"] }),
-        },
-        ctx,
-      )),
-    },
-    {
       name: "verify_project_domain",
       description:
         "Ask Vercel to verify a project's pending domain after its DNS challenge has been completed. Returns the current domain state.",
@@ -1255,6 +800,7 @@ function tools(
           gitBranch: { type: "string", description: "Optional preview-only Git branch." },
           customEnvironmentIds: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 }, description: "Custom environment ids that receive this value." },
           comment: { type: "string", maxLength: 500, description: "Operator-facing note explaining the variable." },
+          upsert: { type: "boolean", description: "Defaults to true. Set false for create-only behavior that refuses to overwrite an existing variable." },
         },
         ["projectId", "key", "value", "type", "targets"],
       ),
@@ -1264,7 +810,7 @@ function tools(
           send,
           {
             method: "POST", path: `/v10/projects/${encodeURIComponent(args["projectId"])}/env`,
-            query: { ...team(args), upsert: "true" },
+            query: { ...team(args), upsert: args["upsert"] === false ? "false" : "true" },
             body: compact({ key: args["key"], value: args["value"], type: args["type"], target: args["targets"], gitBranch: args["gitBranch"], customEnvironmentIds: args["customEnvironmentIds"], comment: args["comment"] }),
           },
           ctx,
@@ -1340,37 +886,6 @@ function tools(
       },
     },
     {
-      name: "promote_deployment",
-      description:
-        "Promote an existing Vercel deployment to production without rebuilding it. The deployment must belong to the named project.",
-      annotations: destructive,
-      inputSchema: namedInput(
-        { projectId: PROJECT_ID_PROPERTY, deploymentId: DEPLOYMENT_ID_PROPERTY, teamId: TEAM_ID_PROPERTY },
-        ["projectId", "deploymentId"],
-      ),
-      outputSchema: { type: "object", properties: { promoted: { type: "boolean" }, deploymentId: { type: "string" } }, required: ["promoted", "deploymentId"] },
-      handler: async (args, ctx) => {
-        await callVercel(send, { method: "POST", path: `/v10/projects/${encodeURIComponent(args["projectId"])}/promote/${encodeURIComponent(args["deploymentId"])}`, query: team(args) }, ctx);
-        return { promoted: true, deploymentId: args["deploymentId"] };
-      },
-    },
-    {
-      name: "cancel_deployment",
-      description:
-        "Cancel a queued, initializing, or building Vercel deployment. A deployment that is already ready, failed, canceled, or deleted cannot be canceled.",
-      annotations: destructive,
-      inputSchema: namedInput(
-        { deploymentId: DEPLOYMENT_ID_PROPERTY, teamId: TEAM_ID_PROPERTY },
-        ["deploymentId"],
-      ),
-      outputSchema: DEPLOYMENT_SCHEMA,
-      handler: async (args, ctx) => projectDeployment(await callVercel(
-        send,
-        { method: "PATCH", path: `/v12/deployments/${encodeURIComponent(args["deploymentId"])}/cancel`, query: team(args) },
-        ctx,
-      )),
-    },
-    {
       name: "delete_deployment",
       description:
         "Permanently delete one Vercel deployment and its deployment URL. This cannot be undone; use cancel_deployment for work still running.",
@@ -1403,7 +918,7 @@ Account purpose: ${purpose}
 ${
   teamId
     ? `This connection defaults to team \`${teamId}${skill.fragments.guide_0}`
-    : "This connection defaults to the token owner's personal account. Call `list_teams`, then pass `teamId`, for team-owned resources."
+    : "This connection defaults to the token owner's personal account. Use hosted MCP `list_teams`, then pass `teamId`, for team-owned resources."
 }${skill.fragments.guide_1}${
     accountInstructions
       ? `\n## ${skill.instructionsHeading}\n\n${accountInstructions}\n`
@@ -1419,6 +934,13 @@ ${
  */
 const VERCEL_MCP_CLASSIFICATION: ToolClassification = {
   tools: {
+    "request_promote": { verdict: "destructive", reason: "The rolling-releases MCP reference promotes an existing deployment to production; replaces the authored REST promotion write." },
+    "list_project_domains": { verdict: "read", reason: "The projects MCP reference lists project-domain metadata; formerly the named REST read." },
+    "add_project_domain": { verdict: "destructive", reason: "Attaches a domain to a project; preserves the former REST write classification." },
+    "cancel_deployment": { verdict: "destructive", reason: "Cancels an existing deployment, even if the vendor claims read-only access." },
+    "upload_file": { verdict: "destructive", reason: "Uploads deployment file bytes and creates vendor state." },
+    "create_deployment": { verdict: "destructive", reason: "Creates a preview or production deployment from Git or files." },
+    "list_deployment_events": { verdict: "read", reason: "Reads build events using the documented deployments catalog." },
     "search_vercel_documentation": {"verdict": "read", "reason": "Retrieves Vercel vercel documentation information without changing vendor state."},
     "list_teams": {"verdict": "read", "reason": "Retrieves Vercel teams information without changing vendor state."},
     "list_projects": {"verdict": "read", "reason": "Retrieves Vercel projects information without changing vendor state."},
@@ -1487,7 +1009,7 @@ function vercelMcp(
       required: true,
     },
   });
-  return connector;
+  return vercelCatalog(connector);
 }
 
 function vercelApi(
@@ -1544,7 +1066,7 @@ function vercelApi(
     ...(options.callAdmission
       ? { callAdmission: options.callAdmission }
       : {}),
-    tools: tools(send, defaultPageSize, teamId),
+    tools: tools(send, teamId),
     ...(options.maxResultBytes !== undefined
       ? { maxResultBytes: options.maxResultBytes }
       : {}),
@@ -1559,7 +1081,7 @@ const VERCEL_OPTIONS = variants("surface", {
     ...keys("surface", "teamId", "baseUrl", "defaultPageSize"),
   }).shape,
   mcp: optionsOf<VercelMcpOptions>()({ ...PROVIDER_COMMON, ...keys("surface") }).shape,
-}, "api");
+}, "mcp");
 
 /** A maintained Vercel connection using the selected provider surface. */
 export const vercel = defineProvider<VercelConnectionOptions>({
@@ -1576,9 +1098,9 @@ export const vercel = defineProvider<VercelConnectionOptions>({
 
 function vercelConnector(id: string, options: VercelConnectionOptions, provider: ProviderContext): Connector {
   const purpose = options.purpose.trim();
-  return options.surface === "mcp"
-    ? vercelMcp(id, purpose, options, provider)
-    : vercelApi(id, purpose, options);
+  return options.surface === "api"
+    ? vercelApi(id, purpose, options)
+    : vercelMcp(id, purpose, options, provider);
 }
 
 /** @deprecated Read `vercel.definition.classify` instead. Kept for existing imports. */

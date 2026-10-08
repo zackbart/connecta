@@ -20,8 +20,6 @@ vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
 
 import {
   CLOUDFLARE_API_BASE,
-  CLOUDFLARE_CONTENT_DNS_RECORD_TYPES,
-  CLOUDFLARE_DNS_RECORD_TYPES,
   CLOUDFLARE_MCP_ENDPOINT,
   CLOUDFLARE_MCP_VETTED_CATALOG,
   cloudflare,
@@ -124,7 +122,7 @@ afterEach(() => {
 
 function connection(options: Record<string, unknown> = {}) {
   return cloudflare("edge", {
-    purpose: "Production edge and DNS administration",
+    surface: "api", purpose: "Production edge and DNS administration",
     ...options,
   } as Parameters<typeof cloudflare>[1]);
 }
@@ -144,7 +142,7 @@ describe("cloudflare() construction", () => {
 
   it("rejects a nonsensical concurrency bound", () => {
     expect(() =>
-      cloudflare("edge", { purpose: "ops", maxConcurrency: 0 }),
+      cloudflare("edge", { surface: "api", purpose: "ops", maxConcurrency: 0 }),
     ).toThrow("maxConcurrency to be a positive integer.");
   });
 
@@ -255,7 +253,7 @@ describe("cloudflare() construction", () => {
     );
     expect(guide.content).toContain("Production edge and DNS administration");
     expect(guide.content).toContain("list_zones");
-    expect(guide.content).toContain("1,200 requests per five minutes");
+    expect(guide.content).toContain("1,200 calls per five minutes");
     expect(guide.content).toContain("page.hasMore");
     expect(guide.content).toContain("## Account instructions");
     expect(guide.content).toContain("Never touch the legacy zone.");
@@ -287,139 +285,6 @@ describe("cloudflare() construction", () => {
 });
 
 describe("cloudflare() tool surface", () => {
-  it("partitions reads from writes with correct annotations", async () => {
-    const tools = await servedTools(connection(), contextWithToken());
-    const names = tools.map((tool) => tool.name).sort();
-    expect(names).toEqual([
-      "add_pages_domain",
-      "bulk_delete_kv_values",
-      "bulk_get_kv_values",
-      "bulk_write_kv_values",
-      "cloudflare_api_get",
-      "cloudflare_api_mutate",
-      "cloudflare_api_upload",
-      "create_dns_record",
-      "create_kv_namespace",
-      "create_r2_bucket",
-      "delete_dns_record",
-      "delete_kv_namespace",
-      "delete_pages_deployment",
-      "delete_pages_domain",
-      "delete_pages_project",
-      "delete_r2_bucket",
-      "delete_r2_object",
-      "delete_worker_script",
-      "get_dns_record",
-      "get_kv_namespace",
-      "get_pages_deployment",
-      "get_pages_project",
-      "get_r2_bucket",
-      "get_r2_cors",
-      "get_worker_deployment",
-      "get_worker_settings",
-      "get_zone",
-      "get_zone_ruleset",
-      "get_zone_setting",
-      "list_accounts",
-      "list_dns_records",
-      "list_kv_keys",
-      "list_kv_namespaces",
-      "list_pages_deployments",
-      "list_pages_domains",
-      "list_pages_projects",
-      "list_r2_buckets",
-      "list_r2_objects",
-      "list_worker_deployments",
-      "list_worker_scripts",
-      "list_zone_rulesets",
-      "list_zones",
-      "purge_cache",
-      "purge_pages_build_cache",
-      "rename_kv_namespace",
-      "retry_pages_deployment",
-      "rollback_pages_deployment",
-      "update_dns_record",
-      "update_r2_bucket",
-      "update_zone_setting",
-      "verify_api_token",
-    ]);
-
-    const reads = [
-      "verify_api_token",
-      "cloudflare_api_get",
-      "list_accounts",
-      "list_zones",
-      "get_zone",
-      "get_zone_setting",
-      "list_zone_rulesets",
-      "get_zone_ruleset",
-      "list_dns_records",
-      "get_dns_record",
-      "list_worker_scripts",
-      "get_worker_settings",
-      "list_worker_deployments",
-      "get_worker_deployment",
-      "list_kv_namespaces",
-      "get_kv_namespace",
-      "list_kv_keys",
-      "bulk_get_kv_values",
-      "list_r2_buckets",
-      "get_r2_bucket",
-      "list_r2_objects",
-      "get_r2_cors",
-      "list_pages_projects",
-      "get_pages_project",
-      "list_pages_deployments",
-      "get_pages_deployment",
-      "list_pages_domains",
-    ];
-    for (const name of reads) {
-      expect(
-        toolNamed(tools, name).annotations,
-        `${name} must be admissible as a read`,
-      ).toEqual({ readOnlyHint: true, destructiveHint: false });
-    }
-
-    // Additive: a create destroys nothing, so destructiveHint stays unset and
-    // readOnlyHint: false already routes it through call_destructive_tool.
-    for (const name of [
-      "create_dns_record",
-      "create_kv_namespace",
-      "create_r2_bucket",
-      "retry_pages_deployment",
-      "add_pages_domain",
-    ]) {
-      expect(toolNamed(tools, name).annotations, name).toEqual({
-        readOnlyHint: false,
-      });
-    }
-    for (const name of [
-      "cloudflare_api_mutate",
-      "cloudflare_api_upload",
-      "update_zone_setting",
-      "delete_worker_script",
-      "rename_kv_namespace",
-      "delete_kv_namespace",
-      "bulk_write_kv_values",
-      "bulk_delete_kv_values",
-      "update_r2_bucket",
-      "delete_r2_bucket",
-      "delete_r2_object",
-      "rollback_pages_deployment",
-      "delete_pages_deployment",
-      "delete_pages_domain",
-      "purge_pages_build_cache",
-      "delete_pages_project",
-      "update_dns_record",
-      "delete_dns_record",
-      "purge_cache",
-    ]) {
-      expect(toolNamed(tools, name).annotations, name).toEqual({
-        readOnlyHint: false,
-        destructiveHint: true,
-      });
-    }
-  });
 
   it("leaves R2 metrics and CORS writes to the raw tools", async () => {
     // #350 measured all three as unprojected wrappers around a path, and
@@ -441,14 +306,14 @@ describe("cloudflare() tool surface", () => {
     expect(guide).toContain("/accounts/{accountId}/r2/metrics");
 
     stubFetch({ body: { success: true, result: null } });
-    await connection().callTool(
+    await connection({ authentication: "globalApiKey" }).callTool(
       "cloudflare_api_mutate",
       {
         method: "PUT",
         path: "/accounts/acct-1/r2/buckets/assets/cors",
         body: { rules: [{ allowed: { methods: ["GET"], origins: ["https://a.test"] } }] },
       },
-      contextWithToken(),
+      contextWithGlobalApiKey(),
     );
     expect(calls[0]!.init.method).toBe("PUT");
     expect(urlOf(0).pathname).toBe(
@@ -521,73 +386,6 @@ describe("cloudflare() tool surface", () => {
         ).toBeTruthy();
       }
     }
-  });
-
-  it("enumerates every legal DNS record type in the schema", async () => {
-    const tools = await servedTools(connection(), contextWithToken());
-    const properties = (name: string) =>
-      (toolNamed(tools, name).inputSchema as Record<string, unknown>)[
-        "properties"
-      ] as Record<string, Record<string, unknown>>;
-
-    // Filtering a list may name any of the 21 record types Cloudflare accepts.
-    expect(CLOUDFLARE_DNS_RECORD_TYPES).toHaveLength(21);
-    expect(properties("list_dns_records")["type"]!["enum"]).toEqual([
-      ...CLOUDFLARE_DNS_RECORD_TYPES,
-    ]);
-
-    // Creating and updating is restricted to the eight content-based types.
-    // The other thirteen take a per-type structured `data` object this surface
-    // deliberately does not accept, so offering them would only produce a 400.
-    expect(CLOUDFLARE_CONTENT_DNS_RECORD_TYPES).toEqual([
-      "A",
-      "AAAA",
-      "CNAME",
-      "MX",
-      "NS",
-      "OPENPGPKEY",
-      "PTR",
-      "TXT",
-    ]);
-    for (const tool of ["create_dns_record", "update_dns_record"]) {
-      expect(properties(tool)["type"]!["enum"], tool).toEqual([
-        ...CLOUDFLARE_CONTENT_DNS_RECORD_TYPES,
-      ]);
-      expect(properties(tool)["type"]!["enum"], tool).not.toContain("SRV");
-    }
-  });
-
-  it("publishes the current R2 and KV jurisdiction values", async () => {
-    const tools = await servedTools(connection(), contextWithToken());
-    const properties = (name: string) =>
-      (toolNamed(tools, name).inputSchema as any).properties as Record<
-        string,
-        Record<string, unknown>
-      >;
-
-    for (const name of [
-      "list_r2_buckets",
-      "get_r2_bucket",
-      "create_r2_bucket",
-      "update_r2_bucket",
-      "delete_r2_bucket",
-      "get_r2_cors",
-      "list_r2_objects",
-      "delete_r2_object",
-    ]) {
-      expect(properties(name)["jurisdiction"]?.["enum"], name).toEqual([
-        "default",
-        "eu",
-        "us",
-        "fedramp",
-      ]);
-    }
-    expect(properties("create_kv_namespace")["jurisdiction"]?.["enum"]).toEqual([
-      "eu",
-      "fedramp",
-      "us",
-    ]);
-    expect(properties("rename_kv_namespace")).not.toHaveProperty("jurisdiction");
   });
 
   it("requires a scope argument only when the deployment declares no default", async () => {
@@ -706,14 +504,14 @@ describe("cloudflare() request building", () => {
 
   it("sends JSON mutations through the approval-gated raw API tool", async () => {
     stubFetch({ body: { success: true, result: { enabled: true } } });
-    await connection().callTool(
+    await connection({ authentication: "globalApiKey" }).callTool(
       "cloudflare_api_mutate",
       {
         method: "PUT",
         path: "/zones/zone-1/email/routing/rules/rule-1",
         body: { enabled: true },
       },
-      contextWithToken(),
+      contextWithGlobalApiKey(),
     );
     expect(calls[0]!.init.method).toBe("PUT");
     expect(bodyOf()).toEqual({ enabled: true });
@@ -722,14 +520,14 @@ describe("cloudflare() request building", () => {
   it("preserves non-envelope JSON from endpoints such as GraphQL", async () => {
     stubFetch({ body: { data: { viewer: { zones: [{ zoneTag: "zone-1" }] } } } });
     await expect(
-      connection().callTool(
+      connection({ authentication: "globalApiKey" }).callTool(
         "cloudflare_api_mutate",
         {
           method: "POST",
           path: "/graphql",
           body: { query: "query { viewer { zones { zoneTag } } }" },
         },
-        contextWithToken(),
+        contextWithGlobalApiKey(),
       ),
     ).resolves.toEqual({
       result: { data: { viewer: { zones: [{ zoneTag: "zone-1" }] } } },
@@ -875,137 +673,6 @@ describe("cloudflare() request building", () => {
     });
   });
 
-  it("builds R2 management requests including jurisdiction and path-like keys", async () => {
-    stubFetch(
-      { body: { success: true, result: { name: "assets" } } },
-      { body: { success: true, result: { key: "images/a b.png" } } },
-    );
-    await connection().callTool(
-      "create_r2_bucket",
-      {
-        accountId: "acct-1",
-        bucketName: "assets",
-        jurisdiction: "eu",
-        locationHint: "weur",
-        storageClass: "Standard",
-      },
-      contextWithToken(),
-    );
-    expect(calls[0]!.init.method).toBe("POST");
-    expect(calls[0]!.init.headers).toMatchObject({ "cf-r2-jurisdiction": "eu" });
-    expect(bodyOf(0)).toEqual({
-      name: "assets",
-      locationHint: "weur",
-      storageClass: "Standard",
-    });
-
-    await connection().callTool(
-      "delete_r2_object",
-      {
-        accountId: "acct-1",
-        bucketName: "assets",
-        objectKey: "images/a b.png",
-      },
-      contextWithToken(),
-    );
-    expect(urlOf(1).pathname).toBe(
-      "/client/v4/accounts/acct-1/r2/buckets/assets/objects/images/a%20b.png",
-    );
-  });
-
-  it("forwards the R2 us jurisdiction on reads and writes", async () => {
-    stubFetch(
-      { body: { success: true, result: { name: "assets", jurisdiction: "us" } } },
-      { body: { success: true, result: { name: "archive", jurisdiction: "us" } } },
-    );
-    const connector = connection();
-    await connector.callTool(
-      "get_r2_bucket",
-      { accountId: "acct-1", bucketName: "assets", jurisdiction: "us" },
-      contextWithToken(),
-    );
-    await connector.callTool(
-      "create_r2_bucket",
-      { accountId: "acct-1", bucketName: "archive", jurisdiction: "us" },
-      contextWithToken(),
-    );
-    for (const call of calls) {
-      expect(call.init.headers).toMatchObject({ "cf-r2-jurisdiction": "us" });
-    }
-  });
-
-  it("refuses R2 object keys whose dot segments would retarget deletion", async () => {
-    const connector = connection();
-    for (const objectKey of ["..", "../cors", "folder/./item"]) {
-      await expect(
-        connector.callTool(
-          "delete_r2_object",
-          { accountId: "acct-1", bucketName: "assets", objectKey },
-          contextWithToken(),
-        ),
-      ).rejects.toBeInstanceOf(ConnectorCallError);
-    }
-    expect(calls).toHaveLength(0);
-  });
-
-  it("uses the documented KV bulk JSON endpoints", async () => {
-    stubFetch({ body: { success: true, result: { successful_key_count: 1 } } });
-    await connection().callTool(
-      "bulk_write_kv_values",
-      {
-        accountId: "acct-1",
-        namespaceId: "ns-1",
-        entries: [{ key: "feature", value: "on", expiration_ttl: 600 }],
-      },
-      contextWithToken(),
-    );
-    expect(calls[0]!.init.method).toBe("PUT");
-    expect(urlOf().pathname).toBe(
-      "/client/v4/accounts/acct-1/storage/kv/namespaces/ns-1/bulk",
-    );
-    expect(bodyOf()).toEqual([
-      { key: "feature", value: "on", expiration_ttl: 600 },
-    ]);
-  });
-
-  it("sends KV jurisdiction only when namespace creation asks for it", async () => {
-    stubFetch(
-      ...["eu", "fedramp", "us", undefined].map((jurisdiction) => ({
-        body: {
-          success: true,
-          result: { id: `ns-${jurisdiction ?? "default"}`, title: "Cache", jurisdiction },
-        },
-      })),
-    );
-    const connector = connection();
-    for (const jurisdiction of ["eu", "fedramp", "us", undefined]) {
-      await connector.callTool(
-        "create_kv_namespace",
-        {
-          accountId: "acct-1",
-          title: "Cache",
-          ...(jurisdiction ? { jurisdiction } : {}),
-        },
-        contextWithToken(),
-      );
-    }
-    expect(calls.map((_call, index) => bodyOf(index))).toEqual([
-      { title: "Cache", jurisdiction: "eu" },
-      { title: "Cache", jurisdiction: "fedramp" },
-      { title: "Cache", jurisdiction: "us" },
-      { title: "Cache" },
-    ]);
-
-    await expect(
-      connector.callTool(
-        "create_kv_namespace",
-        { accountId: "acct-1", title: "Cache", jurisdiction: "default" },
-        contextWithToken(),
-      ),
-    ).rejects.toMatchObject({ code: "invalid_args" });
-    expect(calls).toHaveLength(4);
-  });
-
   it("authenticates with a bearer token against the documented v4 base", async () => {
     stubFetch({
       body: { success: true, result: { id: "tok", status: "active" } },
@@ -1100,134 +767,9 @@ describe("cloudflare() request building", () => {
       "https://cf.proxy.internal/v4/user/tokens/verify",
     );
   });
-
-  it("sends the create body Cloudflare expects, defaulting ttl to automatic", async () => {
-    stubFetch({ body: { success: true, result: { id: "rec-1" } } });
-    await connection().callTool(
-      "create_dns_record",
-      {
-        zoneId: "zone-1",
-        type: "A",
-        name: "www.example.com",
-        content: "203.0.113.10",
-        proxied: true,
-      },
-      contextWithToken(),
-    );
-    expect(calls[0]!.init.method).toBe("POST");
-    expect(bodyOf()).toEqual({
-      type: "A",
-      name: "www.example.com",
-      content: "203.0.113.10",
-      ttl: 1,
-      proxied: true,
-    });
-  });
-
-  it("patches only the fields an update supplies", async () => {
-    stubFetch({ body: { success: true, result: { id: "rec-1" } } });
-    await connection().callTool(
-      "update_dns_record",
-      { zoneId: "zone-1", recordId: "rec-1", content: "203.0.113.11" },
-      contextWithToken(),
-    );
-    expect(calls[0]!.init.method).toBe("PATCH");
-    expect(urlOf().pathname).toBe("/client/v4/zones/zone-1/dns_records/rec-1");
-    expect(bodyOf()).toEqual({ content: "203.0.113.11" });
-  });
-
-  it("acknowledges a delete without echoing Cloudflare's bare id envelope", async () => {
-    stubFetch({ body: { success: true, result: { id: "rec-1" } } });
-    const result = await connection().callTool(
-      "delete_dns_record",
-      { zoneId: "zone-1", recordId: "rec-1" },
-      contextWithToken(),
-    );
-    expect(calls[0]!.init.method).toBe("DELETE");
-    expect(result).toEqual({ deleted: true, recordId: "rec-1" });
-  });
-
-  it("sends exactly one purge variant", async () => {
-    stubFetch(
-      { body: { success: true, result: { id: "zone-1" } } },
-      { body: { success: true, result: { id: "zone-1" } } },
-    );
-    const connector = connection();
-    const everything = await connector.callTool(
-      "purge_cache",
-      { zoneId: "zone-1", everything: true },
-      contextWithToken(),
-    );
-    expect(bodyOf(0)).toEqual({ purge_everything: true });
-    expect(everything).toEqual({
-      purged: true,
-      zoneId: "zone-1",
-      scope: "everything",
-    });
-
-    await connector.callTool(
-      "purge_cache",
-      { zoneId: "zone-1", files: ["https://example.com/a.css"] },
-      contextWithToken(),
-    );
-    expect(bodyOf(1)).toEqual({ files: ["https://example.com/a.css"] });
-  });
 });
 
 describe("cloudflare() projections", () => {
-  it("projects zone settings without inventing provider defaults", async () => {
-    stubFetch(
-      {
-        body: {
-          success: true,
-          result: {
-            id: "proxy_read_timeout",
-            value: 100,
-            editable: false,
-            modified_on: "2026-08-30T00:00:00Z",
-          },
-        },
-      },
-      {
-        body: {
-          success: true,
-          result: {
-            id: "webmcp_packs",
-            value: "dom,credentials",
-            editable: true,
-          },
-        },
-      },
-    );
-    const connector = connection();
-    const current = await connector.callTool(
-      "get_zone_setting",
-      { zoneId: "zone-1", settingId: "proxy_read_timeout" },
-      contextWithToken(),
-    );
-    expect(current).toEqual({
-      id: "proxy_read_timeout",
-      value: 100,
-      editable: false,
-      modifiedOn: "2026-08-30T00:00:00Z",
-    });
-
-    const updated = await connector.callTool(
-      "update_zone_setting",
-      {
-        zoneId: "zone-1",
-        settingId: "webmcp_packs",
-        value: "dom,credentials",
-      },
-      contextWithToken(),
-    );
-    expect(bodyOf(1)).toEqual({ value: "dom,credentials" });
-    expect(updated).toEqual({
-      id: "webmcp_packs",
-      value: "dom,credentials",
-      editable: true,
-    });
-  });
 
   it("preserves new ruleset and Worker settings fields in bounded results", async () => {
     stubFetch(
@@ -1310,82 +852,6 @@ describe("cloudflare() projections", () => {
       contextWithToken(),
     );
     expect((raw as any).scripts[0].observability.traces.propagation_policy).toBeNull();
-  });
-
-  it("projects namespace jurisdiction and bulk operation results", async () => {
-    stubFetch(
-      {
-        body: {
-          success: true,
-          result: [{ id: "ns-1", title: "Cache", jurisdiction: "us" }],
-          result_info: { page: 1, per_page: 20, count: 1, total_pages: 1 },
-        },
-      },
-      { body: { success: true, result: { id: "ns-1", title: "Cache", jurisdiction: "us" } } },
-      { body: { success: true, result: { id: "ns-2", title: "EU", jurisdiction: "eu" } } },
-      { body: { success: true, result: { id: "ns-1", title: "Renamed", jurisdiction: "us" } } },
-      { body: { success: true, result: { values: { feature: "on" } } } },
-      {
-        body: {
-          success: true,
-          result: { successful_key_count: 2, unsuccessful_keys: ["later"] },
-        },
-      },
-      {
-        body: {
-          success: true,
-          result: { successful_key_count: 1, unsuccessful_keys: [] },
-        },
-      },
-    );
-    const connector = connection();
-    const listed = await connector.callTool(
-      "list_kv_namespaces",
-      { accountId: "acct-1" },
-      contextWithToken(),
-    );
-    const fetched = await connector.callTool(
-      "get_kv_namespace",
-      { accountId: "acct-1", namespaceId: "ns-1" },
-      contextWithToken(),
-    );
-    const created = await connector.callTool(
-      "create_kv_namespace",
-      { accountId: "acct-1", title: "EU", jurisdiction: "eu" },
-      contextWithToken(),
-    );
-    const renamed = await connector.callTool(
-      "rename_kv_namespace",
-      { accountId: "acct-1", namespaceId: "ns-1", title: "Renamed" },
-      contextWithToken(),
-    );
-    expect((listed as any).namespaces[0].jurisdiction).toBe("us");
-    expect((fetched as any).jurisdiction).toBe("us");
-    expect((created as any).jurisdiction).toBe("eu");
-    expect((renamed as any).jurisdiction).toBe("us");
-
-    const values = await connector.callTool(
-      "bulk_get_kv_values",
-      { accountId: "acct-1", namespaceId: "ns-1", keys: ["feature"] },
-      contextWithToken(),
-    );
-    const written = await connector.callTool(
-      "bulk_write_kv_values",
-      {
-        accountId: "acct-1",
-        namespaceId: "ns-1",
-        entries: [{ key: "feature", value: "on" }],
-      },
-      contextWithToken(),
-    );
-    const deleted = await connector.callTool(
-      "bulk_delete_kv_values",
-      { accountId: "acct-1", namespaceId: "ns-1", keys: ["feature"] },
-      contextWithToken(),
-    );
-    expect(values).toEqual({ values: { feature: "on" } });
-    expect(written).toEqual({ successfulKeyCount: 2, unsuccessfulKeys: ["later"] });
-    expect(deleted).toEqual({ successfulKeyCount: 1, unsuccessfulKeys: [] });
   });
 
   it("declares and returns the R2 CORS rule collection", async () => {
@@ -1836,13 +1302,8 @@ describe("cloudflare() typed failures", () => {
           result: null,
         },
       },
-      "create_dns_record",
-      {
-        zoneId: "zone-1",
-        type: "A",
-        name: "www.example.com",
-        content: "203.0.113.10",
-      },
+      "list_dns_records",
+      { zoneId: "zone-1" },
     );
     expect(error.code).toBe("invalid_args");
     expect(error.retryable).toBe(false);
@@ -1976,51 +1437,6 @@ describe("cloudflare() typed failures", () => {
     expect(calls).toHaveLength(0);
   });
 
-  caseOf("refuses an ambiguous or empty purge locally", async () => {
-    stubFetch({ body: { success: true, result: {} } });
-    const connector = connection({ zoneId: "zone-1" });
-
-    await expect(
-      connector.callTool(
-        "purge_cache",
-        { everything: true, files: ["https://example.com/a"] },
-        contextWithToken(),
-      ),
-    ).rejects.toMatchObject({
-      code: "invalid_args",
-      message: expect.stringContaining("never both"),
-    });
-
-    await expect(
-      connector.callTool("purge_cache", {}, contextWithToken()),
-    ).rejects.toMatchObject({ code: "invalid_args" });
-
-    await expect(
-      connector.callTool(
-        "purge_cache",
-        { files: ["https://example.com/a"], hosts: ["example.com"] },
-        contextWithToken(),
-      ),
-    ).rejects.toMatchObject({
-      code: "invalid_args",
-      message: expect.stringContaining("exactly one"),
-    });
-
-    expect(calls).toHaveLength(0);
-  });
-
-  caseOf("refuses an update with nothing to change", async () => {
-    stubFetch({ body: { success: true, result: {} } });
-    await expect(
-      connection().callTool(
-        "update_dns_record",
-        { zoneId: "zone-1", recordId: "rec-1" },
-        contextWithToken(),
-      ),
-    ).rejects.toMatchObject({ code: "invalid_args" });
-    expect(calls).toHaveLength(0);
-  });
-
   test.each(cases)("%s", async (_name, run) => run());
 });
 
@@ -2075,5 +1491,92 @@ describe("cloudflare() credential test", () => {
       "X-Auth-Email": "operator@example.com",
       "X-Auth-Key": "candidate-key",
     });
+  });
+});
+
+describe("Cloudflare canonical mutations", () => {
+  it("INV-9: refuses ordinary token-auth JSON writes locally and keeps the R2 jurisdiction gap explicit", async () => {
+    stubFetch({ body: { success: true, result: { id: "bucket" } } });
+    const args = { method: "PUT", path: "/accounts/acct-1/r2/buckets/bucket", body: { storageClass: "InfrequentAccess" } };
+    await expect(connection().callTool("cloudflare_api_mutate", args, contextWithToken())).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("MCP execute") });
+    expect(calls).toHaveLength(0);
+    await connection().callTool("cloudflare_api_mutate", { ...args, headers: [{ name: "cf-r2-jurisdiction", value: "eu" }] }, contextWithToken());
+    expect(calls).toHaveLength(1);
+    expect(new Headers(calls[0]!.init.headers).get("cf-r2-jurisdiction")).toBe("eu");
+  });
+});
+
+
+describe("Cloudflare mutation bypass refusal", () => {
+  it.each(["Accept", "cf-r2-jurisdiction"])("INV-9: a %s header cannot restore a DNS JSON duplicate", async (name) => {
+    await expect(connection().callTool("cloudflare_api_mutate", { method: "POST", path: "/zones/zone-1/dns_records", body: { type: "A", name: "site", content: "192.0.2.1" }, headers: [{ name, value: name === "Accept" ? "application/json" : "eu" }] }, contextWithToken())).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(0);
+  });
+  it.each(["application/json", "application/octet-stream"])("INV-9: %s cannot route an ordinary DNS mutation through upload", async (contentType) => {
+    await expect(connection().callTool("cloudflare_api_upload", { method: "POST", path: "/zones/zone-1/dns_records", contentType, textBody: '{"type":"A","name":"site","content":"192.0.2.1"}' }, contextWithToken())).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(0);
+  });
+});
+
+
+describe("Cloudflare reviewed mutation exceptions", () => {
+  it.each(["Standard", "InfrequentAccess"])("INV-1 INV-9: preserves bucket PATCH with %s storage class without jurisdiction", async (storageClass) => {
+    stubFetch({ body: { success: true, result: { name: "assets", storage_class: storageClass } } });
+    const connector = connection();
+    const result = await connector.callTool("cloudflare_api_mutate", { method: "PATCH", path: "/accounts/acct-1/r2/buckets/assets", headers: [{ name: "CF-R2-Storage-Class", value: storageClass }] }, contextWithToken());
+    expect(result).toEqual({ result: { name: "assets", storage_class: storageClass } });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.init.method).toBe("PATCH");
+    expect(urlOf().pathname).toBe("/client/v4/accounts/acct-1/r2/buckets/assets");
+    expect(new Headers(calls[0]!.init.headers).get("cf-r2-storage-class")).toBe(storageClass);
+    expect(new Headers(calls[0]!.init.headers).has("cf-r2-jurisdiction")).toBe(false);
+    expect((await servedTools(connector)).find((tool) => tool.name === "cloudflare_api_mutate")?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+  });
+  it("INV-9: preserves jurisdiction alongside bucket storage-class PATCH", async () => {
+    stubFetch({ body: { success: true, result: { name: "assets", storage_class: "Standard", jurisdiction: "eu" } } });
+    await connection().callTool("cloudflare_api_mutate", { method: "PATCH", path: "/accounts/acct-1/r2/buckets/assets", headers: [{ name: "cf-r2-storage-class", value: "Standard" }, { name: "cf-r2-jurisdiction", value: "eu" }] }, contextWithToken());
+    expect(new Headers(calls[0]!.init.headers).get("cf-r2-storage-class")).toBe("Standard");
+    expect(new Headers(calls[0]!.init.headers).get("cf-r2-jurisdiction")).toBe("eu");
+  });
+  it.each(["standard", "Archive", "", "Standard, InfrequentAccess"])("INV-9: refuses invalid storage class %s even with jurisdiction", async (value) => {
+    await expect(connection().callTool("cloudflare_api_mutate", { method: "PATCH", path: "/accounts/acct-1/r2/buckets/assets", headers: [{ name: "cf-r2-storage-class", value }, { name: "cf-r2-jurisdiction", value: "eu" }] }, contextWithToken())).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("Standard or InfrequentAccess") });
+    expect(calls).toHaveLength(0);
+  });
+  it.each([
+    ["POST", "/accounts/acct-1/r2/buckets"],
+    ["PUT", "/accounts/acct-1/r2/buckets/assets"],
+    ["PATCH", "/accounts/acct-1/r2/buckets/assets/cors"],
+    ["PATCH", "/zones/zone-1/dns_records/record"],
+  ])("INV-9: storage-class header cannot restore %s %s", async (method, path) => {
+    await expect(connection().callTool("cloudflare_api_mutate", { method, path, headers: [{ name: "cf-r2-storage-class", value: "Standard" }] }, contextWithToken())).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(0);
+  });
+  it("INV-9: creates a jurisdictional bucket through the explicit API header complement", async () => {
+    stubFetch({ body: { success: true, result: { name: "assets", jurisdiction: "eu" } } });
+    await connection().callTool("cloudflare_api_mutate", { method: "POST", path: "/accounts/acct-1/r2/buckets", headers: [{ name: "cf-r2-jurisdiction", value: "eu" }], body: { name: "assets" } }, contextWithToken());
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.init.method).toBe("POST");
+    expect(new Headers(calls[0]!.init.headers).get("cf-r2-jurisdiction")).toBe("eu");
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ name: "assets" });
+  });
+  it.each([
+    ["POST", "/accounts/acct-1/stream/video-id"],
+    ["POST", "/accounts/acct-1/stream/copy"],
+    ["POST", "/accounts/acct-1/stream/direct_upload"],
+    ["PUT", "/accounts/acct-1/stream"],
+    ["POST", "/accounts/acct-1/workers/scripts/site"],
+    ["POST", "/accounts/acct-1/storage/kv/namespaces/ns/values/key"],
+    ["POST", "/accounts/acct-1/r2/buckets/assets/objects/key"],
+    ["PUT", "/accounts/acct-1/images/v1"],
+    ["PUT", "/accounts/acct-1/pages/projects/site/deployments"],
+  ])("INV-9: refuses %s %s because it is not the reviewed upload operation", async (method, path) => {
+    await expect(connection().callTool("cloudflare_api_upload", { method, path, contentType: "application/json", textBody: '{"requireSignedURLs":true}' }, contextWithToken())).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(0);
+  });
+  it("INV-9: retains an actual Stream collection upload", async () => {
+    stubFetch({ body: { success: true, result: { uid: "video" } } });
+    await connection().callTool("cloudflare_api_upload", { method: "POST", path: "/accounts/acct-1/stream", files: [{ name: "file", fileName: "video.mp4", contentType: "video/mp4", base64: "AAEC" }] }, contextWithToken());
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.init.body).toBeInstanceOf(FormData);
   });
 });

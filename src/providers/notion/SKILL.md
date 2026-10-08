@@ -7,6 +7,23 @@
 
 <!-- fragment: guide_0 -->
 
+## Identity before routing
+
+This explicit `surface: "api"` connection acts as an internal integration.
+Its `integration_*` tools are canonical for bot-scoped/headless operations.
+Hosted MCP is the default and acts as its OAuth-authorized user. Authorization
+is not equivalent: an integration token cannot authorize hosted MCP, and user
+OAuth cannot reproduce the integration bot's ownership/sharing boundary.
+Configure each under a separate connector id and authorize it independently.
+Do not switch to a user identity to recover a failed integration operation.
+
+Use the bot tools when the task requires that integration identity. Use hosted
+`notion-search`, `notion-fetch`, `notion-get-users`, `notion-get-comments`,
+`notion-create-pages`, `notion-update-page`, and `notion-create-comment` for
+user-owned content work. Hosted MCP additionally covers sessions, agents,
+attachments and broader workspace operations. REST tool names are not MCP aliases.
+
+
 
 ## Databases contain data sources
 
@@ -15,18 +32,18 @@ source* inside it. The two ids are not interchangeable and Notion rejects the
 wrong one.
 
 - The id in a Notion database URL is a **database id**.
-- `get_database` turns it into the `data_sources` list — usually one entry.
-- `get_data_source_schema` and `query_data_source` take that
-  **data_source_id**, and so does `create_page` when adding a row.
+- `integration_get_database` turns it into the `data_sources` list — usually one entry.
+- `integration_get_data_source_schema` and `integration_query_data_source` take that
+  **data_source_id**, and so does `integration_create_page` when adding a row.
 
-So the sequence for "find rows in this database" is `get_database` →
-`get_data_source_schema` → `query_data_source`. `search` returns data
+So the sequence for "find rows in this database" is `integration_get_database` →
+`integration_get_data_source_schema` → `integration_query_data_source`. `integration_search` returns data
 sources directly and skips the first step.
 
 ## Property quirks that break writes
 
 - Property names in filters, sorts, and writes must match the schema exactly,
-  including case. Read `get_data_source_schema` before composing one.
+  including case. Read `integration_get_data_source_schema` before composing one.
 - `select` and `status` writes must use an existing option name; inventing
   one fails. The schema lists the valid options.
 - Writes **replace** a property. Sending one item to a `multi_select` or
@@ -36,20 +53,20 @@ sources directly and skips the first step.
 - A page's title column is rarely called "title" — pass `title_property` from
   the schema when creating or updating a row.
 - Notion truncates `title`, `rich_text`, `relation`, and `people` at 25
-  entries. `get_page` reports each one in `truncated_properties` as
+  entries. `integration_get_page` reports each one in `truncated_properties` as
   `{ name, id }`; pass that `id` as `property_id` to
-  `get_page_property` for the complete value.
+  `integration_get_page_property` for the complete value.
 
 ## Reading page content
 
-`get_page` returns properties. `get_page_content` returns the body as flat
+`integration_get_page` returns properties. `integration_get_page_content` returns the body as flat
 blocks. Nested blocks (toggles, list children, table rows) need `depth`, and
 each level multiplies requests — a deep read stops at an internal ceiling and
 reports `truncated: true` rather than spending the whole rate-limit budget.
 
 ## Appending is append-only
 
-`append_blocks` adds children and nothing else. It cannot move, reorder, or
+`integration_append_blocks` adds children and nothing else. It cannot move, reorder, or
 replace an existing block, and a block appended through the API can never be
 relocated by it afterwards. Get the position right the first time with
 `position` and `after_block_id`. Notion caps one call at 100 blocks.
@@ -57,14 +74,14 @@ relocated by it afterwards. Get the position right the first time with
 ## Lean by default, raw on request
 
 Every read projects Notion's payload down to ids, plain text, and flattened
-property values. Where the dropped detail can matter — `search`, `get_page`,
-`get_page_content`, `get_page_property`, `get_data_source_schema`,
-`query_data_source`, `list_comments` — pass `raw: true` to get Notion's
+property values. Where the dropped detail can matter — `integration_search`, `integration_get_page`,
+`integration_get_page_content`, `integration_get_page_property`, `integration_get_data_source_schema`,
+`integration_query_data_source`, `integration_list_comments` — pass `raw: true` to get Notion's
 untouched response instead. It is much larger; reach for it only when a
-specific field is missing. Narrow `query_data_source` and `get_page` with
+specific field is missing. Narrow `integration_query_data_source` and `integration_get_page` with
 `properties` instead whenever the goal is fewer fields, not more.
 
-`get_page_content` with `raw: true` returns one level exactly as Notion
+`integration_get_page_content` with `raw: true` returns one level exactly as Notion
 sent it and does not walk nested children, so `depth` is ignored alongside
 it. A block type this projection does not model keeps its payload under
 `raw` on the block itself, so nothing silently flattens to an empty string.
@@ -89,8 +106,8 @@ list is absent from this connection, not hidden behind a generic call.
 
 ## Writes and pagination
 
-- Notion has **no idempotency key**. A retried `create_page` or
-  `add_comment` creates a duplicate. Confirm with `search` before repeating
+- Notion has **no idempotency key**. A retried `integration_create_page` or
+  `integration_add_comment` creates a duplicate. Confirm with `integration_search` before repeating
   a write that may have partially succeeded.
 - List tools take `page_size` (max 100) and return `has_more` with
   `next_cursor`. Pass a cursor back verbatim — it is opaque and must never be
@@ -109,6 +126,10 @@ Workspace purpose: <!-- endfragment -->
 <!-- fragment: guide_2 -->
 
 
+- This connection acts as its OAuth-authorized user. The separately configured
+  `surface: "api"` connection retains required internal-integration operations
+  under `integration_*` names, including headless content writes, cursor-complete
+  queries, exact JSON blocks and property items. No identity fallback occurs.
 - Discover the live catalog before assuming a tool exists. Notion can gate
   tools by workspace, account, client, and rollout independently of Connecta.
 - Start broad discovery with `notion-search`, then use `notion-fetch` on

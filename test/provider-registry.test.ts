@@ -119,36 +119,36 @@ const providers: ProviderCase[] = [
     meteredId: "cloudflare_prod",
     staticCatalog: true,
     factory: (storage: KVStorage) => deployment(storage, [
-      cloudflare("cloudflare_prod", { purpose: "Production zones and edge cache", zoneId: "zone-prod", accountId: "acct-prod" }),
-      cloudflare("cloudflare_staging", { purpose: "Staging zones only", zoneId: "zone-staging" }),
+      cloudflare("cloudflare_prod", { surface: "api", purpose: "Production zones and edge cache", zoneId: "zone-prod", accountId: "acct-prod" }),
+      cloudflare("cloudflare_staging", { surface: "api", purpose: "Staging zones only", zoneId: "zone-staging" }),
     ]),
   },
   {
     name: "notion",
     ids: ["notion_eng", "notion_ops"] as const,
-    toolName: "query_data_source",
-    secondToolName: "query_data_source",
+    toolName: "integration_query_data_source",
+    secondToolName: "integration_query_data_source",
     descriptionMarks: ["Engineering runbooks and specs", "Operations handbook"],
     admissionIds: ["notion_eng", "notion_ops"],
     meteredId: "notion_eng",
     staticCatalog: true,
     factory: (storage: KVStorage) => deployment(storage, [
-      notion("notion_eng", { purpose: "Engineering runbooks and specs" }),
-      notion("notion_ops", { purpose: "Operations handbook", title: "Ops wiki", defaultPageSize: 50 }),
+      notion("notion_eng", { surface: "api", purpose: "Engineering runbooks and specs" }),
+      notion("notion_ops", { surface: "api", purpose: "Operations handbook", title: "Ops wiki", defaultPageSize: 50 }),
     ], true),
   },
   {
     name: "vercel",
     ids: ["vercel_prod", "vercel_preview"] as const,
-    toolName: "list_projects",
-    secondToolName: "list_deployments",
+    toolName: "list_project_env_vars",
+    secondToolName: "list_project_env_vars",
     descriptionMarks: ["Production applications", "Preview applications"],
     admissionIds: ["vercel_prod", "vercel_preview"],
     meteredId: "vercel_prod",
     staticCatalog: true,
     factory: (storage: KVStorage) => deployment(storage, [
-      vercel("vercel_prod", { purpose: "Production applications", teamId: "team_prod", callAdmission: budget }),
-      vercel("vercel_preview", { purpose: "Preview applications", teamId: "team_preview", callAdmission: budget }),
+      vercel("vercel_prod", { surface: "api", purpose: "Production applications", teamId: "team_prod", callAdmission: budget }),
+      vercel("vercel_preview", { surface: "api", purpose: "Preview applications", teamId: "team_preview", callAdmission: budget }),
     ], true),
   },
   {
@@ -365,7 +365,7 @@ describe("provider-specific registry behavior", () => {
   it("serves Cloudflare's complete static catalog", async () => {
     const { registry } = byName("cloudflare").factory(memoryStorage());
     const tools = await registry.getTools("cloudflare_prod", BASE_URL);
-    expect(tools).toHaveLength(51);
+    expect(tools).toHaveLength(29);
     expect(tools.filter((tool) => tool.annotations?.readOnlyHint === true)).toHaveLength(27);
   });
 
@@ -375,8 +375,8 @@ describe("provider-specific registry behavior", () => {
     const ops = await registry.getTools("notion_ops", BASE_URL);
     expect(eng.map((tool) => tool.name)).toEqual(ops.map((tool) => tool.name));
     expect(eng).toHaveLength(15);
-    expect(registry.resolveAddress("notion_eng.trash_page")?.toolName).toBe("trash_page");
-    expect(registry.resolveAddress("nope.trash_page")).toBeFalsy();
+    expect(registry.resolveAddress("notion_eng.integration_trash_page")?.toolName).toBe("integration_trash_page");
+    expect(registry.resolveAddress("nope.integration_trash_page")).toBeFalsy();
   });
 
   it("carries Cloudflare page bounds in search and compact describe", async () => {

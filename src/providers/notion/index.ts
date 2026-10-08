@@ -44,7 +44,7 @@ const DEFAULT_PAGE_SIZE = 25;
 const MAX_CHILDREN_PER_REQUEST = 100;
 
 /**
- * Ceiling on the fetches one `get_page_content` walk may spend. Call admission
+ * Ceiling on the fetches one `integration_get_page_content` walk may spend. Call admission
  * meters tool calls, not the requests inside them, so a deep `depth` would
  * otherwise drain the budget invisibly; the walk stops here and reports
  * `truncated: true` instead.
@@ -97,8 +97,8 @@ interface NotionCommonOptions {
 
 /** Connecta's maintained hand-written Notion REST interface. */
 export interface NotionApiOptions extends NotionCommonOptions {
-  /** Omit for backward compatibility; the hand-written API interface is default. */
-  surface?: "api";
+  /** Select integration-owned REST operations explicitly; hosted user MCP is the default. */
+  surface: "api";
   /** Operator-facing label for the integration token. */
   credentialLabel?: string;
   /**
@@ -110,12 +110,12 @@ export interface NotionApiOptions extends NotionCommonOptions {
 
 /** Notion's official hosted MCP interface, authenticated through OAuth. */
 export interface NotionMcpOptions extends NotionCommonOptions {
-  surface: "mcp";
+  surface?: "mcp";
   /** Optional per-runtime downstream call-admission policy. */
   callAdmission?: ConnectorCallAdmissionPolicy;
 }
 
-/** Backward-compatible API options; existing consumers may extend this interface. */
+/** Explicit integration-owned REST options; use NotionConnectionOptions for either identity. */
 export interface NotionOptions extends NotionApiOptions {}
 
 /** Select one Notion interface when deployment configuration constructs it. */
@@ -413,7 +413,7 @@ function projectPropertyItem(item: any): unknown {
   }
 }
 
-/** A property Notion truncated, with the id `get_page_property` takes. */
+/** A property Notion truncated, with the id `integration_get_page_property` takes. */
 interface TruncatedProperty {
   name: string;
   id: string | null;
@@ -425,7 +425,7 @@ interface ProjectedProperties {
    * Notion cuts `title`, `rich_text`, `relation`, and `people` off at 25 entries
    * and signals it only with `has_more` on the property. Surfacing them is what
    * stops an agent reasoning confidently about 25 of 300 relations, and the id
-   * rides along because `get_page_property` addresses by id, not by name.
+   * rides along because `integration_get_page_property` addresses by id, not by name.
    */
   truncated: TruncatedProperty[];
 }
@@ -497,7 +497,7 @@ function projectPage(page: any, select?: string[]): Record<string, unknown> {
 /**
  * Identity fields only, no properties. A 25-result search across a populated
  * database would otherwise drag back hundreds of flattened values for results
- * the agent is about to discard; `get_page` fetches them for the one that hit.
+ * the agent is about to discard; `integration_get_page` fetches them for the one that hit.
  */
 function projectSearchHit(hit: any): Record<string, unknown> {
   if (hit?.object === "data_source") {
@@ -647,7 +647,7 @@ function projectSchemaProperty(property: any): Record<string, unknown> {
 // ---------------------------------------------------------------------------
 
 // The compact renderer inlines every property description, so these three
-// shared strings are paid for once per tool that uses them. `query_data_source`
+// shared strings are paid for once per tool that uses them. `integration_query_data_source`
 // carries all three plus a filter grammar and rendered past the 1,024-byte
 // compact budget until they were cut to the fact each one actually adds
 // ([#342](https://github.com/zackbart/connecta/issues/342)); the long versions
@@ -733,13 +733,13 @@ const PAGE_OUTPUT_SCHEMA: JsonSchema = {
           name: { type: "string" },
           id: {
             type: ["string", "null"],
-            description: "Pass as property_id to get_page_property.",
+            description: "Pass as property_id to integration_get_page_property.",
           },
         },
         required: ["name", "id"],
       },
       description:
-        "Properties Notion truncated at 25 entries. Each carries the property_id get_page_property needs to read the complete value.",
+        "Properties Notion truncated at 25 entries. Each carries the property_id integration_get_page_property needs to read the complete value.",
     },
   },
   required: ["id", "title", "properties"],
@@ -863,9 +863,9 @@ function buildTools(defaultPageSize: number): ApiTool[] {
   return [
     // ---------------------------------------------------------------- reads
     {
-      name: "search",
+      name: "integration_search",
       description:
-        "Find pages and data sources by title across everything shared with this integration. Never searches page content — use query_data_source for rows inside a database. Returns identity fields only.",
+        "Find pages and data sources by title across everything shared with this integration. Never searches page content — use integration_query_data_source for rows inside a database. Returns identity fields only.",
       annotations: { readOnlyHint: true },
       inputSchema: {
         type: "object",
@@ -933,9 +933,9 @@ function buildTools(defaultPageSize: number): ApiTool[] {
       },
     },
     {
-      name: "get_page",
+      name: "integration_get_page",
       description:
-        "Fetch one page's metadata and flattened property values by id. Returns the page's properties, not its body content — use get_page_content for the blocks.",
+        "Fetch one page's metadata and flattened property values by id. Returns the page's properties, not its body content — use integration_get_page_content for the blocks.",
       annotations: { readOnlyHint: true },
       inputSchema: {
         type: "object",
@@ -961,7 +961,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
       },
     },
     {
-      name: "get_page_content",
+      name: "integration_get_page_content",
       // `raw: true` returns the requested level exactly as Notion sent it and
       // does not walk nested children, so `depth` is ignored alongside it: a
       // raw read of a deep page yields one level.
@@ -1051,9 +1051,9 @@ function buildTools(defaultPageSize: number): ApiTool[] {
       },
     },
     {
-      name: "get_page_property",
+      name: "integration_get_page_property",
       description:
-        "Fetch one page property completely, paginating past the 25-entry limit that get_page reports in truncated_properties. Use for title, rich_text, relation, and people properties — the four Notion paginates.",
+        "Fetch one page property completely, paginating past the 25-entry limit that integration_get_page reports in truncated_properties. Use for title, rich_text, relation, and people properties — the four Notion paginates.",
       annotations: { readOnlyHint: true },
       inputSchema: {
         type: "object",
@@ -1062,7 +1062,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
           property_id: {
             type: "string",
             description:
-              "The property's id, from get_data_source_schema or get_page's truncated_properties — not its name.",
+              "The property's id, from integration_get_data_source_schema or integration_get_page's truncated_properties — not its name.",
           },
           page_size: PAGE_SIZE_PROPERTY,
           start_cursor: START_CURSOR_PROPERTY,
@@ -1115,9 +1115,9 @@ function buildTools(defaultPageSize: number): ApiTool[] {
       },
     },
     {
-      name: "get_database",
+      name: "integration_get_database",
       description:
-        "Fetch a database container and list the data sources inside it. A database id cannot be queried directly — start here to get the data_source_id that query_data_source and get_data_source_schema need.",
+        "Fetch a database container and list the data sources inside it. A database id cannot be queried directly — start here to get the data_source_id that integration_query_data_source and integration_get_data_source_schema need.",
       annotations: { readOnlyHint: true },
       inputSchema: {
         type: "object",
@@ -1169,7 +1169,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
       },
     },
     {
-      name: "get_data_source_schema",
+      name: "integration_get_data_source_schema",
       description:
         "List a data source's properties with their ids, types, and select/status options. Read this before filtering, sorting, or writing — filters and property names that do not match the schema exactly are rejected.",
       annotations: { readOnlyHint: true },
@@ -1179,7 +1179,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
           data_source_id: {
             type: "string",
             description:
-              "Data source id from get_database or search, not a database id.",
+              "Data source id from integration_get_database or integration_search, not a database id.",
           },
           raw: RAW_PROPERTY,
         },
@@ -1195,7 +1195,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
           title_property: {
             type: ["string", "null"],
             description:
-              "Name of the title-typed property. create_page needs this to title a row.",
+              "Name of the title-typed property. integration_create_page needs this to title a row.",
           },
           properties: {
             type: "object",
@@ -1229,7 +1229,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
       },
     },
     {
-      name: "query_data_source",
+      name: "integration_query_data_source",
       description:
         "List rows in a data source with optional filtering and sorting, returning each row's properties already flattened. Requires a data_source_id, never a database_id. Narrow with the properties argument to keep results small.",
       annotations: { readOnlyHint: true },
@@ -1238,12 +1238,12 @@ function buildTools(defaultPageSize: number): ApiTool[] {
         properties: {
           data_source_id: {
             type: "string",
-            description: "Data source id from get_database or search.",
+            description: "Data source id from integration_get_database or integration_search.",
           },
           filter: {
             type: "object",
             description:
-              'Notion filter object, passed through unchanged. Single condition: {"property":"Status","status":{"equals":"Done"}}. Compound: {"and":[...]} or {"or":[...]}. Property names must match get_data_source_schema exactly.',
+              'Notion filter object, passed through unchanged. Single condition: {"property":"Status","status":{"equals":"Done"}}. Compound: {"and":[...]} or {"or":[...]}. Property names must match integration_get_data_source_schema exactly.',
           },
           sorts: {
             type: "array",
@@ -1296,7 +1296,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
       },
     },
     {
-      name: "list_users",
+      name: "integration_list_users",
       description:
         "List workspace users and bots with their ids, for assigning people properties or attributing edits. Requires the integration's user-information capability.",
       annotations: { readOnlyHint: true },
@@ -1320,7 +1320,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
       },
     },
     {
-      name: "get_self",
+      name: "integration_get_self",
       description:
         "Identify the integration this connector authenticates as, and the workspace it is installed in. The cheapest way to confirm the token works before a longer sequence.",
       annotations: { readOnlyHint: true },
@@ -1352,7 +1352,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
       },
     },
     {
-      name: "list_comments",
+      name: "integration_list_comments",
       description:
         "List unresolved comments on a page or block as plain text with their discussion ids. Requires the integration's read-comment capability, which is off by default.",
       annotations: { readOnlyHint: true },
@@ -1387,7 +1387,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
 
     // --------------------------------------------------------------- writes
     {
-      name: "create_page",
+      name: "integration_create_page",
       description:
         "Create a page, either as a child of another page or as a row in a data source. Notion has no idempotency key: a retried create makes a second page, so confirm with search before repeating one.",
       annotations: { readOnlyHint: false },
@@ -1414,12 +1414,12 @@ function buildTools(defaultPageSize: number): ApiTool[] {
           title_property: {
             type: "string",
             description:
-              'Name of the title-typed property, from get_data_source_schema. Required in practice for a data-source parent, whose title column is rarely called "title". Defaults to "title", which is the only valid key under a page parent.',
+              'Name of the title-typed property, from integration_get_data_source_schema. Required in practice for a data-source parent, whose title column is rarely called "title". Defaults to "title", which is the only valid key under a page parent.',
           },
           properties: {
             type: "object",
             description:
-              "Additional Notion property values, keyed by property name and in Notion's own wrapped form, e.g. {\"Status\":{\"status\":{\"name\":\"Todo\"}}}. Read get_data_source_schema first.",
+              "Additional Notion property values, keyed by property name and in Notion's own wrapped form, e.g. {\"Status\":{\"status\":{\"name\":\"Todo\"}}}. Read integration_get_data_source_schema first.",
           },
           markdown: {
             type: "string",
@@ -1444,7 +1444,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
             ["parent_page_id", args.parent_page_id],
             ["parent_data_source_id", args.parent_data_source_id],
           ],
-          "A page needs exactly one parent, and a data source is addressed by its data_source_id from get_database — never by a database_id.",
+          "A page needs exactly one parent, and a data source is addressed by its data_source_id from integration_get_database — never by a database_id.",
         );
         if (args.markdown !== undefined && args.children !== undefined) {
           throw new ConnectorCallError(
@@ -1483,7 +1483,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
       },
     },
     {
-      name: "append_blocks",
+      name: "integration_append_blocks",
       description:
         "Append content to the end of a page or block, or insert it at a chosen position. Appending only adds: existing blocks are never moved or replaced, and an appended block cannot be relocated later through the API.",
       annotations: { readOnlyHint: false },
@@ -1584,7 +1584,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
       },
     },
     {
-      name: "update_page_properties",
+      name: "integration_update_page_properties",
       // Deliberately no locking, templates, or `erase_content` (#409): locking
       // is coordination state, templates finish asynchronously, and
       // `erase_content` permanently deletes every child block. None belongs
@@ -1604,12 +1604,12 @@ function buildTools(defaultPageSize: number): ApiTool[] {
           title_property: {
             type: "string",
             description:
-              'Name of the title-typed property, from get_data_source_schema. Defaults to "title".',
+              'Name of the title-typed property, from integration_get_data_source_schema. Defaults to "title".',
           },
           properties: {
             type: "object",
             description:
-              "Notion property values keyed by property name, in Notion's wrapped form. Read get_data_source_schema for names, types, and valid option names.",
+              "Notion property values keyed by property name, in Notion's wrapped form. Read integration_get_data_source_schema for names, types, and valid option names.",
           },
           icon: { type: "string", description: "Replacement emoji icon." },
         },
@@ -1645,7 +1645,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
       },
     },
     {
-      name: "trash_page",
+      name: "integration_trash_page",
       description:
         "Move a page to the workspace trash, or restore one from it. Trashing hides the page and its content from reads; it is reversible through this same tool with restore: true.",
       annotations: { readOnlyHint: false, destructiveHint: true },
@@ -1685,7 +1685,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
       },
     },
     {
-      name: "add_comment",
+      name: "integration_add_comment",
       description:
         "Start a comment discussion on a page, or reply to an existing discussion. Requires the integration's insert-comment capability, which is off by default.",
       annotations: { readOnlyHint: false },
@@ -1699,7 +1699,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
           discussion_id: {
             type: "string",
             description:
-              "Reply to this existing discussion, from list_comments.",
+              "Reply to this existing discussion, from integration_list_comments.",
           },
           text: { type: "string", description: "Comment body as plain text." },
         },
@@ -1746,7 +1746,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
 /**
  * Marked `required` for one reason: a Notion database is a container, and the
  * rows and schema live in a data source inside it. The id in a database URL is a
- * database id, and passing it to `query_data_source` or `create_page` fails —
+ * database id, and passing it to `integration_query_data_source` or `integration_create_page` fails —
  * a trap no input schema can teach, so the guide has to.
  */
 function apiUsageGuide(purpose: string, instructions: string | undefined): string {
@@ -1859,8 +1859,8 @@ function notionApi(
 
   return api(id, {
     ...(options.authScope ? { authScope: options.authScope } : {}),
-    title: options.title ?? "Notion",
-    description: `Notion workspace — ${purpose}`,
+    title: options.title ?? "Notion integration",
+    description: `Notion internal integration: ${purpose}`,
     credential: {
       label: options.credentialLabel ?? "Notion integration token",
       description:
@@ -1891,7 +1891,7 @@ function notionApi(
     usageGuide: {
       content: apiUsageGuide(purpose, options.instructions),
       summary:
-        "Database-to-data-source lookup, property write rules, lean-vs-raw results, and Notion's overloaded 403/404.",
+        "Internal integration identity. Exact REST queries, JSON blocks, properties, paging and bot-scoped content writes.",
       required: true,
     },
     tools: buildTools(defaultPageSize),
@@ -1909,7 +1909,7 @@ const NOTION_OPTIONS = variants("surface", {
     ...keys("surface", "credentialLabel", "defaultPageSize"),
   }).shape,
   mcp: optionsOf<NotionMcpOptions>()({ ...PROVIDER_COMMON, ...keys("surface") }).shape,
-}, "api");
+}, "mcp");
 
 /** A maintained Notion connection using the selected provider interface. */
 export const notion = defineProvider<NotionConnectionOptions>({
@@ -1926,9 +1926,9 @@ export const notion = defineProvider<NotionConnectionOptions>({
 
 function notionConnector(id: string, options: NotionConnectionOptions, provider: ProviderContext): Connector {
   const purpose = options.purpose.trim();
-  return options.surface === "mcp"
-    ? notionMcp(id, purpose, options, provider)
-    : notionApi(id, purpose, options);
+  return options.surface === "api"
+    ? notionApi(id, purpose, options)
+    : notionMcp(id, purpose, options, provider);
 }
 
 /** @deprecated Read `notion.definition.classify` instead. Kept for existing imports. */
