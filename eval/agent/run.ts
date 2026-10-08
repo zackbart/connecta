@@ -233,9 +233,6 @@ async function runTrial(
       ...(nudges ? { detail: `${nudges} nudge(s)` } : {}),
       advisory: true,
     };
-    // Graders are synchronous over the world; artifact state lives in the
-    // deployment's store, so it is read into the world first.
-    if (deployment.artifacts) world.artifacts = await deployment.artifacts.snapshot();
     const checks = error ? [] : [completed, ...task.grade({ world, trace }), unprompted];
     const passed = checks.every((item) => item.advisory || item.pass);
     return {

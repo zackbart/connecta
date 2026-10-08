@@ -192,10 +192,6 @@ function endpointOf(value: unknown): DescribedEndpoint | undefined {
   return describedEndpoint(value);
 }
 
-/** Exact origins only; an entry that is not a URL is dropped rather than echoed. */
-const origins = (values: readonly unknown[]): string[] =>
-  values.flatMap((value) => describedOrigin(value) ?? []);
-
 const AUTH_MODES = new Set(["none", "headers", "credential", "oauth", "request"]);
 const SOURCE_KINDS = new Set(["remote-mcp", "api", "builtin", "custom"]);
 

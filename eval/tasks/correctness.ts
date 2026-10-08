@@ -132,21 +132,4 @@ export const EXISTING_CORRECTNESS: Record<string, Correctness> = {
     evidence: [/audit/i, /prod-db/, /project\.deleted/, /dana\.whitfield@example\.com/],
     referenceAnswer: "Audit export shows prod-db project.deleted by dana.whitfield@example.com. Posted to #security.",
   },
-  "p2-build-page": {
-    destination: w => called(w, "tracker.search_issues") && called(w, "analytics.get_account_metrics") &&
-      called(w, "chat.post_message", { channel: "triage" }) && Boolean(w.artifacts?.artifacts.some(a => a.id === "open-bugs")),
-    evidence: [/tracker/i, /analytics/i, /\/artifacts\/open-bugs/],
-    records: [{ id: "web", count: "7" }, { id: "api", count: "3" }, { id: "mobile", count: "2" }],
-    referenceAnswer: "Tracker open bugs: web 7, api 3, mobile 2. Analytics supplies MRR. Shared /artifacts/open-bugs in #triage.",
-  },
-  "p2-fix-chart-title": {
-    destination: (w, t) => direct(t, "call_destructive_tool", "artifacts.patch_artifact") && Boolean(w.artifacts?.artifacts.some(a => a.id === "open-bugs")),
-    evidence: [/artifact/i, /open-bugs/, /Open bugs by project/, /patch|title/i],
-    referenceAnswer: "Patched the open-bugs artifact chart title to Open bugs by project.",
-  },
-  "p2-refresh-weekly": {
-    destination: (w, t) => direct(t, "call_destructive_tool", "artifacts.set_refresh") && called(w, "tracker.search_issues") && Boolean(w.artifacts?.artifacts.some(a => a.id === "open-bugs")),
-    evidence: [/open-bugs/, /weekly/i, /\b8\b/, /tracker/i],
-    referenceAnswer: "The open-bugs weekly refresh read the tracker after WEB-999 arrived; web count is now 8.",
-  },
 };

@@ -136,9 +136,6 @@
       "baselineGzip": 35698,
       "maxGzip": 95698
     },
-      "baselineGzip": 11247,
-      "maxGzip": 71247
-    },
     "examples/worker": {
       "baselineGzip": 649045,
       "maxGzip": 709045

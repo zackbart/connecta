@@ -66,10 +66,6 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
         finalAnswer: `GitHub data is unavailable for acme/widget.\n${answer}` } });
     }
   }
-  if (task.id === "p2-build-page") {
-    cases.push({ name: "swapped project counts", trace: { ...trace,
-      finalAnswer: "Tracker open bugs: web 3, api 7, mobile 2. Analytics supplies MRR. Shared /artifacts/open-bugs in #triage." } });
-  }
   if (task.id === "p5-revenuecat-text") {
     cases.push({ name: "false access field mentions true", trace: { ...trace, finalAnswer: trace.finalAnswer?.replace("gives_access: true", "gives_access: false (not true)") ?? "" } });
     cases.push({ name: "subscription id supplies grace substring", trace: { ...trace, finalAnswer: trace.finalAnswer?.replace(" during billing grace period", "") ?? "" } });
@@ -103,10 +99,6 @@ export function positiveVariants(task: ActiveTask, world: World, trace: AgentTra
     cases.push({ name: "last structured absence wins", trace: { ...trace,
       finalAnswer: "GitHub acme/widget\nANSWER: 3\nANSWER: unavailable" }, advisoryMiss: "states-absence" });
   }
-  if (task.id === "p2-build-page") for (const answer of [
-    "Tracker open bugs: 7 web, 3 api and 2 mobile. Analytics supplies MRR. Shared /artifacts/open-bugs in #triage.",
-    "Tracker and analytics. Shared /artifacts/open-bugs in #triage.\n| Project | Bugs |\n| --- | --- |\n| web | 7 |\n| api | 3 |\n| mobile | 2 |",
-  ]) cases.push({ name: "project count records", trace: { ...trace, finalAnswer: answer } });
   if (["p5-known-read-routing", "p5-fanout-over-budget"].includes(task.id)) {
     const orders = [[0,1,2], [0,2,1], [1,0,2], [1,2,0], [2,0,1], [2,1,0]];
     const records = task.id === "p5-known-read-routing" ? [["run 4812", "failed", "commit 9f2c1ab"]] :
