@@ -972,46 +972,34 @@ describe("quickJsExecutor", () => {
 });
 
 
-describe("the advertised investigation example", () => {
-  it.each(["available", "missing", "approval-required"] as const)(
-    "finds dependent evidence with %s logs and never reads the other account",
-    async (mode) => {
-      // Execute the published example, not a separately maintained imitation.
-      const code = required(USAGE_SKILL.match(/```js\n([\s\S]*?)\n```/)?.[1]);
-      const calls: string[] = [];
-      let unrelatedCatalogReads = 0;
-      const run = {
+describe("the advertised discovery example", () => {
+  it("reduces the selected account's run without reading other accounts", async () => {
+    const code = required(USAGE_SKILL.match(/```js\n([\s\S]*?)\n```/)?.[1]);
+    const calls: string[] = [];
+    let unrelatedCatalogReads = 0;
+    const registry = makeRegistry([
+      api("ci", { tools: [{
         name: "get_run", description: "Get a deployment run",
-        inputSchema: { type: "object" as const, properties: { runId: { type: "integer" as const } }, required: ["runId"], additionalProperties: false },
+        inputSchema: { type: "object", properties: { runId: { type: "integer" } }, required: ["runId"], additionalProperties: false },
         annotations: { readOnlyHint: true },
         handler: (args: Record<string, unknown>) => {
           expect(args).toEqual({ runId: 42 }); calls.push("run");
-          return { status: "failed", failedJobId: 7 };
+          return { status: "failed", failedJobId: 7, privateContext: "omit" };
         },
-      };
-      const logs = {
-        name: "get_job_logs", description: "Get logs for a job",
-        inputSchema: { type: "object" as const, properties: { jobId: { type: "integer" as const } }, required: ["jobId"], additionalProperties: false },
-        annotations: { readOnlyHint: mode !== "approval-required" },
-        handler: (args: Record<string, unknown>) => {
-          expect(args).toEqual({ jobId: 7 }); calls.push("logs");
-          return [{ level: "info", message: "private noise", timestamp: "1" }, { level: "error", message: "Build failed", timestamp: "2" }];
-        },
-      };
-      const registry = makeRegistry([
-        api("ci", { tools: mode === "missing" ? [run] : [run, logs] }),
-        { id: "ci_sandbox", listTools: async () => { unrelatedCatalogReads++; throw new Error("wrong account searched"); }, callTool: async () => { throw new Error("wrong account called"); } },
-      ]);
-      const out = await createExecuteTool(registry, "https://connecta.test", quickJsExecutor(), silentLogger)({ code });
-      const payload = JSON.parse(required(out.content[0]).text);
+      }] }),
+      { id: "ci_sandbox", listTools: async () => { unrelatedCatalogReads++; throw new Error("wrong account searched"); }, callTool: async () => { throw new Error("wrong account called"); } },
+    ]);
+    const executor = quickJsExecutor();
+    try {
+      const out = await createExecuteTool(registry, "https://connecta.test", executor, silentLogger)({ code });
       expect(out.isError).toBeFalsy();
-      expect(payload.result).toEqual(mode === "available"
-        ? [{ timestamp: "2", message: "Build failed" }]
-        : { status: "failed", gap: "Job logs not resolved" });
-      expect(calls).toEqual(mode === "available" ? ["run", "logs"] : ["run"]);
+      expect(out.structuredContent?.result).toEqual({ status: "failed", jobId: 7 });
+      expect(calls).toEqual(["run"]);
       expect(unrelatedCatalogReads).toBe(0);
-    },
-  );
+    } finally {
+      await executor.close?.();
+    }
+  });
 });
 
 describe("authenticated host failures (E1, X11)", () => {

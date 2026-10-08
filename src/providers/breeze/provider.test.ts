@@ -194,7 +194,7 @@ describe("breeze() construction", () => {
     expect(usage.content).toContain("Never tag minors.");
   });
 
-  it("INV-2: explains write routing by pool trust without retired approval config", async () => {
+  it("INV-2: points write routing to usage without retired approval config", async () => {
     const connector = connection();
     const tools = await connector.listTools(context());
     for (const name of ["add_person", "assign_tag", "record_check_in"]) {
@@ -202,9 +202,8 @@ describe("breeze() construction", () => {
     }
     const content = guide(connector).content.replace(/\s+/g, " ");
     expect(content).not.toContain("execute.approval");
-    expect(content).toContain("uses `call_destructive_tool` in a read-only pool");
-    expect(content).toContain("A trusted pool also permits writes inside `execute_code`");
-    expect(content).toContain("the host controls approval for the program");
+    expect(content).toContain("follows the routing in the `usage` skill");
+    expect(content).toContain('skills({ name: "usage" })');
   });
 
   it("declares a single-field credential and constructs without the network", () => {
