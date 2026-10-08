@@ -129,7 +129,7 @@
       "setup": "https://vercel.com/docs/agent-resources/vercel-mcp.md",
       "inventory": {
         "url": "https://vercel.com/docs/agent-resources/vercel-mcp/tools.md",
-        "format": "headings"
+        "format": "vercel-categories"
       },
       "endpoints": ["https://mcp.vercel.com"],
       "reviewed": [

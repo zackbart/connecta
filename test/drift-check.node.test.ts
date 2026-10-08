@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 // Hosted reviewed names and endpoints are vendor evidence, independent of runtime modules.
@@ -187,9 +187,13 @@ async function documentedVercelWorkspace(): Promise<{
   const setupReference = join(directory, "vercel-setup.md");
   const headings = (vercelEvidence.reviewed as string[])
     .sort()
-    .map((name) => `### ${name.replaceAll("_", "\\_")}`)
+    .map((name) => `## \`${name}\``)
     .join("\n\n");
-  await writeFile(toolReference, `# Vercel tools\n\n${headings}\n`);
+  await writeFile(
+    toolReference,
+    `# Vercel tools\n\n## Tools by category\n[Tools\n${vercelEvidence.reviewed.length} tools](/docs/agent-resources/vercel-mcp/tools/deployments)\n`,
+  );
+  await writeFile(join(directory, "deployments.md"), headings);
   await writeFile(setupReference, `# Vercel MCP setup\n\nEndpoint: ${VERCEL_MCP_ENDPOINT}\n\nOAuth is required.\n`);
   return { directory, toolReference, setupReference };
 }
@@ -655,7 +659,9 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
       schemasVendored: false,
     });
 
-    await writeFile(toolReference, `${await readFile(toolReference, "utf8")}\n### new\\_vercel\\_tool\n`);
+    await writeFile(toolReference, (await readFile(toolReference, "utf8")).replace("39 tools", "40 tools"));
+    const category = join(dirname(toolReference), "deployments.md");
+    await writeFile(category, `${await readFile(category, "utf8")}\n## ` + "`new_vercel_tool`\n");
     const drifted = runDocumented("vercel", toolReference, setupReference);
     expect(drifted.status).toBe(0);
     expect(JSON.parse(drifted.output).docs[0].added).toEqual(["new_vercel_tool"]);
@@ -1269,7 +1275,7 @@ describe("discovered provider drift evidence", { timeout: CASE_TIMEOUT_MS }, () 
     const report = JSON.parse(result.output);
     expect(result.status).toBe(0);
     expect(report.docs).toMatchObject([
-      { provider: "vercel", findings: [{ kind: "parser-error" }] },
+      { provider: "vercel", findings: [{ kind: "unavailable" }] },
       { provider: "z-vendor", findings: [] },
     ]);
     expect(report.manual).toMatchObject([{ provider: "vercel", findings: [{ kind: "manual-required" }] }]);
