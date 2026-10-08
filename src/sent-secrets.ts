@@ -278,13 +278,14 @@ export function agentOutputOperations<T extends Record<string, (...args: never[]
 ): T {
   return Object.fromEntries(Object.keys(create(requestScope ?? {})).map((name) => [
     name,
-    (...args: never[]) => {
+    async (...args: never[]) => {
       const scope = requestScope ?? {};
       const secrets = sentSecretsForRequest(scope);
-      return Promise.resolve().then(() => create(scope)[name]!(...args)).then(
-        (value) => redactAgentOutput(secrets, value),
-        (error: unknown) => { throw redactAgentOutput(secrets, error); },
-      );
+      try {
+        return redactAgentOutput(secrets, await create(scope)[name]!(...args));
+      } catch (error) {
+        throw redactAgentOutput(secrets, error);
+      }
     },
   ])) as T;
 }

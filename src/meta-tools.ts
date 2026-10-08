@@ -529,7 +529,7 @@ async function guardContent(
 
 // --- argument shapes -------------------------------------------------------
 
-export interface SearchArgs {
+interface SearchArgs {
   query?: string;
   connector?: string;
   safety?: "readOnly" | "approvalRequired" | "all";
@@ -539,7 +539,7 @@ export interface SearchArgs {
   includeSchemas?: "compact" | "json" | "typescript";
 }
 type ResultMode = "mcp" | "value";
-export interface CallArgs {
+interface CallArgs {
   address: string;
   args?: Record<string, unknown>;
   resultMode?: ResultMode;
@@ -547,11 +547,11 @@ export interface CallArgs {
   /** Include connector/catalog/result-processing timing segments. */
   diagnostics?: boolean;
 }
-export interface DestructiveCallArgs extends CallArgs {
+interface DestructiveCallArgs extends CallArgs {
   /** Short model-authored context for the host's approval UI; never downstream input. */
   reason?: string;
 }
-export interface GetResultArgs {
+interface GetResultArgs {
   id: string;
   /**
    * Byte offset to page from; a whole number >= 0, aligned back to the nearest
@@ -561,11 +561,11 @@ export interface GetResultArgs {
   /** Page size in bytes; a whole number >= 1. Defaults to the deployment cap. */
   maxBytes?: number;
 }
-export interface AuthorizeArgs {
+interface AuthorizeArgs {
   connector: string;
   force?: boolean;
 }
-export interface SkillArgs {
+interface SkillArgs {
   name?: string;
 }
 

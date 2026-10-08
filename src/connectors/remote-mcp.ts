@@ -1665,7 +1665,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         onInsufficientScope: "throw",
         fetch: refreshCoordinatorFor(ctx).coordinatedFetch(
           oauthProvider,
-          learnedUrlSafeFetch(id, url, fetch),
+          learnedUrlSafeFetch(id, url, trackedFetch),
           signal,
           ctx.defer,
           learnedUrlSafeFetch(id, url, guardedFetch),

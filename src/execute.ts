@@ -1121,17 +1121,17 @@ export function createExecuteTool(
 
   return agentOutputOperations((requestScope) => ({
     execute: ({ code, diagnostics }: { code: string; diagnostics?: boolean }, options: { signal?: AbortSignal } = {}) => {
-    // A code-unit count above the cap is already too large in UTF-8. Check
-    // that first so a huge direct-call string is never encoded in full.
-    if (code.length > EXECUTE_MAX_CODE_BYTES ||
-      new TextEncoder().encode(code).byteLength > EXECUTE_MAX_CODE_BYTES) {
-      const message = `execute_code code exceeds the ${EXECUTE_MAX_CODE_BYTES}-byte UTF-8 limit.`;
-      return Promise.resolve(failureResponse(message, {
-        code: { code: "invalid_args", message, retryable: false },
-      }));
-    }
-    return runEdge(Effect.suspend(() =>
-      play(normalizeProgramSource(code), diagnostics, options.signal, requestScope)));
+      // A code-unit count above the cap is already too large in UTF-8. Check
+      // that first so a huge direct-call string is never encoded in full.
+      if (code.length > EXECUTE_MAX_CODE_BYTES ||
+        new TextEncoder().encode(code).byteLength > EXECUTE_MAX_CODE_BYTES) {
+        const message = `execute_code code exceeds the ${EXECUTE_MAX_CODE_BYTES}-byte UTF-8 limit.`;
+        return Promise.resolve(failureResponse(message, {
+          code: { code: "invalid_args", message, retryable: false },
+        }));
+      }
+      return runEdge(Effect.suspend(() =>
+        play(normalizeProgramSource(code), diagnostics, options.signal, requestScope)));
     },
   }), config.requestScope).execute;
 }
