@@ -47,7 +47,7 @@ const events: ToolCallActivityEvent[] = [
   { schemaVersion: 1, id: "legacy", requestId: "", occurredAt: VISUAL_NOW, actor: call.actor, connectorId: "github", toolName: "read", address: "github.read", source: "call_tool", outcome: "success", durationMs: 12, attempts: 1, serverName: "Production", serverVersion: "1" },
 ];
 
-export async function createOperatorVisualFixture(state: VisualState, keepEmptyConnector = false): Promise<OperatorVisualFixture> {
+export async function createOperatorVisualFixture(state: VisualState, keepEmptyConnector = false, artifactPage = false): Promise<OperatorVisualFixture> {
   const empty = state === "empty";
   const restricted = state === "restricted";
   const storage = memoryStorage();
@@ -62,7 +62,7 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
     connectors: empty ? keepEmptyConnector ? [github] : [] : connectors, publicUrl: VISUAL_ORIGIN,
     serverInfo: { name: "Production", version: "1" }, auth: fakeClerkAuth({ token: VISUAL_TOKEN, userId: "alice" }),
     storage, vault: encryptedCredentialVault(storage, "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="), logger: "silent",
-    identity: { connectorAccess: () => restricted ? ["github.read", "slot"] : "all", activityAccess: () => !restricted,
+    identity: { connectorAccess: () => empty ? artifactPage ? ["artifacts"] : keepEmptyConnector ? ["github"] : [] : restricted ? ["github.read", "slot"] : "all", activityAccess: () => !restricted,
       credentialAdministration: () => restricted ? [] : "all", personalConnection: () => restricted ? [] : "all", accessTokenManagement: () => !restricted },
     pools: empty || restricted ? {} : { support: { tools: ["github.read"], trust: "read-only", grant: () => true }, automation: { tools: ["github"], trust: "trusted", grant: () => true } },
     activity: activityHistory({ store: { record() {}, list: async () => ({ events: empty ? [] : events }) } }),

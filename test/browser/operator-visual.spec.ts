@@ -26,6 +26,7 @@ let brandedApp: ReturnType<typeof createTestConnecta>;
 test.beforeAll(async () => {
   for (const state of VISUAL_STATES) fixtures.set(state, await createOperatorVisualFixture(state));
   fixtures.set("empty-detail", await createOperatorVisualFixture("empty", true));
+  fixtures.set("empty-artifact", await createOperatorVisualFixture("empty", false, true));
   const storage = memoryStorage();
   app = createTestConnecta({ connectors: [], publicUrl: VISUAL_ORIGIN, auth: machineAuth(VISUAL_TOKEN), storage, logger: "silent", accessTokens: accessTokens(storage), activity: activityHistory({ store: { record() {}, list: async () => ({ events: [] }) } }), artifacts: artifacts({ store: kvArtifactStore(storage) }) });
   brandedApp = createTestConnecta({ connectors: [], publicUrl: VISUAL_ORIGIN, auth: machineAuth(VISUAL_TOKEN), logger: "silent", ui: operatorUi({ branding: { productName: "Acme Tools", ownerName: "Acme & Co.", ownerUrl: "https://acme.example", description: "Manage Acme agent connections.", theme: { accent: "#0a7d55", radius: 4 } } }) });
@@ -33,7 +34,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => { await app.close(); await brandedApp.close(); });
 
 async function installFixture(page: Page, name: string, state: VisualState, scheme: string, override?: OperatorVisualFixture, branded = false) {
-  const fixture = override ?? fixtures.get(state === "empty" && name.startsWith("connector-") ? "empty-detail" : state)!;
+  const fixture = override ?? fixtures.get(state === "empty" ? name.startsWith("connector-") ? "empty-detail" : name === "artifact" || name === "artifacts" ? "empty-artifact" : state : state)!;
   const collection = ["activity", "connector-activity", "artifacts", "artifact", "tokens"].includes(name);
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
@@ -174,7 +175,7 @@ for (const variant of VISUAL_VARIANTS) for (const scheme of ["light", "dark"]) {
           await expect(page.locator("#credential-slot")).toBeVisible();
           if (variant === "narrow-auth") {
             await page.getByRole("button", { name: "Add credential", exact: true }).click();
-            await expect(page.getByLabel("API key", { exact: true })).toBeVisible();
+            await expect(page.getByRole("textbox", { name: "API key", exact: true })).toBeVisible();
           }
         }
       }

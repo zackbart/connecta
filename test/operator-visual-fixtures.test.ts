@@ -38,7 +38,11 @@ describe("operator visual fixture contract", () => {
       expect(ids).toEqual(["github", "slot"]);
       expect(contract.you.permissions).toMatchObject({ activity: false, artifacts: false, accessTokenManagement: false });
       expect(contract.you.permissions.connectors.every(p => !p.manageSharedAuth && !p.connectPersonal)).toBe(true);
-    } else if (state !== "empty") {
+    } else if (state === "empty") {
+      expect(ids).toEqual([]);
+      expect(contract.live.connectors.flatMap(c => c.tools)).toEqual([]);
+      expect(data.connectors).toEqual([]);
+    } else {
       expect(contract.live.connectors.find(c => c.id === "slot")?.status).toBe("credential_required");
     }
     // Only fixed metadata reaches these records; test fixture tokens and the

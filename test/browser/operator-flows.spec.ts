@@ -148,7 +148,7 @@ const test = base.extend<{ deployment: Deployment }>({
       await context.addInitScript(`document.addEventListener('securitypolicyviolation', event => {
         void window.recordFlowCspViolation({ url: location.href, directive: event.effectiveDirective, blockedURI: event.blockedURI });
       });`);
-      await context.route(/^https?:\/\/(?!127\.0\.0\.1:)/, route => {
+      await context.route(url => ["http:", "https:"].includes(url.protocol) && url.origin !== origin && url.origin !== providerOrigin, route => {
         unexpectedNetwork.push(route.request().url());
         return route.abort("blockedbyclient");
       });
