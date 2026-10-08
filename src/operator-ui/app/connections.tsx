@@ -354,7 +354,7 @@ function ConnectorRow({
           <p className="conn-note">{connector.description}</p>
         ) : null}
         {connector.registrationPath ? (
-          <p class="meta">OAuth client: {{ cimd: "Client metadata document (CIMD)", dcr: "Dynamic registration (DCR)", static: "Pre-registered client" }[connector.registrationPath]}</p>
+          <p className="meta">OAuth client: {{ cimd: "Client metadata document (CIMD)", dcr: "Dynamic registration (DCR)", static: "Pre-registered client" }[connector.registrationPath]}</p>
         ) : null}
         {/* Fixed copy keyed by the server's classification — never a status
             message, which can quote a downstream error body (see PROBLEM_COPY). */}

@@ -948,6 +948,7 @@ same auth gate and identity partition as `/ui/data` and `/ui/connectors/:id`.
 with their final read/write classification, catalog age in milliseconds, and
 last-call time/outcome. Catalog descriptions and schemas are allowed for an
 authenticated reader; grammar-failing names and addresses become `<withheld>`.
+`auth.registrationPath` reports the selected downstream OAuth client mechanism when known.
 Status prose, error text, credential values or suffixes, arguments, results,
 and code are excluded. Static and unobserved catalogs have a null age;
 persisted catalogs retain their original fetch time. Probes run with bounded

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { remoteMcp, type RemoteMcpAuth } from "../src/connectors/remote-mcp.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { createTestConnecta, fetchTestUiDetails } from "./helpers.js";
+import type { OperatorUiContract } from "../src/ui.js";
 import { bindCallback, callbackAuth } from "./fixtures/oauth.js";
 
 const BASE = "https://connecta.example";
@@ -88,6 +89,8 @@ describe("downstream OAuth best practice", () => {
     expect((await flow.app.registry.statusFor("svc", BASE)).registrationPath).toBe("cimd");
     const data = await (await fetchTestUiDetails(flow.app, new Request(`${BASE}/ui/data`))).json() as { connectors: Array<{ registrationPath?: string }> };
     expect(data.connectors[0]!.registrationPath).toBe("cimd");
+    const contract = await (await flow.app.fetch(new Request(`${BASE}/ui/api/config`))).json() as OperatorUiContract;
+    expect(contract.live.connectors[0]!.auth).toEqual({ registrationPath: "cimd" });
   });
 
   it("INV-6: falls back to DCR and reports the selected path with matching client metadata", async () => {

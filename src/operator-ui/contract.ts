@@ -19,6 +19,8 @@ export interface OperatorLastCall {
 export interface OperatorConnectorOverlay {
   id: string;
   status: ConnectorStatus["state"];
+  /** Selected downstream client mechanism, when a client has been selected. */
+  auth?: { registrationPath: NonNullable<ConnectorStatus["registrationPath"]> };
   problem?: UiProblem;
   tools: OperatorTool[];
   /** Age of the last complete listing. Static or unobserved catalogs have no age. */
