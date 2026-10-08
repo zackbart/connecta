@@ -166,14 +166,14 @@ function TokenCard({
   );
 }
 
-export function TokensPage({ state }: { state: OperatorState }) {
+export function TokensPage({ state, embedded = false }: { state: OperatorState; embedded?: boolean }) {
   const available = state.data?.accessTokenManagement === "available";
   return (
     <section id="tokensView">
       <div className="lead">
-        <h1 id="tokensHeading" className="" tabIndex={-1}>
+        {embedded ? null : <h1 id="tokensHeading" className="" tabIndex={-1}>
           Access tokens
-        </h1>
+        </h1>}
         <div className="lead-copy">
           <p className="activity-copy">
             Create named Bearer tokens for MCP clients. Each secret is shown

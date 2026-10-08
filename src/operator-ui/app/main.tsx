@@ -22,6 +22,7 @@ import {
 } from "../view.js";
 import { auth, homeUrl, productDescription, titleSuffix } from "./config.js";
 import { ConnectorsPage } from "./connectors.js";
+import { AccessPage } from "./access.js";
 import { ToolsPage } from "./tools.js";
 import { OverviewPage } from "./overview.js";
 import { TokensPage } from "./tokens.js";
@@ -200,6 +201,7 @@ function Gate({ state }: { state: OperatorState }) {
 }
 
 function CurrentPage({ state }: { state: OperatorState }) {
+  if (state.page === "access") return <AccessPage state={state} />;
   if (state.page === "tools") return <ToolsPage state={state} />;
   if (state.page === "connector") return <ConnectorDetailPage state={state} />;
   if (state.page === "connections") return <ConnectorsPage state={state} />;
@@ -226,7 +228,7 @@ function OperatorApp() {
   // identity opens it, and again after an identity change resets it to idle.
   useEffect(() => {
     if (!ready) return;
-    if (state.page === "tokens" && state.data?.accessTokenManagement === "available" && state.tokenPhase === "idle") {
+    if ((state.page === "tokens" || state.page === "access") && state.data?.accessTokenManagement === "available" && state.tokenPhase === "idle") {
       void loadAccessTokens();
     }
     if (

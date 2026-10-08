@@ -1200,9 +1200,9 @@ export function createAccessToken(name: string): Promise<boolean> {
           issued,
           ...state.tokens.filter((token) => token.id !== issued.id),
         ],
-        createdToken: state.page === "tokens" ? payload.token : null,
+        createdToken: (state.page === "tokens" || state.page === "access") ? payload.token : null,
         tokenNotice: info("Access token created."),
-        pendingFocus: state.page === "tokens" ? "tokenRevealHeading" : null,
+        pendingFocus: (state.page === "tokens" || state.page === "access") ? "tokenRevealHeading" : null,
       };
     },
     failed: () => tokenFailure(failure("Access token could not be created. Check the name, capacity, and storage.")),

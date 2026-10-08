@@ -523,3 +523,6 @@ select { background: var(--surface); color: var(--text); border: 1px solid var(-
 .snapshot-tree summary .meta { margin-left: .75rem; }
 .snapshot-value { display: grid; grid-template-columns: minmax(8rem, 1fr) minmax(0, 2fr) auto; align-items: start; gap: 1rem; border-bottom: 1px solid var(--border); padding: .5rem 0; font-size: var(--text-sm); }
 .snapshot-value code, .snapshot-value > span { overflow-wrap: anywhere; }
+.pool-panel { display: grid; gap: .75rem; border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; }
+.pool-members { display: flex; flex-wrap: wrap; gap: .5rem; list-style: none; }
+.pool-members li { font-size: var(--text-xs); padding: .25rem .5rem; background: var(--surface-2); border-radius: var(--radius); }
