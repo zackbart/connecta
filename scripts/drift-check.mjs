@@ -299,6 +299,14 @@ function validateCheck(check, allowUnrecorded) {
         ), "inventory requires URL and supported parser format");
       for (const key of ["start", "end", "prefix"])
         require(inventory[key] === undefined || nonempty(inventory[key]), `inventory ${key} must be non-empty`);
+      require(inventory.categories === undefined ||
+        (inventory.format === "vercel-categories" &&
+          inventory.categories !== null &&
+          typeof inventory.categories === "object" &&
+          !Array.isArray(inventory.categories) &&
+          Object.entries(inventory.categories).every(
+            ([category, names]) => /^[a-z0-9-]+$/.test(category) && strings(names),
+          )), "inventory categories must map category slugs to known tool names");
       require(inventory.acknowledgedUnclassified === undefined ||
         strings(
           inventory.acknowledgedUnclassified,
@@ -1051,7 +1059,7 @@ async function checkDocumentedProvider(provider, defaults, options) {
     sources.tools === undefined
       ? Promise.resolve(undefined)
       : categorized
-        ? readVercelInventory(sources.tools).catch((error) => {
+        ? readVercelInventory(sources.tools, defaults.inventory.categories).catch((error) => {
             throw new UnavailableError(error.message);
           })
         : loadPublished(provider, "MCP tool reference", sources.tools),
@@ -1074,6 +1082,15 @@ async function checkDocumentedProvider(provider, defaults, options) {
     (name) => !reviewedSet.has(name) && acknowledged.has(name),
   );
   const removed = documented === undefined ? [] : reviewed.filter((name) => !documentedSet.has(name));
+
+  if (categorized) {
+    for (const name of removed) {
+      if (!Object.values(defaults.inventory.categories ?? {}).some((names) => names.includes(name)))
+        throw new UnavailableError(
+          `Vercel inventory unavailable/incomplete: no known category for removed tool ${name}; needs review`,
+        );
+    }
+  }
 
   if (defaults.type === "oauth-discovery") {
     const discovery = await checkOAuthDiscovery(

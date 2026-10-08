@@ -261,9 +261,9 @@ describe("Vercel public inventory", () => {
       expect(spawnSync(process.execPath, [...args, "--strict"]).status).toBe(1);
       await expect(readVercelInventory(join(directory, "tools.md"))).rejects.toThrow(
         failure === "unknown syntax" || failure === "split HTML count"
-          ? "unconsumed published category tool count"
+          ? "unconsumed category destination"
           : failure === "unresolved reference"
-            ? "unresolved category reference"
+            ? "unconsumed category destination"
             : "conflicting category reference definition",
       );
     },
@@ -377,9 +377,136 @@ describe("Vercel public inventory", () => {
         // Rethrow assertion errors: a partial success must fail this test.
         if (!(error instanceof Error) || !error.message.includes("Vercel inventory unavailable/incomplete"))
           throw error;
-        expect(error.message, `mutation mask ${mask}`).toMatch(/unconsumed.*(?:count|destination)/);
+        expect(error.message, `mutation mask ${mask}`).toMatch(
+          /(?:unconsumed.*destination|must have exactly one published tool count)/,
+        );
       }
     }
+  });
+
+  it.each([
+    "[Caching\nsix tools](./tools/caching)",
+    "[Caching](./tools/caching)",
+    "[Caching\n6 available tools](./tools/caching)",
+    '<a href="./tools/caching">Caching six tools</a>',
+    '<a href="./tools/caching">Caching</a>',
+    "[Caching six tools][relative]\n\n[relative]: ./tools/caching\n",
+    "[Caching][relative]\n\n[relative]: ./tools/caching\n",
+  ])("INV-8 refuses the round-3 relative category entry %s before CLI drift comparison", async (entry) => {
+    const { directory, report } = await localReferences();
+    await writeFile(join(directory, "tools.md"), (await text("tools.md")).replace(cachingLink, entry));
+    const result = report().docs[0];
+    expect(result.findings).toEqual([
+      expect.objectContaining({
+        kind: "unavailable",
+        detail: expect.stringContaining("must have exactly one published tool count"),
+      }),
+    ]);
+    expect(result.added).toBeUndefined();
+    expect(result.removed).toBeUndefined();
+    expect(result.documentedTools).toBeUndefined();
+  });
+
+  it.each([0, 1, 2, 3, 4, 8])(
+    "INV-8 reconciles a real heading indented %i spaces without substituting code examples",
+    async (indent) => {
+      const { directory, report } = await localReferences();
+      const category =
+        (await text("caching.md")).replace("## `artifact_query`", " ".repeat(indent) + "## `artifact_query`") +
+        "\n```markdown\n## `example_tool`\n```\n\n~~~markdown\n## `tilde_example`\n~~~\n\n    ## `indented_example`\n\n<!--\n## `comment_example`\n-->\n\n`## inline_example`\n";
+      await writeFile(join(directory, "caching.md"), category);
+      const result = report().docs[0];
+      if (indent < 4) {
+        expect(await readVercelInventory(join(directory, "tools.md"))).toEqual({
+          names: recording.expectedNames,
+          pages: 29,
+        });
+        expect(result).toMatchObject({ documentedTools: 213, findings: [] });
+        expect(result.added).toContain("artifact_query");
+        expect(result.added).not.toContain("example_tool");
+      } else {
+        expect(result.findings).toEqual([
+          expect.objectContaining({
+            kind: "unavailable",
+            detail: expect.stringContaining("expected 6 unique tool headings, found 5"),
+          }),
+        ]);
+        expect(result.added).toBeUndefined();
+        expect(result.removed).toBeUndefined();
+        expect(result.documentedTools).toBeUndefined();
+      }
+    },
+  );
+
+  it("INV-8 excludes fenced, indented, and inline category-link examples on the index", async () => {
+    const { directory, report } = await localReferences();
+    const example = "[Example 1 tool](./tools/example)";
+    await writeFile(
+      join(directory, "tools.md"),
+      (await text("tools.md")) +
+        `\n\n\`\`\`markdown\n${example}\n[example]: ./tools/example\n\`\`\`\n\n~~~\n${example}\n~~~\n\n    ${example}\n    [example]: ./tools/example\n\n\`${example}\`\n\n\`multiline\n[inline-example]: ./tools/example\n\`\n\n<!--\n[example]: ./tools/example\n-->\n`,
+    );
+    expect(await readVercelInventory(join(directory, "tools.md"))).toEqual({
+      names: recording.expectedNames,
+      pages: 29,
+    });
+    expect(report().docs[0]).toMatchObject({ documentedTools: 213, inventoryPages: 29, findings: [] });
+  });
+
+  it("INV-8 associates counts only with their category links and ignores unrelated count prose", async () => {
+    const { directory, report } = await localReferences();
+    const summary = "\nExplore all 213 tools below.\n";
+    await writeFile(join(directory, "tools.md"), (await text("tools.md")).replace("# Tools", "# Tools" + summary));
+    expect(report().docs[0]).toMatchObject({ documentedTools: 213, inventoryPages: 29, findings: [] });
+    await writeFile(
+      join(directory, "tools.md"),
+      (await text("tools.md")).replace(cachingLink, "[Caching](./tools/caching)" + summary),
+    );
+    const result = report().docs[0];
+    expect(result.findings).toEqual([expect.objectContaining({ kind: "unavailable" })]);
+    expect(result.added).toBeUndefined();
+    expect(result.removed).toBeUndefined();
+  });
+
+  it("INV-8 reports a whole previously known category disappearing as unavailable, never removals", async () => {
+    const { directory, report } = await localReferences();
+    await writeFile(join(directory, "tools.md"), (await text("tools.md")).replace(cachingLink, ""));
+    const result = report().docs[0];
+    expect(result.findings).toEqual([
+      expect.objectContaining({
+        kind: "unavailable",
+        detail: expect.stringContaining("previously known category caching disappeared"),
+      }),
+    ]);
+    expect(result.added).toBeUndefined();
+    expect(result.removed).toBeUndefined();
+    expect(result.documentedTools).toBeUndefined();
+  });
+
+  it("INV-8 requires a fetched category with a reconciled count before reporting one of its tools removed", async () => {
+    const { directory, report } = await localReferences();
+    const landing = (await text("tools.md")).replace(cachingLink, cachingLink.replace("6 tools", "5 tools"));
+    await writeFile(join(directory, "tools.md"), landing);
+    const category = (await text("caching.md")).replace("## `artifact_query`", "## Artifact query");
+    await writeFile(join(directory, "caching.md"), category);
+    // artifact_query is in the documented category baseline. Use a reviewed
+    // caching tool to exercise the actual removal comparison as well.
+    const teams = (await text("teams.md")).replace("## `list_teams`", "## List teams");
+    await writeFile(join(directory, "teams.md"), teams);
+    // A count mismatch prevents every removal comparison.
+    expect(report().docs[0].findings).toEqual([expect.objectContaining({ kind: "unavailable" })]);
+    expect(report().docs[0].removed).toBeUndefined();
+    await writeFile(join(directory, "tools.md"), landing.replace(teamsLink, teamsLink.replace("8 tools", "7 tools")));
+    // Remove the frequently-used table coverage row for the absent tool too.
+    await writeFile(
+      join(directory, "tools.md"),
+      (await readFile(join(directory, "tools.md"), "utf8")).replace(/^\| \[`list_teams`\].*\n/m, ""),
+    );
+    expect(report().docs[0].removed).toContain("list_teams");
+    await rm(join(directory, "teams.md"));
+    const unavailable = report().docs[0];
+    expect(unavailable.findings).toEqual([expect.objectContaining({ kind: "unavailable" })]);
+    expect(unavailable.removed).toBeUndefined();
   });
 
   it("INV-10 reports advisory additions/removals and never records classifications", async () => {

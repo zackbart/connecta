@@ -185,15 +185,22 @@ async function documentedVercelWorkspace(): Promise<{
   temporary.push(directory);
   const toolReference = join(directory, "vercel-tools.md");
   const setupReference = join(directory, "vercel-setup.md");
-  const headings = (vercelEvidence.reviewed as string[])
-    .sort()
-    .map((name) => `## \`${name}\``)
-    .join("\n\n");
+  const categories = vercelEvidence.inventory.categories as Record<string, string[]>;
   await writeFile(
     toolReference,
-    `# Vercel tools\n\n## Tools by category\n[Tools\n${vercelEvidence.reviewed.length} tools](/docs/agent-resources/vercel-mcp/tools/deployments)\n`,
+    "# Vercel tools\n\n" +
+      Object.entries(categories)
+        .map(
+          ([category, names]) =>
+            `[${category}\n${names.length} tools](/docs/agent-resources/vercel-mcp/tools/${category})`,
+        )
+        .join("\n"),
   );
-  await writeFile(join(directory, "deployments.md"), headings);
+  await Promise.all(
+    Object.entries(categories).map(([category, names]) =>
+      writeFile(join(directory, `${category}.md`), names.map((name) => `## \`${name}\``).join("\n\n")),
+    ),
+  );
   await writeFile(setupReference, `# Vercel MCP setup\n\nEndpoint: ${VERCEL_MCP_ENDPOINT}\n\nOAuth is required.\n`);
   return { directory, toolReference, setupReference };
 }
@@ -651,20 +658,48 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     const cleanReport = JSON.parse(clean.output).docs[0];
     expect(cleanReport).toMatchObject({
       provider: "vercel",
-      documentedTools: 39,
-      added: [],
+      documentedTools: 217,
+      added: expect.any(Array),
       removed: [],
       findings: [],
       schemaAuthority: "live-tools-list",
       schemasVendored: false,
     });
 
-    await writeFile(toolReference, (await readFile(toolReference, "utf8")).replace("39 tools", "40 tools"));
+    expect(cleanReport.added).toHaveLength(178);
+    await writeFile(toolReference, (await readFile(toolReference, "utf8")).replace("14 tools", "15 tools"));
     const category = join(dirname(toolReference), "deployments.md");
     await writeFile(category, `${await readFile(category, "utf8")}\n## ` + "`new_vercel_tool`\n");
     const drifted = runDocumented("vercel", toolReference, setupReference);
     expect(drifted.status).toBe(0);
-    expect(JSON.parse(drifted.output).docs[0].added).toEqual(["new_vercel_tool"]);
+    expect(JSON.parse(drifted.output).docs[0].added).toEqual([...cleanReport.added, "new_vercel_tool"].sort());
+  });
+
+  it("INV-8 refuses a removal with no known category evidence", async () => {
+    const { toolReference, setupReference } = await documentedVercelWorkspace();
+    const directory = await recordWorkspace({
+      vercel: {
+        version: 1,
+        provider: "vercel",
+        checks: [{ ...vercelEvidence, reviewed: [...vercelEvidence.reviewed, "unknown_category_tool"] }],
+      },
+    });
+    const result = reportFor(directory, [
+      "--docs",
+      "--tool-reference",
+      `vercel=${toolReference}`,
+      "--setup-reference",
+      `vercel=${setupReference}`,
+    ]);
+    const docs = JSON.parse(result.output).docs[0];
+    expect(docs.findings).toEqual([
+      expect.objectContaining({
+        kind: "unavailable",
+        detail: expect.stringContaining("no known category for removed tool unknown_category_tool"),
+      }),
+    ]);
+    expect(docs.added).toBeUndefined();
+    expect(docs.removed).toBeUndefined();
   });
 
   it("reads table inventories and treats documented additions as findings", async () => {
