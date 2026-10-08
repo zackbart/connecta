@@ -85,8 +85,32 @@ function requestHeaders(
   };
 }
 
+/** Preserve the Activity link across reloads when the deployment read fails. */
+const NAV_HINT_KEY = "connecta:nav";
+
+function rememberNav(data: UiData): void {
+  try {
+    sessionStorage.setItem(NAV_HINT_KEY, JSON.stringify({ activity: data.activityEnabled }));
+  } catch { /* Storage may be unavailable. */ }
+}
+
+function forgetNav(): void {
+  try { sessionStorage.removeItem(NAV_HINT_KEY); } catch { /* Nothing was stored. */ }
+}
+
+/** A tab-local hint, erased on every identity change; it grants no API access. */
+export function navHint(): { activity: boolean } {
+  try {
+    const hint = JSON.parse(sessionStorage.getItem(NAV_HINT_KEY) ?? "null") as
+      | { activity?: unknown }
+      | null;
+    return { activity: hint?.activity === true };
+  } catch { return { activity: false }; }
+}
+
 function gate(notice: Notice | null = null): void {
   queryClient.clear();
+  forgetNav();
   awaitingAuthorization.clear();
   state = resetIdentity(state, notice);
   for (const listener of listeners) listener();
@@ -233,6 +257,7 @@ async function loadData(): Promise<void> {
   }
   if (!current()) return;
   if (!data || !Array.isArray(data.connectors)) return unreachable("server");
+  rememberNav(data);
   set({ data, session: "ready", gate: null, refreshing: false, loadFailure: null });
   void loadConnectorDetails(data, current, token);
 }

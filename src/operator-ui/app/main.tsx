@@ -40,6 +40,7 @@ import {
   signIn,
   signInWithBearer,
   signOut,
+  navHint,
   subscribe,
   configureNavigation,
   routeChanged,
@@ -57,10 +58,11 @@ function useOperatorState(): OperatorState {
 
 /** Pages an identity may actually open. Hidden is the honest state for the rest. */
 function visiblePages(state: OperatorState): OperatorPage[] {
+  const hint = state.data ? null : navHint();
   return OPERATOR_PAGES.filter((page) => {
     if (page === "activity" && state.contract) return state.contract.you.permissions.activity;
     if (page === "tokens") return state.data?.accessTokenManagement === "available";
-    if (page === "activity") return Boolean(state.data?.activityEnabled);
+    if (page === "activity") return hint ? hint.activity : Boolean(state.data?.activityEnabled);
     return true;
   });
 }
