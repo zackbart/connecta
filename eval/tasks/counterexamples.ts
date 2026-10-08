@@ -61,7 +61,7 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
     cases.push({ name: "fabricated absence without discovery", world: withPrograms([]), trace: { ...trace,
       toolUses: trace.toolUses.map(u => ({ ...u, input: { code: `async () => { /* GitHub pull requests */ return { absence: "GitHub is absent" }; }` }, resultText: `{"absence":"GitHub is absent"}` })) } });
     for (const answer of ["ANSWER: 10", "ANSWER: 0", "ANSWER: ten", "ANSWER: a couple", "No ANSWER line.",
-      "ANSWER: unavailable\nFurther explanation.\nANSWER: 3"]) {
+      "ANSWER: unavailable\nFurther explanation.\nANSWER: 3", "ANSWER: unavailable\nANSWER:", "ANSWER: unavailable (probably 10)"]) {
       cases.push({ name: `invalid structured absence: ${answer}`, trace: { ...trace,
         finalAnswer: `GitHub data is unavailable for acme/widget.\n${answer}` } });
     }
@@ -84,7 +84,8 @@ export function positiveVariants(task: ActiveTask, world: World, trace: AgentTra
     trace: { ...trace, toolUses: [...trace.toolUses, { ...trace.toolUses[0]!, id: "duplicate-read" }] }, advisoryMiss: "one-read" });
   if (task.id === "p5-absent-github") {
     for (const answer of ["ANSWER: unavailable", "**ANSWER:** unavailable", "ANSWER: `unavailable`", "ANSWER: Unavailable.",
-      '  answer: "unavailable"']) {
+      '  answer: "unavailable"', "`ANSWER: unavailable`", "**ANSWER: unavailable**", "ANSWER: unavailable\r\n\r\n",
+      "```\nANSWER: unavailable\n```"]) {
       cases.push({ name: `structured absence: ${answer}`, trace: { ...trace,
         finalAnswer: `GitHub data is unavailable for acme/widget.\n${answer}` } });
     }

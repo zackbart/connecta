@@ -65,8 +65,14 @@ export function statesAbsence(answer: string, service: string): boolean {
 
 /** The last ANSWER line supplies the absence result independently of prose. */
 export function structuredAbsence(answer: string): boolean {
-  const value = [...answer.matchAll(/^\s*\**ANSWER:\**\s*(.+?)\s*$/gim)].at(-1)?.[1];
-  return value !== undefined && value.trim().toLowerCase().replace(/^["'`]+|["'`.]+$/g, "").trim() === "unavailable";
+  // Markdown emphasis or code may wrap the whole line or just the label; an
+  // empty trailing ANSWER line still counts as the last answer.
+  const unwrap = (text: string) => text.trim().replace(/^[*_`"']+|[*_`"'.]+$/g, "").trim();
+  const values = answer.split(/\r?\n/).flatMap(line => {
+    const match = /^answer\s*[*_`]*\s*:\s*[*_`]*\s*(.*)$/i.exec(unwrap(line));
+    return match ? [unwrap(match[1]!)] : [];
+  });
+  return values.at(-1)?.toLowerCase() === "unavailable";
 }
 
 export function called(world: World, address: string, args: Record<string, unknown> = {}): boolean {
