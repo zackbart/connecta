@@ -10,6 +10,39 @@ import { activitySink, createTestConnecta, makeRegistry, silentLogger } from "./
 const BASE = "https://connecta.test";
 
 describe("repairing error envelopes", () => {
+  it("INV-5: unresolved catalog recovery requires original arguments without echoing them", async () => {
+    const call = vi.fn();
+    const registry = makeRegistry([
+      connectorWith({
+        id: "private",
+        kind: "api",
+        tools: async () => {
+          throw new ConnectorCallError("input_required_unsupported", "Use a direct call.");
+        },
+        call,
+      }),
+    ]);
+    const outcome = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+      "private.submit",
+      { password: "private-catalog-marker-12345" },
+      { source: "execute_code", trust: "trusted" },
+    );
+    expect(outcome).toMatchObject({
+      ok: false,
+      dispatched: false,
+      attempts: 0,
+      error: {
+        code: "input_required_unsupported",
+        nextAction: {
+          tool: "call_destructive_tool",
+          arguments: { address: "private.submit" },
+          purpose: expect.stringContaining("original arguments"),
+        },
+      },
+    });
+    expect(JSON.stringify(outcome)).not.toContain("private-catalog-marker-12345");
+    expect(call).not.toHaveBeenCalled();
+  });
   it.each([true, false])(
     "INV-5: input-required retry hints omit writeOnly arguments on read=%s",
     async (readOnlyHint) => {

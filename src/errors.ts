@@ -3,6 +3,7 @@
 
 import type { ExecutorAdmissionErrorCode } from "./executor-admission.js";
 import type { JsonSchema } from "./types.js";
+import { redactCallArguments } from "./argument-redaction.js";
 
 /**
  * Machine-readable classification of a failed connector tool call.
@@ -225,46 +226,30 @@ export function boundedEchoText(value: string, maxBytes: number = MAX_ECHOED_BYT
 }
 
 /**
- * `{ args }` when the caller's arguments fit the shared echo budget,
- * `{}` when they do not. All or nothing: a clipped echo would be a *different*
- * call than the one that was refused, and the routes this feeds end at a human
- * approving one. Unserializable arguments are treated the same way as oversized
- * ones — there is nothing honest to put in the field. Top-level input fields
- * declared writeOnly are omitted before budgeting, regardless of value length.
- * argsRedacted marks the remaining arguments as reconciliation context, not a
- * complete call that can be replayed.
+ * Snapshot the caller's arguments after bounded schema-aware writeOnly omission,
+ * then apply the shared byte budget without clipping. Unresolved sensitivity
+ * omits the entire echo. argsRedacted marks partial or withheld arguments as
+ * reconciliation context; any retry must use the caller's original arguments.
  */
 export function echoedCallArgs(args: unknown, schema?: JsonSchema): { args?: unknown; argsRedacted?: true } {
   if (args === undefined) return {};
   let text: string | undefined;
   let redacted = false;
   try {
-    const properties = schema?.["properties"];
-    const privateFields = new Set(
-      properties && typeof properties === "object"
-        ? Object.entries(properties).flatMap(([name, field]) =>
-            field && typeof field === "object" && field.writeOnly === true ? [name] : [],
-          )
-        : [],
-    );
-    const safeArgs =
-      privateFields.size && args !== null && typeof args === "object" && !Array.isArray(args)
-        ? Object.fromEntries(
-            Object.entries(args).filter(([name]) => {
-              if (!privateFields.has(name)) return true;
-              redacted = true;
-              return false;
-            }),
-          )
-        : args;
+    const filtered = schema ? redactCallArguments(args, schema) : { value: args, redacted: false };
+    redacted = filtered.redacted;
+    if (!("value" in filtered)) return { argsRedacted: true };
+    const safeArgs = filtered.value;
     text = JSON.stringify(safeArgs);
   } catch {
-    return {};
+    return redacted ? { argsRedacted: true } : {};
   }
   if (text === undefined) return {};
   return echoEncoder.encode(text).length <= MAX_ECHOED_BYTES
     ? { args: JSON.parse(text) as unknown, ...(redacted ? { argsRedacted: true as const } : {}) }
-    : {};
+    : redacted
+      ? { argsRedacted: true }
+      : {};
 }
 
 function boundedValidation(details: ArgumentValidationDetails | undefined): ArgumentValidationDetails | undefined {
@@ -569,12 +554,13 @@ export interface CallErrorDetails {
         arguments: {
           address: string;
           /**
-           * The caller's own arguments, echoed only when they fit
-           * the shared echo budget — and then whole, never clipped. Absent
-           * means "re-send exactly what you sent": a half-copied argument object
-           * routed into a human approval prompt would describe a call nobody made.
+           * A schema-filtered snapshot within the shared byte budget, never
+           * clipped. With argsRedacted, this is partial reconciliation context.
+           * If absent or redacted, retry only with the original arguments.
            */
           args?: unknown;
+          /** Sensitive fields were omitted, or sensitivity could not be resolved. */
+          argsRedacted?: true;
         };
         purpose: string;
       }
@@ -600,7 +586,11 @@ export interface CallErrorDetails {
       };
   /** Configured connectors in this request's registry view only. */
   configuredConnectors?: string[];
-  /** Agent-only uncertain write, never copied to an operator record. */
+  /**
+   * Agent-only uncertain write, never copied to an operator record. argsRedacted
+   * marks partial or withheld schema-filtered arguments; argsOmitted means args
+   * is absent. Reconciliation and any explicit retry require the original input.
+   */
   uncertainCall?: { address: string; args?: unknown; argsOmitted?: true; argsRedacted?: true };
   /** Explicit retry guidance; recovery never retries or mutates by itself. */
   retry?: string;

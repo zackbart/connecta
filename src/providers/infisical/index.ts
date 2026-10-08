@@ -148,7 +148,12 @@ export const infisical = defineProvider<InfisicalOptions>({
           });
         const token = await tokens.token(ctx);
         let result = await attempt(token);
-        if (result.rejected) result = await attempt(await tokens.token(ctx, token));
+        if (result.rejected) {
+          const refreshed = await tokens.token(ctx, token);
+          // A 401 can arrive after a write reached downstream code. Prepare a
+          // fresh token for an explicit invocation, but never replay this write.
+          if (request.method === "GET") result = await attempt(refreshed);
+        }
         if (result.error) throw result.error;
         return result.value;
       } catch (error) {

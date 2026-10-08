@@ -553,8 +553,9 @@ and let the failure reach the model.
 program unless the pool is trusted (`W12`). It is refused with
 `destructive_tool_requires_approval` before validation and before anything is
 sent, `nextAction` carrying its canonical address to `call_destructive_tool`
-plus the original arguments when they fit the 512-byte echo budget — whole or
-not at all, since a clipped copy is a different call. The host's prompt on that
+and a schema-filtered snapshot within the 512-byte echo budget. `argsRedacted`
+marks partial or withheld arguments; use the original arguments if this flag is
+set or `args` is absent. Snapshots are never clipped. The host's prompt on that
 call is the approval, and the only one: generated code can neither mint the
 capability nor approve its own write, and the model's short `reason` grants no
 authority and never goes downstream.
@@ -967,6 +968,15 @@ transport failure leaves the outcome unknown.
 **W10.** `execute.maxWrites`, default 10, bounds writes in trusted programs in
 addition to the host-call budget. It is checked after argument validation and
 before admission, so an over-budget write spends no permit.
+
+Program `uncertainCall` and `uncertainCalls` use the same schema-filtered argument
+snapshots as direct calls, even when guest code catches the failure. `argsRedacted: true`
+means sensitive fields were omitted or the entire echo was withheld because
+sensitivity could not be resolved. `argsOmitted: true` means no `args` is present,
+including echoes above the byte budget. These fields identify targets for
+reconciliation. Any new call must use the original arguments when its echo is
+partial or absent. A returned `writes` count cannot make a run safe to repeat.
+See [argument echo rules](./meta-tools.md#echo-budgets) for supported schema shapes.
 
 **W12.** `trusted` endpoints annotate `execute_code` as a write and permit
 program writes. `read-only` endpoints annotate it as read-only and refuse

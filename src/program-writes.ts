@@ -175,7 +175,7 @@ export class ProgramWrites {
       return errorEnvelope({
         code: "write_outcome_unknown",
         message:
-          "A write this program sent has no known outcome, so that is the result rather than what the program returned. It will not be sent again. Check its target before doing anything that depends on it.",
+          "A write this program sent has no known outcome, so that is the result rather than what the program returned. It will not be sent again. Check its target before doing anything that depends on it. Argument echoes may be partial or absent; use the original arguments if reconciliation requires another call.",
         retryable: false,
         ...(this.deadlines.length > 0 ? { details: this.deadlines[0] } : {}),
         ...(this.deadlines.length > 1 ? { timeouts: this.deadlines } : {}),

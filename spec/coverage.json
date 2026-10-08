@@ -313,11 +313,27 @@
       "id": "tool-input-schema",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
-      "notes": "Validate tool arguments locally before dispatch.",
+      "notes": "Validate tool arguments locally before dispatch. Recovery echoes omit writeOnly values at nested properties, array items and prefixes, local references, and allOf. Ambiguous alternatives, unresolved references, unsupported sensitivity rules, and traversal limits withhold args with argsRedacted; explicit retries require original arguments.",
       "tests": [
         {
           "file": "test/meta-tools-call.test.ts",
           "title": "schema-invalid args fail closed as invalid_args without reaching the handler"
+        },
+        {
+          "file": "test/errors.test.ts",
+          "title": "fails closed on schema traversal limits (INV-5)"
+        },
+        {
+          "file": "test/argument-echo.test.ts",
+          "title": "INV-5 INV-6 INV-9: protects local ref and escaped definition pointer in MCP approval and uncertainty envelopes"
+        },
+        {
+          "file": "test/argument-echo.test.ts",
+          "title": "INV-5 INV-6 INV-9: protects oneOf disagreeing sensitivity in MCP approval and uncertainty envelopes"
+        },
+        {
+          "file": "test/program-writes.test.ts",
+          "title": "INV-5 INV-6 INV-9: caught writes retain safe nested properties echoes and original-argument guidance"
         }
       ]
     },
@@ -534,7 +550,7 @@
       "id": "multi-round-trip-requests",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr",
-      "notes": "Auth recovery uses createRequestStateCodec and host-owned invocation facts; writes elicit auth only before invocation and entered reads require unchanged fresh classifications. Direct calls now relay downstream state inside vault encryption and the signed codec envelope, bound to principal, endpoint/pool, connector, original and resolved addresses, arguments digest, round, expiry, and a one-use storage CAS nonce. Original downstream keys stay encrypted behind numbered namespaced keys. Three prompts and a ten-minute window span auth-to-downstream composition; payload and response limits apply. Programs refuse downstream input with a direct-call nextAction. Sampling, roots, prompts, and other deferred request kinds are not relayed.",
+      "notes": "Auth recovery uses createRequestStateCodec and host-owned invocation facts; writes elicit auth only before invocation and entered reads require unchanged fresh classifications. Direct calls now relay downstream state inside vault encryption and the signed codec envelope, bound to principal, endpoint/pool, connector, original and resolved addresses, arguments digest, round, expiry, and a one-use storage CAS nonce. Original downstream keys stay encrypted behind numbered namespaced keys. Three prompts and a ten-minute window span auth-to-downstream composition; payload and response limits apply. Programs refuse downstream input with a direct-call nextAction. Sampling, roots, prompts, and other deferred request kinds are not relayed. Continuation failures reuse the invocation's schema-filtered snapshot and direct-call guidance requires original arguments for partial or absent echoes.",
       "issue": "https://github.com/zackbart/connecta/issues/707",
       "tests": [
         {
@@ -620,6 +636,30 @@
         {
           "file": "test/downstream-input.test.ts",
           "title": "INV-2 INV-4 INV-9: sends an OAuth write continuation once without auth refresh, step-up, or redirect replay"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-5: continuation retry hints omit nested writeOnly arguments"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-5: continuation retry hints omit array writeOnly arguments"
+        },
+        {
+          "file": "test/errors-repair.test.ts",
+          "title": "INV-5: input-required retry hints omit writeOnly arguments on read=false"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-5: continuation failures preserve safe oneOf disagreeing sensitivity echoes"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-5: continuation failures preserve safe local ref and escaped definition pointer echoes"
+        },
+        {
+          "file": "test/errors-repair.test.ts",
+          "title": "INV-5: unresolved catalog recovery requires original arguments without echoing them"
         }
       ]
     },

@@ -813,8 +813,16 @@ what happens over budget differs by field.
 | unknown `connecta.result(id)`, `authorize_connector.connector`, `skills.name` | clamped the same way                                        |
 | `search_tools.connector`                                                      | rejected with `invalid_args` before catalog lookup          |
 
-Arguments go all or nothing because the agent already holds what it sent, and
-half of it would describe a call nobody made. The address gets the opposite rule
+Arguments are schema-filtered before budgeting. `writeOnly: true` values are
+omitted at any depth, including array items and prefixes, local `$ref`/`$defs`,
+and `allOf`. `oneOf`/`anyOf` alternatives must agree on sensitivity. Unresolved
+or remote references, sensitive `patternProperties`/`additionalProperties`
+schemas, unsupported sensitivity rules, and traversal limits omit the entire
+echo. A private array element omits its containing array to keep indices intact.
+`argsRedacted: true` marks partial or withheld echoes. Use them only to identify
+the target for reconciliation; any new call requires the original arguments.
+The filtered snapshot is never clipped: over-budget arguments are dropped whole.
+The address gets the opposite rule
 because it is the thing being corrected: a clipped one still identifies the
 mistake, and a short one — every real one — comes back exact and untagged. A
 scope is rejected outright because a clipped one could select a different
@@ -864,10 +872,12 @@ scoped registry, including an empty list when none are accessible. They never
 list connectors from another pool or identity's grants.
 
 A write that times out after dispatch returns `write_outcome_unknown` with
-`retryable: false` and an agent-only `uncertainCall: { address, args }`. No write
-is automatically replayed. Arguments over the 512-byte echo budget are omitted
-whole with `argsOmitted: true`; use the exact arguments already sent when
-checking the target. A timeout before dispatch remains `timeout`. Trusted
+`retryable: false` and an agent-only `uncertainCall: { address, args?, argsOmitted?, argsRedacted? }`.
+No write is automatically replayed. `args` may be partial reconciliation context
+with `argsRedacted: true`. A withheld echo or arguments over the 512-byte budget
+carry `argsOmitted: true`; sensitive or unresolved schemas also carry
+`argsRedacted: true`. When `args` is absent or redacted, use the original
+arguments if reconciliation requires another call. A timeout before dispatch remains `timeout`. Trusted
 program write accounting keeps this detail even if the guest catches the
 failure or returns early. Multiple uncertain writes use `uncertainCalls`,
 bounded to ten calls with `uncertainCallsTruncated` when more exist.

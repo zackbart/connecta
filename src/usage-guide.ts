@@ -111,10 +111,11 @@ async () => {
 }
 \`\`\`
 
-Program returns have no page handle. Reduce reads before returning. After a
-write, use its existing result, check the target, or report the gap.
-write_outcome_unknown means a write was sent without a known answer: check the
-target, never resend automatically. Non-retryable errors require repair.
+Program returns have no page handle; reduce reads. After a write, check its
+result and target. write_outcome_unknown forbids automatic retry, even if caught.
+Recovery args may be partial (argsRedacted) or absent (argsOmitted). Reconcile
+before retrying with the original args or repeating a program that sent writes.
+Non-retryable errors need repair.
 Follow typed auth recovery: host_auth_required needs host connection repair;
 downstream_oauth_required or auth_required carries an authorize_connector
 handoff; provider_permission_denied needs the resource owner to grant access.

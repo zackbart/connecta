@@ -41,6 +41,106 @@ afterEach(() => {
 });
 
 describe("Infisical security boundaries", () => {
+  const writes = [
+    ["create_secret", "POST", { ...target, secretValue: "submitted-value-12345" }],
+    ["update_secret", "PATCH", { ...target, secretValue: "submitted-value-12345" }],
+    ["delete_secret", "DELETE", target],
+    [
+      "create_folder",
+      "POST",
+      { projectId: target.projectId, environment: target.environment, name: "apps", path: "/" },
+    ],
+  ] as const;
+  for (const source of ["call_destructive_tool", "execute_code"] as const) {
+    it.each(writes)(
+      `requires an explicit counted retry of %s after 401 through ${source} (INV-9)`,
+      async (tool, method, args) => {
+        const { registry } = await setup();
+        let logins = 0;
+        const dispatched: RequestInit[] = [];
+        vi.stubGlobal(
+          "fetch",
+          vi.fn<typeof globalThis.fetch>(async (input, init) => {
+            if (String(input).endsWith("/login"))
+              return json({ accessToken: `auth-token-${++logins}`, expiresIn: 3600 });
+            dispatched.push(init!);
+            return dispatched.length === 1
+              ? Response.json({ message: "private-upstream-body" }, { status: 401 })
+              : json({});
+          }),
+        );
+        const outcome = await invocation(registry).invoke(`infisical.${tool}`, args, { source, trust: "trusted" });
+        expect(outcome).toMatchObject({
+          ok: false,
+          dispatched: true,
+          attempts: 1,
+          error: { code: "auth_required", retryable: false, reconciliationRequired: true },
+        });
+        expect(dispatched).toHaveLength(1);
+        expect(dispatched[0]!.method).toBe(method);
+        expect(logins).toBe(2);
+        expect(JSON.stringify(outcome)).not.toContain("private-upstream-body");
+        const explicit = await invocation(registry).invoke(`infisical.${tool}`, args, { source, trust: "trusted" });
+        expect(explicit).toMatchObject({ ok: true, dispatched: true, attempts: 1 });
+        expect(dispatched).toHaveLength(2);
+        expect(new Headers(dispatched[1]!.headers).get("authorization")).toBe("Bearer auth-token-2");
+        expect(logins).toBe(2);
+      },
+    );
+  }
+  it.each(writes)("refreshes an expiring cached token before dispatching %s (INV-9)", async (tool, _method, args) => {
+    const { registry } = await setup();
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    let logins = 0;
+    const dispatched: RequestInit[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof globalThis.fetch>(async (input, init) => {
+        if (String(input).endsWith("/login")) return json({ accessToken: `expiry-token-${++logins}`, expiresIn: 10 });
+        if (init?.method === "GET") return json({ projects: [] });
+        dispatched.push(init!);
+        return json({});
+      }),
+    );
+    await invocation(registry).invoke("infisical.list_projects", {}, { source: "call_tool" });
+    now += 9000; // Ten-second TTL with the existing ten-percent refresh margin.
+    const result = await invocation(registry).invoke(`infisical.${tool}`, args, { source: "call_destructive_tool" });
+    expect(result).toMatchObject({ ok: true, attempts: 1, dispatched: true });
+    expect(logins).toBe(2);
+    expect(dispatched).toHaveLength(1);
+    expect(new Headers(dispatched[0]!.headers).get("authorization")).toBe("Bearer expiry-token-2");
+  });
+  for (const failure of ["network", "timeout"] as const) {
+    it.each(writes)(`dispatches %s once on ${failure} and counts one attempt (INV-9)`, async (tool, _method, args) => {
+      const { registry } = await setup();
+      let operational = 0;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn<typeof globalThis.fetch>(async (input, init) => {
+          if (String(input).endsWith("/login")) return login();
+          operational++;
+          if (failure === "network") throw new TypeError("Synthetic connection lost");
+          return await new Promise<Response>((_resolve, reject) => {
+            const signal = init!.signal!;
+            if (signal.aborted) reject(signal.reason);
+            else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        }),
+      );
+      const outcome = await invocation(registry).invoke(`infisical.${tool}`, args, {
+        source: "call_destructive_tool",
+        timeoutMs: 100,
+      });
+      expect(outcome).toMatchObject({
+        ok: false,
+        dispatched: true,
+        attempts: 1,
+        error: { code: failure === "network" ? "unavailable" : "write_outcome_unknown" },
+      });
+      expect(operational).toBe(1);
+    });
+  }
   const encodings = {
     raw: (value: string) => value,
     url: encodeURIComponent,

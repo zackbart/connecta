@@ -11,7 +11,7 @@ Values can reference secrets as `${env.KEY}`. Value reads expand references by d
 
 This finite surface has no guarded raw-REST tool. These endpoints return complete collections without a page cursor; narrow the path and avoid recursive/value listings to stay below Connecta's 8 MiB response ceiling. Temporary result paging does not reduce the upstream response size.
 
-Universal Auth tokens remain in memory only. The operator's machine identity must belong to each project with the right role; a 403 needs an operator to fix membership or role. US cloud is the default; set `baseUrl: "https://eu.infisical.com/api"` for EU cloud or your self-hosted HTTPS API base including `/api`. Preserve the connector id and the `clientId`/`clientSecret` fields when migrating existing credentials.
+Universal Auth tokens remain in memory only and refresh before expiry. Reads may retry once after a rejected token. Writes refresh a rejected token for a later explicit call and return the auth failure without resending; reconcile the target before another call. Recovery echoes marked `argsRedacted` omit secret values, so any new call requires the original arguments. The operator's machine identity must belong to each project with the right role; a 403 needs an operator to fix membership or role. US cloud is the default; set `baseUrl: "https://eu.infisical.com/api"` for EU cloud or your self-hosted HTTPS API base including `/api`. Preserve the connector id and the `clientId`/`clientSecret` fields when migrating existing credentials.
 
 No default call budget is assumed. Operators can supply `callAdmission` for their instance's limits. The credential test performs a Universal Auth login only, without reading projects or secrets.
 <!-- endfragment -->

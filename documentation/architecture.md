@@ -549,11 +549,14 @@ credentials produce one payload-free warning per connector; use secrets of
 at least eight characters. Encoded and JSON-escaped echoes of registered
 credentials follow the same redaction rules. Connecta's own messages
 never quote a credential.
-Core uncertainty and retry envelopes omit top-level input fields whose JSON
-Schema declares `writeOnly: true`, before applying the argument echo budget.
-This omission covers values of every length and does not depend on credential
-resolution or dispatch. A partial echo carries `argsRedacted: true`; it identifies
-the target for reconciliation, and retry guidance requires the original arguments.
+Core uncertainty and retry envelopes share one schema-filtered argument snapshot,
+captured before dispatch and byte budgeting. `writeOnly: true` omits values of
+every length, including nested properties, array items and prefixes, local
+`$ref`/`$defs`, and `allOf`. `oneOf`/`anyOf` must agree on sensitivity. Unresolved
+references, sensitive dynamic-property schemas or other unsupported applicators,
+and traversal limits withhold the entire echo. A private array element withholds
+its containing array to preserve indices. `argsRedacted: true` marks a partial
+or withheld echo as reconciliation context; retries require the original arguments.
 OAuth discovery and consent URLs are refused as a typed, non-retryable failure
 when they contain a known credential, before persistence or reuse. This guard
 checks the request's sent credentials and the current grant's credentials,

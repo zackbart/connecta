@@ -394,7 +394,7 @@ export class InvocationService {
                 ? " Sensitive fields are omitted; use the original arguments if reconciliation requires another call."
                 : "args" in echoed
                   ? ""
-                  : " The arguments exceed the echo budget; use the exact arguments you sent."),
+                  : " The arguments could not be echoed safely; use the exact arguments you sent."),
           };
         }
         if (error.code === "auth_required" && target.connector.startAuth) {
@@ -411,7 +411,11 @@ export class InvocationService {
                 arguments: { address: `${target.connector.id}.${target.toolName}`, ...argumentEcho },
                 purpose:
                   "Use this direct call so the host can fulfill the downstream input request." +
-                  (argumentEcho.argsRedacted ? " Re-send the original arguments; sensitive fields are omitted." : ""),
+                  (argumentEcho.argsRedacted
+                    ? " Re-send the original arguments; sensitive fields are omitted."
+                    : "args" in argumentEcho
+                      ? ""
+                      : " Re-send the original arguments; they could not be echoed safely."),
               },
             };
           case "destructive_tool_requires_approval": {
@@ -430,7 +434,7 @@ export class InvocationService {
                     ? "Re-send the original arguments; sensitive fields are omitted from this hint. Add a short reason for the human reviewer."
                     : "args" in echoed
                       ? "Re-send these arguments and add a short reason for the human reviewer."
-                      : "Re-send the arguments you just sent — they are too large to echo back — and add a short reason for the human reviewer."),
+                      : "Re-send the arguments you just sent; they could not be echoed safely. Add a short reason for the human reviewer."),
               },
             };
           }

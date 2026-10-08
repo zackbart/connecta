@@ -14,6 +14,8 @@ import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, Executor, ExecutorProvider, ToolDef } from "../src/types.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { makeRegistry, required, silentLogger } from "./helpers.js";
+import { privateArgumentCases, PRIVATE_MARKER } from "./fixtures/private-arguments.js";
+import type { JsonSchema } from "../src/types.js";
 
 const BASE = "https://connecta.program-writes";
 
@@ -51,6 +53,7 @@ function scriptedExecutor(programs: Map<string, Program>): Executor {
 }
 
 interface WorldOptions {
+  inputSchema?: JsonSchema;
   trust?: PoolTrust;
   maxWrites?: number;
   write?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
@@ -85,6 +88,7 @@ function world(options: WorldOptions = {}) {
         {
           name: "close_issue",
           annotations: { readOnlyHint: false, destructiveHint: true },
+          ...(options.inputSchema ? { inputSchema: options.inputSchema } : {}),
         },
         { name: "post" },
       ];
@@ -133,6 +137,46 @@ const closeOne: Program = async (connecta) => {
 };
 
 describe("a program's write", () => {
+  for (const { name, schema, args, echo } of privateArgumentCases)
+    it(`INV-5 INV-6 INV-9: caught writes retain safe ${name} echoes and original-argument guidance`, async () => {
+      const w = world({
+        trust: "trusted",
+        inputSchema: schema,
+        write: () => {
+          throw new ConnectorCallError("timeout", "Synthetic write deadline.");
+        },
+      });
+      const result = await w.run(async (connecta) => {
+        for (let i = 0; i < 2; i++)
+          try {
+            await connecta.call!("tracker.close_issue", args);
+          } catch {
+            /* Guest cannot erase uncertainty. */
+          }
+        return "caught";
+      });
+      const error = value(result).error;
+      const uncertain = {
+        address: "tracker.close_issue",
+        ...echo,
+        ...(!("args" in echo) ? { argsOmitted: true } : {}),
+      };
+      expect(error).toMatchObject({
+        code: "write_outcome_unknown",
+        retryable: false,
+        writes: { succeeded: 0, failed: 0, unknown: 2 },
+        uncertainCalls: [uncertain, uncertain],
+      });
+      expect(error.message).toContain("original arguments");
+      expect(JSON.stringify(result)).not.toContain(PRIVATE_MARKER);
+      expect(JSON.parse(result.content[0]!.text!)).toEqual(result.structuredContent);
+      expect(w.writes()).toEqual([
+        { address: "tracker.close_issue", args },
+        { address: "tracker.close_issue", args },
+      ]);
+      expect(w.events.map((event) => event.attempts)).toEqual([1, 1]);
+      expect(JSON.stringify(w.events)).not.toContain(PRIVATE_MARKER);
+    });
   it("INV-2: is refused before it is sent, pointing at call_destructive_tool", async () => {
     const w = world();
     const result = await w.run(closeOne);
