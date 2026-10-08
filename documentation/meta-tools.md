@@ -450,7 +450,9 @@ with healthy matches. Credential and permission failures appear first. OAuth
 and operator credential failures carry the codes and `recovery`, `nextAction`,
 and retry instructions described below. `provider_permission_denied` asks the
 resource owner to grant access and carries no reconnect action. Discovery never
-starts recovery. Other failures retain `code`, `message`, `retryable`, and any
+starts recovery. Failure messages use fixed text derived from the error code
+and connector id, never connector-supplied error text. Other failures retain
+`code`, `message`, `retryable`, and any
 `retryAfterMs`. A scoped search also keeps its bounded failure subset under
 `queryAnalysis.catalogError` for clients that already use it.
 
@@ -464,12 +466,14 @@ tools across connectors: `nextOffset` is present only when another page remains.
 Search tokenizes tool names and descriptions at punctuation and camel-case
 boundaries. Whole-token matches and a small set of inflectional variants preserve
 recall without admitting arbitrary mid-word substrings. Document frequency weights
-rare domain terms above ubiquitous action terms. Exact configured connector IDs,
-full display titles, and recognized service names rank first; exact tool-name
-phrases rank next, so `get_issue` beats `get_issue_status`. Complete lexical
-matches then precede partial matches, with score and catalog order breaking ties.
-An identity-only query browses that connector's tools. Connector identity terms
-that never occur in its tools need not be repeated in every tool description.
+rare domain terms above ubiquitous action terms. Exact tool names and canonical
+addresses rank first, so `get_issue` beats `get_issue_status` even when a
+connector is named `issue`. Exact configured connector IDs, full display titles,
+and recognized service names rank next. Complete lexical matches then precede
+partial matches, with score and catalog order breaking ties.
+An exact connector ID or title query browses that connector's tools, even when
+individual tool names or descriptions mention that identity. Connector identity
+terms that never occur in its tools need not be repeated in every tool description.
 
 An explicit unknown `connector` scope returns no tools and an `absence` record:
 `{ service, message, configuredConnectors }`. The message says

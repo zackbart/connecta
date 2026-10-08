@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { CatalogService, flatSearchResult, type CatalogSearchArgs } from "../src/catalog-service.js";
+import { CATALOG_SEARCH_RESULT_SCHEMA, CatalogService, flatSearchResult, type CatalogSearchArgs } from "../src/catalog-service.js";
+import { Validator, type Schema } from "../src/json-schema.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { buildSandboxProviders } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
@@ -8,6 +9,8 @@ import type { Connector, ToolDef } from "../src/types.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { BASE, textOf, type SearchResult } from "./fixtures/meta-tools.js";
 import { makeRegistry, required, silentLogger } from "./helpers.js";
+
+const searchValidator = new Validator(CATALOG_SEARCH_RESULT_SCHEMA as Schema);
 
 function service(id: string, tools: ToolDef[], title?: string): Connector {
   return connectorWith({ id, ...(title ? { title } : {}), tools });
@@ -21,10 +24,16 @@ async function searchBoth(registry: RegistryView, args: CatalogSearchArgs) {
   expect(program).toEqual(top);
   expect(top).not.toHaveProperty("connectors");
   expect(Object.keys(top)[0]).toBe("catalogErrors");
+  const validation = searchValidator.validate(top);
+  expect(validation.errors).toEqual([]);
   return top;
 }
 
 describe("Phase 2 discovery usage-history regressions (#706, #703)", () => {
+  it("exports a flat search schema that rejects connector groups and missing page fields", () => {
+    expect(searchValidator.validate({ connectors: [], total: 0, offset: 0, limit: 8, hasMore: false }).valid).toBe(false);
+    expect(searchValidator.validate({ catalogErrors: [], tools: [], total: 0, offset: 0, limit: 8 }).valid).toBe(false);
+  });
   it.each(["json", "compact", "typescript"] as const)("returns one flat page from both search paths with %s schemas", async (includeSchemas) => {
     const registry = makeRegistry([
       service("linear", [{ name: "get_issue", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } }], "Linear Work"),
@@ -56,6 +65,44 @@ describe("Phase 2 discovery usage-history regressions (#706, #703)", () => {
     for (const query of ["get_issue_status", "linear.get_issue_status"]) {
       const page = await searchBoth(registry, { query, limit: 1, includeSchemas: "json" });
       expect(page.tools[0]?.address).toBe("linear.get_issue_status");
+    }
+  });
+
+  it.each(["get_issue", "get issue", "please get_issue"])("ranks an exact tool name above a connector identity for %s", async (query) => {
+    const registry = makeRegistry([
+      service("issue", [{ name: "get_issue_status" }]),
+      service("tracker", [{ name: "get_issue" }]),
+    ]);
+    const page = await searchBoth(registry, { query, includeSchemas: "json" });
+    expect(page.tools.map((tool) => tool.address)).toEqual(["tracker.get_issue", "issue.get_issue_status"]);
+  });
+
+  it.each(["linear", "Linear Work"])("INV-4: browses granted tools for exact connector identity %s despite description mentions", async (query) => {
+    const registry = makeRegistry([
+      service("linear", [
+        { name: "search_issues", description: "Search Linear Work issues" },
+        { name: "get_issue", description: "Read one ticket" },
+        { name: "delete_issue", description: "Delete one ticket" },
+      ], "Linear Work"),
+      service("metrics", [{ name: "report", description: "Linear Work issue statistics" }]),
+    ]);
+    const scoped = registry.scoped({ connectorIds: ["linear", "metrics"], toolAccess: new Map([["linear", new Set(["search_issues", "get_issue"])]]) });
+    const page = await searchBoth(scoped, { query, limit: 1, includeSchemas: "json" });
+    expect(page.tools[0]?.address).toBe("linear.search_issues");
+    const next = await searchBoth(scoped, { query, limit: 1, offset: required(page.nextOffset), includeSchemas: "json" });
+    expect(next.tools[0]?.address).toBe("linear.get_issue");
+    expect(page.total).toBe(3);
+  });
+
+  it.each(["auth_required", "downstream_oauth_required", "provider_permission_denied", "unavailable"] as const)("INV-6: withholds catalog error text for %s on both search paths", async (code) => {
+    const registry = makeRegistry([connectorWith({
+      id: "private", tools: async () => { throw new ConnectorCallError(code, "DOWNSTREAM_PRIVATE_SENTINEL"); },
+    })]);
+    for (const connector of [undefined, "private"]) {
+      const page = await searchBoth(registry, { query: "get issue", ...(connector ? { connector } : {}), includeSchemas: "json" });
+      expect(JSON.stringify(page)).not.toContain("DOWNSTREAM_PRIVATE_SENTINEL");
+      expect(page.catalogErrors[0]).toMatchObject({ connector: "private", code, message: expect.stringContaining('Connector "private"') });
+      if (connector) expect(page.queryAnalysis?.catalogError).toEqual(expect.objectContaining({ code, message: page.catalogErrors[0]?.message }));
     }
   });
 

@@ -1263,10 +1263,7 @@ describe("probe timeout", () => {
       },
     });
     const catalogError = required(required(scoped.queryAnalysis).catalogError);
-    expect(catalogError.message).toContain(
-      "Upstream returned 503. Operator must restore access.",
-    );
-    expect(catalogError.message).toMatch(/…$/);
+    expect(catalogError.message).toBe('Connector "billing" catalog lookup failed (unavailable).');
     expect(Buffer.byteLength(catalogError.message)).toBeLessThanOrEqual(515);
     // Pinned, not spread: the call-path classifier may grow connector,
     // operation, recovery, or nextAction fields, and none of them belong on a
@@ -1341,9 +1338,7 @@ describe("empty-query browse of an unavailable catalog", () => {
         'Connector "billing" could not be browsed',
       ),
     });
-    expect(required(analysis.catalogError).message).toContain(
-      "Upstream returned 503. Operator must restore access.",
-    );
+    expect(required(analysis.catalogError).message).toBe('Connector "billing" catalog lookup failed (unavailable).');
     // Same bounded shape the term-bearing scoped path returns.
     expect(Object.keys(required(analysis.catalogError)).sort()).toEqual([
       "code",

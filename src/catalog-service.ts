@@ -407,7 +407,7 @@ interface CatalogDescriptionFailureDetail extends CatalogFailureDetail {
 interface CatalogSearchFailure extends CatalogFailureDetail {
   connector: string;
   recovery?: CallErrorDetails["recovery"];
-  nextAction?: CallErrorDetails["nextAction"];
+  nextAction?: Extract<NonNullable<CallErrorDetails["nextAction"]>, { tool: "authorize_connector" }>;
   retry?: string;
 }
 
@@ -444,6 +444,139 @@ export interface CatalogSearchPage {
     guidance?: string;
   };
 }
+
+/** The flat wire page shared by search_tools and connecta.search. */
+export type CatalogSearchResult = Omit<CatalogSearchPage, "entries"> & {
+  tools: Array<CatalogSearchEntry["tool"] & {
+    connectorTitle?: string;
+    guide?: string;
+    guideSummary?: string;
+  }>;
+};
+
+const stringListSchema = { type: "array", items: { type: "string" } } as const;
+const guideProperties = {
+  guide: { type: "string" },
+  guideSummary: { type: "string" },
+  guideRequired: { const: true },
+  guideRequiredReasons: {
+    type: "array",
+    items: { enum: ["connector_required", "approval_required", "schema_truncated"] },
+  },
+};
+const catalogFailureProperties = {
+  code: { type: "string" },
+  message: { type: "string" },
+  retryable: { type: "boolean" },
+  retryAfterMs: { type: "integer", minimum: 0 },
+};
+
+/**
+ * The outputSchema contract for either search adapter. Guest API registration
+ * can reuse this value instead of maintaining a second page definition.
+ */
+export const CATALOG_SEARCH_RESULT_SCHEMA: JsonSchema = {
+  type: "object",
+  required: ["catalogErrors", "tools", "total", "offset", "limit", "hasMore"],
+  additionalProperties: false,
+  properties: {
+    catalogErrors: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["connector", "code", "message", "retryable"],
+        additionalProperties: false,
+        properties: {
+          connector: { type: "string" },
+          ...catalogFailureProperties,
+          recovery: { enum: ["oauth", "operator_config", "unavailable"] },
+          retry: { type: "string" },
+          nextAction: {
+            type: "object",
+            required: ["tool", "arguments", "operatorHandoff"],
+            additionalProperties: false,
+            properties: {
+              tool: { const: "authorize_connector" },
+              arguments: {
+                type: "object",
+                required: ["connector"],
+                additionalProperties: false,
+                properties: { connector: { type: "string" } },
+              },
+              operatorHandoff: { type: "string" },
+            },
+          },
+        },
+      },
+    },
+    absence: {
+      type: "object",
+      required: ["service", "message", "configuredConnectors"],
+      additionalProperties: false,
+      properties: {
+        service: { type: "string" },
+        message: { type: "string" },
+        configuredConnectors: stringListSchema,
+      },
+    },
+    tools: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["name", "address"],
+        additionalProperties: false,
+        properties: {
+          name: { type: "string" },
+          address: { type: "string" },
+          connectorTitle: { type: "string" },
+          description: { type: "string" },
+          inputSchema: {},
+          outputSchema: {},
+          signature: { type: "string" },
+          schemaFormat: { enum: ["json", "text"] },
+          outputSchemaSource: { const: "observed" },
+          inputSchemaTruncated: { const: true },
+          outputSchemaTruncated: { const: true },
+          inputKeys: stringListSchema,
+          requiredInputKeys: stringListSchema,
+          outputKeys: stringListSchema,
+          annotations: { type: "object" },
+          classification: { enum: ["read", "write"] },
+          ...guideProperties,
+        },
+      },
+    },
+    total: { type: "integer", minimum: 0 },
+    offset: { type: "integer", minimum: 0 },
+    limit: { type: "integer", minimum: 1, maximum: MAX_SEARCH_LIMIT },
+    hasMore: { type: "boolean" },
+    nextOffset: { type: "integer", minimum: 0 },
+    matchMode: { const: "partial" },
+    queryAnalysis: {
+      type: "object",
+      required: ["representedTerms", "otherResultTerms", "unmatchedTerms"],
+      additionalProperties: false,
+      properties: {
+        representedTerms: stringListSchema,
+        otherResultTerms: stringListSchema,
+        unmatchedTerms: stringListSchema,
+        truncated: { const: true },
+        connectorScope: { type: "string" },
+        unknownConnector: { const: true },
+        configuredConnectors: stringListSchema,
+        unavailableConnectorCount: { type: "integer", minimum: 0 },
+        catalogError: {
+          type: "object",
+          required: ["code", "message", "retryable"],
+          additionalProperties: false,
+          properties: catalogFailureProperties,
+        },
+        ...guideProperties,
+        guidance: { type: "string" },
+      },
+    },
+  },
+};
 
 export interface CatalogDescription {
   address: string;
@@ -887,7 +1020,13 @@ export class CatalogService {
           const localStatistics = exactConnector
             ? lexicalCorpusStatistics([catalog.success], retrievalQuery)
             : undefined;
-          const toolQuery = exactConnector
+          // An exact identity is a browse even when one tool repeats that
+          // identity in its name or description. Action queries still keep
+          // identity terms that also name an actual capability.
+          const identityBrowse = connectorNames(connector).some((name) =>
+            normalizedPhrase(query) === normalizedPhrase(name),
+          );
+          const toolQuery = identityBrowse ? "" : exactConnector
             ? queryTerms.filter((term) =>
                 !connectorTerms.has(term) ||
                 (localStatistics?.nameMatches.get(term)?.size ?? 0) > 0 ||
@@ -943,16 +1082,16 @@ export class CatalogService {
     if (!isBrowse && !unsearchableQuery && completeMatchCount === 0) {
       matchMode = "partial";
     }
-    // Connector identity and exact tool names precede lexical scoring. A
+    // Exact tool names precede connector identity and lexical scoring. A
     // longer name such as get_issue_status cannot beat an exact get_issue
     // merely because its description repeats rare query terms.
     matches.sort((a, b) => {
       const aFirstTier = a.complete || a.exactName;
       const bFirstTier = b.complete || b.exactName;
       return (
-        b.connectorRank - a.connectorRank ||
         Number(b.exactLookup) - Number(a.exactLookup) ||
         Number(b.exactName) - Number(a.exactName) ||
+        b.connectorRank - a.connectorRank ||
         Number(bFirstTier) - Number(aFirstTier) ||
         b.score - a.score ||
         a.order - b.order
@@ -1089,7 +1228,15 @@ export class CatalogService {
       const error: CatalogSearchFailure = {
         connector: connector.id,
         code: classified.code,
-        message: boundedEchoText(classified.message),
+        // Catalog discovery reports recovery facts, never connector-authored
+        // error text. Clipping a downstream message does not make it safe.
+        message: classified.code === "downstream_oauth_required"
+          ? `Connector "${connector.id}" requires downstream OAuth authorization. Call authorize_connector and give its handoff to the operator.`
+          : classified.code === "auth_required"
+            ? `Connector "${connector.id}" requires operator-managed credentials or configuration. Call authorize_connector and give its handoff to the operator.`
+            : classified.code === "provider_permission_denied"
+              ? `Connector "${connector.id}" requires permission from the provider's resource owner or administrator. Reconnecting alone will not grant access.`
+              : `Connector "${connector.id}" catalog lookup failed (${classified.code}).`,
         retryable: classified.retryable,
         ...(classified.retryAfterMs === undefined ? {} : { retryAfterMs: classified.retryAfterMs }),
       };
@@ -1442,7 +1589,7 @@ function pageTail(page: CatalogSearchPage) {
   };
 }
 
-export function flatSearchResult(page: CatalogSearchPage) {
+export function flatSearchResult(page: CatalogSearchPage): CatalogSearchResult {
   return {
     catalogErrors: page.catalogErrors,
     ...(page.absence ? { absence: page.absence } : {}),
