@@ -31,7 +31,7 @@ export function trackRemoteClientRequest(secrets: SentSecrets, input: RequestInf
         const secret = decode(decoded.slice(colon + 1));
         if (secret) {
           secrets.add(decode(decoded.slice(0, colon)));
-          secrets.add(secret);
+          secrets.secret(secret);
         }
       }
     } catch { /* The wire value is still registered below. */ }
@@ -42,7 +42,7 @@ export function trackRemoteClientRequest(secrets: SentSecrets, input: RequestInf
     const secret = form.get("client_secret");
     if (secret) {
       secrets.add(form.get("client_id") ?? "");
-      secrets.add(secret);
+      secrets.secret(secret);
     }
     // RFC 7009 uses token, rather than the token endpoint's refresh_token.
     const token = form.get("token");

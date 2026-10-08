@@ -392,9 +392,23 @@ visible. Before any diagnostic is truncated or returned, the
 agent boundary replaces these values and their auth prefixes, mixed JSON
 escapes, URL encodings, and base64/base64url forms with `[redacted]`. Final
 transports register sensitive headers and query values after assembling the
-request; custom API handlers use `ctx.fetch`. Values shorter than eight
-characters do not enter the matcher, because a short Basic username would
-rewrite ordinary prose. Connecta's own messages never quote a credential.
+request; custom API handlers use `ctx.fetch`. General values shorter than eight
+characters, including Basic usernames, do not enter the matcher. Basic
+passwords and explicitly secret fields such as `client_secret` are redacted
+at every length. Short secrets match only when bounded by characters other
+than Unicode letters, numbers or underscore. A password `the` therefore
+leaves `other` intact; an isolated `the` equal to that password is withheld.
+Encoded and JSON-escaped echoes use the same rule. Connecta's own messages
+never quote a credential.
+OAuth discovery and consent URLs are refused as a typed, non-retryable failure
+when they contain a known credential, before persistence or reuse. This guard
+checks the request's sent credentials and the current grant's credentials,
+including confidential client secrets. The consent URL's expected `client_id`
+parameter remains public, while echoes elsewhere are refused. URLs are never
+rewritten. OAuth failure
+origins are recorded only for the configured MCP or issuer origin, or the
+origin of discovery metadata whose issuer matches its authorization server.
+An origin matching a sent credential is omitted.
 The matcher is cached until its set changes; the empty set has a fast path.
 `redactAgentOutput` is the agent-facing choke point. Every meta-tool exit,
 including errors, and every host-to-guest value or rejection passes through

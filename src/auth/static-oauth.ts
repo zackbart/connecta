@@ -272,6 +272,8 @@ class StaticOAuthProvider extends KvOAuthProvider {
       (reset) => trackOAuthStartReset(ctx.requestScope ?? ctx, reset),
       undefined,
       settings.scope,
+      undefined,
+      { secrets: sentSecretsFor(ctx) },
     );
   }
 

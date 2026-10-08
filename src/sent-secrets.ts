@@ -9,8 +9,10 @@ const encoder = new TextEncoder();
 const contexts = new WeakMap<ConnectorContext, SentSecrets>();
 const requests = new WeakMap<object, SentSecrets>();
 const wrappedCredentials = new WeakSet<ConnectorContext>();
-const sensitiveName = /key|token|secret|auth|signature|session/i;
-// Short credentials (especially Basic usernames) would corrupt ordinary prose.
+const sensitiveName = /key|token|secret|password|auth|signature|session/i;
+const explicitSecretName = /secret|password/i;
+// General short values, especially usernames, would corrupt ordinary prose.
+// Explicit secrets use whole-token matches below instead of substring matches.
 const MIN_SECRET_LENGTH = 8;
 
 function literal(value: string): string {
@@ -37,14 +39,16 @@ function base64(value: string): string {
 
 export class SentSecrets {
   private readonly values = new Set<string>();
+  private readonly shortSecrets = new Set<string>();
   private matcher: RegExp | undefined;
   private readonly recipients = new Set<SentSecrets>();
 
-  private form(value: string): void {
-    if (this.values.has(value)) return;
-    this.values.add(value);
+  private form(value: string, bounded = false): void {
+    const values = bounded ? this.shortSecrets : this.values;
+    if (values.has(value)) return;
+    values.add(value);
     this.matcher = undefined;
-    for (const recipient of this.recipients) recipient.form(value);
+    for (const recipient of this.recipients) recipient.form(value, bounded);
   }
 
   /** The request receives existing and future credentials from every context. */
@@ -52,6 +56,7 @@ export class SentSecrets {
     if (source === this) return;
     source.recipients.add(this);
     for (const value of source.values) this.form(value);
+    for (const value of source.shortSecrets) this.form(value, true);
   }
 
   add(value: string): void {
@@ -67,6 +72,24 @@ export class SentSecrets {
     }
   }
 
+  /** Explicit secret fields are sensitive at every length. Bound short matches
+   * by Unicode letters, numbers and underscore, so `the` cannot alter `other`.
+   * A standalone word equal to the password is necessarily withheld. */
+  secret(value: string): void {
+    if (value.length >= MIN_SECRET_LENGTH) { this.add(value); return; }
+    if (!value) return;
+    for (const form of [value, encodeURIComponent(value), encodeURI(value),
+      new URLSearchParams({ value }).toString().slice(6), base64(value),
+      base64(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")]) {
+      this.form(form, true);
+    }
+  }
+
+  /** Structural fields must be refused, never repaired into different URLs. */
+  contains(value: string, ignoreCase = false): boolean {
+    return [...this.values, ...this.shortSecrets].some((secret) => new RegExp(wirePattern(secret), ignoreCase ? "i" : "").test(value));
+  }
+
   header(value: string): void {
     this.add(value);
     const framed = /^(?:Bearer|token|Basic)\s+(.+)$/i.exec(value);
@@ -79,16 +102,17 @@ export class SentSecrets {
         const colon = decoded.indexOf(":");
         if (colon !== -1) {
           this.add(decoded.slice(0, colon));
-          this.add(decoded.slice(colon + 1));
+          this.secret(decoded.slice(colon + 1));
         }
       } catch { /* An invalid Basic value is still registered verbatim. */ }
-    }
+    } else this.secret(framed[1]!);
   }
 
   request(input: RequestInfo | URL, init?: RequestInit): void {
     const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
     for (const [name, value] of headers) {
-      if (name === "cookie" || sensitiveName.test(name)) this.header(value);
+      if (explicitSecretName.test(name)) this.secret(value);
+      else if (name === "cookie" || sensitiveName.test(name)) this.header(value);
       if (name === "cookie") {
         for (const cookie of value.split(";")) {
           const equals = cookie.indexOf("=");
@@ -98,26 +122,30 @@ export class SentSecrets {
     }
     const url = new URL(input instanceof Request ? input.url : String(input));
     for (const [name, value] of url.searchParams) {
-      if (sensitiveName.test(name)) this.add(value);
+      if (explicitSecretName.test(name)) this.secret(value);
+      else if (sensitiveName.test(name)) this.add(value);
     }
     // The OAuth SDK sends token requests as form data. Do not read a body
     // stream or clone a Request: registration must not consume its payload.
     if (headers.get("content-type")?.startsWith("application/x-www-form-urlencoded") &&
         (typeof init?.body === "string" || init?.body instanceof URLSearchParams)) {
       for (const [name, value] of new URLSearchParams(init.body)) {
-        if (/^(?:client_secret|refresh_token|code|client_assertion|password)$/i.test(name)) this.add(value);
+        if (/^(?:client_secret|password)$/i.test(name)) this.secret(value);
+        else if (/^(?:refresh_token|code|client_assertion)$/i.test(name)) this.add(value);
       }
     }
   }
 
   text(value: string): string {
-    if (this.values.size === 0) return value;
+    if (this.values.size === 0 && this.shortSecrets.size === 0) return value;
     // Replace longer forms first so a raw token cannot leave its prefix or
     // encoded suffix behind. Literal matches only: ordinary diagnostics stay.
     this.matcher ??= new RegExp([
       literal(REDACTED),
-      ...[...this.values].sort((a, b) => b.length - a.length).map(wirePattern),
-    ].join("|"), "g");
+      ...[...this.values, ...this.shortSecrets].sort((a, b) => b.length - a.length).map((secret) =>
+        this.values.has(secret) ? wirePattern(secret)
+          : `(?<![\\p{L}\\p{N}_])${wirePattern(secret)}(?![\\p{L}\\p{N}_])`),
+    ].join("|"), "gu");
     // A single pass never scans a newly inserted placeholder as credential
     // text. Protect existing placeholders when another boundary runs too.
     value = value.replace(this.matcher, REDACTED);
@@ -181,7 +209,7 @@ export class SentSecrets {
 
   /** Copy, including non-enumerable Error fields; never retain a raw cause. */
   redact<T>(value: T): T {
-    if (this.values.size === 0) return value;
+    if (this.values.size === 0 && this.shortSecrets.size === 0) return value;
     const seen = new Map<object, object>();
     let changed = false;
     const text = (value: string): string => {
@@ -298,12 +326,19 @@ export function trackCredentialReads(ctx: ConnectorContext): void {
   ctx.credential = {
     async get(field) {
       const value = await credential.get(field);
-      if (value) sentSecretsFor(ctx).add(value);
+      if (value) {
+        const secrets = sentSecretsFor(ctx);
+        if (field && explicitSecretName.test(field)) secrets.secret(value);
+        else secrets.add(value);
+      }
       return value;
     },
     async getAll() {
       const values = await credential.getAll();
-      for (const value of Object.values(values ?? {})) sentSecretsFor(ctx).add(value);
+      for (const [field, value] of Object.entries(values ?? {})) {
+        if (explicitSecretName.test(field)) sentSecretsFor(ctx).secret(value);
+        else sentSecretsFor(ctx).add(value);
+      }
       return values;
     },
   };

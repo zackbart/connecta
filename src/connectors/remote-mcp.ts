@@ -1231,23 +1231,31 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    * Anything not already in connecta's words is withheld, including a store's
    * error while the flow saves what it discovered, which can quote it.
    */
-  const withoutAuthorizationServerText = (
+  const withoutAuthorizationServerText = async (
+    ctx: ConnectorContext,
     err: unknown,
     trail: OAuthTrail,
     signals: readonly (AbortSignal | undefined)[],
-  ): unknown => {
+  ): Promise<unknown> => {
+    const safeOrigin = async (host: string | undefined): Promise<string | undefined> => {
+      if (!host || sentSecretsFor(ctx).contains(host, true)) return undefined;
+      if (host === destination.origin || (staticClient && host === new URL(staticClient.issuer).origin)) return host;
+      try { return host === await newProvider(ctx).validatedIssuerOrigin() ? host : undefined; }
+      catch { return undefined; }
+    };
     if (ownAbortReason(err, signals) && !hasSdkPayload(err)) return err;
     if (err instanceof RegistrationRejectedError) {
       const code = registrationErrorCode(err.body);
+      const origin = await safeOrigin(trail.registration);
       const facts = {
         step: "OAuth client registration" as const,
-        ...(trail.registration ? { origin: trail.registration } : {}),
+        ...(origin ? { origin } : {}),
         httpStatus: err.status,
         ...(code ? { oauthError: code } : {}),
       };
       return attachFailureFacts(carryFailureFacts(err, withheldAs(
         `Connector "${id}" could not register an OAuth client with ` +
-          `${trail.registration ?? "its authorization server"}: the ` +
+          `${origin ?? "its authorization server"}: the ` +
           `registration endpoint answered HTTP ${err.status}` +
           `${code ? ` with OAuth error ${code}` : ""}. Its response is ` +
           "withheld because it can quote the request or anything the server " +
@@ -1257,8 +1265,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       )), facts);
     }
     const leg = trail.last;
+    const origin = await safeOrigin(leg?.host);
     const facts = leg
-      ? { step: `OAuth ${leg.step}` as const, origin: leg.host, ...(leg.httpStatus ? { httpStatus: leg.httpStatus } : {}) }
+      ? { step: `OAuth ${leg.step}` as const, ...(origin ? { origin } : {}), ...(leg.httpStatus ? { httpStatus: leg.httpStatus } : {}) }
       : { step: "OAuth flow" as const };
     if (err instanceof UnauthorizedError || err instanceof ConnectorCallError || err instanceof WithheldTextError) {
       return attachFailureFacts(downstreamCallError(err), facts);
@@ -1268,7 +1277,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       return attachFailureFacts(carryFailureFacts(err, classified), facts);
     }
     return attachFailureFacts(carryFailureFacts(err, withheldAs(
-      `Connector "${id}" OAuth ${leg ? `${leg.step} with ${leg.host}` : "flow"} ` +
+      `Connector "${id}" OAuth ${leg ? `${leg.step}${origin ? ` with ${origin}` : ""}` : "flow"} ` +
         `failed${errorKind(err)}. The error is withheld because its text can ` +
         "quote what the server sent. Check the server's OAuth metadata, then " +
         "retry authorization.",
@@ -1386,7 +1395,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           return await fetchFn(input, init);
         }));
       } catch (err) {
-        throw withoutAuthorizationServerText(err, trail, signals);
+        throw await withoutAuthorizationServerText(ctx, err, trail, signals);
       }
     };
     adapted.onUnauthorized = (ctx) =>
@@ -1624,7 +1633,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       metadataUrl,
       oauthScope,
       undefined,
-      { name: ctx.oauthClientName, client: staticClient },
+      { name: ctx.oauthClientName, client: staticClient, secrets: sentSecretsFor(ctx) },
     );
     if (state) state.provider = provider;
     return provider;
@@ -2448,7 +2457,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // Reset so the next use reconnects with the freshly stored tokens.
         closeHalf(state);
       } catch (err) {
-        throw withoutAuthorizationServerText(err, trail, [ctx.signal]);
+        throw await withoutAuthorizationServerText(ctx, err, trail, [ctx.signal]);
       } finally {
         // This exchange-only transport has no lease in the request scope.
         detach(closeConnection(null, t, ctx.logger));
