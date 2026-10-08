@@ -97,7 +97,9 @@ grader rejects a wrong-source attribution with the expected answer intact,
 and a right-source run without answer evidence. It also rejects a no-op, wrong-issue
 refusals, comment-only paging/fan-out, another retained result, direct images
 substituted for program emissions, sequential budget exhaustion, direct-only
-recovery, and contradictory/missing RevenueCat access evidence. The deployment
+recovery, swapped CI facts, fabricated service absence, and contradictory/missing
+RevenueCat access evidence. Positive controls also verify both discovery routes
+and recovery after a schema-rejected program request. The deployment
 adapter observes the real QuickJS provider bridge for paging and fan-out checks;
 source text alone cannot satisfy them.
 Skipped features remain untested until enabled against a supporting checkout.

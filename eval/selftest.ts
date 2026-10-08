@@ -55,6 +55,12 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<{ cor
       if (response.status !== 401) throw new Error("Node eval admitted an unprovisioned client");
     }
     if (mode === "reference") {
+      // A schema rejection must not shift the observer-to-tool correlation.
+      if (task.id === "p5-fanout-over-budget") {
+        const rejected = await session.call("execute_code", {});
+        if (!rejected.isError) throw new Error("Expected malformed execute_code to be rejected");
+        toolUses.push({ id: "ref-invalid", turn, tool: "execute_code", input: {}, isError: true, resultText: rejected.text, resultBlocks: rejected.content });
+      }
       await task.reference({
         world,
         answer: text => { finalAnswer = text; },
@@ -90,12 +96,22 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<{ cor
     trace.urlElicitations = parseTrace(hostEvents, [], []).urlElicitations ?? [];
     const correct = task.grade({ world, trace });
     const regressions = mode === "reference" ? counterexamples(task, world, trace) : [];
+    if (mode === "reference" && task.id === "p5-absent-github") {
+      for (const route of ["search_tools", "execute_code"]) {
+        const programs = world.programs;
+        if (route === "search_tools") world.programs = [];
+        const controls = task.grade({ world, trace: { ...trace, toolUses: trace.toolUses.filter(u => u.tool === route) } });
+        world.programs = programs;
+        if (controls.some(c => !c.advisory && !c.pass)) throw new Error(`Valid ${route} absence discovery failed`);
+      }
+    }
     const missingEvidence = task.grade({ world, trace: { ...trace, finalAnswer: "Completed." } });
     // Keep the successful state and answer, but attribute every source call
     // to another destination. This isolates source enforcement from evidence.
     for (const call of world.ledger.calls) call.service = "wrong_destination";
     for (const p of world.programs) for (const c of p.calls) {
       if (typeof c.args[0] === "string") c.args[0] = c.args[0].replace(/^[^.]+/, "wrong_destination");
+      if (c.name === "connecta.search") c.result = { absence: { service: "wrong_destination" } };
     }
     const wrongUses = toolUses.map(use => ({ ...use, input: {
       ...use.input,

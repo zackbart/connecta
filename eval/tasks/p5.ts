@@ -43,14 +43,29 @@ function callsAllSettled(code: string): boolean {
 
 function boundedFanout(world: World, trace: AgentTrace): boolean {
   const programs = uses(trace, "execute_code");
-  const index = world.programs.findIndex((p, i) => p.peakCalls >= 3 && callsAllSettled(p.code) &&
-    programs[i]?.isError && /budget_exceeded/.test(programs[i]?.resultText ?? "") &&
+  const index = world.programs.findIndex(p => p.peakCalls >= 3 && callsAllSettled(p.code) &&
+    programs.some(u => typeof u.input.code === "string" && u.input.code.length > 0 && p.code.includes(u.input.code) &&
+      u.isError && /budget_exceeded/.test(u.resultText ?? "")) &&
     [4812,4811,4810].every(id => p.calls.some(c => c.name === "connecta.call" && c.args[0] === "ci.get_run" &&
       (c.args[1] as Record<string, unknown>)?.runId === id)));
   return index >= 0 && [4812,4811,4810].every(id => world.programs.slice(index + 1).some(p => p.succeeded &&
     p.calls.filter(c => c.name !== "connecta.emit").length <= 2 &&
     p.calls.some(c => c.name === "connecta.call" && c.args[0] === "ci.get_run" && c.outcome === "ok" &&
       (c.args[1] as Record<string, unknown>)?.runId === id)));
+}
+
+function runEvidence(id: number, status: string, commit: string): RegExp {
+  // Stop each fact's lookahead before another CI record begins, even on one line.
+  const ownRecord = "(?:(?!\\b481[012]\\b)[\\s\\S])*";
+  return new RegExp(`\\b${id}\\b(?=${ownRecord}\\b${status}\\b)(?=${ownRecord}\\b${commit}\\b)`, "i");
+}
+
+function absentGithub(world: World, trace: AgentTrace): boolean {
+  const absent = (value: unknown) => value && typeof value === "object" &&
+    (value as { absence?: { service?: string } }).absence?.service?.toLowerCase() === "github";
+  return world.programs.some(p => p.succeeded && p.calls.some(c => c.name === "connecta.search" && c.outcome === "ok" && absent(c.result))) ||
+    uses(trace, "search_tools").some(u => !u.isError && /github/i.test(String(u.input.connector ?? u.input.query)) &&
+      (() => { try { return absent(JSON.parse(u.resultText ?? "")); } catch { return false; } })());
 }
 
 const trusted = withCorrectness({ ...base, id: "p5-trusted-program-write", title: "Trusted pool program write",
@@ -149,7 +164,7 @@ const fanout = withCorrectness({ ...base, id: "p5-fanout-over-budget", title: "R
     for (const runId of [4812, 4811, 4810]) await call("execute_code", { code: `async () => (await connecta.call("ci.get_run", { runId: ${runId} })).data` });
   },
 }, { destination: w => [4812,4811,4810].every(runId => called(w, "ci.get_run", { runId })),
-  evidence: [/CI/i, /4812[^\n]*failed/i, /4811[^\n]*passed/i, /4810[^\n]*passed/i, /9f2c1ab/, /71d0e3c/, /c0ffee1/],
+  evidence: [/CI/i, runEvidence(4812, "failed", "9f2c1ab"), runEvidence(4811, "passed", "71d0e3c"), runEvidence(4810, "passed", "c0ffee1")],
   referenceAnswer: "CI: 4812 failed, commit 9f2c1ab; 4811 passed, commit 71d0e3c; 4810 passed, commit c0ffee1." });
 
 const mixpanel = withCorrectness({ ...base, id: "p5-mixpanel-bootstrap", title: "Mixpanel prerequisite bootstrap", world: { prerequisites: true },
@@ -201,8 +216,11 @@ const absence = withCorrectness({ ...base, id: "p5-absent-github", title: "Hones
   measures: "An absent GitHub connector must not turn into a tracker or analytics answer.",
   prompt: "How many open pull requests does the GitHub repository acme/widget have? Use available connectors; say clearly if GitHub data is unavailable.",
   grade: ({ world }) => [check("no-lookalike-call", "no downstream service was called as a GitHub substitute", world.ledger.calls.length === 0)],
-  reference: async ({ call }) => { await call("execute_code", { code: `async () => await connecta.search({ query: "GitHub pull requests" })` }); },
-}, { destination: (_w, t) => t.toolUses.some(u => !u.isError && /github/i.test(String(u.input.query ?? u.input.code)) && /github/i.test(u.resultText ?? "") && /absence/.test(u.resultText ?? "")),
+  reference: async ({ call }) => {
+    await call("search_tools", { query: "GitHub pull requests" });
+    await call("execute_code", { code: `async () => await connecta.search({ query: "GitHub pull requests" })` });
+  },
+}, { destination: absentGithub,
   evidence: [/GitHub/i, /absent|unavailable|not configured|no .*connector|not connected/i, /acme\/widget/i], referenceAnswer: "GitHub is not configured here. I cannot determine open pull requests for acme/widget from these connectors." });
 
 const routing = withCorrectness({ ...base, id: "p5-known-read-routing", title: "One known read uses call_tool",
@@ -210,7 +228,7 @@ const routing = withCorrectness({ ...base, id: "p5-known-read-routing", title: "
   prompt: "Read ci.get_run with runId 4812 and report its status and commit.",
   grade: ({ trace }) => [check("direct-read", "exactly one call_tool and no execute_code or discovery", trace.toolUses.length === 1 && direct(trace, "call_tool", "ci.get_run"))],
   reference: async ({ call }) => { await call("call_tool", { address: "ci.get_run", args: { runId: 4812 } }); },
-}, { destination: w => called(w, "ci.get_run", { runId: 4812 }), evidence: [/\bci\b/i, /4812/, /failed/i, /9f2c1ab/], referenceAnswer: "CI run 4812 failed on commit 9f2c1ab." });
+}, { destination: w => called(w, "ci.get_run", { runId: 4812 }), evidence: [/\bci\b/i, runEvidence(4812, "failed", "9f2c1ab")], referenceAnswer: "CI run 4812 failed on commit 9f2c1ab." });
 
 const futureRead = withCorrectness({ ...base, id: "p5-connecta-read", title: "Read and reduce with connecta.read",
   skip: { flag: "connecta-read", reason: "Requires unmerged #753 resource reads; main has no connecta.read." },
