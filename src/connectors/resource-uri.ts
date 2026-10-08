@@ -206,8 +206,8 @@ function safePath(path: string): boolean {
   let value = end < 0 ? path : path.slice(0, end);
   for (let depth = 0; depth < 8; depth++) {
     if (/[\\\p{Cc}\p{Cf}]/u.test(value) || unsafeUnicode(value) || /(?:^|\/)\.{1,2}(?:\/|$)/.test(value)) return false;
-    if (!value.includes("%")) return true;
-    try { value = decodeURIComponent(value); } catch { return false; }
+    if (!value.includes("%") || depth > 0 && !/%[0-9a-f]{2}/i.test(value)) return true;
+    try { value = depth === 0 ? decodeURIComponent(value) : decodeNestedPercentEscapes(value); } catch { return false; }
   }
   return false;
 }
@@ -240,10 +240,18 @@ function safeValue(raw: string, prefix: number | undefined, path: boolean): stri
   for (let depth = 0; depth < 8; depth++) {
     if (/[\\:?#&;=\p{Cc}\p{Cf}]/u.test(value) || unsafeUnicode(value) || (!path && value.includes("/")) ||
         value.startsWith("/") || value.split("/").some(segment => segment === "." || segment === "..")) return undefined;
-    if (!value.includes("%")) return prefix === undefined || Array.from(expanded).length <= prefix ? expanded : undefined;
-    try { value = decodeURIComponent(value); } catch { return undefined; }
+    if (!/%[0-9a-f]{2}/i.test(value)) return prefix === undefined || Array.from(expanded).length <= prefix ? expanded : undefined;
+    try { value = decodeNestedPercentEscapes(value); } catch { return undefined; }
   }
   return undefined;
+}
+
+function decodeNestedPercentEscapes(value: string): string {
+  // The first decode stays strict. Later layers can contain literal percent
+  // signs decoded from %25. Preserve those while decoding every remaining
+  // %HH escape, so literal data cannot hide unsafe escapes elsewhere. Invalid
+  // UTF-8 still throws and the callers keep the same eight-layer bound.
+  return decodeURIComponent(value.replace(/%(?![0-9a-f]{2})/gi, "%25"));
 }
 
 function unsafeUnicode(value: string): boolean {

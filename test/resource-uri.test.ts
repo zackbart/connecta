@@ -46,6 +46,42 @@ it.each([
 });
 
 it.each([
+  ["https://h/100%25/{p}", "https://h/100%25/a"],
+  ["https://h/100%25off/{p}", "https://h/100%25off/a"],
+  ["https://h/{p}", "https://h/50%25off"],
+  ["https://h/{p}", "https://h/50%2525off"],
+  ["https://h/{p}/{p}", "https://h/50%25off/50%25off"],
+  ["https://h/{p:3}/{p}", "https://h/50%25/50%25off"],
+  ["https://h/{p}", "https://h/50%25off%2520sale"],
+])("INV-3: preserves encoded-percent data in template literals and values %s as %s", (template, uri) => {
+  expect(resourceUriMatchesTemplate(uri, template)).toBe(true);
+  expect(resourceUriMatchesTemplates(uri, [{ uriTemplate: template }])).toEqual({ matched: true });
+});
+
+it.each([
+  "%252E%252E", "%25%32%45%25%32%45",
+  "%25E2%2580%25A8", "%25EF%25BC%258F", "%250A", "%25FF",
+])("INV-3 INV-4: encoded-percent data cannot hide nested unsafe escapes %s", encoded => {
+  for (const [template, uri] of [
+    ["https://h/{p}", `https://h/${encoded}`],
+    ["https://h/50%25off/{p}", `https://h/50%25off/${encoded}`],
+    [`https://h/50%25off/${encoded}/{p}`, `https://h/50%25off/${encoded}/a`],
+    ["https://h/{+p}", `https://h/50%25off/${encoded}`],
+  ] as const) {
+    expect(resourceUriMatchesTemplate(uri, template)).toBe(false);
+  }
+});
+
+it.each([
+  ["https://h/100%/{p}", "https://h/100%/a"],
+  ["https://h/100%ZZ/{p}", "https://h/100%ZZ/a"],
+  ["https://h/{p}", "https://h/50%off"],
+  ["https://h/{p}", "https://h/50%25off%FF"],
+])("INV-3 INV-4: preserves strict initial percent and UTF-8 validation %s as %s", (template, uri) => {
+  expect(resourceUriMatchesTemplate(uri, template)).toBe(false);
+});
+
+it.each([
   ["docs://manual/{id}/{id}", "docs://manual/a/b"],
   ["docs://manual/{+id}/{id}", "docs://manual/%2520/%2520"],
   ["docs://manual/entry{;id}/{id}", "docs://manual/entry;id/a"],
