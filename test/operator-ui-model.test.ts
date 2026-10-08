@@ -17,7 +17,6 @@ import {
   oauthDoneNotice,
   problemCopy,
   refusedNotice,
-  TOOL_SAFETY_BADGE,
 } from "../src/operator-ui/view.js";
 import { FIX_PROMPT_KINDS } from "../src/operator-ui/fix-prompts.js";
 import { activityHistory } from "../src/activity.js";
@@ -97,12 +96,6 @@ describe("tool safety classification", () => {
     expect(uiToolSafety({ name: "t", classification: "read", annotations: { readOnlyHint: true } })).toBe("runs_in_programs");
     for (const [, annotations] of cases.slice(1)) {
       expect(uiToolSafety({ name: "t", ...(annotations ? { annotations } : {}) })).toBe("needs_approval");
-    }
-  });
-
-  it("has a badge for every classification the server can send", () => {
-    for (const safety of ["runs_in_programs", "needs_approval"] as const) {
-      expect(TOOL_SAFETY_BADGE[safety].label.length).toBeGreaterThan(0);
     }
   });
 

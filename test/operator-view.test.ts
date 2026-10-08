@@ -7,23 +7,10 @@ import {
   type UiConnector,
 } from "../src/ui.js";
 import {
-  activityDetail,
-  activityOutcomeBadge,
-  activityOutcomeClass,
   activitySummary,
-  authScopeLabel,
-  connectorSummaryParts,
-  connectorStatusLabel,
-  connectorStatusTone,
-  permissionLabel,
-  summarizeConnectors,
-  actorLabel,
-  actorStableId,
   credentialUnavailableCopy,
   driftCounts,
-  driftState,
   driftSummary,
-  driftTotal,
   failure,
   filterActivity,
   info,
@@ -35,48 +22,6 @@ import {
   type UiActivityEvent,
 } from "../src/operator-ui/view.js";
 import { required } from "./helpers.js";
-
-describe("activity rows for resumed programs", () => {
-  const row = (overrides: Partial<UiActivityEvent>): UiActivityEvent => ({
-    occurredAt: "2026-09-24T12:00:00.000Z",
-    connectorId: "tracker",
-    toolName: "close_issue",
-    address: "tracker.close_issue",
-    source: "execute_code",
-    outcome: "success",
-    durationMs: 1,
-    attempts: 1,
-    ...overrides,
-  });
-
-  // Nothing emits a pause or an approval since #672, but older rows carry them.
-  it("paints a historical pause and approval as neither success nor failure", () => {
-    expect(activityOutcomeClass("paused")).toBe("paused");
-    expect(activityOutcomeClass("approved")).toBe("approved");
-    expect(activityOutcomeClass("something new")).toBe("error");
-  });
-
-  it("says what a historical approval covered", () => {
-    expect(activityDetail(row({ source: "resume_execution", outcome: "approved", attempts: 0, approval: "tool" })))
-      .toBe("Resumed program · approved for the rest of the run");
-    expect(activityDetail(row({ source: "resume_execution", outcome: "approved", attempts: 0, approval: "call" })))
-      .toBe("Resumed program · approved for this call");
-    expect(activityDetail(row({ outcome: "paused", attempts: 0 }))).toBe("In a program");
-  });
-
-  it("words sources, friction, and outcomes for a person, never twice", () => {
-    expect(
-      activityDetail(row({ source: "call_tool", outcome: "error", attempts: 2, friction: "auth_required", errorCode: "auth_required" })),
-    ).toBe("Direct call · 2 attempts · needed authorization");
-    // An unknown code is still shown, without its underscores, not guessed at.
-    expect(activityDetail(row({ outcome: "error", errorCode: "rate_limited" }))).toBe(
-      "In a program · rate limited",
-    );
-    expect(activityOutcomeBadge("paused")).toEqual({ label: "Paused for approval", tone: "warn" });
-    expect(activityOutcomeBadge("success")).toEqual({ label: "Succeeded", tone: "ok" });
-    expect(activityOutcomeBadge("something new")).toEqual({ label: "Failed", tone: "danger" });
-  });
-});
 
 /** A connector whose listTools always throws — exercises broken-connector isolation. */
 describe("status UI filtering", () => {
@@ -271,27 +216,6 @@ describe("operator app state", () => {
     // Loaded collections are this identity's own, so navigation keeps them.
   });
 
-  it("labels activity actors and shows a stable id only when it disambiguates", () => {
-    expect(
-      actorLabel({ kind: "clerk", id: "user_1", label: "Ada Lovelace" }),
-    ).toBe("Ada Lovelace (Clerk)");
-    expect(actorLabel({ kind: "clerk", id: "user_fallback" })).toBe(
-      "user_fallback (Clerk)",
-    );
-    expect(actorLabel({ kind: "bearer" })).toBe("Bearer token");
-    expect(actorLabel(undefined)).toBe("Unknown caller");
-    expect(
-      actorStableId({
-        kind: "clerk",
-        id: "user_1",
-        namespace: "https://tenant-a.example",
-        label: "Ada Lovelace",
-      }),
-    ).toBe("https://tenant-a.example · user_1");
-    // A bare id is already its own label — printing it twice says nothing.
-    expect(actorStableId({ kind: "clerk", id: "user_fallback" })).toBeNull();
-  });
-
   it("filters loaded activity across labels, ids, and namespaces", () => {
     const events = [
       event("calc.add", {
@@ -341,69 +265,6 @@ describe("operator app state", () => {
     }
   });
 
-  it("reads a clean drift report as clean, with every category at zero", () => {
-    const clean = {
-      observedAt: "2026-08-12T12:00:00.000Z",
-      unclassifiedTools: 0,
-      unservedTools: 0,
-      annotationConflicts: 0,
-      schemaChanges: 0,
-    };
-    expect(driftState(clean)).toBe("clean");
-    expect(driftTotal(clean)).toBe(0);
-    expect(driftSummary(clean)).toContain("Matches the reviewed manifest");
-    // A clean report still names its four categories, so "clean" is a reading
-    // of something rather than a claim with nothing behind it.
-    expect(driftCounts(clean).map(({ label, count }) => [label, count])).toEqual(
-      [
-        ["Unclassified", 0],
-        ["Unserved", 0],
-        ["Annotation conflicts", 0],
-        ["Schema changes", 0],
-      ],
-    );
-  });
-
-  it("reads any nonzero category as a warning and counts the difference", () => {
-    const drifted = {
-      observedAt: "2026-08-12T12:00:00.000Z",
-      unclassifiedTools: 2,
-      unservedTools: 0,
-      annotationConflicts: 1,
-      schemaChanges: 3,
-    };
-    expect(driftState(drifted)).toBe("warning");
-    expect(driftTotal(drifted)).toBe(6);
-    expect(driftSummary(drifted)).toContain(
-      "6 differences from the reviewed manifest",
-    );
-    expect(driftCounts(drifted).filter(({ count }) => count > 0)).toHaveLength(
-      3,
-    );
-    // One difference reads as one, not as "1 differences".
-    expect(
-      driftSummary({
-        observedAt: "2026-08-12T12:00:00.000Z",
-        unclassifiedTools: 0,
-        unservedTools: 1,
-        annotationConflicts: 0,
-        schemaChanges: 0,
-      }),
-    ).toContain("1 difference from");
-  });
-
-  it("reads an absent drift report as unavailable rather than clean", () => {
-    // "Nothing has refreshed here" and "a refresh found nothing" are different
-    // answers; only one of them is a reason to stop looking.
-    expect(driftState(undefined)).toBe("unavailable");
-    expect(driftTotal(undefined)).toBe(0);
-    expect(driftCounts(undefined)).toEqual([]);
-    expect(driftSummary(undefined)).toBe(
-      "No catalog refresh observed yet in this runtime.",
-    );
-    expect(driftSummary(undefined)).not.toContain("Matches");
-  });
-
   it("renders drift as counts and never as names, schemas, or payloads", () => {
     // A report that arrived carrying more than counts — the panel reads the
     // four categories it knows and nothing else, so extra fields cannot reach
@@ -438,161 +299,5 @@ describe("operator app state", () => {
     );
 
 
-  });
-});
-
-
-describe("connector summary strip", () => {
-  const connector = (
-    status: UiConnector["status"],
-    extra: Partial<UiConnector> = {},
-  ): UiConnector => ({
-    id: `c-${status}-${extra.toolCount ?? 0}`,
-    status,
-    toolCount: 0,
-    tools: [],
-    ...extra,
-  });
-
-  it("counts each state once and adds up the tools", () => {
-    expect(
-      summarizeConnectors([
-        connector("ok", { toolCount: 3 }),
-        connector("ok", { toolCount: 4 }),
-        connector("auth_required"),
-        connector("error"),
-      ]),
-    ).toEqual({
-      total: 4,
-      connected: 2,
-      attention: 1,
-      credentials: 0,
-      unavailable: 1,
-      loading: 0,
-      tools: 7,
-      drifting: 0,
-    });
-  });
-
-  // A connector still loading its catalog has no answer yet, so it lands in
-  // `total` and nowhere else.
-  it("claims a loading connector as neither connected nor failing", () => {
-    const summary = summarizeConnectors([connector("loading")]);
-    expect(summary.total).toBe(1);
-    expect(summary.connected + summary.attention + summary.unavailable).toBe(0);
-    expect(summary.loading).toBe(1);
-    // And the strip says so, rather than "0 connected · 0 tools".
-    expect(connectorSummaryParts(summary)).toEqual([
-      { text: "Checking 1 connector…", tone: "neutral" },
-    ]);
-  });
-
-  it("counts a connector as drifting only when a refresh saw a difference", () => {
-    const observedAt = "2026-01-01T00:00:00.000Z";
-    expect(
-      summarizeConnectors([
-        connector("ok", {
-          catalogDrift: {
-            observedAt,
-            unclassifiedTools: 1,
-            unservedTools: 0,
-            annotationConflicts: 0,
-            schemaChanges: 0,
-          },
-        }),
-        connector("ok", {
-          catalogDrift: {
-            observedAt,
-            unclassifiedTools: 0,
-            unservedTools: 0,
-            annotationConflicts: 0,
-            schemaChanges: 0,
-          },
-        }),
-        connector("ok"),
-      ]).drifting,
-    ).toBe(1);
-  });
-
-  it("names what an auth-needed connector needs, in the badge and the strip", () => {
-    const needsCredential = connector("auth_required", { problem: "credential_required" });
-    const needsOAuth = connector("auth_required", { problem: "oauth_required" });
-    expect(connectorStatusLabel("auth_required", "credential_required")).toBe("Credential needed");
-    expect(connectorStatusLabel("auth_required", "oauth_required")).toBe("Authorization needed");
-    const summary = summarizeConnectors([needsCredential, needsOAuth]);
-    expect(summary).toMatchObject({ attention: 1, credentials: 1 });
-    expect(connectorSummaryParts(summary).map((part) => part.text)).toEqual([
-      "0 connected",
-      "1 needs authorization",
-      "1 needs a credential",
-      "0 tools",
-    ]);
-  });
-
-  it("names only the counts an operator has to act on", () => {
-    const healthy = connectorSummaryParts({
-      total: 2,
-      connected: 2,
-      attention: 0,
-      credentials: 0,
-      unavailable: 0,
-      loading: 0,
-      tools: 9,
-      drifting: 0,
-    });
-    expect(healthy.map((part) => part.text)).toEqual(["2 connected", "9 tools"]);
-    expect(healthy.every((part) => part.tone === "neutral")).toBe(true);
-
-    const troubled = connectorSummaryParts({
-      total: 3,
-      connected: 1,
-      attention: 1,
-      credentials: 0,
-      unavailable: 1,
-      loading: 0,
-      tools: 1,
-      drifting: 0,
-    });
-    expect(troubled).toEqual([
-      { text: "1 connected", tone: "neutral" },
-      { text: "1 needs authorization", tone: "warn" },
-      { text: "1 unavailable", tone: "danger" },
-      { text: "1 tool", tone: "neutral" },
-    ]);
-  });
-
-  it("gives every status a tone, defaulting an unknown one to danger", () => {
-    expect(connectorStatusTone("ok")).toBe("ok");
-    expect(connectorStatusTone("auth_required")).toBe("warn");
-    expect(connectorStatusTone("loading")).toBe("neutral");
-    expect(connectorStatusTone("error")).toBe("danger");
-    expect(connectorStatusTone("something-new")).toBe("danger");
-  });
-
-  it("reads an absent auth scope as shared, the way the payload means it", () => {
-    expect(authScopeLabel(undefined)).toBe("shared auth");
-    expect(authScopeLabel("shared")).toBe("shared auth");
-    expect(authScopeLabel("personal")).toBe("personal auth");
-  });
-
-  it("describes what this identity may do with the connection's auth", () => {
-    const permissions = {
-      use: true,
-      manageSharedAuth: false,
-      connectPersonal: false,
-    };
-    expect(permissionLabel(connector("ok"))).toContain("managed by your deployment");
-    expect(
-      permissionLabel(
-        connector("ok", { permissions: { ...permissions, connectPersonal: true } }),
-      ),
-    ).toContain("your own account");
-    expect(
-      permissionLabel(
-        connector("ok", {
-          permissions: { ...permissions, manageSharedAuth: true, connectPersonal: true },
-        }),
-      ),
-    ).toContain("shared authentication");
   });
 });

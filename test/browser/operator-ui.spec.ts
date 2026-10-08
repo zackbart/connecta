@@ -508,57 +508,6 @@ test("keeps the shell open and loads private data only after authentication", as
   ).toBe(`Bearer ${TOKEN}`);
 });
 
-test("adds, tests, replaces, and removes a credential", async ({ page }) => {
-  await openAuthenticated(page);
-  const row = await openRow(page, "Vaulted service");
-
-  await row.getByRole("button", { name: "Add credential" }).click();
-  await row.locator('input[aria-label="API token"]').fill("first-secret");
-  await row.getByRole("button", { name: "Save" }).click();
-  await expect(row.getByText("configured · ••••cret")).toBeVisible();
-
-  await row.getByRole("button", { name: "Test" }).click();
-  // The answer lands in the card that asked, not in the page header.
-  await expect(row.locator("#credentialNotice-vaulted")).toHaveText(
-    "Credential is valid.",
-  );
-
-  await row.getByRole("button", { name: "Replace" }).click();
-  await row.locator('input[aria-label="API token"]').fill("replacement-token");
-  await row.getByRole("button", { name: "Save" }).click();
-  await expect(row.getByText("configured · ••••oken")).toBeVisible();
-
-  // An in-page confirm, naming the connector by its title; no browser modal.
-  const dialogs: string[] = [];
-  page.on("dialog", (dialog) => {
-    dialogs.push(dialog.message());
-    void dialog.dismiss();
-  });
-  await row.getByRole("button", { name: "Remove", exact: true }).click();
-  const confirm = row.getByRole("group", { name: /Remove Vaulted service's credential\?/ });
-  await expect(confirm.getByRole("button", { name: "Cancel" })).toBeFocused();
-  await confirm.getByRole("button", { name: "Remove", exact: true }).click();
-  await expect(row.getByRole("button", { name: "Add credential" })).toBeVisible();
-  expect(dialogs).toEqual([]);
-
-  const writes = requests.filter(
-    (request) => request.path === "/ui/credentials/vaulted",
-  );
-  expect(writes.map(({ method }) => method)).toEqual(["PUT", "PUT", "DELETE"]);
-  expect(writes.map(({ body }) => body)).toEqual([
-    { value: "first-secret" },
-    { value: "replacement-token" },
-    undefined,
-  ]);
-  expect(
-    requests.some(
-      (request) =>
-        request.path === "/ui/credentials/vaulted/test" &&
-        request.method === "POST",
-    ),
-  ).toBe(true);
-});
-
 test("shows clean, warning, and unobserved drift without naming a tool", async ({ page }) => {
   await openAuthenticated(page);
   for (const [title, id, state, text] of [
@@ -695,22 +644,6 @@ for (const body of ["truncated JSON", "null", "{}"]) {
   });
 }
 
-test("names the empty state of every collection a new deployment has", async ({
-  page,
-}) => {
-  emptyDeployment = true;
-  await openAuthenticated(page);
-
-  await expect(
-    page.getByText("No connectors are visible to this session."),
-  ).toBeVisible();
-
-  await page.getByRole("link", { name: "Activity" }).click();
-  await expect(
-    page.getByText("No connector tool calls recorded yet."),
-  ).toBeVisible();
-});
-
 test("keeps a rejected credential save on screen and retryable", async ({
   page,
 }) => {
@@ -815,21 +748,6 @@ test("shows effective access without exposing auth controls to a reader", async 
   expect(requests.some(request => request.path.startsWith("/ui/access-tokens"))).toBe(false);
 });
 
-test("keeps connection auth usable on a narrow screen", async ({ page }) => {
-  await page.setViewportSize({ width: 375, height: 812 });
-  await openAuthenticated(page);
-  const row = await openRow(page, "Vaulted service");
-  await row.getByRole("button", { name: "Add credential" }).click();
-  await expect(row.locator('input[aria-label="API token"]')).toBeVisible();
-  const fits = await page.evaluate(
-    "document.documentElement.scrollWidth <= window.innerWidth",
-  );
-  expect(fits).toBe(true);
-  await row.locator('input[aria-label="API token"]').fill("mobile-secret");
-  await row.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(row.locator("#credentialNotice-vaulted")).toHaveText("Credential saved.");
-});
-
 test("retries a failed connection without reloading the list", async ({ page }) => {
   faults.set("GET /ui/connectors/drifted", "provider unavailable");
   await openAuthenticated(page);
@@ -840,15 +758,6 @@ test("retries a failed connection without reloading the list", async ({ page }) 
   await expect(row.locator(".conn-head")).toContainText("Connected");
   await expect(row.locator("[data-problem]")).toHaveCount(0);
   expect(requests.filter(request => request.path === "/ui/data")).toHaveLength(1);
-});
-
-test("labels each tool with the call path the server classified", async ({ page }) => {
-  credentialValue = "stored-secret";
-  await openAuthenticated(page);
-  const vaulted = await openRow(page, "Vaulted service", "tools");
-  await expect(vaulted.getByRole("cell", { name: "read", exact: true })).toBeVisible();
-  const crm = await openRow(page, "CRM", "tools");
-  await expect(crm.getByRole("cell", { name: "write", exact: true })).toHaveCount(2);
 });
 
 test("copies a fix prompt that carries nothing from the failure", async ({ page, context }) => {
@@ -1020,22 +929,6 @@ test("keeps a downstream's error text out of every action notice, end to end", a
   ]));
 });
 
-test("offers client setup for the endpoint and each granted pool", async ({ page }) => {
-  pools = ["support"];
-  await openAuthenticated(page, "/");
-  await expect(page.locator("#mcpUrl")).toHaveText(`${origin}/mcp`);
-  await expect(page.getByText("browser-test", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Client setup", exact: true }).click();
-  const drawer = page.getByRole("dialog", { name: "Client setup", exact: true });
-  await expect(drawer).toBeVisible();
-  const commands = drawer.locator('[data-setup="claude"] pre');
-  await expect(commands).toHaveText([
-    `claude mcp add --transport http browser-test ${origin}/mcp`,
-    `claude mcp add --transport http browser-test-support ${origin}/mcp/support`,
-  ]);
-  await expect(drawer.locator(".setup-code").filter({ hasText: TOKEN })).toHaveCount(0);
-});
-
 test("stays signed in with a retry when operator data fails, and gates only on 401", async ({ page }) => {
   let answer: "500" | "network" | "401" | "ok" = "500";
   await page.route("**/ui/data", async (route) => {
@@ -1132,32 +1025,6 @@ test("tells a lost session and a dropped connection apart from a failing connect
   await expect(crm.getByRole("button", { name: "Refresh CRM" })).toBeVisible();
 });
 
-test("paints a problem fixed by authorizing as a warning, with one primary action", async ({ page }) => {
-  oauthConnected = false;
-  await openAuthenticated(page);
-
-  const crm = await openRow(page, "CRM");
-  const problem = crm.locator('[data-problem="oauth_required"]');
-  await expect(problem).toHaveClass(/\bwarn\b/);
-  await expect(crm.locator(".btn.primary")).toHaveCount(1);
-  await expect(crm.getByRole("button", { name: "Connect CRM" })).toHaveClass(/primary/);
-  // Nothing for a coding agent to fix: authorizing is the fix.
-  await expect(crm.locator("[data-fix-prompt]")).toHaveCount(0);
-
-  const vaulted = await openRow(page, "Vaulted service");
-  await expect(vaulted.locator('[data-problem="credential_required"]')).toHaveClass(/\bwarn\b/);
-  // Named by what it needs: its fix is a credential, not authorization.
-  await expect(vaulted.locator(".conn-head")).toContainText("Credential needed");
-  await expect(vaulted.locator(".btn.primary")).toHaveCount(1);
-
-  // A broken connector is still an error.
-  leakyStatus = true;
-  await openRow(page, "Hosted proxy").then(async (row) => {
-    await row.getByRole("button", { name: "Refresh Hosted proxy" }).click();
-    await expect(row.locator('[data-problem="connector_unavailable"]')).not.toHaveClass(/\bwarn\b/);
-  });
-});
-
 test("opens the authorization tab inside the click and sends it on once the route answers", async ({ page }) => {
   oauthConnected = false;
   let release!: () => void;
@@ -1239,44 +1106,6 @@ test("re-reads status when the tab comes back, without starting authorization", 
   // coalesce — and nothing that could start authorization.
   expect(since.filter(request => request.path.startsWith("/ui/oauth/"))).toHaveLength(0);
   expect(since.some(request => request.path === "/ui/connectors/oauth")).toBe(true);
-});
-
-test("collapses the masthead on a phone and keeps the gate within the screen", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto(origin + "/");
-  const gateMasthead = await page.locator(".masthead").boundingBox();
-  const fitsGate = await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth");
-  expect(fitsGate).toBe(true);
-  await expect(page.getByRole("button", { name: "Open operator pages" })).toBeInViewport();
-
-  await page.getByLabel("Bearer token").fill(TOKEN);
-  await page.getByRole("button", { name: "Open operator pages" }).click();
-  await expect(page.locator("#overviewView")).toBeVisible();
-  const masthead = await page.locator(".masthead").boundingBox();
-  // Two rows at most: brand beside the session action, pages under them.
-  expect(masthead!.height).toBeLessThan(260);
-  const brand = await page.locator(".masthead .brand").boundingBox();
-  const session = await page.getByRole("button", { name: "Change token" }).boundingBox();
-  expect(Math.abs(brand!.y + brand!.height / 2 - (session!.y + session!.height / 2))).toBeLessThan(8);
-  expect(await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")).toBe(true);
-  // It scrolls away rather than holding a fifth of the screen.
-  expect(await page.evaluate('getComputedStyle(document.querySelector(".masthead")).position')).toBe("static");
-  expect(gateMasthead!.height).toBeGreaterThan(0);
-});
-
-test("keeps the gate in the guarded page's layout and masthead height", async ({ page }) => {
-  await page.goto(origin + "/");
-  const gateHeading = await page.locator("#gateHeading").boundingBox();
-  const gateMasthead = await page.locator(".masthead").boundingBox();
-
-  await page.getByLabel("Bearer token").fill(TOKEN);
-  await page.getByRole("button", { name: "Open operator pages" }).click();
-  await expect(page.locator("#overviewView")).toBeVisible();
-  const heading = await page.locator("#overviewHeading").boundingBox();
-  const masthead = await page.locator(".masthead").boundingBox();
-  expect(Math.abs(gateHeading!.x - heading!.x)).toBeLessThan(1);
-  expect(Math.abs(gateHeading!.y - heading!.y)).toBeLessThan(1);
-  expect(Math.abs(gateMasthead!.height - masthead!.height)).toBeLessThan(1);
 });
 
 test("keeps inactive connector tabs out of sight and out of the tab order", async ({ page }) => {

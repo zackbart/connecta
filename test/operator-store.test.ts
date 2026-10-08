@@ -2,14 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { UiData } from "../src/operator-ui/model.js";
 
 /**
- * The operator store, driven the way a browser drives it.
- *
- * `test/ui.test.ts` asserts the pure rules in `view.ts`; this suite asserts the
- * wiring that decides *when* those rules run — the Clerk listener, `gate()`, the
- * generation fence, and the request path. That wiring is the security-relevant
- * half: a rule that empties identity-scoped state proves nothing if nothing
- * calls it when the identity changes, and the Playwright suite cannot reach it
- * because it signs in with a bearer token and never changes Clerk sessions.
+ * Within-document identity changes and request ordering in the operator store.
+ * The visual matrix covers presentation; real-server flows cover sign-in and
+ * reloads. These tests exercise Clerk listener changes while requests are in
+ * flight, so stale data cannot land under another identity.
  */
 
 const BASE = "https://deployment.example";

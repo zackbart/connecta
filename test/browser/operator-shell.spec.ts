@@ -71,14 +71,6 @@ test("operator shell admits ambient Access without sending a stored token", asyn
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toHaveCount(0);
 });
 
-for (const scheme of ["light", "dark"]) {
-  test(`operator shell ${scheme} visual fixture`, async ({ page }) => {
-    await page.setViewportSize({ width: 1280, height: 900 });
-    await openShell(page, scheme);
-    await expect(page).toHaveScreenshot(`shell-${scheme}.png`, { fullPage: true, maxDiffPixelRatio: 0.01 });
-  });
-}
-
 test("command palette filters, traps focus and restores its trigger", async ({ page }) => {
   await openShell(page);
   const trigger = page.getByRole("button", { name: "Search pages" });

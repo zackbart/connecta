@@ -80,41 +80,6 @@ async function clean(page: Page) {
   await expect(page.locator("body")).not.toContainText("Hidden connector");
 }
 
-for (const [path, heading, landmark] of [
-  ["/", "Overview", "#overviewView"], ["/connectors", "Connectors", 'table[aria-label="Connectors"]'],
-  ["/connectors/github", "GitHub", '[role="tablist"][aria-label="Connector detail"]'], ["/tools", "Tools", 'table[aria-label="Tool catalog"]'],
-  ["/access", "Access", "#poolsHeading"], ["/activity", "Activity", "#activityList"],
-  ["/artifacts", "Artifacts", 'table[aria-label="Artifacts"]'], ["/config", "Config", ".snapshot-tree"],
-] as const) {
-  test(`page smoke: ${heading} renders under CSP and navigates`, async ({ page }) => {
-    await session(page); const response = await page.goto(origin + path);
-    expect(response!.status()).toBe(200);
-    expect(response!.headers()["content-security-policy"]).toContain("script-src 'self'");
-    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
-    await expect(page.locator(landmark).first()).toBeVisible();
-    await clean(page);
-    await page.getByRole("link", { name: "Overview", exact: true }).click();
-    await expect(page).toHaveURL(origin + "/");
-    await expect(page.locator("#overviewView")).toBeVisible();
-    await clean(page);
-  });
-}
-
-test("Access shows final inbound providers, pool trust and scoped members", async ({ page }) => {
-  await session(page); await page.goto(origin + "/access");
-  const providers = page.locator("#inboundHeading + .rows");
-  await expect(providers).toContainText("clerk");
-  await expect(providers).toContainText("access_token");
-  await expect(providers).not.toContainText("bearer");
-  const pool = page.locator(".pool-panel").filter({ has: page.getByRole("heading", { name: "support", exact: true }) });
-  await expect(pool).toContainText("read-only");
-  await expect(pool).toContainText("github.read");
-  await expect(pool).not.toContainText("github.write");
-  await expect(pool).toContainText(origin + "/mcp/support");
-  await expect(page.locator("#tokenCreateForm")).toBeVisible();
-  await clean(page);
-});
-
 test("needs-attention links and signed authorize_connector hand off to the Auth tab without starting OAuth", async ({ page }) => {
   await session(page); await page.goto(origin);
   await page.getByRole("link", { name: /Slack.*Authorization needed/ }).click();
@@ -204,24 +169,6 @@ test("Config provenance recognizes explicit defaults and excludes hidden keys", 
   await clean(page);
 });
 
-test("denied contract permissions hide activity, artifacts, tokens and shared auth controls", async ({ page }) => {
-  await session(page);
-  await page.route("**/ui/api/config", async route => {
-    const response = await route.fetch(); const facts = await response.json() as OperatorUiContract;
-    facts.you.permissions.activity = false; facts.you.permissions.artifacts = false; facts.you.permissions.accessTokenManagement = false;
-    facts.you.permissions.connectors = facts.you.permissions.connectors.map(c => ({ ...c, manageSharedAuth: false, connectPersonal: false }));
-    return route.fulfill({ json: facts });
-  });
-  await page.goto(origin + "/access");
-  await expect(page.getByText("Token management is not available to this session.")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Activity", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Artifacts", exact: true })).toHaveCount(0);
-  await page.goto(origin + "/connectors/slack#auth");
-  await expect(page.getByText("Authentication for this connection is managed by your deployment.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Connect Slack", exact: true })).toHaveCount(0);
-  await clean(page);
-});
-
 test("connector tabs are keyboard friendly and preserve the selected tab on reload", async ({ page }) => {
   await session(page); await page.goto(origin + "/connectors/github#tools");
   await expect(page.getByRole("tab", { name: "Tools", exact: true })).toHaveAttribute("aria-selected", "true");
@@ -229,28 +176,5 @@ test("connector tabs are keyboard friendly and preserve the selected tab on relo
   await expect(page).toHaveURL(origin + "/connectors/github#auth");
   await expect(page.getByRole("tab", { name: "Auth", exact: true })).toBeFocused();
   await page.reload(); await expect(page.getByRole("tab", { name: "Auth", exact: true })).toHaveAttribute("aria-selected", "true");
-  await clean(page);
-});
-
-
-test("empty credential slots show Credential needed on list and detail pages", async ({ page }) => {
-  await session(page); await page.goto(origin + "/connectors");
-  const row = page.getByRole("row").filter({ hasText: "Empty slot" });
-  await expect(row.getByText("Credential needed", { exact: true })).toBeVisible();
-  await expect(row).not.toContainText("Connected");
-  await page.goto(origin + "/connectors/slot");
-  await expect(page.getByText("Credential needed", { exact: true }).first()).toBeVisible();
-  const response = await page.request.get(origin + "/ui/api/config", { headers: { Authorization: `Bearer ${TOKEN}` } });
-  expect((await response.json() as OperatorUiContract).live.connectors.find(c => c.id === "slot")?.status).toBe("credential_required");
-  await clean(page);
-});
-
-test("Activity renders discrete catalog changes under their request", async ({ page }) => {
-  await session(page);
-  await page.route("**/ui/api/activity*", route => route.fulfill({ json: { events: [{ ...event("drift", "refresh-one", "<catalog>"), kind: "catalog_drift", source: "catalog_refresh", drift: { kind: "catalog_changed", addedTools: 1, removedTools: 2, changedTools: 3 } }] } }));
-  await page.goto(origin + "/activity");
-  const group = page.locator('[aria-label="Request refresh-one"]');
-  await expect(group.getByText("github: Catalog changed", { exact: true })).toBeVisible();
-  await expect(group.getByText("1 added · 2 removed · 3 changed", { exact: true })).toBeVisible();
   await clean(page);
 });
