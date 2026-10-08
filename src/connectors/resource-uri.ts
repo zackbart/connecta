@@ -222,10 +222,22 @@ function safeValue(raw: string, prefix: number | undefined, path: boolean): stri
   // Check each decoding layer. Reserved paths may contain slashes, but cannot
   // introduce URI syntax, a network path, traversal, controls or format marks.
   for (let depth = 0; depth < 8; depth++) {
-    if (/[\\:?#&;=\p{Cc}\p{Cf}]/u.test(value) || (!path && value.includes("/")) ||
+    if (/[\\:?#&;=\p{Cc}\p{Cf}]/u.test(value) || unsafeUnicode(value) || (!path && value.includes("/")) ||
         value.startsWith("/") || value.split("/").some(segment => segment === "." || segment === "..")) return undefined;
     if (!value.includes("%")) return prefix === undefined || Array.from(expanded).length <= prefix ? expanded : undefined;
     try { value = decodeURIComponent(value); } catch { return undefined; }
   }
   return undefined;
+}
+
+function unsafeUnicode(value: string): boolean {
+  // Refuse non-ASCII separators and compatibility lookalikes of URI syntax,
+  // rather than all non-ASCII. Ordinary percent-encoded UTF-8 path segments
+  // and ASCII spaces remain valid. Inspect every decoding layer without
+  // normalizing the value used for expansion.
+  for (const character of value) {
+    if (character <= "\x7f") continue;
+    if (/\p{Z}/u.test(character) || /[\\/:?#&;=.%@]/.test(character.normalize("NFKC"))) return true;
+  }
+  return false;
 }

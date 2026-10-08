@@ -33,6 +33,10 @@ it.each([
   ["https://H:443{/x}", "https://H:443/safe"],
   ["docs:{/a}/static!", "docs:/safe/static!"],
   ["x:{value}", "x:safe"],
+  ["docs://manual/{page}", "docs://manual/caf%C3%A9"],
+  ["docs://manual/{page}", "docs://manual/%25E2%259C%2593"],
+  ["docs://manual/{+path}", "docs://manual/caf%C3%A9/%E6%96%87%E6%9B%B8"],
+  ["docs://manual{/pages*}", "docs://manual/caf%C3%A9/%E2%9C%93"],
 ])("INV-3: matches advertised RFC 6570 expansion %s as %s", (template, uri) => {
   expect(resourceUriMatchesTemplate(uri, template)).toBe(true);
 });
@@ -90,6 +94,18 @@ it.each(["http", "https", "ftp", "ws", "wss"])("INV-3 INV-4: refuses a WHATWG ho
 
 it("INV-3 INV-4: refuses backslash normalization in a literal authority", () => {
   expect(resourceUriMatchesTemplate("https://h\\evil.com/safe", "https://h\\evil.com{/x}")).toBe(false);
+});
+
+it.each(["%E2%80%A8", "%C2%A0", "%EF%BC%8F", "%E3%80%80", "%EF%BC%8E", "%EF%BC%85"])("INV-3 INV-4: refuses Unicode separators and URI syntax lookalikes at each decoding layer %s", encoded => {
+  for (const expression of ["{page}", "{+page}", "{/page*}", "{?page}"]) {
+    const template = "docs://manual/entry" + expression;
+    for (let depth = 0, value = decodeURIComponent(encoded); depth < 8; depth++) {
+      const uri = "docs://manual/entry" + (expression === "{/page*}" ? "/" : expression === "{?page}" ? "?page=" : "") + value;
+      expect(resourceUriMatchesTemplate(uri, template)).toBe(false);
+      expect(resourceUriMatchesTemplates(uri, [{ uriTemplate: template }])).toEqual({ matched: false });
+      value = encodeURIComponent(value);
+    }
+  }
 });
 
 
