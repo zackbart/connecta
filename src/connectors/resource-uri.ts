@@ -9,7 +9,7 @@ type Part = string | Expression;
 import type { ResourceTemplateRefusalCode } from "../types.js";
 export type ResourceTemplateRefusal = ResourceTemplateRefusalCode;
 interface MatchResult { matched: boolean; refusal?: ResourceTemplateRefusal }
-interface ParsedTemplate { parts: Part[]; scheme: string; authority: boolean }
+interface ParsedTemplate { parts: Part[]; scheme: string; authority: string | undefined }
 
 /** Bound parsing plus templates × URI length for the whole resource read. */
 export function resourceUriMatchesTemplates(uri: string, templates: readonly { uriTemplate: string }[], note: (code: ResourceTemplateRefusal) => void = () => {}): MatchResult {
@@ -42,12 +42,8 @@ function parse(template: string): ParsedTemplate | "resource_template_ambiguous"
   if (template.length > MAX_URI_LENGTH) return;
   const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:/.exec(template)?.[0];
   if (!scheme) return;
-  const authority = template.slice(scheme.length).startsWith("//");
-  if (authority) {
-    const rest = template.slice(scheme.length + 2);
-    const end = rest.search(/[/?#]|\{[/?#]/);
-    if (/[{}]/.test(end < 0 ? rest : rest.slice(0, end))) return;
-  }
+  const authority = literalAuthority(template.slice(scheme.length));
+  if (authority !== undefined && /[{}]/.test(authority)) return;
   const parts: Part[] = [];
   let offset = 0;
   let count = 0;
@@ -85,6 +81,13 @@ function parse(template: string): ParsedTemplate | "resource_template_ambiguous"
   return { parts, scheme, authority };
 }
 
+function literalAuthority(rest: string): string | undefined {
+  if (!rest.startsWith("//")) return;
+  const value = rest.slice(2);
+  const end = value.search(/[/?#]|\{[/?#]/);
+  return end < 0 ? value : value.slice(0, end);
+}
+
 function expressionCharacter({ operator, variables }: Expression, character: string): boolean {
   const base = operator === "+" || operator === "#" ? "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.~!$'()*+@-/,%" :
     operator === "." ? "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_~-%" : "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.~-%";
@@ -109,7 +112,7 @@ function findLiteral(uri: string, literal: string, offset: number): number {
 }
 
 function matches(uri: string, { parts, scheme, authority }: ParsedTemplate): boolean {
-  if (uri.length > MAX_URI_LENGTH || !uri.startsWith(scheme) || !authority && uri.slice(scheme.length).startsWith("//")) return false;
+  if (uri.length > MAX_URI_LENGTH || !uri.startsWith(scheme) || authority === undefined && uri.slice(scheme.length).startsWith("//")) return false;
   const values = new Map<string, Array<{ parts: string[]; prefix: number | undefined }>>();
   const capture = (variable: Variable, raw: string[], path: boolean): boolean => {
     const decoded = raw.map(value => safeValue(value, variable.prefix, path));
@@ -177,7 +180,9 @@ function matches(uri: string, { parts, scheme, authority }: ParsedTemplate): boo
   }
   const expanded = parts.map(part => typeof part === "string" ? part : expand(part, candidates)).join("");
   const canonical = (text: string) => text.replace(/%[0-9a-f]{2}/gi, value => value.toUpperCase());
-  return canonical(expanded) === canonical(uri);
+  // Empty expressions can join literals into an authority the template did
+  // not advertise. Compare the final RFC 3986 authority after re-expansion.
+  return canonical(expanded) === canonical(uri) && literalAuthority(uri.slice(scheme.length)) === authority;
 }
 
 function expand({ operator, variables }: Expression, values: Map<string, string[]>): string {

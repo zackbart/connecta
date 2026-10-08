@@ -25,6 +25,11 @@ it.each([
   ["docs://manual/{page:3}", "docs://manual/abc"],
   ["docs://manual/{pages*}", "docs://manual/one,two"],
   ["docs://manual/entry{?format}", "docs://manual/entry"],
+  ["https://h{/x}.evil.com:8443/", "https://h/safe.evil.com:8443/"],
+  ["https://h{/x}@evil.com:1/", "https://h/safe@evil.com:1/"],
+  ["https://h:443{/x}", "https://h:443/safe"],
+  ["https://user@h:8443{/x}", "https://user@h:8443/safe"],
+  ["https://[::1]:8443{/x}", "https://[::1]:8443/safe"],
 ])("INV-3: matches advertised RFC 6570 expansion %s as %s", (template, uri) => {
   expect(resourceUriMatchesTemplate(uri, template)).toBe(true);
 });
@@ -58,6 +63,15 @@ it.each([
   ["docs://manual/{a}{b}", "docs://manual/ab"],
 ])("INV-3 INV-4: refuses unsafe or malformed expansion %s as %s", (template, uri) => {
   expect(resourceUriMatchesTemplate(uri, template)).toBe(false);
+});
+
+it.each([
+  ["https://h{/x}.evil.com:8443/", "https://h.evil.com:8443/"],
+  ["https://h{/x}@evil.com:1/", "https://h@evil.com:1/"],
+  ["https://h{?x}.evil.com/", "https://h.evil.com/"],
+])("INV-3 INV-4: re-checks the literal authority after empty expansion %s as %s", (template, uri) => {
+  expect(resourceUriMatchesTemplate(uri, template)).toBe(false);
+  expect(resourceUriMatchesTemplates(uri, [{ uriTemplate: template }])).toEqual({ matched: false });
 });
 
 
