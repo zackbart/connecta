@@ -44,7 +44,7 @@ import {
   type CallAdmissionPermit,
   type ConnectorCallAdmissionSnapshot,
 } from "./call-admission.js";
-import { boundedCatalogDrift, catalogSafetyOf } from "./catalog-drift.js";
+import { boundedCatalogDrift, catalogClassifierOf } from "./catalog-drift.js";
 import {
   fingerprintSerializedCatalog,
   snapshotCatalog,
@@ -196,7 +196,7 @@ class AbandonedCatalogRefresh extends Error {
 /**
  * Version 3 manifests name downstream facts only: what `listTools` returned,
  * before any classification connecta derives from them (see
- * `CatalogSafety` in `src/catalog-drift.ts`). Version 2, written by 0.28 and
+ * `CatalogClassifier` in `src/catalog-drift.ts`). Version 2, written by 0.28 and
  * earlier, stored listings a vetted wrapper had already classified, so its
  * read-only claims may be connecta's own; {@link legacyCatalogFacts} keeps
  * them out of safety decisions.
@@ -1413,9 +1413,12 @@ export class Registry implements RegistryView {
     flight?: CatalogRefreshFlight,
   ): Promise<ToolDef[]> {
     const generation = this.catalogGeneration(id);
-    // Both cache layers keep downstream facts; loadTools classifies on read.
-    const safety = catalogSafetyOf(connector);
-    const tools = await (safety ? safety.list(ctx) : connector.listTools(ctx));
+    // The connector's current listing, decorators included; both cache
+    // layers keep only the downstream facts behind it, and loadTools
+    // classifies them on every read.
+    const classifier = catalogClassifierOf(connector);
+    const listed = await connector.listTools(ctx);
+    const tools = classifier ? classifier.facts(listed) : listed;
     // The listing a maintained proxy just served is also the only catalog
     // comparison connecta ever makes. It rides this refresh whether or not the
     // result reaches a cache, because what drifted drifted.
@@ -1779,8 +1782,8 @@ export class Registry implements RegistryView {
     );
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
-    const safety = catalogSafetyOf(connector);
-    return safety ? safety.classify(tools, this.opts.logger) : tools;
+    const classifier = catalogClassifierOf(connector);
+    return classifier ? classifier.classify(tools, this.opts.logger) : tools;
   }
 
   /** Cached downstream listing with in-memory + persisted serializable layers. */

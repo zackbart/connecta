@@ -537,28 +537,43 @@ export function withReviewedCatalog(
  * How the registry keeps a wrapped connector's safety out of its caches.
  *
  * A classification is derived from the downstream listing and the reviewed
- * manifest this process runs, so it is never stored: both cache layers keep
- * {@link list}'s downstream facts, and every read runs {@link classify} with
- * the classifier that is current then. A catalog cached under an older
- * manifest, or by an older release, therefore gets no say in what is a read.
+ * manifest this process runs, so it is never stored: the registry lists
+ * through the connector's current `listTools` (a decorator that filters or
+ * augments it is respected), keeps only the {@link facts} behind that listing
+ * in both cache layers, and every read runs {@link classify} with the
+ * classifier that is current then. A catalog cached under an older manifest,
+ * or by an older release, therefore gets no say in what is a read.
  */
-export interface CatalogSafety {
-  /** The downstream listing, unclassified; observes drift as it goes. */
-  list(ctx: ConnectorContext): Promise<ToolDef[]>;
-  /** The current classification of a listing from any cache layer. */
+export interface CatalogClassifier {
+  /**
+   * The downstream facts behind a listing this connector's `listTools`
+   * served, directly or through a decorator: every tool this classifier
+   * produced is traced back to what the downstream said. A tool a decorator
+   * rebuilt cannot be traced, so its read-only claim on a reviewed name, the
+   * one hint this classifier adds, is dropped; the next read decides it again.
+   */
+  facts(tools: readonly ToolDef[]): ToolDef[];
+  /** The current classification of facts from any cache layer. */
   classify(tools: readonly ToolDef[], logger: Logger): Promise<ToolDef[]>;
 }
 
 /**
- * Keyed by the wrapper's `listTools`, not by the connector object: a spread
- * copy keeps the function and so the seam, while a wrapper that replaces
- * `listTools` has taken over the listing and is read through it.
+ * Where a vetted wrapper carries its classifier: an enumerable own property
+ * under a symbol no other module holds, so a decorator's `{ ...connector }`
+ * copies it, nothing outside connecta can forge it, and the registry finds it
+ * whatever `listTools` the decorator put in front of the wrapper's own.
  */
-const catalogSafety = new WeakMap<Connector["listTools"], CatalogSafety>();
+const CATALOG_CLASSIFIER = Symbol("connecta.catalogClassifier");
 
-/** The cache-safe listing seam of a connector built by a vetted wrapper. */
-export function catalogSafetyOf(connector: Connector): CatalogSafety | undefined {
-  return catalogSafety.get(connector.listTools);
+type ClassifiedConnector = Connector & {
+  readonly [CATALOG_CLASSIFIER]?: CatalogClassifier;
+};
+
+/** The classifier a vetted wrapper attached to `connector`, or its copies. */
+export function catalogClassifierOf(
+  connector: Connector,
+): CatalogClassifier | undefined {
+  return (connector as ClassifiedConnector)[CATALOG_CLASSIFIER];
 }
 
 /**
@@ -576,11 +591,23 @@ function observedCatalog(
   catalog: VettedCatalog,
   reviewedWritesWin: boolean,
 ): Connector {
+  if (catalogClassifierOf(connector)) {
+    // The inner classification would reach this one as downstream facts,
+    // and its verdicts would be cached as if a downstream had said them.
+    throw new Error(
+      `[connecta] connector "${connector.id}" is already classified; wrap the unclassified connector once.`,
+    );
+  }
   let observed: CatalogDriftReport | undefined;
   // Digest verification per listing, held only as long as the listing is.
   // A failed verification is not kept, so the next read tries again.
   const verified = new WeakMap<readonly ToolDef[], ReadonlySet<string>>();
   const classified = new WeakMap<readonly ToolDef[], ToolDef[]>();
+  // What each classified listing, tool, and annotations object was derived
+  // from, so facts() can hand back the downstream's own words.
+  const factsOfListing = new WeakMap<readonly ToolDef[], readonly ToolDef[]>();
+  const factsOfTool = new WeakMap<ToolDef, ToolDef>();
+  const factsOfAnnotations = new WeakMap<object, ToolDef>();
 
   async function list(ctx: ConnectorContext): Promise<ToolDef[]> {
     const downstream = await connector.listTools(ctx);
@@ -622,22 +649,51 @@ function observedCatalog(
         logFailure(logger, "schema digest check failed; serving digested reviews as writes", failureRecord({ connector: connector.id }, error));
       }
     }
-    const result = tools.map((definition) =>
-      applyVettedSafety(catalog, definition, reviewedWritesWin, unverified),
-    );
+    const result = tools.map((definition) => {
+      const served = applyVettedSafety(catalog, definition, reviewedWritesWin, unverified);
+      factsOfTool.set(served, definition);
+      if (served.annotations) factsOfAnnotations.set(served.annotations, definition);
+      return served;
+    });
+    factsOfListing.set(result, tools);
     if (settled) classified.set(tools, result);
     return result;
+  }
+
+  function facts(tools: readonly ToolDef[]): ToolDef[] {
+    // The listing itself, so its digest verification is reused on read.
+    const listing = factsOfListing.get(tools);
+    if (listing) return listing as ToolDef[];
+    return tools.map((tool) => {
+      const traced = factsOfTool.get(tool);
+      if (traced) return traced;
+      // A decorator that copied the tool but kept its annotations object
+      // changed something else; restore the downstream's annotations.
+      const behind = tool.annotations && factsOfAnnotations.get(tool.annotations);
+      if (behind) {
+        const { annotations: _served, ...rest } = tool;
+        return behind.annotations ? { ...rest, annotations: behind.annotations } : rest;
+      }
+      if (tool.annotations?.readOnlyHint !== true || !catalog.tools.has(tool.name)) {
+        // Every other hint this classifier adds closes a path, and an
+        // unreviewed name's read-only claim is never one it added.
+        return tool;
+      }
+      const { readOnlyHint: _claimed, ...annotations } = tool.annotations;
+      return { ...tool, annotations };
+    });
   }
 
   async function listTools(ctx: ConnectorContext): Promise<ToolDef[]> {
     return classify(await list(ctx), ctx.logger);
   }
-  catalogSafety.set(listTools, { list, classify });
-  return {
+  const wrapped: ClassifiedConnector = {
     ...connector,
     listTools,
     catalogDrift(): CatalogDriftReport | undefined {
       return observed;
     },
+    [CATALOG_CLASSIFIER]: { facts, classify },
   };
+  return wrapped;
 }

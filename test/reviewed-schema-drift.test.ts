@@ -6,21 +6,10 @@
 // `remoteMcp({ classify })` and the legacy `withVettedCatalog()`. The rule
 // holds for a catalog a restarted process finds in storage too: the cache
 // keeps downstream facts, and every read classifies them again.
-//
-// Programs here are JavaScript closures run by a scripted executor, not source
-// strings: workerd forbids eval, and this suite runs in both projects.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createConnecta, customExecutor } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type {
-  Connector,
-  Executor,
-  ExecutorProvider,
-  KVStorage,
-  ToolDef,
-} from "../src/types.js";
-import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import type { ToolDef } from "../src/types.js";
 import {
   STALE_SCHEMA_PATHS as PATHS,
   currentDigest,
@@ -28,62 +17,7 @@ import {
   mainEraListing,
   seedThingsCatalog,
 } from "./fixtures/stale-schema.js";
-import { required } from "./helpers.js";
-
-type Guest = Record<string, (...args: unknown[]) => Promise<any>>;
-type Program = (connecta: Guest) => Promise<unknown>;
-
-/** Runs registered closures by program text, through the real provider. */
-function scriptedExecutor(programs: Map<string, Program>): Executor {
-  return {
-    async execute(code: string, providers: ExecutorProvider[]) {
-      const program = programs.get(code.trim());
-      if (!program) return { result: undefined, error: `no program for ${code}` };
-      const provider = required(providers[0]);
-      const connecta = new Proxy({} as Guest, {
-        get: (_target, name: string) => (...args: unknown[]) =>
-          required(provider.fns[name])(...args),
-      });
-      try {
-        return { result: await program(connecta) };
-      } catch (error) {
-        return { result: undefined, error: error instanceof Error ? error.message : String(error) };
-      }
-    },
-  };
-}
-
-function deployment(connector: Connector, storage: KVStorage = memoryStorage()) {
-  const programs = new Map<string, Program>();
-  const connecta = createConnecta({
-    connectors: [connector],
-    storage,
-    logger: "silent",
-    executor: customExecutor(scriptedExecutor(programs), { lifecycle: "self-managed" }),
-  });
-  const call = async (name: string, args: Record<string, unknown>) =>
-    (await readJsonRpc(await mcpRpc(connecta, "tools/call", { name, arguments: args }))).result as {
-      isError?: boolean;
-      structuredContent?: Record<string, any>;
-      content?: Array<{ text?: string }>;
-    };
-  let next = 0;
-  return {
-    connecta,
-    call,
-    async searched(safety: "readOnly" | "approvalRequired"): Promise<string[]> {
-      const result = await call("search_tools", { connector: "things", query: "", safety });
-      return (result.structuredContent?.connectors ?? []).flatMap(
-        (entry: { tools: Array<{ address: string }> }) => entry.tools.map((tool) => tool.address),
-      ).sort();
-    },
-    run(program: Program) {
-      const code = `async () => program${next++}`;
-      programs.set(code, program);
-      return call("execute_code", { code });
-    },
-  };
-}
+import { thingsDeployment as deployment } from "./fixtures/things-deployment.js";
 
 afterEach(() => {
   vi.restoreAllMocks();

@@ -18,5 +18,8 @@ covers the whole schema rather than its first 64 levels; a schema too large to
 digest is unchecked, so a write. Catalog caches no longer store
 classifications: they keep the downstream listing, and each read classifies it
 with the running release's review, so a catalog persisted before an upgrade or
-served as a stale fallback cannot keep a read. Catalogs persisted by 0.28 are
+served as a stale fallback cannot keep a read. This holds when a deployment
+decorates a classified connector with its own `listTools`: the decorator's
+filtering and additions are kept, and the review still decides every reviewed
+tool. Catalogs persisted by 0.28 are
 refreshed on first read, and until then serve none of their read-only claims.

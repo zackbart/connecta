@@ -348,10 +348,13 @@ unlisted tool is a read only when it says so, and a reviewed tool whose
 `schemaDigest` no longer matches, or cannot be checked, is a write on discovery
 and every invocation path until a release reviews it again; this holds for the
 legacy wrapper too. A digest covers the whole schema; one too large to hash
-whole is unchecked. Classification is never cached: both catalog layers keep
-the downstream listing, and every read classifies it with the current record,
-so a restart onto a catalog persisted under an older review, or by 0.28
-(whose read-only claims are dropped), cannot keep a read. The same record counts catalog
+whole is unchecked. Classification is never cached: the classifier travels
+on the connector under a private symbol, so a decorator's `{ ...connector }`
+keeps it; the registry lists through the current `listTools`, decorators
+included, traces that listing back to downstream facts for both catalog
+layers, and every read classifies them with the current record. A restart onto
+a catalog persisted under an older review, or by 0.28 (whose read-only claims
+are dropped), cannot keep a read. The same record counts catalog
 drift during refreshes the deployment already asked for, and `scripts/drift-check.mjs` compares
 its names with published inventories. Unconverted hosted providers still use
 the internal `withVettedCatalog()`, whose reviewed creates still yield to a
