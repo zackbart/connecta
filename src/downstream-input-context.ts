@@ -1,4 +1,5 @@
 import { ConnectorCallError } from "./errors.js";
+import { percentDecoded } from "./credential-url.js";
 
 /** Host-only MRTR material. This module must stay safe in executor bundles. */
 export interface DownstreamInputResult {
@@ -20,6 +21,7 @@ interface ContinuationTarget {
   address: string;
   input: InputContinuation;
   privateStates: string[];
+  write: boolean;
 }
 export interface InputCapabilities {
   elicitation?: { form?: Record<string, never>; url?: Record<string, never> };
@@ -42,6 +44,10 @@ export function bindDownstreamContinuation(scope: object, target: ContinuationTa
 
 export function clearDownstreamContinuation(scope: object): void {
   continuations.delete(scope);
+}
+
+export function downstreamWriteContinuation(scope: object): boolean {
+  return continuations.get(scope)?.write === true;
 }
 
 /** Check raw output before redaction, paging, caching, or shape observation. */
@@ -67,9 +73,10 @@ export function assertNoPrivateStateEchoes(value: unknown, states: string[]): vo
     const escapes: Record<string, string> = { '"': '"', "\\": "\\", "/": "/", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
     const matches = (text: string): boolean => {
       for (let pass = 0; pass < 3; pass++) {
-        const view = percent(text);
-        if ([...forms].some(form => view.includes(form))) return true;
-        const decoded = text.replace(/\\(?:u[0-9a-fA-F]{4}|["\\/bfnrt])/g,
+        const unescaped = percentDecoded(text);
+        const views = [percent(text), percent(unescaped)];
+        if ([...forms].some(form => views.some(view => view.includes(form)))) return true;
+        const decoded = unescaped.replace(/\\(?:u[0-9a-fA-F]{4}|["\\/bfnrt])/g,
           escape => escape[1] === "u" ? String.fromCharCode(parseInt(escape.slice(2), 16)) : escapes[escape[1]!]!);
         if (decoded === text) break;
         text = decoded;
@@ -79,6 +86,7 @@ export function assertNoPrivateStateEchoes(value: unknown, states: string[]): vo
     const seen = new WeakSet<object>();
     const visit = (item: unknown): boolean => {
       if (typeof item === "string") return matches(item);
+      if (item === null || typeof item === "boolean" || typeof item === "number") return matches(JSON.stringify(item));
       if (!item || typeof item !== "object" || seen.has(item)) return false;
       seen.add(item);
       if (item instanceof Error && matches(item.message)) return true;

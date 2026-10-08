@@ -203,6 +203,7 @@ export class DownstreamElicitation {
     // or ambiguous continuation must not leave a reusable write permission.
     if (!await storage.compareAndSet(inputRetryKeys.used(state.nonce), null, "used", { ttlSeconds: REQUEST_STATE_TTL_MS / 1000 })) return invalidRequestState();
     bindDownstreamContinuation(this.options.requestScope, { connector: state.connector, address: state.target,
+      write: state.tool === "call_destructive_tool",
       privateStates: [...state.previousStates, ...(state.requestState !== undefined ? [state.requestState] : [])], input: {
       ...(state.requestState !== undefined ? { requestState: state.requestState } : {}), inputResponses: responses,
     } });

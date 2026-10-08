@@ -6,7 +6,7 @@ function refused(): never {
 }
 
 /** Matching only: never change the endpoint that discovery supplied. */
-function percentDecoded(value: string): string {
+export function percentDecoded(value: string): string {
   for (let pass = 0; pass < 8; pass++) {
     const next = value.replace(/(?:%[0-9a-f]{2})+/gi, (escaped) => {
       try { return decodeURIComponent(escaped); }

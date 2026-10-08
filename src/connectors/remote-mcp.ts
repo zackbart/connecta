@@ -73,7 +73,7 @@ import { learnedUrlRefusal } from "../url-safety.js";
 import { oauthSealerFor } from "../oauth-sealing.js";
 import { retainingOAuthPartition } from "../oauth-partition.js";
 import { registerInvocationAuth } from "../invocation-auth.js";
-import { downstreamInputCapabilities, assertDownstreamOutputSafe } from "../downstream-input-context.js";
+import { downstreamInputCapabilities, assertDownstreamOutputSafe, downstreamWriteContinuation } from "../downstream-input-context.js";
 import { detach, runEdge } from "../runtime/run.js";
 import { assertKnownOptions, keys, optionsOf } from "../config-schema.js";
 import { describedEndpoint, describedUrl } from "../described.js";
@@ -1903,6 +1903,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         if (isCursorShapeError(error)) throw new ConnectorCallError("connector_call_failed", "Downstream catalog nextCursor must be a string, null, or absent.", { retryable: false });
         throw error;
       }
+      assertDownstreamOutputSafe(ctx.requestScope ?? ctx, page);
       const clean = cache.intake(ctx, method, page);
       if (method === "tools/list") toolPages++;
       if (message.params?.cursor === undefined) observeCatalogFetch(ctx, Date.now(), method);
@@ -2022,14 +2023,23 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     const url = new URL(opts.url);
     const trackedFetch: FetchLike = async (input, init) => {
       trackSentRequest(ctx, input, init);
-      const response = await fetch(input, init);
-      if (skillsEnabled && typeof init?.body === "string") {
-        let rpc: unknown;
+      let rpc: unknown;
+      if (typeof init?.body === "string") {
         try { rpc = JSON.parse(init.body); }
-        catch { return response; } // OAuth exchanges can send form-encoded bodies.
-        if (skillObject(rpc) && (rpc.method === "skills/list" || rpc.method === "resources/read")) {
-          return boundedSkillResponse(response, rpc.method === "skills/list" ? MAX_SERIALIZED_CATALOG_BYTES : MAX_SKILL_READ_RPC_BYTES, rpc.id, init.signal);
-        }
+        catch { /* OAuth exchanges can send form-encoded bodies. */ }
+      }
+      const writeContinuation = downstreamWriteContinuation(ctx.requestScope ?? ctx) &&
+        init?.method === "POST" && skillObject(rpc) && rpc.method === "tools/call";
+      const response = await fetch(input, writeContinuation ? { ...init, redirect: "manual" } : init);
+      if (writeContinuation && (response.status === 401 || response.status >= 300 && response.status < 400)) {
+        await response.body?.cancel().catch(() => {});
+        // Stop before the SDK can refresh auth or follow a redirect and resend
+        // this write. The host's one-use continuation nonce remains spent.
+        if (response.status === 401) throw authRequiredError();
+        throw new ConnectorCallError("connector_call_failed", "The downstream redirected a write continuation; it was not repeated.", { retryable: false });
+      }
+      if (skillsEnabled && skillObject(rpc) && (rpc.method === "skills/list" || rpc.method === "resources/read")) {
+        return boundedSkillResponse(response, rpc.method === "skills/list" ? MAX_SERIALIZED_CATALOG_BYTES : MAX_SKILL_READ_RPC_BYTES, rpc.id, init?.signal);
       }
       return response;
     };
@@ -3036,9 +3046,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const result = await run();
       // Opaque state must reach the sealing handler byte-exact. Invocation
       // intercepts it before ordinary result processing or guest exposure.
+      if (!preserveInput || !isInputRequiredResult(result)) assertDownstreamOutputSafe(ctx.requestScope ?? ctx, result);
       return preserveInput && isInputRequiredResult(result) || !redactResult ? result : redactSentSecrets(ctx, result);
     }
-    catch (error) { throw redactSentSecrets(ctx, error); }
+    catch (error) { assertDownstreamOutputSafe(ctx.requestScope ?? ctx, error); throw redactSentSecrets(ctx, error); }
     finally { active.delete(ctx); }
   };
   const callTool = connector.callTool;

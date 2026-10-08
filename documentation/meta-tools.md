@@ -598,9 +598,11 @@ the host owns consent and browser navigation. Connecta never adds credentials
 or follows the URL. Messages pass the ordinary agent-output redaction boundary.
 A form is refused if that boundary would change its schema, including property
 names, enum values, or annotations; the host never receives a rewritten answer
-contract. Prompts and raw continuation results that echo any round's opaque state
-(including encoded echoes and short state) are refused before redaction,
-paging, stashing, error shaping, or schema observation. No prompt, state,
+contract. Prompts, raw continuation results, and continuation-time catalogs that
+echo any round's opaque state are refused before redaction, paging, stashing,
+error shaping, schema observation, or cache publication. This includes bounded
+percent-decoded and JSON-escaped views, encoded echoes, short state, and serialized
+numbers, booleans, and null. No prompt, state,
 response, arguments, or raw error reaches activity, logs, or status.
 
 A write returning `input_required` has not completed its operation: the
@@ -609,7 +611,10 @@ defines that result as awaiting input before completion. Sending the original
 opaque state and input responses is a continuation, not an automatic replay.
 The sealed arguments digest prevents using that continuation for fresh write
 arguments. A timeout or other failure during a continuation leaves its nonce
-spent, so it cannot authorize a second attempt.
+spent, so it cannot authorize a second attempt. Write continuations stop at an
+HTTP 401 or redirect before the SDK can refresh authorization or resend the call.
+HTTP 403 scope escalation also remains disabled. Read continuations retain normal
+OAuth refresh behavior.
 
 Auth recovery and downstream input are distinct state variants, with only one
 active in a round. An auth retry can reach downstream input within the same

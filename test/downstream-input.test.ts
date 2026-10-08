@@ -12,6 +12,7 @@ import { guestErrorText, guestFailureFacts, spyLogger } from "./fixtures/misc.js
 import { operatorUi } from "../src/ui.js";
 import { activityHistory } from "../src/activity.js";
 import { inputRetryKeys, resultKeys, scopes } from "../src/storage/keys.js";
+import { seedGrant } from "./fixtures/oauth.js";
 
 const BASE = "https://connecta.test";
 const OPAQUE = "DOWNSTREAM_OPAQUE_STATE";
@@ -23,7 +24,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-function setup(options: { repeat?: boolean; key?: string; url?: string; message?: string; raw?: Record<string, unknown>; vault?: boolean; output?: boolean; invalidOutput?: boolean; authFirst?: boolean; programWrite?: boolean; failContinuationAuth?: boolean; opaque?: string; completeText?: string; completeStructured?: Record<string, unknown>; roundStates?: string[]; continuationMessage?: string; completeError?: boolean } = {}) {
+function setup(options: { repeat?: boolean; key?: string; url?: string; message?: string; raw?: Record<string, unknown>; vault?: boolean; output?: boolean; invalidOutput?: boolean; authFirst?: boolean; programWrite?: boolean; failContinuationAuth?: boolean; opaque?: string; completeText?: string; completeStructured?: Record<string, unknown>; roundStates?: string[]; continuationMessage?: string; completeError?: boolean; oauth?: boolean; failureStatus?: number; catalogEcho?: boolean } = {}) {
   const storage = memoryStorage();
   const vault = encryptedCredentialVault(storage, CREDENTIAL_KEY);
   const logs: unknown[] = [];
@@ -32,6 +33,9 @@ function setup(options: { repeat?: boolean; key?: string; url?: string; message?
   const activity = { record: vi.fn(async () => {}) };
   const key = options.key ?? "question";
   const call = vi.fn();
+  const continuationSend = vi.fn();
+  const tokenRefresh = vi.fn();
+  let catalogs = 0;
   const requests: Record<string, any>[] = [];
   const downstream = httpDownstream(server => {
     for (const [name, read] of [["read", true], ["write", false]] as const) {
@@ -56,11 +60,32 @@ function setup(options: { repeat?: boolean; key?: string; url?: string; message?
         });
       });
     }
-  }, { capture: async request => { if (request.method === "POST") requests.push(await request.json()); } });
+  }, { ...(options.catalogEcho ? { catalogTtlMs: 0 } : {}), capture: async request => { if (request.method === "POST") requests.push(await request.json()); } });
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-    const request = init?.method === "POST" ? JSON.parse(String(init.body)) : undefined;
+    const request = init?.method === "POST" && typeof init.body === "string" && init.body.startsWith("{") ? JSON.parse(init.body) : undefined;
+    const url = String(input);
+    if (url.includes("/.well-known/oauth-protected-resource")) return Response.json({ resource: downstream.url, authorization_servers: ["https://auth.test"] });
+    if (url.includes("https://auth.test/.well-known/")) return Response.json({ issuer: "https://auth.test", authorization_endpoint: "https://auth.test/authorize", token_endpoint: "https://auth.test/token", response_types_supported: ["code"], grant_types_supported: ["authorization_code", "refresh_token"], code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["none"] });
+    if (url === "https://auth.test/token") {
+      tokenRefresh();
+      return Response.json({ access_token: "REFRESHED_ACCESS_CREDENTIAL", refresh_token: "REFRESHED_REFRESH_CREDENTIAL", token_type: "Bearer" });
+    }
+    if (request?.method === "tools/call" && request.params.inputResponses !== undefined) {
+      continuationSend(request);
+      if (options.failureStatus && new Headers(init?.headers).get("authorization") !== "Bearer REFRESHED_ACCESS_CREDENTIAL") {
+        return new Response(null, { status: options.failureStatus, headers: options.failureStatus === 307
+          ? { Location: `${downstream.url}?redirected=true` }
+          : { "WWW-Authenticate": `Bearer resource_metadata="https://downstream.test/.well-known/oauth-protected-resource"${options.failureStatus === 403 ? ', error="insufficient_scope", scope="changed"' : ""}` } });
+      }
+    }
     if (options.failContinuationAuth && request?.method === "tools/call" && request.params.requestState !== undefined) return new Response(null, { status: 401 });
     const reply = await downstream.fetch(input as string, init);
+    if (options.catalogEcho && request?.method === "tools/list" && ++catalogs === 2) {
+      const body = await reply.json() as { result: { tools: Array<Record<string, unknown>>; ttlMs: number } };
+      body.result.tools[0]!.description = OPAQUE;
+      body.result.ttlMs = 60_000;
+      return Response.json(body);
+    }
     if (options.invalidOutput && request?.method === "tools/call" && request.params.requestState !== undefined) {
       await reply.body?.cancel();
       return Response.json({ jsonrpc: "2.0", id: request.id, result: { resultType: "complete", content: [{ type: "text", text: "bad" }], structuredContent: { done: "bad" } } });
@@ -71,7 +96,7 @@ function setup(options: { repeat?: boolean; key?: string; url?: string; message?
     await reply.body?.cancel();
     return Response.json({ jsonrpc: "2.0", id: request.id, result: { resultType: "input_required", ...options.raw } });
   });
-  const connector = remoteMcp("service", { url: downstream.url, auth: options.authFirst ? { type: "credential" } : { type: "headers", headers: { Authorization: `Bearer ${SECRET}` } }, logger });
+  const connector = remoteMcp("service", { url: downstream.url, auth: options.oauth ? { type: "oauth" } : options.authFirst ? { type: "credential" } : { type: "headers", headers: { Authorization: `Bearer ${SECRET}` } }, ...(options.failureStatus === 307 ? { redirects: "same-origin" } : {}), logger });
   const app = createTestConnecta({
     connectors: [connector], storage, logger,
     publicUrl: BASE, ...(options.vault === false ? {} : { vault }),
@@ -109,7 +134,11 @@ function setup(options: { repeat?: boolean; key?: string; url?: string; message?
     request.headers.set("Authorization", `Bearer ${opts.user ?? "alice"}`);
     return readJsonRpc(await app.fetch(opts.pool ? new Request(`${BASE}/mcp/${opts.pool}`, request) : request));
   };
-  return { rpc, call, requests, logs, activity, storage, vault };
+  return { rpc, call, requests, logs, activity, storage, vault, continuationSend, tokenRefresh,
+    seedOAuth: () => seedGrant(storage, { issuer: "https://auth.test", client: { value: { client_id: "relay-client", redirect_uris: [`${BASE}/oauth/callback/service`], token_endpoint_auth_method: "none" } },
+      tokens: { access_token: SECRET, refresh_token: "INITIAL_REFRESH_CREDENTIAL", token_type: "Bearer" },
+    }, "v3:seeded", scopes.connector("service")),
+  };
 }
 
 describe("downstream input relay", () => {
@@ -319,6 +348,78 @@ describe("downstream input relay", () => {
     expect(result.structuredContent.error.code).toBe("input_required_limit");
     expect(result.requestState).toBeUndefined();
     expect(flow.call).toHaveBeenCalledTimes(2);
+  });
+
+  it("INV-4 INV-5 INV-6: refuses mixed percent-encoded private states in prompts, URLs, and paged output across rounds", async () => {
+    const variants = [`%44${OPAQUE.slice(1)}`, [...OPAQUE].map(char => `%${char.charCodeAt(0).toString(16)}`).join("")];
+    for (const encoded of variants) {
+      for (const opts of [{ message: `Confirm ${encoded}` }, { url: `https://downstream.test/approve?state=${encoded}` }]) {
+        const flow = setup(opts);
+        const result = (await flow.rpc()).result;
+        expect(result.structuredContent.error.code).toBe("input_required_invalid");
+        expect(JSON.stringify(result)).not.toContain(encoded);
+      }
+      const flow = setup({ roundStates: [OPAQUE, "DIFFERENT_SECOND_STATE"], completeText: `${"x".repeat(25_000)}${encoded}` });
+      let result = (await flow.rpc()).result;
+      for (let round = 0; round < 2; round++) result = (await flow.rpc({ state: result.requestState, responses: { "downstream/service/0": { action: "accept" } } })).result;
+      expect(result.structuredContent.error.code).toBe("input_required_invalid");
+      expect((await flow.storage.list("")).filter(key => key.includes(resultKeys.family.prefixes[0]))).toHaveLength(0);
+    }
+  });
+
+  it("INV-4 INV-5: checks serialized primitive echoes in completed values and elicitation schemas", async () => {
+    for (const [opaque, value] of [["731496280517349", 731496280517349], ["true", true], ["null", null]] as const) {
+      const flow = setup({ opaque, completeStructured: { n: value } });
+      const args = { address: "service.read", args: { id: 1 }, resultMode: "value" };
+      const first = (await flow.rpc({ args })).result;
+      const result = (await flow.rpc({ args, state: first.requestState, responses: { "downstream/service/0": { action: "accept" } } })).result;
+      expect(result.structuredContent.error.code).toBe("input_required_invalid");
+    }
+    const flow = setup({ raw: { requestState: "731496280517349", inputRequests: { k: { method: "elicitation/create", params: {
+      mode: "form", message: "Confirm", requestedSchema: { type: "object", properties: { n: { type: "number", default: 731496280517349 } } },
+    } } } } });
+    expect((await flow.rpc()).result.structuredContent.error.code).toBe("input_required_invalid");
+  });
+
+  it("INV-4 INV-5 INV-6: guards raw continuation catalogs before public cache publication", async () => {
+    const flow = setup({ catalogEcho: true });
+    const first = (await flow.rpc()).result;
+    const retry = (await flow.rpc({ state: first.requestState, responses: { "downstream/service/0": { action: "accept" } } })).result;
+    expect(retry.structuredContent.error.code).toBe("input_required_invalid");
+    for (const key of await flow.storage.list("")) expect(await flow.storage.get(key)).not.toContain(OPAQUE);
+    const search = await flow.rpc({ name: "search_tools", args: { query: "service.read" }, user: "bob" });
+    expect(search.result.isError).toBeFalsy();
+    expect(JSON.stringify(search)).not.toContain(OPAQUE);
+    expect(flow.call).toHaveBeenCalledOnce();
+  });
+
+  it("INV-2 INV-4 INV-9: sends an OAuth write continuation once without auth refresh, step-up, or redirect replay", async () => {
+    for (const failureStatus of [401, 403, 307]) {
+      const flow = setup({ oauth: true, failureStatus });
+      await flow.seedOAuth();
+      const opts = { name: "call_destructive_tool", args: { address: "service.write", args: { id: 1 } } };
+      const first = (await flow.rpc(opts)).result;
+      expect(first.resultType, JSON.stringify(first)).toBe("input_required");
+      const retryOpts = { ...opts, state: first.requestState, responses: { "downstream/service/0": { action: "accept" } } };
+      const result = (await flow.rpc(retryOpts)).result;
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent.error.retryable).toBe(false);
+      if (failureStatus === 401) expect(result.structuredContent.error).toMatchObject({ code: "downstream_oauth_required", reconciliationRequired: true });
+      expect(flow.continuationSend).toHaveBeenCalledOnce();
+      expect(flow.tokenRefresh).not.toHaveBeenCalled();
+      expect((await flow.rpc(retryOpts)).result.isError).toBe(true);
+      expect(flow.continuationSend).toHaveBeenCalledOnce();
+    }
+    // The fixture can refresh and retry reads; the write assertion cannot pass
+    // merely because the authorization server failed to refresh its token.
+    const read = setup({ oauth: true, failureStatus: 401 });
+    await read.seedOAuth();
+    const first = (await read.rpc()).result;
+    const result = (await read.rpc({ state: first.requestState, responses: { "downstream/service/0": { action: "accept" } } })).result;
+    expect(read.tokenRefresh, JSON.stringify(read.logs)).toHaveBeenCalledOnce();
+    expect(result.isError, JSON.stringify(result)).toBeFalsy();
+    expect(read.continuationSend).toHaveBeenCalledTimes(2);
+    expect(read.tokenRefresh).toHaveBeenCalledOnce();
   });
 
   it("INV-5 INV-6: redacts sent credential echoes in elicitation through the agent boundary without operator payloads", async () => {

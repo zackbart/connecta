@@ -491,6 +491,18 @@
         {
           "file": "test/downstream-input.test.ts",
           "title": "INV-4 INV-5 INV-9: retains bounded encrypted private state history across different downstream rounds"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-4 INV-5 INV-6: refuses mixed percent-encoded private states in prompts, URLs, and paged output across rounds"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-4 INV-5: checks serialized primitive echoes in completed values and elicitation schemas"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-4 INV-5 INV-6: guards raw continuation catalogs before public cache publication"
         }
       ]
     },
@@ -580,6 +592,10 @@
         {
           "file": "test/downstream-input.test.ts",
           "title": "INV-4: namespaces downstream connecta keys and ignores unrelated input responses"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-2 INV-4 INV-9: sends an OAuth write continuation once without auth refresh, step-up, or redirect replay"
         }
       ]
     },
