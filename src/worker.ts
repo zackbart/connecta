@@ -236,12 +236,17 @@ const {
   nativeConsole: console
 });
 `;
+            const binaryTagCheck = "(__CODEMODE_BINARY_TAG in value)";
+            const binaryDataCheck = 'typeof value.data !== "string"';
+            if (!isolated.includes(binaryTagCheck) || !isolated.includes(binaryDataCheck)) {
+              throw new Error("Worker binary codec contract changed.");
+            }
             isolated = isolated
               .replace("async evaluate(__dispatchers = {}, __connectors = {}) {", `async evaluate(__dispatchers = {}, __connectors = {}, ${programName}) {\n${wrapper}`)
               .replaceAll("JSON.parse(", "jsonParse(")
               .replaceAll("JSON.stringify(", "jsonStringify(")
-              .replaceAll("(__CODEMODE_BINARY_TAG in value)", "hasOwn(value, __CODEMODE_BINARY_TAG)")
-              .replaceAll('typeof value.data !== "string"', '!hasOwn(value, "data") || typeof value.data !== "string"')
+              .replaceAll(binaryTagCheck, "hasOwn(value, __CODEMODE_BINARY_TAG)")
+              .replaceAll(binaryDataCheck, '!hasOwn(value, "data") || typeof value.data !== "string"')
               .replaceAll("console.", "nativeConsole.")
               .replaceAll("new Proxy(", "new NativeProxy(")
               .replaceAll("Object.prototype.hasOwnProperty.call(target, toolName)", "hasOwn(target, toolName)")

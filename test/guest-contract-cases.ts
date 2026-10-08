@@ -836,6 +836,17 @@ export const CONTRACT_CASES: ContractCase[] = [
       expect(outcome.result).not.toHaveProperty("truncated");
     },
   },
+  {
+    clauses: "E6",
+    name: "INV-6: rethrown required-field validation messages keep plain JavaScript guidance",
+    code: `async () => { throw new Error("Validation failed: text is required"); }`,
+    check(outcome) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.value.error).toMatchObject({ code: "program_error", details: {
+        name: "Error", hint: "Use plain JavaScript in one async () => { ... } expression and the connecta global.",
+      } });
+    },
+  },
   ...[
     ["require('fs')", "ReferenceError", "Imports, require, and filesystem access"],
     ["fs.readFile('secret')", "ReferenceError", "Imports, require, and filesystem access"],

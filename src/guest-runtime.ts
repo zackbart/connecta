@@ -156,7 +156,7 @@ export function programError(raw: { name?: unknown; message?: unknown; stack?: u
     : workerLocation ? Math.max(1, Number(workerLocation[1]) - 1)
     : location && baseline ? Math.max(1, Number(location[1]) - Number(baseline[1]) + code.split("\n").length + 1) : null;
   let hint = "Use plain JavaScript in one async () => { ... } expression and the connecta global.";
-  if (/require|\b[Ii]mports?\b|\bfs\b|filesystem|node:/.test(message) || name === "SyntaxError" && /\bimport\b/.test(code)) {
+  if (/\brequire\b|\b[Ii]mports?\b|\bfs\b|filesystem|node:/.test(message) || name === "SyntaxError" && /\bimport\b/.test(code)) {
     hint = "Imports, require, and filesystem access are outside the guest API. Use connecta.call to access configured services.";
   } else if (["TypeError", "ReferenceError"].includes(name) && /(?:const|let|var|function|\()\s*connecta\b/.test(code)) {
     hint = "Do not shadow connecta. Use the host-provided connecta global.";
