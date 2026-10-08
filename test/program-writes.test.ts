@@ -53,6 +53,7 @@ function scriptedExecutor(programs: Map<string, Program>): Executor {
 }
 
 interface WorldOptions {
+  failOnInvocationFailure?: boolean;
   trust?: PoolTrust;
   maxWrites?: number;
   write?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
@@ -115,6 +116,7 @@ function world(options: WorldOptions = {}) {
     activity,
     {
       trust: options.trust,
+      failOnInvocationFailure: options.failOnInvocationFailure,
       ...(options.maxWrites !== undefined ? { maxWrites: options.maxWrites } : {}),
     },
   );
@@ -221,6 +223,35 @@ describe("trusted-pool programs (#706)", () => {
     });
     expect(value(done).result).toEqual(["closed", "budget_exceeded"]);
     expect(w.writes()).toHaveLength(1);
+  });
+
+  it.each(["succeeded", "failed", "unknown"] as const)("INV-9: refresh refusals finish %s write accounting", async (state) => {
+    const w = world({
+      trust: "trusted", failOnInvocationFailure: true,
+      read: () => { throw new ConnectorCallError("not_found", "Read refused"); },
+      write: () => {
+        if (state === "failed") throw new ConnectorCallError("invalid_args", "Write refused");
+        if (state === "unknown") throw new ConnectorCallError("timeout", "No write response");
+        return { ok: true };
+      },
+    });
+    const result = await w.run(async (connecta) => {
+      // Refresh picks the first caught refusal; an uncertain write must still
+      // replace that refusal and carry its accounting through the same exit.
+      try { await connecta.call!("reader.get", {}); } catch {}
+      try { await connecta.call!("tracker.close_issue", { id: 1 }); } catch {}
+      return "caught";
+    });
+    expect(result.isError).toBe(true);
+    expect(value(result)).toMatchObject({
+      error: {
+        code: state === "unknown" ? "write_outcome_unknown" : "not_found",
+        writes: { succeeded: state === "succeeded" ? 1 : 0, failed: state === "failed" ? 1 : 0, unknown: state === "unknown" ? 1 : 0 },
+      },
+      hostCalls: { attempted: 2, admitted: 2, succeeded: state === "succeeded" ? 1 : 0, failed: state === "succeeded" ? 1 : 2 },
+    });
+    expect(w.writes()).toHaveLength(1);
+    expect(value(result)).not.toHaveProperty("result");
   });
 
   it("INV-9: lets an unawaited trusted-pool write finish, and says how it went", async () => {

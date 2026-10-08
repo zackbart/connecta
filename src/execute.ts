@@ -1141,18 +1141,10 @@ export function createExecuteTool(
             emitted,
             diagnostics,
           });
-          const finished = programWrites.finish(failed);
-          const result = jsonResult({
-            ...finished.structuredContent,
-            hostCalls: { ...budgetFailure.hostCalls },
-          });
-          result.isError = true;
-          return result;
+          return failed;
         }
         if (Exit.isFailure(exit)) {
-          return programWrites.finish(
-            failedRun(sentSecrets.redact(Cause.squash(exit.cause)), logger, reported),
-          );
+          return failedRun(sentSecrets.redact(Cause.squash(exit.cause)), logger, reported);
         }
         const finished = finishedRun(sentSecrets.redact(exit.value), reported);
         if (config.failOnInvocationFailure && invocationFailures.size > 0) {
@@ -1161,8 +1153,11 @@ export function createExecuteTool(
             code: refusal.details,
           });
         }
-        return programWrites.finish(finished);
-      }), (response) => {
+        return finished;
+      }), (unfinished) => {
+        // Every run response passes through write accounting, including a
+        // refresh refusal after the guest caught its invocation failure.
+        const response = programWrites.finish(unfinished);
         // Calls abandoned by the guest are failed when the run cancels them.
         const counts = { ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded };
         response.structuredContent = { ...response.structuredContent, hostCalls: counts };
