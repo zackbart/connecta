@@ -53,12 +53,14 @@ function base64(value: string): string {
 export class SentSecrets {
   private readonly values = new Set<string>();
   private matcher: RegExp | undefined;
+  private unicode = false;
   private readonly recipients = new Set<SentSecrets>();
 
   private form(value: string): void {
     if (this.values.has(value)) return;
     this.values.add(value);
     this.matcher = undefined;
+    this.unicode ||= /[^\x00-\x7f]/.test(value);
     for (const recipient of this.recipients) recipient.form(value);
   }
 
@@ -170,7 +172,14 @@ export class SentSecrets {
     try { binary = atob(value); } catch { return this.text(value); }
     const forms = [...this.values].map(secret => Array.from(encoder.encode(secret), byte => String.fromCharCode(byte)).join(""));
     const pattern = new RegExp(forms.sort((a, b) => b.length - a.length).map(literal).join("|"), "g");
-    const redacted = this.text(binary.replace(pattern, REDACTED));
+    let redacted = this.text(binary.replace(pattern, REDACTED));
+    if (this.unicode) {
+      // atob returns byte-valued code units. A UTF-8 view also detects mixed
+      // literal/JSON-escaped Unicode echoes. Never re-encode that view: an
+      // arbitrary supporting file may contain invalid UTF-8 or a leading BOM.
+      const view = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(Uint8Array.from(redacted, char => char.charCodeAt(0)));
+      if (this.text(view) !== view) redacted = REDACTED;
+    }
     const encoded = redacted === binary ? value : btoa(redacted);
     // A file's encoding can itself equal a credential. Withhold that file as
     // a valid encoded placeholder, never insert prose into its base64 field.
@@ -239,7 +248,21 @@ export class SentSecrets {
         output.push(source.slice(copied, offset), rewritten);
         copied = offset + cursor;
       }
-      offset += Math.max(step, cursor);
+      let boundary = step;
+      if (starts && ends) {
+        // Keep the next window at an original escape boundary. Starting at
+        // the second slash of a JSON pair changes its meaning and can leave
+        // an invalid escape immediately before a redaction placeholder.
+        let left = 0;
+        let right = ends.length;
+        while (left < right) {
+          const middle = (left + right) >>> 1;
+          if (ends[middle]! <= step) left = middle + 1;
+          else right = middle;
+        }
+        if (left < starts.length) boundary = Math.min(step, starts[left]!);
+      }
+      offset += Math.max(boundary, cursor);
     }
     return output.length ? output.join("") + source.slice(copied) : source;
   }

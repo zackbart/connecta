@@ -403,6 +403,14 @@
         {
           "file": "test/skills-extension.test.ts",
           "title": "INV-5 INV-6 INV-10: proxies the real downstream MCP transport through the private Skills boundary"
+        },
+        {
+          "file": "test/skills-extension.test.ts",
+          "title": "INV-5 INV-8: refuses earlier skill URIs after later catalog operations send new credentials"
+        },
+        {
+          "file": "test/sent-secrets.test.ts",
+          "title": "INV-5 INV-8: preserves JSON escape context at a redaction window boundary"
         }
       ]
     },

@@ -139,6 +139,56 @@ it.each([1, 2])("INV-5: redacts credentials behind %i JSON escape layers in bina
   } finally { await c.close(); }
 });
 
+it.each(["", "\u0000\u00ff"])("INV-5: detects mixed escaped Unicode credentials in UTF-8 blobs without changing unmatched binary bytes %j", async prefix => {
+  const secret = "credentialé-token";
+  const binary = prefix + String.fromCharCode(...new TextEncoder().encode('{"echo":"cred\\u0065ntialé-token"}'));
+  const file = "skill://vendor/review/reference.json";
+  const remote = downstream("remote", {
+    list: async ctx => [{ ...(await downstream().downstreamSkills!.list(ctx))[0]!, resources: [
+      { uri: URI, digest: DIGEST, size: TEXT.length }, { uri: file, digest: DIGEST, size: binary.length },
+    ] }],
+    read: async (uri, ctx) => { sentSecretsFor(ctx).secret(secret); return [{ uri, blob: btoa(binary) }]; },
+  });
+  const c = createTestConnecta({ connectors: [remote], logger: silentLogger });
+  try {
+    const read = await rpc(c, "resources/read", { uri: downstreamSkillUri("remote", file) });
+    expect(atob(read.result.contents[0].blob)).toBe("[redacted]");
+    const innocent = prefix + String.fromCharCode(...new TextEncoder().encode('{"echo":"ordinaryé-token"}'));
+    remote.downstreamSkills!.read = async (uri, ctx) => { sentSecretsFor(ctx).secret(secret); return [{ uri, blob: btoa(innocent) }]; };
+    const unchanged = await rpc(c, "resources/read", { uri: downstreamSkillUri("remote", file) });
+    expect(atob(unchanged.result.contents[0].blob)).toBe(innocent);
+  } finally { await c.close(); }
+});
+
+it("INV-5 INV-8: refuses earlier skill URIs after later catalog operations send new credentials", async () => {
+  const secret = "later-connector-credential";
+  const uri = `skill://${secret}/review/SKILL.md`;
+  const first = downstream("first", { list: async ctx => [{ ...(await downstream().downstreamSkills!.list(ctx))[0]!, uri, resources: [{ uri, digest: DIGEST, size: TEXT.length }] }] });
+  const later = downstream("later", { list: async ctx => { sentSecretsFor(ctx).secret(secret); return []; } });
+  const registry = new SkillsRegistry(makeRegistry([first, later]), BASE);
+  await expect(registry.list()).rejects.toMatchObject({ code: "unavailable" });
+  const c = createTestConnecta({ connectors: [first, later], logger: silentLogger });
+  try {
+    const list = await rpc(c, "skills/list");
+    expect(list.result).toBeUndefined();
+    expect(list.error.code).toBe(-32603);
+  } finally { await c.close(); }
+});
+
+it.each(["uri", "digest"])("INV-5 INV-8: refuses preserved %s fields when a read sends a matching credential", async field => {
+  const secret = field === "uri" ? "later-read-credential" : "a".repeat(32);
+  const uri = field === "uri" ? `skill://${secret}/review/SKILL.md` : URI;
+  const remote = downstream("remote", {
+    list: async ctx => [{ ...(await downstream().downstreamSkills!.list(ctx))[0]!, uri, resources: [{ uri, digest: DIGEST, size: TEXT.length }] }],
+    read: async (uri, ctx) => { sentSecretsFor(ctx).secret(secret); return [{ uri, text: TEXT }]; },
+  });
+  const registry = new SkillsRegistry(makeRegistry([remote]), BASE);
+  const mapped = downstreamSkillUri("remote", uri);
+  expect((await registry.get(mapped)).skill.uri).toBe(mapped);
+  await expect(registry.read(mapped)).rejects.toMatchObject({ code: "unavailable" });
+  await expect(registry.get(mapped)).rejects.toMatchObject({ code: "unavailable" });
+});
+
 it.each(["\u0000", "\\u0000"])("INV-5 INV-8: serves authenticated escaped skill bytes with bounded redaction scratch space %j", async padding => {
   const secret = "bounded-skills-redaction-credential";
   const text = TEXT + padding.repeat(1024 * 1024) + secret;

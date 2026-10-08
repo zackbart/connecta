@@ -134,6 +134,16 @@ describe("call-scoped sent credentials", () => {
     }
   });
 
+  it("INV-5 INV-8: preserves JSON escape context at a redaction window boundary", () => {
+    const token = "ABCDEFGH";
+    const secrets = new SentSecrets(); secrets.secret(token);
+    const escaped = token.split("").map(char => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`).join("");
+    const prefix = '{"echo":"' + "x".repeat(65_535 - 9);
+    const source = prefix + "\\\\" + escaped + '"}';
+    const result = secrets.text(source);
+    expect(JSON.parse(result).echo).toBe("x".repeat(65_535 - 9) + "\\[redacted]");
+  });
+
   it("INV-5: custom connector errors are redacted before classification truncates their diagnostic", async () => {
     const storage = memoryStorage();
     const vault = new CredentialVault(storage, KEY);

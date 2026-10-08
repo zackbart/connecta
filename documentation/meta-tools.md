@@ -284,12 +284,13 @@ Downstream files are proxied byte-exact, including CRLF and binary supporting
 files, within 512 files and 16 MiB per skill. Catalog metadata is bounded to
 1,024 entries and 8 MiB. The existing request-scoped agent boundary redacts
 sent credential echoes, including a credential in a binary file's wire
-encoding. Binary echoes remain valid base64; an encoding that itself echoes a
-credential is withheld as an encoded placeholder. That is the sole exception
-to byte-exactness: digests
-remain the downstream's originals, so a host's integrity check rejects altered
+encoding. Binary echoes remain valid base64; mixed UTF-8/JSON escapes and an
+encoding that itself echoes a credential cause the file to be withheld as an
+encoded placeholder. Unmatched binary bytes remain exact. That is the sole
+exception to byte-exactness: digests remain the downstream's originals, so a host's integrity check rejects altered
 content. Refreshing a manifest cannot make credential-bearing content safe to
-load. URI fields containing a sent credential are refused rather than repaired.
+load. URI and digest fields containing a sent credential are refused rather
+than repaired, including credentials sent by later catalog or read operations.
 Skill content never reaches operator logs, activity or status. Upward
 `resources/read` is skill-only; downstream general resource reads are the
 separate Phase 3 item 7 program API.

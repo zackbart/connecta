@@ -476,7 +476,26 @@ export class SkillsRegistry {
       this.snapshot = this.build();
       this.snapshot.catch(() => { this.snapshot = undefined; });
     }
-    return this.snapshot;
+    const records = await this.snapshot;
+    this.assertSafe(records);
+    return records;
+  }
+
+  /** Later catalog/read operations can add credentials to this request. */
+  private assertSafe(records: readonly SkillRecord[]): void {
+    const secrets = sentSecretsForRequest(this.scope);
+    for (const record of records) {
+      const uris = [record.entry.uri, ...(record.files?.values() ?? [])];
+      if (record.entry.resources !== "dynamic") {
+        for (const file of record.entry.resources) {
+          uris.push(file.uri);
+          if (secrets.contains(file.digest)) throw new ConnectorCallError("unavailable", "Skill digest contains sent credentials.");
+        }
+      }
+      if (record.aliases.some(alias => secrets.contains(alias)) || uris.some(uri => secrets.containsUrl(uri) || secrets.contains(uri))) {
+        throw new ConnectorCallError("unavailable", "Skill URI contains sent credentials.");
+      }
+    }
   }
 
   private async build(): Promise<SkillRecord[]> {
@@ -517,12 +536,17 @@ export class SkillsRegistry {
     // guide, where it cannot consume one of the first five import slots.
     const investigate = records.findIndex(record => record.aliases.includes("investigate"));
     if (investigate >= 0) records.push(records.splice(investigate, 1)[0]!);
+    this.assertSafe(records);
     return records;
   }
 
   private async lookup(uri: string): Promise<SkillRecord> {
     const local = (await this.local).find(record => record.entry.uri === uri || record.aliases.includes(uri));
-    if (local) return withManifest(local);
+    if (local) {
+      const record = await withManifest(local);
+      this.assertSafe([record]);
+      return record;
+    }
     // A non-skill URI never starts a downstream resource request or listing.
     if (!uri.startsWith("skill://downstream/")) throw this.missing(uri);
     const record = (await this.records()).find(record => record.entry.uri === uri);
@@ -563,12 +587,19 @@ export class SkillsRegistry {
 
   async read(uri: string) {
     const local = (await this.local).find(record => record.entry.uri === uri || record.aliases.includes(uri));
-    if (local) return { ...PRIVATE, contents: [{ uri: local.entry.uri, mimeType: "text/markdown", text: (await withManifest(local)).content! }] };
+    if (local) {
+      const record = await withManifest(local);
+      this.assertSafe([record]);
+      return { ...PRIVATE, contents: [{ uri: record.entry.uri, mimeType: "text/markdown", text: record.content! }] };
+    }
     if (!uri.startsWith("skill://downstream/")) throw this.missing(uri);
     const record = (await this.records()).find(record => record.files?.has(uri));
     if (!record?.connector || !record.files || !this.registry.canReadConnectorSkills(record.connector.id)) throw this.missing(uri);
     const originalUri = record.files.get(uri)!;
     const contents = await this.operation(record.connector, ctx => record.connector!.downstreamSkills!.read(originalUri, ctx));
+    // Structural fields and preserved digests cannot be repaired by the
+    // output boundary after this read has sent another credential.
+    await this.records();
     if (!Array.isArray(contents) || contents.length !== 1 || contents[0]?.uri !== originalUri) throw new ConnectorCallError("unavailable", "Downstream skill read returned unexpected files.");
     const content = contents[0];
     if (!content || (typeof content.text === "string") === (typeof content.blob === "string")) throw new ConnectorCallError("unavailable", "Downstream skill read did not return one file.");
