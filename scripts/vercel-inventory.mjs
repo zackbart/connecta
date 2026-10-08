@@ -59,12 +59,40 @@ async function readPage(source, signal) {
 }
 
 function categories(markdown) {
-  const section = markdown.match(/^## Tools by category[ \t]*\r?\n([\s\S]*?)(?=^## |^---[ \t]*$|(?![\s\S]))/m)?.[1];
+  let section = markdown.match(/^## Tools by category[ \t]*\r?\n([\s\S]*?)(?=^## |^---[ \t]*$|(?![\s\S]))/m)?.[1];
   if (!section) throw new Error("missing Tools by category section; a landing-page table is incomplete");
-  const links = [...section.matchAll(/\[([^\]]+)\]\(([^\s)]+)\)/g)];
+  const referenceId = (label) => label.trim().replace(/\s+/g, " ").toLowerCase();
+  const definition = /^[ \t]{0,3}\[([^\]\n]+)\]:[ \t]*(?:<([^<>\s]+)>|(\S+))[^\n]*$/gm;
+  const references = new Map();
+  const plainText = (text) =>
+    text
+      .replace(/<[^>]*>/g, " ")
+      .replace(/&nbsp;|&#160;/gi, " ")
+      .trim();
+  for (const [, label, angleTarget, target] of markdown.matchAll(definition)) {
+    const id = referenceId(label);
+    const destination = angleTarget ?? target;
+    if (references.has(id) && references.get(id) !== destination)
+      throw new Error(`conflicting category reference definition ${label}`);
+    references.set(id, destination);
+  }
+  section = section.replace(definition, "");
+  // Support inline, full/collapsed/shortcut reference Markdown and HTML anchors.
+  // Counts left outside consumed links catch an unknown syntax instead of silently
+  // accepting whichever subset happened to match. Per-page counts cannot do that.
+  const link =
+    /<a\b([^>]*)>([\s\S]*?)<\/a\s*>|\[([^\]]+)\](?:\(\s*(?:<([^<>\s]+)>|([^\s)]+))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)|\[([^\]]*)\])?/gi;
+  const links = [...section.matchAll(link)];
   if (links.length === 0) throw new Error("Tools by category contains no category links");
   const pages = new Map();
-  for (const [, label, target] of links) {
+  for (const [, attributes, htmlLabel, markdownLabel, angleTarget, inlineTarget, reference] of links) {
+    const label = plainText(htmlLabel ?? markdownLabel);
+    const href = attributes?.match(/(?:^|\s)href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i);
+    const target =
+      htmlLabel !== undefined
+        ? (href?.[1] ?? href?.[2] ?? href?.[3])
+        : (angleTarget ?? inlineTarget ?? references.get(referenceId(reference || markdownLabel)));
+    if (target === undefined) throw new Error(`unresolved category reference ${label}`);
     const url = new URL(target, landingUrl);
     const path = url.pathname.replace(/\.md$/, "").replace(/\/$/, "");
     if (
@@ -75,8 +103,9 @@ function categories(markdown) {
       !/^[a-z0-9-]+$/.test(path.slice(categoryRoot.length))
     )
       throw new Error(`invalid category reference ${target}; expected a Vercel MCP category on ${landingUrl.origin}`);
-    const count = label.match(/\b(\d+) tools?\s*$/)?.[1];
-    if (count === undefined || Number(count) < 1) throw new Error(`category ${target} has no published tool count`);
+    const count = label.match(/\b(\d+)\s+tools?\s*$/i)?.[1];
+    if (count === undefined || Number(count) < 1 || [...label.matchAll(/\b\d+\s+tools?\b/gi)].length !== 1)
+      throw new Error(`category ${target} must have exactly one published tool count`);
     url.pathname = path + ".md";
     url.search = "";
     url.hash = "";
@@ -85,6 +114,8 @@ function categories(markdown) {
     pages.set(url.href, Number(count));
     if (pages.size + 1 > maxPages) throw new Error(`reference exceeds ${maxPages} pages including the landing page`);
   }
+  if (/\b\d+\s+tools?\b/i.test(plainText(section.replace(link, ""))))
+    throw new Error("unconsumed published category tool count; review the category index/parser");
   return pages;
 }
 

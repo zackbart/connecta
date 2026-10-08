@@ -1,10 +1,12 @@
 // Node-only: exercises the filesystem and fetch bounds of the public maintainer inventory checker.
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import recording from "./inventory-fixtures/recording.json";
 const inventoryModule = new URL("../../../scripts/vercel-inventory.mjs", import.meta.url).href;
 const { readVercelInventory } = (await import(inventoryModule)) as {
   readVercelInventory(source: string): Promise<{ names: string[]; pages: number }>;
@@ -15,6 +17,20 @@ const fixtures = fileURLToPath(new URL("./inventory-fixtures/", import.meta.url)
 const url = "https://vercel.com/docs/agent-resources/vercel-mcp/tools.md";
 const temporary: string[] = [];
 const text = (name: string) => readFile(join(fixtures, name), "utf8");
+const cachingLink = "[Caching\n6 tools](/docs/agent-resources/vercel-mcp/tools/caching)";
+const teamsLink = "[Teams and Users\n8 tools](/docs/agent-resources/vercel-mcp/tools/teams)";
+
+// Only negative/format-variation tests mutate these recorded response bodies.
+async function mixedIndex() {
+  return (
+    (await text("tools.md"))
+      .replace(cachingLink, "[Caching\n6 tools][CACHE]")
+      .replace(
+        teamsLink,
+        '<a href="/docs/agent-resources/vercel-mcp/tools/teams"><span>Teams and Users</span><br>8 tools</a>',
+      ) + '\n[cache]: </docs/agent-resources/vercel-mcp/tools/caching> "Caching"\n'
+  );
+}
 
 afterEach(async () => {
   vi.unstubAllGlobals();
@@ -22,37 +38,122 @@ afterEach(async () => {
 });
 
 async function mockPages(deployment = "deployments.md") {
-  const pages = new Map([
-    [url, await text("tools.md")],
-    [url.replace("tools.md", "tools/deployments.md"), await text(deployment)],
-    [url.replace("tools.md", "tools/teams.md"), await text("teams.md")],
-  ]);
-  const fetcher = vi.fn(async (source: URL) => new Response(pages.get(String(source)), { status: 200 }));
+  const pages = new Map(
+    await Promise.all(recording.pages.map(async (page) => [page.url, await text(page.file)] as const)),
+  );
+  pages.set(url.replace("tools.md", "tools/deployments.md"), await text(deployment));
+  const fetcher = vi.fn(
+    async (source: URL) => new Response(pages.get(String(source)), { status: pages.has(String(source)) ? 200 : 404 }),
+  );
   vi.stubGlobal("fetch", fetcher);
   return { pages, fetcher };
 }
 
+async function localReferences() {
+  const directory = await mkdtemp(join(tmpdir(), "connecta-vercel-inventory-"));
+  temporary.push(directory);
+  await Promise.all(recording.pages.map(async (page) => writeFile(join(directory, page.file), await text(page.file))));
+  const setup = join(directory, "setup.md");
+  await writeFile(setup, "https://mcp.vercel.com OAuth");
+  const args = [
+    join(root, "scripts/drift-check.mjs"),
+    "--docs",
+    "--provider",
+    "vercel",
+    "--tool-reference",
+    `vercel=${join(directory, "tools.md")}`,
+    "--setup-reference",
+    `vercel=${setup}`,
+    "--json",
+    "--record",
+  ];
+  const report = () => JSON.parse(execFileSync(process.execPath, args, { encoding: "utf8" }));
+  return { directory, args, report };
+}
+
 describe("Vercel public inventory", () => {
-  it("INV-8 traverses categories once and covers table entries without collecting parameter names", async () => {
-    const { fetcher } = await mockPages();
-    expect(await readVercelInventory(url)).toEqual({
-      names: ["cancel_deployment", "list_deployments", "list_teams"],
-      pages: 3,
+  it("INV-8 reads the complete recorded 213-tool union across 29 pages offline", async () => {
+    expect(recording.retrievedAt).toMatch(/^2026-10-08T/);
+    expect(recording.pages).toHaveLength(29);
+    expect(recording.expectedNames).toHaveLength(213);
+    for (const page of recording.pages) {
+      expect(page.url).toBe(page.file === "tools.md" ? url : url.replace("tools.md", `tools/${page.file}`));
+      expect(
+        createHash("sha256")
+          .update(await text(page.file))
+          .digest("hex"),
+      ).toBe(page.sha256);
+    }
+    expect(await readVercelInventory(join(fixtures, "tools.md"))).toEqual({
+      names: recording.expectedNames,
+      pages: 29,
     });
-    expect(fetcher).toHaveBeenCalledTimes(3);
+    const { fetcher } = await mockPages();
+    expect(await readVercelInventory(url)).toEqual({ names: recording.expectedNames, pages: 29 });
+    expect(fetcher).toHaveBeenCalledTimes(29);
     for (const [source, init] of fetcher.mock.calls as unknown as [URL, RequestInit][]) {
       expect(source.origin).toBe("https://vercel.com");
       expect(source.pathname.endsWith(".md")).toBe(true);
       expect(init).toMatchObject({ redirect: "error", credentials: "omit", signal: expect.any(AbortSignal) });
       expect(init.headers).not.toHaveProperty("Authorization");
     }
+    expect(recording.expectedNames).not.toContain("projectId");
   });
+
+  it("INV-8 consumes mixed inline/reference/HTML links and fetches repeated categories once", async () => {
+    const { pages, fetcher } = await mockPages();
+    pages.set(
+      url,
+      (await mixedIndex()).replace(
+        "\n\n---",
+        '\n[Deployments repeated\n12 tools](https://vercel.com/docs/agent-resources/vercel-mcp/tools/deployments.md#tools "Repeat")\n\n---',
+      ),
+    );
+    expect(await readVercelInventory(url)).toEqual({ names: recording.expectedNames, pages: 29 });
+    expect(fetcher).toHaveBeenCalledTimes(29);
+  });
+
+  it.each(["collapsed", "shortcut"])("INV-8 consumes %s category references", async (form) => {
+    const { pages } = await mockPages();
+    const label = "Caching\n6 tools";
+    pages.set(
+      url,
+      (await text("tools.md")).replace(cachingLink, `[${label}]${form === "collapsed" ? "[]" : ""}\n`) +
+        "\n[Caching 6 tools]: /docs/agent-resources/vercel-mcp/tools/caching\n",
+    );
+    expect(await readVercelInventory(url)).toEqual({ names: recording.expectedNames, pages: 29 });
+  });
+
+  it.each(["reference", "HTML"])("INV-5 confines %s category destinations to Vercel", async (form) => {
+    const target = "https://evil.example/docs/agent-resources/vercel-mcp/tools/caching";
+    const landing =
+      (await text("tools.md")).replace(
+        cachingLink,
+        form === "reference" ? "[Caching\n6 tools][cache]" : `<a href="${target}">Caching\n6 tools</a>`,
+      ) + `\n[cache]: ${target}\n`;
+    const fetcher = vi.fn(async () => new Response(landing));
+    vi.stubGlobal("fetch", fetcher);
+    await expect(readVercelInventory(url)).rejects.toThrow("invalid category reference");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["Caching", "Caching 6 tools and 6 tools"])(
+    "INV-8 refuses ambiguous category counts in %s",
+    async (label) => {
+      const { pages } = await mockPages();
+      pages.set(
+        url,
+        (await text("tools.md")).replace(cachingLink, `[${label}](/docs/agent-resources/vercel-mcp/tools/caching)`),
+      );
+      await expect(readVercelInventory(url)).rejects.toThrow("must have exactly one published tool count");
+    },
+  );
 
   it.each(["incomplete.md", "unparseable.md"])(
     "INV-8 refuses %s instead of comparing a partial catalog",
     async (page) => {
       await mockPages(page);
-      await expect(readVercelInventory(url)).rejects.toThrow(/unavailable\/incomplete.*deployments\.md.*expected 2/);
+      await expect(readVercelInventory(url)).rejects.toThrow(/unavailable\/incomplete.*deployments\.md.*expected 12/);
     },
   );
 
@@ -98,12 +199,19 @@ describe("Vercel public inventory", () => {
 
   it("INV-8 refuses conflicting counts, duplicate headings and missing table tools", async () => {
     const { pages } = await mockPages();
-    pages.set(url, (await text("tools.md")).replace("Deployments repeated\n2 tools", "Deployments repeated\n3 tools"));
+    pages.set(
+      url,
+      (await text("tools.md")).replace(
+        "\n\n---",
+        "\n[Deployments repeated\n13 tools](/docs/agent-resources/vercel-mcp/tools/deployments)\n\n---",
+      ),
+    );
     await expect(readVercelInventory(url)).rejects.toThrow("conflicting published tool counts");
     pages.set(url, await text("tools.md"));
-    pages.set(url.replace("tools.md", "tools/deployments.md"), "## `list_deployments`\n## `list_deployments`\n");
-    await expect(readVercelInventory(url)).rejects.toThrow("expected 2 unique tool headings");
-    pages.set(url.replace("tools.md", "tools/deployments.md"), await text("deployments.md"));
+    const deploymentUrl = url.replace("tools.md", "tools/deployments.md");
+    pages.set(deploymentUrl, (await text("deployments.md")).replace("## `get_deployment`", "## `list_deployments`"));
+    await expect(readVercelInventory(url)).rejects.toThrow("expected 12 unique tool headings");
+    pages.set(deploymentUrl, await text("deployments.md"));
     pages.set(url, (await text("tools.md")).replace("[`list_deployments`]", "[`missing_tool`]"));
     await expect(readVercelInventory(url)).rejects.toThrow("landing-page tool missing_tool is absent");
   });
@@ -124,43 +232,66 @@ describe("Vercel public inventory", () => {
     await expect(readVercelInventory(url)).rejects.toThrow("page exceeds 524288 bytes");
   });
 
-  it("INV-10 reports additions/removals, makes strict findings actionable and never records classifications", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "connecta-vercel-inventory-"));
-    temporary.push(directory);
-    const landing = join(directory, "tools.md");
-    await writeFile(landing, await text("tools.md"));
-    await writeFile(join(directory, "deployments.md"), await text("deployments.md"));
-    await writeFile(join(directory, "teams.md"), await text("teams.md"));
-    const setup = join(directory, "setup.md");
-    await writeFile(setup, "https://mcp.vercel.com OAuth");
-    const args = [
-      join(root, "scripts/drift-check.mjs"),
-      "--docs",
-      "--provider",
-      "vercel",
-      "--tool-reference",
-      `vercel=${landing}`,
-      "--setup-reference",
-      `vercel=${setup}`,
-      "--json",
-      "--record",
-    ];
+  it.each(["unknown syntax", "split HTML count", "unresolved reference", "conflicting definition"])(
+    "INV-8 reports %s on a mixed-format index without comparing additions/removals",
+    async (failure) => {
+      const { directory, report, args } = await localReferences();
+      let landing = await mixedIndex();
+      if (failure === "unknown syntax")
+        landing = landing.replace(
+          "[Caching\n6 tools][CACHE]",
+          '<category href="/docs/agent-resources/vercel-mcp/tools/caching">Caching\n6 tools</category>',
+        );
+      if (failure === "split HTML count")
+        landing = landing.replace(
+          "[Caching\n6 tools][CACHE]",
+          "<category>Caching <span>6</span><span>tools</span></category>",
+        );
+      if (failure === "unresolved reference") landing = landing.replace("[CACHE]", "[MISSING]");
+      if (failure === "conflicting definition")
+        landing += "\n[CACHE]: /docs/agent-resources/vercel-mcp/tools/projects\n";
+      await writeFile(join(directory, "tools.md"), landing);
+      const result = report().docs[0];
+      expect(result.findings).toEqual([
+        expect.objectContaining({ kind: "unavailable", detail: expect.stringContaining("unavailable/incomplete") }),
+      ]);
+      expect(result.added).toBeUndefined();
+      expect(result.removed).toBeUndefined();
+      expect(result.documentedTools).toBeUndefined();
+      expect(spawnSync(process.execPath, [...args, "--strict"]).status).toBe(1);
+      await expect(readVercelInventory(join(directory, "tools.md"))).rejects.toThrow(
+        failure === "unknown syntax" || failure === "split HTML count"
+          ? "unconsumed published category tool count"
+          : failure === "unresolved reference"
+            ? "unresolved category reference"
+            : "conflicting category reference definition",
+      );
+    },
+  );
+
+  it("INV-10 reports advisory additions/removals and never records classifications", async () => {
+    const { directory, args, report } = await localReferences();
     const evidence = join(root, "src/providers/vercel/drift.json");
     const before = await readFile(evidence, "utf8");
-    const report = JSON.parse(execFileSync(process.execPath, args, { encoding: "utf8" }));
-    expect(report.docs[0]).toMatchObject({ documentedTools: 3, inventoryPages: 3, added: [], findings: [] });
-    expect(report.docs[0].removed).toContain("get_project");
-    expect(report.findings).toBe(report.docs[0].removed.length);
+    const result = report();
+    expect(result.docs[0]).toMatchObject({ documentedTools: 213, inventoryPages: 29, findings: [] });
+    expect(result.docs[0].added).toHaveLength(178);
+    expect(result.docs[0].added).toContain("artifact_query");
+    expect(result.docs[0].removed).toEqual([
+      "check_domain_availability_and_price",
+      "deploy_to_vercel",
+      "get_deployment_build_logs",
+      "get_web_analytics",
+    ]);
+    expect(result.findings).toBe(182);
     expect(spawnSync(process.execPath, [...args, "--strict"]).status).toBe(1);
-    await writeFile(join(directory, "teams.md"), "## `new_tool`\n");
-    expect(JSON.parse(execFileSync(process.execPath, args, { encoding: "utf8" })).docs[0].added).toEqual(["new_tool"]);
     await rm(join(directory, "teams.md"));
-    const incomplete = JSON.parse(execFileSync(process.execPath, args, { encoding: "utf8" }));
+    const incomplete = report();
     expect(incomplete.docs[0].findings).toEqual([expect.objectContaining({ kind: "unavailable" })]);
     expect(incomplete.docs[0].added).toBeUndefined();
     expect(incomplete.docs[0].removed).toBeUndefined();
     expect(await readFile(evidence, "utf8")).toBe(before);
     await writeFile(join(directory, "tools.md"), "x".repeat(512 * 1024 + 1));
-    await expect(readVercelInventory(landing)).rejects.toThrow("page exceeds 524288 bytes");
+    await expect(readVercelInventory(join(directory, "tools.md"))).rejects.toThrow("page exceeds 524288 bytes");
   });
 });
