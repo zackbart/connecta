@@ -8,7 +8,7 @@ import type { CodexOptions, CodexRun } from "./codex.js";
 import { assertSurface } from "./surface.js";
 import type { StreamEvent } from "./trace.js";
 
-export const CLAUDE_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5-20251001"];
+export const CLAUDE_MODELS = ["claude-sonnet-5-5"];
 
 export async function claudeVersion(): Promise<string> {
   return await new Promise(resolve => {

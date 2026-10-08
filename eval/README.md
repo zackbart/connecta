@@ -9,18 +9,18 @@ with the stricter correctness checks below.
 
 ```sh
 npm run build
-npm run eval:agent -- --runner codex --tasks p5-known-read-routing --repeats 1
-npm run eval:agent -- --runner claude --models claude-haiku-4-5-20251001 --tasks p5-known-read-routing --repeats 1 --max-budget-usd 0.25
+npm run eval:agent -- --runner codex --models gpt-6-luna --tasks p5-known-read-routing --repeats 1
+npm run eval:agent -- --runner claude --models claude-sonnet-5-5 --tasks p5-known-read-routing --repeats 1
 ```
 
 Codex uses the signed-in `codex` CLI, `~/.codex/auth.json`, and defaults to
-`gpt-6-sol`. Its isolated temporary `CODEX_HOME` contains only that credential
+`gpt-6-luna`. Its isolated temporary `CODEX_HOME` contains only that credential
 file and the fake Connecta endpoint. Apps, web search, shell tools and subagents
 are disabled. An OpenAI API key in the environment alone is not sufficient;
 first sign the CLI in with the intended subscription or API account.
 
 Claude uses the owner's signed-in `claude` CLI subscription login. The runner
-preserves the real home for login/keychain access without reading credentials.
+defaults to `claude-sonnet-5-5` and preserves the real home for login/keychain access without reading credentials.
 Each trial runs in an empty temporary workspace with `--safe-mode`,
 `--setting-sources ""`, `--disable-slash-commands`, `--no-chrome`, `--tools ""`,
 and `--strict-mcp-config --mcp-config <fake-only config>`. These flags disable
@@ -39,9 +39,10 @@ They remove temporary trial directories on exit. `get_result` and `resume_execut
 `connecta.describe`, `connecta.skill`, and `connecta.emit`.
 
 `--tasks` selects comma-separated task ids. `--models`, `--repeats` defaulting
-to 3, `--concurrency` defaulting to 1, `--timeout-min` defaulting to 8,
+to 1, `--concurrency` defaulting to 1, `--timeout-min` defaulting to 8,
 `--out`, `--report`, and `--baseline` control the batch. `--effort` is Codex-only;
-`--max-budget-usd` is Claude-only, per trial. Completed trials save atomically
+`--max-budget-usd` is Claude-only, an API-equivalent per-trial cap rather than
+a subscription allowance limit. Completed trials save atomically
 as they finish. SIGINT/SIGTERM terminate active CLI processes and stop the queue.
 Authentication and rate-limit errors stop further trials. The result records
 full final answers, clipped display transcripts, fake calls, grades, image
@@ -115,40 +116,35 @@ turns, rich output, usage accounting, deadlines and cancellation. These checks
 require no API keys or model calls. Eval smoke uses both deployment shapes and
 headless Chromium; install it with `npm run test:browser:install` if needed.
 
-## Follow-up baseline budget
+## Follow-up baseline allowance and time
 
-Freeze the checkout before paid runs, record the commit and CLI versions, and
-save new files rather than overwrite `baselines/`. Full defaults mean 21 tasks
-x 3 repeats = 63 Codex trials, and 21 x 3 x 3 = 189 Claude trials.
-Node/npm, the two CLIs, and the credentials described above are required.
-Homebrew can manage the CLIs with `brew install --cask codex claude-code`.
-No downstream credentials or Cloudflare deployment login are needed.
+Freeze the checkout before baseline runs, record the commit and CLI versions,
+and save new files rather than overwrite `baselines/`. Owner scope is Sonnet
+5.5 and GPT-6-Luna only, with 1-2 repeats per task. Defaults run 22 tasks x 1
+repeat = 22 trials per runner. A two-repeat baseline runs 44 per runner.
+Both use signed-in CLI subscription logins and consume plan allowance.
 
-Planning assumptions, not measured 0.29 results: 20,000-80,000 billable input
-tokens and 4,000-12,000 output tokens per trial, and 45-150 seconds per trial.
-At concurrency 1, allow 47-158 minutes for Codex and 2.4-7.9 hours for the three
-Claude models together. Rate limits, retries, large logs and thinking can raise
-both estimates. The eight-minute limit is a failure bound, not expected latency.
+```sh
+npm run eval:agent -- --runner claude --models claude-sonnet-5-5 --repeats 2 --out eval/results/sonnet-5-5.json
+npm run eval:agent -- --runner codex --models gpt-6-luna --repeats 2 --out eval/results/gpt-6-luna.json
+```
 
-Using standard input/output rates checked on 2026-10-08, before cache effects:
+Node/npm, the two CLIs, and the signed-in credentials described above are
+required. Homebrew can manage the CLIs with `brew install --cask codex
+claude-code`. No downstream credentials or Cloudflare deployment login are
+needed. The tiny authentication smoke uses one `p5-known-read-routing` trial
+per runner; its results are proof of login/isolation, not committed baselines.
 
-| Runner/model | 63-trial estimate | Credential |
-| --- | --- | --- |
-| Claude Opus 5.5, $4/$20 per million tokens | $10-$36 | ANTHROPIC_API_KEY |
-| Claude Sonnet 5.5, $2/$10 | $5-$18 | ANTHROPIC_API_KEY |
-| Claude Haiku 4.5, $1/$5 | $3-$9 | ANTHROPIC_API_KEY |
-| Codex GPT-6 Sol, API equivalent $2/$10 | $5-$18 | signed-in CLI auth.json |
+Planning assumptions, not measured 0.29 results: 20,000-80,000 input tokens,
+4,000-12,000 output tokens and 45-150 seconds per trial. At concurrency 1,
+allow 17-55 minutes per runner for the default batch, or 33-110 minutes per
+runner for two repeats. Rate limits, retries, large logs and thinking can raise
+these estimates. The eight-minute timeout is a failure bound.
 
-Budget about $20-$75 for the combined Claude batch including cache-write
-headroom. Codex subscription runs consume plan allowance; their actual dollar
-cost is account-dependent and the runner leaves `costUsd` unknown. The standard
-credit equivalent is roughly 126-441 credits at 50 input/250 output credits per
-million tokens. Do not treat API-equivalent dollars as a subscription invoice.
-Prices: [Opus](https://platform.claude.com/docs/en/models/opus-5-5/overview),
-[Sonnet](https://platform.claude.com/docs/en/models/sonnet-5-5/overview),
-[Haiku](https://platform.claude.com/docs/en/models/haiku-4-5/overview),
-[GPT-6 Sol](https://developers.openai.com/api/docs/models/gpt-6-sol),
-[Codex credit rates](https://learn.chatgpt.com/docs/pricing).
+Plan allowance depends on the account and model; these estimates do not promise
+a credit count or dollar charge. Claude's reported `costUsd` is API-equivalent
+usage telemetry, not a subscription invoice. Codex leaves `costUsd` unknown.
+The runner records token usage for both, including cached tokens.
 
 ## Program calling-convention check, 2026-09-25
 

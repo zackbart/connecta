@@ -3,9 +3,9 @@
  *
  *   --runner       codex (default) or claude
  *   --models       comma-separated model ids; see eval/README.md for defaults
- *   --repeats      trials per task × model (default 3)
+ *   --repeats      trials per task × model (default 1)
  *   --tasks        comma-separated task ids (default every active task)
- *   --concurrency  parallel trials (default 3)
+ *   --concurrency  parallel trials (default 1)
  *   --timeout-min  per-trial wall budget in minutes (default 8)
  *   --effort       Codex reasoning effort (default model setting)
  *   --out          result JSON path (default eval/results/agent-<time>.json)
@@ -32,9 +32,9 @@ if (runner !== "codex" && runner !== "claude") throw new Error("--runner must be
 if ((runner === "codex" && args.has("max-budget-usd")) || args.has("mcp-output-tokens") || args.has("max-utilization")) {
   throw new Error("Unsupported runner option; --max-budget-usd is Claude-only, and MCP output/utilization flags are retired");
 }
-const models = (args.get("models") ?? (runner === "claude" ? CLAUDE_MODELS.join(",") : "gpt-6-sol"))
+const models = (args.get("models") ?? (runner === "claude" ? CLAUDE_MODELS.join(",") : "gpt-6-luna"))
   .split(",").map(model => model.trim()).filter(Boolean);
-const repeats = Number(args.get("repeats") ?? 3);
+const repeats = Number(args.get("repeats") ?? 1);
 const concurrency = Number(args.get("concurrency") ?? 1);
 const timeoutMs = Number(args.get("timeout-min") ?? 8) * 60_000;
 const effort = args.get("effort");
