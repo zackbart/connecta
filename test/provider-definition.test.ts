@@ -61,7 +61,7 @@ describe("defineProvider()", () => {
       .toThrow('Unknown option: acmeCrm("crm").regoin.');
     expect(purpose).not.toHaveBeenCalled();
     expect(() => factory("crm", { get purpose() { return purpose(); } }))
-      .toThrow('acmeCrm("crm").purpose must be a plain value');
+      .toThrow('acmeCrm("crm") requires purpose to be a plain value');
     expect(purpose).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
 
@@ -259,12 +259,12 @@ describe("defineProvider()", () => {
   it("INV-11: rejects invalid common options before create runs", () => {
     const { factory, create } = sample();
     const bad: Array<[unknown, string]> = [
-      [undefined, "acme-crm() requires an options object."],
-      [{ purpose: "   " }, 'acme-crm("crm") requires a non-empty purpose'],
-      [{ purpose: 7 }, 'acme-crm("crm") requires a non-empty purpose'],
-      [{ purpose: "Sales", title: " " }, "title must be a non-empty string"],
-      [{ purpose: "Sales", instructions: 3 }, "instructions must be a string"],
-      [{ purpose: "Sales", authScope: "team" }, 'authScope must be "shared" or "personal"'],
+      [undefined, 'acmeCrm("crm") requires an options object.'],
+      [{ purpose: "   " }, 'acmeCrm("crm") requires a non-empty purpose'],
+      [{ purpose: 7 }, 'acmeCrm("crm") requires a non-empty purpose'],
+      [{ purpose: "Sales", title: " " }, "title to be a non-empty string"],
+      [{ purpose: "Sales", instructions: 3 }, "instructions to be a string"],
+      [{ purpose: "Sales", authScope: "team" }, 'authScope to be "shared" or "personal"'],
     ];
     for (const [options, message] of bad) {
       expect(() => factory("crm", options as never)).toThrow(message);

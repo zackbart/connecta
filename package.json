@@ -3,7 +3,7 @@
   "version": "0.28.1",
   "type": "module",
   "sideEffects": false,
-  "description": "One MCP to rule them all \u2014 a single MCP endpoint aggregating many downstream connectors behind a code-first surface of seven meta-tools.",
+  "description": "One MCP to rule them all — a single MCP endpoint aggregating many downstream connectors behind a code-first surface of seven meta-tools.",
   "license": "MIT",
   "engines": {
     "node": ">=22.13.0"
@@ -73,81 +73,81 @@
       "types": "./dist/auth/cloudflare-access.d.ts",
       "import": "./dist/auth/cloudflare-access.js"
     },
-    "./providers/breeze": {
-      "types": "./dist/providers/breeze.d.ts",
-      "import": "./dist/providers/breeze.js"
-    },
     "./providers/basecamp": {
-      "types": "./dist/providers/basecamp.d.ts",
-      "import": "./dist/providers/basecamp.js"
+      "types": "./dist/providers/basecamp/index.d.ts",
+      "import": "./dist/providers/basecamp/index.js"
     },
-    "./providers/cloudflare": {
-      "types": "./dist/providers/cloudflare.d.ts",
-      "import": "./dist/providers/cloudflare.js"
-    },
-    "./providers/linear": {
-      "types": "./dist/providers/linear.d.ts",
-      "import": "./dist/providers/linear.js"
-    },
-    "./providers/mixpanel": {
-      "types": "./dist/providers/mixpanel.d.ts",
-      "import": "./dist/providers/mixpanel.js"
-    },
-    "./providers/notion": {
-      "types": "./dist/providers/notion.d.ts",
-      "import": "./dist/providers/notion.js"
-    },
-    "./providers/revenuecat": {
-      "types": "./dist/providers/revenuecat.d.ts",
-      "import": "./dist/providers/revenuecat.js"
-    },
-    "./providers/stripe": {
-      "types": "./dist/providers/stripe.d.ts",
-      "import": "./dist/providers/stripe.js"
-    },
-    "./providers/vercel": {
-      "types": "./dist/providers/vercel.d.ts",
-      "import": "./dist/providers/vercel.js"
+    "./providers/breeze": {
+      "types": "./dist/providers/breeze/index.d.ts",
+      "import": "./dist/providers/breeze/index.js"
     },
     "./providers/ccb": {
-      "types": "./dist/providers/ccb.d.ts",
-      "import": "./dist/providers/ccb.js"
+      "types": "./dist/providers/ccb/index.d.ts",
+      "import": "./dist/providers/ccb/index.js"
     },
-    "./providers/planning-center": {
-      "types": "./dist/providers/planning-center.d.ts",
-      "import": "./dist/providers/planning-center.js"
-    },
-    "./providers/overflow": {
-      "types": "./dist/providers/overflow.d.ts",
-      "import": "./dist/providers/overflow.js"
-    },
-    "./providers/tithely": {
-      "types": "./dist/providers/tithely.d.ts",
-      "import": "./dist/providers/tithely.js"
-    },
-    "./providers/gmail": {
-      "types": "./dist/providers/gmail.d.ts",
-      "import": "./dist/providers/gmail.js"
-    },
-    "./providers/drive": {
-      "types": "./dist/providers/drive.d.ts",
-      "import": "./dist/providers/drive.js"
+    "./providers/cloudflare": {
+      "types": "./dist/providers/cloudflare/index.d.ts",
+      "import": "./dist/providers/cloudflare/index.js"
     },
     "./providers/docs": {
-      "types": "./dist/providers/docs.d.ts",
-      "import": "./dist/providers/docs.js"
+      "types": "./dist/providers/docs/index.d.ts",
+      "import": "./dist/providers/docs/index.js"
     },
-    "./providers/sheets": {
-      "types": "./dist/providers/sheets.d.ts",
-      "import": "./dist/providers/sheets.js"
-    },
-    "./providers/slides": {
-      "types": "./dist/providers/slides.d.ts",
-      "import": "./dist/providers/slides.js"
+    "./providers/drive": {
+      "types": "./dist/providers/drive/index.d.ts",
+      "import": "./dist/providers/drive/index.js"
     },
     "./providers/forms": {
-      "types": "./dist/providers/forms.d.ts",
-      "import": "./dist/providers/forms.js"
+      "types": "./dist/providers/forms/index.d.ts",
+      "import": "./dist/providers/forms/index.js"
+    },
+    "./providers/gmail": {
+      "types": "./dist/providers/gmail/index.d.ts",
+      "import": "./dist/providers/gmail/index.js"
+    },
+    "./providers/linear": {
+      "types": "./dist/providers/linear/index.d.ts",
+      "import": "./dist/providers/linear/index.js"
+    },
+    "./providers/mixpanel": {
+      "types": "./dist/providers/mixpanel/index.d.ts",
+      "import": "./dist/providers/mixpanel/index.js"
+    },
+    "./providers/notion": {
+      "types": "./dist/providers/notion/index.d.ts",
+      "import": "./dist/providers/notion/index.js"
+    },
+    "./providers/overflow": {
+      "types": "./dist/providers/overflow/index.d.ts",
+      "import": "./dist/providers/overflow/index.js"
+    },
+    "./providers/planning-center": {
+      "types": "./dist/providers/planning-center/index.d.ts",
+      "import": "./dist/providers/planning-center/index.js"
+    },
+    "./providers/revenuecat": {
+      "types": "./dist/providers/revenuecat/index.d.ts",
+      "import": "./dist/providers/revenuecat/index.js"
+    },
+    "./providers/sheets": {
+      "types": "./dist/providers/sheets/index.d.ts",
+      "import": "./dist/providers/sheets/index.js"
+    },
+    "./providers/slides": {
+      "types": "./dist/providers/slides/index.d.ts",
+      "import": "./dist/providers/slides/index.js"
+    },
+    "./providers/stripe": {
+      "types": "./dist/providers/stripe/index.d.ts",
+      "import": "./dist/providers/stripe/index.js"
+    },
+    "./providers/tithely": {
+      "types": "./dist/providers/tithely/index.d.ts",
+      "import": "./dist/providers/tithely/index.js"
+    },
+    "./providers/vercel": {
+      "types": "./dist/providers/vercel/index.d.ts",
+      "import": "./dist/providers/vercel/index.js"
     },
     "./ui": {
       "types": "./dist/ui.d.ts",

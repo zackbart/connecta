@@ -6,6 +6,7 @@
 // revisions and latest-published evidence. It never changes pins, check config,
 // hosted reviewed names, or runtime code. MCP schemas remain live tools/list.
 import { createHash } from "node:crypto";
+import { discoverProviders } from "./providers.mjs";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -158,7 +159,10 @@ function checkMode(type) {
 /** Discover only direct provider folders carrying drift.json; shared code is absent. */
 async function discoverRecords(directory) {
   const providers = [];
-  for (const entry of (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
+  const entries = directory === defaultProviderDirectory
+    ? (await discoverProviders(repositoryRoot)).map(({ name }) => ({ name, isDirectory: () => true }))
+    : await readdir(directory, { withFileTypes: true });
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     if (!entry.isDirectory() || entry.name.startsWith("_")) continue;
     const path = resolvePath(directory, entry.name, "drift.json");
     let text;

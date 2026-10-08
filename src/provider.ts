@@ -66,6 +66,8 @@ export interface ProviderSkill {
   content: string;
   /** Heading for deployment instructions, such as `"Workspace instructions"`. */
   instructionsHeading: string;
+  /** Exact generated guide fragments used by existing renderers. */
+  fragments?: Readonly<Record<string, string>>;
 }
 
 /** Connection facts a provider renders around its maintained guide. */
@@ -196,7 +198,10 @@ export function defineProvider<O extends ProviderOptions>(
   }
   const frozen: Readonly<ProviderDefinition<O>> = Object.freeze({
     ...definition,
-    skill: Object.freeze({ ...definition.skill }),
+    skill: Object.freeze({
+      ...definition.skill,
+      ...(definition.skill.fragments ? { fragments: Object.freeze(definition.skill.fragments) } : {}),
+    }),
     ...(definition.bundle ? { bundle: Object.freeze({ ...definition.bundle }) } : {}),
     ...(classify !== undefined ? { classify } : {}),
   });
@@ -277,6 +282,9 @@ export function asProviderFactory<O extends ProviderOptions>(
   const create = definition.create;
   const factory = (id: string, options: O): Connector =>
     asProvider(frozen.name, frozen.options, id, options, create);
+  Object.defineProperty(factory, "name", {
+    value: frozen.name.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase()),
+  });
   return Object.freeze(Object.assign(factory, { definition: frozen }));
 }
 
@@ -287,7 +295,7 @@ export function asProviderFactory<O extends ProviderOptions>(
  * rather than "remote MCP". This is the same construction path defineProvider
  * uses; the remaining providers keep this internal adapter until item 5b.
  */
-export function asProvider<O, C extends { describe?(): ConnectorDescription }>(
+function asProvider<O, C extends { describe?(): ConnectorDescription }>(
   provider: string,
   shape: Field<unknown, unknown>,
   id: string,
@@ -330,7 +338,7 @@ function providerConstructionError(provider: string, id: string, error: unknown)
   // validation. Retain the original error class and the actionable detail.
   const prefix = error.message.startsWith(at) ? at
     : error.message.startsWith(`${provider}()`) ? `${provider}()` : "";
-  const detail = error.message.slice(prefix.length).trimStart().replace(/^requires\s+/, "")
+  const detail = error.message.slice(prefix.length).trimStart().replace(/^\./, "").replace(/^requires\s+/, "").replace(/^must be /, "")
     .replace(/^(.+) must be /, "$1 to be ")
     .replace(/^declares /, "a consistent declaration of ")
     .replace(/^with headers or credential auth requires /, "headers or credential auth to declare ");

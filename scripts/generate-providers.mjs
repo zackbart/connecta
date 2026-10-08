@@ -78,11 +78,11 @@ function readmeList(source, providers) {
     if (source.split(start).length !== 2 || source.split(end).length !== 2 || source.indexOf(end) < source.indexOf(start)) {
       throw new Error("README provider list requires one ordered pair of providers:start/end markers");
     }
-    return source.slice(0, source.indexOf(start) + start.length) + `\n${list}\n` + source.slice(source.indexOf(end));
+    return source.slice(0, source.indexOf(start) + start.length) + list + source.slice(source.indexOf(end));
   }
   const existing = /(\*\*Use maintained connections\*\* for )([\s\S]*?)(: known endpoints)/.exec(source);
   if (!existing) throw new Error("README.md is missing the bounded maintained connections list");
-  return source.replace(existing[0], `${existing[1]}${start}\n${list}\n${end}${existing[3]}`);
+  return source.replace(existing[0], `${existing[1]}${start}${list}${end}${existing[3]}`);
 }
 
 // Bundling is a loader here, not a production build. Virtual skill modules
