@@ -1,0 +1,93 @@
+{
+  "basecamp": {
+    "padded-purpose": {
+      "describe": "b1c57db5acd94ba5993a4d4d9e3b18ba3ff5dd2e8def8598eef9c3e116d406a0"
+    },
+    "default": {
+      "describe": "b1c57db5acd94ba5993a4d4d9e3b18ba3ff5dd2e8def8598eef9c3e116d406a0"
+    },
+    "personal": {
+      "describe": "b1c57db5acd94ba5993a4d4d9e3b18ba3ff5dd2e8def8598eef9c3e116d406a0"
+    }
+  },
+  "linear": {
+    "padded-purpose": {
+      "describe": "ac8c32c575e40ddd479790800e62903997d840130935e11cfa249b87003fc501"
+    },
+    "default": {
+      "describe": "ac8c32c575e40ddd479790800e62903997d840130935e11cfa249b87003fc501"
+    },
+    "read-only": {
+      "describe": "d700b477670a92485898213ebf141b82a1b8f862cfab4bb296dc1fe4421295c1"
+    }
+  },
+  "mixpanel": {
+    "padded-purpose": {
+      "describe": "b216143a0d9a2344f6f8e400511478635477d6b4f4683248c80ea7cc8bb039af"
+    },
+    "default": {
+      "describe": "b216143a0d9a2344f6f8e400511478635477d6b4f4683248c80ea7cc8bb039af"
+    },
+    "eu": {
+      "describe": "8981642d6a3101c756d1aa3eaf08bf24e1642b52b17bf39e4d3c3c5f90ba3082"
+    },
+    "in": {
+      "describe": "fc10793b458ce5990b06cbc3ebba125feb99b63f103b63459b5c1adb1d9c8fc6"
+    },
+    "credential": {
+      "describe": "01aff9479836775fdf3156c15c98a8d55f439b13e95214b118a08117004c3580"
+    },
+    "headers": {
+      "describe": "2964023850d9af8d95c5824bef781877d6e9bcb2019ca8e78e8b62a7b987dc0e"
+    }
+  },
+  "revenuecat": {
+    "padded-purpose": {
+      "describe": "a82862a5330d6d059b92c3ffaf484341f6e8a1a8c9f50495af5b530bce2d7540"
+    },
+    "default": {
+      "describe": "a82862a5330d6d059b92c3ffaf484341f6e8a1a8c9f50495af5b530bce2d7540"
+    },
+    "credential": {
+      "describe": "3e92706795c6b35018ac241e803fd357fc8f959f7eab49e30eefd9989625ff2c"
+    },
+    "headers": {
+      "describe": "ca5e234f6ce8c40b32462f6422acd090c6c4fafccf970ad31b21b1cf6cdd8d2b"
+    }
+  },
+  "stripe": {
+    "padded-purpose": {
+      "describe": "df57dadbdcbc12c8d96552982b82103cdacbf20a67fff221c3ea14965c0163ea"
+    },
+    "default": {
+      "describe": "df57dadbdcbc12c8d96552982b82103cdacbf20a67fff221c3ea14965c0163ea"
+    },
+    "production": {
+      "describe": "9194cf3d43ce84df98a0627030b199359867b5e01757a852d1b70e1b34c7d5f6"
+    },
+    "sandbox": {
+      "describe": "9194cf3d43ce84df98a0627030b199359867b5e01757a852d1b70e1b34c7d5f6"
+    },
+    "connect": {
+      "describe": "10e7ea68e4003f78efb3c9495f65b311936b88169d66adc3a73a40f0cfc6c16e"
+    },
+    "credential": {
+      "describe": "a72165e3923613c4ac70c03ff01f377856d368b8940895269d10df14f50b6fc8"
+    }
+  },
+  "notion": {
+    "mcp": {
+      "describe": "6341f3fe6fdd2c2294b2fa151ebbd262da5f254772e43e364501f7967f12343d"
+    }
+  },
+  "vercel": {
+    "mcp": {
+      "describe": "46ca431c65bb2d0b647faaabaad45e550f6063428670609238c3c9722e616f04"
+    }
+  },
+  "cloudflare": {
+    "mcp": {
+      "describe": "5ac118db1d7028f73b3772fcf2f91dd12f97906646af46b59b9f55205bfe65a3"
+    }
+  }
+}

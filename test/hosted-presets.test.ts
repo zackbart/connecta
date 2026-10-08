@@ -6,6 +6,7 @@ import before from "./fixtures/hosted-presets-abc0d176.json";
 import configChanges from "./fixtures/provider-5d-config-changes.json";
 import guideChanges from "./fixtures/hosted-5c-guide-changes.json";
 import errorGuideChanges from "./fixtures/hosted-p2-item4-guide-changes.json";
+import provenanceChanges from "./fixtures/hosted-p4-provenance-changes.json";
 import trustChanges from "./fixtures/providers-p2-item1-contract-changes.json";
 import { classifyTool } from "../src/tool-safety.js";
 import { providerFixtures } from "./providers.generated.js";
@@ -25,6 +26,7 @@ import type { Connector, ToolAnnotations } from "../src/types.js";
 
 const factories = { basecamp, linear, mixpanel, revenuecat, stripe, notion, vercel, cloudflare };
 type Name = keyof typeof factories;
+const provenanceContracts = provenanceChanges as Record<string, Record<string, { describe: string }>>;
 const upstreamContracts = trustChanges as Record<string, Record<string, { describe?: string }>>;
 const construct = (name: Name, options: unknown): Connector => factories[name]("fixture", options as never);
 
@@ -61,6 +63,8 @@ describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name
       const expected = structuredClone(row.metadata);
       // #734 removed precomputed classifications from raw API descriptions.
       if (!Object.hasOwn(configChanges, name)) expected.describeSha256 = upstreamContracts[name]?.[label]?.describe ?? expected.describeSha256;
+      // Phase 4 adds factory option-presence metadata to describe(); all other metadata stays exact.
+      expected.describeSha256 = provenanceContracts[name]?.[label]?.describe ?? expected.describeSha256;
       expected.usageGuide.content = expectedGuide(name, expected.usageGuide.content);
       if (typeof expected.usageGuide.summary === "string") {
         expected.usageGuide.summary = expectedGuide(name, expected.usageGuide.summary);
