@@ -652,11 +652,11 @@ describe("api() oauth refresh", () => {
     provider.control.refresh = "outage";
 
     const { classified } = await failure(connector.callTool("whoami", {}, ctx()));
-    expect(classified).toMatchObject({ code: "auth_required", retryable: false });
+    expect(classified).toMatchObject({ code: "downstream_oauth_required", retryable: false });
     expect((await connector.status!(ctx())).state).toBe("auth_required");
 
     provider.control.refresh = "rotate";
-    expect((await failure(connector.callTool("whoami", {}, ctx()))).classified.code).toBe("auth_required");
+    expect((await failure(connector.callTool("whoami", {}, ctx()))).classified.code).toBe("downstream_oauth_required");
     expect(provider.tokenRequests.filter((r) => r.params.get("grant_type") === "refresh_token")).toHaveLength(1);
   });
 

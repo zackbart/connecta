@@ -1044,7 +1044,7 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
       expect(text, url).not.toMatch(/trusted-(refresh|access|secret|client)/);
     }
     expect(toForeign.map(({ url }) => url)).not.toContain(`${foreign}/token`);
-    expect(classifyCallError(error).code).toBe("auth_required");
+    expect(classifyCallError(error).code).toBe("downstream_oauth_required");
     // Replacing the issuer advances the epoch and fences its older consents.
     expect(await epochOf(storage)).not.toBe(grant.epoch);
     expect((await storedGrant(storage))?.body?.issuer).toBe(foreign);
@@ -1086,7 +1086,7 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
 
     const error = await c.listTools(scope(storage)).then(() => undefined, (e: unknown) => e);
 
-    expect(classifyCallError(error).code).toBe("auth_required");
+    expect(classifyCallError(error).code).toBe("downstream_oauth_required");
     expect(server.requests.map(({ url }) => url)).not.toContain(`${trusted}/token`);
     expect(await epochOf(storage)).toMatch(/^v3:/);
     expect((await storage.list("")).filter((key) => oauthV2Keys.family.prefixes.some((prefix) => key.startsWith(prefix)))).toEqual([]);
@@ -2068,7 +2068,7 @@ describe("remoteMcp() dispatched refresh grants", () => {
       const passive = scope(storage);
       const { error, classified } = await failureOf(c.listTools(passive));
       expect(error).toBeInstanceOf(Error);
-      expect(classified).toMatchObject({ code: "auth_required", retryable: false });
+      expect(classified).toMatchObject({ code: "downstream_oauth_required", retryable: false });
       expect(classified.message).toContain("authorize_connector");
       expect(server.counts.token).toBe(1);
       // A passive call never starts consent, and never registers a client.
@@ -2103,7 +2103,7 @@ describe("remoteMcp() dispatched refresh grants", () => {
     const c = connector();
     const passive = scope(storage, seal);
     const { classified } = await failureOf(c.listTools(passive));
-    expect(classified).toMatchObject({ code: "auth_required" });
+    expect(classified).toMatchObject({ code: "downstream_oauth_required" });
     await c.closeScope?.(passive);
     expect(await reader(storage, seal).tokens()).toBeUndefined();
     expect((await storedGrant(storage))?.sealed).toBeTypeOf("string");
@@ -2114,6 +2114,28 @@ describe("remoteMcp() dispatched refresh grants", () => {
     await c.closeScope?.(authorizing);
     expect(server.redeemed).toEqual(["refresh-old"]);
   });
+
+  it.each(["plain refusal", "timeout temporarily rate limit 503", "invalid_grant"])(
+    "HTTP 403 refresh requires re-consent without replay regardless of %s (INV-5) (INV-6) (INV-9)",
+    async prose => {
+      const storage = await seededStorage();
+      const server = downstream({ current: () => Response.json({ error: "invalid_grant", error_description: prose }, { status: 403 }) });
+      const c = connector();
+      const passive = scope(storage);
+      try {
+        const { error, classified } = await failureOf(c.listTools(passive));
+        expect(classified).toMatchObject({ code: "downstream_oauth_required", retryable: false });
+        expect(classified.message).toContain("authorize_connector");
+        expect((error as Error).cause).toBeUndefined();
+        expect(await reader(storage).tokens()).toBeUndefined();
+        expect(await reader(storage).pendingAuthorizationUrl()).toBeUndefined();
+        await expect(c.listTools(scope(storage))).rejects.toMatchObject({ code: "downstream_oauth_required" });
+        expect(server.redeemed).toEqual(["refresh-old"]);
+      } finally {
+        await c.closeScope!(passive);
+      }
+    },
+  );
 
   describe("discardRefusedGrant", () => {
     it("deletes by compare-and-set only while the grant holds that refresh token in that epoch", async () => {
@@ -2187,7 +2209,7 @@ describe("remoteMcp() dispatched refresh grants", () => {
     await gate.ready;
     gate.release();
     const failures = await calls;
-    expect(failures.map((f) => f.classified.code)).toEqual(["auth_required", "auth_required", "auth_required"]);
+    expect(failures.map((f) => f.classified.code)).toEqual(["downstream_oauth_required", "downstream_oauth_required", "downstream_oauth_required"]);
     expect(server.counts.token).toBe(1);
     expect(await reader(storage).tokens()).toBeUndefined();
     expect(await reader(storage).pendingAuthorizationUrl()).toBeUndefined();
@@ -2211,7 +2233,7 @@ describe("remoteMcp() dispatched refresh grants", () => {
     const server = downstream(answer);
     const c = connector();
     const passive = scope(storage);
-    expect((await failureOf(c.listTools(passive))).classified).toMatchObject({ code: "auth_required", retryable: false });
+    expect((await failureOf(c.listTools(passive))).classified).toMatchObject({ code: "downstream_oauth_required", retryable: false });
     expect(server.counts.token).toBe(1);
     expect(server.counts.register).toBe(0);
     expect(await reader(storage).pendingAuthorizationUrl()).toBeUndefined();
@@ -2220,7 +2242,7 @@ describe("remoteMcp() dispatched refresh grants", () => {
     await c.closeScope?.(passive);
     answer.current = () => Response.json({ access_token: "access-new", token_type: "Bearer", refresh_token: "refresh-new" });
     const later = scope(storage);
-    expect((await failureOf(c.listTools(later))).classified.code).toBe("auth_required");
+    expect((await failureOf(c.listTools(later))).classified.code).toBe("downstream_oauth_required");
     await c.closeScope?.(later);
     expect(server.redeemed).toEqual(["refresh-old"]);
   });
@@ -2234,14 +2256,14 @@ describe("remoteMcp() dispatched refresh grants", () => {
     const c = connector();
     const passive = scope(storage);
     const { classified } = await failureOf(c.listTools(passive));
-    expect(classified).toMatchObject({ code: "auth_required", retryable: false });
+    expect(classified).toMatchObject({ code: "downstream_oauth_required", retryable: false });
     expect(await reader(storage).tokens()).toBeUndefined();
     expect(await reader(storage).pendingAuthorizationUrl()).toBeUndefined();
     await expect(c.status!(passive)).resolves.toMatchObject({ state: "auth_required" });
     await c.closeScope?.(passive);
     answer.current = () => Response.json({ access_token: "access-new", token_type: "Bearer", refresh_token: "refresh-new" });
     const later = scope(storage);
-    await expect(c.listTools(later)).rejects.toMatchObject({ code: "auth_required" });
+    await expect(c.listTools(later)).rejects.toMatchObject({ code: "downstream_oauth_required" });
     await c.closeScope?.(later);
     expect(server.counts.token).toBe(1);
     expect(server.redeemed).toEqual(["refresh-old"]);
@@ -2299,7 +2321,7 @@ describe("remoteMcp() dispatched refresh grants", () => {
     const { error, classified } = await failureOf(c.listTools(passive));
     expect(storageFailure?.message).toContain("refresh-new");
     expect(classified).toMatchObject({
-      code: "auth_required",
+      code: "downstream_oauth_required",
       retryable: false,
     });
     for (const surface of [String(error), JSON.stringify(classified), output()]) {
@@ -2313,11 +2335,11 @@ describe("remoteMcp() dispatched refresh grants", () => {
   });
 
   it.each([
-    ["a dead grant", () => Response.json({ error: "bad_refresh_token" }), { code: "auth_required", retryable: false }, undefined],
+    ["a dead grant", () => Response.json({ error: "bad_refresh_token" }), { code: "downstream_oauth_required", retryable: false }, undefined],
     [
       "an outage",
       () => new Response("Service Unavailable", { status: 503 }),
-      { code: "auth_required", retryable: false },
+      { code: "downstream_oauth_required", retryable: false },
       undefined,
     ],
   ])("classifies %s met by a tool call after connect", async (_label, tokenAnswer, expected, keptTokens) => {
@@ -2395,7 +2417,7 @@ describe("remoteMcp() dispatched refresh grants", () => {
     gate.release();
     const failures = await calls;
     for (const { classified } of failures) {
-      expect(classified).toMatchObject({ code: "auth_required", retryable: false });
+      expect(classified).toMatchObject({ code: "downstream_oauth_required", retryable: false });
     }
     expect(server.counts.token).toBe(1);
     expect(await reader(storage).pendingAuthorizationUrl()).toBeUndefined();

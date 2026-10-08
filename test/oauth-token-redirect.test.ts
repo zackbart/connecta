@@ -68,7 +68,7 @@ describe.each([["memory", false], ["delayed", true]] as const)("native SDK token
       const storage = store(delayed);
       const a = await adapter(kind, endpoint.issuer, storage);
       const oldEpoch = (await storedGrant(storage))!.epoch;
-      await expect(a.read()).rejects.toSatisfy((error: unknown) => classifyCallError(error).code === "auth_required");
+      await expect(a.read()).rejects.toSatisfy((error: unknown) => classifyCallError(error).code === "downstream_oauth_required");
       expect((await storedGrant(storage))!.body?.tokens).toBeUndefined();
       const spentKey = oauthRefreshSpentKeys.spent(oldEpoch, await oauthStateDigest(tokens.refresh_token));
       expect(await storage.get(spentKey)).not.toBeNull();
@@ -79,7 +79,7 @@ describe.each([["memory", false], ["delayed", true]] as const)("native SDK token
           ...(kind === "remoteMcp" ? { client: { value: { client_id: "native-client", token_endpoint_auth_method: "none" } } } : {}),
         }, oldEpoch);
         const newcomer = await adapter(kind, endpoint.issuer, storage, false);
-        await expect(newcomer.read()).rejects.toSatisfy((error: unknown) => classifyCallError(error).code === "auth_required");
+        await expect(newcomer.read()).rejects.toSatisfy((error: unknown) => classifyCallError(error).code === "downstream_oauth_required");
         expect(await storage.get(spentKey)).not.toBeNull();
       }
       expect(await endpoint.sent()).toEqual([{ path: "token", grant: "refresh_token", credential: "old-refresh" }]);

@@ -548,6 +548,11 @@ and liveness records while retaining every spent record. The SDK receives
 sanitized failure responses, and provider hooks preserve the re-consent verdict
 for passive calls. A source-level guard pins both OAuth adapters to this single
 send gate, manual token fetches, and a separate resource redirect path.
+Connector status reports `auth_required`; agent calls report
+`downstream_oauth_required` with the authorization recovery action. A 403
+during a dispatched refresh also requires re-consent because its fingerprint
+is already spent. Provider permission denials on other calls retain their
+`provider_permission_denied` recovery.
 
 Refresh and failed code-exchange answers are rebuilt from the OAuth `error`
 code alone with fixed text. The SDK logs descriptions below the configured
@@ -595,10 +600,11 @@ To prevent a downstream from targeting the host's private network:
 
 A refused URL is never requested. Discovery, registration, and code exchange
 fail with a non-retryable `connector_call_failed` naming the host and nothing
-else from the URL. A refused refresh never reaches the token endpoint, so there
-is no verdict: the grant is kept, and the SDK falls through to consent as for
-any refresh it could not complete. Redirects cannot route around the rule; the
-redirect policy follows only same-origin hops.
+else from the URL. A refused refresh never reaches the token endpoint. If the
+send gate already recorded its fingerprint, that fingerprint stays spent in
+its epoch and the grant requires re-consent. Redirects cannot route around the
+rule; token requests never follow them, and resource redirects follow only
+same-origin hops.
 
 The check is syntactic: it reads the host after the WHATWG URL parser folds
 `2130706433` and `0x7f.1` into `127.0.0.1`, and never resolves a name — the
@@ -956,7 +962,7 @@ owner's access token as `Authorization: Bearer` with these rules:
   refresh through `remoteMcp()`'s coordinator. Persist rotation even when its
   owner is cancelled after the answer. Replay once; stream bodies are refused.
 - No grant, a second 401, or a [dead refresh](#refresh-failures) means
-  `auth_required`, directing `authorize_connector`. Refresh waiter deadlines
+  `downstream_oauth_required`, directing `authorize_connector`. Refresh waiter deadlines
   return retryable `unavailable`. Latch second 401s for the request scope,
   preventing repeated refreshes by later program calls.
 - Handlers can name no storage, sealing, or owner partition; the registry owns them.

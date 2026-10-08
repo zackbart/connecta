@@ -1464,8 +1464,12 @@ describe("ProtocolError payloads at every SDK exit", () => {
         finishAuth: async () => { throw original; } }) as Transport,
     });
     const context = scope();
+    const provider = new KvOAuthProvider("svc", context.storage, REDIRECT);
+    await provider.beginFlow();
+    const state = await provider.state();
+    await provider.redirectToAuthorization(new URL(`${ISSUER}/authorize?state=${state}`));
     try {
-      const error = await connector.finishAuth!("code", context).catch((error: unknown) => error);
+      const error = await connector.finishAuth!("code", context, new URLSearchParams({ code: "code", state })).catch((error: unknown) => error);
       expect(error).toBeInstanceOf(ConnectorCallError);
       expect(error).not.toHaveProperty("data");
       expect((error as Error).cause).toBeUndefined();

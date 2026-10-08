@@ -439,7 +439,7 @@ describe("an OAuth callback's code exchange is fenced against restarts", () => {
     const completed = await storedTokens(backing, first.epoch);
     held.release();
 
-    expect((await loser as { code?: unknown }).code).toBe("invalid_grant");
+    expect((await loser as { code?: unknown }).code).toBe("downstream_oauth_required");
     expect(server.carrying("never-issued")).toBe(1);
     expect(completed).toMatchObject({ access_token: "access-1" });
     expect(await storedTokens(backing, first.epoch)).toEqual(completed);
@@ -474,7 +474,7 @@ describe("a refused code exchange invalidates only what it began with", () => {
     held.release();
 
     const error = await finishing;
-    expect((error as { code?: unknown }).code).toBe("invalid_grant");
+    expect((error as { code?: unknown }).code).toBe("downstream_oauth_required");
     expect(server.carrying("unknown-code")).toBe(1);
     expect(await storedTokens(backing, epoch)).toMatchObject({ access_token: "written-meanwhile" });
   });
@@ -490,7 +490,7 @@ describe("a refused code exchange invalidates only what it began with", () => {
 
     const error = await finish("unknown-code");
 
-    expect((error as { code?: unknown }).code).toBe("invalid_grant");
+    expect((error as { code?: unknown }).code).toBe("downstream_oauth_required");
     // Refused once, and the SDK's retry is answered with that refusal.
     expect(server.carrying("unknown-code")).toBe(1);
     expect(await storedTokens(storage, epoch)).toBeUndefined();
@@ -533,7 +533,7 @@ describe("a refused code exchange invalidates only what it began with", () => {
     const first = await c.startAuth!(scope(storage), { force: true });
     const state = required(new URL(required(first.authorizationUrl)).searchParams.get("state") ?? undefined);
     const finish = await verified(c, storage, state);
-    expect((await finish("unknown-code") as { code?: unknown }).code).toBe("invalid_grant");
+    expect((await finish("unknown-code") as { code?: unknown }).code).toBe("downstream_oauth_required");
 
     const continued = await c.startAuth!(scope(storage), { force: false });
 
