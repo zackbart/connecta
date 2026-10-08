@@ -1828,6 +1828,13 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         state.credentialDigest !== null &&
         state.credentialDigest !== credentialDigest
       ) {
+        // A slow vault/token read or digest can resume after a newer caller
+        // connected with the replacement. Never let that stale read tear down
+        // the newer connection and install the rotated-away credential.
+        if (await readCredential(ctx) !== credentialValue) {
+          throw new ConnectorCallError("connector_call_failed",
+            "The downstream credential changed while connecting; retry the operation.", { retryable: true });
+        }
         if (isClosed(state)) throw scopeEndedError();
         closeHalf(state);
       }
@@ -1956,6 +1963,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         const negotiationDigest = yield* promised(() => digestOf(JSON.stringify([
           opts.url, opts.versionNegotiation ?? "auto", opts.auth?.type,
           opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
+          credentialHeader, credentialScheme, opts.authScope ?? "shared",
+          opts.redirects ?? "none", clientMetadataUrl, oauthScope,
           state.credentialDigest, genAtStart, callerOf(ctx),
         ])));
         const prior = opts.versionNegotiation === "legacy" ? undefined
@@ -1990,7 +1999,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             // handshake. An auth failure, timeout or initialize failure does not.
             if (prior || opts.versionNegotiation === "legacy" ||
                 !(error instanceof SdkHttpError) || error.code !== SdkErrorCode.EraNegotiationFailed ||
-                error.status < 500 || !owned() || handshakeAbort.signal.aborted) throw error;
+                error.status < 500 || error.status >= 600 || !owned() || handshakeAbort.signal.aborted) throw error;
             // The SDK closed the failed probe transport. Its replacement owns
             // a new connection, with the same credential and OAuth generation.
             c = makeClient();

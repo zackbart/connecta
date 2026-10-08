@@ -1739,18 +1739,23 @@ describe("remoteMcp() connection lifecycle", () => {
     for (let ticks = 0; ticks < 5_000; ticks++) {
       const { server, clientTransport } = await connectServer();
       let initialized = false;
+      const handshakeReady = deferred<void>();
       const watched: Transport = {
         start: () => clientTransport.start(),
         send: (message, sendOpts) => {
-          if ("method" in message && message.method === "notifications/initialized") {
-            initialized = true;
-          }
-          return clientTransport.send(
+          const send = () => clientTransport.send(
             message,
             sendOpts?.relatedRequestId !== undefined
               ? { relatedRequestId: sendOpts.relatedRequestId }
               : undefined,
           );
+          if ("method" in message && message.method === "notifications/initialized") {
+            const sent = send();
+            initialized = true;
+            if (opts.startAt !== "beginning") return sent.then(() => handshakeReady.promise);
+            return sent;
+          }
+          return send();
         },
         close: () => clientTransport.close(),
       };
@@ -1779,10 +1784,18 @@ describe("remoteMcp() connection lifecycle", () => {
         settled = true;
       });
       if (opts.startAt !== "beginning") {
-        while (!initialized && !settled) await Promise.resolve();
+        let spins = 0;
+        while (!initialized && !settled) {
+          await Promise.resolve();
+          if (++spins % 512 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+        }
       }
+      handshakeReady.resolve();
       for (let tick = 0; tick < ticks && !settled; tick++) {
-        await Promise.resolve();
+        // Cache key hashing uses native crypto. Let I/O complete as the sweep
+        // grows while keeping microtask interleavings around the handshake.
+        if (tick % 64 === 63) await new Promise(resolve => setTimeout(resolve, 0));
+        else await Promise.resolve();
       }
       const lateTeardown = settled;
       await teardown(connector, context).catch(() => {});
