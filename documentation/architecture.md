@@ -145,9 +145,9 @@ package versions against a bounded release-version grammar on write and read;
 the nullable `package_version` migration leaves old rows unknown rather than
 assigning today's version to history. `/ui/api/activity` serves these facts
 read-only with the same authorization and validation as `/ui/activity`.
-Catalog drift is deployment-scoped and has no request client. Its recorder
-accepts explicit client facts through the same grammar when a context supplies
-them; ordinary deployment drift observations leave them absent.
+Catalog drift observations remain in authenticated connector status and the
+maintainer-run provider check. They produce no activity events or public health
+counts.
 
 `server/discover` advertises the served extension map, currently empty, with
 private one-hour cache hints. It includes the configured identity, icons, title,

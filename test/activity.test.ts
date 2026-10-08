@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   agentFrictionForCode,
   recordToolActivity,
-  recordCatalogDriftActivity,
-  type CatalogDriftActivityEvent,
   type ActivityRequestContext,
   type ToolCallActivityEvent,
 } from "../src/activity.js";
@@ -34,9 +32,8 @@ const EVENT: ToolCallActivityEvent = {
 describe("activity delivery", () => {
   it("INV-6: stamps every emitted event and call source independently of serverInfo, including auth failures", () => {
     const calls: ToolCallActivityEvent[] = [];
-    const drifts: CatalogDriftActivityEvent[] = [];
     const context = {
-      sink: { record: (event: ToolCallActivityEvent) => void calls.push(event), recordCatalogDrift: (event: CatalogDriftActivityEvent) => void drifts.push(event) },
+      sink: { record: (event: ToolCallActivityEvent) => void calls.push(event) },
       actor: { kind: "test" }, requestId: "r", logger: silentLogger,
       serverInfo: { name: "display", version: "999.0.0" },
       clientInfo: { name: "Claude Code", version: "2.1.0" },
@@ -44,22 +41,23 @@ describe("activity delivery", () => {
     for (const source of ["call_tool", "call_destructive_tool", "execute_code"] as const) {
       recordToolActivity(context, { connectorId: "calc", toolName: "add", address: "calc.add", source, outcome: "error", errorCode: "auth_required", durationMs: 1, attempts: 1 });
     }
-    const counts = { connectorId: "calc", unclassifiedTools: 1, unservedTools: 0, annotationConflicts: 0, schemaChanges: 0 };
-    recordCatalogDriftActivity(context, counts);
     expect(calls).toHaveLength(3);
-    expect(drifts).toHaveLength(1);
-    for (const event of [...calls, ...drifts]) {
+    for (const event of calls) {
       expect(event).toMatchObject({ packageVersion: CONNECTA_VERSION, serverVersion: "999.0.0", clientName: "Claude Code", clientVersion: "2.1.0" });
     }
-    // Deployment observations have no request client unless supplied explicitly.
-    recordCatalogDriftActivity({ sink: context.sink, serverInfo: context.serverInfo, logger: context.logger }, counts);
-    expect(drifts.at(-1)).toMatchObject({ packageVersion: CONNECTA_VERSION });
-    expect(drifts.at(-1)).not.toHaveProperty("clientName");
-    expect(drifts.at(-1)).not.toHaveProperty("clientVersion");
+    const input = { connectorId: "calc", toolName: "add", address: "calc.add", source: "call_tool", outcome: "error", errorCode: "auth_required", durationMs: 1, attempts: 1 } as const;
+    recordToolActivity({
+      sink: context.sink, actor: context.actor, requestId: context.requestId,
+      serverInfo: context.serverInfo, logger: context.logger,
+    }, input);
+    expect(calls.at(-1)).toMatchObject({ packageVersion: CONNECTA_VERSION });
+    expect(calls.at(-1)).not.toHaveProperty("clientName");
+    expect(calls.at(-1)).not.toHaveProperty("clientVersion");
     for (const value of INVALID_CLIENT_FACTS) {
-      recordCatalogDriftActivity({ ...context, clientInfo: { name: value, version: value } as typeof context.clientInfo }, counts);
-      expect(drifts.at(-1)).not.toHaveProperty("clientName");
-      expect(drifts.at(-1)).not.toHaveProperty("clientVersion");
+      recordToolActivity({ ...context, clientInfo: { name: value, version: value } as typeof context.clientInfo }, input);
+      expect(calls.at(-1)).toMatchObject({ packageVersion: CONNECTA_VERSION });
+      expect(calls.at(-1)).not.toHaveProperty("clientName");
+      expect(calls.at(-1)).not.toHaveProperty("clientVersion");
     }
   });
 
