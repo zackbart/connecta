@@ -2,7 +2,8 @@
 
 This repository is deployment configuration, not a copy of Connecta itself.
 
-- Edit `src/index.ts` for connectors, authentication, storage, and public URL.
+- Edit `src/connecta.config.ts` for connectors, authentication, storage, public
+  URL, and optional modules. `src/index.ts` only starts it.
 - Keep `cloudflareAccessAuth()` as the inbound auth provider. Cloudflare Access
   authenticates the request before the Worker runs; do not add JWT parsing or a
   second Worker-side identity gate.
@@ -48,9 +49,8 @@ This repository is deployment configuration, not a copy of Connecta itself.
 - Brand the operator UI in `operatorUi({ branding })`: product and owner names,
   description, favicon, and `theme` (`accent`, `radius`, `fontFamily`,
   `monoFamily`, `colorScheme`). Ask the deployment's owner for their brand
-  rather than leaving the default. The commented block above
-  `ui: operatorUi()` in `src/index.ts` shows the shape; README "UI and
-  encrypted credentials" covers the rest.
+  rather than leaving the default. README "UI and encrypted credentials" shows
+  the shape.
 - After configuration changes, typecheck: inside the connecta repository that
   is `npm run check:examples`; a copied deployment runs its own `tsc --noEmit`.
   After deployment, connect both Claude and ChatGPT to `<PUBLIC_URL>/mcp` and

@@ -5,6 +5,9 @@ import type {
   Connector,
   ConnectorCallAdmissionPolicy,
 } from "../types.js";
+import { keys, optionsOf } from "../config-schema.js";
+import { PROVIDER_COMMON } from "../connectors/option-shapes.js";
+import { asProvider } from "../described.js";
 
 /**
  * Basecamp's one hosted MCP endpoint, streamable HTTP.
@@ -448,8 +451,16 @@ ${
   }`;
 }
 
+
+/** The closed options basecamp() accepts; see `assertKnownOptions`. */
+const BASECAMP_OPTIONS = optionsOf<BasecampOptions>()({ ...PROVIDER_COMMON, ...keys("clientMetadataUrl") });
+
 /** A maintained Basecamp hosted-MCP connection. */
 export function basecamp(id: string, options: BasecampOptions): Connector {
+  return asProvider("basecamp", BASECAMP_OPTIONS, id, options, basecampConnector);
+}
+
+function basecampConnector(id: string, options: BasecampOptions): Connector {
   const purpose = options.purpose.trim();
   if (!purpose) {
     throw new Error("basecamp() requires a non-empty account purpose.");

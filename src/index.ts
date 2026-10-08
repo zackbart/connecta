@@ -1,11 +1,10 @@
-import type { CredentialVault } from "./credential-contract.js";
 import {
   credentialTestRule,
   describeCredentialTestMismatch,
 } from "./credential-rules.js";
 import { Registry } from "./registry.js";
 import { intersectAccess, parseConnectorAccess, POOL_NAME_RE } from "./connector-access.js";
-import type { ConnectorAccess, ConnectorGrant, ResolvedPool } from "./connector-access.js";
+import type { ConnectorAccess, ResolvedPool } from "./connector-access.js";
 import { createFetchHandler } from "./server.js";
 import { createExecuteTool, runClaimMs } from "./execute.js";
 import {
@@ -13,9 +12,13 @@ import {
   droppedThemeTokens,
   droppedUiAuthUrls,
 } from "./branding.js";
-import { memoryStorage } from "./storage/memory.js";
-import { CONNECTA_VERSION } from "./version.js";
-import { assertExecutor } from "./executor-contract.js";
+import {
+  executeLimits,
+  readConfig,
+  type ConnectaConfig,
+  type ResolvedConfig,
+} from "./config.js";
+import { describeConfig, type ConnectaConfigDescription } from "./describe-config.js";
 export { customExecutor, type CustomExecutorOptions } from "./executor-contract.js";
 import {
   AdmissionController,
@@ -23,581 +26,50 @@ import {
   isAdmittingExecutor,
   withExecutorAdmission,
 } from "./executor-admission.js";
-import type {
-  AccessTokensModule,
-  ActivityModule,
-  ArtifactsModule,
-  OperatorSurface,
-} from "./module-contracts.js";
-import { DEFAULT_MAX_WRITES } from "./exempt-writes.js";
-import { disposeEdgeRuntime } from "./runtime/run.js";
 import { NO_EXEMPTIONS, type ApprovalPolicy } from "./tool-safety.js";
-import { createCoreRuntime, resolveLogger } from "./runtime/services.js";
 export type {
   AccessTokensModule,
   ActivityModule,
   ArtifactsModule,
+  ArtifactsModuleDescription,
   OperatorSurface,
 } from "./module-contracts.js";
 export type { CredentialVault, CredentialMetadata } from "./credential-contract.js";
-import type {
-  AuthenticatedIdentity,
-  Connector,
-  Executor,
-  IdentityReference,
-  InboundAuth,
-  KVStorage,
-  Logger,
-} from "./types.js";
-
-// These types are the canonical record of the configuration surface: every
-// field's default and operator-facing meaning belongs in its own doc comment
-// below, where a deployment author reads it from the editor.
-
-/** Tool-catalog caching, persistence, stale fallback, and probe deadlines. */
-export interface ConnectaDiscoveryConfig {
-  /**
-   * Maximum connector catalogs/status probes fetched at once by discovery
-   * operations. Default 4.
-   */
-  concurrency?: number;
-  /** Tool-list cache TTL (seconds). Default 300. */
-  catalogTtlSeconds?: number;
-  /**
-   * Persist serializable remote tool catalogs in storage so cold isolates can
-   * discover tools without a downstream handshake. Default true.
-   */
-  persistCatalog?: boolean;
-  /**
-   * How long an expired persisted catalog remains available as a fallback
-   * when a live refresh fails. Default 3600 seconds.
-   */
-  staleCatalogSeconds?: number;
-  /**
-   * Deadline (ms) for each downstream probe/catalog call fanned out by
-   * `search_tools` and by `connecta.search`/`connecta.describe` inside
-   * `execute_code`. Defaults to 30_000. A timed-out connector degrades
-   * independently; this does not apply to tool calls. Catalog walks receive the
-   * same cancellation signal, which aborts an in-flight page where supported and
-   * prevents another from starting.
-   */
-  probeTimeoutMs?: number;
-}
-
-/** Deployment-wide call deadlines and inline-result paging thresholds. */
-export interface ConnectaCallsConfig {
-  /**
-   * Deadline (ms) for `call_tool`/`call_destructive_tool` calls that pass no
-   * `timeoutMs`. An explicit per-call value wins. Opt-in: unset by default, so
-   * existing long-running calls gain no surprise deadline.
-   *
-   * Each call makes one attempt. `execute_code` host calls are
-   * unaffected because they already carry their own bound.
-   */
-  defaultTimeoutMs?: number;
-  /**
-   * Max inline result size (bytes) before truncation and `get_result` paging.
-   * Must be a finite whole number >= 1; invalid values warn and fall back to
-   * 24_000. Connectors may override it individually.
-   */
-  maxResultBytes?: number;
-}
-
-/** Runtime-wide bounds for transient direct-call result paging. */
-export interface ConnectaResultsConfig {
-  /** Stored bytes, including the paging envelope. Default 8 MiB. Zero disables stashing. */
-  maxStashBytes?: number;
-  /** Stored or in-flight entries. Default 64. Zero disables stashing. */
-  maxStashEntries?: number;
-}
-
-/** Budgets for execute_code programs: host calls and rich output (`connecta.emit`). */
-export interface ConnectaExecuteConfig {
-  /**
-   * Aggregate serialized bytes `connecta.emit` accepts per run. Default
-   * 4_000_000 — a transport bound, not a context bound: emitted image/audio
-   * blocks reach the model as media, not base64 text. Invalid values fall
-   * back to the default.
-   */
-  maxEmittedBytes?: number;
-  /** Content blocks `connecta.emit` accepts per run. Default 32. */
-  maxEmittedBlocks?: number;
-  /**
-   * Host calls one program may make. Default 20. Invalid values fall back to
-   * the default.
-   */
-  maxHostCalls?: number;
-  /**
-   * Deadline for each host call a program makes, in milliseconds. Default
-   * 15_000. Raise it for providers whose legitimate calls run longer, such as
-   * analytics queries; `call_tool`'s own `timeoutMs` is unaffected. Invalid
-   * values fall back to the default.
-   */
-  hostCallTimeoutMs?: number;
-  /**
-   * Hard ceiling on one execution, in milliseconds, enforced outside the
-   * sandbox. Default 120_000, above both executors' own deadlines (QuickJS
-   * 30_000, the Dynamic Worker 60_000), so it only ends a run whose executor
-   * never settled; that run fails as unresponsive and its admission slot is
-   * released. Keep it above any raised executor deadline. Invalid values
-   * fall back to the default.
-   */
-  watchdogMs?: number;
-  /**
-   * Config-exempt writes one program may send, on top of the host-call
-   * budget every call already spends. Default 10. Invalid values fall back
-   * to the default.
-   */
-  maxWrites?: number;
-  /**
-   * Which writes a program may make without asking. A program runs only
-   * explicitly read-only tools and these; every other write is refused and
-   * goes through `call_destructive_tool`, where the host asks. Keys are
-   * connector ids (all of that connector's tools) or `connector.tool`
-   * addresses (that tool); values are `"never"` (never ask) or `"ask"`. The
-   * most specific key wins, and `"ask"` switches off a connector's own
-   * default. An exempt write still spends the write budget and is recorded
-   * in activity; it is never read-only anywhere else — discovery still lists
-   * it as approval-required and `call_tool` still refuses it. An unknown
-   * connector id, or an `api()` address its tools do not include, refuses to
-   * construct; a remote connector's tool names load later, so an address
-   * naming one it never serves simply never matches.
-   */
-  approval?: Readonly<Record<string, "never" | "ask">>;
-}
-
-export interface AdmissionPoolConfig {
-  /** Simultaneous work admitted to this pool. */
-  concurrency?: number;
-  /** Callers allowed to wait behind active work. Set zero to fail fast. */
-  maxQueueSize?: number;
-  /** Maximum queue wait in milliseconds. */
-  queueTimeoutMs?: number;
-  /** Retry hint returned with overload failures, in milliseconds. */
-  retryAfterMs?: number;
-}
-
-export interface RequestAdmissionConfig extends AdmissionPoolConfig {
-  /** Hard lifetime of an admitted /mcp request. Default 300,000 ms. */
-  maxDurationMs?: number;
-}
-
-/**
- * Runtime-portable server-memory boundaries. `/health` and operator routes do
- * not consume these permits, so they remain responsive during MCP saturation.
- */
-export interface ConnectaAdmissionConfig {
-  /**
-   * The `/mcp` request boundary. Defaults to 16 active, 32 queued, and a
-   * 5-second maximum wait.
-   */
-  requests?: RequestAdmissionConfig;
-  /**
-   * Fallback pool for an `executor` that does not implement its own `acquire`.
-   * Defaults to 2 active, 8 queued, and a 5-second maximum wait. Bounded
-   * executors (including `quickJsExecutor`) keep their own tighter pool.
-   */
-  code?: AdmissionPoolConfig;
-}
-
-/** Config-owned identity rules for one deployment and tenant. */
-export type ConnectorPermission = "all" | "none" | readonly string[];
-
-export interface ConnectaIdentityConfig {
-  /**
-   * What this admitted identity may discover and call: `"all"`, or a list
-   * whose entries are connector ids (the whole connector) and `connector.tool`
-   * addresses (that tool only), or `{ tool: "connector.tool",
-   * requireReadOnly: true }` for an exact tool only while its loaded catalog
-   * explicitly classifies it read-only. Grants are additive: an unrestricted
-   * connector or address grant wins over the guarded form. An address naming
-   * a tool the catalog lacks is unreachable and warned once, never widened.
-   */
-  connectorAccess?(
-    identity: Readonly<AuthenticatedIdentity>,
-  ): "all" | readonly ConnectorGrant[] | Promise<"all" | readonly ConnectorGrant[]>;
-  /** Global payload-free activity reads. Defaults to interactive humans. */
-  activityAccess?(
-    principal: Readonly<IdentityReference>,
-  ): boolean | Promise<boolean>;
-  /** Shared credential and OAuth administration. Defaults to none. */
-  credentialAdministration?(
-    identity: Readonly<AuthenticatedIdentity>,
-  ): ConnectorPermission | Promise<ConnectorPermission>;
-  /** Client-token lifecycle management by interactive humans. Defaults to false. */
-  accessTokenManagement?(
-    identity: Readonly<AuthenticatedIdentity>,
-  ): boolean | Promise<boolean>;
-  /** Connecting or changing the caller's personal account. Defaults to none. */
-  personalConnection?(
-    identity: Readonly<AuthenticatedIdentity>,
-  ): ConnectorPermission | Promise<ConnectorPermission>;
-
-}
-
-/**
- * A named tool pool served at `/mcp/<name>`. The pool is the slice a client
- * pointed at that endpoint may see; the identity's own `connectorAccess`
- * remains its ceiling and the pool can only narrow it.
- */
-export interface ConnectaPoolConfig {
-  /** Connector ids and exact `connector.tool` addresses in this pool. */
-  tools: readonly string[];
-  /**
-   * Whether this admitted identity may open the pool. Denied by default:
-   * a pool with no grant serves nobody. A false return, a throw, and an
-   * undeclared pool name are the same 404.
-   */
-  grant?(identity: Readonly<AuthenticatedIdentity>): boolean | Promise<boolean>;
-}
-
-export interface ConnectaConfig {
-  connectors: Connector[];
-  /** Inbound auth adapters. Includes bearerToken(...); omit for open (dev). */
-  auth?: InboundAuth | InboundAuth[];
-  /** Code-derived connection visibility and independent management permissions. */
-  identity?: ConnectaIdentityConfig;
-  /** Named tool pools, each served at `/mcp/<name>` to identities its grant admits. */
-  pools?: Record<string, ConnectaPoolConfig>;
-  /**
-   * The deployment's one store: `d1Storage(env.CONNECTA_DB)` from
-   * `@zackbart/connecta/d1` on Workers, `sqliteStorage(path)` from
-   * `@zackbart/connecta/sqlite` on Node. Defaults to memoryStorage(), which
-   * forgets everything on restart.
-   */
-  storage?: KVStorage;
-  /**
-   * Public base URL. Defaults to the request origin per-request. Configuring an
-   * HTTPS URL also redirects matching inbound HTTP requests to HTTPS.
-   */
-  publicUrl?: string;
-  /**
-   * Exact browser MCP origins, or "*". Defaults to publicUrl's origin and
-   * HTTP(S) loopback origins at any port. Originless clients are admitted.
-   */
-  allowedOrigins?: readonly string[] | "*";
-  /** Optional recorder and reader, created by activityHistory() from /activity. */
-  activity?: ActivityModule;
-  /** Replaceable owner-partitioned credential storage. Omit for config-owned secrets. */
-  vault?: CredentialVault;
-  /** Optional connection UI, created by operatorUi() from /ui. */
-  ui?: OperatorSurface;
-  /**
-   * Optional team pages over stored data, created by artifacts() from
-   * /artifacts. Adds the built-in `artifacts` connector; needs `publicUrl`,
-   * because the links it hands out are shared.
-   */
-  artifacts?: ArtifactsModule;
-  /** Optional managed client tokens, created by accessTokens() from /auth/access-tokens. */
-  accessTokens?: AccessTokensModule;
-  /** Optional dedicated HTTPS origin that serves only artifact pages and their library. */
-  artifactOrigin?: string;
-  /** Tool-catalog caching, persistence, stale fallback, and probe deadlines. */
-  discovery?: ConnectaDiscoveryConfig;
-  /** Deployment-wide call deadlines and result paging threshold. */
-  calls?: ConnectaCallsConfig;
-  /** Runtime-wide transient result stash limits, shared across subjects. */
-  results?: ConnectaResultsConfig;
-  /** Budgets for the `connecta.emit` rich-output channel in execute_code. */
-  execute?: ConnectaExecuteConfig;
-  /** Bounded MCP and fallback code-mode admission. */
-  admission?: ConnectaAdmissionConfig;
-  /** Diagnostic output. Use "silent" to disable all diagnostic logging. */
-  logger?: Logger | "silent";
-  serverInfo?: {
-    name?: string;
-    version?: string;
-    /** Human-readable name clients may show instead of `name`. */
-    title?: string;
-    /** Homepage clients may link from the server listing. */
-    websiteUrl?: string;
-    /** MCP icons-spec entries; clients render these instead of a scraped favicon. */
-    icons?: Array<{ src: string; mimeType?: string; sizes?: string[] }>;
-  };
-  /** Deployment metadata exposed by /health (for example a Worker version). */
-  deploymentInfo?: Record<string, unknown>;
-  /**
-   * Required sandbox for `execute_code`. Workers use
-   * `workerExecutor({ loader: env.LOADER })` from
-   * `@zackbart/connecta/worker`; Node uses `quickJsExecutor()` from
-   * `@zackbart/connecta/quickjs`. Direct upstream DynamicWorkerExecutor
-   * construction throws because its request-owned handles cannot be released.
-   * Custom sandboxes explicitly opt in with
-   * `customExecutor(myExecutor, { lifecycle: "self-managed" })`.
-   */
-  executor: Executor;
-}
-
+export { defineConfig } from "./config.js";
+export type {
+  AdmissionPoolConfig,
+  ConnectaAdmissionConfig,
+  ConnectaCallsConfig,
+  ConnectaConfig,
+  ConnectaDiscoveryConfig,
+  ConnectaExecuteConfig,
+  ConnectaIdentityConfig,
+  ConnectaPoolConfig,
+  ConnectaResultsConfig,
+  ConnectorPermission,
+  RequestAdmissionConfig,
+} from "./config.js";
+export type {
+  ConfigValueSource,
+  ConnectaConfigDescription,
+  DescribedConnector,
+  DescribedLimit,
+} from "./describe-config.js";
 export interface Connecta {
   /** Web-standard fetch handler. Usable as `export default { fetch: connecta.fetch }`. */
   fetch: (request: Request, env?: unknown, ctx?: unknown) => Promise<Response>;
   registry: Registry;
+  /**
+   * A secret-free snapshot of the configuration this deployment runs with,
+   * built once at construction: limits and where each came from, auth
+   * providers, identity rules, pools, modules, and every connector's source,
+   * endpoint, auth mode, and static tools. Header values, keys, client
+   * secrets, credentials, and functions never appear. The same object is
+   * returned on every call.
+   */
+  describeConfig: () => ConnectaConfigDescription;
   /** Drain and release configured executor resources. Idempotent. */
   close: () => Promise<void>;
-}
-
-const REQUEST_ADMISSION_DEFAULTS = {
-  concurrency: 16,
-  maxQueueSize: 32,
-  queueTimeoutMs: 5_000,
-  retryAfterMs: 1_000,
-} as const;
-const DEFAULT_REQUEST_MAX_DURATION_MS = 300_000;
-
-const CODE_ADMISSION_DEFAULTS = {
-  concurrency: 2,
-  maxQueueSize: 8,
-  queueTimeoutMs: 5_000,
-  retryAfterMs: 1_000,
-} as const;
-
-function admissionController(
-  options: AdmissionPoolConfig | undefined,
-  defaults: typeof REQUEST_ADMISSION_DEFAULTS | typeof CODE_ADMISSION_DEFAULTS,
-  maxDurationMs?: number,
-): AdmissionController {
-  return new AdmissionController({
-    concurrency: options?.concurrency ?? defaults.concurrency,
-    maxQueueSize: options?.maxQueueSize ?? defaults.maxQueueSize,
-    queueTimeoutMs: options?.queueTimeoutMs ?? defaults.queueTimeoutMs,
-    retryAfterMs: options?.retryAfterMs ?? defaults.retryAfterMs,
-    ...(maxDurationMs !== undefined ? { maxDurationMs } : {}),
-  });
-}
-
-/** Bearer providers are checked before Clerk (per spec). */
-function normalizeAuth(auth: ConnectaConfig["auth"]): InboundAuth[] {
-  const list = auth ? (Array.isArray(auth) ? auth : [auth]) : [];
-  return [...list].sort((a, b) => {
-    const rank = (x: InboundAuth) => (x.kind === "bearer" ? 0 : 1);
-    return rank(a) - rank(b);
-  });
-}
-
-type OptionSchema =
-  | null
-  | { readonly [key: string]: OptionSchema }
-  | readonly [OptionSchema];
-
-type ClosedOptionSchema<T extends object> = {
-  readonly [K in keyof T]-?: OptionSchema;
-};
-
-const admissionPoolSchema = {
-  concurrency: null,
-  maxQueueSize: null,
-  queueTimeoutMs: null,
-  retryAfterMs: null,
-} as const satisfies ClosedOptionSchema<AdmissionPoolConfig>;
-
-const requestAdmissionSchema = {
-  ...admissionPoolSchema,
-  maxDurationMs: null,
-} as const satisfies ClosedOptionSchema<RequestAdmissionConfig>;
-
-const CONFIG_SCHEMA = {
-  connectors: null,
-  auth: null,
-  identity: {
-    connectorAccess: null,
-    activityAccess: null,
-    credentialAdministration: null,
-    personalConnection: null,
-    accessTokenManagement: null,
-  } satisfies ClosedOptionSchema<ConnectaIdentityConfig>,
-  pools: null,
-  storage: null,
-  publicUrl: null,
-  allowedOrigins: null,
-  activity: null,
-  vault: null,
-  ui: null,
-  artifacts: null,
-  accessTokens: null,
-  artifactOrigin: null,
-  discovery: {
-    concurrency: null,
-    catalogTtlSeconds: null,
-    persistCatalog: null,
-    staleCatalogSeconds: null,
-    probeTimeoutMs: null,
-  } satisfies ClosedOptionSchema<ConnectaDiscoveryConfig>,
-  results: {
-    maxStashBytes: null,
-    maxStashEntries: null,
-  } satisfies ClosedOptionSchema<ConnectaResultsConfig>,
-  calls: {
-    defaultTimeoutMs: null,
-    maxResultBytes: null,
-  } satisfies ClosedOptionSchema<ConnectaCallsConfig>,
-  execute: {
-    maxEmittedBytes: null,
-    maxEmittedBlocks: null,
-    maxHostCalls: null,
-    hostCallTimeoutMs: null,
-    watchdogMs: null,
-    maxWrites: null,
-    approval: null,
-  } satisfies ClosedOptionSchema<ConnectaExecuteConfig>,
-  admission: {
-    requests: requestAdmissionSchema,
-    code: admissionPoolSchema,
-  } satisfies ClosedOptionSchema<ConnectaAdmissionConfig>,
-  logger: null,
-  serverInfo: {
-    name: null,
-    version: null,
-    title: null,
-    websiteUrl: null,
-    icons: [
-      {
-        src: null,
-        mimeType: null,
-        sizes: null,
-      } satisfies ClosedOptionSchema<
-        NonNullable<NonNullable<ConnectaConfig["serverInfo"]>["icons"]>[number]
-      >,
-    ],
-  } satisfies ClosedOptionSchema<NonNullable<ConnectaConfig["serverInfo"]>>,
-  deploymentInfo: null,
-  executor: null,
-} as const satisfies Record<keyof ConnectaConfig, OptionSchema>;
-
-function unknownOptionPaths(
-  value: unknown,
-  path: string,
-  schema: OptionSchema,
-): string[] {
-  if (schema === null) return [];
-  if (Array.isArray(schema)) {
-    if (!Array.isArray(value)) return [];
-    return value.flatMap((entry, index) =>
-      unknownOptionPaths(entry, `${path}[${index}]`, schema[0]),
-    );
-  }
-  if (typeof value !== "object" || value === null) return [];
-  const known = new Set(Object.keys(schema));
-  const unknown = Reflect.ownKeys(value)
-    .filter((key) => typeof key !== "string" || !known.has(key))
-    .map((key) => `${path}.${String(key)}`)
-    .sort();
-  if (unknown.length > 0) return unknown;
-  for (const [key, childSchema] of Object.entries(schema)) {
-    unknown.push(
-      ...unknownOptionPaths(
-        (value as Record<string, unknown>)[key],
-        `${path}.${key}`,
-        childSchema,
-      ),
-    );
-  }
-  return unknown;
-}
-
-/** Pause-only options #672 removed with `resume_execution`. */
-const RETIRED_PAUSE_OPTIONS = [
-  "ConnectaConfig.execute.resumableWrites",
-  "ConnectaConfig.execute.pausedRunTtlSeconds",
-];
-
-function rejectUnknownOptions(paths: string[]): void {
-  if (paths.length === 0) return;
-  throw new Error(
-    `Unknown Connecta configuration option${paths.length === 1 ? "" : "s"}:\n` +
-      paths.map((path) => `- ${path}`).join("\n") +
-      (paths.includes("ConnectaConfig.credentials") ? "\nUse vault: encryptedCredentialVault(storage, key) from @zackbart/connecta/credentials." : "") +
-      (paths.includes("ConnectaConfig.branding") ? "\nMove branding into ui: operatorUi({ branding }) from @zackbart/connecta/ui." : "") +
-      (paths.some((path) => RETIRED_PAUSE_OPTIONS.includes(path))
-        ? "\nPrograms no longer pause at writes, so there is nothing to configure: execute_code runs read-only and config-exempt tools, and every other write goes through call_destructive_tool (issue #672). Delete the option."
-        : ""),
-  );
-}
-
-/** Reject JavaScript typos and removed options before construction does work. */
-function assertKnownConfig(config: ConnectaConfig): void {
-  rejectUnknownOptions(
-    unknownOptionPaths(config, "ConnectaConfig", CONFIG_SCHEMA),
-  );
-  if (config.results !== undefined) {
-    if (!config.results || typeof config.results !== "object" || Array.isArray(config.results)) {
-      throw new Error("ConnectaConfig.results must be an object");
-    }
-    for (const key of ["maxStashBytes", "maxStashEntries"] as const) {
-      const value = config.results[key];
-      if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
-        throw new Error(`ConnectaConfig.results.${key} must be a non-negative safe integer`);
-      }
-    }
-  }
-  if (config.vault && (["get", "getAll", "set", "setAll", "metadata", "delete"].some(key => typeof (config.vault as unknown as Record<string, unknown>)[key] !== "function") || ["seal", "open", "signOAuthHandoff", "verifyOAuthHandoff"].some(key => !["undefined", "function"].includes(typeof (config.vault as unknown as Record<string, unknown>)[key])))) throw new Error("ConnectaConfig.vault must implement CredentialVault");
-  if (config.ui && (typeof config.ui.handle !== "function" || typeof config.ui.credentialHandoffUrl !== "function" || !Array.isArray(config.ui.reservedPaths))) throw new Error("ConnectaConfig.ui must be created with operatorUi(...)");
-  const activity = config.activity as unknown;
-  if (
-    activity !== undefined &&
-    (typeof activity !== "object" ||
-      activity === null ||
-      typeof (activity as ActivityModule).recordTool !== "function")
-  ) {
-    throw new Error(
-      "ConnectaConfig.activity must be created with activityHistory(...)",
-    );
-  }
-  if (config.accessTokens !== undefined && (!config.accessTokens ||
-    typeof config.accessTokens.auth?.authorize !== "function" ||
-    config.accessTokens.auth.interactiveOperator ||
-    typeof config.accessTokens.handle !== "function")) {
-    throw new Error("ConnectaConfig.accessTokens must be created with accessTokens(storage) from @zackbart/connecta/auth/access-tokens; reuse your existing storage to preserve tokens");
-  }
-  const artifacts = config.artifacts as unknown;
-  if (artifacts !== undefined) {
-    const connector = (artifacts as Partial<ArtifactsModule> | null)?.connector;
-    if (
-      typeof artifacts !== "object" ||
-      artifacts === null ||
-      !connector ||
-      connector.id !== "artifacts" ||
-      typeof connector.callTool !== "function" ||
-      typeof (artifacts as Partial<ArtifactsModule>).handle !== "function"
-    ) {
-      throw new Error(
-        "ConnectaConfig.artifacts must be created with artifacts(...) from @zackbart/connecta/artifacts",
-      );
-    }
-    if (config.connectors?.some((candidate) => candidate?.id === "artifacts")) {
-      throw new Error(
-        'Connector id "artifacts" is reserved by the artifacts module; rename ' +
-          "your connector or drop the artifacts option",
-      );
-    }
-    if (!config.publicUrl) {
-      throw new Error(
-        "ConnectaConfig.artifacts needs publicUrl: artifact links are shared " +
-          "with teammates, so they must name the deployment's own origin, never " +
-          "one taken from a request's Host header",
-      );
-    }
-  }
-  if (config.artifactOrigin !== undefined) {
-    if (!config.artifacts || !config.ui || !config.publicUrl) {
-      throw new Error("ConnectaConfig.artifactOrigin needs artifacts, ui, and publicUrl");
-    }
-    if (typeof config.artifactOrigin !== "string") {
-      throw new Error("ConnectaConfig.artifactOrigin must be an HTTPS origin");
-    }
-    let origin: URL;
-    try {
-      origin = new URL(config.artifactOrigin);
-    } catch {
-      throw new Error("ConnectaConfig.artifactOrigin must be an HTTPS origin");
-    }
-    if (
-      origin.protocol !== "https:" ||
-      origin.toString() !== `${origin.origin}/` ||
-      origin.origin === new URL(config.publicUrl).origin
-    ) {
-      throw new Error("ConnectaConfig.artifactOrigin must be a distinct HTTPS origin");
-    }
-  }
 }
 
 /**
@@ -608,31 +80,17 @@ function assertKnownConfig(config: ConnectaConfig): void {
  * checked at catalog load instead and stay unreachable until they match.
  */
 function resolvePools(
-  pools: Record<string, ConnectaPoolConfig> | undefined,
+  pools: ResolvedConfig["pools"],
   registry: Registry,
 ): Map<string, ResolvedPool> {
   const resolved = new Map<string, ResolvedPool>();
   if (!pools) return resolved;
-  if (typeof pools !== "object" || Array.isArray(pools)) {
-    throw new Error("ConnectaConfig.pools must be an object keyed by pool name");
-  }
+  // The schema has already refused a pool that is not an object, a missing or
+  // non-array `tools`, a non-function `grant`, and a misspelled key — a
+  // misspelled `grant` would otherwise boot as a deny-all pool.
   for (const [name, pool] of Object.entries(pools)) {
     if (!POOL_NAME_RE.test(name)) {
       throw new Error(`ConnectaConfig.pools: pool name "${name}" must match [a-z0-9_-]+`);
-    }
-    if (!pool || typeof pool !== "object" || !Array.isArray(pool.tools)) {
-      throw new Error(`ConnectaConfig.pools.${name}: tools must be an array of connector ids or connector.tool addresses`);
-    }
-    if (pool.grant !== undefined && typeof pool.grant !== "function") {
-      throw new Error(`ConnectaConfig.pools.${name}: grant must be a function`);
-    }
-    // A misspelled `grant` would otherwise boot as a deny-all pool with only a
-    // per-request log line to say so; that is fail-closed, but the rule here
-    // is that structural mistakes refuse to boot.
-    for (const key of Object.keys(pool)) {
-      if (key !== "tools" && key !== "grant") {
-        throw new Error(`ConnectaConfig.pools.${name}: unknown option "${key}"`);
-      }
     }
     let access: ConnectorAccess;
     try {
@@ -669,7 +127,7 @@ function resolvePools(
  * on one is kept and simply never matches a tool it does not serve.
  */
 function resolveApprovalPolicy(
-  approval: ConnectaExecuteConfig["approval"],
+  approval: ResolvedConfig["execute"]["approval"],
   registry: Registry,
 ): ApprovalPolicy {
   for (const connector of registry.listConnectors()) {
@@ -679,12 +137,9 @@ function resolveApprovalPolicy(
       );
     }
   }
+  // The schema has already refused a non-object and any accessor entry, so
+  // reading the entries runs no getter.
   if (approval === undefined) return NO_EXEMPTIONS;
-  if (!approval || typeof approval !== "object" || Array.isArray(approval)) {
-    throw new Error(
-      "ConnectaConfig.execute.approval must be an object keyed by connector ids and connector.tool addresses",
-    );
-  }
   const connectors = new Map<string, "never" | "ask">();
   const tools = new Map<string, "never" | "ask">();
   for (const [key, value] of Object.entries(approval)) {
@@ -715,24 +170,14 @@ function resolveApprovalPolicy(
   return { connectors, tools };
 }
 
-/** A positive whole number, or the default when the value is unusable. */
-function positiveWhole(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 1
-    ? Math.trunc(value)
-    : fallback;
-}
-
 /**
  * One-time construction warnings for deployment shapes that run fine but are
  * usually unintended. Warning-only — never throws and never changes behavior;
  * each deployment-wide condition emits at most one `logger.warn`, and each
  * per-connector condition at most one per connector it names.
  */
-function warnInsecureConfig(
-  config: ConnectaConfig,
-  inboundAuth: InboundAuth[],
-  logger: Logger,
-): void {
+function warnInsecureConfig(config: ResolvedConfig): void {
+  const { auth: inboundAuth, logger } = config;
   const oauthConnectors = config.connectors.filter((c) => c.finishAuth);
   const hasCredentialConnector = config.connectors.some((c) => c.credential);
 
@@ -878,132 +323,75 @@ function warnInsecureConfig(
   }
 }
 
-/**
- * Refuse storage without the atomic claim and enumeration every subsystem now
- * relies on, at construction rather than at the first OAuth callback (INV-11).
- * The likeliest cause is a 0.28 deployment still passing its Workers KV
- * adapter, which could never offer either guarantee.
- */
-function assertStorage(storage: KVStorage | undefined): void {
-  if (storage === undefined) return;
-  const missing = (["get", "set", "delete", "list", "compareAndSet"] as const)
-    .filter((method) => typeof (storage as Partial<KVStorage> | null)?.[method] !== "function");
-  if (missing.length === 0) return;
-  throw new Error(
-    `ConnectaConfig.storage must implement ${missing.join(" and ")}. ` +
-      "Use d1Storage(env.CONNECTA_DB) from @zackbart/connecta/d1 on Workers, " +
-      "sqliteStorage(path) from @zackbart/connecta/sqlite on Node, or " +
-      "memoryStorage() in tests. Workers KV is not supported: it is eventually " +
-      "consistent and cannot compare-and-set.",
-  );
-}
-
 export function createConnecta(config: ConnectaConfig): Connecta {
-  assertKnownConfig(config);
-  if (!config.executor) {
-    throw new Error(
-      "ConnectaConfig.executor is required. Configure quickJsExecutor() from " +
-        '"@zackbart/connecta/quickjs" on Node, or ' +
-        "workerExecutor({ loader: env.LOADER }) from " +
-        '"@zackbart/connecta/worker" around DynamicWorkerExecutor on Workers.',
-    );
-  }
-  assertExecutor(config.executor);
-  assertStorage(config.storage);
-  const storage = config.storage ?? memoryStorage();
-  const logger = resolveLogger(config.logger);
-  const credentialVault = config.vault;
-  const configuredAuth = normalizeAuth([
-    ...(config.accessTokens ? [config.accessTokens.auth] : []),
-    ...normalizeAuth(config.auth),
-  ]);
-  const serverInfo = {
-    ...config.serverInfo,
-    name: config.serverInfo?.name ?? "connecta",
-    version: config.serverInfo?.version ?? CONNECTA_VERSION,
-  };
-  // The artifacts module contributes one prebuilt connector, appended like any
-  // configured one: same catalog, invocation, admission, and activity.
-  const connectors = config.artifacts
-    ? [...config.connectors, config.artifacts.connector]
-    : config.connectors;
-  const registry = new Registry(connectors, {
+  // Every structural check runs here, before any work: what comes back is the
+  // configuration the deployment runs with, defaults applied once.
+  const { input, resolved } = readConfig(config);
+  const { logger } = resolved;
+  const storage = resolved.storage;
+  const registry = new Registry([...resolved.connectors], {
     storage,
     logger,
-    credentialVault,
-    credentialUi: Boolean(config.ui),
-    catalogDriftActivity: config.activity?.store
+    credentialVault: resolved.vault,
+    credentialUi: Boolean(resolved.ui),
+    catalogDriftActivity: resolved.activity?.store
       ? {
-          sink: config.activity.store,
-          recordDrift: config.activity.recordDrift,
-          serverInfo,
-          ...(config.activity.deploymentId !== undefined
-            ? { deploymentId: config.activity.deploymentId }
+          sink: resolved.activity.store,
+          recordDrift: resolved.activity.recordDrift,
+          serverInfo: resolved.serverInfo,
+          ...(resolved.activity.deploymentId !== undefined
+            ? { deploymentId: resolved.activity.deploymentId }
             : {}),
         }
       : undefined,
-    toolCacheTtlSeconds: config.discovery?.catalogTtlSeconds,
-    persistToolCatalog: config.discovery?.persistCatalog,
-    toolCatalogStaleSeconds: config.discovery?.staleCatalogSeconds,
-    maxResultBytes: config.calls?.maxResultBytes,
-    results: config.results,
+    toolCacheTtlSeconds: resolved.discovery.catalogTtlSeconds,
+    persistToolCatalog: resolved.discovery.persistCatalog,
+    toolCatalogStaleSeconds: resolved.discovery.staleCatalogSeconds,
+    maxResultBytes: resolved.calls.maxResultBytes,
+    results: resolved.results,
   });
-  const inboundAuth = configuredAuth;
-  const pools = resolvePools(config.pools, registry);
-  const approval = resolveApprovalPolicy(config.execute?.approval, registry);
-  const maxWrites = positiveWhole(config.execute?.maxWrites, DEFAULT_MAX_WRITES);
-  warnInsecureConfig(config, inboundAuth, logger);
-  const requestAdmission = admissionController(
-    config.admission?.requests,
-    REQUEST_ADMISSION_DEFAULTS,
-    config.admission?.requests?.maxDurationMs ?? DEFAULT_REQUEST_MAX_DURATION_MS,
-  );
-  const configuredCodeAdmission = admissionController(
-    config.admission?.code,
-    CODE_ADMISSION_DEFAULTS,
-  );
+  const pools = resolvePools(resolved.pools, registry);
+  const approval = resolveApprovalPolicy(resolved.execute.approval, registry);
+  warnInsecureConfig(resolved);
+  const requestAdmission = new AdmissionController(resolved.admission.requests);
   let codeAdmission: AdmissionController | undefined;
-  let executor = config.executor;
+  let executor = resolved.executor;
   // Read the identity off the configured executor, before any wrapper hides
   // it behind an anonymous object literal.
   const configuredExecutorName = executorName(executor);
-  if (!isAdmittingExecutor(executor)) {
-    codeAdmission = configuredCodeAdmission;
+  const executorAdmits = isAdmittingExecutor(executor);
+  if (!executorAdmits) {
+    codeAdmission = new AdmissionController(resolved.admission.code);
     executor = withExecutorAdmission(executor, codeAdmission);
-  } else if (config.admission?.code) {
+  } else if (input.admission?.code) {
     logger.warn(
       "[connecta] admission.code is ignored because the configured executor " +
         "implements acquire() and owns its admission pool; configure that " +
         "executor's concurrency and queue options instead.",
     );
   }
-  if (config.artifacts?.bindRefresh) {
+  if (resolved.artifacts?.bindRefresh) {
     const sharedIds = registry.listConnectors()
       .filter((connector) => connector.id !== "artifacts" && connector.authScope !== "personal")
       .map((connector) => connector.id);
     const refreshConfig = {
-        discoveryConcurrency: config.discovery?.concurrency,
-        probeTimeoutMs: config.discovery?.probeTimeoutMs,
-        maxEmittedBytes: config.execute?.maxEmittedBytes,
-        maxEmittedBlocks: config.execute?.maxEmittedBlocks,
-        maxHostCalls: config.execute?.maxHostCalls,
-        hostCallTimeoutMs: config.execute?.hostCallTimeoutMs,
-        watchdogMs: config.execute?.watchdogMs,
-        failOnInvocationFailure: true,
-        // A connector's own `approval: "never"` still applies when policy maps
-        // are empty. Override every shared connector explicitly for refresh.
-        approval: {
-          connectors: new Map(sharedIds.map((id) => [id, "ask" as const])),
-          tools: new Map(),
-        },
+      ...executeLimits(resolved),
+      failOnInvocationFailure: true,
+      // A connector's own `approval: "never"` still applies when policy maps
+      // are empty. Override every shared connector explicitly for refresh.
+      approval: {
+        connectors: new Map(sharedIds.map((id) => [id, "ask" as const])),
+        tools: new Map(),
+      },
     };
-    config.artifacts.bindRefresh({
-      ...(config.ui?.branding ? { branding: config.ui.branding } : {}),
+    const identity = resolved.identity;
+    resolved.artifacts.bindRefresh({
+      ...(resolved.ui?.branding ? { branding: resolved.ui.branding } : {}),
       claimMs: runClaimMs(refreshConfig),
       execute: async (program, owner, signal) => {
         if (!owner) throw new Error("Refresh owner is missing; reconfigure this program.");
-        let access = parseConnectorAccess(config.identity?.connectorAccess
-          ? await config.identity.connectorAccess(owner.identity) : "all", { allowReadOnly: true });
+        let access = parseConnectorAccess(identity.connectorAccess
+          ? await identity.connectorAccess(owner.identity) : "all", { allowReadOnly: true });
         if (owner.pool) {
           const pool = pools.get(owner.pool);
           if (!pool || await pool.grant(owner.identity) !== true) {
@@ -1026,60 +414,27 @@ export function createConnecta(config: ConnectaConfig): Connecta {
         const view = registry.scoped({ connectorIds: access.connectorIds,
           ...(access.toolAccess ? { toolAccess: access.toolAccess } : {}),
           ...(access.guardedToolAccess ? { guardedToolAccess: access.guardedToolAccess } : {}) });
-        const execute = createExecuteTool(view, config.publicUrl!, executor, logger, undefined, refreshConfig);
+        const execute = createExecuteTool(view, resolved.publicUrl!, executor, logger, undefined, refreshConfig);
         return execute({ code: program }, { signal });
       },
     });
   }
-  // Every structural check has passed, so this is the configuration the
-  // deployment runs with. Creating the runtime builds nothing — a Worker may
-  // construct its Connecta at global scope, where no fiber may start.
-  const runtime = createCoreRuntime(registry, {
-    storage,
-    logger,
-    vault: credentialVault,
-    activity: config.activity,
-    config: {
-      config,
-      serverInfo,
-      auth: inboundAuth,
-      pools,
-      executorName: configuredExecutorName,
-    },
-  });
   const handler = createFetchHandler({
+    config: resolved,
     registry,
-    auth: inboundAuth,
-    identity: config.identity,
     pools,
-    publicUrl: config.publicUrl,
-    artifactOrigin: config.artifactOrigin,
-    allowedOrigins: config.allowedOrigins,
-    serverInfo,
-    logger,
-    activity: config.activity?.store,
-    activityModule: config.activity,
-    artifactsModule: config.artifacts,
-    accessTokens: config.accessTokens,
-    activityReadGate: config.activity?.readGate,
-    activityDeploymentId: config.activity?.deploymentId,
+    approval,
     executor,
     executorName: configuredExecutorName,
     requestAdmission,
-    defaultToolTimeoutMs: config.calls?.defaultTimeoutMs,
-    probeTimeoutMs: config.discovery?.probeTimeoutMs,
-    discoveryConcurrency: config.discovery?.concurrency,
-    maxEmittedBytes: config.execute?.maxEmittedBytes,
-    maxEmittedBlocks: config.execute?.maxEmittedBlocks,
-    maxHostCalls: config.execute?.maxHostCalls,
-    hostCallTimeoutMs: config.execute?.hostCallTimeoutMs,
-    watchdogMs: config.execute?.watchdogMs,
+  });
+  // Built once, from values construction already validated; never per call.
+  const description = describeConfig({
+    raw: input,
+    config: resolved,
     approval,
-    maxWrites,
-    credentialVault,
-    ui: config.ui,
-    deploymentInfo: config.deploymentInfo,
-    branding: config.ui?.branding,
+    executorName: configuredExecutorName,
+    executorAdmits,
   });
   let closePromise: Promise<void> | undefined;
   return {
@@ -1091,25 +446,18 @@ export function createConnecta(config: ConnectaConfig): Connecta {
           : undefined,
       ),
     registry,
+    describeConfig: () => description,
     close: async () => {
       closePromise ??= Promise.resolve().then(async () => {
-        try {
-          requestAdmission.close();
-          codeAdmission?.close();
-          registry.closeCallAdmission();
-          await config.executor?.close?.();
-        } finally {
-          // Last, and whether or not the executor closed cleanly. A fiber
-          // already running keeps the services it was given; only a run
-          // started after this is refused.
-          await disposeEdgeRuntime(runtime);
-        }
+        requestAdmission.close();
+        codeAdmission?.close();
+        registry.closeCallAdmission();
+        await resolved.executor.close?.();
       });
       await closePromise;
     },
   };
 }
-
 export { remoteMcp } from "./connectors/remote-mcp.js";
 export { api } from "./connectors/api.js";
 export { defineProvider } from "./provider.js";
@@ -1164,7 +512,11 @@ export type {
   ConnectorCredentialFieldConfig,
   ConnectorCredentialValues,
   ConnectorContext,
+  ConnectorAuthDescription,
+  ConnectorDescription,
+  ConnectorToolDescription,
   ConnectorUsageGuide,
+  DescribedEndpoint,
   ConnectorStatus,
   CredentialTestResult,
   AdmittingExecutor,

@@ -1,6 +1,7 @@
 // artifacts(): the typed module a deployment passes as `ConnectaConfig.artifacts`.
 
 import { resolveBranding, type ResolvedTheme } from "../branding.js";
+import { assertKnownOptions, keys, optionsOf } from "../config-schema.js";
 import type { ArtifactsModule } from "../module-contracts.js";
 import { artifactsConnector, type ArtifactRenderCheck } from "./connector.js";
 import { ArtifactOperations } from "./operations.js";
@@ -46,7 +47,17 @@ const STORE_METHODS = [
   "setRefreshScanCursor",
 ] as const;
 
-const OPTIONS = new Set(["store", "allowlist", "limits", "renderCheck"]);
+/** The closed options artifacts() accepts; see `assertKnownOptions`. */
+const ARTIFACTS_OPTIONS = optionsOf<ArtifactsOptions>()({
+  ...keys("store", "renderCheck"),
+  allowlist: optionsOf<ArtifactAllowlist>()(keys("scripts", "styles", "fonts")),
+  limits: optionsOf<ArtifactLimits>()(
+    keys(
+      "sourceBytes", "documentBytes", "documents", "totalDocumentBytes", "renderedBytes", "titleChars",
+      "patchEdits", "findBytes", "programBytes", "runLogBytes", "jsonDepth",
+    ),
+  ),
+});
 
 /**
  * Team pages over stored data, reached by agents through the built-in
@@ -63,9 +74,7 @@ export function artifacts(options: ArtifactsOptions): RefreshableArtifacts {
   if (!options || typeof options !== "object") {
     throw new TypeError("artifacts() needs options with a store");
   }
-  for (const key of Object.keys(options)) {
-    if (!OPTIONS.has(key)) throw new TypeError(`artifacts(): unknown option "${key}"`);
-  }
+  options = assertKnownOptions(options, "artifacts()", ARTIFACTS_OPTIONS);
   const store = options.store as Partial<ArtifactStore> | undefined;
   if (
     !store ||
@@ -105,5 +114,16 @@ export function artifacts(options: ArtifactsOptions): RefreshableArtifacts {
     },
     refresh: (id: string, by: import("./types.js").ArtifactActor) => refresh.run(id, { manual: by }),
     runDue: () => refresh.runDue(),
+    describe: () => ({
+      allowlist: {
+        scripts: [...allowlist.scripts],
+        styles: [...allowlist.styles],
+        fonts: [...allowlist.fonts],
+      },
+      limits: Object.fromEntries(
+        Object.entries(limits).filter(([, value]) => typeof value === "number"),
+      ),
+      renderCheck: options.renderCheck !== undefined,
+    }),
   });
 }

@@ -30,11 +30,13 @@ import type { Connector, ConnectorContext, JsonSchema } from "../types.js";
 import { clampText, jsonBytes, RESULT_BUDGET_BYTES } from "./google/result-size.js";
 import {
   googleOutcomeOf,
+  GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
   type GoogleWorkspaceClient,
   type GoogleWorkspaceOptions,
 } from "./google/workspace.js";
+import { asProvider } from "../described.js";
 
 export type {
   GoogleServiceAccount,
@@ -1439,6 +1441,10 @@ ${extra ? `\n## Connection instructions\n\n${extra}\n` : ""}`;
  * `update_form_info` and `batch_update_form` are destructive.
  */
 export function forms(id: string, options: FormsOptions): Connector {
+  return asProvider("forms", GOOGLE_WORKSPACE_OPTIONS, id, options, formsConnector);
+}
+
+function formsConnector(id: string, options: FormsOptions): Connector {
   const connection = workspaceConnection("forms", options);
   const client = googleWorkspaceClient({
     provider: "Google Forms",

@@ -66,6 +66,9 @@ import type {
   ConnectorContext,
   JsonSchema,
 } from "../types.js";
+import { keys, optionsOf } from "../config-schema.js";
+import { PROVIDER_COMMON } from "../connectors/option-shapes.js";
+import { asProvider } from "../described.js";
 
 /** Every church's API lives at `https://<subdomain>.breezechms.com/api`. */
 export const BREEZE_HOST_SUFFIX = ".breezechms.com";
@@ -1547,8 +1550,16 @@ function normalizeSubdomain(raw: unknown): string {
   return value;
 }
 
+
+/** The closed options breeze() accepts; see `assertKnownOptions`. */
+const BREEZE_OPTIONS = optionsOf<BreezeOptions>()({ ...PROVIDER_COMMON, ...keys("subdomain", "defaultPageSize") });
+
 /** A maintained Breeze ChMS connection for one church's subdomain. */
 export function breeze(id: string, options: BreezeOptions): Connector {
+  return asProvider("breeze", BREEZE_OPTIONS, id, options, breezeConnector);
+}
+
+function breezeConnector(id: string, options: BreezeOptions): Connector {
   const purpose = typeof options.purpose === "string" ? options.purpose.trim() : "";
   if (!purpose) {
     throw new Error("breeze() requires a non-empty church purpose.");

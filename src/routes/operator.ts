@@ -69,9 +69,9 @@ export function authorized(
       authorize(
         request,
         baseUrl,
-        opts.auth,
+        opts.config.auth,
         runtimeContext,
-        opts.identity,
+        opts.config.identity,
         partitionIdentity,
       ),
     ),
@@ -88,10 +88,10 @@ export function authorizedPerson(
       authorizeUiIdentity(
         request,
         baseUrl,
-        opts.auth,
+        opts.config.auth,
         purpose,
         runtimeContext,
-        opts.identity,
+        opts.config.identity,
       ),
     ),
   );

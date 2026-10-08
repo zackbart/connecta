@@ -138,7 +138,7 @@ function credentialRequest(
 ): Effect.Effect<Response, Answer> {
   const { request, baseUrl, opts } = context;
   return Effect.gen(function* () {
-    const vault = opts.credentialVault;
+    const vault = opts.config.vault;
     if (!vault) return yield* refuse("credential storage is not configured", 503);
     if (!isSameOrigin(request, baseUrl)) {
       return yield* refuse("same-origin request required", 403);
@@ -218,7 +218,7 @@ function credentialRequest(
                     ctx,
                   );
             const ok = result?.ok === true;
-            if (!ok) logFailure(opts.logger, "credential test failed", failureRecord({ connector: connectorId }, undefined));
+            if (!ok) logFailure(opts.config.logger, "credential test failed", failureRecord({ connector: connectorId }, undefined));
             return privateJson({ ok });
           } finally {
             releaseCleanup();
@@ -228,7 +228,7 @@ function credentialRequest(
         catch: (error) => error,
       }).pipe(
         Effect.catch((error) => {
-          logFailure(opts.logger, "credential test threw", failureRecord({ connector: connectorId }, error));
+          logFailure(opts.config.logger, "credential test threw", failureRecord({ connector: connectorId }, error));
           return Effect.succeed(privateJson({ ok: false }));
         }),
       );

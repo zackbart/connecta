@@ -48,11 +48,13 @@ import type { Connector, ConnectorContext, JsonSchema } from "../types.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "./google/result-size.js";
 import {
   googleOutcomeOf,
+  GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
   type GoogleWorkspaceClient,
   type GoogleWorkspaceOptions,
 } from "./google/workspace.js";
+import { asProvider } from "../described.js";
 
 export type {
   GoogleServiceAccount,
@@ -3141,6 +3143,10 @@ ${extra ? `\n## Connection instructions\n\n${extra}\n` : ""}`;
  * are destructive.
  */
 export function slides(id: string, options: SlidesOptions): Connector {
+  return asProvider("slides", GOOGLE_WORKSPACE_OPTIONS, id, options, slidesConnector);
+}
+
+function slidesConnector(id: string, options: SlidesOptions): Connector {
   const connection = workspaceConnection("slides", options);
   const client = googleWorkspaceClient({
     provider: "Google Slides",

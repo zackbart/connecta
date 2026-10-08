@@ -9,6 +9,9 @@ import type {
   Connector,
   ConnectorCallAdmissionPolicy,
 } from "../types.js";
+import { optionsOf } from "../config-schema.js";
+import { PROVIDER_COMMON, REMOTE_MCP_AUTH } from "../connectors/option-shapes.js";
+import { asProvider } from "../described.js";
 
 /** RevenueCat publishes one hosted MCP endpoint, streamable HTTP. */
 export const REVENUECAT_MCP_ENDPOINT = "https://mcp.revenuecat.ai/mcp";
@@ -343,8 +346,16 @@ ${sharedUsageGuide()}${
   }`;
 }
 
+
+/** The closed options revenuecat() accepts; see `assertKnownOptions`. */
+const REVENUECAT_OPTIONS = optionsOf<RevenueCatOptions>()({ ...PROVIDER_COMMON, auth: REMOTE_MCP_AUTH });
+
 /** A maintained RevenueCat hosted-MCP connection. */
 export function revenuecat(id: string, options: RevenueCatOptions): Connector {
+  return asProvider("revenuecat", REVENUECAT_OPTIONS, id, options, revenuecatConnector);
+}
+
+function revenuecatConnector(id: string, options: RevenueCatOptions): Connector {
   const purpose = options.purpose.trim();
   if (!purpose) {
     throw new Error("revenuecat() requires a non-empty project purpose.");

@@ -64,8 +64,12 @@ import { learnedUrlRefusal } from "../url-safety.js";
 import { oauthSealerFor } from "../oauth-sealing.js";
 import { retainingOAuthPartition } from "../oauth-partition.js";
 import { detach, runEdge } from "../runtime/run.js";
+import { assertKnownOptions, keys, optionsOf } from "../config-schema.js";
+import { describedEndpoint, describedUrl } from "../described.js";
+import { CALL_ADMISSION, REMOTE_MCP_AUTH, USAGE_GUIDE } from "./option-shapes.js";
 import type {
   Connector,
+  ConnectorAuthDescription,
   ConnectorCallAdmissionPolicy,
   ConnectorContext,
   ConnectorCredentialConfig,
@@ -161,8 +165,8 @@ export interface RemoteMcpOptions {
    * Max inline result size (bytes) for this connector's tools before
    * call_tool truncates and stashes the full text for get_result
    * paging. Overrides the deployment's `calls.maxResultBytes`; omit to inherit
-   * it. Must be a whole number of bytes >= 1; anything else warns at startup
-   * and is ignored.
+   * it. Must be a whole number of bytes >= 1; anything else refuses to
+   * construct.
    */
   maxResultBytes?: number;
   /** Optional per-runtime downstream call-admission policy. */
@@ -225,6 +229,17 @@ export interface RemoteMcpOptions {
    */
   _transportFactory?: (ctx: ConnectorContext) => Transport;
 }
+
+/** The closed options remoteMcp() accepts; see `assertKnownOptions`. */
+const REMOTE_MCP_OPTIONS = optionsOf<RemoteMcpOptions>()({
+  ...keys(
+    "url", "title", "description", "authScope", "maxResultBytes", "versionNegotiation",
+    "redirects", "requireHttps", "logger", "_transportFactory", "classify",
+  ),
+  callAdmission: CALL_ADMISSION,
+  usageGuide: USAGE_GUIDE,
+  auth: REMOTE_MCP_AUTH,
+});
 
 /**
  * How long a downstream gets to answer the session-termination DELETE before
@@ -983,6 +998,7 @@ interface ConnectionState {
  * server or hide other connectors).
  */
 export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
+  opts = assertKnownOptions(opts, `remoteMcp(${JSON.stringify(id)})`, REMOTE_MCP_OPTIONS);
   const classification =
     opts.classify === undefined
       ? undefined
@@ -1054,6 +1070,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // endpoint sends bearer tokens / API keys in cleartext. Loopback is exempt
   // for local development.
   const destination = new URL(opts.url);
+  // Only a web URL reaches a remote MCP server. Another scheme cannot, and a
+  // wrapping one (`blob:https://…`) would also carry its inner URL, userinfo
+  // and all, into every place the endpoint is reported; the value is not echoed.
+  if (destination.protocol !== "https:" && destination.protocol !== "http:") {
+    throw new Error(`[connecta] connector "${id}" url must be an http(s) URL.`);
+  }
   const insecureDestination =
     destination.protocol !== "https:" && !isLoopbackHost(destination.hostname);
   if (insecureDestination) {
@@ -1858,10 +1880,41 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     }
   };
 
+  // Built once from construction-time values: names, framing, and public
+  // URLs only. A static header's value and a stored credential never reach
+  // it, and a URL keeps origin and path: a CIMD document's query may carry a
+  // token even though the document itself is public.
+  const describedClientMetadataUrl = describedUrl(clientMetadataUrl);
+  const authDescription: ConnectorAuthDescription =
+    opts.auth?.type === "headers"
+      ? { mode: "headers", headerNames: Object.keys(opts.auth.headers) }
+      : credentialAuth
+        ? { mode: "credential", header: credentialHeader, scheme: credentialScheme }
+        : isOauth
+          ? {
+              mode: "oauth",
+              ...(oauthScope !== undefined ? { scope: oauthScope } : {}),
+              ...(describedClientMetadataUrl !== undefined
+                ? { clientMetadataUrl: describedClientMetadataUrl }
+                : {}),
+            }
+          : { mode: "none" };
+  const endpoint = describedEndpoint(opts.url);
+
   const connector: Connector = {
     id,
     ...(opts.title !== undefined ? { title: opts.title } : {}),
     kind: "mcp",
+    describe: () => ({
+      source: { kind: "remote-mcp" },
+      ...(endpoint ? { endpoint } : {}),
+      auth: authDescription,
+      transport: {
+        versionNegotiation: opts.versionNegotiation ?? "auto",
+        redirects: opts.redirects ?? "none",
+        requireHttps: opts.requireHttps ?? false,
+      },
+    }),
     ...(opts.description !== undefined
       ? { description: opts.description }
       : {}),

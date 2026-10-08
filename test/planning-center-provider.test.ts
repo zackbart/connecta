@@ -151,7 +151,7 @@ describe("planningCenter() construction", () => {
       budget: { kind: "rolling-window", maxCalls: 100, windowMs: 20_000 },
     });
     const custom = { rules: [{ budget: { kind: "rolling-window" as const, maxCalls: 50, windowMs: 20_000 } }] };
-    expect(connection({ callAdmission: custom }).callAdmission).toBe(custom);
+    expect(connection({ callAdmission: custom }).callAdmission).toEqual(custom);
   });
 
   it("routes by purpose, appends instructions, and states the pins and write limits", () => {

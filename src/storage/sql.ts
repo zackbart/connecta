@@ -28,6 +28,7 @@ import type {
   ToolCallActivityEvent,
 } from "../activity.js";
 import { InvalidActivityCursorError } from "../activity.js";
+import { assertKnownOptions, ConfigError, keys, optionsOf } from "../config-schema.js";
 import { agentFrictionForCode } from "../activity-friction.js";
 import type { KVStorage } from "../types.js";
 import { validateStorageKey } from "./keys.js";
@@ -133,8 +134,11 @@ function expiresAt(now: number, ttlSeconds?: number): number | null {
   return Math.ceil(expiry);
 }
 
+/** The two drivers, as `describe()` names them. */
+export type SqlKind = "d1" | "sqlite";
+
 /** `KVStorage` over one `connecta_kv` table. */
-export function sqlStorage(driver: SqlDriver): KVStorage {
+export function sqlStorage(driver: SqlDriver, kind: SqlKind): KVStorage {
   const ensure = schemaOnce(driver, (d) =>
     d.batch(KV_SCHEMA.map((statement) => sql(statement))),
   );
@@ -153,6 +157,7 @@ export function sqlStorage(driver: SqlDriver): KVStorage {
       : null;
   };
   return {
+    describe: () => ({ kind }),
     async get(key) {
       validateStorageKey(key);
       await ensure();
@@ -408,6 +413,9 @@ export interface SqlActivityOptions {
   retentionDays?: number;
 }
 
+/** The closed options both activity factories accept; see `assertKnownOptions`. */
+const SQL_ACTIVITY_OPTIONS = optionsOf<SqlActivityOptions>()(keys("retentionDays"));
+
 /** Older rows one write removes on its way. Above one: writes catch up. */
 const RETENTION_SWEEP_ROWS = 16;
 
@@ -418,11 +426,13 @@ const RETENTION_SWEEP_ROWS = 16;
  */
 export function sqlActivityStore(
   driver: SqlDriver,
+  kind: SqlKind,
   options: SqlActivityOptions = {},
 ): ActivityStore {
-  const retentionDays = options.retentionDays ?? 90;
-  if (!(retentionDays > 0) || !Number.isFinite(retentionDays)) {
-    throw new TypeError("activity retentionDays must be a positive number");
+  const factory = kind === "d1" ? "d1ActivityStore()" : "sqliteActivityStore()";
+  const { retentionDays = 90 } = assertKnownOptions(options, factory, SQL_ACTIVITY_OPTIONS);
+  if (typeof retentionDays !== "number" || !(retentionDays > 0) || !Number.isFinite(retentionDays)) {
+    throw new ConfigError(`${factory}.retentionDays must be a positive number of days.`);
   }
   const retentionMs = retentionDays * 24 * 60 * 60 * 1000;
   const ensure = schemaOnce(driver, async (d) => {
@@ -447,6 +457,7 @@ export function sqlActivityStore(
     }
   });
   return {
+    describe: () => ({ kind, retentionDays }),
     async record(event) {
       await ensure();
       const occurredAtMs = Date.parse(event.occurredAt);

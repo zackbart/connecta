@@ -14,8 +14,8 @@ services:
     ports:
       - "${PORT:-8787}:${PORT:-8787}"
     environment:
-      # Refuse to start without inbound auth — the same rule src/index.ts
-      # enforces, stated early enough that `up` fails before the build.
+      # Refuse to start without inbound auth — the same rule
+      # src/connecta.config.ts enforces, stated early enough that `up` fails before the build.
       CONNECTA_TOKEN: ${CONNECTA_TOKEN:?set CONNECTA_TOKEN in .env}
       PORT: ${PORT:-8787}
       # Downstream OAuth calls back to this origin. Unset is fine until this
@@ -23,12 +23,13 @@ services:
       PUBLIC_URL: ${PUBLIC_URL:-}
       # Keep the database under /data so it lands on the volume below.
       CONNECTA_DATABASE: ${CONNECTA_DATABASE:-/data/connecta.sqlite}
-      # Operator surface. Passed through so the matching blocks in
-      # src/index.ts work in the container the moment they are uncommented;
-      # until then these are unread.
+      # Optional modules. Each switches its module in src/connecta.config.ts
+      # on when set and off when empty.
       CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY:-}
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
       CONNECTA_CREDENTIAL_KEY: ${CONNECTA_CREDENTIAL_KEY:-}
+      CONNECTA_ACTIVITY: ${CONNECTA_ACTIVITY:-}
+      CONNECTA_ARTIFACTS: ${CONNECTA_ARTIFACTS:-}
     volumes:
       - connecta-state:/data
     restart: unless-stopped

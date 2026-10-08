@@ -9,13 +9,14 @@
 //
 // Web-API only, like everything reachable from the root entry.
 
+import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { Effect } from "effect";
 import type { CallErrorDetails } from "./errors.js";
 import type { InvocationOutcome } from "./invocation.js";
 import { jsonResult, type ToolResult } from "./meta-tools.js";
 
 /** Writes one program may send (`execute.maxWrites`), unless configured. */
-export const DEFAULT_MAX_WRITES = 10;
+export const DEFAULT_MAX_WRITES = CONFIG_DEFAULTS.execute.maxWrites;
 
 /** How a dispatched write ended, as far as anyone can know. */
 type WriteState = "ok" | "failed" | "unknown";

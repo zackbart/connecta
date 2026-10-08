@@ -195,16 +195,13 @@ describe("startup convention warnings", () => {
 
 describe("normalized result-cap state", () => {
   it.each([0, -1, -50, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
-    "uses the default for unusable deployment cap %s",
+    "INV-11: refuses unusable deployment cap %s at construction",
     (maxResultBytes) => {
-      const registry = new Registry([calcConnector], {
+      expect(() => new Registry([calcConnector], {
         storage: memoryStorage(),
         logger: silentLogger,
         maxResultBytes,
-      });
-      expect(registry.maxResultBytes, `cap ${String(maxResultBytes)}`).toBe(
-        24_000,
-      );
+      })).toThrow("calls.maxResultBytes");
     },
   );
 

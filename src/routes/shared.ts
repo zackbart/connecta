@@ -1,12 +1,4 @@
-import type { Implementation } from "@modelcontextprotocol/server";
-import type {
-  AccessTokensModule,
-  ActivityModule,
-  ArtifactsModule,
-  OperatorSurface,
-} from "../module-contracts.js";
-import type { ActivityActor, ActivityReadGate, ActivityStore } from "../activity.js";
-import type { CredentialVault } from "../credential-contract.js";
+import type { ActivityActor } from "../activity.js";
 import type { DeferredWork } from "../connector-scope.js";
 import type { AdmissionController } from "../executor-admission.js";
 import type { Registry, ToolAccess } from "../registry.js";
@@ -14,71 +6,34 @@ import { parseConnectorAccess } from "../connector-access.js";
 import type { ConnectorAccess, ResolvedPool } from "../connector-access.js";
 import type {
   AuthenticatedIdentity,
-  ConnectaBranding,
   Executor,
   InboundAuth,
   InboundAuthRuntimeContext,
-  Logger,
 } from "../types.js";
 import { identityStorageKey, validIdentityReference } from "../identity.js";
 import { isExplicitlyReadOnly } from "../tool-safety.js";
 import type { ApprovalPolicy } from "../tool-safety.js";
-import type { ConnectorPermission, ConnectaIdentityConfig } from "../index.js";
+import type { ConnectorPermission, ConnectaIdentityConfig, ResolvedConfig } from "../config.js";
 export { msg } from "../errors.js";
 
 export interface ServerOptions {
+  /**
+   * Everything createConnecta resolved from configuration: auth, identity,
+   * URLs, modules, logger, and every limit with its default applied. Routes
+   * read it here rather than from fields copied out of it one by one.
+   */
+  config: ResolvedConfig;
   registry: Registry;
-  auth: InboundAuth[];
-  identity?: ConnectaIdentityConfig | undefined;
   /** Validated named pools served at `/mcp/<name>`; empty when none declared. */
-  pools?: ReadonlyMap<string, ResolvedPool> | undefined;
-  publicUrl?: string | undefined;
-  artifactOrigin?: string | undefined;
-  allowedOrigins?: readonly string[] | "*" | undefined;
-  // The SDK's Implementation shape: name/version plus optional title,
-  // websiteUrl, and icons (MCP icons spec) that clients may render.
-  serverInfo: Implementation;
-  logger: Logger;
-  activity?: ActivityStore | undefined;
-  activityReadGate?: ActivityReadGate | undefined;
-  activityDeploymentId?: string | undefined;
-  deploymentInfo?: Record<string, unknown> | undefined;
-  /** Deadline for call_tool/call_destructive_tool calls that pass no timeoutMs. Off when unset. */
-  defaultToolTimeoutMs?: number | undefined;
-  /** Per-connector deadline for the search/describe probe fan-out. Default 30_000. */
-  probeTimeoutMs?: number | undefined;
-  /** Maximum simultaneous connector discovery operations. Default 4. */
-  discoveryConcurrency?: number | undefined;
-  /** Aggregate serialized-byte budget for connecta.emit per run. Default 4_000_000. */
-  maxEmittedBytes?: number | undefined;
-  /** Block-count budget for connecta.emit per run. Default 32. */
-  maxEmittedBlocks?: number | undefined;
-  /** Host calls one execute_code program may make. Default 20. */
-  maxHostCalls?: number | undefined;
-  /** Deadline per execute_code host call. Default 15_000. */
-  hostCallTimeoutMs?: number | undefined;
-  /** Hard ceiling on one execute_code run, outside the sandbox. Default 120_000. */
-  watchdogMs?: number | undefined;
+  pools: ReadonlyMap<string, ResolvedPool>;
   /** Config approval exemptions (`execute.approval`), resolved at construction. */
-  approval?: ApprovalPolicy | undefined;
-  /** Exempt writes one program may send (`execute.maxWrites`). */
-  maxWrites?: number | undefined;
-  /** Required sandbox backing the execute_code meta-tool. */
+  approval: ApprovalPolicy;
+  /** Required sandbox backing execute_code, wrapped in fallback admission if needed. */
   executor: Executor;
   /** Sanitized identity of the configured sandbox, when it has one. */
   executorName?: string | undefined;
   /** Global FIFO boundary for all non-preflight `/mcp` requests. */
   requestAdmission: AdmissionController;
-  /** Encrypted connector-credential storage backing the Credentials page. */
-  credentialVault?: CredentialVault | undefined;
-  /** Optional browser routes, with no implementation import in core. */
-  ui?: OperatorSurface | undefined;
-  activityModule?: ActivityModule | undefined;
-  /** Optional team pages; their routes mount only beside `ui`. */
-  artifactsModule?: ArtifactsModule | undefined;
-  accessTokens?: AccessTokensModule | undefined;
-  /** Optional browser UI and OAuth result-page labels. */
-  branding?: ConnectaBranding | undefined;
 }
 
 export interface RuntimeExecutionContext extends InboundAuthRuntimeContext {
@@ -140,7 +95,7 @@ export function activityActorNamespace(
 export async function authorize(
   request: Request,
   baseUrl: string,
-  auth: InboundAuth[],
+  auth: readonly InboundAuth[],
   runtimeContext?: RuntimeExecutionContext,
   identityConfig?: ConnectaIdentityConfig,
   partitionIdentity = true,
@@ -297,7 +252,7 @@ export async function authorize(
 export async function authorizeUiIdentity(
   request: Request,
   baseUrl: string,
-  auth: InboundAuth[],
+  auth: readonly InboundAuth[],
   purpose: string,
   runtimeContext?: RuntimeExecutionContext,
   identityConfig?: ConnectaIdentityConfig,

@@ -57,7 +57,7 @@ function d1Driver(db: D1DatabaseBinding): SqlDriver {
  * database that already holds the 0.28 example's table is read as is.
  */
 export function d1Storage(db: D1DatabaseBinding): KVStorage {
-  return sqlStorage(d1Driver(db));
+  return sqlStorage(d1Driver(db), "d1");
 }
 
 /**
@@ -69,5 +69,5 @@ export function d1ActivityStore(
   db: D1DatabaseBinding,
   options?: D1ActivityOptions,
 ): ActivityStore {
-  return sqlActivityStore(d1Driver(db), options);
+  return sqlActivityStore(d1Driver(db), "d1", options);
 }

@@ -35,12 +35,14 @@ import { ConnectorCallError } from "../errors.js";
 import type { Connector, JsonSchema } from "../types.js";
 import {
   googleOutcomeOf,
+  GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
   type GoogleWorkspaceClient,
   type GoogleWorkspaceOptions,
 } from "./google/workspace.js";
 import { clampText, jsonBytes, RESULT_BUDGET_BYTES } from "./google/result-size.js";
+import { asProvider } from "../described.js";
 
 export type {
   GoogleServiceAccount,
@@ -1344,6 +1346,10 @@ ${extra ? `\n## Connection instructions\n\n${extra}\n` : ""}`;
  * `batch_update_spreadsheet` are destructive.
  */
 export function sheets(id: string, options: SheetsOptions): Connector {
+  return asProvider("sheets", GOOGLE_WORKSPACE_OPTIONS, id, options, sheetsConnector);
+}
+
+function sheetsConnector(id: string, options: SheetsOptions): Connector {
   const connection = workspaceConnection("sheets", options);
   const client = googleWorkspaceClient({
     provider: "Google Sheets",

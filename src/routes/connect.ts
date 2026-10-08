@@ -14,7 +14,7 @@ const START_TIMEOUT_MS = 30_000;
 
 /** Clerk establishes a browser session on this origin before retrying the link. */
 function clerkSignIn(context: RouteContext): Response | undefined {
-  const clerk = context.opts.auth.find(provider => provider.uiAuth?.kind === "clerk")?.uiAuth;
+  const clerk = context.opts.config.auth.find(provider => provider.uiAuth?.kind === "clerk")?.uiAuth;
   if (clerk?.kind !== "clerk") return undefined;
   const returnUrl = new URL(context.path, context.baseUrl);
   returnUrl.search = context.url.search;
@@ -41,7 +41,7 @@ function clerkSignIn(context: RouteContext): Response | undefined {
   if (window.Clerk.session) { window.location.replace(${target}); return; }
   window.Clerk.mountSignIn(document.getElementById("signin"), { routing: "hash", forceRedirectUrl: ${target}, signUpForceRedirectUrl: ${target} });
 }).catch(() => { document.getElementById("signin").textContent = "Sign-in could not load. Try again."; });</script>`;
-  return new Response(renderPage(context.opts.branding, { title: "Sign in to connect", uiMounted: Boolean(context.opts.ui), body }), {
+  return new Response(renderPage(context.opts.config.ui?.branding, { title: "Sign in to connect", uiMounted: Boolean(context.opts.config.ui), body }), {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
@@ -64,7 +64,7 @@ async function connect(context: RouteContext): Promise<Response> {
   const id = context.path.slice("/connect/".length);
   const handoff = await verifyOAuthHandoff(opts, baseUrl, id, context.url.searchParams.get("h"));
   if (!handoff) return refuse("Invalid or expired connection link. Request a new link from connecta.", 400);
-  const authz = await authorizeUiIdentity(request, baseUrl, opts.auth, "OAuth connection", runtimeContext, opts.identity);
+  const authz = await authorizeUiIdentity(request, baseUrl, opts.config.auth, "OAuth connection", runtimeContext, opts.config.identity);
   if (!authz.ok) {
     // Access sign-in is enforced at the edge. Clerk needs its own sign-in page.
     if (!authz.final && authz.response.status === 401 && !runtimeContext?.access) {
@@ -109,7 +109,7 @@ async function connect(context: RouteContext): Promise<Response> {
       // The start's message can be a downstream's refusal, which an agent
       // may read but a log may not (INV-6): the record keeps the checked
       // state only, since a plugin's `startAuth` returns whatever it likes.
-      logFailure(opts.logger, "OAuth start failed", failureRecord({
+      logFailure(opts.config.logger, "OAuth start failed", failureRecord({
         connector: id,
         mode: handoff.force ? "restart" : "continue",
         state: status.state,
@@ -123,7 +123,7 @@ async function connect(context: RouteContext): Promise<Response> {
     await drainOAuthStartResets(scope);
     await registry.invalidateStored(id);
     if (error === timeoutError) return refuse("OAuth authorization start timed out", 504);
-    logFailure(opts.logger, "OAuth start failed", failureRecord({ connector: id }, error));
+    logFailure(opts.config.logger, "OAuth start failed", failureRecord({ connector: id }, error));
     return refuse("OAuth authorization could not start", 400);
   } finally {
     await closeConnectorScope(connector, ctx, context.defer);

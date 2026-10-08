@@ -41,13 +41,13 @@ const TONE_MARKS = {
  */
 function html(
   reason: OAuthCallbackReason,
-  opts: Pick<RouteContext["opts"], "branding" | "ui">,
+  opts: Pick<RouteContext["opts"], "config">,
   connector?: { id: string; title?: string | undefined },
 ): Response {
-  const brand = resolveBranding(opts.branding);
+  const brand = resolveBranding(opts.config.ui?.branding);
   const outcome = oauthCallbackOutcome(reason, connector, brand.productName);
   const mark = TONE_MARKS[outcome.tone];
-  const uiMounted = Boolean(opts.ui);
+  const uiMounted = Boolean(opts.config.ui);
   const home = uiMounted
     ? `<div class="status-actions"><a class="btn${outcome.tone === "ok" ? "" : " primary"}" href="/">Return to ${escapeHtml(brand.productName)}</a></div>`
     : "";
@@ -71,7 +71,7 @@ function html(
   </section>
 </main>`;
   return new Response(
-    renderPage(opts.branding, {
+    renderPage(opts.config.ui?.branding, {
       title: `${outcome.heading} — ${brand.pageTitle}`,
       uiMounted,
       body,
@@ -192,7 +192,7 @@ async function finishOAuthCallback(
   }
   try {
     const expectedPrincipalKey = callbackTarget?.principalKey;
-    const browserIdentity = await authorizeUiIdentity(context.request, baseUrl, opts.auth, "OAuth callback", context.runtimeContext, opts.identity);
+    const browserIdentity = await authorizeUiIdentity(context.request, baseUrl, opts.config.auth, "OAuth callback", context.runtimeContext, opts.config.identity);
     if (!browserIdentity.ok) {
       // A Clerk browser handshake refreshes its session and returns to this
       // exact callback. It grants no identity and exchanges no code yet.
@@ -206,7 +206,7 @@ async function finishOAuthCallback(
     // the `state` matches the flow connecta started BEFORE exchanging the code.
     if (!connector.verifyState) {
       await equalizeRefusalCost(connectorContext);
-      opts.logger.warn(
+      opts.config.logger.warn(
         `[connecta] refused an OAuth callback for connector ` +
           `${loggableValue(id)} with 400: it implements finishAuth but no ` +
           "verifyState, so connecta cannot establish that it started this flow. " +
@@ -220,14 +220,14 @@ async function finishOAuthCallback(
       stateMatches = await connector.verifyState(state, connectorContext);
     } catch (err) {
       logFailure(
-        opts.logger,
+        opts.config.logger,
         "OAuth callback verifyState threw; no authorization code was exchanged",
         failureRecord({ connector: id }, err),
       );
       return refused();
     }
     if (!stateMatches) {
-      opts.logger.warn(
+      opts.config.logger.warn(
         `[connecta] refused an OAuth callback for connector ` +
           `${loggableValue(id)} with 400: ` +
           (state === null
@@ -243,7 +243,7 @@ async function finishOAuthCallback(
         if (!await opts.registry.consumeOAuthHandoff(id, state, expectedPrincipalKey)) return refused();
       } catch (err) {
         logFailure(
-          opts.logger,
+          opts.config.logger,
           "OAuth callback handoff could not be consumed; no authorization code was exchanged",
           failureRecord({ connector: id }, err),
         );
@@ -258,7 +258,7 @@ async function finishOAuthCallback(
       // Neither the page nor the log repeats what the exchange threw: the SDK
       // quotes the token endpoint's error_description or raw body, and a
       // provider echoing a client_secret_post request puts the secret there.
-      opts.logger.warn(
+      opts.config.logger.warn(
         `[connecta] OAuth callback for connector ${loggableValue(id)} failed ` +
           `with 500: the authorization code exchange failed${exchangeErrorCode(err)}. ` +
           "Check the connector's client configuration and re-run authorization.",

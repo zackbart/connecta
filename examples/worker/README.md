@@ -15,7 +15,8 @@ migrations, and secrets.
 
 | File | What it is |
 | --- | --- |
-| `src/index.ts` | the Worker entrypoint — connector and auth configuration |
+| `src/index.ts` | the Worker entrypoint — starts the configuration, under 30 lines |
+| `src/connecta.config.ts` | connectors, auth, storage, and optional modules, as `defineConfig((env) => …)` |
 | `src/r2-artifact-blobs.ts` | artifact bodies in an R2 bucket, beside a D1-backed `kvArtifactStore` (optional) |
 | `wrangler.jsonc` | Worker name, vars, bindings, `compatibility_flags` |
 
@@ -28,7 +29,8 @@ cancellation. Set it above the longest authorization, tool call, and response
 delivery your deployment expects to serve.
 
 Storage is `d1Storage(env.CONNECTA_DB)` from `@zackbart/connecta/d1`, and
-activity history, when enabled, is `d1ActivityStore` over the same database.
+activity history, when `CONNECTA_ACTIVITY` is `"on"`, is `d1ActivityStore` over
+the same database.
 See [Storage](#storage).
 
 ## Deploy
@@ -226,7 +228,7 @@ separate Credentials or Tokens tab.
 request. Humans may use their code-derived connector view; service identities
 can use MCP but cannot manage personal or shared auth as an interactive human.
 Keep users, groups, and admission in Access. Connector visibility and management
-permissions belong in `src/index.ts`.
+permissions belong in `src/connecta.config.ts`.
 
 `identity.connectorAccess` selects discoverable and callable connectors.
 `credentialAdministration` separately allows shared credential and OAuth
@@ -308,7 +310,7 @@ The required Worker Loader binding is checked into `wrangler.jsonc`:
 "worker_loaders": [{ "binding": "LOADER" }]
 ```
 
-`src/index.ts` uses `workerExecutor({ loader: env.LOADER })` from
+`src/connecta.config.ts` uses `workerExecutor({ loader: env.LOADER })` from
 `@zackbart/connecta/worker`. The adapter constructs the upstream
 `DynamicWorkerExecutor` with only the loader and a deadline, and disposes each
 run's loader and RPC handles when its lease ends, even if the guest has not
@@ -359,7 +361,9 @@ CREATE INDEX IF NOT EXISTS connecta_kv_expiry ON connecta_kv (expires_at_ms);
   activity). The table is unchanged, so no data moves. Rename the binding in
   `wrangler.jsonc` to `CONNECTA_DB`, keeping `database_name` and
   `database_id`, replace the copied `d1-storage.ts` / `d1-activity.ts` imports
-  with `@zackbart/connecta/d1`, and delete those files. A binding rename
+  with `@zackbart/connecta/d1`, and delete those files. A deployment that
+  called `pruneActivity` from a cron drops that call: retention is
+  `d1ActivityStore(db, { retentionDays })`. A binding rename
   changes only the name the Worker sees; the database and its rows stay. An
   existing `tool_call_activity` table missing `actor_namespace`, `friction`, or
   `approval` gets them added on first use.
@@ -409,9 +413,10 @@ to `Env`. Nothing ever deletes a body: versions are immutable, a rollback
 points back at an old one, and a body written by a write that lost a conflict
 stays stored unreferenced.
 
-To refresh pages, keep the module in a variable, pass it to `createConnecta`,
-and assign it to `scheduledArtifacts.module` as shown in `src/index.ts`.
-Uncomment the hourly cron in `wrangler.jsonc`. An hourly tick starts at most
+Setting the `CONNECTA_ARTIFACTS` var to `"on"` switches the module on in
+`src/connecta.config.ts`, and the `scheduled` handler in `src/index.ts` calls
+its `runDue()`. To refresh pages,
+uncomment the hourly cron in `wrangler.jsonc`. An hourly tick starts at most
 10 due pages; each page's `manual`, `daily`, or `weekly` schedule lives in its
 versioned refresh configuration. Refresh programs use only shared connectors'
 explicitly read-only tools within the program owner's current grants. Revoking
@@ -423,27 +428,21 @@ stale banner without exposing downstream error text to readers.
 
 `d1ActivityStore(env.CONNECTA_DB)` from `@zackbart/connecta/d1` is a complete
 `ActivityStore` in the same database — keyset paging on
-`(occurred_at_ms, id)`, its table created on first use — but the wiring in
-`src/index.ts` is **commented out**, because retention is the deployment's
-decision. To enable it, uncomment the `activityHistory` and `d1ActivityStore`
-imports and the `activity` option:
+`(occurred_at_ms, id)`, its table created on first use. `src/connecta.config.ts`
+switches it on only when the `CONNECTA_ACTIVITY` var is `"on"`, because
+retention is the deployment's decision:
 
 ```ts
-import { activityHistory } from "@zackbart/connecta/activity";
-import { d1ActivityStore } from "@zackbart/connecta/d1";
-
-createConnecta({
-  // …
-  activity: activityHistory({
-    store: d1ActivityStore(env.CONNECTA_DB),
-    deploymentId: "production",
-  }),
-});
+activity: env.CONNECTA_ACTIVITY === "on"
+  ? activityHistory({
+      store: d1ActivityStore(env.CONNECTA_DB, { retentionDays: 90 }),
+      deploymentId: "production",
+    })
+  : undefined,
 ```
 
-Each write prunes a bounded batch of rows older than the retention window, 90
-days by default (`d1ActivityStore(env.CONNECTA_DB, { retentionDays: 30 })`), so
-no Cron Trigger is needed. Events carry no arguments, results, generated code,
+Each write prunes a bounded batch of rows older than `retentionDays` (90 by
+default), so no Cron Trigger is needed; change the number there. Events carry no arguments, results, generated code,
 or raw error messages. The Worker entrypoint already forwards `ctx` to
 `connecta.fetch`, which lets async activity writes settle on `waitUntil`.
 

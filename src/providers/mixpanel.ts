@@ -9,6 +9,9 @@ import type {
   Connector,
   ConnectorCallAdmissionPolicy,
 } from "../types.js";
+import { keys, optionsOf } from "../config-schema.js";
+import { PROVIDER_COMMON, REMOTE_MCP_AUTH } from "../connectors/option-shapes.js";
+import { asProvider } from "../described.js";
 
 export type MixpanelRegion = "us" | "eu" | "in";
 
@@ -258,8 +261,16 @@ ${
   }`;
 }
 
+
+/** The closed options mixpanel() accepts; see `assertKnownOptions`. */
+const MIXPANEL_OPTIONS = optionsOf<MixpanelOptions>()({ ...PROVIDER_COMMON, ...keys("region"), auth: REMOTE_MCP_AUTH });
+
 /** A maintained Mixpanel hosted-MCP connection. */
 export function mixpanel(id: string, options: MixpanelOptions): Connector {
+  return asProvider("mixpanel", MIXPANEL_OPTIONS, id, options, mixpanelConnector);
+}
+
+function mixpanelConnector(id: string, options: MixpanelOptions): Connector {
   const purpose = options.purpose.trim();
   if (!purpose) {
     throw new Error("mixpanel() requires a non-empty account purpose.");

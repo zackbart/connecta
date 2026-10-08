@@ -106,6 +106,11 @@ Deployments explicitly compose optional features: `operatorUi()` from
 `activityHistory()` from `/activity`, `artifacts()` from `/artifacts`, and
 inbound authentication adapters from `/auth/*`. Omit a module and its implementation does no runtime work. Core
 keeps connector discovery, execution, invocation, and enforcement together.
+Both deployment shapes write configuration as `defineConfig((env) => …)`, with
+each optional module a type-checked expression the environment switches on.
+`createConnecta` validates it against one schema — an unknown option or an
+unusable value refuses to boot — and `connecta.describeConfig()` returns a
+secret-free snapshot of what the deployment runs with.
 
 The optional UI shows each person's connections and effective permissions.
 Authentication controls live inside each connection, with optional activity

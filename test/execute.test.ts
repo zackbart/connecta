@@ -1478,24 +1478,12 @@ describe("execute_code executor watchdog", () => {
     },
   );
 
-  it(
-    "falls back to the default ceiling for an unusable watchdogMs",
-    { timeout: 8_000 },
-    async () => {
-      const deployment = makeDeployment({
-        execute: { watchdogMs: 0 },
-        executor: {
-          execute: () =>
-            new Promise((resolve) => {
-              setTimeout(() => resolve({ result: "fine" }), 50);
-            }),
-        },
-      });
-      const out = await callExecute(deployment, { code: "async () => null" });
-      expect(out.isError).toBeUndefined();
-      expect(JSON.parse(required(out.content[0]).text ?? "")).toEqual({
-        result: "fine",
-      });
+  it.each([0, -1, 1.5, Number.NaN])(
+    "INV-11: refuses an unusable watchdogMs %s at construction",
+    (watchdogMs) => {
+      expect(() => makeDeployment({ execute: { watchdogMs } })).toThrow(
+        "ConnectaConfig.execute.watchdogMs must be a positive whole number",
+      );
     },
   );
 });

@@ -35,11 +35,13 @@ import type { Connector, ConnectorContext, JsonSchema } from "../types.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "./google/result-size.js";
 import {
   googleOutcomeOf,
+  GOOGLE_WORKSPACE_OPTIONS,
   googleWorkspaceClient,
   workspaceConnection,
   type GoogleWorkspaceClient,
   type GoogleWorkspaceOptions,
 } from "./google/workspace.js";
+import { asProvider } from "../described.js";
 
 export type {
   GoogleServiceAccount,
@@ -1925,6 +1927,10 @@ ${extra ? `\n## Connection instructions\n\n${extra}\n` : ""}`;
  * exempts it in `execute.approval`.
  */
 export function drive(id: string, options: DriveOptions): Connector {
+  return asProvider("drive", GOOGLE_WORKSPACE_OPTIONS, id, options, driveConnector);
+}
+
+function driveConnector(id: string, options: DriveOptions): Connector {
   const connection = workspaceConnection("drive", options);
   const baseUrl = options.baseUrl?.trim() || DRIVE_API_BASE_URL;
   const shared = {

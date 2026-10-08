@@ -44,6 +44,9 @@ import type {
   ConnectorContext,
   JsonSchema,
 } from "../types.js";
+import { keys, optionsOf } from "../config-schema.js";
+import { CALL_ADMISSION } from "../connectors/option-shapes.js";
+import { asProvider } from "../described.js";
 
 /** CCB's v2 media type. The API and its token endpoint both require it. */
 export const CCB_MEDIA_TYPE = "application/vnd.ccbchurch.v2+json";
@@ -1793,8 +1796,22 @@ function defaultTitle(environment: CcbEnvironment, mode: CcbMode, writable: bool
   return `Pushpay ChMS (CCB)${qualifiers.length ? ` — ${qualifiers.join(", ")}` : ""}`;
 }
 
+
+/** The closed options ccb() accepts; see `assertKnownOptions`. */
+const CCB_OPTIONS = optionsOf<CcbOptions>()({
+  ...keys(
+    "purpose", "title", "instructions", "environment", "mode", "clientId", "clientSecret",
+    "access", "scopes", "subdomain", "defaultPerPage", "maxResultBytes",
+  ),
+  callAdmission: CALL_ADMISSION,
+});
+
 /** A maintained Church Community Builder (Pushpay ChMS) v2 connection. */
 export function ccb(id: string, options: CcbOptions): Connector {
+  return asProvider("ccb", CCB_OPTIONS, id, options, ccbConnector);
+}
+
+function ccbConnector(id: string, options: CcbOptions): Connector {
   const purpose = typeof options.purpose === "string" ? options.purpose.trim() : "";
   if (!purpose) throw new Error("ccb() requires a non-empty church purpose.");
   if (options.environment !== "production" && options.environment !== "sandbox") {

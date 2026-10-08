@@ -43,6 +43,9 @@ import type {
   CredentialTestResult,
   JsonSchema,
 } from "../types.js";
+import { keys, optionsOf } from "../config-schema.js";
+import { PROVIDER_COMMON } from "../connectors/option-shapes.js";
+import { asProvider } from "../described.js";
 
 /** Planning Center's REST origin. Override only for a proxy or test double. */
 export const PLANNING_CENTER_API_BASE_URL = "https://api.planningcenteronline.com";
@@ -2432,8 +2435,16 @@ ${
   }`;
 }
 
+
+/** The closed options planningCenter() accepts; see `assertKnownOptions`. */
+const PLANNING_CENTER_OPTIONS = optionsOf<PlanningCenterOptions>()({ ...PROVIDER_COMMON, ...keys("userAgent", "defaultPageSize", "baseUrl") });
+
 /** A maintained Planning Center Online connection over the REST API. */
 export function planningCenter(id: string, options: PlanningCenterOptions): Connector {
+  return asProvider("planning-center", PLANNING_CENTER_OPTIONS, id, options, planningCenterConnector);
+}
+
+function planningCenterConnector(id: string, options: PlanningCenterOptions): Connector {
   const purpose = options.purpose.trim();
   if (!purpose) {
     throw new Error("planningCenter() requires a non-empty organization purpose.");

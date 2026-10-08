@@ -104,7 +104,7 @@ describe("api() connector", () => {
         },
       ],
     });
-    expect(limited.callAdmission).toBe(callAdmission);
+    expect(limited.callAdmission).toEqual(callAdmission);
   });
 
   it("passes usageGuide through, and leaves it unset by default", () => {
@@ -122,7 +122,7 @@ describe("api() connector", () => {
         },
       ],
     });
-    expect(guided.usageGuide).toBe(guide);
+    expect(guided.usageGuide).toEqual(guide);
     const structured = {
       content: guide,
       summary: "Verified sender requirements.",
@@ -140,7 +140,7 @@ describe("api() connector", () => {
           },
         ],
       }).usageGuide,
-    ).toBe(structured);
+    ).toEqual(structured);
   });
 
   it("listTools returns the declared tool defs (name/description/schema)", async () => {

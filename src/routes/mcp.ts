@@ -1,3 +1,4 @@
+import { executeLimits } from "../config.js";
 import { oauthConnectUrl, oauthConnectUnavailable } from "../oauth-handoff.js";
 import {
   classifyInboundRequest,
@@ -347,7 +348,7 @@ function serveMcp(
   // transport never does, and neither may stay wired to an ended request.
   const servers: McpServer[] = [];
   const createServer = (): McpServer => {
-    const server = new McpServer(opts.serverInfo, {
+    const server = new McpServer(opts.config.serverInfo, {
       // A request-local server cannot publish catalog changes. Set this before
       // tool registration, whose SDK default otherwise advertises listChanged.
       capabilities: { tools: { listChanged: false } },
@@ -359,20 +360,20 @@ function serveMcp(
         },
       },
     });
-    const activity: ActivityRequestContext | undefined = opts.activity
+    const activity: ActivityRequestContext | undefined = opts.config.activity?.store
       ? {
-          sink: opts.activity,
-          recordTool: opts.activityModule?.recordTool,
+          sink: opts.config.activity?.store,
+          recordTool: opts.config.activity?.recordTool,
           actor,
           requestId: crypto.randomUUID(),
-          serverInfo: opts.serverInfo,
-          ...(opts.activityDeploymentId
-            ? { deploymentId: opts.activityDeploymentId }
+          serverInfo: opts.config.serverInfo,
+          ...(opts.config.activity?.deploymentId
+            ? { deploymentId: opts.config.activity?.deploymentId }
             : {}),
           ...(runtimeContext?.waitUntil
             ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
             : {}),
-          logger: opts.logger,
+          logger: opts.config.logger,
         }
       : undefined;
     registerMetaTools(server, registry, {
@@ -380,17 +381,13 @@ function serveMcp(
       canManageAuth,
       oauthConnectUrl: (id, force) => oauthConnectUrl(opts, baseUrl, id, principalKey, force),
       oauthConnectUnavailable: oauthConnectUnavailable(opts),
-      credentialHandoffUrl: opts.ui?.credentialHandoffUrl(baseUrl),
+      credentialHandoffUrl: opts.config.ui?.credentialHandoffUrl(baseUrl),
       ...(activity ? { activity } : {}),
-      ...(opts.defaultToolTimeoutMs !== undefined
-        ? { defaultToolTimeoutMs: opts.defaultToolTimeoutMs }
+      ...(opts.config.calls.defaultTimeoutMs !== undefined
+        ? { defaultToolTimeoutMs: opts.config.calls.defaultTimeoutMs }
         : {}),
-      ...(opts.probeTimeoutMs !== undefined
-        ? { probeTimeoutMs: opts.probeTimeoutMs }
-        : {}),
-      ...(opts.discoveryConcurrency !== undefined
-        ? { discoveryConcurrency: opts.discoveryConcurrency }
-        : {}),
+      probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
+      discoveryConcurrency: opts.config.discovery.concurrency,
       requestSignal,
       ...(runtimeContext?.waitUntil
         ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
@@ -400,35 +397,14 @@ function serveMcp(
     registerExecuteTool(server, registry, {
       baseUrl,
       executor: opts.executor,
-      logger: opts.logger,
+      logger: opts.config.logger,
       ...(activity ? { activity } : {}),
       requestSignal,
       ...(runtimeContext?.waitUntil
         ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
         : {}),
-      ...(opts.discoveryConcurrency !== undefined
-        ? { discoveryConcurrency: opts.discoveryConcurrency }
-        : {}),
-      ...(opts.probeTimeoutMs !== undefined
-        ? { probeTimeoutMs: opts.probeTimeoutMs }
-        : {}),
-      ...(opts.maxEmittedBytes !== undefined
-        ? { maxEmittedBytes: opts.maxEmittedBytes }
-        : {}),
-      ...(opts.maxEmittedBlocks !== undefined
-        ? { maxEmittedBlocks: opts.maxEmittedBlocks }
-        : {}),
-      ...(opts.maxHostCalls !== undefined
-        ? { maxHostCalls: opts.maxHostCalls }
-        : {}),
-      ...(opts.hostCallTimeoutMs !== undefined
-        ? { hostCallTimeoutMs: opts.hostCallTimeoutMs }
-        : {}),
-      ...(opts.watchdogMs !== undefined
-        ? { watchdogMs: opts.watchdogMs }
-        : {}),
+      ...executeLimits(opts.config),
       approval: opts.approval,
-      maxWrites: opts.maxWrites,
     });
     servers.push(server);
     return server;
@@ -446,7 +422,7 @@ function serveMcp(
         // Keep the SDK's validation and prevent it from opening an SSE stream.
         // Its capacity error below becomes our permanent unsupported method.
         maxSubscriptions: 0,
-        onerror: (error) => logFailure(opts.logger, "MCP handler error", failureRecord({}, error), "error"),
+        onerror: (error) => logFailure(opts.config.logger, "MCP handler error", failureRecord({}, error), "error"),
       }).fetch(request);
       if (request.headers.get("Mcp-Method") === "subscriptions/listen" && response.status === 200) {
         const body = await response.clone().json();
@@ -482,7 +458,7 @@ export function createMcpRoute(
   handle(context: RouteContext): Effect.Effect<Response | null, unknown>;
   rejectOrigin(request: Request): Response | null;
 } {
-  const configuredOrigins = opts.allowedOrigins;
+  const configuredOrigins = opts.config.allowedOrigins;
   const isExactOrigin = (value: unknown): value is string => {
     if (typeof value !== "string") return false;
     try {
@@ -492,14 +468,9 @@ export function createMcpRoute(
       return false;
     }
   };
-  if (
-    configuredOrigins !== undefined && configuredOrigins !== "*" &&
-    (!Array.isArray(configuredOrigins) || !configuredOrigins.every(isExactOrigin))
-  ) {
-    throw new TypeError('ConnectaConfig.allowedOrigins must be an array of exact HTTP(S) origins or "*".');
-  }
+  // The schema has already refused anything but exact origins or "*".
   const origins = new Set(configuredOrigins === undefined
-    ? opts.publicUrl ? [new URL(opts.publicUrl).origin] : []
+    ? opts.config.publicUrl ? [new URL(opts.config.publicUrl).origin] : []
     : configuredOrigins === "*" ? [] : configuredOrigins);
   const allowsOrigin = (origin: string): boolean => {
     if (configuredOrigins === "*") return true;
@@ -527,7 +498,7 @@ export function createMcpRoute(
       suppressedAdmissionWarnings++;
       return;
     }
-    opts.logger.warn("[connecta] MCP request admission rejected", {
+    opts.config.logger.warn("[connecta] MCP request admission rejected", {
       retryAfterMs: error.retryAfterMs,
       active: opts.requestAdmission.activeCount,
       queued: opts.requestAdmission.queuedCount,
@@ -622,7 +593,7 @@ export function createMcpRoute(
       }
       const localRequest = new Request(request, { signal: localAbort.signal });
       if (admission.success && admission.success.waitMs > 0) {
-        opts.logger.debug("[connecta] MCP request admitted after queue wait", {
+        opts.config.logger.debug("[connecta] MCP request admitted after queue wait", {
           waitMs: admission.success.waitMs,
           active: opts.requestAdmission.activeCount,
           queued: opts.requestAdmission.queuedCount,
@@ -636,9 +607,9 @@ export function createMcpRoute(
       const authz = yield* Effect.promise(() => authorize(
         localRequest,
         baseUrl,
-        opts.auth,
+        opts.config.auth,
         runtimeContext,
-        opts.identity,
+        opts.config.identity,
       ));
       if (!authz.ok) return cors(authz.response);
       // A pool endpoint narrows the identity's own view and nothing else. An
@@ -656,14 +627,14 @@ export function createMcpRoute(
           }
         });
         if (!pool || verdict !== "granted") {
-          opts.logger.warn(
+          opts.config.logger.warn(
             `[connecta] refused /mcp/${poolName} with 404: pool ${verdict}` +
               (authz.actor.id ? ` for ${loggableValue(authz.actor.id)}` : ""),
           );
           // The server's own 404, so a browser sees the page every unserved
           // path shows and an MCP client (which never asks for text/html)
           // still reads a plain "Not Found".
-          return cors(notFoundResponse(request, opts));
+          return cors(notFoundResponse(request, opts.config));
         }
         access = intersectAccess(authz, pool.access);
       }
@@ -680,7 +651,7 @@ export function createMcpRoute(
             identity: authz.identity,
             // `authorize` admits an open deployment's every request as the
             // anonymous actor; only a provider's `ok` is an authentication.
-            authenticated: opts.auth.length > 0,
+            authenticated: opts.config.auth.length > 0,
             ...(poolName !== undefined ? { pool: poolName } : {}),
           },
         });
@@ -693,7 +664,7 @@ export function createMcpRoute(
         );
       }
       if (new URL(request.url).searchParams.has("toolkit")) {
-        return cors(toolkitRetired(opts.logger));
+        return cors(toolkitRetired(opts.config.logger));
       }
       return cors(yield* serveMcp(
         localRequest,

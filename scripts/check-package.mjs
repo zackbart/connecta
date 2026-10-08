@@ -240,6 +240,7 @@ try {
     "templates/node/docker-compose.yml",
     "templates/node/package.json",
     "templates/node/src/index.ts",
+    "templates/node/src/connecta.config.ts",
     "dist/index.js",
     "dist/index.d.ts",
     "dist/types.d.ts",
@@ -852,15 +853,20 @@ try {
     ],
     root,
   );
-  // One Effect, at exactly the pinned version. A second copy means two
+  // One Effect, inside the declared v4 range. A second copy means two
   // runtimes whose fibers, services, and errors do not recognize each other.
-  const effectPin = rootManifest.dependencies?.effect;
+  const effectRange = rootManifest.dependencies?.effect ?? "";
   const installedEffect = JSON.parse(
     await readFile(join(work, "node_modules", "effect", "package.json"), "utf8"),
   ).version;
-  if (installedEffect !== effectPin) {
+  const caret = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(effectRange);
+  const installed = /^(\d+)\.(\d+)\.(\d+)$/.exec(installedEffect);
+  const satisfies = caret && installed && installed[1] === caret[1] &&
+    (Number(installed[2]) > Number(caret[2]) ||
+      (installed[2] === caret[2] && Number(installed[3]) >= Number(caret[3])));
+  if (!satisfies) {
     throw new Error(
-      `Installed effect ${installedEffect} does not match the pin ${effectPin}`,
+      `Installed effect ${installedEffect} does not satisfy ${effectRange}`,
     );
   }
   const consumerLock = JSON.parse(
@@ -902,6 +908,7 @@ try {
     "AGENTS.md",
     "CLAUDE.md",
     "src/index.ts",
+    "src/connecta.config.ts",
     "tsconfig.json",
   ]) {
     if (!existsSync(join(work, "generated-deployment", generated))) {
@@ -928,6 +935,64 @@ try {
   run(npm, ["install", "--ignore-scripts"], generatedRoot);
   await assertInstallScriptsApproved(generatedRoot, generatedPackage);
   run(npm, ["run", "typecheck"], generatedRoot);
+  // The published configuration contract, compiled the way a consumer
+  // compiles it: ConnectaConfig is derived from one schema, so its shape is
+  // checked by the type checker rather than by scraping declaration text.
+  await writeFile(
+    join(generatedRoot, "src", "config-contract.ts"),
+    [
+      'import { createConnecta, customExecutor, defineConfig, type AdmittingExecutor, type Connecta, type ConnectaCallsConfig, type ConnectaConfig, type ConnectaConfigDescription, type ConnectaDiscoveryConfig, type ExecutorLease } from "@zackbart/connecta";',
+      'const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });',
+      "const discovery: ConnectaDiscoveryConfig = { concurrency: 2, catalogTtlSeconds: 1, persistCatalog: false, staleCatalogSeconds: 1, probeTimeoutMs: 1 };",
+      "const calls: ConnectaCallsConfig = { defaultTimeoutMs: 1, maxResultBytes: 1 };",
+      "const config: ConnectaConfig = { connectors: [], executor, discovery, calls, vault: undefined, activity: undefined, ui: undefined, artifacts: undefined };",
+      "// @ts-expect-error executor is required",
+      "const missing: ConnectaConfig = { connectors: [] };",
+      "// @ts-expect-error unknown nested option",
+      "const typo: ConnectaConfig = { connectors: [], executor, discovery: { concurrncy: 2 } };",
+    "// @ts-expect-error legacy top-level activityReadGate",
+    "const legacy0: ConnectaConfig = { connectors: [], executor, activityReadGate: 1 };",
+    "void legacy0;",
+    "// @ts-expect-error legacy top-level activityDeploymentId",
+    "const legacy1: ConnectaConfig = { connectors: [], executor, activityDeploymentId: 1 };",
+    "void legacy1;",
+    "// @ts-expect-error legacy top-level credentialEncryptionKey",
+    "const legacy2: ConnectaConfig = { connectors: [], executor, credentialEncryptionKey: 1 };",
+    "void legacy2;",
+    "// @ts-expect-error legacy top-level credentialHealth",
+    "const legacy3: ConnectaConfig = { connectors: [], executor, credentialHealth: 1 };",
+    "void legacy3;",
+    "// @ts-expect-error legacy top-level toolCacheTtlSeconds",
+    "const legacy4: ConnectaConfig = { connectors: [], executor, toolCacheTtlSeconds: 1 };",
+    "void legacy4;",
+    "// @ts-expect-error legacy top-level persistToolCatalog",
+    "const legacy5: ConnectaConfig = { connectors: [], executor, persistToolCatalog: 1 };",
+    "void legacy5;",
+    "// @ts-expect-error legacy top-level toolCatalogStaleSeconds",
+    "const legacy6: ConnectaConfig = { connectors: [], executor, toolCatalogStaleSeconds: 1 };",
+    "void legacy6;",
+    "// @ts-expect-error legacy top-level probeTimeoutMs",
+    "const legacy7: ConnectaConfig = { connectors: [], executor, probeTimeoutMs: 1 };",
+    "void legacy7;",
+    "// @ts-expect-error legacy top-level defaultToolTimeoutMs",
+    "const legacy8: ConnectaConfig = { connectors: [], executor, defaultToolTimeoutMs: 1 };",
+    "void legacy8;",
+    "// @ts-expect-error legacy top-level maxResultBytes",
+    "const legacy9: ConnectaConfig = { connectors: [], executor, maxResultBytes: 1 };",
+    "void legacy9;",
+    "// @ts-expect-error legacy top-level surface",
+    "const legacy10: ConnectaConfig = { connectors: [], executor, surface: 1 };",
+    "void legacy10;",
+      "const app: Connecta = createConnecta(defineConfig((_env: { X?: string }) => config)({}));",
+      "const snapshot: ConnectaConfigDescription = app.describeConfig();",
+      "const close: () => Promise<void> = app.close;",
+      "type Executors = [AdmittingExecutor, ExecutorLease];",
+      "void missing; void typo; void snapshot; void close;",
+      "export type { Executors };",
+      "",
+    ].join("\n"),
+  );
+  run(npm, ["run", "typecheck"], generatedRoot);
   const generatedTsx = join(
     generatedRoot,
     "node_modules",
@@ -940,46 +1005,49 @@ try {
     generatedRoot,
     "CONNECTA_TOKEN is required",
   );
-  const generatedSource = await readFile(
+  const generatedEntry = await readFile(
     join(generatedRoot, "src", "index.ts"),
     "utf8",
   );
+  const generatedConfig = await readFile(
+    join(generatedRoot, "src", "connecta.config.ts"),
+    "utf8",
+  );
+  const configImport = 'from "./connecta.config.js"';
+  if (!generatedEntry.includes(configImport)) {
+    throw new Error("Generated entry no longer imports src/connecta.config.ts");
+  }
+  // A variant configuration beside the real one, started by a copy of the
+  // entry that imports it instead.
+  const writeVariant = async (name, config) => {
+    await writeFile(join(generatedRoot, "src", `${name}.config.ts`), config);
+    await writeFile(
+      join(generatedRoot, "src", `${name}.ts`),
+      generatedEntry.replace(configImport, `from "./${name}.config.js"`),
+    );
+    return `src/${name}.ts`;
+  };
   // Strip the comment with the line it annotates; leaving it orphaned above a
   // deleted executor would make the fixture read as a deliberate omission.
   const executorLine =
-    "  // Required: model-written programs run in a bounded QuickJS child.\n" +
-    "  executor: quickJsExecutor(),\n";
-  if (!generatedSource.includes(executorLine)) {
+    "    // Required: model-written programs run in a bounded QuickJS child.\n" +
+    "    executor: quickJsExecutor(),\n";
+  if (!generatedConfig.includes(executorLine)) {
     throw new Error("Generated deployment is missing its required executor");
   }
-  await writeFile(
-    join(generatedRoot, "src", "no-executor.ts"),
-    generatedSource.replace(executorLine, ""),
-  );
   expectFailure(
     generatedTsx,
-    ["src/no-executor.ts"],
+    [await writeVariant("no-executor", generatedConfig.replace(executorLine, ""))],
     generatedRoot,
     "ConnectaConfig.executor is required",
     { CONNECTA_TOKEN: "package-smoke-token" },
   );
-  const createCall = "const connecta = createConnecta({\n";
-  if (!generatedSource.includes(createCall)) {
-    throw new Error(
-      "Generated deployment no longer opens createConnecta on its own line; " +
-        "the removed-surface fixture cannot be built",
-    );
-  }
-  await writeFile(
-    join(generatedRoot, "src", "removed-surface.ts"),
-    generatedSource.replace(
-      createCall,
-      `${createCall}  surface: "classic",\n`,
-    ),
-  );
   expectFailure(
     generatedTsx,
-    ["src/removed-surface.ts"],
+    [await writeVariant(
+      "removed-surface",
+      generatedConfig.replace(executorLine, `${executorLine}    surface: "classic",\n`),
+    )],
     generatedRoot,
     "ConnectaConfig.surface",
     { CONNECTA_TOKEN: "package-smoke-token" },
@@ -1028,8 +1096,9 @@ try {
   }
 
   // Exercise the installed package and real QuickJS with an original v0.23
-  // secret. The configured static bearer is different, so only the restored
-  // module can admit this doctor request.
+  // secret. The configured static bearer is different, so only the template's
+  // access-token module, over the migrated database, can admit this
+  // doctor request.
   const legacyTokens = JSON.parse(await readFile(
     join(root, "test", "fixtures", "access-tokens-v023.json"), "utf8",
   ));
@@ -1049,13 +1118,9 @@ try {
   if (!migrated.includes(`Imported ${recordCount} entries`)) {
     throw new Error(`migrate-state did not import the legacy records: ${migrated}`);
   }
-  await writeFile(join(generatedRoot, "src", "managed-tokens.ts"),
-    'import { accessTokens } from "@zackbart/connecta/auth/access-tokens";\n' +
-    generatedSource.replace(createCall, createCall + '  accessTokens: accessTokens(storage),\n'),
-  );
   const legacyPort = await freePort();
   let legacyOutput = "";
-  const legacyDeployment = spawn(generatedTsx, ["src/managed-tokens.ts"], {
+  const legacyDeployment = spawn(generatedTsx, ["src/index.ts"], {
     cwd: generatedRoot,
     env: { ...process.env, CONNECTA_TOKEN: smokeToken, CONNECTA_DATABASE: legacyState, PORT: String(legacyPort) },
     stdio: ["ignore", "pipe", "pipe"],
@@ -1183,31 +1248,6 @@ try {
     ),
     "utf8",
   );
-  for (const declaration of [
-    "export interface ConnectaDiscoveryConfig {",
-    "    catalogTtlSeconds?: number;",
-    "    persistCatalog?: boolean;",
-    "    staleCatalogSeconds?: number;",
-    "    probeTimeoutMs?: number;",
-    "export interface ConnectaCallsConfig {",
-    "    defaultTimeoutMs?: number;",
-    "    maxResultBytes?: number;",
-    "    activity?: ActivityModule;",
-    "    vault?: CredentialVault;",
-    "    ui?: OperatorSurface;",
-    "    artifacts?: ArtifactsModule;",
-    "    discovery?: ConnectaDiscoveryConfig;",
-    "    calls?: ConnectaCallsConfig;",
-    "    close: () => Promise<void>;",
-    "AdmittingExecutor,",
-    "ExecutorLease,",
-  ]) {
-    if (!coreDeclarations.includes(declaration)) {
-      throw new Error(
-        `Packed core declarations are missing: ${declaration.trim()}`,
-      );
-    }
-  }
   for (const removedDeclaration of [
     "health?: CredentialHealthConfig",
     "checkCredentials:",
@@ -1222,17 +1262,6 @@ try {
       );
     }
   }
-  const publicConfigStart = coreDeclarations.indexOf(
-    "export interface ConnectaConfig {",
-  );
-  const connectaStart = coreDeclarations.indexOf("export interface Connecta {");
-  if (publicConfigStart < 0 || connectaStart <= publicConfigStart) {
-    throw new Error("Packed core declarations are missing ConnectaConfig");
-  }
-  const publicConfig = coreDeclarations.slice(
-    publicConfigStart,
-    connectaStart,
-  );
   const typeDeclarations = await readFile(
     join(
       work,
@@ -1253,28 +1282,6 @@ try {
         `Packed executor declarations are missing: ${declaration}`,
       );
     }
-  }
-  for (const legacyName of [
-    "activityReadGate",
-    "activityDeploymentId",
-    "credentialEncryptionKey",
-    "credentialHealth",
-    "toolCacheTtlSeconds",
-    "persistToolCatalog",
-    "toolCatalogStaleSeconds",
-    "probeTimeoutMs",
-    "defaultToolTimeoutMs",
-    "maxResultBytes",
-    "surface",
-  ]) {
-    if (new RegExp(`^\\s+${legacyName}\\??:`, "m").test(publicConfig)) {
-      throw new Error(
-        `Packed ConnectaConfig still exposes legacy field ${legacyName}`,
-      );
-    }
-  }
-  if (!/^\s+executor: Executor;/m.test(publicConfig)) {
-    throw new Error("Packed ConnectaConfig does not require executor");
   }
   for (const dependency of [
     "@clerk/backend",
