@@ -5,12 +5,15 @@ export function wrapGuestProgram(code: string): string {
 
 /** Separate user source from the trusted wrapper before publishing Worker modules. */
 export function isolateGuestProgram(code: string): { program: string; wrapper: string } | undefined {
-  const start = code.indexOf("async (connecta) => await (\n");
-  const end = code.lastIndexOf("\n)())");
-  if (start < 0 || end < start) return undefined;
+  const prefix = "async () => globalThis.__connecta_run()(";
+  const callback = "async (connecta) => await (\n";
+  const suffix = "\n)())";
+  if (!code.startsWith(prefix + callback) || !code.endsWith(suffix)) return undefined;
   return {
-    program: code.slice(start, end + "\n)()".length),
-    wrapper: code.slice(0, start) + "__connecta_user_program" + code.slice(end + "\n)()".length),
+    program: code.slice(prefix.length, -1),
+    // Only this fixed wrapper enters the private runner module. Matching text
+    // inside an arbitrary body/string is guest data, never a trusted wrapper.
+    wrapper: `${prefix}__connecta_user_program)`,
   };
 }
 

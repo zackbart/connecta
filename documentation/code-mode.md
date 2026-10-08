@@ -352,7 +352,9 @@ Offsets and sizes are UTF-8 bytes; the page cap is the original call's inline ca
 Follow `nextOffset`, reassemble inside the program, and return a reduced value.
 Before returning a page, the host rechecks current authentication, connector/tool
 grants, pool membership, and endpoint trust against both the original and current
-tool classification. A read-only endpoint cannot page a write result. Binding
+tool classification. A read-only endpoint cannot page a write result, so a
+direct write there returns an inline truncation notice without stashing the
+result or advertising a paging action. Binding
 mismatches, revoked access, and old entries without bindings are `not_found`, as
 are unknown or expired ids; a storage failure is `unavailable`. IDs are random UUIDs.
 The `get_result` meta-tool is removed.
@@ -559,7 +561,8 @@ much. Run a program that returns less; that is why the envelope says so.
 unprojected data.
 
 For non-repeatable writes, inspect and reduce the full result before return,
-or page a direct `call_destructive_tool` result with `connecta.result`. Sampling a
+or page a direct `call_destructive_tool` result on a trusted endpoint with
+`connecta.result`. Sampling a
 program result may discard the only copy.
 
 **R5.** `console.log`, `console.warn`, and `console.error` are captured in call

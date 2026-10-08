@@ -266,6 +266,13 @@ describe.skipIf(!workerExecutor)(
       expect(result.result).toBe(42);
     });
 
+    it("INV-3: trusted-wrapper markers inside a direct guest body remain data", async () => {
+      const code = "const marker = `async (connecta) => await (\nasync () => 42\n)())`; return marker;";
+      const result = await required(workerExecutor).execute(code, []);
+      expect(result.error).toBeUndefined();
+      expect(result.result).toBe("async (connecta) => await (\nasync () => 42\n)())");
+    });
+
     it("[L4, W9] cancels an exempt write queued at exhaustion", async () => {
       await checkQueuedWriteAtExhaustion(required(workerExecutor));
     });

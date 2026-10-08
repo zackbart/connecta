@@ -105,6 +105,7 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
         });
       };
       let executableCode: string | undefined;
+      let guestProgram: ReturnType<typeof isolateGuestProgram>;
       let normalizationLines = 0;
       const loader = new Proxy(options.loader, {
         get(target, key) {
@@ -117,7 +118,7 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
             if (typeof source !== "string" || !executableCode || !hostProviders) throw new Error("Worker executable module was unavailable.");
             const index = source.indexOf(executableCode);
             if (index < 0) throw new Error("Worker executable module did not contain the program.");
-            const guest = isolateGuestProgram(executableCode);
+            const guest = guestProgram;
             if (guest) normalizationLines = 0;
             const names = hostProviders.map(provider => provider.name).join(", ");
             const globals = hostProviders.map(provider => `globalThis[${JSON.stringify(provider.name)}] = ${provider.name};`).join("\n");
@@ -271,6 +272,10 @@ const {
           if (executed) throw new Error("Executor lease may execute only once.");
           executed = true;
           hostProviders = providers;
+          // Extract the fixed wrapper from the original source. Upstream may
+          // wrap invalid syntax as a bare body; that must not turn an attempted
+          // module escape into runnable statements or shift guest locations.
+          guestProgram = isolateGuestProgram(code.trim());
           executableCode = normalizeCode(code);
           const original = executableCode.indexOf(code.trim());
           if (original >= 0) normalizationLines = executableCode.slice(0, original).split("\n").length - 1;
