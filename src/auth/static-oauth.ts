@@ -28,6 +28,7 @@ import {
   refreshCoordinatorsByPartition,
 } from "./downstream-oauth.js";
 import type { OAuthRefreshCoordinator } from "./downstream-oauth.js";
+import { trackRemoteClientRequest } from "./downstream-client-metadata.js";
 import { trackOAuthStartReset } from "./oauth-start-reset.js";
 
 /**
@@ -395,13 +396,13 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       settings.tokenRequestHeaders.length === 0 ||
       `${url.origin}${url.pathname}` !== settings.identity
     ) {
-      sentSecretsFor(ctx).request(input, init);
+      trackRemoteClientRequest(sentSecretsFor(ctx), input, init);
       return byteReadResponse(await fetch(input, { ...init, redirect: "manual" }));
     }
     const headers = new Headers(init.headers);
     for (const [name, value] of settings.tokenRequestHeaders) headers.set(name, value);
     for (const [, value] of settings.tokenRequestHeaders) sentSecretsFor(ctx).header(value);
-    sentSecretsFor(ctx).request(input, { ...init, headers });
+    trackRemoteClientRequest(sentSecretsFor(ctx), input, { ...init, headers });
     return byteReadResponse(await fetch(input, { ...init, headers, redirect: "manual" }));
   };
 
@@ -667,6 +668,18 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     startAuth: retainingOAuthPartition(startAuth, 0),
     disconnectAuth: retainingOAuthPartition(disconnectAuth, 0),
     verifyState: retainingOAuthPartition(verifyState, 1),
+    verifyCallbackIssuer: retainingOAuthPartition(async (issuer: string | null, ctx: ConnectorContext) => {
+      const provider = callbackProviders.get(scopeOf(ctx));
+      if (!provider) return false;
+      provider.validateCallbackIssuer(issuer);
+      return true;
+    }, 1),
+    consumeAuthError: retainingOAuthPartition(async (ctx: ConnectorContext) => {
+      const provider = callbackProviders.get(scopeOf(ctx));
+      callbackProviders.delete(scopeOf(ctx));
+      if (!provider) throw new ConnectorCallError("connector_call_failed", "OAuth error callback matches no pending consent.");
+      await provider.consumeAuthError();
+    }, 0),
     finishAuth: retainingOAuthPartition(finishAuth, 1),
     access: (ctx) => ({
       fetch: (input, init) => authorizedFetch(ctx, input, init),

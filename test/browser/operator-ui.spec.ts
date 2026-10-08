@@ -148,6 +148,7 @@ function data(): UiData {
             ]
           : [],
         oauth: true,
+        ...(oauthConnected ? { registrationPath: "cimd" as const } : {}),
       },
     ],
   };
@@ -593,11 +594,14 @@ test("disconnects and reconnects downstream OAuth", async ({ page }) => {
   await openAuthenticated(page);
   const row = await openRow(page, "CRM");
 
+  await expect(row.getByText("OAuth client: Client metadata document (CIMD)", { exact: true })).toBeVisible();
+
   // Disconnecting a healthy connection asks first, in the row.
   await row.getByRole("button", { name: "Disconnect CRM" }).click();
   const confirm = row.getByRole("group", { name: /Disconnect CRM\?/ });
   await confirm.getByRole("button", { name: "Disconnect", exact: true }).click();
   await expect(row.locator("#oauthNotice-oauth")).toContainText("Disconnected.");
+  await expect(row.getByText("OAuth client:", { exact: false })).toHaveCount(0);
 
   // Connecting one that is not healthy does not: it opens the tab at once.
   const popup = page.waitForEvent("popup");

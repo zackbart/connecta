@@ -6,6 +6,7 @@ import { createMcpRoute, MCP_CORS_HEADERS } from "./routes/mcp.js";
 import {
   routeOAuthCallback,
 } from "./routes/oauth.js";
+import { routeOAuthClientMetadata } from "./routes/oauth-client-metadata.js";
 import { routeConnect } from "./routes/connect.js";
 import { runEdge } from "./runtime/run.js";
 import {
@@ -103,6 +104,9 @@ export function createFetchHandler(
   const route = (context: RouteContext): Effect.Effect<Response, unknown> =>
     Effect.gen(function* () {
       const { request, path, baseUrl } = context;
+      const clientMetadata = routeOAuthClientMetadata(context);
+      if (clientMetadata) return clientMetadata;
+
       // Private mutations own OPTIONS so they never inherit wildcard CORS.
       const ui = opts.config.ui;
       if (ui) {

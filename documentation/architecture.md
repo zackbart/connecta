@@ -70,6 +70,7 @@ top to bottom.
 | 0 | MCP Origin check | A disallowed `Origin` on `/mcp*` is a fixed 403 before redirects, admission, auth, or preflight — costing no permit and no auth lookup. Originless requests are admitted. |
 | 0 | HTTPS upgrade | 308 to an HTTPS `publicUrl`, with path and query *assigned* onto it rather than resolved against it, so a `//host` pathname cannot replace the origin. `/health` is exempt: a loopback probe must not need public DNS. |
 | 0 | Cloudflare Access (Worker, when enabled) | Edge admission ahead of this table; an admitted invocation carries trusted identity in `ctx.access`. |
+| 1 | `/oauth/client-metadata/<connectorId>` | Public GET-only CIMD for configured self-hosted OAuth connectors; fixed `publicUrl`, no auth or storage. |
 | 1 | Mounted UI routes | Before wildcard OPTIONS, so mutation routes refuse preflight rather than inheriting MCP CORS. No UI module, no routes. |
 | 1 | `/connect/<connectorId>`, `/oauth/callback/<connectorId>` | GET-only browser OAuth routes, before wildcard OPTIONS. Both verify the initiating user and management permission, independent of the UI. |
 | 2 | MCP preflight | Allowed `OPTIONS` on `/mcp*`: 204 without admission or auth. |
@@ -333,8 +334,11 @@ set. Every connector context links its local set into that request, including
 listing, discovery, registry refresh, OAuth refresh, and provider handlers.
 Direct meta-tool invocations and program runs get fresh request identities;
 all operations within one HTTP request share its identity. Credential-slot reads, static
-auth headers, and outbound bearer tokens join the set, including tokens
-rotated during a call. Before any diagnostic is truncated or returned, the
+auth headers, raw confidential OAuth client IDs and secrets, and outbound
+bearer tokens join the set, including tokens rotated during a call. Token and
+revocation requests register client credentials before dispatch, decoding OAuth
+Basic form components so a raw echo is covered too. Public client IDs remain
+visible. Before any diagnostic is truncated or returned, the
 agent boundary replaces these values and their auth prefixes, mixed JSON
 escapes, URL encodings, and base64/base64url forms with `[redacted]`. Final
 transports register sensitive headers and query values after assembling the
@@ -947,6 +951,7 @@ same auth gate and identity partition as `/ui/data` and `/ui/connectors/:id`.
 with their final read/write classification, catalog age in milliseconds, and
 last-call time/outcome. Catalog descriptions and schemas are allowed for an
 authenticated reader; grammar-failing names and addresses become `<withheld>`.
+`auth.registrationPath` reports the selected downstream OAuth client mechanism when known.
 Status prose, error text, credential values or suffixes, arguments, results,
 and code are excluded. Static and unobserved catalogs have a null age;
 persisted catalogs retain their original fetch time. Probes run with bounded

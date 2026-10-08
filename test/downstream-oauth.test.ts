@@ -117,6 +117,7 @@ describe("KvOAuthProvider over memoryStorage", () => {
     expect(p.clientMetadata).toEqual({
       redirect_uris: [REDIRECT],
       client_name: "connecta",
+      application_type: "web",
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: "none",
@@ -238,7 +239,7 @@ describe("KvOAuthProvider over memoryStorage", () => {
     expect(await storedGrant(storage)).toEqual({
       connectaOAuth: 3,
       epoch: "initial",
-      body: { issuer: ISSUER, client: { value: client }, tokens },
+      body: { issuer: ISSUER, client: { value: client, registrationPath: "dcr" }, tokens },
     });
   });
 
@@ -256,7 +257,7 @@ describe("KvOAuthProvider over memoryStorage", () => {
     expect(await storage.get(GRANT)).toBe(before);
     // Discovery for the same server keeps the client and tokens beside it.
     expect((await storedGrant(storage))?.body).toEqual({
-      issuer: ISSUER, client: { value: client }, tokens, discovery,
+      issuer: ISSUER, client: { value: client, registrationPath: "dcr" }, tokens, discovery,
     });
 
     // Tokens for another server replace the whole grant.
@@ -615,7 +616,14 @@ describe("KvOAuthProvider epochs", () => {
     {
       held: "a URL-based client",
       carried: false,
-      setup: (s) => provider(s, { binding: BINDING, clientMetadataUrl: URL_CLIENT }).saveClientInformation({ client_id: URL_CLIENT }, ctxA),
+      setup: async (s) => {
+        const p = provider(s, { binding: BINDING, clientMetadataUrl: URL_CLIENT });
+        await p.saveDiscoveryState({ ...discovery, authorizationServerMetadata: {
+          issuer: ISSUER, authorization_endpoint: `${ISSUER}/authorize`, token_endpoint: `${ISSUER}/token`,
+          response_types_supported: ["code"], client_id_metadata_document_supported: true,
+        } });
+        await p.saveClientInformation({ client_id: URL_CLIENT }, ctxA);
+      },
     },
   ])("a restart that preserves the client, holding $held, carries it: $carried", async ({ carried, setup, binding }) => {
     const storage = memoryStorage();
@@ -634,7 +642,7 @@ describe("KvOAuthProvider epochs", () => {
     // Only the registration, marked carried; never tokens or discovery.
     expect(grant.body).toEqual({
       issuer: ISSUER,
-      client: { value: required(before).value, binding: BINDING, carried: true },
+      client: { value: required(before).value, binding: BINDING, carried: true, registrationPath: "dcr" },
     });
     expect(await provider(storage).clientInformation(ctxA)).toMatchObject({ client_id: client.client_id });
   });

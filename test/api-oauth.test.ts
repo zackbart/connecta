@@ -1,4 +1,4 @@
-import { callbackAuth, bindCallback, storedGrant } from "./fixtures/oauth.js";
+import { callbackAuth, bindCallback, consentKey, storedGrant } from "./fixtures/oauth.js";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
 import type { ApiOAuthConfig, ApiOptions } from "../src/connectors/api.js";
@@ -40,6 +40,39 @@ describe("OAuth handoff lifetime", () => {
       const replay = await app.fetch(new Request(authorizationUrl));
       expect(replay.status).toBe(400);
       expect((await connector.status!(target!.registry.contextFor("ccb", BASE))).state).toBe("ok");
+    } finally { await app.close(); }
+  });
+
+  it.each([true, false])("INV-4 INV-5: error callbacks terminate static consent only after verification (PKCE %s)", async pkce => {
+    const provider = fakeProvider();
+    install(provider);
+    const connector = ccb({ oauth: { ...OAUTH, pkce } });
+    const app = createTestConnecta({ connectors: [connector], storage: memoryStorage(), publicUrl: BASE, auth: callbackAuth, logger: "silent" });
+    try {
+      const ctx = () => app.registry.contextFor("ccb", BASE);
+      const begun = await connector.startAuth!(ctx());
+      const consent = begun.authorizationUrl!;
+      const state = new URL(consent).searchParams.get("state")!;
+      await bindCallback(app, "ccb", state);
+      const key = await consentKey(state);
+      const before = await ctx().storage.get(key);
+      for (const query of [new URLSearchParams({ state: "bad-state", error: "access_denied" }), new URLSearchParams({ state, iss: "https://wrong.example", error: "access_denied" })]) {
+        expect((await app.fetch(new Request(`${BASE}/oauth/callback/ccb?${query}`))).status).toBe(400);
+        expect(await ctx().storage.get(key)).toBe(before);
+      }
+      const refused = await app.fetch(new Request(`${BASE}/oauth/callback/ccb?${new URLSearchParams({ state, error: "access_denied" })}`));
+      expect(await refused.text()).toContain('data-oauth-callback="denied"');
+      const consumed = JSON.parse((await ctx().storage.get(key))!);
+      expect(consumed.consumed).toBe(true);
+      expect(consumed.verifier).toBeUndefined();
+      await bindCallback(app, "ccb", state);
+      const code = provider.consent(consent);
+      const replay = await app.fetch(new Request(`${BASE}/oauth/callback/ccb?${new URLSearchParams({ state, code })}`));
+      expect(replay.status).toBe(400);
+      expect(await replay.text()).toContain('data-oauth-callback="invalid_callback"');
+      expect(provider.tokenRequests).toHaveLength(0);
+      const continued = await connector.startAuth!(ctx());
+      expect(new URL(continued.authorizationUrl!).searchParams.get("state")).not.toBe(state);
     } finally { await app.close(); }
   });
 
@@ -284,7 +317,7 @@ describe("api() oauth construction", () => {
 
   it("exposes the OAuth hooks the callback route, operator UI, and authorize_connector key on", () => {
     const connector = ccb();
-    for (const hook of ["status", "startAuth", "disconnectAuth", "verifyState", "finishAuth"] as const) {
+    for (const hook of ["status", "startAuth", "disconnectAuth", "verifyState", "verifyCallbackIssuer", "consumeAuthError", "finishAuth"] as const) {
       expect(connector[hook]).toBeTypeOf("function");
     }
     expect(api("plain", { tools: [] }).startAuth).toBeUndefined();

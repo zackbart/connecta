@@ -244,7 +244,9 @@ describe("a refused client registration", () => {
       vi.stubGlobal("fetch", downstream({ register: echoingRefusal(status, code) }));
       const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" }, versionNegotiation: "legacy" });
       const { logger, lines } = capturingLogger();
-      const context = scope(logger);
+      // Explicit consent lets this fixture reach registration; ordinary reads
+      // now stop before persisting discovery or registering a client (INV-10).
+      const context = { ...scope(logger), allowAuthorization: true };
       const error = await connector.callTool("read", {}, context).then(() => null, (err: unknown) => err);
       await connector.closeScope!(context);
 
@@ -279,7 +281,8 @@ describe("a refused client registration", () => {
     const search = await tools.searchTools({ query: "read", connector: "svc" });
     const authorize = await tools.authorizeConnector({ connector: "svc" });
 
-    expect(JSON.stringify(call)).toContain("could not register an OAuth client");
+    expect(JSON.stringify(call)).toContain("requires authorization");
+    expect(served).toHaveLength(0);
     expectWithheld(JSON.stringify(call), JSON.stringify(search), JSON.stringify(authorize), ...lines);
   });
 });
@@ -293,7 +296,7 @@ describe("an OAuth discovery failure", () => {
     const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" }, versionNegotiation: "legacy" });
     const { logger, lines } = capturingLogger();
     const started = await connector.startAuth!(scope(logger));
-    const context = scope(logger);
+    const context = { ...scope(logger), allowAuthorization: true };
     const error = await connector.listTools(context).then(() => null, (err: unknown) => err);
     await connector.closeScope!(context);
 
@@ -361,7 +364,8 @@ describe("an OAuth flow on a live client", () => {
 
   /**
    * Connect without credentials, which the live downstream allows, then call
-   * a tool: its 401 starts the flow under test on the connected client.
+   * a tool in an explicitly authorized fixture: its 401 reaches the OAuth
+   * failure boundary under test on the connected client.
    */
   async function liveFailure(
     fetchStub: FetchLike,
@@ -371,7 +375,7 @@ describe("an OAuth flow on a live client", () => {
     vi.stubGlobal("fetch", fetchStub);
     const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" }, versionNegotiation });
     const { logger, lines } = capturingLogger();
-    const context: ConnectorContext = { ...connectorContext(storage), logger, requestScope: {} };
+    const context: ConnectorContext = { ...connectorContext(storage), logger, requestScope: {}, allowAuthorization: true };
     expect(await connector.status!(context)).toMatchObject({ state: "ok" });
     const error = await connector.callTool("read", {}, context).then(() => null, (err: unknown) => err);
     await connector.closeScope!(context);
@@ -485,7 +489,7 @@ describe("an OAuth flow on a live client", () => {
     );
     const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" }, versionNegotiation: mode });
     const { logger, lines } = capturingLogger();
-    const context: ConnectorContext = { ...connectorContext(memoryStorage()), logger, requestScope: {} };
+    const context: ConnectorContext = { ...connectorContext(memoryStorage()), logger, requestScope: {}, allowAuthorization: true };
     expect(await connector.status!(context)).toMatchObject({ state: "ok" });
     const first = connector.callTool("read", {}, context).then(() => null, (err: unknown) => err);
     const second = connector.callTool("read", {}, context).then(() => null, (err: unknown) => err);
@@ -668,7 +672,7 @@ describe("a cancellation in an OAuth flow", () => {
         }));
         const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" }, versionNegotiation });
         const { logger, lines } = capturingLogger();
-        const context = scope(logger);
+        const context = { ...scope(logger), allowAuthorization: true };
         const thrown = await connector.listTools(context).then(() => null, (err: unknown) => err);
         await connector.closeScope!(context);
         const verdict = classifyCallError(thrown);
@@ -733,7 +737,7 @@ describe("the SDK seams OAuth flows are bounded at", () => {
         },
       }));
       const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" }, versionNegotiation: mode });
-      const context = scope();
+      const context = { ...scope(), allowAuthorization: true };
       expect(await connector.status!(context)).toMatchObject({ state: "ok" });
       try {
         const errors = await Promise.all([0, 1].map(() => connector.callTool("write", {}, context).catch((error: unknown) => error)));
@@ -1238,7 +1242,7 @@ describe("SDK failure facts", () => {
         }, { status, headers: { "retry-after": "2" } }),
       }));
       const connector = remoteMcp(id, { url: endpoint, auth: { type: "oauth" }, versionNegotiation: "legacy" });
-      const context = scope();
+      const context = { ...scope(), allowAuthorization: true };
       try {
         const error = await connector.callTool("write", {}, context).catch((error: unknown) => error);
         expect(error).toBeInstanceOf(ConnectorCallError);

@@ -185,10 +185,11 @@ const REFUSED_COPY: Readonly<Record<DownstreamAction, string>> = {
  */
 export function oauthDoneNotice(
   action: "oauth_disconnect" | "oauth_reconnect",
-  answer: { state?: unknown } | null,
+  answer: { state?: unknown; code?: unknown } | null,
   opened = true,
 ): Notice {
   if (action === "oauth_disconnect") {
+    if (answer?.code === "oauth_revocation_failed") return info("Disconnected locally. Provider revocation could not be confirmed. Revoke the grant in the provider's console.");
     return info("Disconnected. Connect again whenever you are ready.");
   }
   if (answer?.state === "ok") return info("Connected.");

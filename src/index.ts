@@ -276,6 +276,8 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   const registry = new Registry([...resolved.connectors], {
     storage,
     logger,
+    publicUrl: resolved.publicUrl,
+    oauthClientName: resolved.serverInfo.name,
     credentialVault: resolved.vault,
     credentialUi: Boolean(resolved.ui),
     catalogDriftActivity: resolved.activity?.store

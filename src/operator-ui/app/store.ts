@@ -515,20 +515,20 @@ export function disconnectOAuth(connector: string): Promise<void> {
       oauthBlocked: null,
       confirming: null,
     },
-    done: () => ({
+    done: (payload) => ({
       ...(state.data
         ? {
             data: {
               ...state.data,
               connectors: state.data.connectors.map((c) => {
                 if (c.id !== connector) return c;
-                const { authorizationUrl: _old, ...rest } = c;
+                const { authorizationUrl: _old, registrationPath: _path, ...rest } = c;
                 return { ...rest, status: "auth_required" as const, tools: [], toolCount: 0 };
               }),
             },
           }
         : {}),
-      ...oauthNoticePatch(connector, oauthDoneNotice("oauth_disconnect", null)),
+      ...oauthNoticePatch(connector, oauthDoneNotice("oauth_disconnect", payload)),
     }),
     failed: (facts) =>
       oauthNoticePatch(

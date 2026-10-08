@@ -449,6 +449,7 @@ export type FailureEvent =
   | "OAuth callback verifyState threw; no authorization code was exchanged"
   | "OAuth callback handoff could not be consumed; no authorization code was exchanged"
   | "MCP pool request denied"
+  | "OAuth error callback consent could not be consumed; no authorization code was exchanged"
   | "MCP handler error"
   | "operator status"
   | "result paging unavailable"
@@ -508,6 +509,7 @@ export function describeFailure(connectorId: string, failure: unknown): string {
 interface OwnStatus {
   readonly state: ConnectorStatus["state"];
   readonly message?: string;
+  readonly registrationPath?: ConnectorStatus["registrationPath"];
   readonly failure?: unknown;
 }
 
@@ -517,6 +519,7 @@ function snapshot(status: ConnectorStatus, failure?: unknown): OwnStatus {
   return {
     state: member(status.state, STATUS_STATES) as ConnectorStatus["state"] | undefined ?? "error",
     ...(typeof status.message === "string" ? { message: status.message } : {}),
+    ...(["cimd", "dcr", "static"].includes(status.registrationPath ?? "") ? { registrationPath: status.registrationPath } : {}),
     ...(failure === undefined ? {} : { failure }),
   };
 }
@@ -548,6 +551,7 @@ export function boundedStatus(status: ConnectorStatus): ConnectorStatus {
     const rebuilt: ConnectorStatus = {
       state: own.state,
       ...(own.message === undefined ? {} : { message: own.message }),
+      ...(own.registrationPath === undefined ? {} : { registrationPath: own.registrationPath }),
     };
     ownStatuses.set(rebuilt, own);
     return rebuilt;

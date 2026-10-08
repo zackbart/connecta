@@ -294,6 +294,8 @@ export interface ApiOAuthHooks {
   ): Promise<ConnectorStatus>;
   disconnectAuth(ctx: ConnectorContext): Promise<void>;
   verifyState(state: string | null, ctx: ConnectorContext): Promise<boolean>;
+  verifyCallbackIssuer(issuer: string | null, ctx: ConnectorContext): Promise<boolean>;
+  consumeAuthError(ctx: ConnectorContext): Promise<void>;
   /** Requires callbackParams with a nonempty state, including without PKCE. */
   finishAuth(
     code: string,
@@ -366,6 +368,8 @@ export function apiConnector(
           startAuth: oauth.startAuth,
           disconnectAuth: oauth.disconnectAuth,
           verifyState: oauth.verifyState,
+          verifyCallbackIssuer: oauth.verifyCallbackIssuer,
+          consumeAuthError: oauth.consumeAuthError,
           finishAuth: oauth.finishAuth,
         }
       : {}),

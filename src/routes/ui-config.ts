@@ -48,6 +48,7 @@ function observe(context: RouteContext, registry: RegistryView, connector: Conne
     return {
       id,
       status: status.state,
+      ...(status.registrationPath ? { auth: { registrationPath: status.registrationPath } } : {}),
       ...(problem ? { problem } : {}),
       // Catalog metadata is allowed for authenticated operators. Only the name
       // and its derived address are withheld when they fail the record grammar.

@@ -55,7 +55,17 @@ export default async function setup(project: TestProject) {
           response.end(JSON.stringify(value));
         };
         if (url.pathname.includes("/.well-known/oauth-authorization-server/")) {
-          json({ issuer, authorization_endpoint: `${issuer}/authorize`, token_endpoint: `${issuer}/token`, registration_endpoint: `${issuer}/register`, response_types_supported: ["code"], grant_types_supported: ["authorization_code", "refresh_token"], code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["none"] });
+          json({ issuer, authorization_endpoint: `${issuer}/authorize`, token_endpoint: `${issuer}/token`, registration_endpoint: `${issuer}/register`, response_types_supported: ["code"], grant_types_supported: ["authorization_code", "refresh_token"], code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["none"], ...(session.mode.startsWith("sdk-revoke-") ? { revocation_endpoint: `${issuer}/revoke` } : {}) });
+          return;
+        }
+        if (operation === "revoke" || operation === "revoke-final") {
+          const form = new URLSearchParams(body);
+          session.requests.push({ path: operation, grant: null, credential: form.get("token") });
+          if (operation === "revoke" && session.mode !== "sdk-revoke-200") {
+            json({ error_description: "REVOCATION_BODY_SENTINEL" }, Number(session.mode.slice("sdk-revoke-".length)), { location: `${issuer}/revoke-final` });
+          } else {
+            json({});
+          }
           return;
         }
         if (operation === "resource") {

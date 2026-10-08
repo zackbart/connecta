@@ -9,6 +9,8 @@ import type {
   OAuthDiscoveryState,
   OAuthTokens,
 } from "@modelcontextprotocol/client";
+import { revokeDownstreamGrant } from "./downstream-revocation.js";
+import { authenticateRemoteClient, downstreamClientMetadata, remoteClientAuthMethod, type RemoteOAuthClient } from "./downstream-client-metadata.js";
 import { ConnectorCallError } from "../errors.js";
 import {
   attachOAuthPartition,
@@ -580,6 +582,7 @@ interface StoredGrant {
 }
 
 interface FlowBinding {
+  issRequired?: true;
   issuer?: string | undefined;
   clientId?: string | undefined;
   tokenEndpoint?: string | undefined;
@@ -590,6 +593,7 @@ async function discoveryBinding(state: OAuthDiscoveryState | undefined): Promise
   return state ? {
     issuer: discoveryIssuer(state),
     tokenEndpoint: state.authorizationServerMetadata?.token_endpoint,
+    ...(state.authorizationServerMetadata?.authorization_response_iss_parameter_supported === true ? { issRequired: true as const } : {}),
     discovery: await oauthStateDigest(JSON.stringify(state)),
   } : {};
 }
@@ -658,6 +662,7 @@ function grantBody(value: unknown): GrantBody {
             value: client.value as unknown as OAuthClientInformationMixed,
             ...(typeof client.binding === "string" ? { binding: client.binding } : {}),
             ...(client.carried === true ? { carried: true as const } : {}),
+            ...(client.registrationPath === "cimd" || client.registrationPath === "dcr" || client.registrationPath === "static" ? { registrationPath: client.registrationPath } : {}),
           },
         }
       : {}),
@@ -697,6 +702,7 @@ function isDisconnectedEpoch(epoch: string): boolean {
  */
 export class KvOAuthProvider implements OAuthClientProvider {
   readonly clientMetadataUrl?: string;
+  readonly addClientAuthentication?: NonNullable<OAuthClientProvider["addClientAuthentication"]>;
   /** The epoch this provider's flow reads and writes in, once known. */
   private epoch: string | undefined;
   /** Set when a flow binds: from then on a replaced epoch fails the flow. */
@@ -747,8 +753,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
     private readonly scope?: string,
     /** Isolate-local clock, used only for claims that have never been sent. */
     private readonly refreshNow: () => number = Date.now,
+    private readonly clientOptions?: { name?: string | undefined; client?: RemoteOAuthClient | undefined },
   ) {
     if (clientMetadataUrl !== undefined) this.clientMetadataUrl = clientMetadataUrl;
+    const client = clientOptions?.client;
+    if (client) this.addClientAuthentication = (headers, params) => authenticateRemoteClient(client, headers, params);
   }
 
   get redirectUrl(): string {
@@ -756,14 +765,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   get clientMetadata(): OAuthClientMetadata {
-    return {
-      redirect_uris: [this.redirectUri],
-      client_name: "connecta",
-      grant_types: ["authorization_code", "refresh_token"],
-      response_types: ["code"],
-      token_endpoint_auth_method: "none",
-      ...(this.scope !== undefined ? { scope: this.scope } : {}),
-    };
+    const client = this.clientOptions?.client;
+    return downstreamClientMetadata(this.redirectUri, this.scope, this.clientOptions?.name,
+      client ? remoteClientAuthMethod(client) : "none");
   }
 
   // --- the grant record ---------------------------------------------------
@@ -981,7 +985,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
   /** Validate RFC 9207 against the server this consent selected. */
   validateCallbackIssuer(issuer: string | null): void {
-    if (issuer !== null && issuer !== this.callback?.flow.binding?.issuer) {
+    if (!this.callback || (issuer === null ? this.callback.flow.binding?.issRequired === true : issuer !== this.callback.flow.binding?.issuer)) {
       throw new ConnectorCallError(
         "connector_call_failed",
         `Connector "${this.connectorId}" authorization callback issuer does not match its consent; nothing was exchanged.`,
@@ -1165,6 +1169,15 @@ export class KvOAuthProvider implements OAuthClientProvider {
     ctx?: OAuthClientInformationContext,
   ): Promise<OAuthClientInformationMixed | undefined> {
     const { body } = await this.boundGrant();
+    const client = this.clientOptions?.client;
+    if (!body.client && !this.allowAuthorization) throw this.authorizationRefused();
+    if (client) {
+      if ((ctx && ctx.issuer !== client.issuer) || body.issuer !== client.issuer) throw this.flowSuperseded();
+      if (body.client && (body.client.value.client_id !== client.clientId || body.client.binding !== this.clientBinding)) throw this.flowSuperseded();
+      return { client_id: client.clientId, issuer: client.issuer,
+        token_endpoint_auth_method: this.clientMetadata.token_endpoint_auth_method,
+        ...(client.clientSecret !== undefined ? { client_secret: client.clientSecret } : {}) };
+    }
     if (!body.client || (ctx && body.issuer !== ctx.issuer)) return undefined;
     this.seen.client = fingerprint(body.client.value);
     return ctx ? { ...body.client.value, issuer: ctx.issuer } : body.client.value;
@@ -1174,11 +1187,20 @@ export class KvOAuthProvider implements OAuthClientProvider {
     info: OAuthClientInformationMixed,
     ctx?: OAuthClientInformationContext,
   ): Promise<void> {
+    const { body } = await this.boundGrant();
+    const registrationPath = this.clientOptions?.client ? "static"
+      : body.client?.value.client_id === info.client_id && body.client.registrationPath ? body.client.registrationPath
+      : this.clientMetadataUrl && body.discovery?.authorizationServerMetadata?.client_id_metadata_document_supported === true ? "cimd" : "dcr";
     await this.writeCredential(
       "client",
-      { value: info, ...(this.clientBinding !== undefined ? { binding: this.clientBinding } : {}) },
+      { value: this.clientOptions?.client ? { client_id: this.clientOptions.client.clientId } : info, registrationPath, ...(this.clientBinding !== undefined ? { binding: this.clientBinding } : {}) },
       ctx?.issuer,
     );
+  }
+
+  async registrationPath(): Promise<"cimd" | "dcr" | "static" | undefined> {
+    const { body } = await this.boundGrant();
+    return body.client?.registrationPath;
   }
 
   async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
@@ -1195,6 +1217,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
    */
   async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
     const issuer = discoveryIssuer(state);
+    if (this.clientOptions?.client && issuer !== this.clientOptions.client.issuer) throw this.flowSuperseded();
+    if (!this.allowAuthorization && !(await this.boundGrant()).body.client) throw this.authorizationRefused();
     this.consentDiscovery = state;
     await this.updateGrant((grant) => {
       const body: GrantBody = grant.body.issuer !== issuer
@@ -1265,6 +1289,10 @@ export class KvOAuthProvider implements OAuthClientProvider {
     if (!this.allowAuthorization) throw this.authorizationRefused();
     const state = this.consent.state ?? authorizationUrl.searchParams.get("state");
     if (!state) throw new Error(`OAuth consent for "${this.connectorId}" carries no state`);
+    const client = this.clientOptions?.client;
+    if (client && !(await this.boundGrant()).body.client) {
+      await this.saveClientInformation({ client_id: client.clientId }, { issuer: client.issuer });
+    }
     const configured = this.configuredAuthorizationBinding();
     if (configured?.issuer !== undefined) {
       const issuer = configured.issuer;
@@ -1372,6 +1400,20 @@ export class KvOAuthProvider implements OAuthClientProvider {
    */
   async claimCodeExchange(): Promise<Response | undefined> {
     if (this.exchangeRefusal) return this.exchangeRefusal.clone();
+    await this.claimConsent();
+    return undefined;
+  }
+
+  /** Terminate the verified consent on an error, sharing the code exchange CAS. */
+  async consumeAuthError(): Promise<void> {
+    const { grant } = await this.readGrant();
+    if (!this.callback || grant.epoch !== this.callback.flow.epoch) throw this.flowSuperseded();
+    await this.checkFlowBinding(grant);
+    await this.claimConsent();
+    this.callback = undefined;
+  }
+
+  private async claimConsent(): Promise<void> {
     const callback = this.callback;
     if (!callback) throw this.flowSuperseded();
     if (callback.claimed) throw new OAuthCallbackClaimedError(this.connectorId);
@@ -1386,7 +1428,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     const remaining = Math.ceil((at + OAUTH_FLOW_TTL_SECONDS * 1000 - Date.now()) / 1000);
     const ttlSeconds = Math.min(OAUTH_FLOW_TTL_SECONDS, Math.max(1, remaining));
     if (await this.storage.compareAndSet(callback.key, callback.raw, claimed, { ttlSeconds })) {
-      return undefined;
+      return;
     }
     if (epochOf(await this.storage.get(GRANT)) !== epoch) throw this.flowSuperseded();
     throw new OAuthCallbackClaimedError(this.connectorId);
@@ -1757,7 +1799,14 @@ export class KvOAuthProvider implements OAuthClientProvider {
     return reset;
   }
 
-  private async performReset(operatorDisconnected: boolean, preserveClient: boolean): Promise<void> {
+  /** Remove the local grant before a bounded, best-effort RFC 7009 request. */
+  disconnectAuthorization(send: FetchLike): Promise<void> {
+    const reset = this.performReset(true, false, send);
+    this.onReset?.(reset);
+    return reset;
+  }
+
+  private async performReset(operatorDisconnected: boolean, preserveClient: boolean, revoke?: FetchLike): Promise<void> {
     const epoch = `${operatorDisconnected ? DISCONNECTED_EPOCH_PREFIX : ACTIVE_EPOCH_PREFIX}${crypto.randomUUID()}`;
     for (let attempt = 0; attempt < MAX_GRANT_WRITES; attempt++) {
       const { raw, grant } = await this.readGrant();
@@ -1771,9 +1820,13 @@ export class KvOAuthProvider implements OAuthClientProvider {
       }
       if (written) {
         this.refreshCoordinator?.retire(grant.epoch);
-        await this.cleanupV2(encoded);
-        await this.sweepConsents();
-        await this.sweepRefreshLeases();
+        try {
+          await this.cleanupV2(encoded);
+          await this.sweepConsents();
+          await this.sweepRefreshLeases();
+        } finally {
+          if (revoke) await revokeDownstreamGrant(grant.body, revoke, this.clientOptions?.client);
+        }
         return;
       }
     }
@@ -1852,12 +1905,16 @@ export class KvOAuthProvider implements OAuthClientProvider {
       !client ||
       client.binding !== this.clientBinding ||
       typeof clientId !== "string" ||
-      clientId === this.clientMetadataUrl ||
+      client.registrationPath === "cimd" || client.registrationPath === "static" ||
+      // Legacy records have no mechanism field: retain their conservative
+      // URL-client refusal, but never reinterpret a recorded DCR identity.
+      (client.registrationPath === undefined && clientId === this.clientMetadataUrl) ||
+      this.clientOptions?.client !== undefined ||
       (typeof expiresAt === "number" && expiresAt > 0 && expiresAt * 1000 <= Date.now()) ||
       (client.carried && !tokens)
     ) {
       return undefined;
     }
-    return { issuer, client: { value: client.value, binding: client.binding, carried: true } };
+    return { issuer, client: { value: client.value, binding: client.binding, carried: true, ...(client.registrationPath ? { registrationPath: client.registrationPath } : {}) } };
   }
 }
