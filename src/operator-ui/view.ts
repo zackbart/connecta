@@ -117,6 +117,10 @@ export interface UiActivityActor {
 }
 
 export interface UiActivityEvent {
+  id?: string;
+  requestId?: string;
+  classification?: "read" | "write";
+  resultBytes?: number;
   occurredAt: string;
   actor?: UiActivityActor;
   connectorId: string;

@@ -1,3 +1,4 @@
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   activityDetail,
   activityOutcomeBadge,
@@ -40,16 +41,40 @@ function ActivityRow({ event }: { event: UiActivityEvent }) {
       <div className="activity-result">
         <Badge tone={badge.tone}>{badge.label}</Badge>
         <div className="activity-detail">{event.durationMs} ms</div>
+        {event.classification ? <Badge>{event.classification}</Badge> : null}
+        {Number.isFinite(event.resultBytes) ? <span className="meta">{event.resultBytes} bytes</span> : null}
       </div>
     </article>
   );
 }
 
+/** Missing IDs are separate calls, never an invented multi-call request. */
+function grouped(events: UiActivityEvent[]): Map<string, UiActivityEvent[]> {
+  const groups = new Map<string, UiActivityEvent[]>();
+  events.forEach((event, index) => {
+    const key = event.requestId ? `request:${event.requestId}` : `ungrouped:${index}`;
+    const group = groups.get(key) ?? [];
+    group.push(event); groups.set(key, group);
+  });
+  return groups;
+}
+
 export function ActivityPage({ state, connectorId }: { state: OperatorState; connectorId?: string }) {
+  const location = useLocation();
+  const go = useNavigate();
+  const params = new URLSearchParams(location.searchStr);
+  const query = params.get("q") ?? "";
+  const connector = connectorId ?? params.get("connector") ?? "";
+  const outcome = params.get("outcome") ?? "";
+  const source = params.get("source") ?? "";
+  const updateFilter = (key: string, value: string) => {
+    const search = { ...location.search, [key]: value || undefined };
+    void go({ to: location.pathname, search, hash: location.hash });
+  };
   const data = state.data;
   const enabled = Boolean(data?.activityEnabled);
   const loading = state.activityPhase === "loading";
-  const visible = filterActivity(state.activityEvents.filter(e => !connectorId || e.connectorId === connectorId), state.activitySearch);
+  const visible = filterActivity(state.activityEvents.filter(e => (!connector || e.connectorId === connector) && (!outcome || e.outcome === outcome) && (!source || e.source === source)), query);
   const summary = activitySummary(state.activityEvents);
   const failed = state.activityPhase === "error";
   return (
@@ -87,9 +112,12 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
               type="search"
               placeholder="Search user, tool, or outcome…"
               aria-label="Search loaded activity"
-              value={state.activitySearch}
-              onInput={(event) => setActivitySearch(event.currentTarget.value)}
+              value={query}
+              onInput={(event) => { setActivitySearch(event.currentTarget.value); updateFilter("q", event.currentTarget.value); }}
             />
+            {connectorId ? null : <label className="select-label">Connector<select aria-label="Activity connector" value={connector} onChange={e => updateFilter("connector", e.target.value)}><option value="">All connectors</option>{(state.contract?.config.connectors ?? data.connectors).map(c => <option key={c.id} value={c.id}>{c.title ?? c.id}</option>)}</select></label>}
+            <label className="select-label">Outcome<select aria-label="Activity outcome" value={outcome} onChange={e => updateFilter("outcome", e.target.value)}><option value="">All outcomes</option>{["success", "error", "timeout", "cancelled", "paused", "approved"].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+            <label className="select-label">Source<select aria-label="Activity source" value={source} onChange={e => updateFilter("source", e.target.value)}><option value="">All sources</option>{["call_tool", "call_destructive_tool", "execute_code", "batch_call"].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
             <button
               id="refreshActivity"
               className="btn"
@@ -118,7 +146,7 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
               </StateBlock>
             ) : (
               <StateBlock>
-                {state.activitySearch.trim()
+                {query.trim()
                   ? "No loaded activity matches this search."
                   : "No connector tool calls recorded yet."}
               </StateBlock>
@@ -131,12 +159,10 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
               className="activity-list"
               aria-busy={loading ? "true" : "false"}
             >
-              {visible.map((event, index) => (
-                <ActivityRow
-                  key={`${event.occurredAt}-${event.address}-${index}`}
-                  event={event}
-                />
-              ))}
+              {[...grouped(visible)].map(([key, events]) => <section key={key} className="request-group" aria-label={events[0]?.requestId ? `Request ${events[0].requestId}` : "Ungrouped call"}>
+                <div className="request-head"><span>{events[0]?.requestId ? "Request" : "Call without request ID"}</span>{events[0]?.requestId ? <code>{events[0].requestId}</code> : null}<span className="meta">{events.length} {events.length === 1 ? "call" : "calls"}</span></div>
+                {events.map((event, index) => <ActivityRow key={event.id ?? `${event.occurredAt}-${event.address}-${index}`} event={event} />)}
+              </section>)}
             </div>
           )}
           {/* Older pages failing is a line under the list, not a wiped list. */}
