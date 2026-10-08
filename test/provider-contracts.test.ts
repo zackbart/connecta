@@ -3,6 +3,7 @@ import hosted from "./fixtures/hosted-presets-abc0d176.json";
 import before from "./fixtures/providers-before-5b.json";
 import trustChanges from "./fixtures/providers-p2-item1-contract-changes.json";
 import errorChanges from "./fixtures/providers-p2-item4-contract-changes.json";
+import guestChanges from "./fixtures/providers-p2-item2-contract-changes.json";
 import { providerContract, type ContractFixture } from "./fixtures/provider-contract.js";
 import { providerFixtures } from "./providers.generated.js";
 
@@ -28,8 +29,9 @@ describe.each(providerFixtures.filter((fixture) => Object.hasOwn(before, fixture
     ))));
     const changes = trustChanges as Record<string, Record<string, Record<string, string>>>;
     const repairs = errorChanges as Record<string, Record<string, Record<string, string>>>;
+    const guest = guestChanges as Record<string, Record<string, Record<string, string>>>;
     const expected = before[fixture.name as keyof typeof before].map((row) => ({
-      ...row, ...changes[fixture.name]?.[row.label], ...repairs[fixture.name]?.[row.label],
+      ...row, ...changes[fixture.name]?.[row.label], ...repairs[fixture.name]?.[row.label], ...guest[fixture.name]?.[row.label],
     }));
     expect(snapshot).toEqual(expected);
   });
