@@ -56,10 +56,11 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
     const started = performance.now();
     const child = spawn(options.testHost?.executable ?? "claude", argv, {
       cwd, stdio: ["pipe", "pipe", "pipe"],
-      // Preserve the owner's home/keychain login without reading credentials.
+      // Preserve the owner's home/keychain login without reading credentials;
+      // the macOS keychain lookup needs USER as well as HOME.
       // Do not let inherited API keys, alternate providers, bare mode, or an
       // enclosing Claude session override subscription auth or CLI isolation.
-      env: { PATH: process.env.PATH, HOME: process.env.HOME, TZ: "UTC",
+      env: { PATH: process.env.PATH, HOME: process.env.HOME, USER: process.env.USER, TZ: "UTC",
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
         CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1", CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
         CLAUDE_CODE_DISABLE_BUNDLED_SKILLS: "1", ENABLE_CLAUDEAI_MCP_SERVERS: "false" },
