@@ -17,6 +17,7 @@ import {
   countBy,
   downstreamMetrics,
   parseTrace,
+  type AgentTrace,
   type StreamEvent,
   type DownstreamMetrics,
   type Tokens,
