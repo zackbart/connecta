@@ -866,6 +866,27 @@ instead of a base64 stack on every route.
 
 ## Human authentication management
 
+Auth URL elicitation uses the SDK's `createRequestStateCodec`, backed by a
+separate HKDF-derived HMAC-SHA256 key held inside `encryptedCredentialVault`.
+The ten-minute state is authenticated, not encrypted. Its secret-free payload
+binds the admitted principal, canonical endpoint including pool, connector,
+meta-tool, address, SHA-256 digest of arguments or code, round, and expiry.
+Arguments and program source never enter the payload. The absolute expiry
+survives every round. Rotation invalidates outstanding states. Custom vaults
+may implement `mintRequestState` and `verifyRequestState`; without both, the
+deployment retains the ordinary handoff. They must authenticate state using a
+stable deployment-held key and reject expired state.
+
+The `/connect` link issued by the elicitation boundary encrypts its browser
+handoff with the vault's `seal`/`open` methods before signing it. The URL carries
+neither principal identifiers nor credentials and authenticates no browser.
+The same principal and management checks apply to OAuth and credential-slot
+links. A credential-slot visit consumes its link and redirects to the
+same-origin operator UI, where credential mutation requires its own identity
+and Origin checks. Vaults without sealing keep ordinary handoffs and cannot
+serve URL elicitation. See [authorization recovery](./meta-tools.md#authorization-recovery)
+for capability gating, retry termination, and program write restrictions.
+
 A verified `/connect` visit gives downstream OAuth work and its state handoff 30 seconds. The request signal
 and deadline reach discovery, registration, and other downstream fetches; expiry returns `504 OAuth
 authorization start timed out`. A restart's grant write, catalog invalidation, and scope close drain before

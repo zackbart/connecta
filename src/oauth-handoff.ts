@@ -31,6 +31,7 @@ export async function oauthConnectUrl(
   connectorId: string,
   principal: string | undefined,
   force = false,
+  opaque = false,
 ): Promise<string> {
   const unavailable = oauthConnectUnavailable(opts);
   if (unavailable) throw new Error(unavailable);
@@ -45,7 +46,11 @@ export async function oauthConnectUrl(
     nonce: crypto.randomUUID(),
     force,
   };
-  const payload = btoa(JSON.stringify(handoff));
+  const vault = opts.config.vault!;
+  if (opaque && (!vault.seal || !vault.open)) throw new Error("URL elicitation requires a sealing credential vault.");
+  const payload = opaque
+    ? `v2:${btoa(await vault.seal!(connectorId, "connecta:connect-link:v2", JSON.stringify(handoff)))}`
+    : btoa(JSON.stringify(handoff));
   const signature = await opts.config.vault!.signOAuthHandoff!(payload);
   const url = new URL(`/connect/${connectorId}`, baseUrl);
   url.searchParams.set("h", `${payload}.${signature}`);
@@ -63,7 +68,9 @@ export async function verifyOAuthHandoff(
   if (!payload || !signature || rest.length) return null;
   try {
     if (!await opts.config.vault?.verifyOAuthHandoff?.(payload, signature)) return null;
-    const h: Handoff = JSON.parse(atob(payload));
+    const h: Handoff = JSON.parse(payload.startsWith("v2:")
+      ? await opts.config.vault!.open!(connectorId, "connecta:connect-link:v2", atob(payload.slice(3)))
+      : atob(payload));
     const connector = opts.registry.getConnector(connectorId);
     if (!connector || h.connector !== connectorId || typeof h.principal !== "string" || !h.principal ||
       h.owner !== (connector.authScope === "personal" ? h.principal : "shared") ||

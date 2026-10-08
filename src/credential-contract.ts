@@ -33,6 +33,10 @@ export interface CredentialVault {
   signOAuthHandoff?(payload: string): Promise<string>;
   /** Verify a browser OAuth handoff signature without exposing the key. */
   verifyOAuthHandoff?(payload: string, signature: string): Promise<boolean>;
+  /** Authenticate MCP retry state with a deployment-held, purpose-specific key. */
+  mintRequestState?(payload: unknown): Promise<string>;
+  /** Reject tampered or expired retry state without exposing the signing key. */
+  verifyRequestState?(state: string): Promise<unknown>;
   /** Reverse `seal` for the same connector, purpose, and owner; rejects otherwise. */
   open?(connectorId: string, purpose: string, sealed: string, owner?: string): Promise<string>;
 }

@@ -1,5 +1,6 @@
 import { GUEST_API_DECLARATION } from "./usage-guide.js";
 import { bindMcpClient, type McpClientContext } from "./mcp-client-context.js";
+import type { AuthElicitation } from "./auth-elicitation.js";
 import type { PoolTrust } from "./tool-safety.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import type { McpServer } from "@modelcontextprotocol/server";
@@ -1421,6 +1422,7 @@ export function registerExecuteTool(
   server: McpServer,
   registry: RegistryView,
   ctx: {
+    authElicitation?: AuthElicitation | undefined;
     baseUrl: string;
     executor: Executor;
     defaultToolTimeoutMs?: number | undefined;
@@ -1517,10 +1519,13 @@ export function registerExecuteTool(
     },
     (args, extra) => {
       if (ctx.client) bindMcpClient(extra, ctx.client, ctx.activity);
-      return underAnySignal([extra.mcpReq.signal, ctx.requestSignal], (signal) =>
+      const run = () => underAnySignal([extra.mcpReq.signal, ctx.requestSignal], (signal) =>
         execute(args as { code: string; diagnostics?: boolean }, {
           signal,
         }));
+      return ctx.authElicitation
+        ? ctx.authElicitation.run("execute_code", args, extra, run)
+        : run();
     },
   );
 }

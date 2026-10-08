@@ -1,4 +1,5 @@
 import { bindMcpClient, type McpClientContext } from "./mcp-client-context.js";
+import type { AuthElicitation } from "./auth-elicitation.js";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { z } from "zod";
@@ -1251,6 +1252,7 @@ export function registerMetaTools(
   server: McpServer,
   registry: RegistryView,
   ctx: {
+    authElicitation?: AuthElicitation | undefined;
     baseUrl: string;
     trust?: import("./tool-safety.js").PoolTrust | undefined;
     defaultToolTimeoutMs?: number | undefined;
@@ -1331,7 +1333,9 @@ export function registerMetaTools(
     },
     async (args, request) => {
       bindRequest(request);
-      return mt.callTool(args as CallArgs);
+      return ctx.authElicitation
+        ? ctx.authElicitation.run("call_tool", args, request, () => mt.callTool(args as CallArgs))
+        : mt.callTool(args as CallArgs);
     },
   );
 
@@ -1359,7 +1363,9 @@ export function registerMetaTools(
       // whitespace-only one "absent" rather than a validation failure — there
       // is no field left for it to be absent from.
       const { reason: _hostContext, ...call } = args as DestructiveCallArgs;
-      return mt.callDestructiveTool(call);
+      return ctx.authElicitation
+        ? ctx.authElicitation.run("call_destructive_tool", call, request, () => mt.callDestructiveTool(call))
+        : mt.callDestructiveTool(call);
     },
   );
 
@@ -1379,7 +1385,9 @@ export function registerMetaTools(
     },
     async (args, request) => {
       bindRequest(request);
-      return mt.authorizeConnector(args as AuthorizeArgs);
+      return ctx.authElicitation
+        ? ctx.authElicitation.run("authorize_connector", args, request, () => mt.authorizeConnector(args as AuthorizeArgs))
+        : mt.authorizeConnector(args as AuthorizeArgs);
     },
   );
 

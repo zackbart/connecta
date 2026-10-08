@@ -500,6 +500,31 @@ bounded no-match analysis. An empty or whitespace-only query browses.
 
 ## Authorization recovery
 
+On MCP 2026-07-28, a host declaring `elicitation.url` receives
+`resultType: "input_required"` when either call tool or an unwritten program
+needs recoverable connector authentication and the admitted identity may manage
+that connector. The `connecta_auth` input request uses `elicitation/create`,
+`mode: "url"`, fixed copy, and an identity-checked `/connect/<id>` link built
+from configured `publicUrl`. OAuth consent stays in the browser; a credential
+slot uses the authenticated operator UI. `authorize_connector` uses the same
+flow for explicit connect and restart. There is no legacy shim.
+
+The host echoes `requestState` and its bare `inputResponses.connecta_auth`
+response on the original `tools/call`. Accept re-runs the original call; it
+does not prove browser consent completed. Decline or cancel ends without
+dispatch, with `auth_declined` or `auth_cancelled`. Three prompts are allowed
+within one ten-minute retry window, then `auth_round_limit` ends the flow.
+Programs that attempted any write never elicit, even if that write failed.
+
+State integrity, expiry, principal, endpoint, and tool failures produce the
+SDK's JSON-RPC `-32602` with `data.reason: "invalid_request_state"` before the
+handler runs. Changed arguments or code produce a typed `invalid_request_state`
+tool failure before dispatch. Retry state grants no access; each request still
+passes current identity, pool, connector visibility, and management checks.
+Hosts without URL support keep the recovery envelope below, with a `/connect`
+URL when this deployment can issue one. Without an interactive provider,
+signing vault, or configured public URL, automatic elicitation is unavailable.
+
 `downstream_oauth_required` means the connector needs an OAuth grant.
 `auth_required` means its operator-managed credentials or configuration need
 repair. Both carry the recovery envelope below. `provider_permission_denied`

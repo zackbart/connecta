@@ -87,7 +87,14 @@ async function connect(context: RouteContext): Promise<Response> {
   if (authz.principalKey !== handoff.principal || !mayManageConnector(authz, connector)) {
     return refuse("Sign in as the user who requested this connection and has permission to manage it.");
   }
-  if (!connector.startAuth) return refuse("unknown OAuth connector", 404);
+  if (!connector.startAuth) {
+    if (!connector.credential || !opts.config.ui || !opts.config.vault) return refuse("unknown OAuth connector", 404);
+    if (!await consumeOAuthConnectLink(opts, handoff)) return refuse("Invalid or expired connection link. Request a new link from connecta.", 400);
+    // Credential entry stays in the authenticated operator UI on this origin.
+    return withSessionCookies(new Response(null, { status: 302, headers: {
+      Location: new URL("/", baseUrl).href, "Cache-Control": "no-store",
+    } }), authz.sessionCookies);
+  }
   if (opts.config.ui && context.url.searchParams.get("start") !== "1") return withSessionCookies(authPage(), authz.sessionCookies);
   const registry = opts.registry.scoped({ connectorIds: [id], principalKey: authz.principalKey, ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}) });
   const scope = {};

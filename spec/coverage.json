@@ -369,17 +369,37 @@
     },
     {
       "id": "elicitation",
-      "status": "planned",
+      "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation",
-      "notes": "MRTR URL elicitation for auth and direct-call downstream relay arrive in Phase 3.",
-      "issue": "https://github.com/zackbart/connecta/issues/707"
+      "notes": "Auth URL elicitation on capable 2026-07-28 hosts, with identity-checked connect links, decline/cancel termination, and ordinary recovery fallback. Downstream input relay and general form elicitation remain outside this item.",
+      "issue": "https://github.com/zackbart/connecta/issues/707",
+      "tests": [
+        {
+          "file": "test/auth-elicitation.test.ts",
+          "title": "INV-4 INV-5 INV-6: asks capable hosts through a fixed same-origin URL elicitation"
+        },
+        {
+          "file": "test/auth-elicitation.test.ts",
+          "title": "INV-4: decline and cancel terminate without dispatch or another prompt"
+        }
+      ]
     },
     {
       "id": "multi-round-trip-requests",
-      "status": "planned",
+      "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr",
-      "notes": "Seal requestState for auth and wrap downstream states on direct calls; programs cannot relay downstream input yet.",
-      "issue": "https://github.com/zackbart/connecta/issues/707"
+      "notes": "Auth retries use createRequestStateCodec with a deployment-held key, principal/endpoint/connector/tool/digest/round/expiry binding, bounded rounds, and no program retry after writes. Downstream state relay on direct calls remains planned in #707 item 5.",
+      "issue": "https://github.com/zackbart/connecta/issues/707",
+      "tests": [
+        {
+          "file": "test/auth-elicitation.test.ts",
+          "title": "INV-4 INV-5: rejects tampered, expired, cross-principal, and cross-pool state before dispatch"
+        },
+        {
+          "file": "test/auth-elicitation.test.ts",
+          "title": "INV-4: bounds rounds while accept does not claim consent completed"
+        }
+      ]
     },
     {
       "id": "subscriptions",
