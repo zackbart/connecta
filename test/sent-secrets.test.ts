@@ -172,19 +172,19 @@ describe("call-scoped sent credentials", () => {
     let reconstructed = "";
     let offset = 0;
     for (;;) {
-      const result = await meta.getResult({ id: notice.resultId, offset, maxBytes: 256 });
+      const result = await meta.readResult({ id: notice.resultId, offset, maxBytes: 256 });
       const text = result.content[0]!.text;
       const newline = text.indexOf("\n");
       const header = JSON.parse(text.slice(0, newline));
       reconstructed += text.slice(newline + 1);
       if (!header.hasMore) break;
-      offset = header.nextAction.arguments.offset;
+      offset = header.nextOffset;
     }
     expect(JSON.parse(reconstructed).echo).toBe("[redacted]");
     const executor: Executor = { execute: async (_code, providers) => {
       const host = providers[0]!.fns;
-      const result = await host.call!("remote.read", {}) as { echo: string };
-      expect(result.echo).toBe("[redacted]");
+      const result = await host.call!("remote.read", {}) as { data: { echo: string }; format: string };
+      expect(result.data.echo).toBe("[redacted]");
       await host.emit!({ type: "text", text: token });
       // Even a program reconstructing a sent value cannot write it to a page.
       await host.call!("artifacts.create_artifact", {
@@ -209,8 +209,11 @@ describe("call-scoped sent credentials", () => {
     const failure = await failed({ code: "async () => {}" });
     expect(failure.isError).toBe(true);
     expect(JSON.stringify(failure)).not.toContain(token);
-    expect(failure.content[0]!.text).toContain("Error: [redacted]");
-    expect(failure.content[0]!.text).toContain("Logs:\n[redacted]");
+    expect(failure.structuredContent).toMatchObject({
+      error: { code: "program_error", message: "Program Error: [redacted]" },
+      logs: "[redacted]",
+    });
+    expect(JSON.parse(failure.content[0]!.text)).toEqual(failure.structuredContent);
   });
 
   it.each(["api", "oauth", "remote"])("INV-5: %s final outgoing requests register auxiliary sensitive headers and query parameters", async (mode) => {

@@ -710,7 +710,7 @@ export class InvocationService {
         const failure = Cause.squash(dispatched.cause);
         const details = context.requestSignal?.aborted
           ? callerCancelledDetails()
-          : carryFailureFacts(failure, classifyCallError(sentSecrets.redact(failure))));
+          : carryFailureFacts(failure, classifyCallError(sentSecrets.redact(failure)));
         return failed(details);
       }
       if (dispatched.value) return failed(dispatched.value);

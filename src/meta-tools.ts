@@ -623,8 +623,6 @@ function metaToolsForRequest(
   opts: {
     /** Deadline applied when a call passes no `timeoutMs`. Off when unset. */
     defaultToolTimeoutMs?: number | undefined;
-    /** Run-owned scope shared by paging and downstream invocation. */
-    requestScope?: object | undefined;
     /** Current endpoint trust for result stashing and paging. */
     trust?: import("./tool-safety.js").PoolTrust | undefined;
     /** Per-connector deadline for the search/describe probe fan-out. Default 30_000. */
@@ -641,7 +639,7 @@ function metaToolsForRequest(
     requestSignal?: AbortSignal | undefined;
     /** Runtime-owned tail for stale catalog refreshes. */
     defer?: DeferredWork | undefined;
-    /** The HTTP request's shared credential-redaction identity. */
+    /** Request identity shared by credential redaction, paging, and downstream invocation. */
     requestScope?: object | undefined;
   } = {},
 ) {
