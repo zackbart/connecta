@@ -26,7 +26,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-function setup(options: { repeat?: boolean; key?: string; url?: string; message?: string; raw?: Record<string, unknown>; vault?: boolean; output?: boolean; invalidOutput?: boolean; authFirst?: boolean; programWrite?: boolean; failContinuationAuth?: boolean; opaque?: string; completeText?: string; completeStructured?: Record<string, unknown>; roundStates?: string[]; continuationMessage?: string; completeError?: boolean; oauth?: boolean; failureStatus?: number; catalogEcho?: boolean; skills?: boolean } = {}) {
+function setup(options: { repeat?: boolean; key?: string; url?: string; message?: string; raw?: Record<string, unknown>; vault?: boolean; output?: boolean; invalidOutput?: boolean; authFirst?: boolean; programWrite?: boolean; failContinuationAuth?: boolean; opaque?: string; completeText?: string; completeStructured?: Record<string, unknown>; roundStates?: string[]; continuationMessage?: string; completeError?: boolean; oauth?: boolean; failureStatus?: number; continuationTimeout?: boolean; catalogEcho?: boolean; skills?: boolean } = {}) {
   const storage = memoryStorage();
   const vault = encryptedCredentialVault(storage, CREDENTIAL_KEY);
   const logs: unknown[] = [];
@@ -74,6 +74,7 @@ function setup(options: { repeat?: boolean; key?: string; url?: string; message?
     }
     if (request?.method === "tools/call" && request.params.inputResponses !== undefined) {
       continuationSend(request);
+      if (options.continuationTimeout) throw new DOMException("PRIVATE_TRANSPORT_TIMEOUT", "TimeoutError");
       if (options.failureStatus && new Headers(init?.headers).get("authorization") !== "Bearer REFRESHED_ACCESS_CREDENTIAL") {
         return new Response(null, { status: options.failureStatus, headers: options.failureStatus === 307
           ? { Location: `${downstream.url}?redirected=true` }
@@ -469,6 +470,57 @@ describe("downstream input relay", () => {
     expect(result.isError, JSON.stringify(result)).toBeFalsy();
     expect(read.continuationSend).toHaveBeenCalledTimes(2);
     expect(read.tokenRefresh).toHaveBeenCalledOnce();
+  });
+
+  it.each([429, 502, 503, 504, "timeout"] as const)("INV-4 INV-6 INV-9: makes a spent continuation non-retryable after %s and directs a fresh input round", async failure => {
+    for (const write of [false, true]) {
+      const flow = setup(failure === "timeout" ? { continuationTimeout: true } : { failureStatus: failure });
+      const opts = { name: write ? "call_destructive_tool" : "call_tool", args: { address: `service.${write ? "write" : "read"}`, args: { id: 1 } } };
+      const first = (await flow.rpc(opts)).result;
+      expect(first.resultType).toBe("input_required");
+      const continuation = { ...opts, state: first.requestState, responses: { "downstream/service/0": { action: "accept" } } };
+      const result = (await flow.rpc(continuation)).result;
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent.error).toMatchObject({
+        code: failure === 429 ? "rate_limited" : failure === "timeout" ? write ? "write_outcome_unknown" : "unavailable" : "connector_call_failed",
+        retryable: false,
+        nextAction: {
+          tool: opts.name,
+          arguments: opts.args,
+          purpose: "Re-issue the original direct call without requestState or inputResponses to start a fresh input round. Do not resend this continuation.",
+        },
+      });
+      expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent);
+      expect(flow.continuationSend).toHaveBeenCalledOnce();
+      const replay = (await flow.rpc(continuation)).result;
+      expect(replay.isError).toBe(true);
+      expect(replay.content[0].text).toContain("Invalid or expired requestState");
+      expect(flow.continuationSend).toHaveBeenCalledOnce();
+      expect(JSON.stringify([result, flow.logs, flow.activity.record.mock.calls])).not.toContain("PRIVATE_TRANSPORT_TIMEOUT");
+      if (failure === "timeout" && write) {
+        expect(result.structuredContent.error.uncertainCall).toEqual({ address: "service.write", args: { id: 1 } });
+        expect(result.structuredContent.error.retry).toContain("Check whether the write took effect first");
+      }
+      // Following nextAction omits the spent state and starts a fresh round.
+      const next = result.structuredContent.error.nextAction;
+      const fresh = (await flow.rpc({ name: next.tool, args: next.arguments })).result;
+      expect(fresh.resultType).toBe("input_required");
+      expect(fresh.requestState).not.toBe(first.requestState);
+      expect(flow.continuationSend).toHaveBeenCalledOnce();
+    }
+  });
+
+  it.each([429, 502, 503, 504])("INV-9: preserves first-call retryability after HTTP %s", async failureStatus => {
+    const flow = setup();
+    const fetch = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (typeof init?.body === "string" && JSON.parse(init.body).method === "tools/call") return new Response(null, { status: failureStatus });
+      return fetch(input, init);
+    });
+    const result = (await flow.rpc()).result;
+    expect(result.structuredContent.error).toMatchObject({ code: failureStatus === 429 ? "rate_limited" : "connector_call_failed", retryable: true });
+    expect(result.structuredContent.error).not.toHaveProperty("nextAction");
+    expect(flow.continuationSend).not.toHaveBeenCalled();
   });
 
   it("INV-5 INV-6: redacts sent credential echoes in elicitation through the agent boundary without operator payloads", async () => {

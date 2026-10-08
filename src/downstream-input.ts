@@ -6,7 +6,7 @@ import {
 import type { CredentialVault } from "./credential-contract.js";
 import type { ToolResult } from "./meta-tools.js";
 import type { RegistryView } from "./registry.js";
-import { ConnectorCallError } from "./errors.js";
+import { ConnectorCallError, echoedCallArgs } from "./errors.js";
 import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import { inputRetryKeys } from "./storage/keys.js";
 import { REQUEST_STATE_TTL_MS, MAX_INPUT_ROUNDS, invalidRequestState, requestDigest, stateObject } from "./request-state.js";
@@ -207,7 +207,25 @@ export class DownstreamElicitation {
       privateStates: [...state.previousStates, ...(state.requestState !== undefined ? [state.requestState] : [])], input: {
       ...(state.requestState !== undefined ? { requestState: state.requestState } : {}), inputResponses: responses,
     } });
-    try { return await this.finish(tool, args, context, await operation(), state); }
+    try {
+      const result = await this.finish(tool, args, context, await operation(), state);
+      if (!result.isError || !stateObject(result.structuredContent)) return result;
+      const error = result.structuredContent.error;
+      if (!stateObject(error)) return result;
+      // The nonce is spent even when the downstream failure would normally
+      // allow a retry. Recovery must start a new direct-call input round.
+      const echoed = echoedCallArgs(args.args);
+      const structuredContent = { ...result.structuredContent, error: {
+        ...error, retryable: false,
+        nextAction: {
+          tool: state.tool,
+          arguments: { address: state.address, ...echoed },
+          purpose: "Re-issue the original direct call without requestState or inputResponses to start a fresh input round. Do not resend this continuation." +
+            (args.args !== undefined && !("args" in echoed) ? " Use the exact arguments you sent; they exceed the echo budget." : ""),
+        },
+      } };
+      return { ...result, structuredContent, content: [{ type: "text", text: JSON.stringify(structuredContent) }] };
+    }
     finally { clearDownstreamContinuation(this.options.requestScope); }
   }
 
