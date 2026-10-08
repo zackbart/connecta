@@ -6,7 +6,7 @@ import type {
   StoredOAuthClientInformation,
 } from "@modelcontextprotocol/client";
 import { byteReadResponse } from "../byte-read-response.js";
-import { sentSecretsFor } from "../sent-secrets.js";
+import { sentSecretsFor, sentSecretsFetch } from "../sent-secrets.js";
 import type {
   ApiOAuthClientAuthentication,
   ApiOAuthConfig,
@@ -484,7 +484,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       // The handler reads the answer with `.json()` or `.text()`, which read
       // bytes here: workerd quotes a text read's non-text Content-Type in
       // its own log, out of the handler's reach.
-      const response = await fetch(url, {
+      const response = await sentSecretsFetch(ctx)(url, {
         ...init,
         headers: sent,
         redirect: "manual",

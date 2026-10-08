@@ -605,8 +605,22 @@ The JSON-RPC and 4xx exception preserves diagnostics agents need to correct
 their arguments. Core redacts credentials used by that call before these
 messages, nested causes/data, or tool results reach an agent or guest program.
 The memory-only set covers credential-slot values, static auth headers,
-outbound bearer tokens, and their URL-encoded and base64 forms. Echoed
-Authorization and Cookie lines are also withheld. See
+outbound bearer tokens, and their JSON-escaped, URL-encoded, base64 and
+base64url forms. Final outgoing requests register Authorization,
+Proxy-Authorization, Cookie, and headers or query parameters whose names
+contain `key`, `token`, `secret`, `auth`, `signature`, or `session`. Custom
+`api()` handlers use `ctx.fetch` for this tracking; `ctx.oauth.fetch` and
+maintained-provider transports track the final request too. Credential-slot
+reads cover values sent in headers, queries, or bodies. Echoed sensitive
+header lines are also withheld.
+
+Only values of at least eight characters enter the matcher. Short values such
+as Basic usernames would corrupt ordinary text; Connecta's own messages never
+quote credential values, regardless of length. One matcher is cached until
+the secret set changes, and an empty set skips matching. Redaction runs after
+JSON unwrapping or joining text blocks and on final serialized text and every
+structured string, before result paging, emits, program outputs/errors/logs,
+or artifact writes. See
 [the agent boundary](./architecture.md#errors-and-records).
 
 ## URLs a downstream advertises

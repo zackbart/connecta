@@ -37,6 +37,7 @@ import {
   type WriteDecision,
 } from "./invocation.js";
 import { normalizeProgramSource } from "./program-source.js";
+import { SentSecrets } from "./sent-secrets.js";
 import type { RegistryView } from "./registry.js";
 import { underAnySignal } from "./timeout.js";
 import { fromSignal, runEdge } from "./runtime/run.js";
@@ -425,6 +426,7 @@ export async function buildSandboxProviders(
 }
 
 interface SandboxLimits {
+  sentSecrets?: SentSecrets;
   signal?: AbortSignal | undefined;
   maxHostCalls?: number | undefined;
   hostCallTimeoutMs?: number | undefined;
@@ -488,6 +490,7 @@ function sandboxProvider(
   limits: SandboxLimits,
   requestScope: object = {},
 ): ExecutorProvider {
+  const sentSecrets = limits.sentSecrets ?? new SentSecrets();
   // All host calls made by one execute_code invocation share a downstream
   // connection, while a later invocation receives a fresh request scope.
   const hostAccessSignal = limits.dispatchController
@@ -531,6 +534,7 @@ function sandboxProvider(
   /** Budget and account for writes admitted by the pool trust decision. */
   const invocationContext = (sending: { settle?: SettleWrite }) => ({
     source: "execute_code" as const,
+    sentSecrets,
     timeoutMs: hostCallTimeoutMs,
     ...(signal !== undefined ? { requestSignal: signal } : {}),
     ...(limits.dispatchController ? { dispatchSignal: limits.dispatchController.signal } : {}),
@@ -575,7 +579,7 @@ function sandboxProvider(
       const sending: { settle?: SettleWrite } = {};
       const outcome = yield* invocation.pipeline(
         String(address),
-        args ?? {},
+        sentSecrets.redact(args ?? {}),
         invocationContext(sending),
       ).pipe(
         Effect.onExit((exit) =>
@@ -654,7 +658,7 @@ function sandboxProvider(
               true,
             );
           }
-          limits.emitCollector.accept(block);
+          limits.emitCollector.accept(sentSecrets.redact(block));
         },
         catch: (err) => err,
       }),
@@ -705,7 +709,7 @@ function sandboxProvider(
   const framed = (err: unknown): Effect.Effect<never, unknown> =>
     Effect.suspend(() => {
       if (!(err instanceof InvocationFailure)) return Effect.fail(err);
-      const failure = boundedGuestFailure(err);
+      const failure = boundedGuestFailure(sentSecrets.redact(err));
       const frame = framedGuestFailure(failureSecret, failure);
       limits.onInvocationFailure?.(failure);
       return Effect.fail(frame);
@@ -736,12 +740,12 @@ function sandboxProvider(
           ).then(
             (value) => {
               if (counted) hostCalls.succeeded++;
-              return budgetFailure ? stopped : value;
+              return budgetFailure ? stopped : sentSecrets.redact(value);
             },
             (err: unknown) => {
               if (counted) hostCalls.failed++;
               if (budgetFailure) return stopped;
-              throw err;
+              throw sentSecrets.redact(err);
             },
           );
           // The executor owns this promise, and a program may abandon a call
@@ -957,6 +961,7 @@ export function createExecuteTool(
     callerSignal: AbortSignal | undefined,
   ): Effect.Effect<ToolResult> =>
     Effect.suspend(() => {
+      const sentSecrets = new SentSecrets();
       const diagnostics = diagnosticsRequested
         ? new ExecuteDiagnostics()
         : undefined;
@@ -1007,6 +1012,7 @@ export function createExecuteTool(
           if (diagnostics) diagnostics.setupMs = elapsed;
         }, Effect.sync(() =>
           sandboxProvider(registry, baseUrl, activity, {
+            sentSecrets,
             signal,
             onHostCallBudgetExceeded: (failure) => {
               budgetFailure = failure;
@@ -1050,14 +1056,14 @@ export function createExecuteTool(
             : executor.execute(program, [provider])
           ).then(
             (outcome) => {
-              executorLogs = outcome?.logs;
-              return outcome;
+              executorLogs = sentSecrets.redact(outcome?.logs);
+              return sentSecrets.redact(outcome);
             },
             (err: unknown) => {
               if (err !== null && typeof err === "object" && "logs" in err) {
-                executorLogs = err.logs;
+                executorLogs = sentSecrets.redact(err.logs);
               }
-              throw err;
+              throw sentSecrets.redact(err);
             },
           ),
           signal,
@@ -1097,10 +1103,10 @@ export function createExecuteTool(
         }
         if (Exit.isFailure(exit)) {
           return programWrites.finish(
-            failedRun(Cause.squash(exit.cause), logger, reported),
+            failedRun(sentSecrets.redact(Cause.squash(exit.cause)), logger, reported),
           );
         }
-        const finished = finishedRun(exit.value, reported);
+        const finished = finishedRun(sentSecrets.redact(exit.value), reported);
         if (config.failOnInvocationFailure && invocationFailures.length > 0) {
           const refusal = invocationFailures[0]!;
           return failureResponse(refusal.details.message, {
@@ -1108,7 +1114,7 @@ export function createExecuteTool(
           });
         }
         return programWrites.finish(finished);
-      });
+      }).pipe(Effect.map((result) => sentSecrets.redact(result)));
     });
 
   return ({ code, diagnostics }, options = {}) => {

@@ -40,6 +40,7 @@ import {
   normalizeTimeoutMs,
 } from "./timeout.js";
 import { RESULT_TTL_SECONDS, resultKeys } from "./storage/keys.js";
+import type { SentSecrets } from "./sent-secrets.js";
 
 export {
   MAX_DESCRIBE_ADDRESSES,
@@ -239,6 +240,7 @@ function base64Of(bytes: Uint8Array): string {
  * at all (a BigInt) still throws, as before, and is reported as a failure.
  */
 interface ResultStash {
+  secrets?: SentSecrets;
   set: RegistryView["stashResult"];
   warn: () => void;
   /**
@@ -414,8 +416,9 @@ async function guardText(
   // Normalizing at the door means the size check below always measures exactly
   // the text that is emitted, and no future caller can launder a non-string
   // through it the way issue #42 describes.
-  const body: string =
+  const serialized: string =
     typeof text === "string" ? text : serializeResultText(text);
+  const body = results.secrets?.text(serialized) ?? serialized;
   return guardEncoded(body, enc.encode(body), results, cap);
 }
 
@@ -425,9 +428,10 @@ async function guardValue(
   results: ResultStash,
   cap: number,
 ): Promise<GuardedResult<unknown>> {
-  const text = serializeResultText(value);
+  const serialized = serializeResultText(value);
+  const text = results.secrets?.text(serialized) ?? serialized;
   const bytes = enc.encode(text);
-  if (bytes.length <= cap) return { result: value, truncated: false };
+  if (bytes.length <= cap) return { result: results.secrets?.redact(value) ?? value, truncated: false };
   const notice = await stashResult(bytes, results, { kind: "none" });
   return {
     result: notice.resultId ? notice : {
@@ -481,6 +485,7 @@ async function guardContent(
   results: ResultStash,
   cap: number,
 ): Promise<GuardedResult<ToolResult>> {
+  content = results.secrets?.redact({ content }).content ?? content;
   const only = content.length === 1 ? content[0] : undefined;
   if (only?.type === "text" && typeof only.text === "string") {
     const bytes = enc.encode(only.text);
@@ -490,7 +495,8 @@ async function guardContent(
   }
   let text: string;
   try {
-    text = JSON.stringify(content);
+    const serialized = JSON.stringify(content);
+    text = results.secrets?.text(serialized) ?? serialized;
   } catch {
     // A block carrying a BigInt or a cycle cannot be serialized, so it cannot
     // be measured, stashed, or paged either — there is nothing this guard could
@@ -666,7 +672,7 @@ export function createMetaTools(
           ? { requestSignal: opts.requestSignal }
           : {}),
         unwrapResult: call.resultMode === "value",
-        processResult: async (result, resolved) => {
+        processResult: async (result, resolved, secrets) => {
           // Result-size cap for THIS call: the connector's own override wins,
           // then the deployment-wide value, then the built-in default (already
           // folded into `globalCap`). Resolved per call so one request can
@@ -678,6 +684,7 @@ export function createMetaTools(
             globalCap,
           );
           const results: ResultStash = {
+            secrets,
             write: resolved.definition.classification !== "read",
             cap,
             set: (id, value, ttlSeconds) => registry.stashResult(id, value, ttlSeconds),

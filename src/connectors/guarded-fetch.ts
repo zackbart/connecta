@@ -539,8 +539,7 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
 
     let response: Response;
     try {
-      sentSecretsFor(ctx).request(url);
-      response = await send(url.toString(), {
+      const init: RequestInit = {
         method: request.method,
         headers,
         ...(request.body !== undefined
@@ -553,7 +552,9 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         // never one. Refused below rather than followed.
         redirect: "manual",
         ...(ctx.signal ? { signal: ctx.signal } : {}),
-      }, ctx);
+      };
+      sentSecretsFor(ctx).request(url, init);
+      response = await send(url.toString(), init, ctx);
     } catch (cause) {
       if (cause instanceof ConnectorCallError) throw cause;
       throw unavailableCallError(

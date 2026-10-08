@@ -216,6 +216,8 @@ export type WriteDecision =
 
 export interface InvocationContext<T> {
   source: ActivityCallSource;
+  /** The owning program retains these credentials only until its run ends. */
+  sentSecrets?: SentSecrets;
   trust?: PoolTrust | undefined;
   timeoutMs?: number;
   requestSignal?: AbortSignal;
@@ -229,6 +231,7 @@ export interface InvocationContext<T> {
   processResult?: (
     value: unknown,
     resolved: ResolvedCatalogTool,
+    sentSecrets: SentSecrets,
   ) => T | Promise<T>;
   /**
    * Optional payload-free friction class derived from a *successful* result —
@@ -605,6 +608,7 @@ export class InvocationService {
             if (context.source === "execute_code") markProgramCall(connectorContext);
             trackCredentialReads(connectorContext);
             sentSecrets = sentSecretsFor(connectorContext);
+            context.sentSecrets?.include(sentSecrets);
             if (
               target.connector.credential &&
               !connectorContext.credential
@@ -650,7 +654,7 @@ export class InvocationService {
               // reports the same downstream-failure wording, and the throw lands
               // inside the attempt where it feeds health.
               assertRawMcpSuccess(target.connector.kind, raw);
-              return { raw, observed: unwrapMcpResult(target.connector.kind, raw) };
+              return { raw, observed: sentSecrets.redact(unwrapMcpResult(target.connector.kind, raw)) };
             }),
           ));
           if (Exit.isFailure(attempt)) {
@@ -702,7 +706,7 @@ export class InvocationService {
       const processResult = context.processResult;
       const processing: Effect.Effect<T, unknown> = processResult
         ? Effect.tryPromise({
-            try: () => Promise.resolve(processResult(result, completed)) as Promise<T>,
+            try: () => Promise.resolve(processResult(sentSecrets.redact(result), completed, sentSecrets)) as Promise<T>,
             catch: (error) => error,
           })
         : Effect.succeed(result as T);
@@ -730,7 +734,7 @@ export class InvocationService {
         );
       if (Exit.isFailure(processed)) return unprocessable();
       try {
-        const value = processed.value;
+        const value = sentSecrets.redact(processed.value);
         const diagnostics = timing();
         const friction = context.activityFriction?.(value);
         record("success", friction ? { friction } : {});

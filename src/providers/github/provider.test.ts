@@ -408,7 +408,9 @@ describe("GitHub App provider", () => {
     expect(activity.events[0]?.outcome).toBe("error");
   });
 
-  it.each([-32602, -32603, 400, 403, "isError"])("INV-5 INV-6: hosted %s credential echoes are redacted for agents, guest calls and nested errors", async (responseKind) => {
+  it.each([-32602, -32603, 400, 403, "isError", "success"].flatMap((kind) =>
+    ["raw", "json-escaped"].map((form) => ({ kind, form })),
+  ))("INV-5 INV-6: hosted $kind $form credential echoes are redacted for agents, guest calls and nested errors", async ({ kind: responseKind, form }) => {
     const fixture = apiFixture();
     const sent = new Set<string>();
     fixture.respond((request) => {
@@ -417,9 +419,14 @@ describe("GitHub App provider", () => {
       const secret = authorization.slice(7); sent.add(secret);
       // Put a full secret across the diagnostic's 512-byte clamp boundary:
       // redaction must happen before truncation to avoid leaking its prefix.
-      const message = `Refused ${"x".repeat(460)} ${authorization}; ${encodeURIComponent(authorization)}; ${btoa(secret)}\nAuthorization: ${authorization}`;
+      const echo = form === "raw" ? secret : secret.split("").map((char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`).join("");
+      const message = `Refused ${"x".repeat(460)} Bearer ${echo}; ${encodeURIComponent(authorization)}; ${btoa(secret)}\nAuthorization: ${authorization}`;
       if (responseKind === 400 || responseKind === 403) return Response.json({ message }, { status: responseKind });
-      if (responseKind === "isError") return Response.json({ jsonrpc: "2.0", id: request.body.id, result: { resultType: "complete", isError: true, content: [{ type: "text", text: message }], structuredContent: { echo: secret } } });
+      if (responseKind === "isError" || responseKind === "success") {
+        const text = responseKind === "success" ? `{"echo":"${echo}"}` : message;
+        const split = text.indexOf(echo) + Math.floor(echo.length / 2);
+        return Response.json({ jsonrpc: "2.0", id: request.body.id, result: { resultType: "complete", isError: responseKind === "isError", content: [{ type: "text", text: text.slice(0, split) }, { type: "text", text: text.slice(split) }] } });
+      }
       return Response.json({ jsonrpc: "2.0", id: request.body.id, error: { code: responseKind, message, data: { token: secret, nested: { authorization } } } });
     });
     const connector = connection(); const logger = spyLogger();
@@ -429,12 +436,18 @@ describe("GitHub App provider", () => {
     const outcome = await new InvocationService(registry, new CatalogService(registry, base), activity.activity).invoke("github.get_file_contents", args, { source: "call_tool" });
     const providers = await buildSandboxProviders(registry, base, silentLogger);
     let guestError: any;
-    try { await providers[0]!.fns.call!("github.get_file_contents", args); }
+    let guestResult: unknown;
+    try { guestResult = await providers[0]!.fns.call!("github.get_file_contents", args); }
     catch (error) { guestError = error; }
     const direct = await connector.callTool("get_file_contents", args, context()).catch((error) => error);
-    expect(outcome).toMatchObject({ ok: false }); expect(guestError).toBeInstanceOf(Error);
-    if (!outcome.ok) expect(outcome.error.message).toContain("[redacted]");
-    const visible = [JSON.stringify(outcome), guestError.message, guestError.stack ?? "", JSON.stringify(guestError), JSON.stringify(guestError.cause) ?? "", JSON.stringify(direct), String(direct), direct instanceof Error ? JSON.stringify(Object.getOwnPropertyDescriptors(direct)) : "", JSON.stringify(activity.events), logger.warnings().join(" ")];
+    if (responseKind === "success") {
+      expect(outcome).toMatchObject({ ok: true });
+      expect(guestResult).toEqual({ echo: "[redacted]" });
+    } else {
+      expect(outcome).toMatchObject({ ok: false }); expect(guestError).toBeInstanceOf(Error);
+      if (!outcome.ok) expect(outcome.error.message).toContain("[redacted]");
+    }
+    const visible = [JSON.stringify(outcome), guestError?.message ?? "", guestError?.stack ?? "", JSON.stringify(guestError) ?? "", JSON.stringify(guestError?.cause) ?? "", JSON.stringify(guestResult) ?? "", JSON.stringify(direct), String(direct), direct instanceof Error ? JSON.stringify(Object.getOwnPropertyDescriptors(direct)) : "", JSON.stringify(activity.events), logger.warnings().join(" ")];
     expect(sent.size).toBeGreaterThan(0);
     for (const secret of sent) for (const text of visible) {
       expect(text).not.toContain(secret);

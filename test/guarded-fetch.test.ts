@@ -479,7 +479,7 @@ describe("guardedFetch() sending through a connector's own fetch", () => {
   it("routes oauthBearer requests through the call's grant and adds no header of its own", async () => {
     stubFetch(() => json({ global: true }));
     const grant = vi.fn(async (_input: string | URL, _init?: RequestInit) => json({ via: "grant" }));
-    const ctx: ApiHandlerContext = { ...context(), oauth: { fetch: grant } };
+    const ctx: ApiHandlerContext = { ...context(), fetch, oauth: { fetch: grant } };
     const send = guardedFetch({
       provider: "Example",
       baseUrl: BASE,
@@ -504,6 +504,7 @@ describe("guardedFetch() sending through a connector's own fetch", () => {
     });
     const refused: ApiHandlerContext = {
       ...context(),
+      fetch,
       oauth: {
         fetch: async () => {
           throw new ConnectorCallError("auth_required", "Connect first.");

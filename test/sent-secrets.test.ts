@@ -3,12 +3,14 @@ import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { ConnectorCallError } from "../src/errors.js";
-import { buildSandboxProviders } from "../src/execute.js";
+import { buildSandboxProviders, createExecuteTool } from "../src/execute.js";
+import { createMetaTools } from "../src/meta-tools.js";
 import { InvocationService } from "../src/invocation.js";
-import { SentSecrets } from "../src/sent-secrets.js";
+import { SentSecrets, sentSecretsFor, trackCredentialReads } from "../src/sent-secrets.js";
 import { CredentialVault } from "../src/credentials.js";
+import { artifacts, kvArtifactStore } from "../src/artifacts.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { Connector, ConnectorContext } from "../src/types.js";
+import type { Connector, ConnectorContext, Executor } from "../src/types.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { connectorContext, spyLogger } from "./fixtures/misc.js";
 import { activitySink, makeRegistry, silentLogger } from "./helpers.js";
@@ -76,10 +78,144 @@ describe("call-scoped sent credentials", () => {
     expect(secrets.redact(result)).toBe(result);
   });
 
-  it("INV-5: short credentials cannot rewrite an inserted or existing placeholder", () => {
+  it("INV-5: credentials shorter than eight characters and Basic usernames cannot corrupt ordinary text", () => {
     const secrets = new SentSecrets(); secrets.add("a");
-    expect(secrets.text("a [redacted]")).toBe("[redacted] [redacted]");
-    expect(secrets.text(secrets.text("Bearer a"))).toBe("[redacted]");
+    secrets.add("1234567");
+    expect(secrets.text("a [redacted] 1234567")).toBe("a [redacted] 1234567");
+    secrets.header(`Basic ${btoa(`a:${SECRET}`)}`);
+    expect(secrets.text("a valid ordinary diagnostic")).toBe("a valid ordinary diagnostic");
+    expect(secrets.text(`a:${SECRET}`)).toBe("[redacted]");
+    secrets.add("12345678");
+    expect(secrets.text("12345678 [redacted]")).toBe("[redacted] [redacted]");
+    expect(secrets.text(secrets.text(`Bearer ${SECRET}`))).toBe("[redacted]");
+  });
+
+  it("INV-5: one cached matcher handles mixed JSON escapes, percent casing and new credentials", () => {
+    const secrets = new SentSecrets();
+    const token = 'credential/"with\\escapes';
+    secrets.add(token);
+    const unicode = token.split("").map((char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0").toUpperCase()}`).join("");
+    const mixed = 'credential\\/\\"with\\\\escapes';
+    const percent = encodeURIComponent(token).replace(/%[0-9A-F]{2}/g, (escape) => `%${escape[1]!.toLowerCase()}${escape[2]}`);
+    for (const form of [token, unicode, mixed, percent]) expect(secrets.text(form)).toBe("[redacted]");
+    expect(secrets.text(`Bearer ${token}`)).toBe("[redacted]");
+    secrets.add("another-credential");
+    expect(secrets.text("another-credential")).toBe("[redacted]");
+    expect(secrets.text(JSON.stringify(unicode))).toBe('"[redacted]"');
+  });
+
+  it("INV-5: a vault-backed matcher handles 10,000 rows without recompiling for each string", async () => {
+    const vault = new CredentialVault(memoryStorage(), KEY);
+    const values = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`key${i}`, `${SECRET}-${i}`]));
+    await vault.setAll("bench", values, "test-user");
+    const ctx = connectorContext();
+    ctx.credential = { get: async (field) => values[field ?? "key0"] ?? null, getAll: () => vault.getAll("bench") };
+    trackCredentialReads(ctx);
+    await ctx.credential.getAll();
+    const secrets = sentSecretsFor(ctx);
+    const rows = Array.from({ length: 10_000 }, (_, i) => ({ id: i, text: `row ${i} ${values.key0}`, label: "ordinary row" }));
+    const started = performance.now();
+    const result = secrets.redact(rows);
+    const elapsed = performance.now() - started;
+    expect(result[9_999]!.text).toBe("row 9999 [redacted]");
+    // Leave room for instrumented CI; the local benchmark is reported in the PR.
+    expect(elapsed).toBeLessThan(1_000);
+  });
+
+  it.each(["unicode", "split", "escaped"])("INV-5: %s MCP text is redacted after unwrapping, before paging, emits and artifact storage", async (form) => {
+    const token = 'credential/"with-escapes';
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, KEY);
+    await vault.set("remote", token, "test-user");
+    const serialized = JSON.stringify({ echo: token, padding: "x".repeat(600) });
+    const escaped = serialized.replace(token.replace(/"/g, '\\"'), token.split("").map((char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`).join(""));
+    const content = form === "split"
+      ? [{ type: "text", text: serialized.slice(0, 18) }, { type: "text", text: serialized.slice(18) }]
+      : [{ type: "text", text: form === "unicode" ? escaped : serialized.replace(/\//g, "\\/") }];
+    const connector: Connector = {
+      id: "remote", kind: "mcp", credential: { label: "Key" },
+      listTools: async () => [{ name: "read", description: "Read", annotations: { readOnlyHint: true } }],
+      callTool: async (_name, _args, ctx) => {
+        await ctx.credential!.get();
+        return { content };
+      },
+    };
+    const store = kvArtifactStore(memoryStorage());
+    const registry = makeRegistry([connector, artifacts({ store }).connector], { storage, credentialVault: vault, maxResultBytes: 256 });
+    const meta = createMetaTools(registry, BASE);
+    const page = await meta.callTool({ address: "remote.read", resultMode: "value" });
+    const notice = (page.structuredContent as any).data;
+    expect(notice.truncated).toBe(true);
+    let reconstructed = "";
+    let offset = 0;
+    for (;;) {
+      const result = await meta.getResult({ id: notice.resultId, offset, maxBytes: 256 });
+      const text = result.content[0]!.text;
+      const newline = text.indexOf("\n");
+      const header = JSON.parse(text.slice(0, newline));
+      reconstructed += text.slice(newline + 1);
+      if (!header.hasMore) break;
+      offset = header.nextAction.arguments.offset;
+    }
+    expect(JSON.parse(reconstructed).echo).toBe("[redacted]");
+    const executor: Executor = { execute: async (_code, providers) => {
+      const host = providers[0]!.fns;
+      const result = await host.call!("remote.read", {}) as { echo: string };
+      expect(result.echo).toBe("[redacted]");
+      await host.emit!({ type: "text", text: token });
+      // Even a program reconstructing a sent value cannot write it to a page.
+      await host.call!("artifacts.create_artifact", {
+        id: "redacted", title: "Redacted", kind: "markdown", source: token,
+        documents: { data: { echoed: token } },
+      });
+      return { result: { echoed: token }, logs: [token] };
+    } };
+    const run = createExecuteTool(registry, BASE, executor, silentLogger, undefined, { trust: "trusted" });
+    const result = await run({ code: "async () => {}" });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.stringify(result)).not.toContain(token);
+    expect(result.structuredContent).toMatchObject({ result: { echoed: "[redacted]" }, logs: "[redacted]" });
+    expect(result.content.at(-1)?.text).toBe("[redacted]");
+    const head = (await store.head("redacted"))!.head;
+    expect(await store.body(head.view.body!)).toBe("[redacted]");
+    expect(JSON.parse((await store.body(head.documents.data!.body!))!)).toEqual({ echoed: "[redacted]" });
+    const failed = createExecuteTool(registry, BASE, { execute: async (_code, providers) => {
+      await providers[0]!.fns.call!("remote.read", {});
+      return { result: undefined, error: token, logs: [token] };
+    } }, silentLogger);
+    const failure = await failed({ code: "async () => {}" });
+    expect(failure.isError).toBe(true);
+    expect(JSON.stringify(failure)).not.toContain(token);
+    expect(failure.structuredContent).toMatchObject({ error: { message: "Error: [redacted]" }, logs: "[redacted]" });
+  });
+
+  it.each(["api", "oauth", "remote"])("INV-5: %s final outgoing requests register auxiliary sensitive headers and query parameters", async (mode) => {
+    const header = "auxiliary-header-credential";
+    const query = "auxiliary-query-credential";
+    const storage = memoryStorage();
+    await storage.set("conn:api:oauth:tokens", JSON.stringify({ connectaOAuthVersion: 2, generation: "legacy", issuer: "https://oauth.api.test/token", value: { access_token: SECRET, token_type: "bearer" } }));
+    const server = httpDownstream((mcp) => mcp.registerTool("read", { description: "Read", annotations: { readOnlyHint: true } }, async () => ({ content: [{ type: "text", text: "ok" }] })));
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      const body = mode === "remote" && request.method === "POST" ? await request.clone().json() as any : undefined;
+      if (mode !== "remote" || body?.method === "tools/call") {
+        expect(request.headers.get("x-api-key")).toBe(header);
+        expect(new URL(request.url).searchParams.get("custom_session_key")).toBe(query);
+        const echo = { header, query };
+        return mode === "remote" ? Response.json({ jsonrpc: "2.0", id: body.id, result: { resultType: "complete", content: [{ type: "text", text: JSON.stringify(echo) }], structuredContent: echo } }) : Response.json(echo);
+      }
+      return server.fetch(request.url, init);
+    });
+    const connector = mode === "remote" ? remoteMcp("api", { url: `${server.url}?custom_session_key=${query}`, auth: { type: "headers", headers: { "X-API-Key": header } } }) : api("api", {
+      ...(mode === "oauth" ? { oauth: { authorizationEndpoint: "https://oauth.api.test/authorize", tokenEndpoint: "https://oauth.api.test/token", clientId: "client", apiOrigins: ["https://api.test"] } } : {}),
+      tools: [{ name: "read", description: "Read", annotations: { readOnlyHint: true }, handler: async (_args, ctx) => {
+        const response = await (ctx.oauth?.fetch ?? ctx.fetch)(`https://api.test/read?custom_session_key=${query}`, { headers: { "X-API-Key": header, "Signature": header } });
+        return response.json();
+      } }],
+    });
+    const registry = makeRegistry([connector], { storage });
+    const outcome = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke("api.read", {}, { source: "call_tool", unwrapResult: true });
+    expect(outcome).toMatchObject({ ok: true, value: { header: "[redacted]", query: "[redacted]" } });
   });
 
   it.each(["rpc", "http", "isError", "success"])("INV-5 INV-6: generic remoteMcp headers auth redacts %s echoes before agents and guest calls", async (kind) => {

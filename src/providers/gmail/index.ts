@@ -1758,7 +1758,7 @@ function gmailConnector(id: string, options: GmailOptions): Connector {
     // Every tool's result passes the whole-size postcondition on its way out.
     tools: tools(client).map((tool) => ({
       ...tool,
-      handler: async (args: unknown, ctx: ConnectorContext) => deliverable(tool.name, await tool.handler(args, ctx)),
+      handler: async (args, ctx) => deliverable(tool.name, await tool.handler(args, ctx)),
     })),
   });
 }

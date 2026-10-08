@@ -484,7 +484,7 @@ function requiresAuthorization(error: unknown): boolean {
 }
 
 /** Classify SDK/runtime facts, dropping every SDK payload and cause chain. */
-function downstreamCallError(error: unknown, httpStatus?: number, wait?: number, oauthStep?: OAuthStep): unknown {
+function downstreamCallError(error: unknown, httpStatus?: number, wait?: number, oauthStep?: OAuthStep, secrets?: SentSecrets): unknown {
   if (error instanceof ConnectorCallError) {
     return hasSdkPayload(error.cause) ? carryFailureFacts(error, withheldAs(error.message, error)) : error;
   }
@@ -530,7 +530,7 @@ function downstreamCallError(error: unknown, httpStatus?: number, wait?: number,
       status === 401 && !(error instanceof RegistrationRejectedError) ? "auth_required"
         : status === 429 ? "rate_limited" : status === 408 && !(error instanceof RegistrationRejectedError)
         ? "timeout" : "connector_call_failed",
-      boundedEchoText(message),
+      boundedEchoText(secrets?.text(message) ?? message),
       { retryable: [429, 502, 503, 504].includes(status) ||
           (status === 408 && !(error instanceof RegistrationRejectedError)),
         ...(wait !== undefined ? { retryAfterMs: wait } : {}) },
@@ -542,7 +542,7 @@ function downstreamCallError(error: unknown, httpStatus?: number, wait?: number,
   // ProtocolError.data is server-chosen even when its message is allowed.
   if (error instanceof ProtocolError) {
     return new ConnectorCallError(error.code === -32602 ? "invalid_args" : "connector_call_failed",
-      boundedEchoText(error.message));
+      boundedEchoText(secrets?.text(error.message) ?? error.message));
   }
   return new ConnectorCallError("connector_call_failed", "The downstream operation failed.");
 }
@@ -1289,7 +1289,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     if (failureRecord({}, err).step?.startsWith("OAuth ")) return downstreamCallError(err);
     const httpStatus = err instanceof SdkHttpError ? err.status : undefined;
     const facts = { step, origin: endpointOrigin, ...(httpStatus ? { httpStatus } : {}) };
-    const classified = downstreamCallError(redactSentSecrets(ctx, err));
+    const classified = downstreamCallError(redactSentSecrets(ctx, err), undefined, undefined, undefined, sentSecretsFor(ctx));
     const verdict = isOauth && classified instanceof ConnectorCallError && classified.code === "auth_required"
       ? carryFailureFacts(err, authRequiredError()) : classified;
     if (ownAbortReasonAsSdkReports(err, signals)) {
@@ -2339,7 +2339,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           if (state.client === client) state.authRequired = true;
           if (err instanceof UnauthorizedError) throw carryFailureFacts(err, authRequiredError());
         }
-        throw downstreamCallError(err);
+        throw downstreamCallError(err, undefined, undefined, undefined, sentSecretsFor(ctx));
       }
     },
 

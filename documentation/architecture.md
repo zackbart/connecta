@@ -327,11 +327,19 @@ refusal, `isError` content, or the words a handler put in a
 memory-only set beside its connector context. Credential-slot reads, static
 auth headers, and outbound bearer tokens join the set, including tokens
 rotated during a call. Before any diagnostic is truncated or returned, the
-agent boundary replaces these values and their auth prefixes, URL encodings,
-and base64 forms with `[redacted]`. Results and nested error causes/data pass
-through the same boundary. Echoed Authorization and Cookie lines are also
-withheld. This applies to every connector and to guest program calls; the set
-is never persisted or logged. Anything else (a transport, parser, stream, validator, or
+agent boundary replaces these values and their auth prefixes, mixed JSON
+escapes, URL encodings, and base64/base64url forms with `[redacted]`. Final
+transports register sensitive headers and query values after assembling the
+request; custom API handlers use `ctx.fetch`. Values shorter than eight
+characters do not enter the matcher, because a short Basic username would
+rewrite ordinary prose. Connecta's own messages never quote a credential.
+The matcher is cached until its set changes; the empty set has a fast path.
+Results, structured strings and nested error causes/data pass through the
+same boundary after unwrapping or joining text blocks and before paging,
+emits, program outputs or artifact writes. Programs retain their calls' sets
+only for the run so later outputs and storage cannot reconstruct an echo.
+Echoed sensitive header lines are also withheld. The set is never persisted
+or logged. Anything else (a transport, parser, stream, validator, or
 runtime error) reaches it in connecta's words: step, origin, HTTP status, and
 class, classified as the original would have been ([auth](./auth.md#what-a-servers-errors-may-say)).
 Operators read logs, status messages, and activity, and none of them carries
