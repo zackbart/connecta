@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { expect, it } from "vitest";
 
+// Member access may wrap between the receiver and dot after formatting.
+const expressionText = (node: ts.Expression) => node.getText().replace(/\s+/g, "");
+
 const root = fileURLToPath(new URL("../src/", import.meta.url));
 const source = (path: string) =>
   ts.createSourceFile(path, readFileSync(root + path, "utf8"), ts.ScriptTarget.Latest, true);
@@ -34,7 +37,7 @@ function method(node: ts.Node): string | undefined {
 it("routes every production refresh send through the fingerprint resolution CAS gate without redirects (INV-5) (INV-9)", () => {
   const coordinator = source("auth/downstream-oauth.ts");
   const calls = nodes(coordinator).filter(ts.isCallExpression);
-  const sends = calls.filter((call) => call.expression.getText() === "baseFetch");
+  const sends = calls.filter((call) => expressionText(call.expression) === "baseFetch");
   expect(sends.map(method)).toEqual(["coordinatedFetch", "redeem"]);
   const generic = nodes(coordinator).find(
     (node) => ts.isMethodDeclaration(node) && node.name.getText() === "coordinatedFetch",
@@ -46,7 +49,14 @@ it("routes every production refresh send through the fingerprint resolution CAS 
   const refresh = sends[1]!;
   let gated = false;
   for (let parent: ts.Node | undefined = refresh.parent; parent; parent = parent.parent) {
-    if (ts.isCallExpression(parent) && parent.expression.getText() === "provider.dispatchRefresh") gated = true;
+    if (
+      ts.isCallExpression(parent) &&
+      ts.isPropertyAccessExpression(parent.expression) &&
+      ts.isIdentifier(parent.expression.expression) &&
+      parent.expression.expression.text === "provider" &&
+      parent.expression.name.text === "dispatchRefresh"
+    )
+      gated = true;
   }
   expect(gated).toBe(true);
   for (const send of sends) {
@@ -59,15 +69,16 @@ it("routes every production refresh send through the fingerprint resolution CAS 
   }
   expect(generic.getText()).toContain("const tokenRequest = isOAuthCredentialRequest(init)");
   expect(generic.getText()).toContain(": resourceFetch(input,");
-  expect(calls.filter((call) => call.expression.getText().endsWith(".dispatchRefresh"))).toHaveLength(1);
+  expect(calls.filter((call) => expressionText(call.expression).endsWith(".dispatchRefresh"))).toHaveLength(1);
   const gate = nodes(coordinator).find(
     (node) => ts.isMethodDeclaration(node) && node.name.getText() === "dispatchRefresh",
   )!;
   const gateCalls = nodes(gate).filter(ts.isCallExpression);
-  expect(gateCalls.filter((call) => call.expression.getText() === "send")).toHaveLength(1);
+  expect(gateCalls.filter((call) => expressionText(call.expression) === "send")).toHaveLength(1);
   const spent = gateCalls.find(
     (call) =>
-      call.expression.getText() === "this.storage.compareAndSet" && call.arguments[0]?.getText() === "lease.spentKey",
+      expressionText(call.expression) === "this.storage.compareAndSet" &&
+      call.arguments[0]?.getText() === "lease.spentKey",
   )!;
   expect(spent.arguments[1]!.getText()).toBe("lease.spentExpected");
   expect(spent.arguments).toHaveLength(3); // No TTL.
@@ -102,7 +113,7 @@ it("routes every production refresh send through the fingerprint resolution CAS 
   expect(directForms).toEqual([]);
   const sdkAuthCalls = production.flatMap(({ path, nodes }) =>
     nodes
-      .filter((node) => ts.isCallExpression(node) && node.expression.getText() === "auth")
+      .filter((node) => ts.isCallExpression(node) && expressionText(node.expression) === "auth")
       .map((call) => ({ path, call: call as ts.CallExpression })),
   );
   expect(sdkAuthCalls.map(({ path }) => path)).toEqual(["auth/static-oauth.ts"]);
@@ -110,7 +121,7 @@ it("routes every production refresh send through the fingerprint resolution CAS 
   const remote = source("connectors/remote-mcp.ts");
   const adapters = nodes(remote)
     .filter(ts.isCallExpression)
-    .filter((call) => call.expression.getText() === "refreshCoordinatorFor(ctx).coordinatedFetch");
+    .filter((call) => expressionText(call.expression) === "refreshCoordinatorFor(ctx).coordinatedFetch");
   expect(adapters).toHaveLength(1);
   expect(adapters[0]!.arguments[1]!.getText()).toBe("learnedUrlSafeFetch(id, url, trackedFetch)");
   expect(adapters[0]!.arguments[4]!.getText()).toBe("learnedUrlSafeFetch(id, url, guardedFetch)");
@@ -126,8 +137,8 @@ it("routes every production refresh send through the fingerprint resolution CAS 
   expect(tracked.getText()).not.toContain("redirectSafeFetch");
   // Bind the active listing/call context for sent-credential tracking while
   // keeping every token send beneath the refresh coordinator's CAS gate.
-  expect(sdkAuthCalls[0]!.call.arguments[1]!.getText()).toContain(
-    "provider,\n        (input, init) => tokenEndpointFetch(ctx, input, init),",
+  expect(sdkAuthCalls[0]!.call.arguments[1]!.getText()).toMatch(
+    /provider,\s*\(input, init\) => tokenEndpointFetch\(ctx, input, init\),/,
   );
   const staticOAuth = source("auth/static-oauth.ts");
   expect(staticOAuth.getText()).not.toContain("redirectSafeFetch");
@@ -135,8 +146,8 @@ it("routes every production refresh send through the fingerprint resolution CAS 
     (node) => ts.isVariableDeclaration(node) && node.name.getText() === "tokenEndpointFetch",
   )!;
   const tokenCalls = nodes(tokenEndpoint).filter(ts.isCallExpression);
-  const staticSends = tokenCalls.filter((call) => call.expression.getText() === "sentSecretsFetch(ctx)");
+  const staticSends = tokenCalls.filter((call) => expressionText(call.expression) === "sentSecretsFetch(ctx)");
   expect(staticSends).toHaveLength(2);
-  expect(tokenCalls.filter((call) => call.expression.getText() === "fetch")).toHaveLength(0);
+  expect(tokenCalls.filter((call) => expressionText(call.expression) === "fetch")).toHaveLength(0);
   for (const send of staticSends) expect(send.arguments[1]!.getText()).toContain('redirect: "manual"');
 });

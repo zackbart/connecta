@@ -128,7 +128,8 @@ export function OverviewPage({ state }: { state: OperatorState }) {
           <section className="section">
             <h2>Catalog</h2>
             <p className="meta">
-              {contract.live.connectors.reduce((n, c) => n + c.tools.length, 0)} tools across{" "}
+              {contract.live.connectors.reduce((n, c) => n + c.tools.length, 0)}
+              {" tools across "}
               {contract.live.connectors.length} connectors. Root endpoint trust: {contract.you.trust}.
             </p>
             <a href="/tools" className="btn quiet">

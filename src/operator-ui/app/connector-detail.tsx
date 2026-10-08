@@ -102,13 +102,13 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
                   <div className="collection">
                     <div className="facts-row">
                       <span>
-                        Catalog age:{" "}
+                        {"Catalog age: "}
                         {live.catalogAgeMs === null
                           ? "Not observed"
                           : `${Math.round(live.catalogAgeMs / 1000)} seconds`}
                       </span>
                       <span>
-                        Last call:{" "}
+                        {"Last call: "}
                         {live.lastCall ? `${formatDate(live.lastCall.at)} · ${live.lastCall.outcome}` : "Not observed"}
                       </span>
                     </div>
