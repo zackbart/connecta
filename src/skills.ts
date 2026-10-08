@@ -1,8 +1,9 @@
+import { USAGE_SKILL } from "./usage-guide.js";
 import { boundedEchoText } from "./errors.js";
 import type { Connector } from "./types.js";
 
 const ROUTE =
-  "Choose a route before discovery. A known-address read needs only call_tool. Unknown-address read-only work starts with execute_code to discover, call, and return the answer; use the same route for reduction, multiple or dependent calls, loops, joins, or branches. Keep discovery and calls together when schemas suffice; do not return catalog matches alone. Sample unfamiliar reads.";
+  "Choose a route before discovery. One known-address read uses call_tool; one known-address write uses call_destructive_tool. Unknown-address read-only work starts with execute_code to discover, call, and return the answer; use the same route for reduction, multiple or dependent calls, loops, joins, or branches. Keep discovery and calls together when schemas suffice; do not return catalog matches alone. Sample unfamiliar reads.";
 const RECOVERY =
   'After auth_required use authorize_connector. After a truncated direct result use connecta.result. Guidance is on demand: fetch skills({ name: "usage" }) only when these instructions and the tool description are insufficient or a run needs repair.';
 
@@ -13,103 +14,7 @@ const RECOVERY =
  */
 export const CONNECTA_INSTRUCTIONS = `${ROUTE} Programs call reads in read-only pools and may also write in trusted pools. The execute_code description names this endpoint's trust. In a read-only pool, discover writes with search_tools then use call_destructive_tool. Never repeat a write to recover its output. ${RECOVERY}`;
 
-const USAGE_SKILL_BASE = `# Connecta usage
-
-## The surface
-
-Six tools: \`execute_code\`, \`search_tools\`, \`call_tool\`, \`call_destructive_tool\`, \`authorize_connector\`, \`skills\`. Discovery and multi-call work live in a program. Top-level search remains for catalog inspection and approval-required work.
-
-Follow the MCP instructions for routing. Read at most once for syntax or repair.
-
-## Inside a program
-
-Write one plain-JavaScript async arrow function, without TypeScript or imports. Return reduced JSON-shaped data.
-
-The minimum guest API is:
-
-- \`connecta.call("connector.tool", args)\` uses the canonical address and returns { data, format: "json" | "text" }.
-- \`connecta.search(args)\` returns \`{ tools, total, offset, limit, hasMore }\`; \`connecta.describe(args)\` returns \`{ tools }\`.
-- Use \`Promise.all\` for independent calls, or \`Promise.allSettled\` to keep successes and failures.
-- \`console.log(...)\` is captured. \`connecta.emit(block)\` produces rich output.
-
-## Discover and select
-
-Search and call in one run when schemas suffice. Sample unfamiliar reads. Reduce a one-time write's full result here or page a direct call with connecta.result; never repeat the write to recover output. Search distinct operations separately with 2–4 distinctive action/object terms.
-
-For top-level catalog inspection or approval-required discovery, omit \`limit\` initially (the default is 8), then page with a limit up to 50 if needed. Empty or whitespace-only queries browse all tools. A non-empty query with no ASCII terms returns no matches; mixed input searches with its ASCII terms. \`includeSchemas: "compact"\` adds bounded input and available output shapes. An \`outputSchemaSource: "observed"\` shape is a hint, not a contract. Plain objects expose \`inputKeys\`, \`requiredInputKeys\`, and \`outputKeys\`; truncation flags mark incomplete shapes; matches also carry declared annotations.
-
-- \`connecta.search({})\` loads all catalogs. Pass \`connector: "<id>"\` when the integration is obvious. Use \`safety: "readOnly"\` for reads. These inputs filter discovery; they grant no authority.
-- Use \`includeSchemas: "json"\` for programmatic schema inspection; compact schemas are text, not objects with \`.properties\`. Check connectorTitle for the account/environment, then address, purpose, annotations, inputs, and outputs. Never select only because a result ranks first or has fewer required inputs.
-- Supply every \`requiredInputKey\` from the task or a prior result. For dependencies, match the earlier \`outputKey\` to the later required key. An empty required-key list does not permit invented arguments. Missing \`outputKeys\` means inspect \`outputSchema\`.
-- Use \`connecta.describe({ address })\` or \`{ addresses }\` when a compact schema is truncated or insufficient. Use \`format: "json"\` only for exact constraints. Write the property names the schema displays; never guess positions or aliases.
-- Reduce through available output keys. An observed key is a hint; later results may differ. Do not guess collection roots such as \`items\` or \`results\`. If a match is missing, re-search or describe.
-- Match provider identifiers and names exactly after resolving them from source data or a connector guide. A broad regular expression that merely finds a plausible value is not identity resolution.
-- Preserve the schema's JSON types exactly: a numeric id is a number, not a numeric-looking string.
-- Validate tabular headers, row arrays, and row widths before mapping them. Never let a header or partial row become data.
-
-Programs may call tools classified as reads. Trusted pools also allow writes, with execute_code annotated as a write for the host. In read-only pools, writes are refused before dispatch: use top-level \`call_destructive_tool\`. Sandbox code cannot change pool trust.
-
-## Errors and repair
-
-Caught Connecta errors expose \`message\`, \`code\`, \`retryable\`, and \`details\`. Promise rejections retain these fields. Branch on fields, never prose. After a shared argument failure, repair one call before repeating it across other records. Do not retry \`retryable: false\`, and do not retry \`rate_limited\` immediately because portable code has no timer.
-
-- \`destructive_tool_requires_approval\`: stop and send the returned address through top-level \`call_destructive_tool\`.
-- \`write_outcome_unknown\`: a trusted-pool write was sent but unanswered and is never re-sent; check the target.
-- \`auth_required\`: let the failure reach the model, then use top-level \`authorize_connector\`, give its handoff to the operator, and retry after recovery.
-- Truncated direct call: page with \`connecta.result\`, never repeat a write. A program result has no page handle; reduce a read in a new program. After a write, check the target or report the gap.
-- Unknown addresses and tools carry scoped search recovery. Use it inside the current run. Do not invent an address.
-
-For a direct call, \`resultMode: "value"\` unwraps the result. \`timeoutMs\` sets its deadline. Every call makes one attempt; use the returned error classification and retry hint to decide whether to reissue. \`diagnostics: true\` adds timing.
-
-\`await connecta.result(id, { offset?, maxBytes? })\` inside a program returns \`{ resultId, offset, bytes, totalBytes, hasMore, nextOffset?, format: "text", text }\`. Pages use UTF-8 bytes. Follow nextOffset until hasMore is false; reassemble and reduce inside the program. Unknown or expired ids fail. Fetch a guide inside the same program with \`await connecta.skill(name)\`.
-
-The \`execute_code\` description states this deployment's host-call and write budgets and per-call deadline.
-
-## Runtime portability
-
-Portable code uses standard JavaScript builtins, \`connecta\`, and \`console.*\`. QuickJS blocks imports and lacks fetch, process, timers, crypto, and WebSocket. Dynamic Workers must use only \`{ loader }\`; bindings, modules, or globalOutbound grant ambient authority. With loader only, environment maps are empty; node:fs/http/https are absent; outbound fetch, WebSocket, node:net, and node:tls are denied; DNS is unresolved. Runtime builtins remain through \`import()\` and \`process.getBuiltinModule()\`, including node:path and cloudflare:workers; this set can drift. Timers, process, crypto, WebSocket, and data: fetch remain. Avoid every runtime-only capability because QuickJS fails.
-
-## Examples
-
-One read-only call at a known address:
-
-\`async () => (await connecta.call("crm.get_account", { id: "acct_42" })).data\`
-
-Dependent lookup: verify connector \`ci\`, run 42, and these schema fields first.
-
-\`\`\`js
-async () => {
-  const find = async name => {
-    const page = await connecta.search({ connector: "ci", query: name, safety: "readOnly", includeSchemas: "compact" });
-    if (page.queryAnalysis?.catalogError) throw new Error(JSON.stringify(page.queryAnalysis.catalogError));
-    return page.tools.find(tool => tool.name === name);
-  };
-  const runTool = await find("get_run");
-  if (!runTool) return { gap: "Run lookup not resolved" };
-  const { data: run } = await connecta.call(runTool.address, { runId: 42 });
-  if (!run.failedJobId) return { status: run.status, gap: "No failed job identified" };
-  const logsTool = await find("get_job_logs");
-  if (!logsTool) return { status: run.status, gap: "Job logs not resolved" };
-  const { data: logs } = await connecta.call(logsTool.address, { jobId: run.failedJobId });
-  return logs.filter(row => row.level === "error").map(({ timestamp, message }) => ({ timestamp, message }));
-}
-\`\`\`
-
-## Media output
-
-\`connecta.emit\` accepts text, image, or audio blocks and delivers them only on success. Its byte and block budgets are separate from the JSON return budget. Return data for the client to render as a view.
-
-`;
-
-/** Deployment-scoped guide routing appended to the shared usage guide. */
-const CONNECTOR_GUIDES_SECTION = `
-## Per-connector guides
-
-Connector guides appear in \`skills({})\` and discovery with an exact \`guide\` name and bounded \`guideSummary\`. Fetch only a listed or carried name with \`skills({ name: <guide> })\`; never infer one from a connector id. \`guideRequired: true\` is a hard stop. \`guideRequiredReasons\` says why: \`connector_required\` and \`approval_required\` stand after schema expansion; \`schema_truncated\` clears after exact describe. Otherwise fetch for a relevant sequence, unit, pagination rule, alias, or API convention. A read-only call with a complete compact schema may skip an irrelevant guide. Connector guides never apply to another deployment.
-`;
-
-/** Shared Connecta routing guidance, byte-identical across deployments. */
-export const USAGE_SKILL = USAGE_SKILL_BASE + CONNECTOR_GUIDES_SECTION;
+export { USAGE_SKILL } from "./usage-guide.js";
 
 /** True when at least one of `connectors` carries a usage guide. */
 export function hasConnectorGuides(connectors: readonly Connector[]): boolean {

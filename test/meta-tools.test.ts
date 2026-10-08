@@ -400,19 +400,11 @@ Prefer \`notion.search\` over listing databases.
     expect(fetched.isError).toBeFalsy();
     expect(textFrom(fetched)).toBe(USAGE_SKILL);
     expect(textFrom(fetched)).toContain("# Connecta usage");
-    expect(textFrom(fetched)).toContain(
-      "never infer one from a connector id",
-    );
-    // #418 moves detailed examples out of always-loaded definitions. The
-    // usage skill is now their one model-facing home.
-    expect(textFrom(fetched)).toContain("## Examples");
+    expect(textFrom(fetched)).toContain("## The global and the envelopes");
     expect(textFrom(fetched)).toContain("crm.get_account");
-    expect(textFrom(fetched)).toContain("## Errors and repair");
-    expect(textFrom(fetched)).toContain("## Runtime portability");
-    expect(textFrom(fetched)).toContain("## Media output");
-    expect(textFrom(fetched)).toContain(
-      "Return data for the client to render as a view",
-    );
+    expect(textFrom(fetched)).toContain("## Large results and recovery");
+    expect(textFrom(fetched)).toContain("## Output");
+    expect(textFrom(fetched)).toContain("Host-call budget exhaustion ends the run");
     expect(textFrom(fetched)).not.toContain("connecta.ui");
   });
 
@@ -435,11 +427,7 @@ Prefer \`notion.search\` over listing databases.
       "`usage` — How to route work between one execute_code program",
     );
     expect(listed).not.toContain("connector:");
-    // #418 moves program selection, direct-call repair, paging, UI bindings,
-    // runtime detail, and examples out of the always-loaded definitions. This
-    // deliberate 9 KB on-demand budget preserves every normative rule instead
-    // of truncating guidance to retain the former 7 KB ceiling.
-    expect(new TextEncoder().encode(expected).length).toBeLessThan(9_000);
+    expect(new TextEncoder().encode(expected).length).toBeLessThan(5_500);
   });
 
   it("errors — never falls back to the generic guide — for a connector with no guide", async () => {

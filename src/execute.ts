@@ -1,3 +1,4 @@
+import { GUEST_API_DECLARATION } from "./usage-guide.js";
 import { bindMcpClient, type McpClientContext } from "./mcp-client-context.js";
 import type { PoolTrust } from "./tool-safety.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
@@ -1383,19 +1384,18 @@ const executeDescription = (
   connectors: ReturnType<RegistryView["listConnectors"]>,
   maxWrites: number,
   trust: PoolTrust,
-) => `Use the configured services below to answer the task. A known address uses call_tool. Unknown-address and wider read-only work uses one execute_code program for discovery, calls, and reduction. ${trust === "trusted" ? "This pool is trusted: programs may call reads and writes. The host approves execute_code as a write." : "This pool is read-only: programs may call reads; writes use call_destructive_tool."} Limits: ${hostLimits.maxHostCalls} host calls, ${maxWrites} writes, ${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
-
+) => `One known read: call_tool. One known write: call_destructive_tool. Everything else: execute_code. ${trust === "trusted" ? "Trusted pool: programs may read and write; the host approves the program as a write." : "Read-only pool: programs read; writes use call_destructive_tool."} Limits: ${hostLimits.maxHostCalls} host calls, ${maxWrites} writes, ${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
 ${connectorInventory(connectors)}
 
-Write async () => { ... } with the global connecta. No portable ambient capabilities.
-- connecta.search({ connector, query, includeSchemas: "json" }) and connecta.describe({ address }) return { tools }. Compact schemas are text.
-- connecta.call(address, args, { timeoutMs? }) or connecta.call({ address, args?, timeoutMs? }) returns { data, format: "json" | "text" }. Check format before reading fields.
-- connecta.result(id, { offset?, maxBytes? }) returns { text, format: "text", hasMore, nextOffset }; reassemble and reduce direct results here.
-- connecta.skill(name) returns { name, text, format: "text" }.
-- Promise.allSettled retains each call failure. Every run reports hostCalls counts; guest mistakes use program_error with repair hints.
-- connecta.emit({ type: "text", text } | { type: "image" | "audio", data, mimeType }) works without await; ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes. Text shares the result cap. console.log is captured.
+Use async () => { ... }, no arguments, with the connecta global. No portable ambient capabilities. API notation:
+\`\`\`ts
+declare const connecta: {
+${GUEST_API_DECLARATION}
+};
+\`\`\`
+Discovery: { tools }; check search catalogErrors/absence. JSON schemas default; compact is text. GuestResult is { data, format: "json" | "text" }; inspect format before fields. Pages: text, hasMore, nextOffset in UTF-8 bytes. Promise.allSettled keeps typed failures. Host-call budget_exceeded is terminal, even through catch/allSettled. Runs report hostCalls.
 
-Return reduced JSON. Sample unfamiliar reads. Read a write's result here; never repeat it to recover output. skills({ name: "investigate" }): workflow; skills({ name: "usage" }): repair${connectorGuides ? ", guide handling" : ""}.`;
+Reduce JSON. Never repeat writes for output. emit: text or base64 image/audio, safe without await, ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes. Text shares the result cap. skills({ name: "investigate" }): workflow; skills({ name: "usage" }): repair${connectorGuides ? ", guide handling" : ""}.`;
 
 // Module scope, like the other five meta-tool inputs: its JSON Schema is
 // derived once per process. Budgets and connectors vary by deployment and

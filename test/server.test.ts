@@ -564,47 +564,16 @@ describe("server /mcp end-to-end", () => {
     const fetchedBody = await readJsonRpc(fetched);
     const skill = fetchedBody.result.content[0].text as string;
     expect(skill).toContain("# Connecta usage");
-    expect(skill).toContain("Follow the MCP instructions for routing");
-    expect(skill).toContain("## Discover and select");
-    expect(skill).toContain("## Errors and repair");
-    expect(skill).toContain(
-      "Programs may call tools classified as reads. Trusted pools also allow writes",
-    );
-    expect(skill).toContain("Dynamic Workers must use only `{ loader }`");
-    expect(skill).toContain("node:fs/http/https are absent");
-    expect(skill).toContain("outbound fetch, WebSocket, node:net, and node:tls are denied");
-    expect(skill).toContain("Runtime builtins remain through `import()`");
-    expect(skill).toContain("this set can drift");
-    expect(skill).toContain("2–4 distinctive action/object terms");
-    // #418: top-level search defaults, paging, compact row semantics, and
-    // non-ASCII behavior moved here from the always-loaded definition.
-    expect(skill).toContain("omit `limit` initially (the default is 8)");
-    expect(skill).toContain("page with a limit up to 50");
-    expect(skill).toContain(
-      "Plain objects expose `inputKeys`, `requiredInputKeys`, and `outputKeys`",
-    );
-    expect(skill).toContain("non-empty query with no ASCII terms returns no matches");
-    expect(skill).toContain("mixed input searches with its ASCII terms");
-    expect(skill).toContain(
-      '`format: "json"` only for exact constraints',
-    );
-    // #418: direct-call shaping, bounded execution, retry safety, diagnostics,
-    // and byte-exact paging all remain model-visible.
-    expect(skill).toContain('`resultMode: "value"` unwraps the result');
-    expect(skill).toContain("`timeoutMs` sets its deadline");
-    expect(skill).toContain(
-      "Every call makes one attempt",
-    );
-    expect(skill).toContain("`diagnostics: true` adds timing");
-    expect(skill).toContain(
-      "`await connecta.result(id, { offset?, maxBytes? })` inside a program returns",
-    );
-    expect(skill).toContain("Pages use UTF-8 bytes");
-    expect(skill).toContain("Unknown or expired ids fail");
-    expect(skill).toContain("## Media output");
+    expect(skill).toContain("## Choose the route");
+    expect(skill).toContain("## The global and the envelopes");
+    expect(skill).toContain("## Keep partial successes");
+    expect(skill).toContain("Programs may\nwrite only in trusted pools");
+    expect(skill).toContain("No imports, require, filesystem, fetch, or timers");
+    expect(skill).toContain("## Large results and recovery");
+    expect(skill).toContain("Follow\nnextOffset in UTF-8 bytes");
+    expect(skill).toContain("## Output");
     expect(skill).not.toContain("connecta.ui");
     expect(skill).not.toContain("connecta.batch");
-    expect(skill).toContain("## Examples");
     expect(skill).toContain("crm.get_account");
 
     const missing = await mcpRpc(
@@ -1805,7 +1774,7 @@ describe("execute_code registration (code mode)", () => {
     }
     const description = await executeDescription();
     expect(description).toContain(
-      "This pool is read-only: programs may call reads; writes use call_destructive_tool.",
+      "Read-only pool: programs read; writes use call_destructive_tool.",
     );
     expect(description).not.toContain("resume_execution");
   });
@@ -1842,18 +1811,18 @@ describe("execute_code registration (code mode)", () => {
       (tool: { name: string }) => tool.name === "execute_code",
     );
     expect(executeTool.description).toContain(
-      "Use the configured services below to answer the task",
+      "One known read: call_tool. One known write: call_destructive_tool.",
     );
     expect(executeTool.description).toContain(
-      "Unknown-address and wider read-only work uses one execute_code program",
+      "Everything else: execute_code.",
     );
     // Advice, not a validity claim: nothing rejects a program that returns
     // catalog matches, and a description that says otherwise teaches the model
     // a rule the server does not enforce (#295).
     expect(executeTool.description).toContain(
-      "Sample unfamiliar reads",
+      "JSON schemas default",
     );
-    expect(executeTool.description).toContain("never repeat it to recover output");
+    expect(executeTool.description).toContain("Never repeat writes for output");
     expect(executeTool.description).not.toContain("Never make a discovery-only");
     expect(executeTool.description).not.toContain("resume_execution");
     expect(executeTool.description).toContain("No portable ambient capabilities");
@@ -1865,7 +1834,7 @@ describe("execute_code registration (code mode)", () => {
     // address is "callable" without showing the parentheses teaches nothing,
     // and the sanitization rule two clauses later makes "as written" false.
     expect(executeTool.description).toContain(
-      "connecta.call(address, args, { timeoutMs? })",
+      "call(address: string, args?: unknown, options?: { timeoutMs?: number })",
     );
     // #418 deliberately replaces the former 4.4 KiB ceiling. The detailed
     // selection rules and examples now live only in the on-demand usage skill.

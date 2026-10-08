@@ -40,6 +40,6 @@ This OAuth session may expose both live and sandbox Stripe accounts. Discover th
 <!-- fragment: guide_3 -->
 , and any single endpoint is capped at 25 per second regardless of mode, so paging one list is the real constraint.
 - Use `search_stripe_documentation` when the shape of an object or a flow is unclear; it is a read and costs nothing but a call.
-- Treat every create, update, delete, refund, and report run as a write. Connecta classifies the maintained writes explicitly and enforces the configured pool trust policy. Unknown tools without an explicit, uncontradicted read annotation fail closed.
+- Treat every create, update, delete, refund, and report run as a write. For guest calls, classification, and routing, fetch `skills({ name: "usage" })`.
 - An `auth_required` failure means this connector's Stripe authorization is missing or expired: run `authorize_connector` for this connector id, then retry the same call unchanged. A rejected argument or a plan restriction comes back in Stripe's own words instead — read it rather than re-authorizing.
 <!-- endfragment -->
