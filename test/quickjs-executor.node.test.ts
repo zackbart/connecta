@@ -339,6 +339,25 @@ describe("quickJsExecutor", () => {
     } finally { dump.mockRestore(); }
   });
 
+  it.each(["cpu", "wall"] as const)("INV-7: preserves %s interruption during rejection-describer initialization", async (budget) => {
+    await prepareQuickJs();
+    const originalEval = QuickJSContext.prototype.evalCode;
+    const evaluate = vi.spyOn(QuickJSContext.prototype, "evalCode").mockImplementationOnce(function (this: QuickJSContext) {
+      return originalEval.call(this, "while (true) {}");
+    });
+    const dump = vi.spyOn(QuickJSContext.prototype, "dump");
+    try {
+      const out = await executeQuickJs(`async () => 42`, [], {
+        timeoutMs: budget === "wall" ? 25 : 5000,
+        cpuTimeMs: budget === "cpu" ? 25 : 5000,
+        memoryLimitBytes: 64 * 1024 * 1024, maxStackSizeBytes: 1024 * 1024,
+      });
+      expect(out.error).toBe(budget === "wall" ? "Execution timed out after 25ms." : "Execution exceeded the 25ms guest CPU budget.");
+      expect(out.timedOut).toBe(budget === "wall" ? true : undefined);
+      expect(dump).not.toHaveBeenCalled();
+    } finally { evaluate.mockRestore(); dump.mockRestore(); }
+  });
+
   it("captures console output as logs", async () => {
     const ex = quickJsExecutor();
     const out = await ex.execute(
@@ -878,9 +897,7 @@ describe("quickJsExecutor", () => {
     clearInterval(heartbeat);
     gaps.sort((a, b) => a - b);
     const p99 = gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * 0.99))];
-    expect(outputs.every((out) => out.error?.includes("guest CPU budget"))).toBe(
-      true,
-    );
+    for (const out of outputs) expect(out.error).toContain("guest CPU budget");
     expect(p99).toBeLessThan(150);
   }, 15_000);
 

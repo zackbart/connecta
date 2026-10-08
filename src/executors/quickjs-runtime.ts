@@ -381,44 +381,12 @@ export async function executeQuickJs(
         return wallInterrupted || cpuInterrupted;
       });
 
-      // Keep this diagnostic function in a host-owned handle. Error.isError
-      // checks the native brand without Proxy traps. Own data descriptors of
-      // native Errors are safe to read; accessors and arbitrary thrown objects
-      // get a fixed description instead of dump's guest serialization/getters.
-      const describeError = ctx.unwrapResult(runGuest(() => ctx.evalCode(`(() => {
-        const isError = Error.isError;
-        const descriptor = Object.getOwnPropertyDescriptor;
-        const prototypeOf = Object.getPrototypeOf;
-        const hasOwn = Function.prototype.call.bind(Object.prototype.hasOwnProperty);
-        const slice = Function.prototype.call.bind(String.prototype.slice);
-        const stringify = JSON.stringify;
-        const prototypes = [
-          [Error.prototype, "Error"], [TypeError.prototype, "TypeError"],
-          [SyntaxError.prototype, "SyntaxError"], [ReferenceError.prototype, "ReferenceError"],
-          [RangeError.prototype, "RangeError"], [EvalError.prototype, "EvalError"],
-          [URIError.prototype, "URIError"], [AggregateError.prototype, "AggregateError"]
-        ];
-        return (error) => {
-          if (!isError(error)) return "null";
-          const text = (key, fallback, limit) => {
-            const own = descriptor(error, key);
-            return own && hasOwn(own, "value") && typeof own.value === "string"
-              ? slice(own.value, 0, limit) : fallback;
-          };
-          const prototype = prototypeOf(error);
-          let name = "Error";
-          for (let i = 0; i < prototypes.length; i++) {
-            if (prototype === prototypes[i][0]) { name = prototypes[i][1]; break; }
-          }
-          return stringify({ __proto__: null, name: text("name", name, 64),
-            message: text("message", "Program threw a value.", 4000), stack: text("stack", "", 1000) });
-        };
-      })()`)));
+      let describeError: QuickJSHandle | undefined;
       const logs: string[] = [];
       const bridge = installBridge(ctx, providers, logs, onLog);
       const finish = <T extends ExecuteResult>(r: T): T => {
         bridge.aborted = true;
-        describeError.dispose();
+        describeError?.dispose();
         for (const failure of bridge.failures) failure.error.dispose();
         bridge.failures.length = 0;
         // Outstanding host calls still hold deferred-promise handles; their
@@ -455,8 +423,9 @@ export async function executeQuickJs(
         else if (type === "undefined") description = "undefined";
         else if (type === "boolean") description = ctx.eq(error, ctx.true);
         else if (ctx.eq(error, ctx.null)) description = null;
-        else {
-          const described = runGuest(() => ctx.callFunction(describeError, ctx.undefined, error));
+        else if (describeError) {
+          const describe = describeError;
+          const described = runGuest(() => ctx.callFunction(describe, ctx.undefined, error));
           if (described.error) described.error.dispose();
           else {
             description = JSON.parse(ctx.getString(described.value)) ?? description;
@@ -478,6 +447,46 @@ export async function executeQuickJs(
         failure: { name: "TimeoutError", timeout: { elapsedMs: Date.now() - (deadline - timeoutMs), deadlineMs: timeoutMs } },
         timedOut: true,
       });
+
+      // Keep this diagnostic function in a host-owned handle. Error.isError
+      // checks the native brand without Proxy traps. Own data descriptors of
+      // native Errors are safe to read; accessors and arbitrary thrown objects
+      // get a fixed description instead of dump's guest serialization/getters.
+      const described = runGuest(() => ctx.evalCode(`(() => {
+        const isError = Error.isError;
+        const descriptor = Object.getOwnPropertyDescriptor;
+        const prototypeOf = Object.getPrototypeOf;
+        const hasOwn = Function.prototype.call.bind(Object.prototype.hasOwnProperty);
+        const slice = Function.prototype.call.bind(String.prototype.slice);
+        const stringify = JSON.stringify;
+        const prototypes = [
+          [Error.prototype, "Error"], [TypeError.prototype, "TypeError"],
+          [SyntaxError.prototype, "SyntaxError"], [ReferenceError.prototype, "ReferenceError"],
+          [RangeError.prototype, "RangeError"], [EvalError.prototype, "EvalError"],
+          [URIError.prototype, "URIError"], [AggregateError.prototype, "AggregateError"]
+        ];
+        return (error) => {
+          if (!isError(error)) return "null";
+          const text = (key, fallback, limit) => {
+            const own = descriptor(error, key);
+            return own && hasOwn(own, "value") && typeof own.value === "string"
+              ? slice(own.value, 0, limit) : fallback;
+          };
+          const prototype = prototypeOf(error);
+          let name = "Error";
+          for (let i = 0; i < prototypes.length; i++) {
+            if (prototype === prototypes[i][0]) { name = prototypes[i][1]; break; }
+          }
+          return stringify({ __proto__: null, name: text("name", name, 64),
+            message: text("message", "Program threw a value.", 4000), stack: text("stack", "", 1000) });
+        };
+      })()`));
+      if (described.error) {
+        const rejection = rejected(described.error);
+        described.error.dispose();
+        return finish(rejection);
+      }
+      describeError = described.value;
 
       const setup = runGuest(() => ctx.evalCode(setupScript(providers)));
       if (setup.error) {
