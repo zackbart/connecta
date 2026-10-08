@@ -10,7 +10,7 @@ import { array, assertKnownOptions, instance, keys, optionsOf, strings } from ".
 import { describedEndpoint, describedOrigin, describedTools } from "../described.js";
 import { CALL_ADMISSION, CREDENTIAL, USAGE_GUIDE } from "./option-shapes.js";
 import { assertStaticToolNames } from "../tool-name.js";
-import { carrySentSecrets, redactSentSecrets, sentSecretsFetch, trackCredentialReads } from "../sent-secrets.js";
+import { redactSentSecrets, sentSecretsFetch, trackCredentialReads } from "../sent-secrets.js";
 import type {
   Connector,
   ConnectorAuthDescription,
@@ -395,14 +395,12 @@ export function apiConnector(
       // its first await never sits handler-less for the thenable-adoption
       // microtask — workerd and vitest both report that gap as an unhandled
       // rejection even though the caller catches the failure.
-      // The accessor closes over the registry's own context, not this copy,
-      // so the grant it reaches is the one that context's owner holds.
-      const handlerCtx: ApiHandlerContext = {
-        ...ctx,
+      // Preserve the registry's context identity: private caller/provenance
+      // markers belong to it, as does the grant its accessor reaches.
+      const handlerCtx: ApiHandlerContext = Object.assign(ctx, {
         fetch: sentSecretsFetch(ctx),
         ...(oauth ? { oauth: oauth.access(ctx) } : {}),
-      };
-      carrySentSecrets(ctx, handlerCtx);
+      });
       try {
         return redactSentSecrets(ctx, await tool.handler(input, handlerCtx));
       } catch (error) {

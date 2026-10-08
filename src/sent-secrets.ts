@@ -247,11 +247,6 @@ export function sentSecretsFor(ctx: ConnectorContext): SentSecrets {
   return secrets;
 }
 
-/** A handler context copy belongs to the same call, never to its whole request. */
-export function carrySentSecrets(from: ConnectorContext, to: ConnectorContext): void {
-  contexts.set(to, sentSecretsFor(from));
-}
-
 /** Slot reads cover custom handlers too, including keys put in query strings. */
 export function trackCredentialReads(ctx: ConnectorContext): void {
   if (!ctx.credential || wrappedCredentials.has(ctx)) return;

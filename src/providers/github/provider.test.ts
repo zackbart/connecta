@@ -445,7 +445,10 @@ describe("GitHub App provider", () => {
       expect(guestResult).toEqual({ echo: "[redacted]" });
     } else {
       expect(outcome).toMatchObject({ ok: false }); expect(guestError).toBeInstanceOf(Error);
-      if (!outcome.ok) expect(outcome.error.message).toContain("[redacted]");
+      if (!outcome.ok) {
+        if (responseKind === 403) expect(outcome.error.code).toBe("provider_permission_denied");
+        else expect(outcome.error.message).toContain("[redacted]");
+      }
     }
     const visible = [JSON.stringify(outcome), guestError?.message ?? "", guestError?.stack ?? "", JSON.stringify(guestError) ?? "", JSON.stringify(guestError?.cause) ?? "", JSON.stringify(guestResult) ?? "", JSON.stringify(direct), String(direct), direct instanceof Error ? JSON.stringify(Object.getOwnPropertyDescriptors(direct)) : "", JSON.stringify(activity.events), logger.warnings().join(" ")];
     expect(sent.size).toBeGreaterThan(0);

@@ -122,6 +122,27 @@ describe("call-scoped sent credentials", () => {
     expect(elapsed).toBeLessThan(1_000);
   });
 
+  it("INV-5: custom connector errors are redacted before classification truncates their diagnostic", async () => {
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, KEY);
+    await vault.set("custom", SECRET, "test-user");
+    const escaped = SECRET.split("").map((char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`).join("");
+    const connector: Connector = {
+      id: "custom", kind: "api", credential: { label: "Key" },
+      listTools: async () => [{ name: "read", description: "Read", annotations: { readOnlyHint: true } }],
+      callTool: async (_name, _args, ctx) => {
+        await ctx.credential!.get();
+        throw new ConnectorCallError("invalid_args", `Refused ${"x".repeat(460)} ${escaped}`);
+      },
+    };
+    const { outcome, failure } = await exercise(connector, { storage, credentialVault: vault });
+    expect(failure.message).toContain("[redacted]");
+    if (!outcome.ok) {
+      expect(outcome.error.message).toContain("[redacted]");
+      expect(outcome.error.message).not.toContain("\\u0073");
+    }
+  });
+
   it.each(["unicode", "split", "escaped"])("INV-5: %s MCP text is redacted after unwrapping, before paging, emits and artifact storage", async (form) => {
     const token = 'credential/"with-escapes';
     const storage = memoryStorage();
@@ -186,7 +207,8 @@ describe("call-scoped sent credentials", () => {
     const failure = await failed({ code: "async () => {}" });
     expect(failure.isError).toBe(true);
     expect(JSON.stringify(failure)).not.toContain(token);
-    expect(failure.structuredContent).toMatchObject({ error: { message: "Error: [redacted]" }, logs: "[redacted]" });
+    expect(failure.content[0]!.text).toContain("Error: [redacted]");
+    expect(failure.content[0]!.text).toContain("Logs:\n[redacted]");
   });
 
   it.each(["api", "oauth", "remote"])("INV-5: %s final outgoing requests register auxiliary sensitive headers and query parameters", async (mode) => {
@@ -243,7 +265,10 @@ describe("call-scoped sent credentials", () => {
         expect(JSON.stringify(result)).toContain("[redacted]");
       } else {
         const { outcome } = await exercise(connector);
-        if (!outcome.ok) expect(outcome.error.message).toContain("[redacted]");
+        if (!outcome.ok) {
+          if (kind === "http") expect(outcome.error.code).toBe("provider_permission_denied");
+          else expect(outcome.error.message).toContain("[redacted]");
+        }
       }
       const raw = await connector.callTool("read", {}, ctx).catch((error) => error);
       expect(JSON.stringify(raw)).not.toContain(SECRET);

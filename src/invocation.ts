@@ -664,7 +664,7 @@ export class InvocationService {
             answered = answeredFailure(attemptError);
             return isCallerCancellation(attemptError, context.requestSignal)
               ? callerCancelledDetails()
-              : carryFailureFacts(attemptError, classifyCallError(attemptError));
+              : carryFailureFacts(attemptError, classifyCallError(sentSecrets.redact(attemptError)));
           }
           observedResult = attempt.value.observed;
           result = context.unwrapResult ? observedResult : attempt.value.raw;
@@ -692,7 +692,7 @@ export class InvocationService {
         const failure = Cause.squash(dispatched.cause);
         return failed(context.requestSignal?.aborted
           ? callerCancelledDetails()
-          : carryFailureFacts(failure, classifyCallError(failure)));
+          : carryFailureFacts(failure, classifyCallError(sentSecrets.redact(failure))));
       }
       if (dispatched.value) return failed(dispatched.value);
       // A dispatch that returned no refusal resolved a concrete tool.
