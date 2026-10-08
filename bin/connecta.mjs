@@ -11,6 +11,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { CONNECTA_VERSION } from "./version.mjs";
 import { META_TOOL_NAMES } from "./meta-tool-names.mjs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -255,9 +256,8 @@ async function doctor() {
           .trim()
       : "";
   const { Client, StreamableHTTPClientTransport } = await import("@modelcontextprotocol/client");
-  const { version } = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
   const client = new Client(
-    { name: "connecta-doctor", version },
+    { name: "connecta-doctor", version: CONNECTA_VERSION },
     { versionNegotiation: { mode: "auto", probe: { timeoutMs: DOCTOR_TIMEOUT_MS } } },
   );
   const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
@@ -320,7 +320,7 @@ async function doctor() {
   console.log(
     `Connecta doctor passed: ${health.connectors} connector(s), ` +
       `${executorName ? `${executorName} executed` : "code executed"}, ` +
-      `prescribed ${META_TOOL_NAMES.length}-tool surface, MCP ${negotiatedVersion}` +
+      `prescribed ${META_TOOL_NAMES.length}-tool surface, MCP ${negotiatedVersion}, package ${CONNECTA_VERSION}` +
       (drifted.length > 0
         ? `, catalog drift on ${drifted.length} connector(s).`
         : "."),

@@ -37,6 +37,9 @@ function ActivityRow({ event }: { event: UiActivityEvent }) {
       <div>
         <div className="activity-address">{event.address}</div>
         <div className="activity-detail">{activityDetail(event)}</div>
+        {event.packageVersion ? <div className="activity-detail">Connecta version: {event.packageVersion}</div> : null}
+        {event.clientName ? <div className="activity-detail">Client name: {event.clientName}</div> : null}
+        {event.clientVersion ? <div className="activity-detail">Client version: {event.clientVersion}</div> : null}
       </div>
       <div className="activity-result">
         <Badge tone={badge.tone}>{badge.label}</Badge>

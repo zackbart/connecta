@@ -1,3 +1,4 @@
+import { CONNECTA_VERSION } from "../../src/version.js";
 import { expect } from "vitest";
 import { activityHistory, type ActivityStore, type ToolCallActivityEvent } from "../../src/activity.js";
 import { createTestConnecta, required, silentLogger } from "../helpers.js";
@@ -54,6 +55,7 @@ export async function checkClientActivity(
   }> = [];
   const c = createTestConnecta({
     connectors: [calcApi()], logger: silentLogger,
+    serverInfo: { name: "deployment-display", version: "999.0.0" },
     auth: { kind: "test", interactiveOperator: true, authorize: () => ({ ok: true, userId: "operator" }) },
     activity: activityHistory({ store: {
       record(event) {
@@ -87,6 +89,8 @@ export async function checkClientActivity(
         expect(events).toHaveLength(start + 1);
         const recorded = required(events.at(-1));
         expect(recorded.source).toBe(name);
+        expect(recorded.packageVersion).toBe(CONNECTA_VERSION);
+        expect(recorded.serverVersion).toBe("999.0.0");
         const valid = VALID_CLIENT_IDENTITIES.includes(clientInfo as typeof VALID_CLIENT_IDENTITIES[number]);
         // 33 characters are still valid in a name, but too long for a version.
         const expectedName = valid || clientInfo.name === "v".repeat(33) ? clientInfo.name : undefined;
@@ -102,7 +106,7 @@ export async function checkClientActivity(
     // D1 table through storage and UI after every call made this quadratic.
     await Promise.all(writes.splice(0));
     const stored = await store.list!({ limit: 100 });
-    const response = await c.fetch(new Request("https://connecta.test/ui/activity?limit=100"));
+    const response = await c.fetch(new Request("https://connecta.test/ui/api/activity?limit=100"));
     expect(response.status).toBe(200);
     const page = await response.json() as { events: ToolCallActivityEvent[] };
     for (const snapshot of [stored.events, page.events]) {
@@ -111,6 +115,7 @@ export async function checkClientActivity(
       for (const { recorded, clientName, clientVersion } of expected) {
         const event = required(byId.get(recorded.id));
         expect(event.source).toBe(recorded.source);
+        expect(event.packageVersion).toBe(CONNECTA_VERSION);
         expect(event.clientName).toBe(clientName);
         expect(event.clientVersion).toBe(clientVersion);
         if (clientName === undefined) expect(event).not.toHaveProperty("clientName");

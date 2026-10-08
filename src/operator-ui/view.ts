@@ -143,6 +143,9 @@ export interface UiActivityEvent {
   errorCode?: string;
   friction?: string;
   approval?: string;
+  packageVersion?: string;
+  clientName?: string;
+  clientVersion?: string;
 }
 
 /**

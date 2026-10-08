@@ -11,7 +11,7 @@ import { machineAuth } from "./helpers/machine-auth.js";
 import { operatorUi } from "../src/ui.js";
 import { SECRETS, VAULT_KEY, secretBearingDeployment } from "./fixtures/describe-config.js";
 import { listen } from "../src/node.js";
-import { customExecutor, createConnecta, META_TOOL_NAMES } from "../src/index.js";
+import { customExecutor, createConnecta, CONNECTA_VERSION, META_TOOL_NAMES } from "../src/index.js";
 import type { Executor, InboundAuth, KVStorage } from "../src/types.js";
 
 // `connecta doctor` is a claim an operator reads and believes. It used to
@@ -103,7 +103,7 @@ describe("connecta doctor's executor line", () => {
     const line = await doctorAgainst(new CustomExecutor());
     expect(line).toBe(
       "Connecta doctor passed: 1 connector(s), CustomExecutor " +
-        "executed, prescribed 6-tool surface, MCP 2026-07-28.",
+        `executed, prescribed 6-tool surface, MCP 2026-07-28, package ${CONNECTA_VERSION}.`,
     );
     expect(line).not.toContain("QuickJS");
   });
@@ -112,7 +112,7 @@ describe("connecta doctor's executor line", () => {
     const line = await doctorAgainst({ execute: async () => ({ result: 42 }) });
     expect(line).toBe(
       "Connecta doctor passed: 1 connector(s), code executed, " +
-        "prescribed 6-tool surface, MCP 2026-07-28.",
+        `prescribed 6-tool surface, MCP 2026-07-28, package ${CONNECTA_VERSION}.`,
     );
   });
 
@@ -123,8 +123,9 @@ describe("connecta doctor's executor line", () => {
     };
     const line = await doctorAgainst(hostile);
     expect(line).toMatch(
-      /^Connecta doctor passed: 1 connector\(s\), 31mEvil Sandbox x+ executed, prescribed 6-tool surface, MCP 2026-07-28\.$/,
+      /^Connecta doctor passed: 1 connector\(s\), 31mEvil Sandbox x+ executed, prescribed 6-tool surface, MCP 2026-07-28, package /,
     );
+    expect(line.endsWith(`package ${CONNECTA_VERSION}.`)).toBe(true);
     expect(line).not.toContain("\u001b");
     expect(line).not.toContain("x".repeat(41));
   });
@@ -189,7 +190,7 @@ describe("connecta doctor's executor line", () => {
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Expected TCP address");
     const { stdout } = await run(process.execPath, [CLI, "doctor", "--url", `http://127.0.0.1:${address.port}`], { env: { ...process.env, CONNECTA_TOKEN: TOKEN } });
-    expect(stdout).toContain("prescribed 6-tool surface, MCP 2025-11-25.");
+    expect(stdout).toContain(`prescribed 6-tool surface, MCP 2025-11-25, package ${CONNECTA_VERSION}.`);
     expect(methods).toEqual(["server/discover", "initialize", "notifications/initialized", "tools/list", "tools/call"]);
   });
 

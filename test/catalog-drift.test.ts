@@ -479,6 +479,7 @@ describe("drift on the registry surface", () => {
       "deploymentId",
       "id",
       "occurredAt",
+      "packageVersion",
       "schemaChanges",
       "schemaVersion",
       "serverName",

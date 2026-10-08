@@ -99,8 +99,9 @@ export default defineConfig((env: Env) => {
     vault: env.CREDENTIAL_ENCRYPTION_KEY
       ? encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY)
       : undefined,
-    // Payload-free activity at /activity, in CONNECTA_DB beside everything
-    // else. Each write prunes rows past the retention window, so no cron.
+    // Payload-free activity at /ui/api/activity in CONNECTA_DB. The shared
+    // D1 mapping persists the build version and validated client facts, and
+    // adds nullable columns to old tables. Each write prunes expired rows.
     activity: env.CONNECTA_ACTIVITY === "on"
       ? activityHistory({
           store: d1ActivityStore(env.CONNECTA_DB, { retentionDays: 90 }),

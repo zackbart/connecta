@@ -415,8 +415,10 @@ CREATE INDEX IF NOT EXISTS connecta_kv_expiry ON connecta_kv (expires_at_ms);
   called `pruneActivity` from a cron drops that call: retention is
   `d1ActivityStore(db, { retentionDays })`. A binding rename
   changes only the name the Worker sees; the database and its rows stay. An
-  existing `tool_call_activity` table missing `actor_namespace`, `friction`, or
-  `approval` gets them added on first use.
+  existing `tool_call_activity` table missing `actor_namespace`, `friction`,
+  `approval`, `client_name`, `client_version`, or `package_version` gets nullable
+  columns added on first use. Old rows keep unknown package and client facts;
+  new rows record the actual package version and validated request client facts.
 - **Activity and storage in two databases** (`ACTIVITY_DB` and `STORAGE_DB`).
   Bind the storage database as `CONNECTA_DB`. Activity is history: either
   start it fresh in `CONNECTA_DB`, or copy it once, before deploying 0.29 (so

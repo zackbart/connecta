@@ -64,8 +64,8 @@ describe("2026-07-28 core", () => {
       sink: { record: event => { template = event; } }, actor: { kind: "test" }, requestId: "r",
       serverInfo: { name: "connecta", version: "0" }, logger: silentLogger,
     }, { connectorId: "calc", toolName: "add", address: "calc.add", source: "call_tool", outcome: "success", durationMs: 1, attempts: 1 });
-    const events = [...INVALID_CLIENT_FACTS, "v".repeat(33)].map(value => ({
-      ...template, clientName: value as string, clientVersion: value as string,
+    const events: ToolCallActivityEvent[] = [...INVALID_CLIENT_FACTS, "v".repeat(33)].map(value => ({
+      ...template, packageVersion: value as string, clientName: value as string, clientVersion: value as string,
     }));
     events.push(...VALID_CLIENT_IDENTITIES.map(clientInfo => ({ ...template, clientName: clientInfo.name, clientVersion: clientInfo.version })));
     const c = createTestConnecta({ connectors: [], logger: silentLogger,
@@ -79,6 +79,7 @@ describe("2026-07-28 core", () => {
       for (const event of page.events.slice(0, INVALID_CLIENT_FACTS.length)) {
         expect(event).not.toHaveProperty("clientName");
         expect(event).not.toHaveProperty("clientVersion");
+        expect(event).not.toHaveProperty("packageVersion");
       }
       expect(page.events[INVALID_CLIENT_FACTS.length]).toMatchObject({ clientName: "v".repeat(33) });
       expect(page.events[INVALID_CLIENT_FACTS.length]).not.toHaveProperty("clientVersion");
@@ -86,6 +87,24 @@ describe("2026-07-28 core", () => {
       // Reading does not mutate the stored event.
       expect(events[0]!.clientName).toBe(INVALID_CLIENT_FACTS[0]);
     } finally { await c.close(); }
+  });
+
+  it("INV-4: activity API is read-only and retains the operator and read gates", async () => {
+    for (const [operator, gate, status] of [[false, true, 403], [true, false, 403], [true, true, 200]] as const) {
+      let reads = 0;
+      const c = createTestConnecta({ connectors: [], logger: silentLogger,
+        auth: { kind: "test", activityActorNamespace: "connecta:test", interactiveOperator: true, authorize: () => ({ ok: true, userId: "operator" }) },
+        identity: { activityAccess: () => operator },
+        activity: activityHistory({ readGate: () => gate, store: { record() {}, list: async () => { reads++; return { events: [] }; } } }),
+      });
+      try {
+        const response = await c.fetch(new Request(`${BASE}/ui/api/activity`));
+        expect(response.status).toBe(status);
+        expect(response.headers.get("Cache-Control")).toContain("no-store");
+        expect(reads).toBe(status === 200 ? 1 : 0);
+        expect((await c.fetch(new Request(`${BASE}/ui/api/activity`, { method: "POST" }))).status).toBe(405);
+      } finally { await c.close(); }
+    }
   });
 
   it("INV-6 INV-7: threads per-request client identity into direct and program activity without retaining capabilities", async () => {
