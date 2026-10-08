@@ -32,12 +32,21 @@ Every hosted tool has an exact reviewed name, argument keys, method subset,
 repository extractor and permission manifest. Validate targets and write access
 before reading a key or resolving a token. Unsupported secondary targets and
 opaque IDs are refused. Installation tokens are routed by owner and narrowed
-to the target repository and minimal permissions. Search constructs scoped
+through `repository_ids` to the target repository and minimal permissions.
+Configured repo names bind once to repository IDs for the provider instance.
+Five-minute name lookup expiry never rebinds a grant to a replacement repo.
+Renames retain the ID; transfers leave the original installation and its token
+cannot reach them. Exact repo access restrictions follow the ID even beneath
+an org grant. Org grants bind to the organization's installation ID.
+An App-JWT-minted metadata-only installation token resolves names via the
+installation repository list. This resolver token never reaches hosted tools
+or caller-selected REST operations. Search constructs scoped
 queries per owner, refuses caller qualifiers/Boolean syntax, validates every
-returned repository and selected partition, and reports paging incompleteness.
+returned repository ID and selected partition, and reports paging
+incompleteness. Issue/PR repository URLs resolve to IDs before returning results.
 
 Cache completed mappings and tokens only in bounded runtime memory, partitioned
-by App/key fingerprint, installation, repositories and permissions. Compare
+by App/key fingerprint, installation, sorted repository IDs and permissions. Compare
 completed cache entries before replacing them. No request promise, transport,
 signal or response is shared across requests, and no token is persisted.
 Each MCP operation owns and closes its token-bound client. A rejected token is

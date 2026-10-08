@@ -56,15 +56,27 @@ export function parseScopes(input: readonly GitHubScope[]): readonly GitHubScope
 }
 
 export class ScopePolicy {
+  private readonly aliases = new Map<string, GitHubScope>();
   constructor(readonly scopes: readonly GitHubScope[]) {}
 
   scope(t: Target, write = false, workflows = false): GitHubScope {
-    const grant = this.scopes.find((scope) => scope.repo === `${t.owner}/${t.repo}`) ??
+    const grant = this.aliases.get(`${t.owner}/${t.repo}`) ?? this.scopes.find((scope) => scope.repo === `${t.owner}/${t.repo}`) ??
       this.scopes.find((scope) => scope.org === t.owner);
     if (!grant || (write && grant.access !== "read-write") || (workflows && grant.workflows !== "write")) {
       throw new ConnectorCallError("invalid_args", `GitHub target or operation is outside configured scope. Allowed: ${this.summary()}. Workflow-file writes require workflows: "write" on the effective scope.`);
     }
     return grant;
+  }
+
+  bindAlias(t: Target, grant: GitHubScope): void {
+    const name = `${t.owner}/${t.repo}`;
+    // Only authenticated installation metadata can introduce an alias. Keep
+    // the stricter grant when multiple configured names bind the same ID.
+    const previous = this.aliases.get(name);
+    if (!previous || grant.access === "read" || (previous.access === grant.access && grant.workflows !== "write")) {
+      if (this.aliases.size >= 256 && !this.aliases.has(name)) this.aliases.delete(this.aliases.keys().next().value!);
+      this.aliases.set(name, grant);
+    }
   }
 
   summary(): string {

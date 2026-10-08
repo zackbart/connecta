@@ -17,11 +17,12 @@
     {
       "type": "manual",
       "source": "https://docs.github.com/en/rest/apps/apps",
-      "rationale": "Review touched REST contracts for App installation discovery, narrowed access-token minting, installation repositories, search, release writes, SHA-guarded PR merge with explicit workflow-write scope. Manual review remains visible; public documentation checks never mint tokens.",
+      "rationale": "Review touched REST contracts for App installation discovery, repository_ids access-token narrowing and metadata-only name resolution, installation repositories, search, release writes, SHA-guarded PR merge with explicit workflow-write scope. Manual review remains visible; public documentation checks never mint tokens.",
       "evidence": {
         "reviewedAt": "2026-10-07",
         "apiVersion": "2022-11-28",
         "tokenContract": "https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app",
+        "repositoryListContract": "https://docs.github.com/en/rest/apps/installations#list-repositories-accessible-to-the-app-installation",
         "jwtContract": "https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app"
       }
     }

@@ -54,13 +54,13 @@ describe("GitHub App provider", () => {
     ];
     await Promise.all(args.map((input) => connector.callTool("get_file_contents", input, context())));
     expect(fixture.tokens.map((token) => token.installation).sort()).toEqual(["11", "11", "22", "22"]);
-    expect(fixture.tokens.map((token) => token.body.repositories[0]).sort()).toEqual(["future", "locked", "one", "readonly"]);
+    expect(fixture.tokens.map((token) => token.body.repository_ids[0]).sort()).toEqual([103, 102, 201, 202].sort());
     for (const token of fixture.tokens) expect(token.body.permissions).toEqual({ contents: "read" });
     const calls = fixture.requests.filter((request) => request.body?.method === "tools/call");
     expect(calls).toHaveLength(4);
     for (const call of calls) {
       const token = fixture.tokens.find((entry) => `Bearer ${entry.value}` === call.headers.get("authorization"))!;
-      expect(token.body.repositories).toEqual([call.body.params.arguments.repo.toLowerCase()]);
+      expect(token.body.repository_ids).toEqual([({ "acme/future": 103, "acme/locked": 102, "other/one": 201, "other/readonly": 202 } as Record<string, number>)[`${call.body.params.arguments.owner}/${call.body.params.arguments.repo}`.toLowerCase()]]);
       expect(token.installation).toBe(call.body.params.arguments.owner.toLowerCase() === "acme" ? "11" : "22");
     }
   });
@@ -99,6 +99,117 @@ describe("GitHub App provider", () => {
     expect(connector.credential?.fields?.[0]?.name).toBe("privateKey");
   });
 
+  it("INV-4: a cached ID token follows a repository rename and returns the same repository's result", async () => {
+    const fixture = apiFixture();
+    const connector = connection({ scopes: [{ repo: "other/one", access: "read" }] });
+    const args = { owner: "other", repo: "one" };
+    await connector.callTool("get_file_contents", args, context());
+    fixture.rename(201, "other/renamed");
+    expect(value(await connector.callTool("get_file_contents", args, context()))).toEqual({ ok: true });
+    expect(fixture.tokens).toHaveLength(1);
+    expect(fixture.tokens[0]!.body).toEqual({ repository_ids: [201], permissions: { contents: "read" } });
+    expect(fixture.tokens[0]!.body).not.toHaveProperty("repositories");
+    expect(fixture.resolverTokens[0]!.body).toEqual({ permissions: { metadata: "read" } });
+    expect(fixture.requests.filter((request) => request.body?.method === "tools/call").every((request) => request.headers.get("authorization") === `Bearer ${fixture.tokens[0]!.value}`)).toBe(true);
+  });
+
+  it("INV-4: rename lookup expiry preserves the grant ID and token cache key across both names", async () => {
+    const fixture = apiFixture();
+    const connector = connection({ scopes: [{ repo: "other/one", access: "read" }] });
+    let now = Date.now(); vi.spyOn(Date, "now").mockImplementation(() => now);
+    await connector.callTool("get_file_contents", { owner: "other", repo: "one" }, context());
+    fixture.rename(201, "other/two");
+    now += 300_001;
+    expect(value(await connector.callTool("get_file_contents", { owner: "other", repo: "one" }, context()))).toEqual({ ok: true });
+    expect(value(await connector.callTool("get_file_contents", { owner: "other", repo: "two" }, context()))).toEqual({ ok: true });
+    expect(fixture.tokens).toHaveLength(1);
+    expect(fixture.requests.filter((request) => request.url.pathname === "/installation/repositories")).toHaveLength(2);
+  });
+
+  it("INV-4: discovery and search accept renamed repositories by ID and teach their current aliases", async () => {
+    const fixture = apiFixture();
+    const connector = connection({ scopes: [{ repo: "other/one", access: "read" }] });
+    await connector.callTool("get_file_contents", { owner: "other", repo: "one" }, context());
+    fixture.rename(201, "other/renamed");
+    fixture.respond((request) => request.url.pathname === "/search/code" ? Response.json({ items: [{ repository: { id: 201, full_name: "other/renamed" }, path: "a" }], total_count: 1 }) : undefined);
+    const search = value(await connector.callTool("search_scoped", { terms: "test", kind: "code" }, context()));
+    expect(search.partitions[0].items[0].repository.id).toBe(201);
+    const scopes = value(await connector.callTool("list_scopes", { owner: "other" }, context()));
+    expect(scopes.repositories).toEqual(["other/renamed"]);
+    expect(value(await connector.callTool("get_file_contents", { owner: "other", repo: "renamed" }, context()))).toEqual({ ok: true });
+    expect(fixture.tokens.filter((token) => token.body.permissions.contents === "read")).toHaveLength(1);
+  });
+
+  it("INV-4: a transferred repository leaves its installation and the cached hosted token returns no data", async () => {
+    const fixture = apiFixture();
+    const connector = connection({ scopes: [{ repo: "other/one", access: "read" }] });
+    await connector.callTool("get_file_contents", { owner: "other", repo: "one" }, context());
+    fixture.rename(201, "outside/one");
+    await expect(connector.callTool("get_file_contents", { owner: "other", repo: "one" }, context())).rejects.not.toThrow(SENTINEL);
+    await expect(connector.callTool("get_file_contents", { owner: "outside", repo: "one" }, context())).rejects.toMatchObject({ code: "invalid_args" });
+    expect(fixture.tokens).toHaveLength(1);
+  });
+
+  it.each([0, 300_001, 3_540_001])("INV-4: a replacement at the old name never inherits its repository grant after %i ms", async (elapsed) => {
+    const fixture = apiFixture();
+    const connector = connection({ scopes: [{ repo: "other/one", access: "read" }] });
+    let now = Date.now(); vi.spyOn(Date, "now").mockImplementation(() => now);
+    await connector.callTool("get_file_contents", { owner: "other", repo: "one" }, context());
+    fixture.rename(201, "other/renamed");
+    fixture.repositories([{ id: 201, full_name: "other/renamed" }, { id: 999, full_name: "other/one" }]);
+    now += elapsed;
+    const call = connector.callTool("get_file_contents", { owner: "other", repo: "one" }, context());
+    if (elapsed) await expect(call).rejects.toMatchObject({ code: "invalid_args" });
+    else await expect(call).rejects.not.toThrow(SENTINEL);
+    expect(fixture.tokens).toHaveLength(1);
+    // An explicit new configuration may bind the new repository on first use.
+    await connection({ scopes: [{ repo: "other/one", access: "read" }] }).callTool("get_file_contents", { owner: "other", repo: "one" }, context());
+    expect(fixture.tokens[1]!.body.repository_ids).toEqual([999]);
+  });
+
+  it("INV-4: an org's exact read-only override follows its repository ID through rename", async () => {
+    const fixture = apiFixture(); const connector = connection();
+    let now = Date.now(); vi.spyOn(Date, "now").mockImplementation(() => now);
+    await connector.callTool("get_file_contents", { owner: "acme", repo: "locked" }, context());
+    fixture.rename(102, "acme/new-name"); now += 300_001;
+    await expect(connector.callTool("create_branch", { owner: "acme", repo: "new-name", branch: "new" }, context())).rejects.toMatchObject({ code: "invalid_args" });
+    expect(fixture.tokens.every((token) => token.body.permissions.contents !== "write")).toBe(true);
+  });
+
+  it("INV-4: an org grant cannot move to a replacement installation on lookup expiry", async () => {
+    const fixture = apiFixture(); const connector = connection();
+    let now = Date.now(); vi.spyOn(Date, "now").mockImplementation(() => now);
+    await connector.callTool("get_file_contents", { owner: "acme", repo: "one" }, context());
+    fixture.installations([{ id: 44, account: { login: "acme", type: "Organization" }, repository_selection: "all" }]);
+    now += 300_001;
+    for (let i = 0; i < 2; i++) await expect(connector.callTool("get_file_contents", { owner: "acme", repo: "one" }, context())).rejects.toMatchObject({ code: "auth_required" });
+    expect(fixture.tokens).toHaveLength(1);
+  });
+
+  it("INV-5: repository-ID sets sort and deduplicate token caches independently of requested names", async () => {
+    const fixture = apiFixture();
+    const auth = new AppAuth({ appId: "12345", privateKey: PRIVATE_KEY }, new ScopePolicy(parseScopes(SCOPES)));
+    const first = await auth.token("other", ["readonly", "one", "one"], { contents: "read" }, context());
+    expect(await auth.token("other", ["one", "readonly"], { contents: "read" }, context())).toBe(first);
+    expect(fixture.tokens).toHaveLength(1); expect(fixture.tokens[0]!.body.repository_ids).toEqual([201, 202]);
+  });
+
+  it("INV-6: failed repository-resolution pages cache no partial name bindings or downstream error text", async () => {
+    const fixture = apiFixture(); let fail = true;
+    fixture.respond((request) => {
+      if (request.url.pathname !== "/installation/repositories") return;
+      if (request.url.searchParams.get("page") === "1") return Response.json({ repositories: [{ id: 201, full_name: "other/one" }, ...Array.from({ length: 99 }, (_, i) => ({ id: 1000 + i, full_name: `other/unused-${i}` }))] });
+      return fail ? new Response(SENTINEL, { status: 500 }) : Response.json({ repositories: [] });
+    });
+    const connector = connection({ scopes: [{ repo: "other/one", access: "read" }] });
+    const call = connector.callTool("get_file_contents", { owner: "other", repo: "one" }, context());
+    await expect(call).rejects.toMatchObject({ code: "unavailable" });
+    await expect(call).rejects.not.toThrow(SENTINEL);
+    expect(fixture.tokens).toHaveLength(0); fail = false;
+    await connector.callTool("get_file_contents", { owner: "other", repo: "one" }, context());
+    expect(fixture.requests.filter((request) => request.url.pathname === "/installation/repositories").map((request) => request.url.searchParams.get("page"))).toEqual(["1", "2", "1", "2"]);
+  });
+
   it("INV-7: concurrent installation resolution uses compare-and-set completed mappings", async () => {
     const fixture = apiFixture(); const blocked = deferred<Response>(); let reads = 0;
     fixture.respond((request) => {
@@ -118,7 +229,7 @@ describe("GitHub App provider", () => {
   it("INV-7: a cancelled token owner neither poisons a follower nor caches its late answer", async () => {
     const fixture = apiFixture(); const blocked = deferred<Response>(); let mints = 0;
     fixture.respond((request) => {
-      if (!request.url.pathname.endsWith("/access_tokens")) return;
+      if (!request.url.pathname.endsWith("/access_tokens") || !request.body?.repository_ids) return;
       if (++mints === 1) return blocked.promise;
     });
     const auth = new AppAuth({ appId: "12345", privateKey: PRIVATE_KEY }, new ScopePolicy(parseScopes(SCOPES)));
@@ -187,7 +298,7 @@ describe("GitHub App provider", () => {
     expect(fixture.fetchStub).not.toHaveBeenCalled();
     const connector = connection({ scopes: [{ org: "acme", access: "read-write", workflows: "write" }, { repo: "acme/locked", access: "read-write" }] });
     await connector.callTool("create_or_update_file", { owner: "acme", repo: "one", path: ".github/workflows/ci.yml", branch: "main", content: "x", message: "edit" }, context());
-    expect(fixture.tokens[0]!.body).toEqual({ repositories: ["one"], permissions: { contents: "write", workflows: "write" } });
+    expect(fixture.tokens[0]!.body).toEqual({ repository_ids: [101], permissions: { contents: "write", workflows: "write" } });
     const before = fixture.requests.length;
     await expect(connector.callTool("delete_file", { owner: "acme", repo: "locked", path: ".github/workflows/ci.yml", branch: "main", message: "delete" }, context())).rejects.toMatchObject({ code: "invalid_args" });
     expect(fixture.requests).toHaveLength(before);
@@ -200,7 +311,7 @@ describe("GitHub App provider", () => {
     expect(fixture.fetchStub).not.toHaveBeenCalled();
     const result = value(await connector.callTool("list_scopes", { owner: "other", per_page: 1 }, context()));
     expect(result.repositories).toEqual(["other/one", "other/readonly"]);
-    expect(fixture.tokens[0]!.body.repositories.sort()).toEqual(["one", "readonly"]);
+    expect(fixture.tokens[0]!.body.repository_ids.sort()).toEqual([201, 202]);
     expect(fixture.tokens[0]!.body.permissions).toEqual({ metadata: "read" });
     expect(JSON.stringify(connector.usageGuide)).toContain("org acme");
     expect(JSON.stringify(connector.usageGuide)).toContain("other/one");
@@ -236,7 +347,7 @@ describe("GitHub App provider", () => {
     expect(result.partitions.map((partition: any) => partition.items.length)).toEqual([1, 1]);
     expect(result.partitions.map((partition: any) => partition.next_page)).toEqual([3, 2]);
     expect(result.incomplete_results).toBe(true);
-    expect(fixture.tokens.map((token) => token.body.repositories)).toEqual([undefined, ["one", "readonly"]]);
+    expect(fixture.tokens.map((token) => token.body.repository_ids)).toEqual([undefined, [201, 202]]);
     expect(fixture.requests.filter((request) => request.url.pathname === "/search/issues").map((request) => request.url.searchParams.get("q"))).toEqual(["org:acme bug is:issue", "repo:other/one repo:other/readonly bug is:issue"]);
   });
 
@@ -247,6 +358,27 @@ describe("GitHub App provider", () => {
     await expect(connector.callTool("search_scoped", { terms: "test", kind: "code", scopes: [{ repo: "acme/one" }] }, context())).rejects.toMatchObject({ code: "invalid_args" });
     repo = "acme/two";
     await expect(connector.callTool("search_scoped", { terms: "test", kind: "code", scopes: [{ repo: "acme/one" }] }, context())).rejects.toMatchObject({ code: "connector_call_failed" });
+  });
+
+  it.each(["repositories", "issues", "pull-requests", "code"])("INV-4: %s search checks repository IDs even when returned names still match", async (kind) => {
+    const fixture = apiFixture(); const connector = connection({ scopes: [{ repo: "other/one", access: "read" }] });
+    await connector.callTool("get_file_contents", { owner: "other", repo: "one" }, context());
+    fixture.respond((request) => {
+      if (request.url.pathname === "/repos/other/one") return Response.json({ id: 999, full_name: "other/one" });
+      if (!request.url.pathname.startsWith("/search/")) return;
+      const item = kind === "repositories" ? { id: 999, full_name: "other/one", body: SENTINEL } : kind === "code" ? { repository: { id: 999, full_name: "other/one" }, path: "a", body: SENTINEL } : { id: 1, repository_url: "https://api.github.com/repos/other/one", body: SENTINEL };
+      return Response.json({ items: [item], total_count: 1 });
+    });
+    const call = connector.callTool("search_scoped", { terms: "test", kind }, context());
+    await expect(call).rejects.toMatchObject({ code: "connector_call_failed" });
+    await expect(call).rejects.not.toThrow(SENTINEL);
+  });
+
+  it("INV-4: scope discovery refuses a name-matching repository with an ungranted ID", async () => {
+    const fixture = apiFixture(); const connector = connection({ scopes: [{ repo: "other/one", access: "read" }] });
+    await connector.callTool("get_file_contents", { owner: "other", repo: "one" }, context());
+    fixture.respond((request) => request.url.pathname === "/installation/repositories" ? Response.json({ repositories: [{ id: 999, full_name: "other/one" }] }) : undefined);
+    await expect(connector.callTool("list_scopes", { owner: "other" }, context())).rejects.toMatchObject({ code: "connector_call_failed" });
   });
 
   it("INV-9: a release write is dispatched once, errors carry retry hints but no downstream body", async () => {
@@ -280,7 +412,7 @@ describe("GitHub App provider", () => {
     expect(writes.map((request) => request.method)).toEqual(["PATCH", "DELETE"]);
     expect(writes[0]!.body).toEqual({ draft: false, name: "v1" });
     expect(fixture.tokens).toHaveLength(1);
-    expect(fixture.tokens[0]!.body).toEqual({ repositories: ["one"], permissions: { contents: "write" } });
+    expect(fixture.tokens[0]!.body).toEqual({ repository_ids: [201], permissions: { contents: "write" } });
   });
 
   it("INV-4: merge is refused before authentication when workflow-write access is absent, even for apparently safe files", async () => {

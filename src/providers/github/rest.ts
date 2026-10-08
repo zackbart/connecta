@@ -92,12 +92,14 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
         const token = await auth.token(owner, undefined, { metadata: "read" }, ctx);
         const data = row(await auth.json({ method: "GET", path: "/installation/repositories", query: { page, per_page: count } }, token, ctx));
         if (!Array.isArray(data.repositories)) throw new ConnectorCallError("connector_call_failed", "GitHub returned an invalid repository list.");
-        const repositories = data.repositories.map((item: unknown) => {
-          const t = resultTarget(row(item), "repositories");
-          policy.scope(t);
+        const repositories = [];
+        for (const item of data.repositories) {
+          const repository = row(item);
+          const t = resultTarget(repository, "repositories");
           if (t.owner !== owner) throw new ConnectorCallError("connector_call_failed", "GitHub returned a repository from another installation owner.");
-          return `${t.owner}/${t.repo}`;
-        });
+          await auth.checkResult(t, repository.id, token, ctx);
+          repositories.push(`${t.owner}/${t.repo}`);
+        }
         return { acting_as: "GitHub App", scopes: policy.scopes.filter((scope) => scope.org === owner || scope.repo?.startsWith(`${owner}/`)), repositories, next_page: repositories.length === count ? page + 1 : null };
       },
     },
@@ -128,8 +130,9 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
           const items = [];
           for (const value of data.items) {
             const item = row(value); const t = resultTarget(item, args.kind);
-            policy.scope(t);
-            if (t.owner !== partition.owner || (partition.repos && !partition.repos.includes(t.repo))) throw new ConnectorCallError("connector_call_failed", "GitHub search escaped its selected partition; results were withheld.");
+            policy.owner(t.owner);
+            if (t.owner !== partition.owner) throw new ConnectorCallError("connector_call_failed", "GitHub search escaped its selected partition; results were withheld.");
+            await auth.checkResult(t, args.kind === "repositories" ? item.id : args.kind === "code" ? row(item.repository).id : undefined, token, ctx);
             const key = `${args.kind}:${t.owner}/${t.repo}:${args.kind === "code" ? item.path : item.id}`;
             if (!seen.has(key)) { seen.add(key); items.push(value); }
           }

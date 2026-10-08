@@ -21,6 +21,11 @@ omit privateKey and populate the connector's encrypted `privateKey` vault field.
 Never put private keys or installation tokens in agent instructions. Tokens
 stay in bounded runtime memory, refresh a minute before expiry, and are never
 persisted. Key rotation partitions the caches by the key's fingerprint.
+Configured repository names bind to repository IDs on first use. Bindings last
+for the provider instance; name lookups expire after five minutes. A rename
+keeps its grant, while a replacement repository at the old name does not.
+Reconfigure to authorize a replacement. Transfers leave the original
+installation and cannot use its tokens. Org grants bind to installation IDs.
 
 ## Choose the target first
 
@@ -33,7 +38,13 @@ keeps All repositories selected.
 
 Every hosted call requires explicit `owner` and `repo`. Connecta checks scope
 and write access before reading the key or minting a token, and narrows each
-repo call's token to that repository and the reviewed permissions. Cross-owner
+repo call's token with `repository_ids` and the reviewed permissions.
+An internal metadata-only installation token resolves names through GitHub's
+installation repository list; it never authenticates hosted calls or search.
+Expiry and misses refresh the name lookup without rebinding configured grants.
+Use discovery or the configured name to refresh a rename before using its new
+name; names that cannot map to a configured grant fail before operation tokens
+are minted. Cross-owner
 PR heads, cross-repository issue parents, opaque comment/review-thread IDs and
 symlink writes are refused. The first release acts as the App; personal OAuth
 attribution is planned separately. Classification describes behavior; scope
@@ -57,7 +68,9 @@ Scope qualifiers and Boolean operators are refused. Results have a partition
 ID, next page, and an incomplete-results flag. Pass pages keyed by those exact
 partition IDs. Each call makes at most 20 partition requests; select fewer
 scopes when needed. Search pages stop at 10 and retain incompleteness. Returned
-repositories are checked against both deployment scopes and selected partitions.
+repositories are checked by ID against both deployment scopes and selected
+partitions. Issue and PR results resolve their repository URL to an ID before
+any result is returned.
 Installation tokens do not override GitHub's own code-search access restrictions.
 
 REST complements own `create_release`, `update_release`, `delete_release` and
