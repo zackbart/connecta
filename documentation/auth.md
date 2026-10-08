@@ -584,8 +584,8 @@ legitimate OAuth metadata. A configured static secret or Basic password below
 this floor produces one operator warning per connector with the typed code
 `short_secret_not_redacted` and no credential value. Remote connectors warn at
 construction; static `api()` OAuth warns on its first provider operation.
-Connecta's own messages never quote credential values, regardless of length. One matcher is cached until
-the secret set changes, and an empty set skips matching. Redaction runs after
+Connecta's own messages never quote credential values, regardless of length.
+One matcher is cached until the secret set changes, and an empty set skips matching. Redaction runs after
 JSON unwrapping or joining text blocks and on final serialized text and every
 structured string, before result paging, emits, program outputs/errors/logs,
 or artifact writes. See

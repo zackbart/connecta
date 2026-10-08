@@ -11,8 +11,9 @@ function percentDecoded(value: string): string {
     const next = value.replace(/(?:%[0-9a-f]{2})+/gi, (escaped) => {
       try { return decodeURIComponent(escaped); }
       catch {
-        // Malformed UTF-8 must not hide adjacent valid ASCII escapes.
-        return escaped.replace(/%([0-7][0-9a-f])/gi, (_, byte: string) => String.fromCharCode(parseInt(byte, 16)));
+        // Replacement decoding preserves valid UTF-8 beside malformed bytes.
+        const bytes = escaped.match(/%[0-9a-f]{2}/gi)!;
+        return new TextDecoder().decode(Uint8Array.from(bytes, (byte) => parseInt(byte.slice(1), 16)));
       }
     });
     if (next === value) return value;

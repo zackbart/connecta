@@ -35,6 +35,7 @@ const encodedUrls = [
   ["percent-encoded", TOKEN, `${ISSUER}/authorize?echo=%63${TOKEN.slice(1)}`],
   ["URL whitespace", TOKEN, `  ${ISSUER}/authorize?echo=%63${TOKEN.slice(1)}  `],
   ["double-encoded", TOKEN, `${ISSUER}/authorize?echo=%2563${TOKEN.slice(1)}`],
+  ["Unicode beside malformed escapes", "cächéd-discovery-credential", `${ISSUER}/authorize?echo=${encodeURIComponent("cächéd-discovery-credential")}%ff`],
   ["punycode host", "cächéd-discovery-credential", new URL("https://cächéd-discovery-credential.authorization.test/authorize").href],
   ["split path and query", TOKEN, `${ISSUER}/cached-discovery-?echo=credential`],
   ["split path segments", TOKEN, `${ISSUER}/cached-/discovery-/credential`],
@@ -271,7 +272,7 @@ it.each(encodedUrls)("INV-5: refuses %s discovery echoes after invalid_grant bef
 
 it.each(encodedUrls)("INV-5: refuses %s saved consent echoes in fresh request scopes", async (_kind, token, endpoint) => {
   const storage = memoryStorage();
-  await seedGrant(storage, { issuer: ISSUER, tokens: { access_token: token, token_type: "bearer" }, discovery });
+  await seedGrant(storage, { issuer: ISSUER, tokens: { access_token: token, token_type: "bearer" }, discovery: { ...discovery } });
   const consent = new URL(endpoint);
   consent.searchParams.set("state", "saved");
   const flow = await consentKey("saved");
