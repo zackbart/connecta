@@ -792,7 +792,7 @@ export function permissionLabel(connector: UiConnector): string {
 export type DriftState = "clean" | "warning" | "unavailable";
 
 /**
- * The four categories, in the order an operator should read them: what the
+ * The categories, in the order an operator should read them: what the
  * deployment refuses to call, what it can no longer call, what contradicts a
  * vetted verdict, and what changed shape underneath a reviewed schema. Counts
  * only — a name or a schema on this path would be the payload leak the whole
@@ -806,6 +806,7 @@ const DRIFT_CATEGORIES: ReadonlyArray<{
   { key: "unservedTools", label: "Unserved" },
   { key: "annotationConflicts", label: "Annotation conflicts" },
   { key: "schemaChanges", label: "Schema changes" },
+  { key: "droppedTools", label: "Dropped tool names" },
 ];
 
 export function driftTotal(drift?: CatalogDriftReport): number {
@@ -823,7 +824,7 @@ export function driftCounts(
   drift?: CatalogDriftReport,
 ): Array<{ key: string; label: string; count: number }> {
   if (!drift) return [];
-  return DRIFT_CATEGORIES.map(({ key, label }) => ({
+  return DRIFT_CATEGORIES.filter(({ key }) => key !== "droppedTools" || drift.droppedTools !== undefined).map(({ key, label }) => ({
     key,
     label,
     count: drift[key] || 0,

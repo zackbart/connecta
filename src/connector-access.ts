@@ -1,3 +1,4 @@
+import { hasControlCharacters } from "./tool-name.js";
 import type { ToolAccess } from "./registry.js";
 import type { AuthenticatedIdentity } from "./types.js";
 
@@ -34,11 +35,6 @@ const CONNECTOR_ID_RE = /^[a-z0-9_-]+$/;
 // non-ASCII ones. Only control characters are refused, so a grant for a
 // legitimately named tool cannot 403 the whole identity at request time.
 const TOOL_ADDRESS_RE = /^[a-z0-9_-]+\..{1,256}$/su;
-const hasControlCharacter = (value: string): boolean =>
-  [...value].some((ch) => {
-    const code = ch.codePointAt(0)!;
-    return code < 0x20 || code === 0x7f;
-  });
 
 /**
  * Normalize a grant list. A bare connector id grants every tool on that
@@ -72,7 +68,7 @@ export function parseConnectorAccess(
       throw new Error("invalid connector permission");
     }
     const address = isGuarded ? entry.tool : entry;
-    if (typeof address !== "string" || !TOOL_ADDRESS_RE.test(address) || hasControlCharacter(address)) {
+    if (typeof address !== "string" || !TOOL_ADDRESS_RE.test(address) || hasControlCharacters(address)) {
       throw new Error("invalid connector permission");
     }
     const dot = address.indexOf(".");

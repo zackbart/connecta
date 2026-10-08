@@ -1,4 +1,5 @@
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
+import { hasControlCharacters } from "./tool-name.js";
 import {
   Cause,
   Clock,
@@ -554,6 +555,8 @@ export class Registry implements RegistryView {
     string,
     CatalogAccessObservation
   >();
+  /** Count-only intake findings, including catalogs loaded from storage. */
+  private droppedToolNames = new Map<string, { count: number; observedAt: string }>();
   /** Last drift counts reported to activity, per connector, in this runtime. */
   private readonly reportedDrift = new Map<string, CatalogDriftCounts>();
   /**
@@ -688,6 +691,9 @@ export class Registry implements RegistryView {
         constructionChecks: false,
       },
     );
+    // Counts only, like the connector-wide reviewed drift observation. No
+    // principal, credentials, or catalog payload crosses this registry boundary.
+    registry.droppedToolNames = this.droppedToolNames;
     if (this.callAdmissionClosed) registry.closeCallAdmission();
     this.personalRegistries.set(principalKey, registry);
     return registry;
@@ -725,6 +731,11 @@ export class Registry implements RegistryView {
     if (this.warnedAbsentGrants.size > MAX_ABSENT_GRANT_WARNINGS) {
       const oldest = this.warnedAbsentGrants.values().next().value;
       if (oldest !== undefined) this.warnedAbsentGrants.delete(oldest);
+    }
+    if (hasControlCharacters(toolName)) {
+      logFailure(this.opts.logger, "connectorAccess grant is unreachable",
+        failureRecord({ connector: connectorId }));
+      return;
     }
     // Grant names are operator data but may carry any non-control character;
     // quote them so a line terminator a log reader honours cannot forge a line.
@@ -929,8 +940,8 @@ export class Registry implements RegistryView {
   /**
    * Payload-free drift counts for the open health endpoint, so `connecta
    * doctor` can report a stale allowlist without asking any downstream
-   * anything. Only connectors that ship a vetted manifest *and* have already
-   * served a refresh *in this runtime* appear — a process or isolate that has
+   * anything. Connectors with a reviewed refresh, an intake finding, or a
+   * plugin drift observation *in this runtime* appear — a process or isolate that has
    * answered no catalog request yet honestly reports nothing, and drift is not
    * persisted the way the catalog itself is.
    *
@@ -953,11 +964,21 @@ export class Registry implements RegistryView {
    * the connector's `catalogDrift()` seam reports, bounded either way.
    */
   private catalogDriftOf(connector: Connector): CatalogDriftReport | undefined {
-    return boundedCatalogDrift(
+    const report = boundedCatalogDrift(
       catalogReviewOf(connector)
         ? observedCatalogDrift(connector)
         : connector.catalogDrift?.(),
     );
+    const dropped = this.droppedToolNames.get(connector.id);
+    if (!dropped) return report;
+    return {
+      ...(report ?? {
+        unclassifiedTools: 0, unservedTools: 0,
+        annotationConflicts: 0, schemaChanges: 0,
+      }),
+      observedAt: dropped.observedAt,
+      ...(dropped.count > 0 ? { droppedTools: dropped.count } : {}),
+    };
   }
 
   /**
@@ -981,19 +1002,22 @@ export class Registry implements RegistryView {
       unservedTools: report.unservedTools,
       annotationConflicts: report.annotationConflicts,
       schemaChanges: report.schemaChanges,
+      ...(report.droppedTools ? { droppedTools: report.droppedTools } : {}),
     };
     const unchanged =
       previous !== undefined &&
       previous.unclassifiedTools === counts.unclassifiedTools &&
       previous.unservedTools === counts.unservedTools &&
       previous.annotationConflicts === counts.annotationConflicts &&
-      previous.schemaChanges === counts.schemaChanges;
+      previous.schemaChanges === counts.schemaChanges &&
+      (previous.droppedTools ?? 0) === (counts.droppedTools ?? 0);
     if (unchanged) return;
     const clean =
       counts.unclassifiedTools === 0 &&
       counts.unservedTools === 0 &&
       counts.annotationConflicts === 0 &&
-      counts.schemaChanges === 0;
+      counts.schemaChanges === 0 &&
+      (counts.droppedTools ?? 0) === 0;
     this.reportedDrift.set(connector.id, counts);
     if (previous === undefined && clean) return;
     this.opts.catalogDriftActivity?.recordDrift?.(
@@ -1446,12 +1470,14 @@ export class Registry implements RegistryView {
     // What the connector reports, decorators included. Both cache layers keep
     // exactly this listing, and loadTools classifies it on every read.
     const tools = await connector.listTools(ctx);
+    const accepted = this.acceptToolNames(tools);
+    this.observeDroppedToolNames(connector, tools.length - accepted.length);
     const review = catalogReviewOf(connector);
     // The listing a reviewed connector just served is also the only catalog
     // comparison connecta ever makes. It rides this refresh whether or not the
     // result reaches a cache, because what drifted drifted.
     if (review) {
-      await observeReviewedDrift(connector, review, tools, this.opts.logger);
+      await observeReviewedDrift(connector, review, accepted, this.opts.logger);
     }
     this.observeCatalogDrift(connector);
     // A deferred deadline may close the owned scope while a connector that
@@ -1797,6 +1823,19 @@ export class Registry implements RegistryView {
     }
   }
 
+  /** The served catalog excludes control-character names; raw caches stay complete. */
+  private acceptToolNames(tools: ToolDef[]): ToolDef[] {
+    const accepted = tools.filter((tool) => !hasControlCharacters(tool.name));
+    return accepted.length === tools.length ? tools : accepted;
+  }
+
+  /** Observe intake once, never while serving an older cached listing. */
+  private observeDroppedToolNames(connector: Connector, count: number): void {
+    if (count > 0 || this.droppedToolNames.has(connector.id)) {
+      this.droppedToolNames.set(connector.id, { count, observedAt: new Date().toISOString() });
+    }
+  }
+
   /**
    * One connector's catalog as served: the cached downstream facts, classified
    * on every read by the connector's `classification`, into fresh objects.
@@ -1821,10 +1860,11 @@ export class Registry implements RegistryView {
     );
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
+    const accepted = this.acceptToolNames(tools);
     const review = catalogReviewOf(connector);
     return review
-      ? classifyCatalog(review, id, tools, this.opts.logger, this.verifiedFacts)
-      : tools;
+      ? classifyCatalog(review, id, accepted, this.opts.logger, this.verifiedFacts)
+      : accepted;
   }
 
   /** Cached downstream listing with in-memory + persisted serializable layers. */
@@ -1889,6 +1929,9 @@ export class Registry implements RegistryView {
         persisted.staleUntil > reconciledAt &&
         (!usableCurrent || persisted.expiresAt > usableCurrent.exp)
       ) {
+        const accepted = this.acceptToolNames(persisted.tools);
+        this.observeDroppedToolNames(connector, persisted.tools.length - accepted.length);
+        this.observeCatalogDrift(connector);
         this.cache.set(id, {
           tools: persisted.tools,
           fingerprint: persisted.fingerprint,

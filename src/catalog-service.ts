@@ -1,3 +1,4 @@
+import { hasControlCharacters } from "./tool-name.js";
 import { Effect, Result } from "effect";
 import {
   compactDiscoverySchema,
@@ -676,10 +677,12 @@ export class CatalogService {
       error: {
         ...framingError(
           "unknown_tool",
-          `Unknown tool "${boundedEchoText(toolName)}" on connector "${connector.id}"`,
+          hasControlCharacters(toolName)
+            ? `Unknown tool on connector "${connector.id}"`
+            : `Unknown tool "${boundedEchoText(toolName)}" on connector "${connector.id}"`,
         ),
         nextAction: this.searchRecovery(
-          { query: recoveryQuery(toolName), connector: connector.id },
+          { query: hasControlCharacters(toolName) ? "" : recoveryQuery(toolName), connector: connector.id },
           "Find the connector's current canonical tool address.",
         ),
       },
