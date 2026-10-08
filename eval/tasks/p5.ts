@@ -35,9 +35,14 @@ function refusedTarget(world: World): boolean {
 function pagedOriginalResult(world: World, trace: AgentTrace): boolean {
   const first = uses(trace, "call_tool").find((u) => u.input.address === "ci.get_run_log" && !u.isError);
   if (!first?.resultText) return false;
-  let resultId: string;
+  let resultId: unknown;
   try {
-    resultId = JSON.parse(first.resultText.split("\n")[0]!).resultId;
+    // MCP mode leads with a truncation notice before any preview. Value mode
+    // wraps that same notice in the successful call envelope's data field.
+    const result = JSON.parse(first.resultText.split("\n")[0]!);
+    const notice = first.input.resultMode === "value" ? (result?.ok === true ? result.data : undefined) : result;
+    if (notice?.truncated !== true) return false;
+    resultId = notice.resultId;
   } catch {
     return false;
   }

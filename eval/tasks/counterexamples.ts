@@ -2,6 +2,26 @@
 import type { AgentTrace } from "../agent/trace.js";
 import type { World } from "../fakes/world.js";
 import type { ActiveTask } from "./types.js";
+import lunaPagingResult from "./fixtures/luna-result-paging-value.json";
+
+/** Raw final GPT-6-Luna repeat 1 envelope, bound to the fresh reference's ID. */
+function valueModePagingTrace(trace: AgentTrace): AgentTrace {
+  return {
+    ...trace,
+    toolUses: trace.toolUses.map((use) => {
+      if (use.tool !== "call_tool" || use.input.address !== "ci.get_run_log" || use.isError) return use;
+      const first = JSON.parse(use.resultText!.split("\n")[0]!);
+      const resultId = use.input.resultMode === "value" ? first.data.resultId : first.resultId;
+      const resultText = JSON.stringify(lunaPagingResult).replaceAll(lunaPagingResult.data.resultId, resultId);
+      return {
+        ...use,
+        input: { ...use.input, resultMode: "value" },
+        resultText,
+        resultBlocks: [{ type: "text", text: resultText }],
+      };
+    }),
+  };
+}
 
 export function counterexamples(
   task: ActiveTask,
@@ -75,17 +95,68 @@ export function counterexamples(
         ),
       },
     });
-    cases.push({
-      name: "pages from another retained result",
-      world: withPrograms(
-        world.programs.map((p) => ({
-          ...p,
-          calls: p.calls.map((c) =>
-            c.name === "connecta.result" ? { ...c, args: ["wrong-result", ...c.args.slice(1)] } : c,
-          ),
-        })),
-      ),
-    });
+    for (const [mode, pagingTrace] of [
+      ["MCP", trace],
+      ["value", valueModePagingTrace(trace)],
+    ] as const) {
+      cases.push({
+        name: `${mode}: pages from another retained result`,
+        trace: pagingTrace,
+        world: withPrograms(
+          world.programs.map((p) => ({
+            ...p,
+            calls: p.calls.map((c) =>
+              c.name === "connecta.result" ? { ...c, args: ["wrong-result", ...c.args.slice(1)] } : c,
+            ),
+          })),
+        ),
+      });
+      cases.push({ name: `${mode}: retained ID never paged`, trace: pagingTrace, world: withPrograms([]) });
+      cases.push({
+        name: `${mode}: paging program failed`,
+        trace: pagingTrace,
+        world: withPrograms(world.programs.map((p) => ({ ...p, succeeded: false }))),
+      });
+      cases.push({
+        name: `${mode}: paging call failed`,
+        trace: pagingTrace,
+        world: withPrograms(
+          world.programs.map((p) => ({
+            ...p,
+            calls: p.calls.map((c) => (c.name === "connecta.result" ? { ...c, outcome: "error" } : c)),
+          })),
+        ),
+      });
+      cases.push({
+        name: `${mode}: pages never reach the failing test`,
+        trace: pagingTrace,
+        world: withPrograms(
+          world.programs.map((p) => ({
+            ...p,
+            calls: p.calls.map((c) =>
+              c.name === "connecta.result" ? { ...c, result: { text: "no failure here" } } : c,
+            ),
+          })),
+        ),
+      });
+      const log = world.ledger.calls.find((c) => c.service === "ci" && c.tool === "get_run_log")!;
+      cases.push({
+        name: `${mode}: second get_run_log fetch`,
+        trace: pagingTrace,
+        world: Object.assign(Object.create(Object.getPrototypeOf(world)), world, {
+          ledger: { ...world.ledger, calls: [...world.ledger.calls, log] },
+        }),
+      });
+      for (const resultText of ["null", "{", '{"resultId":"wrong-result"}', '{"ok":false,"data":null}']) {
+        cases.push({
+          name: `${mode}: invalid retained-result notice ${resultText}`,
+          trace: {
+            ...pagingTrace,
+            toolUses: pagingTrace.toolUses.map((u) => (u.tool === "call_tool" ? { ...u, resultText } : u)),
+          },
+        });
+      }
+    }
   }
   if (task.id === "p5-connecta-read") {
     cases.push({ name: "resource read only in a comment", world: withPrograms([]) });
@@ -324,7 +395,7 @@ export function counterexamples(
   }));
 }
 
-/** Answer permutations keep the real source calls and change only fact order. */
+/** Positive variants preserve the real source calls and observed program results. */
 export function positiveVariants(
   task: ActiveTask,
   world: World,
@@ -333,6 +404,18 @@ export function positiveVariants(
   const cases: { name: string; trace: AgentTrace; world?: World; advisoryMiss?: string; advisoryPass?: string }[] = [];
   const withPrograms = (programs: World["programs"]): World =>
     Object.assign(Object.create(Object.getPrototypeOf(world)), world, { programs });
+  if (task.id === "p5-result-paging") {
+    cases.push({ name: "Luna repeat-1 value-mode retained-result envelope", trace: valueModePagingTrace(trace) });
+    cases.push({
+      name: "explicit MCP result mode",
+      trace: {
+        ...trace,
+        toolUses: trace.toolUses.map((u) =>
+          u.tool === "call_tool" ? { ...u, input: { ...u.input, resultMode: "mcp" } } : u,
+        ),
+      },
+    });
+  }
   if (task.id === "p5-read-only-program-refusal") {
     // Final 0.29 Claude shape: a discovery program and a read-only
     // verification read around the single refused write attempt.
