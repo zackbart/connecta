@@ -197,7 +197,7 @@ const {
   NativeError, NativeWeakMap, NativeProxy, NativePromise, NativeUint8Array, NativeArrayBuffer,
   defineProperties, freeze, clone, retain, lookup, slice, nativeSetTimeout, toNumber, exec,
   hasOwn, push, map, join, toString, fromCharCode, min, subarray, charCodeAt, bufferSlice,
-  isView, nativeBtoa, nativeAtob, race
+  isView, nativeBtoa, nativeAtob, race, jsonParse, jsonStringify, nativeConsole
 } = Object.freeze({
   NativeError: Error, NativeWeakMap: WeakMap, NativeProxy: Proxy, NativePromise: Promise,
   NativeUint8Array: Uint8Array, NativeArrayBuffer: ArrayBuffer,
@@ -216,11 +216,15 @@ const {
   charCodeAt: Function.prototype.call.bind(String.prototype.charCodeAt),
   bufferSlice: Function.prototype.call.bind(ArrayBuffer.prototype.slice),
   isView: ArrayBuffer.isView, nativeBtoa: btoa, nativeAtob: atob,
-  race: Promise.race.bind(Promise)
+  race: Promise.race.bind(Promise), jsonParse: JSON.parse, jsonStringify: JSON.stringify,
+  nativeConsole: console
 });
 `;
             isolated = isolated
               .replace("async evaluate(__dispatchers = {}, __connectors = {}) {", `async evaluate(__dispatchers = {}, __connectors = {}, ${programName}) {\n${wrapper}`)
+              .replaceAll("JSON.parse(", "jsonParse(")
+              .replaceAll("JSON.stringify(", "jsonStringify(")
+              .replaceAll("console.", "nativeConsole.")
               .replaceAll("new Proxy(", "new NativeProxy(")
               .replaceAll("Object.prototype.hasOwnProperty.call(target, toolName)", "hasOwn(target, toolName)")
               .replaceAll("String(toolName)", "toString(toolName)")
