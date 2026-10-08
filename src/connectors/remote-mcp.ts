@@ -1844,11 +1844,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // A slow vault/token read or digest can resume after a newer caller
         // connected with the replacement. Never let that stale read tear down
         // the newer connection and install the rotated-away credential.
-        if (await readCredential(ctx) !== credentialValue) {
+        const observedConnection = state.client ?? state.connecting;
+        const currentCredential = await readCredential(ctx);
+        if (isClosed(state)) throw scopeEndedError();
+        if (currentCredential !== credentialValue ||
+            (state.client ?? state.connecting) !== observedConnection) {
           throw new ConnectorCallError("connector_call_failed",
             "The downstream credential changed while connecting; retry the operation.", { retryable: true });
         }
-        if (isClosed(state)) throw scopeEndedError();
         closeHalf(state);
       }
     }
@@ -1973,11 +1976,17 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // SDK v2 selects its validator by runtime export condition: AJV on
         // Node and @cfworker/json-schema under workerd. The Workers-safe path
         // no longer needs Connecta-specific wiring.
+        const oauthConfig = isOauth ? {
+          client: staticClient,
+          clientMetadataUrl: staticClient ? undefined : clientMetadataUrl ?? selfHostedClientUrl(ctx.publicUrl, id),
+          redirectUri: downstreamRedirectUri(ctx.baseUrl, ctx.publicUrl, id),
+          clientName: ctx.oauthClientName,
+        } : undefined;
         const negotiationDigest = yield* promised(() => digestOf(JSON.stringify([
           opts.url, opts.versionNegotiation ?? "auto", opts.auth?.type,
           opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
           credentialHeader, credentialScheme, opts.authScope ?? "shared",
-          opts.redirects ?? "none", clientMetadataUrl, oauthScope,
+          opts.redirects ?? "none", oauthConfig, oauthScope,
           state.credentialDigest, genAtStart, callerOf(ctx),
         ])));
         const prior = opts.versionNegotiation === "legacy" ? undefined
@@ -1988,7 +1997,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           headers: opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
           credentialHeader, credentialScheme, authScope: opts.authScope ?? "shared",
           redirects: opts.redirects ?? "none", versionNegotiation: opts.versionNegotiation ?? "auto",
-          clientMetadataUrl, oauthScope,
+          oauthConfig, oauthScope,
         }), JSON.stringify([genAtStart, state.credentialDigest])));
         if (!owned()) return yield* Effect.fail(scopeEndedError());
         const makeClient = () => {

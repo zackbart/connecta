@@ -8,7 +8,7 @@ import type { Connector, ConnectorContext, KVStorage } from "../src/types.js";
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-function downstream(probeStatus?: number) {
+function downstream(probeStatus?: number, ttlMs = 0) {
   const methods: string[] = [];
   vi.stubGlobal("fetch", async (_input: unknown, init: RequestInit) => {
     if (init.method !== "POST") return new Response(null, { status: 405 });
@@ -21,7 +21,7 @@ function downstream(probeStatus?: number) {
       ? { supportedVersions: ["2026-07-28"], capabilities: { tools: {} }, instructions: `Instructions ${token}` }
       : request.method === "initialize"
         ? { protocolVersion: request.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "legacy", version: "1" } }
-        : { resultType: "complete", ttlMs: 0, cacheScope: "private", tools: [{ name: "read", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }] };
+        : { resultType: "complete", ttlMs, cacheScope: "private", tools: [{ name: "read", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }] };
     return Response.json({ jsonrpc: "2.0", id: request.id, result });
   });
   return methods;
@@ -100,5 +100,22 @@ describe("downstream negotiation verdicts", () => {
       await list(connector, storage, ctx);
     }
     expect(methods.filter(method => method === "server/discover")).toHaveLength(3);
+  });
+
+  it("INV-5: binds OAuth verdicts to the resolved metadata, redirect and static client configuration", async () => {
+    const methods = downstream(undefined, 60_000);
+    const storage = memoryStorage();
+    const defaultClient = remoteMcp("down", { url: "https://down.test/mcp", auth: { type: "oauth" } });
+    for (const publicUrl of ["https://one.example", "https://two.example", "https://one.example"]) {
+      await list(defaultClient, storage, { ...connectorContext(storage), publicUrl, requestScope: {} });
+    }
+    for (const clientId of ["one", "two", "one"]) {
+      const connector = remoteMcp("down", { url: "https://down.test/mcp", auth: { type: "oauth",
+        client: { issuer: "https://auth.example", clientId, clientSecret: "confidential-client-secret" } } });
+      await list(connector, storage);
+    }
+    expect(methods.filter(method => method === "server/discover")).toHaveLength(4);
+    expect(methods.filter(method => method === "tools/list")).toHaveLength(4);
+    expect((await Promise.all((await storage.list("")).map(key => storage.get(key)))).join("")).not.toContain("confidential-client-secret");
   });
 });
