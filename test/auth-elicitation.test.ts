@@ -8,8 +8,6 @@ import { createTestConnecta, required } from "./helpers.js";
 import { fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { CREDENTIAL_KEY } from "./fixtures/ui.js";
 import { guestErrorText, guestFailureFacts } from "./fixtures/misc.js";
-import { sentSecretsFetch } from "../src/sent-secrets.js";
-import type { ConnectorContext } from "../src/types.js";
 
 const BASE = "https://connecta.test";
 const apps: ReturnType<typeof createTestConnecta>[] = [];
@@ -22,9 +20,8 @@ function setup(options: { manage?: boolean; vault?: boolean; publicUrl?: boolean
   const storage = memoryStorage();
   const vault = encryptedCredentialVault(storage, CREDENTIAL_KEY);
   let connected = false;
-  const call = vi.fn(async (name: string, _args: unknown, ctx: ConnectorContext) => {
+  const call = vi.fn(async (name: string) => {
     if (name !== "write" && !connected) throw new ConnectorCallError("auth_required", "DOWNSTREAM_PRIVATE_TEXT");
-    if (name === "write") await sentSecretsFetch(ctx, async () => Response.json({ done: true }))("https://service.test/items", { method: "POST" });
     return { done: true };
   });
   const connector: Connector = {

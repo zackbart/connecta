@@ -38,7 +38,7 @@ import { splitAddress, type RegistryView } from "./registry.js";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { validateCatalogToolInput } from "./validate.js";
 import { sentSecretsFor, sentSecretsForRequest, trackCredentialReads, type SentSecrets } from "./sent-secrets.js";
-import { invocationDispatchCount, trackInvocationDispatch } from "./downstream-dispatch.js";
+import { invocationDispatchCount, recordInvocationCompletion, trackInvocationDispatch } from "./downstream-dispatch.js";
 import type { ConnectorContext } from "./types.js";
 
 function defined<T extends object>(
@@ -685,6 +685,7 @@ export class InvocationService {
               // reports the same downstream-failure wording, and the throw lands
               // inside the attempt where it feeds health.
               assertRawMcpSuccess(target.connector.kind, raw);
+              if (invocationContext) recordInvocationCompletion(invocationContext);
               return { raw, observed: sentSecrets.redact(downstreamValue(target.connector.kind, raw)) };
             }),
           ));

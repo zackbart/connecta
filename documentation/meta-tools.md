@@ -505,7 +505,8 @@ On MCP 2026-07-28, a host declaring `elicitation.url` receives
 connector authentication and the admitted identity may manage that connector.
 Read-classified calls may re-run after a mid-handler auth failure. A direct write
 may elicit only before any downstream request was sent. Programs may elicit only
-before any write-classified invocation sent a downstream request.
+before any write-classified invocation sent a downstream request or completed a
+local write.
 The `connecta_auth` input request uses `elicitation/create`,
 `mode: "url"`, fixed copy, and an identity-checked `/connect/<id>` link built
 from configured `publicUrl`. OAuth consent stays in the browser; a credential

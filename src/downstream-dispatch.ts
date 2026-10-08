@@ -4,25 +4,27 @@ import type { ConnectorContext } from "./types.js";
 interface RequestDispatches {
   count: number;
   writes: number;
+  completedWrites: number;
 }
 interface InvocationDispatches {
   request: RequestDispatches;
   write: boolean;
   count: number;
+  completed: boolean;
 }
 const requests = new WeakMap<object, RequestDispatches>();
 const invocations = new WeakMap<ConnectorContext, InvocationDispatches>();
 
 function requestFor(scope: object): RequestDispatches {
   let facts = requests.get(scope);
-  if (!facts) { facts = { count: 0, writes: 0 }; requests.set(scope, facts); }
+  if (!facts) { facts = { count: 0, writes: 0, completedWrites: 0 }; requests.set(scope, facts); }
   return facts;
 }
 
 /** Bind the registry's classification and scope before handing over a context. */
 export function trackInvocationDispatch(ctx: ConnectorContext, write: boolean): void {
   if (!invocations.has(ctx)) {
-    invocations.set(ctx, { request: requestFor(ctx.requestScope ?? ctx), write, count: 0 });
+    invocations.set(ctx, { request: requestFor(ctx.requestScope ?? ctx), write, count: 0, completed: false });
   }
 }
 
@@ -47,7 +49,17 @@ export function invocationDispatchCount(ctx: ConnectorContext): number {
   return invocations.get(ctx)?.count ?? 0;
 }
 
+/** A completed write may be local, such as an artifact storage mutation. A
+ * later program auth failure must not replay it even without an HTTP send. */
+export function recordInvocationCompletion(ctx: ConnectorContext): void {
+  const invocation = invocations.get(ctx);
+  if (invocation?.write && !invocation.completed) {
+    invocation.completed = true;
+    invocation.request.completedWrites++;
+  }
+}
+
 export function requestDispatches(scope: object): Readonly<RequestDispatches> {
   const facts = requestFor(scope);
-  return { count: facts.count, writes: facts.writes };
+  return { count: facts.count, writes: facts.writes, completedWrites: facts.completedWrites };
 }

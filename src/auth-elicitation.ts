@@ -183,7 +183,8 @@ export class AuthElicitation {
     // Every accepted retry owns new request-local facts. Handler-authored
     // errors and program write summaries cannot establish replay eligibility.
     const dispatches = requestDispatches(this.options.requestScope);
-    const wrote = dispatches.writes > 0 || (tool === "call_destructive_tool" && dispatches.count > 0);
+    const wrote = dispatches.writes > 0 || dispatches.completedWrites > 0 ||
+      (tool === "call_destructive_tool" && dispatches.count > 0);
     if (authFailure && wrote) {
       const structuredContent = { ...result.structuredContent, error: {
         ...error, retryable: false, reconciliationRequired: true,

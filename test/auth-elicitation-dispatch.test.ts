@@ -31,7 +31,10 @@ function setup(connector: Connector) {
     pools: { trusted: { tools: ["service"], grant: () => true, trust: "trusted" } },
     executor: { execute: async (_code, providers) => {
       const call = required(providers.find(provider => provider.name === "connecta")).fns.call!;
-      try { return { result: await call("service.write", {}) }; }
+      try {
+        await call("service.write", {});
+        return { result: await call("service.read", {}) };
+      }
       catch (error) { return { result: undefined, error: guestErrorText(error), failure: guestFailureFacts(error) }; }
     } },
   });
@@ -68,7 +71,7 @@ function apiFlow(options: { plain?: boolean; guarded?: boolean; resetScope?: boo
   let audits = 0;
   let rejectAudit = true;
   let invocationScope: object | undefined;
-  const sends = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  const sends = vi.fn(async (input: RequestInfo | URL) => {
     const url = input instanceof Request ? input.url : String(input);
     if (url === TOKEN) return Response.json({ access_token: "service-access-token", token_type: "Bearer" });
     if (url === `${API}/items`) { items++; return Response.json({ id: items }); }
@@ -159,7 +162,7 @@ describe("auth recovery dispatch eligibility", () => {
     const flow = apiFlow({ plain: true, resetScope: true });
     expectReconciliation(await flow.rpc());
     expect(flow.items()).toBe(1);
-    expect(flow.dispatches()).toEqual({ count: 2, writes: 2 });
+    expect(flow.dispatches()).toEqual({ count: 2, writes: 2, completedWrites: 0 });
   });
 
   it("INV-9: a read with a mid-handler 401 elicits and can re-run after connection", async () => {
@@ -180,6 +183,18 @@ describe("auth recovery dispatch eligibility", () => {
     const result = await flow.rpc("execute_code");
     if (connected) { expectReconciliation(result); expect(flow.items()).toBe(1); }
     else { expect(result.resultType).toBe("input_required"); expect(flow.sends).not.toHaveBeenCalled(); }
+  });
+
+  it("INV-2 INV-9: completed local program writes remain guarded before a later auth failure", async () => {
+    let writes = 0;
+    const connector = api("service", { tools: [
+      { name: "write", description: "Record a local write", annotations: { readOnlyHint: false }, handler: () => { writes++; return {}; } },
+      { name: "read", description: "Read a protected record", annotations: { readOnlyHint: true }, handler: () => { throw new ConnectorCallError("auth_required", "Connect first."); } },
+    ] });
+    connector.startAuth = async () => ({ state: "auth_required", authorizationUrl: "https://auth.service.test/authorize" });
+    const flow = setup(connector);
+    expectReconciliation(await flow.rpc("execute_code"));
+    expect(writes).toBe(1);
   });
 
   it.each([false, true])("INV-9: remoteMcp direct writes cannot elicit after tools/call returns HTTP 401 (OAuth %s)", async oauth => {

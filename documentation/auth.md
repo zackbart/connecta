@@ -880,7 +880,7 @@ dispatch, so retries cannot fork into sibling forced connection links.
 The host records downstream sends in private invocation state, using the
 registry's write classification. Direct writes may recover automatically only
 before any send; programs stop automatic recovery once a write invocation sends
-anything. This check also applies to each accepted retry. Later auth failures
+anything or completes a local write. This check also applies to each accepted retry. Later auth failures
 carry `reconciliationRequired: true` and manual connection guidance because the
 write may have partially run. Read-classified calls may re-run after dispatch.
 Custom vaults may implement the host-only `requestStateKey` method; without it, the
