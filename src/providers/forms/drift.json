@@ -44,6 +44,16 @@
           "contract": "sha256:3972b8c11272d41e3e7f6268a64998b0017ffde98dc179768cb5dff192a07508"
         }
       ]
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.google.com/workspace/guides/configure-mcp-servers",
+      "rationale": "Keep api(): Forms is absent from the published hosted Workspace server list; delegated auth and coverage have no documented equivalent.",
+      "evidence": {
+        "reviewedAt": "2026-10-08",
+        "decision": "keep-api",
+        "decisionRecord": "decisions/0002-hosted-workspace-planning-center.md"
+      }
     }
   ]
 }

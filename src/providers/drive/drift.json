@@ -79,6 +79,95 @@
           "contract": "sha256:8cca942df8387499b4968cfd0aa6eac4b19cb90b7871db70febcd1ac5a246442"
         }
       ]
+    },
+    {
+      "type": "mcp-catalog",
+      "endpoint": "https://drivemcp.googleapis.com/mcp/v1",
+      "reviewedAt": "2026-10-08",
+      "reviewed": [
+        {
+          "name": "copy_file",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true,
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "create_file",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true,
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "download_file_content",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "get_file_metadata",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "get_file_permissions",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "list_recent_files",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "read_file_content",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "search_files",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          }
+        }
+      ]
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.google.com/workspace/guides/configure-mcp-servers",
+      "rationale": "Keep api(): OAuth developer preview does not establish service-account domain-wide delegation or deployment-owned subject equivalence. Public catalog annotations do not prove operational authorization.",
+      "evidence": {
+        "reviewedAt": "2026-10-08",
+        "decision": "keep-api",
+        "decisionRecord": "decisions/0002-hosted-workspace-planning-center.md"
+      }
     }
   ]
 }

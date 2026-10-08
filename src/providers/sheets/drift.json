@@ -55,6 +55,77 @@
           "contract": "sha256:de88d859a3d49f6862fdb6a367e6f8d3b917881c037747fa411d159e6f4098a2"
         }
       ]
+    },
+    {
+      "type": "mcp-catalog",
+      "endpoint": "https://sheetsmcp.googleapis.com/mcp/v1",
+      "reviewedAt": "2026-10-08",
+      "reviewed": [
+        {
+          "name": "get_spreadsheet",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true,
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "get_values",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true,
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "insert_dimension",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true,
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "update_formulas",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true,
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "update_spreadsheet",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true,
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "update_values",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true,
+            "readOnlyHint": false
+          }
+        }
+      ]
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.google.com/workspace/guides/configure-mcp-servers",
+      "rationale": "Keep api(): OAuth developer preview does not establish service-account domain-wide delegation or deployment-owned subject equivalence. Public catalog annotations do not prove operational authorization.",
+      "evidence": {
+        "reviewedAt": "2026-10-08",
+        "decision": "keep-api",
+        "decisionRecord": "decisions/0002-hosted-workspace-planning-center.md"
+      }
     }
   ]
 }

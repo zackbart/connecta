@@ -1,0 +1,67 @@
+name: Provider drift
+
+# Public vendor contracts only. This workflow reports evidence and never
+# participates in CI's aggregate check gate or accepts a new baseline.
+on:
+  pull_request:
+    paths:
+      - 'src/providers/**'
+      - 'scripts/drift-check.mjs'
+      - 'scripts/providers.mjs'
+      - '.github/workflows/provider-drift.yml'
+  schedule:
+    - cron: '23 10 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Compare public provider contracts
+        id: report
+        continue-on-error: true
+        run: |
+          npm --silent run providers:check -- --json > "$RUNNER_TEMP/provider-drift.json" 2> "$RUNNER_TEMP/provider-drift.log"
+      - name: Summarize advisory findings
+        if: always()
+        env:
+          REPORT_OUTCOME: ${{ steps.report.outcome }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          let summary = '## Provider drift (advisory)\n\nPublic contracts only. No credentials, operational tool calls, issue filing, or baseline updates. This job is outside the aggregate `check` gate.\n\n';
+          try {
+            const report = JSON.parse(readFileSync(join(process.env.RUNNER_TEMP, 'provider-drift.json'), 'utf8'));
+            summary += `${report.findings} finding(s). Review the attached JSON for contract changes, unavailable references, and required manual reviews.\n\n`;
+            for (const mode of ['specs', 'docs', 'manual', 'records']) {
+              const rows = report[mode];
+              const findings = rows.reduce((sum, row) => sum + row.findings.length + (row.added?.length ?? 0), 0);
+              summary += `- ${mode}: ${rows.length} checks, ${findings} findings\n`;
+            }
+          } catch {
+            summary += `No complete JSON report was produced. Report step outcome: ${process.env.REPORT_OUTCOME || 'not run'}. See the job log and attached stderr.\n`;
+          }
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
+          NODE
+      - name: Upload drift evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: provider-drift
+          path: |
+            ${{ runner.temp }}/provider-drift.json
+            ${{ runner.temp }}/provider-drift.log
+          if-no-files-found: warn
+          retention-days: 30

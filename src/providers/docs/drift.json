@@ -31,6 +31,41 @@
           "contract": "sha256:f22440d7367f202609bbfd061f5208fea9a5a5dfe913a5cdd5aa2283786bd4c3"
         }
       ]
+    },
+    {
+      "type": "mcp-catalog",
+      "endpoint": "https://docsmcp.googleapis.com/mcp/v1",
+      "reviewedAt": "2026-10-08",
+      "reviewed": [
+        {
+          "name": "read_doc",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": true,
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "update_doc",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": true,
+            "readOnlyHint": false
+          }
+        }
+      ]
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.google.com/workspace/guides/configure-mcp-servers",
+      "rationale": "Keep api(): OAuth developer preview does not establish service-account domain-wide delegation or deployment-owned subject equivalence. Public catalog annotations do not prove operational authorization.",
+      "evidence": {
+        "reviewedAt": "2026-10-08",
+        "decision": "keep-api",
+        "decisionRecord": "decisions/0002-hosted-workspace-planning-center.md"
+      }
     }
   ]
 }

@@ -1,0 +1,103 @@
+---
+status: proposed
+date: 2026-10-08
+issues: [705]
+supersedes: []
+---
+
+# Keep delegated Workspace and Planning Center API providers
+
+Phase 1 item 5e adopts no hosted capabilities. All seven providers keep their
+current `api()` tools, scopes, classifications, and credentials. Public catalog
+access proves an advertised contract, not successful operational authorization.
+
+## Auth and scopes
+
+[Google's setup](https://developers.google.com/workspace/guides/configure-mcp-servers)
+requires developer-preview enrollment and an OAuth client with user consent.
+It does not document domain-wide delegation or deployment-owned subject mapping.
+Connecta instead signs service-account JWTs for the subject deployment config
+maps from the admitted caller. Tool arguments cannot select that subject, and
+an unmapped caller gets `auth_required`. Neither a catalog response nor OAuth
+support proves this isolation survives a switch. No OAuth fallback is added.
+
+| Provider | Current delegated scopes, under `https://www.googleapis.com/auth/` | Hosted setup scopes under that prefix | Decision |
+| --- | --- | --- | --- |
+| Gmail | `gmail.readonly`, `gmail.compose` | Same | Equal scope names do not prove delegated auth or the current draft-only behavior. Keep API. |
+| Drive | `drive` | `drive.readonly`, `drive.file` | Different grant coverage, especially existing files and sharing. Keep API. |
+| Docs | `documents` | `documents.readonly`, `documents`, `drive.readonly`, `drive.file` | Additional Drive grants and unproven delegated auth. Keep API. |
+| Sheets | `spreadsheets` | `spreadsheets.readonly`, `spreadsheets`, `drive.readonly`, `drive.file` | Additional Drive grants and unproven delegated auth. Keep API. |
+| Slides | `presentations` | `presentations.readonly`, `presentations`, `drive.readonly`, `drive.file` | Additional Drive grants and unproven delegated auth. Keep API. |
+| Forms | `forms.body`, `forms.responses.readonly` | No Forms server listed | Keep API. |
+
+[Planning Center's setup](https://help.planningcenter.com/en/151880-connect-ai-tools-to-planning-center.html)
+requires account sign-in and product authorization, subject to user permissions
+and organization-admin connection controls. Its MCP endpoint returned HTTP 401
+with a Bearer protected-resource challenge for unauthenticated `tools/list`.
+There is no public evidence that the current PAT application ID/secret with
+HTTP Basic is accepted. Its [public resource metadata](https://mcp.planningcenteronline.com/.well-known/oauth-protected-resource)
+advertises `mcp:read`, `mcp:write`, product reads for People, Services, Groups,
+Registrations, Check-Ins, Calendar, Giving, Publishing, and `mcp:people:write`.
+The exact product scope strings are recorded in `planning-center/drift.json`.
+Current PAT auth does not request OAuth scopes; the provider's `apps` option
+confines paths rather than granting downstream permissions. Advertised OAuth
+scopes are not proof of equivalent PAT access. Tool annotations remain unverified.
+
+## Capability evaluation
+
+On 2026-10-08, credential-free JSON-RPC `tools/list` returned complete catalogs
+from `https://{gmail,drive,docs,sheets,slides}mcp.googleapis.com/mcp/v1`.
+Their 43 names and four behavioral hints are reviewed in each provider's
+`drift.json`. No schema is vendored and no operational tool was called.
+The local comparison uses `index.ts` at `e78f2556`, including its result bounds,
+pagination, projections, and write safeguards. Similar operations below are
+coverage candidates, not claims of equivalent argument/result contracts.
+
+Every row keeps the API implementation. The auth gate above applies to every
+Google tool; the additional coverage and annotation findings explain why a
+future migration must also be selective.
+
+| Provider/capability | Hosted tools or public claim | Current API comparison and annotation evidence |
+| --- | --- | --- |
+| Gmail reads | `search_threads`, `get_thread`, `get_message`, `list_labels`, `list_drafts`, `get_draft` | Same six local names, all hosted `readOnlyHint: true`. Local thread cursors detect changes, bodies/results are bounded, attachments are metadata only. Those guarantees need separate equivalence proof. |
+| Gmail draft creation | `create_draft` | Local write; hosted read hint false and destructive hint false. Reply/header preservation and mailbox ownership need proof. |
+| Gmail draft replacement | No `update_draft` | Local write refuses attached/inline-image drafts rather than deleting their attachments. Keep API-only safeguard. |
+| Gmail additional mutations | `label_thread`, `unlabel_thread`, `apply_sensitive_thread_label`, `trash_thread`, `untrash_thread`, `mark_thread_spam`, `unmark_thread_spam`, `label_message`, `update_message_labels`, `unlabel_message`, `apply_sensitive_message_label`, `trash_message`, `untrash_message`, `mark_message_spam`, `unmark_message_spam`, `create_label` | All 16 read hints false. Outside the local mail-read/draft contract. Do not expose them or broaden scope. No send tool was advertised. |
+| Drive reads | `get_file_metadata`, `get_file_permissions`, `search_files`, `read_file_content`, `download_file_content`, `list_recent_files` | All read hints true. Candidates for local `get_file`, `list_permissions`, `search_files`, `get_file_content`; recent listing is additional. Download formats, folder queries, shared-drive routing and bounded content require proof. |
+| Drive creation/copy | `create_file`, `copy_file` | Read hints false, destructive hints false. Candidates for local file/folder creation and copy, with narrower hosted file grants. |
+| Drive remaining operations | No named hosted equivalents | Keep `list_folder_items`, `list_shared_drives`, `update_file_content`, `update_file`, `move_file`, `trash_file`, `restore_file`, `share_file`, `update_permission`, `delete_permission`. Search/creation may cover parts, not complete contracts. Local Drive has no permanent file deletion tool; none is added. |
+| Docs read | `read_doc` | Read hint true; candidate for `get_document`, with different response/paging contracts. |
+| Docs edit | `update_doc` | Read hint false, destructive hint false. Candidate for `append_text`, `insert_text`, `replace_all_text`, `batch_update_document`. Generic deletion/replacement still writes despite the weak destructive hint. |
+| Docs creation | No tool | Keep `create_document`. |
+| Sheets reads | `get_spreadsheet`, `get_values` | Read hints true; same local names but projection/range/result guarantees need proof. |
+| Sheets edits | `update_spreadsheet`, `update_values`, `update_formulas`, `insert_dimension` | Read hints false, destructive hints false. Candidates for local `update_values`, `batch_update_values`, `add_sheet`, `batch_update_spreadsheet`; formulas/dimensions may cover batch requests. Generic destructive edits must stay writes. |
+| Sheets remaining operations | No dedicated tools | Keep `create_spreadsheet`, `append_values`, `clear_values`; generic updates are not proof of equivalent append/clear semantics. |
+| Slides reads | `read_presentation`, `read_slide_page`, `read_slide_page_thumbnail` | Read hints true; candidates for `get_presentation`, `get_page`, `get_slide_thumbnail`. Local `list_layouts` derives presentation data. Pagination/projections need proof. |
+| Slides edits | `update_presentation` | Read hint false, destructive hint true. Candidate for `create_slide`, `replace_all_text`, `batch_update_presentation`; generic requests do not prove comment coverage or partial-comment-update behavior. |
+| Slides creation/comments | No dedicated tools | Keep `create_presentation`, `list_comments`, `create_comment`, `create_comment_reply`, `update_comment_thread`, `update_comment_post`, `delete_comment`, `delete_comment_reply`. |
+| Forms | No hosted Forms server in setup | Keep all six local read/create/update/response tools and current grants. |
+| Planning Center reads | Vendor advertises Services, Giving, People, Registrations, Calendar, Groups, Publishing, Check-Ins | Local reads span the first seven applicable products plus Webhooks; Publishing is additional and Webhooks is not listed. Exact names, paging, pinned versions and hints cannot be compared through the protected catalog. Keep PAT API reads. |
+| Planning Center People writes | Vendor advertises profile notes and filling forms | `add_person_note` is a candidate; filling forms is additional to local form/submission reads. Annotation and PAT equivalence unproven. Keep API. |
+| Planning Center remaining writes | Vendor limits writes to People notes/forms | Keep `create_person`, `update_person`, `add_person_email`, `add_person_phone_number`, `run_list`, `add_workflow_card`, `apply_workflow_card_action`, `add_workflow_card_note`, `schedule_plan_person`, `add_plan_item`, `add_group_member`, and the confined `pco_api_mutate` escape hatch. Scheduling, workflows, and group writes remain API-only. |
+
+Planning Center coverage comes from its
+[official announcement](https://www.planningcenter.com/blog/2026/08/announcing-the-planning-center-mcp-connect-chatgpt-claude-and-other-ai-tools).
+Protected annotations are unknown, not inferred from product prose. A reviewed
+write would outrank a contradictory vendor read hint; unknown tools retain the
+registry's fail-closed rules. These evidence records do not create presets or
+change runtime classification.
+
+## Reconsideration and CI
+
+Adoption requires authenticated evidence for the deployed auth model, exact
+scope and capability coverage, and tests of subject isolation before changing
+Google defaults. Recheck preview enrollment, the draft-only Gmail boundary,
+Drive deletion/sharing, and API-only Planning Center writes. No deployment
+credentials belong in CI, and no baseline updates happen automatically.
+
+The separate Provider drift workflow runs on provider-path PRs and weekly.
+It compares current public REST contracts and Google catalog names/hints,
+retains explicit manual findings for Forms and protected Planning Center,
+and publishes a summary and artifacts. It has read-only repository permission,
+no secrets, no issue filing, and no dependency from the aggregate `check` gate.
+Its job is advisory even if setup, parsing, or networking fails.
