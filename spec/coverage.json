@@ -423,6 +423,14 @@
         {
           "file": "test/remote-mcp-skills.test.ts",
           "title": "INV-8: consumes many short SSE data lines without retaining per-line strings"
+        },
+        {
+          "file": "test/remote-mcp-skills.test.ts",
+          "title": "INV-5 INV-6 INV-8 INV-10: caches ordinary inventories in personal credential partitions while Skills catalogs and all bodies stay uncached"
+        },
+        {
+          "file": "test/remote-mcp-skills.test.ts",
+          "title": "INV-5 INV-10: partitions cached negotiation by the Skills declaration without caching skill catalogs"
         }
       ]
     },
@@ -708,6 +716,14 @@
         {
           "file": "test/skills-extension.test.ts",
           "title": "INV-5 INV-6 INV-10: proxies the real downstream MCP transport through the private Skills boundary"
+        },
+        {
+          "file": "test/remote-mcp-skills.test.ts",
+          "title": "INV-5 INV-6 INV-8 INV-10: caches ordinary inventories in personal credential partitions while Skills catalogs and all bodies stay uncached"
+        },
+        {
+          "file": "test/remote-mcp-skills.test.ts",
+          "title": "INV-5 INV-10: partitions cached negotiation by the Skills declaration without caching skill catalogs"
         }
       ]
     },

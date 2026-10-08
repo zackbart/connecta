@@ -275,9 +275,11 @@ traversal segments fail closed. No URI is fetched directly over HTTP.
 Local guides follow connector visibility. Downstream skills require a
 whole-connector grant in the caller's admitted pool; a tool-only grant cannot
 authorize arbitrary files. Each list/read uses that caller's context and
-credential ownership. There is no shared skills cache while #753 is pending;
-the connector's list/read seam can reuse its private partition cache once
-merged. A failed or malformed opted-in listing fails the entire skills catalog,
+credential ownership. Downstream skills use uncached `skills/list` and explicit
+`resources/read` requests on the same request-scoped connection as ordinary
+resource reads. The SDK's auth-partitioned resource inventories remain separate
+from skill manifests; neither skill catalogs nor file bodies enter its response
+cache. A failed or malformed opted-in listing fails the entire skills catalog,
 with no partial cache. Known local guides remain readable during an outage.
 
 Downstream files are proxied byte-exact, including CRLF and binary supporting
