@@ -1,4 +1,4 @@
-import { SCRIPT_PATH, STYLE_PATH, OPERATOR_UI_ASSETS } from "../src/operator-ui/generated.js";
+import { OPERATOR_UI_SCRIPT_PATH as SCRIPT_PATH, OPERATOR_UI_STYLE_PATH as STYLE_PATH, OPERATOR_UI_ASSETS } from "../src/operator-ui/generated.js";
 import { connectRequest, oauthVault } from "./fixtures/oauth.js";
 import { fetchTestUiDetails } from "./helpers.js";
 import { activityHistory } from "../src/activity.js";
@@ -241,9 +241,9 @@ describe("status UI", () => {
       .replace('<body class="operator-shell">', "<body>")
       .replace(/<a class="skip-link"[^>]*>[^<]*<\/a>\n/, "")
       .replace(/\s*<div id="operatorNav"><\/div>/, "")
-      .split("</header>")[0];
+      .split("</header>")[0]!.replace(/\s+/g, " ").trim();
     expect(head(shell)).toBe(head(callback));
-    for (const page of [OPERATOR_UI_ASSETS[STYLE_PATH].body, callback]) {
+    for (const page of [OPERATOR_UI_ASSETS[STYLE_PATH]!.body, callback]) {
       expect(page).toContain("--surface-2:");
       expect(page).toContain("html[data-scheme=dark]");
 
@@ -460,7 +460,7 @@ describe("status UI", () => {
     const value = 'https://example.test/</script><script>alert(1)</script>';
     const html = renderUiHtml(undefined, value);
     const json = /<script id="operatorConfig" type="application\/json">([\s\S]*?)<\/script>/.exec(html)![1];
-    expect(JSON.parse(json).mcpUrl).toBe(value);
+    expect(JSON.parse(json!).mcpUrl).toBe(value);
     expect(json).not.toContain("<");
     expect(html).not.toContain("nonce=");
     expect(scriptSrcs(html)).toEqual([SCRIPT_PATH]);

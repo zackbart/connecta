@@ -130,6 +130,22 @@ afterEach(() => {
 });
 
 describe("operator store identity wiring", () => {
+  it("consumes Query cancellation and drops a pending connector detail after sign-out", async () => {
+    const { store, fetchMock, changeSession } = await loadStore({ id: "sess_a", getToken: async () => "token-a" });
+    fetchMock.mockResolvedValueOnce(Response.json(uiData("identity-a")));
+    await store.boot();
+    const pending = deferred<Response>();
+    fetchMock.mockImplementationOnce(() => pending.promise);
+    const refresh = store.refreshConnector("github");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    changeSession(null);
+    await expect(refresh).resolves.toBeUndefined();
+    pending.resolve(Response.json({ id: "github", status: "ok", toolCount: 1, tools: [] }));
+    await Promise.resolve();
+    expect(store.getState().session).toBe("gated");
+    expect(store.getState().data).toBeNull();
+  });
+
   it("clears and refetches identity state when Clerk reports a new session", async () => {
     const sessionA: FakeSession = {
       id: "sess_a",
