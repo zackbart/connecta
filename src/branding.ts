@@ -195,6 +195,17 @@ export function themeCss(theme: ResolvedTheme): string {
   return declarations.length ? `:root{${declarations.join(";")}}` : "";
 }
 
+/**
+ * The resolved scheme as the root element's attribute. The dark palette keys
+ * off `html[data-scheme]`, so "system" leaves it off and the media query
+ * decides.
+ */
+function schemeAttribute(theme: ResolvedTheme): string {
+  return theme.colorScheme === "system"
+    ? ""
+    : ` data-scheme="${theme.colorScheme}"`;
+}
+
 /** Text or attribute value, escaped for any position in an HTML document. */
 export function escapeHtml(value: string): string {
   return value

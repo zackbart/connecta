@@ -193,7 +193,7 @@ function endpointOf(value: unknown): DescribedEndpoint | undefined {
 }
 
 const AUTH_MODES = new Set(["none", "headers", "credential", "oauth", "request"]);
-const SOURCE_KINDS = new Set(["remote-mcp", "api", "builtin", "custom"]);
+const SOURCE_KINDS = new Set(["remote-mcp", "api", "custom"]);
 
 /** Re-validate a connector's own description: a custom describe() may return anything. */
 function copyAuth(value: unknown): ConnectorAuthDescription | undefined {
