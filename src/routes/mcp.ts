@@ -10,7 +10,7 @@ import {
 } from "@modelcontextprotocol/server";
 import { Duration, Effect, Exit, Option, Result, Scope } from "effect";
 import type { ActivityActor, ActivityRequestContext } from "../activity.js";
-import { notFoundResponse } from "../branding.js";
+import type { McpClientContext } from "../mcp-client-context.js";
 import { registerExecuteTool } from "../execute.js";
 import {
   ExecutorAdmissionError,
@@ -22,7 +22,6 @@ import type { RegistryView } from "../registry.js";
 import { intersectAccess } from "../connector-access.js";
 import type { ConnectorAccess } from "../connector-access.js";
 import { CONNECTA_INSTRUCTIONS } from "../skills.js";
-import { msg } from "../errors.js";
 import { failureRecord, logFailure } from "../operator-record.js";
 import { redactAgentOutput, sentSecretsForRequest } from "../sent-secrets.js";
 import { detach } from "../runtime/run.js";
@@ -45,6 +44,9 @@ import {
  * option must be finite.
  */
 const SDK_BODY_BOUND = { maxRequestBodySize: Number.MAX_SAFE_INTEGER };
+
+// Identity, not a status/header a custom auth response could imitate.
+const deadlineResponses = new WeakSet<Response>();
 
 async function isModernListen(request: Request, signal: AbortSignal): Promise<boolean> {
   const reader = request.clone().body?.getReader();
@@ -123,11 +125,23 @@ function withMcpCors(
     "Access-Control-Expose-Headers",
     "WWW-Authenticate, Retry-After, mcp-session-id, mcp-protocol-version, Connecta-Error-Code, Connecta-Recovery",
   );
-  return new Response(response.body, {
+  const wrapped = new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
     headers,
   });
+  if (deadlineResponses.has(response)) deadlineResponses.add(wrapped);
+  return wrapped;
+}
+
+/** Transport refusals occur before the RPC body is decoded, so its id is unknown. */
+function mcpRefusal(status: number, code: number, message: string): Response {
+  const response = Response.json({ jsonrpc: "2.0", id: null, error: { code, message } }, {
+    status,
+    headers: { "Cache-Control": "no-store" },
+  });
+  if (status === 504 && code === -33003) deadlineResponses.add(response);
+  return response;
 }
 
 function requestAdmissionFailure(error: ExecutorAdmissionError): Response {
@@ -157,7 +171,7 @@ function requestAdmissionFailure(error: ExecutorAdmissionError): Response {
         // MCP 2026-07-28 basic#error-codes forbids new allocations in the
         // legacy -32000..-32019 range. Use application codes outside the
         // JSON-RPC reserved range, avoiding retired protocol meanings.
-        code: overloaded ? -31001 : -31002,
+        code: overloaded ? -33001 : -33002,
         message: overloaded
           ? "Server capacity is exhausted. Retry later."
           : "Server is shutting down.",
@@ -250,6 +264,12 @@ function scopedToBody(
       if (Exit.isFailure(exit)) {
         yield* Scope.close(scope, exit);
         return yield* exit;
+      }
+      // A deadline can finish with a fresh error response after aborting the
+      // request. Release request resources now, without cancelling that body.
+      if (signal.aborted && deadlineResponses.has(exit.value)) {
+        yield* Scope.close(scope, Exit.void);
+        return exit.value;
       }
       // Every finalizer in the scope is synchronous, so the close has run by
       // the time detach returns: the permit is back, and handed to the next
@@ -354,9 +374,10 @@ function serveMcp(
     const server = new McpServer(opts.config.serverInfo, {
       // A request-local server cannot publish catalog changes. Set this before
       // tool registration, whose SDK default otherwise advertises listChanged.
-      capabilities: { tools: { listChanged: false } },
+      capabilities: { tools: { listChanged: false }, extensions: {} },
       instructions: CONNECTA_INSTRUCTIONS,
       cacheHints: {
+        "server/discover": { ttlMs: 3_600_000, cacheScope: "private" },
         "tools/list": {
           ttlMs: 3_600_000,
           cacheScope: "private",
@@ -379,7 +400,9 @@ function serveMcp(
           logger: opts.config.logger,
         }
       : undefined;
+    const client: McpClientContext = {};
     registerMetaTools(server, registry, {
+      client,
       baseUrl,
       requestScope,
       canManageAuth,
@@ -398,6 +421,7 @@ function serveMcp(
         : {}),
     });
     registerExecuteTool(server, registry, {
+      client,
       baseUrl,
       requestScope,
       executor: opts.executor,
@@ -505,10 +529,7 @@ export function createMcpRoute(
     if (path !== "/mcp" && !path.startsWith("/mcp/")) return null;
     const origin = request.headers.get("Origin");
     if (origin === null || allowsOrigin(origin)) return null;
-    return withMcpCors(new Response('{"error":"origin not allowed"}', {
-      status: 403,
-      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-    }), request, null);
+    return withMcpCors(mcpRefusal(403, -33005, "MCP access is forbidden."), request, null);
   };
   let lastAdmissionWarningAt = 0;
   let suppressedAdmissionWarnings = 0;
@@ -579,7 +600,7 @@ export function createMcpRoute(
           : yield* classify.pipe(Effect.timeoutOption(Duration.millis(maxDurationMs)));
         if (Option.isNone(prepared)) {
           localAbort.abort(new Error("MCP request lifetime exceeded."));
-          return cors(new Response("MCP request lifetime exceeded.", { status: 504 }));
+          return cors(mcpRefusal(504, -33003, "MCP request lifetime exceeded."));
         }
         listen = prepared.value;
       }
@@ -604,7 +625,7 @@ export function createMcpRoute(
         : maxDurationMs === undefined ? undefined : maxDurationMs - (Date.now() - startedAt);
       if (remainingMs !== undefined && remainingMs <= 0) {
         admission.success?.release();
-        return cors(new Response("MCP request lifetime exceeded.", { status: 504 }));
+        return cors(mcpRefusal(504, -33003, "MCP request lifetime exceeded."));
       }
       if (remainingMs !== undefined) {
         deadlineTimer = setTimeout(() => {
@@ -673,10 +694,7 @@ export function createMcpRoute(
         });
         if (!pool || denialReason !== undefined) {
           logFailure(opts.config.logger, "MCP pool request denied", failureRecord({ reason: denialReason ?? "pool_not_declared" }));
-          // The server's own 404, so a browser sees the page every unserved
-          // path shows and an MCP client (which never asks for text/html)
-          // still reads a plain "Not Found".
-          return cors(notFoundResponse(request, opts.config));
+          return cors(mcpRefusal(404, -33004, "MCP endpoint not found."));
         }
         access = intersectAccess(authz, pool.access);
         trust = pool.trust;
@@ -698,13 +716,8 @@ export function createMcpRoute(
             ...(poolName !== undefined ? { pool: poolName } : {}),
           },
         });
-      } catch (error) {
-        return cors(
-          new Response(JSON.stringify({ error: msg(error) }), {
-            status: 403,
-            headers: { "Content-Type": "application/json" },
-          }),
-        );
+      } catch {
+        return cors(mcpRefusal(403, -33005, "MCP access is forbidden."));
       }
       if (new URL(request.url).searchParams.has("toolkit")) {
         return cors(toolkitRetired(opts.config.logger));
@@ -729,7 +742,7 @@ export function createMcpRoute(
       if (Option.isNone(bounded)) localAbort.abort(new Error("MCP request lifetime exceeded."));
       return Option.isSome(bounded)
         ? bounded.value
-        : cors(new Response("MCP request lifetime exceeded.", { status: 504 }));
+        : cors(mcpRefusal(504, -33003, "MCP request lifetime exceeded."));
     }), localAbort.signal);
   }
   return { handle: routeMcp, rejectOrigin };

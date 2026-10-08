@@ -11,7 +11,7 @@ import { machineAuth } from "./helpers/machine-auth.js";
 import { operatorUi } from "../src/ui.js";
 import { SECRETS, VAULT_KEY, secretBearingDeployment } from "./fixtures/describe-config.js";
 import { listen } from "../src/node.js";
-import { customExecutor, createConnecta } from "../src/index.js";
+import { customExecutor, createConnecta, META_TOOL_NAMES } from "../src/index.js";
 import type { Executor, InboundAuth, KVStorage } from "../src/types.js";
 
 // `connecta doctor` is a claim an operator reads and believes. It used to
@@ -103,7 +103,7 @@ describe("connecta doctor's executor line", () => {
     const line = await doctorAgainst(new CustomExecutor());
     expect(line).toBe(
       "Connecta doctor passed: 1 connector(s), CustomExecutor " +
-        "executed, prescribed seven-tool surface.",
+        "executed, prescribed 7-tool surface, MCP 2026-07-28.",
     );
     expect(line).not.toContain("QuickJS");
   });
@@ -112,7 +112,7 @@ describe("connecta doctor's executor line", () => {
     const line = await doctorAgainst({ execute: async () => ({ result: 42 }) });
     expect(line).toBe(
       "Connecta doctor passed: 1 connector(s), code executed, " +
-        "prescribed seven-tool surface.",
+        "prescribed 7-tool surface, MCP 2026-07-28.",
     );
   });
 
@@ -123,7 +123,7 @@ describe("connecta doctor's executor line", () => {
     };
     const line = await doctorAgainst(hostile);
     expect(line).toMatch(
-      /^Connecta doctor passed: 1 connector\(s\), 31mEvil Sandbox x+ executed, prescribed seven-tool surface\.$/,
+      /^Connecta doctor passed: 1 connector\(s\), 31mEvil Sandbox x+ executed, prescribed 7-tool surface, MCP 2026-07-28\.$/,
     );
     expect(line).not.toContain("\u001b");
     expect(line).not.toContain("x".repeat(41));
@@ -155,6 +155,42 @@ describe("connecta doctor's executor line", () => {
       },
     );
     expect(line).toContain("Connecta doctor passed");
+  });
+
+  it("auto-negotiates a legacy server and reports its negotiated revision", async () => {
+    const methods: string[] = [];
+    const server = createServer(async (request, response) => {
+      response.setHeader("Content-Type", "application/json");
+      if (request.url === "/health") {
+        response.end(JSON.stringify({ status: "ok", connectors: 0 }));
+        return;
+      }
+      if (request.method === "GET") { response.writeHead(405); response.end(); return; }
+      if (request.method === "DELETE") { response.end("{}"); return; }
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks).toString());
+      methods.push(body.method);
+      if (body.method === "notifications/initialized") { response.writeHead(202); response.end(); return; }
+      let result;
+      if (body.method === "server/discover") {
+        response.writeHead(404);
+        response.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, error: { code: -32601, message: "Method not found" } }));
+        return;
+      }
+      if (body.method === "initialize") result = { protocolVersion: "2025-11-25", capabilities: { tools: {} }, serverInfo: { name: "legacy", version: "1" } };
+      if (body.method === "tools/list") result = { tools: META_TOOL_NAMES.map(name => ({ name, inputSchema: { type: "object" } })) };
+      if (body.method === "tools/call") result = { content: [{ type: "text", text: '{"result":42}' }] };
+      response.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }));
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    teardown.push(() => new Promise<void>(done => server.close(() => done())));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP address");
+    const { stdout } = await run(process.execPath, [CLI, "doctor", "--url", `http://127.0.0.1:${address.port}`], { env: { ...process.env, CONNECTA_TOKEN: TOKEN } });
+    expect(stdout).toContain("prescribed 7-tool surface, MCP 2025-11-25.");
+    expect(methods).toEqual(["server/discover", "initialize", "notifications/initialized", "tools/list", "tools/call"]);
   });
 
   it("refuses a partial Cloudflare Access credential pair", async () => {

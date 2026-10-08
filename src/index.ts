@@ -500,3 +500,5 @@ export type {
   CatalogDriftActivityEvent,
   ToolCallActivityEvent,
 } from "./activity.js";
+
+export { META_TOOL_NAMES } from "./meta-tool-names.js";

@@ -28,7 +28,7 @@ import type {
   ActivityStore,
   ToolCallActivityEvent,
 } from "../activity.js";
-import { InvalidActivityCursorError } from "../activity.js";
+import { activityClientFact, InvalidActivityCursorError } from "../activity.js";
 import { assertKnownOptions, ConfigError, keys, optionsOf } from "../config-schema.js";
 import { agentFrictionForCode } from "../activity-friction.js";
 import type { KVStorage } from "../types.js";
@@ -406,7 +406,7 @@ export async function copyIntoSql(
 /**
  * The activity table, with keyset paging on `(occurred_at_ms, id)`. Its shape
  * is the 0.28 Worker example's `tool_call_activity`; a table created before
- * `actor_namespace`, `friction`, or `approval` existed gets them added.
+ * `actor_namespace`, `friction`, `approval`, or client identity existed gets them added.
  */
 const ACTIVITY_SCHEMA: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS tool_call_activity (
@@ -427,6 +427,8 @@ const ACTIVITY_SCHEMA: readonly string[] = [
     approval        TEXT,
     server_name     TEXT NOT NULL,
     server_version  TEXT NOT NULL,
+    client_name     TEXT,
+    client_version  TEXT,
     deployment_id   TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS tool_call_activity_recent
@@ -434,7 +436,7 @@ const ACTIVITY_SCHEMA: readonly string[] = [
 ];
 
 /** Columns added after the table first shipped, in the order they arrived. */
-const LATER_ACTIVITY_COLUMNS = ["actor_namespace", "friction", "approval"];
+const LATER_ACTIVITY_COLUMNS = ["actor_namespace", "friction", "approval", "client_name", "client_version"];
 
 interface ActivityRow {
   id: string;
@@ -455,6 +457,8 @@ interface ActivityRow {
   approval: ToolCallActivityEvent["approval"] | null;
   server_name: string;
   server_version: string;
+  client_name: string | null;
+  client_version: string | null;
   deployment_id: string | null;
 }
 
@@ -462,7 +466,7 @@ interface ActivityRow {
 const ACTIVITY_TEXT_COLUMNS = [
   "id", "request_id", "actor_kind", "actor_id", "actor_namespace",
   "connector_id", "tool_name", "source", "outcome", "error_code", "friction",
-  "approval", "server_name", "server_version", "deployment_id",
+  "approval", "server_name", "server_version", "client_name", "client_version", "deployment_id",
 ] as const;
 
 const ACTIVITY_SELECT = `SELECT occurred_at_ms, duration_ms, attempts,
@@ -513,6 +517,8 @@ function rowToEvent(row: ActivityRow): ToolCallActivityEvent {
     ...(row.approval ? { approval: row.approval } : {}),
     serverName: row.server_name,
     serverVersion: row.server_version,
+    ...(row.client_name !== null ? { clientName: row.client_name } : {}),
+    ...(row.client_version !== null ? { clientVersion: row.client_version } : {}),
     ...(row.deployment_id ? { deploymentId: row.deployment_id } : {}),
   };
 }
@@ -604,8 +610,8 @@ export function sqlActivityStore(
             id, occurred_at_ms, request_id, actor_kind, actor_id,
             actor_namespace, connector_id, tool_name, source, outcome,
             duration_ms, attempts, error_code, friction, approval,
-            server_name, server_version, deployment_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            server_name, server_version, client_name, client_version, deployment_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           event.id,
           occurredAtMs,
           event.requestId,
@@ -626,6 +632,8 @@ export function sqlActivityStore(
           event.approval ?? null,
           event.serverName,
           event.serverVersion,
+          activityClientFact(event.clientName) ?? null,
+          activityClientFact(event.clientVersion) ?? null,
           event.deploymentId ?? null,
         ),
         sql(

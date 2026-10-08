@@ -203,6 +203,17 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     expect((await activity.list!({ limit: 10 })).events).toEqual([bare, full]);
   });
 
+  it("INV-6: persists only bounded typed client identity facts in activity", async () => {
+    const activity = (await open()).activity();
+    const full = event(1, { clientName: "doctor", clientVersion: "1.0.0" });
+    await activity.record(full);
+    expect((await activity.list!({ limit: 1 })).events).toEqual([full]);
+    await activity.record(event(2, { clientName: "💻".repeat(200), clientVersion: 42 as unknown as string }));
+    const stored = (await activity.list!({ limit: 1 })).events[0]!;
+    expect(new TextEncoder().encode(stored.clientName).byteLength).toBeLessThanOrEqual(128);
+    expect(stored).not.toHaveProperty("clientVersion");
+  });
+
   it("round-trips activity text holding NUL (U+0000)", async () => {
     // Tool names come from downstream servers and actor ids from identity
     // providers; neither is promised free of NUL.
@@ -285,7 +296,7 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
       : store.record(event(index, { actor: { kind: "clerk", namespace: `ns-${index}` } }))));
     const columns = (await db.rows<{ name: string }>("PRAGMA table_info(tool_call_activity)"))
       .map((column) => column.name);
-    for (const name of ["actor_namespace", "friction", "approval"]) {
+    for (const name of ["actor_namespace", "friction", "approval", "client_name", "client_version"]) {
       expect(columns.filter((column) => column === name)).toHaveLength(1);
     }
     expect((await db.activity().list!({ limit: 10 })).events.map((entry) => entry.actor.namespace))

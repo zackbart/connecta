@@ -21,6 +21,14 @@ import type { CatalogDriftCounts, Logger } from "./types.js";
  */
 const MAX_ACTIVITY_NAME_BYTES = 128;
 
+/** Runtime-checked client identity fact, including the truncation marker. */
+export function activityClientFact(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return new TextEncoder().encode(value).byteLength <= MAX_ACTIVITY_NAME_BYTES
+    ? value
+    : boundedEchoText(value, MAX_ACTIVITY_NAME_BYTES - 3);
+}
+
 /** Two names and the dot between them. */
 const MAX_ACTIVITY_ADDRESS_BYTES = MAX_ACTIVITY_NAME_BYTES * 2 + 1;
 
@@ -115,6 +123,9 @@ export interface ToolCallActivityEvent {
   approval?: ActivityApproval;
   serverName: string;
   serverVersion: string;
+  /** Self-declared client identity, bounded to 128 UTF-8 bytes per field. */
+  clientName?: string;
+  clientVersion?: string;
   deploymentId?: string;
 }
 
@@ -217,6 +228,7 @@ export interface ActivityRequestContext {
   actor: ActivityActor;
   requestId: string;
   serverInfo: { name: string; version: string };
+  clientInfo?: { name: string; version: string };
   deploymentId?: string;
   defer?: (promise: Promise<unknown>) => void;
   logger: Logger;
@@ -256,6 +268,9 @@ export function recordToolActivity(
   // `ConnectorCallError`'s code, and a downstream's own code is not recorded.
   const errorCode = classificationCode(input.errorCode);
   const friction = input.friction ?? agentFrictionForCode(errorCode);
+  // Re-check types at the record boundary; never spread the client envelope.
+  const clientName = activityClientFact(context.clientInfo?.name);
+  const clientVersion = activityClientFact(context.clientInfo?.version);
   const event: ToolCallActivityEvent = {
     schemaVersion: 1,
     id: crypto.randomUUID(),
@@ -273,6 +288,8 @@ export function recordToolActivity(
     ...(friction ? { friction } : {}),
     serverName: context.serverInfo.name,
     serverVersion: context.serverInfo.version,
+    ...(clientName !== undefined ? { clientName } : {}),
+    ...(clientVersion !== undefined ? { clientVersion } : {}),
     ...(context.deploymentId
       ? { deploymentId: context.deploymentId }
       : {}),

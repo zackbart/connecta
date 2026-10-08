@@ -11,6 +11,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { META_TOOL_NAMES } from "./meta-tool-names.mjs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -139,7 +140,10 @@ async function doctorFetch(url, init = {}) {
     const response = await fetch(url, {
       ...init,
       redirect: "manual",
-      signal: AbortSignal.timeout(DOCTOR_TIMEOUT_MS),
+      signal: AbortSignal.any([
+        AbortSignal.timeout(DOCTOR_TIMEOUT_MS),
+        ...(init.signal ? [init.signal] : []),
+      ]),
     });
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       await response.body?.cancel().catch(() => {});
@@ -250,63 +254,45 @@ async function doctor() {
           .slice(0, 40)
           .trim()
       : "";
-  let requestId = 0;
-  const mcp = async (method, params) =>
-    jsonResponse(
-      await doctorFetch(`${baseUrl}/mcp`, {
-      method: "POST",
-      headers: {
-        ...authHeaders,
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-          id: ++requestId,
-          method,
-          params,
-      }),
-      }),
-    );
-
-  const listed = await mcp("tools/list", {});
-  if (listed.error) {
-    throw new Error(`tools/list failed: ${JSON.stringify(listed.error)}`);
-  }
-  const actual = listed.result?.tools
-    ?.map((tool) => tool.name)
-    .sort();
-  const expected = [
-    "authorize_connector",
-    "call_destructive_tool",
-    "call_tool",
-    "execute_code",
-    "get_result",
-    "search_tools",
-    "skills",
-  ];
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-    throw new Error(
-      `Unexpected MCP surface. Expected ${expected.join(", ")}; received ` +
-      `${Array.isArray(actual) ? actual.join(", ") : "no tool list"}.`,
-    );
-  }
-
-  const executed = await mcp("tools/call", {
-    name: "execute_code",
-    arguments: { code: "async () => 42" },
+  const { Client, StreamableHTTPClientTransport } = await import("@modelcontextprotocol/client");
+  const { version } = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
+  const client = new Client(
+    { name: "connecta-doctor", version },
+    { versionNegotiation: { mode: "auto", probe: { timeoutMs: DOCTOR_TIMEOUT_MS } } },
+  );
+  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`), {
+    requestInit: { headers: authHeaders },
+    fetch: doctorFetch,
   });
-  if (executed.error) {
-    throw new Error(`execute_code failed: ${JSON.stringify(executed.error)}`);
-  }
-  const executionResult =
-    executed.result?.structuredContent ??
-    JSON.parse(executed.result?.content?.[0]?.text ?? "null");
-  if (executed.result?.isError || executionResult?.result !== 42) {
-    throw new Error(
-      `${executorName ? `${executorName} execution` : "execute_code"} check ` +
-        `failed: ${JSON.stringify(executed.result)}`,
-    );
+  let negotiatedVersion;
+  try {
+    await client.connect(transport);
+    negotiatedVersion = client.getNegotiatedProtocolVersion();
+    const listed = await client.listTools({}, { timeout: DOCTOR_TIMEOUT_MS });
+    const actual = listed.tools.map((tool) => tool.name).sort();
+    const expected = [...META_TOOL_NAMES].sort();
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      throw new Error(
+        `Unexpected MCP surface. Expected ${expected.join(", ")}; received ` +
+        `${Array.isArray(actual) ? actual.join(", ") : "no tool list"}.`,
+      );
+    }
+
+    const executed = await client.callTool({
+      name: "execute_code",
+      arguments: { code: "async () => 42" },
+    }, undefined, { timeout: DOCTOR_TIMEOUT_MS });
+    const executionResult =
+      executed.structuredContent ??
+      JSON.parse(executed.content?.[0]?.text ?? "null");
+    if (executed.isError || executionResult?.result !== 42) {
+      throw new Error(
+        `${executorName ? `${executorName} execution` : "execute_code"} check ` +
+          `failed: ${JSON.stringify(executed)}`,
+      );
+    }
+  } finally {
+    await client.close();
   }
 
   // Drift is reported, never failed on. A downstream that grew a tool nobody
@@ -334,7 +320,7 @@ async function doctor() {
   console.log(
     `Connecta doctor passed: ${health.connectors} connector(s), ` +
       `${executorName ? `${executorName} executed` : "code executed"}, ` +
-      "prescribed seven-tool surface" +
+      `prescribed ${META_TOOL_NAMES.length}-tool surface, MCP ${negotiatedVersion}` +
       (drifted.length > 0
         ? `, catalog drift on ${drifted.length} connector(s).`
         : "."),

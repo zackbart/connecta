@@ -123,6 +123,48 @@ An admitted non-preflight `/mcp` request then takes five steps in
    404 — then register the seven meta-tools on a fresh `McpServer`
    (`test/server.test.ts`, `test/code-first-surface.test.ts`).
 
+### Modern request metadata and transport refusals
+
+The SDK lifts each modern request's client declarations from `_meta` into
+`ctx.mcpReq.envelope`. Meta-tool handlers bind `clientCapabilities` and
+`clientInfo` to their request-local context before dispatch. These declarations
+never select an identity, grant, connector view, or pool. Direct and program
+activity records retain only the self-declared `clientName` and `clientVersion`,
+each checked as a string and bounded to 128 UTF-8 bytes at the record boundary
+and SQL sink. Capabilities and other client metadata never enter activity.
+Legacy requests without an envelope leave client facts absent.
+
+`server/discover` advertises the served extension map, currently empty, with
+private one-hour cache hints. It includes the configured identity, icons, title,
+and website in `io.modelcontextprotocol/serverInfo` result metadata. The Skills
+meta-tool alone does not implement the official Skills extension. Both direct
+call tools declare `address` as `x-mcp-header: "Address"`, which the SDK mirrors
+and validates as `Mcp-Param-Address` on modern requests.
+
+Connecta's own admission, deadline, pool, and access refusals use JSON-RPC error
+bodies with `Cache-Control: no-store` and the HTTP statuses below. Their RPC id
+is `null` because the route refuses before decoding the RPC body. An aborted
+request releases its resources without cancelling a newly created deadline
+error body. Auth adapters continue to own their challenges and refusal bodies.
+
+| Refusal | HTTP status | Application code | Previous code |
+| --- | --- | --- | --- |
+| Request capacity exhausted | 503 | `-33001` | `-31001` |
+| Server shutting down | 503 | `-33002` | `-31002` |
+| Request lifetime exceeded | 504 | `-33003` | none |
+| Pool missing or refused | 404 | `-33004` | none |
+| Origin or admitted access forbidden | 403 | `-33005` | none |
+
+These allocations are outside JSON-RPC's reserved `-32768..-32000` range and
+MCP's `-32020..-32099` range. The prior admission codes were also outside those
+ranges; the migration changes the application allocation, not a reserved-code
+violation. See the [2026-07-28 error-code policy](https://modelcontextprotocol.io/specification/2026-07-28/basic#error-codes).
+
+`connecta doctor` uses SDK auto negotiation, checks the exported
+`META_TOOL_NAMES` set, and reports the negotiated revision. It closes its client
+on success or failure and refuses credential-bearing redirects during discovery,
+legacy initialization, and tool calls.
+
 ## Layers below the meta-tools
 
 The meta-tool handlers are thin. The work sits in six modules the registry owns

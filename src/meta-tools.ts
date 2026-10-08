@@ -1,4 +1,5 @@
-import type { McpServer } from "@modelcontextprotocol/server";
+import { bindMcpClient, type McpClientContext } from "./mcp-client-context.js";
+import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type {
   ActivityCallSource,
@@ -614,6 +615,7 @@ function metaToolsForRequest(
     /** Maximum simultaneous connector discovery operations. Default 4. */
     discoveryConcurrency?: number | undefined;
     activity?: ActivityRequestContext | undefined;
+    client?: McpClientContext | undefined;
     canManageAuth?: ((id: string) => boolean) | undefined;
     credentialHandoffUrl?: string | undefined;
     oauthConnectUrl?: ((id: string, force?: boolean) => Promise<string>) | undefined;
@@ -1153,7 +1155,7 @@ const READ_ONLY_LOCAL = {
 } as const;
 
 const CALL_INPUT_SCHEMA = {
-  address: z.string(),
+  address: z.string().meta({ "x-mcp-header": "Address" }),
   args: z.record(z.string(), z.unknown()).optional(),
   resultMode: z.enum(["mcp", "value"]).optional(),
   timeoutMs: z.number().int().positive().optional(),
@@ -1227,6 +1229,7 @@ export function registerMetaTools(
     probeTimeoutMs?: number | undefined;
     discoveryConcurrency?: number | undefined;
     activity?: ActivityRequestContext | undefined;
+    client?: McpClientContext | undefined;
     canManageAuth?: ((id: string) => boolean) | undefined;
     credentialHandoffUrl?: string | undefined;
     oauthConnectUrl?: ((id: string, force?: boolean) => Promise<string>) | undefined;
@@ -1242,6 +1245,7 @@ export function registerMetaTools(
     probeTimeoutMs: ctx.probeTimeoutMs,
     discoveryConcurrency: ctx.discoveryConcurrency,
     activity: ctx.activity,
+    client: ctx.client,
     canManageAuth: ctx.canManageAuth,
     credentialHandoffUrl: ctx.credentialHandoffUrl,
     oauthConnectUrl: ctx.oauthConnectUrl,
@@ -1250,6 +1254,10 @@ export function registerMetaTools(
     defer: ctx.defer,
   });
 
+  const bindRequest = (request: ServerContext): void => {
+    if (ctx.client) bindMcpClient(request, ctx.client, ctx.activity);
+  };
+
   server.registerTool(
     "skills",
     {
@@ -1257,7 +1265,10 @@ export function registerMetaTools(
       inputSchema: SKILLS_INPUT,
       annotations: READ_ONLY_LOCAL,
     },
-    async (args) => mt.skills(args as SkillArgs),
+    async (args, request) => {
+      bindRequest(request);
+      return mt.skills(args as SkillArgs);
+    },
   );
 
   server.registerTool(
@@ -1271,7 +1282,10 @@ export function registerMetaTools(
       inputSchema: SEARCH_INPUT,
       annotations: READ_ONLY_REMOTE,
     },
-    async (args) => mt.searchTools(args as SearchArgs),
+    async (args, request) => {
+      bindRequest(request);
+      return mt.searchTools(args as SearchArgs);
+    },
   );
 
   server.registerTool(
@@ -1283,7 +1297,10 @@ export function registerMetaTools(
       // anything else is refused and routed to call_destructive_tool.
       annotations: READ_ONLY_REMOTE,
     },
-    async (args) => mt.callTool(args as CallArgs),
+    async (args, request) => {
+      bindRequest(request);
+      return mt.callTool(args as CallArgs);
+    },
   );
 
   server.registerTool(
@@ -1301,7 +1318,8 @@ export function registerMetaTools(
         openWorldHint: true,
       },
     },
-    async (args) => {
+    async (args, request) => {
+      bindRequest(request);
       // `reason` is the host's to display and connecta's to keep out of the
       // downstream call, so this destructuring is the whole of its handling:
       // nothing below reads it. Dropping it is also what makes an empty or
@@ -1325,7 +1343,10 @@ export function registerMetaTools(
         openWorldHint: true,
       },
     },
-    async (args) => mt.authorizeConnector(args as AuthorizeArgs),
+    async (args, request) => {
+      bindRequest(request);
+      return mt.authorizeConnector(args as AuthorizeArgs);
+    },
   );
 
   server.registerTool(
@@ -1335,6 +1356,9 @@ export function registerMetaTools(
       inputSchema: GET_RESULT_INPUT,
       annotations: READ_ONLY_LOCAL,
     },
-    async (args) => mt.getResult(args as GetResultArgs),
+    async (args, request) => {
+      bindRequest(request);
+      return mt.getResult(args as GetResultArgs);
+    },
   );
 }

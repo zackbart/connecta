@@ -10,7 +10,7 @@
       "id": "json-rpc",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic",
-      "notes": "SDK serves both eras; pool/origin refusals and timeout responses still need JSON-RPC bodies.",
+      "notes": "SDK serves both eras. Connecta-owned admission, origin/access, pool, and deadline refusals use JSON-RPC error bodies with application codes outside reserved ranges; auth-adapter-owned refusal bodies remain adapter-defined pending Phase 3 inbound auth.",
       "tests": [
         {
           "file": "test/server.test.ts",
@@ -19,6 +19,14 @@
         {
           "file": "test/server-route-contracts.test.ts",
           "title": "pins application error codes for overload and shutdown"
+        },
+        {
+          "file": "test/mcp-core.test.ts",
+          "title": "INV-4: returns a payload-free JSON-RPC forbidden error for invalid admitted permissions"
+        },
+        {
+          "file": "test/request-admission.test.ts",
+          "title": "ends stalled authorization before a response and returns its permit"
         }
       ],
       "issue": "https://github.com/zackbart/connecta/issues/707"
@@ -40,21 +48,32 @@
         {
           "file": "test/remote-mcp.test.ts",
           "title": "bypasses discovery for a known-legacy downstream"
+        },
+        {
+          "file": "test/doctor-cli.node.test.ts",
+          "title": "auto-negotiates a legacy server and reports its negotiated revision"
         }
       ]
     },
     {
       "id": "request-metadata",
-      "status": "partial",
+      "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic#_meta",
-      "notes": "SDK validates modern protocol fields; connecta does not yet thread clientCapabilities/clientInfo into tool context or activity.",
+      "notes": "SDK envelope clientCapabilities and clientInfo are bound to request-local meta-tool context. Direct and program activity retain only runtime-checked client name/version facts, bounded to 128 UTF-8 bytes; capabilities and other metadata never enter activity.",
       "tests": [
         {
           "file": "test/server.test.ts",
           "title": "refuses a 2026-07-28 request that drops MCP-Protocol-Version with HeaderMismatch"
+        },
+        {
+          "file": "test/mcp-core.test.ts",
+          "title": "INV-4: binds SDK envelope capabilities and identity as request context only"
+        },
+        {
+          "file": "test/mcp-core.test.ts",
+          "title": "INV-6 INV-7: threads per-request client identity into direct and program activity without retaining capabilities"
         }
-      ],
-      "issue": "https://github.com/zackbart/connecta/issues/707"
+      ]
     },
     {
       "id": "stateless-requests",
@@ -74,35 +93,41 @@
     },
     {
       "id": "icons",
-      "status": "partial",
+      "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic#icons",
-      "notes": "Legacy initialize preserves title, websiteUrl and icons; modern server/discover icon metadata has no connecta-specific regression.",
-      "issue": "https://github.com/zackbart/connecta/issues/707",
+      "notes": "Legacy initialize and modern server/discover preserve configured title, websiteUrl, and icons.",
       "tests": [
         {
           "file": "test/server.test.ts",
           "title": "legacy initialize passes through title, websiteUrl, and icons (MCP icons spec)"
+        },
+        {
+          "file": "test/mcp-core.test.ts",
+          "title": "advertises served extensions, identity, and private discovery cache hints"
         }
       ]
     },
     {
       "id": "server-discovery",
-      "status": "partial",
+      "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/discover",
-      "notes": "server/discover works through the SDK; extension advertisement and discovery cache hints remain planned.",
+      "notes": "server/discover advertises supported modern revisions, tools capability, the served extension map (currently empty), configured server identity, and private one-hour cache hints.",
       "tests": [
         {
           "file": "test/server.test.ts",
           "title": "serves a modern client without initialize and emits private tools/list cache hints"
+        },
+        {
+          "file": "test/mcp-core.test.ts",
+          "title": "advertises served extensions, identity, and private discovery cache hints"
         }
-      ],
-      "issue": "https://github.com/zackbart/connecta/issues/707"
+      ]
     },
     {
       "id": "streamable-http",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http",
-      "notes": "Fetch-native HTTP supports both eras; custom refusal bodies and parameter/header declarations need alignment.",
+      "notes": "Fetch-native HTTP supports both eras, private cache hints, address x-mcp-header declarations, and JSON-RPC route refusals. Auth-adapter-owned refusal bodies remain adapter-defined pending Phase 3 inbound auth.",
       "tests": [
         {
           "file": "test/server.test.ts",
@@ -111,6 +136,10 @@
         {
           "file": "test/server-route-contracts.test.ts",
           "title": "permits MCP preflight without auth and mirrors valid Mcp-Param header names only"
+        },
+        {
+          "file": "test/mcp-core.test.ts",
+          "title": "declares address headers on both direct-call tools and exports exactly the served tool names"
         }
       ],
       "issue": "https://github.com/zackbart/connecta/issues/707"
@@ -236,7 +265,7 @@
       "id": "tools-call",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
-      "notes": "Direct and program calls work; meta-tool outputSchema and x-mcp-header address declarations remain planned.",
+      "notes": "Direct and program calls work. Both direct-call tools declare the address parameter header; meta-tool outputSchema remains planned.",
       "tests": [
         {
           "file": "test/meta-tools-call.test.ts",
@@ -245,6 +274,10 @@
         {
           "file": "test/remote-mcp.test.ts",
           "title": "callTool proxies args and returns the content array as-is"
+        },
+        {
+          "file": "test/mcp-core.test.ts",
+          "title": "declares address headers on both direct-call tools and exports exactly the served tool names"
         }
       ],
       "issue": "https://github.com/zackbart/connecta/issues/707"
@@ -365,7 +398,7 @@
       "id": "caching",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching",
-      "notes": "Private upward tools/list hints and TTL catalog storage exist; SDK ResponseCacheStore and downstream ttlMs/cacheScope adoption are planned.",
+      "notes": "Private upward tools/list and server/discover hints and TTL catalog storage exist; SDK ResponseCacheStore and downstream ttlMs/cacheScope adoption are planned.",
       "tests": [
         {
           "file": "test/server.test.ts",
@@ -374,6 +407,10 @@
         {
           "file": "test/registry.test.ts",
           "title": "caches within the TTL and refetches after it expires"
+        },
+        {
+          "file": "test/mcp-core.test.ts",
+          "title": "advertises served extensions, identity, and private discovery cache hints"
         }
       ],
       "issue": "https://github.com/zackbart/connecta/issues/707"

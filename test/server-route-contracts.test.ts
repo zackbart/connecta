@@ -5,7 +5,7 @@ import { machineAuth } from "./helpers/machine-auth.js";
 import { api } from "../src/connectors/api.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
-import { createTestConnecta, silentLogger } from "./helpers.js";
+import { createTestConnecta, required, silentLogger } from "./helpers.js";
 import { mcpRpc } from "./fixtures/http.js";
 
 const BASE = "https://connecta.test";
@@ -95,19 +95,19 @@ describe("server route contracts", () => {
         expectGlobalSecurityHeaders(response);
         expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
         expect(response.headers.get("Cache-Control")).toBe("no-store");
-        expect(await response.text()).toBe('{"error":"origin not allowed"}');
+        expect(await response.text()).toBe('{"jsonrpc":"2.0","id":null,"error":{"code":-33005,"message":"MCP access is forbidden."}}');
       }
     }
     const http = await connecta.fetch(new Request("http://127.0.0.1/mcp", { headers: { Origin: "https://attacker.example" } }));
     expect(http.status).toBe(403);
-    expect(await http.text()).toBe('{"error":"origin not allowed"}');
+    expect(await http.text()).toBe('{"jsonrpc":"2.0","id":null,"error":{"code":-33005,"message":"MCP access is forbidden."}}');
     expect(authorize).not.toHaveBeenCalled();
     const health = await (await connecta.fetch(new Request(`${BASE}/health`))).json() as any;
     expect(health.admission.requests.totals.admitted).toBe(0);
     await connecta.close();
     const closed = await connecta.fetch(new Request(`${BASE}/mcp`, { headers: { Origin: "null" } }));
     expect(closed.status).toBe(403);
-    expect(await closed.text()).toBe('{"error":"origin not allowed"}');
+    expect(await closed.text()).toBe('{"jsonrpc":"2.0","id":null,"error":{"code":-33005,"message":"MCP access is forbidden."}}');
   });
 
   it("admits only exact configured origins, defaults to public and loopback, and permits originless clients", async () => {
@@ -169,12 +169,11 @@ describe("server route contracts", () => {
       expectMcpCors(response);
       const shape = await responseShape(response);
       expect(shape.status).toBe(404);
-      expect(shape.body).toBe("Not Found");
+      expect(JSON.parse(shape.body)).toEqual({ jsonrpc: "2.0", id: null, error: { code: -33004, message: "MCP endpoint not found." } });
       baseline ??= shape;
       expect(shape).toEqual(baseline);
     }
-    // A browser that carries the credential sees the page every unserved path
-    // shows, still identical across declared, refusing, and missing pools.
+    // MCP pool refusals stay JSON-RPC even when the client asks for HTML.
     const pages = new Set<string>();
     for (const suffix of ["support", "broken", "missing"]) {
       const response = await connecta.fetch(new Request(`${BASE}/mcp/${suffix}`, {
@@ -185,9 +184,9 @@ describe("server route contracts", () => {
       pages.add(await response.text());
     }
     const unserved = await connecta.fetch(new Request(`${BASE}/nowhere`, { headers: { Accept: "text/html" } }));
-    pages.add(await unserved.text());
     expect(pages.size).toBe(1);
-    expect([...pages][0]).toContain("<h1>Page not found</h1>");
+    expect(JSON.parse(required([...pages][0]))).toMatchObject({ error: { code: -33004 } });
+    expect(await unserved.text()).toContain("<h1>Page not found</h1>");
     await connecta.close();
   });
 
@@ -221,12 +220,12 @@ describe("server route contracts", () => {
     const held = await connecta.fetch(new Request(`${BASE}/mcp`));
     const overloaded = await connecta.fetch(new Request(`${BASE}/mcp`));
     expect(overloaded.status).toBe(503);
-    expect(await overloaded.text()).toBe('{"jsonrpc":"2.0","id":null,"error":{"code":-31001,"message":"Server capacity is exhausted. Retry later.","data":{"code":"server_overloaded","retryable":true,"retryAfterMs":1000}}}');
+    expect(await overloaded.text()).toBe('{"jsonrpc":"2.0","id":null,"error":{"code":-33001,"message":"Server capacity is exhausted. Retry later.","data":{"code":"server_overloaded","retryable":true,"retryAfterMs":1000}}}');
     await held.body?.cancel();
     await connecta.close();
     const closed = await connecta.fetch(new Request(`${BASE}/mcp`));
     expect(closed.status).toBe(503);
-    expect(await closed.text()).toBe('{"jsonrpc":"2.0","id":null,"error":{"code":-31002,"message":"Server is shutting down.","data":{"code":"server_shutting_down","retryable":false}}}');
+    expect(await closed.text()).toBe('{"jsonrpc":"2.0","id":null,"error":{"code":-33002,"message":"Server is shutting down.","data":{"code":"server_shutting_down","retryable":false}}}');
   });
 
   it("keeps every built-in and the final 404 inside the security wrapper", async () => {
