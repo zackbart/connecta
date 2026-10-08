@@ -20,6 +20,16 @@ import type { FixPromptKind } from "./fix-prompts.js";
  * browser.
  */
 
+const REGISTRATION_LABELS: Record<NonNullable<UiConnector["registrationPath"]>, string> = {
+  cimd: "Client metadata document (CIMD)",
+  dcr: "Dynamic registration (DCR)",
+  static: "Pre-registered client",
+};
+
+export function registrationPathLabel(path: NonNullable<UiConnector["registrationPath"]>): string {
+  return REGISTRATION_LABELS[path];
+}
+
 export type OperatorPage =
   | "overview"
   | "tools"

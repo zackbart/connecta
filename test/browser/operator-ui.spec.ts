@@ -605,6 +605,43 @@ test("disconnects and reconnects downstream OAuth", async ({ page }) => {
   ]);
 });
 
+for (const [path, label] of [
+  ["static", "Pre-registered client"], ["cimd", "Client metadata document (CIMD)"], ["dcr", "Dynamic registration (DCR)"],
+] as const) {
+  test(`renders the ${path} OAuth client label in the ledger and Auth tab`, async ({ page }) => {
+    await page.route("**/ui/api/config", async route => {
+      const response = await route.fetch(); const facts = await response.json();
+      facts.live.connectors.find((c: { id: string }) => c.id === "oauth").auth = { registrationPath: path };
+      return route.fulfill({ json: facts });
+    });
+    await page.route("**/ui/connectors/oauth", async route => {
+      const response = await route.fetch(); const connector = await response.json();
+      return route.fulfill({ json: { ...connector, registrationPath: path } });
+    });
+    await openAuthenticated(page);
+    await page.getByRole("link", { name: "Connectors", exact: true }).click();
+    await expect(page.getByRole("row").filter({ has: page.getByRole("link", { name: "CRM", exact: true }) })).toContainText(label);
+    const row = await openRow(page, "CRM", "auth");
+    await expect(row.getByText(`OAuth client: ${label}`, { exact: true })).toBeVisible();
+  });
+}
+
+test("reports a typed revocation failure after local disconnect in the Auth tab", async ({ page }) => {
+  await page.route("**/ui/oauth/oauth", route => {
+    if (route.request().method() !== "DELETE") return route.fallback();
+    oauthConnected = false;
+    return route.fulfill({ json: { ok: true, code: "oauth_revocation_failed", message: "raw-provider-secret" } });
+  });
+  await openAuthenticated(page);
+  const row = await openRow(page, "CRM", "auth");
+  await row.getByRole("button", { name: "Disconnect CRM" }).click();
+  await row.getByRole("group", { name: /Disconnect CRM\?/ }).getByRole("button", { name: "Disconnect", exact: true }).click();
+  await expect(row.locator("#oauthNotice-oauth")).toHaveText("Disconnected locally. Provider revocation could not be confirmed. Revoke the grant in the provider's console.");
+  await expect(row.getByText("OAuth client:", { exact: false })).toHaveCount(0);
+  await expect(row.getByRole("button", { name: "Connect CRM", exact: true })).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("raw-provider-secret");
+});
+
 test("reloads retired OAuth state when disconnect reports an error", async ({ page }) => {
   await page.route("**/ui/oauth/oauth", route => {
     if (route.request().method() !== "DELETE") return route.fallback();

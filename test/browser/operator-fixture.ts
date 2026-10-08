@@ -14,6 +14,7 @@ export async function fixtureContract(data: UiData): Promise<OperatorUiContract>
     schemaVersion: 1, config,
     live: { activity: data.activityEnabled ? "available" : "unconfigured", connectors: data.connectors.map(c => ({
       id: c.id, status: c.status === "loading" ? "ok" : c.status,
+      ...(c.registrationPath ? { auth: { registrationPath: c.registrationPath } } : {}),
       ...(c.problem ? { problem: c.problem } : {}), catalogAgeMs: null, lastCall: null,
       tools: c.tools.map(t => ({ ...t, classification: t.safety === "runs_in_programs" ? "read" : "write" })),
     })) },

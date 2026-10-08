@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import type { OperatorConnectorOverlay } from "../contract.js";
-import { connectorStatusLabel, connectorStatusTone, formatDate, type OperatorState } from "../view.js";
+import { connectorStatusLabel, connectorStatusTone, formatDate, registrationPathLabel, type OperatorState } from "../view.js";
 import { Badge, StateBlock } from "./parts.js";
 import { Button, DataTable, Input } from "./primitives.js";
 import { ContractState } from "./overview.js";
@@ -20,6 +20,7 @@ const columns: ColumnDef<Row>[] = [
   { accessorKey: "title", header: "Connector", cell: ({ row }) => <div className="table-name"><ConnectorLink id={row.original.id} name={row.original.title} /><span className="meta mono">{row.original.id}</span></div> },
   { accessorKey: "status", header: "Status", cell: ({ row }) => <Badge tone={connectorStatusTone(row.original.status)}>{connectorStatusLabel(row.original.status, row.original.problem)}</Badge> },
   { accessorKey: "authScope", header: "Auth", cell: ({ row }) => <ConnectorLink id={row.original.id} tab="auth" name={`${row.original.authScope} auth`} /> },
+  { id: "registrationPath", header: "OAuth client", cell: ({ row }) => row.original.auth ? registrationPathLabel(row.original.auth.registrationPath) : <span className="meta">Not selected</span> },
   { accessorKey: "source", header: "Source" },
   { id: "tools", header: "Tools", cell: ({ row }) => row.original.tools.length },
   { id: "lastCall", header: "Last call", cell: ({ row }) => row.original.lastCall ? <span title={row.original.lastCall.outcome}>{formatDate(row.original.lastCall.at)}</span> : <span className="meta">Not observed</span> },

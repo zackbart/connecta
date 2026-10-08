@@ -1,6 +1,6 @@
 import { useLocation } from "@tanstack/react-router";
 import type { UiConnector } from "../model.js";
-import { confirmCopy, connectorLoadFailureCopy, driftCounts, driftState, driftSummary, formatDate, permissionLabel, problemCopy, problemTone, safeHttpHref, type OperatorState } from "../view.js";
+import { confirmCopy, connectorLoadFailureCopy, driftCounts, driftState, driftSummary, formatDate, permissionLabel, registrationPathLabel, problemCopy, problemTone, safeHttpHref, type OperatorState } from "../view.js";
 import { productName } from "./config.js";
 import { CredentialCard } from "./credentials.js";
 import { ConfirmBar, FixPrompt, FixPromptButton, FixPromptPreview, NoticeLine, StateBlock, focusableId } from "./parts.js";
@@ -152,7 +152,7 @@ export function ConnectorAuth({ connector, state }: { connector: UiConnector; st
   const local = state.connectorFailures[id];
   const problem = !local && connector.status !== "loading" ? problemCopy(connector.problem) : null;
   return <div className="collection" data-connector={id}>
-    {connector.registrationPath ? <p className="meta">OAuth client: {{ cimd: "Client metadata document (CIMD)", dcr: "Dynamic registration (DCR)", static: "Pre-registered client" }[connector.registrationPath]}</p> : null}
+    {connector.registrationPath ? <p className="meta">OAuth client: {registrationPathLabel(connector.registrationPath)}</p> : null}
     {connector.status === "loading" ? <StateBlock>Loading authentication details…</StateBlock> : null}
     {problem && connector.problem ? <p className={problemTone(connector.problem) === "warn" ? "msg warn" : "msg"} data-problem={connector.problem}>{problem}</p> : null}
     {local ? <p className="msg warn" data-load-failure={local}>{connectorLoadFailureCopy(local, productName)}</p> : null}
