@@ -1,6 +1,7 @@
 // Web-API only, like the rest of the core: a manifest comparison that ran on
 // Node but not on Workers would leave half the deployments unable to tell a
 // stale allowlist from a current one.
+import { classifyTool } from "./tool-safety.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import type {
   CatalogDriftCounts,
@@ -401,13 +402,20 @@ function servedTool(
   catalog: VettedCatalog,
   fact: ToolDef,
   lapsed: ReadonlySet<string>,
+  override?: "read" | "write",
 ): ToolDef {
   const definition = structuredClone(fact);
+  const reviewed = catalog.tools.get(fact.name);
+  definition.classification = classifyTool(fact, override, reviewed ? {
+    verdict: PUBLIC_VERDICTS[reviewed.verdict], stale: lapsed.has(fact.name),
+  } : undefined);
   const downstream = definition.annotations ?? {};
   const record = catalog.tools.get(definition.name);
   const annotate = (annotations: ToolAnnotations): ToolDef => ({
     ...definition,
-    annotations,
+    annotations: override === undefined ? annotations : { ...annotations,
+      readOnlyHint: override === "read", destructiveHint: override === "write",
+    },
   });
   if (record?.verdict === "destructive") {
     return annotate({ ...downstream, readOnlyHint: false, destructiveHint: true });
@@ -421,7 +429,7 @@ function servedTool(
   }
   if (record?.verdict === "read-only") {
     if (downstream.destructiveHint === true || downstream.readOnlyHint === false) {
-      return definition;
+      return annotate(downstream);
     }
     return annotate({
       ...downstream,
@@ -590,6 +598,7 @@ export async function classifyCatalog(
   facts: readonly ToolDef[],
   logger: Logger,
   memo?: WeakMap<readonly ToolDef[], ReadonlySet<string>>,
+  overrides?: Readonly<Record<string, "read" | "write">>,
 ): Promise<ToolDef[]> {
   let lapsed = memo?.get(facts);
   if (!lapsed) {
@@ -606,7 +615,7 @@ export async function classifyCatalog(
     }
   }
   const unverified = lapsed;
-  return facts.map((fact) => servedTool(catalog, fact, unverified));
+  return facts.map((fact) => servedTool(catalog, fact, unverified, overrides?.[fact.name]));
 }
 
 /**

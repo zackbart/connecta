@@ -117,7 +117,7 @@ or hands out, and a change usually belongs in exactly one of them:
 | `src/invocation.ts` | One tool call: argument validation, call admission, one-attempt timeout, provider retry hints, result unwrapping, size capping, and the activity record. |
 | `src/catalog.ts` | Ranking, description summarizing, and the compact and TypeScript schema renderers discovery shows. |
 | `src/result-shapes.ts` | Bounded runtime-only inference and merging for output shapes learned from successful read-only calls whose providers declared none. |
-| `src/exempt-writes.ts` | The writes a program may send, which config exempted from asking: the write budget's default, what a dispatched write's outcome says about whether it landed, and the tracking that lets one outlive the program without hiding an unknown outcome. Every other program write is refused before it reaches this. |
+| `src/program-writes.ts` | Trusted-pool write accounting: write budgets, dispatch draining, and known or unknown outcomes. |
 
 `src/meta-tools.ts` and `src/execute.ts` are two front doors onto the same two
 services, `CatalogService` and `InvocationService`. That is the point: a
@@ -357,7 +357,7 @@ passed through as given: a class-instance tool keeps its prototype `handler()`
 and its private fields. Configuration is operator-authored and trusted, as in
 #698; the walk refuses mistakes by path and never echoes a value, and is not
 a sandbox for hostile objects. Records keyed by deployment
-names (pools, `execute.approval`) have no prototype, so `__proto__` is a name.
+names (pools, `classification`) have no prototype, so `__proto__` is a name.
 Built-in factories (`api()`, `remoteMcp()`, every provider, and each module
 factory) walk their own options the same way, against shapes the compiler
 checks against their option types (`optionsOf<T>()`). Provider definitions
@@ -367,7 +367,7 @@ name onto `describe().source.provider`. `classify` is accepted by the remote
 shape and validated by the shared reviewed-classification validator. Custom
 connectors remain opaque, including their `classification` field, which the
 registry validates. Checks
-that need the connector set — pool members, `execute.approval` addresses, a
+that need the connector set — pool members, exact classification overrides, a
 connector's own `maxResultBytes` — throw from `src/index.ts` and the registry
 under the same policy. `storage` stays opaque, but its check requires `list`
 and `compareAndSet` as well as `get`, `set`, and `delete`, so a leftover
@@ -501,9 +501,8 @@ any other connector; the slot binds its optional refresh runner once, after the
 registry and executor exist, and a deployment
 without it has no connector, no guide, and no artifact storage traffic. Its
 writes are not read-only anywhere — `call_tool` refuses them and discovery
-lists them approval-required — but they skip approval inside programs through
-the connector's own `approval: "never"`, which `execute.approval` switches off,
-because every write is a new immutable version anyone can roll back. The
+lists them approval-required — and programs may call them only in trusted pools. Approval belongs to the
+host. Artifact versions remain immutable and reversible. The
 module needs `publicUrl`: the links it hands out are shared, so they must never
 come from a request's `Host`.
 
@@ -517,7 +516,7 @@ owner admitted to `set_refresh` is stored with the program. Every run rechecks
 that identity's current `connectorAccess` and pool grant, including continued
 access to `artifacts.set_refresh`, then intersects those grants with shared
 connectors. Revoking either grant stops later runs.
-Approval exemptions are off, so a refresh writes nothing. A refused call fails the
+Refresh programs always use read-only trust, so a refresh writes nothing. A refused call fails the
 entire refresh even if its program catches the error. The head CAS claims one
 run per artifact; the data commit checks the claim ID and program version in
 the same CAS. The claim deadline starts before executor admission and aborts

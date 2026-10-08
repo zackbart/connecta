@@ -433,7 +433,7 @@ describe("operator sinks", () => {
         registry,
         new CatalogService(registry, BASE),
         target.activity,
-      ).invoke(address, args, { source: "call_tool", allowDestructive: true });
+      ).invoke(address, args, { source: "call_destructive_tool" });
       const status = await registry.statusFor("svc", BASE);
 
       const operator = [
@@ -798,7 +798,7 @@ describe("ctx.oauth.fetch", () => {
       registry,
       new CatalogService(registry, BASE),
       target.activity,
-    ).invoke("svc.read", {}, { source: "call_tool", allowDestructive: true });
+    ).invoke("svc.read", {}, { source: "call_destructive_tool" });
     // The agent reads the body as the handler decoded it.
     expect(outcome.ok).toBe(true);
     expect(rendered(outcome.ok ? outcome.value : undefined)).toContain(planted("oauth-body"));

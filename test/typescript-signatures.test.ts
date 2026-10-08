@@ -401,11 +401,15 @@ describe("TypeScript signatures across the discovery surfaces", () => {
 
   it("labels an observed output inside the signature and beside it, and a declaration wins", async () => {
     const registry = makeRegistry([corpusConnector()]);
-    registry.observeOutputShape("corpus", LIST_ISSUES, {
+    const published = await registry.getTools("corpus", BASE);
+    const publishedIssues = required(published.find((tool) => tool.name === LIST_ISSUES.name));
+    const publishedAccounts = required(published.find((tool) => tool.name === LIST_ACCOUNTS.name));
+    expect(publishedIssues.classification).toBe("read");
+    registry.observeOutputShape("corpus", publishedIssues, {
       issues: [{ id: "ENG-1", title: "First" }],
       cursor: "next",
     });
-    registry.observeOutputShape("corpus", LIST_ACCOUNTS, { unrelated: true });
+    registry.observeOutputShape("corpus", publishedAccounts, { unrelated: true });
     const page = await new CatalogService(registry, BASE).search({
       connector: "corpus",
       includeSchemas: "typescript",

@@ -92,7 +92,7 @@ import {
   stashLedgerKeys,
 } from "./storage/keys.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs } from "./timeout.js";
-import { isExplicitlyReadOnly } from "./tool-safety.js";
+import { classifyTool } from "./tool-safety.js";
 
 const ID_RE = /^[a-z0-9_-]+$/;
 const DEFAULT_TTL_SECONDS = CONFIG_DEFAULTS.discovery.catalogTtlSeconds;
@@ -251,8 +251,8 @@ const catalogDecoder = new TextDecoder();
 
 /**
  * Freeze a parsed catalog all the way down, iteratively, since a schema may
- * nest deeper than the host stack. Only reviewed connectors' facts are frozen:
- * the registry owns them, classification copies what it serves, and a digest
+ * nest deeper than the host stack. The registry owns these raw facts,
+ * classification copies what it serves, and a digest
  * verified against them stays true while they are cached.
  */
 function frozenFacts(tools: ToolDef[]): ToolDef[] {
@@ -300,6 +300,7 @@ function warnOnFailure<R>(
 }
 
 export interface RegistryOptions {
+  classification?: Readonly<Record<string, Readonly<Record<string, "read" | "write">>>> | undefined;
   storage: KVStorage;
   logger: Logger;
   credentialVault?: CredentialVault | undefined;
@@ -570,6 +571,7 @@ export class Registry implements RegistryView {
   private readonly persistToolCatalog: boolean;
   /** Result-size guard cap threaded to the meta-tools. */
   readonly maxResultBytes: number;
+  private readonly classification: Readonly<Record<string, Readonly<Record<string, "read" | "write">>>>;
   private readonly configuredConnectors: Connector[];
   private readonly personalRegistries = new Map<string, Registry>();
   private readonly oauthPartition = {};
@@ -648,6 +650,20 @@ export class Registry implements RegistryView {
         );
       }
     }
+    this.classification = Object.assign(Object.create(null),
+      Object.fromEntries(Object.entries(opts.classification ?? {}).map(([id, tools]) =>
+        [id, Object.freeze(Object.assign(Object.create(null), tools))])));
+    Object.freeze(this.classification);
+    for (const [id, overrides] of Object.entries(this.classification)) {
+      for (const [name, verdict] of Object.entries(overrides)) {
+        if (!name || (verdict !== "read" && verdict !== "write")) {
+          throw new Error(`ConnectaConfig.classification.${id}.${name}: expected "read" or "write"`);
+        }
+      }
+      const connector = this.connectors.get(id);
+      if (!connector) throw new Error(`ConnectaConfig.classification: unknown connector "${id}"`);
+      if (connector.staticTools) this.validateClassification(id, connector.staticTools, overrides);
+    }
     this.assertResultCaps(opts.maxResultBytes);
     if (opts.constructionChecks !== false) {
       this.checkConventions(opts.logger);
@@ -687,6 +703,8 @@ export class Registry implements RegistryView {
       ),
       {
         ...this.opts,
+        classification: Object.fromEntries(Object.entries(this.classification).filter(([id]) =>
+          this.connectors.get(id)?.authScope === "personal")),
         storage: namespaced(this.opts.storage, scopes.principal(principalKey)),
         credentialOwner: principalKey,
         constructionChecks: false,
@@ -1470,7 +1488,10 @@ export class Registry implements RegistryView {
     const generation = this.catalogGeneration(id);
     // What the connector reports, decorators included. Both cache layers keep
     // exactly this listing, and loadTools classifies it on every read.
-    const tools = await connector.listTools(ctx);
+    const tools = (await connector.listTools(ctx)).map(tool => {
+      const { classification: _ignored, ...fact } = tool;
+      return fact;
+    });
     const accepted = this.acceptToolNames(tools);
     this.observeDroppedToolNames(connector, tools.length - accepted.length);
     const review = catalogReviewOf(connector);
@@ -1505,12 +1526,10 @@ export class Registry implements RegistryView {
       this.opts.logger.warn(`[connecta] ${message}`);
       throw new Error(message);
     }
-    // A reviewed connector's facts are the registry's own copy of what was
+    // Every connector's facts are the registry's own copy of what was
     // serialized, the same bytes the persisted layer holds: nothing the
     // connector or a decorator does to its listing afterwards reaches them.
-    const facts = review
-      ? frozenFacts(JSON.parse(catalogDecoder.decode(snapshot.serializedBytes)) as ToolDef[])
-      : tools;
+    const facts = frozenFacts(JSON.parse(catalogDecoder.decode(snapshot.serializedBytes)) as ToolDef[]);
     // The caller that began this refresh may still use its bounded result,
     // but credential changes, abandoned flights, and deferred cancellation
     // prevent publication. Recheck after snapshotting, which is asynchronous.
@@ -1862,10 +1881,34 @@ export class Registry implements RegistryView {
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
     const accepted = this.acceptToolNames(tools);
+    const overrides = this.classification[id];
+    this.validateClassification(id, accepted, overrides);
     const review = catalogReviewOf(connector);
     return review
-      ? classifyCatalog(review, id, accepted, this.opts.logger, this.verifiedFacts)
-      : accepted;
+      ? classifyCatalog(review, id, accepted, this.opts.logger, this.verifiedFacts, overrides)
+      : accepted.map(tool => this.publishUnreviewedTool(id, tool));
+  }
+
+  private publishUnreviewedTool(id: string, tool: ToolDef): ToolDef {
+    const override = this.classification[id]?.[tool.name];
+    return { ...structuredClone(tool), classification: classifyTool(tool, override),
+      ...(override !== undefined ? { annotations: { ...structuredClone(tool.annotations),
+        readOnlyHint: override === "read", destructiveHint: override === "write",
+      } } : {}),
+    };
+  }
+
+  /** Construction-only view for the secret-free static config description. */
+  describeStaticTools(id: string): ToolDef[] | undefined {
+    const tools = this.connectors.get(id)?.staticTools;
+    return tools?.map(tool => this.publishUnreviewedTool(id, tool));
+  }
+
+  private validateClassification(id: string, tools: readonly ToolDef[], overrides?: Readonly<Record<string, "read" | "write">>): void {
+    const known = new Set(tools.map(tool => tool.name));
+    for (const name of Object.keys(overrides ?? {})) {
+      if (!known.has(name)) throw new Error(`ConnectaConfig.classification: connector "${id}" has no tool "${name}"`);
+    }
   }
 
   /** Cached downstream listing with in-memory + persisted serializable layers. */
@@ -2027,7 +2070,6 @@ export class Registry implements RegistryView {
   ): Promise<ToolDef[]> {
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
-    if (connector.staticTools) return connector.staticTools;
     if (!requestScope) {
       return this.loadTools(
         id,
@@ -2223,7 +2265,7 @@ class ScopedRegistryView implements RegistryView {
     // indistinguishable from one the connector never had.
     const visible = tools.filter((tool) =>
       granted.has(tool.name) &&
-      (!guarded?.has(tool.name) || isExplicitlyReadOnly(tool)));
+      (!guarded?.has(tool.name) || tool.classification === "read"));
     if (visible.length < granted.size) {
       const present = new Set(tools.map((tool) => tool.name));
       for (const name of granted) {

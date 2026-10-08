@@ -38,12 +38,6 @@ import {
   DEFAULT_PROBE_TIMEOUT_MS,
   normalizeTimeoutMs,
 } from "./timeout.js";
-import {
-  isApprovalExempt,
-  isExplicitlyReadOnly,
-  NO_EXEMPTIONS,
-  type ApprovalPolicy,
-} from "./tool-safety.js";
 import type {
   Connector,
   JsonSchema,
@@ -272,8 +266,8 @@ function toolsForSafety(
   if (safety === "all") return tools;
   return tools.filter((tool) =>
     safety === "readOnly"
-      ? isExplicitlyReadOnly(tool)
-      : !isExplicitlyReadOnly(tool),
+      ? tool.classification === "read"
+      : tool.classification !== "read",
   );
 }
 
@@ -325,7 +319,7 @@ function guideRequiredReasons(
   if (!connectorGuide(connector)) return undefined;
   const reasons: GuideRequiredReason[] = [];
   if (connectorGuideRequired(connector)) reasons.push("connector_required");
-  if (!isExplicitlyReadOnly(tool)) reasons.push("approval_required");
+  if (tool.classification !== "read") reasons.push("approval_required");
   if (schemaTruncated) reasons.push("schema_truncated");
   return reasons.length > 0 ? reasons : undefined;
 }
@@ -469,7 +463,6 @@ export class CatalogService {
   private readonly searchRoute: SearchRoute;
   private readonly readOptions: CatalogReadOptions | undefined;
   private readonly requestSignal: AbortSignal | undefined;
-  private readonly approval: ApprovalPolicy;
   // The request-scoped catalog cache: one shared read per connector asked
   // about, started by the first asker and joined by every later one. A
   // success stays for the rest of the request, so a search and the call after
@@ -499,14 +492,8 @@ export class CatalogService {
       defer?: DeferredWork | undefined;
       /** The request's cancellation; discovery probes end with it. */
       requestSignal?: AbortSignal | undefined;
-      /**
-       * Config approval exemptions (#566), so a row can say a write runs in
-       * programs unasked. Display only: nothing here changes a safety filter.
-       */
-      approval?: ApprovalPolicy | undefined;
     } = {},
   ) {
-    this.approval = options.approval ?? NO_EXEMPTIONS;
     this.requestScope = options.requestScope ?? {};
     this.probeTimeoutMs =
       normalizeTimeoutMs(options.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
@@ -966,16 +953,7 @@ export class CatalogService {
           ...(match.tool.annotations
             ? { annotations: match.tool.annotations }
             : {}),
-          // Config lets a program call this write without asking (#566).
-          // A marker, not a class: the tool stays approval-required.
-          ...(isApprovalExempt(
-            this.approval,
-            match.connector,
-            match.tool.name,
-            match.tool,
-          )
-            ? { approval: "exempt" as const }
-            : {}),
+          classification: match.tool.classification,
           ...(requiredReasons
             ? {
                 guideRequired: true as const,
@@ -1338,14 +1316,7 @@ export class CatalogService {
           : {}),
         ...(output.source ? { outputSchemaSource: output.source } : {}),
         ...(tool.annotations ? { annotations: tool.annotations } : {}),
-        ...(isApprovalExempt(
-          this.approval,
-          addressResolution.connector,
-          tool.name,
-          tool,
-        )
-          ? { approval: "exempt" as const }
-          : {}),
+        classification: tool.classification,
       };
     });
   }

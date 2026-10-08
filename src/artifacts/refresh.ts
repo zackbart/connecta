@@ -32,7 +32,7 @@ export function freshnessOf(head: ArtifactHeadRecord, now = Date.now()) {
 
 export interface ArtifactRefreshRuntime {
   /** The core's bounded read-only program runner; no sandbox code enters this subpath. */
-  execute(program: string, owner: NonNullable<ArtifactHeadRecord["refresh"]>["owner"], signal: AbortSignal): Promise<{ content: { type: string; text?: string }[]; isError?: boolean }>;
+  execute(program: string, owner: NonNullable<ArtifactHeadRecord["refresh"]>["owner"], signal: AbortSignal, options?: { waitForAdmission?: boolean }): Promise<{ content: { type: string; text?: string }[]; isError?: boolean }>;
   claimMs: number;
   /** UI branding shared by the viewer and every render check. */
   branding?: import("../types.js").ConnectaBranding;
@@ -97,9 +97,10 @@ export class ArtifactRefreshService {
     this.#renderFor = renderFor;
   }
 
-  async run(id: string, trigger: ArtifactRunRecord["trigger"]): Promise<RefreshOutcome> {
+  async run(id: string, trigger: ArtifactRunRecord["trigger"], options: { signal?: AbortSignal | undefined; waitForAdmission?: boolean | undefined } = {}): Promise<RefreshOutcome> {
     const runtime = this.#runtime;
     if (!runtime) throw new Error("Create a Connecta deployment with this artifacts() module before refreshing.");
+    if (options.signal?.aborted) throw new Error("Refresh request was cancelled.");
     const runId = crypto.randomUUID();
     const claimed = await this.#ops.claimRefresh(id, runId, trigger, trigger === "schedule", runtime.claimMs);
     if (!claimed.ok) {
@@ -109,17 +110,19 @@ export class ArtifactRefreshService {
     const run = claimed.run;
     const deadline = Date.parse(claimed.head.refresh!.claim!.until);
     const controller = new AbortController();
+    const signal = options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
     const timeout = setTimeout(() => controller.abort(), Math.max(0, deadline - Date.now()));
     let outcome: RefreshOutcome;
+    let execution: ReturnType<ArtifactRefreshRuntime["execute"]> | undefined;
     try {
       await this.#ops.store.putRun(id, run);
-      if (Date.now() >= deadline) throw new Error("Refresh claim expired before execution.");
+      if (signal.aborted || Date.now() >= deadline) throw new Error("Refresh claim expired before execution.");
       if (!claimed.program) throw new Error("Refresh program body is unavailable.");
-      const program = await beforeDeadline(this.#ops.store.body(claimed.program), controller.signal);
+      const program = await beforeDeadline(this.#ops.store.body(claimed.program), signal);
       if (program === null) throw new Error("Refresh program body is unavailable.");
-      const response = responsePayload(await beforeDeadline(
-        runtime.execute(program, claimed.head.refresh!.owner, controller.signal), controller.signal,
-      ));
+      execution = runtime.execute(program, claimed.head.refresh!.owner, signal,
+        { waitForAdmission: options.waitForAdmission !== false });
+      const response = responsePayload(await beforeDeadline(execution, signal));
       const logs = capture(response.logs, this.#ops.context.limits.runLogBytes);
       if (logs) run.logs = logs;
       if (response.error) {
@@ -136,7 +139,8 @@ export class ArtifactRefreshService {
       } else {
         const document = claimed.head.refresh!.document;
         const baseVersion = claimed.head.documents[document]?.version ?? 0;
-        const render = this.#renderFor?.(controller.signal);
+        if (signal.aborted) throw new Error("Refresh request was cancelled before publication.");
+        const render = this.#renderFor?.(signal);
         const saved = await this.#ops.setDocuments({
           id,
           documents: { [document]: { baseVersion, value: response.result } },
@@ -168,6 +172,9 @@ export class ArtifactRefreshService {
     } finally {
       clearTimeout(timeout);
       controller.abort();
+      // Request-bound runs use the core runner, which settles cancellation
+      // after releasing its lease and draining calls. Join that cleanup.
+      if (options.signal && execution) await execution.catch(() => {});
     }
     run.finishedAt = new Date().toISOString();
     await this.#ops.finishRefresh(id, run);

@@ -1,3 +1,4 @@
+import type { PoolTrust } from "./tool-safety.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { Cause, Deferred, Duration, Effect, Exit, type Scope } from "effect";
@@ -26,23 +27,18 @@ import {
 import { boundedEchoText, msg, type CallErrorDetails } from "./errors.js";
 import {
   DEFAULT_MAX_WRITES,
-  ExemptWrites,
+  ProgramWrites,
   writeStateOf,
-} from "./exempt-writes.js";
+} from "./program-writes.js";
 import {
   InvocationFailure,
   InvocationService,
   timed,
-  type WriteGateDecision,
+  type WriteDecision,
 } from "./invocation.js";
 import { normalizeProgramSource } from "./program-source.js";
 import type { RegistryView } from "./registry.js";
 import { underAnySignal } from "./timeout.js";
-import {
-  isApprovalExempt,
-  NO_EXEMPTIONS,
-  type ApprovalPolicy,
-} from "./tool-safety.js";
 import { fromSignal, runEdge } from "./runtime/run.js";
 import { closeScope } from "./runtime/connector-scope.js";
 import {
@@ -447,12 +443,12 @@ interface SandboxLimits {
   emitCollector?: EmitCollector | undefined;
   /** Runtime-owned tail for stale catalog refreshes. */
   defer?: DeferredWork | undefined;
-  /** Config approval exemptions (#566). */
-  approval?: ApprovalPolicy | undefined;
-  /** Exempt writes one program may send. Default 10. */
+  /** Pool trust, resolved by the host route. Default read-only. */
+  trust?: PoolTrust | undefined;
+  /** Trusted-pool writes one program may send. Default 10. */
   maxWrites?: number | undefined;
-  /** The program's exempt writes, for close and drain. */
-  exemptWrites?: ExemptWrites | undefined;
+  /** The program's trusted-pool writes, for close and drain. */
+  programWrites?: ProgramWrites | undefined;
   /** Cancel calls still resolving or waiting for admission at run end. */
   dispatchController?: AbortController | undefined;
 }
@@ -505,7 +501,6 @@ function sandboxProvider(
     concurrency: limits.discoveryConcurrency,
     probeTimeoutMs: limits.probeTimeoutMs,
     defer: limits.defer,
-    approval: limits.approval,
   });
   const invocation = new InvocationService(registry, catalog, activity);
   const maxHostCalls = Math.max(
@@ -517,7 +512,7 @@ function sandboxProvider(
     Math.trunc(limits.hostCallTimeoutMs ?? EXECUTE_HOST_CALL_TIMEOUT_MS),
   );
   const failureSecret = guestFailureSecret();
-  const { signal, diagnostics, exemptWrites } = limits;
+  const { signal, diagnostics, programWrites } = limits;
   const hostCalls = { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
   let budgetFailure: HostCallBudgetExceeded | undefined;
   // A rejected bridge promise is catchable in both sandboxes. End the host
@@ -531,27 +526,19 @@ function sandboxProvider(
   // Stay pending until the lease has disposed the sandbox, then settle the
   // abandoned host RPC waits without retaining request resources forever.
   stopped.catch(() => {});
-  const approval = limits.approval ?? NO_EXEMPTIONS;
   const maxWrites = resolveBudget(limits.maxWrites, DEFAULT_MAX_WRITES);
   let writes = 0;
-  /**
-   * The write gate covers exactly the config-exempt calls (#566): each spends
-   * the write budget and is tracked until it settles (`ExemptWrites`), so the
-   * play can wait for it rather than abort it. Every other write keeps E4's
-   * refusal, ahead of validation, so the host's prompt on
-   * call_destructive_tool stays the only approval there is.
-   */
+  /** Budget and account for writes admitted by the pool trust decision. */
   const invocationContext = (sending: { settle?: SettleWrite }) => ({
     source: "execute_code" as const,
     timeoutMs: hostCallTimeoutMs,
     ...(signal !== undefined ? { requestSignal: signal } : {}),
     ...(limits.dispatchController ? { dispatchSignal: limits.dispatchController.signal } : {}),
     unwrapResult: true,
-    gates: (target: ResolvedCatalogTool) =>
-      isApprovalExempt(approval, target.connector, target.toolName, target.definition),
-    writeGate: (target: ResolvedCatalogTool): Effect.Effect<WriteGateDecision> =>
-      Effect.sync((): WriteGateDecision => {
-        if (exemptWrites?.isClosed) {
+    trust: limits.trust,
+    beforeWrite: (target: ResolvedCatalogTool): Effect.Effect<WriteDecision> =>
+      Effect.sync((): WriteDecision => {
+        if (programWrites?.isClosed) {
           return {
             kind: "refuse",
             error: {
@@ -573,7 +560,7 @@ function sandboxProvider(
           };
         }
         writes++;
-        if (exemptWrites) sending.settle = exemptWrites.begin();
+        if (programWrites) sending.settle = programWrites.begin();
         return { kind: "dispatch" };
       }),
   });
@@ -583,7 +570,7 @@ function sandboxProvider(
   // cancelled attempt in activity like any other outcome.
   const call = (address: unknown, args: unknown) =>
     Effect.gen(function* () {
-      // An exempt write settles here — unknown if the call never returned an
+      // A trusted-pool write settles here — unknown if the call never returned an
       // outcome.
       const sending: { settle?: SettleWrite } = {};
       const outcome = yield* invocation.pipeline(
@@ -737,7 +724,7 @@ function sandboxProvider(
           if (counted && ++hostCalls.attempted > maxHostCalls) {
             hostCalls.failed++;
             budgetFailure = new HostCallBudgetExceeded(hostCalls, maxHostCalls);
-            exemptWrites?.close();
+            programWrites?.close();
             limits.dispatchController?.abort();
             limits.onHostCallBudgetExceeded?.(budgetFailure);
             return stopped;
@@ -893,9 +880,10 @@ function runSignal(
 function leased(
   executor: AdmittingExecutor,
   signal: AbortSignal,
+  wait = true,
 ): Effect.Effect<ExecutorLease, unknown, Scope.Scope> {
   return Effect.acquireRelease(
-    awaitExecutor(() => executor.acquire({ signal }), signal, {
+    awaitExecutor(() => executor.acquire({ signal, wait }), signal, {
       late: (lease) => lease.release(),
     }),
     (lease) => Effect.sync(() => lease.release()),
@@ -904,6 +892,8 @@ function leased(
 
 /** The execute_code configuration a runner enforces. */
 interface RunnerConfig {
+  /** Nested runners must never queue behind the program holding their parent slot. */
+  waitForAdmission?: boolean | undefined;
   /** Refresh only: a refused host call fails the whole run even if guest code catches it. */
   failOnInvocationFailure?: boolean | undefined;
   discoveryConcurrency?: number | undefined;
@@ -914,9 +904,9 @@ interface RunnerConfig {
   hostCallTimeoutMs?: number | undefined;
   watchdogMs?: number | undefined;
   defer?: DeferredWork | undefined;
-  /** Config approval exemptions (#566): writes a program sends unasked. */
-  approval?: ApprovalPolicy | undefined;
-  /** Exempt writes one program may send (`execute.maxWrites`). Default 10. */
+  /** Pool trust, resolved by the host route. Default read-only. */
+  trust?: PoolTrust | undefined;
+  /** Trusted-pool writes one program may send (`execute.maxWrites`). Default 10. */
   maxWrites?: number | undefined;
 }
 
@@ -925,7 +915,7 @@ const RUN_CLAIM_SLACK_MS = 10_000;
 
 /**
  * How long one run may take before whoever claimed it may give up on it: the
- * watchdog, one more host-call deadline for an exempt write the play drains,
+ * watchdog, one more host-call deadline for a trusted-pool write the play drains,
  * and queue slack. Artifact refresh leases its claim for this long.
  */
 export function runClaimMs(
@@ -975,7 +965,7 @@ export function createExecuteTool(
         diagnostics,
       );
       const invocationFailures: InvocationFailure[] = [];
-      const exemptWrites = new ExemptWrites();
+      const programWrites = new ProgramWrites();
       const dispatchController = new AbortController();
       const terminal = Deferred.makeUnsafe<never, InvocationFailure>();
       let budgetFailure: InvocationFailure | undefined;
@@ -1005,7 +995,7 @@ export function createExecuteTool(
         if (isAdmittingExecutor(executor)) {
           lease = yield* timed((elapsed) => {
             if (diagnostics) diagnostics.admissionMs = elapsed;
-          }, leased(executor, signal));
+          }, leased(executor, signal, config.waitForAdmission !== false));
           if ((lease.waitMs ?? 0) > 0) {
             logger.debug("[connecta] execute_code admitted after queue wait", {
               waitMs: lease.waitMs,
@@ -1032,9 +1022,9 @@ export function createExecuteTool(
             maxHostCalls: config.maxHostCalls,
             hostCallTimeoutMs,
             defer: config.defer,
-            approval: config.approval,
+            trust: config.trust,
             maxWrites: config.maxWrites,
-            exemptWrites,
+            programWrites,
             dispatchController,
           }, requestScope),
         ));
@@ -1047,7 +1037,7 @@ export function createExecuteTool(
           );
         }
         const admitted = lease;
-        // An exempt write may still be on the wire when the program settles:
+        // A trusted-pool write may still be on the wire when the program settles:
         // close, so a write gated after this is not sent, then let the ones
         // already dispatched finish before the scope aborts them — an
         // abandoned write would be one whose outcome nobody knows.
@@ -1072,9 +1062,9 @@ export function createExecuteTool(
           signal,
           { watchdog, terminal: Deferred.await(terminal) },
         ).pipe(Effect.ensuring(Effect.suspend(() => {
-          exemptWrites.close();
+          programWrites.close();
           dispatchController.abort();
-          return exemptWrites.drain();
+          return programWrites.drain();
         }))));
       });
       const reported = { emitted, diagnostics, invocationFailures };
@@ -1096,7 +1086,7 @@ export function createExecuteTool(
             emitted,
             diagnostics,
           });
-          const finished = exemptWrites.finish(failed);
+          const finished = programWrites.finish(failed);
           const result = jsonResult({
             ...finished.structuredContent,
             hostCalls: { ...budgetFailure.hostCalls },
@@ -1105,7 +1095,7 @@ export function createExecuteTool(
           return result;
         }
         if (Exit.isFailure(exit)) {
-          return exemptWrites.finish(
+          return programWrites.finish(
             failedRun(Cause.squash(exit.cause), logger, reported),
           );
         }
@@ -1116,7 +1106,7 @@ export function createExecuteTool(
             code: refusal.details,
           });
         }
-        return exemptWrites.finish(finished);
+        return programWrites.finish(finished);
       });
     });
 
@@ -1381,7 +1371,8 @@ const executeDescription = (
   connectorGuides: boolean,
   connectors: ReturnType<RegistryView["listConnectors"]>,
   maxWrites: number,
-) => `Use the configured services below to answer the task. A known address uses call_tool. Unknown-address and wider read-only work uses one execute_code program for discovery, calls, and reduction. Do not return catalog matches alone. Only readOnlyHint: true tools and config-exempt writes are available; any other write goes through call_destructive_tool. Limits: ${hostLimits.maxHostCalls} host calls, ${maxWrites} exempt writes, ${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
+  trust: PoolTrust,
+) => `Use the configured services below to answer the task. A known address uses call_tool. Unknown-address and wider read-only work uses one execute_code program for discovery, calls, and reduction. Do not return catalog matches alone. ${trust === "trusted" ? "This pool is trusted: programs may call reads and writes. The host approves execute_code as a write." : "This pool is read-only: programs may call reads; writes use call_destructive_tool."} Limits: ${hostLimits.maxHostCalls} host calls, ${maxWrites} writes, ${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
 
 ${connectorInventory(connectors)}
 
@@ -1442,9 +1433,9 @@ export function registerExecuteTool(
     /** Hard ceiling on one execution, outside the sandbox. Default 120_000. */
     watchdogMs?: number | undefined;
     defer?: DeferredWork | undefined;
-    /** Config approval exemptions (#566). */
-    approval?: ApprovalPolicy | undefined;
-    /** Exempt writes one program may send. Default 10. */
+    /** Pool trust, resolved by the host route. Default read-only. */
+    trust?: PoolTrust | undefined;
+    /** Trusted-pool writes one program may send. Default 10. */
     maxWrites?: number | undefined;
   },
 ): void {
@@ -1483,7 +1474,7 @@ export function registerExecuteTool(
       hostCallTimeoutMs: hostLimits.hostCallTimeoutMs,
       watchdogMs: ctx.watchdogMs,
       defer: ctx.defer,
-      approval: ctx.approval,
+      trust: ctx.trust,
       maxWrites,
     },
   );
@@ -1496,18 +1487,13 @@ export function registerExecuteTool(
         hasConnectorGuides(connectors),
         connectors,
         maxWrites,
+        ctx.trust ?? "read-only",
       ),
       inputSchema: EXECUTE_INPUT,
-      // This hint describes connector calls: only explicitly read-only ones
-      // run here, plus the writes config exempts from asking (W12) — the
-      // deployment's decision, which no annotation can make for it. Any
-      // other write is refused (E4) and crosses call_destructive_tool, which
-      // is annotated destructive. The supported executor constructions deny
-      // outbound access, filesystem, and deployment config; X5 documents
-      // Dynamic runtime modules separately.
+      // The host sees execute_code as a write only on a trusted endpoint.
       annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
+        readOnlyHint: ctx.trust !== "trusted",
+        destructiveHint: ctx.trust === "trusted",
         openWorldHint: true,
       },
     },

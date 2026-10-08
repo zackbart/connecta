@@ -175,7 +175,7 @@ export class AdmissionController {
     };
   }
 
-  acquire(options: { signal?: AbortSignal } = {}): Promise<AdmissionLease> {
+  acquire(options: { signal?: AbortSignal; wait?: boolean } = {}): Promise<AdmissionLease> {
     return runEdge(admit(this, options));
   }
 
@@ -311,7 +311,7 @@ export class AdmissionController {
   // static block is the one place outside an instance method that may read
   // this bookkeeping while emitting nothing there.
   static {
-    provideAdmissionProgram((controller, signal) =>
+    provideAdmissionProgram((controller, signal, wait) =>
       Effect.suspend(() => {
         controller.reapExpired();
         if (controller.closed) {
@@ -336,6 +336,10 @@ export class AdmissionController {
           controller.active++;
           controller.admittedTotal++;
           return Effect.succeed(controller.makeLease(0));
+        }
+        if (!wait) {
+          controller.rejectedTotal++;
+          return Effect.fail(controller.overloaded("No executor slot is free for nested execution. Invoke the operation directly, after this program ends."));
         }
         if (controller.waiters.length >= controller.maxQueueSize) {
           controller.rejectedTotal++;

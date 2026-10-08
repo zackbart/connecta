@@ -362,7 +362,7 @@ describe("tool cache TTL", () => {
     ).rejects.toThrow("temporary failure");
     await expect(
       registry.getTools("retry_load", BASE, scope),
-    ).resolves.toEqual([{ name: "read" }]);
+    ).resolves.toMatchObject([{ name: "read" }]);
     expect(catalogLoads).toBe(2);
   });
 
@@ -538,11 +538,13 @@ describe("tool cache TTL", () => {
       );
     }
 
+    expect(await readPersistedTools(storage, "chunked")).toEqual(tools);
+
     const cold = new Registry([connector], {
       storage,
       logger: silentLogger,
     });
-    await expect(cold.getTools("chunked", BASE)).resolves.toEqual(tools);
+    await expect(cold.getTools("chunked", BASE)).resolves.toMatchObject(tools);
     expect(calls).toBe(1);
   });
 
@@ -612,7 +614,7 @@ describe("tool cache TTL", () => {
       release();
     }
 
-    await expect(pending).resolves.toEqual(tools);
+    await expect(pending).resolves.toMatchObject(tools);
     expect(calls).toBe(1);
   });
 
@@ -755,7 +757,7 @@ describe("tool cache TTL", () => {
       release();
     }
 
-    await expect(pending).resolves.toEqual([
+    await expect(pending).resolves.toMatchObject([
       {
         name: "large",
         description: "x".repeat(MAX_CATALOG_CHUNK_BYTES * 2),
@@ -921,7 +923,7 @@ describe("tool cache TTL", () => {
     release();
     await refused;
     expect(await storage.get(`catalog:${connector.id}`)).toBeNull();
-    await expect(registry.getTools(connector.id, BASE)).resolves.toEqual([{ name: "fresh" }]);
+    await expect(registry.getTools(connector.id, BASE)).resolves.toMatchObject([{ name: "fresh" }]);
   });
 
   it("persists only when the complete catalog fingerprint changes", async () => {
@@ -1219,8 +1221,8 @@ describe("catalog stale-while-revalidate", () => {
         makeCatalog(secondScope).loadConnector("swr"),
       ]);
 
-      expect(first).toEqual([{ name: "old" }]);
-      expect(second).toEqual([{ name: "old" }]);
+      expect(first).toMatchObject([{ name: "old" }]);
+      expect(second).toMatchObject([{ name: "old" }]);
       expect(calls).toBe(2);
       expect(contexts[1]).not.toBe(firstScope);
       expect(contexts[1]).not.toBe(secondScope);
@@ -1229,7 +1231,7 @@ describe("catalog stale-while-revalidate", () => {
       gate.resolve();
       await Promise.all(tails.slice(0, 2));
       expect(closed).toEqual([contexts[1]]);
-      await expect(registry.getTools("swr", BASE)).resolves.toEqual([
+      await expect(registry.getTools("swr", BASE)).resolves.toMatchObject([
         { name: "new" },
       ]);
       await expect(registry.statusFor("swr", BASE)).resolves.toMatchObject({
@@ -1270,7 +1272,7 @@ describe("catalog stale-while-revalidate", () => {
         new CatalogService(registry, BASE, {
           defer: (promise) => tails.push(promise),
         }).loadConnector("agent_then_operator"),
-      ).resolves.toEqual([{ name: "old" }]);
+      ).resolves.toMatchObject([{ name: "old" }]);
       await vi.waitFor(() => expect(calls).toBe(2));
 
       let operatorSettled = false;
@@ -1285,7 +1287,7 @@ describe("catalog stale-while-revalidate", () => {
 
       gate.resolve();
       await expect(operator).resolves.toMatchObject({ state: "ok" });
-      await expect(registry.getTools("agent_then_operator", BASE)).resolves.toEqual([
+      await expect(registry.getTools("agent_then_operator", BASE)).resolves.toMatchObject([
         { name: "new" },
       ]);
       await Promise.all(tails);
@@ -1332,14 +1334,14 @@ describe("catalog stale-while-revalidate", () => {
         new CatalogService(registry, BASE, {
           defer: (promise) => tails.push(promise),
         }).loadConnector("operator_then_agent"),
-      ).resolves.toEqual([{ name: "old" }]);
+      ).resolves.toMatchObject([{ name: "old" }]);
       expect(operatorSettled).toBe(false);
       expect(tails).toHaveLength(1);
       expect(calls).toBe(2);
 
       gate.resolve();
       await expect(operator).resolves.toMatchObject({ state: "ok" });
-      await expect(registry.getTools("operator_then_agent", BASE)).resolves.toEqual([
+      await expect(registry.getTools("operator_then_agent", BASE)).resolves.toMatchObject([
         { name: "new" },
       ]);
       await Promise.all(tails);
@@ -1391,7 +1393,7 @@ describe("catalog stale-while-revalidate", () => {
 
       await expect(
         service.loadConnector("bounded_swr", { signal: inbound.signal }),
-      ).resolves.toEqual([{ name: "old" }]);
+      ).resolves.toMatchObject([{ name: "old" }]);
       inbound.abort(new Error("request ended"));
       await Promise.all(tails);
 
@@ -1443,8 +1445,8 @@ describe("catalog stale-while-revalidate", () => {
       registry.getTools("blocking_abort", BASE, {}, {
         signal: inbound.signal,
       }),
-    ).resolves.toEqual([{ name: "complete" }]);
-    await expect(registry.getTools("blocking_abort", BASE)).resolves.toEqual([
+    ).resolves.toMatchObject([{ name: "complete" }]);
+    await expect(registry.getTools("blocking_abort", BASE)).resolves.toMatchObject([
       { name: "complete" },
     ]);
     expect(registry.catalogDriftSnapshot().blocking_abort).toMatchObject({
@@ -1482,7 +1484,7 @@ describe("catalog stale-while-revalidate", () => {
         },
       });
 
-      await expect(service.loadConnector("swr_generation")).resolves.toEqual([
+      await expect(service.loadConnector("swr_generation")).resolves.toMatchObject([
         { name: "live_3" },
       ]);
       await Promise.all(tails);
@@ -1542,16 +1544,16 @@ describe("catalog stale-while-revalidate", () => {
           probeTimeoutMs: 1_000,
           defer: (promise) => secondTails.push(promise),
         }).loadConnector("swr_timeout"),
-      ).resolves.toEqual([{ name: "old" }]);
+      ).resolves.toMatchObject([{ name: "old" }]);
       await Promise.all(secondTails);
-      await expect(registry.getTools("swr_timeout", BASE)).resolves.toEqual([
+      await expect(registry.getTools("swr_timeout", BASE)).resolves.toMatchObject([
         { name: "new" },
       ]);
 
       zombie.resolve();
       await Promise.resolve();
       await Promise.resolve();
-      await expect(registry.getTools("swr_timeout", BASE)).resolves.toEqual([
+      await expect(registry.getTools("swr_timeout", BASE)).resolves.toMatchObject([
         { name: "new" },
       ]);
       expect(calls).toBe(3);
@@ -1609,7 +1611,7 @@ describe("catalog stale-while-revalidate", () => {
       expect(settled).toBe(false);
       expect(tails).toEqual([]);
       gate.resolve();
-      await expect(pending).resolves.toEqual([{ name: "live" }]);
+      await expect(pending).resolves.toMatchObject([{ name: "live" }]);
 
       const restarted = new Registry([connector], {
         storage,
@@ -1674,7 +1676,7 @@ describe("catalog stale-while-revalidate", () => {
         new CatalogService(cold, BASE, {
           defer: (promise) => tails.push(promise),
         }).loadConnector("swr_deadline"),
-      ).resolves.toEqual([{ name: "live" }]);
+      ).resolves.toMatchObject([{ name: "live" }]);
       expect(tails).toEqual([]);
       expect(calls).toBe(2);
     } finally {
@@ -1736,13 +1738,13 @@ describe("catalog stale-while-revalidate", () => {
       await manifestRead.promise;
 
       await cold.invalidateStored("swr_storage_race");
-      await expect(cold.getTools("swr_storage_race", BASE, {})).resolves.toEqual([
+      await expect(cold.getTools("swr_storage_race", BASE, {})).resolves.toMatchObject([
         { name: "live_new" },
       ]);
       releaseManifest.resolve();
 
-      await expect(pending).resolves.toEqual([{ name: "live_new" }]);
-      await expect(cold.getTools("swr_storage_race", BASE)).resolves.toEqual([
+      await expect(pending).resolves.toMatchObject([{ name: "live_new" }]);
+      await expect(cold.getTools("swr_storage_race", BASE)).resolves.toMatchObject([
         { name: "live_new" },
       ]);
       expect(tails).toEqual([]);
@@ -1857,13 +1859,13 @@ describe("personal registry eviction", () => {
       .invalidateStored("mine");
     release();
 
-    await expect(refreshing).resolves.toEqual([
+    await expect(refreshing).resolves.toMatchObject([
       { name: "before_reauthorization" },
     ]);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(await storage.get("principal:0:catalog:mine")).toBeNull();
     await expect(
       root.scoped({ connectorIds: "all", principalKey: "0" }).getTools("mine", BASE),
-    ).resolves.toEqual([{ name: "after_reauthorization" }]);
+    ).resolves.toMatchObject([{ name: "after_reauthorization" }]);
   });
 });

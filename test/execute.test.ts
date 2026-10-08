@@ -467,10 +467,10 @@ describe("buildSandboxProviders", () => {
     const connecta = connectaProvider(providers);
     await expect(
       required(connecta.fns.call)("ambiguous.missing_annotations", {}),
-    ).rejects.toThrow("not explicitly read-only");
+    ).rejects.toThrow("is a write");
     await expect(
       required(connecta.fns.call)("ambiguous.contradictory", {}),
-    ).rejects.toThrow("not explicitly read-only");
+    ).rejects.toThrow("is a write");
     expect(calls).toBe(0);
   });
 

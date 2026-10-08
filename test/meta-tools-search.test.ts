@@ -392,7 +392,7 @@ describe("search_tools", () => {
       const result = await mt.callTool({ address });
       expect(result.isError).toBe(true);
       expect(required(result.content[0]).text).toContain(
-        "not explicitly read-only",
+        "is a write",
       );
     }
   });

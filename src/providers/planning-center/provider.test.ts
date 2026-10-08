@@ -11,9 +11,11 @@ import {
   planningCenter,
 } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { isExplicitlyReadOnly } from "../../tool-safety.js";
+import { classifyTool } from "../../tool-safety.js";
 import { silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext, ConnectorUsageGuide } from "../../types.js";
+
+const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
 
 interface StubResponse {
   status?: number;
@@ -120,8 +122,8 @@ describe("planningCenter() construction", () => {
       expect(typeof tool.annotations?.readOnlyHint, tool.name).toBe("boolean");
     }
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
-    expect(isExplicitlyReadOnly(byName.get("pco_api_get")!)).toBe(true);
-    expect(isExplicitlyReadOnly(byName.get("pco_api_mutate")!)).toBe(false);
+    expect(isRead(byName.get("pco_api_get")!)).toBe(true);
+    expect(isRead(byName.get("pco_api_mutate")!)).toBe(false);
     expect(byName.get("pco_api_mutate")!.annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
     expect(byName.has("pco_api_upload")).toBe(false);
     // Additive writes are write-routed without claiming destruction; anything

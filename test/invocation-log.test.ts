@@ -52,7 +52,7 @@ describe("failed call logging", () => {
     expect(meta).toEqual({
       connector: "flaky",
       tool: "read",
-      source: "call_tool",
+      source: "call_destructive_tool",
       attempts: 1,
       durationMs: expect.any(Number),
       code: "connector_call_failed",
@@ -91,7 +91,6 @@ describe("failed call logging", () => {
       target.activity,
     ).invoke("danger.erase", {}, {
       source: "call_tool",
-      allowDestructive: false,
     });
 
     expect(outcome.ok).toBe(false);

@@ -368,7 +368,7 @@ describe("call_tool", () => {
     ]) {
       const ordinary = await mt.callTool({ address });
       expect(ordinary.isError).toBe(true);
-      expect(required(ordinary.content[0]).text).toContain("not explicitly read-only");
+      expect(required(ordinary.content[0]).text).toContain("is a write");
     }
     expect(calls).toEqual([]);
 

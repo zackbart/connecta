@@ -27,9 +27,11 @@ import { CatalogService } from "../../catalog-service.js";
 import { InvocationService } from "../../invocation.js";
 import { runEdge } from "../../runtime/run.js";
 import { writeStateOf } from "../../exempt-writes.js";
-import { isExplicitlyReadOnly } from "../../tool-safety.js";
+import { classifyTool } from "../../tool-safety.js";
 import { makeRegistry, silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext } from "../../types.js";
+
+const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
 
 // The whole surface is hand-written, so there is no downstream catalog to
 // stub. What needs stubbing is the network: every assertion below either
@@ -214,9 +216,9 @@ describe("notion() tool surface", () => {
 
   it("pins the read/write partition against the fail-closed classifier", () => {
     const tools = build().staticTools ?? [];
-    const reads = tools.filter(isExplicitlyReadOnly).map((tool) => tool.name);
+    const reads = tools.filter(isRead).map((tool) => tool.name);
     const writes = tools
-      .filter((tool) => !isExplicitlyReadOnly(tool))
+      .filter((tool) => !isRead(tool))
       .map((tool) => tool.name);
 
     // These are hand-written, so this is not a fill-in check like Mixpanel's —
@@ -1238,7 +1240,7 @@ describe("notion() successful response integrity", () => {
     const invocation = new InvocationService(registry, new CatalogService(registry, "https://connecta.example"));
     const outcome = await runEdge(invocation.pipeline(
       "workspace.append_blocks", { block_id: "synthetic", text: ["hello"] },
-      { source: "call_destructive_tool", allowDestructive: true },
+      { source: "call_destructive_tool" },
     ));
     expect(outcome.ok).toBe(false);
     if (outcome.ok) throw new Error("Expected failed write response");

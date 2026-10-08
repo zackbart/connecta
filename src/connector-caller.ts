@@ -51,3 +51,8 @@ export function attachCaller(
 export function callerOf(ctx: ConnectorContext): ConnectorCaller | undefined {
   return callers.get(ctx);
 }
+
+// Request-local execution provenance for nested built-in program runners.
+const programCalls = new WeakSet<ConnectorContext>();
+export function markProgramCall(ctx: ConnectorContext): void { programCalls.add(ctx); }
+export function isProgramCall(ctx: ConnectorContext): boolean { return programCalls.has(ctx); }

@@ -255,6 +255,7 @@ describe.each([
     const registry = makeRegistry([f.connector], { storage });
     const scope = {};
     const tools = await registry.getTools("down", BASE, scope);
+    const rawTools = await f.connector.listTools(registry.contextFor("down", BASE, scope));
     await f.connector.closeScope!(registry.contextFor("down", BASE, scope));
     expect(required(tools[0]).icons).toEqual(urlIcons);
     expect(required(tools[1]).icons).toEqual([]);
@@ -264,7 +265,7 @@ describe.each([
       revision: string; toolCount: number; byteCount: number; chunkCount: number;
     };
     expect(manifest).toMatchObject({ toolCount: f.definitions.length, chunkCount });
-    const serialized = JSON.stringify(tools);
+    const serialized = JSON.stringify(rawTools);
     expect(manifest.byteCount).toBe(new TextEncoder().encode(serialized).byteLength);
     expect(manifest.byteCount).toBeLessThan(MAX_SERIALIZED_CATALOG_BYTES);
     const chunks: string[] = [];

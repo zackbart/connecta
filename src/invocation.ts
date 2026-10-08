@@ -1,4 +1,6 @@
 import { hasControlCharacters } from "./tool-name.js";
+import { markProgramCall } from "./connector-caller.js";
+import { surfaceAllowsTool, type PoolTrust } from "./tool-safety.js";
 import { Cause, Effect, Exit, type Scope } from "effect";
 import {
   type ActivityCallSource,
@@ -34,7 +36,6 @@ import {
 } from "./operator-record.js";
 import { splitAddress, type RegistryView } from "./registry.js";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
-import { isExplicitlyReadOnly } from "./tool-safety.js";
 import { validateCatalogToolInput } from "./validate.js";
 
 function defined<T extends object>(
@@ -204,7 +205,7 @@ export type InvocationOutcome<T> =
  * recorded as an ordinary failed attempt unless `unrecorded` — a write
  * refused only because its program already returned was never an attempt.
  */
-export type WriteGateDecision =
+export type WriteDecision =
   | { kind: "dispatch" }
   | {
       kind: "refuse";
@@ -214,7 +215,7 @@ export type WriteGateDecision =
 
 export interface InvocationContext<T> {
   source: ActivityCallSource;
-  allowDestructive?: boolean;
+  trust?: PoolTrust | undefined;
   timeoutMs?: number;
   requestSignal?: AbortSignal;
   /** Run ended: cancel resolution/admission, but spare a dispatched write. */
@@ -235,23 +236,11 @@ export interface InvocationContext<T> {
    * "has an error code" must not count a truncation as a failure.
    */
   activityFriction?: (value: T) => AgentFriction | undefined;
-  /**
-   * Decides a call that is not explicitly read-only, in place of the flat
-   * `destructive_tool_requires_approval` refusal. Only code mode supplies
-   * one, for config-exempt writes (#566). It runs after argument validation
-   * and before admission, so a write over budget costs no permit.
-   */
-  writeGate?: (
+  /** Account for an admitted write after validation and before admission. */
+  beforeWrite?: (
     target: ResolvedCatalogTool,
     args: unknown,
-  ) => Effect.Effect<WriteGateDecision>;
-  /**
-   * Which consequential calls `writeGate` decides; all of them when omitted.
-   * One it does not cover keeps the flat refusal, ahead of validation as
-   * always — so a program gates only its config-exempt calls and refuses
-   * every other write.
-   */
-  gates?: (target: ResolvedCatalogTool) => boolean;
+  ) => Effect.Effect<WriteDecision>;
 }
 
 export class InvocationFailure extends Error {
@@ -527,19 +516,14 @@ export class InvocationService {
           resolved = target;
           activityTarget = target;
 
-          const consequential =
-            !isExplicitlyReadOnly(target.definition) && !context.allowDestructive;
-          const gate = consequential && (context.gates?.(target) ?? true)
-            ? context.writeGate
-            : undefined;
-          if (consequential && !gate) {
+          const write = target.definition.classification !== "read";
+          if (!surfaceAllowsTool(target.definition.classification, context.source, context.trust)) {
             const canonicalAddress = `${target.connector.id}.${target.toolName}`;
             return framingError(
               "destructive_tool_requires_approval",
-              `Tool "${canonicalAddress}" is not explicitly read-only. Invoke it through call_destructive_tool so the MCP host can request explicit approval.`,
+              `Tool "${canonicalAddress}" is a write. Invoke it through call_destructive_tool so the MCP host can request approval.`,
             );
           }
-
           // Remote MCP tools advertise their input schema in the catalog. Validate
           // against that same request-local definition before admission or provider
           // dispatch, so a predictable mismatch stays structured instead of being
@@ -565,8 +549,8 @@ export class InvocationService {
             if (invalid) return classifyCallError(invalid);
           }
 
-          if (gate) {
-            const decision = yield* gate(target, args ?? {});
+          if (write && context.beforeWrite) {
+            const decision = yield* context.beforeWrite(target, args ?? {});
             if (decision.kind === "refuse") {
               unrecorded = decision.unrecorded === true;
               return decision.error;
@@ -582,6 +566,7 @@ export class InvocationService {
               this.catalog.requestScope,
               defined({ signal: callSignal, timeoutMs: context.timeoutMs }),
             );
+            if (context.source === "execute_code") markProgramCall(connectorContext);
             if (
               target.connector.credential &&
               !connectorContext.credential

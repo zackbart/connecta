@@ -8,7 +8,7 @@ import { attachCaller } from "../../connector-caller.js";
 import { googleReasonsOf } from "../_shared/google/workspace.js";
 import { DRIVE_API_BASE_URL, DRIVE_SCOPES, drive } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { isExplicitlyReadOnly } from "../../tool-safety.js";
+import { classifyTool } from "../../tool-safety.js";
 import { silentLogger } from "../../../test/helpers.js";
 import type {
   AuthenticatedIdentity,
@@ -16,6 +16,8 @@ import type {
   ConnectorContext,
   ConnectorUsageGuide,
 } from "../../types.js";
+
+const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
 
 // The final-size guard is the last word on every result, and every source is
 // budgeted before it, so nothing ordinary reaches it. The sizing module passes
@@ -211,7 +213,7 @@ describe("drive() identity and surface (H1, H14)", () => {
     const connector = connection();
     const tools = await connector.listTools(context());
     const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
-    const reads = tools.filter((tool) => isExplicitlyReadOnly(tool)).map((tool) => tool.name).sort();
+    const reads = tools.filter((tool) => isRead(tool)).map((tool) => tool.name).sort();
     expect(reads).toEqual([
       "get_file",
       "get_file_content",
@@ -239,7 +241,7 @@ describe("drive() identity and surface (H1, H14)", () => {
     ]) {
       expect(byName[name]!.annotations, name).toEqual({ readOnlyHint: false, destructiveHint: true });
     }
-    expect(connector.approval).toBeUndefined();
+    expect(connector).not.toHaveProperty("approval");
     expect(connector.credential).toBeUndefined();
     expect(connector.startAuth).toBeUndefined();
   });
@@ -1728,7 +1730,7 @@ describe("a redirected or rate-limited write never claims an outcome (shared upd
 
   it("covers every write", async () => {
     const tools = await connection().listTools(context());
-    const writes = tools.filter((tool) => !isExplicitlyReadOnly(tool)).map((tool) => tool.name).sort();
+    const writes = tools.filter((tool) => !isRead(tool)).map((tool) => tool.name).sort();
     expect(WRITES.map(([name]) => name).sort()).toEqual(writes);
   });
 

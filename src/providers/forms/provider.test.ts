@@ -9,9 +9,11 @@ import { attachCaller } from "../../connector-caller.js";
 import { FORMS_API_BASE_URL, FORMS_SCOPES, forms } from "./index.js";
 import { jsonBytes, RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { isExplicitlyReadOnly } from "../../tool-safety.js";
+import { classifyTool } from "../../tool-safety.js";
 import { silentLogger } from "../../../test/helpers.js";
 import type { AuthenticatedIdentity, Connector, ConnectorContext, ConnectorUsageGuide } from "../../types.js";
+
+const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
@@ -219,13 +221,13 @@ describe("forms() identity and surface (H1, H14)", () => {
     const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
     for (const name of ["get_form", "list_responses", "get_response"]) {
       expect(byName[name]!.annotations).toEqual({ readOnlyHint: true });
-      expect(isExplicitlyReadOnly(byName[name]!)).toBe(true);
+      expect(isRead(byName[name]!)).toBe(true);
     }
     expect(byName["create_form"]!.annotations).toEqual({ readOnlyHint: false, destructiveHint: false });
     expect(byName["update_form_info"]!.annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
     expect(byName["batch_update_form"]!.annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
     // The provider never exempts a write from approval, and has no slot.
-    expect(connector.approval).toBeUndefined();
+    expect(connector).not.toHaveProperty("approval");
     expect(connector.credential).toBeUndefined();
     expect(connector.startAuth).toBeUndefined();
   });

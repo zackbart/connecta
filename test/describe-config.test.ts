@@ -353,7 +353,6 @@ describe("describeConfig", () => {
       expect(byId.tracker?.source).toEqual({ kind: "remote-mcp", provider: "linear" });
       expect(byId.artifacts).toMatchObject({
         source: { kind: "builtin", provider: "artifacts" },
-        approval: "never",
       });
       // A custom describe() is re-validated: unknown fields are dropped and
       // endpoints are re-parsed down to origin and path.
@@ -391,7 +390,9 @@ describe("describeConfig", () => {
       ...config,
       discovery: { concurrency: 2 },
       calls: { defaultTimeoutMs: 9_000 },
-      execute: { maxHostCalls: 7, approval: { static_api: "never" } },
+      execute: { maxHostCalls: 7 },
+      classification: { static_api: { read: "write" } },
+      trust: "trusted",
       admission: { requests: { concurrency: 4 } },
     });
     try {
@@ -402,7 +403,8 @@ describe("describeConfig", () => {
         server: { name: "connecta", version: CONNECTA_VERSION, websiteUrl: { origin: "https://about.example", path: "/connecta" }, icons: 1 },
         urls: { publicUrl: { origin: BASE, path: "/" }, mcpPath: "/mcp", allowedOrigins: "default" },
         executor: { admission: { concurrency: { value: 2, source: "default" } } },
-        approval: { connectors: { static_api: "never" }, tools: {} },
+        trust: "trusted",
+        classification: { static_api: { read: "write" } },
         auth: [
           { kind: "bearer", interactive: false },
           { kind: "access_token", interactive: false },

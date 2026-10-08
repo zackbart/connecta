@@ -13,7 +13,6 @@ import {
   type UiProblem,
   type UiToolSafety,
 } from "./operator-ui/model.js";
-import { isExplicitlyReadOnly, type ApprovalPolicy } from "./tool-safety.js";
 import {
   OPERATOR_UI_CSS,
   OPERATOR_UI_SCRIPT,
@@ -90,15 +89,10 @@ export function operatorPageTitle(
   return `${OPERATOR_PAGE_LABELS[page]} — ${configuredTitle}`;
 }
 
-/**
- * The badge a tool earns, from the predicates core enforces with. Computed
- * here so the page reports the rule rather than restating it. `exempt` is the
- * config exemption (#566), which `isApprovalExempt` already refuses to grant
- * a read-only tool.
- */
-export function uiToolSafety(definition: ToolDef, exempt = false): UiToolSafety {
-  if (isExplicitlyReadOnly(definition)) return "runs_in_programs";
-  return exempt ? "exempt" : "needs_approval";
+/** Report the verdict the registry stored, independent of pool trust. */
+export function uiToolSafety(definition: ToolDef): UiToolSafety {
+  if (definition.classification === "read") return "runs_in_programs";
+  return "needs_approval";
 }
 
 /**
@@ -153,7 +147,6 @@ export async function buildUiData(
     mayManage?: (id: string) => boolean;
     timeoutMs?: number;
     signal?: AbortSignal;
-    approval?: ApprovalPolicy;
   } = {},
 ): Promise<UiData> {
   return runEdge(

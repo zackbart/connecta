@@ -10,7 +10,7 @@ import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { servedTools } from "./fixtures/hosted-provider.js";
 import { connectorContext } from "./fixtures/misc.js";
 import { observedCatalogDrift } from "../src/catalog-drift.js";
-import { isExplicitlyReadOnly } from "../src/tool-safety.js";
+import { classifyTool } from "../src/tool-safety.js";
 import type { Connector, ToolAnnotations } from "../src/types.js";
 
 const downstream = vi.hoisted(() => ({
@@ -34,6 +34,8 @@ vi.mock("../src/connectors/remote-mcp.js", async (importOriginal) => {
 });
 
 import { linear, type LinearOptions } from "../src/providers/linear/index.js";
+
+const isRead = (tool: import("../src/types.js").ToolDef) => classifyTool(tool) === "read";
 
 const OLD_VERDICT = { read: "read-only", write: "additive", destructive: "destructive" } as const;
 const variants = before.variants as Record<string, ToolAnnotations | null>;
@@ -141,11 +143,11 @@ describe("linear() before and after defineProvider", () => {
         const verdict = before.verdicts[tool.name as keyof typeof before.verdicts];
         if (verdict === "additive" && recorded.readOnlyHint === true) {
           corrected.push(`${tool.name}:${variant}`);
-          if (isExplicitlyReadOnly({ name: tool.name, annotations: recorded })) {
+          if (isRead({ name: tool.name, annotations: recorded })) {
             wereReads.push(`${tool.name}:${variant}`);
           }
           expect(tool.annotations).toEqual({ ...recorded, readOnlyHint: false });
-          expect(isExplicitlyReadOnly(tool)).toBe(false);
+          expect(isRead(tool)).toBe(false);
           continue;
         }
         expect(tool.annotations, `${tool.name}:${variant}`).toEqual(recorded);

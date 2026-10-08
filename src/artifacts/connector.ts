@@ -1,14 +1,12 @@
-// The built-in `artifacts` connector: reads are explicitly read-only, writes
-// are not — so discovery, `call_tool`, and the guide treat them as writes —
-// but every write is a new immutable version anyone can roll back, so the
-// connector's own default exempts them from approval inside programs
-// (`approval: "never"`), and `execute.approval` can switch that off.
+// Built-in artifact tools use the registry classifier and pool trust.
+// Programs may write only in trusted pools; the host controls approval.
+// Every artifact write creates an immutable version.
 //
 // Who made each version comes from the caller core attached to the context,
 // never from arguments.
 
 import { apiConnector as api } from "../connectors/api-connector.js";
-import { callerOf } from "../connector-caller.js";
+import { callerOf, isProgramCall } from "../connector-caller.js";
 import { ConnectorCallError } from "../errors.js";
 import { resolveTheme, type ResolvedTheme } from "../branding.js";
 import type { Connector, ConnectorContext, JsonSchema } from "../types.js";
@@ -475,10 +473,12 @@ export function artifactsConnector(options: ArtifactsConnectorOptions): Connecto
       },
       {
         name: "run_refresh",
-        description: "Trigger one configured refresh now. Only shared connectors' explicitly read-only tools may run.",
+        description: "Trigger one configured refresh now. Only shared connectors' tools classified as reads may run.",
         annotations: WRITE,
         inputSchema: { type: "object", required: ["id"], properties: { id }, additionalProperties: false },
-        handler: async (args, ctx) => refresh.run(args.id, { manual: actorOf(ctx) }),
+        handler: async (args, ctx) => refresh.run(args.id, { manual: actorOf(ctx) }, {
+          signal: ctx.signal, waitForAdmission: !isProgramCall(ctx),
+        }),
       },
       {
         name: "get_document",
@@ -857,7 +857,6 @@ export function artifactsConnector(options: ArtifactsConnectorOptions): Connecto
   const describe = connector.describe!;
   return {
     ...connector,
-    approval: "never",
     describe: () => ({ ...describe(), source: { kind: "builtin", provider: "artifacts" } }),
   };
 }

@@ -26,7 +26,6 @@ import {
   isAdmittingExecutor,
   withExecutorAdmission,
 } from "./executor-admission.js";
-import { NO_EXEMPTIONS, type ApprovalPolicy } from "./tool-safety.js";
 export type {
   AccessTokensModule,
   ActivityModule,
@@ -115,67 +114,12 @@ function resolvePools(
         }
       }
     }
-    resolved.set(name, { access, grant: pool.grant ?? (() => false) });
+    resolved.set(name, { access, trust: pool.trust, grant: pool.grant ?? (() => false) });
   }
   return resolved;
 }
 
-/**
- * Validate `execute.approval` against the connector set, like the pools: a
- * malformed key or value, an unknown connector, and an `api()` address its
- * tools do not include all throw. Remote catalogs load lazily, so an address
- * on one is kept and simply never matches a tool it does not serve.
- */
-function resolveApprovalPolicy(
-  approval: ResolvedConfig["execute"]["approval"],
-  registry: Registry,
-): ApprovalPolicy {
-  for (const connector of registry.listConnectors()) {
-    if (connector.approval !== undefined && connector.approval !== "never") {
-      throw new Error(
-        `Connector "${connector.id}": approval must be "never" or omitted`,
-      );
-    }
-  }
-  // The schema has already refused a non-object and any accessor entry, so
-  // reading the entries runs no getter.
-  if (approval === undefined) return NO_EXEMPTIONS;
-  const connectors = new Map<string, "never" | "ask">();
-  const tools = new Map<string, "never" | "ask">();
-  for (const [key, value] of Object.entries(approval)) {
-    const where = `ConnectaConfig.execute.approval[${JSON.stringify(key)}]`;
-    if (value !== "never" && value !== "ask") {
-      throw new Error(`${where} must be "never" or "ask"`);
-    }
-    const dot = key.indexOf(".");
-    const id = dot === -1 ? key : key.slice(0, dot);
-    const tool = dot === -1 ? undefined : key.slice(dot + 1);
-    if (!id || tool === "") {
-      throw new Error(`${where}: keys are connector ids or connector.tool addresses`);
-    }
-    const connector = registry.getConnector(id);
-    if (!connector) throw new Error(`${where}: unknown connector "${id}"`);
-    if (tool === undefined) {
-      connectors.set(id, value);
-      continue;
-    }
-    if (
-      connector.staticTools &&
-      !connector.staticTools.some((candidate) => candidate.name === tool)
-    ) {
-      throw new Error(`${where}: connector "${id}" has no tool "${tool}"`);
-    }
-    tools.set(key, value);
-  }
-  return { connectors, tools };
-}
-
-/**
- * One-time construction warnings for deployment shapes that run fine but are
- * usually unintended. Warning-only — never throws and never changes behavior;
- * each deployment-wide condition emits at most one `logger.warn`, and each
- * per-connector condition at most one per connector it names.
- */
+/** Construction warnings for valid but usually unintended deployment choices. */
 function warnInsecureConfig(config: ResolvedConfig): void {
   const { auth: inboundAuth, logger } = config;
   const oauthConnectors = config.connectors.filter((c) => c.finishAuth);
@@ -349,9 +293,9 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     toolCatalogStaleSeconds: resolved.discovery.staleCatalogSeconds,
     maxResultBytes: resolved.calls.maxResultBytes,
     results: resolved.results,
+    classification: resolved.classification,
   });
   const pools = resolvePools(resolved.pools, registry);
-  const approval = resolveApprovalPolicy(resolved.execute.approval, registry);
   warnInsecureConfig(resolved);
   const requestAdmission = new AdmissionController(resolved.admission.requests);
   let codeAdmission: AdmissionController | undefined;
@@ -377,18 +321,13 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     const refreshConfig = {
       ...executeLimits(resolved),
       failOnInvocationFailure: true,
-      // A connector's own `approval: "never"` still applies when policy maps
-      // are empty. Override every shared connector explicitly for refresh.
-      approval: {
-        connectors: new Map(sharedIds.map((id) => [id, "ask" as const])),
-        tools: new Map(),
-      },
+      trust: "read-only" as const,
     };
     const identity = resolved.identity;
     resolved.artifacts.bindRefresh({
       ...(resolved.ui?.branding ? { branding: resolved.ui.branding } : {}),
       claimMs: runClaimMs(refreshConfig),
-      execute: async (program, owner, signal) => {
+      execute: async (program, owner, signal, options) => {
         if (!owner) throw new Error("Refresh owner is missing; reconfigure this program.");
         let access = parseConnectorAccess(identity.connectorAccess
           ? await identity.connectorAccess(owner.identity) : "all", { allowReadOnly: true });
@@ -414,7 +353,9 @@ export function createConnecta(config: ConnectaConfig): Connecta {
         const view = registry.scoped({ connectorIds: access.connectorIds,
           ...(access.toolAccess ? { toolAccess: access.toolAccess } : {}),
           ...(access.guardedToolAccess ? { guardedToolAccess: access.guardedToolAccess } : {}) });
-        const execute = createExecuteTool(view, resolved.publicUrl!, executor, logger, undefined, refreshConfig);
+        const execute = createExecuteTool(view, resolved.publicUrl!, executor, logger, undefined, {
+          ...refreshConfig, waitForAdmission: options?.waitForAdmission,
+        });
         return execute({ code: program }, { signal });
       },
     });
@@ -423,16 +364,15 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     config: resolved,
     registry,
     pools,
-    approval,
     executor,
     executorName: configuredExecutorName,
     requestAdmission,
   });
   // Built once, from values construction already validated; never per call.
   const description = describeConfig({
+    registry,
     raw: input,
     config: resolved,
-    approval,
     executorName: configuredExecutorName,
     executorAdmits,
   });

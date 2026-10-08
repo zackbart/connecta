@@ -211,7 +211,6 @@ function connectorDetail(
         mayManage,
         timeoutMs: opts.config.discovery.probeTimeoutMs,
         signal: request.signal,
-        approval: opts.approval,
       },
     );
     return privateJson({ ...data.connectors[0], permissions: permissions(connector) });

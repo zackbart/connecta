@@ -81,10 +81,11 @@ Reads run anywhere, including inside \`execute_code\`:
   } without saving. **Validate before you save**; each error names a line and
   the fix.
 
-Writes make new versions and never ask for approval inside \`execute_code\`
-(unless this deployment turned that off); each one spends the program's write
-budget. At the top level, \`call_tool\` refuses them — use
-\`call_destructive_tool\`.
+Writes make new versions. Trusted pools permit them inside \`execute_code\`,
+where each one spends the program's write budget and the host controls approval
+for the program. Read-only pools route writes through \`call_destructive_tool\`.
+At the top level, \`call_tool\` refuses every write. A nested \`run_refresh\`
+requires a spare executor slot; call it directly if none is free.
 
 - \`create_artifact { id, title, kind, source, documents? }\` — \`id\` is the
   page's URL slug (lowercase letters, digits, hyphens). \`documents\` maps each
@@ -103,7 +104,7 @@ budget. At the top level, \`call_tool\` refuses them — use
   complete \`execute_code\` async-arrow program returning the document's JSON
   value. \`schedule\` is \`manual\`, \`daily\`, or \`weekly\`; use \`baseVersion: 0\`
   for the first program, then the version from \`get_refresh\`. It can call
-  only explicitly read-only tools on shared connectors. Personal connectors
+  only tools classified as reads on shared connectors. Personal connectors
   and writes fail the run even if the program catches the refusal. A failed
   run keeps the last good document and marks the page stale. Each run rechecks
   your current connector grants and pool access; removing permission to

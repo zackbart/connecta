@@ -323,7 +323,7 @@ class QuickJsChildPool implements AdmittingExecutor {
     this.available = [...this.slots];
   }
 
-  async acquire(options: { signal?: AbortSignal } = {}): Promise<ExecutorLease> {
+  async acquire(options: { signal?: AbortSignal; wait?: boolean } = {}): Promise<ExecutorLease> {
     const admission = await this.admission.acquire(options);
     const slot = this.available.shift();
     if (!slot) {

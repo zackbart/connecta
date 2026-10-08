@@ -11,20 +11,11 @@ import { invariantProblems, referenceProblems, type TestTitle } from "./fixtures
 const principles = readFileSync(new URL("../PRINCIPLES.md", import.meta.url), "utf8");
 const ids = [...principles.matchAll(/^- \*\*(INV-\d+):/gm)].map((match) => match[1]!);
 
-// These are gaps in parts of an invariant, not exemptions from citing a real
-// test. Remove each entry when its target behavior has its own regression.
-const TRANSITIONAL_GAPS = {
-  "INV-2": "TODO Phase 2 (#706 item 1): replace config-exemption tests with per-pool trust tests.",
-};
-
 describe("principles backed by tests", () => {
   it("gives each documented invariant a unique ID", () => {
     expect(ids.length).toBeGreaterThan(0);
     expect(new Set(ids).size).toBe(ids.length);
-    for (const [id, todo] of Object.entries(TRANSITIONAL_GAPS)) {
-      expect(ids).toContain(id);
-      expect(todo).toMatch(/TODO Phase \d+ \(#\d+ item \d+\)/);
-    }
+
   });
 
   it("requires a passing enforcing case, rather than a suite or the guard itself", () => {

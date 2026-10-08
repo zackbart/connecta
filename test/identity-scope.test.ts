@@ -460,7 +460,7 @@ describe("guarded read-only identity grants", () => {
     const connecta = createTestConnecta({
       connectors: [notes], auth: users(),
       identity: { connectorAccess: () => [guarded("notes.read"), guarded("notes.write"), guarded("notes.conflict")] },
-      execute: { approval: { notes: "never" } },
+      trust: "trusted",
       executor: { async execute(_code, providers) {
         const fns = providers.find((provider) => provider.name === "connecta")!.fns;
         observations.search = await fns.search!({ connector: "notes", query: "", limit: 20 });

@@ -5,13 +5,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
 import { TITHELY_API_BASE_URLS, tithely } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { isExplicitlyReadOnly } from "../../tool-safety.js";
+import { classifyTool } from "../../tool-safety.js";
 import { silentLogger } from "../../../test/helpers.js";
 import type {
   Connector,
   ConnectorContext,
   ConnectorUsageGuide,
 } from "../../types.js";
+
+const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
 
 interface StubResponse {
   status?: number;
@@ -195,7 +197,7 @@ describe("tithely() construction", () => {
 
   it("splits reads from the always-destructive mutate hatch and names no money-moving tool", async () => {
     const tools = await connection().listTools(context());
-    const writes = tools.filter((tool) => !isExplicitlyReadOnly(tool));
+    const writes = tools.filter((tool) => !isRead(tool));
     expect(writes.map((tool) => tool.name)).toEqual(["tithely_api_mutate"]);
     expect(writes[0]!.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
     expect(tools.find((tool) => tool.name === "tithely_api_get")?.annotations?.readOnlyHint).toBe(true);

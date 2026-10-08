@@ -109,7 +109,7 @@ describe("a refresh flight's bound (#570)", () => {
     expect(joinerSettled).toBe(false);
 
     await vi.advanceTimersByTimeAsync(1);
-    await expect(joiner).resolves.toEqual([READ]);
+    await expect(joiner).resolves.toEqual([{ ...READ, classification: "read" }]);
     expect(stuck.state.calls).toBe(2);
     expect(
       warnings.some((warning) => warning.includes("outlived its bound")),
@@ -118,11 +118,11 @@ describe("a refresh flight's bound (#570)", () => {
     // The stuck listing finally lands. Its owner may still use it, but it
     // reaches neither cache layer, nor overwrites the fresh attempt's.
     stuck.release([STALE]);
-    await expect(owner).resolves.toEqual([STALE]);
+    await expect(owner).resolves.toEqual([{ ...STALE, classification: "read" }]);
     await flush();
-    await expect(registry.getTools("stuck", BASE)).resolves.toEqual([READ]);
+    await expect(registry.getTools("stuck", BASE)).resolves.toEqual([{ ...READ, classification: "read" }]);
     const cold = registryOf(stuck.connector, storage);
-    await expect(cold.getTools("stuck", BASE)).resolves.toEqual([READ]);
+    await expect(cold.getTools("stuck", BASE)).resolves.toEqual([{ ...READ, classification: "read" }]);
     expect(stuck.state.calls).toBe(2);
   });
 
@@ -143,14 +143,14 @@ describe("a refresh flight's bound (#570)", () => {
     await vi.advanceTimersByTimeAsync(100);
     await expect(
       new CatalogService(registry, BASE).loadConnector("unwatched"),
-    ).resolves.toEqual([READ]);
+    ).resolves.toEqual([{ ...READ, classification: "read" }]);
     expect(stuck.state.calls).toBe(2);
 
     stuck.release([STALE]);
     await flush();
-    await expect(registry.getTools("unwatched", BASE)).resolves.toEqual([READ]);
+    await expect(registry.getTools("unwatched", BASE)).resolves.toEqual([{ ...READ, classification: "read" }]);
     const cold = registryOf(stuck.connector, storage);
-    await expect(cold.getTools("unwatched", BASE)).resolves.toEqual([READ]);
+    await expect(cold.getTools("unwatched", BASE)).resolves.toEqual([{ ...READ, classification: "read" }]);
     expect(stuck.state.calls).toBe(2);
   });
 
@@ -163,11 +163,11 @@ describe("a refresh flight's bound (#570)", () => {
     const owner = registry.getTools("late", BASE, {}, { timeoutMs: 200 });
     await vi.advanceTimersByTimeAsync(300);
     stuck.release([STALE]);
-    await expect(owner).resolves.toEqual([STALE]);
+    await expect(owner).resolves.toEqual([{ ...STALE, classification: "read" }]);
     await flush();
 
     expect(await storage.get("catalog:late")).toBeNull();
-    await expect(registry.getTools("late", BASE)).resolves.toEqual([READ]);
+    await expect(registry.getTools("late", BASE)).resolves.toEqual([{ ...READ, classification: "read" }]);
     expect(stuck.state.calls).toBe(2);
   });
 });
@@ -217,7 +217,7 @@ describe("each reader's own deadline and cancellation (#571)", () => {
     expect(required(slow.signals[0]).aborted).toBe(false);
 
     await vi.advanceTimersByTimeAsync(45);
-    await expect(joined).resolves.toEqual([READ]);
+    await expect(joined).resolves.toEqual([{ ...READ, classification: "read" }]);
     expect(slow.signals).toHaveLength(1);
   });
 
@@ -236,7 +236,7 @@ describe("each reader's own deadline and cancellation (#571)", () => {
     await joinerFailed;
 
     await vi.advanceTimersByTimeAsync(40);
-    await expect(started).resolves.toEqual([READ]);
+    await expect(started).resolves.toEqual([{ ...READ, classification: "read" }]);
     expect(slow.signals).toHaveLength(1);
   });
 
@@ -261,7 +261,7 @@ describe("each reader's own deadline and cancellation (#571)", () => {
 
     const again = catalog.loadConnector("abandoned_read");
     await vi.advanceTimersByTimeAsync(50);
-    await expect(again).resolves.toEqual([READ]);
+    await expect(again).resolves.toEqual([{ ...READ, classification: "read" }]);
     expect(slow.signals).toHaveLength(2);
   });
 
@@ -282,10 +282,10 @@ describe("each reader's own deadline and cancellation (#571)", () => {
     await expect(owned).rejects.toBe(reason);
 
     await vi.advanceTimersByTimeAsync(50);
-    await expect(joined).resolves.toEqual([READ]);
+    await expect(joined).resolves.toEqual([{ ...READ, classification: "read" }]);
     expect(slow.signals).toHaveLength(2);
     await expect(registry.getTools("owner_cancelled", BASE)).resolves.toEqual([
-      READ,
+      { ...READ, classification: "read" },
     ]);
     expect(slow.signals).toHaveLength(2);
   });

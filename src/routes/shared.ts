@@ -11,8 +11,6 @@ import type {
   InboundAuthRuntimeContext,
 } from "../types.js";
 import { identityStorageKey, validIdentityReference } from "../identity.js";
-import { isExplicitlyReadOnly } from "../tool-safety.js";
-import type { ApprovalPolicy } from "../tool-safety.js";
 import type { ConnectorPermission, ConnectaIdentityConfig, ResolvedConfig } from "../config.js";
 export { msg } from "../errors.js";
 
@@ -26,8 +24,6 @@ export interface ServerOptions {
   registry: Registry;
   /** Validated named pools served at `/mcp/<name>`; empty when none declared. */
   pools: ReadonlyMap<string, ResolvedPool>;
-  /** Config approval exemptions (`execute.approval`), resolved at construction. */
-  approval: ApprovalPolicy;
   /** Required sandbox backing execute_code, wrapped in fallback admission if needed. */
   executor: Executor;
   /** Sanitized identity of the configured sandbox, when it has one. */
@@ -357,8 +353,8 @@ export function mayViewArtifacts(authz: AuthorizedIdentity, registry: Registry):
   const tools = authz.toolAccess?.get("artifacts");
   if (tools && !tools.has("get_artifact")) return false;
   if (!authz.guardedToolAccess?.get("artifacts")?.has("get_artifact")) return true;
-  return registry.getConnector("artifacts")?.staticTools?.some((tool) =>
-    tool.name === "get_artifact" && isExplicitlyReadOnly(tool)) === true;
+  return registry.describeStaticTools("artifacts")?.some((tool) =>
+    tool.name === "get_artifact" && tool.classification === "read") === true;
 }
 
 export function mayManageConnector(

@@ -6,13 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
 import { breeze } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { isExplicitlyReadOnly } from "../../tool-safety.js";
+import { classifyTool } from "../../tool-safety.js";
 import { silentLogger } from "../../../test/helpers.js";
 import type {
   Connector,
   ConnectorContext,
   ConnectorUsageGuide,
 } from "../../types.js";
+
+const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
 
 interface StubResponse {
   status?: number;
@@ -160,13 +162,13 @@ describe("breeze() construction", () => {
     const tools = await connection().listTools(context());
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
     expect(tools).toHaveLength(23);
-    expect(isExplicitlyReadOnly(byName.get("breeze_api_get")!)).toBe(true);
+    expect(isRead(byName.get("breeze_api_get")!)).toBe(true);
     expect(byName.get("breeze_api_mutate")?.annotations).toEqual({
       readOnlyHint: false,
       destructiveHint: true,
     });
     for (const name of ["list_contributions", "list_funds", "list_people", "get_person"]) {
-      expect(isExplicitlyReadOnly(byName.get(name)!), name).toBe(true);
+      expect(isRead(byName.get(name)!), name).toBe(true);
     }
     for (const name of ["add_person", "assign_tag", "record_check_in"]) {
       expect(byName.get(name)?.annotations, name).toEqual({ readOnlyHint: false });

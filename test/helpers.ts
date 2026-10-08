@@ -85,8 +85,7 @@ export async function invokeTestCall(
     new CatalogService(registry, "https://connecta.example"),
     target.activity,
   ).invoke(address, args, {
-    source: "call_tool",
-    allowDestructive: true,
+    source: "call_destructive_tool",
   });
 }
 
@@ -143,6 +142,7 @@ export function required<T>(
 export function makeRegistry(
   connectors: Connector[],
   opts: {
+    classification?: import("../src/registry.js").RegistryOptions["classification"];
     toolCacheTtlSeconds?: number;
     maxResultBytes?: number;
     /** Share one store between a registry and a credential vault. */

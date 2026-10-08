@@ -1,8 +1,8 @@
 # Meta-tools
 
 Connecta keeps one small tool surface in model context and resolves downstream
-tools behind it. `search_tools` finds addresses, the call tools enforce safety
-annotations, `execute_code` runs read-only work as a program, and `get_result`
+tools behind it. `search_tools` finds addresses, the call tools enforce the
+stored classification, `execute_code` runs programs under pool trust, and `get_result`
 pages bounded results.
 
 This guide is the contract an MCP client sees. The in-program `connecta.*` API
@@ -16,10 +16,10 @@ configuration adds an eighth or removes one, so a client's cached tool list
 never depends on the storage behind the deployment. There was an eighth,
 `resume_execution`, while programs paused at writes; it left with pausing
 ([#672](https://github.com/zackbart/connecta/issues/672)). `execute_code`
-keeps its read-only hint because the only writes a program sends are the ones
-the deployment's own config exempted from asking
-([code mode](./code-mode.md#writes) `W12`) — a decision made in code, not by
-the model, and not by a downstream annotation.
+is annotated `readOnlyHint: true, destructiveHint: false` on a `read-only`
+endpoint, and `readOnlyHint: false, destructiveHint: true` on a `trusted`
+endpoint. Approval belongs to the host. Pool trust never changes connector
+visibility or tool grants.
 
 | Tool | Arguments | Returns |
 | --- | --- | --- |
@@ -50,14 +50,11 @@ aggregates for a caller measuring a workflow: a `diagnostics` block from
 and the measurements never contain program source, arguments, values, addresses,
 credentials, logs, or raw error text.
 
-Connecta's own tools carry the annotations it demands of downstream tools:
-read-only hints on all but `authorize_connector`, which requests interactive
-authentication changes, and `call_destructive_tool`, the one that sends writes, which is
-destructive. Otherwise a host that gates on annotations would prompt for every
-search, and a connecta aggregated behind another connecta would be refused by
-its own policy. `call_destructive_tool` is where the prompt belongs: its
-arguments are the exact write, so the human approves what will be sent rather
-than a program that might send anything. Its `reason` is dropped before
+Connecta's discovery tools carry read-only hints. `authorize_connector`
+requests interactive authentication changes; `call_destructive_tool` sends
+writes and is annotated destructive. `execute_code` reports the selected pool's
+trust in its description and annotations. Its host may approve the whole
+program on a trusted endpoint. `call_destructive_tool.reason` is dropped before
 anything runs.
 
 ## Routing between the call surfaces
@@ -78,21 +75,12 @@ use a direct `call_destructive_tool` result and page it with `get_result` after
 the write runs once. A program return has no page handle; sampling or slicing
 a write's output there can discard the answer.
 
-Writes do not take that route. A program that reaches a tool not explicitly
-annotated read-only refuses it before validation and before anything is sent —
-unless the deployment's config exempts that tool, and then it runs unasked —
-with `destructive_tool_requires_approval` and a `nextAction` naming
-`call_destructive_tool` and the canonical address. Each write is its own
-top-level call, and the host's permission prompt on it is the only approval
-there is. So "close the stale issues and post a summary" is one program to find
-the issues and one `call_destructive_tool` per write; the program does the
-reading, and the host sees every write it is asked about. Programs once paused
-at a write for a resume call to approve and replay; hosts approve one tool call
-at a time, so under always-allow that prompt approved nothing and cost a round
-trip and a replay
-([#672](https://github.com/zackbart/connecta/issues/672)). Top-level discovery
-stays for catalog inspection and for finding the address of a write, and the
-MCP instructions say so.
+A `trusted` pool lets the same program discover and dispatch writes.
+A `read-only` pool refuses writes before validation or dispatch with
+`destructive_tool_requires_approval` and a `nextAction` naming
+`call_destructive_tool` and the canonical address. Each write then uses its
+own top-level call. Connecta never pauses, replays, or approves a program.
+Top-level discovery remains available for catalog inspection and write routing.
 
 The three discovery routes use deliberately different envelopes. These are their
 smallest successful one-tool shapes:
@@ -130,7 +118,7 @@ discovery. Both take the same arguments.
 | --- | --- |
 | `query` | two to four action/object terms; empty or whitespace-only browses |
 | `connector` | scopes to one id, loading that catalog alone instead of fanning out across every configured connector. Set it when the integration is obvious, omit it when the right one is genuinely ambiguous |
-| `safety` | `"readOnly"` for what runs unasked, `"approvalRequired"` for the complementary set that crosses `call_destructive_tool`, omitted or `"all"` for the complete configured catalog. A config-exempt write stays `"approvalRequired"` and its row says `approval: "exempt"`: a program calls it without asking, and `call_tool` still refuses it ([code mode](./code-mode.md#writes) `W12`) |
+| `safety` | `"readOnly"` selects stored `read` verdicts; `"approvalRequired"` selects stored `write` verdicts; omitted or `"all"` selects both. Each row carries `classification: "read" \| "write"`. These legacy filter names do not describe host approval policy or pool trust. |
 | `limit` / `offset` | page the ranked results; omit `limit` initially so the default eight-result page stays small |
 | `includeSchemas` | `"compact"` for the rendered routing view, `"json"` for the exact schema, `"typescript"` for a function signature ([below](#typescript-signatures)) |
 | `fullDescriptions` | unabridged tool purposes, at the obvious cost |
@@ -547,7 +535,7 @@ the same arguments when the miss happened inside `execute_code`, which has no
 way to call a tool. `call_tool` reaching an unannotated, write-capable, or
 destructive tool returns `nextAction` for `call_destructive_tool` with the
 canonical address, and so does the same call inside a program, unless config
-exempts the tool there. Nothing is executed by these records.
+marks that pool trusted. Nothing is executed by these records.
 
 `connecta.describe` keeps its failures inline instead, so one miss cannot
 discard the other schemas; each failed entry carries a human `error`, typed

@@ -414,8 +414,8 @@ describe("ConnectaConfig boundary", () => {
       .toThrow("ConnectaConfig.discovery must be an object.");
     expect(() => unsafeCreateConnecta({ connectors: [], executor, pools: [] }))
       .toThrow("ConnectaConfig.pools must be an object.");
-    expect(() => unsafeCreateConnecta({ connectors: [], executor, execute: { approval: new Map() } }))
-      .toThrow("ConnectaConfig.execute.approval must be a plain object.");
+    expect(() => unsafeCreateConnecta({ connectors: [], executor, classification: new Map() }))
+      .toThrow("ConnectaConfig.classification must be a plain object.");
   });
 
   it("accepts an explicitly undefined activity group as omitted", () => {
@@ -657,9 +657,9 @@ describe("ConnectaConfig accessors and keyed maps", () => {
       ({ connectors: [], executor, discovery: trap({}, "concurrency", calls) }), "ConnectaConfig.discovery.concurrency"],
     ["a pool", (calls: { count: number }) =>
       ({ connectors: [], executor, pools: trap({}, "support", calls) }), "ConnectaConfig.pools.support"],
-    ["an approval entry", (calls: { count: number }) =>
-      ({ connectors: [], executor, execute: { approval: trap({}, "notes", calls) } }),
-    "ConnectaConfig.execute.approval.notes"],
+    ["a classification entry", (calls: { count: number }) =>
+      ({ connectors: [], executor, classification: trap({}, "notes", calls) }),
+    "ConnectaConfig.classification.notes"],
     ["a connector slot", (calls: { count: number }) =>
       ({ connectors: trap([], "0", calls), executor }), "ConnectaConfig.connectors[0]"],
     ["an icon", (calls: { count: number }) =>
@@ -798,16 +798,16 @@ describe("ConnectaConfig accessors and keyed maps", () => {
     expect(resolved.pools?.["toString"]).toBeUndefined();
   });
 
-  it("INV-11: keeps a __proto__ approval key as an ordinary entry", async () => {
+  it("INV-11: keeps a __proto__ classification key as an ordinary entry", async () => {
     const { resolveConfig } = await import("../src/config.js");
     const resolved = resolveConfig({
       connectors: [],
       executor,
-      execute: { approval: { ["__proto__"]: "never", constructor: "ask" } as const },
+      classification: { ["__proto__"]: { read: "read" }, constructor: { write: "write" as const } },
     });
-    expect(Object.entries(resolved.execute.approval ?? {})).toEqual([
-      ["__proto__", "never"],
-      ["constructor", "ask"],
+    expect(Object.entries(resolved.classification ?? {})).toEqual([
+      ["__proto__", { read: "read" }],
+      ["constructor", { write: "write" }],
     ]);
   });
 });
