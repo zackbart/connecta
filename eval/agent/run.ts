@@ -189,6 +189,7 @@ async function runTrial(
         return followUp.prompt;
       },
     });
+    world.programs = deployment.programs;
     const trace = parseTrace(run.events, run.turnStarts, prompts);
     trace.urlElicitations = parseTrace(hostEvents, [], []).urlElicitations ?? [];
     for (const note of notes) {

@@ -2,6 +2,7 @@
  * A world is one trial's downstream universe: six fake services sharing one
  * ledger and one clock, started fresh and thrown away afterwards.
  */
+import type { ProgramObservation } from "../deploy/observed-executor.js";
 import { FakeOAuth } from "./oauth.js";
 import { assetTools, mixpanelTools, revenuecatTools, supabaseTools, PREREQUISITE_GUIDES } from "./prerequisites.js";
 import { FakeService, Ledger } from "./service.js";
@@ -94,6 +95,8 @@ export class World {
   readonly oauth = new FakeOAuth(this.ledger);
   /** Set by the runner before grading, when the deployment has artifacts. */
   artifacts?: ArtifactSnapshot;
+  /** Host-observed guest calls, never inferred from model source text. */
+  programs: ProgramObservation[] = [];
 
   constructor(readonly options: WorldOptions = {}) {
     this.tracker = trackerState(this.now);

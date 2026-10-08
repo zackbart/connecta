@@ -30,6 +30,8 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     if (mode === 'complete') {
       send({ method: 'item/started', params: { item: { type: 'mcpToolCall', id: 'tool-1', server: 'connecta', tool: 'execute_code', arguments: { code: '1' } } } });
       send({ method: 'item/completed', params: { item: { type: 'mcpToolCall', id: 'tool-1', server: 'connecta', tool: 'execute_code', status: 'completed', result: { content: [{ type: 'text', text: 'ok' }] } } } });
+      send({ method: 'item/completed', params: { item: { type: 'agentMessage', id: 'text-1', phase: 'commentary', text: 'Earlier evidence.' } } });
+      send({ method: 'item/completed', params: { item: { type: 'agentMessage', id: 'text-2', phase: 'final_answer', text: 'Final answer.' } } });
       send({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
     }
   }
@@ -63,6 +65,8 @@ describe("Codex eval app-server", () => {
     expect(trace.permissionDenials).toContain("mcpServer/elicitation/request");
     expect(trace.toolUses).toMatchObject([{ tool: "execute_code", resultText: "ok", isError: false }]);
     expect(trace.resultSubtypes).toEqual(["success"]);
+    expect(run.events.filter(e => e.type === "assistant").at(-1)?.message).toMatchObject({ phase: "final_answer" });
+    expect(trace.finalAnswer).toBe("Final answer.");
     expect(trace.modelTurns).toBeUndefined();
     expect(trace.apiMs).toBeUndefined();
     expect(run.model).toBe("gpt-6-sol");

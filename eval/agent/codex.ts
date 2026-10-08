@@ -73,7 +73,7 @@ function codexEvent(event: { method?: string; params?: Record<string, any> }): S
     }] } }];
   }
   if (event.method === "item/completed" && item?.type === "agentMessage" && item.text) {
-    return [{ type: "assistant", message: { content: [{ type: "text", text: item.text }] } }];
+    return [{ type: "assistant", message: { phase: item.phase, content: [{ type: "text", text: item.text }] } }];
   }
   if (event.method === "turn/completed") {
     const turn = event.params?.turn;

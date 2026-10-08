@@ -88,13 +88,18 @@ in-flight Skills extension or downstream `input_required` relay has shipped.
 ```sh
 npm run eval:selftest
 npm run eval:smoke
-VITEST_MAX_WORKERS=2 npx vitest run --project node test/claude-eval.node.test.ts test/codex-eval.node.test.ts
+VITEST_MAX_WORKERS=2 npx vitest run --project node test/claude-eval.node.test.ts test/codex-eval.node.test.ts test/agent-eval-trace.node.test.ts
 VITEST_MAX_WORKERS=2 npm run release:check
 ```
 
 The self-test executes each reference through real MCP, then proves that its
 grader rejects a wrong-source attribution with the expected answer intact,
-and a right-source run without answer evidence. It also rejects a no-op.
+and a right-source run without answer evidence. It also rejects a no-op, wrong-issue
+refusals, comment-only paging/fan-out, another retained result, direct images
+substituted for program emissions, sequential budget exhaustion, direct-only
+recovery, and contradictory/missing RevenueCat access evidence. The deployment
+adapter observes the real QuickJS provider bridge for paging and fan-out checks;
+source text alone cannot satisfy them.
 Skipped features remain untested until enabled against a supporting checkout.
 Fake CLI protocol tests cover isolation, inventory/model refusal, multiple
 turns, rich output, usage accounting, deadlines and cancellation. These checks

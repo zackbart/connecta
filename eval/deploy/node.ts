@@ -23,7 +23,7 @@ import { accessTokens, AccessTokenManager } from "@zackbart/connecta/auth/access
 import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
 import { listen } from "@zackbart/connecta/node";
 import { sqliteStorage } from "@zackbart/connecta/sqlite";
-import { quickJsExecutor } from "@zackbart/connecta/quickjs";
+import { observedExecutor, type ProgramObservation } from "./observed-executor.js";
 import { operatorUi } from "@zackbart/connecta/ui";
 import type { FakeOAuth } from "../fakes/oauth.js";
 import type { ArtifactSnapshot, ConnectorSpec } from "../fakes/world.js";
@@ -48,6 +48,7 @@ export interface Deployment {
   origin: string;
   mcpUrl: string;
   token: string;
+  programs: ProgramObservation[];
   /** The operator saving a credential in the connection page. */
   openConnect(url: string): Promise<void>;
   setCredential(connectorId: string, value: string): Promise<void>;
@@ -141,6 +142,7 @@ export async function startNodeDeployment(
   const quiet = { debug() {}, info() {}, warn() {}, error() {} };
   const artifactStore = artifactOptions ? kvArtifactStore(storage) : undefined;
   const artifactsModule = artifactStore ? artifacts({ store: artifactStore }) : undefined;
+  const observed = observedExecutor();
   const connecta = createConnecta({
     storage,
     accessTokens: accessTokens(storage),
@@ -150,7 +152,7 @@ export async function startNodeDeployment(
       personalConnection: () => "all",
     },
     publicUrl: origin,
-    executor: quickJsExecutor(),
+    executor: observed.executor,
     vault,
     ui: operatorUi(),
     logger: quiet,
@@ -186,6 +188,7 @@ export async function startNodeDeployment(
   await once(server, "listening");
   return {
     kind: "node-template-shape",
+    programs: observed.programs,
     origin,
     mcpUrl: `${origin}/mcp${typeof pool === "string" ? `/${pool}` : ""}`,
     token: oauth?.token ?? token,

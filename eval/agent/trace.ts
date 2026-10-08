@@ -114,7 +114,7 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
     if (event.type === "codex_usage") {
       const total = event.total as Record<string, number> | undefined;
       if (total) tokens = {
-        input: total.inputTokens ?? 0,
+        input: Math.max(0, (total.inputTokens ?? 0) - (total.cachedInputTokens ?? 0)),
         output: total.outputTokens ?? 0,
         cacheRead: total.cachedInputTokens ?? 0,
         cacheCreation: total.cacheWriteInputTokens ?? 0,
@@ -126,13 +126,18 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
       return;
     }
     if (event.type === "assistant" || event.type === "user") {
-      const message = event.message as { content?: unknown } | undefined;
+      const message = event.message as { content?: unknown; phase?: string } | undefined;
       const blocks = Array.isArray(message?.content) ? message.content : [];
+      if (event.type === "assistant") {
+        // One completed message is the answer; earlier commentary is display-only.
+        finalAnswer = message?.phase === "commentary" ? "" : blocks
+          .filter(block => (block as Record<string, unknown>).type === "text")
+          .map(block => String((block as Record<string, unknown>).text ?? "")).join("\n");
+      }
       for (const raw of blocks) {
         const block = raw as Record<string, unknown>;
         if (block.type === "text" && event.type === "assistant") {
           const text = String(block.text ?? "");
-          finalAnswer += `${text}\n`;
           if (text.trim()) transcript.push({ kind: "assistant", turn, text: clip(text, MAX_TEXT_CHARS) });
         } else if (block.type === "tool_use") {
           finalAnswer = "";

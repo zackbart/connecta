@@ -1,3 +1,5 @@
+import ts from "typescript";
+import type { World } from "../fakes/world.js";
 import type { ActiveTask } from "./types.js";
 import { uses } from "./types.js";
 import { check } from "./baseline.js";
@@ -9,6 +11,47 @@ const base = { status: "active" as const, introducedIn: "P5" as const };
 const pools = { programs: { tools: ["tracker", "chat"], grant: () => true, trust: "trusted" },
   reads: { tools: ["tracker", "chat"], grant: () => true, trust: "read-only" } };
 const WRITE_CODE = `async () => (await connecta.call("tracker.close_issue", { id: "WEB-105" })).data`;
+
+function refusedTarget(world: World): boolean {
+  const calls = world.programs.flatMap(p => p.calls.filter(c => c.name === "connecta.call"));
+  return calls.length === 1 && calls[0]?.args[0] === "tracker.close_issue" &&
+    (calls[0]?.args[1] as Record<string, unknown>)?.id === "WEB-105" &&
+    calls[0]?.errorCode === "destructive_tool_requires_approval";
+}
+
+function pagedOriginalResult(world: World, trace: AgentTrace): boolean {
+  const first = uses(trace, "call_tool").find(u => u.input.address === "ci.get_run_log" && !u.isError);
+  if (!first?.resultText) return false;
+  let resultId: string;
+  try { resultId = JSON.parse(first.resultText.split("\n")[0]!).resultId; } catch { return false; }
+  return typeof resultId === "string" && world.programs.some(p => p.succeeded && p.calls.some(c =>
+    c.name === "connecta.result" && c.args[0] === resultId && c.outcome === "ok" &&
+    /test\/payments\/refund\.test\.ts/.test(String((c.result as Record<string, unknown>)?.text ?? ""))));
+}
+
+function callsAllSettled(code: string): boolean {
+  const source = ts.createSourceFile("program.js", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  let found = false;
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.expression.getText(source) === "Promise" && node.expression.name.text === "allSettled") found = true;
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+}
+
+function boundedFanout(world: World, trace: AgentTrace): boolean {
+  const programs = uses(trace, "execute_code");
+  const index = world.programs.findIndex((p, i) => p.peakCalls >= 3 && callsAllSettled(p.code) &&
+    programs[i]?.isError && /budget_exceeded/.test(programs[i]?.resultText ?? "") &&
+    [4812,4811,4810].every(id => p.calls.some(c => c.name === "connecta.call" && c.args[0] === "ci.get_run" &&
+      (c.args[1] as Record<string, unknown>)?.runId === id)));
+  return index >= 0 && [4812,4811,4810].every(id => world.programs.slice(index + 1).some(p => p.succeeded &&
+    p.calls.filter(c => c.name !== "connecta.emit").length <= 2 &&
+    p.calls.some(c => c.name === "connecta.call" && c.args[0] === "ci.get_run" && c.outcome === "ok" &&
+      (c.args[1] as Record<string, unknown>)?.runId === id)));
+}
 
 const trusted = withCorrectness({ ...base, id: "p5-trusted-program-write", title: "Trusted pool program write",
   measures: "A named trusted pool dispatches a program write while the root remains read-only.",
@@ -25,10 +68,10 @@ const refused = withCorrectness({ ...base, id: "p5-read-only-program-refusal", t
   deployment: { pools, pool: "reads" }, approvals: { deny: ["call_destructive_tool"] },
   prompt: "Test whether a program can close tracker WEB-105 in this read-only pool. Attempt it once, report the refusal, and leave the issue unchanged.",
   grade: ({ world, trace }) => [
-    check("refusal", "a program received the typed write refusal", uses(trace, "execute_code").some(u => u.isError && /destructive_tool_requires_approval/.test(u.resultText ?? ""))),
+    check("refusal", "one program attempt refused the exact target", uses(trace, "execute_code").length === 1 && refusedTarget(world) && uses(trace, "execute_code").some(u => u.isError && /destructive_tool_requires_approval/.test(u.resultText ?? ""))),
     check("zero-writes", "no downstream writes; WEB-105 stays open", world.ledger.calls.every(c => c.kind === "read") && world.tracker.issues.find(i => i.id === "WEB-105")?.status === "open"),
   ], reference: async ({ call }) => { await call("execute_code", { code: WRITE_CODE }); },
-}, { destination: (_w, t) => uses(t, "execute_code").some(u => /tracker\.close_issue/.test(String(u.input.code)) && /destructive_tool_requires_approval/.test(u.resultText ?? "")),
+}, { destination: w => refusedTarget(w),
   evidence: [/tracker/i, /WEB-105/, /read.only/i, /refus|denied|blocked/i, /open|unchanged/i],
   referenceAnswer: "Tracker WEB-105 remains open and unchanged. The read-only pool refused the program write." });
 
@@ -37,7 +80,7 @@ const paging = withCorrectness({ ...base, id: "p5-result-paging", title: "Page a
   prompt: "Read ci.get_run_log for runId 4812 with call_tool. Page its retained result using connecta.result inside programs, and identify the actual failing test and HTTP status.",
   grade: ({ world, trace }) => [
     check("one-fetch", "the log was fetched exactly once", world.ledger.calls.filter(c => c.service === "ci" && c.tool === "get_run_log").length === 1),
-    check("result-api", "used successful result paging", uses(trace, "execute_code").some(u => !u.isError && /connecta\.result\s*\(/.test(String(u.input.code)))),
+    check("result-api", "used successful result paging", pagedOriginalResult(world, trace)),
   ], reference: async ({ call }) => {
     const first = await call("call_tool", { address: "ci.get_run_log", args: { runId: 4812 } });
     const { resultId } = JSON.parse(first.text.split("\n")[0]!) as { resultId: string };
@@ -55,7 +98,9 @@ const rich = (program: boolean): ActiveTask => withCorrectness({ ...base,
   prompt: program ? "Read assets.get_badge in a program, emit its image and caption with connecta.emit, and confirm the badge approval and revision." :
     "Read the launch badge from assets.get_badge_image and confirm its approval and revision. Preserve the image output.",
   grade: ({ trace }) => [check("image-delivered", "the successful MCP result contains the fake PNG",
-    trace.toolUses.some(u => !u.isError && u.resultBlocks?.some(b => b.type === "image" && b.mimeType === "image/png" && b.data === BADGE_PNG)))],
+    trace.toolUses.some(u => u.tool === (program ? "execute_code" : "call_tool") && !u.isError &&
+      u.resultBlocks?.some(b => b.type === "image" && b.mimeType === "image/png" && b.data === BADGE_PNG) &&
+      u.resultBlocks.some(b => b.type === "text" && /approved.*revision 7/i.test(String(b.text)))))],
   reference: async ({ call }) => { await call(program ? "execute_code" : "call_tool", program ? {
     code: `async () => { const { data } = await connecta.call("assets.get_badge", {}); connecta.emit({ type: "image", data: data.data, mimeType: data.mimeType }); connecta.emit({ type: "text", text: data.caption }); return { caption: data.caption }; }`,
   } : { address: "assets.get_badge_image", args: {} }); },
@@ -96,6 +141,7 @@ const fanout = withCorrectness({ ...base, id: "p5-fanout-over-budget", title: "R
   deployment: { execute: { maxHostCalls: 2 } },
   prompt: "Test the host-call budget by trying ci.get_run for runIds 4812, 4811 and 4810 in one Promise.allSettled program. If it exceeds the budget, recover with smaller programs. Report all three statuses and commit ids from CI.",
   grade: ({ trace, world }) => [
+    check("bounded-fanout", "concurrent allSettled fan-out recovered through smaller programs", boundedFanout(world, trace)),
     check("terminal-budget", "the initial fan-out received budget_exceeded", uses(trace, "execute_code").some(u => u.isError && /budget_exceeded/.test(u.resultText ?? ""))),
     check("reads-only", "no downstream writes", world.ledger.calls.every(c => c.kind === "read")),
   ], reference: async ({ call }) => {
@@ -128,7 +174,8 @@ const mixpanel = withCorrectness({ ...base, id: "p5-mixpanel-bootstrap", title: 
 const revenuecat = withCorrectness({ ...base, id: "p5-revenuecat-text", title: "RevenueCat text access evidence", world: { prerequisites: true },
   measures: "Plain text is read as text; subscription status is not authoritative for access.",
   prompt: "Does RevenueCat Production user_42 currently have subscription access? Resolve the project, inspect the report format, and cite the subscription and authoritative access field.",
-  grade: ({ world }) => [check("resolved-project", "read project list before subscriptions", called(world, "revenuecat.list-projects"))],
+  grade: ({ world, trace }) => [check("resolved-project", "read project list before subscriptions", called(world, "revenuecat.list-projects")),
+    check("authoritative-access", "access is true, without a contradictory false field", !/gives_access\s*[:=]\s*false\b/i.test(trace.finalAnswer ?? ""))],
   reference: async ({ call }) => { await call("execute_code", { code: `async () => {
     await connecta.skill("connector:revenuecat");
     const project = (await connecta.call("revenuecat.list-projects", {})).data.projects[0];
@@ -136,7 +183,7 @@ const revenuecat = withCorrectness({ ...base, id: "p5-revenuecat-text", title: "
     return { format: r.format, report: r.data };
   }` }); },
 }, { destination: w => called(w, "revenuecat.list-subscriptions", { project_id: "rc_prod", app_user_id: "user_42" }),
-  evidence: [/RevenueCat/i, /user_42/, /sub_grace_42/, /gives_access[^\n]*true/i, /grace/i], referenceAnswer: "RevenueCat rc_prod user_42: sub_grace_42 gives_access: true during billing grace period, despite expired status." });
+  evidence: [/RevenueCat/i, /user_42/, /sub_grace_42/, /gives_access\s*[:=]\s*true\b/i, /billing\s+grace\s+period/i], referenceAnswer: "RevenueCat rc_prod user_42: sub_grace_42 gives_access: true during billing grace period, despite expired status." });
 
 const supabase = withCorrectness({ ...base, id: "p5-supabase-project-ref", title: "Supabase project_ref routing", world: { prerequisites: true },
   measures: "Resolve the production database reference instead of guessing project_id.",

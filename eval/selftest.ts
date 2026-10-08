@@ -10,6 +10,7 @@ import { World } from "./fakes/world.js";
 import { startNodeDeployment } from "./deploy/node.js";
 import { connectMcp } from "./support/mcp.js";
 import type { AgentTrace, ToolUse } from "./agent/trace.js";
+import { counterexamples } from "./tasks/counterexamples.js";
 import { ACTIVE_TASKS } from "./tasks/index.js";
 import { startAuthHost } from "./agent/auth-host.js";
 import { parseTrace, type StreamEvent } from "./agent/trace.js";
@@ -33,7 +34,7 @@ function emptyTrace(toolUses: ToolUse[], finalAnswer = ""): AgentTrace {
   };
 }
 
-async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<{ correct: Check[]; wrongDestination: Check[]; missingEvidence: Check[] }> {
+async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<{ correct: Check[]; wrongDestination: Check[]; missingEvidence: Check[]; regressions: ReturnType<typeof counterexamples> }> {
   const world = new World(task.world);
   await world.start();
   for (const { service, fault } of task.faults ?? []) world.service(service).faults.push(fault);
@@ -84,13 +85,18 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<{ cor
       });
     }
     if (deployment.artifacts) world.artifacts = await deployment.artifacts.snapshot();
+    world.programs = deployment.programs;
     const trace = emptyTrace(toolUses, finalAnswer);
     trace.urlElicitations = parseTrace(hostEvents, [], []).urlElicitations ?? [];
     const correct = task.grade({ world, trace });
+    const regressions = mode === "reference" ? counterexamples(task, world, trace) : [];
     const missingEvidence = task.grade({ world, trace: { ...trace, finalAnswer: "Completed." } });
     // Keep the successful state and answer, but attribute every source call
     // to another destination. This isolates source enforcement from evidence.
     for (const call of world.ledger.calls) call.service = "wrong_destination";
+    for (const p of world.programs) for (const c of p.calls) {
+      if (typeof c.args[0] === "string") c.args[0] = c.args[0].replace(/^[^.]+/, "wrong_destination");
+    }
     const wrongUses = toolUses.map(use => ({ ...use, input: {
       ...use.input,
       ...(typeof use.input.address === "string" ? { address: use.input.address.replace(/^[^.]+/, "wrong_destination") } : {}),
@@ -99,7 +105,7 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<{ cor
       ...(typeof use.input.code === "string" ? { code: use.input.code.replace(/tracker|ci|assets|oauth|mixpanel|supabase|revenuecat|artifacts|github/gi, "wrong_destination") } : {}),
     } }));
     const wrongDestination = task.grade({ world, trace: { ...trace, toolUses: wrongUses } });
-    return { correct, missingEvidence, wrongDestination };
+    return { correct, missingEvidence, wrongDestination, regressions };
   } finally {
     await session.close();
     await host?.close();
@@ -126,7 +132,7 @@ for (const task of ACTIVE_TASKS) {
     played.wrongDestination.some(c => c.id === "answer-evidence" && c.pass);
   const evidenceRejected = played.missingEvidence.some(c => c.id === "answer-evidence" && !c.pass) &&
     played.missingEvidence.some(c => c.id === "correct-destination" && c.pass);
-  const ok = refFailed.length === 0 && !noopPassed && destinationRejected && evidenceRejected;
+  const ok = refFailed.length === 0 && !noopPassed && destinationRejected && evidenceRejected && played.regressions.every(c => c.rejected);
   if (!ok) failures += 1;
   console.log(`${ok ? "ok  " : "FAIL"} ${task.id}`);
   for (const item of refFailed) {
@@ -135,6 +141,7 @@ for (const task of ACTIVE_TASKS) {
   for (const item of reference.filter((entry) => entry.advisory && !entry.pass)) {
     console.log(`       reference advisory miss ${item.id}${item.detail ? ` (${item.detail})` : ""}`);
   }
+  for (const c of played.regressions) console.log(`       ${c.rejected ? "rejected" : "FAIL accepted"}: ${c.name}`);
   if (!destinationRejected) console.log("       wrong-destination answer did not fail the destination check independently");
   if (!evidenceRejected) console.log("       right-destination answer without facts did not fail evidence independently");
   if (noopPassed) console.log("       a no-op agent passed the grader");
