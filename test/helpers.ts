@@ -107,7 +107,7 @@ export async function seedCatalog(
   await storage.set(
     `catalog:${id}`,
     JSON.stringify({
-      version: 2,
+      version: 3,
       revision: snapshot.fingerprint,
       toolCount: 1,
       byteCount: snapshot.serializedBytes.byteLength,

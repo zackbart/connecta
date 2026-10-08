@@ -7,6 +7,7 @@ import type {
   CatalogDriftReport,
   Connector,
   ConnectorContext,
+  Logger,
   ToolClassification,
   ToolDef,
 } from "./types.js";
@@ -111,21 +112,83 @@ export interface VettedCatalogInput {
 
 const encoder = new TextEncoder();
 
-/** Deterministic JSON: object keys sorted, so key order is not a schema change. */
-function canonicalize(value: unknown, depth = 0): unknown {
-  // Drift is advisory. Beyond this bound compare an explicit marker instead
-  // of letting a downstream schema exhaust the host stack.
-  if (depth > 64) return "[schema depth truncated]";
-  if (Array.isArray(value)) {
-    return value.map((item) => canonicalize(item, depth + 1));
-  }
-  if (value === null || typeof value !== "object") return value;
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([, item]) => item !== undefined)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return Object.fromEntries(
-    entries.map(([key, item]) => [key, canonicalize(item, depth + 1)]),
+/**
+ * Most JSON values one tool's schemas may hold before its digest refuses to
+ * compute. A digest vouches for a whole schema or for nothing, so a schema
+ * past the bound is not hashed in part: the computation throws, and the
+ * caller serves every digested review unverified (INV-1).
+ */
+const MAX_SCHEMA_DIGEST_NODES = 100_000;
+
+/** Object keys in the order `JSON.stringify` emits a key-sorted object. */
+function canonicalKeys(value: object): [string, unknown][] {
+  const entries = Object.entries(value as Record<string, unknown>).filter(
+    ([, item]) =>
+      item !== undefined &&
+      typeof item !== "function" &&
+      typeof item !== "symbol",
   );
+  entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  // A plain object enumerates integer-like keys first, in numeric order.
+  // Recorded digests were taken from a key-sorted object, so reproduce its
+  // enumeration rather than the sort alone.
+  const sorted = Object.fromEntries(entries);
+  return Object.keys(sorted).map((key) => [key, sorted[key]]);
+}
+
+/**
+ * Deterministic JSON with object keys sorted, so key order is not a schema
+ * change. Iterative and complete: every leaf at every depth reaches the
+ * digest, and a schema deeper than the host stack cannot exhaust it. Throws
+ * past {@link MAX_SCHEMA_DIGEST_NODES}, and on any value JSON cannot carry.
+ */
+function canonicalJson(root: unknown): string {
+  type Task = { readonly text: string } | { readonly value: unknown };
+  const out: string[] = [];
+  const stack: Task[] = [{ value: root }];
+  let nodes = 0;
+  while (stack.length > 0) {
+    const task = stack.pop()!;
+    if ("text" in task) {
+      out.push(task.text);
+      continue;
+    }
+    if (++nodes > MAX_SCHEMA_DIGEST_NODES) {
+      throw new Error(
+        `schema has more than ${MAX_SCHEMA_DIGEST_NODES} values; refusing to digest it in part.`,
+      );
+    }
+    const value = task.value;
+    if (value === null || value === undefined) {
+      out.push("null");
+    } else if (typeof value === "string" || typeof value === "boolean") {
+      out.push(JSON.stringify(value));
+    } else if (typeof value === "number") {
+      out.push(Number.isFinite(value) ? JSON.stringify(value) : "null");
+    } else if (typeof value === "function" || typeof value === "symbol") {
+      // Only array items reach here; object keys holding these are dropped.
+      out.push("null");
+    } else if (typeof value !== "object") {
+      throw new Error(`schema holds a ${typeof value}, which JSON cannot carry.`);
+    } else if (Array.isArray(value)) {
+      out.push("[");
+      stack.push({ text: "]" });
+      for (let index = value.length - 1; index >= 0; index -= 1) {
+        stack.push({ value: value[index] });
+        if (index > 0) stack.push({ text: "," });
+      }
+    } else {
+      out.push("{");
+      stack.push({ text: "}" });
+      const entries = canonicalKeys(value);
+      for (let index = entries.length - 1; index >= 0; index -= 1) {
+        const [key, item] = entries[index]!;
+        stack.push({ value: item });
+        stack.push({ text: `${index > 0 ? "," : ""}${JSON.stringify(key)}:` });
+      }
+    }
+  }
+  return out.join("");
 }
 
 /**
@@ -137,15 +200,16 @@ function canonicalize(value: unknown, depth = 0): unknown {
  * maintainer's attention on a downstream that reordered its JSON keys.
  * Description and annotations are excluded — a reworded description is P1's
  * business, and an annotation change is already its own drift category.
+ *
+ * Rejects rather than digesting part of a schema: a digest that ignored some
+ * leaf would let a reviewed read keep its verdict after that leaf changed.
  */
 export async function vettedSchemaDigest(tool: ToolDef): Promise<string> {
   const bytes = encoder.encode(
-    JSON.stringify(
-      canonicalize({
-        inputSchema: tool.inputSchema ?? null,
-        outputSchema: tool.outputSchema ?? null,
-      }),
-    ),
+    canonicalJson({
+      inputSchema: tool.inputSchema ?? null,
+      outputSchema: tool.outputSchema ?? null,
+    }),
   );
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
   return `sha256:${[...digest]
@@ -470,7 +534,35 @@ export function withReviewedCatalog(
 }
 
 /**
- * Classify a listing and observe its drift in one pass.
+ * How the registry keeps a wrapped connector's safety out of its caches.
+ *
+ * A classification is derived from the downstream listing and the reviewed
+ * manifest this process runs, so it is never stored: both cache layers keep
+ * {@link list}'s downstream facts, and every read runs {@link classify} with
+ * the classifier that is current then. A catalog cached under an older
+ * manifest, or by an older release, therefore gets no say in what is a read.
+ */
+export interface CatalogSafety {
+  /** The downstream listing, unclassified; observes drift as it goes. */
+  list(ctx: ConnectorContext): Promise<ToolDef[]>;
+  /** The current classification of a listing from any cache layer. */
+  classify(tools: readonly ToolDef[], logger: Logger): Promise<ToolDef[]>;
+}
+
+/**
+ * Keyed by the wrapper's `listTools`, not by the connector object: a spread
+ * copy keeps the function and so the seam, while a wrapper that replaces
+ * `listTools` has taken over the listing and is read through it.
+ */
+const catalogSafety = new WeakMap<Connector["listTools"], CatalogSafety>();
+
+/** The cache-safe listing seam of a connector built by a vetted wrapper. */
+export function catalogSafetyOf(connector: Connector): CatalogSafety | undefined {
+  return catalogSafety.get(connector.listTools);
+}
+
+/**
+ * Classify a listing and observe its drift.
  *
  * The check happens where the tools are already in hand and still unmodified —
  * after the downstream answered, before the classification is applied. It adds
@@ -485,29 +577,65 @@ function observedCatalog(
   reviewedWritesWin: boolean,
 ): Connector {
   let observed: CatalogDriftReport | undefined;
+  // Digest verification per listing, held only as long as the listing is.
+  // A failed verification is not kept, so the next read tries again.
+  const verified = new WeakMap<readonly ToolDef[], ReadonlySet<string>>();
+  const classified = new WeakMap<readonly ToolDef[], ToolDef[]>();
+
+  async function list(ctx: ConnectorContext): Promise<ToolDef[]> {
+    const downstream = await connector.listTools(ctx);
+    try {
+      const changed = await changedSchemas(catalog, downstream);
+      verified.set(downstream, changed);
+      observed = {
+        observedAt: new Date().toISOString(),
+        ...countDrift(catalog, downstream, changed),
+      };
+    } catch (error) {
+      // A drift check is a report about a catalog, never a condition for
+      // serving one. Keep the last good observation rather than replacing it
+      // with a lie, and let the refresh through; classify() fails closed.
+      ctx.logger.warn(
+        `[connecta] connector "${connector.id}" catalog drift check failed: ` +
+          (error instanceof Error ? error.message : String(error)),
+      );
+    }
+    return downstream;
+  }
+
+  async function classify(
+    tools: readonly ToolDef[],
+    logger: Logger,
+  ): Promise<ToolDef[]> {
+    const done = classified.get(tools);
+    if (done) return done;
+    let unverified = verified.get(tools);
+    let settled = unverified !== undefined;
+    if (!unverified) {
+      try {
+        unverified = await changedSchemas(catalog, tools);
+        settled = true;
+      } catch (error) {
+        // With the schemas uncheckable, no digested review vouches for a
+        // read (INV-1).
+        unverified = digestedTools(catalog, tools);
+        logFailure(logger, "schema digest check failed; serving digested reviews as writes", failureRecord({ connector: connector.id }, error));
+      }
+    }
+    const result = tools.map((definition) =>
+      applyVettedSafety(catalog, definition, reviewedWritesWin, unverified),
+    );
+    if (settled) classified.set(tools, result);
+    return result;
+  }
+
+  async function listTools(ctx: ConnectorContext): Promise<ToolDef[]> {
+    return classify(await list(ctx), ctx.logger);
+  }
+  catalogSafety.set(listTools, { list, classify });
   return {
     ...connector,
-    async listTools(ctx: ConnectorContext): Promise<ToolDef[]> {
-      const downstream = await connector.listTools(ctx);
-      let unverified: ReadonlySet<string>;
-      try {
-        unverified = await changedSchemas(catalog, downstream);
-        observed = {
-          observedAt: new Date().toISOString(),
-          ...countDrift(catalog, downstream, unverified),
-        };
-      } catch (error) {
-        // A drift check is a report about a catalog, never a condition for
-        // serving one. Keep the last good observation rather than replacing it
-        // with a lie, and let the refresh through — but with every digested
-        // review unverified, so none of them vouches for a read (INV-1).
-        unverified = digestedTools(catalog, downstream);
-        logFailure(ctx.logger, "catalog drift check failed", failureRecord({ connector: connector.id }, error));
-      }
-      return downstream.map((definition) =>
-        applyVettedSafety(catalog, definition, reviewedWritesWin, unverified),
-      );
-    },
+    listTools,
     catalogDrift(): CatalogDriftReport | undefined {
       return observed;
     },

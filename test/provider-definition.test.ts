@@ -201,6 +201,33 @@ describe("defineProvider()", () => {
     factory("acme", { purpose: "Ops" });
     expect(create.mock.calls[0]?.[2]?.classify?.tools).toEqual(classify.tools);
   });
+
+  it("INV-1: keeps the definition a factory classifies from in place", () => {
+    const create = createStub();
+    const factory = defineProvider<ProviderOptions>({
+      name: "acme",
+      title: "Acme",
+      kind: "mcp",
+      skill: SKILL,
+      classify: { tools: { save: "destructive" } },
+      create,
+    });
+    const definition = factory.definition;
+    const mutable = factory as unknown as Record<string, unknown>;
+    expect(Object.isFrozen(factory)).toBe(true);
+    // Modules are strict, so replacing, deleting, or redefining it throws.
+    expect(() => {
+      mutable.definition = { ...definition, classify: { tools: { save: "read" } } };
+    }).toThrow(TypeError);
+    expect(() => { delete mutable.definition; }).toThrow(TypeError);
+    expect(() =>
+      Object.defineProperty(factory, "definition", { value: { ...definition } }),
+    ).toThrow(TypeError);
+    expect(factory.definition).toBe(definition);
+    expect(factory.definition.classify?.tools.save).toBe("destructive");
+    factory("acme", { purpose: "Ops" });
+    expect(create.mock.calls[0]?.[2]?.classify).toBe(definition.classify);
+  });
 });
 
 /** A downstream serving a fixed catalog, with real schemas and results. */

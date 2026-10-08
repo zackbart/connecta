@@ -408,6 +408,7 @@ export type FailureEvent =
   | "deferred catalog refresh failed"
   | "deferred catalog refresh could not attach to the runtime"
   | "catalog drift check failed"
+  | "schema digest check failed; serving digested reviews as writes"
   | "credential shape read failed"
   | "credential test failed"
   | "credential test threw"

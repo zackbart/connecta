@@ -6,10 +6,13 @@ import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import {
   detectCatalogDrift,
+  reviewedCatalog,
   vettedCatalog,
   vettedSchemaDigest,
+  withReviewedCatalog,
   withVettedCatalog,
 } from "../src/catalog-drift.js";
+import { connectorContext } from "./fixtures/misc.js";
 // From the root entry on purpose: a deployment writing an activity store reaches
 // these by name, and only naming them here proves the re-export exists.
 import type {
@@ -605,22 +608,107 @@ describe("the drift types are on the public surface", () => {
   });
 });
 
-it("bounds canonicalization depth for deeply nested downstream schemas", async () => {
-  const deepSchema = (leaf: string) => {
-    let schema: Record<string, unknown> = { type: leaf };
-    for (let depth = 0; depth < 10_000; depth += 1) {
-      schema = { items: schema };
-    }
-    return schema;
-  };
-  const first = await vettedSchemaDigest({
-    name: "deep", inputSchema: deepSchema("string"),
+/** `{ items: … }` nested `depth` times around `{ type: leaf }`. */
+function deepSchema(leaf: string, depth: number): Record<string, unknown> {
+  let schema: Record<string, unknown> = { type: leaf };
+  for (let level = 0; level < depth; level += 1) schema = { items: schema };
+  return schema;
+}
+
+/** The recursive, key-sorted canonical form recorded digests were taken in. */
+function sortedJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortedJson);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([key, item]) => [key, sortedJson(item)]),
+  );
+}
+
+async function sha256(text: string): Promise<string> {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)),
+  );
+  return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/** One reviewed read with a recorded digest, through both wrappers. */
+const DIGESTED_READ = {
+  classify: (digest: string, served: ToolDef) =>
+    withReviewedCatalog(
+      connectorWith({ id: "deep", kind: "mcp", tools: [served] }),
+      reviewedCatalog({ tools: { deep: { verdict: "read", schemaDigest: digest } } }, "deep"),
+    ),
+  withVettedCatalog: (digest: string, served: ToolDef) =>
+    withVettedCatalog(
+      connectorWith({ id: "deep", kind: "mcp", tools: [served] }),
+      vettedCatalog({ reads: new Set(["deep"]), writes: new Map(), schemaDigests: { deep: digest } }),
+    ),
+};
+
+describe("schema digests", () => {
+  it("keep the digest a release recorded for a schema in canonical key order", async () => {
+    const tool: ToolDef = {
+      name: "keys",
+      inputSchema: {
+        type: "object",
+        properties: { b: { type: "string" }, "10": { type: "number" }, a: { enum: [1, "x", null] }, "2": {} },
+        required: ["b"],
+        skipped: undefined,
+      },
+      outputSchema: { type: "object", "é": true, "Z": [{ y: 1, x: 2 }] },
+    };
+    expect(await vettedSchemaDigest(tool)).toBe(
+      await sha256(JSON.stringify(sortedJson({
+        inputSchema: tool.inputSchema,
+        outputSchema: tool.outputSchema,
+      }))),
+    );
   });
-  expect(first).toMatch(/^sha256:[a-f0-9]{64}$/);
-  expect(await vettedSchemaDigest({
-    name: "deep", inputSchema: deepSchema("number"),
-  })).toBe(first);
-  expect(await vettedSchemaDigest({
-    name: "deep", inputSchema: { type: "number" },
-  })).not.toBe(first);
+
+  it("INV-1: digest every leaf of a schema deeper than the host stack", async () => {
+    const first = await vettedSchemaDigest({ name: "deep", inputSchema: deepSchema("string", 10_000) });
+    expect(first).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(await vettedSchemaDigest({ name: "deep", inputSchema: deepSchema("number", 10_000) }))
+      .not.toBe(first);
+  });
+
+  it("INV-1: refuse to digest a schema past the node bound rather than hash part of it", async () => {
+    await expect(vettedSchemaDigest({
+      name: "wide",
+      inputSchema: { enum: Array.from({ length: 100_000 }, (_, index) => index) },
+    })).rejects.toThrow(/more than 100000 values/);
+    await expect(vettedSchemaDigest({
+      name: "wide",
+      inputSchema: { enum: Array.from({ length: 99_990 }, (_, index) => index) },
+    })).resolves.toMatch(/^sha256:/);
+  });
+
+  describe.each(Object.keys(DIGESTED_READ) as Array<keyof typeof DIGESTED_READ>)("(%s)", (path) => {
+    it("INV-1: serve a reviewed read whose leaf changed 80 levels down as a write", async () => {
+      const reviewed: ToolDef = { name: "deep", inputSchema: deepSchema("string", 80) };
+      const digest = await vettedSchemaDigest(reviewed);
+      const same = DIGESTED_READ[path](digest, reviewed);
+      expect((await same.listTools(connectorContext()))[0]?.annotations?.readOnlyHint).toBe(true);
+      const changed = DIGESTED_READ[path](digest, { name: "deep", inputSchema: deepSchema("number", 80) });
+      expect((await changed.listTools(connectorContext()))[0]?.annotations?.readOnlyHint).toBe(false);
+      expect(changed.catalogDrift?.()).toMatchObject({ schemaChanges: 1 });
+    });
+
+    it("INV-1: serve a reviewed read whose schema is past the digest bound as a write", async () => {
+      const wide: ToolDef = {
+        name: "deep",
+        inputSchema: { enum: Array.from({ length: 100_000 }, (_, index) => index) },
+      };
+      // The digest a release could have recorded for exactly this schema.
+      const recorded = await sha256(JSON.stringify(sortedJson({
+        inputSchema: wide.inputSchema,
+        outputSchema: null,
+      })));
+      const connector = DIGESTED_READ[path](recorded, wide);
+      expect((await connector.listTools(connectorContext()))[0]?.annotations?.readOnlyHint).toBe(false);
+    });
+  });
 });

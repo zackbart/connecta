@@ -44,7 +44,7 @@ import {
   type CallAdmissionPermit,
   type ConnectorCallAdmissionSnapshot,
 } from "./call-admission.js";
-import { boundedCatalogDrift } from "./catalog-drift.js";
+import { boundedCatalogDrift, catalogSafetyOf } from "./catalog-drift.js";
 import {
   fingerprintSerializedCatalog,
   snapshotCatalog,
@@ -193,8 +193,16 @@ class AbandonedCatalogRefresh extends Error {
   }
 }
 
+/**
+ * Version 3 manifests name downstream facts only: what `listTools` returned,
+ * before any classification connecta derives from them (see
+ * `CatalogSafety` in `src/catalog-drift.ts`). Version 2, written by 0.28 and
+ * earlier, stored listings a vetted wrapper had already classified, so its
+ * read-only claims may be connecta's own; {@link legacyCatalogFacts} keeps
+ * them out of safety decisions.
+ */
 interface PersistedCatalogManifest {
-  version: 2;
+  version: 2 | 3;
   revision: string;
   toolCount: number;
   byteCount: number;
@@ -213,6 +221,24 @@ interface PersistedCatalog {
 }
 
 const CATALOG_CHUNK_IO_CONCURRENCY = 4;
+
+/**
+ * Read a version 2 catalog as downstream facts it might not be.
+ *
+ * 0.28 persisted a vetted wrapper's output, so a `readOnlyHint: true` there may
+ * be a verdict an older classifier filled in rather than anything the
+ * downstream said. Every such claim is dropped: the current classifier then
+ * decides from silence, which fails closed for every tool no current review
+ * vouches for. Claims that close a path stay. The catalog is never fresh, so
+ * the next read refreshes it, and it is only ever a stale fallback.
+ */
+function legacyCatalogFacts(tools: ToolDef[]): ToolDef[] {
+  return tools.map((tool) => {
+    if (tool.annotations?.readOnlyHint !== true) return tool;
+    const { readOnlyHint: _claimed, ...annotations } = tool.annotations;
+    return { ...tool, annotations };
+  });
+}
 
 /**
  * Run `operation` over every chunk index or chunk with the fixed chunk I/O
@@ -1087,7 +1113,7 @@ export class Registry implements RegistryView {
     const maxChunks =
       Math.ceil(MAX_SERIALIZED_CATALOG_BYTES / MAX_CATALOG_CHUNK_BYTES) + 1;
     if (
-      manifest.version !== 2 ||
+      (manifest.version !== 2 && manifest.version !== 3) ||
       typeof manifest.revision !== "string" ||
       !/^sha256:[0-9]{1,8}:[0-9a-f]{64}$/.test(manifest.revision) ||
       !Number.isInteger(manifest.toolCount) ||
@@ -1242,6 +1268,15 @@ export class Registry implements RegistryView {
         );
         return null;
       }
+      if (manifest.version === 2) {
+        return {
+          tools: legacyCatalogFacts(tools),
+          fingerprint: stored.fingerprint,
+          fetchedAt: manifest.fetchedAt,
+          expiresAt: Math.min(manifest.expiresAt, now),
+          staleUntil: manifest.staleUntil,
+        };
+      }
       return {
         tools,
         fingerprint: stored.fingerprint,
@@ -1280,7 +1315,7 @@ export class Registry implements RegistryView {
       // therefore leaves the previous manifest authoritative (or no catalog);
       // unreachable chunks carry a bounded TTL and require no prefix scan.
       const manifest: PersistedCatalogManifest = {
-        version: 2,
+        version: 3,
         revision: snapshot.fingerprint,
         toolCount: snapshot.tools.length,
         byteCount: snapshot.serializedBytes.byteLength,
@@ -1378,7 +1413,9 @@ export class Registry implements RegistryView {
     flight?: CatalogRefreshFlight,
   ): Promise<ToolDef[]> {
     const generation = this.catalogGeneration(id);
-    const tools = await connector.listTools(ctx);
+    // Both cache layers keep downstream facts; loadTools classifies on read.
+    const safety = catalogSafetyOf(connector);
+    const tools = await (safety ? safety.list(ctx) : connector.listTools(ctx));
     // The listing a maintained proxy just served is also the only catalog
     // comparison connecta ever makes. It rides this refresh whether or not the
     // result reaches a cache, because what drifted drifted.
@@ -1720,8 +1757,34 @@ export class Registry implements RegistryView {
     }
   }
 
-  /** Cached listTools with in-memory + persisted serializable catalog layers. */
+  /**
+   * One connector's catalog as served: the cached downstream facts, classified
+   * by the connector's current classifier on every read. Safety is derived
+   * here and nowhere else, so no cache layer can carry a stale verdict — from
+   * an older manifest, an older release, or a stale fallback.
+   */
   private async loadTools(
+    id: string,
+    baseUrl: string,
+    requestScope?: object,
+    callOptions: ConnectorOperationOptions = {},
+    readOptions?: CatalogReadOptions,
+  ): Promise<ToolDef[]> {
+    const tools = await this.loadDownstreamTools(
+      id,
+      baseUrl,
+      requestScope,
+      callOptions,
+      readOptions,
+    );
+    const connector = this.connectors.get(id);
+    if (!connector) throw new Error(`Unknown connector "${id}"`);
+    const safety = catalogSafetyOf(connector);
+    return safety ? safety.classify(tools, this.opts.logger) : tools;
+  }
+
+  /** Cached downstream listing with in-memory + persisted serializable layers. */
+  private async loadDownstreamTools(
     id: string,
     baseUrl: string,
     requestScope?: object,

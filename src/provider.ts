@@ -237,5 +237,7 @@ export function defineProvider<O extends ProviderOptions>(
     }
     return connector;
   };
-  return Object.assign(factory, { definition: frozen });
+  // Frozen whole: build and check tools read `definition` to learn what the
+  // factory classifies, so neither replacing nor deleting it may take effect.
+  return Object.freeze(Object.assign(factory, { definition: frozen }));
 }

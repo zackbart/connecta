@@ -13,4 +13,10 @@ approval-required, `call_tool` refuses it toward `call_destructive_tool`, and
 `schemaChanges` count moved. This applies to `remoteMcp({ classify })` and to
 the hosted providers that record digests today, which is Mixpanel: its reads
 whose live schemas differ from the reviewed ones now need
-`call_destructive_tool` until a release reviews them again.
+`call_destructive_tool` until a release reviews them again. The digest now
+covers the whole schema rather than its first 64 levels; a schema too large to
+digest is unchecked, so a write. Catalog caches no longer store
+classifications: they keep the downstream listing, and each read classifies it
+with the running release's review, so a catalog persisted before an upgrade or
+served as a stale fallback cannot keep a read. Catalogs persisted by 0.28 are
+refreshed on first read, and until then serve none of their read-only claims.
