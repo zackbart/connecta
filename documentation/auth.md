@@ -219,6 +219,11 @@ secrets. Use a separate stored token for each machine or human owner:
    secret refuses, then remove its environment secret and the old import.
    Remove `X-Connecta-Principal`; a token's stored principal cannot vary by
    request. Provision one human-bound token per represented user instead.
+   To retain an old asserted user's personal state, trusted provisioning must
+   call `manager.create(name, { namespace: existingNamespace, id: existingId })`
+   with the exact existing namespace and canonical id, after applying the old
+   admission policy. A Clerk UI token uses the Clerk principal instead and
+   cannot inherit a different asserted namespace's partitions.
 
 Revocation acts on the next request. Rotate by creating a replacement,
 updating the client, verifying it, and revoking the old token. Keep token text
