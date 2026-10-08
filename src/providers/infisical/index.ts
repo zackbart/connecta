@@ -207,20 +207,98 @@ function segment(value: string): string {
   return encodeURIComponent(value);
 }
 
-function projectProject(value: unknown): Json {
-  const project = asRecord(value);
+// These grammars constrain identifiers, not arbitrary human-authored metadata.
+// UUIDs and legacy 24-hex IDs are accepted; unknown shapes are withheld.
+const ID_PATTERN = /^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{24})$/;
+const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_.-]{0,255}$/;
+const SLUG_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const PATH_PATTERN = /^\/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]{0,254}(?:\/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,254})*\/?)?$/;
+const ISO_PATTERN =
+  /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/;
+const SECRET_TYPES = ["shared", "personal"];
+// Infisical RequestState, not individual reviewers' ApprovalStatus.
+const APPROVAL_STATES = ["open", "close"];
+const PROJECT_TYPES = ["secret-manager"];
+
+/** One checked projection for every value-free result. Never match secret values. */
+class IdentifierProjection {
+  omitted = false;
+
+  record(value: unknown, fields: string[], ignored: string[] = []): Json {
+    if (!value || typeof value !== "object" || Array.isArray(value)) this.omitted = true;
+    const record = asRecord(value);
+    if (Object.keys(record).some((key) => !fields.includes(key) && !ignored.includes(key))) this.omitted = true;
+    return record;
+  }
+
+  array(value: unknown): unknown[] {
+    if (value !== undefined && !Array.isArray(value)) this.omitted = true;
+    return asArray(value);
+  }
+
+  text(value: unknown, pattern: RegExp): string | undefined {
+    if (value === undefined) return undefined;
+    if (typeof value === "string" && pattern.exec(value)?.[0] === value) return value;
+    this.omitted = true;
+    return undefined;
+  }
+
+  choice(value: unknown, allowed: string[]): string | undefined {
+    if (value === undefined) return undefined;
+    if (typeof value === "string" && allowed.includes(value)) return value;
+    this.omitted = true;
+    return undefined;
+  }
+
+  version(value: unknown): number | undefined {
+    if (value === undefined) return undefined;
+    if (typeof value === "number" && Number.isSafeInteger(value) && value >= 1) return value;
+    this.omitted = true;
+    return undefined;
+  }
+
+  finish(value: Json): Json {
+    return this.omitted ? { ...value, metadataOmitted: true } : value;
+  }
+}
+
+function projectProject(value: unknown, projection: IdentifierProjection): Json {
+  const project = projection.record(value, ["id", "slug", "type", "environments", "createdAt", "updatedAt"]);
   return compact({
-    id: project["id"],
-    name: project["name"],
-    slug: project["slug"],
-    description: project["description"] || undefined,
-    type: project["type"],
-    environments: asArray(project["environments"]).map((env) => {
-      const record = asRecord(env);
-      return compact({ slug: record["slug"], name: record["name"], id: record["id"] });
+    id: projection.text(project["id"], ID_PATTERN),
+    slug: projection.text(project["slug"], SLUG_PATTERN),
+    type: projection.choice(project["type"], PROJECT_TYPES),
+    environments: projection.array(project["environments"]).map((env) => {
+      const record = projection.record(env, ["slug", "id"]);
+      return compact({
+        slug: projection.text(record["slug"], SLUG_PATTERN),
+        id: projection.text(record["id"], ID_PATTERN),
+      });
     }),
-    createdAt: project["createdAt"],
-    updatedAt: project["updatedAt"],
+    createdAt: projection.text(project["createdAt"], ISO_PATTERN),
+    updatedAt: projection.text(project["updatedAt"], ISO_PATTERN),
+  });
+}
+
+function projectSecretIdentifiers(value: unknown, projection: IdentifierProjection): Json {
+  const secret = projection.record(
+    value,
+    ["id", "secretKey", "environment", "secretPath", "type", "version", "tags", "createdAt", "updatedAt"],
+    ["secretValue", "secretValueHidden"],
+  );
+  return compact({
+    id: projection.text(secret["id"], ID_PATTERN),
+    key: projection.text(secret["secretKey"], KEY_PATTERN),
+    environment: projection.text(secret["environment"], SLUG_PATTERN),
+    path: projection.text(secret["secretPath"], PATH_PATTERN),
+    type: projection.choice(secret["type"], SECRET_TYPES),
+    version: projection.version(secret["version"]),
+    tags: projection.array(secret["tags"]).flatMap((tag) => {
+      const slug = projection.text(projection.record(tag, ["slug"])["slug"], SLUG_PATTERN);
+      return slug === undefined ? [] : [slug];
+    }),
+    createdAt: projection.text(secret["createdAt"], ISO_PATTERN),
+    updatedAt: projection.text(secret["updatedAt"], ISO_PATTERN),
   });
 }
 
@@ -239,13 +317,9 @@ function projectSecret(value: unknown): Json {
     tags: asArray(secret["tags"])
       .map((tag) => asRecord(tag)["slug"])
       .filter(Boolean),
+    createdAt: secret["createdAt"],
     updatedAt: secret["updatedAt"],
   });
-}
-
-function withoutValues(secret: Json): Json {
-  const { value: _value, valueHidden: _hidden, ...rest } = secret;
-  return rest;
 }
 
 /** Join a folder path and a child name or walk-relative path into an absolute path. */
@@ -259,23 +333,24 @@ function joinPath(base: string, rest: string): string {
  * Infisical omits a path from flat listings and gives recursive ones a path
  * relative to the listed folder; both become absolute here.
  */
-function projectFolder(value: unknown, parent?: string): Json {
-  const folder = asRecord(value);
+function projectFolder(value: unknown, projection: IdentifierProjection, parent?: string): Json {
+  const folder = projection.record(value, ["id", "path", "version", "createdAt", "updatedAt"]);
   const name = typeof folder["name"] === "string" ? folder["name"] : undefined;
   const relative = typeof folder["relativePath"] === "string" ? folder["relativePath"] : undefined;
+  const path =
+    parent === undefined
+      ? folder["path"]
+      : relative !== undefined
+        ? joinPath(parent, relative)
+        : name !== undefined
+          ? joinPath(parent, name)
+          : undefined;
   return compact({
-    id: folder["id"],
-    name,
-    path:
-      parent === undefined
-        ? folder["path"]
-        : relative !== undefined
-          ? joinPath(parent, relative)
-          : name !== undefined
-            ? joinPath(parent, name)
-            : undefined,
-    description: folder["description"] || undefined,
-    updatedAt: folder["updatedAt"],
+    id: projection.text(folder["id"], ID_PATTERN),
+    path: projection.text(path, PATH_PATTERN),
+    version: projection.version(folder["version"]),
+    createdAt: projection.text(folder["createdAt"], ISO_PATTERN),
+    updatedAt: projection.text(folder["updatedAt"], ISO_PATTERN),
   });
 }
 
@@ -304,18 +379,43 @@ function result(properties: Record<string, JsonSchema>): JsonSchema {
 const string: JsonSchema = { type: "string" };
 const number: JsonSchema = { type: "number" };
 const strings: JsonSchema = { type: "array", items: string };
+const identifier = (pattern: RegExp): JsonSchema => ({ type: "string", pattern: pattern.source });
+// Keep the compact schema within its discovery budget; runtime projection
+// still checks ISO_PATTERN before any timestamp leaves the provider.
+const timestamp: JsonSchema = { type: "string", format: "date-time" };
+const metadataOmitted: JsonSchema = {
+  type: "boolean",
+  description: "Free text, invalid identifiers or unavailable upstream metadata was withheld.",
+};
 const PROJECT = result({
-  id: string,
-  name: string,
-  slug: string,
-  description: string,
-  type: string,
-  environments: { type: "array", items: result({ slug: string, name: string, id: string }) },
-  createdAt: string,
-  updatedAt: string,
+  id: identifier(ID_PATTERN),
+  slug: identifier(SLUG_PATTERN),
+  type: { type: "string", enum: PROJECT_TYPES },
+  environments: { type: "array", items: result({ slug: identifier(SLUG_PATTERN), id: identifier(ID_PATTERN) }) },
+  createdAt: timestamp,
+  updatedAt: timestamp,
 });
-const FOLDER = result({ id: string, name: string, path: string, description: string, updatedAt: string });
-const SECRET_METADATA = {
+const FOLDER = result({
+  id: identifier(ID_PATTERN),
+  path: identifier(PATH_PATTERN),
+  version: { type: "integer", minimum: 1 },
+  createdAt: timestamp,
+  updatedAt: timestamp,
+});
+const SECRET_IDENTIFIERS = {
+  id: identifier(ID_PATTERN),
+  key: identifier(KEY_PATTERN),
+  environment: identifier(SLUG_PATTERN),
+  path: identifier(PATH_PATTERN),
+  type: { type: "string", enum: SECRET_TYPES },
+  version: { type: "integer", minimum: 1 },
+  tags: { type: "array", items: identifier(SLUG_PATTERN) },
+  createdAt: timestamp,
+  updatedAt: timestamp,
+};
+// Explicit value reads retain values and comments, including keys outside the
+// conservative value-free identifier grammar.
+const SECRET = result({
   id: string,
   key: string,
   comment: string,
@@ -324,24 +424,26 @@ const SECRET_METADATA = {
   type: string,
   version: number,
   tags: strings,
+  createdAt: string,
   updatedAt: string,
-};
-const SECRET = result({ ...SECRET_METADATA, value: string, valueHidden: { type: "boolean" } });
+  value: string,
+  valueHidden: { type: "boolean" },
+});
 const SECRET_LIST = { type: "array", items: SECRET };
-const APPROVAL = result({ id: string, status: string });
-const PROJECTS_RESULT = result({ projects: { type: "array", items: PROJECT } });
-const FOLDERS_RESULT = result({ folders: { type: "array", items: FOLDER } });
+const APPROVAL = result({ id: identifier(ID_PATTERN), status: { type: "string", enum: APPROVAL_STATES } });
+const PROJECTS_RESULT = result({ projects: { type: "array", items: PROJECT }, metadataOmitted });
+const FOLDERS_RESULT = result({ folders: { type: "array", items: FOLDER }, metadataOmitted });
 const SECRETS_RESULT = result({
   secrets: SECRET_LIST,
-  imports: { type: "array", items: result({ environment: string, path: string, secrets: SECRET_LIST }) },
+  imports: {
+    type: "array",
+    items: result({ environment: identifier(SLUG_PATTERN), path: identifier(PATH_PATTERN), secrets: SECRET_LIST }),
+  },
+  metadataOmitted,
 });
 const SECRET_RESULT = result({ secret: SECRET });
-const metadataOmitted: JsonSchema = {
-  type: "boolean",
-  description: "Unsafe or unavailable upstream metadata was withheld; the write or pending approval still succeeded.",
-};
 const WRITE_RESULT = result({
-  secret: result(SECRET_METADATA),
+  secret: result(SECRET_IDENTIFIERS),
   pendingApproval: APPROVAL,
   ok: { type: "boolean" },
   metadataOmitted,
@@ -357,7 +459,11 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
       annotations: { readOnlyHint: true },
       handler: async (_args: Json, ctx: ConnectorContext) => {
         const payload = await call({ method: "GET", path: "/v1/projects", query: { type: "secret-manager" } }, ctx);
-        return { projects: asArray(asRecord(payload)["projects"]).map(projectProject) };
+        const projection = new IdentifierProjection();
+        const body = projection.record(payload, ["projects"]);
+        return projection.finish({
+          projects: projection.array(body["projects"]).map((project) => projectProject(project, projection)),
+        });
       },
     },
     {
@@ -394,13 +500,16 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
           ctx,
         );
         const parent = args.path ?? "/";
-        return { folders: asArray(asRecord(payload)["folders"]).map((folder) => projectFolder(folder, parent)) };
+        const projection = new IdentifierProjection();
+        const body = projection.record(payload, ["folders"]);
+        return projection.finish({
+          folders: projection.array(body["folders"]).map((folder) => projectFolder(folder, projection, parent)),
+        });
       },
     },
     {
       name: "list_secrets",
-      description:
-        "List secrets in an Infisical project environment and path. Returns keys and metadata; values only with includeValues.",
+      description: "List Infisical secret identifiers. includeValues explicitly returns secret values and comments.",
       inputSchema: {
         type: "object",
         properties: {
@@ -408,7 +517,7 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
           environment,
           secretPath,
           recursive: { type: "boolean", description: "Include secrets in every nested folder." },
-          includeValues: { type: "boolean", description: "Return secret values. Defaults to false." },
+          includeValues: { type: "boolean", description: "Return secret values and comments. Defaults to false." },
           includeImports: {
             type: "boolean",
             description: "Include secrets imported from other paths. Defaults to true.",
@@ -438,44 +547,46 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
         ctx: ConnectorContext,
       ) => {
         const includeValues = args.includeValues === true;
-        const payload = asRecord(
-          await call(
-            {
-              method: "GET",
-              path: "/v4/secrets",
-              query: {
-                projectId: args.projectId,
-                environment: args.environment,
-                secretPath: args.secretPath ?? "/",
-                recursive: args.recursive,
-                viewSecretValue: includeValues,
-                expandSecretReferences: includeValues ? (args.expandReferences ?? true) : false,
-                includeImports: args.includeImports ?? true,
-                tagSlugs: args.tagSlugs?.length ? args.tagSlugs.join(",") : undefined,
-              },
+        const payload = await call(
+          {
+            method: "GET",
+            path: "/v4/secrets",
+            query: {
+              projectId: args.projectId,
+              environment: args.environment,
+              secretPath: args.secretPath ?? "/",
+              recursive: args.recursive,
+              viewSecretValue: includeValues,
+              expandSecretReferences: includeValues ? (args.expandReferences ?? true) : false,
+              includeImports: args.includeImports ?? true,
+              tagSlugs: args.tagSlugs?.length ? args.tagSlugs.join(",") : undefined,
             },
-            ctx,
-          ),
+          },
+          ctx,
         );
+        const projection = new IdentifierProjection();
+        const body = projection.record(payload, ["secrets", "imports"]);
         const shape = (secret: unknown) =>
-          includeValues ? projectSecret(secret) : withoutValues(projectSecret(secret));
-        const imports = asArray(payload["imports"]).map((entry) => {
-          const record = asRecord(entry);
+          includeValues ? projectSecret(secret) : projectSecretIdentifiers(secret, projection);
+        const imports = projection.array(body["imports"]).map((entry) => {
+          const record = projection.record(entry, ["environment", "secretPath", "secrets"]);
           return compact({
-            environment: record["environment"],
-            path: record["secretPath"],
-            secrets: asArray(record["secrets"]).map(shape),
+            environment: projection.text(record["environment"], SLUG_PATTERN),
+            path: projection.text(record["secretPath"], PATH_PATTERN),
+            secrets: projection.array(record["secrets"]).map(shape),
           });
         });
-        return compact({
-          secrets: asArray(payload["secrets"]).map(shape),
-          imports: imports.length ? imports : undefined,
-        });
+        return projection.finish(
+          compact({
+            secrets: projection.array(body["secrets"]).map(shape),
+            imports: imports.length ? imports : undefined,
+          }),
+        );
       },
     },
     {
       name: "get_secret",
-      description: "Read one Infisical secret, including its value, by key.",
+      description: "Read one Infisical secret, including its value and comment, by key.",
       inputSchema: {
         type: "object",
         properties: {
@@ -557,7 +668,6 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
         },
         ctx: ConnectorContext,
       ) => {
-        sentSecretsFor(ctx).secret(args.secretValue);
         const payload = asRecord(
           await call(
             {
@@ -575,7 +685,7 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
             ctx,
           ),
         );
-        return writeResult(payload, ctx, args.secretValue);
+        return writeResult(payload);
       },
     },
     {
@@ -616,7 +726,6 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
         if (args.secretValue === undefined && args.secretComment === undefined && args.newSecretName === undefined) {
           throw new ConnectorCallError("invalid_args", "Pass secretValue, secretComment, or newSecretName.");
         }
-        if (args.secretValue !== undefined) sentSecretsFor(ctx).secret(args.secretValue);
         const payload = asRecord(
           await call(
             {
@@ -635,7 +744,7 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
             ctx,
           ),
         );
-        return writeResult(payload, ctx, args.secretValue);
+        return writeResult(payload);
       },
     },
     {
@@ -668,7 +777,7 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
             ctx,
           ),
         );
-        return writeResult(payload, ctx);
+        return writeResult(payload);
       },
     },
     {
@@ -706,84 +815,28 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
           },
           ctx,
         );
-        const body = asRecord(payload);
-        return body["approval"]
-          ? writeResult(body, ctx)
-          : body["folder"]
-            ? { folder: projectFolder(body["folder"], args.path ?? "/") }
-            : { ok: true };
+        return writeResult(asRecord(payload), args.path ?? "/");
       },
     },
   ];
 }
-/**
- * Writes return the secret, or an approval request when the environment has a
- * change policy. Only documented scalar metadata leaves a write. Registering
- * secretValue before dispatch also protects subsequent request/guest exits.
- * The sent-secret matcher has an eight-character floor. Below that floor,
- * withhold all upstream text (including IDs, approval status and tag names)
- * rather than use unreliable substring matching. Numeric exact echoes are
- * withheld too. Fixed result keys/flags are not upstream metadata.
- */
-function writeResult(payload: Json, ctx: ConnectorContext, secretValue?: string): Json {
-  const secrets = sentSecretsFor(ctx);
-  const shortValue = secretValue !== undefined && secretValue.length < 8;
-  let omitted = false;
-  const record = (value: unknown): Json => {
-    if (!value || typeof value !== "object" || Array.isArray(value)) omitted = true;
-    return asRecord(value);
-  };
-  const scalar = (value: unknown, type: "string" | "number"): string | number | undefined => {
-    if (value === undefined) return undefined;
-    if (
-      (type === "string" && typeof value !== "string") ||
-      (type === "number" && (typeof value !== "number" || !Number.isFinite(value)))
-    ) {
-      omitted = true;
-      return undefined;
-    }
-    const text = String(value);
-    if (
-      (shortValue && type === "string") ||
-      text === secretValue ||
-      secrets.contains(text) ||
-      secrets.text(text) !== text
-    ) {
-      omitted = true;
-      return undefined;
-    }
-    return value as string | number;
-  };
-  const string = (value: unknown) => scalar(value, "string") as string | undefined;
-  let projected: Json;
-  if (payload["approval"]) {
-    const approval = record(payload["approval"]);
-    projected = { pendingApproval: compact({ id: string(approval["id"]), status: string(approval["status"]) }) };
-  } else if (payload["secret"]) {
-    const secret = record(payload["secret"]);
-    const tags: string[] = [];
-    if (secret["tags"] !== undefined && !Array.isArray(secret["tags"])) omitted = true;
-    for (const tag of asArray(secret["tags"])) {
-      const slug = string(record(tag)["slug"]);
-      if (slug !== undefined) tags.push(slug);
-    }
-    projected = {
-      secret: compact({
-        id: string(secret["id"]),
-        key: string(secret["secretKey"]),
-        comment: string(secret["secretComment"]),
-        environment: string(secret["environment"]),
-        path: string(secret["secretPath"]),
-        type: string(secret["type"]),
-        version: scalar(secret["version"], "number"),
-        tags,
-        updatedAt: string(secret["updatedAt"]),
+/** Writes and pending approvals expose validated identifiers, never free text. */
+function writeResult(payload: Json, folderParent?: string): Json {
+  const projection = new IdentifierProjection();
+  const body = projection.record(payload, ["approval", "secret", "folder"]);
+  if (body["approval"] !== undefined) {
+    const approval = projection.record(body["approval"], ["id", "status"]);
+    return projection.finish({
+      pendingApproval: compact({
+        id: projection.text(approval["id"], ID_PATTERN),
+        status: projection.choice(approval["status"], APPROVAL_STATES),
       }),
-    };
-  } else {
-    // An unrecognized shape may still carry the value; report success only.
-    projected = { ok: true };
-    omitted = true;
+    });
   }
-  return omitted ? { ...projected, metadataOmitted: true } : projected;
+  if (folderParent !== undefined && body["folder"] !== undefined)
+    return projection.finish({ folder: projectFolder(body["folder"], projection, folderParent) });
+  if (folderParent === undefined && body["secret"] !== undefined)
+    return projection.finish({ secret: projectSecretIdentifiers(body["secret"], projection) });
+  // A successful unrecognized response must never be forwarded.
+  return { ok: true, metadataOmitted: true };
 }

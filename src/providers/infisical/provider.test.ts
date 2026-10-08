@@ -8,6 +8,12 @@ import { memoryStorage } from "../../storage/memory.js";
 import { compactDiscoverySchema, typescriptSignature } from "../../catalog.js";
 import { infisical } from "./index.js";
 import drift from "./drift.json";
+const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
+const ENVIRONMENT_ID = "22222222-2222-4222-8222-222222222222";
+const SECRET_ID = "33333333-3333-4333-8333-333333333333";
+const FOLDER_ID = "44444444-4444-4444-8444-444444444444";
+const NESTED_FOLDER_ID = "55555555-5555-4555-8555-555555555555";
+const APPROVAL_ID = "66666666-6666-4666-8666-666666666666";
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 const connector = infisical("infisical", { purpose: "test org" });
@@ -223,23 +229,27 @@ describe("Infisical connector", () => {
   });
 
   it("returns absolute folder paths for flat and recursive listings", async () => {
-    const fetch = mockFetch(login(), json({ folders: [{ id: "f1", name: "db" }] }));
+    const fetch = mockFetch(login(), json({ folders: [{ id: FOLDER_ID, name: "db" }] }));
     const ctx = context();
     expect(
-      await connector.callTool("list_folders", { projectId: "p1", environment: "prod", path: "/apps/" }, ctx),
+      await connector.callTool("list_folders", { projectId: PROJECT_ID, environment: "prod", path: "/apps/" }, ctx),
     ).toEqual({
-      folders: [{ id: "f1", name: "db", path: "/apps/db" }],
+      folders: [{ id: FOLDER_ID, path: "/apps/db" }],
+      metadataOmitted: true,
     });
     expect(requestOf(fetch, 1).url.searchParams.get("path")).toBe("/apps/");
 
-    mockFetch(json({ folders: [{ id: "f2", name: "replica", relativePath: "/db/replica" }] }));
+    mockFetch(json({ folders: [{ id: NESTED_FOLDER_ID, name: "replica", relativePath: "/db/replica" }] }));
     expect(
       await connector.callTool(
         "list_folders",
-        { projectId: "p1", environment: "prod", path: "/apps", recursive: true },
+        { projectId: PROJECT_ID, environment: "prod", path: "/apps", recursive: true },
         ctx,
       ),
-    ).toEqual({ folders: [{ id: "f2", name: "replica", path: "/apps/db/replica" }] });
+    ).toEqual({
+      folders: [{ id: NESTED_FOLDER_ID, path: "/apps/db/replica" }],
+      metadataOmitted: true,
+    });
   });
 
   it("logs in with Universal Auth and reuses the token", async () => {
@@ -273,13 +283,13 @@ describe("Infisical connector", () => {
       json({
         projects: [
           {
-            id: "p1",
+            id: PROJECT_ID,
             name: "Site",
             slug: "site",
             description: "",
             type: "secret-manager",
             kmsSecretManagerKeyId: "noise",
-            environments: [{ id: "e1", name: "Production", slug: "prod" }],
+            environments: [{ id: ENVIRONMENT_ID, name: "Production", slug: "prod" }],
           },
         ],
       }),
@@ -287,19 +297,19 @@ describe("Infisical connector", () => {
     expect(await connector.callTool("list_projects", {}, context())).toEqual({
       projects: [
         {
-          id: "p1",
-          name: "Site",
+          id: PROJECT_ID,
           slug: "site",
           type: "secret-manager",
-          environments: [{ id: "e1", name: "Production", slug: "prod" }],
+          environments: [{ id: ENVIRONMENT_ID, slug: "prod" }],
         },
       ],
+      metadataOmitted: true,
     });
   });
 
   it("omits secret values from lists unless asked", async () => {
     const secret = {
-      id: "s1",
+      id: SECRET_ID,
       secretKey: "API_KEY",
       secretValue: "hunter2",
       secretPath: "/",
@@ -309,10 +319,19 @@ describe("Infisical connector", () => {
     };
     const fetch = mockFetch(login(), json({ secrets: [secret], imports: [] }));
     const ctx = context();
-    const result = await connector.callTool("list_secrets", { projectId: "p1", environment: "prod" }, ctx);
+    const result = await connector.callTool("list_secrets", { projectId: PROJECT_ID, environment: "prod" }, ctx);
 
     expect(result).toEqual({
-      secrets: [{ id: "s1", key: "API_KEY", environment: "prod", path: "/", version: 3, tags: ["web"] }],
+      secrets: [
+        {
+          id: SECRET_ID,
+          key: "API_KEY",
+          environment: "prod",
+          path: "/",
+          version: 3,
+          tags: ["web"],
+        },
+      ],
     });
     const query = requestOf(fetch, 1).url.searchParams;
     expect(query.get("viewSecretValue")).toBe("false");
@@ -322,7 +341,7 @@ describe("Infisical connector", () => {
     mockFetch(json({ secrets: [secret] }));
     const withValues = await connector.callTool(
       "list_secrets",
-      { projectId: "p1", environment: "prod", includeValues: true },
+      { projectId: PROJECT_ID, environment: "prod", includeValues: true },
       ctx,
     );
     expect(withValues).toMatchObject({ secrets: [{ key: "API_KEY", value: "hunter2" }] });
@@ -332,7 +351,7 @@ describe("Infisical connector", () => {
     const fetch = mockFetch(login(), json({ secret: { secretKey: "A/B", secretValue: "v" } }));
     const result = await connector.callTool(
       "get_secret",
-      { projectId: "p1", environment: "dev", secretName: "A/B" },
+      { projectId: PROJECT_ID, environment: "dev", secretName: "A/B" },
       context(),
     );
     expect(result).toEqual({ secret: { key: "A/B", value: "v", tags: [] } });
@@ -343,41 +362,58 @@ describe("Infisical connector", () => {
     const fetch = mockFetch(login(), json({ secret: { secretKey: "API_KEY", secretValue: "new", version: 4 } }));
     const result = await connector.callTool(
       "update_secret",
-      { projectId: "p1", environment: "prod", secretName: "API_KEY", secretValue: "new" },
+      {
+        projectId: PROJECT_ID,
+        environment: "prod",
+        secretName: "API_KEY",
+        secretValue: "new",
+      },
       context(),
     );
     const { init } = requestOf(fetch, 1);
     expect(init.method).toBe("PATCH");
     expect(JSON.parse(String(init.body))).toEqual({
-      projectId: "p1",
+      projectId: PROJECT_ID,
       environment: "prod",
       secretPath: "/",
       secretValue: "new",
     });
-    expect(result).toEqual({ secret: { version: 4, tags: [] }, metadataOmitted: true });
+    expect(result).toEqual({ secret: { key: "API_KEY", version: 4, tags: [] } });
   });
 
   it("rejects an update with nothing to change", async () => {
     await expect(
-      connector.callTool("update_secret", { projectId: "p1", environment: "prod", secretName: "API_KEY" }, context()),
+      connector.callTool(
+        "update_secret",
+        { projectId: PROJECT_ID, environment: "prod", secretName: "API_KEY" },
+        context(),
+      ),
     ).rejects.toMatchObject({ code: "invalid_args" });
   });
 
   it("reports a pending change approval", async () => {
-    mockFetch(login(), json({ approval: { id: "a1", status: "open", secretPath: "/" } }));
+    mockFetch(login(), json({ approval: { id: APPROVAL_ID, status: "open", secretPath: "/" } }));
     const result = await connector.callTool(
       "delete_secret",
-      { projectId: "p1", environment: "prod", secretName: "API_KEY" },
+      { projectId: PROJECT_ID, environment: "prod", secretName: "API_KEY" },
       context(),
     );
-    expect(result).toEqual({ pendingApproval: { id: "a1", status: "open" } });
+    expect(result).toEqual({
+      pendingApproval: { id: APPROVAL_ID, status: "open" },
+      metadataOmitted: true,
+    });
   });
 
   it("never returns an unrecognized write response", async () => {
     mockFetch(login(), json({ secretValue: "leak" }));
     const result = await connector.callTool(
       "create_secret",
-      { projectId: "p1", environment: "prod", secretName: "API_KEY", secretValue: "leak" },
+      {
+        projectId: PROJECT_ID,
+        environment: "prod",
+        secretName: "API_KEY",
+        secretValue: "leak",
+      },
       context(),
     );
     expect(result).toEqual({ ok: true, metadataOmitted: true });
@@ -417,7 +453,7 @@ describe("Infisical connector", () => {
 });
 
 describe("maintained Infisical contract", () => {
-  const args = { projectId: "p1", environment: "prod", secretName: "API_KEY" };
+  const args = { projectId: PROJECT_ID, environment: "prod", secretName: "API_KEY" };
 
   it("validates construction and common options (INV-11)", () => {
     for (const options of [
@@ -654,7 +690,7 @@ describe("maintained Infisical contract", () => {
     await expect(connector.callTool("list_secrets", args, context())).rejects.toMatchObject({ code: "invalid_args" });
     // An independently valid call must reach the capped stream.
     await expect(
-      connector.callTool("list_secrets", { projectId: "p1", environment: "prod" }, context()),
+      connector.callTool("list_secrets", { projectId: PROJECT_ID, environment: "prod" }, context()),
     ).rejects.toMatchObject({
       code: "connector_call_failed",
       retryable: false,
@@ -725,12 +761,16 @@ describe("maintained Infisical contract", () => {
       json({ secrets: [secret], imports: [{ environment: "prod", secretPath: "/shared", secrets: [secret] }] }),
     );
     const ctx = context();
-    const result = await connector.callTool("list_secrets", { projectId: "p1", environment: "prod" }, ctx);
+    const result = await connector.callTool("list_secrets", { projectId: PROJECT_ID, environment: "prod" }, ctx);
     expect(JSON.stringify(result)).not.toContain("private");
     mockFetch(json({ secrets: [], imports: [{ secrets: [secret] }] }));
     expect(
       JSON.stringify(
-        await connector.callTool("list_secrets", { projectId: "p1", environment: "prod", includeValues: true }, ctx),
+        await connector.callTool(
+          "list_secrets",
+          { projectId: PROJECT_ID, environment: "prod", includeValues: true },
+          ctx,
+        ),
       ),
     ).toContain("private");
   });
@@ -757,12 +797,16 @@ describe("maintained Infisical contract", () => {
       mockFetch(login(), json({ secret: { secretKey: "API_KEY", secretValue: "leak", secretValueHidden: true } }));
       const input = tool === "delete_secret" ? args : { ...args, secretValue: "leak" };
       expect(JSON.stringify(await connector.callTool(tool, input, ctx))).not.toMatch(/leak|valueHidden/);
-      mockFetch(json({ secret: { secretValue: "leak" }, approval: { id: "a1", status: "open", secretValue: "leak" } }));
-      await expect(connector.callTool(tool, input, ctx)).resolves.toEqual(
-        tool === "delete_secret"
-          ? { pendingApproval: { id: "a1", status: "open" } }
-          : { pendingApproval: {}, metadataOmitted: true },
+      mockFetch(
+        json({
+          secret: { secretValue: "leak" },
+          approval: { id: APPROVAL_ID, status: "open", secretValue: "leak" },
+        }),
       );
+      await expect(connector.callTool(tool, input, ctx)).resolves.toEqual({
+        pendingApproval: { id: APPROVAL_ID, status: "open" },
+        metadataOmitted: true,
+      });
       mockFetch(json({ secretValue: "leak" }));
       await expect(connector.callTool(tool, input, ctx)).resolves.toEqual({ ok: true, metadataOmitted: true });
     },
@@ -775,9 +819,9 @@ describe("maintained Infisical contract", () => {
     );
     await expect(
       connector.callTool("update_secret", { ...args, secretComment: "", newSecretName: "NEW" }, context()),
-    ).resolves.toEqual({ secret: { key: "NEW", comment: "Renamed with no value change", tags: [] } });
+    ).resolves.toEqual({ secret: { key: "NEW", tags: [] }, metadataOmitted: true });
     expect(JSON.parse(String(requestOf(fetch, 1).init.body))).toEqual({
-      projectId: "p1",
+      projectId: PROJECT_ID,
       environment: "prod",
       secretPath: "/",
       secretComment: "",
@@ -787,24 +831,34 @@ describe("maintained Infisical contract", () => {
 
   it("creates folders with absolute paths and safe write envelopes", async () => {
     const ctx = context();
-    const fetch = mockFetch(login(), json({ folder: { id: "f1", name: "db" } }));
+    const fetch = mockFetch(login(), json({ folder: { id: FOLDER_ID, name: "db" } }));
     await expect(
-      connector.callTool("create_folder", { projectId: "p1", environment: "prod", name: "db", path: "/apps" }, ctx),
-    ).resolves.toEqual({ folder: { id: "f1", name: "db", path: "/apps/db" } });
+      connector.callTool(
+        "create_folder",
+        { projectId: PROJECT_ID, environment: "prod", name: "db", path: "/apps" },
+        ctx,
+      ),
+    ).resolves.toEqual({
+      folder: { id: FOLDER_ID, path: "/apps/db" },
+      metadataOmitted: true,
+    });
     expect(JSON.parse(String(requestOf(fetch, 1).init.body))).toEqual({
-      projectId: "p1",
+      projectId: PROJECT_ID,
       environment: "prod",
       name: "db",
       path: "/apps",
     });
-    mockFetch(json({ approval: { id: "a1", status: "open", value: "leak" } }));
+    mockFetch(json({ approval: { id: APPROVAL_ID, status: "open", value: "leak" } }));
     await expect(
-      connector.callTool("create_folder", { projectId: "p1", environment: "prod", name: "db" }, ctx),
-    ).resolves.toEqual({ pendingApproval: { id: "a1", status: "open" } });
+      connector.callTool("create_folder", { projectId: PROJECT_ID, environment: "prod", name: "db" }, ctx),
+    ).resolves.toEqual({
+      pendingApproval: { id: APPROVAL_ID, status: "open" },
+      metadataOmitted: true,
+    });
     mockFetch(json({ value: "leak" }));
     await expect(
-      connector.callTool("create_folder", { projectId: "p1", environment: "prod", name: "db" }, ctx),
-    ).resolves.toEqual({ ok: true });
+      connector.callTool("create_folder", { projectId: PROJECT_ID, environment: "prod", name: "db" }, ctx),
+    ).resolves.toEqual({ ok: true, metadataOmitted: true });
   });
 
   it("does not retry an ambiguously dispatched write (INV-9)", async () => {
@@ -822,7 +876,7 @@ describe("maintained Infisical contract", () => {
       code: "invalid_args",
     });
     await expect(
-      connector.callTool("list_folders", { projectId: "p1", environment: "prod", path: "apps" }, context()),
+      connector.callTool("list_folders", { projectId: PROJECT_ID, environment: "prod", path: "apps" }, context()),
     ).rejects.toMatchObject({ code: "invalid_args" });
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -864,13 +918,23 @@ describe("Infisical through the registry", () => {
     vi.stubGlobal("fetch", fetch);
     const tools: Record<string, Record<string, unknown>> = {
       list_projects: {},
-      list_folders: { projectId: "p1", environment: "prod" },
-      list_secrets: { projectId: "p1", environment: "prod" },
-      get_secret: { projectId: "p1", environment: "prod", secretName: "KEY" },
-      create_secret: { projectId: "p1", environment: "prod", secretName: "KEY", secretValue: "input-value" },
-      update_secret: { projectId: "p1", environment: "prod", secretName: "KEY", secretComment: "note" },
-      delete_secret: { projectId: "p1", environment: "prod", secretName: "KEY" },
-      create_folder: { projectId: "p1", environment: "prod", name: "db" },
+      list_folders: { projectId: PROJECT_ID, environment: "prod" },
+      list_secrets: { projectId: PROJECT_ID, environment: "prod" },
+      get_secret: { projectId: PROJECT_ID, environment: "prod", secretName: "KEY" },
+      create_secret: {
+        projectId: PROJECT_ID,
+        environment: "prod",
+        secretName: "KEY",
+        secretValue: "input-value",
+      },
+      update_secret: {
+        projectId: PROJECT_ID,
+        environment: "prod",
+        secretName: "KEY",
+        secretComment: "note",
+      },
+      delete_secret: { projectId: PROJECT_ID, environment: "prod", secretName: "KEY" },
+      create_folder: { projectId: PROJECT_ID, environment: "prod", name: "db" },
     };
     for (const [name, args] of Object.entries(tools)) {
       const read = /^(list|get)_/.test(name);
@@ -906,7 +970,7 @@ describe("Infisical through the registry", () => {
     await connector.callTool(
       "list_secrets",
       {
-        projectId: "p1",
+        projectId: PROJECT_ID,
         environment: "prod",
         secretPath: "/apps",
         includeValues: true,
@@ -918,7 +982,7 @@ describe("Infisical through the registry", () => {
       context(),
     );
     expect(Object.fromEntries(requestOf(fetch, 1).url.searchParams)).toEqual({
-      projectId: "p1",
+      projectId: PROJECT_ID,
       environment: "prod",
       secretPath: "/apps",
       viewSecretValue: "true",
@@ -957,16 +1021,16 @@ it.each(["create_secret", "update_secret", "delete_secret", "create_folder"])(
     mockFetch(login(), new Response("unrecognized-secret-value", { status: 200 }));
     const args =
       tool === "create_folder"
-        ? { projectId: "p1", environment: "prod", name: "db" }
+        ? { projectId: PROJECT_ID, environment: "prod", name: "db" }
         : {
-            projectId: "p1",
+            projectId: PROJECT_ID,
             environment: "prod",
             secretName: "KEY",
             ...(tool === "delete_secret" ? {} : { secretValue: "unrecognized-secret-value" }),
           };
     await expect(connector.callTool(tool, args, context())).resolves.toEqual({
       ok: true,
-      ...(tool === "create_folder" ? {} : { metadataOmitted: true }),
+      metadataOmitted: true,
     });
   },
 );

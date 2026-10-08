@@ -6,7 +6,11 @@ import { memoryStorage } from "../../storage/memory.js";
 import { createTestConnecta, makeRegistry, silentLogger } from "../../../test/helpers.js";
 import { mcpRpc, readJsonRpc } from "../../../test/fixtures/http.js";
 import { infisical } from "./index.js";
-import { checkInfisicalWriteResult, infisicalWriteCases } from "../../../test/fixtures/infisical-write-results.js";
+import {
+  checkInfisicalResult,
+  checkInfisicalSequence,
+  infisicalResultCases,
+} from "../../../test/fixtures/infisical-write-results.js";
 
 const BASE = "https://connecta.test";
 let clientCounter = 0;
@@ -42,16 +46,15 @@ afterEach(() => {
 });
 
 describe("Infisical security boundaries", () => {
-  for (const tool of ["create_secret", "update_secret"]) {
-    for (const approval of [false, true]) {
-      it.each(infisicalWriteCases)(
-        `${tool} ${approval ? "pending approval" : "success"} withholds unsafe metadata for $name in provider and MCP exits (INV-5)`,
-        async (testCase) => {
-          await checkInfisicalWriteResult(testCase, tool, approval);
-        },
-      );
-    }
-  }
+  it.each(infisicalResultCases)(
+    "projects identifiers or explicitly reads values for $name in provider and MCP exits (INV-5)",
+    async (testCase) => {
+      await checkInfisicalResult(testCase);
+    },
+  );
+  it("preserves subsequent ordinary arguments and repeated write values in one program (INV-5)", async () => {
+    await checkInfisicalSequence();
+  });
   const writes = [
     ["create_secret", "POST", { ...target, secretValue: "submitted-value-12345" }],
     ["update_secret", "PATCH", { ...target, secretValue: "submitted-value-12345" }],
@@ -165,7 +168,21 @@ describe("Infisical security boundaries", () => {
       it.each(Object.entries(encodings))(
         `redacts normalized credential %s echoes through ${source}, padded=${padded}, on login and cache hits (INV-5)`,
         async (_name, encode) => {
-          const { registry, credentials } = await setup(padded);
+          const { connector, storage, vault, credentials } = await setup(padded);
+          // Echo after provider projection so structural omission cannot mask a
+          // broken credential registration. This wrapper is only a test probe.
+          const registry = makeRegistry(
+            [
+              {
+                ...connector,
+                callTool: async (tool, args, ctx) => ({
+                  ...((await connector.callTool(tool, args, ctx)) as Record<string, unknown>),
+                  credentialEcho: `${encode(credentials.clientId)} / ${encode(credentials.clientSecret)}`,
+                }),
+              },
+            ],
+            { storage, credentialVault: vault },
+          );
           const fetch = vi.fn<typeof globalThis.fetch>(async (input) =>
             String(input).endsWith("/login")
               ? login()
@@ -180,7 +197,11 @@ describe("Infisical security boundaries", () => {
             const outcome = await invocation(registry).invoke("infisical.list_projects", {}, { source });
             expect(outcome).toMatchObject({
               ok: true,
-              value: { projects: [{ id: "p1", name: "[redacted] / [redacted]", environments: [] }] },
+              value: {
+                projects: [{ environments: [] }],
+                metadataOmitted: true,
+                credentialEcho: "[redacted] / [redacted]",
+              },
             });
           }
           const logins = fetch.mock.calls.filter(([input]) => String(input).endsWith("/login"));

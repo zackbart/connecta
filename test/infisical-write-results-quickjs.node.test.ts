@@ -1,7 +1,11 @@
-// Node-only: runs Infisical write result regressions in the real QuickJS child-process executor.
-import { afterAll, afterEach, describe, it, vi } from "vitest";
+// Node-only: runs Infisical identifier, explicit-read and sequential-program regressions in the real QuickJS child-process executor.
+import { afterAll, afterEach, it, vi } from "vitest";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
-import { checkInfisicalWriteResult, infisicalWriteCases } from "./fixtures/infisical-write-results.js";
+import {
+  checkInfisicalResult,
+  checkInfisicalSequence,
+  infisicalResultCases,
+} from "./fixtures/infisical-write-results.js";
 
 vi.setConfig({ testTimeout: 20_000 });
 const executor = quickJsExecutor({ cpuTimeMs: 5_000 });
@@ -13,15 +17,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-for (const tool of ["create_secret", "update_secret"]) {
-  for (const approval of [false, true]) {
-    describe(`${tool} ${approval ? "pending approval" : "success"} QuickJS results`, () => {
-      it.each(infisicalWriteCases)(
-        "withholds unsafe metadata for $name in execute_code returns and guest logs (INV-5)",
-        async (testCase) => {
-          await checkInfisicalWriteResult(testCase, tool, approval, executor);
-        },
-      );
-    });
-  }
-}
+it.each(infisicalResultCases)(
+  "projects identifiers or explicitly reads values for $name in QuickJS returns and guest logs (INV-5)",
+  async (testCase) => {
+    await checkInfisicalResult(testCase, executor);
+  },
+);
+it("preserves ordinary arguments and repeated write values in one QuickJS program (INV-5)", async () => {
+  await checkInfisicalSequence(executor);
+});
