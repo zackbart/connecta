@@ -6,7 +6,7 @@ import type {
   StoredOAuthClientInformation,
 } from "@modelcontextprotocol/client";
 import { byteReadResponse } from "../byte-read-response.js";
-import { sentSecretsFor, sentSecretsFetch } from "../sent-secrets.js";
+import { sentSecretsFor, sentSecretsFetch, shortSecretWarning } from "../sent-secrets.js";
 import type {
   ApiOAuthClientAuthentication,
   ApiOAuthConfig,
@@ -272,6 +272,8 @@ class StaticOAuthProvider extends KvOAuthProvider {
       (reset) => trackOAuthStartReset(ctx.requestScope ?? ctx, reset),
       undefined,
       settings.scope,
+      undefined,
+      { secrets: sentSecretsFor(ctx) },
     );
   }
 
@@ -381,8 +383,11 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   const rejectedScopes = new WeakSet<object>();
   const scopeOf = (ctx: ConnectorContext): object => ctx.requestScope ?? ctx;
 
-  const providerFor = (ctx: ConnectorContext) =>
-    new StaticOAuthProvider(id, ctx, coordinatorFor(ctx), settings);
+  const warnShortSecret = shortSecretWarning();
+  const providerFor = (ctx: ConnectorContext) => {
+    warnShortSecret(settings.clientSecret, ctx.logger);
+    return new StaticOAuthProvider(id, ctx, coordinatorFor(ctx), settings);
+  };
 
   /**
    * The global `fetch`, read per request, with the configured token-request

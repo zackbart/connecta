@@ -11,6 +11,7 @@ import type {
 } from "@modelcontextprotocol/client";
 import { revokeDownstreamGrant } from "./downstream-revocation.js";
 import { authenticateRemoteClient, downstreamClientMetadata, remoteClientAuthMethod, type RemoteOAuthClient } from "./downstream-client-metadata.js";
+import { SentSecrets } from "../sent-secrets.js";
 import { ConnectorCallError } from "../errors.js";
 import {
   attachOAuthPartition,
@@ -753,7 +754,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     private readonly scope?: string,
     /** Isolate-local clock, used only for claims that have never been sent. */
     private readonly refreshNow: () => number = Date.now,
-    private readonly clientOptions?: { name?: string | undefined; client?: RemoteOAuthClient | undefined },
+    private readonly clientOptions?: { name?: string | undefined; client?: RemoteOAuthClient | undefined; secrets?: SentSecrets | undefined },
   ) {
     if (clientMetadataUrl !== undefined) this.clientMetadataUrl = clientMetadataUrl;
     const client = clientOptions?.client;
@@ -778,6 +779,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   private async encodeGrant(grant: Grant): Promise<string> {
+    this.assertCredentialFree({ issuer: grant.body.issuer, discovery: grant.body.discovery }, grant.body);
     const stored: StoredGrant = {
       connectaOAuth: GRANT_VERSION,
       epoch: grant.epoch,
@@ -1203,8 +1205,55 @@ export class KvOAuthProvider implements OAuthClientProvider {
     return body.client?.registrationPath;
   }
 
+  /** Intake and saved URLs share a guard. Include the current grant's secrets
+   * so a fresh request can reject an older cache before sending credentials. */
+  private assertCredentialFree(value: unknown, body: GrantBody, consentUrl = false): void {
+    // OAuth intentionally puts its public client identity in consent. Exempt
+    // only that parameter when it equals the bound/configured client, leaving
+    // every other occurrence subject to the credential check. The URL itself
+    // is never changed, only this matching view.
+    if (consentUrl && typeof value === "string") {
+      const url = new URL(value);
+      const clientId = this.clientOptions?.client?.clientId ?? body.client?.value.client_id ?? this.configuredAuthorizationBinding()?.clientId;
+      const ids = url.searchParams.getAll("client_id");
+      if (clientId && ids.length === 1 && ids[0] === clientId) url.searchParams.delete("client_id");
+      value = url.href;
+    }
+    const secrets = new SentSecrets();
+    for (const value of [body.tokens?.access_token, body.tokens?.refresh_token,
+      body.client?.value.client_secret, this.clientOptions?.client?.clientSecret]) {
+      if (typeof value === "string") secrets.secret(value);
+    }
+    if (body.client?.value.client_secret) secrets.add(body.client.value.client_id);
+    if (this.clientOptions?.client?.clientSecret) secrets.add(this.clientOptions.client.clientId);
+    const urls: string[] = [];
+    const collect = (item: unknown): void => {
+      if (typeof item === "string") {
+        try { urls.push(new URL(item).href); } catch { /* Not a URL field. */ }
+      } else if (item && typeof item === "object") for (const field of Object.values(item)) collect(field);
+    };
+    collect(value);
+    if ([secrets, this.clientOptions?.secrets].some((source) => source &&
+      (source.redact(value) !== value || urls.some((url) => source.containsUrl(url))))) {
+      throw new ConnectorCallError("connector_call_failed",
+        "OAuth metadata or consent URL contains a credential; refusing authorization.", { retryable: false });
+    }
+  }
+
+  /** Only metadata bound to the discovered issuer can supply operator origins. */
+  async validatedIssuerOrigin(): Promise<string | undefined> {
+    const { body } = await this.boundGrant();
+    const state = body.discovery;
+    if (!state || state.authorizationServerMetadata?.issuer !== state.authorizationServerUrl ||
+      body.issuer !== state.authorizationServerUrl) return undefined;
+    this.assertCredentialFree(state, body);
+    return new URL(state.authorizationServerUrl).origin;
+  }
+
   async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
-    const state = (await this.boundGrant()).body.discovery;
+    const { body } = await this.boundGrant();
+    const state = body.discovery;
+    this.assertCredentialFree(state, body);
     this.consentDiscovery = state;
     return state;
   }
@@ -1216,6 +1265,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * different server leaves behind would never be sent to it anyway.
    */
   async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
+    this.assertCredentialFree(state, (await this.boundGrant()).body);
     const issuer = discoveryIssuer(state);
     if (this.clientOptions?.client && issuer !== this.clientOptions.client.issuer) throw this.flowSuperseded();
     if (!this.allowAuthorization && !(await this.boundGrant()).body.client) throw this.authorizationRefused();
@@ -1224,6 +1274,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
       const body: GrantBody = grant.body.issuer !== issuer
         ? (issuer !== undefined ? { issuer } : {})
         : { ...grant.body };
+      this.assertCredentialFree(state, grant.body);
       body.discovery = state;
       return this.withIssuer(grant, body);
     });
@@ -1287,6 +1338,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    */
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
     if (!this.allowAuthorization) throw this.authorizationRefused();
+    this.assertCredentialFree(authorizationUrl.toString(), (await this.boundGrant()).body, true);
     const state = this.consent.state ?? authorizationUrl.searchParams.get("state");
     if (!state) throw new Error(`OAuth consent for "${this.connectorId}" carries no state`);
     const client = this.clientOptions?.client;
@@ -1310,6 +1362,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     const url = authorizationUrl.toString();
     const { verifier } = this.consent;
     const grant = await this.boundGrant();
+    this.assertCredentialFree(url, grant.body, true);
     const binding = this.configuredAuthorizationBinding() ?? {
       ...await discoveryBinding(this.consentDiscovery ?? grant.body.discovery),
       issuer: discoveryIssuer(this.consentDiscovery) ?? grant.body.issuer,
@@ -1340,12 +1393,15 @@ export class KvOAuthProvider implements OAuthClientProvider {
     const published = this.published;
     if (!published) return undefined;
     if (epochOf(await this.storage.get(GRANT)) !== published.epoch) throw this.flowSuperseded();
+    this.assertCredentialFree(published.url, (await this.boundGrant()).body, true);
     return published.url;
   }
 
   /** The live epoch's pending consent URL, if one is unclaimed. */
   async pendingAuthorizationUrl(): Promise<string | undefined> {
-    return (await this.latestConsent())?.url;
+    const url = (await this.latestConsent())?.url;
+    this.assertCredentialFree(url, (await this.boundGrant()).body, true);
+    return url;
   }
 
   /**
@@ -1361,6 +1417,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     if (!consent || Math.abs(Date.now() - consent.at) >= PENDING_AUTHORIZATION_MAX_AGE_MS) {
       return undefined;
     }
+    this.assertCredentialFree(consent.url, (await this.boundGrant()).body, true);
     let clientId: string | null;
     try {
       clientId = new URL(consent.url).searchParams.get("client_id");

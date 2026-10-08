@@ -301,9 +301,13 @@ describe("an OAuth discovery failure", () => {
     await connector.closeScope!(context);
 
     expect(started).toMatchObject({ state: "error" });
-    expect(started.message).toContain(`Connector "svc" OAuth discovery with`);
-    expect(started.message).toContain(`failed${kind}.`);
-    expect((error as Error).message).toContain("OAuth discovery with");
+    const prefix = `Connector "svc" OAuth discovery${kind ? "" : ` with ${ISSUER}`} failed${kind}.`;
+    expect(started.message).toContain(prefix);
+    expect((error as Error).message).toContain(prefix);
+    if (kind) {
+      expect(started.message).not.toContain(ISSUER);
+      expect((error as Error).message).not.toContain(ISSUER);
+    }
     expect(classifyCallError(error)).toMatchObject({ code: "connector_call_failed", retryable: false });
     expectWithheld(rendered(started), rendered(error), JSON.stringify(classifyCallError(error)), ...lines);
   });
@@ -385,14 +389,15 @@ describe("an OAuth flow on a live client", () => {
     return { error: error as Error, classified };
   }
 
-  it.each(modes)("names discovery and its host for an issuer the metadata names (%s)", async (mode) => {
+  it.each(modes)("omits an unvalidated discovery host for an issuer the metadata names (%s)", async (mode) => {
     const { error, classified } = await liveFailure(
       downstream({ live: true, issuer: `${ISSUER}/?${SECRET}` }),
       mode,
     );
     expect(error.message).toContain(
-      'Connector "svc" OAuth discovery with https://auth.example failed (IssuerMismatchError).',
+      'Connector "svc" OAuth discovery failed (IssuerMismatchError).',
     );
+    expect(error.message).not.toContain(ISSUER);
     expect(classified).toMatchObject({ code: "connector_call_failed", retryable: false });
   });
 
@@ -1010,7 +1015,7 @@ describe("the MCP boundary is an allow-list", () => {
       const error = await connector.listTools(context).then(() => null, (err: unknown) => err);
       await connector.closeScope!(context);
       expect((error as Error).message).toContain(
-        'Connector "svc" OAuth discovery with https://auth.example failed.',
+        'Connector "svc" OAuth discovery failed.',
       );
       expect((error as Error).message).not.toContain("PlantedError");
       expectWithheld(rendered(error), JSON.stringify(classifyCallError(error)), ...lines);
@@ -1281,8 +1286,9 @@ describe("SDK failure facts", () => {
         expect(classifyCallError(error)).toMatchObject({ code: status === 429 ? "rate_limited" : "connector_call_failed",
           retryable: [429, 502, 503, 504].includes(status) });
         expect(failureRecord({ connector: id }, error)).toMatchObject({
-          httpStatus: status, step: "OAuth discovery", origin: authorizationServer,
+          httpStatus: status, step: "OAuth discovery",
         });
+        expect(failureRecord({ connector: id }, error).origin).toBeUndefined();
         expectWithheld(rendered(error));
       } finally {
         await connector.closeScope!(context);

@@ -2,16 +2,31 @@
 // shape, a failure record, storage, or a log. Web APIs only.
 import { carryFailureFacts } from "./operator-record.js";
 import { ConnectorCallError } from "./errors.js";
-import type { ConnectorContext } from "./types.js";
+import { credentialUrlViews } from "./credential-url.js";
+import type { ConnectorContext, Logger } from "./types.js";
 
 const REDACTED = "[redacted]";
 const encoder = new TextEncoder();
 const contexts = new WeakMap<ConnectorContext, SentSecrets>();
 const requests = new WeakMap<object, SentSecrets>();
 const wrappedCredentials = new WeakSet<ConnectorContext>();
-const sensitiveName = /key|token|secret|auth|signature|session/i;
-// Short credentials (especially Basic usernames) would corrupt ordinary prose.
+const sensitiveName = /key|token|secret|password|auth|signature|session/i;
+const explicitSecretName = /secret|password/i;
+// Short credentials can match protocol fields or legitimate configuration.
 const MIN_SECRET_LENGTH = 8;
+
+type SecretWarning = { code: "short_secret_not_redacted" };
+
+/** One payload-free warning per configured connector, regardless of requests. */
+export function shortSecretWarning(): (value: string | undefined, logger: Logger) => void {
+  let warned = false;
+  return (value, logger) => {
+    if (warned || !value || value.length >= MIN_SECRET_LENGTH) return;
+    warned = true;
+    const fact: SecretWarning = { code: "short_secret_not_redacted" };
+    logger.warn("[connecta] Credentials shorter than 8 characters are not redacted from echoes; use longer secrets.", fact);
+  };
+}
 
 function literal(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -67,6 +82,20 @@ export class SentSecrets {
     }
   }
 
+  /** Explicit secrets use the same floor as every other credential. */
+  secret(value: string): void { this.add(value); }
+
+  /** Structural fields must be refused, never repaired into different URLs. */
+  contains(value: string, ignoreCase = false): boolean {
+    return [...this.values].some((secret) => new RegExp(wirePattern(secret), ignoreCase ? "i" : "").test(value));
+  }
+
+  containsUrl(value: string): boolean {
+    const { hosts, components, joined } = credentialUrlViews(value);
+    return hosts.some((host) => this.contains(host, true)) ||
+      [...components, ...joined].some((view) => this.contains(view));
+  }
+
   header(value: string): void {
     this.add(value);
     const framed = /^(?:Bearer|token|Basic)\s+(.+)$/i.exec(value);
@@ -79,16 +108,17 @@ export class SentSecrets {
         const colon = decoded.indexOf(":");
         if (colon !== -1) {
           this.add(decoded.slice(0, colon));
-          this.add(decoded.slice(colon + 1));
+          this.secret(decoded.slice(colon + 1));
         }
       } catch { /* An invalid Basic value is still registered verbatim. */ }
-    }
+    } else this.secret(framed[1]!);
   }
 
   request(input: RequestInfo | URL, init?: RequestInit): void {
     const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
     for (const [name, value] of headers) {
-      if (name === "cookie" || sensitiveName.test(name)) this.header(value);
+      if (explicitSecretName.test(name)) this.secret(value);
+      else if (name === "cookie" || sensitiveName.test(name)) this.header(value);
       if (name === "cookie") {
         for (const cookie of value.split(";")) {
           const equals = cookie.indexOf("=");
@@ -98,14 +128,16 @@ export class SentSecrets {
     }
     const url = new URL(input instanceof Request ? input.url : String(input));
     for (const [name, value] of url.searchParams) {
-      if (sensitiveName.test(name)) this.add(value);
+      if (explicitSecretName.test(name)) this.secret(value);
+      else if (sensitiveName.test(name)) this.add(value);
     }
     // The OAuth SDK sends token requests as form data. Do not read a body
     // stream or clone a Request: registration must not consume its payload.
     if (headers.get("content-type")?.startsWith("application/x-www-form-urlencoded") &&
         (typeof init?.body === "string" || init?.body instanceof URLSearchParams)) {
       for (const [name, value] of new URLSearchParams(init.body)) {
-        if (/^(?:client_secret|refresh_token|code|client_assertion|password)$/i.test(name)) this.add(value);
+        if (/^(?:client_secret|password)$/i.test(name)) this.secret(value);
+        else if (/^(?:refresh_token|code|client_assertion)$/i.test(name)) this.add(value);
       }
     }
   }
@@ -117,7 +149,7 @@ export class SentSecrets {
     this.matcher ??= new RegExp([
       literal(REDACTED),
       ...[...this.values].sort((a, b) => b.length - a.length).map(wirePattern),
-    ].join("|"), "g");
+    ].join("|"), "gu");
     // A single pass never scans a newly inserted placeholder as credential
     // text. Protect existing placeholders when another boundary runs too.
     value = value.replace(this.matcher, REDACTED);
@@ -298,12 +330,19 @@ export function trackCredentialReads(ctx: ConnectorContext): void {
   ctx.credential = {
     async get(field) {
       const value = await credential.get(field);
-      if (value) sentSecretsFor(ctx).add(value);
+      if (value) {
+        const secrets = sentSecretsFor(ctx);
+        if (field && explicitSecretName.test(field)) secrets.secret(value);
+        else secrets.add(value);
+      }
       return value;
     },
     async getAll() {
       const values = await credential.getAll();
-      for (const value of Object.values(values ?? {})) sentSecretsFor(ctx).add(value);
+      for (const [field, value] of Object.entries(values ?? {})) {
+        if (explicitSecretName.test(field)) sentSecretsFor(ctx).secret(value);
+        else sentSecretsFor(ctx).add(value);
+      }
       return values;
     },
   };
