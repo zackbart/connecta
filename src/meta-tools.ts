@@ -40,7 +40,7 @@ import {
   normalizeTimeoutMs,
 } from "./timeout.js";
 import { RESULT_TTL_SECONDS, resultKeys } from "./storage/keys.js";
-import type { SentSecrets } from "./sent-secrets.js";
+import { agentOutputOperations, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 
 export {
   MAX_DESCRIBE_ADDRESSES,
@@ -595,6 +595,17 @@ function oauthFollowUp(connectorId: string): string {
 export function createMetaTools(
   registry: RegistryView,
   baseUrl: string,
+  opts: Parameters<typeof metaToolsForRequest>[2] = {},
+) {
+  return agentOutputOperations(
+    (requestScope) => metaToolsForRequest(registry, baseUrl, { ...opts, requestScope }),
+    opts.requestScope,
+  );
+}
+
+function metaToolsForRequest(
+  registry: RegistryView,
+  baseUrl: string,
   opts: {
     /** Deadline applied when a call passes no `timeoutMs`. Off when unset. */
     defaultToolTimeoutMs?: number | undefined;
@@ -611,6 +622,8 @@ export function createMetaTools(
     requestSignal?: AbortSignal | undefined;
     /** Runtime-owned tail for stale catalog refreshes. */
     defer?: DeferredWork | undefined;
+    /** The HTTP request's shared credential-redaction identity. */
+    requestScope?: object | undefined;
   } = {},
 ) {
   // Already normalized and warned about at registry construction.
@@ -624,7 +637,8 @@ export function createMetaTools(
   // createMetaTools() is called once per inbound MCP request. Sharing this
   // identity lets remote connectors reuse one downstream client inside that
   // request without leaking request-bound I/O into the next one.
-  const requestScope = {};
+  const requestScope = opts.requestScope ?? {};
+  const sentSecrets = sentSecretsForRequest(requestScope);
   const catalog = new CatalogService(registry, baseUrl, {
     requestScope,
     probeTimeoutMs,
@@ -667,6 +681,7 @@ export function createMetaTools(
       call.args ?? {},
       {
         source,
+        sentSecrets,
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
         ...(opts.requestSignal !== undefined
           ? { requestSignal: opts.requestSignal }
@@ -1218,10 +1233,11 @@ export function registerMetaTools(
     oauthConnectUnavailable?: string | undefined;
     requestSignal?: AbortSignal | undefined;
     defer?: DeferredWork | undefined;
-
+    requestScope?: object | undefined;
   },
 ): void {
   const mt = createMetaTools(registry, ctx.baseUrl, {
+    requestScope: ctx.requestScope,
     defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,
     probeTimeoutMs: ctx.probeTimeoutMs,
     discoveryConcurrency: ctx.discoveryConcurrency,

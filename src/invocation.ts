@@ -37,7 +37,7 @@ import {
 import { splitAddress, type RegistryView } from "./registry.js";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { validateCatalogToolInput } from "./validate.js";
-import { SentSecrets, sentSecretsFor, trackCredentialReads } from "./sent-secrets.js";
+import { sentSecretsFor, sentSecretsForRequest, trackCredentialReads, type SentSecrets } from "./sent-secrets.js";
 
 function defined<T extends object>(
   values: T,
@@ -316,7 +316,8 @@ export class InvocationService {
       let attempts = 0;
       let dispatchedToConnector = false;
       let answered = false;
-      let sentSecrets = new SentSecrets();
+      const sentSecrets = sentSecretsForRequest(this.catalog.requestScope);
+      context.sentSecrets?.include(sentSecrets);
       // A write gate's refusal that is no attempt; see WriteGateDecision.
       let unrecorded = false;
       let resolved: ResolvedCatalogTool | undefined;
@@ -607,8 +608,7 @@ export class InvocationService {
             );
             if (context.source === "execute_code") markProgramCall(connectorContext);
             trackCredentialReads(connectorContext);
-            sentSecrets = sentSecretsFor(connectorContext);
-            context.sentSecrets?.include(sentSecrets);
+            sentSecrets.include(sentSecretsFor(connectorContext));
             if (
               target.connector.credential &&
               !connectorContext.credential

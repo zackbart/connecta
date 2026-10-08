@@ -1,4 +1,4 @@
-// Credentials used by one call. Memory only; never part of a context's public
+// Credentials used by one upstream request. Memory only; never part of a context's public
 // shape, a failure record, storage, or a log. Web APIs only.
 import { carryFailureFacts } from "./operator-record.js";
 import { ConnectorCallError } from "./errors.js";
@@ -7,6 +7,7 @@ import type { ConnectorContext } from "./types.js";
 const REDACTED = "[redacted]";
 const encoder = new TextEncoder();
 const contexts = new WeakMap<ConnectorContext, SentSecrets>();
+const requests = new WeakMap<object, SentSecrets>();
 const wrappedCredentials = new WeakSet<ConnectorContext>();
 const sensitiveName = /key|token|secret|auth|signature|session/i;
 // Short credentials (especially Basic usernames) would corrupt ordinary prose.
@@ -46,7 +47,7 @@ export class SentSecrets {
     for (const recipient of this.recipients) recipient.form(value);
   }
 
-  /** A program also redacts its later outputs with credentials from its calls. */
+  /** The request receives existing and future credentials from every context. */
   include(source: SentSecrets): void {
     if (source === this) return;
     source.recipients.add(this);
@@ -245,7 +246,47 @@ export class SentSecrets {
 export function sentSecretsFor(ctx: ConnectorContext): SentSecrets {
   let secrets = contexts.get(ctx);
   if (!secrets) { secrets = new SentSecrets(); contexts.set(ctx, secrets); }
+  sentSecretsForRequest(ctx.requestScope ?? ctx).include(secrets);
   return secrets;
+}
+
+/** One identity per upstream request, including all discovery and call work. */
+export function sentSecretsForRequest(scope: object, secrets?: SentSecrets): SentSecrets {
+  let request = requests.get(scope);
+  if (!request) {
+    request = secrets ?? new SentSecrets();
+    requests.set(scope, request);
+  } else if (secrets) {
+    request.include(secrets);
+  }
+  return request;
+}
+
+/** The agent-facing choke point. Apply to values before bridge serialization
+ * and to serialized wire text, so JSON escapes and structured strings share
+ * the same rule. Intake redaction protects caches independently of this edge. */
+export function redactAgentOutput<T>(secrets: SentSecrets, value: T): T {
+  return secrets.redact(value);
+}
+
+/** Wrap the complete operation table, including rejections. Adding an operation
+ * cannot add an unredacted exit. A direct invocation owns a fresh scope unless
+ * its HTTP request supplied one. */
+export function agentOutputOperations<T extends Record<string, (...args: never[]) => Promise<unknown>>>(
+  create: (scope: object) => T,
+  requestScope?: object,
+): T {
+  return Object.fromEntries(Object.keys(create(requestScope ?? {})).map((name) => [
+    name,
+    (...args: never[]) => {
+      const scope = requestScope ?? {};
+      const secrets = sentSecretsForRequest(scope);
+      return Promise.resolve().then(() => create(scope)[name]!(...args)).then(
+        (value) => redactAgentOutput(secrets, value),
+        (error: unknown) => { throw redactAgentOutput(secrets, error); },
+      );
+    },
+  ])) as T;
 }
 
 /** Slot reads cover custom handlers too, including keys put in query strings. */
@@ -275,7 +316,8 @@ export function redactSentSecrets<T>(ctx: ConnectorContext, value: T): T {
  * cannot be rewritten without changing dispatch, and dropping one entry would
  * publish a partial catalog, so refuse the complete listing instead. */
 export function redactCatalog<T extends { name: string }>(ctx: ConnectorContext, tools: T[]): T[] {
-  const redacted = redactSentSecrets(ctx, tools);
+  sentSecretsFor(ctx);
+  const redacted = sentSecretsForRequest(ctx.requestScope ?? ctx).redact(tools);
   if (redacted.some((tool, index) => tool.name !== tools[index]!.name)) {
     throw new ConnectorCallError("connector_call_failed",
       "Downstream catalog contains a tool name that echoes a sent credential; refusing the complete catalog.",
