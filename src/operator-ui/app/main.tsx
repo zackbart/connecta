@@ -22,6 +22,7 @@ import {
 } from "../view.js";
 import { auth, homeUrl, productDescription, titleSuffix } from "./config.js";
 import { ConnectorsPage } from "./connectors.js";
+import { ToolsPage } from "./tools.js";
 import { OverviewPage } from "./overview.js";
 import { TokensPage } from "./tokens.js";
 import { ActivityPage } from "./activity.js";
@@ -199,6 +200,7 @@ function Gate({ state }: { state: OperatorState }) {
 }
 
 function CurrentPage({ state }: { state: OperatorState }) {
+  if (state.page === "tools") return <ToolsPage state={state} />;
   if (state.page === "connector") return <ConnectorDetailPage state={state} />;
   if (state.page === "connections") return <ConnectorsPage state={state} />;
   if (state.page === "overview") return <OverviewPage state={state} />;
