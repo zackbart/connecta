@@ -325,7 +325,7 @@ describe("ccb() OAuth end to end", () => {
     fake.refresh.clear();
     fake.expireAccess();
     const failed = await failure(call("get_me"));
-    expect(failed).toMatchObject({ code: "auth_required" });
+    expect(failed).toMatchObject({ code: "downstream_oauth_required" });
     expect(failed.message).toContain('authorize_connector({ connector: "church" })');
     expect((await connector.status!(ctx())).state).toBe("auth_required");
   });

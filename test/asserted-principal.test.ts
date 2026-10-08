@@ -301,11 +301,11 @@ describe("an asserted principal through a deployment", () => {
       edge,
     ]);
     expect(await call("common.me", { authorization: `Bearer ${SECRET}` }))
-      .toEqual({ status: 403, body: { error: "asserted principal required" } });
+      .toEqual({ status: 403, body: { error: expect.objectContaining({ code: "host_auth_required", retryable: false }) } });
     expect(await call("common.me", {
       authorization: `Bearer ${SECRET}`,
       [HEADER]: "mallory@evil.test",
-    })).toEqual({ status: 403, body: { error: "asserted principal refused" } });
+    })).toEqual({ status: 403, body: { error: expect.objectContaining({ code: "host_auth_required", retryable: false }) } });
 
     // Without the secret the header is ignored and the next provider decides.
     const fallthrough = await call("common.me", {

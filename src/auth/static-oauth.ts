@@ -426,7 +426,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   // verdict, and a logger rendering the chain renders whatever it says.
   const authRequiredError = () =>
     new ConnectorCallError(
-      "auth_required",
+      "downstream_oauth_required",
       `Connector "${id}" requires authorization — call authorize_connector({ connector: "${id}" }) and open the returned URL.`,
     );
   const disconnectedMessage =
@@ -498,7 +498,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       // the call rather than handing it another flow's grant.
       const generation = await provider.beginFlow();
       if (provider.isOperatorDisconnectedGeneration(generation)) {
-        throw new ConnectorCallError("auth_required", disconnectedMessage);
+        throw new ConnectorCallError("downstream_oauth_required", disconnectedMessage);
       }
       const tokens = await provider.tokens(issuerContext);
       if (!tokens) throw authRequiredError();

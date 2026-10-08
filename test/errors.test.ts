@@ -11,8 +11,8 @@ import {
 describe("WithheldTextError", () => {
   it.each([
     ["Dynamic Client Registration rejected (HTTP 400): secret", "fallback", false],
-    ["Dynamic Client Registration rejected (HTTP 503): secret", "fallback", true],
-    ["HTTP 400: secret request timed out", "timeout", true],
+    ["Dynamic Client Registration rejected (HTTP 503): secret", "fallback", false],
+    ["HTTP 400: secret request timed out", "fallback", false],
   ] as const)("classifies %j as the original would have been", (text, code, retryable) => {
     const original = new Error(text);
     const withheld = new WithheldTextError("connecta's words", original);
@@ -178,14 +178,14 @@ describe("classifyCallError", () => {
     ).toBeLessThanOrEqual(128);
   });
 
-  it("falls back to the message heuristic for plain errors", () => {
+  it("INV-6: untyped prose never decides code or retryability", () => {
     expect(classifyCallError(new Error("request timed out"))).toMatchObject({
-      code: "timeout",
-      retryable: true,
+      code: "connector_call_failed",
+      retryable: false,
     });
     expect(classifyCallError(new Error("HTTP 503"))).toMatchObject({
       code: "connector_call_failed",
-      retryable: true,
+      retryable: false,
     });
     expect(classifyCallError(new Error("no such record"))).toMatchObject({
       code: "connector_call_failed",
@@ -283,10 +283,10 @@ describe("framingError", () => {
     }
   });
 
-  it("still reads the message for codes it does not frame itself", () => {
+  it("INV-6: framing codes never infer retryability from names or prose", () => {
     expect(
       framingError("catalog_lookup_failed", "upstream 503 while paging"),
-    ).toMatchObject({ retryable: true });
+     ).toMatchObject({ retryable: false });
     expect(
       framingError("catalog_lookup_failed", "field shape mismatch"),
     ).toMatchObject({ retryable: false });
@@ -334,5 +334,16 @@ it("reads runtime codes without consulting messages or unstructured causes", () 
   expect(networkErrorCode(new DOMException("deadline", "TimeoutError"))).toBe("timeout");
   for (const error of [new Error("ECONNREFUSED timeout"), new Error("fetch failed", { cause: "ENOTFOUND" }), { code: "https://secret/private" }]) {
     expect(networkErrorCode(error)).toBeUndefined();
+  }
+});
+
+
+it("INV-6: runtime facts classify transport errors independently of prose", () => {
+  for (const message of ["safe", "timeout temporarily rate limit 429 503"]) {
+    expect(classifyCallError(Object.assign(new Error(message), { code: "ECONNRESET" })))
+      .toMatchObject({ code: "unavailable", retryable: true });
+    expect(classifyCallError(Object.assign(new Error(message), { code: "ETIMEDOUT" })))
+      .toMatchObject({ code: "timeout", retryable: true });
+    expect(classifyCallError(new Error(message))).toMatchObject({ code: "connector_call_failed", retryable: false });
   }
 });

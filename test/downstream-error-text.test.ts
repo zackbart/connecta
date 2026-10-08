@@ -1,15 +1,18 @@
 import type { FetchLike, Transport } from "@modelcontextprotocol/client";
-import { RegistrationRejectedError, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { Client, OAuthError, ProtocolError, SdkError, SdkErrorCode, StreamableHTTPClientTransport, UnauthorizedError } from "@modelcontextprotocol/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
 import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
-import { classifyCallError } from "../src/errors.js";
+import { CatalogService } from "../src/catalog-service.js";
+import { classifyCallError, ConnectorCallError } from "../src/errors.js";
+import { InvocationService } from "../src/invocation.js";
 import { createMetaTools } from "../src/meta-tools.js";
+import { failureRecord } from "../src/operator-record.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext, Logger } from "../src/types.js";
 import { connectorContext } from "./fixtures/misc.js";
-import { makeRegistry, required } from "./helpers.js";
+import { makeRegistry } from "./helpers.js";
 
 // Text a downstream or authorization server wrote, planted where each path
 // would carry it: a registration body, an issuer, a runtime error. The issue
@@ -84,6 +87,8 @@ function expectWithheld(...renders: string[]): void {
  * whose answers each case chooses.
  */
 function downstream(overrides: {
+  endpoint?: string;
+  authorizationServer?: string;
   register?: (body: string) => Response | Promise<Response>;
   issuer?: string;
   resource?: string;
@@ -97,11 +102,15 @@ function downstream(overrides: {
   handshake?: () => Response;
   /** The tools a live tools/list serves. */
   tools?: unknown[];
+  /** Refuse a catalog page after a successful handshake. */
+  listPage?: () => Response | "401";
   /** Delay the n-th authorization-server metadata answer (from 0), then name `issuer`. */
   serverMetadata?: (n: number) => Promise<string | undefined>;
   token?: () => Response;
 }): FetchLike {
-  const resourceMetadataUrl = `${new URL(MCP_URL).origin}/.well-known/oauth-protected-resource`;
+  const endpoint = overrides.endpoint ?? MCP_URL;
+  const authorizationServer = overrides.authorizationServer ?? ISSUER;
+  const resourceMetadataUrl = `${new URL(endpoint).origin}/.well-known/oauth-protected-resource`;
   const challenge = () =>
     new Response(null, {
       status: 401,
@@ -111,7 +120,7 @@ function downstream(overrides: {
   let toolCalls = 0;
   return async (input, init = {}) => {
     const url = new URL(input);
-    if (url.href === MCP_URL) {
+    if (url.href === endpoint) {
       if (init.method !== "POST") return new Response(null, { status: 405 });
       if (!overrides.live) return challenge();
       const request = JSON.parse(String(init.body)) as { id?: number; method: string; params?: { protocolVersion?: string } };
@@ -126,8 +135,11 @@ function downstream(overrides: {
         } });
       }
       if (request.method.startsWith("notifications/")) return new Response(null, { status: 202 });
-      if (request.method === "tools/list" && overrides.tools) {
-        return Response.json({ jsonrpc: "2.0", id: request.id, result: { tools: overrides.tools } });
+      if (request.method === "tools/list") {
+        const answer = overrides.listPage?.();
+        if (answer === "401") return challenge();
+        if (answer instanceof Response) return answer;
+        if (overrides.tools) return Response.json({ jsonrpc: "2.0", id: request.id, result: { tools: overrides.tools } });
       }
       if (request.method === "tools/call") {
         const answer = overrides.toolCall?.(toolCalls++, request.id) ?? (overrides.stepUp ? "403" : "401");
@@ -145,27 +157,27 @@ function downstream(overrides: {
     }
     if (url.href === resourceMetadataUrl) {
       return Response.json({
-        resource: overrides.resource ?? MCP_URL,
-        authorization_servers: [ISSUER],
+        resource: overrides.resource ?? endpoint,
+        authorization_servers: [authorizationServer],
       });
     }
-    if (url.href === `${ISSUER}/token`) {
+    if (url.href === `${authorizationServer}/token`) {
       return overrides.token?.() ?? new Response(null, { status: 404 });
     }
-    if (url.href === `${ISSUER}/.well-known/oauth-authorization-server`) {
+    if (url.href === `${authorizationServer}/.well-known/oauth-authorization-server`) {
       const named = await overrides.serverMetadata?.(serverMetadataRequests++);
       return Response.json({
-        issuer: named ?? overrides.issuer ?? ISSUER,
-        authorization_endpoint: `${ISSUER}/authorize`,
-        token_endpoint: `${ISSUER}/token`,
-        registration_endpoint: `${ISSUER}/register`,
+        issuer: named ?? overrides.issuer ?? authorizationServer,
+        authorization_endpoint: `${authorizationServer}/authorize`,
+        token_endpoint: `${authorizationServer}/token`,
+        registration_endpoint: `${authorizationServer}/register`,
         response_types_supported: ["code"],
         grant_types_supported: ["authorization_code", "refresh_token"],
         code_challenge_methods_supported: ["S256"],
         token_endpoint_auth_methods_supported: ["none"],
       });
     }
-    if (url.href === `${ISSUER}/register`) {
+    if (url.href === `${authorizationServer}/register`) {
       const body = String(init.body ?? "");
       if (overrides.register) return await overrides.register(body);
       return Response.json({
@@ -227,7 +239,7 @@ describe("a refused client registration", () => {
     [400, "not-a-registered-code"],
     [503, "temporarily_unavailable"],
   ] as const)(
-    "throws HTTP %i (%s) from a call with the classification the SDK's error had",
+    "throws HTTP %i (%s) from a call from status facts",
     async (status, code) => {
       vi.stubGlobal("fetch", downstream({ register: echoingRefusal(status, code) }));
       const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" }, versionNegotiation: "legacy" });
@@ -246,23 +258,12 @@ describe("a refused client registration", () => {
       }
       expect((error as Error).cause).toBeUndefined();
 
-      // The verdict is the one the SDK's own error, body and all, would have
-      // received, under both the default and the catalog's fallback code.
       expect(served).toHaveLength(1);
-      const original = new RegistrationRejectedError({
-        status,
-        body: required(served[0]),
-        submittedMetadata: { redirect_uris: [REDIRECT] },
-      });
       for (const fallback of ["connector_call_failed", "catalog_lookup_failed"] as const) {
-        const before = classifyCallError(original, fallback);
-        const after = classifyCallError(error, fallback);
-        expect({ code: after.code, retryable: after.retryable }).toEqual({
-          code: before.code,
-          retryable: before.retryable,
+        expect(classifyCallError(error, fallback)).toMatchObject({
+          code: "connector_call_failed", retryable: status === 503,
         });
       }
-      expect(classifyCallError(error).retryable).toBe(status === 503);
       expectWithheld(rendered(error), JSON.stringify(classifyCallError(error)), ...lines);
     },
   );
@@ -391,15 +392,14 @@ describe("an OAuth flow on a live client", () => {
     expect(classified).toMatchObject({ code: "connector_call_failed", retryable: false });
   });
 
-  it.each(modes)("bounds a step-up flow the same way (%s)", async (mode) => {
+  it.each(modes)("INV-6 INV-9: refuses a step-up as permission denial without OAuth (%s)", async (mode) => {
     const { error, classified } = await liveFailure(
       downstream({ live: true, stepUp: true, issuer: `${ISSUER}/?${SECRET}` }),
       mode,
     );
-    expect(error.message).toContain(
-      'Connector "svc" OAuth discovery with https://auth.example failed (IssuerMismatchError).',
-    );
-    expect(classified).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(error.message).toContain("Check the account's permissions");
+    expect(error.message).not.toMatch(/authorize_connector|retry authorization/);
+    expect(classified).toMatchObject({ code: "provider_permission_denied", retryable: false });
   });
 
   it.each(modes)("names discovery and its host for a resource it does not serve (%s)", async (mode) => {
@@ -425,7 +425,7 @@ describe("an OAuth flow on a live client", () => {
   it.each(
     modes.flatMap((mode) => [
       [mode, 500, "unavailable", true],
-      [mode, 400, "auth_required", false],
+      [mode, 400, "downstream_oauth_required", false],
     ] as const),
   )("keeps a refused refresh's body out of the verdict (%s, HTTP %i)", async (mode, status, code, retryable) => {
     const storage = memoryStorage();
@@ -721,55 +721,28 @@ describe("the SDK seams OAuth flows are bounded at", () => {
   });
 
   it.each(["legacy", "auto"] as const)(
-    "tells a step-up flow and a 401 flow running at once apart (%s)",
+    "INV-6 INV-9: keeps a 403 permission denial independent of a concurrent 401 OAuth flow (%s)",
     async (mode) => {
-      // Whichever flow asks for server metadata first is held at
-      // registration until the other has failed, on server metadata answered
-      // only after that registration was sent. Which flow wins that race is
-      // the SDK's, so the two verdicts are matched as a pair.
-      let secondMetadataArrived!: () => void;
-      const secondArrived = new Promise<void>((resolve) => (secondMetadataArrived = resolve));
-      let registrationArrived!: () => void;
-      const registering = new Promise<void>((resolve) => (registrationArrived = resolve));
-      let otherSettled: Promise<unknown> = Promise.resolve();
+      let registrations = 0;
       vi.stubGlobal("fetch", downstream({
         live: true,
-        toolCall: (n) => (n === 0 ? "403" : "401"),
-        serverMetadata: async (n) => {
-          if (n === 0) {
-            await secondArrived;
-            return undefined;
-          }
-          secondMetadataArrived();
-          await registering;
-          return `${ISSUER}/?${SECRET}`;
-        },
-        register: async (body) => {
-          registrationArrived();
-          await otherSettled;
+        toolCall: (n) => n === 0 ? "403" : "401",
+        register: (body) => {
+          registrations++;
           return echoingRefusal(400, "invalid_redirect_uri")(body);
         },
       }));
       const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" }, versionNegotiation: mode });
-      const { logger, lines } = capturingLogger();
-      const context: ConnectorContext = { ...connectorContext(memoryStorage()), logger, requestScope: {} };
+      const context = scope();
       expect(await connector.status!(context)).toMatchObject({ state: "ok" });
-      const stepUp = connector.callTool("read", {}, context).then(() => null, (err: unknown) => err);
-      const challenged = connector.callTool("read", {}, context).then(() => null, (err: unknown) => err);
-      // The registering call cannot settle before its registration answers,
-      // so the first to settle is the other one.
-      otherSettled = Promise.race([stepUp, challenged]);
-      const errors = (await Promise.all([stepUp, challenged])) as Error[];
-      await connector.closeScope!(context);
-
-      const registration =
-        "could not register an OAuth client with https://auth.example: the registration endpoint answered HTTP 400 with OAuth error invalid_redirect_uri.";
-      const discovery = 'Connector "svc" OAuth discovery with https://auth.example failed (IssuerMismatchError).';
-      const told = errors.map((error) =>
-        error.message.includes(registration) ? "registration" : error.message.includes(discovery) ? "discovery" : error.message,
-      );
-      expect(told.sort()).toEqual(["discovery", "registration"]);
-      expectWithheld(...errors.map(rendered), ...lines);
+      try {
+        const errors = await Promise.all([0, 1].map(() => connector.callTool("write", {}, context).catch((error: unknown) => error)));
+        expect(errors.map(error => classifyCallError(error).code)).toEqual(["provider_permission_denied", "connector_call_failed"]);
+        expect(registrations).toBe(1);
+        expectWithheld(...errors.map(rendered));
+      } finally {
+        await connector.closeScope!(context);
+      }
     },
   );
 });
@@ -990,7 +963,7 @@ describe("the MCP boundary is an allow-list", () => {
     // An unknown class is told by the nearest class connecta labels, never by
     // its own name: a status record says Error, the agent's text nothing.
     expect(text).toContain(
-      `${step} with https://downstream.example failed${action === "status" ? " (Error)" : ""}.`,
+      `${step} with https://downstream.example failed${action === "status" ? " (Error, connector_call_failed)." : "."}`,
     );
     expect(text).not.toContain("PlantedError");
     if (action !== "status") {
@@ -1061,5 +1034,462 @@ describe("an api() handler that reads a reply it cannot parse", () => {
     expect(classifyCallError(error)).toMatchObject({ code: "connector_call_failed", retryable: false });
     expect(classifyCallError(error)).not.toHaveProperty("details");
     expectWithheld(rendered(error), JSON.stringify(classifyCallError(error)));
+  });
+});
+
+
+describe("SDK failure facts", () => {
+  it.each((["legacy", "auto"] as const).flatMap(versionNegotiation =>
+    [false, true].map(oauth => ({ versionNegotiation, oauth }))))(
+    "INV-6 INV-8: catalog HTTP 401 latches after OAuth=$oauth under $versionNegotiation negotiation",
+    async ({ versionNegotiation, oauth }) => {
+      let pages = 0;
+      let calls = 0;
+      let refreshes = 0;
+      vi.stubGlobal("fetch", downstream({ live: true,
+        listPage: () => { pages++; return "401"; },
+        toolCall: () => { calls++; return "401"; },
+        token: () => {
+          refreshes++;
+          return Response.json({ access_token: "access-new", token_type: "Bearer", refresh_token: "refresh-new" });
+        },
+      }));
+      const connector = remoteMcp("svc", { url: MCP_URL, versionNegotiation,
+        auth: oauth ? { type: "oauth" } : { type: "headers", headers: { authorization: "Bearer rejected-static" } },
+      });
+      const context = scope();
+      const code = oauth ? "downstream_oauth_required" : "auth_required";
+      try {
+        if (oauth) {
+          const seeder = new KvOAuthProvider("svc", context.storage, REDIRECT, undefined, true);
+          await seeder.saveClientInformation(
+            { client_id: "connecta-client", redirect_uris: [REDIRECT], token_endpoint_auth_method: "none" },
+            { issuer: ISSUER },
+          );
+          await seeder.saveTokens(
+            { access_token: "access-old", token_type: "Bearer", refresh_token: "refresh-old" },
+            { issuer: ISSUER },
+          );
+        }
+        expect(await connector.status!(context)).toMatchObject({ state: "ok" });
+        const error = await connector.listTools(context).catch((error: unknown) => error);
+        expect(classifyCallError(error)).toMatchObject({ code, retryable: false });
+        const record = failureRecord({ connector: "svc" }, error);
+        expect(record).toMatchObject({ code, retryable: false, step: "tools/list",
+          origin: "https://downstream.example", httpStatus: 401, errorClass: "SdkHttpError" });
+        expect(error).not.toHaveProperty("data");
+        expect((error as Error).cause).toBeUndefined();
+        expect(await connector.status!(context)).toMatchObject({ state: "auth_required" });
+        if (oauth) {
+          const started = await connector.startAuth!(context, { force: false });
+          expect(started.state).toBe("auth_required");
+          expect(started.authorizationUrl).toBeUndefined();
+        }
+        const listed = await connector.listTools(context).catch((error: unknown) => error);
+        const called = await connector.callTool("read", {}, context).catch((error: unknown) => error);
+        expect(classifyCallError(listed)).toMatchObject({ code, retryable: false });
+        expect(classifyCallError(called)).toMatchObject({ code, retryable: false });
+        expect(pages).toBe(oauth ? 2 : 1);
+        expect(refreshes).toBe(oauth ? 1 : 0);
+        expect(calls).toBe(0);
+        expectWithheld(rendered(error), JSON.stringify(record), rendered(listed), rendered(called));
+      } finally {
+        await connector.closeScope!(context);
+      }
+    },
+  );
+
+  it.each((["legacy", "auto"] as const).flatMap(versionNegotiation =>
+    [false, true].map(oauth => ({ versionNegotiation, oauth }))))(
+    "INV-6: endpoint HTTP 401 attaches auth recovery after OAuth=$oauth under $versionNegotiation negotiation",
+    async ({ versionNegotiation, oauth }) => {
+      let calls = 0;
+      let refreshes = 0;
+      vi.stubGlobal("fetch", downstream({ live: true,
+        tools: [{ name: "read", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }],
+        toolCall: () => { calls++; return "401"; },
+        token: () => {
+          refreshes++;
+          return Response.json({ access_token: "access-new", token_type: "Bearer", refresh_token: "refresh-new" });
+        },
+      }));
+      const connector = remoteMcp("svc", { url: MCP_URL, versionNegotiation,
+        auth: oauth ? { type: "oauth" } : { type: "headers", headers: { authorization: "Bearer rejected-static" } },
+      });
+      const { logger, lines } = capturingLogger();
+      const registry = makeRegistry([connector], { logger });
+      const catalog = new CatalogService(registry, "https://connecta.test");
+      const context = registry.contextFor("svc", catalog.baseUrl, catalog.requestScope);
+      const call = vi.spyOn(connector, "callTool");
+      try {
+        if (oauth) {
+          const seeder = new KvOAuthProvider("svc", context.storage, REDIRECT, undefined, true);
+          await seeder.saveClientInformation(
+            { client_id: "connecta-client", redirect_uris: [REDIRECT], token_endpoint_auth_method: "none" },
+            { issuer: ISSUER },
+          );
+          await seeder.saveTokens(
+            { access_token: "access-old", token_type: "Bearer", refresh_token: "refresh-old" },
+            { issuer: ISSUER },
+          );
+        }
+        const outcome = await new InvocationService(registry, catalog).invoke("svc.read", {}, { source: "call_tool" });
+        const code = oauth ? "downstream_oauth_required" : "auth_required";
+        expect(outcome).toMatchObject({ ok: false, attempts: 1, error: {
+          code, retryable: false, recovery: oauth ? "oauth" : "unavailable",
+          nextAction: { tool: "authorize_connector", arguments: { connector: "svc" } },
+        } });
+        expect(call).toHaveBeenCalledTimes(1);
+        const error = await call.mock.results[0]!.value.catch((error: unknown) => error);
+        expect(classifyCallError(error)).toMatchObject({ code, retryable: false });
+        const record = failureRecord({ connector: "svc" }, error);
+        expect(record).toMatchObject({ code, retryable: false, step: "tools/call",
+          origin: "https://downstream.example", httpStatus: 401, errorClass: "SdkHttpError" });
+        expect(error).not.toHaveProperty("data");
+        expect((error as Error).cause).toBeUndefined();
+        expect(refreshes).toBe(oauth ? 1 : 0);
+        expect(calls).toBe(oauth ? 2 : 1);
+        // The post-refresh rejection is a verdict for this scope too. Reads
+        // and another call must not reuse the client or resend its credential.
+        const status = await connector.status!(context);
+        expect(status.state).toBe("auth_required");
+        const started = oauth ? await connector.startAuth!(context, { force: false }) : undefined;
+        if (oauth) {
+          expect(started).toMatchObject({ state: "auth_required" });
+          expect(started?.authorizationUrl).toBeUndefined();
+        }
+        const listed = await connector.listTools(context).catch((error: unknown) => error);
+        expect(classifyCallError(listed)).toMatchObject({ code, retryable: false });
+        const again = await connector.callTool("read", {}, context).catch((error: unknown) => error);
+        expect(classifyCallError(again)).toMatchObject({ code, retryable: false });
+        const followup = await new InvocationService(registry, catalog).invoke("svc.read", {}, { source: "call_tool" });
+        expect(followup).toMatchObject({ ok: false, error: {
+          code, retryable: false, recovery: oauth ? "oauth" : "unavailable",
+          nextAction: { tool: "authorize_connector", arguments: { connector: "svc" } },
+        } });
+        expect(refreshes).toBe(oauth ? 1 : 0);
+        expect(calls).toBe(oauth ? 2 : 1);
+        expectWithheld(JSON.stringify(status), safeJson(started), rendered(listed), rendered(again));
+        expectWithheld(rendered(error), JSON.stringify(record), JSON.stringify(outcome), ...lines);
+      } finally {
+        await connector.closeScope!(context);
+      }
+    },
+  );
+
+  it.each(["tools/list", "tools/call"] as const)("INV-6: an UnauthorizedError rethrow keeps its operator facts at %s", async step => {
+    vi.stubGlobal("fetch", downstream({ live: true }));
+    const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" }, versionNegotiation: "legacy" });
+    const context = scope();
+    try {
+      await connector.status!(context);
+      const original = new UnauthorizedError(`refused ${SECRET}`);
+      if (step === "tools/list") vi.spyOn(Client.prototype, "request").mockRejectedValueOnce(original);
+      else vi.spyOn(Client.prototype, "callTool").mockRejectedValueOnce(original);
+      const error = await (step === "tools/list"
+        ? connector.listTools(context) : connector.callTool("read", {}, context)).catch((error: unknown) => error);
+      expect(classifyCallError(error)).toMatchObject({ code: "downstream_oauth_required", retryable: false });
+      expect(failureRecord({ connector: "svc" }, error)).toMatchObject({
+        code: "downstream_oauth_required", step, origin: "https://downstream.example", errorClass: "UnauthorizedError",
+      });
+      expect((error as Error).cause).toBeUndefined();
+      expect(await connector.status!(context)).toMatchObject({ state: "auth_required" });
+      expect((await connector.startAuth!(context, { force: false })).state).toBe("auth_required");
+      expectWithheld(rendered(error), JSON.stringify(failureRecord({ connector: "svc" }, error)));
+    } finally {
+      await connector.closeScope!(context);
+    }
+  });
+
+  it.each(["legacy", "auto"] as const)("INV-7: a call preserves its plain cancellation reason by identity (%s)", async versionNegotiation => {
+    vi.stubGlobal("fetch", downstream({ live: true }));
+    const controller = new AbortController();
+    const context = { ...scope(), signal: controller.signal };
+    const connector = remoteMcp("svc", { url: MCP_URL, versionNegotiation });
+    const reason = new Error("caller left");
+    try {
+      await connector.status!(context);
+      vi.spyOn(Client.prototype, "callTool").mockImplementationOnce(async () => {
+        controller.abort(reason);
+        throw reason;
+      });
+      const error = await connector.callTool("read", {}, context).catch((error: unknown) => error);
+      expect(error).toBe(reason);
+    } finally {
+      await connector.closeScope!(context);
+    }
+  });
+
+  const hostile = "timeout temporarily rate limit 429 502 503 504 econnreset";
+  const names = [
+    { id: "svc", endpoint: MCP_URL, authorizationServer: ISSUER },
+    { id: "svc-timeout-503", endpoint: "https://timeout-503.example/mcp", authorizationServer: "https://temporarily-rate-limit.example" },
+  ];
+  const statuses = [400, 401, 403, 404, 408, 422, 429, 500, 502, 503, 504];
+
+  it.each(statuses.flatMap(status => names.flatMap(name => [false, true].map(malicious => ({ status, ...name, malicious }))))) (
+    "INV-6 INV-9: registration HTTP $status ignores prose=$malicious and name=$id",
+    async ({ status, id, endpoint, authorizationServer, malicious }) => {
+      vi.stubGlobal("fetch", downstream({ endpoint, authorizationServer,
+        register: () => Response.json({
+          // Even a registered transient OAuth code cannot override a registration status.
+          error: malicious ? "temporarily_unavailable" : "invalid_client_metadata",
+          error_description: malicious ? `${hostile} ${SECRET}` : "refused",
+        }, { status, headers: { "retry-after": "2" } }),
+      }));
+      const connector = remoteMcp(id, { url: endpoint, auth: { type: "oauth" }, versionNegotiation: "legacy" });
+      const context = scope();
+      try {
+        const error = await connector.callTool("write", {}, context).catch((error: unknown) => error);
+        expect(error).toBeInstanceOf(ConnectorCallError);
+        expect(classifyCallError(error)).toMatchObject({
+          retryable: [429, 502, 503, 504].includes(status), retryAfterMs: 2000,
+        });
+        expect(classifyCallError(error).code).not.toBe("timeout");
+        expect(failureRecord({ connector: id }, error)).toMatchObject({
+          httpStatus: status, step: "OAuth client registration", origin: authorizationServer,
+          oauthError: malicious ? "temporarily_unavailable" : "invalid_client_metadata",
+        });
+        expect(error).not.toHaveProperty("data");
+        expect((error as Error).cause).toBeUndefined();
+        expectWithheld(rendered(error));
+      } finally {
+        await connector.closeScope!(context);
+      }
+    },
+  );
+
+  it.each([500, 503, 504].flatMap(status => names.flatMap(name => [false, true].map(malicious => ({ status, ...name, malicious }))))) (
+    "INV-6: discovery HTTP $status ignores prose=$malicious and name=$id",
+    async ({ status, id, endpoint, authorizationServer, malicious }) => {
+      const base = downstream({ endpoint, authorizationServer });
+      vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
+        if (new URL(input).origin === authorizationServer) {
+          return new Response(malicious ? `${hostile} ${SECRET}` : "refused", { status });
+        }
+        return base(input, init);
+      });
+      const connector = remoteMcp(id, { url: endpoint, auth: { type: "oauth" }, versionNegotiation: "legacy" });
+      const context = scope();
+      try {
+        const error = await connector.listTools(context).catch((error: unknown) => error);
+        expect(error).toBeInstanceOf(ConnectorCallError);
+        expect(classifyCallError(error)).toMatchObject({ code: status === 429 ? "rate_limited" : "connector_call_failed",
+          retryable: [429, 502, 503, 504].includes(status) });
+        expect(failureRecord({ connector: id }, error)).toMatchObject({
+          httpStatus: status, step: "OAuth discovery", origin: authorizationServer,
+        });
+        expectWithheld(rendered(error));
+      } finally {
+        await connector.closeScope!(context);
+      }
+    },
+  );
+
+  it.each((["legacy", "auto"] as const).flatMap(versionNegotiation => [
+    { versionNegotiation, oauthCode: "invalid_grant", code: "downstream_oauth_required", retryable: false },
+    { versionNegotiation, oauthCode: "temporarily_unavailable", code: "unavailable", retryable: true },
+  ] as const))(
+    "INV-6: callback token HTTP 400 honors $oauthCode under $versionNegotiation negotiation",
+    async ({ versionNegotiation, oauthCode, code, retryable }) => {
+      let exchanges = 0;
+      const base = downstream({ token: () => Response.json({
+        error: oauthCode, error_description: `${hostile} ${SECRET}`,
+        error_uri: `https://evil.example/${SECRET}`, data: { payload: SECRET },
+      }, { status: 400 }) });
+      vi.stubGlobal("fetch", (input: string | URL, init?: RequestInit) => {
+        if (new URL(input).href === `${ISSUER}/token`) {
+          exchanges++;
+          const body = new URLSearchParams(String(init?.body));
+          expect(body.get("grant_type")).toBe("authorization_code");
+          expect(body.get("code")).toBe(`callback-${SECRET}`);
+        }
+        return base(input, init);
+      });
+      const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" }, versionNegotiation });
+      const { logger, lines } = capturingLogger();
+      const startedContext = scope(logger);
+      const callbackContext = { ...startedContext, requestScope: {} };
+      try {
+        const started = await connector.startAuth!(startedContext);
+        expect(started.state).toBe("auth_required");
+        const state = new URL(started.authorizationUrl!).searchParams.get("state")!;
+        expect(await connector.verifyState!(state, callbackContext)).toBe(true);
+        const params = new URLSearchParams({ code: `callback-${SECRET}`, state });
+        const error = await connector.finishAuth!(`callback-${SECRET}`, callbackContext, params)
+          .catch((error: unknown) => error);
+        expect(error).toBeInstanceOf(ConnectorCallError);
+        expect(classifyCallError(error)).toMatchObject({ code, retryable,
+          message: `OAuth failed with error ${oauthCode}.` });
+        expect(error).not.toHaveProperty("data");
+        expect(error).not.toHaveProperty("errorUri");
+        expect((error as Error).cause).toBeUndefined();
+        const record = failureRecord({ connector: "svc" }, error);
+        expect(record).toEqual({ connector: "svc", code, retryable, errorClass: "OAuthError",
+          step: "OAuth token request", origin: ISSUER, httpStatus: 400 });
+        expectWithheld(rendered(error), JSON.stringify(classifyCallError(error)), JSON.stringify(record), ...lines);
+        expect(JSON.stringify(record)).not.toContain(hostile);
+        expect(exchanges).toBeGreaterThan(0);
+      } finally {
+        await connector.closeScope!(startedContext);
+        await connector.closeScope!(callbackContext);
+      }
+    },
+  );
+
+  it.each([
+    [new SdkError(SdkErrorCode.RequestTimeout, "plain failure", { secret: SECRET }), "timeout", true],
+    [new SdkError(SdkErrorCode.InvalidResult, hostile, { secret: SECRET }), "connector_call_failed", false],
+    [new OAuthError("temporarily_unavailable", `plain ${SECRET}`, `https://evil.example/${SECRET}`), "unavailable", true],
+    [new OAuthError("too_many_requests", "plain"), "rate_limited", true],
+    [new OAuthError("invalid_grant", hostile), "downstream_oauth_required", false],
+    [new OAuthError("insufficient_scope", hostile), "provider_permission_denied", false],
+    [new OAuthError("timeout-503", hostile), "connector_call_failed", false],
+    [new ProtocolError(-32602, `Tool read has an invalid outputSchema: ${SECRET}`, { secret: SECRET }), "invalid_args", false],
+    [new ProtocolError(-32603, hostile, { secret: SECRET }), "connector_call_failed", false],
+  ] as const)("INV-6: SDK error %s uses facts and drops payload", async (original, code, retryable) => {
+    vi.stubGlobal("fetch", downstream({ live: true }));
+    const connector = remoteMcp("svc-timeout-503", { url: MCP_URL, versionNegotiation: "legacy" });
+    const context = scope();
+    try {
+      await connector.status!(context);
+      vi.spyOn(Client.prototype, "callTool").mockRejectedValueOnce(original);
+      const error = await connector.callTool("read", {}, context).catch((error: unknown) => error);
+      expect(error).toBeInstanceOf(ConnectorCallError);
+      expect(classifyCallError(error)).toMatchObject({ code, retryable });
+      expect(error).not.toHaveProperty("data");
+      expect(error).not.toHaveProperty("errorUri");
+      expect((error as Error).cause).toBeUndefined();
+      expectWithheld(rendered(error));
+    } finally {
+      await connector.closeScope!(context);
+    }
+  });
+
+  it.each([-32602, -32603])("INV-6 INV-9: wire ProtocolError %i keeps allowed text without data or replay", async code => {
+    let dispatches = 0;
+    vi.stubGlobal("fetch", downstream({ live: true, toolCall: (_n, id) => {
+      dispatches++;
+      return Response.json({ jsonrpc: "2.0", id, error: { code, message: hostile, data: { request: SECRET, payload: [SECRET] } } });
+    } }));
+    const connector = remoteMcp("svc-timeout-503", { url: MCP_URL, versionNegotiation: "legacy" });
+    const context = scope();
+    try {
+      const error = await connector.callTool("write", {}, context).catch((error: unknown) => error);
+      expect(classifyCallError(error)).toMatchObject({
+        code: code === -32602 ? "invalid_args" : "connector_call_failed", message: expect.stringContaining(hostile), retryable: false,
+      });
+      expect(error).not.toHaveProperty("data");
+      expect((error as Error).cause).toBeUndefined();
+      expectWithheld(rendered(error));
+      expect(dispatches).toBe(1);
+    } finally {
+      await connector.closeScope!(context);
+    }
+  });
+
+  it.each(["legacy", "auto"] as const)("INV-6 INV-9: insufficient_scope dispatches once and never begins OAuth (%s)", async versionNegotiation => {
+    let dispatches = 0;
+    let oauthRequests = 0;
+    const base = downstream({ live: true, toolCall: () => { dispatches++; return "403"; } });
+    vi.stubGlobal("fetch", (input: string | URL, init?: RequestInit) => {
+      if (new URL(input).href !== MCP_URL) oauthRequests++;
+      return base(input, init);
+    });
+    const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" }, versionNegotiation });
+    const context = scope();
+    try {
+      const error = await connector.callTool("write", {}, context).catch((error: unknown) => error);
+      expect(classifyCallError(error)).toMatchObject({ code: "provider_permission_denied", retryable: false });
+      expect((error as Error).message).not.toMatch(/authorize_connector|retry authorization/);
+      expect(dispatches).toBe(1);
+      expect(oauthRequests).toBe(0);
+      expect(await context.storage.get("oauth:pending")).toBeNull();
+    } finally {
+      await connector.closeScope!(context);
+    }
+  });
+});
+
+
+describe("ProtocolError payloads at every SDK exit", () => {
+  it.each([false, true])("INV-6: startAuth strips a payload-bearing abort, wrapped=%s", async wrapped => {
+    const sdkError = new ProtocolError(-32603, "caller left", { payload: SECRET });
+    const original = wrapped ? new Error("caller left", { cause: sdkError }) : sdkError;
+    const controller = new AbortController();
+    controller.abort(original);
+    const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" } });
+    const context = { ...scope(), signal: controller.signal };
+    try {
+      const error = await connector.startAuth!(context).catch((error: unknown) => error);
+      expect(error).not.toBe(original);
+      expect(error).toBeInstanceOf(ConnectorCallError);
+      expect(classifyCallError(error)).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(error).not.toHaveProperty("data");
+      expect((error as Error).cause).toBeUndefined();
+      expectWithheld(rendered(error), JSON.stringify(failureRecord({ connector: "svc" }, error)));
+    } finally {
+      await connector.closeScope!(context);
+    }
+  });
+
+  it.each(["initialize", "tools/list"] as const)("INV-6: removes allowed wire data at %s", async method => {
+    const base = downstream({ live: true });
+    vi.stubGlobal("fetch", (input: string | URL, init: RequestInit = {}) => {
+      const request = init.method === "POST" ? JSON.parse(String(init.body)) : undefined;
+      return request?.method === method
+        ? Response.json({ jsonrpc: "2.0", id: request.id, error: { code: -32603,
+          message: "timeout temporarily 503", data: { secret: SECRET } } })
+        : base(input, init);
+    });
+    const connector = remoteMcp("svc-503", { url: MCP_URL, versionNegotiation: "legacy" });
+    const context = scope();
+    try {
+      const error = await connector.listTools(context).catch((error: unknown) => error);
+      expect(error).toBeInstanceOf(ConnectorCallError);
+      expect(classifyCallError(error)).toMatchObject({ code: "connector_call_failed", retryable: false,
+        message: expect.stringContaining("timeout temporarily 503") });
+      expect(error).not.toHaveProperty("data");
+      expect((error as Error).cause).toBeUndefined();
+      expectWithheld(rendered(error));
+    } finally {
+      await connector.closeScope!(context);
+    }
+  });
+
+  it("INV-6: drops ProtocolError data from callback failures", async () => {
+    const original = new ProtocolError(-32603, `SDK check ${SECRET}`, { payload: SECRET });
+    const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" },
+      _transportFactory: () => ({ start: async () => {}, send: async () => {}, close: async () => {},
+        finishAuth: async () => { throw original; } }) as Transport,
+    });
+    const context = scope();
+    try {
+      const error = await connector.finishAuth!("code", context).catch((error: unknown) => error);
+      expect(error).toBeInstanceOf(ConnectorCallError);
+      expect(error).not.toHaveProperty("data");
+      expect((error as Error).cause).toBeUndefined();
+      expectWithheld(rendered(error));
+    } finally {
+      await connector.closeScope!(context);
+    }
+  });
+
+  it("INV-6: drops ProtocolError data even when it is the request's abort reason", async () => {
+    const original = new ProtocolError(-32603, "caller left", { payload: SECRET });
+    const controller = new AbortController();
+    const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" },
+      _transportFactory: () => ({ start: async () => { controller.abort(original); throw original; },
+        send: async () => {}, close: async () => {} }) as Transport,
+    });
+    const context = { ...scope(), signal: controller.signal };
+    try {
+      const error = await connector.listTools(context).catch((error: unknown) => error);
+      expect(error).not.toHaveProperty("data");
+      expect((error as Error).cause).toBeUndefined();
+      expectWithheld(rendered(error));
+    } finally {
+      await connector.closeScope!(context);
+    }
   });
 });

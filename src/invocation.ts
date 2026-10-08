@@ -133,7 +133,7 @@ function isCallerCancellation(
 
 /**
  * A downstream MCP tool answered with `isError`. Classified exactly as the
- * plain `Error` it used to be — same message, same heuristics — and marked so
+ * plain `Error`: untyped, non-retryable, and marked so
  * a write's outcome can tell "the service said no" from "nobody answered".
  */
 class DownstreamToolError extends Error {}
@@ -304,6 +304,7 @@ export class InvocationService {
   ): Effect.Effect<InvocationOutcome<T>> {
     return Effect.gen({ self: this }, function* () {
       const started = Date.now();
+      const argumentEcho = echoedCallArgs(args ?? {});
       let catalogMs = 0;
       let admissionMs = 0;
       let connectorMs = 0;
@@ -363,6 +364,31 @@ export class InvocationService {
         target: typeof activityTarget,
       ): CallErrorDetails => {
         if (!target) return error;
+        const transportCode = error.details?.code;
+        const timedOut = error.code === "timeout" || (error.code === "unavailable" &&
+          (transportCode === "timeout" || transportCode === "ETIMEDOUT" || transportCode?.endsWith("_TIMEOUT")));
+        if (timedOut && dispatchedToConnector &&
+          resolved?.definition.classification === "write") {
+          const echoed = argumentEcho;
+          return {
+            ...error,
+            code: "write_outcome_unknown",
+            message: `The write ${target.connector.id}.${target.toolName} timed out after dispatch. Its outcome is unknown. Check the target before repeating this call.`,
+            retryable: false,
+            connector: target.connector.id,
+            operation: `${target.connector.id}.${target.toolName}`,
+            uncertainCall: {
+              address: `${target.connector.id}.${target.toolName}`,
+              ...echoed,
+              ...("args" in echoed ? {} : { argsOmitted: true as const }),
+            },
+            retry: "Do not retry automatically. Check whether the write took effect first." +
+              ("args" in echoed ? "" : " The arguments exceed the echo budget; use the exact arguments you sent."),
+          };
+        }
+        if (error.code === "auth_required" && target.connector.startAuth) {
+          error = { ...error, code: "downstream_oauth_required" };
+        }
         switch (error.code) {
           case "destructive_tool_requires_approval": {
             const echoed = echoedCallArgs(args);
@@ -383,6 +409,7 @@ export class InvocationService {
             };
           }
           case "auth_required":
+          case "downstream_oauth_required":
             return {
               ...error,
               connector: target.connector.id,
@@ -401,6 +428,13 @@ export class InvocationService {
               retry:
                 `Retry ${target.connector.id}.${target.toolName} after ` +
                 "the operator completes recovery.",
+            };
+          case "provider_permission_denied":
+            return {
+              ...error,
+              connector: target.connector.id,
+              operation: `${target.connector.id}.${target.toolName}`,
+              retry: "Ask the provider's resource owner or administrator to grant the required permission or scope, then retry. Repeating the call or reconnecting alone will not grant access.",
             };
           case "invalid_args":
             if (!error.validation) return error;

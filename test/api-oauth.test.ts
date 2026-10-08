@@ -363,7 +363,7 @@ describe("api() oauth authorization start", () => {
     const connector = ccb();
     const registry = makeRegistry([connector]);
     const { classified } = await failure(connector.callTool("whoami", {}, registry.contextFor("ccb", BASE)));
-    expect(classified).toMatchObject({ code: "auth_required" });
+    expect(classified).toMatchObject({ code: "downstream_oauth_required" });
     expect(classified.message).toContain('authorize_connector({ connector: "ccb" })');
     expect(provider.apiAuthorizations).toEqual([]);
   });
@@ -378,7 +378,7 @@ describe("api() oauth agent recovery", () => {
     const failed = JSON.parse(
       (await mt.callTool({ address: "ccb.whoami" })).content[0]!.text,
     ) as { error: { code: string; recovery?: string } };
-    expect(failed.error).toMatchObject({ code: "auth_required", recovery: "oauth" });
+    expect(failed.error).toMatchObject({ code: "downstream_oauth_required", recovery: "oauth" });
 
     const recovery = JSON.parse(
       (await mt.authorizeConnector({ connector: "ccb" })).content[0]!.text,
@@ -632,7 +632,7 @@ describe("api() oauth refresh", () => {
     provider.control.refresh = "dead";
 
     const { classified } = await failure(connector.callTool("whoami", {}, ctx()));
-    expect(classified).toMatchObject({ code: "auth_required" });
+    expect(classified).toMatchObject({ code: "downstream_oauth_required" });
     const generation = await storage.get("conn:ccb:oauth:generation");
     expect(await storage.get(`conn:ccb:${oauthValueStorageKey("oauth:tokens", generation)}`)).toBeNull();
     expect((await connector.status!(ctx())).state).toBe("auth_required");
@@ -668,7 +668,7 @@ describe("api() oauth refresh", () => {
 
     const scope = registry.contextFor("ccb", BASE, {});
     const { classified } = await failure(connector.callTool("whoami", {}, scope));
-    expect(classified).toMatchObject({ code: "auth_required" });
+    expect(classified).toMatchObject({ code: "downstream_oauth_required" });
     expect(provider.apiAuthorizations).toHaveLength(2);
     expect(provider.tokenRequests.filter((r) => r.params.get("grant_type") === "refresh_token")).toHaveLength(1);
     expect((await connector.status!(scope)).state).toBe("auth_required");
@@ -723,7 +723,7 @@ describe("api() oauth refresh", () => {
     const after = ccb({ oauth: { ...OAUTH, tokenEndpoint: NEW_TOKEN } });
     const second = makeRegistry([after], { storage });
     const { classified } = await failure(after.callTool("whoami", {}, second.contextFor("ccb", BASE)));
-    expect(classified).toMatchObject({ code: "auth_required" });
+    expect(classified).toMatchObject({ code: "downstream_oauth_required" });
     expect(sentToNew).toEqual([]);
     expect(provider.apiAuthorizations).not.toContain("Bearer access-alice-2");
   });
@@ -845,7 +845,7 @@ describe("api() oauth reset and disconnect", () => {
     expect(status).toMatchObject({ state: "auth_required" });
     expect(status.message).toContain("disconnected by an operator");
     const { classified } = await failure(connector.callTool("whoami", {}, ctx()));
-    expect(classified).toMatchObject({ code: "auth_required" });
+    expect(classified).toMatchObject({ code: "downstream_oauth_required" });
     expect(classified.message).toContain("disconnected by an operator");
     expect(await storage.get("conn:ccb:oauth:generation")).toMatch(/^disconnected:/);
     expect(provider.apiAuthorizations).toEqual([]);
@@ -863,7 +863,7 @@ describe("api() oauth reset and disconnect", () => {
     expect(restarted.state).toBe("auth_required");
     expect(restarted.authorizationUrl).toBeDefined();
     const { classified } = await failure(connector.callTool("whoami", {}, ctx()));
-    expect(classified).toMatchObject({ code: "auth_required" });
+    expect(classified).toMatchObject({ code: "downstream_oauth_required" });
     expect(provider.apiAuthorizations).toEqual([]);
   });
 

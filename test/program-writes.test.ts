@@ -90,7 +90,7 @@ function world(options: WorldOptions = {}) {
     },
     async callTool(name, args) {
       count(`reader.${name}`, args);
-      if (options.read) return options.read(name, args as Record<string, unknown>);
+      if (options.read) return await options.read(name, args as Record<string, unknown>);
       return { id: (args as { id?: number }).id, title: "An issue" };
     },
   };
@@ -109,7 +109,7 @@ function world(options: WorldOptions = {}) {
     },
     async callTool(name, args) {
       count(`tracker.${name}`, args);
-      if (options.write) return options.write(name, args as Record<string, unknown>);
+      if (options.write) return await options.write(name, args as Record<string, unknown>);
       return { ok: true };
     },
   };
@@ -529,4 +529,19 @@ describe("classification and pool endpoints (#706)", () => {
       ] });
     } finally { await app.close(); }
   });
+});
+
+it("INV-6 INV-9: caught write timeouts retain uncertain arguments in host-owned write accounting", async () => {
+  const w = world({ trust: "trusted", write: async () => { throw new ConnectorCallError("timeout", "deadline"); } });
+  const result = await w.run(async (connecta) => {
+    try { await connecta.call!("tracker.close_issue", { id: 42, note: "argument-sentinel" }); }
+    catch { return "handled"; }
+    return "unreachable";
+  });
+  expect(value(result).error).toMatchObject({
+    code: "write_outcome_unknown", retryable: false,
+    uncertainCall: { address: "tracker.close_issue", args: { id: 42, note: "argument-sentinel" } },
+  });
+  expect(w.writes()).toHaveLength(1);
+  expect(JSON.stringify(w.events)).not.toContain("argument-sentinel");
 });

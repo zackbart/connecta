@@ -1582,7 +1582,7 @@ describe("remoteMcp() redirect policy", () => {
       connector.status!(ctx(storage)),
     ).resolves.toMatchObject({
       state: "error",
-      message: expect.stringContaining("MCP handshake with https://downstream.test failed (RemoteMcpRedirectError)"),
+      message: expect.stringContaining("MCP handshake with https://downstream.test failed (RemoteMcpRedirectError"),
     });
     expect(calls).toHaveLength(1);
     expect(required(calls[0]).get("authorization")).toBe("Bearer oauth-secret");
@@ -1642,7 +1642,7 @@ describe("remoteMcp() redirect policy", () => {
 
     await expect(connector.status!(ctx())).resolves.toMatchObject({
       state: "error",
-      message: expect.stringContaining("MCP handshake with https://downstream.test failed (RemoteMcpRedirectError)"),
+      message: expect.stringContaining("MCP handshake with https://downstream.test failed (RemoteMcpRedirectError"),
     });
     expect(calls).toHaveLength(1);
     expect(required(calls[0]).get("x-api-key")).toBe("static-secret");
@@ -1686,9 +1686,9 @@ describe("downstream tool error classification", () => {
     const context = ctx();
     const error = await connector.callTool("test", {}, context).catch(error => error);
     expect(classifyCallError(error)).toMatchObject({
-      code: status === 429 ? "rate_limited" : status === 408 ? "timeout" : "connector_call_failed",
+      code: status === 403 ? "provider_permission_denied" : status === 429 ? "rate_limited" : status === 408 ? "timeout" : "connector_call_failed",
       retryable: status === 429 || status === 408,
-      message: expect.stringContaining("timeout is not a valid parameter:"),
+      message: expect.stringContaining(status === 403 ? "Check the account's permissions" : "timeout is not a valid parameter:"),
     });
     expect(new TextEncoder().encode(classifyCallError(error).message).length).toBeLessThanOrEqual(515);
     await connector.closeScope!(context);
@@ -1914,7 +1914,7 @@ describe("OAuth callback transport ownership", () => {
       _transportFactory: () => transport,
     });
     await expect(connector.finishAuth!("code", context)).rejects.toThrow(
-      failure === "exchange" ? "exchange failed" : "pending cleanup failed",
+      "OAuth flow failed",
     );
     await connector.closeScope!(context);
     await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(1));
@@ -1930,7 +1930,7 @@ describe("OAuth callback transport ownership", () => {
         finishAuth: async () => { throw new Error("exchange failed"); },
       }),
     });
-    await expect(connector.finishAuth!("code", ctx())).rejects.toThrow("exchange failed");
+    await expect(connector.finishAuth!("code", ctx())).rejects.toThrow("OAuth flow failed");
     await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(1));
     closing.resolve();
   });

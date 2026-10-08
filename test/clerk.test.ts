@@ -576,7 +576,7 @@ describe("clerkAuth inbound auth", () => {
       expect(response.headers.get("WWW-Authenticate")).toBe(
         `Bearer error="invalid_token", resource_metadata="${BASE}/.well-known/oauth-protected-resource${metadataPath}"`,
       );
-      expect(await response.json()).toEqual({ error: "unauthorized" });
+      expect(await response.json()).toMatchObject({ error: { code: "host_auth_required", retryable: false } });
       const metadata = await c.fetch(new Request(`${BASE}/.well-known/oauth-protected-resource${metadataPath}`));
       expect(await metadata.json()).toMatchObject({ resource: `${BASE}${path}` });
     }

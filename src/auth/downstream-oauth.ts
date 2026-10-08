@@ -316,12 +316,16 @@ async function readRefreshResponse(response: Response): Promise<unknown> {
  * GitHub answers `bad_refresh_token`. Only consent repairs that, so the call is
  * `auth_required` and the refused token is never sent again.
  *
+ * `permission_denied`: HTTP 403. The grant is kept; consent cannot repair
+ * the provider's access policy, so both passive and explicit flows refuse it.
+ *
  * `transient`: the server could not answer now — 5xx, 408, 425, 429, a network
  * failure, or a 2xx that is not a token response. The grant is kept and the
  * call is a retryable outage; a passive call never turns it into consent.
  */
 type RefreshFailure =
   | { kind: "dead" }
+  | { kind: "permission_denied" }
   | {
       kind: "transient";
       /** Completes "the authorization server …" in the agent-facing message. */
@@ -481,6 +485,15 @@ async function refreshResponseOutcome(
       // Not JSON, or too large to be an OAuth error: the status decides.
     }
     const failure = new Error(`OAuth refresh failed with HTTP ${response.status}.`);
+    if (response.status === 403) {
+      return {
+        failure,
+        verdict: { kind: "permission_denied" },
+        // Keep the grant and prevent the SDK's credential-invalidation path.
+        // The provider hooks refuse consent with the typed permission verdict.
+        forSdk: sdkTokenFailure(response, "server_error"),
+      };
+    }
     if (
       response.status >= 400 &&
       response.status < 500 &&
@@ -1409,6 +1422,10 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
   private authorizationRefused(): Error {
     const failure = this.refreshFailure;
+    if (failure?.kind === "permission_denied") {
+      return new ConnectorCallError("provider_permission_denied",
+        "The provider denied the OAuth token request. Check the account's permissions and the grant's required access with the provider or an administrator.");
+    }
     return failure?.kind === "transient"
       ? this.refreshOutage(failure)
       : new UnauthorizedError(
@@ -2223,7 +2240,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * clearPending() once the flow completes.
    */
   async state(): Promise<string> {
-    if (!this.allowAuthorization) throw this.authorizationRefused();
+    if (!this.allowAuthorization || this.refreshFailure?.kind === "permission_denied") throw this.authorizationRefused();
     const value = randomState();
     await this.writeValue(OAUTH.state, value, (raw) => raw);
     return value;
@@ -2242,7 +2259,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   async saveCodeVerifier(verifier: string): Promise<void> {
-    if (!this.allowAuthorization) throw this.authorizationRefused();
+    if (!this.allowAuthorization || this.refreshFailure?.kind === "permission_denied") throw this.authorizationRefused();
     await this.writeValue(OAUTH.verifier, verifier, (raw) => raw);
   }
 
@@ -2256,7 +2273,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
     try {
-      if (!this.allowAuthorization) throw this.authorizationRefused();
+      if (!this.allowAuthorization || this.refreshFailure?.kind === "permission_denied") throw this.authorizationRefused();
       // Timestamped so a later start can tell a URL worth reissuing from a
       // stale one. A pre-envelope (legacy-generation) write keeps its raw
       // format for older readers and carries no time.

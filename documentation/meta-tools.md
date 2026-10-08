@@ -475,11 +475,24 @@ never configured gets neither it nor a count, since nothing was attempted.
 
 ## Authorization recovery
 
-Every typed `auth_required` call failure uses the same envelope:
+`downstream_oauth_required` means the connector needs an OAuth grant.
+`auth_required` means its operator-managed credentials or configuration need
+repair. Both carry the recovery envelope below. `provider_permission_denied`
+means the provider refused a permission or scope; ask its resource owner or
+administrator to grant access before retrying. It does not invite a reconnect.
+
+A host rejected before MCP dispatch gets HTTP 401 or 403 with
+`error.code: "host_auth_required"`, `recovery: "host_connection"`, and the auth
+adapter's original `WWW-Authenticate` challenge. Custom streaming or non-JSON
+responses keep their body and expose `Connecta-Error-Code` and
+`Connecta-Recovery` headers instead. Repair the host's connecta
+connection or endpoint grants. This cannot be fixed by `authorize_connector`.
+
+An OAuth call failure uses this envelope:
 
 ```json
 {
-  "code": "auth_required",
+  "code": "downstream_oauth_required",
   "message": "...",
   "retryable": false,
   "connector": "service",
@@ -596,3 +609,34 @@ the compact schema is needed, routed like any other miss: a program to
 the listed arguments and reissue the original operation. Which keyword a finding
 names, and what the local validator declines to evaluate, is
 [code mode](./code-mode.md#errors)'s `E8`.
+
+
+`repair` adds agent-only detail from that tool's published schema: accepted
+keys, received JSON types, enum values, numeric/length/item bounds, and known
+conditional requirements such as `dependentRequired` and `if`/`then`/`else`.
+Its `example` is synthesized without submitted values and checked against the
+same validator. Complex or unsatisfiable schemas get `exampleUnavailable`
+rather than an invalid example. Synthesis detects recursive references and
+shares a 128-node work budget. Alternative branches do not emit dependency
+advice unless the branch condition is known. Repair detail has a 4 KiB budget; oversized
+detail is withheld whole with `truncated: true`. Operator records still contain
+only checked failure facts, never findings or examples.
+
+Unknown-address errors list `configuredConnectors` from the current endpoint's
+scoped registry, including an empty list when none are accessible. They never
+list connectors from another pool or identity's grants.
+
+A write that times out after dispatch returns `write_outcome_unknown` with
+`retryable: false` and an agent-only `uncertainCall: { address, args }`. No write
+is automatically replayed. Arguments over the 512-byte echo budget are omitted
+whole with `argsOmitted: true`; use the exact arguments already sent when
+checking the target. A timeout before dispatch remains `timeout`. Trusted
+program write accounting keeps this detail even if the guest catches the
+failure or returns early. Multiple uncertain writes use `uncertainCalls`,
+bounded to ten calls with `uncertainCallsTruncated` when more exist.
+
+Retryability comes from typed errors, HTTP status, registered OAuth error codes,
+SDK timeout classes, and runtime network codes. Untyped prose is non-retryable:
+"timeout", "temporarily unavailable", "rate limit", or "503" in a body, tool
+name, or URL never changes the verdict. JSON-RPC `ProtocolError.data` is dropped
+at the downstream boundary, even when the agent may see the error's message.

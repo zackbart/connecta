@@ -12,6 +12,10 @@ export const DEFAULT_MAX_WRITES = CONFIG_DEFAULTS.execute.maxWrites;
 
 /** How a dispatched write ended, as far as anyone can know. */
 type WriteState = "ok" | "failed" | "unknown";
+type WriteCompletion = WriteState | {
+  state: "unknown";
+  uncertainCall: NonNullable<CallErrorDetails["uncertainCall"]>;
+};
 
 /**
  * Whether a write landed, as far as anyone can know.
@@ -21,9 +25,9 @@ type WriteState = "ok" | "failed" | "unknown";
  * not sending it could leave it undone. That is a dispatched call that timed
  * out, was cancelled, found the service unavailable, or failed any way that
  * is not a verdict. A refusal code (`REFUSALS`) or a downstream tool's own
- * `isError` is an answer, so it is `failed`, except that an `isError` whose text
- * classifies as a timeout is a gateway reporting that it gave up, and stays
- * unknown. A call that was never dispatched is `failed`: nothing was sent.
+ * `isError` is an answer, so it is `failed`. Response text does not decide
+ * whether an outcome is unknown. A call that was never dispatched is
+ * `failed`: nothing was sent.
  * `result_processing_failed` means the downstream call completed.
  */
 export function classifyWriteOutcome(outcome: {
@@ -54,6 +58,8 @@ export function classifyWriteOutcome(outcome: {
  */
 const REFUSALS = new Set([
   "auth_required",
+  "downstream_oauth_required",
+  "provider_permission_denied",
   "invalid_args",
   "not_found",
   "rate_limited",
@@ -62,8 +68,8 @@ const REFUSALS = new Set([
 ]);
 
 /** What a dispatched write's outcome says about whether it landed. */
-export function writeStateOf(outcome: InvocationOutcome<unknown>): WriteState {
-  return classifyWriteOutcome(
+export function writeStateOf(outcome: InvocationOutcome<unknown>): WriteCompletion {
+  const state = classifyWriteOutcome(
     outcome.ok
       ? { ok: true, dispatched: outcome.dispatched }
       : {
@@ -73,6 +79,8 @@ export function writeStateOf(outcome: InvocationOutcome<unknown>): WriteState {
           ...(outcome.answered !== undefined ? { answered: outcome.answered } : {}),
         },
   );
+  return state === "unknown" && !outcome.ok && outcome.error.uncertainCall
+    ? { state, uncertainCall: outcome.error.uncertainCall } : state;
 }
 
 type WriteCounts = { succeeded: number; failed: number; unknown: number };
@@ -89,6 +97,8 @@ export class ProgramWrites {
   private closed = false;
   private readonly inFlight = new Set<Promise<void>>();
   private readonly states: WriteState[] = [];
+  private readonly uncertainCalls: NonNullable<CallErrorDetails["uncertainCall"]>[] = [];
+  private uncertainCallsTruncated = false;
 
   /** Whether the program has settled: a write gated now is not sent. */
   get isClosed(): boolean {
@@ -100,16 +110,21 @@ export class ProgramWrites {
   }
 
   /** A write is being dispatched; the function returned records how it ended. */
-  begin(): (state: WriteState) => void {
+  begin(): (completion: WriteCompletion) => void {
     let done: () => void = () => {};
     const settled = new Promise<void>((resolve) => {
       done = resolve;
     });
     this.inFlight.add(settled);
     let recorded = false;
-    return (state) => {
+    return (completion) => {
       if (recorded) return;
       recorded = true;
+      const state = typeof completion === "string" ? completion : completion.state;
+      if (typeof completion !== "string") {
+        if (this.uncertainCalls.length < 10) this.uncertainCalls.push(completion.uncertainCall);
+        else this.uncertainCallsTruncated = true;
+      }
       this.states.push(state);
       this.inFlight.delete(settled);
       done();
@@ -131,10 +146,14 @@ export class ProgramWrites {
       unknown: this.states.filter((state) => state === "unknown").length,
     };
     if (writes.unknown > 0) {
+
       return errorEnvelope({
         code: "write_outcome_unknown",
         message: "A write this program sent has no known outcome, so that is the result rather than what the program returned. It will not be sent again. Check its target before doing anything that depends on it.",
         retryable: false,
+        ...(this.uncertainCalls.length === 1 ? { uncertainCall: this.uncertainCalls[0] }
+          : this.uncertainCalls.length > 1 ? { uncertainCalls: this.uncertainCalls } : {}),
+        ...(this.uncertainCallsTruncated ? { uncertainCallsTruncated: true } : {}),
         writes,
       });
     }

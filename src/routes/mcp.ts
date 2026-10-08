@@ -121,7 +121,7 @@ function withMcpCors(
   }
   headers.set(
     "Access-Control-Expose-Headers",
-    "WWW-Authenticate, Retry-After, mcp-session-id, mcp-protocol-version",
+    "WWW-Authenticate, Retry-After, mcp-session-id, mcp-protocol-version, Connecta-Error-Code, Connecta-Recovery",
   );
   return new Response(response.body, {
     status: response.status,
@@ -611,7 +611,31 @@ export function createMcpRoute(
         runtimeContext,
         opts.config.identity,
       ));
-      if (!authz.ok) return cors(authz.response);
+      if (!authz.ok) {
+        const response = authz.response;
+        // Preserve the auth adapter's challenge and status. The MCP host must
+        // repair its connection to connecta before any connector can be called.
+        if (response.status !== 401 && response.status !== 403) return cors(response);
+        const headers = new Headers(response.headers);
+        headers.set("Connecta-Error-Code", "host_auth_required");
+        headers.set("Connecta-Recovery", "host_connection");
+        // Custom adapters may own a streaming or non-JSON response. Preserve
+        // that body and its request lifetime, and carry recovery in headers.
+        if (!response.headers.get("Content-Type")?.includes("application/json")) {
+          return cors(new Response(response.body, { status: response.status, headers }));
+        }
+        headers.set("Content-Type", "application/json");
+        headers.delete("Content-Length");
+        void response.body?.cancel().catch(() => {});
+        return cors(new Response(JSON.stringify({
+          error: {
+            code: "host_auth_required",
+            message: "The host is not authorized to connect to this endpoint. Sign in or update the host's connecta access token and endpoint grants.",
+            retryable: false,
+            recovery: "host_connection",
+          },
+        }), { status: response.status, headers }));
+      }
       // A pool endpoint narrows the identity's own view and nothing else. An
       // undeclared name, a grant that refuses, and a grant that throws are
       // one identical 404 so a credential never enumerates the other pools;

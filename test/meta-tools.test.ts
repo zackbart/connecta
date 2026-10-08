@@ -1464,7 +1464,7 @@ describe("empty-query browse of an unconfigured connector", () => {
       connectorScope: "ghost",
       unknownConnector: true,
       guidance:
-        'Connector "ghost" is not configured in this deployment. Omit connector to search all configured tools.',
+        'Connector "ghost" is not configured in this deployment. Omit connector to search all configured tools. Configured connectors for this endpoint: calc.',
     });
     // Nothing failed, because nothing was attempted.
     expect(analysis.unavailableConnectorCount).toBeUndefined();
@@ -1495,14 +1495,14 @@ describe("empty-query browse of an unconfigured connector", () => {
     expect(required(browsed.queryAnalysis).unmatchedTerms).toEqual([]);
   });
 
-  it("does not name the connectors the caller did not ask about", async () => {
+  it("INV-4: names the configured connectors visible on this endpoint", async () => {
     const mt = createMetaTools(makeRegistry([calcConnector, barren]), BASE);
     const browsed = textOf(
       await mt.searchTools({ connector: "ghost", query: "" }),
     ) as SearchResult;
     const serialized = JSON.stringify(browsed);
-    expect(serialized).not.toContain("calc");
-    expect(serialized).not.toContain("barren");
+    expect(serialized).toContain("calc");
+    expect(serialized).toContain("barren");
   });
 
   it("distinguishes an unknown id from a configured connector with no tools", async () => {

@@ -1,3 +1,4 @@
+import { ConnectorCallError } from "../errors.js";
 import { Effect } from "effect";
 import { escapeHtml, renderPage } from "../branding.js";
 import { closeConnectorScope } from "../connector-scope.js";
@@ -82,7 +83,7 @@ async function connect(context: RouteContext): Promise<Response> {
   const registry = opts.registry.scoped({ connectorIds: [id], principalKey: authz.principalKey, ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}) });
   const scope = {};
   let ctx = registry.contextFor(id, baseUrl, scope);
-  const timeoutError = new Error("OAuth authorization start timed out");
+  const timeoutError = new ConnectorCallError("timeout", "OAuth authorization start timed out");
   try {
     if (!await consumeOAuthConnectLink(opts, handoff)) return refuse("Invalid or expired connection link. Request a new link from connecta.", 400);
     const status = await runEdge(withDeadlineEffect(signal => Effect.tryPromise({

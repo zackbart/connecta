@@ -1,6 +1,7 @@
 import { Validator } from "@cfworker/json-schema";
 import { boundedEchoText, ConnectorCallError } from "./errors.js";
 import type {
+  ArgumentRepairDetails,
   ArgumentValidationDetails,
   ArgumentValidationIssue,
 } from "./errors.js";
@@ -267,6 +268,221 @@ function validationDetails(
   };
 }
 
+function schemaObject(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : {};
+}
+
+function receivedType(value: unknown): string {
+  return value === undefined ? "missing" : value === null ? "null"
+    : Array.isArray(value) ? "array" : typeof value;
+}
+
+const BOUND_KEYWORDS = [
+  "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+  "minLength", "maxLength", "minItems", "maxItems", "minProperties", "maxProperties",
+] as const;
+
+/** No caller values are used to invent an example. A candidate must validate. */
+function exampleCandidate(
+  schema: unknown, root: JsonSchema, depth = 0,
+  budget = { remaining: 128, active: new Set<object>() },
+): unknown {
+  if (--budget.remaining < 0) throw new Error("Example synthesis budget exhausted");
+  if (depth > 12 || schema === false) return undefined;
+  const node = schemaObject(schema);
+  if (budget.active.has(node)) throw new Error("Recursive schema cannot produce a bounded example");
+  budget.active.add(node);
+  try {
+    if (typeof node.$ref === "string") {
+      return exampleCandidate(pointerValue(root, node.$ref), root, depth + 1, budget);
+    }
+    if (Object.hasOwn(node, "const")) return node.const;
+    if (Array.isArray(node.enum)) return node.enum[0];
+    const type = Array.isArray(node.type) ? node.type[0] : node.type;
+    const variants = Array.isArray(node.oneOf) ? node.oneOf : node.anyOf;
+    if (Array.isArray(variants) && variants.length) {
+      return mergeExample(exampleCandidate({ ...node, oneOf: undefined, anyOf: undefined }, root, depth + 1, budget),
+        exampleCandidate(variants[0], root, depth + 1, budget));
+    }
+    if (Array.isArray(node.examples) && node.examples.length) return node.examples[0];
+    if (Object.hasOwn(node, "default")) return node.default;
+    let candidate: unknown;
+    if (type === "object" || node.properties || node.required || node.allOf) {
+      const properties = schemaObject(node.properties);
+      const required = Array.isArray(node.required) ? node.required : [];
+      candidate = Object.fromEntries(required.filter((key): key is string => typeof key === "string")
+        .slice(0, 30).map((key) => [key, exampleCandidate(properties[key], root, depth + 1, budget)]));
+      if (Array.isArray(node.allOf)) {
+        for (const branch of node.allOf.slice(0, 20)) {
+          candidate = mergeExample(candidate, exampleCandidate(branch, root, depth + 1, budget));
+        }
+      }
+      const object = schemaObject(candidate);
+      const dependencies = schemaObject(node.dependentRequired ?? node.dependencies);
+      for (const [key, needs] of Object.entries(dependencies)) {
+        if (Object.hasOwn(object, key) && Array.isArray(needs)) {
+          for (const need of needs.slice(0, 30)) {
+            if (typeof need === "string" && !Object.hasOwn(object, need)) {
+              Object.defineProperty(object, need, { value: exampleCandidate(properties[need], root, depth + 1, budget), enumerable: true, configurable: true, writable: true });
+            }
+          }
+        }
+      }
+      if (node.if) {
+        try {
+          const matches = new Validator(node.if as never, "2020-12", false).validate(candidate).valid;
+          candidate = mergeExample(candidate, exampleCandidate(matches ? node.then : node.else, root, depth + 1, budget));
+        } catch {
+          // An unevaluable branch cannot establish a valid example.
+        }
+      }
+      // Branches may declare required keys while their types live on the parent.
+      for (const key of Object.keys(schemaObject(candidate))) {
+        if (schemaObject(candidate)[key] === undefined) {
+          schemaObject(candidate)[key] = exampleCandidate(properties[key], root, depth + 1, budget);
+        }
+      }
+    } else if (type === "array") {
+      const count = typeof node.minItems === "number" ? node.minItems : 0;
+      candidate = Array.from({ length: Math.min(count, 20) }, (_, index) =>
+        exampleCandidate(Array.isArray(node.prefixItems) ? node.prefixItems[index] : node.items, root, depth + 1, budget));
+    } else if (type === "number" || type === "integer") {
+      let number = typeof node.minimum === "number" ? node.minimum : 0;
+      if (typeof node.exclusiveMinimum === "number") number = node.exclusiveMinimum + (type === "integer" ? 1 : 0.5);
+      if (typeof node.maximum === "number") number = Math.min(number, node.maximum);
+      if (typeof node.exclusiveMaximum === "number") number = Math.min(number, node.exclusiveMaximum - 1);
+      if (typeof node.multipleOf === "number" && node.multipleOf > 0) number = Math.ceil(number / node.multipleOf) * node.multipleOf;
+      candidate = type === "integer" ? Math.ceil(number) : number;
+    } else if (type === "boolean") candidate = false;
+    else if (type === "null") candidate = null;
+    else if (type === "string") {
+      const formats: Record<string, string> = {
+        date: "2000-01-01", "date-time": "2000-01-01T00:00:00Z",
+        email: "a@example.com", uri: "https://example.com", uuid: "00000000-0000-4000-8000-000000000000",
+      };
+      candidate = typeof node.format === "string" && formats[node.format]
+        ? formats[node.format] : "x".repeat(Math.min(typeof node.minLength === "number" ? node.minLength : 0, 128));
+    }
+    return candidate;
+  } finally {
+    budget.active.delete(node);
+  }
+}
+
+function mergeExample(a: unknown, b: unknown): unknown {
+  if (a !== null && b !== null && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) {
+    return { ...a, ...b };
+  }
+  return b === undefined ? a : b;
+}
+
+/** Remove optional sample fields only when the complete example stays valid. */
+function minimizeExample(example: unknown, validator: Validator): void {
+  let attempts = 0;
+  const valid = () => {
+    try { return validator.validate(example).valid; }
+    catch { return false; }
+  };
+  const visit = (value: unknown, depth: number) => {
+    if (depth > 12 || value === null || typeof value !== "object" || attempts >= 60) return;
+    if (Array.isArray(value)) {
+      for (const item of value.slice(0, 20)) visit(item, depth + 1);
+      while (value.length > 0 && attempts++ < 60) {
+        const last = value.pop();
+        if (!valid()) { value.push(last); break; }
+      }
+      return;
+    }
+    const object = value as Record<string, unknown>;
+    for (const key of Object.keys(object)) {
+      if (attempts++ >= 60) break;
+      const original = object[key];
+      delete object[key];
+      if (!valid()) {
+        Object.defineProperty(object, key, { value: original, enumerable: true, configurable: true, writable: true });
+        visit(original, depth + 1);
+      }
+    }
+  };
+  visit(example, 0);
+}
+
+function repairDetails(schema: JsonSchema, args: unknown, units: ValidationUnit[], validator: Validator): ArgumentRepairDetails {
+  const root = schemaObject(schema);
+  const keys = (node: Record<string, unknown>) => Object.entries(schemaObject(node.properties))
+    .filter(([, value]) => value !== false).map(([key]) => key);
+  const issues = units.slice(0, MAX_ARGUMENT_VALIDATION_ISSUES).map((unit) => {
+    const missing = unit.keyword === "required" ? REQUIRED_PROPERTY_RE.exec(unit.error)?.[1] : undefined;
+    const location = missing === undefined ? unit.instanceLocation
+      : `${unit.instanceLocation}/${encodePointerPart(missing)}`;
+    const parentLocation = unit.keywordLocation.replace(/\/[^/]+$/, "");
+    const parent = schemaObject(pointerValue(schema, parentLocation));
+    const node = missing === undefined ? parent : schemaObject(schemaObject(parent.properties)[missing]);
+    const bounds = Object.fromEntries(BOUND_KEYWORDS.flatMap((key) =>
+      typeof node[key] === "number" ? [[key, node[key]]] : []));
+    // A false subschema under additionalProperties names its parent object's keys.
+    const closedParent = unit.keyword === "false" && unit.keywordLocation.endsWith("/additionalProperties")
+      ? schemaObject(pointerValue(schema, unit.keywordLocation.slice(0, -"/additionalProperties".length))) : node;
+    const acceptedKeys = keys(closedParent);
+    return {
+      path: argumentPath(location), receivedType: receivedType(pointerValue(args, location)),
+      ...(acceptedKeys.length ? { acceptedKeys } : {}),
+      ...(Array.isArray(node.enum) ? { enumValues: node.enum } : {}),
+      ...(Object.keys(bounds).length ? { bounds } : {}),
+    };
+  });
+  const conditionalRequirements: NonNullable<ArgumentRepairDetails["conditionalRequirements"]> = [];
+  const visit = (value: unknown, path: string, depth: number) => {
+    if (depth > 12 || conditionalRequirements.length >= 20) return;
+    const node = schemaObject(value);
+    for (const [key, required] of Object.entries(schemaObject(node.dependentRequired ?? node.dependencies))) {
+      if (Array.isArray(required) && required.every((key) => typeof key === "string")) {
+        conditionalRequirements.push({ path, condition: { required: [key] }, required });
+      }
+    }
+    for (const [key, branch] of Object.entries(schemaObject(node.dependentSchemas))) {
+      const required = schemaObject(branch).required;
+      if (Array.isArray(required) && required.every((key) => typeof key === "string")) {
+        conditionalRequirements.push({ path, condition: { required: [key] }, required });
+      }
+    }
+    for (const [branch, condition] of [[node.then, node.if], [node.else, node.if ? { not: node.if } : undefined]]) {
+      const required = schemaObject(branch).required;
+      if (condition && Array.isArray(required) && required.every((key) => typeof key === "string")) {
+        conditionalRequirements.push({ path, condition, required });
+      }
+    }
+    for (const [key, child] of Object.entries(schemaObject(node.properties))) visit(child, `${path === "/" ? "" : path}/${encodePointerPart(key)}`, depth + 1);
+    // Alternatives can make a dependency branch-specific. Do not state its
+    // requirements without proving the complete branch condition.
+    for (const key of ["allOf"]) {
+      if (Array.isArray(node[key])) for (const child of node[key]) visit(child, path, depth + 1);
+    }
+  };
+  visit(schema, "/", 0);
+  let example: unknown;
+  let valid = false;
+  try {
+    // Serialization makes the validation cover exactly what the agent receives.
+    example = JSON.parse(JSON.stringify(exampleCandidate(schema, schema)));
+    valid = validator.validate(example).valid;
+    if (valid) {
+      minimizeExample(example, validator);
+      valid = validator.validate(example).valid;
+    }
+  } catch {
+    valid = false;
+    // Unsatisfiable or complex schemas do not get a made-up valid example.
+  }
+  return {
+    ...(root.properties ? { acceptedKeys: keys(root) } : {}), issues,
+    ...(conditionalRequirements.length ? { conditionalRequirements } : {}),
+    ...(valid ? { example } : { exampleUnavailable: "No valid example could be synthesized. Inspect the published inputSchema." }),
+    ...(units.length > MAX_ARGUMENT_VALIDATION_ISSUES ? { truncated: true as const } : {}),
+  };
+}
+
 function unevaluableSchema(address: string): ConnectorCallError {
   return new ConnectorCallError(
     "invalid_args",
@@ -384,7 +600,7 @@ export function validateCatalogToolInput(
     return new ConnectorCallError(
       "invalid_args",
       `Invalid arguments for "${opts.address}": ${detail || "input does not match the tool's inputSchema"}`,
-      { validation },
+      { validation, repair: repairDetails(schema, args, units, validator) },
     );
   }
   return null;
