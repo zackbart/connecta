@@ -92,6 +92,7 @@ function deploy(setup: Setup = {}) {
       store,
       ...(setup.renderCheck ? { renderCheck: setup.renderCheck } : {}),
     }),
+    trust: "trusted",
     ...setup.config,
   });
   let counter = 0;
@@ -129,7 +130,7 @@ describe("the artifacts slot", () => {
   it("adds exactly the artifacts tools with read and write annotations", async () => {
     const { app } = deploy();
     const connector = required(app.registry.getConnector("artifacts"));
-    expect(connector.approval).toBe("never");
+    expect(connector).not.toHaveProperty("approval");
     expect(connector.kind).toBe("api");
     const tools = required(connector.staticTools);
     expect(tools.map((tool) => [tool.name, tool.annotations])).toEqual([
@@ -245,14 +246,14 @@ describe("writing through the connector", () => {
     }
   });
 
-  it("refuses writes in programs when the deployment asks for approval", async () => {
-    const { run, json } = deploy({ config: { execute: { approval: { artifacts: "ask" } } } });
+  it("INV-2: refuses artifact writes in a read-only pool", async () => {
+    const { run, json } = deploy({ config: { trust: "read-only" } });
     const refused = json(await run(async (connecta) => connecta.call("artifacts.create_artifact", CREATE)));
     expect(refused.error).toMatchObject({
       code: "destructive_tool_requires_approval",
       nextAction: { tool: "call_destructive_tool", arguments: { address: "artifacts.create_artifact" } },
     });
-    const perTool = deploy({ config: { execute: { approval: { "artifacts.create_artifact": "ask" } } } });
+    const perTool = deploy({ config: { trust: "read-only" } });
     const alsoRefused = perTool.json(
       await perTool.run(async (connecta) => connecta.call("artifacts.create_artifact", CREATE)),
     );

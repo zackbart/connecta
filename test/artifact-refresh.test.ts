@@ -5,7 +5,8 @@ import { ArtifactOperations } from "../src/artifacts/operations.js";
 import { ArtifactRefreshService } from "../src/artifacts/refresh.js";
 import type { ArtifactRenderCheck } from "../src/artifacts/connector.js";
 import { resolveAllowlist, resolveLimits } from "../src/artifacts/validate.js";
-import { customExecutor, createConnecta } from "../src/index.js";
+import { customExecutor, createConnecta, type ConnectaConfig } from "../src/index.js";
+import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Executor, ExecutorProvider } from "../src/types.js";
 
@@ -13,7 +14,7 @@ const actor = { kind: "test", id: "alice" };
 const owner = { identity: { actor, interactive: false } };
 const source = '<!doctype html><main id="artifact-root"><script>document.body.textContent=window.artifact.data.data.value</script></main>';
 
-function setup(execute: Executor["execute"], access?: () => readonly string[], renderCheck?: ArtifactRenderCheck) {
+function setup(execute: Executor["execute"], access?: () => readonly string[], renderCheck?: ArtifactRenderCheck, config: Pick<ConnectaConfig, "trust" | "admission" | "execute"> = {}) {
   let writeCalls = 0;
   let readCalls = 0;
   const store = kvArtifactStore(memoryStorage());
@@ -27,7 +28,7 @@ function setup(execute: Executor["execute"], access?: () => readonly string[], r
       { name: "write", description: "Write", annotations: { readOnlyHint: false },
         handler: async () => { writeCalls++; return { written: true }; } },
     ],
-  }), approval: "never" as const };
+  }) };
   const personal = { ...api("personal", {
     description: "Private test data",
     tools: [{ name: "read", description: "Read", annotations: { readOnlyHint: true },
@@ -35,6 +36,7 @@ function setup(execute: Executor["execute"], access?: () => readonly string[], r
   }), authScope: "personal" as const };
   const app = createConnecta({
     connectors: [shared, personal], executor: customExecutor({ execute }, { lifecycle: "self-managed" }), artifacts: module,
+    ...config,
     publicUrl: "https://connecta.test", storage: memoryStorage(), logger: "silent",
     ...(access ? { identity: { connectorAccess: access } } : {}),
   });
@@ -59,6 +61,99 @@ const hostCall = (providers: ExecutorProvider[], address: string) =>
 describe("artifact refresh", () => {
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("INV-7: nested refresh refuses an occupied executor slot without queuing or publishing later", async () => {
+    let children = 0;
+    const { app, module, operations, create, configure } = setup(async (code, providers) => {
+      if (code.includes("nested-parent")) return { result: await providers[0]!.fns.call!("artifacts.run_refresh", { id: "weekly" }) };
+      children++;
+      return { result: { value: 2 } };
+    }, undefined, undefined, { trust: "trusted", admission: { code: { concurrency: 1, queueTimeoutMs: 500 } }, execute: { hostCallTimeoutMs: 200 } });
+    try {
+      await create();
+      await configure("async () => ({ value: 2 })");
+      const reply = await readJsonRpc(await mcpRpc(app, "tools/call", { name: "execute_code", arguments: { code: "async () => 'nested-parent'" } }));
+      expect(JSON.stringify(reply)).toContain("executor_overloaded");
+      expect(children).toBe(0);
+      expect(await operations.getDocument("weekly", "data")).toMatchObject({ ok: true, value: { value: 1 } });
+      // Direct refresh has no parent permit and still succeeds with one slot.
+      expect(await module.refresh("weekly", actor)).toMatchObject({ status: "succeeded" });
+      expect(children).toBe(1);
+    } finally { await app.close(); }
+  });
+
+  it("INV-7: nested refresh cannot publish after the parent host-call deadline", async () => {
+    let finish!: () => void;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    let children = 0;
+    const { app, operations, create, configure } = setup(async (code, providers) => {
+      if (code.includes("nested-parent")) return { result: await providers[0]!.fns.call!("artifacts.run_refresh", { id: "weekly" }) };
+      children++;
+      await pending;
+      return { result: { value: 2 } };
+    }, undefined, undefined, { trust: "trusted", admission: { code: { concurrency: 2 } }, execute: { hostCallTimeoutMs: 100 } });
+    try {
+      await create();
+      await configure("async () => ({ value: 2 })");
+      const reply = await readJsonRpc(await mcpRpc(app, "tools/call", { name: "execute_code", arguments: { code: "async () => 'nested-parent'" } }));
+      expect(JSON.stringify(reply)).toContain("write_outcome_unknown");
+      expect(children).toBe(1);
+      finish();
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(await operations.getDocument("weekly", "data")).toMatchObject({ ok: true, value: { value: 1 } });
+    } finally { finish(); await app.close(); }
+  });
+
+  it("INV-7: refresh rechecks parent cancellation after storage yields and before publishing", async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    let stored!: () => void;
+    const finished = new Promise<void>(resolve => { stored = resolve; });
+    let bodies = 0;
+    const { app, operations, store, create, configure } = setup(async (code, providers) => {
+      if (code.includes("nested-parent")) return { result: await providers[0]!.fns.call!("artifacts.run_refresh", { id: "weekly" }) };
+      return { result: { value: 2 } };
+    }, undefined, undefined, { trust: "trusted", admission: { code: { concurrency: 2 } }, execute: { hostCallTimeoutMs: 100 } });
+    try {
+      await create();
+      await configure("async () => ({ value: 2 })");
+      const putBody = store.putBody.bind(store);
+      store.putBody = async (...args) => { bodies++; await blocked; return putBody(...args); };
+      const putRun = store.putRun.bind(store);
+      store.putRun = async (...args) => { await putRun(...args); if (args[1].finishedAt) stored(); };
+      const reply = await readJsonRpc(await mcpRpc(app, "tools/call", { name: "execute_code", arguments: { code: "async () => 'nested-parent'" } }));
+      expect(JSON.stringify(reply)).toContain("write_outcome_unknown");
+      expect(bodies).toBe(1);
+      release();
+      await finished;
+      expect(await operations.getDocument("weekly", "data")).toMatchObject({ ok: true, value: { value: 1 } });
+      expect((await store.runs("weekly", 1))[0]).toMatchObject({ status: "failed", errorCode: "unavailable" });
+    } finally { release(); await app.close(); }
+  });
+
+  it("INV-7: request-bound refresh joins child cancellation and preserves last-good data", async () => {
+    const { operations, create, configure } = setup(async () => ({ result: null }));
+    await create();
+    await configure("async () => ({ value: 2 })");
+    const refresh = new ArtifactRefreshService(operations);
+    let started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    let cleaned = false;
+    refresh.bind({ claimMs: 1_000, execute: async (_program, _owner, signal) => {
+      started();
+      await new Promise<void>(resolve => signal.addEventListener("abort", () => { resolve(); }, { once: true }));
+      await Promise.resolve();
+      cleaned = true;
+      return { content: [{ type: "text", text: JSON.stringify({ result: { value: 2 } }) }] };
+    } });
+    const controller = new AbortController();
+    const running = refresh.run("weekly", { manual: actor }, { signal: controller.signal });
+    await ready;
+    controller.abort();
+    expect(await running).toMatchObject({ status: "failed" });
+    expect(cleaned).toBe(true);
+    expect(await operations.getDocument("weekly", "data")).toMatchObject({ ok: true, value: { value: 1 } });
   });
 
   it("settles an unresponsive admission wait at claim expiry before another run starts", async () => {
@@ -127,7 +222,7 @@ describe("artifact refresh", () => {
     expect(await module.refresh("weekly", actor)).toMatchObject({ status: "failed" });
     expect((await store.head("weekly"))?.head.refresh?.last?.status).toBe("failed");
     expect((await store.head("weekly"))?.head.refresh?.claim).toBeUndefined();
-    expect((await store.runs("weekly", 2))[0]?.message).toContain("temporary body-store failure");
+    expect((await store.runs("weekly", 2)).find(run => run.status === "failed")?.message).toContain("temporary body-store failure");
     expect(await operations.getDocument("weekly", "data")).toMatchObject({ ok: true, value: { value: 2 } });
   });
   it("runs the configured render check before publishing refreshed data", async () => {

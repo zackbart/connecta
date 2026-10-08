@@ -4,6 +4,7 @@ import type { AuthenticatedIdentity } from "./types.js";
 
 /** A declared pool after construction-time validation. */
 export interface ResolvedPool {
+  trust: import("./tool-safety.js").PoolTrust;
   access: ConnectorAccess;
   grant(identity: Readonly<AuthenticatedIdentity>): boolean | Promise<boolean>;
 }

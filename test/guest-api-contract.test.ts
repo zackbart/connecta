@@ -231,7 +231,7 @@ describe.skipIf(!workerExecutor)(
       const writing = new Promise<void>((resolve) => { started = resolve; });
       let lateReads = 0;
       const registry = makeRegistry([{
-        id: "writer", kind: "api", approval: "never",
+        id: "writer", kind: "api",
         async listTools() { return [{ name: "write", annotations: { readOnlyHint: false } }]; },
         async callTool() {
           started();
@@ -249,6 +249,7 @@ describe.skipIf(!workerExecutor)(
       }]);
       const outcome = await createExecuteTool(registry, CONTRACT_BASE, required(workerExecutor), silentLogger, undefined, {
         maxHostCalls: 3,
+        trust: "trusted",
       })({ code: `async () => {
         void connecta.call("writer.write", {}).catch(() => {});
         await connecta.call("control.ready", {});

@@ -17,7 +17,6 @@ import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import type { ConnectaConfig, ResolvedConfig } from "./config.js";
 import { describedEndpoint, describedHref, describedOrigin, describedTools, describedUrl } from "./described.js";
 import { connectorGuideRequired, connectorGuideSummary } from "./skills.js";
-import type { ApprovalPolicy } from "./tool-safety.js";
 import type {
   Connector,
   ConnectorAuthDescription,
@@ -52,8 +51,6 @@ export interface DescribedConnector {
     description?: string;
     fields?: Array<{ name: string; label: string; description?: string }>;
   };
-  /** The connector's own default for program writes. */
-  approval?: "never";
   maxResultBytes: { value: number; source: "connector" | "deployment" };
   /** Call admission as numbers; a partition-key function is `partitioned: true`. */
   callAdmission?: {
@@ -96,15 +93,16 @@ export interface ConnectaConfigDescription {
     execute: Record<keyof typeof CONFIG_DEFAULTS.execute, DescribedLimit>;
     requests: Record<keyof typeof CONFIG_DEFAULTS.admission.requests, DescribedLimit>;
   };
-  /** Config-exempt program writes (`execute.approval`), resolved. */
-  approval: { connectors: Record<string, "never" | "ask">; tools: Record<string, "never" | "ask"> };
+  /** Trust and exact classification overrides from deployment code. */
+  trust: "trusted" | "read-only";
+  classification: Record<string, Record<string, "read" | "write">>;
   /** Inbound auth providers in the order they are tried. */
   auth: Array<{ kind: string; interactive: boolean; ui?: string }>;
   identity: Record<
     "connectorAccess" | "activityAccess" | "credentialAdministration" | "accessTokenManagement" | "personalConnection",
     "default" | "custom"
   >;
-  pools: Array<{ name: string; path: string; tools: string[]; hasGrant: boolean }>;
+  pools: Array<{ name: string; path: string; tools: string[]; hasGrant: boolean; trust: "trusted" | "read-only" }>;
   modules: {
     ui: { enabled: boolean };
     vault: { enabled: boolean; sealsOAuth?: boolean };
@@ -140,9 +138,9 @@ export interface ConnectaConfigDescription {
 }
 
 export interface DescribeConfigInput {
+  registry: import("./registry.js").Registry;
   raw: ConnectaConfig;
   config: ResolvedConfig;
-  approval: ApprovalPolicy;
   executorName: string | undefined;
   /** True when the executor owns admission, so `admission.code` is unused. */
   executorAdmits: boolean;
@@ -276,7 +274,7 @@ function ownDescription(connector: Connector): ConnectorDescription {
   };
 }
 
-function describeConnector(connector: Connector, deploymentCap: number): DescribedConnector {
+function describeConnector(connector: Connector, deploymentCap: number, registry: import("./registry.js").Registry): DescribedConnector {
   const own = ownDescription(connector);
   const credential = connector.credential;
   const admission = connector.callAdmission;
@@ -305,7 +303,6 @@ function describeConnector(connector: Connector, deploymentCap: number): Describ
           },
         }
       : {}),
-    ...(connector.approval === "never" ? { approval: "never" as const } : {}),
     maxResultBytes: num(connector.maxResultBytes) !== undefined
       ? { value: connector.maxResultBytes!, source: "connector" }
       : { value: deploymentCap, source: "deployment" },
@@ -331,7 +328,7 @@ function describeConnector(connector: Connector, deploymentCap: number): Describ
           },
         }
       : {}),
-    ...(connector.staticTools ? { tools: describedTools(connector.staticTools) } : {}),
+    ...(connector.staticTools ? { tools: describedTools(registry.describeStaticTools(connector.id) ?? []) } : {}),
   } as DescribedConnector;
 }
 
@@ -408,10 +405,8 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
         Object.keys(D.admission.requests) as Array<keyof typeof D.admission.requests>,
       ) as ConnectaConfigDescription["limits"]["requests"],
     },
-    approval: {
-      connectors: Object.fromEntries(input.approval.connectors),
-      tools: Object.fromEntries(input.approval.tools),
-    },
+    trust: config.trust,
+    classification: structuredClone(config.classification ?? {}),
     auth: config.auth.map((provider) => ({
       kind: String(provider.kind),
       interactive: provider.interactiveOperator === true,
@@ -421,6 +416,7 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
       IDENTITY_KEYS.map((key) => [key, typeof config.identity[key] === "function" ? "custom" : "default"]),
     ) as ConnectaConfigDescription["identity"],
     pools: Object.entries(config.pools ?? {}).map(([name, pool]) => ({
+      trust: pool.trust,
       name,
       path: `/mcp/${name}`,
       tools: pool.tools.map(String),
@@ -492,7 +488,7 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
     },
     deploymentInfo: Object.keys(config.deploymentInfo ?? {}),
     connectors: config.connectors.map((connector) =>
-      describeConnector(connector, config.calls.maxResultBytes)),
+      describeConnector(connector, config.calls.maxResultBytes, input.registry)),
   };
   return deepFreeze(description);
 }

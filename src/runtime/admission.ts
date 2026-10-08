@@ -18,6 +18,7 @@ import type {
 type AdmissionProgram = (
   controller: AdmissionController,
   signal: AbortSignal | undefined,
+  wait: boolean,
 ) => Effect.Effect<AdmissionLease, ExecutorAdmissionError>;
 
 let program: AdmissionProgram | undefined;
@@ -33,6 +34,8 @@ export function provideAdmissionProgram(admit: AdmissionProgram): void {
 }
 
 export interface AdmitOptions {
+  /** Refuse immediately when there is no free slot. Default true. */
+  wait?: boolean | undefined;
   /** Cancels a queued wait as `executor_cancelled`, as `acquire()` does. */
   signal?: AbortSignal | undefined;
 }
@@ -52,7 +55,7 @@ export function admit(
   if (!program) {
     throw new Error("AdmissionController's admission program was never installed.");
   }
-  return program(controller, options.signal);
+  return program(controller, options.signal, options.wait !== false);
 }
 
 /**

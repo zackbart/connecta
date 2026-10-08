@@ -149,7 +149,7 @@ describe("what a write's outcome can know", () => {
     new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
       "w.send",
       args,
-      { source: "call_destructive_tool", allowDestructive: true },
+      { source: "call_destructive_tool" },
     );
 
   it("reports whether the connector was actually called", async () => {
@@ -194,13 +194,13 @@ describe("what a write's outcome can know", () => {
       serverInfo: { name: "t", version: "0" },
       logger: silentLogger,
     });
-    const invalid = await service.invoke("w.send", {}, { source: "execute_code", writeGate: gate });
+    const invalid = await service.invoke("w.send", {}, { source: "execute_code", trust: "trusted", beforeWrite: gate });
     expect(invalid).toMatchObject({ ok: false, error: { code: "invalid_args" } });
     expect(gate).not.toHaveBeenCalled();
     const refusedCall = await service.invoke(
       "w.send",
       { to: "a" },
-      { source: "execute_code", writeGate: gate },
+      { source: "execute_code", trust: "trusted", beforeWrite: gate },
     );
     expect(refusedCall).toMatchObject({
       ok: false,

@@ -2,7 +2,7 @@ import { encryptedCredentialVault } from "../src/credentials.js";
 import { describe, expect, it } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { isExplicitlyReadOnly } from "../src/tool-safety.js";
+import { classifyTool } from "../src/tool-safety.js";
 import type { Connector, ToolDef } from "../src/types.js";
 import { createTestConnecta } from "./helpers.js";
 import {
@@ -11,6 +11,8 @@ import {
   mcpRpc,
   readJsonRpc,
 } from "./fixtures/http.js";
+
+const isRead = (tool: import("../src/types.js").ToolDef) => classifyTool(tool) === "read";
 
 /**
  * The operator boundary, enforced rather than asserted in prose (#338).
@@ -185,7 +187,7 @@ function describeTool(tool: ToolDef) {
     // The destructive boundary is derived from annotations, so it is a
     // declared structure too: a route that quietly promoted a tool to
     // read-only would widen the sandbox without touching the catalog.
-    readOnly: isExplicitlyReadOnly(tool),
+    readOnly: isRead(tool),
   };
 }
 

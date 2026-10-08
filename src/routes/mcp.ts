@@ -342,6 +342,7 @@ function serveMcp(
   canManageAuth: (connectorId: string) => boolean,
   principalKey: string | undefined,
   runtimeContext?: RuntimeExecutionContext,
+  trust: import("../tool-safety.js").PoolTrust = "read-only",
 ): Effect.Effect<Response, never, Scope.Scope> {
   // Every McpServer the request builds is fresh and closes with its scope.
   // The modern handler tears its own down after the exchange; the legacy
@@ -392,7 +393,6 @@ function serveMcp(
       ...(runtimeContext?.waitUntil
         ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
         : {}),
-      approval: opts.approval,
     });
     registerExecuteTool(server, registry, {
       baseUrl,
@@ -404,7 +404,7 @@ function serveMcp(
         ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
         : {}),
       ...executeLimits(opts.config),
-      approval: opts.approval,
+      trust,
     });
     servers.push(server);
     return server;
@@ -617,6 +617,7 @@ export function createMcpRoute(
       // one identical 404 so a credential never enumerates the other pools;
       // the operator log is where the reason lives.
       let access: ConnectorAccess = authz;
+      let trust = opts.config.trust;
       if (poolName !== undefined) {
         const pool = opts.pools?.get(poolName);
         const verdict = !pool ? "undeclared" : yield* Effect.promise(async () => {
@@ -637,6 +638,7 @@ export function createMcpRoute(
           return cors(notFoundResponse(request, opts.config));
         }
         access = intersectAccess(authz, pool.access);
+        trust = pool.trust;
       }
       let scopedRegistry: RegistryView;
       try {
@@ -676,6 +678,7 @@ export function createMcpRoute(
         id => { const connector = scopedRegistry.getConnector(id); return Boolean(connector && mayManageConnector(authz, connector)); },
         authz.principalKey,
         runtimeContext,
+        trust,
       ));
       });
       if (remainingMs === undefined) return yield* handled;

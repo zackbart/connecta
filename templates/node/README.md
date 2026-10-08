@@ -89,7 +89,8 @@ The template explicitly enables `ui: operatorUi()` from
 bearer to inspect Connections. Omit that option and import for an API-only
 server. OAuth callbacks remain in core even with no UI.
 
-The page labels whether each tool runs in programs or needs approval. For
+The page labels each tool as a read or write. Trusted programs may write;
+read-only pools use `call_destructive_tool`, with approval controlled by the host. For
 classified connection failures it offers a fixed repair prompt, and its
 endpoint section has client setup commands for `/mcp` and any pool available
 to the signed-in identity. Those commands contain no bearer token.

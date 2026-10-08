@@ -1863,8 +1863,8 @@ function usageGuide(purpose: string, instructions: string | undefined): string {
  *
  * The `drive` scope reaches everything the user can; the tool surface is what
  * keeps this connection from deleting a file permanently or transferring
- * ownership. Every write crosses the host's approval unless the deployment
- * exempts it in `execute.approval`.
+ * ownership. Every write crosses host approval through call_destructive_tool
+ * or a trusted program.
  */
 export const drive = asProviderFactory<DriveOptions>({
   name: "drive",

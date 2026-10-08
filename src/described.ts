@@ -3,7 +3,6 @@
 // nothing else, so a value that carries a secret — a URL's userinfo or query,
 // a header's value, a function's source — has no path into a description.
 
-import { isExplicitlyReadOnly } from "./tool-safety.js";
 import type {
   ConnectorToolDescription,
   DescribedEndpoint,
@@ -106,7 +105,7 @@ export function describedTools(tools: readonly ToolDef[]): ConnectorToolDescript
       ...(annotations ? { annotations } : {}),
       ...(inputSchema ? { inputSchema } : {}),
       ...(outputSchema ? { outputSchema } : {}),
-      classification: isExplicitlyReadOnly(tool) ? "read" : "write",
+      ...(tool.classification ? { classification: tool.classification } : {}),
     };
   });
 }

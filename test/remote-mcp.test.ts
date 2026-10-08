@@ -1114,7 +1114,7 @@ describe("the api() construction contract stops at hand-written tools", () => {
       const ordinary = await mt.callTool({ address, args: {} });
       expect(ordinary.isError).toBe(true);
       expect(required(ordinary.content[0]).text).toContain(
-        "not explicitly read-only",
+        "is a write",
       );
       const approved = await mt.callDestructiveTool({
         address,

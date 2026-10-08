@@ -145,7 +145,7 @@ describe("server /mcp end-to-end", () => {
       "Unknown-address read-only work starts with execute_code",
     );
     expect(body.result.instructions).toContain(
-      "Only readOnlyHint: true tools and config-exempt writes run there",
+      "Programs call reads in read-only pools and may also write in trusted pools",
     );
     expect(body.result.instructions).toContain("call_destructive_tool");
     expect(body.result.instructions).not.toContain("resume_execution");
@@ -570,7 +570,7 @@ describe("server /mcp end-to-end", () => {
     expect(skill).toContain("## Discover and select");
     expect(skill).toContain("## Errors and repair");
     expect(skill).toContain(
-      "Only explicitly `readOnlyHint: true` calls and writes the deployment's config exempts from approval run in a program",
+      "Programs may call tools classified as reads. Trusted pools also allow writes",
     );
     expect(skill).toContain("Dynamic Workers must use only `{ loader }`");
     expect(skill).toContain("node:fs/http/https are absent");
@@ -796,6 +796,7 @@ describe("server /mcp end-to-end", () => {
             {
               name: "add",
               address: "calc.add",
+              classification: "read",
               description: "Add two numbers",
               annotations: { readOnlyHint: true },
             },
@@ -1843,7 +1844,7 @@ describe("execute_code registration (code mode)", () => {
       ).description as string;
     }
     expect(await executeDescription()).toContain(
-      "Limits: 20 host calls, 10 exempt writes, 15s/host call.",
+      "Limits: 20 host calls, 10 writes, 15s/host call.",
     );
     expect(
       await executeDescription({
@@ -1851,7 +1852,7 @@ describe("execute_code registration (code mode)", () => {
         hostCallTimeoutMs: 45_000,
         maxWrites: 3,
       }),
-    ).toContain("Limits: 7 host calls, 3 exempt writes, 45s/host call.");
+    ).toContain("Limits: 7 host calls, 3 writes, 45s/host call.");
     // Unusable values refuse to construct rather than advertise a limit
     // nobody chose (INV-11).
     for (const execute of [{ maxHostCalls: 0 }, { hostCallTimeoutMs: Number.NaN }, { maxWrites: -1 }]) {
@@ -1861,7 +1862,7 @@ describe("execute_code registration (code mode)", () => {
     }
     const description = await executeDescription();
     expect(description).toContain(
-      "Only readOnlyHint: true tools and config-exempt writes are available; any other write goes through call_destructive_tool.",
+      "This pool is read-only: programs may call reads; writes use call_destructive_tool.",
     );
     expect(description).not.toContain("resume_execution");
   });

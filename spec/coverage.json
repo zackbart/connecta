@@ -238,7 +238,7 @@
         },
         {
           "file": "test/program-writes.test.ts",
-          "title": "INV-2: runs an exempt write, recorded as an ordinary call"
+          "title": "INV-2: runs a write in a trusted pool, recorded as an ordinary call"
         }
       ]
     },

@@ -89,7 +89,7 @@ describe("catalog probe deadlines", () => {
     expect(page.queryAnalysis?.catalogError?.code).toBe("timeout");
 
     required(release)([READ]);
-    await expect(joined).resolves.toEqual([READ]);
+    await expect(joined).resolves.toEqual([{ ...READ, classification: "read" }]);
     // The read the probe started now serves the rest of the request.
     const again = await service.search({ connector: "slow" });
     expect(again.entries.map((entry) => entry.tool.address)).toEqual([
@@ -103,6 +103,7 @@ describe("request-scoped catalog cache", () => {
   it("INV-1 INV-3: owns its snapshot and never shares definitions with discovery or invocation consumers", async () => {
     const original: ToolDef = {
       name: "read",
+      classification: "read",
       annotations: { readOnlyHint: true },
       inputSchema: { type: "object", properties: { id: { type: "string" } } },
     };
@@ -184,7 +185,7 @@ describe("request-scoped catalog cache", () => {
     ]);
     expect(described[0]?.name).toBe("read");
     expect(resolved.ok).toBe(true);
-    expect(loaded).toEqual([READ]);
+    expect(loaded).toEqual([{ ...READ, classification: "read" }]);
     expect(reads).toBe(1);
   });
 
@@ -206,6 +207,6 @@ describe("request-scoped catalog cache", () => {
       "synchronous failure",
     );
     throws = false;
-    await expect(service.loadConnector("sync")).resolves.toEqual([READ]);
+    await expect(service.loadConnector("sync")).resolves.toEqual([{ ...READ, classification: "read" }]);
   });
 });

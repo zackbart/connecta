@@ -62,7 +62,7 @@ export async function checkQueuedWriteAtExhaustion(executor: Executor): Promise<
   try {
     const outcome = await createExecuteTool(registry, CONTRACT_BASE, executor, silentLogger, undefined, {
       maxHostCalls: 3,
-      approval: { connectors: new Map(), tools: new Map([["limited.write", "never"]]) },
+      trust: "trusted",
     })({ code: `async () => {
       void connecta.call("limited.read", {}).catch(() => {});
       void connecta.call("limited.write", {}).catch(() => {});
@@ -729,7 +729,7 @@ export const CONTRACT_CASES: ContractCase[] = [
     check(outcome, state) {
       const result = record(outcome);
       for (const message of [result.shortcut, result.canonical]) {
-        expect(String(message)).toContain("not explicitly read-only");
+        expect(String(message)).toContain("is a write");
         expect(String(message)).toContain("call_destructive_tool");
       }
       expect(state.calls["reader.wipe"]).toBeUndefined();

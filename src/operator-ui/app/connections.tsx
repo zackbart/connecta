@@ -421,10 +421,9 @@ function ConnectorRow({
             <div class="tool-list">
               {tools.some((tool) => tool.safety) ? (
                 <p class="meta tool-legend">
-                  Read-only tools run inside execute_code programs. Everything
-                  else goes through call_destructive_tool, where the host asks
-                  first — unless this deployment's config exempts the tool, in
-                  which case programs call it unasked.
+                  Reads run inside execute_code programs. Writes run in trusted
+                  pools, or through call_destructive_tool in read-only pools.
+                  Approval belongs to the host.
                 </p>
               ) : null}
               {tools.map((tool) => (

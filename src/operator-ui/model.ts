@@ -3,23 +3,8 @@ import type {
   CatalogDriftReport,
 } from "../types.js";
 
-/**
- * Which call path a tool takes, decided on the server by the same
- * `isExplicitlyReadOnly` predicate discovery and invocation use
- * (`src/tool-safety.ts`) and never re-derived in the browser: a second copy of
- * the rule is a second place for it to be wrong.
- *
- * - `runs_in_programs` — explicitly read-only, so `execute_code` may call it.
- * - `exempt` — not read-only, but the deployment's `execute.approval` lets a
- *   program call it without asking (#566). Still approval-required
- *   everywhere else.
- * - `needs_approval` — everything else: a program refuses it, and it crosses
- *   `call_destructive_tool`, where the host asks.
- *
- * The badge renders from a table keyed by this union, so each value is one
- * entry, not a branch.
- */
-export type UiToolSafety = "runs_in_programs" | "exempt" | "needs_approval";
+/** Tool verdicts, independent of the selected pool's trust. */
+export type UiToolSafety = "runs_in_programs" | "needs_approval";
 
 export interface UiTool {
   name: string;

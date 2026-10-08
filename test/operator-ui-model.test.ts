@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { bearerToken } from "../src/auth/bearer.js";
 import { api } from "../src/connectors/api.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { isExplicitlyReadOnly } from "../src/tool-safety.js";
+import { classifyTool } from "../src/tool-safety.js";
 import type { Connector, ConnectorStatus, ToolDef } from "../src/types.js";
 import { uiProblemFor, uiToolSafety } from "../src/ui.js";
 import type { UiConnector, UiData, UiProblem } from "../src/operator-ui/model.js";
@@ -25,6 +25,8 @@ import { CredentialVault, encryptedCredentialVault } from "../src/credentials.js
 import { createTestConnecta, fetchTestUiDetails, silentLogger } from "./helpers.js";
 import { fakeClerkAuth } from "./fixtures/http.js";
 import { CLERK_OPTIONS, CREDENTIAL_KEY, credentialRequest } from "./fixtures/ui.js";
+
+const isRead = (tool: import("../src/types.js").ToolDef) => classifyTool(tool) === "read";
 
 const BASE = "https://connecta.test";
 const TOKEN = "model-token";
@@ -85,47 +87,23 @@ describe("tool safety classification", () => {
 
   it.each(cases)("agrees with the core predicate: %s", (_, annotations) => {
     const tool: ToolDef = { name: "t", ...(annotations ? { annotations } : {}) };
+    tool.classification = classifyTool(tool);
     expect(uiToolSafety(tool)).toBe(
-      isExplicitlyReadOnly(tool) ? "runs_in_programs" : "needs_approval",
+      isRead(tool) ? "runs_in_programs" : "needs_approval",
     );
   });
 
   it("fails closed on anything short of an explicit, uncontradicted read-only hint", () => {
-    expect(uiToolSafety({ name: "t", annotations: { readOnlyHint: true } })).toBe("runs_in_programs");
+    expect(uiToolSafety({ name: "t", classification: "read", annotations: { readOnlyHint: true } })).toBe("runs_in_programs");
     for (const [, annotations] of cases.slice(1)) {
       expect(uiToolSafety({ name: "t", ...(annotations ? { annotations } : {}) })).toBe("needs_approval");
     }
   });
 
   it("has a badge for every classification the server can send", () => {
-    for (const safety of ["runs_in_programs", "exempt", "needs_approval"] as const) {
+    for (const safety of ["runs_in_programs", "needs_approval"] as const) {
       expect(TOOL_SAFETY_BADGE[safety].label.length).toBeGreaterThan(0);
     }
-  });
-
-  it("shows a config exemption only on a tool that is not read-only", () => {
-    expect(uiToolSafety({ name: "t", annotations: { destructiveHint: true } }, true))
-      .toBe("exempt");
-    expect(uiToolSafety({ name: "t" }, true)).toBe("exempt");
-    // Read-only needs no exemption, and never reads as one.
-    expect(uiToolSafety({ name: "t", annotations: { readOnlyHint: true } }, true))
-      .toBe("runs_in_programs");
-  });
-
-  it("ships a config exemption in connector details", async () => {
-    const connecta = createTestConnecta({
-      connectors: [docsApi()],
-      auth: bearerToken(TOKEN),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      execute: { approval: { "docs.erase": "never" } },
-    });
-    const data = await uiData(connecta);
-    const docs = data.connectors.find((c) => c.id === "docs")!;
-    expect(docs.tools.map(({ address, safety }) => ({ address, safety }))).toEqual([
-      { address: "docs.read", safety: "runs_in_programs" },
-      { address: "docs.erase", safety: "exempt" },
-    ]);
   });
 
   it("ships the classification in connector details", async () => {

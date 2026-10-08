@@ -26,13 +26,15 @@ import {
   vercel,
 } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { isExplicitlyReadOnly } from "../../tool-safety.js";
+import { classifyTool } from "../../tool-safety.js";
 import { silentLogger } from "../../../test/helpers.js";
 import type {
   Connector,
   ConnectorContext,
   ConnectorUsageGuide,
 } from "../../types.js";
+
+const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
 
 interface StubResponse {
   status?: number;
@@ -146,12 +148,12 @@ describe("vercel() construction", () => {
       true,
     );
     expect(
-      isExplicitlyReadOnly(
+      isRead(
         tools.find((tool) => tool.name === "vercel_api_get")!,
       ),
     ).toBe(true);
     expect(
-      isExplicitlyReadOnly(
+      isRead(
         tools.find((tool) => tool.name === "vercel_api_mutate")!,
       ),
     ).toBe(false);

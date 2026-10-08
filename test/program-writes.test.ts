@@ -1,26 +1,14 @@
-// Writes inside execute_code (#566, #672): a program runs explicitly
-// read-only tools and the writes config exempts from approval, and refuses
-// every other write before it is sent. The host's prompt on
-// call_destructive_tool is the only approval there is.
-//
-// Programs here are JavaScript closures run by a scripted executor, not
-// source strings: workerd forbids eval, and this suite runs in both projects.
-// The guest-contract arms cover the real QuickJS and Dynamic Worker sandboxes.
-
+// Trust-tier program writes, with one attempt and bounded outcome accounting.
 import { describe, expect, it } from "vitest";
 import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
 import { recordToolActivity } from "../src/activity.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
-import { classifyWriteOutcome } from "../src/exempt-writes.js";
+import { classifyWriteOutcome } from "../src/program-writes.js";
 import { api } from "../src/connectors/api.js";
 import { customExecutor, createConnecta } from "../src/index.js";
 import { createMetaTools } from "../src/meta-tools.js";
-import {
-  isApprovalExempt,
-  NO_EXEMPTIONS,
-  type ApprovalPolicy,
-} from "../src/tool-safety.js";
+import { classifyTool, type PoolTrust } from "../src/tool-safety.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type {
   Connector,
@@ -81,10 +69,8 @@ function scriptedExecutor(programs: Map<string, Program>): Executor {
 }
 
 interface WorldOptions {
-  approval?: ApprovalPolicy;
+  trust?: PoolTrust;
   maxWrites?: number;
-  /** The tracker connector's own approval default. */
-  trackerApproval?: "never";
   write?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
   read?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
 }
@@ -112,7 +98,6 @@ function world(options: WorldOptions = {}) {
     id: "tracker",
     kind: "api",
     description: "Writes issues",
-    ...(options.trackerApproval ? { approval: options.trackerApproval } : {}),
     async listTools() {
       return [
         {
@@ -145,7 +130,7 @@ function world(options: WorldOptions = {}) {
     silentLogger,
     activity,
     {
-      approval: options.approval,
+      trust: options.trust,
       ...(options.maxWrites !== undefined ? { maxWrites: options.maxWrites } : {}),
     },
   );
@@ -166,14 +151,6 @@ function world(options: WorldOptions = {}) {
 function value(result: { structuredContent?: Record<string, unknown> }): Record<string, any> {
   return required(result.structuredContent, "structured result") as Record<string, any>;
 }
-
-const policy = (
-  tools: Record<string, "never" | "ask"> = {},
-  connectors: Record<string, "never" | "ask"> = {},
-): ApprovalPolicy => ({
-  tools: new Map(Object.entries(tools)),
-  connectors: new Map(Object.entries(connectors)),
-});
 
 const closeOne: Program = async (connecta) => {
   await connecta.call!("tracker.close_issue", { id: 1 });
@@ -220,17 +197,17 @@ describe("a program's write", () => {
   });
 });
 
-describe("config approval exemptions (#566)", () => {
-  it("INV-2: runs an exempt write, recorded as an ordinary call", async () => {
-    const w = world({ approval: policy({ "tracker.close_issue": "never" }) });
+describe("trusted-pool programs (#706)", () => {
+  it("INV-2: runs a write in a trusted pool, recorded as an ordinary call", async () => {
+    const w = world({ trust: "trusted" });
     expect(value(await w.run(closeOne)).result).toBe("closed");
     expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }]);
     expect(w.events.map((event) => [event.address, event.outcome, event.source]))
       .toEqual([["tracker.close_issue", "success", "execute_code"]]);
   });
 
-  it("covers only the exempt tool: every other write keeps E4", async () => {
-    const w = world({ approval: policy({ "tracker.close_issue": "never" }) });
+  it("INV-2: permits every write in a trusted pool", async () => {
+    const w = world({ trust: "trusted" });
     const done = await w.run(async (connecta) => {
       await connecta.call!("tracker.close_issue", { id: 1 });
       try {
@@ -240,12 +217,12 @@ describe("config approval exemptions (#566)", () => {
         return (error as { code: string }).code;
       }
     });
-    expect(value(done).result).toBe("destructive_tool_requires_approval");
-    expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }]);
+    expect(value(done).result).toBe("posted");
+    expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }, { address: "tracker.post", args: { text: "x" } }]);
   });
 
   it("spends the write budget", async () => {
-    const w = world({ maxWrites: 1, approval: policy({}, { tracker: "never" }) });
+    const w = world({ maxWrites: 1, trust: "trusted" });
     const done = await w.run(async (connecta) => {
       const outcomes = [];
       for (const id of [1, 2]) {
@@ -262,34 +239,11 @@ describe("config approval exemptions (#566)", () => {
     expect(w.writes()).toHaveLength(1);
   });
 
-  it("honors a connector's own default and lets config switch it off", async () => {
-    const byDefault = world({ trackerApproval: "never" });
-    expect(value(await byDefault.run(closeOne)).result).toBe("closed");
-
-    const refused = (result: { structuredContent?: Record<string, unknown> }) =>
-      value(result).error?.code;
-    const switchedOff = world({
-      trackerApproval: "never",
-      approval: policy({}, { tracker: "ask" }),
-    });
-    expect(refused(await switchedOff.run(closeOne))).toBe("destructive_tool_requires_approval");
-
-    // The address beats the connector entry, both ways.
-    const narrowed = world({
-      approval: policy({ "tracker.close_issue": "ask" }, { tracker: "never" }),
-    });
-    expect(refused(await narrowed.run(closeOne))).toBe("destructive_tool_requires_approval");
-    const widened = world({
-      approval: policy({ "tracker.close_issue": "never" }, { tracker: "ask" }),
-    });
-    expect(value(await widened.run(closeOne)).result).toBe("closed");
-  });
-
-  it("INV-9: lets an unawaited exempt write finish, and says how it went", async () => {
+  it("INV-9: lets an unawaited trusted-pool write finish, and says how it went", async () => {
     let writeStarted!: () => void;
     let dispatched = new Promise<void>((resolve) => { writeStarted = resolve; });
     const w = world({
-      approval: policy({ "tracker.close_issue": "never" }),
+      trust: "trusted",
       read: async () => {
         await dispatched;
         return { id: 9, title: "An issue" };
@@ -330,7 +284,7 @@ describe("config approval exemptions (#566)", () => {
     let writeStarted!: () => void;
     const dispatched = new Promise<void>((resolve) => { writeStarted = resolve; });
     const w = world({
-      approval: policy({ "tracker.close_issue": "never" }),
+      trust: "trusted",
       read: async () => { await dispatched; return { id: 9 }; },
       write: async () => {
         writeStarted();
@@ -363,7 +317,7 @@ describe("config approval exemptions (#566)", () => {
   });
 
   it("puts write counts on the error of a program that fails after writing", async () => {
-    const w = world({ approval: policy({ "tracker.close_issue": "never" }) });
+    const w = world({ trust: "trusted" });
     const failed = await w.run(async (connecta) => {
       await connecta.call!("tracker.close_issue", { id: 1 });
       throw new Error("the program gave up");
@@ -374,112 +328,34 @@ describe("config approval exemptions (#566)", () => {
     });
   });
 
-  it("never exempts a read-only tool or reads an annotation as an exemption", () => {
-    const every = policy({}, { reader: "never" });
-    const connector = { id: "reader" };
-    expect(isApprovalExempt(every, connector, "get", {
-      name: "get",
-      annotations: { readOnlyHint: true },
-    })).toBe(false);
-    // A downstream cannot annotate its way out of approval.
-    expect(isApprovalExempt(NO_EXEMPTIONS, connector, "wipe", {
-      name: "wipe",
-      annotations: { readOnlyHint: false, approval: "never" } as never,
-    })).toBe(false);
-    expect(isApprovalExempt(every, connector, "wipe", { name: "wipe" })).toBe(true);
-  });
-
-  it("keeps an exempt tool approval-required everywhere else", async () => {
-    const approval = policy({ "tracker.close_issue": "never" });
-    const w = world({ approval });
-    const tools = createMetaTools(w.registry, BASE, { approval });
-    const direct = await tools.callTool({
-      address: "tracker.close_issue",
-      args: { id: 1 },
-      resultMode: "value",
-    });
-    expect(direct.isError).toBe(true);
-    expect(JSON.stringify(direct.structuredContent)).toContain(
-      "destructive_tool_requires_approval",
-    );
+  it("INV-2: keeps writes out of call_tool even in trusted deployments", async () => {
+    const w = world({ trust: "trusted" });
+    const tools = createMetaTools(w.registry, BASE);
+    const refused = await tools.callTool({ address: "tracker.close_issue", args: { id: 1 } });
+    expect(refused.isError).toBe(true);
     expect(w.writes()).toEqual([]);
-
-    const search = async (safety: "readOnly" | "approvalRequired") =>
-      value(await tools.searchTools({ connector: "tracker", query: "", safety }));
-    const approvalRequired = (await search("approvalRequired")).connectors[0].tools as Array<{
-      address: string;
-      approval?: string;
-    }>;
-    expect(approvalRequired.find((tool) => tool.address === "tracker.close_issue")?.approval)
-      .toBe("exempt");
-    expect(approvalRequired.find((tool) => tool.address === "tracker.post")?.approval)
-      .toBeUndefined();
-    expect((await search("readOnly")).connectors).toEqual([]);
-
-    // A program sees the same marker.
-    const found = await w.run(async (connecta) => {
-      const page = await connecta.search!({ connector: "tracker", query: "close" });
-      const described = await connecta.describe!({ address: "tracker.close_issue" });
-      return {
-        searched: page.tools.find((tool: { address: string }) => tool.address === "tracker.close_issue")?.approval,
-        described: described.tools[0].approval,
-      };
-    });
-    expect(value(found).result).toEqual({ searched: "exempt", described: "exempt" });
+    const search = value(await tools.searchTools({ connector: "tracker", safety: "approvalRequired" }));
+    expect(search.connectors[0].tools.every((tool: ToolDef) => tool.classification === "write")).toBe(true);
+    expect(JSON.stringify(search)).not.toContain('"approval":"exempt"');
   });
 
-  it("validates exemptions at construction, like pools", () => {
-    const executor: Executor = { execute: async () => ({ result: null }) };
-    const notes = api("notes", {
-      tools: [
-        {
-          name: "add",
-          description: "Add a note",
-          annotations: { readOnlyHint: false },
-          handler: () => ({}),
-        },
-        {
-          name: "list",
-          description: "List notes",
-          annotations: { readOnlyHint: true },
-          handler: () => [],
-        },
-      ],
-    });
-    const remote: Connector = {
-      id: "remote",
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return {};
-      },
-    };
-    const construct = (approval: unknown, connectors: Connector[] = [notes, remote]) =>
-      createConnecta({
-        connectors,
-        executor: customExecutor(executor, { lifecycle: "self-managed" }),
-        logger: "silent",
-        execute: { approval: approval as Record<string, "never" | "ask"> },
-      });
-    expect(() => construct({ notes: "never", "notes.add": "ask", "remote.anything": "never" }))
-      .not.toThrow();
-    expect(() => construct({ nope: "never" })).toThrow(/unknown connector "nope"/);
-    expect(() => construct({ "nope.add": "never" })).toThrow(/unknown connector "nope"/);
-    expect(() => construct({ "notes.missing": "never" })).toThrow(
-      /connector "notes" has no tool "missing"/,
-    );
-    expect(() => construct({ notes: "always" })).toThrow(/must be "never" or "ask"/);
-    expect(() => construct({ "notes.": "never" })).toThrow(/connector ids or connector.tool addresses/);
-    expect(() => construct(["notes"])).toThrow(/must be an object/);
-    expect(() =>
-      construct(undefined, [{ ...remote, approval: "always" as never }]),
-    ).toThrow(/approval must be "never" or omitted/);
+  it("INV-11: rejects removed exemptions and unknown classification keys", () => {
+    const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
+    const notes = api("notes", { tools: [{ name: "read", description: "Read", annotations: { readOnlyHint: true }, handler: () => [] }] });
+    const construct = (options: unknown) => createConnecta({ connectors: [notes], executor, logger: "silent", ...options as object });
+    expect(() => construct({ execute: { approval: { notes: "never" } } })).toThrow("ConnectaConfig.execute.approval");
+    expect(() => construct({ classification: { nope: { read: "read" } } })).toThrow('unknown connector "nope"');
+    expect(() => construct({ classification: { notes: { missing: "read" } } })).toThrow('has no tool "missing"');
+    expect(() => construct({ classification: { notes: { read: "never" } } })).toThrow('must be "read" or "write"');
+    expect(() => construct({ trust: "ask" })).toThrow('must be "trusted" or "read-only"');
+    expect(() => construct({ pools: { named: { tools: ["notes"], trust: "ask" } } })).toThrow("ConnectaConfig.pools.named.trust");
+    expect(() => construct({ connectors: [{ ...notes, approval: "never" }] })).toThrow("approval was removed");
   });
+
 });
 
 describe("write outcomes", () => {
-  it("classifies an exempt write's outcome by what is known", () => {
+  it("classifies a write's outcome by what is known", () => {
     const table: Array<[Parameters<typeof classifyWriteOutcome>[0], string]> = [
       [{ ok: true, dispatched: true }, "ok"],
       [{ ok: false, dispatched: false, error: { code: "timeout" } }, "failed"],
@@ -536,5 +412,121 @@ describe("retired pause configuration (#672)", () => {
     const health = await (await connecta.fetch(new Request("http://localhost/health"))).json();
     expect(health).not.toHaveProperty("resumableWrites");
     await connecta.close();
+  });
+});
+
+
+describe("classification and pool endpoints (#706)", () => {
+  it("INV-1: classifies by overrides, provider review, then fail-closed annotations", () => {
+    const raw: ToolDef = { name: "mixed", annotations: { readOnlyHint: true } };
+    expect(classifyTool(raw, "write", { verdict: "read" })).toBe("write");
+    expect(classifyTool(raw, "read", { verdict: "write", stale: true })).toBe("read");
+    expect(classifyTool(raw, undefined, { verdict: "write" })).toBe("write");
+    expect(classifyTool(raw, undefined, { verdict: "read", stale: true })).toBe("write");
+    expect(classifyTool({ name: "silent" }, undefined, { verdict: "read" })).toBe("read");
+    for (const annotations of [undefined, {}, { readOnlyHint: false }, { readOnlyHint: true, destructiveHint: true }]) {
+      expect(classifyTool({ name: "unknown", ...(annotations ? { annotations } : {}) })).toBe("write");
+    }
+    expect(classifyTool(raw)).toBe("read");
+  });
+
+  it("INV-1 INV-3: publishes isolated verdicts without persisting or trusting a downstream verdict", async () => {
+    const storage = memoryStorage();
+    const raw: ToolDef[] = [
+      { name: "mislabeled", annotations: { readOnlyHint: true } },
+      { name: "mixed", annotations: { readOnlyHint: false } },
+      { name: "constructor", classification: "read" },
+    ];
+    const connector: Connector = { id: "test", listTools: async () => raw, callTool: async () => ({ ok: true }) };
+    const overrides = { test: { mislabeled: "write" as const, mixed: "read" as const } };
+    const registry = makeRegistry([connector], { storage, classification: overrides });
+    overrides.test.mixed = "write" as never;
+    const first = await registry.getTools("test", BASE, {});
+    expect(first.map(tool => tool.classification)).toEqual(["write", "read", "write"]);
+    first[0]!.classification = "read";
+    first[1]!.annotations!.readOnlyHint = false;
+    raw[0]!.annotations!.readOnlyHint = false;
+    const second = await registry.getTools("test", BASE, {});
+    expect(second.map(tool => tool.classification)).toEqual(["write", "read", "write"]);
+    expect(second[1]!.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+    for (const key of await storage.list("")) {
+      expect(await storage.get(key)).not.toContain('"classification"');
+    }
+    const tools = createMetaTools(registry, BASE);
+    expect((await tools.callTool({ address: "test.mislabeled" })).isError).toBe(true);
+    expect((await tools.callTool({ address: "test.mixed" })).isError).toBeFalsy();
+    expect((await tools.callDestructiveTool({ address: "test.mislabeled" })).isError).toBeFalsy();
+  });
+
+  it("INV-1: deployment overrides beat stale reviewed schemas and provider writes", async () => {
+    const raw: ToolDef[] = [
+      { name: "lapsed", annotations: { readOnlyHint: true } },
+      { name: "mislabeled", annotations: { readOnlyHint: true } },
+      { name: "mixed" },
+      { name: "constructor" },
+    ];
+    const connector: Connector = {
+      id: "reviewed", listTools: async () => raw, callTool: async () => null,
+      classification: { tools: {
+        lapsed: { verdict: "read", schemaDigest: `sha256:${"0".repeat(64)}` },
+        mislabeled: "write", mixed: "write",
+      } },
+    };
+    const registry = makeRegistry([connector], { classification: {
+      reviewed: { lapsed: "read", mixed: "read", constructor: "read" as const },
+    } });
+    const tools = await registry.getTools("reviewed", BASE, {});
+    expect(tools.map(tool => tool.classification)).toEqual(["read", "write", "read", "read"]);
+    expect(tools[0]!.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+    const without = makeRegistry([connector]);
+    expect((await without.getTools("reviewed", BASE, {})).map(tool => tool.classification))
+      .toEqual(["write", "write", "write", "write"]);
+  });
+
+  it("INV-11 INV-8: refuses an entire remote catalog with an unknown override", async () => {
+    const connector: Connector = { id: "remote", listTools: async () => [{ name: "read", annotations: { readOnlyHint: true } }], callTool: async () => null };
+    const registry = makeRegistry([connector], { classification: { remote: { missing: "read" } } });
+    await expect(registry.getTools("remote", BASE, {})).rejects.toThrow('has no tool "missing"');
+    await expect(registry.getTools("remote", BASE, {})).rejects.toThrow('has no tool "missing"');
+  });
+
+  it("INV-2 INV-4 INV-9: endpoint trust controls writes and execute_code annotations", async () => {
+    let writes = 0;
+    const programs = new Map<string, Program>([["async () => write", async connecta => {
+      await connecta.call!("notes.write", {});
+      return "written";
+    }]]);
+    const notes = api("notes", { tools: [
+      { name: "write", description: "Write", annotations: { readOnlyHint: false }, handler: () => { writes++; return "written"; } },
+    ] });
+    const app = createConnecta({ connectors: [notes], logger: "silent", executor: customExecutor(scriptedExecutor(programs), { lifecycle: "self-managed" }),
+      pools: {
+        trusted: { tools: ["notes"], trust: "trusted", grant: () => true },
+        readonly: { tools: ["notes"], grant: () => true },
+      },
+    });
+    const rpc = async (path: string, method: string, params: unknown) => readJsonRpc(await app.fetch(new Request(`http://localhost${path}`, {
+      method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    }))) as Promise<any>;
+    try {
+      for (const path of ["/mcp", "/mcp/readonly", "/mcp/trusted"]) {
+        const trusted = path === "/mcp/trusted";
+        const listing = await rpc(path, "tools/list", {});
+        expect(listing.result.tools.find((tool: { name: string }) => tool.name === "execute_code").annotations)
+          .toMatchObject({ readOnlyHint: !trusted, destructiveHint: trusted });
+        const run = await rpc(path, "tools/call", { name: "execute_code", arguments: { code: "async () => write" } });
+        expect(run.result.isError === true).toBe(!trusted);
+        const direct = await rpc(path, "tools/call", { name: "call_tool", arguments: { address: "notes.write" } });
+        expect(direct.result.isError).toBe(true);
+      }
+      expect(writes).toBe(1);
+      const direct = await rpc("/mcp/readonly", "tools/call", { name: "call_destructive_tool", arguments: { address: "notes.write" } });
+      expect(direct.result.isError).toBeFalsy();
+      expect(writes).toBe(2);
+      expect(app.describeConfig()).toMatchObject({ trust: "read-only", pools: [
+        { name: "trusted", trust: "trusted" }, { name: "readonly", trust: "read-only" },
+      ] });
+    } finally { await app.close(); }
   });
 });

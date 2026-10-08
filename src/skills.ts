@@ -8,10 +8,10 @@ const RECOVERY =
 
 /**
  * The always-loaded MCP `instructions` string. A program runs reads and the
- * writes config exempts from approval; every other write is its own top-level
+ * writes in trusted pools; a read-only pool routes every write to top-level
  * call_destructive_tool, where the host's permission prompt is the approval.
  */
-export const CONNECTA_INSTRUCTIONS = `${ROUTE} Only readOnlyHint: true tools and config-exempt writes run there. Keep catalog inspection and other unannotated, write-capable, or destructive work top level: search_tools then call_destructive_tool when a call is needed. Never repeat a write to recover its output. ${RECOVERY}`;
+export const CONNECTA_INSTRUCTIONS = `${ROUTE} Programs call reads in read-only pools and may also write in trusted pools. The execute_code description names this endpoint's trust. In a read-only pool, discover writes with search_tools then use call_destructive_tool. Never repeat a write to recover its output. ${RECOVERY}`;
 
 const USAGE_SKILL_BASE = `# Connecta usage
 
@@ -47,14 +47,14 @@ For top-level catalog inspection or approval-required discovery, omit \`limit\` 
 - Preserve the schema's JSON types exactly: a numeric id is a number, not a numeric-looking string.
 - Validate tabular headers, row arrays, and row widths before mapping them. Never let a header or partial row become data.
 
-Only explicitly \`readOnlyHint: true\` calls and writes the deployment's config exempts from approval run in a program. Any other write is refused before it is sent: send it through top-level \`call_destructive_tool\`, where the host asks. Sandbox code cannot widen host gates.
+Programs may call tools classified as reads. Trusted pools also allow writes, with execute_code annotated as a write for the host. In read-only pools, writes are refused before dispatch: use top-level \`call_destructive_tool\`. Sandbox code cannot change pool trust.
 
 ## Errors and repair
 
 Caught Connecta errors expose \`message\`, \`code\`, \`retryable\`, and \`details\`. Promise rejections retain these fields. Branch on fields, never prose. After a shared argument failure, repair one call before repeating it across other records. Do not retry \`retryable: false\`, and do not retry \`rate_limited\` immediately because portable code has no timer.
 
 - \`destructive_tool_requires_approval\`: stop and send the returned address through top-level \`call_destructive_tool\`.
-- \`write_outcome_unknown\`: an exempt write was sent but unanswered and is never re-sent; check the target.
+- \`write_outcome_unknown\`: a trusted-pool write was sent but unanswered and is never re-sent; check the target.
 - \`auth_required\`: let the failure reach the model, then use top-level \`authorize_connector\`, give its handoff to the operator, and retry after recovery.
 - Truncated direct call: page with \`get_result\`, never repeat a write. A program result has no page handle; reduce a read in a new program. After a write, check the target or report the gap.
 - Unknown addresses and tools carry scoped search recovery. Use it inside the current run. Do not invent an address.

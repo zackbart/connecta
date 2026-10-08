@@ -9,13 +9,15 @@ import {
   overflow,
 } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { isExplicitlyReadOnly } from "../../tool-safety.js";
+import { classifyTool } from "../../tool-safety.js";
 import { silentLogger } from "../../../test/helpers.js";
 import type {
   Connector,
   ConnectorContext,
   ConnectorUsageGuide,
 } from "../../types.js";
+
+const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
 
 interface StubResponse {
   status?: number;
@@ -219,7 +221,7 @@ describe("overflow() construction", () => {
       "overflow_api_get",
       "overflow_api_mutate",
     ]);
-    const writes = tools.filter((tool) => !isExplicitlyReadOnly(tool));
+    const writes = tools.filter((tool) => !isRead(tool));
     expect(writes.map((tool) => tool.name)).toEqual(["overflow_api_mutate"]);
     expect(writes[0]!.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
     expect(tools.every((tool) => typeof tool.annotations?.readOnlyHint === "boolean")).toBe(true);

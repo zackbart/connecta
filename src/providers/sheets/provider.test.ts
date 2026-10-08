@@ -11,9 +11,11 @@ import { createMetaTools } from "../../meta-tools.js";
 import { SHEETS_API_BASE_URL, SHEETS_SCOPES, sheets } from "./index.js";
 import { Registry } from "../../registry.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { isExplicitlyReadOnly } from "../../tool-safety.js";
+import { classifyTool } from "../../tool-safety.js";
 import { silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext, ConnectorUsageGuide } from "../../types.js";
+
+const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
@@ -111,7 +113,7 @@ describe("sheets() identity and surface (H1)", () => {
     expect(guide(connector).required).toBe(true);
   });
 
-  it("ships exactly its tools, each with its safety class, and never exempts itself", async () => {
+  it("ships exactly its tools, each with its safety class", async () => {
     const connector = connection();
     const tools = await connector.listTools(context());
     const annotations = Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations]));
@@ -126,13 +128,13 @@ describe("sheets() identity and surface (H1)", () => {
       add_sheet: { readOnlyHint: false, destructiveHint: false },
       batch_update_spreadsheet: { readOnlyHint: false, destructiveHint: true },
     });
-    expect(tools.filter((tool) => isExplicitlyReadOnly(tool)).map((tool) => tool.name).sort()).toEqual([
+    expect(tools.filter((tool) => isRead(tool)).map((tool) => tool.name).sort()).toEqual([
       "get_spreadsheet",
       "get_values",
     ]);
     // No listing tool: finding a spreadsheet by name is Drive's job.
     expect(tools.some((tool) => /^(list|search)_/.test(tool.name))).toBe(false);
-    expect(connector.approval).toBeUndefined();
+    expect(connector).not.toHaveProperty("approval");
     expect(connector.credential).toBeUndefined();
     expect(connector.startAuth).toBeUndefined();
   });

@@ -459,7 +459,7 @@ describe("remoteMcp({ classify })", () => {
     const ctx = connectorContext();
     try {
       const strip = (tools: Awaited<ReturnType<Connector["listTools"]>>) =>
-        tools.map(({ annotations: _annotations, ...rest }) => rest);
+        tools.map(({ annotations: _annotations, classification: _classification, ...rest }) => rest);
       const [before, after] = [await plain.listTools(ctx), await servedTools(classified, ctx)];
       expect(strip(after)).toEqual(strip(before));
       // The connector itself lists exactly what the downstream said.

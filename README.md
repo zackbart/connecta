@@ -18,10 +18,9 @@ internal API, anything you have connected. Here is what happens:
 3. Only the answer comes back into the agent's context — not raw pages of
    API output.
 4. If the agent wants to change something — create, update, delete — it
-   cannot do that from a program, unless your config exempts that tool. The
-   program refuses the write before anything is sent and hands back the exact
-   call; the agent makes it through `call_destructive_tool`, one visible call
-   your MCP client can put in front of you first.
+   can do that from a program in a `trusted` pool. A `read-only` pool
+   routes each write through `call_destructive_tool`. The host controls approval; trusted endpoints annotate `execute_code` as a
+   write. Pool trust defaults to `read-only`.
 
 Credentials never leave the server. The program never sees them, and neither
 does the agent.
@@ -31,7 +30,7 @@ flowchart TB
     Client["Your MCP client<br/>Claude, Cursor, …"]
 
     subgraph Connecta["Connecta — one endpoint, seven tools, your credentials"]
-        Sandbox["execute_code<br/>the agent's program runs here<br/>read-only tools, plus writes<br/>your config exempts"]
+        Sandbox["execute_code<br/>the agent's program runs here<br/>reads, plus writes<br/>in trusted pools"]
         Explicit["call_destructive_tool<br/>one visible call per write<br/>your client can ask you first"]
     end
 
@@ -88,11 +87,11 @@ Fifty issues in, one small object out. Your context window notices.
   notice also points the agent to reduce or search the result inside a
   program. Discovery can show compact schemas, exact JSON Schema, or a
   TypeScript signature to read while writing JavaScript.
-- **Keep writes deliberate.** Only tools marked read-only run in a program.
-  Every other write is a separate, visible `call_destructive_tool` call your
-  client can gate, so the host's permission prompt is the one approval there
-  is. Config — and only config — can exempt a cheap, reversible write from
-  asking, per tool or per connector, and then a program may make it.
+- **Keep writes deliberate.** The registry classifies tools as reads or writes.
+  Read-only pools route writes through `call_destructive_tool`; trusted pools
+  let programs write and annotate `execute_code` as a write. The host controls
+  approval. Exact deployment classification overrides beat provider review
+  and downstream annotations.
 - **Run it on Node or Cloudflare Workers.** The core is shared; each deployment
   supplies its platform's executor and one store: a D1 database on Workers
   (`@zackbart/connecta/d1`), a SQLite file on Node (`@zackbart/connecta/sqlite`).

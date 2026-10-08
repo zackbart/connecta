@@ -6,13 +6,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SLIDES_API_BASE_URL, SLIDES_SCOPES, slides } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { isExplicitlyReadOnly } from "../../tool-safety.js";
+import { classifyTool } from "../../tool-safety.js";
 import { validateToolInput } from "../../validate.js";
 import { compactDiscoverySchema, MAX_COMPACT_DISCOVERY_SCHEMA_BYTES, typescriptSignature } from "../../catalog.js";
 import { buildSandboxProviders } from "../../execute.js";
 import { createMetaTools } from "../../meta-tools.js";
 import { makeRegistry, required, silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext, ConnectorUsageGuide, JsonSchema } from "../../types.js";
+
+const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
@@ -336,11 +338,11 @@ describe("slides() identity and surface (H1, H14)", () => {
     const byName = Object.fromEntries((await connector.listTools(context())).map((tool) => [tool.name, tool]));
     for (const name of ["get_presentation", "get_page", "list_layouts", "list_comments", "get_slide_thumbnail"]) {
       expect(byName[name]!.annotations).toEqual({ readOnlyHint: true });
-      expect(isExplicitlyReadOnly(byName[name]!)).toBe(true);
+      expect(isRead(byName[name]!)).toBe(true);
     }
     for (const name of ["create_presentation", "create_slide", "create_comment", "create_comment_reply"]) {
       expect(byName[name]!.annotations).toEqual({ readOnlyHint: false, destructiveHint: false });
-      expect(isExplicitlyReadOnly(byName[name]!)).toBe(false);
+      expect(isRead(byName[name]!)).toBe(false);
     }
     for (const name of [
       "replace_all_text",
@@ -351,10 +353,10 @@ describe("slides() identity and surface (H1, H14)", () => {
       "batch_update_presentation",
     ]) {
       expect(byName[name]!.annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
-      expect(isExplicitlyReadOnly(byName[name]!)).toBe(false);
+      expect(isRead(byName[name]!)).toBe(false);
     }
-    // The provider never exempts itself, and has no slot or OAuth of its own.
-    expect(connector.approval).toBeUndefined();
+    // The provider has no slot or OAuth of its own.
+    expect(connector).not.toHaveProperty("approval");
     expect(connector.credential).toBeUndefined();
     expect(connector.startAuth).toBeUndefined();
   });

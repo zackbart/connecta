@@ -305,13 +305,14 @@ describe.each(Object.keys(WRAPPERS) as Array<keyof typeof WRAPPERS>)(
   (wrapper) => {
     const wrap = WRAPPERS[wrapper];
 
-    it("INV-1 INV-2: a retained call definition cannot turn the next exempt write into a read or bypass its budget", async () => {
+    it("INV-1 INV-2: a retained call definition cannot turn the next trusted-pool write into a read or bypass its budget", async () => {
       const calls: string[] = [];
       const { decorate } = retainingDecorator();
       const app = thingsDeployment(
         decorate(wrap({ list_things: "read", make_thing: "write" }, calls)),
         memoryStorage(),
-        { approval: { "things.make_thing": "never" }, maxWrites: 1 },
+        { maxWrites: 1 },
+        "trusted",
       );
       try {
         const result = await app.run(async (connecta) => {

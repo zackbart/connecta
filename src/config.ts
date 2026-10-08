@@ -186,25 +186,10 @@ const execute = {
    */
   watchdogMs: whole({ min: 1, default: D.execute.watchdogMs }),
   /**
-   * Config-exempt writes one program may send, on top of the host-call
+   * Trusted-pool writes one program may send, on top of the host-call
    * budget every call already spends. Default 10.
    */
   maxWrites: whole({ min: 1, default: D.execute.maxWrites }),
-  /**
-   * Which writes a program may make without asking. A program runs only
-   * explicitly read-only tools and these; every other write is refused and
-   * goes through `call_destructive_tool`, where the host asks. Keys are
-   * connector ids (all of that connector's tools) or `connector.tool`
-   * addresses (that tool); values are `"never"` (never ask) or `"ask"`. The
-   * most specific key wins, and `"ask"` switches off a connector's own
-   * default. An exempt write still spends the write budget and is recorded
-   * in activity; it is never read-only anywhere else — discovery still lists
-   * it as approval-required and `call_tool` still refuses it. An unknown
-   * connector id, or an `api()` address its tools do not include, refuses to
-   * construct; a remote connector's tool names load later, so an address
-   * naming one it never serves simply never matches.
-   */
-  approval: record(opaque<"never" | "ask", "never" | "ask">()),
 };
 
 function admissionPool(defaults: {
@@ -283,7 +268,18 @@ const identity = {
   >(),
 };
 
+const trust = () => opaque<"trusted" | "read-only", "trusted" | "read-only">({
+  check: (value, path) => {
+    if (value !== "trusted" && value !== "read-only") {
+      throw new ConfigError(`${path} must be "trusted" or "read-only".`);
+    }
+  },
+  resolve: value => value ?? "read-only",
+});
+
 const pool = {
+  /** Programs may write only in trusted pools. Default read-only. */
+  trust: trust(),
   /** Connector ids and exact `connector.tool` addresses in this pool. */
   tools: required(
     opaque<readonly string[]>({
@@ -326,6 +322,9 @@ const connectaConfig = {
     array(
       opaque<Connector>({
         check: (value, path) => {
+          if (isObject(value) && Object.hasOwn(value, "approval")) {
+            throw new ConfigError(`${path}.approval was removed; configure pool trust instead.`);
+          }
           if (!isObject(value) || typeof value.id !== "string" ||
             typeof value.listTools !== "function" || typeof value.callTool !== "function") {
             throw new ConfigError(
@@ -356,6 +355,16 @@ const connectaConfig = {
   identity: object(identity),
   /** Named tool pools, each served at `/mcp/<name>` to identities its grant admits. */
   pools: record(object(pool)),
+  /** Trust of the default /mcp endpoint. Default read-only. */
+  trust: trust(),
+  /** Exact connector id -> tool name -> verdict. Unknown names fail at catalog publication. */
+  classification: record(record(opaque<"read" | "write">({
+    check: (value, path) => {
+      if (value !== "read" && value !== "write") {
+        throw new ConfigError(`${path} must be "read" or "write".`);
+      }
+    },
+  }))),
   /**
    * The deployment's one store: `d1Storage(env.CONNECTA_DB)` from
    * `@zackbart/connecta/d1` on Workers, `sqliteStorage(path)` from
@@ -579,8 +588,9 @@ function rejectUnknownOptions(paths: string[]): void {
       paths.map((path) => `- ${path}`).join("\n") +
       (paths.includes("ConnectaConfig.credentials") ? "\nUse vault: encryptedCredentialVault(storage, key) from @zackbart/connecta/credentials." : "") +
       (paths.includes("ConnectaConfig.branding") ? "\nMove branding into ui: operatorUi({ branding }) from @zackbart/connecta/ui." : "") +
+      (paths.includes("ConnectaConfig.execute.approval") ? "\nexecute.approval was removed. Set trust: \"trusted\" on a pool to allow program writes; the default is read-only." : "") +
       (paths.some((path) => RETIRED_PAUSE_OPTIONS.includes(path))
-        ? "\nPrograms no longer pause at writes, so there is nothing to configure: execute_code runs read-only and config-exempt tools, and every other write goes through call_destructive_tool (issue #672). Delete the option."
+        ? "\nPrograms no longer pause at writes, so there is nothing to configure: read-only pools route writes through call_destructive_tool; trusted pools allow program writes (issue #672). Delete the option."
         : ""),
   );
 }

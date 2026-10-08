@@ -937,8 +937,8 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
       description:
         "Create an empty Google Form with a title in the user's Drive. Google sets only the title here: add questions and a description with batch_update_form.",
       // Additive: a new, empty form changes nothing that existed. Not
-      // read-only, so it crosses call_destructive_tool unless the deployment
-      // exempts it in `execute.approval`; the provider never exempts itself.
+      // read-only: program calls require a trusted pool; other writes use
+      // call_destructive_tool. The host controls approval.
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: input(
         {
@@ -1376,7 +1376,7 @@ function usageGuide(purpose: string, instructions: string | undefined): string {
  *
  * Listing forms needs Drive, which this connection does not request; pair it
  * with a Drive connection for that. `create_form` is an additive write the
- * host approves unless the deployment exempts it in `execute.approval`;
+ * host approves through call_destructive_tool or a trusted program;
  * `update_form_info` and `batch_update_form` are destructive.
  */
 export const forms = asProviderFactory<FormsOptions>({

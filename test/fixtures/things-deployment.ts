@@ -41,6 +41,7 @@ export function thingsDeployment(
   connector: Connector,
   storage: KVStorage = memoryStorage(),
   execute?: ConnectaConfig["execute"],
+  trust: "trusted" | "read-only" = "read-only",
 ) {
   const programs = new Map<string, Program>();
   const connecta = createConnecta({
@@ -48,6 +49,7 @@ export function thingsDeployment(
     storage,
     logger: "silent",
     ...(execute ? { execute } : {}),
+    trust,
     executor: customExecutor(closureExecutor(programs), { lifecycle: "self-managed" }),
   });
   const call = async (name: string, args: Record<string, unknown>) =>

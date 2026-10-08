@@ -64,6 +64,8 @@ export interface Logger {
 }
 
 export interface ToolDef {
+  /** Final verdict on a request-scoped published catalog entry. Never persisted. */
+  classification?: "read" | "write";
   name: string; // unique within the connector
   description?: string;
   /** Downstream display metadata retained with the catalog. */
@@ -81,9 +83,9 @@ export interface ToolDef {
   outputSchema?: JsonSchema;
   /**
    * Standard MCP tool behavior hints plus provider-specific extensions.
-   * Connecta fails closed: only readOnlyHint === true (without a contradictory
-   * destructiveHint) may use call_tool or execute_code. Every other tool must
-   * cross the call_destructive_tool approval boundary.
+   * The registry classifies these after deployment overrides and provider
+   * review. Only a stored read verdict may use call_tool; program writes
+   * require a trusted pool. Approval belongs to the host.
    */
   annotations?: ToolAnnotations;
 }
@@ -351,17 +353,6 @@ export interface Connector {
   title?: string;
   /** How call_tool wraps results. "mcp" passes the content array through; anything else is JSON-wrapped. */
   kind?: "mcp" | "api";
-  /**
-   * This connector's own default for its tools that are not explicitly
-   * read-only, inside `execute_code`: `"never"` lets a program call them
-   * without asking for approval. Reserved for connectors connecta ships
-   * whose writes are cheap to undo (the artifacts connector, whose
-   * every write is a new immutable version); a deployment's own connectors
-   * leave it unset and exempt through `execute.approval`, which overrides
-   * this either way. Never read from a downstream catalog — a server cannot
-   * exempt its own tools — and never makes a tool read-only anywhere else.
-   */
-  approval?: "never";
   description?: string;
   /**
    * Max inline result size (bytes) for this connector's tools before
@@ -422,7 +413,7 @@ export interface Connector {
    * review. `{ ...connector }`, `Object.assign`, and `Object.create` keep it;
    * a forwarding class that omits it serves an unreviewed connector, whose
    * downstream annotations are its own claims and fail closed when absent.
-   * Phase 2's deployment-level classifier overrides, keyed by connector id
+   * Deployment-level classifier overrides, keyed by connector id
    * and tool ([#706](https://github.com/zackbart/connecta/issues/706)), apply
    * regardless of wrapping.
    */
@@ -551,8 +542,8 @@ export interface ConnectorToolDescription {
   annotations?: ToolAnnotations;
   inputSchema?: JsonSchema;
   outputSchema?: JsonSchema;
-  /** `read` only for an explicit `readOnlyHint: true` (INV-1). */
-  classification: "read" | "write";
+  /** Present on registry descriptions after overrides and provider review (INV-1). */
+  classification?: "read" | "write";
 }
 
 /** What `Connector.describe()` reports. Every field is optional but `source`. */
@@ -663,10 +654,11 @@ export interface AdmissionSnapshot {
 /**
  * Optional admission capability used by bounded executors. The acquired lease
  * carries execution so an already-admitted caller cannot accidentally acquire
- * a second slot and deadlock a pool of one.
+ * a second slot and deadlock a pool of one. `wait: false` must refuse with
+ * executor_overloaded immediately when no slot is free; never queue it.
  */
 export interface AdmittingExecutor extends Executor {
-  acquire(options?: { signal?: AbortSignal }): Promise<ExecutorLease>;
+  acquire(options?: { signal?: AbortSignal; wait?: boolean }): Promise<ExecutorLease>;
   /** Payload-free health/metrics view when the executor exposes one. */
   admissionSnapshot?(): AdmissionSnapshot;
 }

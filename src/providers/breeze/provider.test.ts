@@ -6,13 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
 import { breeze } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { isExplicitlyReadOnly } from "../../tool-safety.js";
+import { classifyTool } from "../../tool-safety.js";
 import { silentLogger } from "../../../test/helpers.js";
 import type {
   Connector,
   ConnectorContext,
   ConnectorUsageGuide,
 } from "../../types.js";
+
+const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
 
 interface StubResponse {
   status?: number;
@@ -160,13 +162,13 @@ describe("breeze() construction", () => {
     const tools = await connection().listTools(context());
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
     expect(tools).toHaveLength(23);
-    expect(isExplicitlyReadOnly(byName.get("breeze_api_get")!)).toBe(true);
+    expect(isRead(byName.get("breeze_api_get")!)).toBe(true);
     expect(byName.get("breeze_api_mutate")?.annotations).toEqual({
       readOnlyHint: false,
       destructiveHint: true,
     });
     for (const name of ["list_contributions", "list_funds", "list_people", "get_person"]) {
-      expect(isExplicitlyReadOnly(byName.get(name)!), name).toBe(true);
+      expect(isRead(byName.get(name)!), name).toBe(true);
     }
     for (const name of ["add_person", "assign_tag", "record_check_in"]) {
       expect(byName.get(name)?.annotations, name).toEqual({ readOnlyHint: false });
@@ -192,21 +194,17 @@ describe("breeze() construction", () => {
     expect(usage.content).toContain("Never tag minors.");
   });
 
-  it("tells agents the additive writes still need approval unless config exempts them", async () => {
-    // add_person, assign_tag, and record_check_in declare readOnlyHint: false
-    // and nothing exempts them by default, so a program inside execute_code
-    // is refused them like any other write.
+  it("INV-2: explains write routing by pool trust without retired approval config", async () => {
     const connector = connection();
     const tools = await connector.listTools(context());
     for (const name of ["add_person", "assign_tag", "record_check_in"]) {
       expect(tools.find((tool) => tool.name === name)!.annotations?.readOnlyHint).toBe(false);
     }
     const content = guide(connector).content.replace(/\s+/g, " ");
-    expect(content).not.toMatch(/approval-gated except/);
-    expect(content).toContain(
-      "Every write, `add_person`, `assign_tag`, and `record_check_in` included, is a `call_destructive_tool` call",
-    );
-    expect(content).toContain("unless the deployment exempts it in `execute.approval`");
+    expect(content).not.toContain("execute.approval");
+    expect(content).toContain("uses `call_destructive_tool` in a read-only pool");
+    expect(content).toContain("A trusted pool also permits writes inside `execute_code`");
+    expect(content).toContain("the host controls approval for the program");
   });
 
   it("declares a single-field credential and constructs without the network", () => {

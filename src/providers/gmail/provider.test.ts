@@ -6,9 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GMAIL_API_BASE_URL, GMAIL_SCOPES, gmail } from "./index.js";
 import { RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { isExplicitlyReadOnly } from "../../tool-safety.js";
+import { classifyTool } from "../../tool-safety.js";
 import { silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext, ConnectorUsageGuide } from "../../types.js";
+
+const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
@@ -204,16 +206,16 @@ describe("gmail() identity and surface (H1, H14)", () => {
     expect(tools.some((tool) => /send|delete|trash|label_|modify|gmail_api/.test(tool.name))).toBe(false);
   });
 
-  it("classifies reads as read-only and drafts as writes it never exempts itself", async () => {
+  it("classifies reads as read-only and drafts as writes", async () => {
     const connector = connection();
     const tools = await connector.listTools(context());
-    const writes = tools.filter((tool) => !isExplicitlyReadOnly(tool)).map((tool) => tool.name);
+    const writes = tools.filter((tool) => !isRead(tool)).map((tool) => tool.name);
     expect(writes.sort()).toEqual(["create_draft", "update_draft"]);
     const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
     expect(byName["create_draft"]!.annotations).toEqual({ readOnlyHint: false, destructiveHint: false });
     // Gmail's update replaces the whole message; the old body is gone.
     expect(byName["update_draft"]!.annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
-    expect(connector.approval).toBeUndefined();
+    expect(connector).not.toHaveProperty("approval");
     // No operator slot and no OAuth: the key is deployment config.
     expect(connector.credential).toBeUndefined();
     expect(connector.startAuth).toBeUndefined();

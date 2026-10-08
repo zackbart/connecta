@@ -244,14 +244,10 @@ its degradation rules are specified once, under
 signature is byte-identical to the one `search_tools` returns.
 
 **S1a.** `connector` loads only the named catalog; omit it only when the
-integration is ambiguous, because an unscoped search fans out across every
-configured connector. `safety: "readOnly"` returns exactly the tools
-`connecta.call` runs unasked; `"approvalRequired"` returns the complementary
-fail-closed class, false, missing, and contradictory annotations included,
-whose calls a program has refused (`E4`) unless config exempts them (`W12`),
-which a row marks with `approval: "exempt"` without moving it out of that
-class; omitted or `"all"` preserves the complete catalog. These filters grant
-no authority and change no admission decision.
+integration is ambiguous. `safety: "readOnly"` selects stored read verdicts;
+`"approvalRequired"` selects stored write verdicts; omitted or `"all"` selects
+both. Search and describe rows carry `classification`. These filters grant no
+authority and change no pool trust or call admission decision.
 
 **S2.** A requested object schema carries `inputKeys`, `requiredInputKeys`
 (declared properties only), and `outputKeys`: the names the rendered schema
@@ -336,7 +332,7 @@ as sequential calls. There is no separate batch size or result contract.
 `details`. Project those fields before returning — an `Error` object is not a
 JSON result contract.
 
-**S9.** A successful explicitly read-only call whose provider declared no
+**S9.** A successful call classified as a read whose provider declared no
 `outputSchema` passively learns one from the unwrapped result. The observation
 keeps field names and broad JSON types only — no arguments, scalar values, raw
 results, code, credentials, or errors — and property names may be user-authored.
@@ -399,7 +395,7 @@ caller what to do next, and never invents a cause it was not told.
 | --- | --- | --- |
 | `unknown_address` | no connector owns the address | false |
 | `unknown_tool` | the connector has no such tool | false |
-| `destructive_tool_requires_approval` | the tool is neither explicitly read-only nor config-exempt (`E4`) | false |
+| `destructive_tool_requires_approval` | a program in a read-only pool attempted a write (`E4`) | false |
 | `auth_required` | the credential is missing, expired, or rejected | false |
 | `invalid_args` | arguments or discovery bounds were rejected | false |
 | `not_found` | the downstream answered and the resource is not there — the one code that says skip this id rather than stop, raised only where the provider tells absence from a permission gap | false |
@@ -414,7 +410,7 @@ caller what to do next, and never invents a cause it was not told.
 | `result_processing_failed` | the result could not be prepared | per message |
 | `result_too_large` | a discovery response exceeded its byte bound | false |
 | `budget_exceeded` | the run exhausted a host-call, write, or emitted-output budget | false |
-| `write_outcome_unknown` | an exempt write was sent and no answer came back; it is never sent again (`W9`) | false |
+| `write_outcome_unknown` | a trusted-pool write was sent and no answer came back; it is never sent again (`W9`) | false |
 
 **E3.** `auth_required` carries the same recovery envelope as `call_tool`:
 `connector`, `operation`, `recovery` (`oauth`, `operator_config`, or
@@ -422,8 +418,8 @@ caller what to do next, and never invents a cause it was not told.
 sentence. A program cannot recover credentials — only an operator can — so stop
 and let the failure reach the model.
 
-**E4.** An unannotated, write-capable, or destructive tool never runs in a
-program unless config exempts it (`W12`). It is refused with
+**E4.** A tool classified as a write never runs in a
+program unless the pool is trusted (`W12`). It is refused with
 `destructive_tool_requires_approval` before validation and before anything is
 sent, `nextAction` carrying its canonical address to `call_destructive_tool`
 plus the original arguments when they fit the 512-byte echo budget — whole or
@@ -651,7 +647,7 @@ because connecta enforces them above the sandbox:
 | Bound | Value |
 | --- | --- |
 | Host calls per execution, shared by `search`, `describe`, and `call` | 20 by default, `execute.maxHostCalls` |
-| Exempt writes per run, on top of the host calls they also spend (`W10`) | 10 by default, `execute.maxWrites` |
+| Trusted-pool writes per run, on top of the host calls they also spend (`W10`) | 10 by default, `execute.maxWrites` |
 | Deadline per host call | 15 s, `execute.hostCallTimeoutMs`; one deadline covers catalog resolution, admission, and the connector call |
 | Discovery page | ≤ 100 tools, ≤ 256,000 serialized bytes |
 | `describe` addresses | ≤ 100 |
@@ -667,7 +663,7 @@ The first call beyond the budget ends the host run with one non-retryable
 `try/catch` cannot swallow it. Later host access, including `emit`, stops; pending
 replies are withheld. The refusal reaches no connector, returns no partial result,
 and discards accepted emits (`M4`). Calls still resolving or awaiting admission
-are cancelled, including exempt writes past their gate. Dispatched exempt writes
+are cancelled, including trusted-pool writes past their gate. Dispatched trusted-pool writes
 drain under `W9`; unknown outcomes retain precedence. The lease then releases:
 QuickJS terminates its child, and the Worker adapter disposes RPC and loader
 handles independently of the guest deadline. Workers guest computation may
@@ -746,54 +742,70 @@ payload-free *by construction* means the event has nowhere to put a payload.
 distinctive artifact is the program source — exactly what a payload-free history
 must never keep.
 
-**V5.** An exempt write a program issues after it has already returned is not
+**V5.** A trusted-pool write a program issues after it has already returned is not
 sent and records nothing: it was never an attempt (`W9`).
 
 ## Writes
 
-A program does not ask anyone anything. It runs explicitly read-only tools and
-the writes config exempts from asking, and refuses every other write (`E4`), so
-each consequential call is its own `call_destructive_tool` and the host's
-permission prompt is the one approval there is. Programs once paused at a write
-and resumed by replay
-([#565](https://github.com/zackbart/connecta/issues/565)); hosts approve one
-call at a time, so under always-allow that prompt approved nothing and cost a
-round trip and a replay, and it went
-([#672](https://github.com/zackbart/connecta/issues/672)). `W1`–`W8` and `W11`
-belonged to pausing and stay retired; nothing reuses those ids.
+Pool trust belongs to deployment code. The default `/mcp` endpoint uses
+`trust: "read-only"`; each named pool has its own `trust`, also defaulting to
+`"read-only"`. A trusted default endpoint does not make named pools trusted.
+The default preserves refusal of ordinary program writes and removes the old
+artifact exemption. A deployment must opt into program writes explicitly.
 
-**W9.** An exempt write the program does not await outlives it: the play stops
-gating once the program settles — a write that reaches the gate after is not
-sent (`V5`) — and waits for writes already dispatched, each within its host-call
-deadline, before the run's scope aborts them. A write sent and never answered
-makes the result `write_outcome_unknown` with
-`writes: { succeeded, failed, unknown }`, whatever the program returned, and it
-is never sent again. Only a refusal (`auth_required`, `invalid_args`,
-`not_found`, `rate_limited`, `conflict`, `input_required_unsupported`) or the
-tool's own `isError` answers; an `isError` reading as a timeout does not, and
-`connector_call_failed` — an oversized body, a refused redirect — may come after
-the write landed. A program that fails after writing carries the same `writes`
-on its error, because it is not a program that is safe to run again.
+```ts
+createConnecta({
+  connectors, executor,
+  trust: "read-only",
+  pools: {
+    automation: { tools: ["posthog", "artifacts"], trust: "trusted", grant },
+  },
+  classification: {
+    posthog: { exec: "read" }, // only for a deployment with a read-only exec contract
+    vendor: { mislabeled_update: "write" },
+  },
+});
+```
 
-**W10.** `execute.maxWrites` (default 10) bounds a run's exempt writes beyond
-the host calls they spend, checked at the gate after validation and before
-admission, so an over-budget write fails `budget_exceeded` without a permit.
-The host-call budget bounds fan-out; this one bounds how much a program may
-change unasked, which is a different question even for writes a deployment
-called cheap.
+The registry computes one `classifyTool` verdict on each request-scoped
+published catalog entry. It caches and persists only raw downstream facts.
+Every caller consumes that stored verdict. Config cannot classify an individual
+invocation's arguments: marking a mixed entry point read is an assertion about
+all calls this deployment can make through it.
 
-**W12.** Config may exempt a write from asking, and nothing else may
-([#566](https://github.com/zackbart/connecta/issues/566)). `execute.approval`
-maps connector ids and `connector.tool` addresses to `"never"` or `"ask"`; the
-address wins over the connector entry, which wins over a connector's own
-built-in default (reserved for connectors connecta ships, such as artifacts),
-which wins over `"ask"`. An exempt call is decided at the write gate, after
-validation and before admission, and dispatches with the write budget (`W10`),
-`W9`'s tracking, and a `V1` event. Exempt is never read-only: no read-only tool
-is reported exempt, discovery keeps an exempt tool approval-required,
-`call_tool` refuses it, and no annotation grants it, or a downstream could
-exempt itself. Unknown connectors and `api()` addresses its tools lack refuse
-to construct; an unserved remote address never matches.
+| Precedence | Evidence | Result |
+| --- | --- | --- |
+| 1 | Exact deployment `classification[connectorId][toolName]` | `read` or `write`, even over a stale provider review |
+| 2 | `Connector.classification` provider review | Reviewed writes remain writes; a stale schema digest makes a read a write; an explicit downstream contradiction also invalidates a reviewed read |
+| 3 | Downstream annotations | Read only when `readOnlyHint === true && destructiveHint !== true`; otherwise write |
+
+Unknown connector override keys fail construction. Unknown static tool keys
+fail construction; unknown remote tool keys fail publication of the whole
+catalog. Overrides are exact tool names, including names containing dots.
+They are never inferred from descriptions or arguments.
+
+**W9.** Programs in trusted pools may write. A dispatched write is awaited even
+if the program does not await it, bounded by its host-call deadline. A write
+that reaches accounting after the program settles is not sent. An unanswered
+write makes the run fail `write_outcome_unknown` with
+`writes: { succeeded, failed, unknown }`, regardless of its return value.
+A failed program that already wrote carries those counts on its error. No
+write is automatically retried, including an ambiguous timeout. A downstream
+refusal or a tool's `isError` can establish failure; a timeout or an unanswered
+transport failure leaves the outcome unknown.
+
+**W10.** `execute.maxWrites`, default 10, bounds writes in trusted programs in
+addition to the host-call budget. It is checked after argument validation and
+before admission, so an over-budget write spends no permit.
+
+**W12.** `trusted` endpoints annotate `execute_code` as a write and permit
+program writes. `read-only` endpoints annotate it as read-only and refuse
+program writes before validation, with `call_destructive_tool` as the recovery.
+`call_tool` accepts only reads in either tier; `call_destructive_tool` may send
+writes in either tier. Approval belongs to the host. Trust grants no tool or
+connector access and cannot be set by guest code, request arguments, or a
+downstream catalog. `execute.approval`, `Connector.approval`, and per-tool
+approval exemptions are removed. `W1`–`W8` and `W11` remain retired.
 
 ## Executor exceptions
 
@@ -932,8 +944,8 @@ rejection, and branded adapter acceptance across module copies.
 | `L5`, `L7`, `X2` | `test/quickjs-executor.node.test.ts` (CPU, heap), `test/execute.test.ts` and `test/executor-admission.test.ts` (bounded admission and queue) |
 | `L6`, `X10` | `test/quickjs-executor.node.test.ts` (bridge and IPC bounds for arguments and result; the address in the over-bound message), `test/quickjs-child-stderr.node.test.ts` (outer reply serialization failure settles the call) |
 | `V1`–`V4` | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, the friction each derives, no event for the execution itself), `test/activity.test.ts` (the shared code → friction table, the identity clamp, the one-attempt floor), `test/operator-view.test.ts`, `test/sql-storage-contract.ts`, run by `test/d1-storage.node.test.ts` and `test/sqlite-storage.node.test.ts` (historical pause and approval rows still render and round-trip) |
-| `V5`, `W9` | `test/program-writes.test.ts` (an unawaited exempt write finished and recorded, its unknown outcome reported, counts on a failed program, the classification table), `test/invocation-pipeline.test.ts` (the gate after validation, an unrecorded refusal) |
-| `W10`, `W12` | `test/program-writes.test.ts` (an exempt write runs and every other write keeps `E4`, the write budget, precedence and a connector default switched off, `call_tool` still refusing, search and describe markers, construction refusals), `test/artifacts-connector.test.ts` (the shipped default and switching it off), `test/operator-ui-model.test.ts`, `test/browser/operator-ui.spec.ts` (the badge) |
+| `V5`, `W9` | `test/program-writes.test.ts` (an unawaited trusted-pool write finished and recorded, its unknown outcome reported, counts on a failed program, the classification table), `test/invocation-pipeline.test.ts` (the gate after validation, an unrecorded refusal) |
+| `W10`, `W12` | `test/program-writes.test.ts` (a trusted-pool write runs and every other write keeps `E4`, the write budget, pool trust and override precedence, `call_tool` still refusing, search and describe verdicts, construction refusals), `test/artifacts-connector.test.ts` (trusted-pool artifact writes and read-only refusal), `test/operator-ui-model.test.ts`, `test/browser/operator-ui.spec.ts` (the badge) |
 | `M1` | `test/guest-api-contract.test.ts` (invalid emits throw catchably, accept nothing), `test/execute-emit.test.ts` (every rejected shape) |
 | `M2`, `M3` | `test/guest-api-contract.test.ts` (delivery order, truncated return plus delivered blocks), `test/execute-emit.test.ts` (envelope, `structuredContent`, byte-for-byte no-emit path) |
 | `M4` | `test/guest-api-contract.test.ts` (discard is visible), `test/execute-emit.test.ts` (structured and plain paths), `test/quickjs-executor.node.test.ts` (mid-run shutdown) |

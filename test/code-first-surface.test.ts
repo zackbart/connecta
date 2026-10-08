@@ -104,7 +104,7 @@ describe("the advertised surface", () => {
       expect(tools.map((tool) => tool.name).sort()).toEqual(SEVEN);
       const execute = tools.find((tool) => tool.name === "execute_code")?.description;
       expect(execute).toContain(
-        "Only readOnlyHint: true tools and config-exempt writes are available",
+        "This pool is read-only: programs may call reads; writes use call_destructive_tool",
       );
       expect(execute).toContain("call_destructive_tool");
     }

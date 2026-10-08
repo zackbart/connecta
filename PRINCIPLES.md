@@ -39,11 +39,12 @@ Each ID must appear in at least one passing Vitest test title under `test/` or `
 The full Node run checks the executed test tree, including runtime skips.
 
 - **INV-1: Fail-closed classification.** Missing, false, or contradictory
-  read annotations classify as writes.
+  read annotations classify as writes unless deployment config or a current
+  provider review supplies a verdict. Stale reviewed schemas fail closed.
 - **INV-2: Writes respect trust.** A write leaves a program only in a
   `trusted` pool; otherwise it is its own top-level `call_destructive_tool`
-  call. Pool trust ships in Phase 2. Until then, config exemptions are the
-  transitional implementation, and all other program writes are refused.
+  call. `execute_code` is annotated as a write on trusted endpoints. Approval
+  belongs to the host.
 - **INV-3: Generated code mints nothing.** No connectors, grants, downstream
   subject choice, client-dereferenceable URIs, or credentials. Enforcement
   lives below the sandbox.

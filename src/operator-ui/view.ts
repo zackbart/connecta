@@ -701,19 +701,14 @@ export const TOOL_SAFETY_BADGE: Readonly<
   Record<UiToolSafety, { label: string; tone: Tone; title: string }>
 > = {
   runs_in_programs: {
-    label: "runs in programs",
+    label: "read",
     tone: "ok",
-    title: "Explicitly read-only: execute_code programs may call it without asking.",
-  },
-  exempt: {
-    label: "exempt from approval",
-    tone: "neutral",
-    title: "Not read-only, but this deployment's config lets programs call it without asking. Each call still counts against the write budget and appears in activity; call_tool still refuses it.",
+    title: "Classified as a read: call_tool and execute_code may call it.",
   },
   needs_approval: {
-    label: "asks for approval",
+    label: "write",
     tone: "warn",
-    title: "Not explicitly read-only: programs refuse it, and it runs through call_destructive_tool, where the host asks first.",
+    title: "Classified as a write: trusted programs may call it; read-only pools use call_destructive_tool. The host controls approval.",
   },
 };
 

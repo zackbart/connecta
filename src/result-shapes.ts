@@ -1,4 +1,3 @@
-import { isExplicitlyReadOnly } from "./tool-safety.js";
 import type { JsonSchema, ToolDef } from "./types.js";
 
 const OBSERVATION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -309,7 +308,7 @@ export class ObservedOutputSchemas {
         this.entries.delete(key);
         return undefined;
       }
-      if (!isExplicitlyReadOnly(definition)) {
+      if (definition.classification !== "read") {
         this.entries.delete(key);
         return undefined;
       }
@@ -339,7 +338,7 @@ export class ObservedOutputSchemas {
         this.entries.delete(key);
         return;
       }
-      if (!isExplicitlyReadOnly(definition)) {
+      if (definition.classification !== "read") {
         this.entries.delete(key);
         return;
       }

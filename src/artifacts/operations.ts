@@ -632,6 +632,8 @@ export class ArtifactOperations {
     runId?: string;
     /** A refresh result may publish only while its own claim still holds. */
     programVersion?: number;
+    /** Request cancellation fences refresh publication immediately before the head swap. */
+    signal?: AbortSignal;
     render?: RenderPage;
   }): Promise<
     Result<{
@@ -754,6 +756,7 @@ export class ArtifactOperations {
       if (tooLarge) return tooLarge;
       return { ok: true, next: nextHead, bodies, supersede, warnings: [] };
     }, input.render, op === "refresh" ? (next) => {
+      if (input.signal?.aborted) return fail("unavailable", "The refresh request was cancelled before data commit; no data was saved.");
       const claim = next.refresh?.claim;
       return claim !== undefined && claim.runId === input.runId && Date.parse(claim.until) > this.#now()
         ? undefined

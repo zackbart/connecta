@@ -39,7 +39,6 @@ import {
   DEFAULT_PROBE_TIMEOUT_MS,
   normalizeTimeoutMs,
 } from "./timeout.js";
-import { isExplicitlyReadOnly, type ApprovalPolicy } from "./tool-safety.js";
 import { RESULT_TTL_SECONDS, resultKeys } from "./storage/keys.js";
 
 export {
@@ -606,8 +605,6 @@ export function createMetaTools(
     requestSignal?: AbortSignal | undefined;
     /** Runtime-owned tail for stale catalog refreshes. */
     defer?: DeferredWork | undefined;
-    /** Config approval exemptions (#566), shown on discovery rows. */
-    approval?: ApprovalPolicy | undefined;
   } = {},
 ) {
   // Already normalized and warned about at registry construction.
@@ -628,7 +625,6 @@ export function createMetaTools(
     concurrency: discoveryConcurrency,
     defer: opts.defer,
     requestSignal: opts.requestSignal,
-    approval: opts.approval,
     // searchRoute keeps its top-level default. In-program callers use a
     // separate CatalogService configured for connecta.search.
   });
@@ -658,7 +654,6 @@ export function createMetaTools(
   async function runCall(
     call: CallArgs,
     source: ActivityCallSource,
-    options: { allowDestructive?: boolean } = {},
   ): Promise<RunCallOutcome> {
     const timeoutMs = normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs;
     const outcome = await invocation.invoke<ProcessedCallResult>(
@@ -666,9 +661,6 @@ export function createMetaTools(
       call.args ?? {},
       {
         source,
-        ...(options.allowDestructive !== undefined
-          ? { allowDestructive: options.allowDestructive }
-          : {}),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
         ...(opts.requestSignal !== undefined
           ? { requestSignal: opts.requestSignal }
@@ -686,7 +678,7 @@ export function createMetaTools(
             globalCap,
           );
           const results: ResultStash = {
-            write: !isExplicitlyReadOnly(resolved.definition),
+            write: resolved.definition.classification !== "read",
             cap,
             set: (id, value, ttlSeconds) => registry.stashResult(id, value, ttlSeconds),
             // The catalog entry, never `toolName`: a record names a tool
@@ -864,7 +856,7 @@ export function createMetaTools(
       // `reason` is read by the host's approval view and stops there — runCall
       // forwards only the call arguments, so it never reaches the connector.
       return (
-        await runCall(args, "call_destructive_tool", { allowDestructive: true })
+        await runCall(args, "call_destructive_tool")
       ).toolResult;
     },
 
@@ -1224,7 +1216,7 @@ export function registerMetaTools(
     oauthConnectUnavailable?: string | undefined;
     requestSignal?: AbortSignal | undefined;
     defer?: DeferredWork | undefined;
-    approval?: ApprovalPolicy | undefined;
+
   },
 ): void {
   const mt = createMetaTools(registry, ctx.baseUrl, {
@@ -1238,7 +1230,6 @@ export function registerMetaTools(
     oauthConnectUnavailable: ctx.oauthConnectUnavailable,
     requestSignal: ctx.requestSignal,
     defer: ctx.defer,
-    approval: ctx.approval,
   });
 
   server.registerTool(

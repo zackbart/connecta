@@ -1,13 +1,5 @@
-// The writes a program may send: config-exempt ones (#566), and nothing else.
-//
-// Every other write a program attempts is refused
-// `destructive_tool_requires_approval` before it is validated or sent (E4),
-// so the host's prompt on `call_destructive_tool` stays the only approval.
-// An exempt write is still a write, though, and it gets what a write needs:
-// its own budget, a dispatch the run waits for rather than aborts, and a
-// result that never hides a write whose outcome is unknown.
-//
-// Web-API only, like everything reachable from the root entry.
+// Budget and outcome accounting for writes dispatched by trusted programs.
+// Await each dispatched write once; never conceal an unknown outcome.
 
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { Effect } from "effect";
@@ -86,14 +78,14 @@ export function writeStateOf(outcome: InvocationOutcome<unknown>): WriteState {
 type WriteCounts = { succeeded: number; failed: number; unknown: number };
 
 /**
- * The exempt writes one program sends. The play closes this when the
+ * The trusted-pool writes one program sends. The play closes this when the
  * program settles — a write that reaches the gate after is not sent — and
  * drains what is on the wire before the run's scope aborts it, so the write
  * finishes and its activity says how it did. The result never hides a write
  * whose outcome is unknown, and a program that fails after writing reports
  * the counts.
  */
-export class ExemptWrites {
+export class ProgramWrites {
   private closed = false;
   private readonly inFlight = new Set<Promise<void>>();
   private readonly states: WriteState[] = [];

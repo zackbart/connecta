@@ -1,3 +1,4 @@
+import { classifyTool } from "../src/tool-safety.js";
 import { describe, expect, it, vi } from "vitest";
 import { CatalogService } from "../src/catalog-service.js";
 import { InvocationService } from "../src/invocation.js";
@@ -8,7 +9,7 @@ import { makeRegistry, required } from "./helpers.js";
 const BASE = "https://connecta.test";
 
 function shapeTool(overrides: Partial<ToolDef> = {}): ToolDef {
-  return {
+  const tool = {
     name: "list_issues",
     description: "List issues",
     inputSchema: {
@@ -18,6 +19,7 @@ function shapeTool(overrides: Partial<ToolDef> = {}): ToolDef {
     annotations: { readOnlyHint: true },
     ...overrides,
   };
+  return { ...tool, classification: classifyTool(tool) };
 }
 
 function shapeConnector(tool: ToolDef, values: unknown[]): Connector {

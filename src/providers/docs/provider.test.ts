@@ -7,9 +7,11 @@ import { Validator } from "@cfworker/json-schema";
 import { attachCaller } from "../../connector-caller.js";
 import { DOCS_API_BASE_URL, DOCS_SCOPES, docs } from "./index.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { isExplicitlyReadOnly } from "../../tool-safety.js";
+import { classifyTool } from "../../tool-safety.js";
 import { silentLogger } from "../../../test/helpers.js";
 import type { AuthenticatedIdentity, Connector, ConnectorContext, ConnectorUsageGuide } from "../../types.js";
+
+const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
@@ -258,7 +260,7 @@ describe("docs() identity and surface (H1, H14)", () => {
     const connector = connection();
     const tools = await connector.listTools(context());
     const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations]));
-    expect(tools.filter((tool) => isExplicitlyReadOnly(tool)).map((tool) => tool.name)).toEqual(["get_document"]);
+    expect(tools.filter((tool) => isRead(tool)).map((tool) => tool.name)).toEqual(["get_document"]);
     expect(byName["get_document"]).toEqual({ readOnlyHint: true });
     for (const additive of ["create_document", "append_text", "insert_text"]) {
       expect(byName[additive], additive).toEqual({ readOnlyHint: false, destructiveHint: false });
@@ -266,8 +268,8 @@ describe("docs() identity and surface (H1, H14)", () => {
     for (const destructive of ["replace_all_text", "batch_update_document"]) {
       expect(byName[destructive], destructive).toEqual({ readOnlyHint: false, destructiveHint: true });
     }
-    // Never self-exempt; no operator slot and no OAuth: the key is deployment config.
-    expect(connector.approval).toBeUndefined();
+    // No operator slot and no OAuth: the key is deployment config.
+    expect(connector).not.toHaveProperty("approval");
     expect(connector.credential).toBeUndefined();
     expect(connector.startAuth).toBeUndefined();
   });

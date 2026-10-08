@@ -54,9 +54,9 @@ may be missing. Read the currency from `get_account_summary`.
 ## Writes and the hatches
 
 - Every write, `add_person`, `assign_tag`, and `record_check_in`
-  included, is a `call_destructive_tool` call unless the deployment exempts
-  it in `execute.approval`; a program inside `execute_code` is refused
-  the rest. Those three only add, and `add_person` never deduplicates.
+  included, uses `call_destructive_tool` in a read-only pool. A trusted
+  pool also permits writes inside `execute_code`; the host controls
+  approval for the program. Those three only add, and `add_person` never deduplicates.
 - `update_person` field values: text, date (M/D/YYYY), or option id in
   `response`; email, phone, address, and family_role values in `details`.
 - Every Breeze call is a GET, writes included, so the hatches split by
