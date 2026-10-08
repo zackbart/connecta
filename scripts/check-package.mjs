@@ -219,14 +219,14 @@ try {
   // one (scripts/prune-declarations.mjs). Packed, it means pruning stopped.
   if (paths.has("dist/operator-ui/generated.d.ts")) {
     throw new Error(
-      "Packed artifact ships dist/operator-ui/generated.d.ts; the build " +
+      "Packed package ships dist/operator-ui/generated.d.ts; the build " +
         "should have pruned it as unreachable",
     );
   }
 
   for (const excluded of ["AGENTS.md", "CLAUDE.md", "PRINCIPLES.md"]) {
     if (paths.has(excluded)) {
-      throw new Error(`Packed artifact ships repository-only ${excluded}`);
+      throw new Error(`Packed package ships repository-only ${excluded}`);
     }
   }
 
@@ -263,18 +263,15 @@ try {
       `dist/providers/${name}/index.js`,
       `dist/providers/${name}/index.d.ts`,
     ]),
-    "dist/artifacts.js",
-    "dist/artifacts.d.ts",
     "dist/d1.js",
     "dist/d1.d.ts",
     "dist/sqlite.js",
     "dist/sqlite.d.ts",
     "dist/storage/sql.js",
     "dist/storage/keys.js",
-    "examples/worker/src/r2-artifact-blobs.ts",
   ]) {
     if (!paths.has(required)) {
-      throw new Error(`Packed artifact is missing ${required}`);
+      throw new Error(`Packed package is missing ${required}`);
     }
   }
   for (const path of paths) {
@@ -288,7 +285,7 @@ try {
       /(?:^|\/)(?:fixtures|provider\.test|provider\.node\.test)\.(?:js|d\.ts)$/.test(path) ||
       path.endsWith("provider-smoke.generated.mjs")
     ) {
-      throw new Error(`Source-only artifact leaked into the package: ${path}`);
+      throw new Error(`Source-only file leaked into the package: ${path}`);
     }
     // The hero image is 230 KB of README decoration. npmjs.com resolves the
     // README's relative image path against the repository, so the package page
@@ -306,7 +303,7 @@ try {
       throw new Error(`Redundant deployment scaffold leaked into ${path}`);
     }
     // A Cloudflare-named connector or storage path fails anywhere in the
-    // artifact, `dist/` and `examples/` alike (#377). The supported platform
+    // package, `dist/` and `examples/` alike (#377). The supported platform
     // storage is the explicit `/d1` and `/sqlite` subpaths; Workers KV is no
     // longer supported, so no KV adapter may grow back under either tree.
     if (
@@ -432,23 +429,7 @@ try {
 } finally {
   globalThis.fetch = originalFetch;
 }
-const artifactsModule = await import("@zackbart/connecta/artifacts");
-if (typeof artifactsModule.kvArtifactStore !== "function") {
-  throw new Error("missing kvArtifactStore");
-}
-const artifactsSlot = artifactsModule.artifacts({
-  store: artifactsModule.kvArtifactStore(core.memoryStorage()),
-});
-if (artifactsSlot.connector?.id !== "artifacts") {
-  throw new Error("artifacts() did not return the artifacts connector");
-}
-if (!artifactsModule.validateArtifact({ kind: "markdown", source: "# smoke" }).ok) {
-  throw new Error("packed validateArtifact refused a valid page");
-}
 for (const name of [
-  "kvArtifactStore",
-  "validateArtifact",
-  "artifacts",
   "clerkAuth",
   "cloudflareApi",
   "cloudflareKvStorage",
@@ -673,7 +654,7 @@ try {
       "const retiredStale: ConnectaDiscoveryConfig = { staleCatalogSeconds: 1 };",
       "void retiredPersistence; void retiredStale;",
       "const calls: ConnectaCallsConfig = { defaultTimeoutMs: 1, maxResultBytes: 1 };",
-      "const config: ConnectaConfig = { connectors: [], executor, discovery, calls, vault: undefined, activity: undefined, ui: undefined, artifacts: undefined };",
+      "const config: ConnectaConfig = { connectors: [], executor, discovery, calls, vault: undefined, activity: undefined, ui: undefined };",
       "// @ts-expect-error executor is required",
       "const missing: ConnectaConfig = { connectors: [] };",
       "// @ts-expect-error unknown nested option",
@@ -793,7 +774,6 @@ try {
     PUBLIC_URL: "",
     CONNECTA_CREDENTIAL_KEY: "",
     CONNECTA_ACTIVITY: "",
-    CONNECTA_ARTIFACTS: "",
     PORT: String(port),
   };
   const provisionedToken = (output) => {

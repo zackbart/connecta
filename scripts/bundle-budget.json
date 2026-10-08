@@ -136,7 +136,6 @@
       "baselineGzip": 35698,
       "maxGzip": 95698
     },
-    "./artifacts": {
       "baselineGzip": 11247,
       "maxGzip": 71247
     },
