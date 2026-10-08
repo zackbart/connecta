@@ -406,7 +406,7 @@ export function downstreamSkillUri(connectorId: string, uri: string): string {
 }
 
 function validateEntry(entry: ConnectorSkill): void {
-  if (!entry || typeof entry.uri !== "string" || typeof entry.frontmatter !== "object" || !entry.frontmatter || Array.isArray(entry.frontmatter) ||
+  if (!entry || typeof entry.uri !== "string" || entry.uri.length > 32_768 || typeof entry.frontmatter !== "object" || !entry.frontmatter || Array.isArray(entry.frontmatter) ||
     typeof entry.frontmatter.name !== "string" || !validSkillName(entry.frontmatter.name) || typeof entry.frontmatter.description !== "string" || !entry.frontmatter.description || entry.frontmatter.description.length > 1024 ||
     (entry.resources !== "dynamic" && !Array.isArray(entry.resources))) {
     throw new ConnectorCallError("unavailable", "Downstream skill entry is invalid.");
