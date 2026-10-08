@@ -570,6 +570,8 @@ export interface ConnectorToolDescription {
 
 /** What `Connector.describe()` reports. Every field is optional but `source`. */
 export interface ConnectorDescription {
+  /** Construction-time presence for described fields, keyed by relative dot path. Never option values. */
+  optionSources?: Readonly<Record<string, "default" | "config">>;
   source: {
     kind: "remote-mcp" | "api" | "builtin" | "custom";
     /** The maintained provider or built-in module that built the connector. */

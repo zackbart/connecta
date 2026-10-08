@@ -995,7 +995,10 @@ source. The response has `schemaVersion: 1`, `config`, `configSources`, `live`, 
 visible connectors, granted tools, classification overrides, and admitted
 pools. Pool tools are the intersection with the caller's identity grants.
 `configSources` labels each serialized leaf as `default` or `config`, based on
-option presence rather than equality with the default. Its paths use connector
+option presence rather than equality with the default. Factory descriptions carry
+relative `optionSources` paths so resolved module and transport defaults retain
+their provenance. The snapshot copies only resolved values; the UI consumes
+these presence facts separately. Its paths use connector
 ids and pool names and are filtered after disclosure; hidden values leave no
 provenance keys. It contains no source code or credential material.
 Every response is private, `no-store` JSON. Only GET is allowed, with the

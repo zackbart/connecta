@@ -362,9 +362,10 @@ export function accessTokens(storage: KVStorage, options: { maxActive?: number }
   options = assertKnownOptions(options, "accessTokens()", ACCESS_TOKENS_OPTIONS);
   const manager = new AccessTokenManager(storage, options);
   const maxActive = options.maxActive ?? DEFAULT_MAX_ACTIVE;
+  const optionSources = Object.freeze({ maxActive: options.maxActive === undefined ? "default" as const : "config" as const });
   return {
     auth: manager.auth,
     handle: context => routeAccessTokens(context, manager),
-    describe: () => ({ maxActive }),
+    describe: () => ({ maxActive, optionSources }),
   };
 }

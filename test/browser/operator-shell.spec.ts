@@ -60,10 +60,11 @@ async function openShell(page: Page, scheme = "light", clerk = false) {
 test("operator shell admits ambient Access without sending a stored token", async ({ page }) => {
   await page.addInitScript("localStorage.setItem('connecta:token', 'stale-token');");
   const dataRequest = page.waitForRequest(request => new URL(request.url()).pathname === "/ui/data");
-  await page.goto(`${origin}/?access`);
+  await page.goto(`${origin}/access?access`);
   const request = await dataRequest;
   expect(request.headers()["authorization"]).toBeUndefined();
-  await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Access", exact: true })).toBeVisible();
+  await expect(page.locator("#inboundHeading + .rows")).toContainText("cloudflare-access");
   await expect(page.getByText("Checking your session…")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toHaveCount(0);
 });

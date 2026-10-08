@@ -105,6 +105,11 @@ export function artifacts(options: ArtifactsOptions): RefreshableArtifacts {
     theme: () => theme,
     ...(options.renderCheck ? { renderCheck: options.renderCheck } : {}),
   });
+  const optionSources = Object.freeze(Object.fromEntries([
+    ["renderCheck", options.renderCheck === undefined ? "default" : "config"],
+    ...Object.keys(allowlist).map(key => [`allowlist.${key}`, options.allowlist?.[key as keyof ArtifactAllowlist] === undefined ? "default" : "config"]),
+    ...Object.keys(limits).map(key => [`limits.${key}`, options.limits?.[key as keyof ArtifactLimits] === undefined ? "default" : "config"]),
+  ] as Array<[string, "default" | "config"]>));
   return Object.freeze({
     connector,
     handle: artifactRoutes({ operations, allowlist }),
@@ -115,6 +120,7 @@ export function artifacts(options: ArtifactsOptions): RefreshableArtifacts {
     refresh: (id: string, by: import("./types.js").ArtifactActor) => refresh.run(id, { manual: by }),
     runDue: () => refresh.runDue(),
     describe: () => ({
+      optionSources,
       allowlist: {
         scripts: [...allowlist.scripts],
         styles: [...allowlist.styles],

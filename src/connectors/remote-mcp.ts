@@ -2066,11 +2066,21 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           : { mode: "none" };
   const endpoint = describedEndpoint(opts.url);
 
+  const optionSources = Object.freeze({
+    "source.kind": "default" as const,
+    "auth.mode": opts.auth === undefined ? "default" as const : "config" as const,
+    "auth.header": credentialAuth?.header === undefined ? "default" as const : "config" as const,
+    "auth.scheme": credentialAuth?.scheme === undefined ? "default" as const : "config" as const,
+    "credential.label": credentialAuth?.credential === undefined ? "default" as const : "config" as const,
+    ...Object.fromEntries(["versionNegotiation", "redirects", "requireHttps"].map(key =>
+      [`transport.${key}`, opts[key as "versionNegotiation" | "redirects" | "requireHttps"] === undefined ? "default" : "config"] as const)),
+  });
   const connector: Connector = {
     id,
     ...(opts.title !== undefined ? { title: opts.title } : {}),
     kind: "mcp",
     describe: () => ({
+      optionSources,
       source: { kind: "remote-mcp" },
       ...(endpoint ? { endpoint } : {}),
       auth: authDescription,

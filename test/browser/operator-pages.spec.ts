@@ -98,6 +98,21 @@ for (const [path, heading, landmark] of [
   });
 }
 
+test("Access shows final inbound providers, pool trust and scoped members", async ({ page }) => {
+  await session(page); await page.goto(origin + "/access");
+  const providers = page.locator("#inboundHeading + .rows");
+  await expect(providers).toContainText("clerk");
+  await expect(providers).toContainText("access_token");
+  await expect(providers).not.toContainText("bearer");
+  const pool = page.locator(".pool-panel").filter({ has: page.getByRole("heading", { name: "support", exact: true }) });
+  await expect(pool).toContainText("read-only");
+  await expect(pool).toContainText("github.read");
+  await expect(pool).not.toContainText("github.write");
+  await expect(pool).toContainText(origin + "/mcp/support");
+  await expect(page.locator("#tokenCreateForm")).toBeVisible();
+  await clean(page);
+});
+
 test("needs-attention links and signed authorize_connector hand off to the Auth tab without starting OAuth", async ({ page }) => {
   await session(page); await page.goto(origin);
   await page.getByRole("link", { name: /Slack.*Authorization needed/ }).click();
