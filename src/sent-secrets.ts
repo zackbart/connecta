@@ -171,58 +171,77 @@ export class SentSecrets {
     const forms = [...this.values].map(secret => Array.from(encoder.encode(secret), byte => String.fromCharCode(byte)).join(""));
     const pattern = new RegExp(forms.sort((a, b) => b.length - a.length).map(literal).join("|"), "g");
     const redacted = binary.replace(pattern, REDACTED);
-    return redacted === binary ? value : btoa(redacted);
+    const encoded = redacted === binary ? value : btoa(redacted);
+    // A file's encoding can itself equal a credential. Withhold that file as
+    // a valid encoded placeholder, never insert prose into its base64 field.
+    if (this.text(encoded) === encoded) return encoded;
+    const withheld = btoa(REDACTED);
+    return this.text(withheld) === withheld ? withheld : "";
   }
 
-  /** Decode a matching view, retaining source spans so replacements stay JSON-safe.
-   * Two passes also cover an escaped diagnostic inside a serialized envelope.
-   * This avoids exponentially large regexes for vault-backed private keys. */
+  /** Decode bounded windows with source spans, including twice-escaped JSON.
+   * Scratch space follows credential length, never the whole skill file. */
   private escapedText(source: string): string {
-    let view = source;
-    let starts = Array.from({ length: source.length }, (_, i) => i);
-    let ends = starts.map((i) => i + 1);
-    const matches: { start: number; end: number }[] = [];
-    for (let pass = 0; pass < 2; pass++) {
-      const decoded: string[] = [];
-      const nextStarts: number[] = [];
-      const nextEnds: number[] = [];
-      let cursor = 0;
-      const copy = (end: number) => {
-        for (; cursor < end; cursor++) {
-          decoded.push(view[cursor]!);
-          nextStarts.push(starts[cursor]!);
-          nextEnds.push(ends[cursor]!);
+    const step = 65_536;
+    let longest = 0;
+    for (const value of this.values) longest = Math.max(longest, value.length);
+    // Each of two Unicode escape layers expands a code unit at most sixfold.
+    const overlap = 36 * longest + 12;
+    const output: string[] = [];
+    let copied = 0;
+    for (let offset = 0; offset < source.length;) {
+      let view = source.slice(offset, offset + step + overlap);
+      let starts: Uint32Array | undefined;
+      let ends: Uint32Array | undefined;
+      const matches: { start: number; end: number }[] = [];
+      for (let pass = 0; pass < 2 && view.includes("\\"); pass++) {
+        const parts: string[] = [];
+        const nextStarts = new Uint32Array(view.length);
+        const nextEnds = new Uint32Array(view.length);
+        let cursor = 0;
+        let length = 0;
+        const copy = (end: number) => {
+          if (cursor < end) parts.push(view.slice(cursor, end));
+          for (; cursor < end; cursor++, length++) {
+            nextStarts[length] = starts?.[cursor] ?? cursor;
+            nextEnds[length] = ends?.[cursor] ?? cursor + 1;
+          }
+        };
+        for (const match of view.matchAll(jsonEscape)) {
+          copy(match.index);
+          const code = match[0].slice(1);
+          parts.push(code.startsWith("u") ? String.fromCharCode(parseInt(code.slice(1), 16)) : shortEscape[code]!);
+          nextStarts[length] = starts?.[match.index] ?? match.index;
+          cursor = match.index + match[0].length;
+          nextEnds[length++] = ends?.[cursor - 1] ?? cursor;
         }
-      };
-      for (const match of view.matchAll(jsonEscape)) {
-        copy(match.index);
-        const code = match[0].slice(1);
-        decoded.push(code.startsWith("u") ? String.fromCharCode(parseInt(code.slice(1), 16)) : shortEscape[code]!);
-        nextStarts.push(starts[match.index]!);
-        cursor = match.index + match[0].length;
-        nextEnds.push(ends[cursor - 1]!);
+        if (cursor === 0) break;
+        copy(view.length);
+        view = parts.join("");
+        starts = nextStarts.subarray(0, length);
+        ends = nextEnds.subarray(0, length);
+        for (const match of view.matchAll(this.matcher!)) {
+          const start = starts[match.index]!;
+          if (match[0] !== REDACTED && start < step) matches.push({ start, end: ends[match.index + match[0].length - 1]! });
+        }
       }
-      if (cursor === 0) break;
-      copy(view.length);
-      view = decoded.join("");
-      starts = nextStarts;
-      ends = nextEnds;
-      for (const match of view.matchAll(this.matcher!)) {
-        if (match[0] !== REDACTED) matches.push({ start: starts[match.index]!, end: ends[match.index + match[0].length - 1]! });
+      matches.sort((a, b) => a.start - b.start || b.end - a.end);
+      let rewritten = "";
+      let cursor = 0;
+      for (let i = 0; i < matches.length; i++) {
+        const match = matches[i]!;
+        let end = match.end;
+        while (matches[i + 1] && matches[i + 1]!.start <= end) end = Math.max(end, matches[++i]!.end);
+        rewritten += source.slice(offset + cursor, offset + match.start) + REDACTED;
+        cursor = end;
       }
+      if (cursor) {
+        output.push(source.slice(copied, offset), rewritten);
+        copied = offset + cursor;
+      }
+      offset += Math.max(step, cursor);
     }
-    if (matches.length === 0) return source;
-    matches.sort((a, b) => a.start - b.start || b.end - a.end);
-    let result = "";
-    let cursor = 0;
-    for (let i = 0; i < matches.length; i++) {
-      const match = matches[i]!;
-      let end = match.end;
-      while (matches[i + 1] && matches[i + 1]!.start <= end) end = Math.max(end, matches[++i]!.end);
-      result += source.slice(cursor, match.start) + REDACTED;
-      cursor = end;
-    }
-    return result + source.slice(cursor);
+    return output.length ? output.join("") + source.slice(copied) : source;
   }
 
   /** Copy, including non-enumerable Error fields; never retain a raw cause. */
@@ -255,11 +274,12 @@ export class SentSecrets {
         // is not a safe way to expose a diagnostic to an agent.
         if (!("value" in descriptor)) { changed = true; continue; }
         const redactedKey = text(key);
+        const blob = key === "blob" && "uri" in item && typeof descriptor.value === "string";
         const field = key === "content" ? this.joinedContent(descriptor.value)
-          : key === "blob" && "uri" in item && typeof descriptor.value === "string" ? this.blob(descriptor.value) : descriptor.value;
+          : blob ? this.blob(descriptor.value as string) : descriptor.value;
         changed ||= field !== descriptor.value;
         Object.defineProperty(copy, redactedKey, {
-          ...descriptor, value: visit(field),
+          ...descriptor, value: blob ? field : visit(field),
           ...(redactedKey !== key ? { configurable: true } : {}),
         });
       }

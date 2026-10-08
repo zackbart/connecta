@@ -124,6 +124,16 @@ describe("call-scoped sent credentials", () => {
     expect(elapsed).toBeLessThan(1_000);
   });
 
+  it("INV-5 INV-8: finds twice-escaped credentials across bounded scanning windows", () => {
+    const token = 'boundary/"credential';
+    const secrets = new SentSecrets(); secrets.secret(token);
+    const escaped = token.split("").map(char => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`).join("");
+    for (const encoded of [escaped, JSON.stringify(escaped).slice(1, -1)]) {
+      const text = "\\u0000".repeat(10_920) + encoded + "\\u0000".repeat(20_000);
+      expect(secrets.text(text)).toBe("\\u0000".repeat(10_920) + "[redacted]" + "\\u0000".repeat(20_000));
+    }
+  });
+
   it("INV-5: custom connector errors are redacted before classification truncates their diagnostic", async () => {
     const storage = memoryStorage();
     const vault = new CredentialVault(storage, KEY);

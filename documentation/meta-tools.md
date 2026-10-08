@@ -283,7 +283,10 @@ with no partial cache. Known local guides remain readable during an outage.
 Downstream files are proxied byte-exact, including CRLF and binary supporting
 files, within 512 files and 16 MiB per skill. Catalog metadata is bounded to
 1,024 entries and 8 MiB. The existing request-scoped agent boundary redacts
-sent credential echoes. That is the sole exception to byte-exactness: digests
+sent credential echoes, including a credential in a binary file's wire
+encoding. Binary echoes remain valid base64; an encoding that itself echoes a
+credential is withheld as an encoded placeholder. That is the sole exception
+to byte-exactness: digests
 remain the downstream's originals, so a host's integrity check rejects altered
 content. Refreshing a manifest cannot make credential-bearing content safe to
 load. URI fields containing a sent credential are refused rather than repaired.

@@ -518,14 +518,17 @@ function serveMcp(
     // Both SDK transports serialize here. This also covers SDK-generated
     // JSON-RPC errors and allowed HTTP 4xx text, outside tool result shaping.
     if (!response.body) return response;
-    let body = await response.text();
+    const body = await response.text();
+    let text: string | undefined;
     if (response.headers.get("Content-Type")?.includes("application/json")) {
       // Structured redaction also joins text blocks before a secret split
       // across them can cross the serialization boundary.
-      try { body = JSON.stringify(redactAgentOutput(sentSecrets, JSON.parse(body))); }
+      try { text = JSON.stringify(redactAgentOutput(sentSecrets, JSON.parse(body))); }
       catch { /* Non-JSON diagnostics still pass through the text boundary. */ }
     }
-    const text = redactAgentOutput(sentSecrets, body);
+    // Parsed JSON already passes every string through the boundary. A second
+    // serialized pass would mistake a blob's encoding for credential bytes.
+    text ??= redactAgentOutput(sentSecrets, body);
     const headers = new Headers(response.headers);
     headers.delete("Content-Length");
     return new Response(text, { status: response.status, statusText: response.statusText, headers });

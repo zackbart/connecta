@@ -99,6 +99,41 @@ it("INV-5: preserves uncredentialed skill examples and redacts credentials insid
   await c.close();
 });
 
+it("INV-5 INV-8: keeps blob credential collisions validly encoded through HTTP serialization", async () => {
+  const file = "skill://vendor/review/reference.bin";
+  for (const secret of [btoa("abcdefgh"), "AAAAAAAA"]) {
+    const bytes = secret === "AAAAAAAA" ? "\u0000".repeat(12) : "abcdefgh";
+    const remote = downstream("remote", {
+      list: async ctx => [{ ...(await downstream().downstreamSkills!.list(ctx))[0]!, resources: [
+        { uri: URI, digest: DIGEST, size: TEXT.length }, { uri: file, digest: DIGEST, size: bytes.length },
+      ] }],
+      read: async (uri, ctx) => { sentSecretsFor(ctx).secret(secret); return [{ uri, blob: btoa(bytes) }]; },
+    });
+    const c = createTestConnecta({ connectors: [remote], logger: silentLogger });
+    try {
+      const read = await rpc(c, "resources/read", { uri: downstreamSkillUri("remote", file) });
+      expect(read.error).toBeUndefined();
+      expect(atob(read.result.contents[0].blob)).toBe("[redacted]");
+      expect(JSON.stringify(read)).not.toContain(secret);
+    } finally { await c.close(); }
+  }
+});
+
+it.each(["\u0000", "\\u0000"])("INV-5 INV-8: serves authenticated escaped skill bytes with bounded redaction scratch space %j", async padding => {
+  const secret = "bounded-skills-redaction-credential";
+  const text = TEXT + padding.repeat(1024 * 1024) + secret;
+  const remote = downstream("remote", {
+    list: async ctx => [{ ...(await downstream().downstreamSkills!.list(ctx))[0]!, resources: "dynamic" }],
+    read: async (uri, ctx) => { sentSecretsFor(ctx).secret(secret); return [{ uri, text }]; },
+  });
+  const c = createTestConnecta({ connectors: [remote], logger: silentLogger });
+  try {
+    const read = await rpc(c, "resources/read", { uri: downstreamSkillUri("remote", URI) });
+    expect(read.error).toBeUndefined();
+    expect(read.result.contents[0].text).toBe(TEXT + padding.repeat(1024 * 1024) + "[redacted]");
+  } finally { await c.close(); }
+}, 30_000);
+
 it("INV-4 INV-5: fetches personal downstream skills with each principal's credential partition", async () => {
   const storage = memoryStorage();
   const vault = new CredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(9))));
@@ -127,6 +162,15 @@ it("INV-8: rejects malformed, out-of-root and oversized manifests atomically", a
   for (const resources of [[], [{ uri: URI, digest: "wrong", size: 1 }], [{ uri: URI, digest: DIGEST, size: 16 * 1024 * 1024 + 1 }],
     [{ uri: URI, digest: DIGEST, size: 1 }, { uri: "skill://vendor/other/file", digest: DIGEST, size: 1 }]]) {
     const remote = downstream("remote", { list: async ctx => [{ ...(await downstream().downstreamSkills!.list(ctx))[0]!, resources }] });
+    await expect(new SkillsRegistry(makeRegistry([remote]), BASE).list()).rejects.toMatchObject({ code: "unavailable" });
+  }
+});
+
+it("INV-8: refuses invalid downstream Agent Skills frontmatter without rewriting it", async () => {
+  for (const frontmatter of [{ name: "with_underscore", description: "Description" },
+    { name: "-edge", description: "Description" }, { name: "double--hyphen", description: "Description" },
+    { name: "a".repeat(65), description: "Description" }, { name: "review", description: "x".repeat(1025) }]) {
+    const remote = downstream("remote", { list: async ctx => [{ ...(await downstream().downstreamSkills!.list(ctx))[0]!, frontmatter }] });
     await expect(new SkillsRegistry(makeRegistry([remote]), BASE).list()).rejects.toMatchObject({ code: "unavailable" });
   }
 });
