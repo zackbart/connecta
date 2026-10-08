@@ -72,6 +72,7 @@ export interface TrialResult {
     version: string | undefined;
     exitCode: number | null;
     timedOut: boolean;
+    aborted: boolean;
     resultSubtypes: string[];
     stderrTail: string;
     argv: string[];
@@ -272,6 +273,7 @@ async function runTrial(
         version: trace.agentVersion ?? trace.claudeCodeVersion,
         exitCode: run.exitCode,
         timedOut: run.timedOut,
+        aborted: run.aborted,
         resultSubtypes: trace.resultSubtypes,
         stderrTail: run.stderrTail,
         argv: run.argv,

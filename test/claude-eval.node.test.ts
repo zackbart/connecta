@@ -2,7 +2,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runClaude } from "../eval/agent/claude.js";
 import { parseTrace } from "../eval/agent/trace.js";
 import { infraError } from "../eval/agent/infra.js";
@@ -19,8 +19,10 @@ const config = JSON.parse(fs.readFileSync(value('--mcp-config'), 'utf8'));
 if (Object.keys(config.mcpServers).join(',') !== 'connecta' || value('--tools') !== '' ||
     value('--setting-sources') !== '' || !argv.includes('--strict-mcp-config') ||
     !argv.includes('--no-session-persistence') || value('--permission-mode') !== 'dontAsk' ||
-    value('--permission-prompts') !== 'none' || !fs.realpathSync(process.cwd()).startsWith(fs.realpathSync(process.env.HOME)) ||
-    !process.env.CLAUDE_CONFIG_DIR.startsWith(process.env.HOME) || process.env.OPENAI_API_KEY || process.env.CLAUDECODE) {
+    value('--permission-prompts') !== 'none' || fs.realpathSync(process.cwd()).startsWith(fs.realpathSync(process.env.HOME)) ||
+    !argv.includes('--safe-mode') || !argv.includes('--disable-slash-commands') || !argv.includes('--no-chrome') ||
+    process.env.HOME !== value('--expected-home') || process.env.CLAUDE_CONFIG_DIR || process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN ||
+    process.env.OPENAI_API_KEY || process.env.CLAUDECODE || process.env.CLAUDE_CODE_SIMPLE) {
   send({type:'result',subtype:'error',result:'isolation failed'}); process.exit(1);
 }
 send({type:'system',subtype:'init',model:mode === 'wrong-model' ? 'wrong-model' : model,
@@ -41,17 +43,24 @@ async function fixture(mode = "complete", options: { signal?: AbortSignal; timeo
   try {
     const script = join(dir, "claude.cjs");
     await writeFile(script, CLI);
-    return await runClaude({ model: "claude-haiku-4-5-20251001", mcpUrl: "http://127.0.0.1:1/mcp", token: "fake-secret",
+    return await runClaude({ model: "claude-sonnet-5-5", mcpUrl: "http://127.0.0.1:1/mcp", token: "fake-secret",
       allowedTools: ["authorize_connector", "call_destructive_tool", "call_tool", "execute_code", "search_tools", "skills"], deniedTools: [],
       timeoutMs: options.timeoutMs ?? 10_000, ...(options.signal ? { signal: options.signal } : {}),
       firstPrompt: "First", nextTurn: async n => options.followUp && n === 1 ? "Second" : undefined,
-      maxBudgetUsd: 0.1, testHost: { executable: process.execPath, args: [script, mode] } });
+      maxBudgetUsd: 0.1, testHost: { executable: process.execPath, args: [script, mode, "--expected-home", process.env.HOME!] } });
   } finally { await rm(dir, { recursive: true, force: true }); }
 }
 
 describe("Claude eval CLI", () => {
   it("isolates config and tools and preserves multi-turn answers, images, cumulative cost and usage", async () => {
-    const run = await fixture("complete", { followUp: true });
+    vi.stubEnv("ANTHROPIC_API_KEY", "fake-key-must-not-reach-child");
+    vi.stubEnv("ANTHROPIC_AUTH_TOKEN", "fake-token-must-not-reach-child");
+    vi.stubEnv("CLAUDE_CONFIG_DIR", "/fake-config-must-not-reach-child");
+    vi.stubEnv("CLAUDE_CODE_SIMPLE", "1");
+    vi.stubEnv("CLAUDECODE", "1");
+    let run;
+    try { run = await fixture("complete", { followUp: true }); }
+    finally { vi.unstubAllEnvs(); }
     const trace = parseTrace(run.events, run.turnStarts, ["First", "Second"]);
     expect(run.timedOut).toBe(false);
     expect(run.turnStarts).toHaveLength(2);

@@ -1,4 +1,4 @@
-/** Claude Code, with one isolated home and only the fake MCP server per trial. */
+/** Claude Code sign-in, with CLI isolation and only the fake MCP server per trial. */
 import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -28,16 +28,11 @@ interface ClaudeOptions extends Omit<CodexOptions, "testHost" | "effort"> {
 export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
   if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) throw new Error("Claude timeout must be positive");
   if (options.signal?.aborted) throw new Error("Claude trial aborted");
-  if (!options.testHost && !process.env.ANTHROPIC_API_KEY) {
-    throw new Error("Claude eval requires ANTHROPIC_API_KEY; it does not reuse user settings or subscription credentials");
-  }
   const root = await mkdtemp(join(tmpdir(), "connecta-eval-claude-"));
   const cwd = join(root, "empty-workspace");
-  const configHome = join(root, "claude-home");
   const configPath = join(root, "mcp.json");
   try {
     await mkdir(cwd);
-    await mkdir(configHome);
     await writeFile(configPath, JSON.stringify({ mcpServers: { connecta: {
       type: "http", url: options.mcpUrl, headers: { Authorization: `Bearer ${options.token}` },
     } } }), { mode: 0o600 });
@@ -45,6 +40,7 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
       ...(options.testHost?.args ?? []),
       "--print", "--verbose", "--input-format", "stream-json", "--output-format", "stream-json",
       "--model", options.model, "--tools", "", "--setting-sources", "",
+      "--safe-mode", "--disable-slash-commands", "--no-chrome",
       "--strict-mcp-config", "--mcp-config", configPath, "--no-session-persistence",
       "--permission-mode", "dontAsk", "--permission-prompts", "none",
       "--allowedTools", options.allowedTools.map(tool => `mcp__connecta__${tool}`).join(","),
@@ -55,8 +51,10 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
     const started = performance.now();
     const child = spawn(options.testHost?.executable ?? "claude", argv, {
       cwd, stdio: ["pipe", "pipe", "pipe"],
-      env: { PATH: process.env.PATH, HOME: root, CLAUDE_CONFIG_DIR: configHome, TZ: "UTC",
-        ...(options.testHost ? {} : { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY }),
+      // Preserve the owner's home/keychain login without reading credentials.
+      // Do not let inherited API keys, alternate providers, bare mode, or an
+      // enclosing Claude session override subscription auth or CLI isolation.
+      env: { PATH: process.env.PATH, HOME: process.env.HOME, TZ: "UTC",
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" },
     });
     const events: StreamEvent[] = [];

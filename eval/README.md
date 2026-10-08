@@ -19,16 +19,22 @@ file and the fake Connecta endpoint. Apps, web search, shell tools and subagents
 are disabled. An OpenAI API key in the environment alone is not sufficient;
 first sign the CLI in with the intended subscription or API account.
 
-Claude uses the `claude` CLI and `ANTHROPIC_API_KEY`. It defaults to
-`claude-opus-5-5`, `claude-sonnet-5-5`, and `claude-haiku-4-5-20251001`.
-Its empty temporary home and config directory load no user/project settings,
-plugins or external MCP servers. Built-in tools are disabled. The fake MCP
-allowlist runs with `dontAsk`; denied tools are disallowed and prompts are
-refused. Subscription credentials are not copied into that home.
+Claude uses the owner's signed-in `claude` CLI subscription login. The runner
+preserves the real home for login/keychain access without reading credentials.
+Each trial runs in an empty temporary workspace with `--safe-mode`,
+`--setting-sources ""`, `--disable-slash-commands`, `--no-chrome`, `--tools ""`,
+and `--strict-mcp-config --mcp-config <fake-only config>`. These flags disable
+CLAUDE.md, user/project/local settings, skills, plugins, hooks, built-in tools,
+and external MCP servers. Safe mode preserves authentication; bare mode does
+not and is unsuitable here. The fake MCP allowlist runs with `dontAsk`; denied
+tools are disallowed and prompts are refused. Child environments contain no
+`ANTHROPIC_API_KEY`, auth-token override, alternate provider config or enclosing
+Claude session flags, so an inherited API key cannot select API billing.
 
 Both runners require the exact six meta-tools, reject a different served model,
-record requested/served models and CLI versions, and remove temporary homes
-on exit. `get_result` and `resume_execution` are absent. Programs use
+record the same per-trial fields for requested/served models, CLI versions,
+exit/deadline/interruption status, tool inventories and invocation arguments.
+They remove temporary trial directories on exit. `get_result` and `resume_execution` are absent. Programs use
 `connecta.call(...).data`, `connecta.result`, `connecta.search`,
 `connecta.describe`, `connecta.skill`, and `connecta.emit`.
 

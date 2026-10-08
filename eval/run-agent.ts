@@ -5,15 +5,15 @@
  *   --models       comma-separated model ids; see eval/README.md for defaults
  *   --repeats      trials per task × model (default 3)
  *   --tasks        comma-separated task ids (default every active task)
- *   --concurrency  parallel trials (default 1)
+ *   --concurrency  parallel trials (default 3)
  *   --timeout-min  per-trial wall budget in minutes (default 8)
  *   --effort       Codex reasoning effort (default model setting)
  *   --out          result JSON path (default eval/results/agent-<time>.json)
  *   --report       also write an HTML report
  *   --baseline     previous result file for that report
  *
- * Codex uses its existing CLI sign-in; Claude requires ANTHROPIC_API_KEY. Each trial creates a separate Codex
- * home containing only its fake MCP endpoint. Completed trials are written
+ * Both runners use existing CLI sign-ins. Codex isolates its home; Claude
+ * isolates settings and tools with CLI flags. Only the fake MCP endpoint loads. Completed trials are written
  * atomically as they finish.
  */
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
@@ -57,7 +57,6 @@ if (!models.length) throw new Error("--models must name at least one model");
 const out = resolve(args.get("out") ?? join(ROOT, "eval", "results", `agent-${stamp()}.json`));
 const version = await (runner === "claude" ? claudeVersion() : codexVersion());
 if (version === "unavailable") throw new Error(`${runner} CLI is unavailable`);
-if (runner === "claude" && !process.env.ANTHROPIC_API_KEY) throw new Error("Claude eval requires ANTHROPIC_API_KEY");
 const file: AgentResultFile = {
   kind: "connecta-eval/agent", version: 1, meta: runMeta(), [runner === "claude" ? "claudeVersion" : "codexVersion"]: version,
   config: { runner, models, repeats, tasks: tasks.map(task => task.id),
