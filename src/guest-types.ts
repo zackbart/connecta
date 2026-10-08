@@ -7,6 +7,7 @@ export interface GuestApi {
   describe(args?: CatalogDescribeArgs): Promise<{ tools: CatalogDescription[] }>;
   call(address: string, args?: unknown, options?: { timeoutMs?: number }): Promise<GuestResult>;
   call(request: { address: string; args?: unknown; timeoutMs?: number }): Promise<GuestResult>;
+  read(uri: string): Promise<{ contents: Array<{ uri: string; mimeType?: string } & ({ text: string } | { blob: string })> }>;
   result(id: string, options?: { offset?: number; maxBytes?: number }): Promise<GuestResultPage>;
   skill(name: string): Promise<{ name: string; text: string; format: "text" }>;
   emit(block: GuestBlock): PromiseLike<void>;
