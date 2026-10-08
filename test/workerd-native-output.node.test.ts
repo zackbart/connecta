@@ -13,10 +13,13 @@ describe("workerd's native output", () => {
   it("INV-6: carries no planted downstream text while the sink suite runs in workerd", async () => {
     const root = fileURLToPath(new URL("..", import.meta.url));
     const vitest = fileURLToPath(new URL("../node_modules/vitest/vitest.mjs", import.meta.url));
+    // CI forces colour; plain output keeps the summary match literal.
+    const env: NodeJS.ProcessEnv = { ...process.env, CI: "1", NO_COLOR: "1" };
+    delete env.FORCE_COLOR;
     const { stdout, stderr } = await promisify(execFile)(
       process.execPath,
       [vitest, "run", "--project", "workers", "test/operator-sinks.test.ts"],
-      { cwd: root, timeout: 120_000, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, CI: "1" } },
+      { cwd: root, timeout: 120_000, maxBuffer: 16 * 1024 * 1024, env },
     );
     const output = `${stdout}\n${stderr}`;
     expect(output).toMatch(/Tests\s+\d+ passed/);
