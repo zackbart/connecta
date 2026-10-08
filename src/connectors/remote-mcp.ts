@@ -424,13 +424,59 @@ async function boundedSkillResponse(response: Response, limit: number, rpcId: un
   // embedded resource BOMs and strip only the SSE stream's initial BOM here.
   const decoder = new TextDecoder("utf-8", { ignoreBOM: true, fatal: false });
   let firstDecoded = true;
-  let frames = "";
+  let lineBuffer = "";
+  let scanned = 0;
+  let data: string[] = [];
+  const lineEnd = /[\r\n]/g;
+  const consume = (decoded: string, eof = false): string | undefined => {
+    lineBuffer += decoded;
+    while (true) {
+      lineEnd.lastIndex = scanned;
+      const ending = lineEnd.exec(lineBuffer);
+      if (!ending) { scanned = lineBuffer.length; return; }
+      // A CR split from its possible LF must wait for the next chunk.
+      if (lineBuffer[ending.index] === "\r" && ending.index + 1 === lineBuffer.length && !eof) {
+        scanned = ending.index;
+        return;
+      }
+      const width = lineBuffer[ending.index] === "\r" && lineBuffer[ending.index + 1] === "\n" ? 2 : 1;
+      const line = lineBuffer.slice(0, ending.index);
+      lineBuffer = lineBuffer.slice(ending.index + width);
+      scanned = 0;
+      if (line === "") {
+        const json = data.join("\n");
+        data = [];
+        if (!json) continue;
+        const message: unknown = JSON.parse(json);
+        if (skillObject(message) && message.id === rpcId && ("result" in message || "error" in message)) return json;
+      } else {
+        const colon = line.indexOf(":");
+        const field = colon === -1 ? line : line.slice(0, colon);
+        if (field === "data") data.push(colon === -1 ? "" : line.slice(colon + 1).replace(/^ /, ""));
+      }
+    }
+  };
+  const terminalResponse = async (json: string) => {
+    // The SDK's detached SSE consumer does not settle body-read errors. Hand
+    // it the bounded terminal answer and close a server-kept-open stream.
+    await reader.cancel().catch(() => {});
+    const headers = new Headers(response.headers);
+    headers.set("content-type", "application/json");
+    headers.delete("content-length");
+    return new Response(json, { status: response.status, statusText: response.statusText, headers });
+  };
   try {
     while (true) {
       if (signal?.aborted) throw signal.reason;
       const chunk = await reader.read();
       if (signal?.aborted) throw signal.reason;
-      if (chunk.done) break;
+      if (chunk.done) {
+        if (sse) {
+          const terminal = consume(decoder.decode(), true);
+          if (terminal !== undefined) return await terminalResponse(terminal);
+        }
+        break;
+      }
       bytes += chunk.value.byteLength;
       if (bytes > limit) throw exceeded();
       if (!sse) { chunks.push(chunk.value); continue; }
@@ -439,26 +485,8 @@ async function boundedSkillResponse(response: Response, limit: number, rpcId: un
         firstDecoded = false;
         if (decoded.startsWith("\uFEFF")) decoded = decoded.slice(1);
       }
-      frames += decoded;
-      let separator: RegExpExecArray | null;
-      while ((separator = /\r\n\r\n|\n\n|\r\r/.exec(frames)) !== null) {
-        const frame = frames.slice(0, separator.index);
-        frames = frames.slice(separator.index + separator[0].length);
-        const data = frame.split(/\r\n|\n|\r/).filter(line => line.startsWith("data:"))
-          .map(line => line.slice(5).replace(/^ /, "")).join("\n");
-        if (!data) continue;
-        const message: unknown = JSON.parse(data);
-        if (skillObject(message) && message.id === rpcId && ("result" in message || "error" in message)) {
-          // The SDK's detached SSE consumer does not settle body-read errors.
-          // Hand it the bounded terminal JSON-RPC answer without changing the
-          // resource strings, and close any server-kept-open response stream.
-          await reader.cancel().catch(() => {});
-          const headers = new Headers(response.headers);
-          headers.set("content-type", "application/json");
-          headers.delete("content-length");
-          return new Response(data, { status: response.status, statusText: response.statusText, headers });
-        }
-      }
+      const terminal = consume(decoded);
+      if (terminal !== undefined) return await terminalResponse(terminal);
     }
     if (sse) throw new ConnectorCallError("connector_call_failed", "Downstream Skills stream ended without a terminal RPC response.");
     let next = 0;
@@ -2263,6 +2291,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             { name: "connecta", version: CONNECTA_VERSION },
             {
               ...clientOptions,
+              ...(skillsEnabled ? { capabilities: { extensions: { [SKILLS_EXTENSION]: {} } } } : {}),
               listMaxPages: MAX_TOOL_PAGES,
               versionNegotiation: {
                 mode: opts.versionNegotiation ?? "auto",

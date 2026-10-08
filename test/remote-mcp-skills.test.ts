@@ -63,6 +63,19 @@ function fixture(
 }
 
 describe("remote MCP Skills transport", () => {
+  it("INV-10: declares Skills support to a downstream requiring mutual extension negotiation", async () => {
+    const f = fixture(rpc => {
+      const meta = rpc.params?._meta as Record<string, unknown>;
+      const capabilities = meta["io.modelcontextprotocol/clientCapabilities"] as { extensions?: Record<string, unknown> };
+      if (!capabilities.extensions?.[EXTENSION]) return Response.json({ jsonrpc: "2.0", id: rpc.id, error: { code: -32602, message: "Skills client declaration required" } });
+      return complete({ skills: [skill()] });
+    });
+    expect(await f.downstream.list(f.context())).toEqual([skill()]);
+    for (const { rpc } of f.requests) {
+      const meta = (rpc.params?._meta ?? {}) as Record<string, unknown>;
+      expect(meta["io.modelcontextprotocol/clientCapabilities"]).toMatchObject({ extensions: { [EXTENSION]: {} } });
+    }
+  });
   it("INV-11: exposes downstream Skills only for a boolean opt-in in the closed options", () => {
     expect(remoteMcp("remote", { url: "https://skills.test" })).not.toHaveProperty("downstreamSkills");
     expect(remoteMcp("remote", { url: "https://skills.test", skills: false })).not.toHaveProperty("downstreamSkills");
@@ -195,6 +208,17 @@ describe("remote MCP Skills transport", () => {
   it("INV-8: rejects an SSE response ending without a matching terminal result", async () => {
     const f = fixture(() => new Response(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: 999, result: complete({ skills: [skill()] }) })}\n\n`, { headers: { "content-type": "text/event-stream" } }));
     await expect(f.downstream.list(f.context())).rejects.toThrow();
+  });
+
+  it.each(["\r\n\r", "\r\n\n", "\n\r\n", "\r\r\n", "\n\r"])("INV-7 INV-8: accepts mixed SSE line endings across byte chunks %j", async ending => {
+    const f = fixture(rpc => {
+      const bytes = new TextEncoder().encode(`: heartbeat\r\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result: complete({ skills: [skill()] }) })}${ending}: tail\r\n`);
+      let offset = 0;
+      return new Response(new ReadableStream<Uint8Array>({
+        pull(controller) { if (offset < bytes.length) controller.enqueue(bytes.subarray(offset, ++offset)); else controller.close(); },
+      }), { headers: { "content-type": "text/event-stream" } });
+    });
+    expect(await f.downstream.list(f.context())).toEqual([skill()]);
   });
 
   it("INV-8: accepts 512 files and 16 MiB, refusing larger manifests and aggregate catalogs", async () => {

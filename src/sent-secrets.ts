@@ -170,7 +170,7 @@ export class SentSecrets {
     try { binary = atob(value); } catch { return this.text(value); }
     const forms = [...this.values].map(secret => Array.from(encoder.encode(secret), byte => String.fromCharCode(byte)).join(""));
     const pattern = new RegExp(forms.sort((a, b) => b.length - a.length).map(literal).join("|"), "g");
-    const redacted = binary.replace(pattern, REDACTED);
+    const redacted = this.text(binary.replace(pattern, REDACTED));
     const encoded = redacted === binary ? value : btoa(redacted);
     // A file's encoding can itself equal a credential. Withhold that file as
     // a valid encoded placeholder, never insert prose into its base64 field.

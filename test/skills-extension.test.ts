@@ -119,6 +119,26 @@ it("INV-5 INV-8: keeps blob credential collisions validly encoded through HTTP s
   }
 });
 
+it.each([1, 2])("INV-5: redacts credentials behind %i JSON escape layers in binary supporting files", async layers => {
+  const secret = "escaped-blob-skills-credential";
+  const escaped = secret.split("").map(char => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`).join("");
+  const bytes = layers === 1 ? `{"echo":"${escaped}"}` : JSON.stringify({ echo: escaped });
+  const file = "skill://vendor/review/reference.json";
+  const remote = downstream("remote", {
+    list: async ctx => [{ ...(await downstream().downstreamSkills!.list(ctx))[0]!, resources: [
+      { uri: URI, digest: DIGEST, size: TEXT.length }, { uri: file, digest: DIGEST, size: bytes.length },
+    ] }],
+    read: async (uri, ctx) => { sentSecretsFor(ctx).secret(secret); return [{ uri, blob: btoa(bytes) }]; },
+  });
+  const c = createTestConnecta({ connectors: [remote], logger: silentLogger });
+  try {
+    const read = await rpc(c, "resources/read", { uri: downstreamSkillUri("remote", file) });
+    const decoded = atob(read.result.contents[0].blob);
+    expect(JSON.parse(decoded).echo).toBe("[redacted]");
+    expect(decoded).not.toContain("\\u0065");
+  } finally { await c.close(); }
+});
+
 it.each(["\u0000", "\\u0000"])("INV-5 INV-8: serves authenticated escaped skill bytes with bounded redaction scratch space %j", async padding => {
   const secret = "bounded-skills-redaction-credential";
   const text = TEXT + padding.repeat(1024 * 1024) + secret;
