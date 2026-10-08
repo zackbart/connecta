@@ -137,7 +137,10 @@ export function activityBehaviorFacts(event: {
   const drift = event.kind === "catalog_drift" && change?.kind === "catalog_changed" &&
     activityCount(change.addedTools) !== undefined && activityCount(change.removedTools) !== undefined && activityCount(change.changedTools) !== undefined
     ? { kind: "catalog_changed" as const, addedTools: change.addedTools!, removedTools: change.removedTools!, changedTools: change.changedTools! } : undefined;
-  const pool = typeof event.pool === "string" && /^[a-z0-9_-]{1,64}(?![\s\S])/.test(event.pool) ? event.pool : undefined;
+  // Pool names come from matched deployment config, whose grammar has no size
+  // ceiling. Invalid stored scope stays withheld rather than becoming root scope.
+  const pool = event.pool === undefined || event.pool === null ? undefined
+    : typeof event.pool === "string" && /^[a-z0-9_-]+(?![\s\S])/.test(event.pool) ? event.pool : "<withheld>";
   return {
     ...(classification !== undefined ? { classification } : {}),
     ...(resultBytes !== undefined ? { resultBytes } : {}),
@@ -283,6 +286,7 @@ export type ActivityReadGate = (
 export interface CatalogDriftActivityContext {
   recordDrift?: typeof recordCatalogDriftActivity;
   recordChange?: typeof recordCatalogChangeActivity;
+  defer?: (promise: Promise<unknown>) => void;
   sink: ActivitySink;
   serverInfo: { name: string; version: string };
   clientInfo?: { name: string; version: string };

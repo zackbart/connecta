@@ -84,4 +84,21 @@ describe.skipIf(!db)("client activity in Workers D1", () => {
       expect(event).not.toHaveProperty("clientVersion");
     }
   });
+
+  it("INV-6: persists discrete catalog events and rejects invalid behavior facts in D1", async () => {
+    const database = required(db);
+    await database.prepare("DROP TABLE IF EXISTS tool_call_activity").run();
+    const activity = d1ActivityStore(database);
+    const row: ToolCallActivityEvent = {
+      schemaVersion: 1, id: crypto.randomUUID(), requestId: "refresh", occurredAt: new Date().toISOString(), actor: { kind: "system" },
+      connectorId: "dynamic", toolName: "<catalog>", address: "dynamic.<catalog>", source: "catalog_refresh", outcome: "success", durationMs: 0, attempts: 1,
+      serverName: "test", serverVersion: "1", kind: "catalog_drift", pool: "support", drift: { kind: "catalog_changed", addedTools: 1, removedTools: 2, changedTools: 3 },
+    };
+    await activity.record(row);
+    expect((await activity.list!({ limit: 1 })).events).toEqual([row]);
+    await database.prepare("UPDATE tool_call_activity SET drift_kind = ?, result_bytes = ?, classification = ?").bind("downstream-text", -1, "payload").run();
+    const invalid = (await activity.list!({ limit: 1 })).events[0];
+    for (const field of ["kind", "drift", "resultBytes", "classification"]) expect(invalid).not.toHaveProperty(field);
+  });
+
 });

@@ -1384,7 +1384,7 @@ describe("status UI", () => {
         interactiveOperator: true,
         kind: "oidc",
         activityActorNamespace: "https://identity.example",
-        activityActorLabel: vi.fn(() => new Promise(() => {})),
+        activityActorLabel: vi.fn(() => new Promise<string | undefined>(() => {})),
         authorize: () => ({ ok: true, userId: "operator" }),
       };
       const event: ToolCallActivityEvent = {

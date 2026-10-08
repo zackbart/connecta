@@ -1,4 +1,4 @@
-import { activityRequest } from "./activity-request.js";
+import { activityRequest, bindActivityRequest } from "./activity-request.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { assertStaticToolNames, hasControlCharacters } from "./tool-name.js";
 import {
@@ -1600,7 +1600,7 @@ export class Registry implements RegistryView {
       const removedTools = [...before.keys()].filter(name => !after.has(name)).length;
       const changedTools = [...after].filter(([name, fact]) => before.has(name) && before.get(name) !== fact).length;
       if (addedTools || removedTools || changedTools) this.opts.catalogDriftActivity?.recordChange?.(
-        this.opts.catalogDriftActivity ? { ...this.opts.catalogDriftActivity, logger: this.opts.logger } : undefined,
+        this.opts.catalogDriftActivity ? { ...this.opts.catalogDriftActivity, logger: this.opts.logger, ...(ctx.defer ? { defer: ctx.defer } : {}) } : undefined,
         { connectorId: id, drift: { kind: "catalog_changed", addedTools, removedTools, changedTools } },
         activityRequest(ctx.requestScope),
       );
@@ -1853,6 +1853,8 @@ export class Registry implements RegistryView {
             );
           }
           const refreshScope = {};
+          const activity = activityRequest(requestScope);
+          if (activity) bindActivityRequest(refreshScope, activity);
           if (requestScope) sentSecretsForRequest(requestScope).include(sentSecretsForRequest(refreshScope));
           const ctx = this.contextFor(id, baseUrl, refreshScope, {
             signal,

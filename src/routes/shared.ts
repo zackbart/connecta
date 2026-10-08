@@ -251,10 +251,14 @@ export async function authorize(
         ? { namespace: actorNamespace ?? `connecta:auth:${provider.kind}`, id: subjectId }
         : principal;
       const interactive = Boolean(result.userId && provider.interactiveOperator);
+      // Principal-only API callers still need a stable typed actor for history
+      // ownership. Never collapse distinct personal partitions into { kind }.
+      const actorId = subjectId ?? principal?.id;
+      const recordNamespace = actorNamespace ?? (subjectId === undefined ? principal?.namespace : undefined);
       const actor: ActivityActor = {
         kind: provider.kind,
-        ...(subjectId ? { id: subjectId } : {}),
-        ...(subjectId && actorNamespace ? { namespace: actorNamespace } : {}),
+        ...(actorId ? { id: actorId } : {}),
+        ...(actorId && recordNamespace ? { namespace: recordNamespace } : {}),
       };
       const identity: AuthenticatedIdentity = {
         actor,

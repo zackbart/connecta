@@ -491,6 +491,7 @@ export type {
 } from "./types.js";
 export type {
   ActivityActor,
+  ActivityCatalogChange,
   ActivityCallSource,
   ActivityOutcome,
   ActivityPage,

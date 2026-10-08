@@ -112,7 +112,7 @@ export function uiData(
       }
       return Effect.gen(function* () {
         const status = yield* attempt(() =>
-          registry.statusFor(c.id, baseUrl, requestScope, { signal }),
+          registry.statusFor(c.id, baseUrl, requestScope, { signal, ...(options.defer ? { defer: options.defer } : {}) }),
         );
         if (status.state !== "ok" || signal.aborted) {
           return { status, tools: [], catalogFailed: false };
@@ -122,7 +122,7 @@ export function uiData(
         // A name outside MCP's tool-name grammar is withheld here as in every
         // record (INV-6), and so is the address built from it.
         return yield* attempt(async () =>
-          (await registry.getTools(c.id, baseUrl, requestScope, { signal })).map(
+          (await registry.getTools(c.id, baseUrl, requestScope, { signal, ...(options.defer ? { defer: options.defer } : {}) })).map(
             (t): UiTool => ({
               name: recordedToolName(t),
               address: `${c.id}.${recordedToolName(t)}`,

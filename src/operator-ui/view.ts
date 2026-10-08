@@ -971,10 +971,12 @@ export function filterActivity(
 /** Counts only. What the deployment ran, never what it sent or received. */
 export function activitySummary(events: UiActivityEvent[]): string {
   if (events.length === 0) return "";
-  const tools = new Set(events.map((event) => event.address)).size;
-  return `${events.length} loaded call${events.length === 1 ? "" : "s"} · ${tools} tool${
+  const calls = events.filter(event => event.kind !== "catalog_drift");
+  const changes = events.length - calls.length;
+  const tools = new Set(calls.map((event) => event.address)).size;
+  return `${calls.length} loaded call${calls.length === 1 ? "" : "s"} · ${tools} tool${
     tools === 1 ? "" : "s"
-  }`;
+  }${changes ? ` · ${changes} catalog change${changes === 1 ? "" : "s"}` : ""}`;
 }
 
 // A pause and an approval are neither success nor failure: each gets its own
@@ -1042,6 +1044,7 @@ function reasonLabel(code: string): string {
 
 /** The one-line detail under an address: where it ran, retries, and why it stalled. */
 export function activityDetail(event: UiActivityEvent): string {
+  if (event.kind === "catalog_drift") return "Catalog changed";
   const parts = [SOURCE_LABELS[event.source] ?? event.source];
   if (event.approval === "tool") parts.push("approved for the rest of the run");
   if (event.approval === "call") parts.push("approved for this call");

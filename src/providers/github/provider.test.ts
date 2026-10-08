@@ -558,7 +558,7 @@ describe("GitHub App provider", () => {
     const connector = connection({ app: { appId: "12345" } });
     expect(await connector.status?.(context({ credential: { get, getAll: async () => ({ privateKey: PRIVATE_KEY }) } }))).toMatchObject({ state: "ok" });
     const registry = makeRegistry([connector]);
-    expect(await registry.statusFor("github", "https://connecta.test")).toMatchObject({ state: "ok" });
+    expect(await registry.statusFor("github", "https://connecta.test")).toMatchObject({ state: "credential_required" });
     expect(get).not.toHaveBeenCalled(); expect(fixture.fetchStub).not.toHaveBeenCalled();
   });
 

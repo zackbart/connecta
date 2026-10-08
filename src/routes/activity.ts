@@ -1,4 +1,4 @@
-import { intersectAccess, type ConnectorAccess } from "../connector-access.js";
+import { activityEventVisible } from "./activity-disclosure.js";
 import { Duration, Effect } from "effect";
 import {
   activityBehaviorFacts,
@@ -9,7 +9,7 @@ import {
   type ActivityPage,
   type ActivityReadPage,
 } from "../activity.js";
-import { recordedToolName, failureRecord, logFailure } from "../operator-record.js";
+import { failureRecord, logFailure } from "../operator-record.js";
 import type { InboundAuth } from "../types.js";
 import {
   ACTOR_LABEL_BUDGET_MS,
@@ -90,13 +90,6 @@ function enrichActivityActorLabels(
   });
 }
 
-/** Historical disclosure uses the verdict at call time; old guarded rows fail closed. */
-export function activityToolVisible(authz: ConnectorAccess, event: ActivityPage["events"][number]): boolean {
-  const allowed = authz.toolAccess?.get(event.connectorId);
-  return recordedToolName({ name: event.toolName }) === event.toolName && (!allowed || allowed.has(event.toolName)) &&
-    (!authz.guardedToolAccess?.get(event.connectorId)?.has(event.toolName) || event.classification === "read");
-}
-
 function activityRead(context: RouteContext): Effect.Effect<Response, Answer> {
   const { url, opts } = context;
   return Effect.gen(function* () {
@@ -115,16 +108,7 @@ function activityRead(context: RouteContext): Effect.Effect<Response, Answer> {
     for (const [name, pool] of opts.pools) {
       if (yield* Effect.promise(async () => { try { return await pool.grant(authz.identity) === true; } catch { return false; } })) admittedPools.add(name);
     }
-    const visible = (event: ActivityPage["events"][number]) => {
-      const connector = registry.getConnector(event.connectorId);
-      if (!connector || event.pool !== undefined && !admittedPools.has(event.pool)) return false;
-      if (connector.authScope === "personal" && (event.actor.kind !== authz.actor.kind || event.actor.id !== authz.actor.id || event.actor.namespace !== authz.actor.namespace)) return false;
-      const access = event.pool ? intersectAccess(authz, opts.pools.get(event.pool)!.access) : authz;
-      if (access.connectorIds !== "all" && !access.connectorIds.includes(event.connectorId)) return false;
-      // Connector-wide counts reveal tools outside an address-only grant.
-      if (event.kind === "catalog_drift") return !access.toolAccess?.has(event.connectorId);
-      return activityToolVisible(access, event);
-    };
+    const visible = (event: ActivityPage["events"][number]) => activityEventVisible(context, authz, registry, admittedPools, event);
     const cursor = url.searchParams.get("cursor") ?? undefined;
     if (cursor && cursor.length > 500) return yield* refuse("invalid cursor", 400);
     const requestedLimit = Number(url.searchParams.get("limit") ?? "50");

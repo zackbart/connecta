@@ -1,3 +1,5 @@
+import { modernRequest } from "./fixtures/client-identity.js";
+import { readJsonRpc } from "./fixtures/http.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { activityHistory, recordToolActivity, recordCatalogChangeActivity, type ToolCallActivityEvent } from "../src/activity.js";
 import { AccessTokenManager, accessTokens } from "../src/access-tokens.js";
@@ -98,4 +100,67 @@ describe("Phase 4 behavior fixes", () => {
     expect(events[0]?.requestId).toMatch(/^[0-9a-f-]{36}$/);
     expect(JSON.stringify(events)).not.toMatch(/secret|removed"|added"/);
   });
+
+  it("INV-6 INV-7: a catalog change and its downstream call share the HTTP request and pool", async () => {
+    const events: ToolCallActivityEvent[] = [];
+    let description = "Initial catalog";
+    const c: Connector = { id: "dynamic", listTools: async () => [{ name: "read", description, annotations: { readOnlyHint: true } }], callTool: async () => ({ ok: true }) };
+    const deployment = app({ connectors: [c], logger: "silent", discovery: { catalogTtlSeconds: 0 }, pools: { support: { tools: ["dynamic"], grant: () => true } }, activity: activityHistory({ store: { record: e => { events.push(e); } } }) });
+    const call = async () => {
+      const request = modernRequest("tools/call", { name: "call_tool", arguments: { address: "dynamic.read" } });
+      const response = await readJsonRpc(await deployment.fetch(new Request(BASE + "/mcp/support", request)));
+      expect(response.result.isError).not.toBe(true);
+    };
+    await call();
+    description = "Changed catalog";
+    await call();
+    expect(events).toHaveLength(3);
+    expect(events[1]).toMatchObject({ kind: "catalog_drift", pool: "support", drift: { kind: "catalog_changed", addedTools: 0, removedTools: 0, changedTools: 1 } });
+    expect(events[1]?.requestId).toBe(events[2]?.requestId);
+    expect(events[0]?.requestId).not.toBe(events[2]?.requestId);
+    expect(events[1]?.actor).toEqual(events[2]?.actor);
+    expect(JSON.stringify(events)).not.toContain("Changed catalog");
+  });
+
+
+  it("INV-4 INV-6: principal-only API callers cannot read another principal's personal history or ownerless legacy rows", async () => {
+    const events: ToolCallActivityEvent[] = [];
+    const auth: InboundAuth = { kind: "api", authorize: request => ({ ok: true, principal: { namespace: "directory", id: request.headers.get("X-Principal") ?? "alice" } }) };
+    const deployment = app({ connectors: [{ ...connector("personal"), authScope: "personal" }], auth, logger: "silent", identity: { activityAccess: () => true }, activity: activityHistory({ store: { record: e => { events.push(e); }, list: async () => ({ events }) } }) });
+    const request = modernRequest("tools/call", { name: "call_tool", arguments: { address: "personal.read" } });
+    expect((await readJsonRpc(await deployment.fetch(request))).result.isError).not.toBe(true);
+    expect(events[0]?.actor).toEqual({ kind: "api", id: "alice", namespace: "directory" });
+    events.push(event("legacy", { connectorId: "personal", actor: { kind: "api" } }));
+    const read = async (principal: string) => await (await deployment.fetch(new Request(BASE + "/ui/api/activity", { headers: { "X-Principal": principal } }))).json() as { events: ToolCallActivityEvent[] };
+    expect((await read("bob")).events).toEqual([]);
+    expect((await read("alice")).events.map(e => e.id)).toEqual([events[0]!.id]);
+  });
+
+  it("INV-4 INV-6: keeps long configured pool names scoped through recording and disclosure", async () => {
+    const events: ToolCallActivityEvent[] = [];
+    const pool = "p".repeat(65);
+    const auth: InboundAuth = { kind: "api", authorize: request => ({ ok: true, principal: { namespace: "directory", id: request.headers.get("X-Principal") ?? "alice" } }) };
+    const deployment = app({ connectors: [connector("visible")], auth, logger: "silent", identity: { activityAccess: () => true }, pools: { [pool]: { tools: ["visible"], grant: identity => identity.principal?.id === "alice" } }, activity: activityHistory({ store: { record: e => { events.push(e); }, list: async () => ({ events }) } }) });
+    const request = modernRequest("tools/call", { name: "call_tool", arguments: { address: "visible.read" } });
+    expect((await readJsonRpc(await deployment.fetch(new Request(BASE + "/mcp/" + pool, request)))).result.isError).not.toBe(true);
+    expect(events[0]?.pool).toBe(pool);
+    const read = await deployment.fetch(new Request(BASE + "/ui/api/activity", { headers: { "X-Principal": "bob" } }));
+    expect((await read.json() as { events: ToolCallActivityEvent[] }).events).toEqual([]);
+  });
+
+  it.each(["/ui/api/config", "/ui/connectors/dynamic"])("INV-7: %s defers pending catalog activity writes through the Workers lifetime hook", async path => {
+    let description = "Initial";
+    let release!: () => void;
+    const writes: Promise<unknown>[] = [];
+    const c: Connector = { id: "dynamic", listTools: async () => [{ name: "read", description }], callTool: async () => null };
+    const deployment = app({ connectors: [c], logger: "silent", discovery: { catalogTtlSeconds: 0 }, activity: activityHistory({ store: { record: () => new Promise<void>(resolve => { release = resolve; }) } }) });
+    expect((await deployment.fetch(new Request(BASE + path))).status).toBe(200);
+    description = "Changed";
+    const response = await deployment.fetch(new Request(BASE + path), undefined, { waitUntil: pending => { writes.push(pending); } });
+    expect(response.status).toBe(200);
+    expect(writes.length).toBeGreaterThan(0);
+    expect(release).toBeTypeOf("function");
+    release(); await Promise.all(writes);
+  });
+
 });
