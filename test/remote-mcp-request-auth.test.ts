@@ -59,8 +59,8 @@ it("INV-11: request auth rejects personal ownership, callback/header mistakes an
 it("INV-1: exact hide mode filters explicit unlisted reads on fresh and persisted catalogs", async () => {
   const storage = memoryStorage(); const ctx = connectorContext(storage);
   const calls = vi.fn(async () => ({})); const source = [
-    { name: "listed", annotations: { readOnlyHint: true } },
-    { name: "unlisted", annotations: { readOnlyHint: true } },
+    { name: "listed", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+    { name: "unlisted", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
   ];
   const classify: ToolClassification = { unlisted: "hide", tools: { listed: "read" } };
   const connector: Connector = { id: "github", classification: classify, listTools: async () => source, callTool: calls };
@@ -68,7 +68,7 @@ it("INV-1: exact hide mode filters explicit unlisted reads on fresh and persiste
   expect((await first.getTools("github", "https://connecta.test")).map((tool) => tool.name)).toEqual(["listed"]);
   const failed = vi.fn(async () => { throw new Error("offline"); });
   const restarted = makeRegistry([{ ...connector, listTools: failed }], { storage });
-  expect((await restarted.getTools("github", "https://connecta.test")).map((tool) => tool.name)).toEqual(["listed"]);
+  await expect(restarted.getTools("github", "https://connecta.test")).rejects.toThrow("offline");
   const current = reviewedCatalog(classify, "github");
   const tools = await classifyCatalog(current, "github", source, ctx.logger);
   expect(tools.map((tool) => tool.name)).toEqual(["listed"]);
@@ -76,6 +76,19 @@ it("INV-1: exact hide mode filters explicit unlisted reads on fresh and persiste
   const remote = remoteMcp("github", { url: "https://api.githubcopilot.com/mcp/", classify, auth: { type: "request", token: requestAuth } });
   await expect(remote.callTool("unlisted", {}, ctx)).rejects.toMatchObject({ code: "invalid_args" });
   expect(requestAuth).not.toHaveBeenCalled();
+  const fixture = apiFixture();
+  fixture.respond(request => request.body?.method === "tools/list" ? Response.json({
+    jsonrpc: "2.0", id: request.body.id, result: { resultType: "complete", tools: source, ttlMs: 60_000, cacheScope: "private" },
+  }) : undefined);
+  const read = async () => {
+    const root = makeRegistry([remote], { storage }); const requestScope = {};
+    try { return await root.getTools("github", "https://connecta.test", requestScope); }
+    finally { await remote.closeScope?.(root.contextFor("github", "https://connecta.test", requestScope)); }
+  };
+  expect((await read()).map(tool => tool.name)).toEqual(["listed"]);
+  fixture.respond(request => request.body?.method === "tools/list" ? new Response(null, { status: 503 }) : undefined);
+  expect((await read()).map(tool => tool.name)).toEqual(["listed"]);
+  expect(fixture.requests.filter(request => request.body?.method === "tools/list")).toHaveLength(1);
 });
 
 it("INV-11: allowlist mode is validated and deep-frozen as public classification data", () => {

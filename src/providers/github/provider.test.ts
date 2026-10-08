@@ -14,7 +14,7 @@ import { InvocationService } from "../../invocation.js";
 import { buildSandboxProviders } from "../../execute.js";
 import { silentLogger } from "../../../test/helpers.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { responseCacheKeys } from "../../storage/keys.js";
+import { negotiationKeys, responseCacheKeys } from "../../storage/keys.js";
 
 function value(result: any): any { return result.structuredContent; }
 
@@ -115,10 +115,13 @@ describe("GitHub App provider", () => {
     now += 3_540_001;
     await connector.callTool("get_file_contents", args, context());
     expect(fixture.tokens).toHaveLength(3);
-    // SDK catalog bookkeeping is allowed; installation tokens remain memory-only.
-    expect(JSON.stringify([set.mock.calls, cas.mock.calls])).not.toContain(fixture.tokens[0]!.value);
-    expect(set.mock.calls.every(([key]) => key.startsWith(responseCacheKeys.family.prefixes[0]))).toBe(true);
-    expect(cas.mock.calls.every(([key]) => key.startsWith(responseCacheKeys.family.prefixes[0]))).toBe(true);
+    // Catalog and negotiation bookkeeping is allowed; tokens remain memory-only.
+    const persisted = JSON.stringify([set.mock.calls, cas.mock.calls]);
+    for (const token of [...fixture.tokens, ...fixture.resolverTokens]) expect(persisted).not.toContain(token.value);
+    expect(persisted).not.toContain(PRIVATE_KEY);
+    const prefixes = [...responseCacheKeys.family.prefixes, ...negotiationKeys.family.prefixes];
+    expect(set.mock.calls.every(([key]) => prefixes.some(prefix => key.startsWith(prefix)))).toBe(true);
+    expect(cas.mock.calls.every(([key]) => prefixes.some(prefix => key.startsWith(prefix)))).toBe(true);
   });
 
   it("INV-5: partitions tokens by vault key fingerprint and never describes app secrets", async () => {

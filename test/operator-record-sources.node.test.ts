@@ -104,9 +104,8 @@ describe("operator log calls", () => {
         problems.push(`src/${name}:${line}: logger method alias ${match[0].slice(0, 80)}`);
       }
     }
-    // Worker guest logging now calls its private captured console reference.
-    // This floor only checks that the scan ran; every matched call is checked above.
-    expect(calls).toBeGreaterThanOrEqual(48);
+    // Retired catalog refresh and bearer logs no longer contribute call sites.
+    expect(calls).toBeGreaterThanOrEqual(39);
     expect(problems).toEqual([]);
   });
 
