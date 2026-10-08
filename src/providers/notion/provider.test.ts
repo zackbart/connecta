@@ -1106,7 +1106,7 @@ describe("notion() error mapping", () => {
     });
     // auth_required would route the agent to authorize_connector, which cannot
     // grant a Notion capability or share a page.
-    expect(error.code).toBe("connector_call_failed");
+    expect(error.code).toBe("provider_permission_denied");
     expect(error.retryable).toBe(false);
     expect(error.message).toContain("capability");
     expect(error.message).toContain("Re-authorizing will not help");

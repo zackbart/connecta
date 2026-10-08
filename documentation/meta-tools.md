@@ -247,8 +247,11 @@ For object results, `structuredContent` is the canonical full-fidelity value and
 `content` carries the same complete value as compact JSON for clients that only
 consume text. Keeping both follows MCP's backwards-compatibility guidance;
 dropping the text copy waits on host-forwarding measurements showing supported
-clients do not need it. Plain-text guidance and errors stay text-only, and a
-downstream MCP tool's native content blocks pass through in MCP result mode.
+clients do not need it. Direct-call failures set `isError: true` and carry the
+same `{ ok: false, error, durationMs, attempts }` envelope in both forms, whether
+`resultMode` is omitted, `"mcp"`, or `"value"`. Plain-text guidance stays
+text-only. A downstream MCP tool's successful native content blocks pass through
+in MCP result mode.
 When no text block exists and `structuredContent` is present, Connecta appends a
 text block carrying its compact JSON and then applies the same content size
 guard, which preserves structured-only results including `null`, arrays, and

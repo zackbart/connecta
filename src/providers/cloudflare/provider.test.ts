@@ -1783,7 +1783,15 @@ describe("cloudflare() typed failures", () => {
     expect(error.code).toBe("invalid_args");
   });
 
-  caseOf("treats an insufficient-permission 403 as auth_required, not a retry", async () => {
+  caseOf("keeps a typed invalid-token 403 on credential recovery", async () => {
+    const error = await failure({
+      status: 403,
+      body: { success: false, errors: [{ code: 6111, message: "Invalid API Token" }], result: null },
+    });
+    expect(error).toMatchObject({ code: "auth_required", retryable: false });
+  });
+
+  caseOf("INV-6: treats an insufficient-permission 403 as provider_permission_denied", async () => {
     const error = await failure({
       status: 403,
       body: {
@@ -1792,7 +1800,7 @@ describe("cloudflare() typed failures", () => {
         result: null,
       },
     });
-    expect(error.code).toBe("auth_required");
+    expect(error.code).toBe("provider_permission_denied");
     expect(error.retryable).toBe(false);
     expect(error.message).toContain("permission");
   });

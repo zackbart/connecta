@@ -468,7 +468,7 @@ describe("ccb() typed failures (H11)", () => {
 
   it("maps a 403 to a non-retryable gap that re-authorizing cannot fix", async () => {
     const failed = await failing(json({ message: "Insufficient scope" }, {}, 403));
-    expect(failed).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failed).toMatchObject({ code: "provider_permission_denied", retryable: false });
     expect(failed.message).toContain("Insufficient scope");
     expect(failed.message).toContain("Re-authorizing alone will not fix it");
   });

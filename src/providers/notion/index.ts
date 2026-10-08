@@ -185,7 +185,7 @@ function notionFailure(
   }
   if (status === 403) {
     return new ConnectorCallError(
-      "connector_call_failed",
+      "provider_permission_denied",
       `${labelled} The token is valid but this integration is not allowed to perform this operation. An operator must enable the matching capability on the Notion integration (comment capabilities are off by default) or share the object with it. Re-authorizing will not help.`,
       { retryable: false },
     );

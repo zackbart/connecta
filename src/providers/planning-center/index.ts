@@ -445,7 +445,7 @@ function planningCenterFailure(
   }
   if (status === 403) {
     return new ConnectorCallError(
-      "connector_call_failed",
+      "provider_permission_denied",
       `${detail} The token's Planning Center user lacks permission for this product or record. Permissions belong to that user; an operator must raise them or use another user's token. Retrying will not help.`,
       { retryable: false },
     );

@@ -211,7 +211,7 @@ describe("Planning Center transport", () => {
 
   it.each([
     [401, "auth_required", false],
-    [403, "connector_call_failed", false],
+    [403, "provider_permission_denied", false],
     [404, "not_found", false],
     [422, "invalid_args", false],
     [500, "unavailable", true],

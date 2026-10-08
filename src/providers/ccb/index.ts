@@ -398,8 +398,8 @@ function ccbFailure(
   }
   if (status === 403) {
     return new ConnectorCallError(
-      "connector_call_failed",
-      `${detail} The grant lacks this endpoint's scope, or (Identity Auth) the signed-in person lacks the permission in CCB. Re-authorizing alone will not fix it.`,
+      "provider_permission_denied",
+      `${detail} The grant lacks this endpoint's scope, or (Identity Auth) the signed-in person lacks the permission in CCB. Ask the CCB administrator to grant this endpoint's scope or the signed-in person's permission. Re-authorizing alone will not fix it.`,
       { retryable: false },
     );
   }

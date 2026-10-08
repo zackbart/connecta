@@ -138,10 +138,16 @@ function vercelFailure(
       wait === undefined ? {} : { retryAfterMs: wait },
     );
   }
-  if (status === 401 || status === 403) {
+  if (status === 401) {
     return new ConnectorCallError(
       "auth_required",
       `${detail} The configured access token is invalid, expired, outside this team, or lacks the required scope. An operator must replace it or widen its Vercel scope.`,
+    );
+  }
+  if (status === 403) {
+    return new ConnectorCallError(
+      "provider_permission_denied",
+      `${detail} Vercel refused access to this team or resource. Ask the team administrator to grant access and an operator to widen the configured token's Vercel scope.`,
     );
   }
   if (status === 404) {

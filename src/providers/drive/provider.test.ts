@@ -660,7 +660,7 @@ describe("reading content", () => {
     const meta = metadata({ mimeType: "text/plain", size: "5" });
     route = (request) => meta(request) ?? GOOGLE_ERROR(403, "cannotDownloadAbusiveFile", "Flagged as abusive.");
     await expect(call(connection(), "get_file_content", { fileId: "f1" })).rejects.toMatchObject({
-      code: "connector_call_failed",
+      code: "provider_permission_denied",
     });
   });
 
@@ -803,7 +803,7 @@ describe("errors map to what the caller does next (H11)", () => {
   it("names the drive scope when the grant lacks it", async () => {
     route = () => GOOGLE_ERROR(403, "insufficientPermissions", "Insufficient Permission");
     const failure = await call(connection(), "search_files").catch((error) => error);
-    expect(failure.code).toBe("auth_required");
+    expect(failure.code).toBe("provider_permission_denied");
     expect(failure.message).toContain("https://www.googleapis.com/auth/drive");
   });
 

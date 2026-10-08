@@ -399,7 +399,7 @@ function classifyApiFailure(
   }
   if (reasons.has("insufficientPermissions") || reasons.has("ACCESS_TOKEN_SCOPE_INSUFFICIENT")) {
     return new ConnectorCallError(
-      "auth_required",
+      "provider_permission_denied",
       `${detail} The delegated token lacks a scope this call needs. The Admin console's domain-wide delegation entry must list exactly: ${scopes.join(",")}.`,
     );
   }
@@ -413,14 +413,14 @@ function classifyApiFailure(
   }
   if (reasons.has("domainPolicy")) {
     return new ConnectorCallError(
-      "connector_call_failed",
+      "provider_permission_denied",
       `${detail} A Workspace domain policy forbids this action for this account; only a Workspace administrator can change that.`,
       { retryable: false },
     );
   }
   if (reasons.has("insufficientFilePermissions") || reasons.has("forbidden")) {
     return new ConnectorCallError(
-      "connector_call_failed",
+      "provider_permission_denied",
       `${detail} This account does not have the permission on this item that the action needs — it may be shared view-only, or not shared with this user. Its owner can grant more.`,
       { retryable: false },
     );
@@ -440,8 +440,8 @@ function classifyApiFailure(
   }
   if (status === 403) {
     return new ConnectorCallError(
-      "connector_call_failed",
-      `${detail} Google refused the request; the account may lack access to this item, or a Workspace policy may block it. Google does not say which.`,
+      "provider_permission_denied",
+      `${detail} Google refused the request; the account may lack access to this item, or a Workspace policy may block it. Google does not say which. Ask the item owner to grant access or a Workspace administrator to review the policy.`,
       { retryable: false },
     );
   }

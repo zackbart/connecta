@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { CatalogService } from "../src/catalog-service.js";
 import { ConnectorCallError } from "../src/errors.js";
+import { createMetaTools } from "../src/meta-tools.js";
 import { InvocationService } from "../src/invocation.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import { connectorWith } from "./fixtures/connectors.js";
@@ -9,6 +10,52 @@ import { activitySink, createTestConnecta, makeRegistry, silentLogger } from "./
 const BASE = "https://connecta.test";
 
 describe("repairing error envelopes", () => {
+  describe.each([undefined, "mcp", "value"] as const)("direct-call result mode %s", (resultMode) => {
+    it("INV-4 INV-6 INV-9: preserves every repair envelope in structured content and agent text", async () => {
+      const warn = vi.fn();
+      const target = activitySink();
+      const create = vi.fn(async () => { throw new ConnectorCallError("timeout", "downstream-text-sentinel"); });
+      const registry = makeRegistry([
+        connectorWith({ id: "args", kind: "mcp", tools: [{
+          name: "read", annotations: { readOnlyHint: true },
+          inputSchema: { type: "object", properties: { mode: { type: "string", enum: ["fast", "slow"] }, count: { type: "integer", minimum: 1 } }, required: ["mode", "count"], additionalProperties: false },
+        }] }),
+        ...(["credential", "oauth", "permission"] as const).map((id) => connectorWith({
+          id, kind: id === "oauth" ? "mcp" : "api",
+          tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+          ...(id === "oauth" ? { startAuth: async () => ({ state: "auth_required" as const }) } : {}),
+          call: async () => { throw new ConnectorCallError(id === "permission" ? "provider_permission_denied" : "auth_required", "downstream-text-sentinel"); },
+        })),
+        connectorWith({ id: "notes", kind: "api", tools: [{ name: "create", annotations: { readOnlyHint: false } }], call: create }),
+      ], { logger: { ...silentLogger, warn } });
+      const mt = createMetaTools(registry, BASE, { activity: target.activity });
+      const mode = resultMode === undefined ? {} : { resultMode };
+      const cases = [
+        [await mt.callTool({ address: "args.read", args: { mode: "wrong", count: "argument-sentinel" }, ...mode }), {
+          code: "invalid_args", retryable: false,
+          repair: { acceptedKeys: ["mode", "count"], example: { mode: "fast", count: 1 }, issues: expect.arrayContaining([expect.objectContaining({ enumValues: ["fast", "slow"] }), expect.objectContaining({ receivedType: "string", bounds: { minimum: 1 } })]) },
+        }],
+        [await mt.callTool({ address: "credential.read", ...mode }), { code: "auth_required", retryable: false, recovery: "unavailable", nextAction: { tool: "authorize_connector", arguments: { connector: "credential" } } }],
+        [await mt.callTool({ address: "oauth.read", ...mode }), { code: "downstream_oauth_required", retryable: false, recovery: "oauth", nextAction: { tool: "authorize_connector", arguments: { connector: "oauth" } } }],
+        [await mt.callTool({ address: "permission.read", ...mode }), { code: "provider_permission_denied", retryable: false, retry: expect.stringContaining("administrator") }],
+        [await mt.callTool({ address: "missing.read", ...mode }), { code: "unknown_address", retryable: false, configuredConnectors: ["args", "credential", "oauth", "permission", "notes"] }],
+        [await mt.callDestructiveTool({ address: "notes.create", args: { title: "argument-sentinel" }, ...mode }), { code: "write_outcome_unknown", retryable: false, uncertainCall: { address: "notes.create", args: { title: "argument-sentinel" } }, retry: expect.stringContaining("Do not retry automatically") }],
+      ] as const;
+      for (const [result, error] of cases) {
+        expect(result.isError, error.code).toBe(true);
+        const text = JSON.parse(result.content[0]!.text);
+        expect(text).toEqual(result.structuredContent);
+        expect(text).toMatchObject({ ok: false, error, attempts: expect.any(Number), durationMs: expect.any(Number) });
+      }
+      expect(create).toHaveBeenCalledTimes(1);
+      const records = JSON.stringify([warn.mock.calls, target.events]);
+      expect(records).not.toContain("argument-sentinel");
+      expect(records).not.toContain("downstream-text-sentinel");
+      expect(records).not.toContain("acceptedKeys");
+      expect(records).not.toContain("uncertainCall");
+    });
+  });
+
   it("INV-4: an unknown connector lists only connectors in this endpoint's registry view", async () => {
     const registry = makeRegistry(["visible", "private"].map((id) => connectorWith({ id, kind: "api" })));
     const scoped = registry.scoped({ connectorIds: ["visible"] });

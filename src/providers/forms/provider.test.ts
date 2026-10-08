@@ -1052,7 +1052,7 @@ describe("errors (H11)", () => {
       body: { error: { code: 403, message: "Request had insufficient authentication scopes.", status: "PERMISSION_DENIED", details: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }] } },
     });
     const failure = await call(connection(), "list_responses", { formId: "form-1" }).catch((error) => error);
-    expect(failure.code).toBe("auth_required");
+    expect(failure.code).toBe("provider_permission_denied");
     expect(failure.message).toContain(FORMS_SCOPES.join(","));
   });
 

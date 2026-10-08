@@ -604,11 +604,11 @@ describe("overflow() failures map to the caller's next move", () => {
     expect((await failure(call(connection(), "list_locations"))).retryAfterMs).toBe(60_000);
   });
 
-  it("treats 401 and 403 on a read as a credential problem", async () => {
+  it("distinguishes read authentication and permission refusals", async () => {
     queue({ status: 401, body: { message: "Unauthorized" } }, { status: 403, body: { error: "Forbidden resource" } });
     for (let index = 0; index < 2; index += 1) {
       const error = await failure(call(connection(), "list_locations"));
-      expect(error.code).toBe("auth_required");
+      expect(error.code).toBe(index === 0 ? "auth_required" : "provider_permission_denied");
       expect(error.retryable).toBe(false);
       expect(error.message).toContain("not interchangeable");
       expect(error.message).not.toContain("donor account");
@@ -620,7 +620,7 @@ describe("overflow() failures map to the caller's next move", () => {
     const error = await failure(call(connection(), "overflow_api_mutate", {
       method: "PATCH", path: "/donors/d1", body: { phone: "+15555550100" },
     }));
-    expect(error.code).toBe("auth_required");
+    expect(error.code).toBe("provider_permission_denied");
     expect(error.message).toContain("donor account cannot be edited");
   });
 

@@ -27,7 +27,8 @@ import type {
   ConnectorContext,
   InboundAuth,
 } from "../src/types.js";
-import { createTestConnecta, silentLogger } from "./helpers.js";
+import { createMetaTools } from "../src/meta-tools.js";
+import { activitySink, createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -732,7 +733,7 @@ describe("the in-memory token cache", () => {
     await vi.waitFor(() => expect(tokenCalls).toHaveLength(1));
     held.release(Response.json({ error: "unauthorized_client" }, { status: 401 }));
     const failures = await Promise.all(pending);
-    expect(failures.map((error) => error.code)).toEqual(["auth_required", "auth_required"]);
+    expect(failures.map((error) => error.code)).toEqual(["provider_permission_denied", "provider_permission_denied"]);
     expect(tokenCalls).toHaveLength(1);
   });
 
@@ -790,11 +791,19 @@ describe("token refusals map to what fixes them, and never carry a secret", () =
       error: "unauthorized_client",
       error_description: "Client is unauthorized to retrieve access tokens using this method.",
     });
-    expect(failure.code).toBe("auth_required");
+    expect(failure.code).toBe("provider_permission_denied");
     expect(failure.message).toContain(owner.clientId);
     expect(failure.message).toContain(GMAIL_SCOPES.join(","));
     expect(failure.message).toContain("Manage Domain Wide Delegation");
     expect(failure.message).toContain("24 hours");
+  });
+
+  it.each(["unauthorized_client", "access_denied", "invalid_scope", undefined])("INV-6: delegation refusal %s asks an administrator for the exact grant without token-endpoint text", async (error) => {
+    const { failure } = await refusedWith(403, { error, error_description: "downstream-text-sentinel" });
+    expect(failure).toMatchObject({ code: "provider_permission_denied", retryable: false });
+    expect(failure.message).toContain("Manage Domain Wide Delegation");
+    expect(failure.message).toContain(GMAIL_SCOPES.join(","));
+    expect(failure.message).not.toContain("downstream-text-sentinel");
   });
 
   it("explains invalid_grant: unknown or suspended user, deleted key, or clock skew", async () => {
@@ -852,13 +861,41 @@ describe("API refusals map by Google's reason codes", () => {
     return await labels(mailbox(), context(identity("alice"))).catch((failure) => failure);
   }
 
+  it.each([undefined, "mcp", "value"] as const)("INV-6: scope recovery reaches the agent in %s mode while Google prose stays out of operator sinks", async (resultMode) => {
+    apiReplies.push(() => Response.json({ error: {
+      code: 403, message: "downstream-text-sentinel",
+      details: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }],
+    } }, { status: 403 }));
+    const warn = vi.fn();
+    const target = activitySink();
+    const registry = makeRegistry([mailbox({ subject: "alice@org.example" })], { logger: { ...silentLogger, warn } });
+    const result = await createMetaTools(registry, "https://connecta.example", { activity: target.activity }).callTool({
+      address: "mail.list_labels", ...(resultMode === undefined ? {} : { resultMode }),
+    });
+    const text = JSON.parse(result.content[0]!.text);
+    expect(result.isError).toBe(true);
+    expect(text).toEqual(result.structuredContent);
+    expect(text).toMatchObject({ ok: false, error: {
+      code: "provider_permission_denied", retryable: false,
+      message: expect.stringContaining(GMAIL_SCOPES.join(",")),
+      retry: expect.stringContaining("administrator"),
+    } });
+    expect(text.error.message).toContain("Admin console");
+    expect(text.error.message).toContain("downstream-text-sentinel");
+    expect(text.error).not.toHaveProperty("nextAction");
+    expect(apiCalls).toHaveLength(1);
+    expect(tokenCalls).toHaveLength(1);
+    expect(target.events).toHaveLength(1);
+    expect(JSON.stringify([warn.mock.calls, target.events, await registry.statusFor("mail", "https://connecta.example")])).not.toContain("downstream-text-sentinel");
+  });
+
   it("names the exact scopes when the token lacks one", async () => {
     const failure = await apiFailure(403, {
       message: "Request had insufficient authentication scopes.",
       status: "PERMISSION_DENIED",
       details: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }],
     });
-    expect(failure.code).toBe("auth_required");
+    expect(failure.code).toBe("provider_permission_denied");
     expect(failure.message).toContain(GMAIL_SCOPES.join(","));
   });
 
@@ -914,7 +951,7 @@ describe("API refusals map by Google's reason codes", () => {
       status: "PERMISSION_DENIED",
       errors: [{ reason, domain: "global" }],
     });
-    expect(failure).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failure).toMatchObject({ code: reason === "exportSizeLimitExceeded" ? "connector_call_failed" : "provider_permission_denied", retryable: false });
     expect(failure.message).toContain(words);
     expect(googleReasonsOf(failure)).toEqual([reason, "PERMISSION_DENIED"]);
   });
@@ -1082,12 +1119,12 @@ describe("the shared client reads bytes and text for the products that need them
       ["rateLimitExceeded", 409, "ABORTED", "rate_limited", "wait before retrying"],
       ["userRateLimitExceeded", 400, "FAILED_PRECONDITION", "rate_limited", "wait before retrying"],
       ["RATE_LIMIT_EXCEEDED", 409, "ABORTED", "rate_limited", "wait before retrying"],
-      ["ACCESS_TOKEN_SCOPE_INSUFFICIENT", 400, "FAILED_PRECONDITION", "auth_required", "lacks a scope"],
-      ["insufficientPermissions", 409, "ABORTED", "auth_required", "lacks a scope"],
+      ["ACCESS_TOKEN_SCOPE_INSUFFICIENT", 400, "FAILED_PRECONDITION", "provider_permission_denied", "lacks a scope"],
+      ["insufficientPermissions", 409, "ABORTED", "provider_permission_denied", "lacks a scope"],
       ["exportSizeLimitExceeded", 400, "FAILED_PRECONDITION", "connector_call_failed", "larger than Google will export"],
-      ["domainPolicy", 409, "ABORTED", "connector_call_failed", "domain policy forbids"],
-      ["insufficientFilePermissions", 400, "FAILED_PRECONDITION", "connector_call_failed", "does not have the permission"],
-      ["forbidden", 409, "ABORTED", "connector_call_failed", "does not have the permission"],
+      ["domainPolicy", 409, "ABORTED", "provider_permission_denied", "domain policy forbids"],
+      ["insufficientFilePermissions", 400, "FAILED_PRECONDITION", "provider_permission_denied", "does not have the permission"],
+      ["forbidden", 409, "ABORTED", "provider_permission_denied", "does not have the permission"],
     ])("lets %s outrank the guard on HTTP %i %s", async (reason, status, canonical, code, words) => {
       apiReplies.push(() =>
         Response.json(
@@ -1236,7 +1273,7 @@ describe("the shared client reads bytes and text for the products that need them
       );
       const drive = client();
       const policy = await failing(drive.json(write, context()));
-      expect(policy.code).toBe("connector_call_failed");
+      expect(policy.code).toBe("provider_permission_denied");
       expect(googleOutcomeOf(policy)).toEqual({ dispatched: true, status: 403, phase: "refused" });
       expect(googleReasonsOf(policy)).toEqual(["domainPolicy"]);
 
@@ -1251,7 +1288,7 @@ describe("the shared client reads bytes and text for the products that need them
         new Response(new Uint8Array(4096), { status: 403, headers: { "Content-Length": "4096" } }),
       );
       const failure = await failing(client(1024).json(write, context()));
-      expect(failure.code).toBe("connector_call_failed");
+      expect(failure.code).toBe("provider_permission_denied");
       expect(failure.message).not.toContain("probably applied");
       expect(googleOutcomeOf(failure)).toEqual({ dispatched: true, status: 403, phase: "refused" });
     });

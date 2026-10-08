@@ -613,7 +613,7 @@ describe("typed failures (H11)", () => {
     message?: string;
   }> = [
     { name: "401", response: { status: 401, body: { status: "fail", reason: "Bad keys" } }, code: "auth_required", retryable: false, message: "other environment" },
-    { name: "403", response: { status: 403, body: {} }, code: "connector_call_failed", retryable: false, message: "does not say which" },
+    { name: "403", response: { status: 403, body: {} }, code: "provider_permission_denied", retryable: false, message: "does not say which" },
     { name: "404", response: { status: 404, text: "Not Found" }, code: "connector_call_failed", retryable: false, message: "does not distinguish" },
     { name: "400", response: { status: 400, body: { status: "fail", reason: "amount is required" } }, code: "invalid_args", retryable: false, message: "amount is required" },
     { name: "422", response: { status: 422, body: {} }, code: "invalid_args", retryable: false },

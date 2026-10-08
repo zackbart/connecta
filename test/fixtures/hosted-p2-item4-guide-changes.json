@@ -1,0 +1,12 @@
+{
+  "cloudflare": [
+    [
+      "The API token is operator-managed and scoped by permission. An `auth_required` failure means the token is missing, invalid, or lacks that call's permission. Call `verify_api_token` first.",
+      "The API token is operator-managed and scoped by permission. An `auth_required` failure means the token is missing or invalid. A `provider_permission_denied` failure asks an administrator to grant resource permission and token scope. Call `verify_api_token` first."
+    ],
+    [
+      "The Global API Key and account email are operator-managed. The key has the same access as its Cloudflare user. An `auth_required` failure means one field is missing, the pair is invalid, or the user lacks access. Call `verify_global_api_key` first.",
+      "The Global API Key and account email are operator-managed. The key has the same access as its Cloudflare user. An `auth_required` failure means one field is missing or the pair is invalid. A `provider_permission_denied` failure asks an administrator to grant the user access. Call `verify_global_api_key` first."
+    ]
+  ]
+}
