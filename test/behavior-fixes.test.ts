@@ -157,6 +157,45 @@ describe("Phase 4 behavior fixes", () => {
     expect(second.nextCursor).toBeUndefined();
   });
 
+  it("INV-4 INV-6 INV-7: hidden-boundary reads stop after cancellation and have a finite work budget", async () => {
+    let release!: () => void;
+    let started!: () => void;
+    const pending = new Promise<void>(resolve => { started = resolve; });
+    let blocked = true;
+    const list = vi.fn(async () => {
+      if (blocked) { started(); await new Promise<void>(resolve => { release = resolve; }); }
+      return { events: [event("hidden", { connectorId: "hidden" })], nextCursor: "hidden-" + list.mock.calls.length };
+    });
+    const deployment = app({ connectors: [connector("visible")], auth: { kind: "api", authorize: () => ({ ok: true, principal: { namespace: "directory", id: "reader" } }) }, identity: { activityAccess: () => true }, logger: "silent", activity: activityHistory({ store: { record() {}, list } }) });
+    const controller = new AbortController();
+    const abandoned = deployment.fetch(new Request(BASE + "/ui/api/activity", { signal: controller.signal }));
+    const rejected = expect(abandoned).rejects.toThrow();
+    await pending; controller.abort(); await rejected; release();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(list).toHaveBeenCalledTimes(1);
+    blocked = false; list.mockClear();
+    const response = await deployment.fetch(new Request(BASE + "/ui/api/activity"));
+    expect(response.status).toBe(503);
+    expect(list).toHaveBeenCalledTimes(1001);
+    expect(JSON.stringify(await response.json())).not.toContain("hidden-");
+  });
+
+  it.each(["/ui/api/config", "/ui/connectors/personal"])("INV-4 INV-6: %s attributes personal catalog changes to the admitted owner", async path => {
+    const events: ToolCallActivityEvent[] = [];
+    let description = "Initial";
+    const c: Connector = { id: "personal", authScope: "personal", listTools: async () => [{ name: "read", description }], callTool: async () => null };
+    const auth: InboundAuth = { kind: "human", authorize: request => ({ ok: true, interactive: true, subjectId: "shared-subject", principal: { namespace: "directory", id: request.headers.get("X-Principal") ?? "alice" } }) };
+    const deployment = app({ connectors: [c], auth, identity: { activityAccess: () => true }, logger: "silent", discovery: { catalogTtlSeconds: 0 }, activity: activityHistory({ store: { record: e => { events.push(e); }, list: async () => ({ events }) } }) });
+    expect((await deployment.fetch(new Request(BASE + path))).status).toBe(200);
+    description = "Changed";
+    expect((await deployment.fetch(new Request(BASE + path))).status).toBe(200);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ kind: "catalog_drift", actorBasis: "principal", actor: { kind: "human", id: "alice", namespace: "directory" } });
+    const read = async (principal: string) => await (await deployment.fetch(new Request(BASE + "/ui/api/activity", { headers: { "X-Principal": principal } }))).json() as { events: ToolCallActivityEvent[] };
+    expect((await read("alice")).events.map(e => e.id)).toEqual([events[0]!.id]);
+    expect((await read("bob")).events).toEqual([]);
+  });
+
   it("INV-4 INV-6: keeps long configured pool names scoped through recording and disclosure", async () => {
     const events: ToolCallActivityEvent[] = [];
     const pool = "p".repeat(65);

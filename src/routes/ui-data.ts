@@ -7,6 +7,7 @@
 // however it ends.
 
 import { Effect } from "effect";
+import { bindActivityRequest } from "../activity-request.js";
 import { resolveDiscoveryConcurrency } from "../concurrency.js";
 import type { DeferredWork } from "../connector-scope.js";
 import type { CredentialVault } from "../credential-contract.js";
@@ -36,6 +37,7 @@ import { uiProblemFor, uiToolSafety } from "../ui.js";
 import { CONNECTA_VERSION } from "../version.js";
 
 export interface UiDataOptions {
+  activityContext?: import("../activity.js").ActivityRequestContext | undefined;
   serverInfo: { name: string; version: string };
   credentialVault?: CredentialVault | undefined;
   activityEnabled: boolean;
@@ -70,6 +72,7 @@ export function uiData(
 ): Effect.Effect<UiData> {
   return Effect.suspend(() => {
     const requestScope = {};
+    if (options.activityContext) bindActivityRequest(requestScope, options.activityContext);
     const vault = options.credentialVault;
     const owner = options.personalCredentialOwner;
     /**

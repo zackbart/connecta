@@ -673,6 +673,8 @@ Personal activity rows must carry the checked `principal` actor basis as well as
 a matching principal ID and namespace. Legacy subject actors cannot prove
 personal ownership and are withheld. Activity pagination advances past hidden
 boundary rows so their timestamp and event ID never appear in a returned cursor.
+Each read belongs to the request fiber. A scan exceeding 1,000 additional
+boundary reads returns 503 without a cursor; cancellation starts no further read.
 
 ```ts
 createConnecta({

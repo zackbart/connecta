@@ -113,7 +113,9 @@ describe("operator config contract", () => {
     const app = deployment({ connectors: [connector("svc"), connector("personal", { authScope: "personal" })], executor, auth: human, ui: operatorUi(), logger: "silent", identity: { connectorAccess: () => ["svc.read", "personal"] }, activity: activityHistory({ store: { record() {}, list: async () => ({ events: [
       event("svc", "write", "2026-10-08T01:03:00.000Z"), event("svc", "read", "SENTINEL-time"), event("svc", "read", "2026-10-08T01:02:00.000Z", { outcome: "SENTINEL-outcome" }),
       event("svc", "read", "2026-10-08T01:01:00.000Z", { arguments: "SENTINEL-args", result: "SENTINEL-result", errorCode: "SENTINEL-error", outcome: "timeout" }),
-      event("personal", "read", "2026-10-08T01:02:00.000Z", { actor: { kind: "human", id: "bob", namespace: "directory" } }), event("personal", "read", "2026-10-08T01:00:00.000Z"),
+      event("personal", "read", "2026-10-08T01:02:00.000Z", { actorBasis: "principal", actor: { kind: "human", id: "bob", namespace: "directory" } }),
+      event("personal", "read", "2026-10-08T01:01:00.000Z"), // Legacy subject actor does not prove ownership.
+      event("personal", "read", "2026-10-08T01:00:00.000Z", { actorBasis: "principal" }),
     ] }) } }) });
     const data = await read(app);
     expect(data.live.connectors.map(c => c.lastCall)).toEqual([{ at: "2026-10-08T01:01:00.000Z", outcome: "timeout" }, { at: "2026-10-08T01:00:00.000Z", outcome: "success" }]);

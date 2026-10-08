@@ -1,7 +1,9 @@
 import { activityEventVisible } from "./activity-disclosure.js";
+import { operatorActivityContext } from "./activity-context.js";
+import { bindActivityRequest } from "../activity-request.js";
 import { configValuePaths } from "../config-value-sources.js";
 import { Effect } from "effect";
-import type { ActivityOutcome } from "../activity.js";
+import type { ActivityOutcome, ActivityRequestContext } from "../activity.js";
 import { intersectAccess, type ConnectorAccess } from "../connector-access.js";
 import { describedTools } from "../described.js";
 import { resolveDiscoveryConcurrency } from "../concurrency.js";
@@ -35,9 +37,10 @@ function toolVisible(authz: Authorized, id: string, name: string, classification
     (!authz.guardedToolAccess?.get(id)?.has(name) || classification === "read");
 }
 
-function observe(context: RouteContext, registry: RegistryView, connector: Connector): Effect.Effect<OperatorConnectorOverlay> {
+function observe(context: RouteContext, registry: RegistryView, connector: Connector, activity: ActivityRequestContext | undefined): Effect.Effect<OperatorConnectorOverlay> {
   const { opts, baseUrl, request, defer } = context;
   const scope = {};
+  if (activity) bindActivityRequest(scope, activity);
   const id = connector.id;
   return withDeadlineEffect(signal => Effect.gen(function* () {
     const drift = yield* attempt(() => registry.credentialDriftFor(id));
@@ -140,7 +143,8 @@ function configRead(context: RouteContext): Effect.Effect<Response, Answer> {
       if (!admitted) return [];
       return [{ ...pool, tools: admitted.grants.flatMap(grant => grant.tools === "all" ? [grant.connectorId] : grant.tools.map(tool => `${grant.connectorId}.${tool.name}`)) }];
     });
-    const rows = yield* Effect.forEach(visible, c => observe(context, registry, c), { concurrency: resolveDiscoveryConcurrency(opts.config.discovery.concurrency) });
+    const requestActivity = operatorActivityContext(context, authz);
+    const rows = yield* Effect.forEach(visible, c => observe(context, registry, c, requestActivity), { concurrency: resolveDiscoveryConcurrency(opts.config.discovery.concurrency) });
     const activity = yield* lastCalls(context, authz, registry, rows, new Set(pools.map(pool => pool.name)));
     const contract: OperatorUiContract = {
       schemaVersion: 1,

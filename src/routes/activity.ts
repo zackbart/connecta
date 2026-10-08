@@ -115,23 +115,26 @@ function activityRead(context: RouteContext): Effect.Effect<Response, Answer> {
     const limit = Number.isFinite(requestedLimit)
       ? Math.min(100, Math.max(1, Math.trunc(requestedLimit)))
       : 50;
-    return yield* Effect.tryPromise({
-      try: async () => {
-        let page = await list({ ...(cursor !== undefined ? { cursor } : {}), limit });
-        const events = page.events.filter(visible);
-        // Store cursors may encode their boundary row's timestamp and id. A
-        // rejected boundary must never reach the caller. Advance one row at a
-        // time until the boundary is visible or history is exhausted.
-        const seen = new Set<string>();
-        while (page.nextCursor && (!page.events.length || !visible(page.events[page.events.length - 1]!))) {
-          if (seen.has(page.nextCursor)) throw new Error("activity cursor did not advance");
-          seen.add(page.nextCursor);
-          page = await list({ cursor: page.nextCursor, limit: 1 });
-          events.push(...page.events.filter(visible));
-        }
-        return { events, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
-      },
-      catch: (error) => error,
+    const readPage = (cursor: string | undefined, limit: number) => Effect.tryPromise({
+      try: () => list({ ...(cursor !== undefined ? { cursor } : {}), limit }),
+      catch: error => error,
+    });
+    return yield* Effect.gen(function* () {
+      let page = yield* readPage(cursor, limit);
+      const events = page.events.filter(visible);
+      // Store cursors may encode their boundary row's timestamp and id. A
+      // rejected boundary must never reach the caller. Advance one row at a
+      // time until the boundary is visible or history is exhausted.
+      const seen = new Set<string>();
+      let boundaryReads = 0;
+      while (page.nextCursor && (!page.events.length || !visible(page.events[page.events.length - 1]!))) {
+        if (boundaryReads++ >= 1000) throw new Error("activity disclosure scan exhausted");
+        if (seen.has(page.nextCursor)) throw new Error("activity cursor did not advance");
+        seen.add(page.nextCursor);
+        page = yield* readPage(page.nextCursor, 1);
+        events.push(...page.events.filter(visible));
+      }
+      return { events, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
     }).pipe(
       Effect.flatMap((page) => enrichActivityActorLabels(page, authz.identity.interactive ? opts.config.auth : [])),
       Effect.map((page) => privateJson(page)),
