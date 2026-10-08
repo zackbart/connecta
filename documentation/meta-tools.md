@@ -503,10 +503,11 @@ bounded no-match analysis. An empty or whitespace-only query browses.
 On MCP 2026-07-28, a host declaring `elicitation.url` receives
 `resultType: "input_required"` when an eligible call or program needs recoverable
 connector authentication and the admitted identity may manage that connector.
-Read-classified calls may re-run after a mid-handler auth failure. A direct write
-may elicit only before any downstream request was sent. Programs may elicit only
-before any write-classified invocation sent a downstream request or completed a
-local write.
+Read-classified calls may re-run after a mid-handler auth failure. A write may
+elicit only when Connecta's own pre-invocation credential resolution
+reports a missing grant, a missing credential slot, or required consent before
+refresh. Its handler and transport have not been entered. Programs also require
+that no write-classified call has entered its handler during this run.
 The `connecta_auth` input request uses `elicitation/create`,
 `mode: "url"`, fixed copy, and an identity-checked `/connect/<id>` link built
 from configured `publicUrl`. OAuth consent stays in the browser; a credential
@@ -521,9 +522,11 @@ within one ten-minute retry window, then `auth_round_limit` ends the flow.
 Each state can be consumed once; concurrent or repeated retries are refused
 before dispatch. A Continue link from a pending restart requires that restart
 to start successfully before the browser can consume it.
-Host-owned invocation facts count credential-carrying and plain requests at the
-final transport boundary. Each accept retry checks its own round's dispatches.
-An auth failure after a write sent anything keeps its ordinary error code,
+Host-owned invocation facts record the auth failure's origin and entry into
+write-classified calls. Raw fetches and custom connector transports cannot
+establish recovery eligibility. Each accept retry checks its own round.
+An auth failure after a write handler or transport was entered keeps its
+ordinary error code,
 `retryable: false`, `reconciliationRequired: true`, and manual `/connect` guidance
 where available. The write may have partially run; reconcile its target before
 retrying after connection. Handler-authored error fields cannot clear this guard.

@@ -877,10 +877,15 @@ survives every round. Rotation invalidates outstanding states.
 Each state admits one retry through a connector-scoped storage CAS, including
 decline and cancel. Concurrent or repeated consumption is refused before
 dispatch, so retries cannot fork into sibling forced connection links.
-The host records downstream sends in private invocation state, using the
-registry's write classification. Direct writes may recover automatically only
-before any send; programs stop automatic recovery once a write invocation sends
-anything or completes a local write. This check also applies to each accepted retry. Later auth failures
+The host records auth failure origins and write handler entry in private
+invocation state, using the registry's classification. Writes may elicit only
+when Connecta's own credential resolution fails before invoking the connector:
+a missing grant, a missing credential slot, or consent required before refresh.
+Auth failures inside handlers or transports cannot elicit for writes, including
+raw fetches, custom connector errors, and refresh failures inside a handler.
+Programs also stop automatic recovery once any write-classified call enters
+its handler, even if it sends nothing or fails. Each accepted retry checks
+these facts for its own round. Later auth failures
 carry `reconciliationRequired: true` and manual connection guidance because the
 write may have partially run. Read-classified calls may re-run after dispatch.
 Custom vaults may implement the host-only `requestStateKey` method; without it, the
