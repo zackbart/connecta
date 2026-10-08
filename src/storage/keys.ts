@@ -268,6 +268,20 @@ export const kvCopyKeys = {
   cursor: (token: string) => validateStorageKey(`kv-copy:v1:cursor:${token}`),
 } as const satisfies Keyed;
 
+/** Once traffic uses D1, copying stale KV state is refused. */
+export const kvCutoverKeys = {
+  family: {
+    name: "kv-cutover",
+    scope: "root",
+    prefixes: ["kv-cutover:v1:"],
+    version: { number: 1, in: "key" },
+    codec: textCodec,
+    ttl: { kind: "durable" },
+    durable: true,
+  },
+  source: (source: string) => validateStorageKey(`kv-cutover:v1:${encodeURIComponent(source)}`),
+} as const satisfies Keyed;
+
 // --- connector families ---------------------------------------------------
 
 /** The OAuth values a flow stores, each under its historical key. */
@@ -348,6 +362,7 @@ export const KEY_FAMILIES: readonly KeyFamily[] = [
   oauthKeys.family,
   oauthConnectKeys.family,
   kvCopyKeys.family,
+  kvCutoverKeys.family,
 ];
 
 // Principal, connector, and subject segments are hex digests and connector

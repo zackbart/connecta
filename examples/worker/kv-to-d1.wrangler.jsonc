@@ -2,7 +2,8 @@
 // Never deployed: `wrangler deploy` reads wrangler.jsonc, which binds no KV.
 // Both bindings are remote, so the script reads the real namespace and writes
 // the real database through your `wrangler login` session. Fill in the ids,
-// run the script once, then delete this file. README.md § "Upgrading from
+// stop traffic/writers, wait for stable KV, copy and verify before deploying,
+// then mark cutover before reopening traffic. README.md § "Upgrading from
 // 0.28" has the steps.
 {
   "name": "connecta-kv-to-d1",

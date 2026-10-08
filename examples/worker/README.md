@@ -382,59 +382,87 @@ CREATE INDEX IF NOT EXISTS connecta_kv_expiry ON connecta_kv (expires_at_ms);
 
 #### Copying Workers KV state into D1
 
-Storage keys did not change in 0.29, so `copyKvToD1(kv, db)` from
-`@zackbart/connecta/d1` copies every live entry as it is: the same key, the
-same value (vault ciphertext included), and the same absolute expiry. It
-skips expired entries. A D1 entry that already holds a different value is kept
-and counted as a conflict. Rerunning the copy writes nothing new, so it is
-always safe. It reports counts per key family and never a key or value.
-`scripts/copy-kv-to-d1.mjs` runs it from your machine through wrangler's
-remote bindings, using `kv-to-d1.wrangler.jsonc`. That config binds the KV
-namespace and the D1 database, and nothing deploys it, so the Worker's own
-`wrangler.jsonc` never binds KV.
+Storage keys did not change in 0.29. `copyKvToD1(kv, db, { source })` from
+`@zackbart/connecta/d1` preserves live keys, exact values including vault
+ciphertext, and absolute expiries. The source is the KV namespace id. Counts
+and failures name only families, never keys or values. Oversized UTF-8 strings
+or rows are skipped and counted as invalid against D1's
+[2,000,000-byte limit](https://developers.cloudflare.com/d1/platform/limits/).
+A different live D1 value or expiry is a conflict, kept by default.
 
-1. **Prepare 0.29.** Give `wrangler.jsonc` one `CONNECTA_DB` D1 binding. If
-   activity already has a D1 database, rename its binding to `CONNECTA_DB`
-   and keep `database_name` and `database_id`. Otherwise run
-   `wrangler d1 create connecta`. Remove `kv_namespaces`, replace
-   `cloudflare-kv.ts` with `d1Storage(env.CONNECTA_DB)`, and delete the
-   adapter. Keep the credential encryption secret unchanged: sealed
-   credentials and OAuth state keep their keys.
-2. **Fill in the copy config.** In `kv-to-d1.wrangler.jsonc`, set the KV
-   namespace `id` (from `wrangler kv namespace list`) and the D1
-   `database_name` and `database_id` you just bound. Run `wrangler login` for
-   the account.
-3. **Deploy**: `wrangler deploy`. From now on nothing writes the KV
-   namespace.
-4. **Copy at once**, from this folder: `node scripts/copy-kv-to-d1.mjs`. The
-   script prints one row per family. Expect `access-token`, `credential`, and
-   `oauth` rows with `copied` counts and no `conflicts`. Until the copy
-   finishes, the deployment has no state: `cta_` tokens are refused and OAuth
-   connectors read as unauthorized. Do not authorize, issue, or revoke
-   anything during that time, because D1 keeps a key the deployment writes
-   first. Copy after deploying, not before: a copy taken while the old
-   Worker still serves would miss its last writes, and would bring back a
-   token revoked or a connector disconnected after it.
-5. **Resolve conflicts**, if the script reports any. `catalog` and `result`
-   conflicts are caches and can be ignored. For any other family, run
-   `node scripts/copy-kv-to-d1.mjs --overwrite`, which takes Workers KV's
-   values, and then redo whatever was done during the copy window.
-6. **Verify**: run `connecta doctor`. Use an OAuth connector without
-   consenting again, authenticate a machine client with an existing `cta_`
-   token, and call a connector that has a vault credential.
-7. **Clean up.** Delete `kv-to-d1.wrangler.jsonc` and
-   `scripts/copy-kv-to-d1.mjs` from the deployment's repository. Delete the
-   KV namespace (`wrangler kv namespace delete --namespace-id <id>`) once the
-   deployment has run cleanly for a while.
+Use a maintenance window. Copying while either deployment serves can restore
+revoked tokens, stale refresh tokens, or disconnected connectors. A rerun is
+safe only while the source remains stable and D1 has no new application writes.
+The script reads the source id from `kv-to-d1.wrangler.jsonc` and checks two
+consecutive listing/hash passes before a copy or verification pass. The config
+uses remote KV and D1 bindings and is never deployed.
 
-A deployment that prefers to run the copy inside its Worker can call
-`copyKvToD1(env.CONNECTA_KV, env.CONNECTA_DB, { cursor })` from a guarded
-one-off route instead. Each call reads at most `maxKeys` keys (default 500),
-which stays inside a Workers Paid invocation's 1,000 KV and D1 operations.
-Each call returns `done: false` and a cursor until the namespace is read; loop
-on the cursor. The cursor is a random token, and the Workers KV cursor it
-stands for stays in D1 for seven days, because a raw KV cursor can spell the
-last key listed. Remove the route and the KV binding once the copy is done.
+Prepare the new configuration without deploying it. Use the existing activity
+D1 database as `CONNECTA_DB`, keeping its name and id; otherwise create one
+with `wrangler d1 create connecta`. Remove `kv_namespaces` and copied adapters.
+Configuration lives in `src/connecta.config.ts` and
+`src/index.ts` is the entry point. Set the plain var `CONNECTA_ACTIVITY = "on"`
+so preserved activity remains visible. `CONNECTA_ARTIFACTS = "on"` enables
+artifacts if used. Bind only `CONNECTA_DB` and `LOADER` for storage/execution;
+keep existing auth vars and the credential secret.
+Fill in the copy config's namespace id and the same D1 database name/id,
+then `wrangler login` and check the prepared deployment with a dry run.
+
+1. Back up KV with a bulk export including values and expiration metadata.
+   Export D1 with `wrangler d1 export <db> --remote --output before-cutover.sql`.
+   Store backups securely and preserve the exact credential encryption key,
+   including One&Many's `CONNECTA_CREDENTIALS_KEY`.
+2. Block traffic using maintenance mode or turn the route off. Stop cron,
+   queue consumers, scheduled jobs, and every other KV/D1 writer. Drain all
+   in-flight requests, including OAuth callbacks and token refreshes.
+3. Wait at least **60 seconds after the last write**, or the longest configured
+   KV `cacheTtl`, whichever is greater. KV propagation can take longer, so this
+   is a minimum, not proof of consistency. See
+   [KV consistency](https://developers.cloudflare.com/kv/concepts/how-kv-works/).
+   Confirm a stable source with two consecutive listing/hash passes that match;
+   the script performs this check. If they differ, stay in maintenance, wait
+   longer, and repeat. Expiring entries may also require another pass.
+4. Copy **before switching traffic** with
+   `node scripts/copy-kv-to-d1.mjs --maintenance`. Resolve all `invalid` and
+   `conflicts` counts under maintenance; either makes the script exit non-zero.
+   An oversized entry requires a deliberate per-family remediation, not a
+   retry of the same value. Overwrite only families explicitly reviewed as
+   stale in D1, for example `--maintenance --overwrite-family catalog`.
+   Token/OAuth/vault families require the operator to confirm D1 rows are stale
+   and also pass `--confirm-stale-d1`; never infer this from a conflict alone.
+   There is no blanket `--overwrite`. Then run
+   `node scripts/copy-kv-to-d1.mjs --maintenance --verify`. It compares SHA-256
+   hashes of exact values and absolute expiries for live source keys, reports
+   `verified` / `mismatches` counts by family only, and exits non-zero on any
+   invalid entry or mismatch. Keep traffic and writers stopped until these
+   counts are resolved. A verification pass does not rewrite copied entries.
+5. Deploy the D1 configuration with `wrangler deploy` while maintenance remains.
+   Run `connecta doctor` using Access service credentials. Verify an existing
+   OAuth connector without re-consent, an existing `cta_` token, a connector
+   using a vault credential, and prior activity in the Activity view. Run
+   these controlled checks with other traffic and background writers blocked.
+6. Seal the source with
+   `node scripts/copy-kv-to-d1.mjs --maintenance --mark-live`, then reopen
+   traffic and background writers. The permanent D1 marker refuses later
+   copies. Never rerun after traffic resumes. `--i-know-this-is-stale` is only
+   an emergency override after stopping writers again and assessing stale KV;
+   it does not make stale tokens or credentials safe to restore.
+   Retain backups before deleting the KV namespace. After a clean observation
+   period, remove the copy script/config and delete KV with
+   `wrangler kv namespace delete --namespace-id <id>`.
+
+An in-Worker copy can call
+`copyKvToD1(env.CONNECTA_KV, env.CONNECTA_DB, { source: namespaceId, cursor })`
+from a guarded one-off route under the same maintenance procedure. Each call
+reads at most `maxKeys` keys, default 500. For near-limit rows use 200 or fewer
+so additional byte-bounded D1 batches fit the invocation's query budget.
+Loop until `done`, passing each returned cursor. Tokens keep KV's raw cursor
+in D1 for seven days, are bound to the source id, and are atomically consumed.
+Unknown, spent, or foreign-source tokens are refused without echoing them.
+On failure, use the error's replacement token or restart under maintenance.
+Call `markKvToD1Live(db, namespaceId)` before reopening traffic, and remove the
+route and KV binding. The source stability check is the operator's duty when
+using the API directly. Remote bindings remain unverified until deploy day.
 
 ## Artifacts (optional)
 

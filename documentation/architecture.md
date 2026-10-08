@@ -237,7 +237,10 @@ its whole file on every write. Each has a one-shot copy into its replacement,
 entries verbatim, because physical keys did not change, and both keep any key
 the target already holds. `copyKvToD1` reports counts per key family
 (`familyOfKey` in `src/storage/keys.ts`), never a key. It resumes through a
-token, because Workers KV's own list cursor can spell a key.
+source-bound, atomically claimed token, because Workers KV's own list cursor
+can spell a key. Copy under maintenance after KV stabilizes, verify hashes
+and expiries, and mark cutover before reopening traffic; the permanent D1
+marker refuses stale copies afterward.
 
 `KVStorage` is `get`/`set`/`delete`/`list(prefix)`/`compareAndSet`, all
 required, and `createConnecta` refuses storage missing one (INV-11).

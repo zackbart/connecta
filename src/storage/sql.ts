@@ -284,7 +284,7 @@ export type SqlCopyOutcome = "copied" | "unchanged" | "conflict" | "overwritten"
 
 /** Keys one read compares: D1 binds at most 100 parameters, one is `now`. */
 const COPY_READ_KEYS = 99;
-/** Writes one transaction carries, by count and by bound characters. */
+/** Writes one transaction carries, by count and by UTF-8 bytes. */
 const COPY_BATCH_STATEMENTS = 50;
 const COPY_BATCH_BYTES = 4 * 1024 * 1024;
 
@@ -304,22 +304,23 @@ export async function copyIntoSql(
   await driver.batch(KV_SCHEMA.map((statement) => sql(statement)));
   const live = "(expires_at_ms IS NULL OR expires_at_ms > ?)";
   const currentValues = async (keys: readonly string[]) => {
-    const values = new Map<string, string>();
+    const values = new Map<string, { value: string; expiresAtMs: number | null }>();
     for (let start = 0; start < keys.length; start += COPY_READ_KEYS) {
       const chunk = keys.slice(start, start + COPY_READ_KEYS);
       const rows = await driver.all<{
         key: string;
         value: string;
         value_bytes: TextBytes | null;
+        expires_at_ms: number | null;
       }>(sql(
-        `SELECT key, ${textColumn("value")} FROM connecta_kv
+        `SELECT key, ${textColumn("value")}, expires_at_ms FROM connecta_kv
          WHERE key IN (${chunk.map(() => "?").join(", ")}) AND ${live}`,
         ...chunk,
         now,
       ));
       // The message names no key: a copy's errors reach operator output.
       for (const row of rows) {
-        values.set(row.key, textOf(row.value, row.value_bytes, "a stored value") ?? "");
+        values.set(row.key, { value: textOf(row.value, row.value_bytes, "a stored value") ?? "", expiresAtMs: row.expires_at_ms });
       }
     }
     return values;
@@ -330,7 +331,7 @@ export async function copyIntoSql(
   const existing = await currentValues(entries.map((entry) => entry.key));
   for (const [index, entry] of entries.entries()) {
     const current = existing.get(entry.key);
-    if (current === entry.value) {
+    if (current?.value === entry.value && current.expiresAtMs === entry.expiresAtMs) {
       outcomes[index] = "unchanged";
     } else if (current !== undefined && !overwrite) {
       outcomes[index] = "conflict";
@@ -338,7 +339,7 @@ export async function copyIntoSql(
       outcomes[index] = current === undefined ? "copied" : "overwritten";
       writes.push({
         index,
-        bytes: entry.key.length + entry.value.length,
+        bytes: new TextEncoder().encode(entry.key).byteLength + new TextEncoder().encode(entry.value).byteLength + 32,
         statement: overwrite
           ? sql(
               `INSERT INTO connecta_kv (key, value, expires_at_ms)
@@ -395,7 +396,9 @@ export async function copyIntoSql(
   if (raced.length > 0) {
     const after = await currentValues(raced.map((index) => entries[index]!.key));
     for (const index of raced) {
-      outcomes[index] = after.get(entries[index]!.key) === entries[index]!.value
+      const entry = entries[index]!;
+      const current = after.get(entry.key);
+      outcomes[index] = current?.value === entry.value && current.expiresAtMs === entry.expiresAtMs
         ? "unchanged"
         : "conflict";
     }

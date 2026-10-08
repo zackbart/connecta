@@ -3,7 +3,9 @@
 This repository is deployment configuration, not a copy of Connecta itself.
 
 - Edit `src/connecta.config.ts` for connectors, authentication, storage, public
-  URL, and optional modules. `src/index.ts` only starts it.
+  URL, and optional modules. `src/index.ts` only starts it. Set plain vars
+  `CONNECTA_ACTIVITY="on"` for preserved activity and `CONNECTA_ARTIFACTS="on"`
+  when artifacts are used.
 - Keep `cloudflareAccessAuth()` as the inbound auth provider. Cloudflare Access
   authenticates the request before the Worker runs; do not add JWT parsing or a
   second Worker-side identity gate.
@@ -39,7 +41,10 @@ This repository is deployment configuration, not a copy of Connecta itself.
   a KV namespace, a second database, or a copied storage adapter; connecta
   creates its own tables. The only KV binding is in `kv-to-d1.wrangler.jsonc`,
   which is never deployed. It exists for the one-shot copy from a 0.28 Workers
-  KV deployment (README.md § "Upgrading from 0.28"); delete it after the copy.
+  KV deployment (README.md § "Upgrading from 0.28"). Back up, block traffic
+  and background writers, drain, wait for stable KV, copy and verify, deploy
+  while maintenance remains, then mark cutover before reopening traffic. Never
+  rerun stale KV after cutover. Retain backups before removing KV.
 - Add application logic only inside deliberate `api()` connector handlers.
   Do not copy or modify Connecta package internals here.
 - Prefer `api()` when the agent must see an exact reviewed capability set;

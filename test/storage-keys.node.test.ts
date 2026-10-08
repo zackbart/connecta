@@ -12,6 +12,7 @@ import {
   familyOfKey,
   KEY_FAMILIES,
   kvCopyKeys,
+  kvCutoverKeys,
   oauthConnectKeys,
   oauthHandoffKeys,
   oauthKeys,
@@ -122,6 +123,7 @@ describe("storage key families", () => {
       [connector(oauthKeys.cleanupAt("v2:epoch")), "oauth"],
       [connector(oauthConnectKeys.used("nonce")), "oauth-connect"],
       [kvCopyKeys.cursor("token"), "kv-copy"],
+      [kvCutoverKeys.source("namespace"), "kv-cutover"],
       // A custom connector's own keys, and keys no family claims.
       [connector("my:key"), "connector-owned"],
       [personal(connector("my:key")), "connector-owned"],

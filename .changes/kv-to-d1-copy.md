@@ -2,14 +2,14 @@
 type: added
 ---
 
-`copyKvToD1(kv, db, { cursor, overwrite, maxKeys })` on `@zackbart/connecta/d1`
-copies a 0.28 Workers KV deployment's state into D1 once, so OAuth grants,
-vault credentials, and `cta_` tokens survive the move to `d1Storage`. Each
-live entry keeps its key, value, and absolute expiry; expired entries are
-skipped, and a D1 entry holding a different value is kept unless `overwrite`
-is set, so a rerun copies nothing twice. Each call reads at most `maxKeys`
-keys (default 500, inside a Workers Paid invocation's limits) and returns a
-resume token until done. Results count keys per key family and never name a
-key or value, and errors use fixed wording. The Worker example adds
-`scripts/copy-kv-to-d1.mjs`, which runs the copy through wrangler's remote
-bindings right after the deploy (#709).
+`copyKvToD1(kv, db, { source, cursor, overwriteFamilies, maxKeys, verify })`
+on `@zackbart/connecta/d1` copies a 0.28 Workers KV deployment's state into D1
+during a maintenance window, preserving OAuth grants, vault credentials,
+`cta_` tokens, and absolute expiries. It skips oversized UTF-8 strings/rows,
+bounds buffered bytes, and reports invalid/conflict/verification counts by
+family only. Resume tokens require the same source id and an atomic claim;
+error labels use class identity. Overwrite requires an explicit family list.
+`markKvToD1Live` seals the source in D1 before traffic reopens, refusing later
+copies unless explicitly overridden. The Worker runbook backs up and drains
+writers, waits for stable KV, copies and verifies before deployment, checks
+existing credentials under maintenance, then reopens traffic (#709).
