@@ -1228,18 +1228,13 @@ export class KvOAuthProvider implements OAuthClientProvider {
     if (this.clientOptions?.client?.clientSecret) secrets.add(this.clientOptions.client.clientId);
     const urls: string[] = [];
     const collect = (item: unknown): void => {
-      if (typeof item === "string" && /^https?:\/\//i.test(item)) urls.push(item);
-      else if (item && typeof item === "object") for (const field of Object.values(item)) collect(field);
+      if (typeof item === "string") {
+        try { urls.push(new URL(item).href); } catch { /* Not a URL field. */ }
+      } else if (item && typeof item === "object") for (const field of Object.values(item)) collect(field);
     };
     collect(value);
     if ([secrets, this.clientOptions?.secrets].some((source) => source &&
-      (source.redact(value) !== value || urls.some((url) => {
-        if (source.contains(url)) return true;
-        // URL parsers lowercase host labels; preserve that equivalence only
-        // for hosts, without making path/query credential matches insensitive.
-        try { return source.contains(new URL(url).hostname, true); }
-        catch { return false; }
-      })))) {
+      (source.redact(value) !== value || urls.some((url) => source.containsUrl(url))))) {
       throw new ConnectorCallError("connector_call_failed",
         "OAuth metadata or consent URL contains a credential; refusing authorization.", { retryable: false });
     }

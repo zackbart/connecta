@@ -2,4 +2,4 @@
 type: security
 ---
 
-Harden credential redaction in downstream OAuth metadata, saved authorization URLs, operator failure origins, and short explicit secrets.
+Refuse credential echoes in normalized downstream OAuth metadata and saved authorization URLs, and restrict operator failure origins. Use an eight-character floor for all echo matching and warn once when configured secrets are below it.

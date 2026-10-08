@@ -2,7 +2,8 @@
 // shape, a failure record, storage, or a log. Web APIs only.
 import { carryFailureFacts } from "./operator-record.js";
 import { ConnectorCallError } from "./errors.js";
-import type { ConnectorContext } from "./types.js";
+import { credentialUrlViews } from "./credential-url.js";
+import type { ConnectorContext, Logger } from "./types.js";
 
 const REDACTED = "[redacted]";
 const encoder = new TextEncoder();
@@ -11,9 +12,21 @@ const requests = new WeakMap<object, SentSecrets>();
 const wrappedCredentials = new WeakSet<ConnectorContext>();
 const sensitiveName = /key|token|secret|password|auth|signature|session/i;
 const explicitSecretName = /secret|password/i;
-// General short values, especially usernames, would corrupt ordinary prose.
-// Explicit secrets use whole-token matches below instead of substring matches.
+// Short credentials can match protocol fields or legitimate configuration.
 const MIN_SECRET_LENGTH = 8;
+
+type SecretWarning = { code: "short_secret_not_redacted" };
+
+/** One payload-free warning per configured connector, regardless of requests. */
+export function shortSecretWarning(): (value: string | undefined, logger: Logger) => void {
+  let warned = false;
+  return (value, logger) => {
+    if (warned || !value || value.length >= MIN_SECRET_LENGTH) return;
+    warned = true;
+    const fact: SecretWarning = { code: "short_secret_not_redacted" };
+    logger.warn("[connecta] Credentials shorter than 8 characters are not redacted from echoes; use longer secrets.", fact);
+  };
+}
 
 function literal(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -39,16 +52,14 @@ function base64(value: string): string {
 
 export class SentSecrets {
   private readonly values = new Set<string>();
-  private readonly shortSecrets = new Set<string>();
   private matcher: RegExp | undefined;
   private readonly recipients = new Set<SentSecrets>();
 
-  private form(value: string, bounded = false): void {
-    const values = bounded ? this.shortSecrets : this.values;
-    if (values.has(value)) return;
-    values.add(value);
+  private form(value: string): void {
+    if (this.values.has(value)) return;
+    this.values.add(value);
     this.matcher = undefined;
-    for (const recipient of this.recipients) recipient.form(value, bounded);
+    for (const recipient of this.recipients) recipient.form(value);
   }
 
   /** The request receives existing and future credentials from every context. */
@@ -56,7 +67,6 @@ export class SentSecrets {
     if (source === this) return;
     source.recipients.add(this);
     for (const value of source.values) this.form(value);
-    for (const value of source.shortSecrets) this.form(value, true);
   }
 
   add(value: string): void {
@@ -72,22 +82,18 @@ export class SentSecrets {
     }
   }
 
-  /** Explicit secret fields are sensitive at every length. Bound short matches
-   * by Unicode letters, numbers and underscore, so `the` cannot alter `other`.
-   * A standalone word equal to the password is necessarily withheld. */
-  secret(value: string): void {
-    if (value.length >= MIN_SECRET_LENGTH) { this.add(value); return; }
-    if (!value) return;
-    for (const form of [value, encodeURIComponent(value), encodeURI(value),
-      new URLSearchParams({ value }).toString().slice(6), base64(value),
-      base64(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")]) {
-      this.form(form, true);
-    }
-  }
+  /** Explicit secrets use the same floor as every other credential. */
+  secret(value: string): void { this.add(value); }
 
   /** Structural fields must be refused, never repaired into different URLs. */
   contains(value: string, ignoreCase = false): boolean {
-    return [...this.values, ...this.shortSecrets].some((secret) => new RegExp(wirePattern(secret), ignoreCase ? "i" : "").test(value));
+    return [...this.values].some((secret) => new RegExp(wirePattern(secret), ignoreCase ? "i" : "").test(value));
+  }
+
+  containsUrl(value: string): boolean {
+    const { hosts, components, joined } = credentialUrlViews(value);
+    return hosts.some((host) => this.contains(host, true)) ||
+      [...components, ...joined].some((view) => this.contains(view));
   }
 
   header(value: string): void {
@@ -137,14 +143,12 @@ export class SentSecrets {
   }
 
   text(value: string): string {
-    if (this.values.size === 0 && this.shortSecrets.size === 0) return value;
+    if (this.values.size === 0) return value;
     // Replace longer forms first so a raw token cannot leave its prefix or
     // encoded suffix behind. Literal matches only: ordinary diagnostics stay.
     this.matcher ??= new RegExp([
       literal(REDACTED),
-      ...[...this.values, ...this.shortSecrets].sort((a, b) => b.length - a.length).map((secret) =>
-        this.values.has(secret) ? wirePattern(secret)
-          : `(?<![\\p{L}\\p{N}_])${wirePattern(secret)}(?![\\p{L}\\p{N}_])`),
+      ...[...this.values].sort((a, b) => b.length - a.length).map(wirePattern),
     ].join("|"), "gu");
     // A single pass never scans a newly inserted placeholder as credential
     // text. Protect existing placeholders when another boundary runs too.
@@ -209,7 +213,7 @@ export class SentSecrets {
 
   /** Copy, including non-enumerable Error fields; never retain a raw cause. */
   redact<T>(value: T): T {
-    if (this.values.size === 0 && this.shortSecrets.size === 0) return value;
+    if (this.values.size === 0) return value;
     const seen = new Map<object, object>();
     let changed = false;
     const text = (value: string): string => {

@@ -40,7 +40,7 @@ import {
 } from "../auth/downstream-oauth.js";
 import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
 import { byteReadResponse } from "../byte-read-response.js";
-import { redactCatalog, redactSentSecrets, sentSecretsFor, trackCredentialReads, type SentSecrets } from "../sent-secrets.js";
+import { redactCatalog, redactSentSecrets, sentSecretsFor, shortSecretWarning, trackCredentialReads, type SentSecrets } from "../sent-secrets.js";
 import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
 import { reviewedClassification } from "../catalog-drift.js";
 import { connectorScopeCleanupClaimed } from "../connector-scope.js";
@@ -1137,6 +1137,21 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // join one token redemption. It owns no client, transport, or request state.
   const refreshCoordinatorFor = refreshCoordinatorsByPartition();
   const logger = opts.logger ?? console;
+  const warnShortSecret = shortSecretWarning();
+  warnShortSecret(staticClient?.clientSecret, logger);
+  if (opts.auth?.type === "headers") {
+    for (const [name, value] of Object.entries(opts.auth.headers)) {
+      if (!/key|token|secret|password|auth|signature|session/i.test(name)) continue;
+      const basic = /^Basic\s+(.+)$/i.exec(value);
+      if (basic) {
+        try {
+          const decoded = atob(basic[1]!);
+          const colon = decoded.indexOf(":");
+          if (colon !== -1) warnShortSecret(decoded.slice(colon + 1), logger);
+        } catch { /* Invalid Basic configuration is not a short password. */ }
+      } else warnShortSecret(value.replace(/^(?:Bearer|token)\s+/i, ""), logger);
+    }
+  }
 
   const credentialAuth =
     opts.auth?.type === "credential" ? opts.auth : undefined;
