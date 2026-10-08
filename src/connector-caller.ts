@@ -2,12 +2,9 @@
 //
 // `ConnectorContext` deliberately carries no identity: a deployment's own
 // connector acts for the deployment, and one that could read its caller would
-// invite per-user behavior the access rules never saw. Two kinds of in-repo
-// code are the exceptions, so the identity rides beside the context, the way
+// invite per-user behavior the access rules never saw. Maintained providers are the exception, so the identity rides beside the context, the way
 // the OAuth sealer does, where only in-repo code can read it:
 //
-// - the built-in artifacts connector, because every version it writes records
-//   who wrote it;
 // - maintained providers that act *as* the caller downstream — Google
 //   Workspace through domain-wide delegation (`src/providers/_shared/google/`) — which
 //   hand the identity to a deployment-config function that names the
@@ -18,8 +15,7 @@
 // registry view that request receives, and `api()` hands handlers that same
 // context object; no argument or program can name it, and a header only
 // through an inbound-auth provider configured to read one (a bearer's asserted
-// principal). A context no request admitted — a scheduled artifact refresh, an
-// operator probe — has no caller, and a delegated provider fails closed on it,
+// principal). A context no request admitted, such as an operator probe, has no caller, and a delegated provider fails closed on it,
 // as it does on the anonymous caller an open deployment admits.
 
 import type { AuthenticatedIdentity, ConnectorContext } from "./types.js";
@@ -52,7 +48,3 @@ export function callerOf(ctx: ConnectorContext): ConnectorCaller | undefined {
   return callers.get(ctx);
 }
 
-// Request-local execution provenance for nested built-in program runners.
-const programCalls = new WeakSet<ConnectorContext>();
-export function markProgramCall(ctx: ConnectorContext): void { programCalls.add(ctx); }
-export function isProgramCall(ctx: ConnectorContext): boolean { return programCalls.has(ctx); }

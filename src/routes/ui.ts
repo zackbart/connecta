@@ -25,7 +25,6 @@ import {
 } from "./operator.js";
 import {
   mayManageConnector,
-  mayViewArtifacts,
   privateJson,
   type RouteContext,
 } from "./shared.js";
@@ -96,12 +95,10 @@ export async function routeUi(
   }
 
   const operatorPage = operatorPageForPath(path);
-  const artifactPage = operatorPage === "artifacts" || operatorPage === "artifact";
   if (
     operatorPage &&
     (operatorPage !== "activity" || opts.config.activity?.store.list) &&
-    (operatorPage !== "tokens" || opts.config.accessTokens) &&
-    (!artifactPage || opts.config.artifacts)
+    (operatorPage !== "tokens" || opts.config.accessTokens)
   ) {
     if (request.method !== "GET" && request.method !== "HEAD") {
       return privateJson({ error: "method not allowed" }, { status: 405 });
@@ -120,25 +117,16 @@ export async function routeUi(
     const mcpUrl = new URL("/mcp", baseUrl).toString();
     const clerkOrigin = uiAuth?.kind === "clerk" && isSafeHttpsUrl(uiAuth.frontendApiUrl)
       ? new URL(uiAuth.frontendApiUrl).origin : undefined;
-    // An artifact shell frames the sandboxed page from its own origin and
-    // nothing else; Connections stays on the deployment's public origin.
-    const homeUrl = opts.config.publicUrl ? new URL("/", opts.config.publicUrl).toString() : "/";
-    // The artifact host serves no favicon, so a shell there takes its icons
-    // from the public origin, as the 404 does; on the main host they stay
-    // root-relative.
-    const onArtifactHost = Boolean(opts.config.artifactOrigin) &&
-      url.origin === new URL(opts.config.artifactOrigin!).origin;
-    const iconOrigin = onArtifactHost ? opts.config.publicUrl : undefined;
     return new Response(
       request.method === "HEAD"
         ? null
-        : renderUiHtml(uiAuth, mcpUrl, opts.config.ui?.branding, undefined, operatorPage, { homeUrl, iconOrigin }),
+        : renderUiHtml(uiAuth, mcpUrl, opts.config.ui?.branding, undefined, operatorPage),
       {
         status: 200,
         headers: htmlSecurityHeaders({
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-store",
-        }, { ...(clerkOrigin ? { clerkOrigin } : {}), frameSelf: artifactPage }),
+        }, { ...(clerkOrigin ? { clerkOrigin } : {}) }),
       },
     );
   }
@@ -237,7 +225,6 @@ function summary(context: RouteContext): Effect.Effect<Response, Answer> {
       connectaVersion: CONNECTA_VERSION,
       activityEnabled,
       ...(opts.config.accessTokens ? { accessTokenManagement: authz.accessTokenManagement && authz.identity.principal ? "available" : "requires_operator" } : {}),
-      ...(opts.config.artifacts && mayViewArtifacts(authz, opts.registry) ? { artifactsEnabled: true } : {}),
       credentialManagement,
       oauthManagement: visible.some(c => mayManage(c.id)),
       connectors: visible.map(c => ({ id: c.id, ...(c.title ? { title: c.title } : {}), ...(c.description ? { description: c.description } : {}), authScope: c.authScope ?? "shared", status: "loading", toolCount: 0, tools: [], oauth: Boolean(c.startAuth && c.disconnectAuth), permissions: permissions(c) })),

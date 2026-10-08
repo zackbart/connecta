@@ -985,28 +985,13 @@ interface RunnerConfig {
   maxWrites?: number | undefined;
 }
 
-/** Room for the executor queue a run waits in before its watchdog starts. */
-const RUN_CLAIM_SLACK_MS = 10_000;
-
-/**
- * How long one run may take before whoever claimed it may give up on it: the
- * watchdog, a second watchdog budget for a trusted-pool write the play drains,
- * and queue slack. Artifact refresh leases its claim for this long.
- */
-export function runClaimMs(
-  config: Pick<RunnerConfig, "watchdogMs" | "hostCallTimeoutMs">,
-): number {
-  // A guest override is capped by the remaining watchdog, including drained writes.
-  return 2 * resolveBudget(config.watchdogMs, EXECUTE_WATCHDOG_MS) + RUN_CLAIM_SLACK_MS;
-}
-
 /** Runs one `execute_code` program and answers as the tool does. */
 type ExecuteHandler = (
   args: { code: string; diagnostics?: boolean },
   options?: { signal?: AbortSignal },
 ) => Promise<ToolResult>;
 
-/** The execute_code handler. Exported for direct testing and artifact refresh. */
+/** The execute_code handler. Exported for direct testing. */
 export function createExecuteTool(
   registry: RegistryView,
   baseUrl: string,

@@ -38,7 +38,6 @@ export {
 import {
   escapeHtml,
   isSafeHttpsUrl,
-  notFoundResponse,
   renderPage,
   resolveBranding,
 } from "./branding.js";
@@ -48,11 +47,8 @@ export type OperatorPage = import("./operator-ui/view.js").OperatorPage;
 const OPERATOR_PAGE_LABELS: Readonly<Record<OperatorPage, string>> = {
   overview: "Overview", connections: "Connectors", connector: "Connector",
   tools: "Tools", access: "Access", config: "Config", tokens: "Access tokens",
-  activity: "Activity", artifacts: "Artifacts", artifact: "Artifact",
+  activity: "Activity",
 };
-
-/** `/artifacts/<id>` and its snapshots, `/artifacts/<id>/v/<version>`. */
-const ARTIFACT_PAGE = /^\/artifacts\/[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?(?:\/v\/\d{1,9})?$/;
 
 export function operatorPageForPath(path: string): OperatorPage | undefined {
   if (path === "/") return "overview";
@@ -63,14 +59,7 @@ export function operatorPageForPath(path: string): OperatorPage | undefined {
   if (path === "/config") return "config";
   if (path === "/tokens") return "tokens";
   if (path === "/activity") return "activity";
-  if (path === "/artifacts") return "artifacts";
-  if (ARTIFACT_PAGE.test(path)) return "artifact";
   return undefined;
-}
-
-/** Everything artifact pages own: shells, their API, and the frame. */
-function isArtifactPath(path: string): boolean {
-  return path === "/artifacts" || path.startsWith("/artifacts/");
 }
 
 export function operatorPageTitle(
@@ -174,16 +163,6 @@ export function renderUiHtml(
   /** @deprecated Scripts load from same-origin assets; ignored. */
   _nonce?: string,
   page: OperatorPage = "overview",
-  options: {
-    /** Where the Connections page lives, when this shell is on another origin. */
-    homeUrl?: string;
-    /**
-     * The origin that serves `/favicon.*`, when this shell is on another one:
-     * an artifact host answers those paths with 404. See `PageLayout.iconOrigin`.
-     */
-    iconOrigin?: string | undefined;
-  } = {},
-): string {
   const clerk = uiAuth?.kind === "clerk" ? uiAuth : undefined;
   // The Clerk loader's origin. A value that fails the gate is dropped rather
   // than escaped into the page: the loader tag is simply not emitted, the gate
@@ -227,7 +206,6 @@ export function renderUiHtml(
     title: operatorPageTitle(page, brand.pageTitle),
     uiMounted: true,
     operatorShell: true,
-    iconOrigin: options.iconOrigin,
     styles: "",
     head: `<link rel="stylesheet" href="${OPERATOR_UI_STYLE_PATH}"><link rel="license" href="${OPERATOR_UI_NOTICES_PATH}">` + clerkScript,
     skipTo: { id: "operatorContent", label: "Skip to operator page" },
@@ -245,7 +223,7 @@ export function renderUiHtml(
 </main>
 `,
     tail: `<script id="operatorConfig" type="application/json">${jsonForInlineScript({
-      auth, mcpUrl, initialPage: page, homeUrl: options.homeUrl ?? "/",
+      auth, mcpUrl, initialPage: page, 
       titleSuffix: brand.pageTitle, productName: brand.productName,
       productDescription: brand.description, productOperatorLabel: brand.productName + " operator",
     })}</script><script defer src="${OPERATOR_UI_SCRIPT_PATH}"></script>`,
@@ -287,16 +265,7 @@ export function operatorUi(
       // route here, and no activity module, runs for a path this surface does
       // not own. The Activity page is the one addition; the server reserves
       // it only when history is readable, and routeUi checks the same thing.
-      // Artifact pages are the other: they exist only beside the module.
-      const artifacts = context.opts.config.artifacts;
-      const artifactPath = Boolean(artifacts) && isArtifactPath(context.path);
-      if (!artifactPath && !ownsOperatorPath(reservedPaths, context.path)) return null;
-      if (artifactPath && !operatorPageForPath(context.path)) {
-        // The pages' JSON API and the sandboxed frame; the module owns both,
-        // and this bundle imports none of it.
-        return (await artifacts?.handle(context)) ??
-          notFoundResponse(context.request, context.opts.config);
-      }
+      if (!ownsOperatorPath(reservedPaths, context.path)) return null;
       const tokenResponse = await context.opts.config.accessTokens?.handle(context);
       if (tokenResponse) return tokenResponse;
       const routes = [

@@ -65,7 +65,7 @@ const sql = (text: string, ...params: SqlValue[]): SqlStatement => ({
 // read of a text column also selects its bytes, only when they hold a zero
 // byte, and the bytes win. Reading every value as a BLOB would also work, but
 // D1 returns a BLOB as an array of numbers, several times the value's size on
-// the wire, and stash chunks and artifact bodies are large.
+// the wire, and stash chunks are large.
 
 type TextBytes = Uint8Array | readonly number[];
 

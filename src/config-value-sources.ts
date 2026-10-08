@@ -38,7 +38,7 @@ function factorySource(sources: Readonly<Record<string, ConfigValueSource>>, par
 export function describeConfigSources(snapshot: ConnectaConfigDescription, raw: ConnectaConfig): Record<string, ConfigValueSource> {
   const sources: Record<string, ConfigValueSource> = {};
   const connectorSources = new Map(raw.connectors.map(connector => [connector.id, factorySources(connector)]));
-  const moduleSources = { accessTokens: factorySources(raw.accessTokens), artifacts: factorySources(raw.artifacts) };
+  const moduleSources = { accessTokens: factorySources(raw.accessTokens) };
   const provided = (value: unknown): ConfigValueSource => value === undefined ? "default" : "config";
   for (const path of configValuePaths(snapshot)) {
     const parts = path.split(".").slice(1);
@@ -46,7 +46,7 @@ export function describeConfigSources(snapshot: ConnectaConfigDescription, raw: 
     let source: ConfigValueSource = "config";
     if (group === "schemaVersion" || group === "connectaVersion") source = "default";
     else if (group === "server") source = provided(raw.serverInfo?.[key as keyof NonNullable<ConnectaConfig["serverInfo"]>]);
-    else if (group === "urls") source = key === "mcpPath" ? "default" : provided(raw[key as "publicUrl" | "artifactOrigin" | "allowedOrigins"]);
+    else if (group === "urls") source = key === "mcpPath" ? "default" : provided(raw[key as "publicUrl" | "allowedOrigins"]);
     else if (group === "trust") source = provided(raw.trust);
     else if (group === "identity") source = provided(raw.identity?.[key as keyof NonNullable<ConnectaConfig["identity"]>]);
     else if (group === "storage") source = provided(raw.storage);
@@ -54,7 +54,7 @@ export function describeConfigSources(snapshot: ConnectaConfigDescription, raw: 
     else if (group === "classification") source = provided(raw.classification);
     else if (group === "pools") source = field === "trust" ? provided(raw.pools?.[key!]?.trust) : provided(raw.pools);
     else if (group === "modules") {
-      const module = key === "ui" ? raw.ui : key === "vault" ? raw.vault : key === "activity" ? raw.activity : key === "accessTokens" ? raw.accessTokens : raw.artifacts;
+      const module = key === "ui" ? raw.ui : key === "vault" ? raw.vault : key === "activity" ? raw.activity : raw.accessTokens;
       const factory = moduleSources[key as keyof typeof moduleSources];
       source = (factory ? factorySource(factory, parts.slice(2)) : undefined) ?? provided(module);
     } else if (group === "branding") {

@@ -76,7 +76,6 @@ export interface ConnectaConfigDescription {
   server: { name: string; version: string; title?: string; websiteUrl?: DescribedEndpoint; icons: number };
   urls: {
     publicUrl?: DescribedEndpoint;
-    artifactOrigin?: string;
     mcpPath: "/mcp";
     /** Configured exact origins, `"*"`, or the default (publicUrl plus loopback). */
     allowedOrigins: string[] | "*" | "default";
@@ -113,12 +112,6 @@ export interface ConnectaConfigDescription {
       store?: { kind: DescribedStoreKind; retentionDays?: number };
     };
     accessTokens: { enabled: boolean; maxActive?: number };
-    artifacts: {
-      enabled: boolean;
-      allowlist?: { scripts: string[]; styles: string[]; fonts: string[] };
-      limits?: Record<string, number>;
-      renderCheck?: boolean;
-    };
   };
   /** Every accepted store implements `list` and `compareAndSet`, so only its kind is told. */
   storage: { configured: boolean; kind: DescribedStoreKind };
@@ -352,7 +345,6 @@ const storeKind = (described: { kind?: unknown } | undefined): DescribedStoreKin
 export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescription {
   const { raw, config } = input;
   const brand = resolveBranding(config.ui?.branding);
-  const artifacts = config.artifacts?.describe?.();
   const accessTokens = config.accessTokens?.describe?.();
   const storage = config.storage;
   const activityStore = config.activity?.store.describe?.();
@@ -378,9 +370,6 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
     },
     urls: {
       ...(publicUrl ? { publicUrl } : {}),
-      ...(config.artifactOrigin !== undefined
-        ? { artifactOrigin: describedOrigin(config.artifactOrigin) ?? "" }
-        : {}),
       mcpPath: "/mcp",
       allowedOrigins: config.allowedOrigins === undefined
         ? "default"
@@ -447,25 +436,6 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
         : { enabled: false },
       accessTokens: config.accessTokens
         ? { enabled: true, ...(num(accessTokens?.maxActive) !== undefined ? { maxActive: accessTokens!.maxActive } : {}) }
-        : { enabled: false },
-      artifacts: config.artifacts
-        ? {
-            enabled: true,
-            ...(artifacts
-              ? {
-                  allowlist: {
-                    scripts: origins(artifacts.allowlist.scripts),
-                    styles: origins(artifacts.allowlist.styles),
-                    fonts: origins(artifacts.allowlist.fonts),
-                  },
-                  limits: Object.fromEntries(
-                    Object.entries(artifacts.limits).flatMap(([key, value]) =>
-                      num(value) !== undefined ? [[key, value]] : []),
-                  ),
-                  renderCheck: artifacts.renderCheck === true,
-                }
-              : {}),
-          }
         : { enabled: false },
     },
     storage: {

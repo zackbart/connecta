@@ -15,7 +15,7 @@ import { withDeadlineEffect } from "../runtime/run.js";
 import type { Connector } from "../types.js";
 import { uiProblemFor } from "../ui.js";
 import { authorized, serveOperator, visibleRegistry, type Answer, type Authorized } from "./operator.js";
-import { mayManageConnector, mayViewArtifacts, privateJson, type RouteContext } from "./shared.js";
+import { mayManageConnector, privateJson, type RouteContext } from "./shared.js";
 
 const attempt = <A>(operation: () => Promise<A>) => Effect.tryPromise({ try: operation, catch: (error) => error });
 const validName = (name: string) => recordedToolName({ name }) === name;
@@ -159,7 +159,6 @@ function configRead(context: RouteContext): Effect.Effect<Response, Answer> {
         permissions: {
           activity: activity === "available" || activity === "unavailable",
           accessTokenManagement: Boolean(opts.config.accessTokens && authz.accessTokenManagement && authz.identity.principal),
-          artifacts: Boolean(opts.config.artifacts && mayViewArtifacts(authz, opts.registry)),
           connectors: visible.map(c => ({ id: c.id, use: true,
             manageSharedAuth: c.authScope !== "personal" && mayManageConnector(authz, c),
             connectPersonal: c.authScope === "personal" && mayManageConnector(authz, c),

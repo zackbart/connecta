@@ -19,8 +19,6 @@ import {
 
 export type { ServerOptions } from "./routes/shared.js";
 
-const isArtifactPath = (path: string) => path === "/artifacts" || path.startsWith("/artifacts/");
-
 /**
  * Build the Web-standard fetch handler.
  *
@@ -79,7 +77,6 @@ export function createFetchHandler(
           ...(opts.config.ui?.reservedPaths ?? []),
           ...(opts.config.ui && opts.config.activity?.store.list ? ["/activity"] : []),
           ...(opts.config.ui && opts.config.accessTokens ? ["/tokens"] : []),
-          ...(opts.config.ui && opts.config.artifacts ? ["/artifacts", "/artifacts/*"] : []),
         ],
       },
       ...(opts.config.deploymentInfo ? { deployment: opts.config.deploymentInfo } : {}),
@@ -141,31 +138,6 @@ export function createFetchHandler(
       const defer = runtimeContext
         ? runtimeContext.waitUntil.bind(runtimeContext)
         : undefined;
-
-      // The artifact hostname serves artifact pages and public UI assets only.
-      // Dispatch before MCP origin checks so even a hostile /mcp gets the same
-      // 404 as any other unserved path.
-      if (opts.config.artifactOrigin && url.origin === new URL(opts.config.artifactOrigin).origin) {
-        if ((!isArtifactPath(path) && !path.startsWith("/ui/assets/")) || !opts.config.ui || !opts.config.artifacts) {
-          return Effect.succeed(withSecurityHeaders(notFoundResponse(request, opts.config), url, path));
-        }
-        const context: RouteContext = {
-          request, url, path, baseUrl: opts.config.artifactOrigin, opts, defer, runtimeContext,
-        };
-        return Effect.map(Effect.promise(() => opts.config.ui!.handle(context)), response =>
-          withSecurityHeaders(response ?? notFoundResponse(request, opts.config), url, path),
-        );
-      }
-
-      if (opts.config.artifactOrigin && isArtifactPath(path) && opts.config.ui && opts.config.artifacts) {
-        const target = new URL(opts.config.artifactOrigin);
-        target.pathname = path;
-        target.search = url.search;
-        return Effect.succeed(withSecurityHeaders(new Response(null, {
-          status: 308,
-          headers: { Location: target.toString() },
-        }), url, path));
-      }
 
       const originRefusal = routeMcp.rejectOrigin(request);
       if (originRefusal) {

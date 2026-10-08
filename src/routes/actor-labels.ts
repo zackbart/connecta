@@ -1,5 +1,5 @@
 // Display labels for stored actors, shared by the activity page and the
-// artifact library. An actor is stored as a stable id; a label is resolved at
+// activity history. An actor is stored as a stable id; a label is resolved at
 // read time from the one auth provider that owns the actor's directory, and
 // only on an authorized read path. Nothing here is persisted, and a label a
 // store happens to carry is never trusted or echoed.
