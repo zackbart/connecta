@@ -1170,9 +1170,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
   ): Promise<OAuthClientInformationMixed | undefined> {
     const { body } = await this.boundGrant();
     const client = this.clientOptions?.client;
+    if (!body.client && !this.allowAuthorization) throw this.authorizationRefused();
     if (client) {
       if ((ctx && ctx.issuer !== client.issuer) || body.issuer !== client.issuer) throw this.flowSuperseded();
-      if (!body.client && !this.allowAuthorization) throw this.authorizationRefused();
       if (body.client && (body.client.value.client_id !== client.clientId || body.client.binding !== this.clientBinding)) throw this.flowSuperseded();
       return { client_id: client.clientId, issuer: client.issuer,
         token_endpoint_auth_method: this.clientMetadata.token_endpoint_auth_method,
@@ -1218,7 +1218,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
     const issuer = discoveryIssuer(state);
     if (this.clientOptions?.client && issuer !== this.clientOptions.client.issuer) throw this.flowSuperseded();
-    if (this.clientOptions?.client && !this.allowAuthorization && !(await this.boundGrant()).body.client) throw this.authorizationRefused();
+    if (!this.allowAuthorization && !(await this.boundGrant()).body.client) throw this.authorizationRefused();
     this.consentDiscovery = state;
     await this.updateGrant((grant) => {
       const body: GrantBody = grant.body.issuer !== issuer

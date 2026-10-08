@@ -160,16 +160,18 @@ describe("downstream OAuth best practice", () => {
     expect(JSON.stringify(flow.lines)).not.toMatch(/SENTINEL/);
   });
 
-  it("INV-10: passive status does not persist a static client's discovery, identity, or consent", async () => {
-    const flow = setup({ auth: { type: "oauth", client: { issuer: ISSUER, clientId: "static-client", clientSecret: SECRET } } });
+  it.each(["static", "cimd", "dcr"])("INV-10: passive status does not persist a %s client's discovery, identity, or consent", async path => {
+    const flow = setup(path === "static"
+      ? { auth: { type: "oauth", client: { issuer: ISSUER, clientId: "static-client", clientSecret: SECRET } } }
+      : { cimd: path === "cimd" });
     const storage = flow.ctx().storage;
     expect(await storage.list("oauth:")).toEqual([]);
     expect((await flow.connector.status!(flow.ctx())).state).toBe("auth_required");
     expect(await storage.list("oauth:")).toEqual([]);
     expect(flow.sent.some(request => request.url.endsWith("/token") || request.url.endsWith("/register"))).toBe(false);
     const status = await flow.start();
-    expect(status.registrationPath).toBe("static");
-    expect(JSON.parse((await storage.get("oauth:grant"))!).body.client).toMatchObject({ value: { client_id: "static-client" }, registrationPath: "static" });
+    expect(status.registrationPath).toBe(path);
+    expect(JSON.parse((await storage.get("oauth:grant"))!).body.client.registrationPath).toBe(path);
   });
 
   it.each(["none", "client_secret_post"] as const)("INV-5 INV-6: pins static %s authentication for exchange and revocation", async tokenEndpointAuthMethod => {
