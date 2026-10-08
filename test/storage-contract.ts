@@ -169,6 +169,44 @@ export function compareAndSetContract(
     expect(await storage.compareAndSet("lease", null, "next")).toBe(true);
   });
 
+  it("INV-7: honors absolute expiry for set and CAS without restarting a delayed write's TTL", async () => {
+    const advance = fakeClock();
+    const storage = await open();
+    const expiresAtMs = Date.now() + 60_000;
+    await storage.set("absolute-set", "value", { expiresAtMs });
+    expect(await storage.get("absolute-set")).toBe("value");
+    expect(await storage.compareAndSet("absolute-cas", null, "value", { expiresAtMs })).toBe(true);
+    expect(await storage.get("absolute-cas")).toBe("value");
+    await advance(61_000);
+    expect(await storage.get("absolute-set")).toBeNull();
+    expect(await storage.get("absolute-cas")).toBeNull();
+    const past = Date.now() - 60_000;
+    await storage.set("late-set", "late", { expiresAtMs: past });
+    expect(await storage.compareAndSet("late-cas", null, "late", { expiresAtMs: past })).toBe(true);
+    expect(await storage.get("late-set")).toBeNull();
+    expect(await storage.get("late-cas")).toBeNull();
+    expect(await storage.list("late-")).toEqual([]);
+  });
+
+  it("refuses invalid or mixed absolute expiry options without changing a live value", async () => {
+    const storage = await open();
+    const invalid = [
+      { expiresAtMs: Number.NaN },
+      { expiresAtMs: Number.POSITIVE_INFINITY },
+      { expiresAtMs: Number.MAX_VALUE },
+      { expiresAtMs: 1.5 },
+      { expiresAtMs: Date.now() + 60_000, ttlSeconds: 10 },
+    ];
+    for (const options of invalid) {
+      await storage.set("absolute", "original");
+      await expect(storage.set("absolute", "replacement", options)).rejects.toThrow();
+      await expect(storage.compareAndSet("absolute", "original", "replacement", options)).rejects.toThrow();
+      expect(await storage.get("absolute")).toBe("original");
+      expect(await storage.compareAndSet("absolute", "different", "replacement", options)).toBe(false);
+      expect(await storage.compareAndSet("absolute", "original", null, options)).toBe(true);
+    }
+  });
+
   it("refuses non-finite or overflowing TTLs without changing a live value", async () => {
     const storage = await open();
     for (const ttlSeconds of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.MAX_VALUE]) {

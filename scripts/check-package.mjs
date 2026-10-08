@@ -5,7 +5,8 @@ import { createServer } from "node:http";
 import { copyFile, lstat, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { getPlatformProxy } from "wrangler";
 import { discoverProviders } from "./providers.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -14,6 +15,39 @@ const work = await mkdtemp(join(tmpdir(), "connecta-package-"));
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const rootManifest = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 const templateManifest = JSON.parse(await readFile(join(root, "templates", "node", "package.json"), "utf8"));
+
+/** Exercise the packed adapters, including absolute CAS insert and update. */
+async function checkAbsoluteExpiry(storage) {
+  if (storage.capabilities?.absoluteExpiry !== true) throw new Error("missing absoluteExpiry capability");
+  const future = Date.now() + 60_000;
+  const past = Date.now() - 60_000;
+  await storage.set("absolute-set", "live", { expiresAtMs: future });
+  if ((await storage.get("absolute-set")) !== "live") throw new Error("absolute set lost a live value");
+  if (!(await storage.compareAndSet("absolute-cas-insert", null, "live", { expiresAtMs: future }))) {
+    throw new Error("absolute CAS insert failed");
+  }
+  await storage.set("absolute-cas-update", "old");
+  if (!(await storage.compareAndSet("absolute-cas-update", "old", "live", { expiresAtMs: future }))) {
+    throw new Error("absolute CAS update failed");
+  }
+  if ((await storage.get("absolute-cas-insert")) !== "live" || (await storage.get("absolute-cas-update")) !== "live") {
+    throw new Error("absolute CAS lost a live value");
+  }
+  await storage.set("expired-set", "dead", { expiresAtMs: past });
+  if ((await storage.get("expired-set")) !== null) throw new Error("absolute set ignored its expiry");
+  if (
+    !(await storage.compareAndSet("expired-cas", null, "dead", { expiresAtMs: past })) ||
+    (await storage.get("expired-cas")) !== null
+  )
+    throw new Error("absolute CAS insert ignored its expiry");
+  await storage.set("expired-cas", "old");
+  if (
+    !(await storage.compareAndSet("expired-cas", "old", "dead", { expiresAtMs: past })) ||
+    (await storage.get("expired-cas")) !== null
+  )
+    throw new Error("absolute CAS update ignored its expiry");
+  return future;
+}
 
 if (templateManifest.dependencies?.["@zackbart/connecta"] !== rootManifest.version) {
   throw new Error("Node template must pin the package's current version");
@@ -291,10 +325,12 @@ try {
   );
   await writeFile(join(work, "package.json"), JSON.stringify({ private: true, type: "module" }));
   await copyFile(join(root, "scripts", "provider-smoke.generated.mjs"), join(work, "provider-smoke.generated.mjs"));
+  await writeFile(join(work, "storage-smoke.mjs"), `export ${checkAbsoluteExpiry.toString()}\n`);
   await writeFile(
     join(work, "smoke.mjs"),
     `
 import { createRequire } from "node:module";
+import { checkAbsoluteExpiry } from "./storage-smoke.mjs";
 
 // Resolving the installed manifest is what bundler plugins and version probes
 // do; without a "./package.json" entry in the exports map this throws
@@ -316,12 +352,26 @@ if (typeof d1Module.d1Storage !== "function" || typeof d1Module.d1ActivityStore 
   throw new Error("missing D1 storage adapters");
 }
 const sqliteModule = await import("@zackbart/connecta/sqlite");
-const smokeStorage = sqliteModule.sqliteStorage(sqliteModule.openSqlite(":memory:"));
+const smokeDb = sqliteModule.openSqlite(":memory:");
+const smokeStorage = sqliteModule.sqliteStorage(smokeDb);
 if (!(await smokeStorage.compareAndSet("smoke", null, "1")) ||
     (await smokeStorage.compareAndSet("smoke", null, "2")) ||
     (await smokeStorage.get("smoke")) !== "1") {
   throw new Error("packed sqliteStorage did not compare-and-set");
 }
+const sqliteExpiry = await checkAbsoluteExpiry(smokeStorage);
+const sqliteRows = smokeDb.prepare("SELECT expires_at_ms FROM connecta_kv WHERE key LIKE 'absolute-%'").all();
+if (sqliteRows.length !== 3 || sqliteRows.some((row) => row.expires_at_ms !== sqliteExpiry)) {
+  throw new Error("packed sqliteStorage did not store exact absolute set/CAS expiries");
+}
+await checkAbsoluteExpiry(core.memoryStorage());
+const { capabilities, ...legacy } = smokeStorage;
+const executor = core.customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
+let legacyRejected = false;
+try { core.createConnecta({ connectors: [], executor, storage: legacy }); }
+catch (error) { legacyRejected = error.message.includes("capabilities.absoluteExpiry: true"); }
+if (!legacyRejected) throw new Error("packed createConnecta accepted legacy storage");
+smokeDb.close();
 const jsonSchema = await import("@zackbart/connecta/json-schema");
 if (typeof jsonSchema.Validator !== "function") {
   throw new Error("missing Validator re-export");
@@ -545,8 +595,14 @@ try {
   await writeFile(
     join(generatedRoot, "src", "config-contract.ts"),
     [
-      'import { createConnecta, customExecutor, defineConfig, type AdmittingExecutor, type Connecta, type ConnectaCallsConfig, type ConnectaConfig, type ConnectaConfigDescription, type ConnectaDiscoveryConfig, type ExecutorLease } from "@zackbart/connecta";',
+      'import { createConnecta, customExecutor, defineConfig, type AdmittingExecutor, type Connecta, type ConnectaCallsConfig, type ConnectaConfig, type ConnectaConfigDescription, type ConnectaDiscoveryConfig, type ExecutorLease, type KVStorage } from "@zackbart/connecta";',
       'const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });',
+      "const legacyStorage = { get: async (_key: string) => null, set: async (_key: string, _value: string, _options?: { ttlSeconds?: number }) => {}, delete: async (_key: string) => {}, list: async (_prefix: string) => [], compareAndSet: async (_key: string, _expected: string | null, _next: string | null, _options?: { ttlSeconds?: number }) => true };",
+      "// @ts-expect-error legacy storage lacks explicit absolute-expiry support",
+      "const legacyAdapter: KVStorage = legacyStorage;",
+      "// @ts-expect-error construction requires the capability too",
+      "createConnecta({ connectors: [], executor, storage: legacyStorage });",
+      "void legacyAdapter;",
       "const discovery: ConnectaDiscoveryConfig = { concurrency: 2, catalogTtlSeconds: 1, catalogMinTtlSeconds: 0, catalogMaxTtlSeconds: 2, probeTimeoutMs: 1 };",
       "// @ts-expect-error registry persistence was retired",
       "const retiredPersistence: ConnectaDiscoveryConfig = { persistCatalog: false };",
@@ -965,6 +1021,23 @@ try {
     throw new Error("Vercel SDK was installed with the package");
   }
   run(process.execPath, ["smoke.mjs"], work);
+  const packedD1 = await import(
+    pathToFileURL(join(work, "node_modules", "@zackbart", "connecta", "dist", "d1.js")).href
+  );
+  const proxy = await getPlatformProxy({
+    configPath: join(root, "test", "fixtures", "d1-storage", "wrangler.jsonc"),
+    persist: false,
+  });
+  try {
+    const db = proxy.env.CONNECTA_DB;
+    const expiry = await checkAbsoluteExpiry(packedD1.d1Storage(db));
+    const { results } = await db.prepare("SELECT expires_at_ms FROM connecta_kv WHERE key LIKE 'absolute-%'").all();
+    if (results.length !== 3 || results.some((row) => row.expires_at_ms !== expiry)) {
+      throw new Error("packed d1Storage did not store exact absolute set/CAS expiries");
+    }
+  } finally {
+    await proxy.dispose();
+  }
 
   run(npm, ["install", "--ignore-scripts", "@clerk/backend@3.23.1", "quickjs-emscripten@^0.32.0"], work);
   run(process.execPath, ["optional.mjs"], work);

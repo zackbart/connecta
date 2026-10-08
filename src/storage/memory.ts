@@ -19,11 +19,15 @@ export function memoryStorage(): KVStorage {
     }
     return e;
   };
-  const write = (key: string, value: string, ttlSeconds?: number) => {
+  const write = (key: string, value: string, opts?: Parameters<KVStorage["set"]>[2]) => {
+    const { ttlSeconds, expiresAtMs } = opts ?? {};
+    if (expiresAtMs !== undefined && (!Number.isSafeInteger(expiresAtMs) || ttlSeconds !== undefined)) {
+      throw new RangeError("expiresAtMs must be a safe integer epoch timestamp without ttlSeconds");
+    }
     if (ttlSeconds !== undefined && !Number.isFinite(ttlSeconds)) {
       throw new RangeError("ttlSeconds must produce a finite expiration timestamp");
     }
-    const exp = ttlSeconds ? Date.now() + ttlSeconds * 1000 : undefined;
+    const exp = expiresAtMs ?? (ttlSeconds ? Date.now() + ttlSeconds * 1000 : undefined);
     if (exp !== undefined && !Number.isFinite(exp)) {
       throw new RangeError("ttlSeconds must produce a finite expiration timestamp");
     }
@@ -43,6 +47,7 @@ export function memoryStorage(): KVStorage {
     });
   };
   return {
+    capabilities: { absoluteExpiry: true },
     describe: () => ({ kind: "memory" }),
     async get(key) {
       validateStorageKey(key);
@@ -50,7 +55,7 @@ export function memoryStorage(): KVStorage {
     },
     async set(key, value, opts) {
       validateStorageKey(key);
-      write(key, value, opts?.ttlSeconds);
+      write(key, value, opts);
     },
     async delete(key) {
       validateStorageKey(key);
@@ -71,7 +76,7 @@ export function memoryStorage(): KVStorage {
       validateStorageKey(key);
       if ((fresh(key)?.value ?? null) !== expected) return false;
       if (next === null) map.delete(key);
-      else write(key, next, opts?.ttlSeconds);
+      else write(key, next, opts);
       return true;
     },
   };

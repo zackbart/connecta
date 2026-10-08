@@ -81,6 +81,7 @@ function expectBalanced(text: string): void {
 function notionContext(): ConnectorContext {
   return {
     storage: {
+      capabilities: { absoluteExpiry: true },
       get: async () => null,
       set: async () => {},
       delete: async () => {},

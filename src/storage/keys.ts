@@ -115,8 +115,8 @@ export const resultKeys = {
 // --- root families --------------------------------------------------------
 
 /**
- * The runtime-wide result stash ledger: every live stash entry's partition
- * key, byte charge, and expiry. One record, swapped by compare-and-set, so the
+ * The runtime-wide result stash ledger: every live stash entry's reservation
+ * id, byte charge, and expiry. One record, swapped by compare-and-set, so the
  * stash bounds hold across isolates and processes sharing the store.
  */
 export const stashLedgerKeys = {
@@ -126,9 +126,8 @@ export const stashLedgerKeys = {
     prefixes: ["result-stash:v1:"],
     version: { number: 1, in: "key" },
     codec: jsonCodec,
-    // Durable as a record, self-pruning by content: an entry leaves the
-    // ledger once its result's TTL has passed.
-    ttl: { kind: "durable" },
+    // Every reservation is finite; the row expires with its latest charge.
+    ttl: { kind: "configured", by: "latest live stash reservation deadline" },
     durable: false,
   },
   ledger: "result-stash:v1:ledger",

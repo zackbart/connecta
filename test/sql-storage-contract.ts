@@ -4,6 +4,7 @@ import type { ActivityStore, KVStorage, ToolCallActivityEvent } from "../src/ind
 import { InvalidActivityCursorError } from "../src/activity.js";
 import { agentFrictionForCode } from "../src/activity-friction.js";
 import { skewedRefresh } from "./fixtures/oauth-refresh-clock.js";
+import { stashChargeContract } from "./stash-charge-contract.js";
 import { compareAndSetContract, NUL_VALUES } from "./storage-contract.js";
 
 /**
@@ -26,6 +27,30 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  stashChargeContract(async () => {
+    const db = await open();
+    const inner = db.storage();
+    await inner.get("warm");
+    let offset = 0;
+    const options = (opts?: Parameters<KVStorage["set"]>[2]) =>
+      opts?.expiresAtMs === undefined ? opts : { ...opts, expiresAtMs: opts.expiresAtMs - offset };
+    return {
+      storage: {
+        ...inner,
+        set: (key, value, opts) => inner.set(key, value, options(opts)),
+        compareAndSet: (key, expected, next, opts) => inner.compareAndSet(key, expected, next, options(opts)),
+      },
+      advance: async (ms) => {
+        offset += ms;
+        await db.exec("UPDATE connecta_kv SET expires_at_ms = expires_at_ms - ? WHERE expires_at_ms IS NOT NULL", ms);
+      },
+      expiries: async () =>
+        (await db.rows<{ expires_at_ms: number | null }>("SELECT expires_at_ms FROM connecta_kv")).map((row) =>
+          row.expires_at_ms === null ? null : row.expires_at_ms + offset,
+        ),
+    };
   });
 
   let casDatabase: SqlFixture;

@@ -540,6 +540,7 @@ describe("KvOAuthProvider epochs", () => {
     let plant = false;
     const planted = oauthFlowKeys.flow("f".repeat(64));
     const storage: KVStorage = {
+      capabilities: backing.capabilities,
       get: (key) => backing.get(key),
       set: (key, value, options) => (key === GRANT && grantOps.push("set"), backing.set(key, value, options)),
       delete: (key) => (key === GRANT && grantOps.push("delete"), backing.delete(key)),
@@ -921,6 +922,7 @@ describe("layout 2 migration", () => {
   /** A connector namespace inside another partition of `backing`. */
   function partition(backing: KVStorage, prefix: string): KVStorage {
     return {
+      capabilities: backing.capabilities,
       get: (key) => backing.get(prefix + key),
       set: (key, value, options) => backing.set(prefix + key, value, options),
       delete: (key) => backing.delete(prefix + key),

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { memoryStorage } from "../src/storage/memory.js";
 import { makeRegistry } from "./helpers.js";
+import { stashChargeContract } from "./stash-charge-contract.js";
 import { compareAndSetContract } from "./storage-contract.js";
 
 describe("memoryStorage compareAndSet", () => {
   compareAndSetContract(() => memoryStorage());
+  stashChargeContract(async () => ({ storage: memoryStorage() }));
 });
 
 describe("namespaced storage compareAndSet", () => {

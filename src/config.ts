@@ -380,6 +380,8 @@ const connectaConfig = {
    * `@zackbart/connecta/d1` on Workers, `sqliteStorage(path)` from
    * `@zackbart/connecta/sqlite` on Node. Defaults to memoryStorage(), which
    * forgets everything on restart.
+   * Custom adapters must declare `capabilities.absoluteExpiry: true` and honor
+   * `expiresAtMs` on set and compareAndSet; older adapters fail construction.
    */
   storage: opaque<KVStorage, KVStorage>({
     // Every subsystem relies on the atomic claim and enumeration, so storage
@@ -388,14 +390,20 @@ const connectaConfig = {
     // adapter, which could never offer either guarantee.
     check: (value, path) => {
       const missing = STORAGE_METHODS.filter((method) => !hasMethods(value, [method]));
-      if (missing.length === 0) return;
-      throw new ConfigError(
-        `${path} must implement ${missing.join(" and ")}. ` +
-          "Use d1Storage(env.CONNECTA_DB) from @zackbart/connecta/d1 on Workers, " +
-          "sqliteStorage(path) from @zackbart/connecta/sqlite on Node, or " +
-          "memoryStorage() in tests. Workers KV is not supported: it is eventually " +
-          "consistent and cannot compare-and-set.",
-      );
+      if (missing.length > 0)
+        throw new ConfigError(
+          `${path} must implement ${missing.join(" and ")}. ` +
+            "Use d1Storage(env.CONNECTA_DB) from @zackbart/connecta/d1 on Workers, " +
+            "sqliteStorage(path) from @zackbart/connecta/sqlite on Node, or " +
+            "memoryStorage() in tests. Workers KV is not supported: it is eventually " +
+            "consistent and cannot compare-and-set.",
+        );
+      if (!isObject(value) || !isObject(value.capabilities) || value.capabilities.absoluteExpiry !== true) {
+        throw new ConfigError(
+          `${path} must declare capabilities.absoluteExpiry: true and honor expiresAtMs on set and compareAndSet. ` +
+            "Upgrade the storage adapter before declaring this capability.",
+        );
+      }
     },
     resolve: (value) => value ?? memoryStorage(),
   }),

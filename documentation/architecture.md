@@ -344,11 +344,20 @@ marker refuses stale copies afterward.
 
 `KVStorage` is `get`/`set`/`delete`/`list(prefix)`/`compareAndSet`, all
 required, and `createConnecta` refuses storage missing one (INV-11).
+Adapters must also declare `capabilities: { absoluteExpiry: true }`.
+Construction rejects missing or false capability declarations with an error
+naming `capabilities.absoluteExpiry`. The memory, SQLite, and D1 adapters carry
+this marker. Custom adapters may declare it only after implementing absolute
+expiry on both writes; a legacy `ttlSeconds`-only adapter is rejected by the
+published types and at runtime.
 `compareAndSet(key, expected, next, options?)` is an atomic claim: `null` means
 absent (expired counts) on the way in and delete on the way out, and a
-successful write takes the same optional `ttlSeconds` as `set`. SQL TTLs are
-created and checked by the database clock inside each statement, so isolate
-clock skew cannot expire a live holder's record. Each SQL claim
+successful write takes the same expiry options as `set`. Relative `ttlSeconds`
+is created and checked by the database clock inside each statement, so isolate
+clock skew cannot expire a live holder's record. Absolute `expiresAtMs` is a
+safe-integer epoch-millisecond deadline stored verbatim and checked against the
+storage clock. Supply at most one option. Custom adapters must implement both;
+a delayed absolute-expiry write must not restart a relative TTL at commit time. Each SQL claim
 is one statement, which SQLite executes atomically and D1 serializes on its
 primary. Everything that must claim a key exactly once relies on it with no
 read-then-write fallback: access-token issuance and
@@ -370,7 +379,8 @@ State-file import validates all keys before writing. The `connecta_kv` table
 keeps its existing TEXT keys, including compatibility with the 0.28 schema.
 Storage writes no log lines. A refused import names the file and an entry's
 position, never a key, a value, or the JSON parser's account, which quotes
-the file (INV-6).
+the file (INV-6). Database failures report only a fixed import step and an
+entry's position, including errors raised by target-database triggers.
 
 Remote MCP catalogs use the SDK `ResponseCacheStore` over this same SQL KV.
 The `response-cache:v1:` family binds connector id, a hash of its configured
@@ -453,12 +463,43 @@ Result paging stores each oversized result for 15 minutes, chunked so a page
 reads only what it covers. Its bounds (`results.maxStashBytes`,
 `results.maxStashEntries`) are the deployment's, not an isolate's: every charge
 is a row in one ledger record, booked by compare-and-set before any chunk is
-written, so isolates and processes sharing the store see one count. A lost swap
-backs off and re-reads; only a full ledger refuses. Each chunk's TTL is what
-remains of its charge's deadline, so no chunk outlives its charge. A full
-stash returns the successful call's preview and a paging-unavailable notice
-rather than a result id. The shared storage cases live in
-`test/storage-contract.ts` and `test/sql-storage-contract.ts`.
+written, so isolates and processes sharing the store see one count. Every
+reservation starts with a finite deadline of booking time plus the 30-second
+write budget plus the chunk TTL, normally 15 minutes. Pending writes retain
+that charge until its deadline. Booking retries recognize their own reservation
+ID and reuse its stored deadline, including a final read after an ambiguous
+last CAS. A lost swap or transient storage error backs off and re-reads, up to
+32 attempts. A full ledger or unconfirmed exhausted booking returns no result id.
+
+The whole chunk-write phase has a 30-second timeout measured from booking, with
+a clock check before and after each write. Trailing chunks precede the header;
+failure or timeout returns no result id and stops the write loop. Chunks use an
+absolute expiry at booking time plus their TTL, so slow writes shorten the
+remaining paging window. Storage promises cannot guarantee cancellation of an
+already-dispatched database operation, and a rejected client response does not
+prove that operation cannot commit later. Even a commit after timeout or process
+interruption keeps that absolute expiry, rather than starting another TTL.
+
+Settlement and release only shorten or remove a reservation. Successful writes
+attempt to shorten the charge to the fixed chunk expiry. Cleanup releases it
+only after all deletions succeed and every dispatched write returned confirmed
+success. Failed cleanup or exhausted release attempts finite settlement when
+no write is unconfirmed. A rejected or timed-out write keeps its original
+reservation because it may still commit after deletion. Each completion path
+has one 15-second budget covering deletion, release, fallback settlement, and
+their storage waits and retries. Successful-write settlement has the same
+15-second budget. A stalled operation stops being awaited when the budget
+expires; its late response starts no further I/O, and no background cleanup
+fiber is started. The caller returns its write outcome even if these
+optimizations cannot finish. Ledger updates retry within the same 32-attempt
+budget. If they fail, time out, crash, or exhaust,
+capacity may be over-held until the booked deadline, at most 15 minutes and
+30 seconds for the normal TTL. The ledger row itself has an absolute expiry at
+its latest live reservation deadline. There are no completion receipts or
+separate recovery rows. Expired data reads as absent and normal storage sweeps
+reclaim the physical rows. A full stash returns the successful call's preview
+and a paging-unavailable notice rather than a result id. Shared failure cases
+live in `test/stash-charge-contract.ts`, exercised by the memory and SQL suites.
 
 `src/credentials.ts` is the AES-GCM vault behind the root-exported
 `CredentialVault` contract, selected through the `vault` slot. It binds connector

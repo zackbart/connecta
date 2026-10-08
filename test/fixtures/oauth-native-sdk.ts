@@ -17,7 +17,7 @@ export function store(delayed: boolean): KVStorage {
     if (delayed) await pause();
     return result;
   };
-  return { get: hop(backing.get), set: hop(backing.set), delete: hop(backing.delete), list: hop(backing.list), compareAndSet: hop(backing.compareAndSet) };
+  return { capabilities: backing.capabilities, get: hop(backing.get), set: hop(backing.set), delete: hop(backing.delete), list: hop(backing.list), compareAndSet: hop(backing.compareAndSet) };
 }
 export async function nativeOAuthServer(mode: string) {
   const base = inject("oauthHttpServer");

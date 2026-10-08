@@ -276,7 +276,13 @@ async function migrateState() {
   }
   const [statePath, databasePath] = args.map((arg) => resolve(process.cwd(), arg));
   const { importStateFile, openSqlite } = await import(pathToFileURL(join(packageRoot, "dist", "sqlite.js")).href);
-  const database = openSqlite(databasePath);
+  let database;
+  try {
+    database = openSqlite(databasePath);
+  } catch {
+    throw new Error("State migration failed: could not open the SQLite database");
+  }
+  let closeFailed = false;
   try {
     const result = importStateFile(database, statePath);
     console.log(
@@ -284,8 +290,13 @@ async function migrateState() {
         ` (${result.kept} already present, ${result.expired} expired).`,
     );
   } finally {
-    database.close();
+    try {
+      database.close();
+    } catch {
+      closeFailed = true;
+    }
   }
+  if (closeFailed) throw new Error("State migration failed: could not close the SQLite database");
 }
 
 try {

@@ -2045,15 +2045,14 @@ describe("bounded result stash", () => {
       expect(second).toHaveProperty("resultId");
       expect(await storage.get(`results:result:${first.resultId}`)).toBeNull();
       const ledger = JSON.parse((await storage.get("result-stash:v1:ledger")) ?? "null");
-      expect(ledger.entries).toEqual([[`results:result:${second.resultId}`, expect.any(Number), expect.any(Number)]]);
+      expect(ledger.entries).toEqual([[expect.any(String), expect.any(Number), expect.any(Number)]]);
     } finally {
       now.mockRestore();
     }
   });
 
-  it("keeps a charge booked until every chunk written under it has expired, however slow the writes", async () => {
-    // Each write takes 20.5 s of a mocked clock, as a slow store might: three
-    // chunks finish 61.5 s after the charge was booked.
+  it("keeps a charge booked through fixed chunk expiry within the 30-second write budget", async () => {
+    // Three writes finish after 24 s, within the total write budget.
     const start = 1_000_000;
     let clock = start;
     const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
@@ -2066,7 +2065,7 @@ describe("bounded result stash", () => {
       storage: {
         ...inner,
         async set(key, value, options) {
-          if (slow) clock += 20_500;
+          if (slow) clock += 8_000;
           await inner.set(key, value, options);
         },
       },
@@ -2078,13 +2077,12 @@ describe("bounded result stash", () => {
     try {
       expect(await root.stashResult("first", ["h", "a", "b"], 900)).toBe(true);
       slow = false;
-      // Past the 900 s TTL, but the header landed 61.5 s late: it is still
-      // readable, so its charge must still refuse a second stash.
-      clock = start + 919_000;
+      // Slow commits do not restart an absolute chunk TTL.
+      clock = start + 899_000;
       expect(await inner.get("results:result:first")).toBe("h");
       expect(await root.stashResult("second", ["h", "a", "b"], 900)).toBe(false);
       // Whenever any chunk is readable, its charge is still booked.
-      for (; clock <= start + 970_000; clock += 500) {
+      for (; clock <= start + 931_000; clock += 500) {
         const readable = await Promise.all(
           [0, 1, 2].map((index) => inner.get(`results:result:first${index ? `#${index}` : ""}`)),
         );
@@ -2099,7 +2097,7 @@ describe("bounded result stash", () => {
 
   it.each([
     { case: "outlasts its deadline", delayMs: 25_000, chunks: ["h", "a", "b", "c"], ttlSeconds: 60 },
-    { case: "has one write slower than the grace", delayMs: 31_000, chunks: ["h"], ttlSeconds: 900 },
+    { case: "exceeds the 30-second write budget", delayMs: 31_000, chunks: ["h"], ttlSeconds: 900 },
   ])("fails a stash that $case and releases its charge", async ({ delayMs, chunks, ttlSeconds }) => {
     let clock = 1_000_000;
     const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
@@ -2119,7 +2117,7 @@ describe("bounded result stash", () => {
     try {
       expect(await root.stashResult("slow", chunks, ttlSeconds)).toBe(false);
       expect(await inner.list("results:")).toEqual([]);
-      expect(JSON.parse((await inner.get("result-stash:v1:ledger")) ?? "null").entries).toEqual([]);
+      expect(await inner.get("result-stash:v1:ledger")).toBeNull();
     } finally {
       now.mockRestore();
     }
@@ -2147,7 +2145,9 @@ describe("bounded result stash", () => {
     expect(await storage.list("results:result:")).toHaveLength(64);
   });
 
-  it("releases a failed write's charge only after deleting what it may have written", async () => {
+  it("INV-7: retains a rejected write's finite charge even after successful deletion", async () => {
+    let clock = Date.now();
+    const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
     const storage = memoryStorage();
     let failWrite = true;
     let failDelete = true;
@@ -2175,14 +2175,17 @@ describe("bounded result stash", () => {
     expect(notice(await call())).not.toHaveProperty("resultId");
     expect(await storage.list("results:result:")).toHaveLength(1);
     expect(notice(await call())).not.toHaveProperty("resultId");
-    // With deletion working, a failed write cleans up and frees its charge.
+    // With deletion working, an unconfirmed write still holds its reservation.
     failDelete = false;
     failWrite = true;
     await storage.delete("result-stash:v1:ledger");
     for (const key of await storage.list("results:")) await storage.delete(key);
     expect(notice(await call())).not.toHaveProperty("resultId");
     expect(await storage.list("results:result:")).toEqual([]);
+    expect(notice(await call())).not.toHaveProperty("resultId");
+    clock += 930_001;
     expect(notice(await call())).toHaveProperty("resultId");
+    now.mockRestore();
   });
 
   it("pages a large stored result without encoding the full text again", async () => {

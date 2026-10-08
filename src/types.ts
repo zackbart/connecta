@@ -10,14 +10,24 @@ export type JsonSchema = Record<string, unknown>;
  * before accessing storage. SQL TEXT results truncate at NUL on Node 22.
  */
 export interface KVStorage {
+  /**
+   * Explicit adapter opt-in: both `set` and `compareAndSet` honor
+   * `expiresAtMs`, including delayed commits. `createConnecta` rejects adapters
+   * without this capability. Declare it only after implementing that contract.
+   */
+  readonly capabilities: { readonly absoluteExpiry: true };
   /** The live value at `key`; null when absent or expired. */
   get(key: string): Promise<string | null>;
   /**
    * Write `value`. With `opts.ttlSeconds` the entry reads as absent once that
    * many seconds pass; omitted or zero means no expiry. Shared stores must
-   * create and check expiry with a storage-owned clock, not each caller's clock.
+   * create and check relative expiry with a storage-owned clock. `expiresAtMs`
+   * instead sets an absolute, safe-integer epoch-millisecond expiry, including
+   * for a delayed commit. Adapters must honor it without restarting a TTL at
+   * commit time. Supply at most one of these options; a past absolute expiry
+   * writes an already-expired value.
    */
-  set(key: string, value: string, opts?: { ttlSeconds?: number }): Promise<void>;
+  set(key: string, value: string, opts?: { ttlSeconds?: number; expiresAtMs?: number }): Promise<void>;
   delete(key: string): Promise<void>;
   /** Live keys beginning with `prefix`, sorted by UTF-16 code unit. */
   list(prefix: string): Promise<string[]>;
@@ -25,8 +35,8 @@ export interface KVStorage {
    * Atomic compare-and-set: write `next` only if the key's current value is
    * exactly `expected`, and report whether the write happened. `expected:
    * null` means "absent", and an expired entry is absent. `next: null`
-   * deletes; otherwise `next` is stored with `options.ttlSeconds`, or with no
-   * expiry when that is omitted, exactly as `set` would. On `false` nothing
+   * deletes; otherwise `next` takes the relative or absolute expiry options
+   * exactly as `set` would, or no expiry when both are omitted. On `false` nothing
    * changed.
    *
    * Atomic means linearizable against every other operation on the same
@@ -44,7 +54,7 @@ export interface KVStorage {
     key: string,
     expected: string | null,
     next: string | null,
-    options?: { ttlSeconds?: number },
+    options?: { ttlSeconds?: number; expiresAtMs?: number },
   ): Promise<boolean>;
   /**
    * Which adapter this is, for `Connecta.describeConfig()`. The shipped

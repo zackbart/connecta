@@ -40,7 +40,7 @@ export function storageGet(key: string): Effect.Effect<string | null, unknown, S
 export function storageSet(
   key: string,
   value: string,
-  options?: { ttlSeconds?: number },
+  options?: Parameters<KVStorage["set"]>[2],
 ): Effect.Effect<void, unknown, Storage> {
   return Storage.use((storage) =>
     Effect.tryPromise({
@@ -65,7 +65,7 @@ export function storageCompareAndSet(
   key: string,
   expected: string | null,
   next: string | null,
-  options?: { ttlSeconds?: number },
+  options?: Parameters<KVStorage["set"]>[2],
 ): Effect.Effect<boolean, unknown, Storage> {
   return Storage.use((storage) =>
     Effect.tryPromise({

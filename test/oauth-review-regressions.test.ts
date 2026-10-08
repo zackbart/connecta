@@ -35,6 +35,7 @@ function backingStore(delayed: boolean): KVStorage {
       return answer;
     };
   return {
+    capabilities: backing.capabilities,
     get: hop(backing.get),
     set: hop(backing.set),
     delete: hop(backing.delete),
