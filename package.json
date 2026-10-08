@@ -1,9 +1,9 @@
 {
   "name": "@zackbart/connecta",
-  "version": "0.28.1",
+  "version": "0.29.0",
   "type": "module",
   "sideEffects": false,
-  "description": "One MCP to rule them all — a single MCP endpoint aggregating many downstream connectors behind a code-first surface of seven meta-tools.",
+  "description": "One MCP to rule them all — a single MCP endpoint aggregating many downstream connectors behind a code-first surface of six meta-tools.",
   "license": "MIT",
   "engines": {
     "node": ">=22.13.0"

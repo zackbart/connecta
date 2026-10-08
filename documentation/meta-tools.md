@@ -322,8 +322,8 @@ totals describe exactly that text.
 | Bound                              | Value                              |
 | ---------------------------------- | ---------------------------------- |
 | Stashed result TTL                 | 15 minutes                         |
-| `results.maxStashBytes`            | 8 MiB per `createConnecta` runtime |
-| `results.maxStashEntries`          | 64 per runtime                     |
+| `results.maxStashBytes`            | 8 MiB per shared storage ledger    |
+| `results.maxStashEntries`          | 64 per shared storage ledger       |
 | Top-level discovery result ceiling | 256,000 UTF-8 bytes                |
 | Downstream MCP `isError` text      | 512 UTF-8 bytes plus an `…` marker |
 
@@ -336,9 +336,9 @@ subjects and pools; they count the stored ASCII paging envelope, base64 overhead
 included, not only the result text. Capacity is reserved before each storage
 write so concurrent requests cannot oversubscribe it, and a full stash refuses
 new entries. A later attempt deletes expired entries before reusing their
-capacity; a failed deletion keeps the charge. These bounds cover writes by this
-runtime — not other processes, Worker isolates, or entries a previous runtime
-left behind.
+capacity; a failed deletion keeps the charge. These bounds cover all processes and Worker isolates sharing the store.
+Compare-and-set reserves each charge in one storage ledger before any chunk
+is written; chunk TTLs cannot exceed the charge deadline.
 
 Results belong to the authenticated subject whenever auth supplies a subject or
 user id, independently of activity configuration, under the provider's namespace
@@ -356,9 +356,8 @@ New entries store UTF-8 bytes in a base64 envelope split across storage keys,
 occupies more than 33 keys, because every chunk is also a write. `connecta.result`
 reads and decodes only the chunks a page covers plus a few boundary bytes, so
 paging a 1.2 MB result costs the same per page as paging a 300 KB one; it
-neither encodes nor reads the whole result per page. Pre-upgrade entries remain readable during their TTL — the earlier
-single-key envelope reads one full value per page, and raw text before that
-also pays one full encoding. Offsets and `totalBytes` always describe the
+neither encodes nor reads the whole result per page. Entries without the required identity and invocation bindings fail closed,
+including pre-upgrade single-key envelopes and raw-text entries. Offsets and `totalBytes` always describe the
 original UTF-8 text, not the envelope. A supplied offset inside a character
 moves back to its start; page ends also align to character boundaries, and a
 page smaller than one character widens just enough to make progress.
