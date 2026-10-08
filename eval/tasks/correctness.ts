@@ -63,14 +63,20 @@ function recordEvidence(answer: string, records: EvidenceRecord[], universe = re
   const compatible = records.length === 1 ? known.filter(record =>
     record.id!.source === patterns[0]!.id!.source) : known;
   // A commit hash the record set doesn't contain is a fabricated fact, even
-  // when the true commit also appears elsewhere in the answer. SHA-shaped
-  // tokens are hex runs that mix digits and letters, or follow "commit"/"sha".
+  // when the true commit also appears elsewhere in the answer. A hex token is
+  // a commit claim when it follows "commit"/"sha", or shares a clause with a
+  // run id. UUIDs and other result ids elsewhere are not commit claims.
   const shas = universe.flatMap(record => Object.values(record).filter(fact => /^[a-f0-9]{7,40}$/i.test(fact)));
   const knownSha = (token: string) => shas.some(sha =>
     sha.toLowerCase().startsWith(token.slice(0, 7).toLowerCase()) || token.toLowerCase().startsWith(sha.toLowerCase()));
-  const tokens = [...answer.matchAll(/\b(?:commit|sha)\s*:?\s*([0-9a-f]{7,40})\b|\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])([0-9a-f]{7,40})\b/gi)]
-    .map(match => match[1] ?? match[2]!);
-  if (shas.length && tokens.some(token => !knownSha(token))) return false;
+  const withoutUuids = (text: string) => text.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, " ");
+  const runIds = known.map(record => record.id!).filter(Boolean);
+  const claimed = [...withoutUuids(answer).matchAll(/\b(?:commit|sha)\s*:?\s*([0-9a-f]{7,40})\b/gi)].map(match => match[1]!);
+  for (const clause of clauses.map(withoutUuids)) {
+    if (!runIds.some(id => id.test(clause))) continue;
+    claimed.push(...[...clause.matchAll(/\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/gi)].map(match => match[0]));
+  }
+  if (shas.length && claimed.some(token => !knownSha(token))) return false;
   return complete &&
     clauses.every(clause => {
       const matches = fields.map(field => ({ field, facts: known.flatMap(record =>
