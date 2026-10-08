@@ -102,7 +102,7 @@ const crossConnectorJoin: ActiveTask = {
   measures:
     "Joining two paged read-only sources (tracker issues by customer domain, analytics accounts and metrics) and writing one answer.",
   prompt:
-    "Using the issue tracker and product analytics, find the open bug that affects our highest-paying customer (by MRR). " +
+    "Using the issue tracker and product analytics, find the open bug that affects our highest-paying customer (by MRR) that has an open bug. " +
     "Then post exactly one message to the #triage chat channel in the form `<ISSUE-KEY> <customer name> $<MRR>`.",
   grade: ({ world }) => {
     const { checks, text } = singlePost(world, "triage");

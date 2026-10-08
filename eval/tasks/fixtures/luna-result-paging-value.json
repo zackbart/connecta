@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "data": {
+    "truncated": true,
+    "resultId": "a04444cb-2c7c-478b-bf59-9a8b8e91b535",
+    "totalBytes": 187299,
+    "hint": "The result is 187299 bytes. To find something specific, repeat this read inside execute_code with connecta.call and filter or search the result there, returning only what matters; to read it in full, page it with connecta.result using nextAction.",
+    "nextOffset": 0,
+    "nextAction": {
+      "tool": "execute_code",
+      "arguments": {
+        "code": "async () => await connecta.result(\"a04444cb-2c7c-478b-bf59-9a8b8e91b535\", { offset: 0, maxBytes: 3829 })"
+      }
+    }
+  },
+  "format": "text",
+  "durationMs": 16,
+  "attempts": 1
+}

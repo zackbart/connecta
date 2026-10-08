@@ -114,3 +114,8 @@ handoff material, so committed files cannot replay real authorization.
 ## Regrading sanitized files
 
 The committed result files are sanitized: fake emails and OAuth handoff values are replaced. `eval:regrade` must run on the raw result files. Regrading a sanitized copy changes checks that compare those values, such as `truncated-write-export`'s actor email. The refusal grader fix was applied only to `p5-read-only-program-refusal` trials, from a regrade of the committed file. That task's checks read no sanitized values, and no other trial changed.
+
+## Changes since the baseline
+
+- #768 clarifies `cross-connector-join` to select the highest-paying customer by MRR that has an open bug. The expected answer remains Stark Industries / API-207, with the same destination and evidence checks. Future trials of this task are not comparable with the 0.29 baseline's ambiguous prompt. The recorded scores above and committed result JSON files remain unchanged.
+- #770 fixes `p5-result-paging`'s retained-ID binding for value-mode `call_tool` envelopes. Offline regrading of raw `/tmp/connecta-plan/final-gpt-6-luna.json` gives GPT-6-Luna **2/2** for this task, previously **1/2**. Only repeat 1's `result-api` verdict changes, from fail to pass; all other task outcomes and check verdicts stay the same, with no unavailable checks. This is a grader correction to the same saved trials, not a model change or a live rerun. The original baseline JSON files remain unchanged.
