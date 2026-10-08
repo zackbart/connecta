@@ -180,6 +180,31 @@ describe("importStateFile", () => {
     expect(() => db.prepare("SELECT key FROM connecta_kv").all()).toThrow();
   });
 
+  it("INV-6: refuses a malformed file without quoting its keys or text", () => {
+    const directory = tempDirectory();
+    const secret = "planted-state-secret-7f3a9c";
+    const db = track(openSqlite(join(directory, "connecta.sqlite")));
+    const cases = [
+      // V8's parse error quotes the text around the fault.
+      `{"conn:notion:oauth:tokens": {"value": "${secret}"`,
+      `{"${secret}":{"value":"1"}, oops}`,
+      JSON.stringify({ "a": { value: "1" }, [`conn:${secret}`]: { value: 2 } }),
+    ];
+    for (const [index, content] of cases.entries()) {
+      const path = join(directory, `state-${index}.json`);
+      writeFileSync(path, content);
+      let message = "";
+      try {
+        importStateFile(db, path);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toMatch(/not a connecta state file/);
+      expect(message).not.toContain(secret);
+    }
+    expect(() => db.prepare("SELECT key FROM connecta_kv").all()).toThrow();
+  });
+
   it("imports values holding NUL (U+0000) whole", async () => {
     const directory = tempDirectory();
     const path = join(directory, "state.json");

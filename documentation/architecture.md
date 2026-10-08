@@ -258,6 +258,9 @@ storage reject them with `TypeError` before accessing storage: Node 22's
 components; OAuth cleanup builders already percent-encode their components.
 State-file import validates all keys before writing. The `connecta_kv` table
 keeps its existing TEXT keys, including compatibility with the 0.28 schema.
+Storage writes no log lines. A refused import names the file and an entry's
+position, never a key, a value, or the JSON parser's account, which quotes
+the file (INV-6).
 
 Result paging stores each oversized result for 15 minutes, chunked so a page
 reads only what it covers. Its bounds (`results.maxStashBytes`,

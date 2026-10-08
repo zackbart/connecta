@@ -143,19 +143,28 @@ export function importStateFile(
   statePath: string,
   now: number = Date.now(),
 ): StateFileImport {
-  const loaded = JSON.parse(readFileSync(statePath, "utf8")) as unknown;
+  const text = readFileSync(statePath, "utf8");
+  // The file holds stored state (tokens, sealed credentials), and these
+  // errors reach the operator's terminal, so they name the file and an entry's
+  // position, never a key or the parser's account, which quotes the text.
+  let loaded: unknown;
+  try {
+    loaded = JSON.parse(text);
+  } catch {
+    throw new TypeError(`${statePath} is not a connecta state file: it is not valid JSON`);
+  }
   if (loaded === null || typeof loaded !== "object" || Array.isArray(loaded)) {
     throw new TypeError(`${statePath} is not a connecta state file`);
   }
   const entries = Object.entries(loaded as Record<string, unknown>);
-  for (const [key, entry] of entries) {
+  for (const [index, [key, entry]] of entries.entries()) {
     validateStorageKey(key);
     const valid = entry !== null && typeof entry === "object" &&
       typeof (entry as { value?: unknown }).value === "string" &&
       (!("exp" in entry) || Number.isFinite((entry as { exp?: unknown }).exp));
     if (!valid) {
       throw new TypeError(
-        `${statePath} is not a connecta state file: entry ${JSON.stringify(key)} has no string value`,
+        `${statePath} is not a connecta state file: entry ${index + 1} has no string value`,
       );
     }
   }
