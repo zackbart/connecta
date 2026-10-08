@@ -63,7 +63,7 @@ test("operator shell admits ambient Access without sending a stored token", asyn
   await page.goto(`${origin}/?access`);
   const request = await dataRequest;
   expect(request.headers()["authorization"]).toBeUndefined();
-  await expect(page.getByRole("heading", { name: "Connections", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
   await expect(page.getByText("Checking your session…")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toHaveCount(0);
 });
