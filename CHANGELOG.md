@@ -64,7 +64,7 @@ Start the upgraded deployment under maintenance and run `connecta doctor` with i
   closed when absent. Exact deployment-level overrides
   ([#706](https://github.com/zackbart/connecta/issues/706)) apply ahead of review
   and downstream annotations, regardless of wrapping.
-  
+
   Request-scoped catalogs own their definitions and serve deep copies to
   discovery and invocation. Each connector dispatch also receives a fresh deep
   copy of its definition. Mutating a dispatched definition or a discovery
@@ -122,7 +122,7 @@ Start the upgraded deployment under maintenance and run `connecta doctor` with i
   is unknown and for one not shared with the caller alike. Setup, including
   the Admin console scope, is documented on `docs()`; drift is checked against
   the Docs Discovery document.
-  
+
   Trusted pools permit program writes; read-only pools use `call_destructive_tool`.
   The MCP host controls approval.
 - **Draft-only Gmail connection.** `@zackbart/connecta/providers/gmail`
@@ -230,7 +230,7 @@ Start the upgraded deployment under maintenance and run `connecta doctor` with i
   may be missing or hidden from this account, because Drive does not say
   which. Setup — the Google Drive API and the one scope on the delegation
   entry — is documented on `drive()` itself.
-  
+
   Trusted pools permit program writes; read-only pools use `call_destructive_tool`.
   The MCP host controls approval.
 - **Google Sheets connection** ([#682](https://github.com/zackbart/connecta/issues/682)).
@@ -261,7 +261,7 @@ Start the upgraded deployment under maintenance and run `connecta doctor` with i
   be shared with the caller. Listing and finding spreadsheets is Drive's job.
   The one scope, `https://www.googleapis.com/auth/spreadsheets`, and its setup
   are documented on `sheets()`.
-  
+
   Trusted pools permit program writes; read-only pools use `call_destructive_tool`.
   The MCP host controls approval.
 - **Google Forms connection.** `@zackbart/connecta/providers/forms` exports
@@ -391,7 +391,7 @@ Start the upgraded deployment under maintenance and run `connecta doctor` with i
   repeated slide. Slides cannot list decks, and the guide says that is
   Drive's job. A 404 is reported as unknown-or-not-visible, because a deck is
   a Drive file. Setup is documented on `slides()`.
-  
+
   Trusted pools permit program writes; read-only pools use `call_destructive_tool`.
   The MCP host controls approval.
 - **Google Discovery drift checks.** `npm run providers:check -- --provider
@@ -426,12 +426,12 @@ Start the upgraded deployment under maintenance and run `connecta doctor` with i
   database already holds. Every storage key is built in `src/storage/keys.ts`,
   which lists each key family's scope, version, codec, and TTL (#705).
 - Relay downstream form and URL input requests on direct MCP calls using encrypted, signed, single-use state bound to the principal, pool, target, and original arguments. Gate elicitation by the host's declared capabilities, bound rounds and payloads, and keep program input requests unsupported with direct-call guidance.
-  
+
   Refuse private-state echoes before publishing prompts, results, or catalogs, and prevent OAuth refresh or redirects from resending write continuations.
 - Ask MCP 2026-07-28 hosts with URL elicitation support to connect a service when a call needs authentication. Authenticate retries with a deployment-held key and bind them to the principal, endpoint, connector, tool, arguments or code, round, and expiry. Decline and cancel stop without dispatch. Writes elicit only for Connecta-owned credential resolution failures before connector invocation. Programs also stop recovery after any write-classified handler was entered; each retry checks its own round. Raw fetches and custom transports cannot establish retry eligibility. These failures require reconciliation before retrying and retain manual connection guidance. Reads may re-run after dispatch only when classified from a catalog accepted within its TTL. The host records every entered call's classification and freshness; stale-fallback entries block program recovery. Accept rechecks every entered read before restarting any call and refuses changed classifications or digests with `auth_replay_refused` and reconciliation guidance. Normal stale-fallback calls retain their existing behavior. Other hosts receive the existing recovery envelope with a connection link.
 - Programs can read downstream MCP resources with `connecta.read("resource://<connectorId>/<encodeURIComponent(downstreamUri)>")`. Reads require a whole-connector grant, share host-call and connector admission limits, and redact credential echoes before reaching the guest or agent.
 - Serve usage, connector guides and opted-in downstream skills through one caller-scoped registry. Advertise the Skills extension and skill-only resources, with private cache hints, five-entry skill pages and preserved downstream digests. Both the skills meta-tool and connecta.skill read the same documents. Connector guide bodies gain Agent Skills frontmatter; connector:<id> remains a one-release lookup alias. Sent credential echoes pass through the existing agent redaction boundary, including binary supporting files.
-  
+
   Downstream Skills listing and file reads bypass the SDK response cache while sharing request-scoped auth with ordinary resource reads. Negotiation reuse includes the Skills opt-in.
 - Record the build-time package version independently of display serverInfo on every activity event. Persist package and validated client facts in SQL history, migrate old tables with a nullable column, and expose them read-only at /ui/api/activity and in Activity row details. Older calls without request IDs remain separate rows. Doctor uses and reports the same generated package version.
 - Add the typed operator UI contract and read-only `/ui/api/config` endpoint with a caller-scoped config snapshot, classified live tools, catalog age, payload-free last-call facts, and effective grants, pools, trust tiers, and permissions. `connecta doctor --config` prints the same secret-free snapshot as JSON.
@@ -523,7 +523,7 @@ Start the upgraded deployment under maintenance and run `connecta doctor` with i
   through as given, so a class-instance tool keeps its prototype handler and
   private fields; a tool without a handler function refuses to construct. Pool names and `classification` map keys such as `__proto__` and
   `constructor` are ordinary entries (#705).
-  
+
   Provider definitions declare a closed `options` shape with `optionsOf<T>()`.
   `defineProvider()` and the remaining providers use one descriptor-validation
   path and stamp the maintained name onto `describe().source.provider`. The root
@@ -581,25 +581,25 @@ Start the upgraded deployment under maintenance and run `connecta doctor` with i
 - **Breaking:** Classify tools once per request-scoped catalog entry, with exact deployment overrides ahead of provider review and downstream annotations. Add read-only and trusted pool tiers, defaulting to read-only, and annotate execute_code as a write on trusted endpoints. Remove connector and execute approval exemptions while preserving write budgets and unknown-outcome accounting. Deployments must explicitly enable trusted pools for program writes.
 - **Breaking:** Discovery returns one flat `{ catalogErrors, tools, total, offset, limit, hasMore }` page from both `search_tools` and `connecta.search`, replacing top-level connector groups. Exact tool names and canonical addresses rank before connector identities, then partial matches. Exact connector ID or title queries browse that connector's tools even when individual descriptions mention its identity. Unknown connector scopes and recognized absent services return an explicit endpoint-scoped absence instead of lookalikes. Catalog credential and permission failures appear before tools with recovery instructions and fixed messages derived only from error codes and connector IDs. Program search and describe default to JSON Schema values; compact schemas and TypeScript signatures are labeled `schemaFormat: "text"`.
 - **Breaking:** Make call errors actionable with agent-only schema keys, enum values, bounds, received types, validated examples and known conditional requirements. List only the current endpoint's configured connectors on address failures. Distinguish host authentication (`host_auth_required`), downstream OAuth (`downstream_oauth_required`) and provider permission (`provider_permission_denied`) recovery. A dispatched write timeout returns `write_outcome_unknown`, never invites an automatic retry, and echoes bounded arguments only to its caller.
-  
+
   Decide retryability from HTTP status, registered OAuth codes, typed SDK errors and runtime network facts, never prose (#700). Untyped errors whose text mentions timeout, 429, 502, 503, 504, rate limits, temporary failures or cross-request cancellation are now generic non-retryable failures; typed and structured transport failures retain their verdicts. A 400 registration refusal saying "temporarily unavailable" is non-retryable; 429/502/503/504 refusals remain retryable regardless of body or URL wording. An SDK `RequestTimeout` is a timeout regardless of message wording. An OAuth token endpoint HTTP 403 is now `provider_permission_denied`, keeps the stored grant, and does not start consent. Drop downstream `ProtocolError.data` on errors rethrown by connecta. Operator records remain payload-free (INV-6).
-  
+
   Preserve complete error envelopes in MCP structured content and agent-readable text in every direct-call result mode. Maintained API providers distinguish permission refusals from invalid credentials, including Workspace delegation and insufficient scopes, with provider-specific recovery guidance.
 - **Breaking:** Complete the JavaScript guest API with `connecta.result(id, options)` and `connecta.skill(name)`, support object-form calls, and remove the `get_result` meta-tool. Guest calls now return `{ data, format: "json" | "text" }`; direct results also declare their format. Every program reports host-call counts, and guest failures use `program_error` with source locations and fixed repair hints. Uncaught host errors retain their type through executor-owned Error identities and host outcome channels. Programs and direct calls share configurable deadlines and report operation, stage, elapsed time, and effective deadline. Unawaited emission delivers MCP media content; emitted text shares the program result cap. All six meta-tools advertise output schemas. The shared discovery and doctor tool-name set excludes `get_result`, retaining negotiated doctor checks. Spec coverage records tool calls with both address headers and output schemas.
-  
+
   Result paging binds stashes to the admitted identity, endpoint, origin, connector, and tool, and rechecks current grants, pool membership, and trust before returning data. Legacy unbound stashes are unavailable after upgrade. Truncated direct writes on read-only pools return inline notices and bounded previews without storing results or advertising unavailable paging. Refresh refusals retain write accounting, including uncertain outcomes.
-  
+
   Worker guest modules cannot resolve runner modules through dynamic imports or builtin module loaders. A private runner module captures its references before guest module evaluation, and the adapter refuses splices containing more than one expression before loading. Worker typed failure details stay in a per-run host map; the runner retains only random failure IDs by Error identity, and unknown IDs attach no host details. The Worker codec reads only own binary-envelope properties, and completion captures safe array iteration even without a guest prelude. QuickJS checks interrupt and deadline facts before safely describing rejections without guest getters, serialization hooks, or Proxy traps, including interruptions during private diagnostic initialization. Images require a supported MIME type and canonical base64 before collection. Catalog search advertises the shared flat schema; eval programs and graders use typed data and result paging.
-  
+
   Worker startup refuses upstream binary codec changes that would bypass own-property checks. Required-field validation messages retain ordinary JavaScript guidance. Bundle baselines record Acorn for the Worker import router and single-expression validation; the parser remains outside the root import graph.
 - Teach the guest global, positional calls, discovery envelopes, JSON and text results, partial failures, and terminal host-call budgets in a shorter usage guide. Route single known reads and writes directly. Check every JavaScript example on QuickJS and Workers, and keep the tool's API notation aligned with the shipped guest declaration.
 - **Breaking:** Use SDK Client.listTools aggregation and a SQL-backed ResponseCacheStore for complete, intake-redacted remote MCP catalogs. Honor bounded downstream ttlMs and public/private scope within host-computed auth partitions; request tokens and personal auth remain private even under public hints. Partition private entries by admitted principal and pool even with shared auth, preserve original fetch age, and refuse invalid header declarations before SDK logging. Replace the registry's memory/stale/persist cache with request-local reads. Remove discovery.persistCatalog and discovery.staleCatalogSeconds; add catalogMinTtlSeconds and catalogMaxTtlSeconds (defaults 0 and 86400). catalogTtlSeconds remains the legacy fallback. Retired registry catalogs are ignored. Transient first-page tool listing failures may use complete SQL-backed facts in the same auth partition for five minutes after expiry. Expiry provenance survives classification; stale fallback and zero-TTL classifications cannot authorize post-entry auth recovery.
 - Default downstream OAuth to per-connector client metadata documents on public HTTPS deployments, retain DCR fallback, support issuer-bound static remote MCP clients, and report the selected registration path. Basecamp no longer requires an external metadata document.
-  
+
   Validate callback state and issuer before interpreting authorization errors, then atomically consume the verified consent and discard its PKCE verifier. Error and code callbacks share one claim; Continue starts a new consent after an error.
-  
+
   On Disconnect, remove local authorization first and attempt issuer-bound RFC 7009 revocation once when advertised. Failed revocation reports `oauth_revocation_failed` without provider text or credentials.
-  
+
   Register raw confidential client IDs and secrets before token and revocation dispatch, including form-encoded Basic credentials, so downstream echoes remain redacted after refresh.
 - Cache downstream protocol verdicts for five minutes within the connector, credential generation, admitted identity and pool. Modern verdicts skip discovery on later requests. Legacy verdicts skip the probe while retaining a fresh initialize handshake. Automatic negotiation retries a probe HTTP 5xx with a fresh legacy transport.
 - **Breaking:** Support Clerk and Cloudflare Access for inbound human authentication, with Access limited to trusted direct Worker context. Machines use stored `cta_` tokens. Remove `/auth/bearer`, `bearerToken`, and request-selected `assertedPrincipal` identities. Install `accessTokens(storage)`, provision a token per machine or human owner, update actor-id grants, rotate clients, and delete old secrets. Access service credentials satisfy the edge only and need a `cta_` token inside connecta. Replace custom auth `final`/`finalRefusals` with synchronous `recognizesCredential`. Select 401 challenges from the provider that actually serves protected-resource metadata, include Clerk scopes, and remove the Clerk authorization-server metadata proxy. See the exact migration steps in `documentation/auth.md`.
@@ -656,10 +656,10 @@ Start the upgraded deployment under maintenance and run `connecta doctor` with i
   shared connectors. Return connecta `/connect` links to agents and operator
   actions; keep status reads passive.
 - Drop downstream tools whose names contain C0, DEL, or C1 control characters at fresh and cached catalog intake. Report only the dropped count in connector drift and keep space and non-ASCII names callable with withheld operator records.
-  
+
   Reject control characters in configured static tool names at construction, before startup logs, with a path error that omits the tool name.
 - Keep Clerk SDK upstream error text and workerd native body-reader diagnostics out of operator output. Read all Clerk SDK responses as bytes, route SDK diagnostics through checked failure records, and preserve browser handshake and JWT authentication. Verify response-wrapper fidelity on Node and Workers.
-  
+
   The bundled gate client has Connecta-owned declarations for user lookup. The optional Clerk peer accepts compatible 3.x releases independently of the generator's exact internal SDK dependency.
 - Record Clerk authentication and admission denials with checked fixed reason codes. Exclude provider user IDs, email addresses, and email domains from denial logs, including email lookup failures. Add denial canaries for Clerk and Cloudflare Access across logs, activity, and status.
 - Make explicit Authorization headers decisive across inbound auth providers and protected routes. Normalize the case-insensitive Bearer scheme with one shared parser, reject malformed and unsupported headers with a 401 challenge, and exclude ambient cookies, Clerk browser handshake credentials, and Access context. Preserve explicit-header 401 challenges on OAuth starts and callbacks. Keep cookie-only human authentication and stored machine-token ownership.
@@ -756,7 +756,7 @@ Start the upgraded deployment under maintenance and run `connecta doctor` with i
 - **Breaking:** Remove built-in artifacts: the `connecta/artifacts` subpath, `artifacts:` config
   slot and `artifactOrigin`, operator pages and navigation, scheduled refresh,
   and agent tools and guide. Publishing belongs in dedicated services.
-  
+
   Delete the `connecta/artifacts` import and `artifacts:` configuration, plus
   `artifactOrigin` if set; a configuration that still contains either key fails
   at construction with a `ConfigError`. Remove `CONNECTA_ARTIFACTS` and refresh timers or cron
