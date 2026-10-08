@@ -88,8 +88,14 @@ and after and compare serialized bytes for every provider and relevant mode.
 
 `npm run providers:check` reads public contracts only. Parser failures are
 provider-local findings; report them alongside other drift and manual review
-requirements. Never fetch credentials, call operational tools, file issues, or
-silently accept a new baseline. Recording evidence is an explicit action.
+requirements. The `mcp-catalog` check compares credential-free public `tools/list` names and
+four behavioral hints against reviewed evidence. Catalog access does not prove
+operational auth or enable a preset. Recording never accepts catalog changes.
+Never fetch credentials, call operational tools, file issues, or silently accept
+a new baseline. Recording endpoint evidence is an explicit action.
+
+The Provider drift workflow runs on provider-path PRs and weekly. Its summary
+and artifacts are advisory; it is not a dependency of the aggregate `check` gate.
 
 Add a unique `.changes/<slug>.md` fragment. Run `npm run check:fast` while
 iterating, then `VITEST_MAX_WORKERS=2 npm run release:check` for provider

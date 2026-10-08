@@ -1276,7 +1276,7 @@ describe("discovered provider drift evidence", { timeout: CASE_TIMEOUT_MS }, () 
       expect(record).toMatchObject({ version: 1, provider });
       expect(record.checks.length).toBeGreaterThan(0);
       for (const check of record.checks) {
-        expect(["endpoints", "versioned-endpoints", "mcp-docs", "oauth-discovery", "manual"]).toContain(check.type);
+        expect(["endpoints", "versioned-endpoints", "mcp-docs", "oauth-discovery", "mcp-catalog", "manual"]).toContain(check.type);
         if (check.type === "mcp-docs" || check.type === "oauth-discovery") {
           expect(check.setup).toMatch(/^https:\/\//);
           expect(check.endpoints.length).toBeGreaterThan(0);
@@ -1506,5 +1506,105 @@ describe("public reference availability", { timeout: CASE_TIMEOUT_MS }, () => {
     } finally {
       await new Promise((resolve) => http.close(resolve));
     }
+  });
+});
+
+
+describe("public hosted catalog drift", () => {
+  const reviewed = [
+    { name: "read_item", annotations: { readOnlyHint: true, destructiveHint: false } },
+    { name: "edit_item", annotations: { readOnlyHint: false, destructiveHint: true } },
+  ];
+  const check = { type: "mcp-catalog", endpoint: "https://catalog.example/mcp", reviewed };
+
+  async function fixture(tools: unknown[], nextCursor?: string) {
+    const directory = await recordWorkspace({ vendor: { version: 1, provider: "vendor", checks: [check] } });
+    const catalog = join(directory, "catalog.json");
+    await writeFile(catalog, JSON.stringify({ jsonrpc: "2.0", id: 1, result: { tools, ...(nextCursor === undefined ? {} : { nextCursor }) } }));
+    return { directory, catalog };
+  }
+  function catalogRun(directory: string, catalog: string, extra: string[] = []) {
+    return spawnSync(process.execPath, [checker, "--docs", "--provider-dir", directory,
+      "--tool-reference", `vendor=${catalog}`, "--json", ...extra], { encoding: "utf8" });
+  }
+
+  it("reports additions, removals and weakened read/write annotations without adopting or recording them", async () => {
+    const { directory, catalog } = await fixture([
+      { name: "read_item", annotations: { readOnlyHint: false, destructiveHint: false } },
+      { name: "new_item", annotations: { readOnlyHint: true } },
+    ]);
+    const path = join(directory, "vendor", "drift.json");
+    const before = await readFile(path, "utf8");
+    const result = catalogRun(directory, catalog, ["--record", "--provider", "vendor"]);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).docs[0].findings).toEqual([
+      { kind: "catalog-annotations", detail: "read_item: behavioral annotations changed" },
+      { kind: "catalog-added", detail: "new_item" },
+      { kind: "catalog-removed", detail: "edit_item" },
+    ]);
+    expect(await readFile(path, "utf8")).toBe(before);
+    expect(catalogRun(directory, catalog, ["--strict"]).status).toBe(1);
+  });
+
+  it("ignores titles and schemas but reports missing hints", async () => {
+    const { directory, catalog } = await fixture(reviewed.map((tool) => ({ ...tool,
+      annotations: { ...tool.annotations, title: "new title" }, inputSchema: { changed: true } })));
+    expect(JSON.parse(catalogRun(directory, catalog).stdout).findings).toBe(0);
+    await writeFile(catalog, JSON.stringify({ jsonrpc: "2.0", id: 1, result: { tools: reviewed.map((tool) => ({ name: tool.name })) } }));
+    expect(JSON.parse(catalogRun(directory, catalog).stdout).docs[0].findings.map((finding: any) => finding.kind)).toEqual(["catalog-annotations", "catalog-annotations"]);
+  });
+
+  it.each([
+    [{ name: "duplicate" }, { name: "duplicate" }],
+    [{ name: "bad_hint", annotations: { readOnlyHint: "true" } }],
+  ])("reports malformed catalogs without a partial comparison", async (...tools) => {
+    const { directory, catalog } = await fixture(tools);
+    const report = JSON.parse(catalogRun(directory, catalog).stdout);
+    expect(report.docs[0].findings).toEqual([expect.objectContaining({ kind: "parser-error" })]);
+    expect(report.docs[0].catalogTools).toBeUndefined();
+  });
+
+  it("never compares an incomplete file catalog", async () => {
+    const { directory, catalog } = await fixture(reviewed, "more");
+    expect(JSON.parse(catalogRun(directory, catalog).stdout).docs[0].findings).toEqual([expect.objectContaining({ kind: "parser-error" })]);
+  });
+
+  it("sends only unauthenticated tools/list, follows pagination and isolates protected catalogs", async () => {
+    const requests: { method: string | undefined; authorization: string | undefined; body: any }[] = [];
+    const server = createServer(async (request, response) => {
+      let body = "";
+      for await (const chunk of request) body += chunk;
+      requests.push({ method: request.method, authorization: request.headers.authorization, body: JSON.parse(body) });
+      if (request.url === "/protected") { response.writeHead(401).end(); return; }
+      const cursor = JSON.parse(body).params.cursor;
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {
+        tools: cursor === undefined ? [reviewed[0]] : [reviewed[1]],
+        ...(cursor === undefined ? { nextCursor: "page-2" } : {}),
+      } }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const directory = await recordWorkspace({
+        vendor: { version: 1, provider: "vendor", checks: [check] },
+        protected: { version: 1, provider: "protected", checks: [check] },
+      });
+      const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+        execFile(process.execPath, [checker, "--docs", "--provider-dir", directory, "--json",
+          "--tool-reference", `vendor=${origin}/catalog`, "--tool-reference", `protected=${origin}/protected`],
+        (error, stdout, stderr) => error ? reject(error) : resolve({ stdout, stderr }));
+      });
+      const report = JSON.parse(result.stdout);
+      expect(report.docs.find((entry: any) => entry.provider === "vendor")).toMatchObject({ catalogTools: 2, findings: [] });
+      expect(report.docs.find((entry: any) => entry.provider === "protected").findings).toEqual([expect.objectContaining({ kind: "unavailable" })]);
+      expect(requests).toHaveLength(3);
+      for (const request of requests) {
+        expect(request.method).toBe("POST");
+        expect(request.authorization).toBeUndefined();
+        expect(request.body).toMatchObject({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+        expect(Object.keys(request.body.params).every((key) => key === "cursor")).toBe(true);
+      }
+    } finally { await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }
   });
 });

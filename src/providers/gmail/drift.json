@@ -68,6 +68,230 @@
           "contract": "sha256:aca8b1ba77ee4b3f59166cb97716ba1baea4a6f36d4346e8d1eefd47a750d344"
         }
       ]
+    },
+    {
+      "type": "mcp-catalog",
+      "endpoint": "https://gmailmcp.googleapis.com/mcp/v1",
+      "reviewedAt": "2026-10-08",
+      "reviewed": [
+        {
+          "name": "apply_sensitive_message_label",
+          "annotations": {
+            "destructiveHint": true,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "apply_sensitive_thread_label",
+          "annotations": {
+            "destructiveHint": true,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "create_draft",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": false,
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "create_label",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": false,
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "get_draft",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "get_message",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "get_thread",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "label_message",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "label_thread",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "list_drafts",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "list_labels",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "mark_message_spam",
+          "annotations": {
+            "destructiveHint": true,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "mark_thread_spam",
+          "annotations": {
+            "destructiveHint": true,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "search_threads",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "trash_message",
+          "annotations": {
+            "destructiveHint": true,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "trash_thread",
+          "annotations": {
+            "destructiveHint": true,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "unlabel_message",
+          "annotations": {
+            "destructiveHint": true,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "unlabel_thread",
+          "annotations": {
+            "destructiveHint": true,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "unmark_message_spam",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "unmark_thread_spam",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "untrash_message",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "untrash_thread",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": false
+          }
+        },
+        {
+          "name": "update_message_labels",
+          "annotations": {
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false,
+            "readOnlyHint": false
+          }
+        }
+      ]
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.google.com/workspace/guides/configure-mcp-servers",
+      "rationale": "Keep api(): OAuth developer preview does not establish service-account domain-wide delegation or deployment-owned subject equivalence. Public catalog annotations do not prove operational authorization.",
+      "evidence": {
+        "reviewedAt": "2026-10-08",
+        "decision": "keep-api",
+        "decisionRecord": "decisions/0002-hosted-workspace-planning-center.md"
+      }
     }
   ]
 }
