@@ -10,6 +10,7 @@ import { Effect } from "effect";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { closeScope } from "./runtime/connector-scope.js";
 import type { DeferredWork } from "./connector-scope.js";
+import { storedCredentialShape } from "./credential-rules.js";
 
 const TTL_MS = 10 * 60_000;
 const MAX_ROUNDS = 3;
@@ -74,7 +75,7 @@ export class AuthElicitation {
     registry: RegistryView;
     canManage: (id: string) => boolean;
     connectLink: (id: string, force?: boolean) => Promise<{ url: string; nonce: string }>;
-    linkUsed: (id: string, nonce: string) => Promise<boolean>;
+    linkProgress: (id: string, nonce: string) => Promise<"claimed" | "started" | undefined>;
     unavailable: string | undefined;
     credentialUi: boolean;
     requestSignal: AbortSignal;
@@ -102,11 +103,17 @@ export class AuthElicitation {
     return state as unknown as AuthRequestState;
   }
 
-  private async browserStarted(state: AuthRequestState): Promise<boolean> {
+  private async browserProgress(state: AuthRequestState): Promise<{ visited: boolean; completed: boolean }> {
+    let visited = false;
+    let completed = false;
+    let pending = false;
     for (const nonce of state.browserNonces) {
-      if (await this.options.linkUsed(state.connector, nonce)) return true;
+      const progress = await this.options.linkProgress(state.connector, nonce);
+      visited ||= progress !== undefined;
+      completed ||= progress === "started";
+      pending ||= progress === "claimed";
     }
-    return false;
+    return { visited, completed: completed && !pending };
   }
 
   private async connected(id: string, context: ServerContext): Promise<boolean> {
@@ -120,7 +127,7 @@ export class AuthElicitation {
         yield* Effect.addFinalizer(() => closeScope(connector, ctx, defer));
         if (connector.credential) {
           const metadata = yield* Effect.promise(() => vault!.metadata(id, connector.authScope === "personal" ? principal : undefined));
-          if (!metadata) return false;
+          if (storedCredentialShape(connector.credential, metadata?.fields ?? null).state !== "valid") return false;
         }
         if (!connector.status) return Boolean(connector.credential);
         return (yield* Effect.promise(() => registry.statusFor(id, publicUrl!, scope, { signal: deadline }))).state === "ok";
@@ -144,8 +151,8 @@ export class AuthElicitation {
       if (response.action === "cancel") return failure("auth_cancelled", "Connection was cancelled. The request was not retried.");
       if (response.action !== "accept") throw new ProtocolError(INVALID_PARAMS, "Invalid auth elicitation response", { reason: "invalid_input_response" });
     }
-    const browserStarted = previous && tool === "authorize_connector" ? await this.browserStarted(previous) : false;
-    if (browserStarted && previous && await this.connected(previous.connector, context)) {
+    const browser = previous && tool === "authorize_connector" ? await this.browserProgress(previous) : undefined;
+    if (browser?.completed && previous && await this.connected(previous.connector, context)) {
       const structuredContent = { connector: previous.connector, status: "ok" };
       return { structuredContent, content: [{ type: "text", text: JSON.stringify(structuredContent) }] };
     }
@@ -178,7 +185,7 @@ export class AuthElicitation {
     if (previous && previous.round >= MAX_ROUNDS) return failure("auth_round_limit", "Connection is still required after three prompts. Connect explicitly, then start a new request.");
     // Once a verified browser has started this attempt, retries continue it.
     // A pending consent must never be reset by another force=true prompt.
-    const link = await this.options.connectLink(id, explicit && args.force === true && !browserStarted);
+    const link = await this.options.connectLink(id, explicit && args.force === true && !browser?.visited);
     const state: AuthRequestState = {
       version: 1, principal, endpoint: this.options.endpoint, connector: id, tool,
       ...(typeof args.address === "string" ? { address: args.address } : {}),

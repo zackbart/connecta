@@ -878,8 +878,10 @@ may implement the host-only `requestStateKey` method; without it, the
 deployment retains the ordinary handoff. It must return a stable,
 purpose-specific deployment key of at least 32 bytes. Only the MCP boundary
 reads this key; connector contexts and guest APIs cannot reach the vault.
-Explicit authorization retries check for a verified browser visit and a
-healthy passive connector status before completing. A forced flow switches to
+Explicit authorization retries require a completed browser start (including
+its reset and consent binding), valid stored credential fields where declared,
+and a healthy passive connector status where available before completing.
+An in-progress start cannot complete against an old grant. A forced flow switches to
 Continue after that visit, so another prompt cannot restart pending consent.
 
 The `/connect` link issued by the elicitation boundary encrypts its browser

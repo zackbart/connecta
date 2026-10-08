@@ -68,9 +68,10 @@ export async function oauthConnectLink(
   return { url: url.toString(), nonce: handoff.nonce };
 }
 
-/** Passive check of a browser visit that passed identity and management checks. */
-export async function oauthConnectLinkUsed(opts: ServerOptions, baseUrl: string, id: string, nonce: string): Promise<boolean> {
-  return await opts.registry.contextFor(id, baseUrl).storage.get(oauthConnectKeys.used(nonce)) === "used";
+/** A claim precedes OAuth reset; only a completed start can prove recovery. */
+export async function oauthConnectLinkProgress(opts: ServerOptions, baseUrl: string, id: string, nonce: string): Promise<"claimed" | "started" | undefined> {
+  const stage = await opts.registry.contextFor(id, baseUrl).storage.get(oauthConnectKeys.used(nonce));
+  return stage === "used" ? "claimed" : stage === "started" ? "started" : undefined;
 }
 
 export async function verifyOAuthHandoff(
@@ -106,4 +107,12 @@ export async function consumeOAuthConnectLink(opts: ServerOptions, handoff: Hand
   const storage = opts.registry.contextFor(handoff.connector, handoff.origin).storage;
   const expiry = { ttlSeconds: Math.max(1, Math.ceil((handoff.expiresAt - Date.now()) / 1000)) };
   return storage.compareAndSet(oauthConnectKeys.used(handoff.nonce), null, "used", expiry);
+}
+
+/** Mark only after the start, reset, and consent binding have finished. */
+export async function completeOAuthConnectStart(opts: ServerOptions, handoff: Handoff): Promise<boolean> {
+  if (handoff.expiresAt <= Date.now()) return false;
+  const storage = opts.registry.contextFor(handoff.connector, handoff.origin).storage;
+  const expiry = { ttlSeconds: Math.max(1, Math.ceil((handoff.expiresAt - Date.now()) / 1000)) };
+  return storage.compareAndSet(oauthConnectKeys.used(handoff.nonce), "used", "started", expiry);
 }

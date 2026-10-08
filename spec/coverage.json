@@ -381,6 +381,10 @@
         {
           "file": "test/auth-elicitation.test.ts",
           "title": "INV-4: decline and cancel terminate without dispatch or another prompt"
+        },
+        {
+          "file": "test/auth-elicitation.test.ts",
+          "title": "INV-4 INV-5: credential completion requires fields compatible with the current declaration"
         }
       ]
     },
@@ -398,6 +402,10 @@
         {
           "file": "test/auth-elicitation.test.ts",
           "title": "INV-4: bounds rounds while accept does not claim consent completed"
+        },
+        {
+          "file": "test/auth-elicitation.test.ts",
+          "title": "INV-4 INV-5 INV-9: a claimed forced reconnect cannot complete against the old grant before reset finishes"
         }
       ]
     },

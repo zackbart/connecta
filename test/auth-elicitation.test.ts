@@ -15,7 +15,7 @@ afterEach(async () => {
   await Promise.all(apps.splice(0).map(app => app.close()));
 });
 
-function setup(options: { manage?: boolean; vault?: boolean; publicUrl?: boolean; programWrite?: boolean; credential?: boolean; uiPath?: string } = {}) {
+function setup(options: { manage?: boolean; vault?: boolean; publicUrl?: boolean; programWrite?: boolean; credential?: boolean; namedCredential?: boolean; uiPath?: string } = {}) {
   const storage = memoryStorage();
   const vault = encryptedCredentialVault(storage, CREDENTIAL_KEY);
   let connected = false;
@@ -36,7 +36,8 @@ function setup(options: { manage?: boolean; vault?: boolean; publicUrl?: boolean
   };
   if (options.credential) {
     delete connector.startAuth;
-    connector.credential = { label: "Service token" };
+    connector.credential = { label: "Service token", ...(options.namedCredential ? { fields: [{ name: "apiKey", label: "API key" }] } : {}) };
+    if (options.namedCredential) delete connector.status;
   }
   const app = createTestConnecta({
     connectors: [connector], storage, logger: "silent",
@@ -78,7 +79,16 @@ function setup(options: { manage?: boolean; vault?: boolean; publicUrl?: boolean
     const target = opts.pool ? new Request(`${BASE}/mcp/${opts.pool}`, request) : request;
     return readJsonRpc(await app.fetch(target));
   };
-  return { rpc, call, connector, app, vault, connect: () => { connected = true; } };
+  const browser = async (url: string) => {
+    const response = await app.fetch(new Request(url, { headers: { Cookie: "__session=alice" } }));
+    const location = response.headers.get("Location");
+    if (location && new URL(location).pathname === "/connectors/service") {
+      const start = new URL(url); start.searchParams.set("start", "1");
+      return app.fetch(new Request(start, { headers: { Cookie: "__session=alice" } }));
+    }
+    return response;
+  };
+  return { rpc, call, connector, app, vault, browser, connect: () => { connected = true; }, disconnect: () => { connected = false; } };
 }
 
 describe("auth URL elicitation", () => {
@@ -231,18 +241,59 @@ describe("auth URL elicitation", () => {
     const flow = setup();
     const args = { connector: "service", force: true };
     const first = (await flow.rpc("authorize_connector", args)).result;
-    const browser = (url: string) => flow.app.fetch(new Request(url, { headers: { Cookie: "__session=alice" } }));
-    expect((await browser(first.inputRequests.connecta_auth.params.url)).status).toBe(302);
+    expect((await flow.browser(first.inputRequests.connecta_auth.params.url)).status).toBe(302);
     expect(flow.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: true });
     const pending = (await flow.rpc("authorize_connector", args, { state: first.requestState, action: "accept" })).result;
     expect(pending.resultType).toBe("input_required");
-    expect((await browser(pending.inputRequests.connecta_auth.params.url)).status).toBe(302);
+    expect((await flow.browser(pending.inputRequests.connecta_auth.params.url)).status).toBe(302);
     expect(flow.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: false });
     flow.connect();
     const completed = (await flow.rpc("authorize_connector", args, { state: pending.requestState, action: "accept" })).result;
     expect(completed.resultType).not.toBe("input_required");
     expect(completed.structuredContent).toEqual({ connector: "service", status: "ok" });
     expect(flow.connector.startAuth).toHaveBeenCalledTimes(2);
+  });
+
+  it("INV-4 INV-5 INV-9: a claimed forced reconnect cannot complete against the old grant before reset finishes", async () => {
+    const flow = setup();
+    flow.connect();
+    let resume!: () => void;
+    let entered!: () => void;
+    const paused = new Promise<void>(resolve => { resume = resolve; });
+    const starting = new Promise<void>(resolve => { entered = resolve; });
+    vi.mocked(flow.connector.startAuth!).mockImplementation(async () => {
+      entered();
+      await paused;
+      flow.disconnect();
+      return { state: "auth_required", authorizationUrl: `https://downstream.test/secret?state=${crypto.randomUUID()}` };
+    });
+    const args = { connector: "service", force: true };
+    const first = (await flow.rpc("authorize_connector", args)).result;
+    const browser = flow.browser(first.inputRequests.connecta_auth.params.url);
+    await starting;
+    let pending;
+    try {
+      pending = (await flow.rpc("authorize_connector", args, { state: first.requestState, action: "accept" })).result;
+      expect(pending.resultType).toBe("input_required");
+    } finally { resume(); }
+    expect((await browser).status).toBe(302);
+    const afterReset = (await flow.rpc("authorize_connector", args, { state: pending.requestState, action: "accept" })).result;
+    expect(afterReset.resultType).toBe("input_required");
+    flow.connect();
+    expect((await flow.rpc("authorize_connector", args, { state: afterReset.requestState, action: "accept" })).result.structuredContent).toEqual({ connector: "service", status: "ok" });
+  });
+
+  it("INV-4 INV-5: credential completion requires fields compatible with the current declaration", async () => {
+    const flow = setup({ credential: true, namedCredential: true });
+    await flow.vault.set("service", "old-single-value", "alice");
+    const args = { connector: "service" };
+    const first = (await flow.rpc("authorize_connector", args)).result;
+    expect((await flow.browser(first.inputRequests.connecta_auth.params.url)).status).toBe(302);
+    const pending = (await flow.rpc("authorize_connector", args, { state: first.requestState, action: "accept" })).result;
+    expect(pending.resultType).toBe("input_required");
+    await flow.vault.setAll("service", { apiKey: "new-api-key" }, "alice");
+    const completed = (await flow.rpc("authorize_connector", args, { state: pending.requestState, action: "accept" })).result;
+    expect(completed.structuredContent).toEqual({ connector: "service", status: "ok" });
   });
 
   it("INV-4 INV-5: credential handoffs respect configured UI paths and reject external redirects", async () => {

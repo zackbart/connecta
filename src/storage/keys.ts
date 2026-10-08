@@ -415,7 +415,7 @@ export const oauthV2Keys = {
   generation: "oauth:generation",
 } as const satisfies Keyed;
 
-/** Single-use `/connect/<id>` links already spent, by nonce. */
+/** Single-use `/connect/<id>` links: claimed (`used`) or start completed (`started`). */
 export const oauthConnectKeys = {
   family: {
     name: "oauth-connect",
