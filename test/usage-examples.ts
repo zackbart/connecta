@@ -80,8 +80,10 @@ export async function checkUsageExamples(executor: Executor): Promise<void> {
   const registry = makeRegistry([fixture], { maxResultBytes: 512 });
   const run = createExecuteTool(registry, BASE, executor, silentLogger);
   const direct = await createMetaTools(registry, BASE).callTool({ address: "ci.export" });
-  expect(direct.structuredContent).toMatchObject({ truncated: true, resultId: expect.any(String) });
-  const resultId = direct.structuredContent!.resultId as string;
+  expect(direct.structuredContent).toBeUndefined();
+  const notice = JSON.parse(required(direct.content[0]).text.split("\n")[0]!);
+  expect(notice).toMatchObject({ truncated: true, resultId: expect.any(String) });
+  const resultId = notice.resultId as string;
   const guideExamples = examples(USAGE_SKILL);
   const expected = [
     { status: "failed", jobId: "job_7" },

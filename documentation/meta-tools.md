@@ -19,9 +19,11 @@ never depends on the storage behind the deployment. There was an eighth,
 is annotated `readOnlyHint: true, destructiveHint: false` on a `read-only`
 endpoint, and `readOnlyHint: false, destructiveHint: true` on a `trusted`
 endpoint. Approval belongs to the host. Pool trust never changes connector
-visibility or tool grants. Every meta-tool advertises `outputSchema` for its
-structured content; raw downstream MCP content stays in `content`. Direct
-results declare `format: "json" | "text"`, and value mode places the value in `data`.
+visibility or tool grants. The four tools with structured-only success results
+advertise `outputSchema`. The two direct-call tools omit it because their default
+mode returns native `content`. Default-mode successes declare
+`_meta["dev.connecta/format"]: "json" | "text"`; value mode places the value in
+`data` and declares `format` in its complete result envelope.
 
 | Tool                    | Arguments                                                                                                                           | Returns                                                                                                       |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
@@ -302,16 +304,25 @@ and [2026-07-28 Resources](https://modelcontextprotocol.io/specification/2026-07
 
 ## Result representation
 
-For object results, `structuredContent` is the canonical full-fidelity value and
+For structured envelopes, `structuredContent` is the canonical full-fidelity value and
 `content` carries the same complete value as compact JSON for clients that only
 consume text. Keeping both follows MCP's backwards-compatibility guidance;
 dropping the text copy waits on host-forwarding measurements showing supported
 clients do not need it. Direct-call failures set `isError: true` and carry the
 same `{ ok: false, error, durationMs, attempts }` envelope in both forms, whether
 `resultMode` is omitted, `"mcp"`, or `"value"`. Plain-text guidance stays
-text-only. A downstream MCP tool's successful native content blocks pass through
-in MCP result mode.
-When no text block exists and `structuredContent` is present, Connecta appends a
+text-only. Successful direct calls with `resultMode` omitted or `"mcp"` return
+their data only in `content`, with the downstream format in
+`_meta["dev.connecta/format"]`. They omit `structuredContent`, including on
+truncated results, so clients that prefer it cannot replace data or a preview
+with metadata. API results keep their serialized value; downstream MCP native
+content blocks pass through. Value-mode successes retain
+`{ ok: true, data, format, durationMs, attempts }` in both forms, including when
+`data` is a truncation notice. Direct-call tools advertise no `outputSchema`:
+MCP requires a tool declaring one to supply conforming structured results, which
+default native content does not promise.
+When downstream MCP content has no text block and downstream `structuredContent`
+is present, Connecta appends a
 text block carrying its compact JSON and then applies the same content size
 guard, which preserves structured-only results including `null`, arrays, and
 scalars. An existing text mirror stays unchanged; Connecta adds no second copy.
@@ -373,7 +384,8 @@ retryable timeout while Connecta prepares its response.
 A `call_tool` or `call_destructive_tool` result over its cap — the connector's
 `maxResultBytes`, else `calls.maxResultBytes`, else 24,000 bytes — comes back
 as one text block. Its first line is the truncation notice, one line of compact
-JSON; everything after the first newline is the preview:
+JSON; everything after the first newline is the preview. `structuredContent`
+is absent, so the notice cannot hide the preview in clients that prefer it:
 
 ```text
 {"truncated":true,"resultId":"…","totalBytes":161420,"hint":"This write already ran: do not call it again to see its result. Bytes 0-24000 of 161420 follow; page the rest with connecta.result using nextAction.","nextOffset":24000,"nextAction":{"tool":"execute_code","arguments":{"code":"async () => await connecta.result(\"…\", { offset: 24000 })"}}}

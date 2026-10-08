@@ -273,7 +273,7 @@
       "id": "tools-call",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
-      "notes": "Direct and program calls work; both direct-call tools declare the address parameter header and all six meta-tools declare outputSchema.",
+      "notes": "Direct and program calls work; both direct-call tools declare the address parameter header. The four structured-only meta-tools declare outputSchema; native-content direct-call tools omit it.",
       "tests": [
         {
           "file": "test/meta-tools-call.test.ts",
@@ -289,7 +289,7 @@
         },
         {
           "file": "test/meta-tool-schemas.test.ts",
-          "title": "INV-3: every meta-tool advertises a schema matching successful structured content"
+          "title": "INV-3: structured-only meta-tools advertise schemas and direct-call tools permit native content"
         }
       ]
     },
@@ -325,7 +325,7 @@
       "id": "tool-output-schema",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
-      "notes": "Downstream structured output is SDK-validated across every catalog page. All six meta-tools advertise output schemas matching successful structured content.",
+      "notes": "Downstream structured output is SDK-validated across every catalog page. The four structured-only meta-tools advertise output schemas matching successful structured content. Direct-call tools omit outputSchema because default-mode successes return native content; value-mode and error envelopes still mirror complete JSON.",
       "tests": [
         {
           "file": "test/remote-mcp-pagination.test.ts",
@@ -333,7 +333,7 @@
         },
         {
           "file": "test/meta-tool-schemas.test.ts",
-          "title": "INV-3: every meta-tool advertises a schema matching successful structured content"
+          "title": "INV-3: structured-only meta-tools advertise schemas and direct-call tools permit native content"
         }
       ]
     },
@@ -341,7 +341,7 @@
       "id": "tool-content",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
-      "notes": "Direct downstream content passes through; guest emission permits text, image and audio only.",
+      "notes": "Default-mode direct-call successes preserve downstream content and bounded notice-first previews, omit structuredContent, and carry format in _meta[\"dev.connecta/format\"]. Value-mode and error results carry complete data in structuredContent and serialized JSON in content. Guest emission permits text, image and audio only; internal result pages retain their text and paging fields.",
       "tests": [
         {
           "file": "test/remote-mcp.test.ts",
@@ -350,6 +350,22 @@
         {
           "file": "test/execute-emit.test.ts",
           "title": "accepts exactly the three block shapes"
+        },
+        {
+          "file": "test/direct-call-content.test.ts",
+          "title": "INV-9: default direct-call results preserve data and previews without structured stubs or repeated writes"
+        },
+        {
+          "file": "test/direct-call-content.test.ts",
+          "title": "INV-9: value-mode direct-call results mirror complete data or paging envelopes in both forms"
+        },
+        {
+          "file": "test/direct-call-content.test.ts",
+          "title": "direct-call failures mirror the full error envelope in every mode"
+        },
+        {
+          "file": "test/direct-call-content.test.ts",
+          "title": "INV-9: result pages retain the same bytes and metadata in both internal forms without recalling the tool"
         }
       ]
     },

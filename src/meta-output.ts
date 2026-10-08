@@ -62,24 +62,6 @@ export const SEARCH_OUTPUT: StandardSchemaWithJSON<CatalogSearchResult, CatalogS
   },
 };
 
-export const CALL_OUTPUT = advertisedSchema(
-  z
-    .object({
-      ok: z.boolean().optional(),
-      data: z.unknown().optional(),
-      format: format.optional(),
-      error: error.optional(),
-      durationMs: z.number().nonnegative().optional(),
-      attempts: z.number().int().nonnegative().optional(),
-      truncated: z.boolean().optional(),
-      resultId: z.string().optional(),
-      totalBytes: z.number().int().nonnegative().optional(),
-      hint: z.string().optional(),
-      nextAction: z.record(z.string(), z.unknown()).optional(),
-    })
-    .passthrough(),
-);
-
 export const AUTHORIZE_OUTPUT = advertisedSchema(
   z
     .object({
