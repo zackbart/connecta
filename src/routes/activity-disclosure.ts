@@ -12,7 +12,14 @@ function activityToolVisible(authz: ConnectorAccess, event: ActivityPage["events
     (!authz.guardedToolAccess?.get(event.connectorId)?.has(event.toolName) || event.classification === "read");
 }
 
-/** One disclosure rule for the timeline and the UI's last-call overlay. */
+/**
+ * One disclosure rule for the timeline and the UI's last-call overlay.
+ * After Activity access and the read gate, operators and activityAccess machine
+ * callers may see other principals' shared-connector history when connector/tool
+ * and recorded-pool grants permit, including request IDs, client name/version,
+ * and actor kind/id/namespace. Interactive reads may add directory actor labels;
+ * machine reads do not. Personal history requires a matching principal owner.
+ */
 export function activityEventVisible(
   context: RouteContext,
   authz: Authorized,

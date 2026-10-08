@@ -1064,7 +1064,19 @@ owns authenticated reads and existing mutations. Overview, Connectors, connector
 detail, Tools, Access and Config consume the typed contract. Activity and
 Artifacts retain their authenticated data routes. Connector detail tabs live
 in the URL hash; Activity filters live in the query string and apply to loaded
-history. Calls group only by recorded request ids, with missing ids shown as
+history. Both `/ui/activity` and `/ui/api/activity` require Activity access and
+pass the optional activity `readGate`. Interactive operators and machine callers
+admitted by `identity.activityAccess` share the same history disclosure rules.
+Connector/tool grants and grants for the recorded pool filter each event. Shared
+connector history can include other principals' events, with recorded request
+IDs, validated client name/version and package version, and actor kind, ID and
+namespace. Interactive reads may also add directory actor labels; machine reads
+never add them. Personal connector history is owner-only: the event must have a
+checked `principal` actor basis and actor ID/namespace matching the reader's
+admitted principal. Rows without a provable personal owner are withheld. Activity
+carries no arguments, results, code or raw downstream errors. The last-call
+overlay uses the same event filter but returns only timestamp and outcome.
+Calls group only by recorded request ids, with missing ids shown as
 separate calls. Classification and result size are shown only when recorded. The verdict is
 captured after registry resolution, and result size counts UTF-8 bytes of the
 downstream value before paging or truncation. Nullable SQL columns preserve old

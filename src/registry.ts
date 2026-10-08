@@ -1513,6 +1513,27 @@ export class Registry implements RegistryView {
 
   private readonly observedCatalogs = new Map<string, readonly ToolDef[]>();
 
+  /** Compare published catalogs and emit counts through one relocatable hook. */
+  private recordCatalogDrift(
+    previous: readonly ToolDef[] | undefined,
+    next: readonly ToolDef[],
+    attribution: { id: string; connector: Connector; ctx: ConnectorContext },
+  ): void {
+    const { id, connector, ctx } = attribution;
+    if (previous) {
+      const before = new Map(previous.map(tool => [tool.name, JSON.stringify(tool)]));
+      const after = new Map(next.map(tool => [tool.name, JSON.stringify(tool)]));
+      const addedTools = [...after.keys()].filter(name => !before.has(name)).length;
+      const removedTools = [...before.keys()].filter(name => !after.has(name)).length;
+      const changedTools = [...after].filter(([name, fact]) => before.has(name) && before.get(name) !== fact).length;
+      if (addedTools || removedTools || changedTools) this.opts.catalogDriftActivity?.recordChange?.(
+        this.opts.catalogDriftActivity ? { ...this.opts.catalogDriftActivity, logger: this.opts.logger, ...(ctx.defer ? { defer: ctx.defer } : {}) } : undefined,
+        { connectorId: id, drift: { kind: "catalog_changed", addedTools, removedTools, changedTools }, ...(connector.authScope === "personal" ? { personal: true } : {}) },
+        activityRequest(ctx.requestScope),
+      );
+    }
+  }
+
   private async refreshToolsWithContext(
     id: string,
     connector: Connector,
@@ -1593,18 +1614,7 @@ export class Registry implements RegistryView {
     // One publication hook for discrete changes. The first complete catalog is
     // a baseline; rejected, abandoned and identical refreshes emit nothing.
     const baseline = this.observedCatalogs.get(id) ?? previous?.tools;
-    if (baseline) {
-      const before = new Map(baseline.map(tool => [tool.name, JSON.stringify(tool)]));
-      const after = new Map(facts.map(tool => [tool.name, JSON.stringify(tool)]));
-      const addedTools = [...after.keys()].filter(name => !before.has(name)).length;
-      const removedTools = [...before.keys()].filter(name => !after.has(name)).length;
-      const changedTools = [...after].filter(([name, fact]) => before.has(name) && before.get(name) !== fact).length;
-      if (addedTools || removedTools || changedTools) this.opts.catalogDriftActivity?.recordChange?.(
-        this.opts.catalogDriftActivity ? { ...this.opts.catalogDriftActivity, logger: this.opts.logger, ...(ctx.defer ? { defer: ctx.defer } : {}) } : undefined,
-        { connectorId: id, drift: { kind: "catalog_changed", addedTools, removedTools, changedTools }, ...(connector.authScope === "personal" ? { personal: true } : {}) },
-        activityRequest(ctx.requestScope),
-      );
-    }
+    this.recordCatalogDrift(baseline, facts, { id, connector, ctx });
     this.observedCatalogs.set(id, facts);
     this.cache.set(id, {
       tools: facts,
