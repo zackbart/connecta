@@ -1,5 +1,10 @@
 # Notion, Vercel and Cloudflare migration for 0.29
 
+Use this upgrade guide for an existing deployment.
+[Deployment upgrades](./deploying.md#upgrade-an-existing-deployment) cover other
+version changes; [integrating services](./integrating.md) covers new connectors.
+[The agent index](./README.md) routes package maintenance separately.
+
 This is the Phase 1 item 5d migration input for [Phase 5 release #709](https://github.com/zackbart/connecta/issues/709).
 Deploy it with the consolidated 0.29 release, not while the rework is in progress.
 BePresent and One&Many use Notion and Cloudflare; their actual grants and

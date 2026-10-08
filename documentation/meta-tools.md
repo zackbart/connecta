@@ -9,6 +9,21 @@ This guide is the contract an MCP client sees. The in-program `connecta.*` API
 those tools imply belongs to [code mode](./code-mode.md); inbound identity and
 credential administration belong to [auth](./auth.md).
 
+## Task routes
+
+Start with [Operating an endpoint](./operating.md) for a workflow, or
+[the agent index](./README.md) for setup and repository tasks. This reference
+owns the top-level MCP contract; it does not require reading the core internals.
+
+| Task                                               | Sections                                                                                                                                    |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Choose a tool or construct its arguments           | [Six-tool table](#the-six-tools), [call routing](#routing-between-the-call-surfaces), [downstream input](#downstream-input-on-direct-calls) |
+| Find an operation and its schema                   | [Discovery context](#discovery-context), [TypeScript signatures](#typescript-signatures), [lexical discovery](#lexical-discovery)           |
+| Load provider instructions or native skills        | [Connector guides](#connector-guides-and-skills), [native extension](#native-skills-extension)                                              |
+| Interpret a direct response or page a large result | [Representation](#result-representation), [truncation](#truncated-direct-call-results), [paging](#paging-with-connectaresult)               |
+| Recover a refused or invalid call                  | [Authorization](#authorization-recovery), [routing](#routing-recovery), [arguments](#argument-recovery), [echo budgets](#echo-budgets)      |
+| Change the contract                                | [Source and tests](#source-and-tests), [guest API](./code-mode.md#verification)                                                             |
+
 ## The six tools
 
 Every deployment requires an executor, so `tools/list` is exactly six. No
@@ -862,3 +877,19 @@ SDK timeout classes, and runtime network codes. Untyped prose is non-retryable:
 "timeout", "temporarily unavailable", "rate limit", or "503" in a body, tool
 name, or URL never changes the verdict. JSON-RPC `ProtocolError.data` is dropped
 at the downstream boundary, even when the agent may see the error's message.
+
+## Source and tests
+
+Handlers and schemas live in [meta-tools.ts](https://github.com/zackbart/connecta/blob/main/src/meta-tools.ts).
+[Catalog service](https://github.com/zackbart/connecta/blob/main/src/catalog-service.ts)
+and [invocation](https://github.com/zackbart/connecta/blob/main/src/invocation.ts)
+serve both direct tools and programs. [Skills](https://github.com/zackbart/connecta/blob/main/src/skills.ts)
+owns the supplied usage instructions and connector guides.
+
+[Schema tests](https://github.com/zackbart/connecta/blob/main/test/meta-tool-schemas.test.ts),
+[search tests](https://github.com/zackbart/connecta/blob/main/test/meta-tools-search.test.ts),
+[call tests](https://github.com/zackbart/connecta/blob/main/test/meta-tools-call.test.ts),
+[skills tests](https://github.com/zackbart/connecta/blob/main/test/skills-extension.test.ts),
+and [surface tests](https://github.com/zackbart/connecta/blob/main/test/code-first-surface.test.ts)
+check the published contract. Guest parity and clause evidence are in
+[code-mode verification](./code-mode.md#verification).

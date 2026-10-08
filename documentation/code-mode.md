@@ -11,6 +11,26 @@ a third executor is implementable from this document alone.
 [`meta-tools.md`](./meta-tools.md) owns the top-level tool contract, and clause
 identifiers (`A1`, `E3`, …) are stable and cited by [Verification](#verification).
 
+## Task routes
+
+For normal endpoint work, start with [Operating an endpoint](./operating.md).
+Use this reference for exact guest behavior or executor implementation.
+[Agent index](./README.md) routes other work.
+
+| Task                                         | Sections                                                                                                                                         |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Wire a shipped or custom executor            | [Deploy-time capability](#deploy-time-capability), [executor requirements](#what-an-executor-must-implement), [exceptions](#executor-exceptions) |
+| Write a portable program                     | [Program form](#the-program), [addresses](#addressing), [guest functions](#the-surface)                                                          |
+| Discover and call tools                      | [Search](#connectasearch), [describe](#connectadescribe), [call](#connectacall), [parallel calls](#parallel-calls)                               |
+| Page results, load skills or read resources  | [Result and skill](#connectaresult-and-connectaskill), [read](#connectaread), [projection](#results-and-projection)                              |
+| Emit incremental output                      | [emit](#connectaemit), [emitted output](#emitted-output)                                                                                         |
+| Handle errors, writes, or cancellation       | [Errors](#errors), [retries](#retry-semantics), [limits](#cancellation-and-limits), [writes](#writes), [activity](#activity)                     |
+| Change the contract or check executor parity | [Verification](#verification), then the tests indexed by clause                                                                                  |
+
+Clause IDs remain stable, including retired IDs. Check current behavior against
+source and the verification table; do not reuse a retired clause to introduce
+new behavior.
+
 ## Deploy-time capability
 
 The `executor` passed to `createConnecta()` is required. `tools/list` is exactly
@@ -1025,7 +1045,7 @@ reasonable demand on a platform sandbox.
 values through a tagged envelope, so a `Uint8Array` may survive there. `P3` is
 the contract: JSON-serializable values, or the program is Workers-only.
 
-**X8. Unknown properties.** The guest namespace exposes only the six documented
+**X8. Unknown properties.** The guest namespace exposes only the seven documented
 functions. Unknown and inherited members are absent on both executors; calling
 one is a guest `TypeError` under `E6`. Engine message text is not contract.
 

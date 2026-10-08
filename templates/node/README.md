@@ -1,5 +1,12 @@
 # Connecta deployment
 
+Agent setup guide for the Node deployment and its Docker packaging.
+For cross-platform setup and upgrades, use [Deploying Connecta](https://github.com/zackbart/connecta/blob/main/documentation/deploying.md).
+For connector changes, use [Integrating services](https://github.com/zackbart/connecta/blob/main/documentation/integrating.md).
+The [agent index](https://github.com/zackbart/connecta/blob/main/documentation/README.md) routes endpoint use and package
+maintenance. This README and [local agent instructions](./AGENTS.md) own the
+runnable steps for a copied Node deployment.
+
 This is the prescribed Node deployment. It runs locally from source and as
 a container. Install, provision a machine token, then start it:
 

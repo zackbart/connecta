@@ -1,5 +1,9 @@
 # Operator UI tests
 
+Use this repository-maintenance guide when changing operator pages, data routes,
+or browser evidence. Read the [operator UI contract](./operator-ui.md) first.
+[The agent index](./README.md) routes deployment and endpoint tasks.
+
 `test/fixtures/operator-visual.ts` owns the visual data. It builds the config,
 live overlay, viewer, and legacy auth details through the current server routes,
 using the types in `src/operator-ui/contract.ts` and `model.ts`. Collections use

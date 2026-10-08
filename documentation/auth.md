@@ -1,5 +1,28 @@
 # Inbound auth
 
+## Task routes
+
+[Agent index](./README.md) distinguishes endpoint operation from deployment
+and package maintenance. This guide owns identity, grants, and downstream
+credential contracts; use [deployment setup](./deploying.md) for runnable steps.
+
+| Task                                                  | Sections                                                                                                                                                                      |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Connect a machine or migrate an old client            | [Managed tokens](#managed-client-tokens-and-upgrading-from-v023), [static bearer migration](#migrating-static-bearer-clients)                                                 |
+| Configure caller visibility, trust, or auth ownership | [Principals and operators](#principals-visibility-and-operators), [pools](#pools), [shared and personal auth](#shared-and-personal-auth)                                      |
+| Set up human sign-in                                  | [Access on Workers](#cloudflare-access-on-workers), [Clerk tokens and sessions](#clerk-oauth-tokens-and-operator-sessions), [management](#human-authentication-management)    |
+| Enable credential or connection controls              | [Management permissions](#management-permissions), [start/restart/disconnect](#starting-restarting-and-disconnecting)                                                         |
+| Diagnose consent or token refresh                     | [State at rest](#downstream-oauth-state-at-rest), [callbacks](#consents-and-callbacks), [refresh failures](#refresh-failures), [safe errors](#what-a-servers-errors-may-say)  |
+| Configure a downstream OAuth client or HTTP handler   | [Client registration](#downstream-oauth-client-registration), [api() OAuth](#downstream-oauth-on-api), [request-local bearer tokens](#request-local-downstream-bearer-tokens) |
+| Review browser or downstream URL boundaries           | [Origins](#origins), [advertised URLs](#urls-a-downstream-advertises), [one server per grant](#one-server-per-grant)                                                          |
+
+[Credential recognition and admission](#credential-recognition-and-admission)
+defines refusal precedence.
+[Source and tests](#source-and-tests) points to the implementation. Migration
+sections describe upgrade procedures, not additional auth modes to enable.
+
+## Credential recognition and admission
+
 Inbound auth decides who may reach the MCP endpoint. People use `clerkAuth`
 from `@zackbart/connecta/auth/clerk` or `cloudflareAccessAuth` from
 `/auth/cloudflare-access`. Machines use `accessTokens(storage)` from
@@ -1145,3 +1168,21 @@ is retained across requests, and rejected writes are never replayed. An omitted
 `app.privateKey` uses the encrypted connector vault's `privateKey` field;
 `describe()` includes neither the key nor the minted tokens. The maintained
 provider skill explains App permissions and installation prerequisites.
+
+## Source and tests
+
+Inbound adapters live in [src/auth](https://github.com/zackbart/connecta/tree/main/src/auth);
+[auth routes](https://github.com/zackbart/connecta/blob/main/src/routes/oauth.ts)
+own connection handoffs and callbacks. Check [inbound auth tests](https://github.com/zackbart/connecta/blob/main/test/inbound-auth.test.ts),
+[Access tests](https://github.com/zackbart/connecta/blob/main/test/cloudflare-access-auth.test.ts),
+and [identity-scope tests](https://github.com/zackbart/connecta/blob/main/test/identity-scope.test.ts)
+for credential precedence and disclosure boundaries.
+
+Downstream OAuth implementation and evidence are in
+[downstream-oauth.ts](https://github.com/zackbart/connecta/blob/main/src/auth/downstream-oauth.ts),
+[static-oauth.ts](https://github.com/zackbart/connecta/blob/main/src/auth/static-oauth.ts),
+[OAuth connect tests](https://github.com/zackbart/connecta/blob/main/test/oauth-connect.test.ts),
+[callback fencing](https://github.com/zackbart/connecta/blob/main/test/oauth-callback-fencing.test.ts),
+[refresh leases](https://github.com/zackbart/connecta/blob/main/test/oauth-refresh-lease.test.ts),
+and [API OAuth tests](https://github.com/zackbart/connecta/blob/main/test/api-oauth.test.ts).
+Use the test pointers within each section for narrower failure cases.
