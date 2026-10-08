@@ -72,7 +72,7 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
     void go({ to: location.pathname, search, hash: location.hash });
   };
   const data = state.data;
-  const enabled = Boolean(data?.activityEnabled);
+  const enabled = Boolean(data?.activityEnabled) && state.contract?.you.permissions.activity === true;
   const loading = state.activityPhase === "loading";
   const visible = filterActivity(state.activityEvents.filter(e => (!connector || e.connectorId === connector) && (!outcome || e.outcome === outcome) && (!source || e.source === source)), query);
   const summary = activitySummary(state.activityEvents);
@@ -97,9 +97,7 @@ export function ActivityPage({ state, connectorId }: { state: OperatorState; con
         )
       ) : !enabled ? (
         <Unavailable>
-          Activity history is not configured. Add an{" "}
-          <span className="mono">activity.store</span> with a list reader to
-          enable this page.
+          Activity history is not available to this session. Its reader and access rules are configured in deployment code.
         </Unavailable>
       ) : (
         <div id="activityAvailable" className="collection">

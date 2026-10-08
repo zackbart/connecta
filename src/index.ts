@@ -1,3 +1,4 @@
+import { describeConfigSources } from "./config-value-sources.js";
 import {
   credentialTestRule,
   describeCredentialTestMismatch,
@@ -373,6 +374,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   const handler = createFetchHandler({
     config: resolved,
     configDescription: description,
+    configValueSources: describeConfigSources(description, config),
     registry,
     pools,
     executor,

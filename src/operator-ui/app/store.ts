@@ -287,18 +287,20 @@ async function loadData(): Promise<void> {
   set({ data, session: "ready", gate: null, refreshing: false, loadFailure: null });
   rememberNav(data);
   void loadConnectorDetails(data, current, token);
-  void loadOperatorContract();
 }
 
 /** The typed read model uses the same token and identity fence as mutations. */
+let contractRevision = 0;
 export async function loadOperatorContract(): Promise<void> {
-  const current = fence();
+  const identityCurrent = fence();
+  const revision = ++contractRevision;
+  const current = () => identityCurrent() && revision === contractRevision;
   set({ contractPhase: "loading" });
   try {
     const token = await sessionToken();
     if (!current()) return;
     const contract = await queryClient.fetchQuery({
-      queryKey: ["operator-config", state.generation],
+      queryKey: ["operator-config", state.generation, revision],
       queryFn: async ({ signal }) => {
         const response = await fetch("/ui/api/config", { headers: requestHeaders(token), credentials: "same-origin", signal });
         if (response.status === 401 || response.status === 403) throw new RequestFailure("session");
@@ -1079,7 +1081,7 @@ function applyDetail(id: string, outcome: DetailOutcome): void {
       patch.oauthBlocked = null;
     }
   }
-  set({ ...patch, data: { ...state.data, connectors } });
+  set({ ...patch, data: { ...state.data, connectors }, ...(state.contract ? { contractPhase: "idle" } : {}) });
 }
 
 let detailGeneration = 0;

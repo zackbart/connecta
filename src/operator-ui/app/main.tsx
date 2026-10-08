@@ -22,6 +22,7 @@ import {
 } from "../view.js";
 import { auth, homeUrl, productDescription, titleSuffix } from "./config.js";
 import { ConnectorsPage } from "./connectors.js";
+import { ConfigPage } from "./config-page.js";
 import { AccessPage } from "./access.js";
 import { ToolsPage } from "./tools.js";
 import { OverviewPage } from "./overview.js";
@@ -35,6 +36,7 @@ import {
   focusHandled,
   forgetBearer,
   getState,
+  loadOperatorContract,
   loadActivity,
   loadAccessTokens,
   signIn,
@@ -64,6 +66,8 @@ function visiblePages(state: OperatorState): OperatorPage[] {
   // artifact origin, a first visit — only what this page can vouch for shows.
   const hint = state.data ? null : navHint();
   return OPERATOR_PAGES.filter((page) => {
+    if (page === "activity" && state.contract) return state.contract.you.permissions.activity;
+    if (page === "artifacts" && state.contract) return state.contract.you.permissions.artifacts;
     if (page === "tokens") return state.data?.accessTokenManagement === "available";
     if (page === "activity") return hint ? hint.activity : Boolean(state.data?.activityEnabled);
     if (page === "artifacts") {
@@ -201,6 +205,7 @@ function Gate({ state }: { state: OperatorState }) {
 }
 
 function CurrentPage({ state }: { state: OperatorState }) {
+  if (state.page === "config") return <ConfigPage state={state} />;
   if (state.page === "access") return <AccessPage state={state} />;
   if (state.page === "tools") return <ToolsPage state={state} />;
   if (state.page === "connector") return <ConnectorDetailPage state={state} />;
@@ -228,6 +233,7 @@ function OperatorApp() {
   // identity opens it, and again after an identity change resets it to idle.
   useEffect(() => {
     if (!ready) return;
+    if (!isArtifactPage(state.page) && state.data && state.contractPhase === "idle") void loadOperatorContract();
     if ((state.page === "tokens" || state.page === "access") && state.data?.accessTokenManagement === "available" && state.tokenPhase === "idle") {
       void loadAccessTokens();
     }
