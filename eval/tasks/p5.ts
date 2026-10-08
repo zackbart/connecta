@@ -55,9 +55,12 @@ function boundedFanout(world: World, trace: AgentTrace): boolean {
 }
 
 function runEvidence(id: number, status: string, commit: string): RegExp {
-  // Stop each fact's lookahead before another CI record begins, even on one line.
-  const ownRecord = "(?:(?!\\b481[012]\\b)[\\s\\S])*";
-  return new RegExp(`\\b${id}\\b(?=${ownRecord}\\b${status}\\b)(?=${ownRecord}\\b${commit}\\b)`, "i");
+  // Records occupy separate lines or semicolon-separated groups. Facts may
+  // appear in any order, including commit-first prose and markdown tables.
+  // Require one record id per group so a neighboring record cannot supply facts.
+  const record = "[^;\\n]*";
+  return new RegExp(`(?:^|[;\\n])(?=${record}\\b${id}\\b)(?=${record}\\b${status}\\b)` +
+    `(?=${record}\\b${commit}\\b)(?!${record}\\b481[012]\\b${record}\\b481[012]\\b)${record}`, "i");
 }
 
 function absentGithub(world: World, trace: AgentTrace): boolean {

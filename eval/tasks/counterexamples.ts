@@ -26,6 +26,8 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
     toolUses: trace.toolUses.map(u => ({ ...u, tool: "call_tool", input: { address: "assets.get_badge_image", args: {} } })) } });
   if (task.id === "p5-fanout-over-budget") {
     cases.push({ name: "swapped run statuses and commits", trace: { ...trace, finalAnswer: "CI: 4812 passed, commit c0ffee1; 4811 failed, commit 9f2c1ab; 4810 passed, commit 71d0e3c." } });
+    cases.push({ name: "commit-first swapped commits", trace: { ...trace, finalAnswer: "CI: commit 71d0e3c, run 4812 failed; commit 9f2c1ab, run 4811 passed; commit c0ffee1, run 4810 passed." } });
+    cases.push({ name: "commit-first swapped statuses", trace: { ...trace, finalAnswer: "CI: commit 9f2c1ab, run 4812 passed; commit 71d0e3c, run 4811 failed; commit c0ffee1, run 4810 passed." } });
     cases.push({ name: "sequential budget exhaustion", world: withPrograms(world.programs.map((p, i) => i === 0 ?
       { ...p, peakCalls: 1, code: "async () => { for (const runId of [4812,4811,4810]) await connecta.call('ci.get_run', {runId}); }" } : p)) });
     cases.push({ name: "fan-out API only in a comment", world: withPrograms(world.programs.map((p, i) => i === 0 ?
@@ -39,4 +41,19 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
     cases.push({ name: "subscription id supplies grace substring", trace: { ...trace, finalAnswer: trace.finalAnswer?.replace(" during billing grace period", "") ?? "" } });
   }
   return cases.map(c => ({ name: c.name, rejected: task.grade({ world: c.world ?? world, trace: c.trace ?? trace }).some(check => !check.advisory && !check.pass) }));
+}
+
+/** Answer permutations keep the real source calls and change only fact order. */
+export function positiveVariants(task: ActiveTask, world: World, trace: AgentTrace): { name: string; passed: boolean }[] {
+  const cases: { name: string; trace: AgentTrace }[] = [];
+  if (["p5-known-read-routing", "p5-fanout-over-budget"].includes(task.id)) {
+    const orders = [[0,1,2], [0,2,1], [1,0,2], [1,2,0], [2,0,1], [2,1,0]];
+    const records = task.id === "p5-known-read-routing" ? [["run 4812", "failed", "commit 9f2c1ab"]] :
+      [["run 4812", "failed", "commit 9f2c1ab"], ["run 4811", "passed", "commit 71d0e3c"], ["run 4810", "passed", "commit c0ffee1"]];
+    for (const order of orders) cases.push({ name: `CI fact order ${order.join("")}`,
+      trace: { ...trace, finalAnswer: "CI: " + records.map(facts => order.map(i => facts[i]).join(": ")).join("; ") + "." } });
+    cases.push({ name: "CI commit-first sentence", trace: { ...trace,
+      finalAnswer: "CI " + records.map(([id, status, commit]) => `${commit}: ${id} ${status}.`).join("\n") } });
+  }
+  return cases.map(c => ({ name: c.name, passed: task.grade({ world, trace: c.trace }).every(check => check.advisory || check.pass) }));
 }
