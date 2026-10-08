@@ -3,6 +3,7 @@ import { ConnectorCallError } from "../src/errors.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
+import { operatorUi } from "../src/ui.js";
 import { createTestConnecta, required } from "./helpers.js";
 import { fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { CREDENTIAL_KEY } from "./fixtures/ui.js";
@@ -14,8 +15,9 @@ afterEach(async () => {
   await Promise.all(apps.splice(0).map(app => app.close()));
 });
 
-function setup(options: { manage?: boolean; vault?: boolean; publicUrl?: boolean; programWrite?: boolean; credential?: boolean } = {}) {
+function setup(options: { manage?: boolean; vault?: boolean; publicUrl?: boolean; programWrite?: boolean; credential?: boolean; uiPath?: string } = {}) {
   const storage = memoryStorage();
+  const vault = encryptedCredentialVault(storage, CREDENTIAL_KEY);
   let connected = false;
   const call = vi.fn(async (name: string) => {
     if (name !== "write" && !connected) throw new ConnectorCallError("auth_required", "DOWNSTREAM_PRIVATE_TEXT");
@@ -29,7 +31,8 @@ function setup(options: { manage?: boolean; vault?: boolean; publicUrl?: boolean
       { name: "needs_auth", inputSchema: { type: "object" } },
     ],
     callTool: call,
-    startAuth: vi.fn(async () => ({ state: "auth_required" as const, authorizationUrl: "https://downstream.test/secret" })),
+    status: async () => ({ state: connected ? "ok" : "auth_required" }),
+    startAuth: vi.fn(async () => ({ state: "auth_required" as const, authorizationUrl: `https://downstream.test/secret?state=${crypto.randomUUID()}` })),
   };
   if (options.credential) {
     delete connector.startAuth;
@@ -38,7 +41,8 @@ function setup(options: { manage?: boolean; vault?: boolean; publicUrl?: boolean
   const app = createTestConnecta({
     connectors: [connector], storage, logger: "silent",
     ...(options.publicUrl === false ? {} : { publicUrl: BASE }),
-    ...(options.vault === false ? {} : { vault: encryptedCredentialVault(storage, CREDENTIAL_KEY) }),
+    ...(options.vault === false ? {} : { vault }),
+    ...(options.uiPath ? { ui: { ...operatorUi(), credentialHandoffUrl: () => options.uiPath! } } : {}),
     auth: ["alice", "bob"].map(user => fakeClerkAuth({ token: user, userId: user })),
     identity: { credentialAdministration: () => options.manage === false ? "none" : "all" },
     pools: { trusted: { tools: ["service"], grant: () => true, trust: "trusted" } },
@@ -74,7 +78,7 @@ function setup(options: { manage?: boolean; vault?: boolean; publicUrl?: boolean
     const target = opts.pool ? new Request(`${BASE}/mcp/${opts.pool}`, request) : request;
     return readJsonRpc(await app.fetch(target));
   };
-  return { rpc, call, connector, app, connect: () => { connected = true; } };
+  return { rpc, call, connector, app, vault, connect: () => { connected = true; } };
 }
 
 describe("auth URL elicitation", () => {
@@ -182,6 +186,7 @@ describe("auth URL elicitation", () => {
       else {
         expect(result.resultType).not.toBe("input_required");
         expect(result.structuredContent.error.writes.succeeded).toBe(1);
+        expect(result.structuredContent.error.authorizationUrl).toContain(`${BASE}/connect/service?h=`);
       }
     }
   });
@@ -220,5 +225,49 @@ describe("auth URL elicitation", () => {
     expect(retry.result.isError).toBeFalsy();
     expect((await flow.rpc("skills", {}, { state, action: "accept" })).error.data.reason).toBe("invalid_request_state");
     expect(flow.call).toHaveBeenCalledTimes(2);
+  });
+
+  it("INV-4 INV-9: authorize retries finish after a verified browser attempt and do not repeat force", async () => {
+    const flow = setup();
+    const args = { connector: "service", force: true };
+    const first = (await flow.rpc("authorize_connector", args)).result;
+    const browser = (url: string) => flow.app.fetch(new Request(url, { headers: { Cookie: "__session=alice" } }));
+    expect((await browser(first.inputRequests.connecta_auth.params.url)).status).toBe(302);
+    expect(flow.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: true });
+    const pending = (await flow.rpc("authorize_connector", args, { state: first.requestState, action: "accept" })).result;
+    expect(pending.resultType).toBe("input_required");
+    expect((await browser(pending.inputRequests.connecta_auth.params.url)).status).toBe(302);
+    expect(flow.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: false });
+    flow.connect();
+    const completed = (await flow.rpc("authorize_connector", args, { state: pending.requestState, action: "accept" })).result;
+    expect(completed.resultType).not.toBe("input_required");
+    expect(completed.structuredContent).toEqual({ connector: "service", status: "ok" });
+    expect(flow.connector.startAuth).toHaveBeenCalledTimes(2);
+  });
+
+  it("INV-4 INV-5: credential handoffs respect configured UI paths and reject external redirects", async () => {
+    for (const uiPath of ["/operator", "https://evil.test/operator"]) {
+      const flow = setup({ credential: true, uiPath });
+      const args = { connector: "service" };
+      const first = (await flow.rpc("authorize_connector", args)).result;
+      const browser = await flow.app.fetch(new Request(first.inputRequests.connecta_auth.params.url, { headers: { Cookie: "__session=alice" } }));
+      if (uiPath.startsWith("https:")) {
+        expect(browser.status).toBe(503);
+        expect(browser.headers.get("Location")).toBeNull();
+      } else {
+        expect(browser.headers.get("Location")).toBe(`${BASE}/operator`);
+        await flow.vault.set("service", "configured-token", "alice");
+        flow.connect();
+        const completed = (await flow.rpc("authorize_connector", args, { state: first.requestState, action: "accept" })).result;
+        expect(completed.structuredContent).toEqual({ connector: "service", status: "ok" });
+      }
+    }
+  });
+
+  it("INV-9: written programs keep a connect link for hosts without URL support", async () => {
+    const flow = setup({ programWrite: true });
+    const result = (await flow.rpc("execute_code", { code: "program" }, { pool: "trusted", capable: false })).result;
+    expect(result.resultType).not.toBe("input_required");
+    expect(result.structuredContent.error).toMatchObject({ writes: { succeeded: 1 }, authorizationUrl: expect.stringContaining(`${BASE}/connect/service?h=`) });
   });
 });

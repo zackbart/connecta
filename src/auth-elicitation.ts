@@ -1,11 +1,15 @@
 import {
   createRequestStateCodec, inputRequired, ProtocolError, INVALID_PARAMS,
   PROTOCOL_VERSION_META_KEY, CLIENT_CAPABILITIES_META_KEY,
-  type InputRequiredResult, type ServerContext,
+  type InputRequiredResult, type RequestStateCodec, type ServerContext,
 } from "@modelcontextprotocol/server";
 import type { CredentialVault } from "./credential-contract.js";
 import type { ToolResult } from "./meta-tools.js";
 import type { RegistryView } from "./registry.js";
+import { Effect } from "effect";
+import { runEdge, withDeadlineEffect } from "./runtime/run.js";
+import { closeScope } from "./runtime/connector-scope.js";
+import type { DeferredWork } from "./connector-scope.js";
 
 const TTL_MS = 10 * 60_000;
 const MAX_ROUNDS = 3;
@@ -22,17 +26,7 @@ interface AuthRequestState {
   digest: string;
   round: number;
   expiresAt: number;
-}
-
-/** The SDK signs a secret-free payload. The raw deployment key stays in the vault. */
-export async function authRequestStateCodec(raw: Uint8Array) {
-  const material = await crypto.subtle.importKey("raw", new Uint8Array(raw), "HKDF", false, ["deriveBits"]);
-  const key = new Uint8Array(await crypto.subtle.deriveBits({
-    name: "HKDF", hash: "SHA-256",
-    salt: new TextEncoder().encode("connecta:request-state:v1"),
-    info: new TextEncoder().encode("auth-elicitation"),
-  }, material, 256));
-  return createRequestStateCodec({ key, ttlSeconds: TTL_MS / 1000 });
+  browserNonces: string[];
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -54,13 +48,24 @@ async function digest(tool: string, args: Record<string, unknown>): Promise<stri
   return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function failure(code: string, message: string): ToolResult {
+function failure(code: "invalid_request_state" | "auth_declined" | "auth_cancelled" | "auth_round_limit", message: string): ToolResult {
   const structuredContent = { ok: false, error: { code, message, retryable: false } };
   return { content: [{ type: "text", text: JSON.stringify(structuredContent) }], structuredContent, isError: true };
 }
 
 /** Request-local auth recovery at the MCP boundary, never inside a guest provider. */
 export class AuthElicitation {
+  private codec: Promise<RequestStateCodec<AuthRequestState>> | undefined;
+
+  private stateCodec(): Promise<RequestStateCodec<AuthRequestState>> {
+    const key = this.options.vault?.requestStateKey;
+    if (!key) return invalidState();
+    return this.codec ??= key.call(this.options.vault).then(bytes => createRequestStateCodec<AuthRequestState>({
+      key: bytes, ttlSeconds: TTL_MS / 1000,
+      bind: () => canonical({ principal: this.options.principal, endpoint: this.options.endpoint }),
+    }));
+  }
+
   constructor(private readonly options: {
     vault: CredentialVault | undefined;
     publicUrl: string | undefined;
@@ -68,16 +73,19 @@ export class AuthElicitation {
     principal: string | undefined;
     registry: RegistryView;
     canManage: (id: string) => boolean;
-    connectUrl: (id: string, force?: boolean) => Promise<string>;
+    connectLink: (id: string, force?: boolean) => Promise<{ url: string; nonce: string }>;
+    linkUsed: (id: string, nonce: string) => Promise<boolean>;
     unavailable: string | undefined;
     credentialUi: boolean;
+    requestSignal: AbortSignal;
+    defer: DeferredWork | undefined;
   }) {}
 
   /** The SDK runs this before any tool handler, including non-auth tools. */
   async verify(wire: string, context: ServerContext): Promise<AuthRequestState> {
     const { vault, endpoint, principal, registry, canManage } = this.options;
-    if (!vault?.verifyRequestState || wire.length > 8192) return invalidState();
-    const state = await vault.verifyRequestState(wire);
+    if (!vault?.requestStateKey || wire.length > 8192) return invalidState();
+    const state: unknown = await (await this.stateCodec()).verify(wire, context);
     if (!object(state) || state.version !== 1 || !principal || state.principal !== principal ||
         state.endpoint !== endpoint || typeof state.connector !== "string" ||
         !registry.getConnector(state.connector) || !canManage(state.connector) ||
@@ -86,10 +94,40 @@ export class AuthElicitation {
         !Number.isInteger(state.round) || (state.round as number) < 1 || (state.round as number) > MAX_ROUNDS ||
         !["call_tool", "call_destructive_tool", "execute_code", "authorize_connector"].includes(String(state.tool)) ||
         typeof state.digest !== "string" || !/^[a-f0-9]{64}$/.test(state.digest) ||
+        !Array.isArray(state.browserNonces) || state.browserNonces.length !== state.round ||
+        !state.browserNonces.every(nonce => typeof nonce === "string" && /^[a-f0-9-]{36}$/.test(nonce)) ||
         (state.address !== undefined && typeof state.address !== "string")) return invalidState();
     if (context.mcpReq.method !== "tools/call" ||
         context.http?.req?.headers.get("Mcp-Name") !== state.tool) return invalidState();
     return state as unknown as AuthRequestState;
+  }
+
+  private async browserStarted(state: AuthRequestState): Promise<boolean> {
+    for (const nonce of state.browserNonces) {
+      if (await this.options.linkUsed(state.connector, nonce)) return true;
+    }
+    return false;
+  }
+
+  private async connected(id: string, context: ServerContext): Promise<boolean> {
+    const { registry, publicUrl, vault, principal, defer } = this.options;
+    const connector = registry.getConnector(id)!;
+    const scope = {};
+    const signal = AbortSignal.any([context.mcpReq.signal, this.options.requestSignal]);
+    try {
+      return await runEdge(withDeadlineEffect(deadline => Effect.gen(function* () {
+        const ctx = registry.contextFor(id, publicUrl!, scope, { signal: deadline });
+        yield* Effect.addFinalizer(() => closeScope(connector, ctx, defer));
+        if (connector.credential) {
+          const metadata = yield* Effect.promise(() => vault!.metadata(id, connector.authScope === "personal" ? principal : undefined));
+          if (!metadata) return false;
+        }
+        if (!connector.status) return Boolean(connector.credential);
+        return (yield* Effect.promise(() => registry.statusFor(id, publicUrl!, scope, { signal: deadline }))).state === "ok";
+      }).pipe(Effect.scoped), { signal, timeoutMs: 5000, timeoutError: new Error("Auth status check timed out") }));
+    } catch {
+      return false;
+    }
   }
 
   async run(
@@ -106,6 +144,11 @@ export class AuthElicitation {
       if (response.action === "cancel") return failure("auth_cancelled", "Connection was cancelled. The request was not retried.");
       if (response.action !== "accept") throw new ProtocolError(INVALID_PARAMS, "Invalid auth elicitation response", { reason: "invalid_input_response" });
     }
+    const browserStarted = previous && tool === "authorize_connector" ? await this.browserStarted(previous) : false;
+    if (browserStarted && previous && await this.connected(previous.connector, context)) {
+      const structuredContent = { connector: previous.connector, status: "ok" };
+      return { structuredContent, content: [{ type: "text", text: JSON.stringify(structuredContent) }] };
+    }
     const result = await operation();
     const error = result.structuredContent?.error;
     const authFailure = result.isError && object(error) &&
@@ -119,33 +162,37 @@ export class AuthElicitation {
     if (typeof id !== "string" || !/^[a-z0-9_-]+$/.test(id) || !recoverable ||
         !principal || !publicUrl || unavailable || !canManage(id)) return result;
     // finish() adds host-owned write counts to any failing program that sent a write.
-    if (tool === "execute_code" && object(error) && error.writes !== undefined) return result;
+    const wrote = tool === "execute_code" && object(error) && error.writes !== undefined;
     const envelope = context.mcpReq.envelope as Record<string, unknown> | undefined;
     const capabilities = envelope?.[CLIENT_CAPABILITIES_META_KEY];
     const elicitation = object(capabilities) ? capabilities.elicitation : undefined;
     const capable = envelope?.[PROTOCOL_VERSION_META_KEY] === "2026-07-28" &&
       object(elicitation) && Object.hasOwn(elicitation, "url") && object(elicitation.url);
-    if (!capable || !vault?.mintRequestState || !vault.verifyRequestState || !vault.seal || !vault.open) {
+    if (wrote || !capable || !vault?.requestStateKey || !vault.seal || !vault.open) {
       if (!authFailure) return result;
       const structuredContent = { ...result.structuredContent, error: {
-        ...error, authorizationUrl: await this.options.connectUrl(id),
+        ...error, authorizationUrl: (await this.options.connectLink(id)).url,
       } };
       return { ...result, structuredContent, content: [{ type: "text", text: JSON.stringify(structuredContent) }] };
     }
     if (previous && previous.round >= MAX_ROUNDS) return failure("auth_round_limit", "Connection is still required after three prompts. Connect explicitly, then start a new request.");
+    // Once a verified browser has started this attempt, retries continue it.
+    // A pending consent must never be reset by another force=true prompt.
+    const link = await this.options.connectLink(id, explicit && args.force === true && !browserStarted);
     const state: AuthRequestState = {
       version: 1, principal, endpoint: this.options.endpoint, connector: id, tool,
       ...(typeof args.address === "string" ? { address: args.address } : {}),
       digest: requestDigest ?? await digest(tool, args),
       round: (previous?.round ?? 0) + 1,
       expiresAt: previous?.expiresAt ?? Date.now() + TTL_MS,
+      browserNonces: [...(previous?.browserNonces ?? []), link.nonce],
     };
     return inputRequired({
       inputRequests: { [INPUT_KEY]: inputRequired.elicitUrl({
         message: MESSAGE,
-        url: await this.options.connectUrl(id, explicit && args.force === true),
+        url: link.url,
       }) },
-      requestState: await vault.mintRequestState(state),
+      requestState: await (await this.stateCodec()).mint(state, context),
     });
   }
 }

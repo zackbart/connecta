@@ -89,10 +89,14 @@ async function connect(context: RouteContext): Promise<Response> {
   }
   if (!connector.startAuth) {
     if (!connector.credential || !opts.config.ui || !opts.config.vault) return refuse("unknown OAuth connector", 404);
+    let target: URL;
+    try { target = new URL(opts.config.ui.credentialHandoffUrl(baseUrl), baseUrl); }
+    catch { return refuse("Credential management URL is unavailable", 503); }
+    if (target.origin !== new URL(baseUrl).origin || target.username || target.password) return refuse("Credential management URL is unavailable", 503);
     if (!await consumeOAuthConnectLink(opts, handoff)) return refuse("Invalid or expired connection link. Request a new link from connecta.", 400);
     // Credential entry stays in the authenticated operator UI on this origin.
     return withSessionCookies(new Response(null, { status: 302, headers: {
-      Location: new URL("/", baseUrl).href, "Cache-Control": "no-store",
+      Location: target.href, "Cache-Control": "no-store",
     } }), authz.sessionCookies);
   }
   if (opts.config.ui && context.url.searchParams.get("start") !== "1") return withSessionCookies(authPage(), authz.sessionCookies);

@@ -870,12 +870,17 @@ Auth URL elicitation uses the SDK's `createRequestStateCodec`, backed by a
 separate HKDF-derived HMAC-SHA256 key held inside `encryptedCredentialVault`.
 The ten-minute state is authenticated, not encrypted. Its secret-free payload
 binds the admitted principal, canonical endpoint including pool, connector,
-meta-tool, address, SHA-256 digest of arguments or code, round, and expiry.
+meta-tool, address, SHA-256 digest of arguments or code, round, expiry, and
+the opaque browser-link nonces issued in that flow.
 Arguments and program source never enter the payload. The absolute expiry
 survives every round. Rotation invalidates outstanding states. Custom vaults
-may implement `mintRequestState` and `verifyRequestState`; without both, the
-deployment retains the ordinary handoff. They must authenticate state using a
-stable deployment-held key and reject expired state.
+may implement the host-only `requestStateKey` method; without it, the
+deployment retains the ordinary handoff. It must return a stable,
+purpose-specific deployment key of at least 32 bytes. Only the MCP boundary
+reads this key; connector contexts and guest APIs cannot reach the vault.
+Explicit authorization retries check for a verified browser visit and a
+healthy passive connector status before completing. A forced flow switches to
+Continue after that visit, so another prompt cannot restart pending consent.
 
 The `/connect` link issued by the elicitation boundary encrypts its browser
 handoff with the vault's `seal`/`open` methods before signing it. The URL carries

@@ -33,6 +33,17 @@ export async function oauthConnectUrl(
   force = false,
   opaque = false,
 ): Promise<string> {
+  return (await oauthConnectLink(opts, baseUrl, connectorId, principal, force, opaque)).url;
+}
+
+export async function oauthConnectLink(
+  opts: ServerOptions,
+  baseUrl: string,
+  connectorId: string,
+  principal: string | undefined,
+  force = false,
+  opaque = false,
+): Promise<{ url: string; nonce: string }> {
   const unavailable = oauthConnectUnavailable(opts);
   if (unavailable) throw new Error(unavailable);
   const connector = opts.registry.getConnector(connectorId);
@@ -54,7 +65,12 @@ export async function oauthConnectUrl(
   const signature = await opts.config.vault!.signOAuthHandoff!(payload);
   const url = new URL(`/connect/${connectorId}`, baseUrl);
   url.searchParams.set("h", `${payload}.${signature}`);
-  return url.toString();
+  return { url: url.toString(), nonce: handoff.nonce };
+}
+
+/** Passive check of a browser visit that passed identity and management checks. */
+export async function oauthConnectLinkUsed(opts: ServerOptions, baseUrl: string, id: string, nonce: string): Promise<boolean> {
+  return await opts.registry.contextFor(id, baseUrl).storage.get(oauthConnectKeys.used(nonce)) === "used";
 }
 
 export async function verifyOAuthHandoff(
