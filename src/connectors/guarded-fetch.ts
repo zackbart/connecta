@@ -14,6 +14,7 @@
  */
 import { ConnectorCallError, unavailableCallError } from "../errors.js";
 import { sentSecretsFor } from "../sent-secrets.js";
+import { recordDownstreamDispatch } from "../downstream-dispatch.js";
 import type { ConnectorContext } from "../types.js";
 import type { ApiHandlerContext } from "./api-connector.js";
 
@@ -167,6 +168,10 @@ type GuardedFetcher = (
   ctx: ConnectorContext,
 ) => Promise<Response>;
 
+// OAuth resolves a grant before sending; its final sentSecretsFetch boundary
+// records dispatch. Entering this adapter is not evidence of a sent request.
+const deferredFetches = new WeakSet<GuardedFetcher>();
+
 /**
  * The transport half of a guarded connector that authenticates through its
  * own `api()` OAuth grant: no header of the helper's making, and every request
@@ -183,22 +188,21 @@ type GuardedFetcher = (
 export function oauthBearer(
   provider: string,
 ): Pick<GuardedFetchOptions, "authenticate" | "fetch"> {
-  return {
-    authenticate: () => ({}),
-    fetch: (url, init, ctx) => {
-      const grant = (ctx as ApiHandlerContext).oauth;
-      if (!grant) {
-        // A wiring bug, not an outage: the transport was built for a grant the
-        // connector does not have, so no request can be authenticated.
-        throw new ConnectorCallError(
-          "connector_call_failed",
-          `The ${provider} transport authenticates through the connector's OAuth grant, and this call's context carries none.`,
-          { retryable: false },
-        );
-      }
-      return grant.fetch(url, init);
-    },
+  const send: GuardedFetcher = (url, init, ctx) => {
+    const grant = (ctx as ApiHandlerContext).oauth;
+    if (!grant) {
+      // A wiring bug, not an outage: the transport was built for a grant the
+      // connector does not have, so no request can be authenticated.
+      throw new ConnectorCallError(
+        "connector_call_failed",
+        `The ${provider} transport authenticates through the connector's OAuth grant, and this call's context carries none.`,
+        { retryable: false },
+      );
+    }
+    return grant.fetch(url, init);
   };
+  deferredFetches.add(send);
+  return { authenticate: () => ({}), fetch: send };
 }
 
 /** Send one guarded request and map its response with provider knowledge. */
@@ -554,6 +558,7 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         ...(ctx.signal ? { signal: ctx.signal } : {}),
       };
       sentSecretsFor(ctx).request(url, init);
+      if (!deferredFetches.has(send)) recordDownstreamDispatch([ctx]);
       response = await send(url.toString(), init, ctx);
     } catch (cause) {
       if (cause instanceof ConnectorCallError) throw cause;

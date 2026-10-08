@@ -11,6 +11,7 @@ import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { closeScope } from "./runtime/connector-scope.js";
 import type { DeferredWork } from "./connector-scope.js";
 import { storedCredentialShape } from "./credential-rules.js";
+import { requestDispatches } from "./downstream-dispatch.js";
 
 const TTL_MS = 10 * 60_000;
 const MAX_ROUNDS = 3;
@@ -81,6 +82,7 @@ export class AuthElicitation {
     unavailable: string | undefined;
     credentialUi: boolean;
     requestSignal: AbortSignal;
+    requestScope: object;
     defer: DeferredWork | undefined;
   }) {}
 
@@ -171,20 +173,29 @@ export class AuthElicitation {
         return { structuredContent, content: [{ type: "text", text: JSON.stringify(structuredContent) }] };
       }
     }
-    const result = await operation();
+    let result = await operation();
     const error = result.structuredContent?.error;
     const authFailure = result.isError && object(error) &&
       (error.code === "auth_required" || error.code === "downstream_oauth_required");
     const explicit = tool === "authorize_connector" &&
       ["oauth", "operator_config"].includes(String(result.structuredContent?.recovery));
     const id = authFailure ? error.connector : explicit ? args.connector : undefined;
+    // Every accepted retry owns new request-local facts. Handler-authored
+    // errors and program write summaries cannot establish replay eligibility.
+    const dispatches = requestDispatches(this.options.requestScope);
+    const wrote = dispatches.writes > 0 || (tool === "call_destructive_tool" && dispatches.count > 0);
+    if (authFailure && wrote) {
+      const structuredContent = { ...result.structuredContent, error: {
+        ...error, retryable: false, reconciliationRequired: true,
+        retry: "This write may have partially run. Reconcile its target before retrying after the operator completes recovery.",
+      } };
+      result = { ...result, structuredContent, content: [{ type: "text", text: JSON.stringify(structuredContent) }] };
+    }
     const { registry, vault, principal, publicUrl, canManage, unavailable } = this.options;
     const connector = typeof id === "string" ? registry.getConnector(id) : undefined;
     const recoverable = connector?.startAuth || (connector?.credential && this.options.credentialUi);
     if (typeof id !== "string" || !/^[a-z0-9_-]+$/.test(id) || !recoverable ||
         !principal || !publicUrl || unavailable || !canManage(id)) return result;
-    // finish() adds host-owned write counts to any failing program that sent a write.
-    const wrote = tool === "execute_code" && object(error) && error.writes !== undefined;
     const envelope = context.mcpReq.envelope as Record<string, unknown> | undefined;
     const capabilities = envelope?.[CLIENT_CAPABILITIES_META_KEY];
     const elicitation = object(capabilities) ? capabilities.elicitation : undefined;
@@ -193,7 +204,7 @@ export class AuthElicitation {
     if (wrote || !capable || !vault?.requestStateKey || !vault.seal || !vault.open) {
       if (!authFailure) return result;
       const structuredContent = { ...result.structuredContent, error: {
-        ...error, authorizationUrl: (await this.options.connectLink(id)).url,
+        ...(result.structuredContent?.error as Record<string, unknown>), authorizationUrl: (await this.options.connectLink(id)).url,
       } };
       return { ...result, structuredContent, content: [{ type: "text", text: JSON.stringify(structuredContent) }] };
     }

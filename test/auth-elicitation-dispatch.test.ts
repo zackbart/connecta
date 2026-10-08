@@ -4,6 +4,7 @@ import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { guardedFetch, oauthBearer } from "../src/connectors/guarded-fetch.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { ConnectorCallError } from "../src/errors.js";
+import { requestDispatches } from "../src/downstream-dispatch.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
 import { createTestConnecta, required } from "./helpers.js";
@@ -62,10 +63,11 @@ function setup(connector: Connector) {
   return { app, rpc, connect };
 }
 
-function apiFlow(options: { plain?: boolean; guarded?: boolean } = {}) {
+function apiFlow(options: { plain?: boolean; guarded?: boolean; resetScope?: boolean } = {}) {
   let items = 0;
   let audits = 0;
   let rejectAudit = true;
+  let invocationScope: object | undefined;
   const sends = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     if (url === TOKEN) return Response.json({ access_token: "service-access-token", token_type: "Bearer" });
@@ -81,8 +83,11 @@ function apiFlow(options: { plain?: boolean; guarded?: boolean } = {}) {
     oauth: { authorizationEndpoint: "https://auth.service.test/authorize", tokenEndpoint: TOKEN,
       clientId: "client", apiOrigins: [API] },
     tools: ["write", "read"].map(name => ({
-      name, ...(name === "read" ? { annotations: { readOnlyHint: true } } : {}),
+      name, description: name === "write" ? "Create an item and read its audit" : "Read the audit",
+      annotations: { readOnlyHint: name === "read" },
       handler: async (_args, ctx) => {
+        invocationScope = ctx.requestScope;
+        if (options.resetScope) ctx.requestScope = {};
         if (options.guarded) {
           if (name === "write") await transport({ method: "POST", path: "/items" }, ctx, response => response.json());
           return transport({ method: "GET", path: "/audit" }, ctx, response => {
@@ -98,7 +103,8 @@ function apiFlow(options: { plain?: boolean; guarded?: boolean } = {}) {
       },
     })),
   });
-  return { ...setup(connector), sends, items: () => items, audits: () => audits, allowAudit: () => { rejectAudit = false; } };
+  return { ...setup(connector), sends, items: () => items, audits: () => audits,
+    dispatches: () => requestDispatches(required(invocationScope)), allowAudit: () => { rejectAudit = false; } };
 }
 
 function expectReconciliation(result: any) {
@@ -149,6 +155,13 @@ describe("auth recovery dispatch eligibility", () => {
     expect(flow.items()).toBe(1);
   });
 
+  it("INV-4 INV-9: a handler cannot reset its dispatch facts by replacing its context scope", async () => {
+    const flow = apiFlow({ plain: true, resetScope: true });
+    expectReconciliation(await flow.rpc());
+    expect(flow.items()).toBe(1);
+    expect(flow.dispatches()).toEqual({ count: 2, writes: 2 });
+  });
+
   it("INV-9: a read with a mid-handler 401 elicits and can re-run after connection", async () => {
     const flow = apiFlow();
     await flow.connect();
@@ -169,24 +182,45 @@ describe("auth recovery dispatch eligibility", () => {
     else { expect(result.resultType).toBe("input_required"); expect(flow.sends).not.toHaveBeenCalled(); }
   });
 
-  it("INV-9: remoteMcp direct writes cannot elicit after tools/call returns HTTP 401", async () => {
+  it.each([false, true])("INV-9: remoteMcp direct writes cannot elicit after tools/call returns HTTP 401 (OAuth %s)", async oauth => {
     let calls = 0;
+    let granted = false;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(input, init);
+      if (request.url === TOKEN) {
+        granted = true;
+        return Response.json({ access_token: "service-access-token", token_type: "Bearer" });
+      }
+      if (request.url.includes(".well-known/oauth-protected-resource")) {
+        return Response.json({ resource: `${API}/mcp`, authorization_servers: ["https://auth.service.test"] });
+      }
+      if (request.url.includes(".well-known/oauth-authorization-server")) {
+        return Response.json({ issuer: "https://auth.service.test", authorization_endpoint: "https://auth.service.test/authorize",
+          token_endpoint: TOKEN, response_types_supported: ["code"], code_challenge_methods_supported: ["S256"],
+          token_endpoint_auth_methods_supported: ["none"] });
+      }
       if (request.method !== "POST") return new Response(null, { status: 405 });
       const message = await request.json() as any;
       if (message.method === "notifications/initialized") return new Response(null, { status: 202 });
-      if (message.method === "tools/call") { calls++; return new Response(null, { status: 401 }); }
+      if (message.method === "tools/call") calls++;
+      if ((oauth && !granted) || message.method === "tools/call") {
+        return new Response(null, { status: 401, headers: {
+          "www-authenticate": `Bearer resource_metadata="${API}/.well-known/oauth-protected-resource"`,
+        } });
+      }
       const result = message.method === "initialize"
         ? { protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "service", version: "1" } }
         : { tools: [{ name: "write", inputSchema: { type: "object" } }] };
       return Response.json({ jsonrpc: "2.0", id: message.id, result });
     });
-    const connector = remoteMcp("service", { url: `${API}/mcp`, versionNegotiation: "legacy" });
+    const connector = remoteMcp("service", { url: `${API}/mcp`, versionNegotiation: "legacy",
+      ...(oauth ? { auth: { type: "oauth" as const, client: { issuer: "https://auth.service.test", clientId: "client", tokenEndpointAuthMethod: "none" as const } } } : {}),
+    });
     // The no-auth transport gives the exact HTTP 401 boundary without beginning
     // a separate SDK authorization flow. Recovery remains available to the host.
-    connector.startAuth = async () => ({ state: "auth_required", authorizationUrl: "https://auth.service.test/authorize" });
+    if (!oauth) connector.startAuth = async () => ({ state: "auth_required", authorizationUrl: "https://auth.service.test/authorize" });
     const flow = setup(connector);
+    if (oauth) await flow.connect();
     expectReconciliation(await flow.rpc());
     expect(calls).toBe(1);
   });

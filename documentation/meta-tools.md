@@ -501,9 +501,12 @@ bounded no-match analysis. An empty or whitespace-only query browses.
 ## Authorization recovery
 
 On MCP 2026-07-28, a host declaring `elicitation.url` receives
-`resultType: "input_required"` when either call tool or an unwritten program
-needs recoverable connector authentication and the admitted identity may manage
-that connector. The `connecta_auth` input request uses `elicitation/create`,
+`resultType: "input_required"` when an eligible call or program needs recoverable
+connector authentication and the admitted identity may manage that connector.
+Read-classified calls may re-run after a mid-handler auth failure. A direct write
+may elicit only before any downstream request was sent. Programs may elicit only
+before any write-classified invocation sent a downstream request.
+The `connecta_auth` input request uses `elicitation/create`,
 `mode: "url"`, fixed copy, and an identity-checked `/connect/<id>` link built
 from configured `publicUrl`. OAuth consent stays in the browser; a credential
 slot uses the authenticated operator UI. `authorize_connector` uses the same
@@ -517,7 +520,12 @@ within one ten-minute retry window, then `auth_round_limit` ends the flow.
 Each state can be consumed once; concurrent or repeated retries are refused
 before dispatch. A Continue link from a pending restart requires that restart
 to start successfully before the browser can consume it.
-Programs that attempted any write never elicit, even if that write failed.
+Host-owned invocation facts count credential-carrying and plain requests at the
+final transport boundary. Each accept retry checks its own round's dispatches.
+An auth failure after a write sent anything keeps its ordinary error code,
+`retryable: false`, `reconciliationRequired: true`, and manual `/connect` guidance
+where available. The write may have partially run; reconcile its target before
+retrying after connection. Handler-authored error fields cannot clear this guard.
 
 State integrity, expiry, principal, endpoint, and tool failures produce the
 SDK's JSON-RPC `-32602` with `data.reason: "invalid_request_state"` before the

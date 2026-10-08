@@ -371,7 +371,7 @@
       "id": "elicitation",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation",
-      "notes": "Auth URL elicitation on capable 2026-07-28 hosts, with identity-checked connect links, decline/cancel termination, and ordinary recovery fallback. Downstream input relay and general form elicitation remain outside this item.",
+      "notes": "Auth URL elicitation on capable 2026-07-28 hosts, with identity-checked connect links, decline/cancel termination, and ordinary recovery fallback. Host-owned transport facts allow direct writes only before any downstream send and programs only before any write invocation sends. Reads may re-run after dispatch. Downstream input relay and general form elicitation remain outside this item.",
       "issue": "https://github.com/zackbart/connecta/issues/707",
       "tests": [
         {
@@ -392,7 +392,7 @@
       "id": "multi-round-trip-requests",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr",
-      "notes": "Auth retries use createRequestStateCodec with a deployment-held key, principal/endpoint/connector/tool/digest/round/expiry binding, bounded rounds, and no program retry after writes. Downstream state relay on direct calls remains planned in #707 item 5.",
+      "notes": "Auth retries use createRequestStateCodec with a deployment-held key, principal/endpoint/connector/tool/digest/round/expiry binding, and bounded rounds. Each accepted retry checks host-owned dispatch facts; writes that sent anything require reconciliation and manual connection rather than further elicitation. Downstream state relay on direct calls remains planned in #707 item 5.",
       "issue": "https://github.com/zackbart/connecta/issues/707",
       "tests": [
         {
@@ -422,6 +422,18 @@
         {
           "file": "test/auth-elicitation.test.ts",
           "title": "INV-4 INV-5 INV-9: Continue cannot reuse the old grant when its forced predecessor fails"
+        },
+        {
+          "file": "test/auth-elicitation-dispatch.test.ts",
+          "title": "INV-9: an accept retry that dispatches a write and then fails auth cannot elicit another round"
+        },
+        {
+          "file": "test/auth-elicitation-dispatch.test.ts",
+          "title": "INV-4 INV-9: a handler cannot reset its dispatch facts by replacing its context scope"
+        },
+        {
+          "file": "test/auth-elicitation-dispatch.test.ts",
+          "title": "INV-9: a read with a mid-handler 401 elicits and can re-run after connection"
         }
       ]
     },

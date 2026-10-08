@@ -41,6 +41,7 @@ import {
 import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
 import { byteReadResponse } from "../byte-read-response.js";
 import { redactCatalog, redactSentSecrets, sentSecretsFor, shortSecretWarning, trackCredentialReads, type SentSecrets } from "../sent-secrets.js";
+import { recordDownstreamDispatch } from "../downstream-dispatch.js";
 import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
 import { reviewedClassification } from "../catalog-drift.js";
 import { connectorScopeCleanupClaimed } from "../connector-scope.js";
@@ -1123,13 +1124,15 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // A cached transport may dispatch concurrent calls and listings. Register
   // its actual sent auth with every operation using that client, including
   // handshake/discovery requests and OAuth rotations. Remove settled users.
-  const activeSecrets = new WeakMap<ConnectionState, Set<SentSecrets>>();
+  const activeContexts = new WeakMap<ConnectionState, Set<ConnectorContext>>();
   const trackSentRequest = (ctx: ConnectorContext, input: RequestInfo | URL, init?: RequestInit): void => {
-    const recipients = new Set([sentSecretsFor(ctx), ...activeSecrets.get(entryFor(ctx)) ?? []]);
+    const active = activeContexts.get(entryFor(ctx));
+    const recipients = new Set([sentSecretsFor(ctx), ...[...(active ?? [])].map(sentSecretsFor)]);
     for (const secrets of recipients) {
       if (opts.auth?.type === "oauth") trackRemoteClientRequest(secrets, input, init);
       else secrets.request(input, init);
     }
+    recordDownstreamDispatch(active?.size ? [...active] : [ctx]);
   };
   const connectingWaiters = new WeakMap<Deferred.Deferred<Client, unknown>, number>();
   const isOauth = opts.auth?.type === "oauth";
@@ -2561,12 +2564,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       for (const value of Object.values(opts.auth.headers)) secrets.header(value);
     }
     const state = entryFor(ctx);
-    let active = activeSecrets.get(state);
-    if (!active) { active = new Set(); activeSecrets.set(state, active); }
-    active.add(secrets);
+    let active = activeContexts.get(state);
+    if (!active) { active = new Set(); activeContexts.set(state, active); }
+    active.add(ctx);
     try { return redactSentSecrets(ctx, await run()); }
     catch (error) { throw redactSentSecrets(ctx, error); }
-    finally { active.delete(secrets); }
+    finally { active.delete(ctx); }
   };
   const callTool = connector.callTool;
   connector.callTool = (name, args, ctx, options) =>

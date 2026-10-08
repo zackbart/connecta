@@ -877,6 +877,12 @@ survives every round. Rotation invalidates outstanding states.
 Each state admits one retry through a connector-scoped storage CAS, including
 decline and cancel. Concurrent or repeated consumption is refused before
 dispatch, so retries cannot fork into sibling forced connection links.
+The host records downstream sends in private invocation state, using the
+registry's write classification. Direct writes may recover automatically only
+before any send; programs stop automatic recovery once a write invocation sends
+anything. This check also applies to each accepted retry. Later auth failures
+carry `reconciliationRequired: true` and manual connection guidance because the
+write may have partially run. Read-classified calls may re-run after dispatch.
 Custom vaults may implement the host-only `requestStateKey` method; without it, the
 deployment retains the ordinary handoff. It must return a stable,
 purpose-specific deployment key of at least 32 bytes. Only the MCP boundary
@@ -901,7 +907,7 @@ links. A credential-slot visit consumes its link and redirects to the
 same-origin operator UI, where credential mutation requires its own identity
 and Origin checks. Vaults without sealing keep ordinary handoffs and cannot
 serve URL elicitation. See [authorization recovery](./meta-tools.md#authorization-recovery)
-for capability gating, retry termination, and program write restrictions.
+for capability gating, retry termination, and dispatch restrictions.
 
 A verified `/connect` visit gives downstream OAuth work and its state handoff 30 seconds. The request signal
 and deadline reach discovery, registration, and other downstream fetches; expiry returns `504 OAuth

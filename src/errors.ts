@@ -512,6 +512,8 @@ export interface CallErrorDetails {
   operation?: string;
   /** Which safe recovery path `authorize_connector` will return. */
   recovery?: AuthRecoveryMode;
+  /** An auth failure followed a write's downstream send. Reconcile before retry. */
+  reconciliationRequired?: true;
   /** The single model-facing entry point for every credential class. */
   nextAction?: {
     tool: "authorize_connector";

@@ -390,6 +390,7 @@ function serveMcp(
       unavailable: oauthConnectUnavailable(opts),
       credentialUi: Boolean(opts.config.ui && opts.config.vault),
       requestSignal,
+      requestScope,
       defer: runtimeContext?.waitUntil?.bind(runtimeContext),
     });
     const server = new McpServer(opts.config.serverInfo, {

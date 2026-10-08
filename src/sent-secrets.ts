@@ -3,6 +3,7 @@
 import { carryFailureFacts } from "./operator-record.js";
 import { ConnectorCallError } from "./errors.js";
 import { credentialUrlViews } from "./credential-url.js";
+import { recordDownstreamDispatch } from "./downstream-dispatch.js";
 import type { ConnectorContext, Logger } from "./types.js";
 
 const REDACTED = "[redacted]";
@@ -370,6 +371,7 @@ export function redactCatalog<T extends { name: string }>(ctx: ConnectorContext,
 export function sentSecretsFetch(ctx: ConnectorContext, send: typeof fetch = fetch): typeof fetch {
   return (input, init) => {
     sentSecretsFor(ctx).request(input, init);
+    recordDownstreamDispatch([ctx]);
     return send(input, init);
   };
 }
