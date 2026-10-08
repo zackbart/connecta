@@ -1,6 +1,12 @@
 import { USAGE_SKILL } from "./usage-guide.js";
-import { boundedEchoText } from "./errors.js";
-import type { Connector } from "./types.js";
+import { boundedEchoText, ConnectorCallError } from "./errors.js";
+import { Effect } from "effect";
+import { runEdge, withDeadlineEffect } from "./runtime/run.js";
+import { closeScopeOnExit } from "./runtime/connector-scope.js";
+import { sentSecretsForRequest } from "./sent-secrets.js";
+import type { RegistryView } from "./registry.js";
+import type { DeferredWork } from "./connector-scope.js";
+import type { Connector, ConnectorContext, ConnectorSkill, ConnectorSkillResourceContents } from "./types.js";
 
 const ROUTE =
   "Choose a route before discovery. One known-address read uses call_tool; one known-address write uses call_destructive_tool. Unknown-address read-only work starts with execute_code to discover, call, and return the answer; use the same route for reduction, multiple or dependent calls, loops, joins, or branches. Keep discovery and calls together when schemas suffice; do not return catalog matches alone. Sample unfamiliar reads.";
@@ -29,11 +35,16 @@ export function hasConnectorGuides(connectors: readonly Connector[]): boolean {
  * copy. Guide-free deployments still pay no fixed tool-description cost: the
  * conditional notes in meta-tools.ts remain absent.
  */
-function usageSkill(_connectors: readonly Connector[]): string {
+function usageSkill(): string {
   return USAGE_SKILL;
 }
 
-const INVESTIGATE_SKILL = `# Investigate across services
+const INVESTIGATE_SKILL = `---
+name: investigate
+description: Plan purchase verification, experiment checks, and customer or deployment investigations across services; resolve scope and capability limits before querying.
+---
+
+# Investigate across services
 
 ## Plan the investigation
 
@@ -322,84 +333,234 @@ export function connectorGuideRequired(connector: Connector): boolean {
   );
 }
 
-export interface SkillListing {
-  name: string;
-  description: string;
+/** Complete entries stay atomic within ChatGPT's five-skill import budget. */
+const SKILL_PAGE_SIZE = 5;
+const MAX_SKILL_FILES = 512;
+const MAX_SKILL_BYTES = 16 * 1024 * 1024;
+const MAX_SKILL_CATALOG_BYTES = 8 * 1024 * 1024;
+const MAX_SKILLS = 1_024;
+const encoder = new TextEncoder();
+const PRIVATE = { resultType: "complete" as const, ttlMs: 0, cacheScope: "private" as const };
+
+interface SkillRecord {
+  entry: ConnectorSkill;
+  aliases: string[];
+  content?: string;
+  connector?: Connector;
+  files?: Map<string, string>;
 }
 
-/**
- * Every fetchable skill: the built-in guides plus one entry per connector that
- * carries a usage guide. Derived from the connector list passed in — the single
- * place guide visibility is decided.
- */
-export function listSkills(connectors: readonly Connector[]): SkillListing[] {
-  const listing: SkillListing[] = AVAILABLE_SKILLS.map((skill) => ({
-    name: skill.name,
-    description: skill.description,
-  }));
-  for (const connector of connectors) {
-    // Undefined here means "no guide" and nothing else: a connector that has
-    // one always summarizes to a non-empty line, configured or derived.
-    const summary = connectorGuideSummary(connector);
-    if (!summary) continue;
-    listing.push({
-      name: connectorSkillName(connector.id),
-      description: summary,
+function localRecord(name: string, uri: string, description: string, content: string, aliases: string[]): SkillRecord {
+  return { entry: { uri, frontmatter: { name, description }, resources: "dynamic" }, content, aliases };
+}
+
+/** JSON frontmatter is YAML too; no runtime provider imports or filesystem reads. */
+function localRecords(connectors: readonly Connector[]): SkillRecord[] {
+  const builtIns = AVAILABLE_SKILLS.map(skill => localRecord(skill.name,
+    `skill://connecta/${skill.name}/SKILL.md`, skill.description, skill.content(), [skill.name, `skill://connecta/${skill.name}`]));
+  const guides = connectors.filter(connector => connectorGuide(connector) !== undefined)
+    .sort((a, b) => Number(connectorGuideRequired(b)) - Number(connectorGuideRequired(a)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .map(connector => {
+      const name = connector.id;
+      const description = connectorGuideSummary(connector)!;
+      const root = `skill://connecta/connectors/${encodeURIComponent(name)}`;
+      const content = `---\n${JSON.stringify({ name, description }, null, 2)}\n---\n\n${connectorGuide(connector)!}`;
+      return localRecord(name, `${root}/SKILL.md`, description, content, [connectorSkillName(name), root]);
     });
-  }
-  return listing;
+  return [builtIns[0]!, ...guides, ...builtIns.slice(1)];
 }
 
-export type SkillLookup =
-  { found: true; content: string } | { found: false; message: string };
+/** Keep the downstream path tree, so relative supporting-file references still resolve. */
+export function downstreamSkillUri(connectorId: string, uri: string): string {
+  const match = /^([A-Za-z][A-Za-z0-9+.-]*:(?:\/\/[^/?#]*)?)(\/[^?#]+)$/.exec(uri);
+  if (!match || match[2]!.split("/").slice(1).some(segment => {
+    try { const decoded = decodeURIComponent(segment); return !decoded || decoded === "." || decoded === ".." || decoded.includes("\\") || decoded.includes("/") || decoded.includes("\u0000"); }
+    catch { return true; }
+  })) throw new ConnectorCallError("unavailable", "Downstream skill URI is not a supported file URI.");
+  const authority = match[1]!.split("://")[1];
+  // A skill may root at the authority, e.g. skill://review/SKILL.md.
+  // Repeating it as a path segment preserves the Agent Skills directory name.
+  return `skill://downstream/${encodeURIComponent(connectorId)}/${encodeURIComponent(match[1]!)}${authority ? `/${encodeURIComponent(authority)}` : ""}${match[2]}`;
+}
+
+function validateEntry(entry: ConnectorSkill): void {
+  if (!entry || typeof entry.uri !== "string" || typeof entry.frontmatter !== "object" || !entry.frontmatter || Array.isArray(entry.frontmatter) ||
+    typeof entry.frontmatter.name !== "string" || !entry.frontmatter.name || typeof entry.frontmatter.description !== "string" || !entry.frontmatter.description ||
+    (entry.resources !== "dynamic" && !Array.isArray(entry.resources))) {
+    throw new ConnectorCallError("unavailable", "Downstream skill entry is invalid.");
+  }
+  const root = entry.uri.slice(0, entry.uri.lastIndexOf("/") + 1);
+  if (!entry.uri.endsWith("/SKILL.md") || decodeURIComponent(root.split("/").at(-2) ?? "") !== entry.frontmatter.name) {
+    throw new ConnectorCallError("unavailable", "Downstream skill root does not match its name.");
+  }
+  if (entry.resources === "dynamic") return;
+  if (!entry.resources.length || entry.resources.length > MAX_SKILL_FILES) throw new ConnectorCallError("unavailable", "Downstream skill manifest exceeds the file bound.");
+  let bytes = 0;
+  const files = new Set<string>();
+  for (const file of entry.resources) {
+    if (!file || typeof file.uri !== "string" || !file.uri.startsWith(root) || files.has(file.uri) ||
+      typeof file.digest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(file.digest) || !Number.isSafeInteger(file.size) || file.size < 0) {
+      throw new ConnectorCallError("unavailable", "Downstream skill manifest is invalid.");
+    }
+    bytes += file.size;
+    files.add(file.uri);
+  }
+  if (!files.has(entry.uri) || bytes > MAX_SKILL_BYTES) throw new ConnectorCallError("unavailable", "Downstream skill manifest is incomplete or oversized.");
+}
+
+async function withManifest(record: SkillRecord): Promise<SkillRecord> {
+  const bytes = encoder.encode(record.content!);
+  if (bytes.length > MAX_SKILL_BYTES) throw new ConnectorCallError("unavailable", "Local skill exceeds the byte bound.");
+  const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(byte => byte.toString(16).padStart(2, "0")).join("");
+  return { ...record, entry: { ...record.entry, resources: [{ uri: record.entry.uri, digest: `sha256:${digest}`, size: bytes.length }] } };
+}
+
+export interface SkillsRegistryOptions {
+  requestScope?: object | undefined;
+  requestSignal?: AbortSignal | undefined;
+  probeTimeoutMs?: number | undefined;
+  defer?: DeferredWork | undefined;
+}
 
 /**
- * Resolve one skill name. Built-in names match exactly; connector guides are
- * reachable only through the `connector:` prefix. Every miss — unknown name,
- * unknown connector, connector without a guide — is an explicit error, never a
- * silent fallback to the generic guide.
+ * One caller-view registry for native methods, the meta-tool and the guest API.
+ * No content reaches storage or operator sinks. The transport's list/read seam
+ * can adopt #753's private partition cache without changing any reader here.
+ * Only a complete snapshot lives in this request; a failed build is discarded.
  */
-export function resolveSkill(
-  name: string,
-  connectors: readonly Connector[],
-): SkillLookup {
-  const builtIn = AVAILABLE_SKILLS.find((skill) => skill.name === name);
-  if (builtIn) {
-    return { found: true, content: builtIn.content(connectors) };
+export class SkillsRegistry {
+  private readonly scope: object;
+  private readonly local: SkillRecord[];
+  private snapshot: Promise<SkillRecord[]> | undefined;
+
+  constructor(private readonly registry: RegistryView, private readonly baseUrl: string, private readonly options: SkillsRegistryOptions = {}) {
+    this.scope = options.requestScope ?? {};
+    this.local = localRecords(registry.listConnectors());
   }
-  const available = () =>
-    listSkills(connectors)
-      .map((skill) => skill.name)
-      .join(", ");
-  if (name.startsWith(CONNECTOR_SKILL_PREFIX)) {
-    const id = name.slice(CONNECTOR_SKILL_PREFIX.length);
-    const connector = connectors.find((c) => c.id === id);
-    if (!connector) {
-      return {
-        found: false,
-        message: `Unknown connector "${boundedEchoText(id)}". Available skills: ${available()}.`,
-      };
+
+  private operation<T>(connector: Connector, read: (ctx: ConnectorContext) => Promise<T>): Promise<T> {
+    const timeoutMs = this.options.probeTimeoutMs ?? 20_000;
+    const operationScope = {};
+    sentSecretsForRequest(this.scope).include(sentSecretsForRequest(operationScope));
+    return runEdge(Effect.scoped(withDeadlineEffect(signal => Effect.gen({ self: this }, function* () {
+      const ctx = this.registry.contextFor(connector.id, this.baseUrl, operationScope, { signal, timeoutMs, ...(this.options.defer ? { defer: this.options.defer } : {}) });
+      yield* closeScopeOnExit(connector, ctx, this.options.defer);
+      return yield* Effect.tryPromise({ try: () => read(ctx), catch: error => error instanceof ConnectorCallError && error.code === "auth_required" ? new ConnectorCallError("auth_required", "Downstream skills require authorization.") : new ConnectorCallError("unavailable", "Downstream skills are unavailable.") });
+    }), { timeoutMs, signal: this.options.requestSignal, timeoutError: new ConnectorCallError("unavailable", "Downstream skills timed out.") })), { signal: this.options.requestSignal });
+  }
+
+  private async records(): Promise<SkillRecord[]> {
+    if (!this.snapshot) {
+      this.snapshot = this.build();
+      this.snapshot.catch(() => { this.snapshot = undefined; });
     }
-    const guide = connectorGuide(connector);
-    if (!guide) {
-      return {
-        found: false,
-        message: `Connector "${boundedEchoText(id)}" has no usage guide. Available skills: ${available()}.`,
-      };
+    return this.snapshot;
+  }
+
+  private async build(): Promise<SkillRecord[]> {
+    const records = await Promise.all(this.local.map(withManifest));
+    // Bounded sequential connector reads avoid unbounded fan-out and finish
+    // cleanup before a later connector's failure can end the whole listing.
+    for (const connector of this.registry.listConnectors()) {
+      if (!connector.downstreamSkills || !this.registry.canReadConnectorSkills(connector.id)) continue;
+      const entries = await this.operation(connector, ctx => connector.downstreamSkills!.list(ctx));
+      if (!Array.isArray(entries) || entries.length > MAX_SKILLS) throw new ConnectorCallError("unavailable", "Downstream skills listing exceeds its bound.");
+      for (const original of entries) {
+        const entry = structuredClone(original);
+        validateEntry(entry);
+        const files = new Map<string, string>();
+        const uri = downstreamSkillUri(connector.id, entry.uri);
+        const secrets = sentSecretsForRequest(this.scope);
+        if (secrets.containsUrl(entry.uri)) throw new ConnectorCallError("unavailable", "Downstream skill URI contains sent credentials.");
+        files.set(uri, entry.uri);
+        const resources = entry.resources === "dynamic" ? "dynamic" : entry.resources.map(file => {
+          const uri = downstreamSkillUri(connector.id, file.uri);
+          if (secrets.containsUrl(file.uri)) throw new ConnectorCallError("unavailable", "Downstream skill URI contains sent credentials.");
+          files.set(uri, file.uri);
+          return { ...file, uri };
+        });
+        if (records.some(record => record.entry.uri === uri)) throw new ConnectorCallError("unavailable", "Downstream skills listing contains duplicate entries.");
+        records.push({ entry: { ...entry, uri, resources }, aliases: [], connector, files });
+      }
     }
-    return { found: true, content: guide };
+    if (records.length > MAX_SKILLS || encoder.encode(JSON.stringify(records.map(record => record.entry))).length > MAX_SKILL_CATALOG_BYTES) {
+      throw new ConnectorCallError("unavailable", "Skills listing exceeds its byte or entry bound.");
+    }
+    // Keep the old investigation guide behind every connector and downstream
+    // guide, where it cannot consume one of the first five import slots.
+    const investigate = records.findIndex(record => record.aliases.includes("investigate"));
+    if (investigate >= 0) records.push(records.splice(investigate, 1)[0]!);
+    return records;
   }
-  const bare = connectors.find((c) => c.id === name);
-  if (bare) {
-    return {
-      found: false,
-      message: connectorGuide(bare)
-        ? `Unknown skill "${boundedEchoText(name)}". Connector guides are fetched as "${boundedEchoText(connectorSkillName(name))}". Available skills: ${available()}.`
-        : `Connector "${boundedEchoText(name)}" has no usage guide. Available skills: ${available()}.`,
-    };
+
+  private async lookup(uri: string): Promise<SkillRecord> {
+    const local = this.local.find(record => record.entry.uri === uri || record.aliases.includes(uri));
+    if (local) return withManifest(local);
+    // A non-skill URI never starts a downstream resource request or listing.
+    if (!uri.startsWith("skill://downstream/")) throw this.missing(uri);
+    const record = (await this.records()).find(record => record.entry.uri === uri);
+    if (!record) throw this.missing(uri);
+    return record;
   }
-  return {
-    found: false,
-    message: `Unknown skill "${boundedEchoText(name)}". Available skills: ${available()}.`,
-  };
+
+  private missing(name: string): ConnectorCallError {
+    const available = this.local.map(record => record.aliases[0]).join(", ");
+    // Caller-authored URI/error text never enters operator records. Preserve
+    // legacy guidance without allowing a missing name to probe a hidden view.
+    const id = name.startsWith(CONNECTOR_SKILL_PREFIX) ? name.slice(CONNECTOR_SKILL_PREFIX.length) : name;
+    const connector = this.registry.getConnector(id);
+    const message = name.startsWith(CONNECTOR_SKILL_PREFIX)
+      ? connector ? `Connector "${boundedEchoText(id)}" has no usage guide.` : `Unknown connector "${boundedEchoText(id)}".`
+      : connector ? `Unknown skill "${boundedEchoText(name)}". Connector guides are fetched as "${boundedEchoText(connectorSkillName(name))}".` : `Unknown skill "${boundedEchoText(name)}".`;
+    return new ConnectorCallError("not_found", `${message} Available skills: ${available}.`);
+  }
+
+  async list(cursor?: string) {
+    const records = await this.records();
+    const offset = cursor === undefined ? 0 : /^skills:[1-9][0-9]*$/.test(cursor) ? Number(cursor.slice(7)) : NaN;
+    if (!Number.isSafeInteger(offset) || offset % SKILL_PAGE_SIZE !== 0 || offset >= records.length) throw new ConnectorCallError("invalid_args", "Invalid skills cursor.");
+    return { ...PRIVATE, skills: records.slice(offset, offset + SKILL_PAGE_SIZE).map(record => record.entry),
+      ...(offset + SKILL_PAGE_SIZE < records.length ? { nextCursor: `skills:${offset + SKILL_PAGE_SIZE}` } : {}) };
+  }
+
+  async get(uri: string) { return { ...PRIVATE, skill: (await this.lookup(uri)).entry }; }
+
+  async resources(cursor?: string) {
+    const page = await this.list(cursor);
+    return { ...PRIVATE, resources: page.skills.flatMap(skill => (skill.resources === "dynamic" ? [{ uri: skill.uri }] : skill.resources).map(file => ({
+      uri: file.uri, name: file.uri === skill.uri ? String(skill.frontmatter.name) : file.uri.slice(file.uri.lastIndexOf("/") + 1),
+      ...(file.uri === skill.uri ? { description: String(skill.frontmatter.description), mimeType: "text/markdown" } : {}),
+      ...("size" in file ? { size: file.size } : {}),
+    }))), ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
+  }
+
+  async read(uri: string) {
+    const local = this.local.find(record => record.entry.uri === uri || record.aliases.includes(uri));
+    if (local) return { ...PRIVATE, contents: [{ uri: local.entry.uri, mimeType: "text/markdown", text: (await withManifest(local)).content! }] };
+    if (!uri.startsWith("skill://downstream/")) throw this.missing(uri);
+    const record = (await this.records()).find(record => record.files?.has(uri));
+    if (!record?.connector || !record.files || !this.registry.canReadConnectorSkills(record.connector.id)) throw this.missing(uri);
+    const originalUri = record.files.get(uri)!;
+    const contents = await this.operation(record.connector, ctx => record.connector!.downstreamSkills!.read(originalUri, ctx));
+    if (!Array.isArray(contents) || contents.length !== 1 || contents[0]?.uri !== originalUri) throw new ConnectorCallError("unavailable", "Downstream skill read returned unexpected files.");
+    const content = contents[0];
+    if (!content || (typeof content.text === "string") === (typeof content.blob === "string")) throw new ConnectorCallError("unavailable", "Downstream skill read did not return one file.");
+    let bytes: number;
+    try { bytes = typeof content.text === "string" ? encoder.encode(content.text).length : atob(content.blob!).length; }
+    catch { throw new ConnectorCallError("unavailable", "Downstream skill file is not valid base64."); }
+    if (bytes > MAX_SKILL_BYTES) throw new ConnectorCallError("unavailable", "Downstream skill file exceeds the byte bound.");
+    return { ...PRIVATE, contents: [{ ...content, uri } as ConnectorSkillResourceContents] };
+  }
+
+  async text(name: string): Promise<string> {
+    const record = await this.lookup(name);
+    const content = (await this.read(record.entry.uri)).contents[0]!;
+    if (typeof content.text === "string") return content.text;
+    try { return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(Uint8Array.from(atob(content.blob!), char => char.charCodeAt(0))); }
+    catch { throw new ConnectorCallError("unavailable", "Skill instructions are not UTF-8 text."); }
+  }
+
+  async summaries() {
+    return (await this.records()).map(record => ({ name: record.aliases[0] ?? record.entry.uri, uri: record.entry.uri, description: String(record.entry.frontmatter.description) }));
+  }
 }

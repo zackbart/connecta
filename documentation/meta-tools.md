@@ -196,7 +196,8 @@ declared schema exactly as they do for compact.
 A connector may attach a deployment-owned guide as markdown, keeping the
 original `usageGuide: string` configuration, or as
 `{ content, summary?, required? }` — which registers no connector and creates no
-shared runtime template. `content` is the markdown `skills` returns verbatim.
+shared runtime template. The registry prepends Agent Skills frontmatter to
+`content` and preserves the guide body, including its whitespace.
 `summary` is normalized and refuses construction over 120 characters; absent,
 Connecta derives the same bounded fallback the skills listing uses from the
 guide's first meaningful body paragraph. `required: true` is reserved for
@@ -238,6 +239,58 @@ client that never fetches a skill can still write a valid first program. Connect
 guides stay scoped to the deployment that listed them even when two deployments
 use identical content, and a deployment with no connector guides receives none of
 the short conditional guide pointers in its tool definitions.
+
+### Native Skills extension
+
+Connecta declares `resources: {}` and `io.modelcontextprotocol/skills`, then
+serves `skills/list`, `skills/get`, `resources/list` and `resources/read` from
+the same registry as `skills` and `connecta.skill`. These methods return
+`resultType: "complete"`, `ttlMs: 0` and `cacheScope: "private"`. Listing pages
+contain at most five complete skills: usage first, required connector guides
+next, other connector guides, downstream skills, then the investigation guide.
+Subsequent pages use `cursor`/`nextCursor`. Local lookup works without listing.
+
+The local document URIs are `skill://connecta/usage/SKILL.md` and
+`skill://connecta/connectors/<connector-id>/SKILL.md`. The suffix makes each
+document a valid Agent Skills file; the roots `skill://connecta/usage` and
+`skill://connecta/connectors/<connector-id>` also resolve. Provider guides are
+built from the generated `src/providers/*/SKILL.md` content with the existing
+connection context and deployment instructions. Local manifests contain a
+SHA-256 digest and UTF-8 byte size of the complete document. `usage` and
+`investigate` remain compatibility names; `connector:<id>` remains a
+one-release alias for its canonical document.
+
+Set `remoteMcp(id, { url, skills: true })` to opt into downstream skills.
+Each downstream URI maps under `skill://downstream/<connector-id>/` with an
+encoded origin and the original path tree, preserving relative references.
+The originating authority is repeated as a path segment so an authority-rooted
+skill retains its directory name. All frontmatter fields, manifests and digests
+are preserved except for the namespace prefix on URIs. Listing never retrieves
+file bodies. Reads accept only files advertised in a complete manifest, or the
+main file of a dynamic skill. Non-file URI shapes, query/fragment URIs and
+traversal segments fail closed. No URI is fetched directly over HTTP.
+
+Local guides follow connector visibility. Downstream skills require a
+whole-connector grant in the caller's admitted pool; a tool-only grant cannot
+authorize arbitrary files. Each list/read uses that caller's context and
+credential ownership. There is no shared skills cache while #753 is pending;
+the connector's list/read seam can reuse its private partition cache once
+merged. A failed or malformed opted-in listing fails the entire skills catalog,
+with no partial cache. Known local guides remain readable during an outage.
+
+Downstream files are proxied byte-exact, including CRLF and binary supporting
+files, within 512 files and 16 MiB per skill. Catalog metadata is bounded to
+1,024 entries and 8 MiB. The existing request-scoped agent boundary redacts
+sent credential echoes. That is the sole exception to byte-exactness: digests
+remain the downstream's originals, so a host's integrity check rejects altered
+content. Refreshing a manifest cannot make credential-bearing content safe to
+load. URI fields containing a sent credential are refused rather than repaired.
+Skill content never reaches operator logs, activity or status. Upward
+`resources/read` is skill-only; downstream general resource reads are the
+separate Phase 3 item 7 program API.
+
+The wire contract follows the [Skills extension](https://modelcontextprotocol.io/extensions/skills/overview)
+and [2026-07-28 Resources](https://modelcontextprotocol.io/specification/2026-07-28/server/resources).
 
 ## Result representation
 

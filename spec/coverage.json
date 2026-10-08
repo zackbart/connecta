@@ -357,7 +357,7 @@
       "id": "resources",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/resources",
-      "notes": "Programs read downstream resources with connector-qualified connecta.read URIs, whole-connector grants, request-scoped auth, admission, deadlines and credential redaction. Remote reads require exact advertised resources or bounded, traversal-safe RFC 6570 template matches from complete paginated, host-auth-partitioned inventories. Program-facing listing/template discovery, subscriptions and native upward skill resources remain unimplemented; no general upward resource proxy is claimed.",
+      "notes": "Programs read downstream resources with connector-qualified connecta.read URIs, whole-connector grants, request-scoped auth, admission, deadlines and credential redaction. Remote reads require exact advertised resources or bounded, traversal-safe RFC 6570 template matches from complete paginated, host-auth-partitioned inventories. Skill-only upward resources/list and resources/read use the caller-view skills registry with private zero-TTL hints. Program-facing listing/template discovery and subscriptions remain unimplemented; no general upward resource proxy is claimed.",
       "issue": "https://github.com/zackbart/connecta/issues/707",
       "tests": [
         {
@@ -371,6 +371,26 @@
         {
           "file": "test/resource-read.test.ts",
           "title": "INV-3 INV-4 INV-8: reads exact resources and templates from the complete paginated inventory"
+        },
+        {
+          "file": "test/skills-extension.test.ts",
+          "title": "INV-3 INV-4: serves only advertised skill files and keeps all four readers in parity"
+        },
+        {
+          "file": "test/skills-extension.test.ts",
+          "title": "INV-4: prioritizes usage and required guides within five-entry skill pages"
+        },
+        {
+          "file": "test/skills-extension.test.ts",
+          "title": "INV-4 INV-5: isolates skill disclosure across principals, pools and tool-only grants"
+        },
+        {
+          "file": "test/skills-extension.test.ts",
+          "title": "INV-5 INV-6: preserves downstream bytes and manifests except sent credential echoes"
+        },
+        {
+          "file": "test/skills-extension.test.ts",
+          "title": "INV-8: rejects the complete listing when any opted-in catalog fails"
         }
       ]
     },
@@ -621,10 +641,31 @@
     },
     {
       "id": "io.modelcontextprotocol/skills",
-      "status": "planned",
+      "status": "supported",
       "spec": "https://modelcontextprotocol.io/extensions/skills/overview",
-      "notes": "The current skills meta-tool is not the extension; native skills/resources adoption is Phase 3 item 6.",
-      "issue": "https://github.com/zackbart/connecta/issues/707"
+      "notes": "Native skills/list and skills/get share one registry with skill-only resources and both text readers. Local manifests, five-entry pages, opt-in downstream proxying, whole-connector grants, byte preservation and the credential-redaction exception are enforced. Directory reading is not declared.",
+      "tests": [
+        {
+          "file": "test/skills-extension.test.ts",
+          "title": "INV-3 INV-4: serves only advertised skill files and keeps all four readers in parity"
+        },
+        {
+          "file": "test/skills-extension.test.ts",
+          "title": "INV-4: prioritizes usage and required guides within five-entry skill pages"
+        },
+        {
+          "file": "test/skills-extension.test.ts",
+          "title": "INV-4 INV-5: isolates skill disclosure across principals, pools and tool-only grants"
+        },
+        {
+          "file": "test/skills-extension.test.ts",
+          "title": "INV-5 INV-6: preserves downstream bytes and manifests except sent credential echoes"
+        },
+        {
+          "file": "test/skills-extension.test.ts",
+          "title": "INV-8: rejects the complete listing when any opted-in catalog fails"
+        }
+      ]
     },
     {
       "id": "io.modelcontextprotocol/tasks",

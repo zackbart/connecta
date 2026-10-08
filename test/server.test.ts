@@ -309,7 +309,7 @@ describe("server /mcp end-to-end", () => {
     }
   });
 
-  it("advertises tools without Apps or resources", async () => {
+  it("advertises tools and skill resources without Apps", async () => {
     const c = makeDeployment();
     const body = await readJsonRpc(
       await mcpRpc(
@@ -323,8 +323,8 @@ describe("server /mcp end-to-end", () => {
         { token: TOKEN },
       ),
     );
-    expect(body.result.capabilities.extensions).toEqual({});
-    expect(body.result.capabilities.resources).toBeUndefined();
+    expect(body.result.capabilities.extensions).toEqual({ "io.modelcontextprotocol/skills": {} });
+    expect(body.result.capabilities.resources).toEqual({});
     const read = await readJsonRpc(await mcpRpc(c, "resources/read", {
       uri: "ui://connecta/program-ui/v3",
     }, { token: TOKEN }));

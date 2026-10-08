@@ -28,7 +28,7 @@ import {
   ExecutorExecutionError,
   isAdmittingExecutor,
 } from "./executor-admission.js";
-import { boundedEchoText, msg, type CallErrorDetails } from "./errors.js";
+import { boundedEchoText, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
 import {
   DEFAULT_MAX_WRITES,
   ProgramWrites,
@@ -54,7 +54,7 @@ import {
   connectorGuideRequired,
   connectorSkillName,
   hasConnectorGuides,
-  resolveSkill,
+  SkillsRegistry,
 } from "./skills.js";
 import type {
   AdmittingExecutor,
@@ -485,6 +485,7 @@ function sandboxProvider(
     defer: limits.defer,
   });
   const invocation = new InvocationService(registry, catalog, activity);
+  const skills = new SkillsRegistry(registry, baseUrl, { requestScope, requestSignal: hostAccessSignal, probeTimeoutMs: limits.probeTimeoutMs, defer: limits.defer });
   const maxHostCalls = Math.max(
     1,
     Math.trunc(limits.maxHostCalls ?? EXECUTE_MAX_HOST_CALLS),
@@ -664,14 +665,12 @@ function sandboxProvider(
       },
       catch: (err) => err,
     }),
-    skill: (name) => Effect.try({
-      try: () => {
+    skill: (name) => Effect.tryPromise({
+      try: async () => {
         if (typeof name !== "string") throw guestFailure("invalid_args", "Use connecta.skill(name) with an exact skill name.");
-        const skill = resolveSkill(name, registry.listConnectors());
-        if (!skill.found) throw guestFailure("not_found", skill.message);
-        return { name, format: "text", text: skill.content };
+        return { name, format: "text", text: await skills.text(name) };
       },
-      catch: (err) => err,
+      catch: (err) => err instanceof ConnectorCallError ? guestFailure(err.code, err.message, err.code === "unavailable") : err,
     }),
     read: (uri) => Effect.suspend(() => {
       const started = Date.now();

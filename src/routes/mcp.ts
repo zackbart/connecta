@@ -25,6 +25,7 @@ import type { RegistryView } from "../registry.js";
 import { intersectAccess } from "../connector-access.js";
 import type { ConnectorAccess } from "../connector-access.js";
 import { CONNECTA_INSTRUCTIONS } from "../skills.js";
+import { registerSkills } from "./skills.js";
 import { failureRecord, logFailure } from "../operator-record.js";
 import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "../sent-secrets.js";
 import { detach } from "../runtime/run.js";
@@ -396,7 +397,7 @@ function serveMcp(
     const server = new McpServer(opts.config.serverInfo, {
       // A request-local server cannot publish catalog changes. Set this before
       // tool registration, whose SDK default otherwise advertises listChanged.
-      capabilities: { tools: { listChanged: false }, extensions: {} },
+      capabilities: { tools: { listChanged: false }, extensions: { "io.modelcontextprotocol/skills": {} } },
       instructions: CONNECTA_INSTRUCTIONS,
       inputRequired: { legacyShim: false },
       requestState: { verify: (state, context) => authElicitation.verify(state, context) },
@@ -428,6 +429,12 @@ function serveMcp(
       : undefined;
     if (activity) bindActivityRequest(requestScope, activity);
     const client: McpClientContext = {};
+    registerSkills(server, registry, baseUrl, {
+      requestScope,
+      requestSignal,
+      probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
+      ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
+    });
     registerMetaTools(server, registry, {
       authElicitation,
       client,

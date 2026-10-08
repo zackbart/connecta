@@ -144,6 +144,7 @@ export class SentSecrets {
 
   text(value: string): string {
     if (this.values.size === 0) return value;
+    const original = value;
     // Replace longer forms first so a raw token cannot leave its prefix or
     // encoded suffix behind. Literal matches only: ordinary diagnostics stay.
     this.matcher ??= new RegExp([
@@ -154,10 +155,23 @@ export class SentSecrets {
     // text. Protect existing placeholders when another boundary runs too.
     value = value.replace(this.matcher, REDACTED);
     if (value.includes("\\")) value = this.escapedText(value);
+    // Ordinary skill bytes, including example credential header names, stay
+    // exact. Header-line scrubbing belongs to an actual credential echo.
+    if (value === original) return value;
     return value.replace(
       /(^|[\r\n])([\t ]*(?:cookie|set-cookie|[a-z0-9-]*(?:key|token|secret|auth|signature|session)[a-z0-9-]*)\s*:\s*)[^\r\n]*/gi,
       `$1$2${REDACTED}`,
     );
+  }
+
+  /** Skill supporting files may contain arbitrary bytes, including credential echoes. */
+  private blob(value: string): string {
+    let binary: string;
+    try { binary = atob(value); } catch { return this.text(value); }
+    const forms = [...this.values].map(secret => Array.from(encoder.encode(secret), byte => String.fromCharCode(byte)).join(""));
+    const pattern = new RegExp(forms.sort((a, b) => b.length - a.length).map(literal).join("|"), "g");
+    const redacted = binary.replace(pattern, REDACTED);
+    return redacted === binary ? value : btoa(redacted);
   }
 
   /** Decode a matching view, retaining source spans so replacements stay JSON-safe.
@@ -241,7 +255,8 @@ export class SentSecrets {
         // is not a safe way to expose a diagnostic to an agent.
         if (!("value" in descriptor)) { changed = true; continue; }
         const redactedKey = text(key);
-        const field = key === "content" ? this.joinedContent(descriptor.value) : descriptor.value;
+        const field = key === "content" ? this.joinedContent(descriptor.value)
+          : key === "blob" && "uri" in item && typeof descriptor.value === "string" ? this.blob(descriptor.value) : descriptor.value;
         changed ||= field !== descriptor.value;
         Object.defineProperty(copy, redactedKey, {
           ...descriptor, value: visit(field),

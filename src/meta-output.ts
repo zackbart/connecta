@@ -31,7 +31,7 @@ export const SKILLS_OUTPUT = advertisedSchema(z.object({
   name: z.string().optional(),
   text: z.string().optional(),
   format: format.optional(),
-  skills: z.array(z.object({ name: z.string(), description: z.string() })).optional(),
+  skills: z.array(z.object({ name: z.string(), uri: z.string(), description: z.string() })).optional(),
   error: error.optional(),
 }).passthrough());
 
