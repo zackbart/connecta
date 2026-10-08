@@ -488,7 +488,7 @@ describe("call_tool", () => {
           annotations: { readOnlyHint: true },
           handler: () => {
             safeCalls++;
-            if (safeCalls === 1) throw new Error("temporary 503");
+            if (safeCalls === 1) throw new ConnectorCallError("unavailable", "temporary 503");
             return { ok: true };
           },
         },

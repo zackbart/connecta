@@ -298,8 +298,8 @@ function overflowFailure(
         ? " Overflow also answers 403 when a donor profile owned by a donor account cannot be edited through the API; if reads succeed with this credential, that refusal is the cause and no credential change will fix it."
         : "";
     return new ConnectorCallError(
-      "auth_required",
-      `Overflow rejected the request (HTTP ${status}): ${detail} The client id and API key may be wrong, revoked, or issued for the other environment (staging and production credentials are not interchangeable); an operator must replace them.${ambiguity}`,
+      status === 403 ? "provider_permission_denied" : "auth_required",
+      `Overflow rejected the request (HTTP ${status}): ${detail} The client id and API key may be wrong, revoked, or issued for the other environment (staging and production credentials are not interchangeable); an operator must check them and ask the account administrator to grant resource access if they are valid.${ambiguity}`,
     );
   }
   if (status === 404) {

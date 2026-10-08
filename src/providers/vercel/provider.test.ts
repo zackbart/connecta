@@ -881,7 +881,7 @@ describe("Vercel typed failures and credential test", () => {
   });
 
   it.each([
-    [403, "forbidden", "auth_required", false],
+    [403, "forbidden", "provider_permission_denied", false],
     [404, "not_found", "not_found", false],
     [400, "bad_request", "invalid_args", false],
     [503, "unavailable", "unavailable", true],

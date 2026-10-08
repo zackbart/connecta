@@ -1803,7 +1803,7 @@ export class Registry implements RegistryView {
         }),
       {
         timeoutMs: options.refreshTimeoutMs,
-        timeoutError: new Error(
+        timeoutError: new ConnectorCallError("timeout",
           `deferred catalog refresh of "${id}" timed out after ${options.refreshTimeoutMs}ms`,
         ),
       },

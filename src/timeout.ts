@@ -1,6 +1,7 @@
 // The deadline vocabulary shared by downstream discovery probes and tool calls.
 // One definition keeps those waits bounded consistently.
 
+import { ConnectorCallError } from "./errors.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { Effect } from "effect";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
@@ -93,6 +94,6 @@ export function withAbortableTimeout<T>(
 ): Promise<T> {
   return withDeadline(operation, {
     timeoutMs: ms,
-    timeoutError: new Error(`${label} timed out after ${ms}ms`),
+    timeoutError: new ConnectorCallError("timeout", `${label} timed out after ${ms}ms`),
   });
 }

@@ -102,6 +102,7 @@ describe("describe recovery", () => {
 
     expect(required(described[0]).errorDetails).toEqual({
       code: "unknown_address",
+      configuredConnectors: ["calc"],
       message: 'Unknown address "ghost.ad"',
       retryable: false,
       nextAction: {

@@ -840,9 +840,9 @@ export const CONTRACT_CASES: ContractCase[] = [
         });
       }
       expect(result.auth).toMatchObject({
-        code: "auth_required",
+        code: "downstream_oauth_required",
         retryable: false,
-        detailCode: "auth_required",
+        detailCode: "downstream_oauth_required",
         detailRetryable: false,
       });
       expect(result.rate).toMatchObject({
@@ -936,7 +936,7 @@ export const CONTRACT_CASES: ContractCase[] = [
       });
       expect(required(outcomes[3])).toMatchObject({
         ok: false,
-        code: "auth_required",
+        code: "downstream_oauth_required",
         retryable: false,
         recovery: "oauth",
         nextAction: "authorize_connector",
@@ -1130,6 +1130,7 @@ export const CONTRACT_CASES: ContractCase[] = [
       expect(String(required(tools[1]).error)).toContain("Unknown address");
       expect(required(tools[1]).errorDetails).toEqual({
         code: "unknown_address",
+        configuredConnectors: expect.arrayContaining(["reader"]),
         message: 'Unknown address "nope.read"',
         retryable: false,
         nextAction: {

@@ -45,6 +45,7 @@ import {
   boundedEchoText,
   ConnectorCallError,
   msg,
+  networkErrorCode,
   unavailableCallError,
   WithheldTextError,
 } from "../errors.js";
@@ -66,6 +67,7 @@ import { retainingOAuthPartition } from "../oauth-partition.js";
 import { detach, runEdge } from "../runtime/run.js";
 import { assertKnownOptions, keys, optionsOf } from "../config-schema.js";
 import { describedEndpoint, describedUrl } from "../described.js";
+import { retryAfterMs } from "./guarded-fetch.js";
 import { CALL_ADMISSION, REMOTE_MCP_AUTH, USAGE_GUIDE } from "./option-shapes.js";
 import type {
   Connector,
@@ -444,28 +446,96 @@ function promised<A>(evaluate: () => PromiseLike<A>): Effect.Effect<A, unknown> 
   return Effect.tryPromise({ try: evaluate, catch: (error) => error });
 }
 
-/** Classify protocol/status facts; provider prose never decides retryability. */
-function downstreamCallError(error: unknown): unknown {
-  if (error instanceof ProtocolError && error.code === -32602) {
-    return new ConnectorCallError("invalid_args", boundedEchoText(error.message));
+/** A retained cause chain must not smuggle an SDK payload past the boundary. */
+function hasSdkPayload(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  for (let current = error; current instanceof Error && !seen.has(current); current = current.cause) {
+    if (current instanceof ProtocolError || current instanceof SdkError) return true;
+    seen.add(current);
   }
-  if (error instanceof SdkHttpError && error.status >= 400 && error.status < 500) {
-    let message = error.message;
-    if (typeof error.data.text === "string") {
+  return false;
+}
+
+/** Cancellation can bypass an inner SDK catch and return the signal's reason. */
+function payloadFree<A extends unknown[], R>(run: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
+  return async (...args) => {
+    try {
+      return await run(...args);
+    } catch (error) {
+      throw hasSdkPayload(error) ? carryFailureFacts(error, downstreamCallError(error)) : error;
+    }
+  };
+}
+
+/** Both the SDK's auth signal and its classified form invalidate a live client. */
+function requiresAuthorization(error: unknown): boolean {
+  return error instanceof UnauthorizedError ||
+    (error instanceof ConnectorCallError &&
+      (error.code === "auth_required" || error.code === "downstream_oauth_required"));
+}
+
+/** Classify SDK/runtime facts, dropping every SDK payload and cause chain. */
+function downstreamCallError(error: unknown, httpStatus?: number, wait?: number, oauthStep?: OAuthStep): unknown {
+  if (error instanceof ConnectorCallError) {
+    return hasSdkPayload(error.cause) ? carryFailureFacts(error, withheldAs(error.message, error)) : error;
+  }
+  if (error instanceof WithheldTextError || error instanceof UnauthorizedError) return error;
+  const network = !(error instanceof SdkError) && !(error instanceof OAuthClientFlowError)
+    ? networkErrorCode(error) : undefined;
+  if (network) {
+    return network === "timeout" || network === "ETIMEDOUT" || network.endsWith("_TIMEOUT")
+      ? new ConnectorCallError("timeout", "The downstream request timed out.")
+      : unavailableCallError(error);
+  }
+  const status = error instanceof SdkHttpError || error instanceof RegistrationRejectedError
+    ? error.status : httpStatus;
+  if (error instanceof InsufficientScopeError || (status === 403 && !(error instanceof RegistrationRejectedError)) ||
+      (error instanceof OAuthError && ["insufficient_scope", "invalid_scope", "access_denied"].includes(error.code))) {
+    return new ConnectorCallError("provider_permission_denied",
+      "The provider denied this operation. Check the account's permissions and the tool's required access with the provider or an administrator.");
+  }
+  // Token endpoints return typed OAuth recovery codes on HTTP 400. Other
+  // OAuth steps, especially registration, keep their HTTP status verdict.
+  if (error instanceof OAuthError && OAUTH_ERROR_CODES.has(error.code) &&
+      (status === undefined || oauthStep === "token request")) {
+    return new ConnectorCallError(
+      ["invalid_client", "invalid_grant", "invalid_token", "unauthorized_client"].includes(error.code)
+        ? "downstream_oauth_required" : error.code === "too_many_requests" ? "rate_limited"
+          : ["server_error", "temporarily_unavailable"].includes(error.code) ? "unavailable" : "connector_call_failed",
+      `OAuth failed with error ${error.code}.`,
+    );
+  }
+  if (status !== undefined && status >= 400) {
+    let message = `The downstream service answered HTTP ${status}.`;
+    if (error instanceof SdkHttpError && status < 500 && typeof error.data.text === "string") {
+      message = error.message;
       try {
         const body = JSON.parse(error.data.text);
         const detail = body?.message ?? body?.error?.message ?? body?.error_description;
         if (typeof detail === "string") message = detail;
       } catch {
-        // Non-JSON refusals still retain a bounded diagnostic.
+        // Non-JSON MCP refusals retain only a bounded diagnostic.
       }
     }
     return new ConnectorCallError(
-      error.status === 429 ? "rate_limited" : error.status === 408 ? "timeout" : "connector_call_failed",
+      status === 401 && !(error instanceof RegistrationRejectedError) ? "auth_required"
+        : status === 429 ? "rate_limited" : status === 408 && !(error instanceof RegistrationRejectedError)
+        ? "timeout" : "connector_call_failed",
       boundedEchoText(message),
+      { retryable: [429, 502, 503, 504].includes(status) ||
+          (status === 408 && !(error instanceof RegistrationRejectedError)),
+        ...(wait !== undefined ? { retryAfterMs: wait } : {}) },
     );
   }
-  return error;
+  if (error instanceof SdkError && error.code === SdkErrorCode.RequestTimeout) {
+    return new ConnectorCallError("timeout", "The downstream request timed out.");
+  }
+  // ProtocolError.data is server-chosen even when its message is allowed.
+  if (error instanceof ProtocolError) {
+    return new ConnectorCallError(error.code === -32602 ? "invalid_args" : "connector_call_failed",
+      boundedEchoText(error.message));
+  }
+  return new ConnectorCallError("connector_call_failed", "The downstream operation failed.");
 }
 
 const encoder = new TextEncoder();
@@ -604,12 +674,12 @@ export function redirectSafeFetch(
           redirect: "manual",
         });
       } catch (cause) {
-        if (cause instanceof ConnectorCallError) throw cause;
+        if (cause instanceof ConnectorCallError) throw downstreamCallError(cause);
         throw unavailableCallError(
           cause,
           current.href,
           undefined,
-          init.signal ?? undefined,
+          hasSdkPayload(cause) ? undefined : init.signal ?? undefined,
         );
       }
       // Every MCP and OAuth exchange reads its answer through here, and the
@@ -862,16 +932,17 @@ function errorKind(err: unknown): string {
 }
 
 /**
- * `message` in place of an error's text, keeping the verdict
- * `classifyCallError` gives `verdict`: its code, retryability, and wait when
- * it is already a `ConnectorCallError`, the timeout and retryable flags
- * otherwise.
+ * Replace text while keeping a verdict already derived from structured facts.
+ * Never retain the original SDK error as a cause.
  */
 function withheldAs(message: string, verdict: unknown): Error {
   if (verdict instanceof ConnectorCallError) {
     return new ConnectorCallError(verdict.code, message, {
       retryable: verdict.retryable,
       ...(verdict.retryAfterMs !== undefined ? { retryAfterMs: verdict.retryAfterMs } : {}),
+      ...(verdict.details ? { details: verdict.details } : {}),
+      ...(verdict.validation ? { validation: verdict.validation } : {}),
+      ...(verdict.current ? { current: verdict.current } : {}),
     });
   }
   return new WithheldTextError(message, verdict);
@@ -887,7 +958,7 @@ type OAuthStep = "discovery" | "client registration" | "token request";
  */
 interface OAuthTrail {
   /** The flow's latest request, if it was not to the MCP endpoint. */
-  last?: { step: OAuthStep; host: string } | undefined;
+  last?: { step: OAuthStep; host: string; httpStatus?: number; retryAfterMs?: number } | undefined;
   /** The origin a client registration was last sent to. */
   registration?: string;
 }
@@ -920,8 +991,14 @@ function tracedOAuthFetch(
       trail.last = { step, host: url.origin };
       if (step === "client registration") trail.registration = url.origin;
     }
-    // The SDK's own fetch when it was handed none: read as bytes all the same.
-    return byteReadResponse(await baseFetch(input, init));
+    const leg = trail.last;
+    const response = await baseFetch(input, init);
+    if (leg) {
+      leg.httpStatus = response.status;
+      const wait = retryAfterMs(response.headers);
+      if (wait !== undefined) leg.retryAfterMs = wait;
+    }
+    return byteReadResponse(response);
   };
 }
 
@@ -1101,7 +1178,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    */
   const authRequiredError = () =>
     new ConnectorCallError(
-      "auth_required",
+      isOauth ? "downstream_oauth_required" : "auth_required",
       `Connector "${id}" requires authorization — call authorize_connector({ connector: "${id}" }) and open the returned URL.`,
     );
 
@@ -1123,7 +1200,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     trail: OAuthTrail,
     signals: readonly (AbortSignal | undefined)[],
   ): unknown => {
-    if (ownAbortReason(err, signals)) return err;
+    if (ownAbortReason(err, signals) && !hasSdkPayload(err)) return err;
     if (err instanceof RegistrationRejectedError) {
       const code = registrationErrorCode(err.body);
       const facts = {
@@ -1132,7 +1209,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         httpStatus: err.status,
         ...(code ? { oauthError: code } : {}),
       };
-      return attachFailureFacts(carryFailureFacts(err, new WithheldTextError(
+      return attachFailureFacts(carryFailureFacts(err, withheldAs(
         `Connector "${id}" could not register an OAuth client with ` +
           `${trail.registration ?? "its authorization server"}: the ` +
           `registration endpoint answered HTTP ${err.status}` +
@@ -1140,20 +1217,26 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           "withheld because it can quote the request or anything the server " +
           "chose to add. Check the server's client registration policy, then " +
           "retry authorization.",
-        err,
+        downstreamCallError(err, undefined, trail.last?.retryAfterMs),
       )), facts);
     }
     const leg = trail.last;
     const facts = leg
-      ? { step: `OAuth ${leg.step}` as const, origin: leg.host }
+      ? { step: `OAuth ${leg.step}` as const, origin: leg.host, ...(leg.httpStatus ? { httpStatus: leg.httpStatus } : {}) }
       : { step: "OAuth flow" as const };
-    if (keepsItsText(err, undefined)) return attachFailureFacts(err, facts);
+    if (err instanceof UnauthorizedError || err instanceof ConnectorCallError || err instanceof WithheldTextError) {
+      return attachFailureFacts(downstreamCallError(err), facts);
+    }
+    const classified = downstreamCallError(err, leg?.httpStatus, leg?.retryAfterMs, leg?.step);
+    if (err instanceof OAuthError || (classified instanceof ConnectorCallError && classified.code === "provider_permission_denied")) {
+      return attachFailureFacts(carryFailureFacts(err, classified), facts);
+    }
     return attachFailureFacts(carryFailureFacts(err, withheldAs(
       `Connector "${id}" OAuth ${leg ? `${leg.step} with ${leg.host}` : "flow"} ` +
         `failed${errorKind(err)}. The error is withheld because its text can ` +
         "quote what the server sent. Check the server's OAuth metadata, then " +
         "retry authorization.",
-      err,
+      classified,
     )), facts);
   };
 
@@ -1172,30 +1255,42 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     step: "MCP handshake" | "tools/list" | "tools/call",
     transport: Transport | undefined,
     signals: readonly (AbortSignal | undefined)[],
-    verdict: (err: unknown) => unknown = (original) => original,
   ): unknown => {
+    // An OAuth flow already attached the step and origin it failed at. The
+    // outer MCP operation must not replace them with the endpoint's facts.
+    if (failureRecord({}, err).step?.startsWith("OAuth ")) return downstreamCallError(err);
     const httpStatus = err instanceof SdkHttpError ? err.status : undefined;
     const facts = { step, origin: endpointOrigin, ...(httpStatus ? { httpStatus } : {}) };
+    const classified = downstreamCallError(err);
+    const verdict = isOauth && classified instanceof ConnectorCallError && classified.code === "auth_required"
+      ? carryFailureFacts(err, authRequiredError()) : classified;
+    if (ownAbortReasonAsSdkReports(err, signals)) {
+      return attachFailureFacts(carryFailureFacts(err, withheldAs(msg(err), verdict)), facts);
+    }
+    if (err instanceof InsufficientScopeError) {
+      return attachFailureFacts(carryFailureFacts(err, verdict), facts);
+    }
     if (
       ownAbortReason(err, signals) ||
-      ownAbortReasonAsSdkReports(err, signals) ||
       keepsItsText(err, transport)
     ) {
-      return attachFailureFacts(err, facts);
+      return attachFailureFacts(carryFailureFacts(err,
+        err instanceof UnauthorizedError || (ownAbortReason(err, signals) && !hasSdkPayload(err))
+          ? err : verdict), facts);
     }
     // The SDK wraps a failure of connecta's own fetch (a refused redirect, an
     // unreachable host) in an error of its own, such as the version probe's;
     // that failure's words are connecta's, and they say what happened.
     const ours = connectaErrorWithin(err);
     if (ours) {
-      return attachFailureFacts(carryFailureFacts(ours, withheldAs(ours.message, verdict(err))), facts);
+      return attachFailureFacts(carryFailureFacts(ours, withheldAs(ours.message, ours)), facts);
     }
     const status = httpStatus ? ` with HTTP ${httpStatus}` : "";
     return attachFailureFacts(carryFailureFacts(err, withheldAs(
       `Connector "${id}" ${step} with ${endpointOrigin} failed${status}` +
         `${errorKind(err)}${sdkCheckFailed(err)}. The error is withheld because ` +
         "its text can quote what the server sent.",
-      verdict(err),
+      verdict,
     )), facts);
   };
 
@@ -1271,7 +1366,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   class OperatorDisconnectedError extends ConnectorCallError {
     constructor() {
       super(
-        "auth_required",
+        "downstream_oauth_required",
         `Connector "${id}" was disconnected by an operator — explicitly start authorization to reconnect it.`,
       );
     }
@@ -1516,6 +1611,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const oauthProvider = provider ?? newProvider(ctx, undefined, signal);
       const transport = new StreamableHTTPClientTransport(url, {
         authProvider: oauthProvider,
+        onInsufficientScope: "throw",
         fetch: refreshCoordinatorFor(ctx).coordinatedFetch(
           oauthProvider,
           learnedUrlSafeFetch(id, url, guardedFetch),
@@ -1834,7 +1930,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             // Only a real 401/UnauthorizedError means auth is the problem —
             // a network error on an oauth connector must surface as "error",
             // not "auth_required".
-            if (err instanceof UnauthorizedError) state.authRequired = true;
+            if (requiresAuthorization(err)) state.authRequired = true;
             const release = Scope.closeUnsafe(lease, Exit.void);
             if (release) detach(release);
           } else {
@@ -1844,7 +1940,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             detach(closeConnection(held.client, held.transport, ctx.logger));
           }
           if (err instanceof UnauthorizedError) {
-            return Effect.fail(authRequiredError());
+            return Effect.fail(carryFailureFacts(err, authRequiredError()));
           }
           // Defense in depth for the one error class that can quote the
           // credential: a runtime refusing the assembled header.
@@ -2075,9 +2171,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // A grant can be revoked after connect and after any earlier page.
         // Classify that exactly like connect-time and call-time authorization
         // failures, and latch it for the rest of this request scope.
-        if (err instanceof UnauthorizedError) {
+        if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
+        if (requiresAuthorization(err)) {
           if (state.client === client) state.authRequired = true;
-          throw authRequiredError();
+          if (err instanceof UnauthorizedError) throw carryFailureFacts(err, authRequiredError());
         }
         throw err;
       }
@@ -2148,7 +2245,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             }
           : state.toolDefinitions.get(name);
         if (toolDefinition?.execution?.taskSupport === "required") {
-          throw new Error(
+          throw new ConnectorCallError("connector_call_failed",
             `Tool "${name}" requires task-based execution, which Connecta does not support.`,
           );
         }
@@ -2165,7 +2262,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             },
           )
           .catch((err: unknown) => {
-            throw atMcpBoundary(err, "tools/call", client.transport, [ctx.signal], downstreamCallError);
+            throw atMcpBoundary(err, "tools/call", client.transport, [ctx.signal]);
           });
         if (isInputRequiredResult(result)) {
           throw new ConnectorCallError(
@@ -2178,9 +2275,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         return result;
       } catch (err) {
         // A grant revoked after connect surfaces here, not in ensureConnected.
-        if (err instanceof UnauthorizedError) {
+        if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
+        if (requiresAuthorization(err)) {
           if (state.client === client) state.authRequired = true;
-          throw authRequiredError();
+          if (err instanceof UnauthorizedError) throw carryFailureFacts(err, authRequiredError());
         }
         throw downstreamCallError(err);
       }
@@ -2211,6 +2309,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         if (err instanceof CredentialRequiredError) {
           return ownStatus({ state: "auth_required", message: err.message });
         }
+        if (err instanceof OperatorDisconnectedError) {
+          return ownStatus({ state: "auth_required", message: err.message });
+        }
         if (state.authRequired) {
           // Only an OAuth connector has a pending consent URL to offer. A
           // credential connector's downstream 401 is repaired in the operator
@@ -2221,9 +2322,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
               ? "Authorization required — the downstream rejected this connector's stored credential."
               : "Authorization required — open the URL to connect.",
           });
-        }
-        if (err instanceof OperatorDisconnectedError) {
-          return ownStatus({ state: "auth_required", message: err.message });
         }
         // An operator surface: the record, never the error's own text.
         return failureStatus(id, err);
@@ -2244,15 +2342,24 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       await provider.bindFlow();
       const t = (leased ??
         buildTransport(ctx, provider)) as StreamableHTTPClientTransport;
+      const trail: OAuthTrail = {};
+      const internals = t as unknown as { _fetchWithInit?: FetchLike };
+      const traced = tracedOAuthFetch(trail, new URL(opts.url), internals._fetchWithInit ?? fetch);
+      const exchange = new Proxy(t, {
+        get: (target, key) => key === "_fetchWithInit" ? traced : Reflect.get(target, key, target),
+        set: (target, key, value) => Reflect.set(target, key, value, target),
+      });
       try {
         if (callbackParams !== undefined) {
-          await t.finishAuth(callbackParams);
+          await exchange.finishAuth(callbackParams);
         } else {
-          await t.finishAuth(code);
+          await exchange.finishAuth(code);
         }
         await provider.clearPending();
         // Reset so the next use reconnects with the freshly stored tokens.
         closeHalf(state);
+      } catch (err) {
+        throw withoutAuthorizationServerText(err, trail, [ctx.signal]);
       } finally {
         // This exchange-only transport has no lease in the request scope.
         // It must close even when redemption or pending-state cleanup fails.
@@ -2343,5 +2450,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     connector.verifyState = retain(connector.verifyState!, 1);
     connector.finishAuth = retain(connector.finishAuth!, 1);
   }
+  connector.listTools = payloadFree(connector.listTools);
+  connector.callTool = payloadFree(connector.callTool);
+  if (connector.startAuth) connector.startAuth = payloadFree(connector.startAuth);
+  if (connector.finishAuth) connector.finishAuth = payloadFree(connector.finishAuth);
   return connector;
 }

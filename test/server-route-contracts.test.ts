@@ -67,7 +67,7 @@ function expectMcpCors(response: Response): void {
   expectGlobalSecurityHeaders(response);
   expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
   expect(response.headers.get("Access-Control-Expose-Headers")).toBe(
-    "WWW-Authenticate, Retry-After, mcp-session-id, mcp-protocol-version",
+    "WWW-Authenticate, Retry-After, mcp-session-id, mcp-protocol-version, Connecta-Error-Code, Connecta-Recovery",
   );
   expect(response.headers.get("Access-Control-Allow-Headers")).toBe(
     "Content-Type, Authorization, mcp-protocol-version, mcp-session-id, mcp-method, mcp-name",
@@ -164,7 +164,7 @@ describe("server route contracts", () => {
       const unauthenticated = await connecta.fetch(new Request(url));
       expect(unauthenticated.status).toBe(401);
       expectMcpCors(unauthenticated);
-      expect(await unauthenticated.text()).toBe('{"error":"unauthorized"}');
+      expect(await unauthenticated.json()).toMatchObject({ error: { code: "host_auth_required", retryable: false } });
       const response = await connecta.fetch(new Request(url, { headers: { Authorization: `Bearer ${TOKEN}` } }));
       expectMcpCors(response);
       const shape = await responseShape(response);
@@ -285,7 +285,7 @@ describe("server route contracts", () => {
     const mcp = await mcpRpc(connecta, "tools/call", { name: "search_tools", arguments: { query: "read" } });
     expect(mcp.status).toBe(401);
     expectMcpCors(mcp);
-    expect(await mcp.text()).toBe('{"error":"unauthorized"}');
+    expect(await mcp.json()).toMatchObject({ error: { code: "host_auth_required", retryable: false } });
 
     const owned = await connecta.fetch(new Request(`${BASE}/owned`));
     expect(owned.status).toBe(404);
@@ -400,7 +400,7 @@ describe("server route contracts", () => {
     expect(mcp.status).toBe(401);
     expectMcpCors(mcp);
     expect(mcp.headers.get("WWW-Authenticate")).toBe("Bearer");
-    expect(await mcp.text()).toBe('{"error":"unauthorized"}');
+    expect(await mcp.json()).toMatchObject({ error: { code: "host_auth_required", retryable: false } });
 
     // Auth guards /mcp before the transport sees the request for EVERY
     // method, not just POST — session semantics belong to the transport, but
@@ -413,7 +413,7 @@ describe("server route contracts", () => {
       expect(nonPost.status, `${method} /mcp`).toBe(401);
       expectMcpCors(nonPost);
       expect(nonPost.headers.get("WWW-Authenticate")).toBe("Bearer");
-      expect(await nonPost.text()).toBe('{"error":"unauthorized"}');
+      expect(await nonPost.json()).toMatchObject({ error: { code: "host_auth_required", retryable: false } });
     }
 
     const offOriginCredential = await connecta.fetch(

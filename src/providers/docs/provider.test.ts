@@ -748,7 +748,7 @@ describe("failures, mapped to what the caller does next (H11)", () => {
   it("keeps a 4xx refusal as mapped: nothing applied, nothing uncertain", async () => {
     route = () => ({ status: 403, body: { error: { code: 403, message: "The caller does not have permission", status: "PERMISSION_DENIED" } } });
     const failure = await call(connection(), "append_text", { documentId: "d", text: "x" }).catch((error) => error);
-    expect(failure.code).toBe("connector_call_failed");
+    expect(failure.code).toBe("provider_permission_denied");
     expect(failure.message).toContain("may lack access");
     expect(failure.message).not.toContain("outcome of this edit is unknown");
   });
@@ -842,7 +842,7 @@ describe("failures, mapped to what the caller does next (H11)", () => {
   it("maps a permission refusal, a missing scope, and a rate limit by their fix", async () => {
     route = () => ({ status: 403, body: { error: { code: 403, message: "The caller does not have permission", status: "PERMISSION_DENIED" } } });
     await expect(call(connection(), "get_document", { documentId: "d" })).rejects.toMatchObject({
-      code: "connector_call_failed",
+      code: "provider_permission_denied",
       message: expect.stringContaining("may lack access"),
     });
 
@@ -851,7 +851,7 @@ describe("failures, mapped to what the caller does next (H11)", () => {
       body: { error: { code: 403, message: "Insufficient scopes.", status: "PERMISSION_DENIED", details: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }] } },
     });
     await expect(call(connection(), "get_document", { documentId: "d" })).rejects.toMatchObject({
-      code: "auth_required",
+      code: "provider_permission_denied",
       message: expect.stringContaining("https://www.googleapis.com/auth/documents"),
     });
 

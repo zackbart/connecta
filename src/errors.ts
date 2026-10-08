@@ -13,6 +13,8 @@ import type { ExecutorAdmissionErrorCode } from "./executor-admission.js";
 export type ConnectorCallErrorCode =
   | "timeout"
   | "auth_required"
+  | "downstream_oauth_required"
+  | "provider_permission_denied"
   | "rate_limited"
   | "unavailable"
   | "invalid_args"
@@ -60,7 +62,8 @@ export type ClassificationCode =
   | "executor_failed";
 
 const CLASSIFICATION_CODE_TABLE = {
-  timeout: true, auth_required: true, rate_limited: true, unavailable: true,
+  timeout: true, auth_required: true, downstream_oauth_required: true,
+  provider_permission_denied: true, rate_limited: true, unavailable: true,
   invalid_args: true, not_found: true, conflict: true,
   input_required_unsupported: true, connector_call_failed: true,
   executor_overloaded: true, executor_cancelled: true, executor_closed: true,
@@ -92,6 +95,40 @@ export interface ArgumentValidationDetails {
   issues: ArgumentValidationIssue[];
   /** More findings existed but were omitted from the bounded response. */
   truncated?: true;
+}
+
+/** Agent-only facts from the published schema, never operator record fields. */
+export interface ArgumentRepairDetails {
+  acceptedKeys?: string[];
+  issues: Array<{
+    path: string;
+    receivedType: string;
+    acceptedKeys?: string[];
+    enumValues?: unknown[];
+    bounds?: Record<string, number>;
+  }>;
+  conditionalRequirements?: Array<{
+    path: string;
+    condition: unknown;
+    required: string[];
+  }>;
+  /** Synthesized from the schema and checked by the same validator. */
+  example?: unknown;
+  exampleUnavailable?: string;
+  truncated?: true;
+}
+
+/** Drop oversized detail whole; clipping keys or examples changes their meaning. */
+function boundedRepair(details: ArgumentRepairDetails | undefined): ArgumentRepairDetails | undefined {
+  if (!details) return undefined;
+  try {
+    const text = JSON.stringify(details);
+    return new TextEncoder().encode(text).length <= 4096
+      ? JSON.parse(text) as ArgumentRepairDetails
+      : { issues: [], truncated: true, exampleUnavailable: "Repair detail exceeds the response budget. Inspect the published inputSchema." };
+  } catch {
+    return undefined;
+  }
 }
 
 export const MAX_ARGUMENT_VALIDATION_ISSUES = 3;
@@ -176,7 +213,7 @@ export function echoedCallArgs(args: unknown): { args?: unknown } {
   }
   if (text === undefined) return {};
   return echoEncoder.encode(text).length <= MAX_ECHOED_BYTES
-    ? { args }
+    ? { args: JSON.parse(text) as unknown }
     : {};
 }
 
@@ -327,7 +364,7 @@ export class WithheldTextError extends Error {
   }
 }
 
-/** Agent-visible recovery class attached only to `auth_required` failures. */
+/** Agent-visible recovery class for downstream credential failures. */
 export type AuthRecoveryMode =
   | "oauth"
   | "operator_config"
@@ -338,6 +375,8 @@ const RETRYABLE_BY_CODE: Record<ConnectorCallErrorCode, boolean> = {
   rate_limited: true,
   unavailable: true,
   auth_required: false,
+  downstream_oauth_required: false,
+  provider_permission_denied: false,
   invalid_args: false,
   not_found: false,
   conflict: false,
@@ -379,9 +418,9 @@ function normalizeRetryAfterMs(value: number | undefined): number | undefined {
 
 /**
  * Throw from `Connector.callTool` (or anything beneath it) to classify a
- * failure exactly. Untyped errors fall back to a message-text heuristic, so a
- * connector whose legitimate error text mentions "timeout" is misread as a
- * retryable timeout — this class is the escape hatch. `retryable` defaults per
+ * failure exactly. Untyped errors are non-retryable unless a runtime errno
+ * or abort identifies a transport failure. This class supplies the connector's
+ * reviewed verdict. `retryable` defaults per
  * code (timeout, rate_limited, and unavailable retry; the rest do not) and may
  * be overridden.
  *
@@ -403,6 +442,7 @@ export class ConnectorCallError extends Error {
   readonly retryAfterMs: number | undefined;
   /** Bounded schema findings for `invalid_args`; never submitted values. */
   readonly validation: ArgumentValidationDetails | undefined;
+  readonly repair: ArgumentRepairDetails | undefined;
   /** Sanitized transport diagnostics for `unavailable` only. */
   readonly details: UnavailableDetails | undefined;
   /**
@@ -419,6 +459,7 @@ export class ConnectorCallError extends Error {
       retryAfterMs?: number;
       cause?: unknown;
       validation?: ArgumentValidationDetails;
+      repair?: ArgumentRepairDetails;
       details?: UnavailableDetails;
       current?: Readonly<Record<string, number>>;
     } = {},
@@ -435,6 +476,7 @@ export class ConnectorCallError extends Error {
       code === "unavailable" ? sanitizedUnavailableDetails(opts.details) : undefined;
     this.validation =
       code === "invalid_args" ? boundedValidation(opts.validation) : undefined;
+    this.repair = code === "invalid_args" ? boundedRepair(opts.repair) : undefined;
     this.current = code === "conflict" ? boundedCurrent(opts.current) : undefined;
   }
 }
@@ -450,6 +492,7 @@ export interface CallErrorDetails {
   retryAfterMs?: number;
   /** Bounded input-schema findings; paths and expectations, never values. */
   validation?: ArgumentValidationDetails;
+  repair?: ArgumentRepairDetails;
   /** On a `conflict`: where each thing the write touched stands now. */
   current?: Readonly<Record<string, number>>;
   /** Connector whose failed operation needs recovery. */
@@ -503,53 +546,24 @@ export interface CallErrorDetails {
     addresses: string[];
     purpose: string;
   };
+  /** Configured connectors in this request's registry view only. */
+  configuredConnectors?: string[];
+  /** Agent-only uncertain write, never copied to an operator record. */
+  uncertainCall?: { address: string; args?: unknown; argsOmitted?: true };
   /** Explicit retry guidance; recovery never retries or mutates by itself. */
   retry?: string;
 }
 
-/**
- * Codes whose retryability is a fact about connecta's own framing, never a
- * guess from text. The message embeds the address the caller asked for, so a
- * connector named `svc-503` or `temporary-export` would otherwise flip a policy
- * refusal into `retryable: true` through the heuristic below — and a caller that
- * trusts the flag would cheerfully retry a refusal forever.
- */
-const NEVER_RETRYABLE_FRAMING = new Set([
-  "result_processing_failed",
-  "unknown_address",
-  "unknown_tool",
-  "ambiguous_tool_alias",
-  "destructive_tool_requires_approval",
-]);
-
-/**
- * Details for a failure connecta itself framed — an address it could not
- * resolve, a tool it refuses to run — rather than one a connector threw.
- */
+/** Retryability of connecta framing depends only on its code. */
 export function framingError(code: ClassificationCode, message: string): CallErrorDetails {
   return {
     code,
     message,
-    retryable: NEVER_RETRYABLE_FRAMING.has(code)
-      ? false
-      : messageLooksRetryable(message),
+    retryable: code === "timeout" || code === "unavailable" || code === "rate_limited",
   };
 }
 
-const RETRYABLE_MESSAGE_RE =
-  /timeout|timed out|econnreset|econnrefused|temporar|rate.?limit|429|502|503|504|refcountedcanceler|different request/i;
-const TIMEOUT_MESSAGE_RE = /timed out|timeout/i;
-
-/** Message-text fallback used when an error carries no typed classification. */
-function messageLooksRetryable(message: string): boolean {
-  return RETRYABLE_MESSAGE_RE.test(message);
-}
-
-/**
- * Classify a value thrown by a connector call. A `ConnectorCallError` is
- * authoritative; anything else falls back to the historical message-text
- * heuristic.
- */
+/** Typed connector verdicts and runtime facts only. Prose never changes a verdict. */
 export function classifyCallError(
   err: unknown,
   fallbackCode: ClassificationCode = "connector_call_failed",
@@ -563,6 +577,7 @@ export function classifyCallError(
         ? { retryAfterMs: err.retryAfterMs }
         : {}),
       ...(err.validation ? { validation: err.validation } : {}),
+      ...(err.repair ? { repair: err.repair } : {}),
       ...(err.details ? { details: err.details } : {}),
       ...(err.current ? { current: err.current } : {}),
     };
@@ -574,20 +589,14 @@ export function classifyCallError(
       retryable: err.retryable,
     };
   }
-  // An aborted fetch rejects with a DOMException named "AbortError" whose
-  // message ("The operation was aborted", and variants across runtimes) matches
-  // neither heuristic below — so a call the engine itself cancelled would read
-  // as a non-retryable failure, the opposite of the truth. Note this also
-  // covers an abort the connector triggered for its own reasons; running out of
-  // time is by far the likelier cause and retryable/timeout is the safer read.
-  if (err instanceof Error && err.name === "AbortError") {
-    return { code: "timeout", message: err.message, retryable: true };
-  }
   const message = err instanceof Error ? err.message : String(err);
+  const network = networkErrorCode(err);
   return {
-    code: TIMEOUT_MESSAGE_RE.test(message) ? "timeout" : fallbackCode,
+    code: network === "timeout" || network === "ETIMEDOUT" || network?.endsWith("_TIMEOUT")
+      ? "timeout"
+      : network ? "unavailable" : fallbackCode,
     message,
-    retryable: RETRYABLE_MESSAGE_RE.test(message),
+    retryable: network !== undefined,
   };
 }
 

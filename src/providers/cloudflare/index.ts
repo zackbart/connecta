@@ -362,10 +362,16 @@ function failureFor(
     );
   }
   const authCoded = [...codes].some((code) => AUTH_ERROR_CODES.has(code));
-  if (status === 401 || status === 403 || authCoded) {
+  if (status === 401 || authCoded) {
     return new ConnectorCallError(
       "auth_required",
       `Cloudflare rejected the configured credential (HTTP ${status}). ${detail} Check that it is valid and has permission to access this resource.`,
+    );
+  }
+  if (status === 403) {
+    return new ConnectorCallError(
+      "provider_permission_denied",
+      `Cloudflare refused access to this resource (HTTP 403). ${detail} Verify the configured credential first; if valid, ask the account administrator to grant the required resource permission and token scope.`,
     );
   }
   if (status === 400 || status === 409 || status === 422) {
@@ -3683,8 +3689,8 @@ function apiUsageGuide(
     : "It declares no default account. `list_accounts` supplies the `accountId` the Workers, KV, R2, and Pages tools need.";
   const authenticationLine =
     authentication === "apiToken"
-      ? "The API token is operator-managed and scoped by permission. An `auth_required` failure means the token is missing, invalid, or lacks that call's permission. Call `verify_api_token` first."
-      : "The Global API Key and account email are operator-managed. The key has the same access as its Cloudflare user. An `auth_required` failure means one field is missing, the pair is invalid, or the user lacks access. Call `verify_global_api_key` first.";
+      ? "The API token is operator-managed and scoped by permission. An `auth_required` failure means the token is missing or invalid. A `provider_permission_denied` failure asks an administrator to grant resource permission and token scope. Call `verify_api_token` first."
+      : "The Global API Key and account email are operator-managed. The key has the same access as its Cloudflare user. An `auth_required` failure means one field is missing or the pair is invalid. A `provider_permission_denied` failure asks an administrator to grant the user access. Call `verify_global_api_key` first.";
   return `# Cloudflare usage
 
 Account purpose: ${purpose}

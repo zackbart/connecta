@@ -1,6 +1,6 @@
 import { callbackAuth, bindCallback, oauthVault } from "./fixtures/oauth.js";
 import { fetchTestUiDetails } from "./helpers.js";
-import { auth, UnauthorizedError } from "@modelcontextprotocol/client";
+import { auth, OAuthError, UnauthorizedError } from "@modelcontextprotocol/client";
 import type { OAuthValueKey } from "../src/storage/keys.js";
 import type {
   FetchLike,
@@ -2972,7 +2972,10 @@ describe("OAuthRefreshCoordinator", () => {
     }
 
     expect(sdkError).toBeInstanceOf(Error);
-    expect(classifyCallError(sdkError)).toMatchObject({ retryable: true });
+    // Direct SDK callers see the registered code; Connecta's remote boundary
+    // translates it to a typed retry verdict without reading its description.
+    expect(sdkError).toBeInstanceOf(OAuthError);
+    expect(sdkError).toMatchObject({ code: "temporarily_unavailable" });
     expect(await contender.pendingAuthorizationUrl()).toBeUndefined();
     expect(tokenRequests).toBe(1);
     writeGate.resolve();
@@ -5544,9 +5547,10 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
   const trusted = "https://auth.example";
   const foreign = "https://foreign-auth.example";
 
-  function downstream() {
+  function downstream({ acceptIssuedTokens = false } = {}) {
     let advertised = trusted;
     let issued = 0;
+    const accessTokens = new Map<string, string>();
     const requests: { url: string; text: string }[] = [];
     const fetchStub: FetchLike = async (input, init = {}) => {
       const url = new URL(input);
@@ -5576,6 +5580,7 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
         }
         if (url.href === `${server}/token`) {
           issued++;
+          accessTokens.set(server, `${name}-access-${issued}`);
           return Response.json({
             access_token: `${name}-access-${issued}`,
             token_type: "Bearer",
@@ -5583,11 +5588,25 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
           });
         }
       }
-      // The resource server refuses every token, so each call asks the
+      // By default the resource server refuses every token, so each call asks the
       // authorization server it currently advertises to recover the grant.
       // Once it names a foreign one, its challenge points at fresh metadata
       // too, as a compromised downstream's would.
       if (url.href === mcpUrl) {
+        const accessToken = accessTokens.get(advertised);
+        if (acceptIssuedTokens && accessToken !== undefined &&
+            new Headers(init.headers).get("authorization") === `Bearer ${accessToken}`) {
+          if (init.method !== "POST") return new Response(null, { status: 405 });
+          const request = JSON.parse(String(init.body)) as {
+            id?: number; method: string; params?: { protocolVersion?: string };
+          };
+          if (request.method.startsWith("notifications/")) return new Response(null, { status: 202 });
+          const result = request.method === "initialize"
+            ? { protocolVersion: request.params?.protocolVersion, capabilities: { tools: {} },
+                serverInfo: { name: "test", version: "1" } }
+            : { tools: [] };
+          return Response.json({ jsonrpc: "2.0", id: request.id, result });
+        }
         const metadata = advertised === trusted ? resourceMetadataUrl : rotatedMetadataUrl;
         return new Response(null, {
           status: 401,
@@ -5667,7 +5686,7 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
       expect(text, url).not.toMatch(/trusted-(refresh|access|secret|client)/);
     }
     expect(toForeign.map(({ url }) => url)).not.toContain(`${foreign}/token`);
-    expect(classifyCallError(error).code).toBe("auth_required");
+    expect(classifyCallError(error).code).toBe("downstream_oauth_required");
     // Nothing was retired inside the SDK's flow: it found nothing for the
     // foreign server and went on within the same epoch.
     expect(await storage.get("oauth:generation")).toBe(generation);
@@ -5677,7 +5696,7 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
     // anything is sent.
     server.requests.length = 0;
     const again = await c.listTools(scope(storage)).then(() => undefined, (e: unknown) => e);
-    expect(classifyCallError(again).code).toBe("auth_required");
+    expect(classifyCallError(again).code).toBe("downstream_oauth_required");
     expect(await storage.get("oauth:generation")).not.toBe(generation);
     for (const { url, text } of server.requests) {
       if (new URL(url).origin !== new URL(mcpUrl).origin) {
@@ -5718,7 +5737,7 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
     }
     expect(toForeign.map(({ url }) => url)).not.toContain(`${foreign}/token`);
     expect(server.requests.map(({ url }) => url)).not.toContain(`${trusted}/token`);
-    expect(classifyCallError(error).code).toBe("auth_required");
+    expect(classifyCallError(error).code).toBe("downstream_oauth_required");
     // Retired behind a new epoch: an operator re-authorizes once.
     expect(await storage.get("oauth:generation")).toMatch(/^v2:/);
     const stored = await Promise.all((await storage.list!("")).map((key) => storage.get(key)));
@@ -5779,7 +5798,7 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
     // Retirement lands mid-flow, after discovery was saved into the epoch it
     // retires. The client, verifier, and consent URL the flow writes next go
     // to the replacement epoch, and so must the discovery the callback checks.
-    const server = downstream();
+    const server = downstream({ acceptIssuedTokens: true });
     vi.stubGlobal("fetch", server.fetchStub);
     onTestFinished(() => { vi.unstubAllGlobals(); });
     const storage = memoryStorage();
@@ -5813,7 +5832,10 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
     // The connection is healthy again: Continue has nothing left to hand back.
     const after = await c.startAuth!(scope(storage), { force: false });
     expect(after.authorizationUrl).toBeUndefined();
-    expect(after.state).not.toBe("auth_required");
+    expect(after.state).toBe("ok");
+    expect(server.requests.filter(({ url }) => url === `${trusted}/token`)).toHaveLength(1);
+    expect(server.requests.some(({ url, text }) =>
+      url === mcpUrl && text.includes("Bearer trusted-access-1"))).toBe(true);
   });
 
   it("retires a bound client with the unbound token set beside it, so the consent names a client it can redeem", async () => {
@@ -6118,7 +6140,7 @@ describe("remoteMcp() and an authorization server the downstream switches to", (
     const c = connector();
     const error = await c.listTools(scope(storage)).then(() => undefined, (e: unknown) => e);
 
-    expect(classifyCallError(error).code).toBe("auth_required");
+    expect(classifyCallError(error).code).toBe("downstream_oauth_required");
     expect(server.requests.map(({ url }) => url)).not.toContain(`${trusted}/token`);
     // The access token still reaches the configured resource server, as it
     // always did; the refresh token and client secret reach no one.
@@ -7108,14 +7130,6 @@ describe("remoteMcp() dead and transient refresh grants", () => {
       "400 invalid_scope",
       () => Response.json({ error: "invalid_scope" }, { status: 400 }),
     ],
-    [
-      "403 with a non-OAuth body",
-      () =>
-        new Response("<html>Forbidden</html>", {
-          status: 403,
-          headers: { "content-type": "text/html" },
-        }),
-    ],
     ["404 with no body", () => new Response(null, { status: 404 })],
   ];
 
@@ -7132,7 +7146,7 @@ describe("remoteMcp() dead and transient refresh grants", () => {
         const { error, classified } = await failureOf(c.listTools(passive));
         expect(error).toBeInstanceOf(Error);
         expect(classified).toMatchObject({
-          code: "auth_required",
+          code: "downstream_oauth_required",
           retryable: false,
         });
         expect(classified.message).toContain("authorize_connector");
@@ -7187,7 +7201,7 @@ describe("remoteMcp() dead and transient refresh grants", () => {
     try {
       const passive = scope(storage, sealer);
       const { classified } = await failureOf(c.listTools(passive));
-      expect(classified).toMatchObject({ code: "auth_required" });
+      expect(classified).toMatchObject({ code: "downstream_oauth_required" });
       await c.closeScope?.(passive);
       expect(await storage.get(tokenKey)).toBeNull();
 
@@ -7280,9 +7294,9 @@ describe("remoteMcp() dead and transient refresh grants", () => {
       gate.release();
       const failures = await calls;
       expect(failures.map((f) => f.classified.code)).toEqual([
-        "auth_required",
-        "auth_required",
-        "auth_required",
+        "downstream_oauth_required",
+        "downstream_oauth_required",
+        "downstream_oauth_required",
       ]);
       expect(server.counts.token).toBe(1);
       const reader = new KvOAuthProvider("svc", storage, REDIRECT);
@@ -7293,6 +7307,31 @@ describe("remoteMcp() dead and transient refresh grants", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it.each(["plain refusal", "timeout temporarily rate limit 503", "invalid_grant"])(
+    "INV-6 INV-9: HTTP 403 refresh denial ignores %s and keeps the grant without consent",
+    async prose => {
+      const storage = await seededStorage();
+      const server = downstream({ current: () => Response.json({ error: "invalid_grant", error_description: prose }, { status: 403 }) });
+      const c = connector();
+      vi.stubGlobal("fetch", server.fetchStub);
+      const passive = scope(storage);
+      try {
+        const { error, classified } = await failureOf(c.listTools(passive));
+        expect(classified).toMatchObject({ code: "provider_permission_denied", retryable: false });
+        expect(classified.message).toContain("Check the account's permissions");
+        expect(classified.message).not.toMatch(/authorize_connector|retry authorization/);
+        expect((error as Error).cause).toBeUndefined();
+        expect(server.counts.token).toBe(1);
+        const reader = new KvOAuthProvider("svc", storage, REDIRECT);
+        expect(await reader.tokens()).toMatchObject({ refresh_token: "refresh-old" });
+        expect(await reader.pendingAuthorizationUrl()).toBeUndefined();
+        expect(await c.status!(passive)).toMatchObject({ state: "error" });
+      } finally {
+        await c.closeScope!(passive);
+      }
+    },
+  );
 
   const transientAnswers: [
     string,
@@ -7509,7 +7548,7 @@ describe("remoteMcp() dead and transient refresh grants", () => {
     [
       "a dead grant",
       () => Response.json({ error: "bad_refresh_token" }),
-      { code: "auth_required", retryable: false },
+      { code: "downstream_oauth_required", retryable: false },
       undefined,
     ],
     [

@@ -628,7 +628,7 @@ describe("errors (H11)", () => {
       body: { error: { code: 403, message: "Insufficient scopes.", status: "PERMISSION_DENIED", details: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }] } },
     });
     const failure = await call(connection(), "get_presentation", { presentationId: "deck1" }).catch((error) => error);
-    expect(failure.code).toBe("auth_required");
+    expect(failure.code).toBe("provider_permission_denied");
     expect(failure.message).toContain("https://www.googleapis.com/auth/presentations");
   });
 
@@ -1894,7 +1894,7 @@ describe("comments: the read path (#696)", { timeout: 60_000 }, () => {
   it("says a 403 on a comment read most likely means the account may only view the deck", async () => {
     route = () => ({ status: 403, body: { error: { code: 403, message: "The caller does not have permission", status: "PERMISSION_DENIED" } } });
     const failure = await call(connection(), "list_comments", { presentationId: "deck1" }).catch((error) => error);
-    expect(failure.code).toBe("connector_call_failed");
+    expect(failure.code).toBe("provider_permission_denied");
     expect(failure.message).toContain("The caller does not have permission");
     expect(failure.message).toContain("Reading comments needs comment access");
   });

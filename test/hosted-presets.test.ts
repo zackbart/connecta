@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import before from "./fixtures/hosted-presets-abc0d176.json";
 import guideChanges from "./fixtures/hosted-5c-guide-changes.json";
+import errorGuideChanges from "./fixtures/hosted-p2-item4-guide-changes.json";
 import trustChanges from "./fixtures/providers-p2-item1-contract-changes.json";
 import { classifyTool } from "../src/tool-safety.js";
 import { providerFixtures } from "./providers.generated.js";
@@ -33,7 +34,8 @@ async function hash(value: unknown): Promise<string> {
 }
 
 function expectedGuide(name: Name, content: string): string {
-  for (const [from, to] of guideChanges[name]) content = content.replaceAll(from!, to!);
+  const repairs = errorGuideChanges as Partial<Record<Name, string[][]>>;
+  for (const [from, to] of [...guideChanges[name], ...repairs[name] ?? []]) content = content.replaceAll(from!, to!);
   return content;
 }
 

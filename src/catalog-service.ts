@@ -17,6 +17,7 @@ import { resolveDiscoveryConcurrency } from "./concurrency.js";
 import {
   boundedEchoText,
   classifyCallError,
+  ConnectorCallError,
   framingError,
 } from "./errors.js";
 import type { CallErrorDetails } from "./errors.js";
@@ -366,6 +367,7 @@ interface CatalogFailureDetail {
 }
 
 interface CatalogDescriptionFailureDetail extends CatalogFailureDetail {
+  configuredConnectors?: string[];
   nextAction?: NonNullable<CallErrorDetails["nextAction"]>;
   /** Nearby canonical addresses, ranked deterministically by tool name. */
   suggestions?: string[];
@@ -386,6 +388,7 @@ export interface CatalogSearchPage {
     truncated?: true;
     connectorScope?: string;
     unknownConnector?: true;
+    configuredConnectors?: string[];
     unavailableConnectorCount?: number;
     /** Bounded typed failure for an explicitly scoped unavailable catalog. */
     catalogError?: CatalogFailureDetail;
@@ -597,7 +600,7 @@ export class CatalogService {
             {
               ...(this.requestSignal ? { signal: this.requestSignal } : {}),
               timeoutMs: this.probeTimeoutMs,
-              timeoutError: new Error(
+              timeoutError: new ConnectorCallError("timeout",
                 `${route} probe of "${id}" timed out after ${this.probeTimeoutMs}ms`,
               ),
             },
@@ -629,6 +632,7 @@ export class CatalogService {
           "unknown_address",
           `Unknown address "${boundedEchoText(address)}"`,
         ),
+        configuredConnectors: this.registry.listConnectors().map((connector) => connector.id),
         nextAction: this.searchRecovery(
           { query: recoveryQuery(query) },
           "Find the configured canonical address before retrying.",
@@ -1075,13 +1079,11 @@ export class CatalogService {
           }. Scope by connector and browse with an empty query to list the tools there.${filterRecovery}`;
     // A scope that resolved to nothing is the same silence one step earlier in
     // the lookup: no connector resolved, so no catalog was even attempted, so
-    // no catalog failed and the unavailable path below never fires. Echo only
-    // the ID the caller already supplied — naming what else is configured
-    // would answer a question they did not ask, past a filter they may not
-    // pass.
+    // no catalog failed and the unavailable path below never fires. Name
+    // only configured connectors in the current identity/pool registry view.
     const unknownConnectorGuidance =
       args.connector && !scopedConnector
-        ? `Connector "${args.connector}" is not configured in this deployment. Omit connector to search all configured tools.`
+        ? `Connector "${args.connector}" is not configured in this deployment. Omit connector to search all configured tools. Configured connectors for this endpoint: ${this.registry.listConnectors().map((connector) => connector.id).join(", ") || "none"}.`
         : undefined;
     // Searchable queries report analysis when the scorer had to degrade. A
     // non-empty query with no searchable terms reports the bounded raw input
@@ -1151,7 +1153,7 @@ export class CatalogService {
                 : {}),
               ...(args.connector ? { connectorScope: args.connector } : {}),
               ...(args.connector && !scopedConnector
-                ? { unknownConnector: true as const }
+                ? { unknownConnector: true as const, configuredConnectors: this.registry.listConnectors().map((connector) => connector.id) }
                 : {}),
               ...(unavailableCatalogs > 0
                 ? { unavailableConnectorCount: unavailableCatalogs }
@@ -1208,6 +1210,7 @@ export class CatalogService {
           error: message,
           errorDetails: {
             ...framingError("unknown_address", message),
+            configuredConnectors: this.registry.listConnectors().map((connector) => connector.id),
             nextAction: this.searchRecovery(
               { query: recoveryQuery(address) },
               "Find the configured canonical address before retrying.",

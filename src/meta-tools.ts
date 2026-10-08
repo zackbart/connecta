@@ -751,19 +751,16 @@ export function createMetaTools(
           "invalid_args",
           "input_required_unsupported",
         ].includes(outcome.error.code);
-      const makeFailedResult = () =>
-        recoveryRequired ||
-        call.resultMode === "value"
-          ? jsonResult({
-              ok: false,
-              error: outcome.error,
-              durationMs: outcome.durationMs,
-              attempts: outcome.attempts,
-              ...(call.diagnostics ? { timing: outcome.timing } : {}),
-            })
-          : errorResult(outcome.error.message);
+      // Every mode carries the complete repair envelope in both MCP forms.
+      const makeFailedResult = () => jsonResult({
+        ok: false,
+        error: outcome.error,
+        durationMs: outcome.durationMs,
+        attempts: outcome.attempts,
+        ...(call.diagnostics ? { timing: outcome.timing } : {}),
+      });
       let failedResult = makeFailedResult();
-      // Value mode repeats the error in text and structuredContent. Account for
+      // Errors repeat in text and structuredContent. Account for
       // both copies and JSON escaping when the bounded provider reason is large.
       if (!recoveryRequired) {
         const cap = resolveMaxResultBytes(
@@ -776,9 +773,7 @@ export function createMetaTools(
           failedResult = makeFailedResult();
         }
       }
-      if (recoveryRequired) {
-        failedResult.isError = true;
-      }
+      failedResult.isError = true;
       return {
         toolResult: failedResult,
         durationMs: outcome.durationMs,

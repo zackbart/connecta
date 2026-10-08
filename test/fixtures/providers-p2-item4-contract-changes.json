@@ -1,0 +1,39 @@
+{
+  "cloudflare": {
+    "padded-purpose": {
+      "guide": "48460d59fd87dc4ce1e790d259a0435a27643a21c0eb7f0273d9e01868c41bb4"
+    },
+    "empty-title": {
+      "guide": "48460d59fd87dc4ce1e790d259a0435a27643a21c0eb7f0273d9e01868c41bb4"
+    },
+    "blank-title": {
+      "guide": "48460d59fd87dc4ce1e790d259a0435a27643a21c0eb7f0273d9e01868c41bb4"
+    },
+    "default": {
+      "guide": "48460d59fd87dc4ce1e790d259a0435a27643a21c0eb7f0273d9e01868c41bb4"
+    },
+    "mcp": {
+      "guide": "20ed2ee8e37891a28b547041ee60f7f280cb2fc1365a229a55452e83d7982723"
+    },
+    "instructions": {
+      "guide": "1a728fc85cf14b4b155ad2342cec08601fb42de57bc45bbc8a3ff97d284a3318"
+    }
+  },
+  "planning-center": {
+    "padded-purpose": {
+      "guide": "f5e4c29a8d4ede4203286ca0caf3661c89825797b85890d1d7a3aa57fb686480"
+    },
+    "empty-title": {
+      "guide": "f5e4c29a8d4ede4203286ca0caf3661c89825797b85890d1d7a3aa57fb686480"
+    },
+    "blank-title": {
+      "guide": "f5e4c29a8d4ede4203286ca0caf3661c89825797b85890d1d7a3aa57fb686480"
+    },
+    "default": {
+      "guide": "f5e4c29a8d4ede4203286ca0caf3661c89825797b85890d1d7a3aa57fb686480"
+    },
+    "instructions": {
+      "guide": "78b3f78fd59826aef65fa4c801f7e34f734d2a16f72e64a810ea2d6583c7646d"
+    }
+  }
+}

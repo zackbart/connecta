@@ -404,9 +404,9 @@ function tokenFailure(
   const client = account.clientId
     ? `client ID ${account.clientId} (${account.clientEmail})`
     : `the client ID of ${account.clientEmail}`;
-  if (code === "unauthorized_client" || code === "access_denied") {
+  if (code === "unauthorized_client" || code === "access_denied" || code === "invalid_scope") {
     return new ConnectorCallError(
-      "auth_required",
+      "provider_permission_denied",
       `Google refused domain-wide delegation for ${account.clientEmail}.${said} A Workspace super admin must authorize ${client} in the Admin console (Security → Access and data control → API controls → Manage Domain Wide Delegation) with exactly these scopes: ${scopes.join(",")}. A new or changed grant can take up to 24 hours to apply.`,
     );
   }
@@ -434,6 +434,12 @@ function tokenFailure(
     return new ConnectorCallError(
       "unavailable",
       `Google's token endpoint answered HTTP ${status}.${said}`,
+    );
+  }
+  if (status === 403) {
+    return new ConnectorCallError(
+      "provider_permission_denied",
+      `Google refused domain-wide delegation.${said} Ask a Workspace super admin to review ${client} in the Admin console's Manage Domain Wide Delegation entry and grant exactly these scopes: ${scopes.join(",")}.`,
     );
   }
   return new ConnectorCallError(

@@ -356,7 +356,7 @@ describe("remoteMcp() tools/list pagination", () => {
     const err = await connector
       .listTools(context)
       .then(() => null, (reason: unknown) => reason);
-    expect(err).toMatchObject({ code: "auth_required" });
+    expect(err).toMatchObject({ code: "downstream_oauth_required" });
     await expect(connector.status!(context)).resolves.toMatchObject({
       state: "auth_required",
     });
@@ -958,7 +958,7 @@ describe("paginated catalogs through the discovery path", () => {
 
     // The failed walk is typed as an authorization failure and caches nothing.
     await expect(registry.getTools("paged", BASE, {})).rejects.toMatchObject({
-      code: "auth_required",
+      code: "downstream_oauth_required",
     });
 
     // An agent meets it as a call failure carrying the route to the URL: the
@@ -973,7 +973,7 @@ describe("paginated catalogs through the discovery path", () => {
     ) as {
       error: { code: string; nextAction?: { tool?: string } };
     };
-    expect(called.error.code).toBe("auth_required");
+    expect(called.error.code).toBe("downstream_oauth_required");
     expect(called.error.nextAction?.tool).toBe("authorize_connector");
     const authorized = JSON.parse(
       required(

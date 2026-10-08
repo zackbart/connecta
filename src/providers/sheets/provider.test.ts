@@ -1038,13 +1038,13 @@ describe("errors (H11)", () => {
     expect(failure.message).toContain("not visible to this account");
   });
 
-  it("maps a refused share to connector_call_failed and a bad range to invalid_args", async () => {
+  it("maps a refused share to provider_permission_denied and a bad range to invalid_args", async () => {
     route = () => ({
       status: 403,
       body: { error: { code: 403, message: "The caller does not have permission", status: "PERMISSION_DENIED" } },
     });
     await expect(call(connection(), "get_values", { spreadsheetId: ID, ranges: ["A1"] })).rejects.toMatchObject({
-      code: "connector_call_failed",
+      code: "provider_permission_denied",
     });
     route = () => ({
       status: 400,
@@ -1067,7 +1067,7 @@ describe("errors (H11)", () => {
       body: { error: { code: 403, message: "Insufficient scopes", details: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }] } },
     });
     const scope = await call(connection(), "get_spreadsheet", { spreadsheetId: ID }).catch((error) => error);
-    expect(scope.code).toBe("auth_required");
+    expect(scope.code).toBe("provider_permission_denied");
     expect(scope.message).toContain("https://www.googleapis.com/auth/spreadsheets");
   });
 });

@@ -271,8 +271,8 @@ function tithelyFailure(
   }
   if (status === 403) {
     return new ConnectorCallError(
-      "connector_call_failed",
-      `${detail} Tithe.ly refused the request: the key pair may not reach this resource, or API access may not be enabled for this environment. Tithe.ly does not say which.`,
+      "provider_permission_denied",
+      `${detail} Tithe.ly refused the request: the key pair may not reach this resource, or API access may not be enabled for this environment. Tithe.ly does not say which. Ask the account administrator to grant API access to this resource and environment.`,
       { retryable: false },
     );
   }

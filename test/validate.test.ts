@@ -474,3 +474,91 @@ it("never quotes a schema's enum, and bounds detail to 256 UTF-8 bytes plus its 
   expect(detail.endsWith("…")).toBe(true);
   expect(detail).not.toContain("\uFFFD");
 });
+
+it("INV-6: agent repair includes schema keys, enum values, bounds and received types without caller values", () => {
+  const schema: JsonSchema = {
+    type: "object", additionalProperties: false,
+    properties: {
+      mode: { type: "string", enum: ["fast", "safe"] },
+      count: { type: "integer", minimum: 1, maximum: 10 },
+    }, required: ["mode", "count"],
+  };
+  const error = validateToolInput(schema, { mode: "caller-secret", count: 20, typo: "another-secret" }, OPTS);
+  expect(error?.repair).toMatchObject({
+    acceptedKeys: ["mode", "count"],
+    issues: expect.arrayContaining([
+      { path: "/mode", receivedType: "string", enumValues: ["fast", "safe"] },
+      { path: "/count", receivedType: "number", bounds: { minimum: 1, maximum: 10 } },
+      { path: "/typo", receivedType: "string", acceptedKeys: ["mode", "count"] },
+    ]),
+    example: { mode: "fast", count: 1 },
+  });
+  expect(validateToolInput(schema, error?.repair?.example, OPTS)).toBeNull();
+  expect(JSON.stringify(error?.repair)).not.toContain("caller-secret");
+  expect(JSON.stringify(error?.repair)).not.toContain("another-secret");
+});
+
+it("INV-6: agent repair states dependent and conditional date requirements from the schema", () => {
+  const schema: JsonSchema = {
+    type: "object",
+    properties: {
+      distinct_id: { type: "string", minLength: 1 },
+      from_date: { type: "string", format: "date" },
+      to_date: { type: "string", format: "date" },
+    }, required: ["distinct_id"],
+    dependentRequired: { distinct_id: ["from_date", "to_date"] },
+    ...JSON.parse('{"if":{"required":["distinct_id"]},"then":{"required":["from_date","to_date"]}}'),
+  };
+  const error = validateToolInput(schema, { distinct_id: "caller-secret" }, OPTS);
+  expect(error?.repair?.conditionalRequirements).toContainEqual({
+    path: "/", condition: { required: ["distinct_id"] }, required: ["from_date", "to_date"],
+  });
+  expect(error?.repair?.example).toEqual({ distinct_id: "x", from_date: "2000-01-01", to_date: "2000-01-01" });
+  expect(validateToolInput(schema, error?.repair?.example, OPTS)).toBeNull();
+});
+
+it("INV-6: examples are verified and oversized schema detail is bounded", () => {
+  const unsupported: JsonSchema = { type: "object", properties: { code: { type: "string", pattern: "^CUSTOM-[0-9]{5}$" } }, required: ["code"] };
+  const error = validateToolInput(unsupported, {}, OPTS);
+  expect(error?.repair).not.toHaveProperty("example");
+  expect(error?.repair?.exampleUnavailable).toContain("No valid example");
+  const large: JsonSchema = { type: "string", enum: ["e".repeat(10000)] };
+  const repair = validateToolInput(large, 1, OPTS)?.repair;
+  expect(repair?.truncated).toBe(true);
+  expect(JSON.stringify(repair).length).toBeLessThan(4096);
+});
+
+it("INV-6: recursive schema examples stop before expanding beyond a shared synthesis budget", () => {
+  const schema: JsonSchema = {
+    type: "object",
+    properties: Object.fromEntries(Array.from({ length: 30 }, (_, index) => [`p${index}`, { $ref: "#" }])),
+    required: Array.from({ length: 30 }, (_, index) => `p${index}`),
+  };
+  const error = validateToolInput(schema, {}, OPTS);
+  expect(error?.code).toBe("invalid_args");
+  expect(error?.repair).not.toHaveProperty("example");
+  expect(error?.repair?.exampleUnavailable).toContain("No valid example");
+});
+
+it("INV-6: minimization restores a field when removing it makes validation throw", () => {
+  const schema: JsonSchema = {
+    type: "object", properties: { selector: { type: "string" } },
+    examples: [{ selector: "keep" }],
+    ...JSON.parse('{"if":{"required":["selector"]},"else":{"$ref":"#/$defs/missing"}}'),
+  };
+  const error = validateToolInput(schema, { selector: 1 }, OPTS);
+  expect(error?.repair?.example).toEqual({ selector: "keep" });
+  expect(validateToolInput(schema, error?.repair?.example, OPTS)).toBeNull();
+});
+
+it("INV-6: conditional advice does not assert dependencies from an unselected alternative", () => {
+  const schema: JsonSchema = {
+    type: "object", oneOf: [
+      { properties: { kind: { const: "a" }, trigger: { type: "string" }, extra: { type: "string" } }, required: ["kind"], dependentRequired: { trigger: ["extra"] } },
+      { properties: { kind: { const: "b" }, trigger: { type: "string" }, count: { type: "integer", minimum: 1 } }, required: ["kind"] },
+    ],
+  };
+  expect(validateToolInput(schema, { kind: "b", trigger: "v" }, OPTS)).toBeNull();
+  const error = validateToolInput(schema, { kind: "b", trigger: "v", count: 0 }, OPTS);
+  expect(error?.repair).not.toHaveProperty("conditionalRequirements");
+});
