@@ -85,6 +85,8 @@ import type {
   ConnectorCallAdmissionPolicy,
   ConnectorContext,
   ConnectorCredentialConfig,
+  ConnectorSkill,
+  ConnectorSkillResourceContents,
   ConnectorStatus,
   ConnectorUsageGuide,
   CredentialTestResult,
@@ -198,6 +200,8 @@ export interface RemoteMcpOptions {
    * discovery metadata. See `Connector.usageGuide`.
    */
   usageGuide?: string | ConnectorUsageGuide;
+  /** Opt in to downstream Skills listing and resource reads. Defaults to false. */
+  skills?: boolean;
   auth?: RemoteMcpAuth;
   /**
    * Reviewed read/write verdicts for this downstream's tools, by exact name.
@@ -255,7 +259,7 @@ export interface RemoteMcpOptions {
 const REMOTE_MCP_OPTIONS = optionsOf<RemoteMcpOptions>()({
   ...keys(
     "url", "title", "description", "authScope", "maxResultBytes", "versionNegotiation",
-    "redirects", "requireHttps", "logger", "_transportFactory", "classify",
+    "redirects", "requireHttps", "logger", "_transportFactory", "classify", "skills",
   ),
   callAdmission: CALL_ADMISSION,
   usageGuide: USAGE_GUIDE,
@@ -287,6 +291,193 @@ function unadvertisedResource(): ConnectorCallError {
 
 /** SDK aggregation cap; intake also refuses loops and non-progress (INV-8). */
 const MAX_TOOL_PAGES = 10_000;
+const SKILLS_EXTENSION = "io.modelcontextprotocol/skills";
+const MAX_SKILLS = 10_000;
+const MAX_SKILL_FILES = 512;
+const MAX_SKILL_BYTES = 16 * 1024 * 1024;
+// A valid UTF-8 text file can expand sixfold when JSON escapes control bytes.
+// Leave room for the envelope while accepting every file up to the spec limit.
+const MAX_SKILL_READ_RPC_BYTES = 6 * MAX_SKILL_BYTES + 1024 * 1024;
+
+/** Count UTF-8 without allocating another full copy of a bounded response. */
+function skillTextBytes(value: string): number {
+  let bytes = 0;
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code < 0x80) bytes++;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff && i + 1 < value.length &&
+      value.charCodeAt(i + 1) >= 0xdc00 && value.charCodeAt(i + 1) <= 0xdfff) {
+      bytes += 4;
+      i++;
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
+function skillObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function skillJsonBytes(value: unknown): number {
+  return skillTextBytes(JSON.stringify(value));
+}
+
+function validSkill(value: unknown): value is ConnectorSkill {
+  if (!skillObject(value) || typeof value.uri !== "string" || !value.uri ||
+    !skillObject(value.frontmatter) || typeof value.frontmatter.name !== "string" ||
+    !value.frontmatter.name || typeof value.frontmatter.description !== "string" ||
+    !value.frontmatter.description) return false;
+  if (value.resources === "dynamic") return true;
+  if (!Array.isArray(value.resources) || !value.resources.length || value.resources.length > MAX_SKILL_FILES) return false;
+  const uris = new Set<string>();
+  let bytes = 0;
+  for (const resource of value.resources) {
+    if (!skillObject(resource) || typeof resource.uri !== "string" || !resource.uri ||
+      uris.has(resource.uri) || typeof resource.digest !== "string" ||
+      !/^sha256:[a-f0-9]{64}$/.test(resource.digest) ||
+      typeof resource.size !== "number" || !Number.isSafeInteger(resource.size) || resource.size < 0) return false;
+    uris.add(resource.uri);
+    bytes += resource.size;
+    if (bytes > MAX_SKILL_BYTES) return false;
+  }
+  return uris.has(value.uri);
+}
+
+function completeSkillResult(value: unknown): value is Record<string, unknown> {
+  // The modern SDK codec rejects non-complete wire results and removes
+  // resultType before invoking an explicit result schema.
+  return skillObject(value) &&
+    typeof value.ttlMs === "number" && Number.isSafeInteger(value.ttlMs) && value.ttlMs >= 0 &&
+    (value.cacheScope === "public" || value.cacheScope === "private");
+}
+
+interface SkillPage {
+  skills: ConnectorSkill[];
+  nextCursor?: string;
+  bytes: number;
+}
+
+const SkillPageSchema: StandardSchemaV1<unknown, SkillPage> = {
+  "~standard": {
+    version: 1,
+    vendor: "connecta",
+    validate(value) {
+      if (!completeSkillResult(value) || !Array.isArray(value.skills) || value.skills.length > MAX_SKILLS ||
+        !value.skills.every(validSkill) || (value.nextCursor !== undefined && typeof value.nextCursor !== "string")) {
+        return { issues: [{ message: "Invalid or incomplete Skills listing." }] };
+      }
+      const bytes = skillJsonBytes(value);
+      if (bytes > MAX_SERIALIZED_CATALOG_BYTES) return { issues: [{ message: "Skills listing exceeds the byte limit." }] };
+      return { value: { skills: value.skills, bytes, ...(typeof value.nextCursor === "string" ? { nextCursor: value.nextCursor } : {}) } };
+    },
+  },
+};
+
+function skillReadSchema(uri: string): StandardSchemaV1<unknown, ConnectorSkillResourceContents[]> {
+  return {
+    "~standard": {
+      version: 1,
+      vendor: "connecta",
+      validate(value) {
+        if (!completeSkillResult(value) || !Array.isArray(value.contents) || value.contents.length !== 1 ||
+          skillJsonBytes(value) > MAX_SKILL_READ_RPC_BYTES) {
+          return { issues: [{ message: "Invalid or incomplete skill resource response." }] };
+        }
+        const content: unknown = value.contents[0];
+        if (!skillObject(content) || content.uri !== uri ||
+          (content.mimeType !== undefined && typeof content.mimeType !== "string")) {
+          return { issues: [{ message: "Unexpected skill resource contents." }] };
+        }
+        const mimeType = typeof content.mimeType === "string" ? { mimeType: content.mimeType } : {};
+        if (typeof content.text === "string" && !("blob" in content) &&
+          skillTextBytes(content.text) <= MAX_SKILL_BYTES) {
+          return { value: [{ uri, ...mimeType, text: content.text }] };
+        }
+        if (typeof content.blob === "string" && !("text" in content) &&
+          content.blob.length % 4 === 0 && !/[^A-Za-z0-9+/]/.test(content.blob.replace(/={1,2}$/, ""))) {
+          const bytes = content.blob.length / 4 * 3 - (content.blob.endsWith("==") ? 2 : content.blob.endsWith("=") ? 1 : 0);
+          if (bytes <= MAX_SKILL_BYTES) return { value: [{ uri, ...mimeType, blob: content.blob }] };
+        }
+        return { issues: [{ message: "Invalid or oversized skill resource bytes." }] };
+      },
+    },
+  };
+}
+
+/** Bound the body before SDK consumption, including its detached SSE reader. */
+async function boundedSkillResponse(response: Response, limit: number, rpcId: unknown, signal?: AbortSignal | null): Promise<Response> {
+  const exceeded = () => new ConnectorCallError("connector_call_failed", "Downstream Skills response exceeds the RPC byte limit.");
+  const declared = response.headers.get("content-length");
+  if (declared !== null && Number(declared) > limit) {
+    await response.body?.cancel().catch(() => {});
+    throw exceeded();
+  }
+  if (!response.body) return response;
+  const reader = response.body.getReader();
+  const abort = () => { void reader.cancel().catch(() => {}); };
+  signal?.addEventListener("abort", abort, { once: true });
+  let bytes = 0;
+  const chunks: Uint8Array[] = [];
+  const sse = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() === "text/event-stream";
+  // workerd applies BOM stripping to later decode() chunks too. Preserve
+  // embedded resource BOMs and strip only the SSE stream's initial BOM here.
+  const decoder = new TextDecoder("utf-8", { ignoreBOM: true, fatal: false });
+  let firstDecoded = true;
+  let frames = "";
+  try {
+    while (true) {
+      if (signal?.aborted) throw signal.reason;
+      const chunk = await reader.read();
+      if (signal?.aborted) throw signal.reason;
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      if (bytes > limit) throw exceeded();
+      if (!sse) { chunks.push(chunk.value); continue; }
+      let decoded = decoder.decode(chunk.value, { stream: true });
+      if (firstDecoded && decoded.length) {
+        firstDecoded = false;
+        if (decoded.startsWith("\uFEFF")) decoded = decoded.slice(1);
+      }
+      frames += decoded;
+      let separator: RegExpExecArray | null;
+      while ((separator = /\r\n\r\n|\n\n|\r\r/.exec(frames)) !== null) {
+        const frame = frames.slice(0, separator.index);
+        frames = frames.slice(separator.index + separator[0].length);
+        const data = frame.split(/\r\n|\n|\r/).filter(line => line.startsWith("data:"))
+          .map(line => line.slice(5).replace(/^ /, "")).join("\n");
+        if (!data) continue;
+        const message: unknown = JSON.parse(data);
+        if (skillObject(message) && message.id === rpcId && ("result" in message || "error" in message)) {
+          // The SDK's detached SSE consumer does not settle body-read errors.
+          // Hand it the bounded terminal JSON-RPC answer without changing the
+          // resource strings, and close any server-kept-open response stream.
+          await reader.cancel().catch(() => {});
+          const headers = new Headers(response.headers);
+          headers.set("content-type", "application/json");
+          headers.delete("content-length");
+          return new Response(data, { status: response.status, statusText: response.statusText, headers });
+        }
+      }
+    }
+    if (sse) throw new ConnectorCallError("connector_call_failed", "Downstream Skills stream ended without a terminal RPC response.");
+    let next = 0;
+    return new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const chunk = chunks[next++];
+        if (chunk) controller.enqueue(chunk);
+        else controller.close();
+      },
+    }), { status: response.status, statusText: response.statusText, headers: response.headers });
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    throw error;
+  } finally {
+    signal?.removeEventListener("abort", abort);
+    reader.releaseLock();
+  }
+}
+
 
 /**
  * Compatibility concession for hand-rolled servers that serialize
@@ -1089,6 +1280,10 @@ interface ConnectionState {
  */
 export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   opts = assertKnownOptions(opts, `remoteMcp(${JSON.stringify(id)})`, REMOTE_MCP_OPTIONS);
+  const skillsEnabled = opts.skills;
+  if (skillsEnabled !== undefined && typeof skillsEnabled !== "boolean") {
+    throw new Error(`[connecta] connector "${id}" skills must be a boolean.`);
+  }
   const classification =
     opts.classify === undefined
       ? undefined
@@ -1316,7 +1511,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const atMcpBoundary = (
     ctx: ConnectorContext,
     err: unknown,
-    step: "MCP handshake" | "tools/list" | "tools/call" | "resources/read",
+    step: "MCP handshake" | "tools/list" | "tools/call" | "skills/list" | "resources/read",
     transport: Transport | undefined,
     signals: readonly (AbortSignal | undefined)[],
   ): unknown => {
@@ -1324,7 +1519,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // outer MCP operation must not replace them with the endpoint's facts.
     if (failureRecord({}, err).step?.startsWith("OAuth ")) return downstreamCallError(err);
     const httpStatus = err instanceof SdkHttpError ? err.status : undefined;
-    const facts = { step, origin: endpointOrigin, ...(httpStatus ? { httpStatus } : {}) };
+    // Skills operations retain the existing closed operator-record vocabulary.
+    const facts = {
+      ...(step === "skills/list" || step === "resources/read" ? {} : { step }),
+      origin: endpointOrigin, ...(httpStatus ? { httpStatus } : {}),
+    };
     const classified = downstreamCallError(redactSentSecrets(ctx, err), undefined, undefined, undefined, sentSecretsFor(ctx));
     const verdict = isOauth && classified instanceof ConnectorCallError && classified.code === "auth_required"
       ? carryFailureFacts(err, authRequiredError()) : classified;
@@ -1736,7 +1935,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     const url = new URL(opts.url);
     const trackedFetch: FetchLike = async (input, init) => {
       trackSentRequest(ctx, input, init);
-      return await fetch(input, init);
+      const response = await fetch(input, init);
+      if (skillsEnabled && typeof init?.body === "string") {
+        let rpc: unknown;
+        try { rpc = JSON.parse(init.body); }
+        catch { return response; } // OAuth exchanges can send form-encoded bodies.
+        if (skillObject(rpc) && (rpc.method === "skills/list" || rpc.method === "resources/read")) {
+          return boundedSkillResponse(response, rpc.method === "skills/list" ? MAX_SERIALIZED_CATALOG_BYTES : MAX_SKILL_READ_RPC_BYTES, rpc.id, init.signal);
+        }
+      }
+      return response;
     };
     // A runtime refusing the assembled header quotes it, and the transport
     // error below keeps none of what the runtime said. So whether the
@@ -2230,6 +2438,39 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       [`transport.${key}`, opts[key as "versionNegotiation" | "redirects" | "requireHttps"] === undefined ? "default" : "config"] as const)),
   });
   const resourceTemplateRefusals = new Set<ResourceTemplateRefusal>();
+  const skillScopeOpen = (ctx: ConnectorContext, state: ConnectionState) => {
+    if (isClosed(state)) throw scopeEndedError();
+    if (ctx.signal?.aborted) throw ctx.signal.reason instanceof Error ? ctx.signal.reason : scopeEndedError();
+  };
+
+  const withSkillsClient = async <T>(
+    ctx: ConnectorContext,
+    method: "skills/list" | "resources/read",
+    run: (client: Client, state: ConnectionState) => Promise<T>,
+  ): Promise<T> => {
+    const state = stateFor(ctx);
+    const client = await ensureConnected(ctx, state);
+    try {
+      skillScopeOpen(ctx, state);
+      const capabilities = client.getServerCapabilities();
+      const extension = capabilities?.extensions?.[SKILLS_EXTENSION];
+      if (client.getProtocolEra() !== "modern" || !skillObject(capabilities?.resources) || !skillObject(extension) ||
+        (extension.directoryRead !== undefined && typeof extension.directoryRead !== "boolean")) {
+        throw new ConnectorCallError("connector_call_failed", "The downstream did not declare a valid Skills extension and resources capability.");
+      }
+      const result = await run(client, state);
+      skillScopeOpen(ctx, state);
+      return result;
+    } catch (error) {
+      if (ownAbortReason(error, [ctx.signal]) && !hasSdkPayload(error)) throw error;
+      const classified = atMcpBoundary(ctx, error, method, client.transport, [ctx.signal]);
+      if (requiresAuthorization(classified) && state.client === client) state.authRequired = true;
+      // The SDK and downstream can quote whole manifests or bodies in errors.
+      // Keep their typed verdict and operator facts, never the quoted payload.
+      throw carryFailureFacts(classified, withheldAs(`Connector "${id}" downstream ${method} failed.`, classified));
+    }
+  };
+
   const connector: Connector = {
     id,
     ...(opts.title !== undefined ? { title: opts.title } : {}),
@@ -2256,6 +2497,43 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       ? { callAdmission: opts.callAdmission }
       : {}),
     ...(opts.usageGuide !== undefined ? { usageGuide: opts.usageGuide } : {}),
+    ...(skillsEnabled ? {
+      downstreamSkills: {
+        list: (ctx: ConnectorContext) => withSkillsClient(ctx, "skills/list", async (client, state) => {
+          const listed: ConnectorSkill[] = [];
+          const uris = new Set<string>();
+          const cursors = new Set<string>();
+          let cursor: string | undefined;
+          let bytes = 0;
+          for (let page = 0; page < MAX_SKILLS; page++) {
+            skillScopeOpen(ctx, state);
+            const result = await client.request({ method: "skills/list", ...(cursor === undefined ? {} : { params: { cursor } }) }, SkillPageSchema, requestOptions(ctx));
+            bytes += result.bytes;
+            if (bytes > MAX_SERIALIZED_CATALOG_BYTES || listed.length + result.skills.length > MAX_SKILLS) {
+              throw new ConnectorCallError("connector_call_failed", "Downstream Skills listing exceeds the aggregate limit.");
+            }
+            for (const skill of result.skills) {
+              if (uris.has(skill.uri)) throw new ConnectorCallError("connector_call_failed", "Downstream Skills listing contains duplicate skill URIs.");
+              uris.add(skill.uri);
+              listed.push(skill);
+            }
+            if (result.nextCursor === undefined) return listed;
+            if (!result.skills.length || cursors.has(result.nextCursor)) {
+              throw new ConnectorCallError("connector_call_failed", "Downstream Skills pagination loops or makes no progress.");
+            }
+            cursors.add(result.nextCursor);
+            cursor = result.nextCursor;
+          }
+          throw new ConnectorCallError("connector_call_failed", "Downstream Skills listing exceeds the page limit.");
+        }),
+        read: (uri: string, ctx: ConnectorContext) => withSkillsClient(ctx, "resources/read", async (client) => {
+          // The registry admits only advertised manifest URIs. An explicit
+          // request bypasses the SDK readResource response cache entirely and
+          // validates the raw result before its resource union drops fields.
+          return client.request({ method: "resources/read", params: { uri } }, skillReadSchema(uri), requestOptions(ctx));
+        }),
+      },
+    } : {}),
     // Data the registry classifies every read with; listTools below returns
     // the downstream's listing unclassified.
     ...(classification !== undefined ? { classification } : {}),
@@ -2644,7 +2922,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     };
   }
 
-  const withActiveSecrets = async <T>(ctx: ConnectorContext, run: () => Promise<T>): Promise<T> => {
+  const withActiveSecrets = async <T>(ctx: ConnectorContext, run: () => Promise<T>, redactResult = true): Promise<T> => {
     trackCredentialReads(ctx);
     const secrets = sentSecretsFor(ctx);
     if (opts.auth?.type === "headers") {
@@ -2654,7 +2932,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     let active = activeContexts.get(state);
     if (!active) { active = new Set(); activeContexts.set(state, active); }
     active.add(ctx);
-    try { return redactSentSecrets(ctx, await run()); }
+    try {
+      const result = await run();
+      return redactResult ? redactSentSecrets(ctx, result) : result;
+    }
     catch (error) { throw redactSentSecrets(ctx, error); }
     finally { active.delete(ctx); }
   };
@@ -2665,6 +2946,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   connector.listTools = (ctx) => withActiveSecrets(ctx, () => listTools(ctx));
   const readResource = connector.readResource!;
   connector.readResource = (uri, ctx) => withActiveSecrets(ctx, () => readResource(uri, ctx));
+  if (connector.downstreamSkills) {
+    const { list, read } = connector.downstreamSkills;
+    connector.downstreamSkills.list = (ctx) => withActiveSecrets(ctx, () => list(ctx), false);
+    connector.downstreamSkills.read = (uri, ctx) => withActiveSecrets(ctx, () => read(uri, ctx), false);
+  }
 
   if (isOauth && !staticClient && clientMetadataUrl === undefined) declareSelfHostedClient(connector, oauthScope);
   if (isOauth) {
@@ -2680,6 +2966,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     connector.listTools = retain(connector.listTools, 0);
     connector.callTool = retain(connector.callTool, 2);
     connector.readResource = retain(connector.readResource, 1);
+    if (connector.downstreamSkills) {
+      connector.downstreamSkills.list = retain(connector.downstreamSkills.list, 0);
+      connector.downstreamSkills.read = retain(connector.downstreamSkills.read, 1);
+    }
     connector.status = retain(connector.status!, 0);
     connector.startAuth = retain(connector.startAuth!, 0);
     connector.disconnectAuth = retain(connector.disconnectAuth!, 0);
@@ -2691,6 +2981,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   connector.listTools = payloadFree(connector.listTools);
   connector.callTool = payloadFree(connector.callTool);
   connector.readResource = payloadFree(connector.readResource);
+  if (connector.downstreamSkills) {
+    connector.downstreamSkills.list = payloadFree(connector.downstreamSkills.list);
+    connector.downstreamSkills.read = payloadFree(connector.downstreamSkills.read);
+  }
   if (connector.startAuth) connector.startAuth = payloadFree(connector.startAuth);
   if (connector.finishAuth) connector.finishAuth = payloadFree(connector.finishAuth);
   if (isOauth) registerInvocationAuth(connector, retainingOAuthPartition(async ctx => {
