@@ -44,7 +44,7 @@ import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
 import { byteReadResponse } from "../byte-read-response.js";
 import { redactCatalog, redactSentSecrets, sentSecretsFor, shortSecretWarning, trackCredentialReads, type SentSecrets } from "../sent-secrets.js";
 import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "../catalog-limits.js";
-import { catalogClientOptions, catalogIntake, closeCatalogCacheScope, observeCatalogChange, observeCatalogFetch } from "../catalog-cache.js";
+import { catalogClientOptions, catalogItems, type CatalogMethod, type CatalogResult, closeCatalogCacheScope, observeCatalogChange, observeCatalogFetch } from "../catalog-cache.js";
 import { reviewedClassification } from "../catalog-drift.js";
 import { connectorScopeCleanupClaimed } from "../connector-scope.js";
 import {
@@ -75,6 +75,7 @@ import { detach, runEdge } from "../runtime/run.js";
 import { assertKnownOptions, keys, optionsOf } from "../config-schema.js";
 import { describedEndpoint, describedUrl } from "../described.js";
 import { retryAfterMs } from "./guarded-fetch.js";
+import { resourceUriMatchesTemplate } from "./resource-uri.js";
 import { callerOf } from "../connector-caller.js";
 import { readNegotiation, storeNegotiation } from "./negotiation-cache.js";
 import { CALL_ADMISSION, REMOTE_MCP_AUTH, USAGE_GUIDE } from "./option-shapes.js";
@@ -279,6 +280,10 @@ const TERMINATE_SESSION_BUDGET_MS = 1_000;
  * this bounds one that never does.
  */
 const LOCAL_CLOSE_BUDGET_MS = 1_000;
+
+function unadvertisedResource(): ConnectorCallError {
+  return new ConnectorCallError("not_found", "The resource URI is not advertised by this connector.", { retryable: false });
+}
 
 /** SDK aggregation cap; intake also refuses loops and non-progress (INV-8). */
 const MAX_TOOL_PAGES = 10_000;
@@ -850,7 +855,7 @@ function recordWireErrors(transport: Transport, catalogChanged: () => void): voi
   transport.onmessage = (message) => {
     // The public transport observer runs before SDK 2.3.1's delete-based
     // eviction. Ordinary opposite-scope cleanup never rotates this fence.
-    if (isJSONRPCNotification(message) && message.method === "notifications/tools/list_changed") catalogChanged();
+    if (isJSONRPCNotification(message) && (message.method === "notifications/tools/list_changed" || message.method === "notifications/resources/list_changed")) catalogChanged();
     if (isJSONRPCErrorResponse(message) && seen.size < MAX_WIRE_ERRORS) {
       seen.add(wireErrorKey(message.error.code, message.error.message));
     }
@@ -1558,20 +1563,29 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    * an advertised successor is never proof of a complete catalog (INV-8). */
   const listingContexts = new WeakMap<RequestOptions, ConnectorContext>();
   const installCatalogIntake = (client: Client, ctx: ConnectorContext, cache: Awaited<ReturnType<typeof catalogClientOptions>>): void => {
-    const listTools = client.listTools.bind(client);
-    client.listTools = (params, options) => {
+    let toolPages = 0;
+    const listingContext = (options?: RequestOptions) => {
       const { signal: _signal, timeoutMs: _timeout, ...base } = ctx;
-      return cache.withListing(
-        (options && listingContexts.get(options)) ?? { ...base, requestScope: ctx.requestScope ?? ctx,
-          ...(options?.signal ? { signal: options.signal } : {}), ...(options?.timeout ? { timeoutMs: options.timeout } : {}) },
-        () => listTools(params, options),
-      );
+      return (options && listingContexts.get(options)) ?? { ...base, requestScope: ctx.requestScope ?? ctx,
+        ...(options?.signal ? { signal: options.signal } : {}), ...(options?.timeout ? { timeoutMs: options.timeout } : {}) };
     };
+    const listTools = client.listTools.bind(client);
+    client.listTools = (params, options) => cache.withListing(listingContext(options), async () => {
+      const before = toolPages;
+      const result = await listTools(params, options);
+      if (toolPages !== before && params?.cursor === undefined) await cache.completedCatalogRefresh(result);
+      return result;
+    });
+    const listResources = client.listResources.bind(client);
+    client.listResources = (params, options) => cache.withListing(listingContext(options), () => listResources(params, options));
+    const listResourceTemplates = client.listResourceTemplates.bind(client);
+    client.listResourceTemplates = (params, options) => cache.withListing(listingContext(options), () => listResourceTemplates(params, options));
     const request = client.request.bind(client);
-    const walks = new WeakMap<object, { names: Set<string>; cursors: Set<string>; barren: number; bytes: number; first?: ReturnType<typeof catalogIntake> }>();
+    const walks = new WeakMap<object, { names: Set<string>; cursors: Set<string>; barren: number; bytes: number; first?: CatalogResult & { ttlMs: number; cacheScope: "public" | "private" } }>();
     client.request = (async (...args: unknown[]) => {
       const message = args[0] as { method: string; params?: { cursor?: string } };
-      if (message.method !== "tools/list") return Reflect.apply(request, client, args);
+      if (message.method !== "tools/list" && message.method !== "resources/list" && message.method !== "resources/templates/list") return Reflect.apply(request, client, args);
+      const method: CatalogMethod = message.method;
       const ctx = cache.currentContext();
       const options = (args.length === 3 ? args[2] : args[1]) as RequestOptions | undefined;
       if (isClosed(entryFor(ctx))) throw scopeEndedError();
@@ -1582,18 +1596,20 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         walk = { names: new Set(), cursors: new Set(), barren: 0, bytes: 0 };
         walks.set(key, walk);
       }
-      let page: ListToolsResult;
+      let page: CatalogResult;
       try {
-        page = await request(message as Parameters<Client["request"]>[0], CompatibleListToolsResultSchema, options);
+        page = await request(message as Parameters<Client["request"]>[0], method === "tools/list" ? CompatibleListToolsResultSchema : method === "resources/list" ? specTypeSchemas.ListResourcesResult : specTypeSchemas.ListResourceTemplatesResult, options);
       } catch (error) {
-        if (isCursorShapeError(error)) throw new ConnectorCallError("connector_call_failed", "Downstream tools/list nextCursor must be a string, null, or absent.", { retryable: false });
+        if (isCursorShapeError(error)) throw new ConnectorCallError("connector_call_failed", "Downstream catalog nextCursor must be a string, null, or absent.", { retryable: false });
         throw error;
       }
-      const clean = catalogIntake(ctx, page);
+      const clean = cache.intake(ctx, method, page);
+      if (method === "tools/list") toolPages++;
       if (message.params?.cursor === undefined) observeCatalogFetch(ctx, Date.now());
-      const tools = clean.tools.filter(tool => {
-        if (walk.names.has(tool.name)) return false;
-        walk.names.add(tool.name);
+      const tools = catalogItems(method, clean).filter(item => {
+        const name = method === "tools/list" ? item.name : method === "resources/list" ? (item as { uri: string }).uri : (item as { uriTemplate: string }).uriTemplate;
+        if (walk.names.has(name)) return false;
+        walk.names.add(name);
         return true;
       });
       walk.bytes += new TextEncoder().encode(JSON.stringify(tools)).byteLength;
@@ -1601,12 +1617,13 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         throw new ConnectorCallError("connector_call_failed", "Downstream catalog exceeds the complete-catalog ceiling.", { retryable: false });
       }
       if (clean.nextCursor !== undefined) {
-        if (walk.cursors.has(clean.nextCursor)) throw new ConnectorCallError("connector_call_failed", "Downstream tools/list pagination chain loops.", { retryable: false });
-        if (tools.length === 0 && ++walk.barren > 1) throw new ConnectorCallError("connector_call_failed", "Downstream tools/list pagination is not advancing.", { retryable: false });
+        if (walk.cursors.has(clean.nextCursor)) throw new ConnectorCallError("connector_call_failed", "Downstream catalog pagination chain loops.", { retryable: false });
+        if (tools.length === 0 && ++walk.barren > 1) throw new ConnectorCallError("connector_call_failed", "Downstream catalog pagination is not advancing.", { retryable: false });
         if (tools.length > 0) walk.barren = 0;
         walk.cursors.add(clean.nextCursor);
       }
-      const result = { ...clean, tools };
+      const field = method === "tools/list" ? "tools" : method === "resources/list" ? "resources" : "resourceTemplates";
+      const result = { ...clean, [field]: tools };
       if (!walk.first) walk.first = result;
       else {
         // SDK aggregation retains page-one metadata. A later page may only
@@ -2014,10 +2031,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           credentialHeader, credentialScheme, authScope: opts.authScope ?? "shared",
           redirects: opts.redirects ?? "none", versionNegotiation: opts.versionNegotiation ?? "auto",
           oauthConfig, oauthScope,
-        }), JSON.stringify([genAtStart, state.credentialDigest]), connectionAbort.signal, cacheOwner));
+        }), JSON.stringify([genAtStart, state.credentialDigest]), connectionAbort.signal, cacheOwner, requestAuth || opts.authScope === "personal" ? "private" : "shared",
+          provider ? async () => digestOf(JSON.stringify(await provider.tokens())) : undefined));
         if (!owned()) return yield* Effect.fail(scopeEndedError());
         const makeClient = () => {
-          const { withListing: _listing, currentContext: _context, ...clientOptions } = cacheOptions;
+          const { intake: _intake, completedCatalogRefresh: _refresh, withListing: _listing, currentContext: _context, ...clientOptions } = cacheOptions;
           const client = new Client(
             { name: "connecta", version: CONNECTA_VERSION },
             {
@@ -2399,6 +2417,17 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const state = stateFor(ctx);
       const client = await ensureConnected(ctx, state);
       try {
+        const options = requestOptions(ctx) ?? {};
+        listingContexts.set(options, ctx);
+        try {
+          if (!client.getServerCapabilities()?.resources) throw unadvertisedResource();
+          const resources = await client.listResources(undefined, options);
+          const templates = await client.listResourceTemplates(undefined, options);
+          if (!resources.resources.some(resource => resource.uri === uri) &&
+              !templates.resourceTemplates.some(template => resourceUriMatchesTemplate(uri, template.uriTemplate))) throw unadvertisedResource();
+        } catch (err) {
+          throw atMcpBoundary(ctx, err, "resources/read", client.transport, [ctx.signal]);
+        } finally { listingContexts.delete(options); }
         const result = await client.readResource({ uri }, {
           ...requestOptions(ctx), cacheMode: "bypass", allowInputRequired: true,
         }).catch((err: unknown) => {

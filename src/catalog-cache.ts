@@ -1,7 +1,8 @@
 // The SDK owns aggregation and freshness. This adapter stores only complete,
-// intake-redacted tools/list successes in the deployment's SQL-backed KV.
-import type { CacheKey, ClientOptions, ListToolsResult, ResponseCacheStore } from "@modelcontextprotocol/client";
+// intake-redacted catalog successes in the deployment's SQL-backed KV.
+import type { CacheKey, ClientOptions, ListToolsResult, ListResourcesResult, ListResourceTemplatesResult, ResponseCacheStore } from "@modelcontextprotocol/client";
 import { MAX_CACHE_TTL_MS, specTypeSchemas } from "@modelcontextprotocol/client";
+import { callerOf } from "./connector-caller.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { ConnectorCallError } from "./errors.js";
 import { fingerprintSerializedCatalog } from "./catalog-fingerprint.js";
@@ -14,10 +15,32 @@ import type { ConnectorContext, KVStorage } from "./types.js";
 interface CatalogCacheSettings {
   storage: KVStorage;
   partition: string;
+  sharedPartition?: string;
   defaultTtlMs: number;
   minTtlMs: number;
   maxTtlMs: number;
+  onCompletedCatalogRefresh?: (refresh: CompletedCatalogRefresh, ctx: ConnectorContext) => void | Promise<void>;
 }
+export interface CompletedCatalogRefresh {
+  connectorId: string;
+  previousDigest?: string;
+  digest: string;
+}
+/** Phase 4 drift events attach here. Only complete wire refreshes call this hook. */
+export async function observeCompletedCatalogRefresh(ctx: ConnectorContext, refresh: CompletedCatalogRefresh): Promise<void> {
+  await settings.get(ctx)?.onCompletedCatalogRefresh?.(refresh, ctx);
+}
+export type CatalogMethod = "tools/list" | "resources/list" | "resources/templates/list";
+export type CatalogResult = ListToolsResult | ListResourcesResult | ListResourceTemplatesResult;
+export function catalogItems(method: CatalogMethod, result: CatalogResult) {
+  if (method === "tools/list") return (result as ListToolsResult).tools;
+  if (method === "resources/list") return (result as ListResourcesResult).resources;
+  return (result as ListResourceTemplatesResult).resourceTemplates;
+}
+function catalogSchema(method: CatalogMethod) {
+  return method === "tools/list" ? specTypeSchemas.ListToolsResult : method === "resources/list" ? specTypeSchemas.ListResourcesResult : specTypeSchemas.ListResourceTemplatesResult;
+}
+
 const fetchedAt = new WeakMap<ConnectorContext, number>();
 export function observeCatalogFetch(ctx: ConnectorContext, at: number): void { fetchedAt.set(ctx, at); }
 export function catalogFetchedAt(ctx: ConnectorContext): number | undefined { return fetchedAt.get(ctx); }
@@ -122,10 +145,13 @@ interface Listing {
   ctx: ConnectorContext;
   generation: { value?: string };
   ended: boolean;
+  previousDigest?: string | undefined;
+  credentialIdentity?: string | undefined;
 }
 interface CacheOperation {
   ctx: ConnectorContext;
   generation: Listing["generation"];
+  credentialIdentity?: string | undefined;
   stopped: () => boolean;
   io: <T>(read: () => Promise<T>) => Promise<T>;
 }
@@ -138,12 +164,17 @@ export async function catalogClientOptions(
   authPartition: string,
   connectionSignal?: AbortSignal,
   owner?: object,
+  sharing: "private" | "shared" = "private",
+  resolveCredentialIdentity?: () => Promise<string>,
 ): Promise<Pick<ClientOptions, "responseCacheStore" | "cachePartition" | "defaultCacheTtlMs"> & {
+  intake: (ctx: ConnectorContext, method: CatalogMethod, result: CatalogResult) => CatalogResult & { ttlMs: number; cacheScope: "public" | "private" };
+  completedCatalogRefresh: (result: ListToolsResult) => Promise<void>;
   withListing: <T>(ctx: ConnectorContext, read: () => Promise<T>) => Promise<T>;
   currentContext: () => ConnectorContext;
 }> {
   const policy = settings.get(ctx);
-  const partition = JSON.stringify([policy?.partition ?? "unscoped", authPartition]);
+  const partition = JSON.stringify([policy?.partition ?? JSON.stringify([ctx.baseUrl, ctx.publicUrl, callerOf(ctx)]), authPartition]);
+  const sharedPartition = JSON.stringify(["host-shared", policy?.sharedPartition ?? JSON.stringify([ctx.baseUrl, ctx.publicUrl, callerOf(ctx)?.pool]), authPartition]);
   const storage = policy?.storage ?? ctx.storage;
   const configHash = (await fingerprintSerializedCatalog(JSON.stringify([config, policy?.defaultTtlMs ?? 300_000, policy?.minTtlMs ?? 0, policy?.maxTtlMs ?? MAX_CACHE_TTL_MS]))).fingerprint;
   const scope = cacheScope(ctx, connectorId, owner);
@@ -159,6 +190,7 @@ export async function catalogClientOptions(
     return {
       ctx: listing?.ctx ?? ctx,
       generation: listing?.generation ?? { ...connectionGeneration },
+      credentialIdentity: listing?.credentialIdentity,
       stopped: () => unavailable || ended(),
       io: read => new Promise((resolve, reject) => {
         const cleanup = () => { for (const signal of signals) signal.removeEventListener("abort", abort); };
@@ -188,7 +220,8 @@ export async function catalogClientOptions(
     throw new Error("Catalog cache generation is busy.");
   };
   const namespace = async (operation: CacheOperation): Promise<string | undefined> => {
-    const { stopped, generation } = operation;
+    const { stopped, generation, io } = operation;
+    if (resolveCredentialIdentity && await io(resolveCredentialIdentity) !== operation.credentialIdentity) return undefined;
     const current = await currentGeneration(operation);
     if (!current || stopped()) return undefined;
     generation.value ??= current;
@@ -196,14 +229,14 @@ export async function catalogClientOptions(
   };
   const address = async (key: CacheKey, operation: CacheOperation): Promise<string | undefined> => {
     const { stopped } = operation;
-    if (stopped() || key.method !== "tools/list" || key.params) return undefined;
+    if (stopped() || !isCatalogMethod(key.method) || key.params) return undefined;
     let pair: unknown;
     try { pair = JSON.parse(key.partition ?? ""); } catch { return undefined; }
-    if (!Array.isArray(pair) || pair.length !== 2 || (pair[1] !== "" && pair[1] !== partition)) return undefined;
+    if (!Array.isArray(pair) || pair.length !== 2 || (pair[1] !== partition && (pair[1] !== "" || sharing !== "shared"))) return undefined;
     const prefix = await namespace(operation);
     if (!prefix || stopped()) return undefined;
     // Hash the admitted principal/pool/auth partition; no identities or server text in keys.
-    const digest = (await fingerprintSerializedCatalog(pair[1])).fingerprint;
+    const digest = (await fingerprintSerializedCatalog(JSON.stringify([key.method, pair[1] === "" ? sharedPartition : partition, operation.credentialIdentity ?? null]))).fingerprint;
     return stopped() ? undefined : responseCacheKeys.entry(prefix, digest);
   };
   const manifest = (raw: string | null): Manifest | undefined => {
@@ -218,6 +251,49 @@ export async function catalogClientOptions(
         /^sha256:[0-9]+:[0-9a-f]{64}$/.test(m.fingerprint) ? m : undefined;
     } catch { return undefined; }
   };
+  const intake = (ctx: ConnectorContext, method: CatalogMethod, result: CatalogResult) => {
+    const body = sharing === "private" ? { ...result, cacheScope: "private" as const } : result;
+    if (method === "tools/list") return catalogIntake(ctx, body as ListToolsResult);
+    const field = method === "resources/list" ? "resources" : "resourceTemplates";
+    const items = catalogItems(method, body).map(({ _meta: _ignored, ...item }) => item);
+    if (items.length > MAX_CATALOG_TOOLS) throw catalogCeiling();
+    const clean = sentSecretsForRequest(ctx.requestScope ?? ctx).redact({ ...body, [field]: items });
+    if (new TextEncoder().encode(JSON.stringify(clean)).byteLength > MAX_SERIALIZED_CATALOG_BYTES) throw catalogCeiling();
+    return { ...clean, ttlMs: catalogTtlMs(ctx, body.ttlMs), cacheScope: body.cacheScope === "public" ? "public" as const : "private" as const };
+  };
+  let lastCompletedDigest: string | undefined;
+  const completedCatalogRefresh = async (result: ListToolsResult) => {
+    const listing = active;
+    const operation = capture();
+    const { stopped, io } = operation;
+    if (!listing || stopped()) return;
+    const clean = intake(listing.ctx, "tools/list", result);
+    const digest = (await fingerprintSerializedCatalog(JSON.stringify(clean))).fingerprint;
+    if (stopped()) return;
+    let previousDigest = listing.previousDigest ?? lastCompletedDigest;
+    try {
+      // A digest baseline survives cache expiry and invalidation, while keeping
+      // the same host auth partition. It contains no catalog or caller text.
+      const partitionDigest = (await fingerprintSerializedCatalog(JSON.stringify([
+        clean.cacheScope === "public" ? sharedPartition : partition, operation.credentialIdentity ?? null,
+      ]))).fingerprint;
+      const key = responseCacheKeys.refreshDigest(connectorId, configHash, partitionDigest);
+      for (let attempt = 0; attempt < 16; attempt++) {
+        if (stopped() || !await namespace(operation) || stopped()) return;
+        const previous = await io(() => storage.get(key));
+        if (stopped()) return;
+        if (previous && /^sha256:[0-9]+:[0-9a-f]{64}$/.test(previous)) previousDigest = previous;
+        if (await io(() => storage.compareAndSet(key, previous, digest, { ttlSeconds: GENERATION_TTL_SECONDS }))) break;
+        if (attempt === 15) throw new Error("Catalog refresh digest is busy.");
+      }
+    } catch (error) {
+      if (stopped()) return;
+      logFailure(listing.ctx.logger, "catalog refresh observation failed", failureRecord({ connector: connectorId }, error));
+    }
+    if (stopped()) return;
+    lastCompletedDigest = digest;
+    await observeCompletedCatalogRefresh(listing.ctx, { connectorId, ...(previousDigest ? { previousDigest } : {}), digest });
+  };
   const store: ResponseCacheStore = {
     async get(key) {
       const operation = capture();
@@ -225,6 +301,7 @@ export async function catalogClientOptions(
       const root = await address(key, operation);
       if (!root || stopped()) return undefined;
       const m = manifest(await io(() => storage.get(root)));
+      if (key.method === "tools/list" && active && m) active.previousDigest ??= m.fingerprint;
       if (stopped() || !m || m.expiresAt <= Date.now()) return undefined;
       const chunks: string[] = [];
       for (let i = 0; i < m.chunkCount; i++) {
@@ -236,12 +313,14 @@ export async function catalogClientOptions(
       const value = chunks.join("");
       const fingerprint = await fingerprintSerializedCatalog(value);
       if (stopped() || fingerprint.byteLength > MAX_SERIALIZED_CATALOG_BYTES || fingerprint.fingerprint !== m.fingerprint || !await namespace(operation) || stopped()) return undefined;
-      const result = JSON.parse(value) as ListToolsResult;
-      if (!Array.isArray(result.tools) || result.tools.length > MAX_CATALOG_TOOLS || "nextCursor" in result ||
+      const result = JSON.parse(value) as CatalogResult;
+      const method = key.method as CatalogMethod;
+      const items = catalogItems(method, result);
+      if (!Array.isArray(items) || items.length > MAX_CATALOG_TOOLS || "nextCursor" in result ||
         (result.resultType !== undefined && result.resultType !== "complete")) return undefined;
-      const validated = await specTypeSchemas.ListToolsResult["~standard"].validate(result);
+      const validated = await catalogSchema(method)["~standard"].validate(result);
       if (stopped() || validated.issues) return undefined;
-      const clean = JSON.stringify(catalogIntake(ctx, validated.value));
+      const clean = JSON.stringify(intake(ctx, method, validated.value));
       observeCatalogFetch(ctx, m.fetchedAt);
       return { value: clean, stamp: m.stamp, expiresAt: m.expiresAt, scope: m.scope };
     },
@@ -250,13 +329,15 @@ export async function catalogClientOptions(
       const { ctx, stopped, io } = operation;
       const root = await address(key, operation);
       if (!root || stopped()) return 0;
-      const result = JSON.parse(entry.value) as ListToolsResult;
-      if (!Array.isArray(result.tools) || "nextCursor" in result ||
+      const result = JSON.parse(entry.value) as CatalogResult;
+      const method = key.method as CatalogMethod;
+      if (!Array.isArray(catalogItems(method, result)) || "nextCursor" in result ||
         (result.resultType !== undefined && result.resultType !== "complete")) return 0;
       // Defence in depth: the SDK catches store failures, so intake also runs on
       // the request path, where a secret-bearing name refuses the entire list.
-      const value = JSON.stringify(catalogIntake(ctx, result));
+      const value = JSON.stringify(intake(ctx, method, result));
       const fingerprint = await fingerprintSerializedCatalog(value);
+      if (method === "tools/list" && active) active.previousDigest ??= manifest(await io(() => storage.get(root)))?.fingerprint;
       const expiresAt = Math.min(entry.expiresAt ?? Date.now(), (catalogFetchedAt(ctx) ?? Date.now()) + catalogTtlMs(ctx, result.ttlMs));
       if (stopped() || expiresAt <= Date.now() || !await namespace(operation) || stopped()) return 0;
       const revision = crypto.randomUUID();
@@ -278,7 +359,7 @@ export async function catalogClientOptions(
         const previous = await io(() => storage.get(root));
         if (stopped() || expiresAt <= Date.now()) return 0;
         const stamp = Math.max(Date.now(), (manifest(previous)?.stamp ?? 0) + 1, lastStamp + 1);
-        const m: Manifest = { stamp, expiresAt, fetchedAt: catalogFetchedAt(ctx) ?? Date.now(), scope: result.cacheScope === "public" ? "public" : "private", revision, chunkCount, fingerprint: fingerprint.fingerprint };
+        const m: Manifest = { stamp, expiresAt, fetchedAt: catalogFetchedAt(ctx) ?? Date.now(), scope: sharing === "shared" && result.cacheScope === "public" ? "public" : "private", revision, chunkCount, fingerprint: fingerprint.fingerprint };
         const published = await io(() => storage.compareAndSet(root, previous, JSON.stringify(m), { ttlSeconds: ttlSeconds() }));
         if (stopped()) return 0;
         if (published) { lastStamp = stamp; return stamp; }
@@ -290,7 +371,7 @@ export async function catalogClientOptions(
       const root = await address(key, operation);
       if (root && !operation.stopped()) await operation.io(() => storage.delete(root));
     },
-    async evict(method) { if (method === "tools/list") await store.clear(); },
+    async evict(method) { if (isCatalogMethod(method)) await store.clear(); },
     async clear() { const operation = capture(); if (!operation.stopped()) await operation.io(() => invalidateCatalogCache(storage, connectorId)); },
   };
   // Refresh/bypass listings may never call get(). Pin before any wire I/O so
@@ -318,6 +399,7 @@ export async function catalogClientOptions(
       active = listing;
       const operation = capture();
       try {
+        if (resolveCredentialIdentity) listing.credentialIdentity = await operation.io(resolveCredentialIdentity);
         // Each new listing pins before even a refresh's first wire page. A
         // notification fences this listing, while a later listing can refresh.
         if (!operation.stopped()) {
@@ -339,5 +421,9 @@ export async function catalogClientOptions(
     tail = pending.then(() => {}, () => {});
     return pending;
   };
-  return { responseCacheStore: store, cachePartition: partition, defaultCacheTtlMs: policy?.defaultTtlMs ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds * 1000, withListing, currentContext: () => active?.ctx ?? ctx };
+  return { intake, completedCatalogRefresh, responseCacheStore: store, cachePartition: partition, defaultCacheTtlMs: policy?.defaultTtlMs ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds * 1000, withListing, currentContext: () => active?.ctx ?? ctx };
+}
+
+function isCatalogMethod(method: string): method is CatalogMethod {
+  return method === "tools/list" || method === "resources/list" || method === "resources/templates/list";
 }

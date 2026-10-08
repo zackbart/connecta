@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Server } from "@modelcontextprotocol/server";
-import { catalogClientOptions, attachCatalogCache, catalogIntake } from "../src/catalog-cache.js";
+import { catalogClientOptions, attachCatalogCache, catalogIntake, invalidateCatalogCache, type CompletedCatalogRefresh } from "../src/catalog-cache.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { MAX_CATALOG_CHUNK_BYTES } from "../src/catalog-limits.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
@@ -47,9 +47,10 @@ async function storage(): Promise<KVStorage> {
     return sqlStorage(driver, "sqlite");
   }
 }
-async function fixture(options: { ttl?: number; scope?: "public" | "private"; legacy?: boolean; min?: number; max?: number; fallback?: number; sharedCredential?: boolean; description?: string; nextPage?: { ttl: number; scope: "public" | "private" } } = {}) {
+async function fixture(options: { ttl?: number; scope?: "public" | "private"; legacy?: boolean; min?: number; max?: number; fallback?: number; sharedCredential?: boolean; description?: string; operatorShared?: boolean; nextPage?: { ttl: number; scope: "public" | "private" } } = {}) {
   const store = await storage();
   const id = `catalog_${crypto.randomUUID().replaceAll("-", "")}`;
+  let tokenA = TOKEN_A;
   let listings = 0; let mode: "ok" | "name" | "error" | "partial" | "header" | "paged" = "ok";
   const requests: string[] = [];
   const server = httpDownstream(mcp => mcp.registerTool("read", { annotations: { readOnlyHint: true } }, async () => ({ content: [] })));
@@ -71,17 +72,100 @@ async function fixture(options: { ttl?: number; scope?: "public" | "private"; le
     }
     return server.fetch(input instanceof Request ? input.url : input, init);
   });
-  const connector = remoteMcp(id, { url: server.url, versionNegotiation: options.legacy ? "legacy" : "auto", auth: { type: "request", token: async ctx => !options.sharedCredential && callerOf(ctx)?.identity.actor.id === "b" ? TOKEN_B : TOKEN_A } });
+  const connector = remoteMcp(id, { url: server.url, versionNegotiation: options.legacy ? "legacy" : "auto", auth: options.operatorShared ? { type: "headers", headers: { Authorization: `Bearer ${TOKEN_A}` } } : { type: "request", token: async ctx => !options.sharedCredential && callerOf(ctx)?.identity.actor.id === "b" ? TOKEN_B : tokenA } });
   const registry = () => new Registry([connector], { storage: store, logger: silentLogger, toolCacheTtlSeconds: options.fallback ?? 300, catalogMinTtlSeconds: options.min ?? 0, catalogMaxTtlSeconds: options.max ?? 86_400 });
   const read = async (root: Registry, principal = "a", pool = "one", requestScope = {}) => {
     const view = root.scoped({ connectorIds: [id], principalKey: principal, caller: { identity: { actor: { kind: "human", id: principal, namespace: "test" }, interactive: true }, authenticated: true, pool } });
     try { return await view.getTools(id, BASE, requestScope); }
     finally { await connector.closeScope?.(view.contextFor(id, BASE, requestScope)); }
   };
-  return { store, id, connector, registry, read, requests, listings: () => listings, mode: (value: typeof mode) => { mode = value; } };
+  return { store, id, connector, registry, read, requests, rotate: (token: string) => { tokenA = token; }, listings: () => listings, mode: (value: typeof mode) => { mode = value; } };
 }
 
 describe("SQL-backed SDK catalog cache", () => {
+  it("INV-6 INV-8: observes one completed SDK catalog refresh with previous and new digests, excluding hits and failures", async () => {
+    const store = await storage(); const id = `refresh_${crypto.randomUUID().replaceAll("-", "")}`;
+    const ctx = { ...connectorContext(store), requestScope: {} };
+    const refreshes: CompletedCatalogRefresh[] = [];
+    attachCatalogCache(ctx, { storage: store, partition: "principal/pool", defaultTtlMs: 300_000, minTtlMs: 0, maxTtlMs: 86_400_000,
+      onCompletedCatalogRefresh: (refresh, observed) => { expect(observed).toBe(ctx); refreshes.push(refresh); } });
+    let revision = "old"; let fail = false; let server: Server;
+    const connector = remoteMcp(id, { url: "https://downstream.test/mcp", _transportFactory: () => {
+      const [client, peer] = InMemoryTransport.createLinkedPair();
+      server = new Server({ name: "downstream", version: "1" }, { capabilities: { tools: { listChanged: true } } });
+      server.setRequestHandler("tools/list", async request => {
+        if (fail && request.params?.cursor) throw new Error("private-listing-failure");
+        return { tools: [{ name: `${revision}_${request.params?.cursor ? "second" : "first"}`, inputSchema: { type: "object" } }],
+          ...(!request.params?.cursor ? { nextCursor: "second" } : {}), ttlMs: 60_000, cacheScope: "private" };
+      });
+      const connected = server.connect(peer);
+      closers.push(async () => { await connected; await server.close(); });
+      return client;
+    } });
+    closers.push(() => connector.closeScope!(ctx));
+    await connector.listTools(ctx); await connector.listTools(ctx);
+    expect(refreshes).toHaveLength(1);
+    expect(refreshes[0]).toMatchObject({ connectorId: id, digest: expect.stringMatching(/^sha256:/) });
+    expect(refreshes[0]!.previousDigest).toBeUndefined();
+    const generation = await store.get(responseCacheKeys.generation(id));
+    fail = true;
+    await server!.notification({ method: "notifications/tools/list_changed" });
+    await waitFor(async () => await store.get(responseCacheKeys.generation(id)) !== generation);
+    await expect(connector.listTools(ctx)).rejects.toThrow();
+    expect(refreshes).toHaveLength(1);
+    fail = false; revision = "new";
+    await connector.listTools(ctx); await connector.listTools(ctx);
+    expect(refreshes).toHaveLength(2);
+    expect(refreshes[1]!.previousDigest).toBe(refreshes[0]!.digest);
+    expect(refreshes[1]!.digest).not.toBe(refreshes[0]!.digest);
+  });
+
+  it("INV-5 INV-8: OAuth credential identities fence cache hits and mid-listing publication without an epoch change", async () => {
+    const store = await storage(); const ctx = connectorContext(store);
+    const id = `oauth_identity_${crypto.randomUUID().replaceAll("-", "")}`;
+    let identity = "credential-digest-a";
+    const cache = await catalogClientOptions(ctx, id, "oauth-configuration", "same-epoch", undefined, undefined, "private", async () => identity);
+    const key = { method: "tools/list", partition: JSON.stringify(["server", cache.cachePartition]) };
+    const value = JSON.stringify({ tools: [{ name: "read", inputSchema: { type: "object" } }], ttlMs: 60_000, cacheScope: "private" });
+    await cache.withListing(ctx, () => cache.responseCacheStore!.set(key, { value, expiresAt: Date.now() + 60_000, scope: "private" }));
+    await cache.withListing(ctx, async () => { expect(await cache.responseCacheStore!.get(key)).toBeDefined(); });
+    identity = "credential-digest-b";
+    await cache.withListing(ctx, async () => { expect(await cache.responseCacheStore!.get(key)).toBeUndefined(); });
+    await cache.withListing(ctx, async () => {
+      identity = "credential-digest-c";
+      expect(await cache.responseCacheStore!.set(key, { value, expiresAt: Date.now() + 60_000, scope: "private" })).toBe(0);
+    });
+  });
+
+  it("INV-6 INV-8: refresh digest baselines survive invalidation and a new request without retaining catalogs", async () => {
+    const store = await storage(); const id = `refresh_restart_${crypto.randomUUID().replaceAll("-", "")}`;
+    const refreshes: CompletedCatalogRefresh[] = [];
+    const refresh = async (name: string) => {
+      const ctx = connectorContext(store);
+      attachCatalogCache(ctx, { storage: store, partition: "principal/pool", defaultTtlMs: 300_000, minTtlMs: 0, maxTtlMs: 86_400_000,
+        onCompletedCatalogRefresh: value => { refreshes.push(value); } });
+      const cache = await catalogClientOptions(ctx, id, "configuration", "grant");
+      await cache.withListing(ctx, () => cache.completedCatalogRefresh({ tools: [{ name, inputSchema: { type: "object" } }], ttlMs: 0 }));
+    };
+    await refresh("old"); await invalidateCatalogCache(store, id); await refresh("new");
+    expect(refreshes).toHaveLength(2);
+    expect(refreshes[1]!.previousDigest).toBe(refreshes[0]!.digest);
+    const keys = (await store.list(responseCacheKeys.prefix(id))).filter(key => key.includes(":refresh-digest:"));
+    expect(keys).toHaveLength(1);
+    expect(await store.get(keys[0]!)).toBe(refreshes[1]!.digest);
+  });
+
+  it("INV-4 INV-5: private auth modes refuse the SDK's empty shared slot", async () => {
+    const store = await storage(); const ctx = connectorContext(store);
+    const id = `private_slot_${crypto.randomUUID().replaceAll("-", "")}`;
+    const cache = await catalogClientOptions(ctx, id, "configuration", "private-grant");
+    const key = { method: "tools/list", partition: JSON.stringify(["server", ""]) };
+    const value = JSON.stringify({ tools: [{ name: "read", inputSchema: { type: "object" } }], ttlMs: 60_000, cacheScope: "public" });
+    expect(await cache.responseCacheStore!.set(key, { value, expiresAt: Date.now() + 60_000, scope: "public" })).toBe(0);
+    expect(await cache.responseCacheStore!.get(key)).toBeUndefined();
+    expect(await store.list(responseCacheKeys.prefix(id))).toEqual([]);
+  });
+
   it.each([0, 1])("INV-7 INV-8: closing temporary instance %s preserves another instance with the same connector id and request scope", async closing => {
     const store = await storage(); const id = `instances_${crypto.randomUUID().replaceAll("-", "")}`;
     const ctx = { ...connectorContext(store), requestScope: {} };
@@ -145,6 +229,8 @@ describe("SQL-backed SDK catalog cache", () => {
           listings++;
           return { tools: [{ name: changed ? "new_catalog" : "old_catalog", description: `Catalog ${TOKEN_A}`, inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }], ttlMs: 60_000, cacheScope: scope };
         });
+        server.setRequestHandler("resources/list", async () => ({ resources: [{ name: "manual", uri: "docs://manual/start" }], ttlMs: 60_000, cacheScope: "private" }));
+        server.setRequestHandler("resources/templates/list", async () => ({ resourceTemplates: [], ttlMs: 60_000, cacheScope: "private" }));
         server.setRequestHandler("resources/read", async request => ({ contents: [{ uri: request.params.uri, text: "resource" }] }));
         const connected = server.connect(peer);
         closers.push(async () => { await connected; await server.close(); });
@@ -304,12 +390,38 @@ describe("SQL-backed SDK catalog cache", () => {
     await f.read(f.registry(), "b", "one"); expect(f.listings()).toBe(3);
   });
 
-  it("INV-5 INV-6: public cache hits carry only intake-redacted success and no prior SentSecrets", async () => {
+  it("INV-4 INV-5: public hints cannot share Alice's private workspace with Bob or another pool", async () => {
+    const f = await fixture({ ttl: 60_000, scope: "public", description: "Private Alice workspace: acquisition-budget-2027" });
+    await f.read(f.registry(), "a", "P");
+    f.mode("error");
+    await expect(f.read(f.registry(), "b", "Q")).rejects.toMatchObject({ code: "provider_permission_denied" });
+    await expect(f.read(f.registry(), "a", "Q")).rejects.toMatchObject({ code: "provider_permission_denied" });
+    expect(f.listings()).toBe(3);
+    await expect(f.read(f.registry(), "a", "P")).resolves.toMatchObject([{ description: "Private Alice workspace: acquisition-budget-2027" }]);
+    expect(f.listings()).toBe(3);
+  });
+
+  it("INV-4 INV-5: a rotated request token cannot reuse the same principal's public-hinted catalog", async () => {
+    const f = await fixture({ ttl: 60_000, scope: "public" });
+    await f.read(f.registry());
+    f.rotate("replacement-request-token"); f.mode("error");
+    await expect(f.read(f.registry())).rejects.toMatchObject({ code: "provider_permission_denied" });
+    expect(f.listings()).toBe(2);
+  });
+
+  it("INV-4 INV-5: operator-shared public catalogs reuse within a pool and stay separate across pools", async () => {
+    const f = await fixture({ ttl: 60_000, scope: "public", operatorShared: true });
+    await f.read(f.registry(), "a", "P"); await f.read(f.registry(), "b", "P");
+    expect(f.listings()).toBe(1);
+    await f.read(f.registry(), "a", "Q"); expect(f.listings()).toBe(2);
+  });
+
+  it("INV-5 INV-6: public hints preserve request-token isolation and intake redaction", async () => {
     const f = await fixture({ ttl: 60_000, scope: "public" });
     const a = await f.read(f.registry());
     const scopeB = {};
     const b = await f.read(f.registry(), "b", "two", scopeB);
-    expect(b).toEqual(a); expect(f.listings()).toBe(1);
+    expect(b).toEqual(a); expect(f.listings()).toBe(2);
     expect(JSON.stringify(b)).toContain("[redacted]");
     expect(JSON.stringify(b)).not.toContain(TOKEN_A);
     expect(sentSecretsForRequest(scopeB).text(TOKEN_A)).toBe(TOKEN_A);
@@ -390,17 +502,17 @@ describe("SQL-backed SDK catalog cache", () => {
     const ctx = connectorContext(store);
     attachCatalogCache(ctx, { storage: store, partition: "a/pool", defaultTtlMs: 300_000, minTtlMs: 0, maxTtlMs: 86_400_000 });
     const id = `configuration_${crypto.randomUUID().replaceAll("-", "")}`;
-    const a = await catalogClientOptions(ctx, id, "configuration-a", "grant");
+    const a = await catalogClientOptions(ctx, id, "configuration-a", "grant", undefined, undefined, "shared");
     const key = { method: "tools/list", partition: JSON.stringify(["self-reported-server-a", ""]) };
     const value = JSON.stringify({ resultType: "complete", tools: [{ name: "read", inputSchema: { type: "object" } }], ttlMs: 60_000, cacheScope: "public" });
     await a.responseCacheStore!.set(key, { value, expiresAt: Date.now() + 60_000, scope: "public" });
     expect(await a.responseCacheStore!.get({ ...key, partition: JSON.stringify(["self-reported-server-b", ""]) })).toBeDefined();
-    const changed = await catalogClientOptions(ctx, id, "configuration-b", "grant");
-    const otherConnector = await catalogClientOptions(ctx, id + "_other", "configuration-a", "grant");
+    const changed = await catalogClientOptions(ctx, id, "configuration-b", "grant", undefined, undefined, "shared");
+    const otherConnector = await catalogClientOptions(ctx, id + "_other", "configuration-a", "grant", undefined, undefined, "shared");
     expect(await changed.responseCacheStore!.get(key)).toBeUndefined();
     expect(await otherConnector.responseCacheStore!.get(key)).toBeUndefined();
     attachCatalogCache(ctx, { storage: store, partition: "a/pool", defaultTtlMs: 300_000, minTtlMs: 0, maxTtlMs: 30_000 });
-    const bounded = await catalogClientOptions(ctx, id, "configuration-a", "grant");
+    const bounded = await catalogClientOptions(ctx, id, "configuration-a", "grant", undefined, undefined, "shared");
     expect(await bounded.responseCacheStore!.get(key)).toBeUndefined();
   });
 

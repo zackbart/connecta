@@ -751,6 +751,7 @@ export class Registry implements RegistryView {
       partition: JSON.stringify([scope?.principalKey ?? this.opts.credentialOwner ?? null,
         scope?.subjectKey ?? null, scope?.caller?.identity ?? null, scope?.caller?.authenticated ?? false,
         scope?.caller?.pool ?? null]),
+      sharedPartition: JSON.stringify([baseUrl, this.opts.publicUrl ?? null, scope?.caller?.pool ?? null]),
       defaultTtlMs: (this.opts.toolCacheTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds) * 1000,
       minTtlMs: (this.opts.catalogMinTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogMinTtlSeconds) * 1000,
       maxTtlMs: (this.opts.catalogMaxTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogMaxTtlSeconds) * 1000,

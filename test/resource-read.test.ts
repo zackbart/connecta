@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { inputRequired, ProtocolError, ResourceNotFoundError } from "@modelcontextprotocol/server";
+import { callerOf } from "../src/connector-caller.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { CredentialVault } from "../src/credentials.js";
 import { ConnectorCallError } from "../src/errors.js";
@@ -257,4 +258,85 @@ it("INV-3, INV-5, INV-7: remote resource reads use resources/read, redact sent h
   expect(payloads.some(body => body.method === "tools/list")).toBe(false);
   expect(requests.every(request => request.url.startsWith(downstream.url))).toBe(true);
   expect(requests.filter(request => request.method === "POST").every(request => request.headers.get("X-API-Key") === token)).toBe(true);
+});
+
+function advertisedRemote() {
+  const storage = memoryStorage();
+  const calls: Array<{ method: string; uri?: string }> = [];
+  let token = "alice-resource-token";
+  let mode: "ok" | "loop" | "error" = "ok";
+  const downstream = httpDownstream(server => server.registerResource("manual", "docs://public/manual", {}, async () => ({ contents: [] })));
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    const message = request.method === "POST" ? await request.clone().json() as { id: string; method: string; params?: { cursor?: string; uri?: string } } : undefined;
+    if (message) calls.push({ method: message.method, ...(message.params?.uri ? { uri: message.params.uri } : {}) });
+    if (message?.method === "resources/list" || message?.method === "resources/templates/list") {
+      if (mode === "error" && message.params?.cursor) return new Response("private-inventory-error", { status: 403 });
+      const resources = message.method === "resources/list";
+      const owner = request.headers.get("authorization") === "Bearer alice-resource-token" ? "alice" : "bob";
+      return Response.json({ jsonrpc: "2.0", id: message.id, result: {
+        resultType: "complete", ttlMs: 60_000, cacheScope: "public",
+        ...(!message.params?.cursor || mode === "loop" ? { nextCursor: "second" } : {}),
+        ...(resources ? { resources: [{ name: "manual", uri: !message.params?.cursor ? "docs://public/manual" : `docs://${owner}/manual` }] }
+          : { resourceTemplates: [{ name: "entry", uriTemplate: !message.params?.cursor ? "docs://public/{entry}" : `docs://${owner}/records/{record}{?format}` }] }),
+      } });
+    }
+    if (message?.method === "resources/read") return Response.json({ jsonrpc: "2.0", id: message.id, result: { resultType: "complete", ttlMs: 0, cacheScope: "private", contents: [{ uri: message.params?.uri, text: "synthetic-resource-payload" }] } });
+    return downstream.fetch(input instanceof Request ? input.url : input, init);
+  });
+  const connector = remoteMcp("docs", { url: downstream.url, auth: { type: "request", token: async ctx => callerOf(ctx)?.identity.actor.id === "bob" ? "bob-resource-token" : token }, logger: silentLogger });
+  const root = makeRegistry([connector], { storage });
+  const view = (principal = "alice", pool = "P") => root.scoped({ connectorIds: ["docs"], principalKey: principal,
+    caller: { identity: { actor: { kind: "human", id: principal, namespace: "test" }, interactive: true }, authenticated: true, pool } });
+  return { calls, view, storage, mode: (value: typeof mode) => { mode = value; }, rotate: () => { token = "rotated-alice-resource-token"; } };
+}
+
+it.each(["http://127.0.0.1/private", "file:///etc/passwd", "http://example.test/private", "data:text/plain,private"])("INV-3 INV-4 INV-6: refuses unadvertised URI %s before downstream read", async uri => {
+  const f = advertisedRemote();
+  const result = await read(f.view(), qualified("docs", uri));
+  expect(result.structuredContent).toMatchObject({ error: { code: "not_found", retryable: false, message: "The resource URI is not advertised by this connector." } });
+  expect(f.calls.filter(call => call.method === "resources/read")).toEqual([]);
+  expect(JSON.stringify(result)).not.toContain(uri);
+});
+
+it("INV-3 INV-4 INV-8: reads exact resources and templates from the complete paginated inventory", async () => {
+  const f = advertisedRemote();
+  for (const uri of ["docs://public/manual", "docs://alice/manual", "docs://alice/records/123?format=json", "docs://public/introduction"]) {
+    const result = await read(f.view(), qualified("docs", uri));
+    expect(result.isError, JSON.stringify({ output: result.structuredContent, calls: f.calls })).toBeUndefined();
+  }
+  expect(f.calls.filter(call => call.method === "resources/list")).toHaveLength(2);
+  expect(f.calls.filter(call => call.method === "resources/templates/list")).toHaveLength(2);
+  expect(f.calls.filter(call => call.method === "resources/read")).toHaveLength(4);
+  for (const key of await f.storage.list("response-cache:")) expect(await f.storage.get(key)).not.toContain("synthetic-resource-payload");
+});
+
+it.each(["docs://public/..", "docs://public/a/b", "docs://public/%2fprivate", "docs://public/%2e%2e", "docs://public/%252e%252e", "docs://public/http%3a%2f%2f127.0.0.1", "docs://public/%5cprivate"])("INV-3 INV-4: refuses template traversal URI %s before dispatch", async uri => {
+  const f = advertisedRemote();
+  expect((await read(f.view(), qualified("docs", uri))).structuredContent).toMatchObject({ error: { code: "not_found", retryable: false } });
+  expect(f.calls.filter(call => call.method === "resources/read")).toEqual([]);
+});
+
+it("INV-4 INV-5: public resource inventories stay private across callers, pools and token rotation", async () => {
+  const f = advertisedRemote();
+  const first = await read(f.view(), qualified("docs", "docs://alice/manual"));
+  expect(first.isError, JSON.stringify(first.structuredContent)).toBeUndefined();
+  expect((await read(f.view("bob", "Q"), qualified("docs", "docs://alice/manual"))).structuredContent).toMatchObject({ error: { code: "not_found" } });
+  expect(f.calls.filter(call => call.method === "resources/list")).toHaveLength(4);
+  expect((await read(f.view("alice", "Q"), qualified("docs", "docs://alice/manual"))).isError).toBeUndefined();
+  expect(f.calls.filter(call => call.method === "resources/list")).toHaveLength(6);
+  f.rotate();
+  expect((await read(f.view(), qualified("docs", "docs://alice/manual"))).structuredContent).toMatchObject({ error: { code: "not_found" } });
+  expect(f.calls.filter(call => call.method === "resources/list")).toHaveLength(8);
+  expect(f.calls.filter(call => call.method === "resources/read")).toHaveLength(2);
+});
+
+it.each(["loop", "error"] as const)("INV-3 INV-8: incomplete %s resource inventories refuse dispatch and are not cached", async mode => {
+  const f = advertisedRemote(); f.mode(mode);
+  const failed = await read(f.view(), qualified("docs", "docs://public/manual"));
+  expect(failed.isError).toBe(true);
+  expect(f.calls.filter(call => call.method === "resources/read")).toEqual([]);
+  f.mode("ok");
+  expect((await read(f.view(), qualified("docs", "docs://alice/manual"))).isError).toBeUndefined();
+  expect(f.calls.filter(call => call.method === "resources/list").length).toBeGreaterThan(2);
 });

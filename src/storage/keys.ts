@@ -169,6 +169,7 @@ export const responseCacheKeys = {
   generation: (id: string) => validateStorageKey(`response-cache:v1:${id}:generation`),
   namespace: (id: string, config: string, generation: string) => validateStorageKey(`response-cache:v1:${id}:${config}:${generation}:`),
   entry: (namespace: string, partition: string) => validateStorageKey(`${namespace}${partition}`),
+  refreshDigest: (id: string, config: string, partition: string) => validateStorageKey(`response-cache:v1:${id}:refresh-digest:${config}:${partition}`),
   chunk: (entry: string, revision: string, index: number) => validateStorageKey(`${entry}:chunk:${revision}:${index}`),
 } as const satisfies Keyed;
 
