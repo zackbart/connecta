@@ -127,7 +127,7 @@ const BASECAMP_CLASSIFICATION: ToolClassification = {
     "list_everything_todos": {"verdict": "read", "reason": "Retrieves Basecamp everything todos information without changing vendor state."},
     "list_everything_cards": {"verdict": "read", "reason": "Retrieves Basecamp everything cards information without changing vendor state."},
     "summarize_recording": {"verdict": "read", "reason": "Retrieves Basecamp recording information without changing vendor state."},
-    "create_stream_ticket": {"verdict": "read", "reason": "Mints a WebSocket credential, which is a side effect even without a persistent record."},
+    "create_stream_ticket": {"verdict": "read", "reason": "Retained exception from the 2026-10-05 live review: the server marks this short-lived, single-connection feed ticket read-only. It creates no Basecamp record and unlocks only the same observational feed as list_feed_events. The ticket is an ephemeral credential; the guide tells agents not to call it because Connecta cannot hold the WebSocket connection."},
     "get_todoset": {"verdict": "read", "reason": "Retrieves Basecamp todoset information without changing vendor state."},
     "list_todolists": {"verdict": "read", "reason": "Retrieves Basecamp todolists information without changing vendor state."},
     "get_todolist": {"verdict": "read", "reason": "Retrieves Basecamp todolist information without changing vendor state."},

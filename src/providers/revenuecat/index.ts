@@ -176,7 +176,7 @@ const REVENUECAT_CLASSIFICATION: ToolClassification = {
     "create-virtual-currency": {"verdict": "write", "reason": "create virtual currency creates or appends RevenueCat state; it has side effects."},
     "unarchive-virtual-currency": {"verdict": "destructive", "reason": "unarchive virtual currency changes existing RevenueCat state or removes it."},
     "update-virtual-currency": {"verdict": "destructive", "reason": "update virtual currency changes existing RevenueCat state or removes it."},
-    "create-webhook-integration": {"verdict": "destructive", "reason": "create webhook integration changes existing RevenueCat state or removes it."},
+    "create-webhook-integration": {"verdict": "destructive", "reason": "Starts delivering customer events to a caller-supplied URL; omitted filters deliver every customer event in the project. Destructive by consequence even though it creates a new integration."},
     "delete-webhook-integration": {"verdict": "destructive", "reason": "delete webhook integration changes existing RevenueCat state or removes it."},
     "update-webhook-integration": {"verdict": "destructive", "reason": "update webhook integration changes existing RevenueCat state or removes it."},
     "create-paywall-ai": {"verdict": "write", "reason": "create paywall ai creates or appends RevenueCat state; it has side effects."},

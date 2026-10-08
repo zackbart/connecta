@@ -405,10 +405,13 @@ connection context `create` supplies, the maintained text, then deployment
 instructions, which append and never replace. `src/provider.ts` imports neither
 transport, so an `api()` provider gains no MCP client or Effect graph from it
 (`test/purity.node.test.ts`). The factory carries its `definition`, which build and
-check tools read instead of keeping provider lists; Linear is converted, and
-the other 18 providers use a thin internal adapter to the same validation and
-description-stamping path until their definitions and folders move in later
-#705 items.
+check tools read instead of keeping provider lists. All nineteen providers
+live in their own folders. The eight hosted implementations, including the
+MCP branches of Notion, Vercel, and Cloudflare, use reviewed presets over
+`remoteMcp({ classify })`. The eleven API-only factories retain an internal
+adapter to the same definition and description-stamping path. The mixed
+providers still select one interface; capability reconciliation is planned in
+[#705 item 5d](https://github.com/zackbart/connecta/issues/705).
 
 `remoteMcp({ classify })` is the public way to declare what a downstream's
 tools do: `{ tools: { name: "read" | "write" | "destructive" | { verdict,
@@ -436,9 +439,10 @@ review applies the current one; a 0.28 (version 2) catalog loses its
 read-only claims, which may be an older classifier's, and is refreshed on
 first read. During refreshes the deployment already asked for, the registry
 counts drift against the same record, and `scripts/drift-check.mjs` compares
-its names with published inventories. The legacy `withVettedCatalog()` only
-sets the field, so unconverted hosted providers follow the same rules
-(`test/classified-decorators.test.ts`, `test/linear-snapshot.test.ts`).
+its names with published inventories. The internal `withVettedCatalog()`
+helper has been removed. Public provider `*_VETTED_CATALOG` exports remain
+deprecated aliases derived from each definition
+(`test/classified-decorators.test.ts`, `test/hosted-presets.test.ts`).
 
 Wrappers must forward `classification` to keep the review. `{ ...connector }`,
 `Object.assign`, and `Object.create` keep it. A forwarding class that omits it

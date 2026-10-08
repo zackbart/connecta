@@ -93,6 +93,10 @@
     [
       "Connecta routes every `execute` call through approval because the tool can",
       "Connecta classifies every `execute` call as a write because the tool can"
+    ],
+    [
+      "Official whole-API MCP. Search the OpenAPI document, then approve each mixed-method execute program.",
+      "Official whole-API MCP. Search the OpenAPI document; execute programs always classify as writes."
     ]
   ]
 }

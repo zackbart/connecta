@@ -52,8 +52,8 @@ describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name
       }));
       const expected = structuredClone(row.metadata);
       expected.usageGuide.content = expectedGuide(name, expected.usageGuide.content);
-      if (name === "cloudflare" && label === "mcp") {
-        expected.usageGuide.summary = "Official whole-API MCP. Search the OpenAPI document; execute programs always classify as writes.";
+      if (typeof expected.usageGuide.summary === "string") {
+        expected.usageGuide.summary = expectedGuide(name, expected.usageGuide.summary);
       }
       expect(metadata, `${name}:${label}`).toEqual(expected);
       if ("tools" in row) {
