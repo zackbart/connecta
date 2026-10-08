@@ -22,6 +22,7 @@ import {
   ExecutorExecutionError,
 } from "../executor-admission.js";
 import { msg } from "../errors.js";
+import { InvocationFailure } from "../invocation.js";
 import { brandExecutor } from "../executor-contract.js";
 import { MAX_EXECUTE_LOG_CHARS } from "../executor-result.js";
 import { detach, fromSignal, runEdge } from "../runtime/run.js";
@@ -466,18 +467,22 @@ class QuickJsChildPool implements AdmittingExecutor {
           this.rejectActive(slot, error);
           this.recycle(slot);
         }).pipe(Effect.andThen(Effect.never));
+      const started = Date.now();
       const contenders: Array<Effect.Effect<ExecuteResult, Error>> = [
         Deferred.await(active.outcome),
         Effect.sleep(
           Duration.millis(this.runtimeOptions.timeoutMs + CHILD_EXIT_GRACE_MS),
         ).pipe(
-          Effect.andThen(
-            endWith(
-              new Error(
-                `QuickJS child exceeded the ${this.runtimeOptions.timeoutMs}ms wall budget and was terminated.`,
-              ),
-            ),
-          ),
+          Effect.andThen(Effect.suspend(() => {
+            const elapsedMs = Date.now() - started;
+            const deadlineMs = this.runtimeOptions.timeoutMs;
+            return endWith(new InvocationFailure({
+              code: "timeout",
+              message: `Operation "execute_code" timed out during sandbox termination after ${elapsedMs}ms (effective deadline ${deadlineMs}ms).`,
+              retryable: false,
+              details: { operation: "execute_code", stage: "sandbox termination", elapsedMs, deadlineMs },
+            }));
+          })),
         ),
       ];
       if (signal) {

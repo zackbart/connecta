@@ -56,7 +56,7 @@ function setup(execute: Executor["execute"], access?: () => readonly string[], r
 }
 
 const hostCall = (providers: ExecutorProvider[], address: string) =>
-  providers[0]!.fns.call!(address, {});
+  providers[0]!.fns.call!(address, {}).then((value) => (value as { data: unknown }).data);
 
 describe("artifact refresh", () => {
   afterEach(() => {

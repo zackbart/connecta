@@ -1156,7 +1156,7 @@ describe("authorize_connector", () => {
       await mt.searchTools({ query: "nothing matches this at all" }),
       await mt.skills({}),
       await mt.skills({ name: "usage" }),
-      await mt.getResult({ id: "expired" }),
+      await mt.readResult({ id: "expired" }),
     ];
 
     for (const payload of payloads) {

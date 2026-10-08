@@ -1,6 +1,6 @@
 // The upstream sandbox, with request-owned loader/RPC handles. A guest's
 // deadline cannot clean up after the parent response has already ended.
-import { DynamicWorkerExecutor, type DynamicWorkerExecutorOptions } from "@cloudflare/codemode";
+import { DynamicWorkerExecutor, normalizeCode, type DynamicWorkerExecutorOptions } from "@cloudflare/codemode";
 import {
   AdmissionController,
   type AdmissionControllerOptions,
@@ -63,11 +63,30 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
           },
         });
       };
+      let executableCode: string | undefined;
+      let normalizationLines = 0;
       const loader = new Proxy(options.loader, {
         get(target, key) {
           if (key === "load") return (...args: unknown[]) => {
             if (released) throw new Error("Executor lease was already released.");
-            return track(Reflect.apply(Reflect.get(target, key), target, args));
+            const definition = args[0] as { modules?: Record<string, unknown> };
+            const source = definition?.modules?.["executor.js"];
+            // Keep guest source in its own module. Upstream otherwise evaluates
+            // it in the lexical scope of raw RPC dispatchers and private frames.
+            if (typeof source !== "string" || !executableCode || !hostProviders) throw new Error("Worker executable module was unavailable.");
+            const index = source.indexOf(executableCode);
+            if (index < 0) throw new Error("Worker executable module did not contain the program.");
+            const prelude = hostProviders.find(provider => provider.prelude)?.prelude;
+            const before = prelude ? source.indexOf(prelude) : source.indexOf("    try {\n      const result = await Promise.race");
+            if (before < 0) throw new Error("Worker provider setup was unavailable.");
+            const globals = hostProviders.map(provider => `globalThis[${JSON.stringify(provider.name)}] = ${provider.name};`).join("\n");
+            const isolated = source.slice(0, index) + "__connecta_program" + source.slice(index + executableCode.length);
+            const main = 'import __connecta_program from "./connecta-guest.js";\n' + isolated.slice(0, before) + globals + "\n" + isolated.slice(before);
+            return track(Reflect.apply(Reflect.get(target, key), target, [{ ...definition, modules: {
+              ...definition.modules,
+              "executor.js": main,
+              "connecta-guest.js": `export default (${executableCode});`,
+            } }, ...args.slice(1)]));
           };
           const value = Reflect.get(target, key);
           return typeof value === "function" ? (...args: unknown[]) => Reflect.apply(value, target, args) : value;
@@ -80,6 +99,9 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
           if (executed) throw new Error("Executor lease may execute only once.");
           executed = true;
           hostProviders = providers;
+          executableCode = normalizeCode(code);
+          const original = executableCode.indexOf(code.trim());
+          if (original >= 0) normalizationLines = executableCode.slice(0, original).split("\n").length - 1;
           const detached = providers.map((provider, index) => ({
             name: provider.name,
             ...(provider.prelude ? { prelude: provider.prelude } : {}),
@@ -90,14 +112,29 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
               "executor_cancelled", "Worker executor lease was released during execution.",
             ));
           });
+          const started = Date.now();
           try {
-            return await Promise.race([
+            const result = await Promise.race([
               new DynamicWorkerExecutor({
                 loader,
                 ...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
               }).execute(code, detached),
               stopped,
             ]);
+            if (result.error === "Execution timed out") return { ...result, failure: {
+              name: "TimeoutError", timeout: { elapsedMs: Date.now() - started, deadlineMs: options.timeout ?? 60_000 },
+            } };
+            return result;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "";
+            // Worker Loader erases the native SyntaxError type at its RPC edge.
+            // Match its startup diagnostic only; guest/downstream failures return normally.
+            const syntax = /^Failed to start Worker:\nUncaught SyntaxError: ([^\n]*)\n\s+at connecta-guest\.js:(\d+):\d+$/.exec(message);
+            if (error instanceof SyntaxError || syntax) {
+              const line = syntax ? Math.max(1, Number(syntax[2]) - normalizationLines) : undefined;
+              return { result: undefined, error: (syntax?.[1] ?? message) || "Invalid JavaScript program.", failure: { name: "SyntaxError", ...(line !== undefined ? { line } : {}) } };
+            }
+            throw error;
           } finally {
             cancel = undefined;
           }

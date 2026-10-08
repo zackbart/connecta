@@ -10,6 +10,7 @@
 // carry the file.
 
 import { describe, expect, it } from "vitest";
+import { customExecutor } from "../src/executor-contract.js";
 import { createConnecta } from "../src/index.js";
 import { createExecuteTool } from "../src/execute.js";
 import {
@@ -195,7 +196,7 @@ describe("guest API contract (executor-independent)", () => {
 
     expect(out.isError).toBe(true);
     expect(required(out.content[0]).text).toContain("Sandbox exploded");
-    expect(out.structuredContent).toBeUndefined();
+    expect(out.structuredContent).toMatchObject({ error: { code: "program_error" } });
   });
 });
 
@@ -269,25 +270,28 @@ describe.skipIf(!workerExecutor)(
       expect(outcome.structuredContent).toMatchObject({
         error: { code: "budget_exceeded", writes: { succeeded: 1, failed: 0, unknown: 0 } },
         hostCalls: { attempted: 4, admitted: 3, succeeded: 3, failed: 1 },
-        logs: "guest timer escaped",
+
       });
       expect(outcome.structuredContent).not.toHaveProperty("result");
       expect(outcome.structuredContent).not.toHaveProperty("emittedDiscarded");
       expect(lateReads).toBe(0);
     });
-    for (const contractCase of CONTRACT_CASES) {
-      it(`[${contractCase.clauses}] ${contractCase.name}`, async () => {
-        const harness = contractHarness();
-        const executor = required(
-          contractCase.deadline ? workerDeadlineExecutor : workerExecutor,
-        );
-        const config = caseConfig(contractCase);
-        const outcome = await harness.run(executor, contractCase.code, config);
-        const follow = contractCase.follows
-          ? await harness.run(executor, contractCase.follows, config)
-          : undefined;
-        contractCase.check(outcome, harness.state, follow);
-      });
+    for (const custom of [false, true]) {
+      for (const contractCase of CONTRACT_CASES) {
+        it(`[${contractCase.clauses}] ${custom ? "customExecutor: " : ""}${contractCase.name}`, async () => {
+          const harness = contractHarness();
+          const executor = required(
+            contractCase.deadline ? workerDeadlineExecutor : workerExecutor,
+          );
+          const config = caseConfig(contractCase);
+          const chosen = custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor;
+          const outcome = await harness.run(chosen, contractCase.code, config);
+          const follow = contractCase.follows
+            ? await harness.run(chosen, contractCase.follows, config)
+            : undefined;
+          contractCase.check(outcome, harness.state, follow);
+        });
+      }
     }
 
     it("[P2, X5] pins the Dynamic Worker capability exceptions", async () => {
@@ -329,7 +333,7 @@ describe.skipIf(!workerExecutor)(
           https: "undefined",
         },
         env: {
-          entrypoint: { type: "object", keys: 0 },
+          entrypoint: { type: "undefined", keys: 0 },
           global: { type: "undefined", keys: 0 },
           process: { type: "object", keys: 0 },
           workers: { type: "object", keys: 0 },

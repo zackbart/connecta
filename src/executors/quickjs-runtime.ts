@@ -390,11 +390,16 @@ export async function executeQuickJs(
         }
         return logs.length > 0 ? { ...r, logs } : r;
       };
-      const fail = (error: string): ExecuteResult =>
-        finish({ result: undefined, error });
+      const fail = (error: string, dumped?: unknown): ExecuteResult => {
+        const name = dumped && typeof dumped === "object" && "name" in dumped && typeof dumped.name === "string" ? dumped.name : "Error";
+        const stack = dumped && typeof dumped === "object" && "stack" in dumped && typeof dumped.stack === "string" ? dumped.stack : "";
+        const location = /:(\d+)(?::\d+)?\)?(?:\n|$)/.exec(stack);
+        return finish({ result: undefined, error, failure: { name, ...(location ? { line: Math.max(1, Number(location[1]) - 1) } : {}) } });
+      };
       const timedOut = (): QuickJsExecutionResult => ({
         result: undefined,
         error: timeoutError,
+        failure: { name: "TimeoutError", timeout: { elapsedMs: Date.now() - (deadline - timeoutMs), deadlineMs: timeoutMs } },
         timedOut: true,
       });
 
@@ -416,7 +421,7 @@ export async function executeQuickJs(
         evaluated.error.dispose();
         if (isInterrupt(dumped) && wallInterrupted) return finish(timedOut());
         if (isInterrupt(dumped) && cpuInterrupted) return fail(cpuTimeoutError);
-        return fail(formatGuestError(dumped));
+        return fail(formatGuestError(dumped), dumped);
       }
       const promiseHandle = evaluated.value;
 

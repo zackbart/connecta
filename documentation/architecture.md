@@ -120,7 +120,7 @@ An admitted non-preflight `/mcp` request then takes five steps in
 5. **Serve.** Refuse `?toolkit=` with a 404 — the toolkits are gone
    ([#178](https://github.com/zackbart/connecta/issues/178)) but their URLs were
    handed out, and retiring a scoping boundary into fail-open is worse than any
-   404 — then register the seven meta-tools on a fresh `McpServer`
+   404 — then register the six meta-tools on a fresh `McpServer`
    (`test/server.test.ts`, `test/code-first-surface.test.ts`).
 
 ### Modern request metadata and transport refusals

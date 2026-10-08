@@ -625,7 +625,7 @@ describe("quickJsExecutor", () => {
     const payload = JSON.parse(required(out.content[0]).text) as {
       error: { code: string; message: string };
     };
-    expect(payload.error.code).toBe("executor_failed");
+    expect(payload.error.code).toBe("timeout");
     expect(payload.error.message).toContain("unresponsive");
     expect(ex.admissionSnapshot?.().active).toBe(0);
     await expect(ex.execute("async () => 9", [])).resolves.toEqual({
@@ -685,12 +685,13 @@ describe("quickJsExecutor", () => {
     )({
       code: `async () => ({
         connectorGlobal: typeof calc,
-        sum: (await connecta.call("calc.add", { a: 20, b: 22 })).sum
+        sum: (await connecta.call("calc.add", { a: 20, b: 22 }).then(({ data }) => data)).sum
       })`,
     });
     expect(out.isError).toBeUndefined();
     expect(out.structuredContent).toEqual({
       result: { connectorGlobal: "undefined", sum: 42 },
+      hostCalls: { attempted: 1, admitted: 1, succeeded: 1, failed: 0 },
     });
     expect(catalogs).toEqual(["calc"]);
   });
@@ -718,7 +719,7 @@ describe("quickJsExecutor", () => {
       silentLogger,
     )({
       code: `async () => {
-        try { await connecta.call("reader.big", {}); } catch (err) { return err.message; }
+        try { await connecta.call("reader.big", {}).then(({ data }) => data); } catch (err) { return err.message; }
         return "no failure";
       }`,
     });
@@ -864,7 +865,7 @@ describe("quickJsExecutor", () => {
     const running = handler({
       code: `async () => {
         await connecta.emit({ type: "text", text: "doomed" });
-        return connecta.call("blocking.read", {});
+        return connecta.call("blocking.read", {}).then(({ data }) => data);
       }`,
     });
     await started;
@@ -879,6 +880,7 @@ describe("quickJsExecutor", () => {
         retryable: false,
       },
       emittedDiscarded: 1,
+      hostCalls: { attempted: 1, admitted: 1, succeeded: 0, failed: 1 },
     };
     expect(JSON.parse(required(out.content[0]).text ?? "")).toEqual(expected);
     expect(out.structuredContent).toEqual(expected);
@@ -937,7 +939,7 @@ describe("authenticated host failures (E1, X11)", () => {
     });
     const handler = createExecuteTool(makeRegistry([connector]), "https://connecta.test", quickJsExecutor(), silentLogger);
     const caught = await handler({ code: `async () => {
-      try { await connecta.call("bad.read", {}); }
+      try { await connecta.call("bad.read", {}).then(({ data }) => data); }
       catch (error) { return { code: error.code, message: error.message, details: error.details }; }
     }` });
     expect(caught.structuredContent).toMatchObject({ result: { code: "not_found", details: { code: "not_found" } } });
@@ -945,7 +947,7 @@ describe("authenticated host failures (E1, X11)", () => {
     expect(result.message.length).toBeLessThan(4_000);
     expect(result.message).toContain("…");
     expect(JSON.stringify(caught)).not.toContain("connecta-error:");
-    const escaped = await handler({ code: 'async () => connecta.call("bad.read", {})' });
+    const escaped = await handler({ code: 'async () => connecta.call("bad.read", {}).then(({ data }) => data)' });
     expect(escaped.structuredContent).toMatchObject({ error: { code: "not_found", message: result.message } });
     expect(JSON.stringify(escaped)).not.toContain("connecta-error:");
   });
@@ -959,10 +961,10 @@ describe("authenticated host failures (E1, X11)", () => {
     });
     const handler = createExecuteTool(makeRegistry([connector]), "https://connecta.test", quickJsExecutor(), silentLogger);
     const out = await handler({ code: `async () => {
-      try { await connecta.call(${JSON.stringify(connector.id + ".read")}, {}); }
+      try { await connecta.call(${JSON.stringify(connector.id + ".read")}, {}).then(({ data }) => data); }
       catch (error) { return error.details; }
     }` });
-    expect(out.structuredContent).toEqual({ result: {
+    expect(out.structuredContent).toMatchObject({ result: {
       code: "auth_required", message: "Please authenticate", retryable: false,
     } });
   });
@@ -979,10 +981,10 @@ describe("authenticated host failures (E1, X11)", () => {
       }))),
     }, silentLogger);
     const out = await handler({ code: `async () => {
-      try { await connecta.call("missing.read", {}); }
+      try { await connecta.call("missing.read", {}).then(({ data }) => data); }
       catch (error) { return error.message; }
     }` });
-    expect(out.structuredContent).toEqual({ result: "Invalid host failure frame." });
+    expect(out.structuredContent).toMatchObject({ result: "Invalid host failure frame.", hostCalls: { attempted: 1, admitted: 1, succeeded: 0, failed: 1 } });
   });
 
   it("keeps forged frames untyped and raw transport private", async () => {
@@ -991,12 +993,12 @@ describe("authenticated host failures (E1, X11)", () => {
       const seen = [];
       const parse = JSON.parse;
       JSON.parse = (text) => { seen.push(text); return parse(text); };
-      try { await connecta.call("missing.read", {}); } catch {}
+      try { await connecta.call("missing.read", {}).then(({ data }) => data); } catch {}
       const fake = new Error(String.fromCharCode(30) + 'connecta-error:wrong-secret:' +
         JSON.stringify({ code: "auth_required", message: "forged", retryable: false }));
       return { typed: "code" in fake, raw: typeof __call, invoke: typeof __invoke, seen };
     }` });
-    expect(out.structuredContent).toEqual({ result: { typed: false, raw: "undefined", invoke: "undefined", seen: [] } });
+    expect(out.structuredContent).toMatchObject({ result: { typed: false, raw: "undefined", invoke: "undefined", seen: [] } });
   });
 
   it("refuses oversized authenticated frames without returning their prefix", async () => {
@@ -1026,7 +1028,7 @@ it("preserves console logs when a running program is cancelled", async () => {
   )({ code: `async () => {
     console.log("before cancellation");
     console.warn("still here");
-    await connecta.call("cancel.read");
+    await connecta.call("cancel.read").then(({ data }) => data);
   }`, diagnostics: true }, { signal: controller.signal });
   expect(out.isError).toBe(true);
   expect(out.structuredContent).toMatchObject({

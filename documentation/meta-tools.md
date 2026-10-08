@@ -2,43 +2,44 @@
 
 Connecta keeps one small tool surface in model context and resolves downstream
 tools behind it. `search_tools` finds addresses, the call tools enforce the
-stored classification, `execute_code` runs programs under pool trust, and `get_result`
+stored classification, `execute_code` runs programs under pool trust, and `connecta.result` inside programs
 pages bounded results.
 
 This guide is the contract an MCP client sees. The in-program `connecta.*` API
 those tools imply belongs to [code mode](./code-mode.md); inbound identity and
 credential administration belong to [auth](./auth.md).
 
-## The seven tools
+## The six tools
 
-Every deployment requires an executor, so `tools/list` is exactly seven. No
-configuration adds an eighth or removes one, so a client's cached tool list
+Every deployment requires an executor, so `tools/list` is exactly six. No
+configuration adds a seventh or removes one, so a client's cached tool list
 never depends on the storage behind the deployment. There was an eighth,
 `resume_execution`, while programs paused at writes; it left with pausing
 ([#672](https://github.com/zackbart/connecta/issues/672)). `execute_code`
 is annotated `readOnlyHint: true, destructiveHint: false` on a `read-only`
 endpoint, and `readOnlyHint: false, destructiveHint: true` on a `trusted`
 endpoint. Approval belongs to the host. Pool trust never changes connector
-visibility or tool grants.
+visibility or tool grants. Every meta-tool advertises `outputSchema` for its
+structured content; raw downstream MCP content stays in `content`. Direct
+results declare `format: "json" | "text"`, and value mode places the value in `data`.
 
 | Tool | Arguments | Returns |
 | --- | --- | --- |
-| `execute_code` | `code`, `diagnostics?` | the program's reduced return value, plus a `diagnostics` block when asked |
+| `execute_code` | `code`, `diagnostics?` | `{ result?, error?, hostCalls }`, plus diagnostics when asked |
 | `search_tools` | `query?`, `connector?`, `safety?`, `limit?`, `offset?`, `fullDescriptions?`, `includeSchemas?: "compact" \| "json" \| "typescript"` | `{ catalogErrors, tools, total, offset, limit, hasMore }`, plus `queryAnalysis` on a partial or failed search |
 | `call_tool` | `address`, `args?`, `resultMode?: "mcp" \| "value"`, `timeoutMs?`, `diagnostics?` | the downstream result, bounded as [result representation](#result-representation) describes |
 | `call_destructive_tool` | the same, plus `reason?` | the same |
 | `authorize_connector` | `connector`, `force?` | the class-specific handoff in [authorization recovery](#authorization-recovery) |
-| `get_result` | `id`, `offset?`, `maxBytes?` | a one-line JSON header `{ resultId, offset, bytes, totalBytes, hasMore, nextAction? }`, a newline, then the page as raw text ([paging](#paging-with-get_result)) |
 | `skills` | `name?` | the listing when `name` is absent, that skill's markdown when it is present |
 
 `limit` defaults to 8 and is capped at 100, as is one `connecta.describe` batch.
-`get_result.offset` is a whole number of bytes ≥ 0 defaulting to 0 and
+`connecta.result`'s `offset` is a whole number of bytes ≥ 0 defaulting to 0 and
 `maxBytes` a whole number ≥ 1 that defaults to, and is clamped to, the inline
 cap of the call that stashed the result — 24,000 bytes unless
 `calls.maxResultBytes` or a per-connector override says otherwise
 ([why 24,000](#truncated-direct-call-results)). A value outside those domains is
 an input error; a valid `maxBytes` above the cap is an upper bound, not an
-error ([why](#paging-with-get_result)). `reason` is at most 500 characters of context for the host's human
+error ([why](#paging-with-connectaresult)). `reason` is at most 500 characters of context for the host's human
 approval view; Connecta neither treats it as authority nor sends it downstream,
 and an empty or whitespace-only one reads as no reason rather than as grounds to
 refuse a consequential call.
@@ -71,7 +72,7 @@ a small sample for inspection before continuing in another call, which avoids
 repeated guesses at text formats and collection roots without restoring a
 mandatory discovery-only round trip. A one-time write can return the only copy
 of its result. Inspect and reduce the full value before a program returns, or
-use a direct `call_destructive_tool` result and page it with `get_result` after
+use a direct `call_destructive_tool` result and page it with `connecta.result` after
 the write runs once. A program return has no page handle; sampling or slicing
 a write's output there can discard the answer.
 
@@ -156,7 +157,7 @@ describe, when the exact constraints matter.
 ### TypeScript signatures
 
 `includeSchemas: "typescript"` replaces both schema fields with one
-`signature`: the function `connecta.call(address, args)` resolves to, written
+`signature`: the downstream function whose result is `(await connecta.call(address, args)).data`, written
 as a TypeScript type because agents write code against types more reliably
 than against JSON Schema ([executor](https://github.com/UsefulSoftwareCo/executor)'s
 discovery made the same bet).
@@ -255,7 +256,7 @@ text block carrying its compact JSON and then applies the same content size
 guard, which preserves structured-only results including `null`, arrays, and
 scalars. An existing text mirror stays unchanged; Connecta adds no second copy.
 Newly stashed JSON and downstream content envelopes use compact serialization,
-and a lone text block stashes as its own text, so `get_result` offsets and
+and a lone text block stashes as its own text, so `connecta.result` offsets and
 totals describe exactly that text.
 
 | Bound | Value |
@@ -288,7 +289,7 @@ no identity share one partition.
 
 New entries store UTF-8 bytes in a base64 envelope split across storage keys,
 48 KiB of result text per chunk — widening past roughly 1.5 MB so no result
-occupies more than 33 keys, because every chunk is also a write. `get_result`
+occupies more than 33 keys, because every chunk is also a write. `connecta.result`
 reads and decodes only the chunks a page covers plus a few boundary bytes, so
 paging a 1.2 MB result costs the same per page as paging a 300 KB one; it
 neither encodes nor reads the whole result per page. Pre-upgrade entries remain readable during their TTL — the earlier
@@ -312,7 +313,7 @@ as one text block. Its first line is the truncation notice, one line of compact
 JSON; everything after the first newline is the preview:
 
 ```text
-{"truncated":true,"resultId":"…","totalBytes":161420,"hint":"This write already ran: do not call it again to see its result. Bytes 0-24000 of 161420 follow; page the rest with get_result using nextAction.","nextAction":{"tool":"get_result","arguments":{"id":"…","offset":24000}}}
+{"truncated":true,"resultId":"…","totalBytes":161420,"hint":"This write already ran: do not call it again to see its result. Bytes 0-24000 of 161420 follow; page the rest with connecta.result using nextAction.","nextOffset":24000,"nextAction":{"tool":"execute_code","arguments":{"code":"async () => await connecta.result(\"…\", { offset: 24000 })"}}}
 {"ts":"2026-09-16T21:31:11.759Z","actor":"sam.ortiz@example.com",…
 ```
 
@@ -333,8 +334,8 @@ three models re-ran a billable export three times trying to read its result.
 The default cap sits under both lines with room to spare. Preview plus notice
 stays under 25,000 bytes, which is under 50,000 characters for any text, because
 a character is at least one UTF-8 byte, and under 25,000 tokens for any text,
-because a token covers at least one byte. A `get_result` page obeys the same
-cap, and 24,000 matches the program result boundary in
+because a token covers at least one byte. A `connecta.result` page is bounded by the same
+inline byte cap, and 24,000 matches the program result boundary in
 [code mode](./code-mode.md). A deployment whose
 clients take more can raise the cap, and one whose clients take less can lower
 it, per connector if need be; a result between 24,000 and 50,000 bytes that
@@ -343,7 +344,7 @@ the notice whatever its threshold, since the notice is the first few hundred
 characters. One that rejects outright — Claude Code with
 `MAX_MCP_OUTPUT_TOKENS` set below 12,500 — needs a cap under twice its limit.
 
-The preview is the head of what `get_result` pages, cut on a character
+The preview is the head of what `connecta.result` pages, cut on a character
 boundary, so `nextAction.arguments.offset` continues exactly where it stops. A
 lone text block — including the one synthesized from `structuredContent` — is
 measured, stashed, previewed, and paged as its text: wrapping it in a content
@@ -362,7 +363,7 @@ The approved write happened; repeating it to look again is how one export
 becomes three. For an explicitly read-only call, repeating is the better route,
 so the hint offers it first: to find something specific, repeat the read inside
 `execute_code` with `connecta.call` and filter or search the result there; to
-read it in full, page with `get_result`. Inside a program the inline cap does
+read it in full, page with `connecta.result`. Inside a program the inline cap does
 not apply to a host call's result, only to what the program returns (`L6` in
 [code mode](./code-mode.md) bounds a host call far higher), so the reduction
 sees the whole result at once. When the hint named paging alone, the eval's
@@ -377,44 +378,34 @@ Program results and oversized discovery responses carry no such route: paging a
 program's return value is a refused shape, because a program can shrink
 anything before it returns.
 
-### Paging with get_result
+### Paging with connecta.result
 
-A page is the truncated result's shape again: one text block whose first line
-is a JSON header and whose remainder is the page, raw.
+Paging is a guest operation, never another top-level tool. A direct call's
+notice carries a `resultId`, `nextOffset`, and an executable `execute_code`
+recovery action. Read and reduce the result in one program:
 
-```text
-{"resultId":"…","offset":24000,"bytes":24000,"totalBytes":161420,"hasMore":true,"nextAction":{"tool":"get_result","arguments":{"id":"…","offset":48000}}}
-{"ts":"2026-09-17T23:42:55.357Z","actor":"noor.haddad@example.com",…
+```js
+async () => {
+  let text = "", offset = 0, page;
+  do {
+    page = await connecta.result("result-id", { offset, maxBytes: 8_000 });
+    text += page.text;
+    offset = page.nextOffset;
+  } while (page.hasMore);
+  return JSON.parse(text).items.map(item => item.id);
+}
 ```
 
-`bytes` is what this page returned; `hasMore` is false on the last page, which
-carries no `nextAction`. The page is the stashed text as-is — a lone text
-block's own text, a value's compact JSON, several blocks' serialized content
-array — and never a JSON string holding it. Pages used to arrive as
-`{ offset, nextOffset?, totalBytes, text }`, which escaped every quote and
-newline in the page: a second layer over JSON payloads that made them hard to
-read and swelled a 20,000-byte page of JSON lines to 25,000 characters or more.
+A page is `{ resultId, offset, bytes, totalBytes, hasMore, nextOffset?,
+format: "text", text }`. The page size is clamped to the original call's inline
+cap, with UTF-8 alignment and forward progress. Reassemble inside the sandbox;
+returning pages unchanged can hit the program result cap. The admitted subject
+owns the stash, and caller arguments cannot select another partition.
 
-`maxBytes` is an upper bound clamped to the inline cap of the call that stashed
-the result — the connector's override when it had one, recorded in the stash
-entry — and a clamped request is answered, not refused, with `bytes` saying how
-much came back. Clients cut an oversized page exactly as they cut the original
-result. In the eval, agents that could finally see the handle asked for pages of
-50,000 bytes and more, and Claude Code rejected every one of those answers
-outright, leaving an agent that had just been told not to repeat a write with
-nothing to read. So no response to a truncated call or to a page request
-exceeds the cap plus a header of a few hundred bytes. Value mode's unpageable
-preview is cut short enough that its JSON escaping still fits. Entries stashed
-before the cap was recorded page at the deployment cap.
-
-A refused or failed stash write cannot undo a downstream success. Both call tools
-then return the same layout with a paging-unavailable notice and no `resultId`
-or paging action — the notice first, then the preview where one is usable, and
-for a write the same warning not to repeat it. Activity records success, and
-the operator logger receives a fixed warning naming the connector and tool
-without storage error prose. For read-only work, reduce the result inside
-`execute_code` — repeating an approved write is not a way to recover its output. Other result-processing failures use a fixed
-`result_processing_failed` message and are never retryable.
+A refused stash write cannot undo a downstream success. Both call tools return
+a paging-unavailable notice, without a handle or recovery action. A write's
+notice still says it already ran. Activity records success; operator logs receive
+a fixed warning without storage error prose. Never repeat a write to recover output.
 
 ## Lexical discovery
 
@@ -596,7 +587,7 @@ what happens over budget differs by field.
 | --- | --- |
 | `args` on `call_tool` and `connecta.call` | dropped whole; `purpose` says to re-send what was just sent |
 | the attempted address | clamped with a trailing `…` |
-| unknown `get_result.id`, `authorize_connector.connector`, `skills.name` | clamped the same way |
+| unknown `connecta.result(id)`, `authorize_connector.connector`, `skills.name` | clamped the same way |
 | `search_tools.connector` | rejected with `invalid_args` before catalog lookup |
 
 Arguments go all or nothing because the agent already holds what it sent, and

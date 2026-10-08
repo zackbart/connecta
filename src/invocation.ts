@@ -26,7 +26,7 @@ import {
   type CallErrorDetails,
   type ClassificationCode,
 } from "./errors.js";
-import { unwrapMcpResult } from "./mcp-result.js";
+import { downstreamValue } from "./mcp-result.js";
 import {
   carryFailureFacts,
   classifiedFailure,
@@ -189,7 +189,7 @@ interface InvocationBase {
 }
 
 export type InvocationOutcome<T> =
-  | (InvocationBase & { ok: true; value: T; resolved: ResolvedCatalogTool })
+  | (InvocationBase & { ok: true; value: T; format: "json" | "text"; resolved: ResolvedCatalogTool })
   | (InvocationBase & {
       ok: false;
       error: CallErrorDetails;
@@ -232,6 +232,7 @@ export interface InvocationContext<T> {
     value: unknown,
     resolved: ResolvedCatalogTool,
     sentSecrets: SentSecrets,
+    format: "json" | "text",
   ) => T | Promise<T>;
   /**
    * Optional payload-free friction class derived from a *successful* result —
@@ -463,10 +464,17 @@ export class InvocationService {
             return error;
         }
       };
+      let stage = "catalog";
       const failed = (error: CallErrorDetails): InvocationOutcome<T> => {
         const diagnostics = timing();
         const target = resolved ?? activityTarget;
         const details = sentSecrets.redact(enrich(error, target));
+        if (details.code === "timeout") {
+          const elapsedMs = Date.now() - started;
+          const operation = sentSecrets.redact(boundedEchoText(address, 512));
+          details.message = `Operation "${operation}" timed out during ${stage} after ${elapsedMs}ms (effective deadline ${context.timeoutMs}ms).`;
+          details.details = { ...details.details, operation, stage, elapsedMs, ...defined({ deadlineMs: context.timeoutMs }) };
+        }
         const outcome = (): InvocationOutcome<T> => ({
           ok: false,
           durationMs: Date.now() - started,
@@ -522,6 +530,7 @@ export class InvocationService {
       }
       let result: unknown;
       let observedResult: unknown;
+      let valueFormat: "json" | "text" = "json";
       // Everything up to the downstream result: resolution, the safety and
       // schema refusals, admission, and the one attempt. A refusal is its
       // success value. Its failure is an abort reason or something nobody
@@ -638,10 +647,12 @@ export class InvocationService {
           // cannot hold its permit past the deadline.
           const attempt = yield* Effect.exit(Effect.scoped(
             Effect.gen({ self: this }, function* () {
+              stage = "admission";
               yield* timed(
                 (elapsed) => { admissionMs += elapsed; },
                 admitted(this.registry, target, args, admissionSignal),
               );
+              stage = "downstream";
               const reply = yield* timed(
                 (elapsed) => { connectorMs += elapsed; },
                 Effect.tryPromise({
@@ -654,7 +665,7 @@ export class InvocationService {
               // reports the same downstream-failure wording, and the throw lands
               // inside the attempt where it feeds health.
               assertRawMcpSuccess(target.connector.kind, raw);
-              return { raw, observed: sentSecrets.redact(unwrapMcpResult(target.connector.kind, raw)) };
+              return { raw, observed: sentSecrets.redact(downstreamValue(target.connector.kind, raw)) };
             }),
           ));
           if (Exit.isFailure(attempt)) {
@@ -666,7 +677,8 @@ export class InvocationService {
               ? callerCancelledDetails()
               : carryFailureFacts(attemptError, classifyCallError(sentSecrets.redact(attemptError)));
           }
-          observedResult = attempt.value.observed;
+          observedResult = attempt.value.observed.data;
+          valueFormat = attempt.value.observed.format;
           result = context.unwrapResult ? observedResult : attempt.value.raw;
           return undefined;
         });
@@ -690,9 +702,10 @@ export class InvocationService {
       );
       if (Exit.isFailure(dispatched)) {
         const failure = Cause.squash(dispatched.cause);
-        return failed(context.requestSignal?.aborted
+        const details = context.requestSignal?.aborted
           ? callerCancelledDetails()
           : carryFailureFacts(failure, classifyCallError(sentSecrets.redact(failure))));
+        return failed(details);
       }
       if (dispatched.value) return failed(dispatched.value);
       // A dispatch that returned no refusal resolved a concrete tool.
@@ -706,7 +719,7 @@ export class InvocationService {
       const processResult = context.processResult;
       const processing: Effect.Effect<T, unknown> = processResult
         ? Effect.tryPromise({
-            try: () => Promise.resolve(processResult(sentSecrets.redact(result), completed, sentSecrets)) as Promise<T>,
+            try: () => Promise.resolve(processResult(sentSecrets.redact(result), completed, sentSecrets, valueFormat)) as Promise<T>,
             catch: (error) => error,
           })
         : Effect.succeed(result as T);
@@ -741,6 +754,7 @@ export class InvocationService {
         return {
           ok: true,
           value,
+          format: valueFormat,
           resolved: completed,
           durationMs: Date.now() - started,
           attempts,

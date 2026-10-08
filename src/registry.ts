@@ -132,7 +132,7 @@ export const MIN_MAX_RESULT_BYTES = 1;
 /**
  * The one definition of a usable `maxResultBytes`: a finite whole number of at
  * least {@link MIN_MAX_RESULT_BYTES} bytes. Shared by all three intake points
- * — `calls.maxResultBytes`, the per-connector override, and `get_result`'s
+ * — `calls.maxResultBytes`, the per-connector override, and `connecta.result`'s
  * `maxBytes` argument — so a value that is valid at one is valid at all.
  *
  * Everything else is rejected rather than coerced, because each rejected shape
@@ -317,7 +317,7 @@ export interface RegistryOptions {
   persistToolCatalog?: boolean | undefined;
   toolCatalogStaleSeconds?: number | undefined;
   /**
-   * Cap on inline result size before truncation + get_result paging. Must be a
+   * Cap on inline result size before truncation + connecta.result paging. Must be a
    * whole number of bytes >= 1; anything else throws at construction. Default
    * 24_000.
    */
@@ -1068,7 +1068,7 @@ export class Registry implements RegistryView {
    * Reserve capacity and write one ASCII paging envelope.
    *
    * `chunks[n]` lands on `resultKeys.chunk(id, n)` inside `partition` — the
-   * layout get_result reads back, so a page fetches only the chunks it covers
+   * layout connecta.result reads back, so a page fetches only the chunks it covers
    * instead of the whole stored result (issue #540). Chunking is a read-cost
    * decision, not a capacity one: however many keys an envelope occupies, it
    * is one stash entry charged its total ASCII length.
@@ -1135,7 +1135,7 @@ export class Registry implements RegistryView {
 
   /**
    * Storage namespaced to the root result partition, kept separate from any
-   * connector's namespace. Backs get_result.
+   * connector's namespace. Backs connecta.result.
    */
   resultsStorage(): KVStorage {
     return namespaced(this.opts.storage, scopes.results);

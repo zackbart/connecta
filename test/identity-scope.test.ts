@@ -9,6 +9,7 @@ import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, InboundAuth, ToolDef } from "../src/types.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import { scriptedExecutor } from "./fixtures/misc.js";
 
 const BASE = "https://connecta.test";
 const ENCRYPTION_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
@@ -48,7 +49,7 @@ function visible(id: string): Connector {
 }
 
 describe("identity-scoped connectors", () => {
-  it.each(["subject", "principal"] as const)("isolates result pages for machine %s identities without an activity namespace", async (identityKind) => {
+  it.each(["subject", "principal"] as const)("INV-4: isolates guest result pages for machine %s identities without an activity namespace", async (identityKind) => {
     const auth: InboundAuth | InboundAuth[] = identityKind === "subject"
       ? [machineAuth("alice", { subjectId: "alice" }), machineAuth("bob", { subjectId: "bob" })]
       : {
@@ -62,6 +63,7 @@ describe("identity-scoped connectors", () => {
     const connecta = createTestConnecta({
       connectors: [api("docs", { tools: [{ name: "read", description: "Read docs", annotations: { readOnlyHint: true }, handler: () => "x".repeat(500) }] })],
       auth,
+      executor: scriptedExecutor((fns) => fns.result!(resultId)),
       calls: { maxResultBytes: 100 },
       logger: silentLogger,
     });
@@ -70,8 +72,8 @@ describe("identity-scoped connectors", () => {
     const result = await call("alice", "call_tool", { address: "docs.read" });
     const { resultId } = JSON.parse(result.content[0].text.split("\n")[0]);
     expect(resultId).toBeTypeOf("string");
-    expect((await call("alice", "get_result", { id: resultId })).isError).toBeFalsy();
-    expect((await call("bob", "get_result", { id: resultId })).isError).toBe(true);
+    expect((await call("alice", "execute_code", { code: "async () => await connecta.result(id)" })).isError).toBeFalsy();
+    expect((await call("bob", "execute_code", { code: "async () => await connecta.result(id)" })).isError).toBe(true);
     await connecta.close();
   });
 

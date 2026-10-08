@@ -586,7 +586,7 @@ describe("pages that can be delivered", { timeout: 60_000 }, () => {
     expect(stashed.totalBytes).toBeGreaterThan(3 * 1024 * 1024);
     expect(stashed.resultId).toEqual(expect.any(String));
     expect(stashed.hint).not.toContain("Paging is unavailable");
-    const page = await mt.getResult({ id: stashed.resultId, offset: 0 });
+    const page = await mt.readResult({ id: stashed.resultId, offset: 0 });
     expect(page.isError).toBeFalsy();
   });
 });

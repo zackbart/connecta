@@ -14,7 +14,7 @@
       "tests": [
         {
           "file": "test/server.test.ts",
-          "title": "serves a modern-era (2026-07-28) client the same seven-tool surface"
+          "title": "serves a modern-era (2026-07-28) client the same six-tool surface"
         },
         {
           "file": "test/server-route-contracts.test.ts",
@@ -43,7 +43,7 @@
       "tests": [
         {
           "file": "test/server.test.ts",
-          "title": "serves a modern-era (2026-07-28) client the same seven-tool surface"
+          "title": "serves a modern-era (2026-07-28) client the same six-tool surface"
         },
         {
           "file": "test/remote-mcp.test.ts",
@@ -139,7 +139,7 @@
       "tests": [
         {
           "file": "test/server.test.ts",
-          "title": "serves a modern-era (2026-07-28) client the same seven-tool surface"
+          "title": "serves a modern-era (2026-07-28) client the same six-tool surface"
         },
         {
           "file": "test/server-route-contracts.test.ts",
@@ -257,11 +257,11 @@
       "id": "tools-list",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
-      "notes": "The seven current meta-tools are listed; downstream pages assemble complete catalogs.",
+      "notes": "The six current meta-tools are listed; downstream pages assemble complete catalogs.",
       "tests": [
         {
           "file": "test/server.test.ts",
-          "title": "serves a modern-era (2026-07-28) client the same seven-tool surface"
+          "title": "serves a modern-era (2026-07-28) client the same six-tool surface"
         },
         {
           "file": "test/remote-mcp-pagination.test.ts",
@@ -273,7 +273,7 @@
       "id": "tools-call",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
-      "notes": "Direct and program calls work. Both direct-call tools declare the address parameter header; meta-tool outputSchema remains planned.",
+      "notes": "Direct and program calls work; both direct-call tools declare the address parameter header and all six meta-tools declare outputSchema.",
       "tests": [
         {
           "file": "test/meta-tools-call.test.ts",
@@ -320,16 +320,19 @@
     },
     {
       "id": "tool-output-schema",
-      "status": "partial",
+      "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
-      "notes": "Downstream structured output is SDK-validated across every catalog page; meta-tools do not all declare outputSchema.",
+      "notes": "Downstream structured output is SDK-validated across every catalog page. All six meta-tools advertise output schemas matching successful structured content.",
       "tests": [
         {
           "file": "test/remote-mcp-pagination.test.ts",
           "title": "rejects structured content that violates an EARLIER page's output schema"
+        },
+        {
+          "file": "test/meta-tool-schemas.test.ts",
+          "title": "INV-3: every meta-tool advertises a schema matching successful structured content"
         }
-      ],
-      "issue": "https://github.com/zackbart/connecta/issues/706"
+      ]
     },
     {
       "id": "tool-content",
@@ -500,7 +503,7 @@
         },
         {
           "file": "test/server.test.ts",
-          "title": "serves a modern-era (2026-07-28) client the same seven-tool surface"
+          "title": "serves a modern-era (2026-07-28) client the same six-tool surface"
         }
       ]
     },

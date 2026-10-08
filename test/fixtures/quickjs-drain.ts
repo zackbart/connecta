@@ -45,6 +45,7 @@ assert.deepEqual(await pending, {
   result: undefined,
   error: "Execution timed out after 50ms.",
   timedOut: true,
+  failure: { name: "TimeoutError", timeout: { elapsedMs: 50, deadlineMs: 50 } },
 });
 mock.timers.reset();
 assert.ok(context);

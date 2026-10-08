@@ -4,7 +4,6 @@ export const META_TOOL_NAMES = Object.freeze([
   "call_destructive_tool",
   "call_tool",
   "execute_code",
-  "get_result",
   "search_tools",
   "skills",
 ]);

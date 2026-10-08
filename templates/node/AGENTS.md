@@ -4,7 +4,7 @@ This repository is deployment configuration, not a copy of Connecta itself.
 
 - Edit `src/connecta.config.ts` for connectors, authentication, storage, public
   URL, and optional modules. `src/index.ts` only starts it.
-- Keep `executor: quickJsExecutor()` for the prescribed seven-tool code-first
+- Keep `executor: quickJsExecutor()` for the prescribed six-tool code-first
   surface. Root and named pools default to `trust: "read-only"`: programs
   may read, and writes use `call_destructive_tool`. Explicit `trusted` pools
   also permit program writes and annotate `execute_code` as a write. Approval

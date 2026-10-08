@@ -103,7 +103,7 @@ describe("connecta doctor's executor line", () => {
     const line = await doctorAgainst(new CustomExecutor());
     expect(line).toBe(
       "Connecta doctor passed: 1 connector(s), CustomExecutor " +
-        "executed, prescribed 7-tool surface, MCP 2026-07-28.",
+        "executed, prescribed 6-tool surface, MCP 2026-07-28.",
     );
     expect(line).not.toContain("QuickJS");
   });
@@ -112,7 +112,7 @@ describe("connecta doctor's executor line", () => {
     const line = await doctorAgainst({ execute: async () => ({ result: 42 }) });
     expect(line).toBe(
       "Connecta doctor passed: 1 connector(s), code executed, " +
-        "prescribed 7-tool surface, MCP 2026-07-28.",
+        "prescribed 6-tool surface, MCP 2026-07-28.",
     );
   });
 
@@ -123,7 +123,7 @@ describe("connecta doctor's executor line", () => {
     };
     const line = await doctorAgainst(hostile);
     expect(line).toMatch(
-      /^Connecta doctor passed: 1 connector\(s\), 31mEvil Sandbox x+ executed, prescribed 7-tool surface, MCP 2026-07-28\.$/,
+      /^Connecta doctor passed: 1 connector\(s\), 31mEvil Sandbox x+ executed, prescribed 6-tool surface, MCP 2026-07-28\.$/,
     );
     expect(line).not.toContain("\u001b");
     expect(line).not.toContain("x".repeat(41));
@@ -189,7 +189,7 @@ describe("connecta doctor's executor line", () => {
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Expected TCP address");
     const { stdout } = await run(process.execPath, [CLI, "doctor", "--url", `http://127.0.0.1:${address.port}`], { env: { ...process.env, CONNECTA_TOKEN: TOKEN } });
-    expect(stdout).toContain("prescribed 7-tool surface, MCP 2025-11-25.");
+    expect(stdout).toContain("prescribed 6-tool surface, MCP 2025-11-25.");
     expect(methods).toEqual(["server/discover", "initialize", "notifications/initialized", "tools/list", "tools/call"]);
   });
 

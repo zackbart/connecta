@@ -367,7 +367,7 @@ export interface Connector {
   description?: string;
   /**
    * Max inline result size (bytes) for this connector's tools before
-   * call_tool truncates and stashes the full text for get_result
+   * call_tool truncates and stashes the full text for connecta.result
    * paging. Overrides `ConnectaConfig.calls.maxResultBytes`;
    * omit to inherit it (which itself defaults to 24_000). Must be a whole
    * number of bytes >= 1; anything else refuses to construct.
@@ -610,6 +610,12 @@ export interface ConnectorUsageGuide {
 export interface ExecuteResult {
   result: unknown;
   error?: string;
+  /** Structured sandbox facts. Runtime failures inside the host wrapper use its authenticated result frame. */
+  failure?: {
+    name: string;
+    line?: number;
+    timeout?: { elapsedMs: number; deadlineMs: number };
+  };
   logs?: string[];
 }
 

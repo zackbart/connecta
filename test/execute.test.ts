@@ -18,6 +18,8 @@ import {
 } from "../src/meta-tools.js";
 import { InvocationFailure } from "../src/invocation.js";
 import { unwrapMcpResult } from "../src/mcp-result.js";
+import { memoryStorage } from "../src/storage/memory.js";
+import { scriptedExecutor } from "./fixtures/misc.js";
 import type {
   ActivityRequestContext,
   ToolCallActivityEvent,
@@ -94,7 +96,7 @@ function callCanonical(
   return required(connectaProvider(providers).fns.call)(
     `${connectorId}.${toolName}`,
     args,
-  );
+  ).then((value) => (value as { data: unknown }).data);
 }
 
 describe("execute_code intake", () => {
@@ -332,7 +334,7 @@ describe("buildSandboxProviders", () => {
 
     const connecta = connectaProvider(providers);
     expect(await required(connecta.fns.call)("calc.add", { a: 1, b: 1 })).toEqual({
-      sum: 2,
+      data: { sum: 2 }, format: "json",
     });
     const failure = await required(connecta.fns.call)("nope.add", {}).then(
       () => undefined,
@@ -433,7 +435,7 @@ describe("buildSandboxProviders", () => {
     );
     expect(lazyError).toMatchObject({
       code: "destructive_tool_requires_approval",
-      message: directError?.message,
+      details: { message: directError?.details.message },
     });
     expect(lazyError?.message).toContain("call_destructive_tool");
     expect(calls).toBe(0);
@@ -742,7 +744,7 @@ describe("buildSandboxProviders", () => {
     expect(page.tools.map((tool) => tool.address)).toEqual(["mixed.read"]);
     expect(
       await required(connecta.fns.call)(required(page.tools[0]).address, {}),
-    ).toBe("read");
+    ).toEqual({ data: "read", format: "text" });
   });
 
   it("resolves schema key metadata the way the compact schema renders", async () => {
@@ -1063,7 +1065,7 @@ describe("buildSandboxProviders", () => {
     );
     await expect(
       callCanonical(providers, "slow", "read"),
-    ).rejects.toThrow("timed out after 10ms");
+    ).rejects.toThrow("effective deadline 10ms");
   });
 });
 
@@ -1093,7 +1095,7 @@ describe("execute_code host-call limits from configuration", () => {
       undefined,
       { hostCallTimeoutMs: 10 },
     )({ code: "async () => null" });
-    expect(required(out.content[0]).text).toContain("timed out after 10ms");
+    expect(required(out.content[0]).text).toContain("effective deadline 10ms");
   });
 
   it("honors a configured host-call budget through the handler", async () => {
@@ -1254,7 +1256,7 @@ describe("MCP and code-mode invocation parity", () => {
     });
     expect(result.codeError).toMatchObject({
       code: "timeout",
-      details: { message: result.mcpError.message },
+      details: { details: { operation: "parity.read", stage: "downstream", deadlineMs: 10 } },
       retryable: result.mcpError.retryable,
     });
     const sharedFields = {
@@ -1367,7 +1369,7 @@ describe("execute_code executor watchdog", () => {
       )({ code: "async () => null", diagnostics: true });
       expect(out.isError).toBe(true);
       const error = parsedError(out);
-      expect(error.code).toBe("executor_failed");
+      expect(error.code).toBe("timeout");
       expect(error.message).toContain("unresponsive");
       expect(error.retryable).toBe(false);
       expect(admission.snapshot().active).toBe(0);
@@ -1399,7 +1401,7 @@ describe("execute_code executor watchdog", () => {
       ]);
       for (const out of wedged) {
         expect(out.isError).toBe(true);
-        expect(parsedError(out).code).toBe("executor_failed");
+        expect(parsedError(out).code).toBe("timeout");
         expect(parsedError(out).message).toContain("unresponsive");
       }
       const health = (await (
@@ -1411,6 +1413,7 @@ describe("execute_code executor watchdog", () => {
       expect(third.isError).toBeUndefined();
       expect(JSON.parse(required(third.content[0]).text ?? "")).toEqual({
         result: "third",
+        hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 },
       });
     },
   );
@@ -1471,6 +1474,7 @@ describe("execute_code executor watchdog", () => {
       expect(JSON.parse(required(out.content[0]).text)).toEqual({
         result: "late",
         logs: "kept",
+        hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 },
       });
       expect(admission.snapshot().active).toBe(0);
     },
@@ -1698,7 +1702,7 @@ describe("execute_code handler", () => {
       JSON.stringify(out.structuredContent),
     );
     expect(parsed.logs).toBe("hi");
-    expect(required(executor.seen[0]).code).toBe("async () => 1");
+    expect(required(executor.seen[0]).code).toContain("async () => 1");
     expect(required(executor.seen[0]).providers.map((p) => p.name)).toEqual([
       "connecta",
     ]);
@@ -1824,7 +1828,7 @@ describe("execute_code handler", () => {
       code: "async () => null",
       diagnostics: false,
     });
-    expect(required(omitted.content[0]).text).toBe('{"result":{"ok":true}}');
+    expect(JSON.parse(required(omitted.content[0]).text)).toEqual({ result: { ok: true }, hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 } });
     expect(disabled).toEqual(omitted);
   });
 
@@ -2015,7 +2019,7 @@ describe("execute_code handler", () => {
       fakeExecutor({ result: null }),
       silentLogger,
     )({ code: "async () => null" });
-    expect(JSON.parse(required(nulled.content[0]).text)).toEqual({ result: null });
+    expect(JSON.parse(required(nulled.content[0]).text)).toEqual({ result: null, hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 } });
   });
 
   it("truncates oversized results", async () => {
@@ -2058,7 +2062,7 @@ describe("execute_code handler", () => {
 });
 
 // E6: a caught connector failure must not classify an unrelated program error.
-it.each(["", "x", "failed"])("does not match short failure prose %j by containment", async (message) => {
+it.each(["", "x", "failed"])("INV-6: does not match short failure prose %j by containment", async (message) => {
   const connector = connectorWith({
     id: "bad", kind: "api",
     tools: [{ name: "read", annotations: { readOnlyHint: true } }],
@@ -2071,7 +2075,7 @@ it.each(["", "x", "failed"])("does not match short failure prose %j by containme
     },
   };
   const out = await createExecuteTool(makeRegistry([connector]), BASE, executor, silentLogger)({ code: "", diagnostics: true });
-  expect(out.structuredContent).toMatchObject({ error: { code: "executor_failed" } });
+  expect(out.structuredContent).toMatchObject({ error: { code: "program_error" } });
 });
 
 it.each([
@@ -2102,7 +2106,7 @@ it.each([
   }
 });
 
-it.each([0, 1, 64])("retains only the latest 64 failures for terminal matching (failure %i)", async (escapedIndex) => {
+it.each([0, 1, 64])("INV-6: authenticates failures older than 64 without matching prose (failure %i)", async (escapedIndex) => {
   const executor: Executor = {
     async execute(_code, providers) {
       const messages: string[] = [];
@@ -2119,7 +2123,7 @@ it.each([0, 1, 64])("retains only the latest 64 failures for terminal matching (
   )({ code: "", diagnostics: true });
   expect(out.isError).toBe(true);
   expect(out.structuredContent).toMatchObject({
-    error: { code: escapedIndex === 0 ? "executor_failed" : "unknown_address" },
+    error: { code: "unknown_address" },
   });
 });
 
@@ -2131,7 +2135,7 @@ it("reports an empty terminal executor error as failure with a fixed message", a
   )({ code: "", diagnostics: true });
   expect(out.isError).toBe(true);
   expect(out.structuredContent).toMatchObject({
-    error: { code: "executor_failed", message: "Error: Execution failed without an error message." },
+    error: { code: "program_error", message: "Program Error: Execution failed without an error message." },
     logs: "before failure",
   });
 });
@@ -2150,7 +2154,7 @@ it("does not retype an empty terminal error as a previously caught empty failure
   };
   const out = await createExecuteTool(makeRegistry([connector]), BASE, executor, silentLogger)({ code: "", diagnostics: true });
   expect(out.structuredContent).toMatchObject({
-    error: { code: "executor_failed", message: "Error: Execution failed without an error message." },
+    error: { code: "program_error", message: "Program Error: Execution failed without an error message." },
   });
 });
 
@@ -2306,3 +2310,71 @@ it(
     expect(execute).not.toHaveBeenCalled();
   },
 );
+
+
+it.each([undefined, 30])("INV-7: direct and guest calls share default and requested deadlines (%s)", async (requestedMs) => {
+  const connector = connectorWith({
+    id: "deadline", kind: "api", description: "Deadline fixture",
+    tools: [{ name: "read", description: "Wait until cancelled", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }],
+    call: async () => await new Promise<never>(() => {}),
+  });
+  const executor: Executor = {
+    async execute(_code, providers) {
+      try { return { result: await required(connectaProvider(providers).fns.call)({ address: "deadline.read", ...(requestedMs ? { timeoutMs: requestedMs } : {}) }) }; }
+      catch (error) { return { result: (error as InvocationFailure).details }; }
+    },
+  };
+  const app = makeDeployment({ connectors: [connector], executor, calls: { defaultTimeoutMs: 40 }, execute: { hostCallTimeoutMs: 10 } });
+  try {
+    const invoke = async (name: string, args: object) => (await readJsonRpc(await mcpRpc(app, "tools/call", { name, arguments: args }, { token: "test-token-123" }))).result;
+    const direct = await invoke("call_tool", { address: "deadline.read", resultMode: "value", ...(requestedMs ? { timeoutMs: requestedMs } : {}) });
+    const guest = await invoke("execute_code", { code: "async () => await connecta.call({ address: 'deadline.read' })" });
+    const deadlineMs = requestedMs ?? 40;
+    for (const error of [direct.structuredContent.error, guest.structuredContent.result]) {
+      expect(error).toMatchObject({ code: "timeout", details: { operation: "deadline.read", stage: "downstream", elapsedMs: expect.any(Number), deadlineMs } });
+      expect(error.details.elapsedMs).toBeGreaterThanOrEqual(deadlineMs - 1);
+      expect(error.message).toContain(`effective deadline ${deadlineMs}ms`);
+    }
+    expect(guest.structuredContent.hostCalls).toEqual({ attempted: 1, admitted: 1, succeeded: 0, failed: 1 });
+  } finally { await app.close(); }
+});
+
+
+it.each(["cancel", "deadline"])("INV-7: guest paging starts no additional storage reads after %s", async (ending) => {
+  const inner = memoryStorage();
+  let resultId = "", blocking = false;
+  let release!: () => void, entered!: () => void, completed!: () => void;
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  const ready = new Promise<void>(resolve => { entered = resolve; });
+  const done = new Promise<void>(resolve => { completed = resolve; });
+  const reads: string[] = [];
+  const storage = { ...inner, async get(key: string) {
+    if (blocking && key.includes(resultId)) {
+      reads.push(key);
+      if (reads.length === 1) { entered(); await blocked; completed(); }
+    }
+    return inner.get(key);
+  } };
+  const registry = makeRegistry([connectorWith({
+    id: "pages", kind: "api", description: "Large page fixture",
+    tools: [{ name: "read", description: "Read text", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }],
+    call: async () => "x".repeat(120_000),
+  })], { storage });
+  const direct = await createMetaTools(registry, BASE).callTool({ address: "pages.read", resultMode: "value" });
+  resultId = (required(direct.structuredContent).data as { resultId: string }).resultId;
+  blocking = true;
+  const controller = new AbortController();
+  const execute = createExecuteTool(registry, BASE,
+    scriptedExecutor((fns) => required(fns.result)(resultId, { offset: 48_000 })), silentLogger, undefined, { hostCallTimeoutMs: 50 });
+  const running = execute({ code: "async () => await connecta.result(id)" }, { signal: controller.signal });
+  await ready;
+  if (ending === "cancel") controller.abort();
+  const response = await running;
+  expect(response.isError).toBe(true);
+  const code = (required(response.structuredContent).error as { code: string }).code;
+  expect(ending === "cancel" ? ["cancelled", "executor_cancelled"] : ["timeout"]).toContain(code);
+  release();
+  await done;
+  await new Promise(resolve => setTimeout(resolve, 5));
+  expect(reads).toHaveLength(1);
+});

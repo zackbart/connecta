@@ -3,6 +3,7 @@
 // the Dynamic Worker executor in test/guest-api-contract.test.ts.
 
 import { afterAll, describe, expect, it, vi } from "vitest";
+import { customExecutor } from "../src/executor-contract.js";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
 import {
   CAPABILITY_PROBE_CODE,
@@ -35,17 +36,20 @@ describe("guest API contract (QuickJS executor)", () => {
   it("[L4, W9] cancels an exempt write queued at exhaustion", async () => {
     await checkQueuedWriteAtExhaustion(executor);
   });
-  for (const contractCase of CONTRACT_CASES) {
-    it(`[${contractCase.clauses}] ${contractCase.name}`, async () => {
-      const harness = contractHarness();
-      const chosen = contractCase.deadline ? deadlineExecutor : executor;
-      const config = caseConfig(contractCase);
-      const outcome = await harness.run(chosen, contractCase.code, config);
-      const follow = contractCase.follows
-        ? await harness.run(chosen, contractCase.follows, config)
-        : undefined;
-      contractCase.check(outcome, harness.state, follow);
-    });
+  for (const custom of [false, true]) {
+    for (const contractCase of CONTRACT_CASES) {
+      it(`[${contractCase.clauses}] ${custom ? "customExecutor: " : ""}${contractCase.name}`, async () => {
+        const harness = contractHarness();
+        const base = contractCase.deadline ? deadlineExecutor : executor;
+        const chosen = custom ? customExecutor(base, { lifecycle: "self-managed" }) : base;
+        const config = caseConfig(contractCase);
+        const outcome = await harness.run(chosen, contractCase.code, config);
+        const follow = contractCase.follows
+          ? await harness.run(chosen, contractCase.follows, config)
+          : undefined;
+        contractCase.check(outcome, harness.state, follow);
+      });
+    }
   }
 
   it("[R5, L4] retains streamed logs when the budget ends the child", async () => {

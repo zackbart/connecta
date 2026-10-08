@@ -409,9 +409,7 @@ function serveMcp(
       oauthConnectUnavailable: oauthConnectUnavailable(opts),
       credentialHandoffUrl: opts.config.ui?.credentialHandoffUrl(baseUrl),
       ...(activity ? { activity } : {}),
-      ...(opts.config.calls.defaultTimeoutMs !== undefined
-        ? { defaultToolTimeoutMs: opts.config.calls.defaultTimeoutMs }
-        : {}),
+      defaultToolTimeoutMs: opts.config.calls.defaultTimeoutMs ?? opts.config.execute.hostCallTimeoutMs,
       probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
       discoveryConcurrency: opts.config.discovery.concurrency,
       requestSignal,
@@ -424,6 +422,7 @@ function serveMcp(
       baseUrl,
       requestScope,
       executor: opts.executor,
+      defaultToolTimeoutMs: opts.config.calls.defaultTimeoutMs ?? opts.config.execute.hostCallTimeoutMs,
       logger: opts.config.logger,
       ...(activity ? { activity } : {}),
       requestSignal,

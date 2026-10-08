@@ -74,7 +74,7 @@ describe("v0.23 client-token migration", () => {
     });
     try {
       const list = await readJsonRpc(await mcpRpc(app, "tools/list", {}, { token: fixture.bound.token }));
-      expect(list.result.tools).toHaveLength(7);
+      expect(list.result.tools).toHaveLength(6);
       const call = () => mcpRpc(app, "tools/call", { name: "call_tool", arguments: { address: "calc.add", args: { a: 2, b: 3 } } }, { token: fixture.bound.token });
       expect((await readJsonRpc(await call())).result.isError).not.toBe(true);
       const poolRequest = () => new Request(BASE + "/mcp/desktop", mcpRpc("tools/list", {}, { token: fixture.bound.token }));

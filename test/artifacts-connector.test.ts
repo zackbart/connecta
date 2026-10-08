@@ -1,3 +1,4 @@
+import { guestError, guestErrorText, guestSource } from "./fixtures/misc.js";
 // The built-in artifacts connector through a real deployment: the typed slot,
 // the tool surface, approval exemption, conflicts, authorship, the guide, and
 // the render-check hook.
@@ -31,20 +32,10 @@ interface Guest {
 }
 type Program = (connecta: Guest) => Promise<unknown>;
 
-/** Rebuild a typed guest error the way the trusted prelude does. */
-function guestError(error: unknown): Error {
-  const message = error instanceof Error ? error.message : String(error);
-  const prefix = "\u001econnecta-error:";
-  if (!message.startsWith(prefix)) return error instanceof Error ? error : new Error(message);
-  const rest = message.slice(prefix.length);
-  const details = JSON.parse(rest.slice(rest.indexOf(":") + 1)) as { code: string; message: string };
-  return Object.assign(new Error(details.message), { code: details.code, details });
-}
-
 function scriptedExecutor(programs: Map<string, Program>): Executor {
   return {
     async execute(code: string, providers: ExecutorProvider[]) {
-      const program = programs.get(code.trim());
+      const program = programs.get(guestSource(code));
       if (!program) return { result: undefined, error: `no program for ${code}` };
       const provider = required(providers[0]);
       const connecta = new Proxy({} as Guest, {
@@ -59,7 +50,7 @@ function scriptedExecutor(programs: Map<string, Program>): Executor {
       try {
         return { result: await program(connecta) };
       } catch (error) {
-        return { result: undefined, error: error instanceof Error ? error.message : String(error) };
+        return { result: undefined, error: guestErrorText(error) };
       }
     },
   };
@@ -209,18 +200,18 @@ describe("writing through the connector", () => {
     const { run, json, events } = deploy({ config: { execute: { maxWrites: 2 } } });
     const created = json(
       await run(async (connecta) => {
-        const made = await connecta.call("artifacts.create_artifact", CREATE);
-        const read = await connecta.call("artifacts.get_artifact", { id: "q3-bugs", includeSource: false });
+        const made = await connecta.call("artifacts.create_artifact", CREATE).then(({ data }) => data);
+        const read = await connecta.call("artifacts.get_artifact", { id: "q3-bugs", includeSource: false }).then(({ data }) => data);
         const patched = await connecta.call("artifacts.patch_artifact", {
           id: "q3-bugs",
           baseVersion: read.view.version,
           edits: [{ find: "Bugs by team", replace: "Open bugs by project" }],
-        });
+        }).then(({ data }) => data);
         try {
           await connecta.call("artifacts.set_documents", {
             id: "q3-bugs",
             documents: { data: { baseVersion: 1, value: {} } },
-          });
+          }).then(({ data }) => data);
         } catch (error) {
           return { made, patched, third: (error as { code: string }).code };
         }
@@ -248,14 +239,14 @@ describe("writing through the connector", () => {
 
   it("INV-2: refuses artifact writes in a read-only pool", async () => {
     const { run, json } = deploy({ config: { trust: "read-only" } });
-    const refused = json(await run(async (connecta) => connecta.call("artifacts.create_artifact", CREATE)));
+    const refused = json(await run(async (connecta) => connecta.call("artifacts.create_artifact", CREATE).then(({ data }) => data)));
     expect(refused.error).toMatchObject({
       code: "destructive_tool_requires_approval",
       nextAction: { tool: "call_destructive_tool", arguments: { address: "artifacts.create_artifact" } },
     });
     const perTool = deploy({ config: { trust: "read-only" } });
     const alsoRefused = perTool.json(
-      await perTool.run(async (connecta) => connecta.call("artifacts.create_artifact", CREATE)),
+      await perTool.run(async (connecta) => connecta.call("artifacts.create_artifact", CREATE).then(({ data }) => data)),
     );
     expect(alsoRefused.error?.code).toBe("destructive_tool_requires_approval");
   });
@@ -294,7 +285,7 @@ describe("writing through the connector", () => {
     const caught = json(
       await run(async (connecta) => {
         try {
-          await connecta.call("artifacts.update_artifact", { id: "q3-bugs", baseVersion: 1, source: page("x") });
+          await connecta.call("artifacts.update_artifact", { id: "q3-bugs", baseVersion: 1, source: page("x") }).then(({ data }) => data);
         } catch (error) {
           const typed = error as { code: string; details: { retryable: boolean; current: unknown } };
           return { code: typed.code, retryable: typed.details.retryable, current: typed.details.current };

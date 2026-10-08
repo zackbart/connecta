@@ -7,6 +7,7 @@
 // Key order is not compared; a JSON Schema's meaning does not depend on it.
 
 import { describe, expect, it } from "vitest";
+import { Validator } from "@cfworker/json-schema";
 import type { Executor } from "../src/types.js";
 import { makeDeployment, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 
@@ -79,16 +80,6 @@ const GOLDEN: Record<string, unknown> = {
     },
     required: ["connector"],
   },
-  get_result: {
-    type: "object",
-    $schema: DRAFT,
-    properties: {
-      id: { type: "string" },
-      offset: { type: "integer", minimum: 0, maximum: MAX_SAFE_INTEGER },
-      maxBytes: { type: "integer", minimum: 1, maximum: MAX_SAFE_INTEGER },
-    },
-    required: ["id"],
-  },
   execute_code: {
     type: "object",
     $schema: DRAFT,
@@ -109,7 +100,7 @@ const GOLDEN: Record<string, unknown> = {
 };
 
 describe("meta-tool input schemas", () => {
-  it("renders all seven exactly as the golden records", async () => {
+  it("renders all six exactly as the golden records", async () => {
     const body = await readJsonRpc(
       await mcpRpc(
         makeDeployment({ executor: stubExecutor }),
@@ -127,5 +118,34 @@ describe("meta-tool input schemas", () => {
     for (const [name, schema] of Object.entries(GOLDEN)) {
       expect(rendered[name], name).toStrictEqual(schema);
     }
+  });
+});
+
+
+describe("meta-tool output schemas", () => {
+  it("INV-3: every meta-tool advertises a schema matching successful structured content", async () => {
+    const app = makeDeployment({ executor: stubExecutor, trust: "trusted" });
+    try {
+      const list = await readJsonRpc(await mcpRpc(app, "tools/list", {}, { token: TOKEN }));
+      const cases: Record<string, object> = {
+        skills: {},
+        search_tools: { connector: "calc" },
+        call_tool: { address: "calc.add", args: { a: 2, b: 3 }, resultMode: "value" },
+        call_destructive_tool: { address: "calc.add", args: { a: 2, b: 3 }, resultMode: "value", reason: "Test the direct-call output contract." },
+        authorize_connector: { connector: "calc" },
+        execute_code: { code: "async () => null" },
+      };
+      expect(list.result.tools).toHaveLength(6);
+      for (const tool of list.result.tools) {
+        expect(tool.outputSchema, tool.name).toMatchObject({ type: "object", properties: expect.any(Object) });
+        const response = await readJsonRpc(await mcpRpc(app, "tools/call", { name: tool.name, arguments: cases[tool.name] }, { token: TOKEN }));
+        expect(response.error, tool.name).toBeUndefined();
+        expect(response.result.isError, tool.name).toBeFalsy();
+        expect(new Validator(tool.outputSchema).validate(response.result.structuredContent).valid, tool.name).toBe(true);
+      }
+      const execute = list.result.tools.find((tool: { name: string }) => tool.name === "execute_code");
+      expect(new Validator(execute.outputSchema).validate({ result: null }).valid).toBe(false);
+      expect(new Validator(execute.outputSchema).validate({ hostCalls: { attempted: -1, admitted: 0, succeeded: 0, failed: 0 } }).valid).toBe(false);
+    } finally { await app.close(); }
   });
 });

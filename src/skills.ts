@@ -4,7 +4,7 @@ import type { Connector } from "./types.js";
 const ROUTE =
   "Choose a route before discovery. A known-address read needs only call_tool. Unknown-address read-only work starts with execute_code to discover, call, and return the answer; use the same route for reduction, multiple or dependent calls, loops, joins, or branches. Keep discovery and calls together when schemas suffice; do not return catalog matches alone. Sample unfamiliar reads.";
 const RECOVERY =
-  'After auth_required use authorize_connector. After a truncated direct result use get_result. Guidance is on demand: fetch skills({ name: "usage" }) only when these instructions and the tool description are insufficient or a run needs repair.';
+  'After auth_required use authorize_connector. After a truncated direct result use connecta.result. Guidance is on demand: fetch skills({ name: "usage" }) only when these instructions and the tool description are insufficient or a run needs repair.';
 
 /**
  * The always-loaded MCP `instructions` string. A program runs reads and the
@@ -17,7 +17,7 @@ const USAGE_SKILL_BASE = `# Connecta usage
 
 ## The surface
 
-Seven tools: \`execute_code\`, \`search_tools\`, \`call_tool\`, \`call_destructive_tool\`, \`authorize_connector\`, \`get_result\`, \`skills\`. Discovery and multi-call work live in a program. Top-level search remains for catalog inspection and approval-required work.
+Six tools: \`execute_code\`, \`search_tools\`, \`call_tool\`, \`call_destructive_tool\`, \`authorize_connector\`, \`skills\`. Discovery and multi-call work live in a program. Top-level search remains for catalog inspection and approval-required work.
 
 Follow the MCP instructions for routing. Read at most once for syntax or repair.
 
@@ -27,14 +27,14 @@ Write one plain-JavaScript async arrow function, without TypeScript or imports. 
 
 The minimum guest API is:
 
-- \`connecta.call("connector.tool", args)\` uses the canonical address and returns the unwrapped value.
+- \`connecta.call("connector.tool", args)\` uses the canonical address and returns { data, format: "json" | "text" }.
 - \`connecta.search(args)\` returns \`{ tools, total, offset, limit, hasMore }\`; \`connecta.describe(args)\` returns \`{ tools }\`.
 - Use \`Promise.all\` for independent calls, or \`Promise.allSettled\` to keep successes and failures.
 - \`console.log(...)\` is captured. \`connecta.emit(block)\` produces rich output.
 
 ## Discover and select
 
-Search and call in one run when schemas suffice. Sample unfamiliar reads. Reduce a one-time write's full result here or page a direct call with get_result; never repeat the write to recover output. Search distinct operations separately with 2–4 distinctive action/object terms.
+Search and call in one run when schemas suffice. Sample unfamiliar reads. Reduce a one-time write's full result here or page a direct call with connecta.result; never repeat the write to recover output. Search distinct operations separately with 2–4 distinctive action/object terms.
 
 For top-level catalog inspection or approval-required discovery, omit \`limit\` initially (the default is 8), then page with a limit up to 50 if needed. Empty or whitespace-only queries browse all tools. A non-empty query with no ASCII terms returns no matches; mixed input searches with its ASCII terms. \`includeSchemas: "compact"\` adds bounded input and available output shapes. An \`outputSchemaSource: "observed"\` shape is a hint, not a contract. Plain objects expose \`inputKeys\`, \`requiredInputKeys\`, and \`outputKeys\`; truncation flags mark incomplete shapes; matches also carry declared annotations.
 
@@ -56,12 +56,12 @@ Caught Connecta errors expose \`message\`, \`code\`, \`retryable\`, and \`detail
 - \`destructive_tool_requires_approval\`: stop and send the returned address through top-level \`call_destructive_tool\`.
 - \`write_outcome_unknown\`: a trusted-pool write was sent but unanswered and is never re-sent; check the target.
 - \`auth_required\`: let the failure reach the model, then use top-level \`authorize_connector\`, give its handoff to the operator, and retry after recovery.
-- Truncated direct call: page with \`get_result\`, never repeat a write. A program result has no page handle; reduce a read in a new program. After a write, check the target or report the gap.
+- Truncated direct call: page with \`connecta.result\`, never repeat a write. A program result has no page handle; reduce a read in a new program. After a write, check the target or report the gap.
 - Unknown addresses and tools carry scoped search recovery. Use it inside the current run. Do not invent an address.
 
 For a direct call, \`resultMode: "value"\` unwraps the result. \`timeoutMs\` sets its deadline. Every call makes one attempt; use the returned error classification and retry hint to decide whether to reissue. \`diagnostics: true\` adds timing.
 
-\`get_result({ id, offset?, maxBytes? })\` returns a one-line JSON header \`{ resultId, offset, bytes, totalBytes, hasMore, nextAction? }\`, a newline, and then the page as raw text, for a direct-call result. Both sizes are byte counts: \`maxBytes\` must be a whole number at least 1, defaults to the result's cap, and is clamped to it; \`offset\` must be a whole number at least 0 and defaults to 0. An offset inside a multi-byte character moves back to its first byte, and the header reports the served offset. Follow \`nextAction\` until \`hasMore\` is false to reassemble pages. An unknown or expired id is an error.
+\`await connecta.result(id, { offset?, maxBytes? })\` inside a program returns \`{ resultId, offset, bytes, totalBytes, hasMore, nextOffset?, format: "text", text }\`. Pages use UTF-8 bytes. Follow nextOffset until hasMore is false; reassemble and reduce inside the program. Unknown or expired ids fail. Fetch a guide inside the same program with \`await connecta.skill(name)\`.
 
 The \`execute_code\` description states this deployment's host-call and write budgets and per-call deadline.
 
@@ -73,7 +73,7 @@ Portable code uses standard JavaScript builtins, \`connecta\`, and \`console.*\`
 
 One read-only call at a known address:
 
-\`async () => await connecta.call("crm.get_account", { id: "acct_42" })\`
+\`async () => (await connecta.call("crm.get_account", { id: "acct_42" })).data\`
 
 Dependent lookup: verify connector \`ci\`, run 42, and these schema fields first.
 
@@ -86,11 +86,11 @@ async () => {
   };
   const runTool = await find("get_run");
   if (!runTool) return { gap: "Run lookup not resolved" };
-  const run = await connecta.call(runTool.address, { runId: 42 });
+  const { data: run } = await connecta.call(runTool.address, { runId: 42 });
   if (!run.failedJobId) return { status: run.status, gap: "No failed job identified" };
   const logsTool = await find("get_job_logs");
   if (!logsTool) return { status: run.status, gap: "Job logs not resolved" };
-  const logs = await connecta.call(logsTool.address, { jobId: run.failedJobId });
+  const { data: logs } = await connecta.call(logsTool.address, { jobId: run.failedJobId });
   return logs.filter(row => row.level === "error").map(({ timestamp, message }) => ({ timestamp, message }));
 }
 \`\`\`

@@ -14,10 +14,11 @@ import {
   type ResolvedCatalogTool,
 } from "./catalog-service.js";
 import type { DeferredWork } from "./connector-scope.js";
-import { errorResult, jsonResult, type ToolResult } from "./meta-tools.js";
+import { createMetaTools, jsonResult, type ToolResult } from "./meta-tools.js";
 import {
   guardExecuteResultValue,
   MAX_EXECUTE_LOG_CHARS,
+  MAX_EXECUTE_RESULT_CHARS,
   truncateExecuteText,
 } from "./executor-result.js";
 import {
@@ -37,17 +38,20 @@ import {
   timed,
   type WriteDecision,
 } from "./invocation.js";
+import { GUEST_FAILURE_FRAME, guestPrelude, guestSecret, programError, wrapGuestProgram } from "./guest-runtime.js";
+import { EXECUTE_OUTPUT } from "./meta-output.js";
 import { normalizeProgramSource } from "./program-source.js";
 import { agentOutputOperations, redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import type { RegistryView } from "./registry.js";
-import { underAnySignal } from "./timeout.js";
-import { fromSignal, runEdge } from "./runtime/run.js";
+import { normalizeTimeoutMs, underAnySignal } from "./timeout.js";
+import { fromSignal, runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { closeScope } from "./runtime/connector-scope.js";
 import {
   connectorGuide,
   connectorGuideRequired,
   connectorSkillName,
   hasConnectorGuides,
+  resolveSkill,
 } from "./skills.js";
 import type {
   AdmittingExecutor,
@@ -81,6 +85,7 @@ export const CONNECTOR_INVENTORY_MAX_BYTES = 256;
  */
 export const EXECUTE_MAX_EMITTED_BYTES = CONFIG_DEFAULTS.execute.maxEmittedBytes;
 export const EXECUTE_MAX_EMITTED_BLOCKS = CONFIG_DEFAULTS.execute.maxEmittedBlocks;
+const CALL_SIGNATURE = "Use connecta.call(address, args?, { timeoutMs? }) or connecta.call({ address, args?, timeoutMs? }). address must be a canonical connector.tool string.";
 const diagnosticsEncoder = new TextEncoder();
 
 type ExecuteDiagnosticOperation = "search" | "describe" | "call";
@@ -251,9 +256,10 @@ function requireEmittedBlock(raw: unknown): EmittedBlock {
 export class EmitCollector {
   readonly blocks: EmittedBlock[] = [];
   bytes = 0;
+  textChars = 0;
   constructor(
     private readonly maxBytes: number,
-    private readonly maxBlocks: number,
+    readonly maxBlocks: number,
     private readonly diagnostics?: ExecuteDiagnostics,
   ) {}
 
@@ -273,6 +279,12 @@ export class EmitCollector {
         `connecta.emit byte budget exceeded: block is ${size} serialized bytes with ${this.maxBytes - this.bytes} of ${this.maxBytes} remaining`,
       );
     }
+    const textChars = block.type === "text" ? JSON.stringify(block).length : 0;
+    // Reserve space for a reduced result envelope even if text fills the budget.
+    if (this.textChars + textChars > MAX_EXECUTE_RESULT_CHARS - 512) {
+      throw guestFailure("result_too_large", "Emitted text shares the 24,000-character program result limit. Reduce the text before emitting it.");
+    }
+    this.textChars += textChars;
     this.blocks.push(block);
     this.bytes += size;
     this.diagnostics?.recordEmitted(this.blocks.length, this.bytes);
@@ -309,16 +321,6 @@ function guestFailure(
   retryable = false,
 ): InvocationFailure {
   return new InvocationFailure({ code, message, retryable });
-}
-
-const GUEST_FAILURE_FRAME = "\u001econnecta-error:";
-const guestFailureFrames = new WeakMap<InvocationFailure, string>();
-
-/** Per-execution secret: guest prose cannot collide with this host frame. */
-function guestFailureSecret(): string {
-  const words = new Uint32Array(4);
-  crypto.getRandomValues(words);
-  return Array.from(words, (word) => word.toString(16).padStart(8, "0")).join("");
 }
 
 /**
@@ -360,56 +362,10 @@ function boundedGuestFailure(failure: InvocationFailure): InvocationFailure {
   return new InvocationFailure(details);
 }
 
-function framedGuestFailure(
-  secret: string,
-  failure: InvocationFailure,
-): InvocationFailure {
+function framedGuestFailure(secret: string, id: string, failure: InvocationFailure): InvocationFailure {
   const framed = new InvocationFailure(failure.details);
-  framed.message =
-    `${GUEST_FAILURE_FRAME}${secret}:${JSON.stringify(failure.details)}`;
-  guestFailureFrames.set(failure, framed.message);
+  framed.message = `${GUEST_FAILURE_FRAME}${secret}:${JSON.stringify({ id, details: failure.details })}`;
   return framed;
-}
-
-/** Rebuild host failures as guest errors without exposing the private frame. */
-function guestErrorPrelude(failureSecret: string): string {
-  return `((failurePrefix) => {
-  const NativeError = globalThis.Error;
-  const startsWith = Function.prototype.call.bind(String.prototype.startsWith);
-  const slice = Function.prototype.call.bind(String.prototype.slice);
-  const parse = JSON.parse;
-  const freeze = Object.freeze;
-  const defineProperties = Object.defineProperties;
-  const construct = Reflect.construct;
-  function ConnectaError(message, options) {
-    let details;
-    if (typeof message === "string" && startsWith(message, failurePrefix)) {
-      try { details = parse(slice(message, failurePrefix.length)); }
-      catch { message = "Invalid host failure frame."; }
-    }
-    const error = construct(
-      NativeError,
-      options === undefined ? [details ? details.message : message] : [details ? details.message : message, options],
-      new.target || NativeError
-    );
-    if (details) {
-      freeze(details);
-      defineProperties(error, {
-        code: { value: details.code, enumerable: true },
-        retryable: { value: details.retryable, enumerable: true },
-        details: { value: details, enumerable: true }
-      });
-    }
-    return error;
-  }
-  ConnectaError.prototype = NativeError.prototype;
-  Object.setPrototypeOf(ConnectaError, NativeError);
-  Object.defineProperty(globalThis, "Error", {
-    value: ConnectaError,
-    writable: false,
-    configurable: false
-  });
-})(${JSON.stringify(`${GUEST_FAILURE_FRAME}${failureSecret}:`)});`;
 }
 
 /**
@@ -428,13 +384,17 @@ export async function buildSandboxProviders(
 
 interface SandboxLimits {
   sentSecrets?: SentSecrets;
+  defaultToolTimeoutMs?: number | undefined;
+  programDeadlineAt?: number | undefined;
   signal?: AbortSignal | undefined;
+  failureSecret?: string | undefined;
+  hostCalls?: HostCalls | undefined;
   maxHostCalls?: number | undefined;
   hostCallTimeoutMs?: number | undefined;
   discoveryConcurrency?: number | undefined;
   /** Per-connector deadline for in-program catalog probes. Default 30_000. */
   probeTimeoutMs?: number | undefined;
-  onInvocationFailure?: ((failure: InvocationFailure) => void) | undefined;
+  onInvocationFailure?: ((failure: InvocationFailure, id: string) => void) | undefined;
   /** Terminal host refusal, never delivered as a guest rejection. */
   onHostCallBudgetExceeded?: ((failure: InvocationFailure) => void) | undefined;
   diagnostics?: ExecuteDiagnostics | undefined;
@@ -471,6 +431,8 @@ class HostCallBudgetExceeded extends InvocationFailure {
     });
   }
 }
+
+interface HostCalls { attempted: number; admitted: number; succeeded: number; failed: number }
 
 type SettleWrite = (state: ReturnType<typeof writeStateOf>) => void;
 
@@ -515,10 +477,12 @@ function sandboxProvider(
     1,
     Math.trunc(limits.hostCallTimeoutMs ?? EXECUTE_HOST_CALL_TIMEOUT_MS),
   );
-  const failureSecret = guestFailureSecret();
+  const failureSecret = limits.failureSecret ?? guestSecret();
   const { signal, diagnostics, programWrites } = limits;
-  const hostCalls = { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
-  let budgetFailure: HostCallBudgetExceeded | undefined;
+  const hostCalls = limits.hostCalls ?? { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
+  let budgetFailure: InvocationFailure | undefined;
+  let emitAttempts = 0;
+  const maxEmitAttempts = Math.max(EXECUTE_MAX_EMITTED_BLOCKS, limits.emitCollector?.maxBlocks ?? EXECUTE_MAX_EMITTED_BLOCKS) * 4;
   // A rejected bridge promise is catchable in both sandboxes. End the host
   // run instead and leave that bridge pending: an awaiting guest cannot catch
   // the refusal and loop. Later calls, including emit, lose host access too.
@@ -533,10 +497,10 @@ function sandboxProvider(
   const maxWrites = resolveBudget(limits.maxWrites, DEFAULT_MAX_WRITES);
   let writes = 0;
   /** Budget and account for writes admitted by the pool trust decision. */
-  const invocationContext = (sending: { settle?: SettleWrite }) => ({
+  const invocationContext = (sending: { settle?: SettleWrite }, timeoutMs: number) => ({
     source: "execute_code" as const,
     sentSecrets,
-    timeoutMs: hostCallTimeoutMs,
+    timeoutMs,
     ...(signal !== undefined ? { requestSignal: signal } : {}),
     ...(limits.dispatchController ? { dispatchSignal: limits.dispatchController.signal } : {}),
     unwrapResult: true,
@@ -573,15 +537,35 @@ function sandboxProvider(
   // A call brings its own cancellation: the invocation pipeline reads the
   // run's signal, refuses a call that starts after it, and records the
   // cancelled attempt in activity like any other outcome.
-  const call = (address: unknown, args: unknown) =>
+  const call = (address: unknown, args: unknown, options?: unknown) =>
     Effect.gen(function* () {
+      let timeout: unknown;
+      if (address !== null && typeof address === "object" && !Array.isArray(address)) {
+        const request = address as Record<string, unknown>;
+        if (args !== undefined || options !== undefined || Object.keys(request).some((key) => !["address", "args", "timeoutMs"].includes(key))) {
+          return yield* Effect.fail(guestFailure("invalid_args", CALL_SIGNATURE));
+        }
+        address = request.address;
+        args = request.args;
+        timeout = request.timeoutMs;
+      } else if (options !== undefined) {
+        if (!options || typeof options !== "object" || Array.isArray(options) || Object.keys(options).some((key) => key !== "timeoutMs")) {
+          return yield* Effect.fail(guestFailure("invalid_args", CALL_SIGNATURE));
+        }
+        timeout = (options as { timeoutMs?: unknown }).timeoutMs;
+      }
+      if (typeof address !== "string" || (timeout !== undefined && (typeof timeout !== "number" || !Number.isSafeInteger(timeout) || timeout < 1))) {
+        return yield* Effect.fail(guestFailure("invalid_args", CALL_SIGNATURE));
+      }
+      const requestedMs = normalizeTimeoutMs(timeout as number | undefined) ?? normalizeTimeoutMs(limits.defaultToolTimeoutMs) ?? hostCallTimeoutMs;
+      const timeoutMs = Math.min(requestedMs, Math.max(1, (limits.programDeadlineAt ?? Infinity) - Date.now()));
       // A trusted-pool write settles here — unknown if the call never returned an
       // outcome.
       const sending: { settle?: SettleWrite } = {};
       const outcome = yield* invocation.pipeline(
-        String(address),
+        address,
         sentSecrets.redact(args ?? {}),
-        invocationContext(sending),
+        invocationContext(sending, timeoutMs),
       ).pipe(
         Effect.onExit((exit) =>
           Effect.sync(() =>
@@ -591,7 +575,7 @@ function sandboxProvider(
       );
       diagnostics?.recordCall(outcome);
       return outcome.ok
-        ? outcome.value
+        ? { data: outcome.value, format: outcome.format }
         : yield* Effect.fail(new InvocationFailure(outcome.error));
     });
 
@@ -640,11 +624,40 @@ function sandboxProvider(
       );
     });
 
+  const meta = createMetaTools(registry, baseUrl);
   const operations: Record<
     string,
     (...args: unknown[]) => Effect.Effect<unknown, unknown>
   > = {
     call,
+    result: (id, options, signal) => Effect.tryPromise({
+      try: async () => {
+        if (typeof id !== "string" || !options && options !== undefined || options !== undefined && (typeof options !== "object" || Array.isArray(options))) {
+          throw guestFailure("invalid_args", "Use connecta.result(id, { offset?, maxBytes? }).");
+        }
+        const args = (options ?? {}) as Record<string, unknown>;
+        if (Object.keys(args).some((key) => !["offset", "maxBytes"].includes(key)) ||
+          args.offset !== undefined && (typeof args.offset !== "number" || !Number.isSafeInteger(args.offset) || args.offset < 0) ||
+          args.maxBytes !== undefined && (typeof args.maxBytes !== "number" || !Number.isSafeInteger(args.maxBytes) || args.maxBytes < 1)) {
+          throw guestFailure("invalid_args", "Use connecta.result(id, { offset?, maxBytes? }) with whole byte offsets >= 0 and maxBytes >= 1.");
+        }
+        const page = await meta.readResult({ id, ...args }, { signal: signal as AbortSignal | undefined });
+        if (page.isError) throw new InvocationFailure((page.structuredContent?.error ?? {
+          code: "not_found", message: page.content[0]?.text ?? "Result unavailable.", retryable: false,
+        }) as CallErrorDetails);
+        return page.structuredContent;
+      },
+      catch: (err) => err,
+    }),
+    skill: (name) => Effect.try({
+      try: () => {
+        if (typeof name !== "string") throw guestFailure("invalid_args", "Use connecta.skill(name) with an exact skill name.");
+        const skill = resolveSkill(name, registry.listConnectors());
+        if (!skill.found) throw guestFailure("not_found", skill.message);
+        return { name, format: "text", text: skill.content };
+      },
+      catch: (err) => err,
+    }),
     // Emission is a provider function, never an ExecuteResult field —
     // that is what keeps the Executor contract untouched and parity
     // structural (M8). It spends no host-call budget (M7); its own
@@ -711,19 +724,29 @@ function sandboxProvider(
     Effect.suspend(() => {
       if (!(err instanceof InvocationFailure)) return Effect.fail(err);
       const failure = boundedGuestFailure(sentSecrets.redact(err));
-      const frame = framedGuestFailure(failureSecret, failure);
-      limits.onInvocationFailure?.(failure);
+      const id = guestSecret();
+      const frame = framedGuestFailure(failureSecret, id, failure);
+      limits.onInvocationFailure?.(failure, id);
       return Effect.fail(frame);
     });
   return {
     name: "connecta",
     // Trusted host code the program runs after and cannot undo.
-    prelude: guestErrorPrelude(failureSecret),
+    prelude: guestPrelude(failureSecret),
     fns: Object.fromEntries(
       Object.entries(operations).map(([name, operation]) => [
         name,
         (...args: unknown[]) => {
           if (budgetFailure) return stopped;
+          // Invalid emits still allocate guest promises and authenticated frames.
+          // Bound those attempts without consuming the invocation budget or evicting frames.
+          if (name === "emit" && ++emitAttempts > maxEmitAttempts) {
+            budgetFailure = guestFailure("budget_exceeded", `execute_code emission-attempt budget exceeded (${maxEmitAttempts} attempts maximum).`);
+            programWrites?.close();
+            limits.dispatchController?.abort();
+            limits.onHostCallBudgetExceeded?.(budgetFailure);
+            return stopped;
+          }
           // L4/M7: spend on entry, before even invalid arguments are checked;
           // emit has a separate budget and never spends this one.
           const counted = name !== "emit";
@@ -736,9 +759,26 @@ function sandboxProvider(
             return stopped;
           }
           if (counted) hostCalls.admitted++;
-          const settled = runEdge(
-            Effect.suspend(() => operation(...args)).pipe(Effect.catch(framed)),
-          ).then(
+          const started = Date.now();
+          const utility = name === "result" || name === "skill";
+          const invoke = Effect.suspend(() => operation(...args));
+          const guarded = utility ? withDeadlineEffect((utilitySignal) => name === "result" ? Effect.suspend(() => operation(args[0], args[1], utilitySignal)) : invoke, {
+            timeoutMs: hostCallTimeoutMs,
+            ...(hostAccessSignal ? { signal: hostAccessSignal } : {}),
+            timeoutError: guestFailure("timeout", `connecta.${name} timed out.`),
+          }) : invoke;
+          const settled = runEdge(guarded.pipe(Effect.catch((error) => {
+            if (utility && hostAccessSignal?.aborted) return framed(guestFailure("cancelled", `connecta.${name} was cancelled because the run ended.`));
+            if (utility && error instanceof InvocationFailure && error.code === "timeout") {
+              const elapsedMs = Date.now() - started;
+              const message = `Operation "connecta.${name}" timed out during ${name === "result" ? "result storage" : "skill lookup"} after ${elapsedMs}ms (effective deadline ${hostCallTimeoutMs}ms).`;
+              return framed(new InvocationFailure({
+                code: "timeout", message, retryable: true,
+                details: { operation: `connecta.${name}`, stage: name === "result" ? "result storage" : "skill lookup", elapsedMs, deadlineMs: hostCallTimeoutMs },
+              }));
+            }
+            return framed(error);
+          }))).then(
             (value) => {
               if (counted) hostCalls.succeeded++;
               return budgetFailure ? stopped : redactAgentOutput(sentSecrets, value);
@@ -791,6 +831,7 @@ function awaitExecutor<A>(
     terminal?: Effect.Effect<never, unknown>;
   } = {},
 ): Effect.Effect<A, unknown> {
+  const started = Date.now();
   const contenders: Array<Effect.Effect<A, unknown>> = [
     Effect.suspend(() => {
       let pending: Promise<A> | undefined;
@@ -836,11 +877,14 @@ function awaitExecutor<A>(
               "[connecta] execute_code executor did not settle; run abandoned",
               { watchdogMs: watchdog.ms },
             );
+            const elapsedMs = Date.now() - started;
             return Effect.fail(
-              new Error(
-                `sandbox unresponsive: no outcome within the ${watchdog.ms}ms ` +
-                  "execute.watchdogMs ceiling, so the run was abandoned",
-              ),
+              new InvocationFailure({
+                code: "timeout",
+                message: `Operation "execute_code" timed out during sandbox watchdog after ${elapsedMs}ms (effective deadline ${watchdog.ms}ms); sandbox unresponsive.`,
+                retryable: false,
+                details: { operation: "execute_code", stage: "sandbox watchdog", elapsedMs, deadlineMs: watchdog.ms },
+              }),
             );
           }),
         ),
@@ -900,6 +944,7 @@ function leased(
 interface RunnerConfig {
   /** An HTTP request shares its scope with every registered tool. */
   requestScope?: object | undefined;
+  defaultToolTimeoutMs?: number | undefined;
   /** Nested runners must never queue behind the program holding their parent slot. */
   waitForAdmission?: boolean | undefined;
   /** Refresh only: a refused host call fails the whole run even if guest code catches it. */
@@ -923,15 +968,14 @@ const RUN_CLAIM_SLACK_MS = 10_000;
 
 /**
  * How long one run may take before whoever claimed it may give up on it: the
- * watchdog, one more host-call deadline for a trusted-pool write the play drains,
+ * watchdog, a second watchdog budget for a trusted-pool write the play drains,
  * and queue slack. Artifact refresh leases its claim for this long.
  */
 export function runClaimMs(
   config: Pick<RunnerConfig, "watchdogMs" | "hostCallTimeoutMs">,
 ): number {
-  return resolveBudget(config.watchdogMs, EXECUTE_WATCHDOG_MS) +
-    resolveBudget(config.hostCallTimeoutMs, EXECUTE_HOST_CALL_TIMEOUT_MS) +
-    RUN_CLAIM_SLACK_MS;
+  // A guest override is capped by the remaining watchdog, including drained writes.
+  return 2 * resolveBudget(config.watchdogMs, EXECUTE_WATCHDOG_MS) + RUN_CLAIM_SLACK_MS;
 }
 
 /** Runs one `execute_code` program and answers as the tool does. */
@@ -974,7 +1018,9 @@ export function createExecuteTool(
         resolveBudget(config.maxEmittedBlocks, EXECUTE_MAX_EMITTED_BLOCKS),
         diagnostics,
       );
-      const invocationFailures: InvocationFailure[] = [];
+      const invocationFailures = new Map<string, InvocationFailure>();
+      const failureSecret = guestSecret();
+      const hostCalls = { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
       const programWrites = new ProgramWrites();
       const dispatchController = new AbortController();
       const terminal = Deferred.makeUnsafe<never, InvocationFailure>();
@@ -1017,20 +1063,21 @@ export function createExecuteTool(
           sandboxProvider(registry, baseUrl, activity, {
             sentSecrets,
             signal,
+            failureSecret,
+            hostCalls,
             onHostCallBudgetExceeded: (failure) => {
               budgetFailure = failure;
               Deferred.doneUnsafe(terminal, Effect.fail(failure));
             },
-            onInvocationFailure: (failure) => {
-              invocationFailures.push(failure);
-              if (invocationFailures.length > 64) invocationFailures.shift();
-            },
+            onInvocationFailure: (failure, id) => { invocationFailures.set(id, failure); },
             emitCollector: emitted,
             ...(diagnostics ? { diagnostics } : {}),
             discoveryConcurrency: config.discoveryConcurrency,
             probeTimeoutMs: config.probeTimeoutMs,
             maxHostCalls: config.maxHostCalls,
             hostCallTimeoutMs,
+            defaultToolTimeoutMs: config.defaultToolTimeoutMs,
+            programDeadlineAt: Date.now() + watchdog.ms,
             defer: config.defer,
             trust: config.trust,
             maxWrites: config.maxWrites,
@@ -1055,8 +1102,8 @@ export function createExecuteTool(
           if (diagnostics) diagnostics.executorWallMs = elapsed;
         }, awaitExecutor(
           () => (admitted
-            ? admitted.execute(program, [provider])
-            : executor.execute(program, [provider])
+            ? admitted.execute(wrapGuestProgram(program, failureSecret), [provider])
+            : executor.execute(wrapGuestProgram(program, failureSecret), [provider])
           ).then(
             (outcome) => {
               executorLogs = sentSecrets.redact(outcome?.logs);
@@ -1077,7 +1124,7 @@ export function createExecuteTool(
           return programWrites.drain();
         }))));
       });
-      const reported = { emitted, diagnostics, invocationFailures };
+      const reported = { emitted, diagnostics, invocationFailures, failureSecret, program };
       const exited = Effect.exit(Effect.scoped(run)).pipe(Effect.flatMap((exit) =>
         // Releasing a QuickJS lease ends its child and rejects execute() with
         // the retained log prefix. Give that report one timer turn, just as
@@ -1086,7 +1133,7 @@ export function createExecuteTool(
           ? Effect.sleep(Duration.millis(1)).pipe(Effect.as(exit))
           : Effect.succeed(exit),
       ));
-      return Effect.map(exited, (exit) => {
+      return Effect.map(Effect.map(exited, (exit) => {
         // A synchronous fire-and-forget burst can also settle its executor in
         // this turn. The host's terminal refusal always wins over that value.
         if (budgetFailure instanceof HostCallBudgetExceeded) {
@@ -1110,29 +1157,36 @@ export function createExecuteTool(
           );
         }
         const finished = finishedRun(sentSecrets.redact(exit.value), reported);
-        if (config.failOnInvocationFailure && invocationFailures.length > 0) {
-          const refusal = invocationFailures[0]!;
+        if (config.failOnInvocationFailure && invocationFailures.size > 0) {
+          const refusal = invocationFailures.values().next().value!;
           return failureResponse(refusal.details.message, {
             code: refusal.details,
           });
         }
         return programWrites.finish(finished);
+      }), (response) => {
+        // Calls abandoned by the guest are failed when the run cancels them.
+        const counts = { ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded };
+        response.structuredContent = { ...response.structuredContent, hostCalls: counts };
+        if (response.content[0]?.type === "text") response.content[0].text = JSON.stringify(response.structuredContent);
+        return response;
       }).pipe(Effect.map((result) => redactAgentOutput(sentSecrets, result)));
     });
 
   return agentOutputOperations((requestScope) => ({
     execute: ({ code, diagnostics }: { code: string; diagnostics?: boolean }, options: { signal?: AbortSignal } = {}) => {
-      // A code-unit count above the cap is already too large in UTF-8. Check
-      // that first so a huge direct-call string is never encoded in full.
-      if (code.length > EXECUTE_MAX_CODE_BYTES ||
-        new TextEncoder().encode(code).byteLength > EXECUTE_MAX_CODE_BYTES) {
-        const message = `execute_code code exceeds the ${EXECUTE_MAX_CODE_BYTES}-byte UTF-8 limit.`;
-        return Promise.resolve(failureResponse(message, {
-          code: { code: "invalid_args", message, retryable: false },
-        }));
-      }
-      return runEdge(Effect.suspend(() =>
-        play(normalizeProgramSource(code), diagnostics, options.signal, requestScope)));
+    // A code-unit count above the cap is already too large in UTF-8. Check
+    // that first so a huge direct-call string is never encoded in full.
+    if (code.length > EXECUTE_MAX_CODE_BYTES ||
+      new TextEncoder().encode(code).byteLength > EXECUTE_MAX_CODE_BYTES) {
+      const message = `execute_code code exceeds the ${EXECUTE_MAX_CODE_BYTES}-byte UTF-8 limit.`;
+      const response = failureResponse(message, { code: { code: "invalid_args", message, retryable: false } });
+      response.structuredContent = { ...response.structuredContent, hostCalls: { attempted: 0, admitted: 0, succeeded: 0, failed: 0 } };
+      response.content[0]!.text = JSON.stringify(response.structuredContent);
+      return Promise.resolve(response);
+    }
+    return runEdge(Effect.suspend(() =>
+      play(normalizeProgramSource(code), diagnostics, options.signal, requestScope)));
     },
   }), config.requestScope).execute;
 }
@@ -1140,18 +1194,22 @@ export function createExecuteTool(
 interface RunReport {
   emitted: EmitCollector;
   diagnostics: ExecuteDiagnostics | undefined;
-  invocationFailures: readonly InvocationFailure[];
+  invocationFailures: ReadonlyMap<string, InvocationFailure>;
+  failureSecret: string;
+  program: string;
 }
 
 /** An execution that never produced an ExecuteResult, as the model sees it. */
 function failedRun(
   err: unknown,
   logger: Logger,
-  { emitted, diagnostics }: RunReport,
+  { emitted, diagnostics, program }: RunReport,
 ): ToolResult {
   const logs = err !== null && typeof err === "object" && "logs" in err
     ? executeLogs(err.logs)
     : undefined;
+  if (err instanceof InvocationFailure) return failureResponse(err.details.message, { logs, emitted, diagnostics, code: err.details });
+  if (err instanceof SyntaxError) return failureResponse(err.message, { logs, emitted, diagnostics, code: programError({ name: "SyntaxError", message: err.message }, program) });
   if (err instanceof ExecutorAdmissionError) {
     if (err.code === "executor_overloaded") {
       logger.warn("[connecta] execute_code admission rejected", {
@@ -1184,7 +1242,7 @@ function failedRun(
 /** The response for an ExecuteResult: the program's error or its value. */
 function finishedRun(
   outcome: ExecuteResult,
-  { emitted, diagnostics, invocationFailures }: RunReport,
+  { emitted, diagnostics, invocationFailures, failureSecret, program }: RunReport,
 ): ToolResult {
   if (outcome === null || typeof outcome !== "object" || Array.isArray(outcome)) {
     return failureResponse("Executor failed: expected an ExecuteResult object.", {
@@ -1203,65 +1261,44 @@ function finishedRun(
     });
   }
   if (outcome.error !== undefined) {
-    // Executor bridges necessarily reduce thrown host errors to strings.
-    // Match that terminal string back to the request-local typed failure so
-    // an unhandled tool failure keeps the same structured contract as
-    // call_tool. Failures caught by model code never reach
-    // outcome.error and therefore remain under that code's control.
-    //
-    // An error the program let through unchanged matches exactly, and an
-    // exact match always wins: a program that wrapped one failure's message
-    // around another's must not have the wrong type attached. Containment is
-    // the fallback, so a wrapped message still reports its underlying type
-    // rather than losing it to prose.
-    let invocationFailure: InvocationFailure | undefined;
-    for (const match of [
-      (candidate: InvocationFailure) =>
-        outcome.error !== "" &&
-        [candidate.message, guestFailureFrames.get(candidate)].includes(
-          outcome.error,
-        ),
-      (candidate: InvocationFailure) =>
-        [candidate.message, guestFailureFrames.get(candidate)].some(
-          (message) =>
-            // E6: empty or tiny prose cannot identify a wrapped failure.
-            message !== undefined &&
-            message.length >= 8 &&
-            outcome.error?.includes(message) === true,
-        ),
-    ]) {
-      for (let i = invocationFailures.length - 1; i >= 0; i--) {
-        const candidate = invocationFailures[i];
-        if (candidate && match(candidate)) {
-          invocationFailure = candidate;
-          break;
-        }
-      }
-      if (invocationFailure) break;
+    const prefix = `${GUEST_FAILURE_FRAME}${failureSecret}:`;
+    // A custom bridge can retain the exact authenticated host frame. No substring matching.
+    let failure: InvocationFailure | undefined;
+    if (outcome.error.startsWith(prefix)) {
+      try { failure = invocationFailures.get(JSON.parse(outcome.error.slice(prefix.length)).id); } catch {}
     }
-    if (invocationFailure) {
-      // E1/X11: return the same bounded details the guest received.
-      return failureResponse(invocationFailure.details.message, {
-        logs,
-        emitted,
-        diagnostics,
-        code: invocationFailure.details,
-      });
+    if (outcome.failure?.timeout) {
+      const { elapsedMs, deadlineMs } = outcome.failure.timeout;
+      const message = `Operation "execute_code" timed out during sandbox after ${elapsedMs}ms (effective deadline ${deadlineMs}ms).`;
+      return failureResponse(message, { logs, emitted, diagnostics, code: {
+        code: "timeout", message, retryable: false,
+        details: { operation: "execute_code", stage: "sandbox", elapsedMs, deadlineMs },
+      } });
     }
-    const message = `Error: ${outcome.error || "Execution failed without an error message."}`;
-    return failureResponse(message, {
-      logs,
-      emitted,
-      diagnostics,
-      code: "executor_failed",
+    return failureResponse(failure?.details.message ?? outcome.error, {
+      logs, emitted, diagnostics,
+      code: failure?.details ?? programError({
+        name: outcome.failure?.name ?? /^(SyntaxError|ReferenceError|TypeError|RangeError):/.exec(outcome.error)?.[1],
+        message: outcome.error || "Execution failed without an error message.",
+        ...(outcome.failure?.line !== undefined ? { line: outcome.failure.line - 1 } : {}),
+      }, program),
     });
   }
+  const frame = outcome.result !== null && typeof outcome.result === "object"
+    ? (outcome.result as { __connectaFailure?: { token?: string; hostId?: string; program?: { name?: unknown; message?: unknown; stack?: unknown; baseline?: unknown } } }).__connectaFailure
+    : undefined;
+  if (frame?.token === failureSecret) {
+    const failure = frame.hostId ? invocationFailures.get(frame.hostId) : undefined;
+    const error = failure?.details ?? programError(frame.program ?? {}, program);
+    return failureResponse(error.message, { logs, emitted, diagnostics, code: error });
+  }
+
   // A result crossing back as a host BigInt (or otherwise unserializable
   // value) makes JSON.stringify throw — keep that inside the structured
   // error path so captured logs survive instead of a raw SDK 500.
   let result: unknown;
   try {
-    result = guardExecuteResultValue(outcome.result);
+    result = guardExecuteResultValue(outcome.result, MAX_EXECUTE_RESULT_CHARS - emitted.textChars);
   } catch (err) {
     const message = `Error: result is not JSON-serializable: ${msg(err)}`;
     return failureResponse(message, {
@@ -1304,22 +1341,14 @@ function failureResponse(
   },
 ): ToolResult {
   const { logs, emitted, diagnostics, code } = options;
-  if (diagnostics || typeof code !== "string") {
-    const result = jsonResult({
-      error:
-        typeof code === "string"
-          ? { code, message, retryable: false }
-          : code,
-      ...(logs ? { logs } : {}),
-      ...(emitted ? discardedEmits(emitted) : {}),
-      ...(diagnostics ? { diagnostics: diagnostics.finish() } : {}),
-    });
-    result.isError = true;
-    return result;
-  }
-  return errorResult(
-    `${message}${logs ? `\n\nLogs:\n${logs}` : ""}${emitted ? discardedEmitsText(emitted) : ""}`,
-  );
+  const result = jsonResult({
+    error: typeof code === "string" ? { code, message, retryable: false } : code,
+    ...(logs ? { logs } : {}),
+    ...(emitted ? discardedEmits(emitted) : {}),
+    ...(diagnostics ? { diagnostics: diagnostics.finish() } : {}),
+  });
+  result.isError = true;
+  return result;
 }
 
 /**
@@ -1331,13 +1360,6 @@ function discardedEmits(emitted: EmitCollector): {
   return emitted.blocks.length > 0
     ? { emittedDiscarded: emitted.blocks.length }
     : {};
-}
-
-/** The same visibility for the plain-text error paths. */
-function discardedEmitsText(emitted: EmitCollector): string {
-  return emitted.blocks.length > 0
-    ? `\n\nemittedDiscarded: ${emitted.blocks.length}`
-    : "";
 }
 
 function connectorInventory(
@@ -1384,20 +1406,21 @@ const executeDescription = (
   connectors: ReturnType<RegistryView["listConnectors"]>,
   maxWrites: number,
   trust: PoolTrust,
-) => `Use the configured services below to answer the task. A known address uses call_tool. Unknown-address and wider read-only work uses one execute_code program for discovery, calls, and reduction. Do not return catalog matches alone. ${trust === "trusted" ? "This pool is trusted: programs may call reads and writes. The host approves execute_code as a write." : "This pool is read-only: programs may call reads; writes use call_destructive_tool."} Limits: ${hostLimits.maxHostCalls} host calls, ${maxWrites} writes, ${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
+) => `Use the configured services below to answer the task. A known address uses call_tool. Unknown-address and wider read-only work uses one execute_code program for discovery, calls, and reduction. ${trust === "trusted" ? "This pool is trusted: programs may call reads and writes. The host approves execute_code as a write." : "This pool is read-only: programs may call reads; writes use call_destructive_tool."} Limits: ${hostLimits.maxHostCalls} host calls, ${maxWrites} writes, ${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
 
 ${connectorInventory(connectors)}
 
-Read guides with top-level skills. Write async () => { ... } using the global connecta:
-- connecta.search({ connector, query, safety: "readOnly", includeSchemas: "json" }) returns { tools }. Search operations separately; choose by connectorTitle and schema.required/.properties, never guessed fields. Compact schemas are text.
-- connecta.describe({ address }) clarifies schemas.
-- connecta.call(address, args) returns the provider value directly.
-- Use Promise.all for independent calls, or Promise.allSettled to retain failures. Check status; missing values are unknown, never false or zero.
-- connecta.emit(block): { type: "text", text } or { type: "image" | "audio", data (base64), mimeType }; success-only, ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes. console.log(...) is captured.
+Write async () => { ... } with the global connecta. No portable ambient capabilities.
+- connecta.search({ connector, query, includeSchemas: "json" }) and connecta.describe({ address }) return { tools }. Compact schemas are text.
+- connecta.call(address, args, { timeoutMs? }) or connecta.call({ address, args?, timeoutMs? }) returns { data, format: "json" | "text" }. Check format before reading fields.
+- connecta.result(id, { offset?, maxBytes? }) returns { text, format: "text", hasMore, nextOffset }; reassemble and reduce direct results here.
+- connecta.skill(name) returns { name, text, format: "text" }.
+- Promise.allSettled retains each call failure. Every run reports hostCalls counts; guest mistakes use program_error with repair hints.
+- connecta.emit({ type: "text", text } | { type: "image" | "audio", data, mimeType }) works without await; ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes. Text shares the result cap. console.log is captured.
 
-No portable ambient capabilities. Return reduced JSON. Sample unfamiliar reads. Reduce a one-time write's full result here, or use a direct call and get_result paging; never repeat it to recover output. Never guess fields or use the whole text as an id. Top-level skills({ name: "usage" }): repair${connectorGuides ? ", guide handling" : ""}; skills({ name: "investigate" }): task planning.`;
+Return reduced JSON. Sample unfamiliar reads. Read a write's result here; never repeat it to recover output. skills({ name: "investigate" }): workflow; skills({ name: "usage" }): repair${connectorGuides ? ", guide handling" : ""}.`;
 
-// Module scope, like the other six meta-tool inputs: its JSON Schema is
+// Module scope, like the other five meta-tool inputs: its JSON Schema is
 // derived once per process. Budgets and connectors vary by deployment and
 // view, so they live in the description, never here.
 const EXECUTE_INPUT = advertisedSchema(
@@ -1423,6 +1446,7 @@ export function registerExecuteTool(
   ctx: {
     baseUrl: string;
     executor: Executor;
+    defaultToolTimeoutMs?: number | undefined;
     logger: Logger;
     activity?: ActivityRequestContext | undefined;
     client?: McpClientContext | undefined;
@@ -1480,6 +1504,7 @@ export function registerExecuteTool(
     ctx.logger,
     ctx.activity,
     {
+      defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,
       discoveryConcurrency: ctx.discoveryConcurrency,
       probeTimeoutMs: ctx.probeTimeoutMs,
       maxEmittedBytes: emitBudgets.maxBytes,
@@ -1505,6 +1530,7 @@ export function registerExecuteTool(
         ctx.trust ?? "read-only",
       ),
       inputSchema: EXECUTE_INPUT,
+      outputSchema: EXECUTE_OUTPUT,
       // The host sees execute_code as a write only on a trusted endpoint.
       annotations: {
         readOnlyHint: ctx.trust !== "trusted",

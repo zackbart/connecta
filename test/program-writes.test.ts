@@ -1,3 +1,4 @@
+import { guestError, guestErrorText, guestSource } from "./fixtures/misc.js";
 // Trust-tier program writes, with one attempt and bounded outcome accounting.
 import { describe, expect, it } from "vitest";
 import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
@@ -24,27 +25,10 @@ const BASE = "https://connecta.program-writes";
 type Guest = Record<string, (...args: unknown[]) => Promise<any>>;
 type Program = (connecta: Guest) => Promise<unknown>;
 
-/** Rebuild a typed guest error the way the trusted prelude does. */
-function guestError(error: unknown): Error {
-  const message = error instanceof Error ? error.message : String(error);
-  const prefix = "\u001econnecta-error:";
-  if (!message.startsWith(prefix)) return error instanceof Error ? error : new Error(message);
-  const rest = message.slice(prefix.length);
-  const details = JSON.parse(rest.slice(rest.indexOf(":") + 1)) as {
-    code: string;
-    message: string;
-  };
-  return Object.assign(new Error(details.message), {
-    code: details.code,
-    details,
-  });
-}
-
-/** Runs registered closures by program text, through the real provider. */
 function scriptedExecutor(programs: Map<string, Program>): Executor {
   return {
     async execute(code: string, providers: ExecutorProvider[]) {
-      const program = programs.get(code.trim());
+      const program = programs.get(guestSource(code));
       if (!program) return { result: undefined, error: `no program for ${code}` };
       const provider = required(providers[0]);
       const connecta = new Proxy({} as Guest, {
@@ -61,7 +45,7 @@ function scriptedExecutor(programs: Map<string, Program>): Executor {
       } catch (error) {
         return {
           result: undefined,
-          error: error instanceof Error ? error.message : String(error),
+          error: guestErrorText(error),
         };
       }
     },
