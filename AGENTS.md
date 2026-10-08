@@ -20,7 +20,7 @@ file new work with motivation, behavior, and acceptance criteria, not a TODO.md.
 
 ## Verification
 
-`npm run check:fast` is the inner loop: docs, fragment, Node-suite, UI, lint,
+`npm run check:fast` is the inner loop: formatting, docs, fragment, Node-suite, UI, lint,
 Knip, and typecheck checks run concurrently with `vitest related` on both
 projects for files changed since the `origin/main` merge base (uncommitted and
 untracked and deleted paths included, with both sides of renames), suites
@@ -30,7 +30,7 @@ Vitest config changes wait for `check`.
 Deleted modules require a full Vitest run because their import graph is gone.
 
 `npm run check` must pass before you claim anything is done. It runs
-`check:core` (docs, fragments, Node-suite reasons, UI freshness, lint, unused,
+`check:core` (formatting, docs, fragments, Node-suite reasons, UI freshness, lint, unused,
 typecheck, both vitest projects, build, declarations, bundle, examples), then
 `test:browser` in Chromium; run `npm run test:browser:install` once per machine.
 `release:check` adds `check:security` (`npm audit`) and `check:package` (the
@@ -98,8 +98,7 @@ missing and unknown IDs, and spec coverage titles that no passing test matches.
   Convert at the boundary. See [Effect inside](./documentation/architecture.md#effect-inside).
   Upgrading an unstable Effect subpath is its own deliberate PR. Replacing
   either MCP SDK edge needs proof of wire contracts and request lifetimes.
-- There is no formatter until Phase 5. Match surrounding code. Docs explain
-  the contract and why it exists; keep them precise.
+- Run `npm run format` before committing; CI checks formatting.
 - Keep Oxlint and Knip clean. Remove dead declarations instead of suppressing.
 - Commits use imperative behavior summaries with issue refs in parentheses:
   `Normalize maxResultBytes at every intake point (#32) (#39)`.

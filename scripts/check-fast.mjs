@@ -109,6 +109,7 @@ async function main() {
   if (fullRun) console.log(`Deleted modules require a full Vitest run: ${deleted.join(", ")}.`);
   const vitest = join(root, "node_modules/vitest/vitest.mjs");
   const results = await Promise.all([
+    run("format", "npm", ["run", "-s", "format:check"]),
     run("docs", "npm", ["run", "-s", "check:docs"]),
     run("changes", "npm", ["run", "-s", "check:changes"]),
     run("operator-ui", "npm", ["run", "-s", "check:operator-ui"]),
