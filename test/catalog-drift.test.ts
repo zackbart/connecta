@@ -1,3 +1,4 @@
+import { reviewedFixture } from "./fixtures/reviewed-connector.js";
 import { recordCatalogDriftActivity } from "../src/activity.js";
 import { describe, expect, it, vi } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
@@ -9,7 +10,6 @@ import {
   observedCatalogDrift,
   vettedCatalog,
   vettedSchemaDigest,
-  withVettedCatalog,
 } from "../src/catalog-drift.js";
 import { servedTools } from "./fixtures/hosted-provider.js";
 import { connectorContext } from "./fixtures/misc.js";
@@ -75,7 +75,7 @@ function proxy(
     call: async () => null,
   });
   return {
-    connector: withVettedCatalog(downstream, catalog),
+    connector: reviewedFixture(downstream, catalog),
     listings: () => listings,
   };
 }
@@ -210,7 +210,7 @@ describe("detectCatalogDrift()", () => {
   });
 });
 
-describe("withVettedCatalog()", () => {
+describe("reviewedFixture()", () => {
   it("preserves the downstream MCP schemas byte-for-byte in memory", async () => {
     const inputSchema = {
       type: "object",
@@ -707,8 +707,8 @@ const DIGESTED_READ = {
     ...connectorWith({ id: "deep", kind: "mcp", tools: [served] }),
     classification: { tools: { deep: { verdict: "read", schemaDigest: digest } } },
   }),
-  withVettedCatalog: (digest: string, served: ToolDef) =>
-    withVettedCatalog(
+  reviewedFixture: (digest: string, served: ToolDef) =>
+    reviewedFixture(
       connectorWith({ id: "deep", kind: "mcp", tools: [served] }),
       vettedCatalog({ reads: new Set(["deep"]), writes: new Map(), schemaDigests: { deep: digest } }),
     ),

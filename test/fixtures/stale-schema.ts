@@ -1,5 +1,6 @@
+import { reviewedFixture } from "./reviewed-connector.js";
 // Reviewed reads with recorded schema digests, declared through both
-// `remoteMcp({ classify })` and `withVettedCatalog()`: `list_things` matches its digest, `peek_things`
+// `remoteMcp({ classify })` and `reviewedFixture()`: `list_things` matches its digest, `peek_things`
 // (silent) and `scan_things` (claiming `readOnlyHint: true`) have changed
 // schemas since review. A deployment can also restart onto a catalog an
 // earlier process persisted, in today's layout or in 0.28's, with the
@@ -9,7 +10,6 @@ import { snapshotCatalog } from "../../src/catalog-fingerprint.js";
 import {
   vettedCatalog,
   vettedSchemaDigest,
-  withVettedCatalog,
 } from "../../src/catalog-drift.js";
 import { remoteMcp } from "../../src/connectors/remote-mcp.js";
 import type { Connector, KVStorage, ToolDef } from "../../src/types.js";
@@ -124,8 +124,8 @@ export const STALE_SCHEMA_PATHS = {
         },
       },
     }),
-  withVettedCatalog: (digest: string, calls: string[], unavailable = false): Connector =>
-    withVettedCatalog(
+  reviewedFixture: (digest: string, calls: string[], unavailable = false): Connector =>
+    reviewedFixture(
       remoteMcp("things", {
         url: "https://things.example/mcp",
         _transportFactory: transport(calls, unavailable),

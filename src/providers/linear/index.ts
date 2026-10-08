@@ -82,77 +82,77 @@ const UPSERT =
 const LINEAR_CLASSIFICATION: ToolClassification = {
   tools: {
     // Issues
-    list_issues: "read",
-    get_issue: "read",
-    list_issue_statuses: "read",
-    get_issue_status: "read",
-    list_issue_labels: "read",
+    list_issues: {"verdict": "read", "reason": "Reads existing Linear list issues data without changing workspace state."},
+    get_issue: {"verdict": "read", "reason": "Reads existing Linear get issue data without changing workspace state."},
+    list_issue_statuses: {"verdict": "read", "reason": "Reads existing Linear list issue statuses data without changing workspace state."},
+    get_issue_status: {"verdict": "read", "reason": "Reads existing Linear get issue status data without changing workspace state."},
+    list_issue_labels: {"verdict": "read", "reason": "Reads existing Linear list issue labels data without changing workspace state."},
     save_issue: { verdict: "destructive", reason: UPSERT },
-    create_issue_label: "write",
+    create_issue_label: {"verdict": "write", "reason": "Creates Linear state through create_issue_label; the reviewed operation only appends."},
     // Projects
-    list_projects: "read",
-    get_project: "read",
-    list_project_labels: "read",
+    list_projects: {"verdict": "read", "reason": "Reads existing Linear list projects data without changing workspace state."},
+    get_project: {"verdict": "read", "reason": "Reads existing Linear get project data without changing workspace state."},
+    list_project_labels: {"verdict": "read", "reason": "Reads existing Linear list project labels data without changing workspace state."},
     save_project: { verdict: "destructive", reason: UPSERT },
     // Milestones
-    list_milestones: "read",
-    get_milestone: "read",
+    list_milestones: {"verdict": "read", "reason": "Reads existing Linear list milestones data without changing workspace state."},
+    get_milestone: {"verdict": "read", "reason": "Reads existing Linear get milestone data without changing workspace state."},
     save_milestone: { verdict: "destructive", reason: UPSERT },
     // Initiatives
-    list_initiatives: "read",
-    get_initiative: "read",
-    list_initiative_labels: "read",
+    list_initiatives: {"verdict": "read", "reason": "Reads existing Linear list initiatives data without changing workspace state."},
+    get_initiative: {"verdict": "read", "reason": "Reads existing Linear get initiative data without changing workspace state."},
+    list_initiative_labels: {"verdict": "read", "reason": "Reads existing Linear list initiative labels data without changing workspace state."},
     save_initiative: { verdict: "destructive", reason: UPSERT },
-    create_initiative_label: "write",
+    create_initiative_label: {"verdict": "write", "reason": "Creates Linear state through create_initiative_label; the reviewed operation only appends."},
     // Cycles
-    list_cycles: "read",
+    list_cycles: {"verdict": "read", "reason": "Reads existing Linear list cycles data without changing workspace state."},
     // Comments
-    list_comments: "read",
+    list_comments: {"verdict": "read", "reason": "Reads existing Linear list comments data without changing workspace state."},
     save_comment: { verdict: "destructive", reason: UPSERT },
-    delete_comment: "destructive",
+    delete_comment: {"verdict": "destructive", "reason": "Changes or removes existing Linear state through delete_comment."},
     // Documents
-    list_documents: "read",
-    get_document: "read",
+    list_documents: {"verdict": "read", "reason": "Reads existing Linear list documents data without changing workspace state."},
+    get_document: {"verdict": "read", "reason": "Reads existing Linear get document data without changing workspace state."},
     save_document: { verdict: "destructive", reason: UPSERT },
     // Teams and users
-    list_teams: "read",
-    get_team: "read",
-    list_users: "read",
-    get_user: "read",
-    get_workspace: "read",
+    list_teams: {"verdict": "read", "reason": "Reads existing Linear list teams data without changing workspace state."},
+    get_team: {"verdict": "read", "reason": "Reads existing Linear get team data without changing workspace state."},
+    list_users: {"verdict": "read", "reason": "Reads existing Linear list users data without changing workspace state."},
+    get_user: {"verdict": "read", "reason": "Reads existing Linear get user data without changing workspace state."},
+    get_workspace: {"verdict": "read", "reason": "Reads existing Linear get workspace data without changing workspace state."},
     // Templates
-    list_templates: "read",
-    get_template: "read",
+    list_templates: {"verdict": "read", "reason": "Reads existing Linear list templates data without changing workspace state."},
+    get_template: {"verdict": "read", "reason": "Reads existing Linear get template data without changing workspace state."},
     // Status updates
-    get_status_updates: "read",
+    get_status_updates: {"verdict": "read", "reason": "Reads existing Linear get status updates data without changing workspace state."},
     save_status_update: { verdict: "destructive", reason: UPSERT },
-    delete_status_update: "destructive",
+    delete_status_update: {"verdict": "destructive", "reason": "Changes or removes existing Linear state through delete_status_update."},
     // Releases
-    list_release_pipelines: "read",
-    list_releases: "read",
-    get_release: "read",
-    list_release_notes: "read",
-    get_release_note: "read",
+    list_release_pipelines: {"verdict": "read", "reason": "Reads existing Linear list release pipelines data without changing workspace state."},
+    list_releases: {"verdict": "read", "reason": "Reads existing Linear list releases data without changing workspace state."},
+    get_release: {"verdict": "read", "reason": "Reads existing Linear get release data without changing workspace state."},
+    list_release_notes: {"verdict": "read", "reason": "Reads existing Linear list release notes data without changing workspace state."},
+    get_release_note: {"verdict": "read", "reason": "Reads existing Linear get release note data without changing workspace state."},
     save_release: { verdict: "destructive", reason: UPSERT },
     save_release_note: { verdict: "destructive", reason: UPSERT },
     // Code review
-    list_diffs: "read",
-    get_diff: "read",
-    get_diff_threads: "read",
+    list_diffs: {"verdict": "read", "reason": "Reads existing Linear list diffs data without changing workspace state."},
+    get_diff: {"verdict": "read", "reason": "Reads existing Linear get diff data without changing workspace state."},
+    get_diff_threads: {"verdict": "read", "reason": "Reads existing Linear get diff threads data without changing workspace state."},
     save_diff_comment: { verdict: "destructive", reason: UPSERT },
-    resolve_diff_thread: "destructive",
-    delete_diff_comment: "destructive",
-    submit_diff_review: "destructive",
-    merge_diff: "destructive",
+    resolve_diff_thread: {"verdict": "destructive", "reason": "Changes or removes existing Linear state through resolve_diff_thread."},
+    delete_diff_comment: {"verdict": "destructive", "reason": "Changes or removes existing Linear state through delete_diff_comment."},
+    submit_diff_review: {"verdict": "destructive", "reason": "Changes or removes existing Linear state through submit_diff_review."},
+    merge_diff: {"verdict": "destructive", "reason": "Changes or removes existing Linear state through merge_diff."},
     // Attachments
-    get_attachment: "read",
+    get_attachment: {"verdict": "read", "reason": "Reads existing Linear get attachment data without changing workspace state."},
     prepare_attachment_upload: {
       verdict: "write",
       reason: "Mints an upload URL: a side effect, but it changes no existing record.",
     },
-    create_attachment_from_upload: "write",
-    create_attachment: "write",
-    delete_attachment: "destructive",
+    create_attachment_from_upload: {"verdict": "write", "reason": "Creates Linear state through create_attachment_from_upload; the reviewed operation only appends."},
+    create_attachment: {"verdict": "write", "reason": "Creates Linear state through create_attachment; the reviewed operation only appends."},
+    delete_attachment: {"verdict": "destructive", "reason": "Changes or removes existing Linear state through delete_attachment."},
     // Explicit issue access.
     share_issue: {
       verdict: "destructive",
@@ -163,16 +163,16 @@ const LINEAR_CLASSIFICATION: ToolClassification = {
       reason: "Changes who can see an existing issue.",
     },
     // Agent skills
-    list_agent_skills: "read",
-    get_agent_skill: "read",
+    list_agent_skills: {"verdict": "read", "reason": "Reads existing Linear list agent skills data without changing workspace state."},
+    get_agent_skill: {"verdict": "read", "reason": "Reads existing Linear get agent skill data without changing workspace state."},
     // Documentation search
-    search_documentation: "read",
+    search_documentation: {"verdict": "read", "reason": "Reads existing Linear search documentation data without changing workspace state."},
     // Customer requests (plan-gated)
-    list_customers: "read",
+    list_customers: {"verdict": "read", "reason": "Reads existing Linear list customers data without changing workspace state."},
     save_customer: { verdict: "destructive", reason: UPSERT },
-    delete_customer: "destructive",
+    delete_customer: {"verdict": "destructive", "reason": "Changes or removes existing Linear state through delete_customer."},
     save_customer_need: { verdict: "destructive", reason: UPSERT },
-    delete_customer_need: "destructive",
+    delete_customer_need: {"verdict": "destructive", "reason": "Changes or removes existing Linear state through delete_customer_need."},
     // Markdown helper.
     extract_images: {
       verdict: "read",
@@ -218,7 +218,7 @@ export const linear = defineProvider<LinearOptions>({
     const accessNote =
       access === "read-only"
         ? "Read-only connection: bound to Linear's read-only endpoint, whose token is scope-limited downstream, so every write fails at Linear regardless of arguments. Route writes to a connector configured for read-write access."
-        : "Read-write connection: treat every `save_`, `create_`, `delete_`, `resolve_`, `submit_`, and `merge_` operation as a write. Connecta routes the maintained write catalog through `call_destructive_tool`; newly added tools also fail closed until a release classifies them.";
+        : "Read-write connection: treat every `save_`, `create_`, `delete_`, `resolve_`, `submit_`, and `merge_` operation as a write. Connecta classifies the maintained writes explicitly and enforces the configured pool trust policy. Unknown tools without an explicit, uncontradicted read annotation fail closed.";
     return remoteMcp(id, {
       url: LINEAR_MCP_ENDPOINTS[access],
       ...provider.connectorOptions,
@@ -269,8 +269,7 @@ export const linear = defineProvider<LinearOptions>({
  * The reviewed classification in the legacy manifest form.
  *
  * @deprecated Read `linear.definition.classify` instead. This alias is derived
- * from it, so the two cannot disagree, and is removed when the remaining
- * hosted providers convert (#705).
+ * from it and retained for existing public imports.
  */
 export const LINEAR_VETTED_CATALOG = reviewedCatalog(
   linear.definition.classify!,

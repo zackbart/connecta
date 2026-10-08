@@ -369,18 +369,6 @@ export function reviewedClassification(
   return parseClassification(classification, owner).frozen;
 }
 
-/** A legacy manifest in the public, deep-frozen form a connector carries. */
-function classificationOf(catalog: VettedCatalog): ToolClassification {
-  const tools: Record<string, ReviewedTool> = {};
-  for (const [name, record] of catalog.tools) {
-    tools[name] = Object.freeze({
-      verdict: PUBLIC_VERDICTS[record.verdict],
-      ...(record.schemaDigest !== undefined ? { schemaDigest: record.schemaDigest } : {}),
-    });
-  }
-  return Object.freeze({ tools: Object.freeze(tools) });
-}
-
 /**
  * One reviewed tool as served: a fresh object, never one a connector, a
  * cache, or an earlier read holds.
@@ -540,22 +528,6 @@ export async function detectCatalogDrift(
   tools: readonly ToolDef[],
 ): Promise<CatalogDriftCounts> {
   return countDrift(catalog, tools, await changedSchemas(catalog, tools));
-}
-
-/**
- * Give a hosted-MCP connector its vetted manifest as a `classification`: the
- * review the registry classifies every read with and counts drift against.
- * The connector itself is unchanged, and its `listTools` still returns what
- * the downstream said.
- *
- * Retained for the hosted providers that have not converted to
- * `remoteMcp({ classify })` yet (#705); it is deleted with the last of them.
- */
-export function withVettedCatalog(
-  connector: Connector,
-  catalog: VettedCatalog,
-): Connector {
-  return { ...connector, classification: classificationOf(catalog) };
 }
 
 /**

@@ -4,15 +4,15 @@ import {
   withCredentialDefaults,
   type RemoteMcpAuth,
 } from "../../connectors/remote-mcp.js";
-import { vettedCatalog, withVettedCatalog } from "../../catalog-drift.js";
-import { defined } from "../../connectors/api-connector.js";
+import { reviewedCatalog } from "../../catalog-drift.js";
 import type {
   Connector,
+  ToolClassification,
   ConnectorCallAdmissionPolicy,
 } from "../../types.js";
 import { keys, optionsOf, strings, variants } from "../../config-schema.js";
 import { CREDENTIAL } from "../../connectors/option-shapes.js";
-import { asProviderFactory } from "../../provider.js";
+import { defineProvider, type ProviderContext } from "../../provider.js";
 
 /** Which Stripe environment a static credential reaches. */
 export type StripeMode = "production" | "sandbox";
@@ -91,56 +91,33 @@ const STRIPE_ADMISSION: Readonly<
 };
 
 /**
- * Tools whose official contract is observational rather than mutating.
- *
- * `stripe_api_read` is on this list because Stripe documents it as the `GET`
- * half of the generic pair — the tool itself is the read boundary, not the
- * endpoint an agent names inside it.
+ * Reviewed in #705's provider audit against https://docs.stripe.com/mcp.
+ * Retains the release-reviewed inventory, including names absent from today's
+ * public reference. Live annotations were not reverified without credentials.
+ * No schema digest is asserted without a captured schema to review.
  */
-const READ_ONLY_TOOLS = new Set([
-  "stripe_api_search",
-  "stripe_api_details",
-  "stripe_api_read",
-  "get_stripe_account_info",
-  "get_balance_summary",
-  "list_metrics",
-  "explain_metric",
-  "metric_drilldown",
-  "show_metric_app",
-  "list_available_accounts_or_orgs",
-  "manage_stripe_accounts",
-  "search_stripe_documentation",
-]);
-
-/**
- * Reviewed writes with their destructive verdict. `stripe_api_write` is the
- * sibling of `stripe_api_read` and carries every `POST`, `PATCH`, `PUT`, and
- * `DELETE`. Additive writes leave `destructiveHint` unset: `readOnlyHint: false`
- * already routes them through the approval path, and asserting destruction they
- * do not perform would misstate their effect.
- */
-const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
-  ["stripe_api_write", "destructive"],
-  ["create_refund", "destructive"],
-  // Creates and continues provider-side guide state; destroys nothing.
-  ["stripe_implementation_planner", "additive"],
-  // Retrieval mixed with query-run creation behind one tool.
-  ["stripe_analytics", "additive"],
-  ["stripe_report", "additive"],
-  ["send_stripe_mcp_feedback", "additive"],
-]);
-
-/**
- * One release-reviewed manifest, used both to classify a live tool and as the
- * baseline the drift check compares against, so the annotation a caller gets and
- * the verdict a check reads can never disagree. Stripe publishes no stability or
- * deprecation policy for this tool set, so treat it as unversioned: an
- * unclassified, unannotated name fails closed onto the approval path (P5).
- */
-export const STRIPE_VETTED_CATALOG = vettedCatalog({
-  reads: READ_ONLY_TOOLS,
-  writes: WRITE_TOOLS,
-});
+const STRIPE_CLASSIFICATION: ToolClassification = {
+  tools: {
+    "stripe_api_search": {"verdict": "read", "reason": "Searches API method contracts and object records; it does not invoke mutating methods."},
+    "stripe_api_details": {"verdict": "read", "reason": "Reads the parameter contract for an API method; it does not execute that method."},
+    "stripe_api_read": {"verdict": "read", "reason": "The vendor restricts this generic tool to HTTP GET; all mutating methods use stripe_api_write."},
+    "get_stripe_account_info": {"verdict": "read", "reason": "Reads metadata for the selected Stripe account."},
+    "get_balance_summary": {"verdict": "read", "reason": "Retrieves Stripe balance summary information without changing vendor state."},
+    "list_metrics": {"verdict": "read", "reason": "Retrieves Stripe metrics information without changing vendor state."},
+    "explain_metric": {"verdict": "read", "reason": "Explains an existing metric definition without creating an analytics run."},
+    "metric_drilldown": {"verdict": "read", "reason": "Reads the breakdown of an existing metric."},
+    "show_metric_app": {"verdict": "read", "reason": "Displays an existing metric app without changing its data."},
+    "list_available_accounts_or_orgs": {"verdict": "read", "reason": "Retrieves Stripe available accounts or orgs information without changing vendor state."},
+    "manage_stripe_accounts": {"verdict": "read", "reason": "Selects account context for the session; the reviewed contract does not mutate payment or account records."},
+    "search_stripe_documentation": {"verdict": "read", "reason": "Searches Stripe reference documentation without accessing payment mutations."},
+    "stripe_api_write": {"verdict": "destructive", "reason": "Can dispatch POST, PATCH, PUT, or DELETE across the Stripe API, including edits and cancellations."},
+    "create_refund": {"verdict": "destructive", "reason": "Moves money and changes an existing payment; a refund cannot be undone."},
+    "stripe_implementation_planner": {"verdict": "write", "reason": "Creates or continues provider-side planning state."},
+    "stripe_analytics": {"verdict": "write", "reason": "Mixes retrieval with durable query-run creation, so the whole tool is a write."},
+    "stripe_report": {"verdict": "write", "reason": "May create durable report-run state, so retrieval paths cannot make the whole tool read-only."},
+    "send_stripe_mcp_feedback": {"verdict": "write", "reason": "Submits feedback to Stripe, creating provider-side state."},
+  },
+};
 
 /** Stripe key prefixes carry their own mode; only a clear reading counts. */
 const LIVE_KEY = /\b(?:sk|rk|pk)_live_/;
@@ -281,7 +258,7 @@ const STRIPE_OPTIONS = optionsOf<StripeOptions>()({
 });
 
 /** A maintained Stripe hosted-MCP connection. */
-export const stripe = asProviderFactory<StripeOptions>({
+export const stripe = defineProvider<StripeOptions>({
   name: "stripe",
   title: "Stripe",
   kind: "mcp",
@@ -289,14 +266,12 @@ export const stripe = asProviderFactory<StripeOptions>({
   bundle: {"baselineGzip":129103,"maxGzip":189103},
   skill,
   options: STRIPE_OPTIONS,
+  classify: STRIPE_CLASSIFICATION,
   create: stripeConnector,
 });
 
-function stripeConnector(id: string, options: StripeOptions): Connector {
+function stripeConnector(id: string, options: StripeOptions, provider: ProviderContext): Connector {
   const purpose = options.purpose.trim();
-  if (!purpose) {
-    throw new Error("stripe() requires a non-empty account purpose.");
-  }
   const auth = resolveAuth(id, options);
   const mode = "mode" in options ? options.mode : undefined;
   if (auth.type === "oauth" && mode !== undefined) {
@@ -320,7 +295,7 @@ function stripeConnector(id: string, options: StripeOptions): Connector {
   const copy = mode === undefined ? undefined : MODE_COPY[mode];
   const connector = remoteMcp(id, {
     url: STRIPE_MCP_ENDPOINT,
-    ...(options.authScope ? { authScope: options.authScope } : {}),
+    ...provider.connectorOptions,
     title: options.title ?? copy?.title ?? "Stripe",
     description:
       mode === undefined
@@ -328,6 +303,7 @@ function stripeConnector(id: string, options: StripeOptions): Connector {
         : `Stripe payments (${copy?.blurb}) — ${purpose}`,
     auth,
     requireHttps: true,
+    classify: provider.classify,
     callAdmission: STRIPE_ADMISSION[mode ?? "sandbox"],
     usageGuide: {
       content:
@@ -345,7 +321,12 @@ function stripeConnector(id: string, options: StripeOptions): Connector {
       // Not `required`. The four generic tools are the routing decision; a
       // guide forced into every call would pay for the same prose repeatedly.
     },
-    ...defined({ maxResultBytes: options.maxResultBytes }),
   });
-  return withVettedCatalog(connector, STRIPE_VETTED_CATALOG);
+  return connector;
 }
+
+/** @deprecated Read `stripe.definition.classify` instead. Kept for existing imports. */
+export const STRIPE_VETTED_CATALOG = reviewedCatalog(
+  stripe.definition.classify!,
+  'defineProvider("stripe")',
+);

@@ -258,7 +258,7 @@ describe("revenuecat()", () => {
     expect(guide).toContain("get-product-store-state-plan");
     expect(guide).toContain("apply-product-store-state-plan");
     expect(guide).toContain("authorize_connector");
-    expect(guide).toContain("call_destructive_tool");
+    expect(guide).toContain("configured pool trust policy");
     // The unclassified tool is named rather than left to be discovered.
     expect(guide).toContain(
       "`render-paywall-screenshot` is unclassified on purpose because",
@@ -376,7 +376,7 @@ describe("revenuecat()", () => {
 
   it("rejects an empty purpose at construction (P2)", () => {
     expect(() => revenuecat("revenuecat", { purpose: "  " })).toThrow(
-      "a non-empty project purpose",
+      "a non-empty purpose",
     );
   });
 

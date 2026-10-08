@@ -102,7 +102,7 @@ list is absent from this connection, not hidden behind a generic call.
 
 Official MCP interface: tool names, descriptions, argument schemas, and result
 schemas come from Notion's live server. Connecta preserves that catalog and
-only fills in release-reviewed safety annotations when Notion leaves them out.
+applies release-reviewed classification. Reviewed writes stay writes even when Notion claims they only read.
 
 Workspace purpose: <!-- endfragment -->
 

@@ -1,7 +1,8 @@
+import { reviewedFixture } from "./fixtures/reviewed-connector.js";
 // A reviewed connector reports facts and carries its review as data; the
-// registry is the only classifier. Both former wrappers, `remoteMcp({ classify
-// })` and `withVettedCatalog()`, list the downstream's tools unclassified and
-// set `Connector.classification`. Whatever a decorator puts in front, the
+// registry is the only classifier. Both `remoteMcp({ classify })` and custom
+// connectors list downstream tools unclassified and declare the public
+// `Connector.classification` field. Whatever a decorator puts in front, the
 // cache keeps exactly what `listTools` returned, and every read classifies
 // those facts with the review the running process holds, into fresh objects.
 // A decorator that keeps the field keeps the review; one that drops it serves
@@ -9,7 +10,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { vettedCatalog, withVettedCatalog } from "../src/catalog-drift.js";
+import { vettedCatalog } from "../src/catalog-drift.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type {
@@ -78,8 +79,8 @@ const WRAPPERS = {
       _transportFactory: transport(calls),
       classify: { tools: review },
     }),
-  withVettedCatalog: (review: Review, calls: Calls): Connector =>
-    withVettedCatalog(
+  reviewedFixture: (review: Review, calls: Calls): Connector =>
+    reviewedFixture(
       remoteMcp("things", { url: URL, _transportFactory: transport(calls) }),
       vettedCatalog({
         reads: new Set(Object.keys(review).filter((name) => review[name as Name] === "read")),

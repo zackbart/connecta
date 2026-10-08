@@ -7,7 +7,8 @@ description: Add or change a maintained connecta provider in its own folder, wit
 
 Read `PRINCIPLES.md` and the architecture guide. Phase 1 item 5
 ([#705](https://github.com/zackbart/connecta/issues/705)) owns this shape.
-Hosted presets and capability reconciliation remain separate follow-up work.
+The eight hosted implementations use reviewed presets. Capability reconciliation
+remains separate follow-up work.
 
 ## Provider folder
 
@@ -40,7 +41,7 @@ Additional provider-local tests and references may accompany these files.
 
 ## Definition and behavior
 
-`defineProvider()` is transport-independent. Existing providers use
+`defineProvider()` is transport-independent. Existing API-only providers use
 `asProviderFactory()` to attach that same definition while retaining their
 existing constructor's option policy during the folder migration. Use
 `defineProvider()` for new providers. Declare the closed option shape

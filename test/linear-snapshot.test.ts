@@ -5,6 +5,7 @@
 // named exception that is strictly safer.
 import type { Transport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import guideChanges from "./fixtures/hosted-5c-guide-changes.json";
 import before from "./fixtures/linear-0.28-snapshot.json";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { servedTools } from "./fixtures/hosted-provider.js";
@@ -77,9 +78,13 @@ afterEach(() => {
 });
 
 describe("linear() before and after defineProvider", () => {
-  it("renders the same titles, descriptions, auth slot, and guides as 0.28", () => {
+  it("preserves 0.28 metadata and guides except the enumerated 5c prerequisites", () => {
     for (const [key, options] of Object.entries(before.configs)) {
       const connector = linear("tracker", options as LinearOptions);
+      const expected = structuredClone(before.connectors[key as keyof typeof before.connectors]);
+      for (const [from, to] of guideChanges.linear) {
+        expected.usageGuide.content = expected.usageGuide.content.replaceAll(from!, to!);
+      }
       expect(
         {
           title: connector.title,
@@ -91,7 +96,7 @@ describe("linear() before and after defineProvider", () => {
           usageGuide: connector.usageGuide,
         },
         key,
-      ).toEqual(before.connectors[key as keyof typeof before.connectors]);
+      ).toEqual(expected);
     }
   });
 
