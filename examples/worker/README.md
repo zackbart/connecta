@@ -1,5 +1,12 @@
 # connecta — Cloudflare Worker example
 
+Agent setup guide for the Worker deployment.
+For deployment choices and upgrades, use [Deploying Connecta](https://github.com/zackbart/connecta/blob/main/documentation/deploying.md).
+For connector changes, use [Integrating services](https://github.com/zackbart/connecta/blob/main/documentation/integrating.md).
+The [agent index](https://github.com/zackbart/connecta/blob/main/documentation/README.md) routes endpoint use and package
+maintenance. This README and [local agent instructions](./AGENTS.md) own the
+runnable Worker steps.
+
 A deployable Worker that aggregates a downstream remote MCP and an in-code HTTP
 API connector, guarded by Cloudflare Access. It uses three Cloudflare resources
 and nothing else: one D1 database (`CONNECTA_DB`) for every piece of state, the

@@ -5,11 +5,15 @@ keep it that way. Connecta aggregates remote MCP servers and HTTP APIs behind on
 MCP endpoint. Agents use JavaScript through `execute_code`, with direct calls
 for known operations and writes. One fetch-native core runs on Node and
 Cloudflare Workers, with Effect inside and Promises at the published edge.
-Read [PRINCIPLES.md](./PRINCIPLES.md) before changing a subsystem and start
-with [architecture](./documentation/architecture.md). The other guides cover
-[meta-tools](./documentation/meta-tools.md), [code mode](./documentation/code-mode.md),
-and [auth](./documentation/auth.md). Subsystem source and tests carry the rest;
-[README.md](./README.md) is the human-facing overview.
+Read [PRINCIPLES.md](./PRINCIPLES.md) before changing a subsystem, then use the
+[agent documentation index](./documentation/README.md) to select the task guide
+and contract sections. [Architecture](./documentation/architecture.md) maps the
+implementation; subsystem source and tests establish current behavior.
+[README.md](./README.md) is the human-facing product overview. Keep behavior,
+configuration, contracts, and technical setup in agent docs. This file owns
+repository policy; scoped skills and provider guides own their task-specific
+detail. Update the owning guide when changing behavior, and keep the overview
+consistent without adding API or configuration instructions to it.
 The [0.29 plan of record #703](https://github.com/zackbart/connecta/issues/703)
 owns the rework and supersedes older guidance wherever they conflict.
 [decisions/](./decisions/) explains past choices without binding later PRs.
@@ -79,8 +83,9 @@ There are two: [templates/node/](./templates/node/) and
 [examples/worker/](./examples/worker/). `connecta init [directory]` copies the
 Node template, pins the exact CLI package version, restores `.gitignore` and
 the `CLAUDE.md` symlink, and refuses an existing path. Its Docker files
-containerize that same project. Keep setup changes aligned with README,
-template and container files, and `scripts/check-package.mjs`. `connecta doctor`
+containerize that same project. Keep setup changes aligned with the
+[deployment guide](./documentation/deploying.md), template and container files,
+and `scripts/check-package.mjs`; reflect product-facing changes in README. `connecta doctor`
 checks health, executor, and the current meta-tool set.
 
 ## Tests
