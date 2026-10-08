@@ -8,6 +8,8 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { bearerToken } from "../src/auth/bearer.js";
+import { operatorUi } from "../src/ui.js";
+import { SECRETS, VAULT_KEY, secretBearingDeployment } from "./fixtures/describe-config.js";
 import { listen } from "../src/node.js";
 import { customExecutor, createConnecta } from "../src/index.js";
 import type { Executor, InboundAuth, KVStorage } from "../src/types.js";
@@ -209,5 +211,77 @@ describe("connecta doctor's credential destinations", () => {
       },
     })).rejects.toMatchObject({ stderr: expect.stringContaining("redirect") });
     expect(received).toEqual([]);
+  });
+});
+
+describe("connecta doctor --config", () => {
+  async function deploymentUrl(app: ReturnType<typeof createConnecta>) {
+    const server = listen(app, { port: 0, host: "127.0.0.1", gracefulShutdown: false });
+    teardown.push(async () => {
+      await new Promise<void>(done => server.close(() => done()));
+      await app.close();
+    });
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP address");
+    return `http://127.0.0.1:${address.port}`;
+  }
+
+  it("INV-5 INV-6: prints only the allowlisted snapshot with the full #724 sentinel set absent", async () => {
+    const { config, storage, vault } = secretBearingDeployment();
+    await vault.set("vaulted_mcp", SECRETS.storedCredential, "operator");
+    await storage.set("access-token:sentinel", SECRETS.storedAccessToken);
+    for (const connector of config.connectors) connector.status = async () => ({ state: "error", message: SECRETS.headerValue });
+    config.publicUrl = `http://localhost/?token=${SECRETS.publicUrlQuery}`;
+    const app = createConnecta(config);
+    const url = await deploymentUrl(app);
+    for (const args of [["--config", "--url", url], ["--url", url, "--config"]]) {
+      const { stdout, stderr } = await run(process.execPath, [CLI, "doctor", ...args], {
+        env: { ...process.env, CONNECTA_TOKEN: SECRETS.bearerToken, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" },
+      });
+      expect(JSON.parse(stdout)).toEqual(app.describeConfig());
+      expect(stderr).toBe("");
+      for (const [position, secret] of Object.entries(SECRETS)) expect(stdout + stderr, position).not.toContain(secret);
+      expect(stdout).not.toContain(VAULT_KEY);
+      expect(stdout).not.toContain('"you"');
+      expect(stdout).not.toContain('"live"');
+    }
+  });
+
+  it("INV-4: prints the caller's scoped snapshot and does not execute a diagnostic program", async () => {
+    let executed = 0;
+    const app = createConnecta({
+      connectors: [api("visible", { tools: [{ name: "read", description: "Read a thing", annotations: { readOnlyHint: true }, handler: () => null }] }), api("hidden", { tools: [{ name: "read", description: "Read a thing", annotations: { readOnlyHint: true }, handler: () => null }] })],
+      executor: customExecutor({ execute: async () => { executed++; return { result: null }; } }, { lifecycle: "self-managed" }),
+      auth: bearerToken(TOKEN), ui: operatorUi(), logger: "silent", identity: { connectorAccess: () => ["visible"] },
+    });
+    const url = await deploymentUrl(app);
+    const { stdout } = await run(process.execPath, [CLI, "doctor", "--config", "--url", url], { env: { ...process.env, CONNECTA_TOKEN: TOKEN, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" } });
+    expect(JSON.parse(stdout).connectors.map((c: { id: string }) => c.id)).toEqual(["visible"]);
+    expect(stdout).not.toContain("hidden");
+    expect(executed).toBe(0);
+  });
+
+  it("INV-5 INV-6: refuses config redirects and withholds an authentication failure body", async () => {
+    for (const status of [302, 403]) {
+      const server = createServer((_request, response) => {
+        response.writeHead(status, { Location: "https://other.example/SENTINEL-location" });
+        response.end("SENTINEL-error-body");
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      teardown.push(() => new Promise<void>(done => server.close(() => done())));
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected TCP address");
+      try {
+        await run(process.execPath, [CLI, "doctor", "--config", "--url", `http://127.0.0.1:${address.port}`], { env: { ...process.env, CONNECTA_TOKEN: TOKEN, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" } });
+        throw new Error("Expected failure");
+      } catch (error) {
+        const result = error as { stdout: string; stderr: string };
+        expect(result.stdout).toBe("");
+        expect(result.stderr).toContain(`HTTP ${status}`);
+        expect(result.stderr).not.toContain("SENTINEL");
+      }
+    }
   });
 });

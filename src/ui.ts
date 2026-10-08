@@ -333,3 +333,13 @@ export function operatorUi(
     },
   };
 }
+
+export type {
+  OperatorUiContract,
+  OperatorConnectorOverlay,
+  OperatorTool,
+  OperatorViewer,
+  OperatorGrant,
+  OperatorPool,
+  OperatorLastCall,
+} from "./operator-ui/contract.js";

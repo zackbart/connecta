@@ -360,14 +360,6 @@ export function createConnecta(config: ConnectaConfig): Connecta {
       },
     });
   }
-  const handler = createFetchHandler({
-    config: resolved,
-    registry,
-    pools,
-    executor,
-    executorName: configuredExecutorName,
-    requestAdmission,
-  });
   // Built once, from values construction already validated; never per call.
   const description = describeConfig({
     registry,
@@ -375,6 +367,15 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     config: resolved,
     executorName: configuredExecutorName,
     executorAdmits,
+  });
+  const handler = createFetchHandler({
+    config: resolved,
+    configDescription: description,
+    registry,
+    pools,
+    executor,
+    executorName: configuredExecutorName,
+    requestAdmission,
   });
   let closePromise: Promise<void> | undefined;
   return {
