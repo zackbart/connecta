@@ -676,11 +676,14 @@ switched by the environment, and keep their entries under 30 lines.
 Infisical separates explicit value reads from identifier results. `get_secret`
 and `list_secrets` with `includeValues: true` return secret values and comments.
 All other results, including imported secrets and pending approvals, allow only
-checked ID, key, slug, path, timestamp, positive version and enum fields. They
-omit comments, descriptions, free-form names, reminder notes and arbitrary nested
-objects; `metadataOmitted: true` reports withheld or unavailable metadata.
+checked IDs, keys, environment and tag slugs, paths, timestamps, positive versions
+and enum fields. They omit project slugs derived from free-text names, comments,
+descriptions, free-form names, reminder notes and arbitrary nested objects.
+`metadataOmitted: true` reports withheld or unavailable metadata.
 This assumes an honest server and protects against careless human entry in free
 text. A malicious server encoding values into valid identifiers is out of scope.
+Write input schemas mark secret values, secret comments and folder descriptions
+as `writeOnly`, so recovery argument echoes omit them without changing dispatch.
 Submitted values never join the request's sent-credential set, preserving later
 program arguments. Client credentials and tokens still join that set on every
 call. The [provider guide](https://github.com/zackbart/connecta/blob/main/src/providers/infisical/SKILL.md) owns routing and

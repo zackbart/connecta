@@ -10,6 +10,7 @@ import { mcpRpc, readJsonRpc } from "./http.js";
 const id = "11111111-1111-4111-8111-111111111111";
 const approvalId = "22222222-2222-4222-8222-222222222222";
 const marker = 'r4-existing-secret-value/+"marker-8361927';
+const projectName = "r5-careless-secret-value-9438267";
 const target = { projectId: "project-1", environment: "prod", secretName: "API_KEY", secretPath: "/apps" };
 const identifiers = {
   id, key: "API_KEY", environment: "prod", path: "/apps", type: "shared", version: 9,
@@ -23,6 +24,12 @@ const secret = {
 
 type Case = { name: string; tool: string; args: Record<string, unknown>; response: unknown; expected: unknown; read?: boolean };
 export const infisicalResultCases: Case[] = [];
+infisicalResultCases.push({
+  name: "list_projects default slug derived from a free-text name", tool: "list_projects", args: {},
+  response: { projects: [{ id, name: projectName, slug: `${projectName}-abcd`, type: "secret-manager",
+    environments: [{ id: approvalId, slug: "prod" }] }] },
+  expected: { projects: [{ id, type: "secret-manager", environments: [{ id: approvalId, slug: "prod" }] }], metadataOmitted: true },
+});
 for (const kind of ["free text", "nested objects", "invalid identifiers", "wrong scalar types", "invalid container", "valid identifiers"] as const) {
   let responseSecret: Record<string, unknown> = { ...secret };
   let projected: Record<string, unknown> = { ...identifiers };
@@ -102,7 +109,7 @@ for (const tool of ["list_projects", "list_folders", "create_folder"]) {
   infisicalResultCases.push({
     name: `${tool} free text`, tool, args,
     response: project ? { projects: [fields] } : tool === "list_folders" ? { folders: [fields] } : { folder: fields },
-    expected: { ...(project ? { projects: [{ id, slug: "app", type: "secret-manager", environments: [{ id: approvalId, slug: "prod" }] }] }
+    expected: { ...(project ? { projects: [{ id, type: "secret-manager", environments: [{ id: approvalId, slug: "prod" }] }] }
       : tool === "list_folders" ? { folders: [{ id, path: "/apps" }] } : { folder: { id, path: "/apps" } }), metadataOmitted: true },
   });
 }
@@ -116,13 +123,14 @@ for (const tool of ["get_secret", "list_secrets"]) infisicalResultCases.push({
 });
 
 let clientCounter = 0;
-async function setup(executor?: Executor, extraConnectors: ReturnType<typeof api>[] = []) {
+async function setup(executor?: Executor, extraConnectors: ReturnType<typeof api>[] = [], trust: "trusted" | "read-only" = "trusted", hostCallTimeoutMs?: number) {
   const storage = memoryStorage();
   const vault = new CredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
   await vault.setAll("infisical", { clientId: `result-client-${++clientCounter}`, clientSecret: "synthetic-client-secret-12345" }, "operator");
   const connector = infisical("infisical", { purpose: "result security tests" });
   const deployment = createTestConnecta({
-    storage, vault, connectors: [connector, ...extraConnectors], logger: silentLogger, trust: "trusted",
+    storage, vault, connectors: [connector, ...extraConnectors], logger: silentLogger, trust,
+    ...(hostCallTimeoutMs ? { execute: { hostCallTimeoutMs } } : {}),
     ...(executor ? { executor: { execute: executor.execute.bind(executor) } } : {}),
   });
   return { storage, connector, deployment };
@@ -152,6 +160,10 @@ export async function checkInfisicalResult(testCase: Case, executor?: Executor) 
       expect(envelope.result).toEqual(guestResult);
       expect(JSON.parse(envelope.logs)).toEqual(guestResult);
       expect(rpc.result.structuredContent).toEqual(envelope);
+      if (!testCase.read) {
+        expect(JSON.stringify(rpc.result)).not.toContain(marker);
+        expect(JSON.stringify(rpc.result)).not.toContain(projectName);
+      }
     } else {
       const direct = await connector.callTool(testCase.tool, testCase.args, {
         baseUrl: "https://connecta.test", logger: silentLogger, storage,
@@ -167,13 +179,107 @@ export async function checkInfisicalResult(testCase: Case, executor?: Executor) 
         const parsed = JSON.parse(rpc.result.content[0].text);
         expect(resultMode === "value" ? parsed.data : parsed).toEqual(testCase.expected);
         if (resultMode === "value") expect(rpc.result.structuredContent).toEqual(parsed);
-        if (!testCase.read) expect(JSON.stringify(rpc.result)).not.toContain(marker);
+        if (!testCase.read) {
+          expect(JSON.stringify(rpc.result)).not.toContain(marker);
+          expect(JSON.stringify(rpc.result)).not.toContain(projectName);
+        }
       }
     }
     expect(dispatched).toHaveLength(executor ? 1 : 3);
     for (const request of dispatched) if ("secretValue" in testCase.args)
       expect(JSON.parse(String(request.body)).secretValue).toBe(testCase.args.secretValue);
   } finally { await deployment.close(); }
+}
+
+const recoveryMarker = "r5-free-text-write-secret-9837261";
+export const infisicalRecoveryCases = [
+  { name: "create with value and comment", tool: "create_secret", args: { ...target, secretValue: recoveryMarker, secretComment: recoveryMarker }, publicArgs: target },
+  { name: "update with value and comment", tool: "update_secret", args: { ...target, secretValue: recoveryMarker, secretComment: recoveryMarker }, publicArgs: target },
+  { name: "comment-only update", tool: "update_secret", args: { ...target, secretComment: recoveryMarker }, publicArgs: target },
+  { name: "folder create with description", tool: "create_folder", args: { projectId: target.projectId, environment: "prod", name: "apps", path: "/", description: recoveryMarker },
+    publicArgs: { projectId: target.projectId, environment: "prod", name: "apps", path: "/" } },
+];
+
+/** Assert structural omission in refusals and uncertain writes, preserving dispatched inputs. */
+export async function checkInfisicalRecovery(testCase: typeof infisicalRecoveryCases[number], executor?: Executor) {
+  for (const failure of ["refusal", "timeout"] as const) {
+    const witnessed: unknown[] = [];
+    const witness = api("ordinary", { tools: [{
+      name: "witness", description: "Record the caught recovery error.",
+      inputSchema: { type: "object", properties: { error: { type: "object" } }, required: ["error"] },
+      annotations: { readOnlyHint: true },
+      handler: async (args: { error: unknown }) => { witnessed.push(args.error); return true; },
+    }] });
+    const { deployment } = await setup(executor, [witness], failure === "refusal" ? "read-only" : "trusted", 100);
+    const dispatched: RequestInit[] = [];
+    vi.stubGlobal("fetch", vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      if (String(input).endsWith("/login")) return Response.json({ accessToken: "synthetic-access-token-12345", expiresIn: 3600 });
+      dispatched.push(init!);
+      return await new Promise<Response>((_resolve, reject) => {
+        const signal = init!.signal!;
+        if (signal.aborted) reject(signal.reason);
+        else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    }));
+    const code = failure === "refusal" ? "destructive_tool_requires_approval" : "write_outcome_unknown";
+    const check = (error: unknown) => {
+      expect(error).toMatchObject({ code, ...(failure === "refusal"
+        ? { nextAction: { arguments: { address: `infisical.${testCase.tool}`, args: testCase.publicArgs, argsRedacted: true } } }
+        : { uncertainCall: { address: `infisical.${testCase.tool}`, args: testCase.publicArgs, argsRedacted: true }, retryable: false }) });
+      const typed = error as { uncertainCall?: { args: unknown }; nextAction?: { arguments: { args: unknown } } };
+      expect(typed.uncertainCall?.args ?? typed.nextAction?.arguments.args).toEqual(testCase.publicArgs);
+      expect(JSON.stringify(error)).not.toContain(recoveryMarker);
+    };
+    try {
+      if (executor) {
+        for (const caught of [true, false]) {
+          const before = dispatched.length;
+          const call = `await connecta.call("infisical.${testCase.tool}", ${JSON.stringify(testCase.args)})`;
+          const rpc = await readJsonRpc(await mcpRpc(deployment, "tools/call", {
+            name: "execute_code", arguments: { code: caught ? `async () => {
+              try { ${call}; } catch (error) { await connecta.call("ordinary.witness", { error: error.details }); return "caught"; }
+            }` : `async () => ${call}` },
+          }));
+          const envelope = JSON.parse(rpc.result.content[0].text);
+          expect(rpc.result.structuredContent).toEqual(envelope);
+          if (caught) {
+            expect(witnessed).toHaveLength(1);
+            check(witnessed[0]);
+          }
+          if (!caught || failure === "timeout") {
+            expect(rpc.result.isError).toBe(true);
+            check(envelope.error);
+          } else {
+            expect(rpc.result.isError).toBeFalsy();
+            expect(envelope.result).toBe("caught");
+          }
+          expect(JSON.stringify(rpc.result)).not.toContain(recoveryMarker);
+          expect(dispatched.length - before).toBe(failure === "refusal" ? 0 : 1);
+        }
+      } else {
+        for (const resultMode of ["mcp", "value"] as const) {
+          const before = dispatched.length;
+          const rpc = await readJsonRpc(await mcpRpc(deployment, "tools/call", {
+            name: failure === "refusal" ? "call_tool" : "call_destructive_tool",
+            arguments: { address: `infisical.${testCase.tool}`, args: testCase.args, timeoutMs: 100, resultMode },
+          }));
+          expect(rpc.result.isError).toBe(true);
+          const envelope = JSON.parse(rpc.result.content[0].text);
+          expect(rpc.result.structuredContent).toEqual(envelope);
+          check(envelope.error);
+          expect(JSON.stringify(rpc.result)).not.toContain(recoveryMarker);
+          expect(dispatched.length - before).toBe(failure === "refusal" ? 0 : 1);
+        }
+      }
+      expect(dispatched).toHaveLength(failure === "refusal" ? 0 : 2);
+      for (const request of dispatched) {
+        const expected = { ...testCase.args } as Record<string, unknown>;
+        delete expected.secretName;
+        expect(JSON.parse(String(request.body))).toEqual(expected);
+      }
+      expect(JSON.stringify(testCase.args)).toContain(recoveryMarker);
+    } finally { await deployment.close(); }
+  }
 }
 
 /** Submitted data must never become a credential that changes future arguments. */

@@ -263,10 +263,10 @@ class IdentifierProjection {
 }
 
 function projectProject(value: unknown, projection: IdentifierProjection): Json {
-  const project = projection.record(value, ["id", "slug", "type", "environments", "createdAt", "updatedAt"]);
+  // Infisical derives default slugs from free-text project names.
+  const project = projection.record(value, ["id", "type", "environments", "createdAt", "updatedAt"]);
   return compact({
     id: projection.text(project["id"], ID_PATTERN),
-    slug: projection.text(project["slug"], SLUG_PATTERN),
     type: projection.choice(project["type"], PROJECT_TYPES),
     environments: projection.array(project["environments"]).map((env) => {
       const record = projection.record(env, ["slug", "id"]);
@@ -389,7 +389,6 @@ const metadataOmitted: JsonSchema = {
 };
 const PROJECT = result({
   id: identifier(ID_PATTERN),
-  slug: identifier(SLUG_PATTERN),
   type: { type: "string", enum: PROJECT_TYPES },
   environments: { type: "array", items: result({ slug: identifier(SLUG_PATTERN), id: identifier(ID_PATTERN) }) },
   createdAt: timestamp,
@@ -648,7 +647,7 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
             description: "The value. May reference others as ${env.KEY}.",
           },
           secretPath,
-          secretComment: { type: "string", description: "Optional note shown beside the secret." },
+          secretComment: { type: "string", writeOnly: true, description: "Optional note shown beside the secret." },
           type: secretType,
         },
         required: ["projectId", "environment", "secretName", "secretValue"],
@@ -699,7 +698,7 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
           secretName,
           secretPath,
           secretValue: { type: "string", writeOnly: true, description: "New value." },
-          secretComment: { type: "string", description: "New comment." },
+          secretComment: { type: "string", writeOnly: true, description: "New comment." },
           newSecretName: { type: "string", minLength: 1, description: "Rename the secret to this key." },
           type: secretType,
         },
@@ -790,7 +789,7 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
           environment,
           name: { type: "string", minLength: 1, description: "Folder name." },
           path: { type: "string", pattern: "^/", description: "Absolute parent path beginning with /. Defaults to /." },
-          description: { type: "string", description: "Optional folder description." },
+          description: { type: "string", writeOnly: true, description: "Optional folder description." },
         },
         required: ["projectId", "environment", "name"],
         additionalProperties: false,

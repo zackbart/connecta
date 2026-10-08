@@ -3,7 +3,9 @@ import { afterAll, afterEach, it, vi } from "vitest";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
 import {
   checkInfisicalResult,
+  checkInfisicalRecovery,
   checkInfisicalSequence,
+  infisicalRecoveryCases,
   infisicalResultCases,
 } from "./fixtures/infisical-write-results.js";
 
@@ -16,6 +18,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
+
+it.each(infisicalRecoveryCases)(
+  "omits free text from $name QuickJS caught errors and final program errors (INV-5, INV-9)",
+  async (testCase) => {
+    await checkInfisicalRecovery(testCase, executor);
+  },
+);
 
 it.each(infisicalResultCases)(
   "projects identifiers or explicitly reads values for $name in QuickJS returns and guest logs (INV-5)",

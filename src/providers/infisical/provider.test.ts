@@ -298,7 +298,6 @@ describe("Infisical connector", () => {
       projects: [
         {
           id: PROJECT_ID,
-          slug: "site",
           type: "secret-manager",
           environments: [{ id: ENVIRONMENT_ID, slug: "prod" }],
         },
@@ -539,6 +538,29 @@ describe("maintained Infisical contract", () => {
       for (const argument of expected[tool.name]!) {
         expect(compact.text).toContain(argument);
         expect(signature.text).toContain(argument);
+      }
+    }
+  });
+
+  it("marks every free-text write input private and omits project slugs from the output schema (INV-5)", async () => {
+    const privateFields: Record<string, string[]> = {
+      create_secret: ["secretValue", "secretComment"],
+      update_secret: ["secretValue", "secretComment"],
+      delete_secret: [],
+      create_folder: ["description"],
+    };
+    for (const tool of await connector.listTools(context())) {
+      if (tool.name in privateFields) {
+        const properties = tool.inputSchema!.properties as Record<string, { writeOnly?: boolean }>;
+        expect(
+          Object.entries(properties)
+            .filter(([, schema]) => schema.writeOnly)
+            .map(([name]) => name),
+        ).toEqual(privateFields[tool.name]);
+      }
+      if (tool.name === "list_projects") {
+        const schema = tool.outputSchema as { properties: { projects: { items: { properties: object } } } };
+        expect(schema.properties.projects.items.properties).not.toHaveProperty("slug");
       }
     }
   });

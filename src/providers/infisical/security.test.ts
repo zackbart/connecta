@@ -8,7 +8,9 @@ import { mcpRpc, readJsonRpc } from "../../../test/fixtures/http.js";
 import { infisical } from "./index.js";
 import {
   checkInfisicalResult,
+  checkInfisicalRecovery,
   checkInfisicalSequence,
+  infisicalRecoveryCases,
   infisicalResultCases,
 } from "../../../test/fixtures/infisical-write-results.js";
 
@@ -46,6 +48,12 @@ afterEach(() => {
 });
 
 describe("Infisical security boundaries", () => {
+  it.each(infisicalRecoveryCases)(
+    "omits free text from $name MCP refusals and dispatched timeouts in both result modes (INV-5, INV-9)",
+    async (testCase) => {
+      await checkInfisicalRecovery(testCase);
+    },
+  );
   it.each(infisicalResultCases)(
     "projects identifiers or explicitly reads values for $name in provider and MCP exits (INV-5)",
     async (testCase) => {
