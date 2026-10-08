@@ -1817,7 +1817,7 @@ describe("audit regressions", () => {
     const call = vi.fn(async () => "x".repeat(4_000));
     const connector = connectorWith({ id: "large", kind: "api", tools: [{ name: "read", annotations: { readOnlyHint: method === "callTool" } }], call });
     const target = activitySink();
-    const mt = createMetaTools(makeRegistry([connector], { storage, maxResultBytes: 1_000, logger: { ...silentLogger, warn } }), BASE, { activity: target.activity });
+    const mt = createMetaTools(makeRegistry([connector], { storage, maxResultBytes: 1_000, logger: { ...silentLogger, warn } }), BASE, { trust: "trusted", activity: target.activity });
     for (const resultMode of ["mcp", "value"] as const) {
       const result = await mt[method]({ address: "large.read", resultMode });
       expect(result.isError).toBeFalsy();
@@ -2333,6 +2333,44 @@ describe("truncated results lead with their connecta.result handle", () => {
     return text;
   }
 
+  it.each(["api-text", "api-value", "mcp-text", "mcp-value", "mcp-blocks"] as const)("INV-2 INV-9: a read-only pool returns an inline %s write truncation without an unreachable stash", async (mode) => {
+    const store = memoryStorage();
+    const stashKeys: string[] = [];
+    const storage = { ...store, set: async (key: string, value: string, options?: { ttlSeconds?: number }) => {
+      if (key.includes("result:") || key.includes("result-stash:")) stashKeys.push(key);
+      await store.set(key, value, options);
+    } };
+    const { activity, events } = activitySink();
+    let calls = 0;
+    const connector = connectorWith({
+      id: "down", kind: mode.startsWith("mcp") ? "mcp" : "api",
+      tools: [{ name: "run", annotations: { readOnlyHint: false } }],
+      call: async () => {
+        calls++;
+        return mode === "mcp-blocks" ? { content: [{ type: "image", mimeType: "image/png", data: "a".repeat(3000) }] }
+          : mode.startsWith("mcp") ? { content: [{ type: "text", text: JSON_LINES }] } : JSON_LINES;
+      },
+    });
+    const mt = createMetaTools(makeRegistry([connector], { storage, maxResultBytes: 1000 }), BASE, {
+      trust: "read-only", activity,
+    });
+    const result = await mt.callDestructiveTool({ address: "down.run", resultMode: mode.endsWith("value") ? "value" : "mcp" });
+    expect(result.isError).toBeFalsy();
+    const notice = mode.endsWith("value") ? (textOf(result) as { data: Record<string, unknown> }).data
+      : JSON.parse(required(result.content[0]).text.split("\n")[0]!);
+    expect(notice).toMatchObject({ truncated: true, totalBytes: expect.any(Number) });
+    expect(notice.hint).toContain("This write already ran");
+    expect(notice.hint).toContain("Paging is unavailable for write results on read-only pools");
+    for (const key of ["resultId", "nextAction", "nextOffset"]) expect(notice).not.toHaveProperty(key);
+    expect(JSON.stringify(result)).not.toContain("connecta.result");
+    expect(stashKeys).toEqual([]);
+    expect(calls).toBe(1);
+    expect(events).toMatchObject([{ outcome: "success", friction: "result_too_large" }]);
+    if (mode === "api-text" || mode === "mcp-text") expect(lead(result).preview).toBe((mode === "api-text" ? JSON.stringify(JSON_LINES) : JSON_LINES).slice(0, 1000));
+    if (mode.endsWith("value")) expect(notice.preview).toBeTypeOf("string");
+    expect(new TextEncoder().encode(required(result.content[0]).text).length).toBeLessThan(1400);
+  });
+
   it("puts the notice and its next action before the preview", async () => {
     const mt = createMetaTools(makeRegistry([capped("c")], { maxResultBytes: 100 }), BASE);
     const { notice, preview } = lead(await mt.callTool({ address: "c.big" }));
@@ -2356,7 +2394,7 @@ describe("truncated results lead with their connecta.result handle", () => {
     // survives that; a leading one must.
     const mt = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: JSON_LINES }], readOnly)], { maxResultBytes: 10_000 }),
-      BASE,
+      BASE, { trust: "trusted" },
     );
     const result = await mt[method]({ address: "down.run" });
     const { notice } = lead(result);
@@ -2369,7 +2407,7 @@ describe("truncated results lead with their connecta.result handle", () => {
   it("tells a write's caller that the call already ran and must not be repeated", async () => {
     const mt = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: JSON_LINES }], false)], { maxResultBytes: 1_000 }),
-      BASE,
+      BASE, { trust: "trusted" },
     );
     const { notice } = lead(await mt.callDestructiveTool({ address: "down.run", reason: "export" }));
     expect(notice.hint).toMatch(/already ran/i);
@@ -2382,7 +2420,7 @@ describe("truncated results lead with their connecta.result handle", () => {
 
     const read = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: JSON_LINES }], true)], { maxResultBytes: 1_000 }),
-      BASE,
+      BASE, { trust: "trusted" },
     );
     const { notice: readNotice } = lead(await read.callTool({ address: "down.run" }));
     expect(readNotice.hint).not.toMatch(/already ran/i);
@@ -2394,7 +2432,7 @@ describe("truncated results lead with their connecta.result handle", () => {
     // pages to find one line is how the eval's weakest model missed it.
     const read = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: JSON_LINES }], true)], { maxResultBytes: 1_000 }),
-      BASE,
+      BASE, { trust: "trusted" },
     );
     for (const result of [
       await read.callTool({ address: "down.run" }),
@@ -2415,7 +2453,7 @@ describe("truncated results lead with their connecta.result handle", () => {
     // A write's notice is untouched: repeating it is exactly what it forbids.
     const write = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: JSON_LINES }], false)], { maxResultBytes: 1_000 }),
-      BASE,
+      BASE, { trust: "trusted" },
     );
     const { notice: writeNotice } = lead(await write.callDestructiveTool({ address: "down.run", reason: "export" }));
     expect(writeNotice.hint).toBe(
@@ -2427,7 +2465,7 @@ describe("truncated results lead with their connecta.result handle", () => {
   it("previews a lone text block as its text, not its serialized envelope", async () => {
     const mt = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: JSON_LINES }], true)], { maxResultBytes: 1_000 }),
-      BASE,
+      BASE, { trust: "trusted" },
     );
     const { notice, preview } = lead(await mt.callTool({ address: "down.run" }));
     expect(preview.startsWith('[{"type"')).toBe(false);
@@ -2478,7 +2516,7 @@ describe("truncated results lead with their connecta.result handle", () => {
 
     const inline = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: "x".repeat(24_000) }], readOnly)]),
-      BASE,
+      BASE, { trust: "trusted" },
     );
     expect((await inline[method]({ address: "down.run" })).content)
       .toEqual([{ type: "text", text: "x".repeat(24_000) }]);

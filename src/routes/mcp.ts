@@ -405,6 +405,7 @@ function serveMcp(
       client,
       baseUrl,
       requestScope,
+      trust,
       canManageAuth,
       oauthConnectUrl: (id, force) => oauthConnectUrl(opts, baseUrl, id, principalKey, force),
       oauthConnectUnavailable: oauthConnectUnavailable(opts),

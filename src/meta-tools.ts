@@ -243,6 +243,8 @@ function base64Of(bytes: Uint8Array): string {
  */
 interface ResultStash {
   secrets?: SentSecrets;
+  /** Write stashes require the same endpoint to admit trusted programs. */
+  pageable: boolean;
   set: RegistryView["stashResult"];
   binding: ResultBinding;
   warn: () => void;
@@ -321,6 +323,11 @@ async function stashResult(
   preview: PreviewShape,
 ) {
   const totalBytes = bytes.length;
+  if (!results.pageable) return {
+    truncated: true,
+    totalBytes,
+    hint: `${WRITE_ALREADY_RAN} Paging is unavailable for write results on read-only pools.`,
+  };
   const id = crypto.randomUUID();
   try {
     // Base64 permits byte-range decoding, and splitting the envelope across
@@ -618,7 +625,7 @@ function metaToolsForRequest(
     defaultToolTimeoutMs?: number | undefined;
     /** Run-owned scope shared by paging and downstream invocation. */
     requestScope?: object | undefined;
-    /** Current endpoint trust for program result paging. */
+    /** Current endpoint trust for result stashing and paging. */
     trust?: import("./tool-safety.js").PoolTrust | undefined;
     /** Per-connector deadline for the search/describe probe fan-out. Default 30_000. */
     probeTimeoutMs?: number | undefined;
@@ -712,6 +719,7 @@ function metaToolsForRequest(
           );
           const results: ResultStash = {
             secrets,
+            pageable: resolved.definition.classification === "read" || opts.trust === "trusted",
             binding: {
               identity: registry.resultIdentity(), baseUrl,
               connector: resolved.connector.id, tool: resolved.definition.name,
@@ -1246,6 +1254,7 @@ export function registerMetaTools(
   registry: RegistryView,
   ctx: {
     baseUrl: string;
+    trust?: import("./tool-safety.js").PoolTrust | undefined;
     defaultToolTimeoutMs?: number | undefined;
     probeTimeoutMs?: number | undefined;
     discoveryConcurrency?: number | undefined;
@@ -1262,6 +1271,7 @@ export function registerMetaTools(
 ): void {
   const mt = createMetaTools(registry, ctx.baseUrl, {
     requestScope: ctx.requestScope,
+    trust: ctx.trust,
     defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,
     probeTimeoutMs: ctx.probeTimeoutMs,
     discoveryConcurrency: ctx.discoveryConcurrency,

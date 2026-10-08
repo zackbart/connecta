@@ -373,7 +373,7 @@ sees the whole result at once. When the hint named paging alone, the eval's
 weakest model read a 185 KB CI log in 24,000-byte pages, skipped the range
 holding the real failure, and named the flaky test near the top; before the
 notice was visible, it had reduced the log in a program and found the failure.
-`nextAction` stays the page handle for either kind of call, because paging is
+When paging is available, `nextAction` is the page handle for either kind of call, because paging is
 the one next step connecta can spell out exactly, while a reduction is a
 program the agent has to write. `resultId` stays beside the exact `nextAction`,
 so the handle is actionable without copying an identifier out of prose.
@@ -406,6 +406,11 @@ returning pages unchanged can hit the program result cap. The admitted subject
 and principal, endpoint/pool, request origin, connector, and tool bindings must
 match. The host rechecks current access and trust before returning each page; a
 read-only endpoint cannot read a write stash. Caller arguments select no partition.
+
+A write on a read-only endpoint returns an inline truncation notice and any
+usable bounded preview. It says paging is unavailable and the write already
+ran; it carries no result handle or recovery action and stores no unreachable
+stash. Write paging remains available on trusted endpoints.
 
 A refused stash write cannot undo a downstream success. Both call tools return
 a paging-unavailable notice, without a handle or recovery action. A write's

@@ -64,6 +64,12 @@ export async function checkStashAuthority(executor: Executor): Promise<void> {
     return (await readJsonRpc(response)).result as ToolResult;
   };
   try {
+    const inline = await rpc("call_destructive_tool", { address: "docs.write" }, { app: readonly });
+    expect(inline.isError).toBeFalsy();
+    expect(inline.structuredContent).toMatchObject({ truncated: true,
+      hint: expect.stringContaining("Paging is unavailable for write results on read-only pools") });
+    expect(inline.structuredContent).not.toHaveProperty("resultId");
+    expect(inline.structuredContent).not.toHaveProperty("nextAction");
     const direct = await rpc("call_destructive_tool", { address: "docs.write" });
     const id = JSON.parse(required(direct.content[0]).text.split("\n")[0]!).resultId;
     expect(id).toMatch(/^[a-f0-9-]{36}$/);
