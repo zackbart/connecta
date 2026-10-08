@@ -214,7 +214,7 @@
     "changelog:assemble": "node scripts/changelog.mjs",
     "providers:generate": "tsx scripts/generate-providers.mjs",
     "check:providers-generated": "tsx scripts/generate-providers.mjs --check",
-    "prebuild": "npm run build:operator-ui",
+    "prebuild": "node scripts/generate-version.mjs && npm run build:operator-ui",
     "pretest": "npm run build:operator-ui",
     "pretest:node": "npm run build:operator-ui",
     "pretest:workers": "npm run build:operator-ui",

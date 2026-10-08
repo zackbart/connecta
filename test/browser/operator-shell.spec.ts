@@ -100,7 +100,7 @@ test("command palette filters, traps focus and restores its trigger", async ({ p
 
 for (const fromAppearance of [false, true]) {
   test(`palette page selection leaves focus at the destination heading${fromAppearance ? " from Appearance" : ""}`, async ({ page }) => {
-    await page.route("**/ui/activity*", route => route.fulfill({ json: { events: [] } }));
+    await page.route("**/ui/api/activity*", route => route.fulfill({ json: { events: [] } }));
     await openShell(page);
     if (fromAppearance) {
       await page.getByRole("button", { name: "Appearance", exact: true }).click();

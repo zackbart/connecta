@@ -1,3 +1,4 @@
+import { CONNECTA_VERSION } from "./version.js";
 import { assertKnownOptions, keys, optionsOf } from "./config-schema.js";
 import { routeActivity } from "./routes/activity.js";
 import type { ActivityModule } from "./module-contracts.js";
@@ -40,6 +41,13 @@ export function activityClientFact(value: unknown, field: "name" | "version"): s
   return typeof value === "string" && !RESERVED_CLIENT_FACTS.has(value) && CLIENT_FACT_GRAMMARS[field].test(value)
     ? value
     : undefined;
+}
+
+/** Stored package versions use a bounded release-version grammar, including prereleases. */
+export function activityPackageVersion(value: unknown): string | undefined {
+  return typeof value === "string" && value.length <= 128 &&
+    /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?(?![\s\S])/.test(value)
+    ? value : undefined;
 }
 
 /** Two names and the dot between them. */
@@ -134,6 +142,8 @@ export interface ToolCallActivityEvent {
    * here — the approved arguments were never recorded.
    */
   approval?: ActivityApproval;
+  /** Real build version. Absent only in history written before telemetry existed. */
+  packageVersion?: string;
   serverName: string;
   serverVersion: string;
   /** Self-declared client identity checked by activityClientFact; invalid facts are absent. */
@@ -158,8 +168,13 @@ export interface CatalogDriftActivityEvent extends CatalogDriftCounts {
   id: string;
   occurredAt: string;
   connectorId: string;
+  /** Real build version. Absent only in history written before telemetry existed. */
+  packageVersion?: string;
   serverName: string;
   serverVersion: string;
+  /** Self-declared client facts, when an explicit client context exists. */
+  clientName?: string;
+  clientVersion?: string;
   deploymentId?: string;
 }
 
@@ -230,6 +245,7 @@ export interface CatalogDriftActivityContext {
   recordDrift?: typeof recordCatalogDriftActivity;
   sink: ActivitySink;
   serverInfo: { name: string; version: string };
+  clientInfo?: { name: string; version: string };
   deploymentId?: string;
   logger: Logger;
 }
@@ -299,6 +315,7 @@ export function recordToolActivity(
     attempts: Math.max(1, Math.trunc(input.attempts)),
     ...(errorCode ? { errorCode } : {}),
     ...(friction ? { friction } : {}),
+    packageVersion: CONNECTA_VERSION,
     serverName: context.serverInfo.name,
     serverVersion: context.serverInfo.version,
     ...(clientName !== undefined ? { clientName } : {}),
@@ -331,6 +348,8 @@ export function recordCatalogDriftActivity(
   input: { connectorId: string } & CatalogDriftCounts,
 ): void {
   if (!context?.sink.recordCatalogDrift) return;
+  const clientName = activityClientFact(context.clientInfo?.name, "name");
+  const clientVersion = activityClientFact(context.clientInfo?.version, "version");
   const event: CatalogDriftActivityEvent = {
     schemaVersion: 1,
     id: crypto.randomUUID(),
@@ -341,8 +360,11 @@ export function recordCatalogDriftActivity(
     annotationConflicts: input.annotationConflicts,
     schemaChanges: input.schemaChanges,
     ...(input.droppedTools ? { droppedTools: input.droppedTools } : {}),
+    packageVersion: CONNECTA_VERSION,
     serverName: context.serverInfo.name,
     serverVersion: context.serverInfo.version,
+    ...(clientName !== undefined ? { clientName } : {}),
+    ...(clientVersion !== undefined ? { clientVersion } : {}),
     ...(context.deploymentId ? { deploymentId: context.deploymentId } : {}),
   };
   try {

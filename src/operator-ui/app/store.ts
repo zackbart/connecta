@@ -684,7 +684,7 @@ export async function loadActivity(reset: boolean): Promise<void> {
   }
   try {
     const payload = await operatorRequest(
-      `/ui/activity?${params}`,
+      `/ui/api/activity?${params}`,
       "GET",
       current,
     );

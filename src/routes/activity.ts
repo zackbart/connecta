@@ -1,5 +1,6 @@
 import { Duration, Effect } from "effect";
 import {
+  activityPackageVersion,
   activityClientFact,
   InvalidActivityCursorError,
   type ActivityActor,
@@ -69,11 +70,13 @@ function enrichActivityActorLabels(
               : {}),
           };
           // Re-check stored client facts, including custom readers and old rows.
-          const { clientName: suppliedName, clientVersion: suppliedVersion, ...record } = event;
+          const { packageVersion: suppliedPackageVersion, clientName: suppliedName, clientVersion: suppliedVersion, ...record } = event;
+          const packageVersion = activityPackageVersion(suppliedPackageVersion);
           const clientName = activityClientFact(suppliedName, "name");
           const clientVersion = activityClientFact(suppliedVersion, "version");
           return {
             ...record,
+            ...(packageVersion !== undefined ? { packageVersion } : {}),
             ...(clientName !== undefined ? { clientName } : {}),
             ...(clientVersion !== undefined ? { clientVersion } : {}),
             actor: resolved ? { ...actor, label: resolved } : actor,
@@ -127,7 +130,7 @@ export async function routeActivity(
   context: RouteContext,
 ): Promise<Response | null> {
   const { path, request } = context;
-  if (path !== "/ui/activity") return null;
+  if (path !== "/ui/activity" && path !== "/ui/api/activity") return null;
   if (request.method !== "GET") {
     return privateJson({ error: "method not allowed" }, { status: 405 });
   }

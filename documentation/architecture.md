@@ -138,6 +138,16 @@ and authenticated activity read route. Names match
 64 characters, versions up to 32. `__proto__`, `constructor`, and `prototype`
 are reserved. Invalid values are absent, never truncated or escaped. Capabilities and other client metadata never enter activity.
 Legacy requests without an envelope leave client facts absent.
+Every emitted activity event also carries `packageVersion`, generated from
+`package.json` before build and independent of the display-only `serverInfo`.
+Doctor uses and reports that same generated version. SQL stores validate
+package versions against a bounded release-version grammar on write and read;
+the nullable `package_version` migration leaves old rows unknown rather than
+assigning today's version to history. `/ui/api/activity` serves these facts
+read-only with the same authorization and validation as `/ui/activity`.
+Catalog drift is deployment-scoped and has no request client. Its recorder
+accepts explicit client facts through the same grammar when a context supplies
+them; ordinary deployment drift observations leave them absent.
 
 `server/discover` advertises the served extension map, currently empty, with
 private one-hour cache hints. It includes the configured identity, icons, title,

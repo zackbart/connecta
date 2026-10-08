@@ -204,6 +204,22 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     expect((await activity.list!({ limit: 10 })).events).toEqual([bare, full]);
   });
 
+  it("INV-6: validates package versions on SQL writes and historical reads", async () => {
+    const db = await open();
+    const activity = db.activity();
+    for (const value of [...INVALID_CLIENT_FACTS, "1.2.3\n", "1.2.3-" + "x".repeat(128)]) {
+      await activity.record(event(1, { packageVersion: value as string }));
+      expect(await db.rows("SELECT package_version FROM tool_call_activity WHERE id = ?", id(1)))
+        .toEqual([{ package_version: null }]);
+      expect((await activity.list!({ limit: 1 })).events[0]).not.toHaveProperty("packageVersion");
+      await db.exec("DELETE FROM tool_call_activity");
+    }
+    await activity.record(event(1, { packageVersion: "0.29.0-rc.1+build.2" }));
+    expect((await activity.list!({ limit: 1 })).events[0]?.packageVersion).toBe("0.29.0-rc.1+build.2");
+    await db.exec("UPDATE tool_call_activity SET package_version = ?", "1.2.3\nPAYLOAD");
+    expect((await activity.list!({ limit: 1 })).events[0]).not.toHaveProperty("packageVersion");
+  });
+
   it("INV-6: persists only allowlisted client identity facts in activity", async () => {
     const db = await open();
     const activity = db.activity();
@@ -283,7 +299,7 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
       .rejects.toBeInstanceOf(InvalidActivityCursorError);
   });
 
-  it("upgrades a 0.28 activity table and derives friction for rows written before its column", async () => {
+  it("INV-6: upgrades old activity rows without inventing package or client facts and derives friction", async () => {
     const db = await open();
     await db.exec(LEGACY_ACTIVITY_TABLE);
     const codes = ["unknown_tool", "invalid_args", "auth_required", "not_found", "rate_limited"];
@@ -304,6 +320,9 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     for (const entry of events) {
       expect(entry.friction).toBe(agentFrictionForCode(entry.errorCode));
       expect(entry).not.toHaveProperty("approval");
+      expect(entry).not.toHaveProperty("packageVersion");
+      expect(entry).not.toHaveProperty("clientName");
+      expect(entry).not.toHaveProperty("clientVersion");
     }
     await activity.record(event(9, {
       occurredAt: "2026-07-28T00:00:00.000Z",
@@ -323,7 +342,7 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
       : store.record(event(index, { actor: { kind: "clerk", namespace: `ns-${index}` } }))));
     const columns = (await db.rows<{ name: string }>("PRAGMA table_info(tool_call_activity)"))
       .map((column) => column.name);
-    for (const name of ["actor_namespace", "friction", "approval", "client_name", "client_version"]) {
+    for (const name of ["actor_namespace", "friction", "approval", "client_name", "client_version", "package_version"]) {
       expect(columns.filter((column) => column === name)).toHaveLength(1);
     }
     expect((await db.activity().list!({ limit: 10 })).events.map((entry) => entry.actor.namespace))

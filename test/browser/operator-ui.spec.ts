@@ -321,7 +321,7 @@ test.beforeAll(async () => {
       sendJson(response, 200, connector);
       return;
     }
-    if (method === "GET" && url.pathname === "/ui/activity") {
+    if (method === "GET" && url.pathname === "/ui/api/activity") {
       sendJson(response, 200, {
         events: emptyDeployment ? [] : [
           {
@@ -670,7 +670,7 @@ test("navigates to the activity list and back without a shell reload", async ({
   await expect(activity.getByText("Ada Lovelace (Clerk)")).toBeVisible();
   await expect(activity.getByText("Succeeded")).toBeVisible();
   expect(
-    requests.find((request) => request.path.startsWith("/ui/activity"))
+    requests.find((request) => request.path.startsWith("/ui/api/activity"))
       ?.authorization,
   ).toBe(`Bearer ${TOKEN}`);
 
@@ -681,14 +681,14 @@ test("navigates to the activity list and back without a shell reload", async ({
 
 for (const body of ["truncated JSON", "null", "{}"]) {
   test(`offers Activity retry after an unreadable successful response: ${body}`, async ({ page }) => {
-    await page.route("**/ui/activity?**", route => route.fulfill({
+    await page.route("**/ui/api/activity?**", route => route.fulfill({
       status: 200, contentType: "application/json", body,
     }));
     await openAuthenticated(page);
     await page.getByRole("link", { name: "Activity" }).click();
     await expect(page.locator("#activityError")).toContainText("Activity couldn't be loaded");
     await expect(page.getByText("No connector tool calls recorded yet.", { exact: true })).toHaveCount(0);
-    await page.unroute("**/ui/activity?**");
+    await page.unroute("**/ui/api/activity?**");
     await page.getByRole("button", { name: "Retry", exact: true }).click();
     await expect(page.locator("#activityList").getByText("oauth.contacts")).toBeVisible();
     await expect(page.locator("#activityError")).toHaveCount(0);
