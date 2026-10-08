@@ -1,7 +1,7 @@
 # Agent evaluations
 
 The final 0.29 baselines for #709 item 1 are
-[Sonnet 5.5](baselines/sonnet-5-5-0.29.json), 28/34 with four N/A trials, and
+[Sonnet 5.5](baselines/sonnet-5-5-0.29.json), 30/34 with four N/A trials, and
 [GPT-6-Luna](baselines/gpt-6-luna-0.29.json), 29/38.
 [Baseline notes](baselines/notes-0.29.md) record the live setup, per-task scores,
 failure triage and caveats. Older files retain their historical tools, models

@@ -9718,7 +9718,7 @@
         },
         {
           "id": "refusal",
-          "description": "one program attempt refused the exact target",
+          "description": "one program write attempt refused the exact target",
           "pass": false
         },
         {
@@ -40453,7 +40453,7 @@
         },
         {
           "id": "refusal",
-          "description": "one program attempt refused the exact target",
+          "description": "one program write attempt refused the exact target",
           "pass": false
         },
         {

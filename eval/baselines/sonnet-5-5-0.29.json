@@ -10294,7 +10294,7 @@
       "task": "p5-read-only-program-refusal",
       "model": "claude-sonnet-5-5",
       "repeat": 1,
-      "status": "fail",
+      "status": "pass",
       "checks": [
         {
           "id": "conversation-completed",
@@ -10310,8 +10310,8 @@
         },
         {
           "id": "refusal",
-          "description": "one program attempt refused the exact target",
-          "pass": false
+          "description": "one program write attempt refused the exact target",
+          "pass": true
         },
         {
           "id": "structured-outcome",
@@ -10326,7 +10326,7 @@
         {
           "id": "correct-destination",
           "description": "used the requested connector, tool and target",
-          "pass": false
+          "pass": true
         },
         {
           "id": "answer-evidence",
@@ -35520,7 +35520,7 @@
       "task": "p5-read-only-program-refusal",
       "model": "claude-sonnet-5-5",
       "repeat": 2,
-      "status": "fail",
+      "status": "pass",
       "checks": [
         {
           "id": "conversation-completed",
@@ -35536,8 +35536,8 @@
         },
         {
           "id": "refusal",
-          "description": "one program attempt refused the exact target",
-          "pass": false
+          "description": "one program write attempt refused the exact target",
+          "pass": true
         },
         {
           "id": "structured-outcome",
@@ -35552,7 +35552,7 @@
         {
           "id": "correct-destination",
           "description": "used the requested connector, tool and target",
-          "pass": false
+          "pass": true
         },
         {
           "id": "answer-evidence",

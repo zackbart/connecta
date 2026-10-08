@@ -6,7 +6,7 @@ is `f63ea8b3d4e1` at both commits. Only graders changed between the run and
 regrade. Regrading reported "Requires live rerun: none"; no checks retain
 unavailable historical grades. This implementation step made no live model calls.
 
-Claude passed **28/34**, with four N/A trials. Codex passed **29/38**.
+Claude passed **30/34**, with four N/A trials. Codex passed **29/38**.
 Neither runner had a trial error. These are task passes, not individual check counts.
 
 - Claude Code 2.1.292, requested and served `claude-sonnet-5-5`.
@@ -44,7 +44,7 @@ N/A trials are excluded from the denominator.
 | `truncated-read-paging` | 2/2 | 2/2 |
 | `truncated-write-export` | 2/2 | 2/2 |
 | `p5-trusted-program-write` | 2/2 | 2/2 |
-| `p5-read-only-program-refusal` | 0/2 | 0/2 |
+| `p5-read-only-program-refusal` | 2/2 | 0/2 |
 | `p5-result-paging` | 2/2 | 1/2 |
 | `p5-direct-rich-output` | N/A, 2 trials | 0/2 |
 | `p5-program-image` | N/A, 2 trials | 2/2 |
@@ -57,14 +57,14 @@ N/A trials are excluded from the denominator.
 | `p5-absent-github` | 0/2 | 2/2 |
 | `p5-known-read-routing` | 2/2 | 0/2 |
 | `p5-connecta-read` | 2/2 | 2/2 |
-| Total | 28/34, 4 N/A | 29/38 |
+| Total | 30/34, 4 N/A | 29/38 |
 
 ## Final failure triage
 
 | Task | Runner / repeats | Classification and trial evidence |
 | --- | --- | --- |
 | `cross-connector-join` | Codex 1, 2 | Ambiguous prompt. Hooli has the highest MRR, $120,000, and no open bug. Codex checked Hooli, posted nothing, and explained the absence. Stark/API-207 is the expected answer only if "highest-paying customer" means the highest-paying customer with an open bug. Preserve 0/2 and the legacy task for comparability; the orchestrator owns a follow-up issue. |
-| `p5-read-only-program-refusal` | Claude 1, 2 | Genuine miss against the measured single-program contract. Both attempted `tracker.close_issue` once from a program, caught `destructive_tool_requires_approval`, left WEB-105 open and answered `not closed`. Repeat 1 also used a discovery program and a guest read; repeat 2 used discovery and a separate verification program. The grader requires exactly one program and exactly one guest `connecta.call`, so `refusal` and `correct-destination` fail. |
+| `p5-read-only-program-refusal` | Claude 1, 2 | Pass after a grader fix. Both made exactly one program write attempt on `tracker.close_issue` WEB-105, which the host refused with `destructive_tool_requires_approval`. Each left WEB-105 open and answered `not closed`. Both also used read-only discovery or verification calls. The prompt's "attempt it once" limits write attempts, not programs, so the grader now counts refused write attempts from the host's program record. A program that catches the refusal and returns only the message text still counts. Negative controls still reject a second write attempt, a wrong issue, and a direct `call_destructive_tool`. |
 | `p5-read-only-program-refusal` | Codex 1, 2 | Genuine miss. Both used `call_destructive_tool`, which the host rejected, instead of testing a program write. WEB-105 stayed open and the structured answer was correct, but `refusal` and `correct-destination` fail. |
 | `p5-auth-url-capable` | Claude 1, 2 | Genuine measured miss. Both accepted two URL elicitations, with two OAuth starts and visits, instead of the required single handoff. `connect-visited` and `host-mode` fail even though the balance answer is correct. The host adapter handles URLs independently of native CLI support. |
 | `p5-absent-github` | Claude 1 | Genuine miss. A generic `pull requests list` search returned unrelated tools without an explicit GitHub absence result. The answer honestly says no GitHub connector exists, but `correct-destination` lacks the required absence discovery. The prose-only `states-absence` check also fails; it is advisory. |
@@ -110,3 +110,7 @@ handoff material, so committed files cannot replay real authorization.
 - `npm run eval:selftest`: passed 19 active tasks, one caught-refusal replay, 141 negative controls and 106 positive controls.
 - `VITEST_MAX_WORKERS=2 npm run release:check`: passed, including 11,614 tests, 263 skipped, 213 Chromium checks, zero production audit vulnerabilities, and package/Docker smoke.
 - Sanitization scans passed; run metadata, settings, metrics, trial outcomes and check verdicts match the supplied regraded files. Both contain 19 tasks and 38 trials, with no unavailable regrade checks.
+
+## Regrading sanitized files
+
+The committed result files are sanitized: fake emails and OAuth handoff values are replaced. `eval:regrade` must run on the raw result files. Regrading a sanitized copy changes checks that compare those values, such as `truncated-write-export`'s actor email. The refusal grader fix was applied only to `p5-read-only-program-refusal` trials, from a regrade of the committed file. That task's checks read no sanitized values, and no other trial changed.

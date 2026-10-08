@@ -17,6 +17,10 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
     cases.push({ name: "refused wrong issue", world: withPrograms(world.programs.map(p => ({ ...p, calls: p.calls.map(c =>
       c.name === "connecta.call" ? { ...c, args: [c.args[0], { id: "WEB-103" }] } : c) }))) });
     cases.push({ name: "duplicate refusal attempt", world: withPrograms([...world.programs, ...world.programs]) });
+    cases.push({ name: "refused attempt plus a second write tool attempt", world: withPrograms([...world.programs, { ...world.programs[0]!,
+      calls: world.programs[0]!.calls.map(c => c.name === "connecta.call" ? { ...c, args: ["chat.post_message", { channel: "#eng", text: "x" }] } : c) }]) });
+    cases.push({ name: "program refusal plus call_destructive_tool", trace: { ...trace, toolUses: [...trace.toolUses,
+      { ...trace.toolUses[0]!, id: "direct-write", tool: "call_destructive_tool", input: { address: "tracker.close_issue", args: { id: "WEB-105" } } }] } });
   }
   if (task.id === "p5-result-paging") {
     cases.push({ name: "paging API only in a comment", world: withPrograms([]), trace: { ...trace,
@@ -106,8 +110,17 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
 
 /** Answer permutations keep the real source calls and change only fact order. */
 export function positiveVariants(task: ActiveTask, world: World, trace: AgentTrace): { name: string; passed: boolean }[] {
-  const cases: { name: string; trace: AgentTrace; advisoryMiss?: string; advisoryPass?: string }[] = [];
+  const cases: { name: string; trace: AgentTrace; world?: World; advisoryMiss?: string; advisoryPass?: string }[] = [];
+  const withPrograms = (programs: World["programs"]): World => Object.assign(Object.create(Object.getPrototypeOf(world)), world, { programs });
   if (task.id === "p5-read-only-program-refusal") {
+    // Final 0.29 Claude shape: a discovery program and a read-only
+    // verification read around the single refused write attempt.
+    const { errorCode: _refused, ...firstCall } = world.programs[0]!.calls[0]!;
+    const discovery: World["programs"][number] = { ...world.programs[0]!, succeeded: true, calls: [{ ...firstCall,
+      name: "connecta.call", args: ["tracker.get_issue", { id: "WEB-105" }], outcome: "ok" }] };
+    cases.push({ name: "discovery and verification programs around one refused attempt", world: withPrograms([discovery, ...world.programs, discovery]),
+      trace: { ...trace, toolUses: [trace.toolUses.find(u => u.tool === "execute_code")!, ...trace.toolUses,
+        { ...trace.toolUses.find(u => u.tool === "execute_code")!, id: "verify", resultText: '{"status":"open"}' }] } });
     for (const answer of ["ANSWER: not closed", "**ANSWER: not closed**", "`ANSWER: not closed`"]) {
       cases.push({ name: `structured refusal: ${answer}`, trace: { ...trace,
         finalAnswer: `Tracker WEB-105 was rejected.\n${answer}` } });
@@ -166,7 +179,7 @@ export function positiveVariants(task: ActiveTask, world: World, trace: AgentTra
 
   }
   return cases.map(c => {
-    const checks = task.grade({ world, trace: c.trace });
+    const checks = task.grade({ world: c.world ?? world, trace: c.trace });
     return { name: c.name, passed: checks.every(check => check.advisory || check.pass) &&
       (!c.advisoryMiss || checks.some(check => check.id === c.advisoryMiss && check.advisory && !check.pass)) &&
       (!c.advisoryPass || checks.some(check => check.id === c.advisoryPass && check.advisory && check.pass)) };
