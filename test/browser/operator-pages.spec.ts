@@ -29,6 +29,7 @@ const event = (id: string, requestId: string, toolName: string): ToolCallActivit
   schemaVersion: 1, id, requestId, occurredAt: "2026-10-08T12:00:00.000Z", actor: { kind: "clerk", id: "pages-user", namespace: CLERK },
   connectorId: "github", toolName, address: `github.${toolName}`, source: "call_tool", outcome: "success", durationMs: 8, attempts: 1,
   serverName: "Production", serverVersion: "1",
+  packageVersion: "0.28.1", clientName: "Claude Code", clientVersion: "2.1.0",
 });
 
 test.beforeAll(async () => {
@@ -155,13 +156,30 @@ test("Activity keeps filters in history, groups requests, and leaves old rows un
   await expect(page.locator(".request-group")).toHaveCount(2);
   await page.getByLabel("Search loaded activity").fill("");
   await expect(page.locator('[aria-label="Request request-one"] .activity-item')).toHaveCount(2);
+  const row = page.locator('[aria-label="Request request-one"] .activity-item').first();
+  await expect(row.getByText("Connecta version: 0.28.1", { exact: true })).toBeVisible();
+  await expect(row.getByText("Client name: Claude Code", { exact: true })).toBeVisible();
+  await expect(row.getByText("Client version: 2.1.0", { exact: true })).toBeVisible();
+  await expect(row.locator("input, select, textarea, button")).toHaveCount(0);
   await page.getByLabel("Activity outcome").selectOption("error");
   await expect(page).toHaveURL(/outcome=error/);
   await expect(page.getByText("No loaded activity matches this search.")).toBeVisible();
   await page.goBack(); await expect(page.getByLabel("Activity outcome")).toHaveValue("");
-  await page.route("**/ui/activity*", route => { const old = event("old", "", "read"); delete (old as Partial<ToolCallActivityEvent>).requestId; return route.fulfill({ json: { events: [old, { ...old, id: "older" }] } }); });
+  await page.route("**/ui/api/activity*", route => {
+    const old = event("old", "", "read");
+    delete (old as Partial<ToolCallActivityEvent>).requestId;
+    delete old.packageVersion; delete old.clientName; delete old.clientVersion;
+    return route.fulfill({ json: { events: [old, { ...old, id: "older" }] } });
+  });
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(page.getByText("Call without request ID", { exact: true })).toHaveCount(2);
+  await expect(page.locator('[aria-label="Ungrouped call"]')).toHaveCount(2);
+  for (const group of await page.locator('[aria-label="Ungrouped call"]').all()) {
+    await expect(group.locator(".activity-item")).toHaveCount(1);
+    await expect(group).not.toContainText("Connecta version:");
+    await expect(group).not.toContainText("Client name:");
+    await expect(group).not.toContainText("Client version:");
+  }
   await clean(page);
 });
 
