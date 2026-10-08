@@ -17,7 +17,16 @@ describe.skipIf(!db)("client activity in Workers D1", () => {
   it("INV-6: withholds invalid modern client facts across direct/program D1 activity and UI", async () => {
     const database = required(db);
     await database.prepare("DROP TABLE IF EXISTS tool_call_activity").run();
-    await checkClientActivity(d1ActivityStore(database));
+    const activity = d1ActivityStore(database);
+    // Finish the lazy schema setup once before deferred writes can overlap.
+    await activity.list!({ limit: 1 });
+    // Exercise each rejection class through real HTTP, D1, and UI, including
+    // both final-newline anchors and all reserved names. The recorder, SDK,
+    // shared SQL contract, and D1 sink below keep the exhaustive value matrix.
+    await checkClientActivity(activity, [
+      "\u001b[31mCLIENT\nforged", "1\r\nINJECT", "client\0payload", "client\n", "client\r",
+      "x".repeat(65), "__proto__", "constructor", "prototype", 42,
+    ]);
   });
 
   it("INV-6: withholds non-string and invalid client facts at the D1 sink itself", async () => {

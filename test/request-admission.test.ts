@@ -44,7 +44,7 @@ async function waitFor(
 
 describe("request admission", () => {
   beforeEach(() => {
-    // The clock, not the scheduler: Effect still yields on real immediates.
+    // Only deadlines are faked; native WebCrypto still completes in real time.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   });
   afterEach(() => {
@@ -54,6 +54,10 @@ describe("request admission", () => {
   it("aborts an in-flight connector call at the total request deadline", async () => {
     let started = 0;
     let aborted = 0;
+    let markStarted!: () => void;
+    const callStarted = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
     const connector: Connector = {
       ...calcConnector,
       async callTool(_name, _args, ctx) {
@@ -65,6 +69,7 @@ describe("request admission", () => {
           } else {
             ctx.signal?.addEventListener("abort", () => { aborted++; resolve(); }, { once: true });
           }
+          markStarted();
         });
         return { stopped: true };
       },
@@ -80,7 +85,10 @@ describe("request admission", () => {
       name: "call_tool",
       arguments: { address: "calc.add", args: { a: 1, b: 2 } },
     }, { id: 1 }));
-    await waitFor(() => started === 1);
+    // Catalog fingerprinting awaits native WebCrypto. An arbitrary number of
+    // fake-clock turns cannot guarantee it finishes before the call begins.
+    await callStarted;
+    expect(started).toBe(1);
     // Time moves only here: a tick short of the 100ms lifetime the call is
     // still running, and at 100ms it is aborted.
     await vi.advanceTimersByTimeAsync(99);

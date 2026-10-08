@@ -41,9 +41,17 @@ export function modernRequest(method: string, params: Record<string, unknown> = 
 }
 
 /** Real modern direct/program calls, their record boundary, storage, and UI. */
-export async function checkClientActivity(store: ActivityStore): Promise<void> {
+export async function checkClientActivity(
+  store: ActivityStore,
+  invalidFacts: readonly unknown[] = INVALID_CLIENT_FACTS,
+): Promise<void> {
   const events: ToolCallActivityEvent[] = [];
   const writes: Promise<unknown>[] = [];
+  const expected: Array<{
+    recorded: ToolCallActivityEvent;
+    clientName: string | undefined;
+    clientVersion: string | undefined;
+  }> = [];
   const c = createTestConnecta({
     connectors: [calcApi()], logger: silentLogger,
     auth: { kind: "test", interactiveOperator: true, authorize: () => ({ ok: true, userId: "operator" }) },
@@ -62,7 +70,7 @@ export async function checkClientActivity(store: ActivityStore): Promise<void> {
     } },
   });
   try {
-    const invalid = [...INVALID_CLIENT_FACTS, "v".repeat(33)].map(value => ({ name: value, version: value }));
+    const invalid = [...invalidFacts, "v".repeat(33)].map(value => ({ name: value, version: value }));
     for (const clientInfo of [...invalid, ...VALID_CLIENT_IDENTITIES]) {
       for (const name of ["call_tool", "call_destructive_tool", "execute_code"]) {
         const start = events.length;
@@ -87,19 +95,27 @@ export async function checkClientActivity(store: ActivityStore): Promise<void> {
         expect(recorded.clientVersion).toBe(expectedVersion);
         if (expectedName === undefined) expect(recorded).not.toHaveProperty("clientName");
         if (expectedVersion === undefined) expect(recorded).not.toHaveProperty("clientVersion");
-        await Promise.all(writes.splice(0));
-        const stored = required((await store.list!({ limit: 100 })).events.find(event => event.id === recorded.id));
-        const response = await c.fetch(new Request("https://connecta.test/ui/activity?limit=100"));
-        expect(response.status).toBe(200);
-        const page = await response.json() as { events: ToolCallActivityEvent[] };
-        const displayed = required(page.events.find(event => event.id === recorded.id));
-        for (const event of [stored, displayed]) {
-          expect(event.clientName).toBe(expectedName);
-          expect(event.clientVersion).toBe(expectedVersion);
-          if (expectedName === undefined) expect(event).not.toHaveProperty("clientName");
-          if (expectedVersion === undefined) expect(event).not.toHaveProperty("clientVersion");
-          expect(JSON.stringify(event)).not.toMatch(/elicitation|__proto__|constructor|payload|secret/);
-        }
+        expected.push({ recorded, clientName: expectedName, clientVersion: expectedVersion });
+      }
+    }
+    // Each boundary checks every recorded event once. Re-reading the growing
+    // D1 table through storage and UI after every call made this quadratic.
+    await Promise.all(writes.splice(0));
+    const stored = await store.list!({ limit: 100 });
+    const response = await c.fetch(new Request("https://connecta.test/ui/activity?limit=100"));
+    expect(response.status).toBe(200);
+    const page = await response.json() as { events: ToolCallActivityEvent[] };
+    for (const snapshot of [stored.events, page.events]) {
+      const byId = new Map(snapshot.map(event => [event.id, event]));
+      expect(byId.size).toBe(expected.length);
+      for (const { recorded, clientName, clientVersion } of expected) {
+        const event = required(byId.get(recorded.id));
+        expect(event.source).toBe(recorded.source);
+        expect(event.clientName).toBe(clientName);
+        expect(event.clientVersion).toBe(clientVersion);
+        if (clientName === undefined) expect(event).not.toHaveProperty("clientName");
+        if (clientVersion === undefined) expect(event).not.toHaveProperty("clientVersion");
+        expect(JSON.stringify(event)).not.toMatch(/elicitation|__proto__|constructor|payload|secret/);
       }
     }
   } finally { await Promise.all(writes); await c.close(); }
