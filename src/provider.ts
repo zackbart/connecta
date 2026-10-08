@@ -277,11 +277,20 @@ export function asProvider<O, C extends { describe?(): ConnectorDescription }>(
   options = assertKnownOptions(options, `${factory}(${JSON.stringify(id)})`, shape);
   const connector = build(id, options);
   const describe = connector.describe?.bind(connector);
-  return {
-    ...connector,
-    describe: (): ConnectorDescription => {
+  const ownDescribe = Object.getOwnPropertyDescriptor(connector, "describe");
+  // Keep the receiver of prototype methods (including private fields). When
+  // the description cannot be replaced, inherit the whole connector instead
+  // of copying it: decorators may inherit their id, methods, and review.
+  const stamped = Object.isExtensible(connector) && (!ownDescribe || ownDescribe.configurable)
+    ? connector
+    : Object.create(connector) as C;
+  Object.defineProperty(stamped, "describe", {
+    configurable: true,
+    enumerable: false,
+    value: (): ConnectorDescription => {
       const base = describe?.() ?? { source: { kind: "custom" as const } };
       return { ...base, source: { ...base.source, provider } };
     },
-  };
+  });
+  return stamped;
 }

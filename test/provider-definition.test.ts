@@ -9,11 +9,12 @@ import {
   type ProviderContext,
   type ProviderOptions,
 } from "../src/index.js";
-import type { Connector, ToolClassification } from "../src/types.js";
+import type { Connector, ConnectorDescription, ToolClassification, ToolDef } from "../src/types.js";
 import { observedCatalogDrift } from "../src/catalog-drift.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { servedTools } from "./fixtures/hosted-provider.js";
 import { connectorContext } from "./fixtures/misc.js";
+import { thingsDeployment } from "./fixtures/things-deployment.js";
 
 const SKILL = {
   content: "\n- Resolve ids before writing.\n- Page with cursors.\n",
@@ -109,6 +110,92 @@ describe("defineProvider()", () => {
       source: { kind: "custom", provider: "acme-crm" },
     });
   });
+
+  it.each(["plain object", "class instance", "Object.create decorator", "frozen object", "non-configurable describe"])(
+    "INV-1: provider stamping preserves discovery, calls, and the review on a %s",
+    async (shape) => {
+      const tools: ToolDef[] = [
+        { name: "list_things", description: "List things" },
+        { name: "make_thing", description: "Make a thing", annotations: { readOnlyHint: true } },
+      ];
+      const calls: string[] = [];
+      let created!: Connector;
+      const factory = defineProvider<ProviderOptions>({
+        name: "acme-crm",
+        title: "Acme CRM",
+        kind: "mcp",
+        skill: SKILL,
+        options: optionsOf<ProviderOptions>()(PROVIDER_COMMON),
+        classify: { tools: { list_things: "read", make_thing: "write" } },
+        create(id, _options, provider) {
+          const base: Connector = {
+            id,
+            classification: provider.classify,
+            async listTools() { expect(this.id).toBe(id); return tools; },
+            async callTool(name) { calls.push(`${this.id}.${name}`); return "listed"; },
+            describe() {
+              expect(this.id).toBe(id);
+              return { source: { kind: "remote-mcp", provider: "old" }, endpoint: { origin: "https://api.example", path: "/mcp" } };
+            },
+          };
+          class PrivateConnector implements Connector {
+            #tools = tools;
+            #result = "listed";
+            readonly id = id;
+            readonly classification = provider.classify;
+            async listTools() { return this.#tools; }
+            async callTool(name: string) { calls.push(`${this.id}.${name}`); return this.#result; }
+            describe(): ConnectorDescription {
+              expect(this.#result).toBe("listed");
+              return base.describe!();
+            }
+          }
+          switch (shape) {
+            case "class instance": created = new PrivateConnector(); break;
+            case "Object.create decorator": created = Object.create(base) as Connector; break;
+            case "frozen object": created = Object.freeze(base); break;
+            case "non-configurable describe":
+              Object.defineProperty(base, "describe", { configurable: false, writable: false });
+              created = base;
+              break;
+            default: created = base;
+          }
+          return created;
+        },
+      });
+      const connector = factory("things", { purpose: "Inventory" });
+      if (shape === "frozen object" || shape === "non-configurable describe") {
+        expect(Object.getPrototypeOf(connector)).toBe(created);
+        expect(Object.getOwnPropertyNames(connector)).toEqual(["describe"]);
+        expect(created.describe?.().source.provider).toBe("old");
+      } else {
+        expect(connector).toBe(created);
+      }
+      expect(Object.getOwnPropertyDescriptor(connector, "describe")?.enumerable).toBe(false);
+      expect(connector.classification).toBe(factory.definition.classify);
+      expect(Object.isFrozen(connector.classification?.tools)).toBe(true);
+      const description = {
+        source: { kind: "remote-mcp", provider: "acme-crm" },
+        endpoint: { origin: "https://api.example", path: "/mcp" },
+      };
+      expect(connector.describe?.()).toEqual(description);
+      const app = thingsDeployment(connector);
+      try {
+        expect(app.connecta.describeConfig().connectors).toEqual([
+          expect.objectContaining({ id: "things", ...description }),
+        ]);
+        expect(await app.searched("readOnly")).toEqual(["things.list_things"]);
+        expect(await app.searched("approvalRequired")).toEqual(["things.make_thing"]);
+        const read = await app.call("call_tool", { address: "things.list_things", args: {}, resultMode: "value" });
+        expect(read.isError).toBeFalsy();
+        expect(read.structuredContent?.data).toBe("listed");
+        expect((await app.call("call_tool", { address: "things.make_thing", args: {} })).isError).toBe(true);
+        expect(calls).toEqual(["things.list_things"]);
+      } finally {
+        await app.connecta.close();
+      }
+    },
+  );
 
   it("hands create only the common connector options the deployment set", () => {
     const { factory, create } = sample();
