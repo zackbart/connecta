@@ -250,9 +250,8 @@ export type ActivityReadGate = (
 ) => boolean | Promise<boolean>;
 
 /**
- * Deployment-scoped destination for drift observations. Not request-scoped:
- * a drifting catalog is something the deployment saw, not something a caller
- * did, so it carries no actor and no request id to attribute it to one.
+ * Default destination for catalog changes. Request attribution overrides it
+ * when a publication belongs to an admitted caller.
  */
 export interface CatalogDriftActivityContext {
   recordChange?: typeof recordCatalogChangeActivity;
@@ -301,6 +300,7 @@ export type ActivityEventInput = Pick<
    */
   errorCode?: ClassificationCode;
   personal?: boolean;
+  privateCatalog?: boolean;
 };
 
 /**
@@ -327,8 +327,8 @@ export function recordToolActivity(
     id: crypto.randomUUID(),
     occurredAt: new Date().toISOString(),
     requestId: context.requestId,
-    actor: input.personal ? context.principalActor ?? { kind: context.actor.kind } : context.actor,
-    ...activityBehaviorFacts({ ...input, pool: context.pool, actorBasis: input.personal && context.principalActor ? "principal" : undefined }),
+    actor: input.personal || input.privateCatalog ? context.principalActor ?? { kind: context.actor.kind } : context.actor,
+    ...activityBehaviorFacts({ ...input, pool: context.pool, actorBasis: input.privateCatalog || input.personal && context.principalActor ? "principal" : undefined }),
     connectorId: boundedEchoText(input.connectorId, MAX_ACTIVITY_NAME_BYTES),
     toolName: boundedEchoText(input.toolName, MAX_ACTIVITY_NAME_BYTES),
     address: boundedEchoText(input.address, MAX_ACTIVITY_ADDRESS_BYTES),
@@ -364,7 +364,7 @@ export function recordToolActivity(
 /** A discrete catalog change, with no catalog names, descriptions or schemas. */
 export function recordCatalogChangeActivity(
   context: CatalogDriftActivityContext | undefined,
-  input: { connectorId: string; drift: ActivityCatalogChange; personal?: boolean },
+  input: { connectorId: string; drift: ActivityCatalogChange; personal?: boolean; privateCatalog?: boolean },
   request?: ActivityRequestContext,
 ): void {
   if (!context) return;
@@ -375,6 +375,7 @@ export function recordCatalogChangeActivity(
     source: "catalog_refresh", outcome: "success", durationMs: 0, attempts: 1,
     kind: "catalog_drift", drift: input.drift,
     ...(input.personal ? { personal: true } : {}),
+    ...(input.privateCatalog ? { privateCatalog: true } : {}),
   });
 }
 

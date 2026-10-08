@@ -25,10 +25,86 @@ export interface CompletedCatalogRefresh {
   connectorId: string;
   previousDigest?: string;
   digest: string;
+  previous?: readonly CatalogToolFingerprint[];
+  next: readonly CatalogToolFingerprint[];
+  private: boolean;
 }
-/** Phase 4 drift events attach here. Only complete wire refreshes call this hook. */
+export interface CatalogToolFingerprint { name: string; fact: string }
+interface RefreshBaseline { digest: string; tools: CatalogToolFingerprint[] }
+interface RefreshManifest { digest: string; revision: string; chunkCount: number; fingerprint: string }
+/** Publish one accepted catalog refresh, with its partitioned drift baseline. */
 export async function observeCompletedCatalogRefresh(ctx: ConnectorContext, refresh: CompletedCatalogRefresh): Promise<void> {
   await settings.get(ctx)?.onCompletedCatalogRefresh?.(refresh, ctx);
+}
+/** Hash-only facts preserve change counts without storing tool names or schemas. */
+async function catalogFingerprints(tools: readonly { name: string }[]): Promise<CatalogToolFingerprint[]> {
+  const facts: CatalogToolFingerprint[] = [];
+  for (let offset = 0; offset < tools.length; offset += 128) {
+    facts.push(...await Promise.all(tools.slice(offset, offset + 128).map(async tool => ({
+      name: (await fingerprintSerializedCatalog(tool.name)).fingerprint,
+      fact: (await fingerprintSerializedCatalog(JSON.stringify(tool))).fingerprint,
+    }))));
+  }
+  return facts;
+}
+async function refreshBaseline(storage: KVStorage, key: string, raw: string | null, io: CacheOperation["io"]): Promise<RefreshBaseline | undefined> {
+  if (!raw) return;
+  try {
+    const value = JSON.parse(raw) as RefreshManifest;
+    const hash = (v: unknown) => typeof v === "string" && /^sha256:[0-9]+:[0-9a-f]{64}$/.test(v);
+    if (!hash(value.digest) || !hash(value.fingerprint) || !/^[0-9a-f-]{36}$/.test(value.revision) ||
+      !Number.isInteger(value.chunkCount) || value.chunkCount < 1 || value.chunkCount > Math.ceil(MAX_SERIALIZED_CATALOG_BYTES / MAX_CATALOG_CHUNK_BYTES)) return;
+    const chunks: string[] = [];
+    for (let index = 0; index < value.chunkCount; index++) {
+      const chunk = await io(() => storage.get(responseCacheKeys.chunk(key, value.revision, index)));
+      if (chunk === null || new TextEncoder().encode(chunk).byteLength > MAX_CATALOG_CHUNK_BYTES) return;
+      chunks.push(chunk);
+    }
+    const serialized = chunks.join("");
+    if ((await fingerprintSerializedCatalog(serialized)).fingerprint !== value.fingerprint) return;
+    const tools = JSON.parse(serialized) as CatalogToolFingerprint[];
+    if (Array.isArray(tools) && tools.length <= MAX_CATALOG_TOOLS && tools.every(tool => tool && hash(tool.name) && hash(tool.fact))) return { digest: value.digest, tools };
+  } catch { /* Retired or torn baselines establish a new count baseline. */ }
+}
+async function acceptCatalogRefresh(
+  storage: KVStorage, key: string, connectorId: string, digest: string, tools: readonly { name: string }[],
+  privateCatalog: boolean, current: () => Promise<boolean>, io: CacheOperation["io"],
+): Promise<CompletedCatalogRefresh | undefined> {
+  const next = await catalogFingerprints(tools);
+  const serialized = JSON.stringify(next);
+  const revision = crypto.randomUUID();
+  const fingerprint = (await fingerprintSerializedCatalog(serialized)).fingerprint;
+  // Fingerprints are ASCII. Chunk them under the same platform value ceiling
+  // as catalogs, then publish their manifest in one compare-and-set.
+  const chunkCount = Math.ceil(serialized.length / MAX_CATALOG_CHUNK_BYTES);
+  for (let index = 0; index < chunkCount; index++) {
+    if (!await current()) return;
+    const chunk = serialized.slice(index * MAX_CATALOG_CHUNK_BYTES, (index + 1) * MAX_CATALOG_CHUNK_BYTES);
+    await io(() => storage.set(responseCacheKeys.chunk(key, revision, index), chunk, { ttlSeconds: GENERATION_TTL_SECONDS + 300 }));
+  }
+  const manifest: RefreshManifest = { digest, revision, chunkCount, fingerprint };
+  for (let attempt = 0; attempt < 16; attempt++) {
+    if (!await current()) return;
+    const raw = await io(() => storage.get(key));
+    const previous = await refreshBaseline(storage, key, raw, io);
+    if (!await current()) return;
+    const published = await io(() => storage.compareAndSet(key, raw, JSON.stringify(manifest), { ttlSeconds: GENERATION_TTL_SECONDS }));
+    if (!await current()) return;
+    if (published) return { connectorId, digest, next, private: privateCatalog,
+      ...(previous ? { previousDigest: previous.digest, previous: previous.tools } : {}) };
+  }
+  throw new Error("Catalog refresh baseline is busy.");
+}
+/** Custom dynamic connectors have no SDK cache; publish their complete intake here. */
+export async function observeUncachedCatalogRefresh(ctx: ConnectorContext, connectorId: string, tools: readonly { name: string }[]): Promise<void> {
+  const policy = settings.get(ctx);
+  if (!policy?.onCompletedCatalogRefresh) return;
+  const config = (await fingerprintSerializedCatalog("custom-connector")).fingerprint;
+  const partition = (await fingerprintSerializedCatalog(JSON.stringify([policy.partition, ctx.baseUrl, ctx.publicUrl]))).fingerprint;
+  const digest = (await fingerprintSerializedCatalog(JSON.stringify(tools))).fingerprint;
+  const refresh = await acceptCatalogRefresh(policy.storage, responseCacheKeys.refreshDigest(connectorId, config, partition),
+    connectorId, digest, tools, true, async () => !ctx.signal?.aborted, read => read());
+  if (refresh) await observeCompletedCatalogRefresh(ctx, refresh);
 }
 export type CatalogMethod = "tools/list" | "resources/list" | "resources/templates/list";
 export type CatalogResult = ListToolsResult | ListResourcesResult | ListResourceTemplatesResult;
@@ -145,7 +221,6 @@ interface Listing {
   ctx: ConnectorContext;
   generation: { value?: string };
   ended: boolean;
-  previousDigest?: string | undefined;
   credentialIdentity?: string | undefined;
 }
 interface CacheOperation {
@@ -263,40 +338,23 @@ export async function catalogClientOptions(
     if (new TextEncoder().encode(JSON.stringify(clean)).byteLength > MAX_SERIALIZED_CATALOG_BYTES) throw catalogCeiling();
     return { ...clean, ttlMs: catalogTtlMs(ctx, body.ttlMs), cacheScope: body.cacheScope === "public" ? "public" as const : "private" as const };
   };
-  let lastCompletedDigest: string | undefined;
   const completeCatalogRefresh = async (result: ListToolsResult) => {
     const listing = active;
     const operation = capture();
     const { stopped, io } = operation;
-    if (!listing) return;
-    const live = () => !scope.closed && !listing.ended && !connectionSignal?.aborted && !listing.ctx.signal?.aborted;
-    if (!live()) return;
+    if (!listing || stopped()) return;
     const clean = intake(listing.ctx, "tools/list", result);
     const digest = (await fingerprintSerializedCatalog(JSON.stringify(clean))).fingerprint;
-    if (!live()) return;
-    let previousDigest = listing.previousDigest ?? lastCompletedDigest;
+    const partitionDigest = (await fingerprintSerializedCatalog(JSON.stringify([
+      clean.cacheScope === "public" ? sharedPartition : partition, operation.credentialIdentity ?? null,
+    ]))).fingerprint;
     try {
-      // A digest baseline survives cache expiry and invalidation, while keeping
-      // the same host auth partition. It contains no catalog or caller text.
-      const partitionDigest = (await fingerprintSerializedCatalog(JSON.stringify([
-        clean.cacheScope === "public" ? sharedPartition : partition, operation.credentialIdentity ?? null,
-      ]))).fingerprint;
-      const key = responseCacheKeys.refreshDigest(connectorId, configHash, partitionDigest);
-      for (let attempt = 0; !unavailable && attempt < 16; attempt++) {
-        if (stopped() || !await namespace(operation) || stopped()) return;
-        const previous = await io(() => storage.get(key));
-        if (stopped()) return;
-        if (previous && /^sha256:[0-9]+:[0-9a-f]{64}$/.test(previous)) previousDigest = previous;
-        if (await io(() => storage.compareAndSet(key, previous, digest, { ttlSeconds: GENERATION_TTL_SECONDS }))) break;
-        if (attempt === 15) throw new Error("Catalog refresh digest is busy.");
-      }
+      return await acceptCatalogRefresh(storage, responseCacheKeys.refreshDigest(connectorId, configHash, partitionDigest),
+        connectorId, digest, (clean as ListToolsResult).tools, clean.cacheScope !== "public",
+        async () => !stopped() && !!await namespace(operation) && !stopped(), io);
     } catch (error) {
-      if (!live()) return;
-      logFailure(listing.ctx.logger, "catalog refresh observation failed", failureRecord({ connector: connectorId }, error));
+      if (!stopped()) logFailure(listing.ctx.logger, "catalog refresh observation failed", failureRecord({ connector: connectorId }, error));
     }
-    if (!live()) return;
-    lastCompletedDigest = digest;
-    return { connectorId, ...(previousDigest ? { previousDigest } : {}), digest };
   };
   const store: ResponseCacheStore = {
     async get(key) {
@@ -305,7 +363,6 @@ export async function catalogClientOptions(
       const root = await address(key, operation);
       if (!root || stopped()) return undefined;
       const m = manifest(await io(() => storage.get(root)));
-      if (!stopped() && key.method === "tools/list" && operation.listing && m) operation.listing.previousDigest ??= m.fingerprint;
       if (stopped() || !m || m.expiresAt <= Date.now()) return undefined;
       const chunks: string[] = [];
       for (let i = 0; i < m.chunkCount; i++) {
@@ -341,7 +398,6 @@ export async function catalogClientOptions(
       // the request path, where a secret-bearing name refuses the entire list.
       const value = JSON.stringify(intake(ctx, method, result));
       const fingerprint = await fingerprintSerializedCatalog(value);
-      if (method === "tools/list" && operation.listing) operation.listing.previousDigest ??= manifest(await io(() => storage.get(root)))?.fingerprint;
       const expiresAt = Math.min(entry.expiresAt ?? Date.now(), (catalogFetchedAt(ctx) ?? Date.now()) + catalogTtlMs(ctx, result.ttlMs));
       if (stopped() || expiresAt <= Date.now() || !await namespace(operation) || stopped()) return 0;
       const revision = crypto.randomUUID();

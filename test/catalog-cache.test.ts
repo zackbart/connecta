@@ -153,9 +153,41 @@ describe("SQL-backed SDK catalog cache", () => {
     await refresh("old"); await invalidateCatalogCache(store, id); await refresh("new");
     expect(refreshes).toHaveLength(2);
     expect(refreshes[1]!.previousDigest).toBe(refreshes[0]!.digest);
-    const keys = (await store.list(responseCacheKeys.prefix(id))).filter(key => key.includes(":refresh-digest:"));
+    const keys = (await store.list(responseCacheKeys.prefix(id))).filter(key => key.includes(":refresh-digest:") && !key.includes(":chunk:"));
     expect(keys).toHaveLength(1);
-    expect(await store.get(keys[0]!)).toBe(refreshes[1]!.digest);
+    const baseline = await store.get(keys[0]!);
+    const manifest = JSON.parse(baseline!);
+    expect(manifest).toMatchObject({ digest: refreshes[1]!.digest, chunkCount: 1 });
+    const facts = await store.get(responseCacheKeys.chunk(keys[0]!, manifest.revision, 0));
+    expect(JSON.parse(facts!)).toEqual(refreshes[1]!.next);
+    expect(facts).not.toMatch(/old|new|inputSchema/);
+    expect(baseline).not.toMatch(/old|new|inputSchema/);
+  });
+
+  it("INV-6 INV-8: publishes chunked hash baselines and rejects torn baseline facts", async () => {
+    const store = await storage(); const ctx = connectorContext(store);
+    const id = `refresh_chunks_${crypto.randomUUID().replaceAll("-", "")}`;
+    const cache = await catalogClientOptions(ctx, id, "configuration", "grant");
+    const tools = Array.from({ length: 7_000 }, (_, index) => ({ name: `tool_${index}`, inputSchema: { type: "object" as const } }));
+    const refresh = () => cache.withListing(ctx, () => cache.completeCatalogRefresh({ tools, ttlMs: 0 }));
+    const first = await refresh();
+    expect(first?.previous).toBeUndefined();
+    const keys = (await store.list(responseCacheKeys.prefix(id))).filter(key => key.includes(":refresh-digest:") && !key.includes(":chunk:"));
+    expect(keys).toHaveLength(1);
+    const manifest = JSON.parse((await store.get(keys[0]!))!);
+    expect(manifest.chunkCount).toBeGreaterThan(1);
+    for (let index = 0; index < manifest.chunkCount; index++) {
+      const chunk = (await store.get(responseCacheKeys.chunk(keys[0]!, manifest.revision, index)))!;
+      expect(new TextEncoder().encode(chunk).byteLength).toBeLessThanOrEqual(MAX_CATALOG_CHUNK_BYTES);
+      expect(chunk).not.toContain("tool_");
+    }
+    const second = await refresh();
+    expect(second?.previous).toEqual(first?.next);
+    const current = JSON.parse((await store.get(keys[0]!))!);
+    await store.delete(responseCacheKeys.chunk(keys[0]!, current.revision, 0));
+    const torn = await refresh();
+    expect(torn?.previous).toBeUndefined();
+    expect(torn?.previousDigest).toBeUndefined();
   });
 
   it("INV-4 INV-5: private auth modes refuse the SDK's empty shared slot", async () => {
@@ -313,7 +345,7 @@ describe("SQL-backed SDK catalog cache", () => {
     const set = f.store.set.bind(f.store);
     let chunks = 0;
     vi.spyOn(f.store, "set").mockImplementation(async (key, ...args) => {
-      if (key.includes(":chunk:") && ++chunks === 1) {
+      if (key.includes(":chunk:") && !key.includes(":refresh-digest:") && ++chunks === 1) {
         entered.resolve(); await release.promise;
         try { return await set(key, ...args); } finally { finished.resolve(); }
       }
@@ -457,7 +489,7 @@ describe("SQL-backed SDK catalog cache", () => {
   it("INV-8: a missing SQL chunk forces a complete live refresh", async () => {
     const f = await fixture({ ttl: 60_000 });
     await f.read(f.registry());
-    const chunks = (await f.store.list("response-cache:v1:")).filter(key => key.includes(f.id) && key.includes(":chunk:"));
+    const chunks = (await f.store.list("response-cache:v1:")).filter(key => key.includes(f.id) && key.includes(":chunk:") && !key.includes(":refresh-digest:"));
     expect(chunks).toHaveLength(1); await f.store.delete(chunks[0]!);
     await f.read(f.registry()); expect(f.listings()).toBe(2);
   });
@@ -630,7 +662,7 @@ describe("SQL-backed SDK catalog cache", () => {
     const publication = vi.spyOn(f.store, "compareAndSet").mockImplementation((...args) => { start("compareAndSet"); return cas(...args); });
     vi.spyOn(f.store, "set").mockImplementation(async (key, ...args) => {
       start("set");
-      if (key.includes(":chunk:") && ++chunks === 1) { entered.resolve(); await release.promise; }
+      if (key.includes(":chunk:") && !key.includes(":refresh-digest:") && ++chunks === 1) { entered.resolve(); await release.promise; }
       return set(key, ...args);
     });
     const root = f.registry(); const requestScope = {};

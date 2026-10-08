@@ -1,3 +1,8 @@
+import { InMemoryTransport } from "@modelcontextprotocol/client";
+import { Server } from "@modelcontextprotocol/server";
+import { remoteMcp } from "../src/connectors/remote-mcp.js";
+import { httpDownstream } from "./fixtures/downstream-mcp.js";
+import type { ToolDef } from "../src/types.js";
 import { modernRequest } from "./fixtures/client-identity.js";
 import { readJsonRpc } from "./fixtures/http.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -13,12 +18,25 @@ import type { OperatorUiContract } from "../src/ui.js";
 
 const BASE = "https://connecta.test";
 const apps: ReturnType<typeof createTestConnecta>[] = [];
-afterEach(async () => { for (const app of apps.splice(0)) await app.close(); });
+const closers: Array<() => Promise<void>> = [];
+afterEach(async () => { for (const app of apps.splice(0)) await app.close(); for (const close of closers.splice(0)) await close(); vi.unstubAllGlobals(); });
 function app(config: Parameters<typeof createTestConnecta>[0]) { const result = createTestConnecta(config); apps.push(result); return result; }
 function event(id: string, overrides: Partial<ToolCallActivityEvent> = {}): ToolCallActivityEvent {
   return { schemaVersion: 1, id, requestId: "request", occurredAt: new Date().toISOString(), actor: { kind: "machine" }, connectorId: "visible", toolName: "read", address: "visible.read", source: "call_tool", outcome: "success", durationMs: 1, attempts: 1, serverName: "test", serverVersion: "1", classification: "read", ...overrides };
 }
 const connector = (id: string): Connector => api(id, { tools: [{ name: "read", description: "Read", annotations: { readOnlyHint: true }, handler: () => null }, { name: "write", description: "Write", annotations: { readOnlyHint: false }, handler: () => null }] });
+
+function remoteCatalog(id: string, tools: () => ToolDef[], authScope?: "personal") {
+  return remoteMcp(id, { url: "https://downstream.test/mcp", ...(authScope ? { authScope } : {}), _transportFactory: () => {
+    const [client, peer] = InMemoryTransport.createLinkedPair();
+    const server = new Server({ name: "downstream", version: "1" }, { capabilities: { tools: {} } });
+    server.setRequestHandler("tools/list", async () => ({ tools: tools().map(tool => ({ ...tool, inputSchema: { type: "object" as const } })), ttlMs: 0, cacheScope: "public" }));
+    server.setRequestHandler("tools/call", async () => ({ content: [], structuredContent: { ok: true } }));
+    const connected = server.connect(peer);
+    closers.push(async () => { await connected; await server.close(); });
+    return client;
+  } });
+}
 
 describe("Phase 4 behavior fixes", () => {
   it("INV-5 INV-6 INV-10: empty slots override a successful status without probing, including the UI contract", async () => {
@@ -88,7 +106,7 @@ describe("Phase 4 behavior fixes", () => {
   it("INV-6 INV-8: emits one discrete payload-free change per accepted catalog transition", async () => {
     const events: ToolCallActivityEvent[] = [];
     let tools = [{ name: "read", description: "secret-text" }, { name: "removed" }];
-    const c: Connector = { id: "dynamic", listTools: async () => tools, callTool: async () => null };
+    const c = remoteCatalog("dynamic", () => tools);
     const registry = new Registry([c], { storage: memoryStorage(), logger: { debug() {}, info() {}, warn() {}, error() {} }, toolCacheTtlSeconds: 0, catalogDriftActivity: { recordChange: recordCatalogChangeActivity, sink: { record: e => { events.push(e); } }, serverInfo: { name: "test", version: "1" } } });
     await registry.getTools("dynamic", BASE);
     expect(events).toHaveLength(0);
@@ -104,7 +122,7 @@ describe("Phase 4 behavior fixes", () => {
   it("INV-6 INV-7: a catalog change and its downstream call share the HTTP request and pool", async () => {
     const events: ToolCallActivityEvent[] = [];
     let description = "Initial catalog";
-    const c: Connector = { id: "dynamic", listTools: async () => [{ name: "read", description, annotations: { readOnlyHint: true } }], callTool: async () => ({ ok: true }) };
+    const c = remoteCatalog("dynamic", () => [{ name: "read", description, annotations: { readOnlyHint: true } }]);
     const deployment = app({ connectors: [c], logger: "silent", discovery: { catalogTtlSeconds: 0 }, pools: { support: { tools: ["dynamic"], grant: () => true } }, activity: activityHistory({ store: { record: e => { events.push(e); } } }) });
     const call = async () => {
       const request = modernRequest("tools/call", { name: "call_tool", arguments: { address: "dynamic.read" } });
@@ -122,6 +140,49 @@ describe("Phase 4 behavior fixes", () => {
     expect(JSON.stringify(events)).not.toContain("Changed catalog");
   });
 
+
+  it.each(["request-public", "shared-private"] as const)("INV-4 INV-5 INV-6 INV-8: %s catalog drift in partition A is neither emitted for nor visible to partition B", async mode => {
+    const events: ToolCallActivityEvent[] = [];
+    const descriptions: Record<string, string> = { alice: "A initial secret", bob: "B distinct secret" };
+    const downstream = httpDownstream(server => server.registerTool("read", { annotations: { readOnlyHint: true } }, async () => ({ content: [] })));
+    let listingPrincipal = "alice";
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      const message = request.method === "POST" ? await request.clone().json() as { method: string; id: string } : undefined;
+      if (message?.method === "tools/list") return Response.json({ jsonrpc: "2.0", id: message.id, result: {
+        resultType: "complete", tools: [{ name: "read", description: descriptions[listingPrincipal], inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }],
+        ttlMs: 0, cacheScope: mode === "request-public" ? "public" : "private",
+      } });
+      return downstream.fetch(input instanceof Request ? input.url : input, init);
+    });
+    const c = remoteMcp("partitioned", { url: downstream.url, ...(mode === "request-public" ? { auth: { type: "request" as const, token: async () => "same-secret-token" } } : {}) });
+    const auth: InboundAuth = { kind: "api", authorize: request => ({ ok: true, subjectId: "shared-subject", principal: { namespace: "directory", id: request.headers.get("X-Principal") ?? "alice" } }) };
+    const deployment = app({ connectors: [c], auth, storage: memoryStorage(), logger: "silent", identity: { activityAccess: () => true },
+      pools: { support: { tools: ["partitioned"], grant: () => true } },
+      activity: activityHistory({ store: { record: e => { events.push(e); }, list: async () => ({ events }) } }) });
+    const call = async (principal: string) => {
+      listingPrincipal = principal;
+      const request = modernRequest("tools/call", { name: "call_tool", arguments: { address: "partitioned.read" } });
+      request.headers.set("X-Principal", principal);
+      const result = await readJsonRpc(await deployment.fetch(new Request(BASE + "/mcp/support", request)));
+      expect(result.result, JSON.stringify(result)).not.toHaveProperty("isError", true);
+    };
+    const changes = () => events.filter(e => e.kind === "catalog_drift");
+    await call("alice"); await call("bob");
+    expect(changes()).toEqual([]);
+    descriptions.alice = "A changed secret";
+    await call("alice");
+    expect(changes()).toHaveLength(1);
+    expect(changes()[0]).toMatchObject({ actorBasis: "principal", actor: { kind: "api", id: "alice", namespace: "directory" }, pool: "support",
+      drift: { kind: "catalog_changed", addedTools: 0, removedTools: 0, changedTools: 1 } });
+    expect(changes()[0]!.requestId).toBe(events.at(-1)!.requestId);
+    await call("bob"); await call("alice");
+    expect(changes()).toHaveLength(1);
+    const read = async (principal: string) => await (await deployment.fetch(new Request(BASE + "/ui/api/activity", { headers: { "X-Principal": principal } }))).json() as { events: ToolCallActivityEvent[] };
+    expect((await read("bob")).events.filter(e => e.kind === "catalog_drift")).toEqual([]);
+    expect((await read("alice")).events.filter(e => e.kind === "catalog_drift").map(e => e.id)).toEqual([changes()[0]!.id]);
+    expect(JSON.stringify(changes())).not.toMatch(/secret|same-secret-token/);
+  });
 
   it.each([false, true])("INV-4 INV-6: API principals cannot read another owner or ownerless legacy rows with shared subject=%s", async sharedSubject => {
     const events: ToolCallActivityEvent[] = [];
@@ -183,7 +244,7 @@ describe("Phase 4 behavior fixes", () => {
   it.each(["/ui/api/config", "/ui/connectors/personal"])("INV-4 INV-6: %s attributes personal catalog changes to the admitted owner", async path => {
     const events: ToolCallActivityEvent[] = [];
     let description = "Initial";
-    const c: Connector = { id: "personal", authScope: "personal", listTools: async () => [{ name: "read", description }], callTool: async () => null };
+    const c = remoteCatalog("personal", () => [{ name: "read", description }], "personal");
     const auth: InboundAuth = { kind: "human", authorize: request => ({ ok: true, interactive: true, subjectId: "shared-subject", principal: { namespace: "directory", id: request.headers.get("X-Principal") ?? "alice" } }) };
     const deployment = app({ connectors: [c], auth, identity: { activityAccess: () => true }, logger: "silent", discovery: { catalogTtlSeconds: 0 }, activity: activityHistory({ store: { record: e => { events.push(e); }, list: async () => ({ events }) } }) });
     expect((await deployment.fetch(new Request(BASE + path))).status).toBe(200);
@@ -212,7 +273,7 @@ describe("Phase 4 behavior fixes", () => {
     let description = "Initial";
     let release!: () => void;
     const writes: Promise<unknown>[] = [];
-    const c: Connector = { id: "dynamic", listTools: async () => [{ name: "read", description }], callTool: async () => null };
+    const c = remoteCatalog("dynamic", () => [{ name: "read", description }]);
     const deployment = app({ connectors: [c], logger: "silent", discovery: { catalogTtlSeconds: 0 }, activity: activityHistory({ store: { record: () => new Promise<void>(resolve => { release = resolve; }) } }) });
     expect((await deployment.fetch(new Request(BASE + path))).status).toBe(200);
     description = "Changed";

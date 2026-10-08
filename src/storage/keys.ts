@@ -163,7 +163,7 @@ export const responseCacheKeys = {
   family: {
     name: "response-cache", scope: "root", prefixes: ["response-cache:v1:"],
     version: { number: 1, in: "key" }, codec: textCodec,
-    ttl: { kind: "configured", by: "bounded downstream ttlMs; generation expires after 48 hours" }, durable: false,
+    ttl: { kind: "configured", by: "bounded downstream ttlMs; generations and hash refresh baselines expire after 48 hours" }, durable: false,
   },
   prefix: (id: string) => validateStorageKey(`response-cache:v1:${id}:`),
   generation: (id: string) => validateStorageKey(`response-cache:v1:${id}:generation`),

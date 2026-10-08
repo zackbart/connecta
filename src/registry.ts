@@ -1,5 +1,7 @@
 import { markCatalogFreshness, carryCatalogFreshness } from "./catalog-freshness.js";
-import { attachCatalogCache, catalogFetchedAt, invalidateCatalogCache } from "./catalog-cache.js";
+import { activityRequest } from "./activity-request.js";
+import type { CatalogDriftActivityContext } from "./activity.js";
+import { attachCatalogCache, catalogFetchedAt, invalidateCatalogCache, observeUncachedCatalogRefresh, type CatalogToolFingerprint } from "./catalog-cache.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { assertStaticToolNames, hasControlCharacters } from "./tool-name.js";
 import {
@@ -160,6 +162,7 @@ export interface RegistryOptions {
   credentialOwner?: string | undefined;
   /** Internal child registries skip deployment-wide construction warnings. */
   constructionChecks?: boolean | undefined;
+  catalogDriftActivity?: Omit<CatalogDriftActivityContext, "logger"> | undefined;
   toolCacheTtlSeconds?: number | undefined;
   catalogMinTtlSeconds?: number | undefined;
   catalogMaxTtlSeconds?: number | undefined;
@@ -755,6 +758,7 @@ export class Registry implements RegistryView {
       defaultTtlMs: (this.opts.toolCacheTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds) * 1000,
       minTtlMs: (this.opts.catalogMinTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogMinTtlSeconds) * 1000,
       maxTtlMs: (this.opts.catalogMaxTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogMaxTtlSeconds) * 1000,
+      onCompletedCatalogRefresh: (refresh, ctx) => this.recordCatalogDrift(refresh.previous, refresh.next, { id, connector: this.connectors.get(id)!, ctx, privateCatalog: refresh.private }),
     });
     sentSecretsFor(context);
     trackCredentialReads(context);
@@ -948,6 +952,27 @@ export class Registry implements RegistryView {
     return { connector, toolName: parts.toolName };
   }
 
+  /** Compare only the fingerprints accepted in this exact cache partition. */
+  private recordCatalogDrift(
+    previous: readonly CatalogToolFingerprint[] | undefined,
+    next: readonly CatalogToolFingerprint[],
+    attribution: { id: string; connector: Connector; ctx: ConnectorContext; privateCatalog: boolean },
+  ): void {
+    if (!previous) return;
+    const { id, connector, ctx, privateCatalog } = attribution;
+    const before = new Map(previous.map(tool => [tool.name, tool.fact]));
+    const after = new Map(next.map(tool => [tool.name, tool.fact]));
+    const addedTools = [...after.keys()].filter(name => !before.has(name)).length;
+    const removedTools = [...before.keys()].filter(name => !after.has(name)).length;
+    const changedTools = [...after].filter(([name, fact]) => before.has(name) && before.get(name) !== fact).length;
+    if (addedTools || removedTools || changedTools) this.opts.catalogDriftActivity?.recordChange?.(
+      { ...this.opts.catalogDriftActivity, logger: this.opts.logger, ...(ctx.defer ? { defer: ctx.defer } : {}) },
+      { connectorId: id, drift: { kind: "catalog_changed", addedTools, removedTools, changedTools },
+        privateCatalog, ...(connector.authScope === "personal" ? { personal: true } : {}) },
+      activityRequest(ctx.requestScope),
+    );
+  }
+
   private async loadDownstreamTools(
     id: string,
     baseUrl: string,
@@ -974,6 +999,10 @@ export class Registry implements RegistryView {
     this.observeDroppedToolNames(connector, facts.length - accepted.length);
     const review = catalogReviewOf(connector);
     if (review) await observeReviewedDrift(connector, review, accepted, this.opts.logger);
+    if (catalogFetchedAt(ctx) === undefined) {
+      try { await observeUncachedCatalogRefresh(ctx, id, facts); }
+      catch (error) { logFailure(this.opts.logger, "catalog refresh observation failed", failureRecord({ connector: id }, error)); }
+    }
     this.catalogObservedAt.set(id, catalogFetchedAt(ctx) ?? Date.now());
     this.catalogAccess.set(id, { state: "fresh", observedAt: new Date().toISOString() });
     return markCatalogFreshness(facts, 0);

@@ -145,9 +145,9 @@ package versions against a bounded release-version grammar on write and read;
 the nullable `package_version` migration leaves old rows unknown rather than
 assigning today's version to history. `/ui/api/activity` serves these facts
 read-only with the same authorization and validation as `/ui/activity`.
-Catalog drift observations remain in authenticated connector status and the
-maintainer-run provider check. They produce no activity events or public health
-counts.
+Catalog changes emit discrete, payload-free activity events after accepted
+refreshes. Reviewed drift observations remain in authenticated connector status
+and the maintainer-run provider check; public health counts are removed.
 
 `server/discover` advertises the served extension map, currently empty, with
 private one-hour cache hints. It includes the configured identity, icons, title,
@@ -402,15 +402,24 @@ bounded time for generation rotations already started. Catalog age remains the
 original fetch age across process restarts and cache hits.
 `test/catalog-cache.test.ts` runs against real SQLite and D1.
 
-`observeCompletedCatalogRefresh` in `src/catalog-cache.ts` is the single hook
-for the planned Phase 4 drift-event integration. The SDK tools/list wrapper
-calls it once after a complete wire refresh, including zero-TTL results. Cache
-hits and failed or fenced walks do not call it. Its record contains connector
-id, the previous digest when known, and the new digest. A hash-only baseline
-uses the same auth/config partition, survives catalog expiry and invalidation,
-and expires after 48 hours. An initial or expired baseline has no previous
-digest. `attachCatalogCache` accepts an internal `onCompletedCatalogRefresh`
-callback; no activity event or public configuration option is added here.
+`observeCompletedCatalogRefresh` in `src/catalog-cache.ts` is the accepted
+refresh publication hook. The SDK tools/list wrapper calls it once after a
+complete, unfenced wire refresh, including zero-TTL results. Custom dynamic
+connectors publish their complete intake through the same hook. Cache hits,
+rejected or abandoned walks, and identical catalogs emit no change event.
+`Registry.recordCatalogDrift` compares the previous and next tool fingerprints
+from this hook, preserving the requesting actor, request id, pool and deferred
+activity write. The first complete catalog is a baseline.
+
+Hash-only baselines publish bounded chunks before a manifest. They store the
+catalog digest and hashes of each tool name and fact, so added, removed and changed counts require no persisted tool names or
+schemas. They use the exact host auth/config cache partition, survive catalog
+expiry and invalidation, and expire after 48 hours. There is no connection-wide
+fallback baseline across partitions. Private catalog events use the admitted
+principal actor basis even for shared-auth connectors; activity disclosure
+requires that same owner and the recorded pool's grants. Ownerless private
+observations cannot be disclosed. Public-hinted shared-auth catalogs retain
+shared history within their admitted pool and endpoint.
 
 
 Result paging stores each oversized result for 15 minutes, chunked so a page
@@ -1140,7 +1149,8 @@ rows. Catalog changes use the same paging envelope with `kind: "catalog_drift"`,
 added, removed and changed tool counts. The first complete catalog is a baseline;
 one refresh-publication hook emits each later change. It includes the request's
 id and typed actor when available, otherwise a fresh id and system actor. No
-names, descriptions or schemas enter the event. Empty credential declarations
+names, descriptions or schemas enter the event. Private catalog changes require
+a matching principal owner even when the connector uses shared auth. Empty credential declarations
 report `credential_required` before running a connector status or catalog probe.
 The Access adapter reports inbound provider kinds, admitted pools, grants, trust
 and endpoint setup; token controls retain their existing permission gate.
