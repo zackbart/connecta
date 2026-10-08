@@ -6,6 +6,7 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 
 interface ToolResult {
+  content: Record<string, unknown>[];
   isError: boolean;
   text: string;
   structured: unknown;
@@ -45,6 +46,7 @@ export async function connectMcp(
       const result = await client.callTool({ name, arguments: args });
       const content = Array.isArray(result.content) ? result.content : [];
       return {
+        content: content as Record<string, unknown>[],
         isError: result.isError === true,
         text: content
           .map((block) =>

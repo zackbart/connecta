@@ -1,7 +1,7 @@
 /**
  * Turn agent events into a bounded transcript and the
- * per-trial numbers the report compares. Nothing here reads the answer the
- * agent wrote; graders look at the fakes instead.
+ * per-trial numbers the report compares. Correctness graders read the final
+ * answer separately from the clipped display transcript.
  */
 import type { CallRecord, RequestRecord } from "../fakes/service.js";
 const SERVER_NAME = "connecta";
@@ -22,6 +22,7 @@ export type TranscriptEntry =
   | { kind: "turn_end"; turn: number; subtype: string; isError: boolean; numTurns?: number; durationMs?: number };
 
 export interface ToolUse {
+  resultBlocks?: Record<string, unknown>[];
   id: string;
   turn: number;
   tool: string;
@@ -38,6 +39,8 @@ export interface Tokens {
 }
 
 export interface AgentTrace {
+  finalAnswer?: string;
+  urlElicitations?: { connector: string; url: string; action: string }[];
   transcript: TranscriptEntry[];
   toolUses: ToolUse[];
   tokens: Tokens;
@@ -50,6 +53,8 @@ export interface AgentTrace {
   claudeCodeVersion: string | undefined;
   agentVersion?: string;
   loadedTools: string[];
+  skillInventory?: { name: string; enabled: boolean }[];
+  pluginInventory?: { name: string; id: string; enabled: boolean }[];
   rateLimit: Record<string, unknown> | undefined;
 }
 
@@ -83,10 +88,15 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
   let version: string | undefined;
   let agentVersion: string | undefined;
   let loadedTools: string[] = [];
+  let skillInventory: AgentTrace["skillInventory"];
+  let pluginInventory: AgentTrace["pluginInventory"];
   let rateLimit: Record<string, unknown> | undefined;
+  let finalAnswer = "";
+  const urlElicitations: { connector: string; url: string; action: string }[] = [];
   events.forEach((event, index) => {
     const startedTurn = turnStarts.indexOf(index);
     if (startedTurn >= 0) {
+      finalAnswer = "";
       turn = startedTurn + 1;
       transcript.push({ kind: "user", turn, text: clip(prompts[startedTurn] ?? "", MAX_TEXT_CHARS) });
     }
@@ -95,16 +105,22 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
       version = event.claude_code_version === undefined ? undefined : String(event.claude_code_version);
       agentVersion = event.agent_version === undefined ? undefined : String(event.agent_version);
       loadedTools = Array.isArray(event.tools) ? event.tools.map(String) : [];
+      skillInventory = event.skillInventory as AgentTrace["skillInventory"];
+      pluginInventory = event.pluginInventory as AgentTrace["pluginInventory"];
       return;
     }
     if (event.type === "rate_limit_event") {
       rateLimit = event.rate_limit_info as Record<string, unknown>;
       return;
     }
+    if (event.type === "eval_url_elicitation") {
+      urlElicitations.push({ connector: String(event.connector), url: String(event.url), action: String(event.action) });
+      return;
+    }
     if (event.type === "codex_usage") {
       const total = event.total as Record<string, number> | undefined;
       if (total) tokens = {
-        input: total.inputTokens ?? 0,
+        input: Math.max(0, (total.inputTokens ?? 0) - (total.cachedInputTokens ?? 0)),
         output: total.outputTokens ?? 0,
         cacheRead: total.cachedInputTokens ?? 0,
         cacheCreation: total.cacheWriteInputTokens ?? 0,
@@ -116,14 +132,21 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
       return;
     }
     if (event.type === "assistant" || event.type === "user") {
-      const message = event.message as { content?: unknown } | undefined;
+      const message = event.message as { content?: unknown; phase?: string } | undefined;
       const blocks = Array.isArray(message?.content) ? message.content : [];
+      if (event.type === "assistant") {
+        // One completed message is the answer; earlier commentary is display-only.
+        finalAnswer = message?.phase === "commentary" ? "" : blocks
+          .filter(block => (block as Record<string, unknown>).type === "text")
+          .map(block => String((block as Record<string, unknown>).text ?? "")).join("\n");
+      }
       for (const raw of blocks) {
         const block = raw as Record<string, unknown>;
         if (block.type === "text" && event.type === "assistant") {
           const text = String(block.text ?? "");
           if (text.trim()) transcript.push({ kind: "assistant", turn, text: clip(text, MAX_TEXT_CHARS) });
         } else if (block.type === "tool_use") {
+          finalAnswer = "";
           const name = String(block.name ?? "");
           const input = (block.input ?? {}) as Record<string, unknown>;
           const serialized = JSON.stringify(input);
@@ -151,6 +174,7 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
           if (use) {
             use.isError = isError;
             use.resultText = text;
+            use.resultBlocks = Array.isArray(block.content) ? block.content as Record<string, unknown>[] : [];
           }
           transcript.push({
             kind: "tool_result",
@@ -192,6 +216,8 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
     }
   });
   return {
+    finalAnswer: finalAnswer.trim(),
+    urlElicitations,
     transcript,
     toolUses: [...toolUses.values()],
     tokens,
@@ -204,6 +230,8 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
     claudeCodeVersion: version,
     ...(agentVersion ? { agentVersion } : {}),
     loadedTools,
+    ...(skillInventory ? { skillInventory } : {}),
+    ...(pluginInventory ? { pluginInventory } : {}),
     rateLimit,
   };
 }

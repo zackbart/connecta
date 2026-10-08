@@ -56,7 +56,9 @@ interface GradeContext {
 /** A scripted MCP caller standing in for the agent, for the self-test. */
 export interface ReferenceContext {
   world: World;
-  call(tool: string, args: Record<string, unknown>): Promise<{ isError: boolean; text: string; structured: unknown }>;
+  /** The reference's final answer, kept separate from tool output. */
+  answer(text: string): void;
+  call(tool: string, args: Record<string, unknown>): Promise<{ isError: boolean; text: string; structured: unknown; content: Record<string, unknown>[] }>;
   /** Run the next follow-up's operator step, as the runner would between turns. */
   nextTurn(): Promise<boolean>;
 }
@@ -65,7 +67,10 @@ export interface ActiveTask {
   status: "active";
   id: string;
   title: string;
-  introducedIn: "baseline" | "P2" | "P3";
+  introducedIn: "baseline" | "P2" | "P3" | "P5";
+  /** Omitted tasks stay visible in reports. Explicit opt-in is needed to run them. */
+  skip?: { flag: string; reason: string };
+  host?: { urlElicitation: "capable" | "incapable" };
   /** What behaviour the task isolates, in one sentence. */
   measures: string;
   world?: WorldOptions;
@@ -95,7 +100,7 @@ export interface PlannedTask {
   status: "planned";
   id: string;
   title: string;
-  introducedIn: "P2" | "P3";
+  introducedIn: "P2" | "P3" | "P5";
   measures: string;
   prompt: string;
   sketch: {

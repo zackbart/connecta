@@ -10,7 +10,7 @@ export interface AgentResultFile {
   kind: "connecta-eval/agent";
   version: 1;
   meta: RunMeta;
-  /** New runs use Codex. Historical Claude result files retain claudeVersion. */
+  /** CLI versions, present for the selected runner. */
   codexVersion?: string;
   claudeVersion?: string;
   config: {
@@ -26,6 +26,7 @@ export interface AgentResultFile {
   tasks: { id: string; title: string; measures: string; introducedIn: string }[];
   planned: PlannedTask[];
   trials: TrialResult[];
+  skipped?: { id: string; flag: string; reason: string }[];
   stopped?: string;
 }
 

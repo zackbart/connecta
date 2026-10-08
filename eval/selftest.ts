@@ -9,13 +9,17 @@
 import { World } from "./fakes/world.js";
 import { startNodeDeployment } from "./deploy/node.js";
 import { connectMcp } from "./support/mcp.js";
-import type { AgentTrace, ToolUse } from "./agent/trace.js";
+import type { AgentTrace, ToolUse, TranscriptEntry } from "./agent/trace.js";
+import { counterexamples, positiveVariants } from "./tasks/counterexamples.js";
 import { ACTIVE_TASKS } from "./tasks/index.js";
+import { startAuthHost } from "./agent/auth-host.js";
+import { parseTrace, type StreamEvent } from "./agent/trace.js";
+import { flags } from "./support/meta.js";
 import type { ActiveTask, Check } from "./tasks/types.js";
 
-function emptyTrace(toolUses: ToolUse[]): AgentTrace {
+function emptyTrace(toolUses: ToolUse[], finalAnswer = "", transcript: TranscriptEntry[] = []): AgentTrace {
   return {
-    transcript: [],
+    finalAnswer, transcript,
     toolUses,
     tokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
     costUsd: undefined,
@@ -30,16 +34,20 @@ function emptyTrace(toolUses: ToolUse[]): AgentTrace {
   };
 }
 
-async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<Check[]> {
+async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<{ correct: Check[]; wrongDestination: Check[]; missingEvidence: Check[]; regressions: ReturnType<typeof counterexamples>; positives: ReturnType<typeof positiveVariants> }> {
   const world = new World(task.world);
   await world.start();
   for (const { service, fault } of task.faults ?? []) world.service(service).faults.push(fault);
-  const deployment = await startNodeDeployment(world.connectorSpecs(), task.deployment);
-  const session = await connectMcp(deployment.mcpUrl, { Authorization: `Bearer ${deployment.token}` });
+  const deployment = await startNodeDeployment(world.connectorSpecs(), task.deployment, task.world?.oauth ? world.oauth : undefined);
+  const hostEvents: StreamEvent[] = [];
+  const host = task.host ? await startAuthHost(deployment, task.host.urlElicitation === "capable", e => hostEvents.push(e)) : undefined;
+  const session = await connectMcp(host?.mcpUrl ?? deployment.mcpUrl, { Authorization: `Bearer ${deployment.token}` });
   const toolUses: ToolUse[] = [];
+  const transcript: TranscriptEntry[] = [];
   let turn = 1;
+  let finalAnswer = "";
   try {
-    if (!/^cta_[A-Za-z0-9_-]{43}$/.test(deployment.token)) {
+    if (!task.world?.oauth && !/^cta_[A-Za-z0-9_-]{43}$/.test(deployment.token)) {
       throw new Error("Node eval did not provision a managed machine token");
     }
     for (const headers of [{}, { Authorization: "Bearer eval-provisioning" }]) {
@@ -48,8 +56,15 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<Check
       if (response.status !== 401) throw new Error("Node eval admitted an unprovisioned client");
     }
     if (mode === "reference") {
+      // A schema rejection must not shift the observer-to-tool correlation.
+      if (task.id === "p5-fanout-over-budget") {
+        const rejected = await session.call("execute_code", {});
+        if (!rejected.isError) throw new Error("Expected malformed execute_code to be rejected");
+        toolUses.push({ id: "ref-invalid", turn, tool: "execute_code", input: {}, isError: true, resultText: rejected.text, resultBlocks: rejected.content });
+      }
       await task.reference({
         world,
+        answer: text => { finalAnswer = text; transcript.push({ kind: "assistant", turn, text }); },
         call: async (tool, args) => {
           const result = await session.call(tool, args);
           toolUses.push({
@@ -59,7 +74,10 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<Check
             input: args,
             isError: result.isError,
             resultText: result.text,
+            resultBlocks: result.content,
           });
+          transcript.push({ kind: "tool_result", turn, id: toolUses.at(-1)!.id,
+            isError: result.isError, text: result.text, chars: result.text.length });
           return result;
         },
         nextTurn: async () => {
@@ -68,7 +86,7 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<Check
           const proceed = await followUp?.before?.({
             world,
             deployment,
-            trace: emptyTrace(toolUses),
+            trace: emptyTrace(toolUses, finalAnswer, transcript),
             note: () => {},
           });
           return proceed !== false;
@@ -76,9 +94,41 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<Check
       });
     }
     if (deployment.artifacts) world.artifacts = await deployment.artifacts.snapshot();
-    return task.grade({ world, trace: emptyTrace(toolUses) });
+    world.programs = deployment.programs;
+    const trace = emptyTrace(toolUses, finalAnswer, transcript);
+    trace.urlElicitations = parseTrace(hostEvents, [], []).urlElicitations ?? [];
+    const correct = task.grade({ world, trace });
+    const regressions = mode === "reference" ? counterexamples(task, world, trace) : [];
+    const positives = mode === "reference" ? positiveVariants(task, world, trace) : [];
+    if (mode === "reference" && task.id === "p5-absent-github") {
+      for (const route of ["search_tools", "execute_code"]) {
+        const programs = world.programs;
+        if (route === "search_tools") world.programs = [];
+        const controls = task.grade({ world, trace: { ...trace, toolUses: trace.toolUses.filter(u => u.tool === route) } });
+        world.programs = programs;
+        if (controls.some(c => !c.advisory && !c.pass)) throw new Error(`Valid ${route} absence discovery failed`);
+      }
+    }
+    const missingEvidence = task.grade({ world, trace: { ...trace, finalAnswer: "Completed." } });
+    // Keep the successful state and answer, but attribute every source call
+    // to another destination. This isolates source enforcement from evidence.
+    for (const call of world.ledger.calls) call.service = "wrong_destination";
+    for (const p of world.programs) for (const c of p.calls) {
+      if (typeof c.args[0] === "string") c.args[0] = c.args[0].replace(/^[^.]+/, "wrong_destination");
+      if (c.name === "connecta.search") c.result = { absence: { service: "wrong_destination" } };
+    }
+    const wrongUses = toolUses.map(use => ({ ...use, input: {
+      ...use.input,
+      ...(typeof use.input.address === "string" ? { address: use.input.address.replace(/^[^.]+/, "wrong_destination") } : {}),
+      ...(typeof use.input.connector === "string" ? { connector: "wrong_destination" } : {}),
+      ...(typeof use.input.query === "string" ? { query: "wrong_destination" } : {}),
+      ...(typeof use.input.code === "string" ? { code: use.input.code.replace(/tracker|ci|assets|oauth|mixpanel|supabase|revenuecat|artifacts|github/gi, "wrong_destination") } : {}),
+    } }));
+    const wrongDestination = task.grade({ world, trace: { ...trace, toolUses: wrongUses } });
+    return { correct, missingEvidence, wrongDestination, regressions, positives };
   } finally {
     await session.close();
+    await host?.close();
     await deployment.close();
     await world.stop();
   }
@@ -86,12 +136,23 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<Check
 
 const required = (checks: Check[]) => checks.filter((item) => !item.advisory);
 let failures = 0;
+const args = flags(process.argv.slice(2));
+const include = new Set((args.get("include-skipped") ?? "").split(","));
 for (const task of ACTIVE_TASKS) {
-  const reference = await play(task, "reference");
+  if (task.skip && !include.has(task.skip.flag)) {
+    console.log(`skip ${task.id}: ${task.skip.reason} Enable with --include-skipped ${task.skip.flag}.`);
+    continue;
+  }
+  const played = await play(task, "reference");
+  const reference = played.correct;
   const refFailed = required(reference).filter((item) => !item.pass);
-  const noop = await play(task, "noop");
+  const noop = (await play(task, "noop")).correct;
   const noopPassed = required(noop).every((item) => item.pass);
-  const ok = refFailed.length === 0 && !noopPassed;
+  const destinationRejected = played.wrongDestination.some(c => c.id === "correct-destination" && !c.pass) &&
+    played.wrongDestination.some(c => c.id === "answer-evidence" && c.pass);
+  const evidenceRejected = played.missingEvidence.some(c => c.id === "answer-evidence" && !c.pass) &&
+    played.missingEvidence.some(c => c.id === "correct-destination" && c.pass);
+  const ok = refFailed.length === 0 && !noopPassed && destinationRejected && evidenceRejected && played.regressions.every(c => c.rejected) && played.positives.every(c => c.passed);
   if (!ok) failures += 1;
   console.log(`${ok ? "ok  " : "FAIL"} ${task.id}`);
   for (const item of refFailed) {
@@ -100,6 +161,10 @@ for (const task of ACTIVE_TASKS) {
   for (const item of reference.filter((entry) => entry.advisory && !entry.pass)) {
     console.log(`       reference advisory miss ${item.id}${item.detail ? ` (${item.detail})` : ""}`);
   }
+  for (const c of played.regressions) console.log(`       ${c.rejected ? "rejected" : "FAIL accepted"}: ${c.name}`);
+  for (const c of played.positives) console.log(`       ${c.passed ? "passed" : "FAIL rejected"}: ${c.name}`);
+  if (!destinationRejected) console.log("       wrong-destination answer did not fail the destination check independently");
+  if (!evidenceRejected) console.log("       right-destination answer without facts did not fail evidence independently");
   if (noopPassed) console.log("       a no-op agent passed the grader");
 }
 if (failures) {

@@ -6,6 +6,11 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { StreamEvent } from "./trace.js";
+import { assertSurface } from "./surface.js";
+
+// Bundled skills load even in a fresh HOME in Codex CLI 0.160.1. Disable
+// known names before thread/start; a future enabled item fails the guard.
+const SYSTEM_SKILLS = ["imagegen", "openai-docs", "review-agent", "skill-creator", "skill-installer"];
 
 export interface CodexRun {
   events: StreamEvent[];
@@ -67,11 +72,12 @@ function codexEvent(event: { method?: string; params?: Record<string, any> }): S
     return [{ type: "user", message: { content: [{
       type: "tool_result", tool_use_id: item.id,
       is_error: item.status !== "completed" || Boolean(item.error) || item.result?.isError === true,
-      content: [{ type: "text", text: item.error ? JSON.stringify(item.error) : mcpResultText(item.result) }],
+      content: item.error ? [{ type: "text", text: JSON.stringify(item.error) }] :
+        item.result?.content ?? [{ type: "text", text: mcpResultText(item.result) }],
     }] } }];
   }
   if (event.method === "item/completed" && item?.type === "agentMessage" && item.text) {
-    return [{ type: "assistant", message: { content: [{ type: "text", text: item.text }] } }];
+    return [{ type: "assistant", message: { phase: item.phase, content: [{ type: "text", text: item.text }] } }];
   }
   if (event.method === "turn/completed") {
     const turn = event.params?.turn;
@@ -99,14 +105,16 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
     await rm(root, { recursive: true, force: true });
     throw error;
   }
-  // This home has no user MCP servers, plugins, skills, memories, or project
-  // instructions. The model cannot execute shell commands or browse the web.
+  // This home has no user MCP servers, memories, or project instructions.
+  // Bundled skills need explicit disables and an inventory check below.
   // Only the fresh trial's loopback MCP endpoint is configured.
   const config = [
     `model = ${JSON.stringify(options.model)}`,
     'approval_policy = "on-request"',
     'sandbox_mode = "read-only"',
     'web_search = "disabled"',
+    ...SYSTEM_SKILLS.flatMap(name => ['[[skills.config]]', `name = ${JSON.stringify(name)}`, 'enabled = false']),
+    '[plugins]',
     '[features]',
     'apps = false',
     'multi_agent = false',
@@ -270,6 +278,27 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
     await request("initialize", { clientInfo: { name: "connecta_eval", title: "Connecta eval", version: "1" },
       capabilities: { experimentalApi: true } });
     send({ method: "initialized" });
+    const inventory = async () => {
+      const skillResult = await request("skills/list", { cwds: [cwd], forceReload: true });
+      const pluginResult = await request("plugin/installed", { cwds: [cwd] });
+      if (!Array.isArray(skillResult.data) || skillResult.data.length !== 1 || skillResult.data[0]?.cwd !== cwd ||
+        !Array.isArray(skillResult.data[0]?.skills) || !Array.isArray(skillResult.data[0]?.errors) ||
+        skillResult.data[0].errors.length || !Array.isArray(pluginResult.marketplaces) ||
+        !Array.isArray(pluginResult.marketplaceLoadErrors) || pluginResult.marketplaceLoadErrors.length ||
+        pluginResult.marketplaces.some((m: any) => !Array.isArray(m.plugins))) {
+        throw new Error("Codex skill/plugin inventory could not be verified");
+      }
+      const skills = skillResult.data[0].skills.map((s: any) => ({ name: String(s.name ?? "<unknown>"), enabled: s.enabled }));
+      const plugins = pluginResult.marketplaces.flatMap((m: any) => m.plugins.map((p: any) =>
+        ({ name: String(p.name ?? "<unknown>"), id: String(p.id ?? "<unknown>"), enabled: p.enabled })));
+      const unexpected = { skills: skills.filter((s: any) => s.enabled !== false),
+        plugins: plugins.filter((p: any) => p.enabled !== false) };
+      if (unexpected.skills.length || unexpected.plugins.length) {
+        throw new Error(`Codex loaded plugins or skills outside the fake MCP config: ${JSON.stringify(unexpected).replaceAll(options.token, "<redacted>")}`);
+      }
+      return { skills, plugins };
+    };
+    await inventory();
     const thread = await request("thread/start", {
       model: options.model, cwd, approvalPolicy: "on-request", sandbox: "read-only", ephemeral: true,
       baseInstructions: "Complete the user's task using only the connecta MCP tools. Do not use shell, files, web, or other services.",
@@ -277,6 +306,7 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
     });
     model = thread.model;
     if (model !== options.model) throw new Error(`Codex served ${String(model)} instead of ${options.model}`);
+    const verifiedInventory = await inventory();
     const status = await request("mcpServerStatus/list", { threadId: thread.thread.id });
     const servers = status.data as { name: string; tools: Record<string, unknown>; toolsError?: string }[];
     if (servers.length !== 1 || servers[0]?.name !== "connecta" || servers[0].toolsError) {
@@ -285,11 +315,10 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
       })))}`);
     }
     loadedTools = Object.keys(servers[0].tools).map(tool => `mcp__connecta__${tool}`);
-    if (!loadedTools.includes("mcp__connecta__execute_code")) {
-      throw new Error("Codex did not load the fake connecta MCP tools");
-    }
+    assertSurface(loadedTools);
     push({ type: "system", subtype: "init", model,
-      agent_version: options.testHost?.version ?? await codexVersion(), tools: loadedTools });
+      agent_version: options.testHost?.version ?? await codexVersion(), tools: loadedTools,
+      skillInventory: verifiedInventory.skills, pluginInventory: verifiedInventory.plugins });
     let prompt: string | undefined = options.firstPrompt;
     let turn = 0;
     while (prompt !== undefined && !timedOut && !options.signal?.aborted) {

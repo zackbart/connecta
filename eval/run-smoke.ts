@@ -28,15 +28,9 @@ import type { SmokeCheck, SmokeResultFile, SmokeTarget } from "./report/summary.
 import { connectMcp, parseJson, type McpSession } from "./support/mcp.js";
 import { flags, ROOT, runMeta, stamp } from "./support/meta.js";
 import { freePort } from "./support/serve.js";
+import { META_TOOLS } from "./agent/surface.js";
 
-const SIX = [
-  "authorize_connector",
-  "call_destructive_tool",
-  "call_tool",
-  "execute_code",
-  "search_tools",
-  "skills",
-];
+const SIX = META_TOOLS;
 
 const args = flags(process.argv.slice(2));
 const out = resolve(args.get("out") ?? join(ROOT, "eval", "results", `smoke-${stamp()}.json`));

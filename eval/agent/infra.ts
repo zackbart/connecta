@@ -20,13 +20,13 @@ export function infraError(events: StreamEvent[], exitCode: number | null, loade
   if (failed && /authentication|unauthorized|invalid api key|please run \/login|\b401\b/i.test(failureText)) {
     return `authentication failure: ${failureText.slice(0, 300)}`;
   }
-  if (failed) return `Codex turn failed: ${String(failed.result ?? failed.subtype).slice(0, 300)}`;
+  if (failed) return `Agent turn failed: ${String(failed.result ?? failed.subtype).slice(0, 300)}`;
   if (results.length && !loadedTools.includes(toolId("execute_code"))) {
     return "the connecta MCP server was not connected when the session started";
   }
   const apiError = results.find((event) => event.api_error_status != null);
   if (apiError) return `API error ${String(apiError.api_error_status)}: ${String(apiError.result ?? "").slice(0, 300)}`;
-  if (results.length === 0) return `Codex produced no result (exit ${String(exitCode)})`;
+  if (results.length === 0) return `Agent produced no result (exit ${String(exitCode)})`;
   return undefined;
 }
 
