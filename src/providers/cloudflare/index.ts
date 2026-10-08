@@ -1166,7 +1166,11 @@ function headersFromArgs(value: unknown): Record<string, string> | undefined {
         `The raw Cloudflare tools do not allow the ${name} header. Authentication and request framing are connector-owned; use contentType for a raw upload body.`,
       );
     }
-    headers[name] = String(entry["value"]);
+    const value = String(entry["value"]);
+    if (name.toLowerCase() === "cf-r2-storage-class" && value !== "Standard" && value !== "InfrequentAccess") {
+      throw new ConnectorCallError("invalid_args", "cf-r2-storage-class must be Standard or InfrequentAccess.");
+    }
+    headers[name] = value;
   }
   return headers;
 }
@@ -1181,11 +1185,14 @@ function rawSpec(
   }) as Pick<GuardedRequest, "path" | "query" | "headers">;
 }
 
-// The hosted helper accepts contentType/rawBody but no R2 jurisdiction header.
+// The hosted helper cannot send R2 jurisdiction or bucket-edit storage headers.
 // Ordinary headers such as Accept are not a reason to restore JSON duplicates.
-function needsMutationHeaders(spec: Pick<GuardedRequest, "path" | "headers">): boolean {
+function needsMutationHeaders(method: GuardedRequest["method"], spec: Pick<GuardedRequest, "path" | "headers">): boolean {
+  const headers = Object.entries(spec.headers ?? {});
+  if (method === "PATCH" && /^\/accounts\/[^/]+\/r2\/buckets\/[^/]+\/?$/.test(spec.path) &&
+    headers.some(([name, value]) => name.toLowerCase() === "cf-r2-storage-class" && (value === "Standard" || value === "InfrequentAccess"))) return true;
   return /^\/accounts\/[^/]+\/r2\/buckets(?:\/|$)/.test(spec.path) &&
-    Object.entries(spec.headers ?? {}).some(([name, value]) => name.toLowerCase() === "cf-r2-jurisdiction" && typeof value === "string" && value.trim().length > 0);
+    headers.some(([name, value]) => name.toLowerCase() === "cf-r2-jurisdiction" && typeof value === "string" && value.trim().length > 0);
 }
 
 // Reviewed raw-body families, rather than a Content-Type assertion that could
@@ -1441,7 +1448,7 @@ const QUERY_INPUT_PROPERTY: JsonSchema = {
 const HEADERS_INPUT_PROPERTY: JsonSchema = {
   type: "array",
   description:
-    "Endpoint headers as name/value pairs, e.g. cf-r2-jurisdiction or Range. Connector-owned headers are refused.",
+    "Endpoint headers as name/value pairs, e.g. cf-r2-jurisdiction, cf-r2-storage-class (Standard or InfrequentAccess), or Range. Connector-owned headers are refused.",
   items: {
     type: "object",
     properties: {
@@ -1729,7 +1736,7 @@ function buildTools(
     ),
     cfTool(
       "cloudflare_api_mutate",
-      "Call JSON mutations using an explicit Global API Key identity, or R2 bucket endpoints requiring cf-r2-jurisdiction. API-token ordinary JSON mutations belong to hosted MCP execute. No multipart or binary uploads.",
+      "Call JSON mutations for Global API Key identity or R2 jurisdiction/storage-class header gaps. Ordinary API-token writes use hosted execute. Bucket PATCH accepts cf-r2-storage-class: Standard or InfrequentAccess; no uploads.",
       { readOnlyHint: false, destructiveHint: true },
       undefined,
       undefined,
@@ -1771,8 +1778,8 @@ function buildTools(
       async (args: JsonRecord, ctx) => {
               const method = String(args["method"]) as GuardedRequest["method"];
               const spec = rawSpec(args);
-              if (authentication === "apiToken" && !needsMutationHeaders(spec)) {
-                throw new ConnectorCallError("invalid_args", "Use the Cloudflare MCP execute tool for JSON mutations with an API token. This REST tool is reserved for Global API Key identity or R2 bucket operations requiring cf-r2-jurisdiction.");
+              if (authentication === "apiToken" && !needsMutationHeaders(method, spec)) {
+                throw new ConnectorCallError("invalid_args", "Use the Cloudflare MCP execute tool for JSON mutations with an API token. This REST tool is reserved for Global API Key identity, R2 bucket operations requiring cf-r2-jurisdiction, or bucket PATCH with cf-r2-storage-class set to Standard or InfrequentAccess.");
               }
               const { result, resultInfo } = await callCloudflare(
                 send,

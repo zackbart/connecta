@@ -36,9 +36,13 @@ content writes remain available.
 For Cloudflare, migrate ordinary JSON writes to hosted `search` then `execute`.
 A scoped API token can authorize hosted MCP without interactive OAuth; configure
 that credential independently even if it has the same value as the REST token.
-Keep REST reads in read-only programs. Global API Key/email and R2 jurisdiction
+Keep REST reads in read-only programs. Global API Key/email and R2 jurisdiction/storage-class
 JSON mutations, plus byte/header-compatible uploads, stay in the explicit REST
-complement. `execute` remains a write even when its program only calls GET.
+complement. Replace `update_r2_bucket` with `cloudflare_api_mutate` using
+`PATCH /accounts/{accountId}/r2/buckets/{bucketName}` and the header
+`cf-r2-storage-class` set to `Standard` or `InfrequentAccess`. Omit the body;
+include `cf-r2-jurisdiction` only when the bucket needs it. This remains a write.
+`execute` remains a write even when its program only calls GET.
 Trusted pools may execute writes; read-only pools use direct host-approved writes.
 
 For Vercel, authorize the owning teams in hosted OAuth, migrate discovery/logs,

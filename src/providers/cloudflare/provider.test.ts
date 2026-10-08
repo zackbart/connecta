@@ -1520,6 +1520,37 @@ describe("Cloudflare mutation bypass refusal", () => {
 
 
 describe("Cloudflare reviewed mutation exceptions", () => {
+  it.each(["Standard", "InfrequentAccess"])("INV-1 INV-9: preserves bucket PATCH with %s storage class without jurisdiction", async (storageClass) => {
+    stubFetch({ body: { success: true, result: { name: "assets", storage_class: storageClass } } });
+    const connector = connection();
+    const result = await connector.callTool("cloudflare_api_mutate", { method: "PATCH", path: "/accounts/acct-1/r2/buckets/assets", headers: [{ name: "CF-R2-Storage-Class", value: storageClass }] }, contextWithToken());
+    expect(result).toEqual({ result: { name: "assets", storage_class: storageClass } });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.init.method).toBe("PATCH");
+    expect(urlOf().pathname).toBe("/client/v4/accounts/acct-1/r2/buckets/assets");
+    expect(new Headers(calls[0]!.init.headers).get("cf-r2-storage-class")).toBe(storageClass);
+    expect(new Headers(calls[0]!.init.headers).has("cf-r2-jurisdiction")).toBe(false);
+    expect((await servedTools(connector)).find((tool) => tool.name === "cloudflare_api_mutate")?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+  });
+  it("INV-9: preserves jurisdiction alongside bucket storage-class PATCH", async () => {
+    stubFetch({ body: { success: true, result: { name: "assets", storage_class: "Standard", jurisdiction: "eu" } } });
+    await connection().callTool("cloudflare_api_mutate", { method: "PATCH", path: "/accounts/acct-1/r2/buckets/assets", headers: [{ name: "cf-r2-storage-class", value: "Standard" }, { name: "cf-r2-jurisdiction", value: "eu" }] }, contextWithToken());
+    expect(new Headers(calls[0]!.init.headers).get("cf-r2-storage-class")).toBe("Standard");
+    expect(new Headers(calls[0]!.init.headers).get("cf-r2-jurisdiction")).toBe("eu");
+  });
+  it.each(["standard", "Archive", "", "Standard, InfrequentAccess"])("INV-9: refuses invalid storage class %s even with jurisdiction", async (value) => {
+    await expect(connection().callTool("cloudflare_api_mutate", { method: "PATCH", path: "/accounts/acct-1/r2/buckets/assets", headers: [{ name: "cf-r2-storage-class", value }, { name: "cf-r2-jurisdiction", value: "eu" }] }, contextWithToken())).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("Standard or InfrequentAccess") });
+    expect(calls).toHaveLength(0);
+  });
+  it.each([
+    ["POST", "/accounts/acct-1/r2/buckets"],
+    ["PUT", "/accounts/acct-1/r2/buckets/assets"],
+    ["PATCH", "/accounts/acct-1/r2/buckets/assets/cors"],
+    ["PATCH", "/zones/zone-1/dns_records/record"],
+  ])("INV-9: storage-class header cannot restore %s %s", async (method, path) => {
+    await expect(connection().callTool("cloudflare_api_mutate", { method, path, headers: [{ name: "cf-r2-storage-class", value: "Standard" }] }, contextWithToken())).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(0);
+  });
   it("INV-9: creates a jurisdictional bucket through the explicit API header complement", async () => {
     stubFetch({ body: { success: true, result: { name: "assets", jurisdiction: "eu" } } });
     await connection().callTool("cloudflare_api_mutate", { method: "POST", path: "/accounts/acct-1/r2/buckets", headers: [{ name: "cf-r2-jurisdiction", value: "eu" }], body: { name: "assets" } }, contextWithToken());

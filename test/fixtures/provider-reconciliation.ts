@@ -35,7 +35,7 @@ export function reconciliationTests(
       const removed = before.api.filter((tool) => !current.has(tool.name));
       expect(removed.map((tool) => tool.name).sort()).toEqual(Object.keys(ownership.removedApiTools).sort());
       for (const tool of removed) {
-        const replacement = (ownership.canonicalHalf === "api" ? current : hosted).get(ownership.removedApiTools[tool.name]!);
+        const replacement = (ownership.canonicalHalf === "api" ? current : hosted).get(ownership.removedApiTools[tool.name]!) ?? current.get(ownership.removedApiTools[tool.name]!);
         expect(replacement, `${tool.name} needs a canonical replacement`).toBeDefined();
         if (tool.classification === "write") expect(replacement?.classification).toBe("write");
         if (tool.annotations?.destructiveHint) expect(replacement?.annotations?.destructiveHint).toBe(true);

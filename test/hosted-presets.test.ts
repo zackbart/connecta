@@ -35,9 +35,9 @@ async function hash(value: unknown): Promise<string> {
 }
 
 function expectedGuide(name: Name, content: string): string {
-  if (Object.hasOwn(configChanges, name)) return content;
   const repairs = errorGuideChanges as Partial<Record<Name, string[][]>>;
-  for (const [from, to] of [...guideChanges[name], ...repairs[name] ?? []]) content = content.replaceAll(from!, to!);
+  const changes = Object.hasOwn(configChanges, name) ? [] : guideChanges[name];
+  for (const [from, to] of [...changes, ...repairs[name] ?? []]) content = content.replaceAll(from!, to!);
   return content;
 }
 
