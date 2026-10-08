@@ -207,3 +207,16 @@ test("real Clerk 6.38.1 loads CAPTCHA and its frame without CSP violations", asy
   expect(await page.evaluate("window.Clerk.__internal_environment.userSettings.signUp.captcha_enabled")).toBe(true);
   expect(await page.evaluate("window.__cspViolations")).toEqual([]);
 });
+
+test("browser 404 pages retain the common CSP without Clerk permissions", async ({ page }) => {
+  const response = await page.goto(origin + "/missing?clerk");
+  expect(response!.status()).toBe(404);
+  expect(response!.headers()["content-security-policy"]).toBe("script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+  await expect(page.getByRole("heading", { name: "Page not found" })).toBeVisible();
+  const violation = await page.evaluate(`new Promise(resolve => {
+    document.addEventListener('securitypolicyviolation', event => resolve(event.blockedURI), { once: true });
+    const inline = document.createElement('script'); inline.textContent = 'window.__errorScriptRan = true'; document.head.append(inline);
+  })`);
+  expect(violation).toBe("inline");
+  expect(await page.evaluate("window.__errorScriptRan")).toBeUndefined();
+});

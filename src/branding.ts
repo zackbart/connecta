@@ -1,4 +1,5 @@
 import { PAGE_CSS, TOKENS_CSS } from "./page-styles.js";
+import { htmlSecurityHeaders } from "./html-security.js";
 import type { ConnectaBranding, ConnectaTheme, UiAuthConfig } from "./types.js";
 /** Connecta's default monochrome "C" mark. */
 export const CONNECTA_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
@@ -414,7 +415,7 @@ export function notFoundResponse(
     }),
     {
       status: 404,
-      headers: { "Content-Type": "text/html; charset=utf-8", Vary: "Accept" },
+      headers: htmlSecurityHeaders({ "Content-Type": "text/html; charset=utf-8", Vary: "Accept" }),
     },
   );
 }

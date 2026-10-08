@@ -79,8 +79,12 @@ top to bottom.
 | 6 | `/mcp`, `/mcp/<pool>` | Admission, then auth, then a request-local MCP server. Body-confirmed modern listens skip admission and are refused after auth and SDK validation. An undeclared pool, a refusing grant, and a throwing grant are one identical 404; see [pools](./auth.md#pools). |
 | 7 | Other paths | 404. Custom HTTP routes belong to the deployment. |
 
-Every response leaves through `withSecurityHeaders`, and the UI module adds a
-same-origin script CSP (plus the configured Clerk origin) and framing denial to its shells.
+Every response leaves through `withSecurityHeaders`. HTML uses one common
+security-header helper, including status and error pages. Operator shells
+allow same-origin scripts and deny framing. Clerk pages also admit the validated
+loader origin, the exact Cloudflare CAPTCHA script and frame host, Clerk images,
+and first-party or blob workers. Local Clerk sign-in adds a nonce for its bootstrap.
+Sandboxed artifact documents retain their separate script and framing policy.
 `test/server-route-contracts.test.ts` pins the ordering and the exact refusal
 bodies; it exists because the ordering is invisible in any one file and a
 reordering reads like a harmless refactor.

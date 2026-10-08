@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { htmlSecurityHeaders } from "../html-security.js";
 import { closeConnectorScope } from "../connector-scope.js";
 import { OAuthCallbackClaimedError, oauthStateDigest } from "../auth/downstream-oauth.js";
 import { failureRecord, logFailure } from "../operator-record.js";
@@ -76,7 +77,7 @@ function html(
       uiMounted,
       body,
     }),
-    { status: outcome.status, headers: { "Content-Type": "text/html; charset=utf-8" } },
+    { status: outcome.status, headers: htmlSecurityHeaders({ "Content-Type": "text/html; charset=utf-8" }) },
   );
 }
 
