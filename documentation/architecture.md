@@ -334,8 +334,11 @@ set. Every connector context links its local set into that request, including
 listing, discovery, registry refresh, OAuth refresh, and provider handlers.
 Direct meta-tool invocations and program runs get fresh request identities;
 all operations within one HTTP request share its identity. Credential-slot reads, static
-auth headers, and outbound bearer tokens join the set, including tokens
-rotated during a call. Before any diagnostic is truncated or returned, the
+auth headers, raw confidential OAuth client IDs and secrets, and outbound
+bearer tokens join the set, including tokens rotated during a call. Token and
+revocation requests register client credentials before dispatch, decoding OAuth
+Basic form components so a raw echo is covered too. Public client IDs remain
+visible. Before any diagnostic is truncated or returned, the
 agent boundary replaces these values and their auth prefixes, mixed JSON
 escapes, URL encodings, and base64/base64url forms with `[redacted]`. Final
 transports register sensitive headers and query values after assembling the

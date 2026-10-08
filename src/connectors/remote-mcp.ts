@@ -1,4 +1,4 @@
-import { assertRemoteOAuthClient, declareSelfHostedClient, downstreamClientMetadata, downstreamRedirectUri, remoteClientAuthMethod, selfHostedClientUrl, type RemoteOAuthClient } from "../auth/downstream-client-metadata.js";
+import { assertRemoteOAuthClient, declareSelfHostedClient, downstreamClientMetadata, downstreamRedirectUri, remoteClientAuthMethod, selfHostedClientUrl, trackRemoteClientRequest, type RemoteOAuthClient } from "../auth/downstream-client-metadata.js";
 import {
   AuthorizationServerMismatchError,
   Client,
@@ -1126,7 +1126,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const activeSecrets = new WeakMap<ConnectionState, Set<SentSecrets>>();
   const trackSentRequest = (ctx: ConnectorContext, input: RequestInfo | URL, init?: RequestInit): void => {
     const recipients = new Set([sentSecretsFor(ctx), ...activeSecrets.get(entryFor(ctx)) ?? []]);
-    for (const secrets of recipients) secrets.request(input, init);
+    for (const secrets of recipients) {
+      if (opts.auth?.type === "oauth") trackRemoteClientRequest(secrets, input, init);
+      else secrets.request(input, init);
+    }
   };
   const connectingWaiters = new WeakMap<Deferred.Deferred<Client, unknown>, number>();
   const isOauth = opts.auth?.type === "oauth";
@@ -2025,7 +2028,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // request-local transport. A hung connect therefore cannot delay the
     // fence, and every late OAuth write stays in the older namespace.
     const reset = operatorDisconnected
-      ? provider.disconnectAuthorization(learnedUrlSafeFetch(id, new URL(opts.url), fetch))
+      ? provider.disconnectAuthorization(learnedUrlSafeFetch(id, new URL(opts.url), async (input, init) => {
+          trackSentRequest(ctx, input, init);
+          return await fetch(input, init);
+        }))
       : provider.resetAuthorization(false, preserveClient);
     try {
       await reset;

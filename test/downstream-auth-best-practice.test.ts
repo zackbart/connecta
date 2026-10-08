@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { remoteMcp, type RemoteMcpAuth } from "../src/connectors/remote-mcp.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { createTestConnecta, fetchTestUiDetails } from "./helpers.js";
+import { createMetaTools } from "../src/meta-tools.js";
+import { sentSecretsFor } from "../src/sent-secrets.js";
 import type { OperatorUiContract } from "../src/ui.js";
 import { bindCallback, callbackAuth, consentKey } from "./fixtures/oauth.js";
 
@@ -18,10 +20,11 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-function setup(options: { cimd?: boolean; publicUrl?: string | null; auth?: RemoteMcpAuth; revocation?: boolean; revokeStatus?: number; revokeThrows?: boolean; issRequired?: boolean; registeredClientId?: string; revocationMethods?: string[] } = {}) {
+function setup(options: { cimd?: boolean; publicUrl?: string | null; auth?: RemoteMcpAuth; revocation?: boolean; revokeStatus?: number; revokeThrows?: boolean; issRequired?: boolean; registeredClientId?: string; revocationMethods?: string[]; registeredClientSecret?: string; clientMethod?: "client_secret_basic" | "client_secret_post"; echo?: string } = {}) {
   const sent: Array<{ url: string; init: RequestInit; form: URLSearchParams }> = [];
   const registrations: Record<string, unknown>[] = [];
   let issuer = ISSUER;
+  let refreshRequired = false;
   const lines: unknown[] = [];
   const logger = { debug: (...args: unknown[]) => { lines.push(args); }, info: (...args: unknown[]) => { lines.push(args); }, warn: (...args: unknown[]) => { lines.push(args); }, error: (...args: unknown[]) => { lines.push(args); } };
   for (const method of ["debug", "info", "warn", "error", "log"] as const) vi.spyOn(console, method).mockImplementation((...args) => { lines.push(args); });
@@ -44,18 +47,21 @@ function setup(options: { cimd?: boolean; publicUrl?: string | null; auth?: Remo
     if (url === `${issuer}/register`) {
       const metadata = JSON.parse(String(init.body));
       registrations.push(metadata);
-      return Response.json({ ...metadata, client_id: options.registeredClientId ?? "registered-client" });
+      return Response.json({ ...metadata, client_id: options.registeredClientId ?? "registered-client",
+        ...(options.registeredClientSecret ? { client_secret: options.registeredClientSecret, token_endpoint_auth_method: options.clientMethod } : {}) });
     }
-    if (url === `${issuer}/token`) return Response.json({ access_token: "ACCESS_TOKEN_SENTINEL", refresh_token: "REFRESH_TOKEN_SENTINEL", token_type: "Bearer" });
+    if (url === `${issuer}/token`) return Response.json({ access_token: form.get("grant_type") === "refresh_token" ? "ROTATED_ACCESS_TOKEN_SENTINEL" : "ACCESS_TOKEN_SENTINEL", refresh_token: "REFRESH_TOKEN_SENTINEL", token_type: "Bearer" });
     if (url === `${issuer}/revoke`) {
       if (options.revokeThrows) throw new Error(`${SECRET} ${TEXT}`);
       return new Response(TEXT, { status: options.revokeStatus ?? 200, headers: { Location: `${issuer}/revoke-again` } });
     }
     if (url === MCP) {
-      if (new Headers(init.headers).get("authorization") !== "Bearer ACCESS_TOKEN_SENTINEL") return new Response(null, { status: 401, headers: { "WWW-Authenticate": 'Bearer resource_metadata="https://mcp.example/resource"' } });
+      const authorization = new Headers(init.headers).get("authorization");
+      if (authorization !== "Bearer ROTATED_ACCESS_TOKEN_SENTINEL" && (refreshRequired || authorization !== "Bearer ACCESS_TOKEN_SENTINEL")) return new Response(null, { status: 401, headers: { "WWW-Authenticate": 'Bearer resource_metadata="https://mcp.example/resource"' } });
       const rpc = JSON.parse(String(init.body));
       if (rpc.method === "notifications/initialized") return new Response(null, { status: 202 });
-      return Response.json({ jsonrpc: "2.0", id: rpc.id, result: rpc.method === "initialize" ? { protocolVersion: rpc.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "service", version: "1" } } : { tools: [] } });
+      return Response.json({ jsonrpc: "2.0", id: rpc.id, result: rpc.method === "initialize" ? { protocolVersion: rpc.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "service", version: "1" } } : rpc.method === "tools/call" ? { content: [{ type: "text", text: options.echo ?? "ok" }] }
+        : { tools: options.echo ? [{ name: "read", description: "Read", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }] : [] } });
     }
     throw new Error(`Unexpected request ${url}`);
   });
@@ -69,7 +75,7 @@ function setup(options: { cimd?: boolean; publicUrl?: string | null; auth?: Remo
     const query = new URLSearchParams({ state: new URL(url).searchParams.get("state")!, ...params });
     return app.fetch(new Request(`${BASE}/oauth/callback/svc?${query}`));
   };
-  return { app, connector, ctx, start, callback, sent, registrations, lines, changeIssuer: (value: string) => { issuer = value; } };
+  return { app, connector, ctx, start, callback, sent, registrations, lines, requireRefresh: () => { refreshRequired = true; }, changeIssuer: (value: string) => { issuer = value; } };
 }
 
 describe("downstream OAuth best practice", () => {
@@ -158,6 +164,67 @@ describe("downstream OAuth best practice", () => {
     expect(await flow.ctx().storage.get("oauth:grant")).not.toContain(SECRET);
     expect((await flow.app.registry.statusFor("svc", BASE)).registrationPath).toBe("static");
     expect(JSON.stringify(flow.lines)).not.toMatch(/SENTINEL/);
+  });
+
+  it.each([
+    ["static", "client_secret_basic"], ["static", "client_secret_post"],
+    ["dcr", "client_secret_basic"], ["dcr", "client_secret_post"],
+  ] as const)("INV-5: redacts raw reserved-character %s %s client credentials echoed after refresh", async (path, method) => {
+    const clientId = "PRIVATE_CLIENT+reserved/characters=";
+    const secret = "CLIENT_SECRET+reserved/characters=";
+    const flow = setup({ echo: `Echo ${secret}; ${clientId}`,
+      ...(path === "static" ? { auth: { type: "oauth", client: { issuer: ISSUER, clientId, clientSecret: secret, tokenEndpointAuthMethod: method } } as RemoteMcpAuth }
+        : { registeredClientId: clientId, registeredClientSecret: secret, clientMethod: method }) });
+    const started = await flow.start();
+    expect((await flow.callback(started.authorizationUrl!)).status).toBe(200);
+    flow.requireRefresh();
+    const result = await createMetaTools(flow.app.registry, BASE).callTool({ address: "svc.read" });
+    const refreshes = flow.sent.filter(request => request.form.get("grant_type") === "refresh_token");
+    expect(refreshes).toHaveLength(1);
+    const encode = (value: string) => new URLSearchParams({ value }).toString().slice(6);
+    if (method === "client_secret_basic") expect(new Headers(refreshes[0]!.init.headers).get("Authorization")).toBe(`Basic ${btoa(path === "static" ? `${encode(clientId)}:${encode(secret)}` : `${clientId}:${secret}`)}`);
+    else {
+      expect(refreshes[0]!.form.get("client_id")).toBe(clientId);
+      expect(refreshes[0]!.form.get("client_secret")).toBe(secret);
+    }
+    expect(result.isError).not.toBe(true);
+    expect(JSON.stringify(result)).toContain("Echo [redacted]; [redacted]");
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(JSON.stringify(result)).not.toContain(clientId);
+  });
+
+  it.each([
+    ["static", "client_secret_basic"], ["static", "client_secret_post"],
+    ["dcr", "client_secret_basic"], ["dcr", "client_secret_post"],
+  ] as const)("INV-5: registers raw %s %s client credentials and the removed token on revocation", async (path, method) => {
+    const clientId = "PRIVATE_CLIENT+reserved/characters=";
+    const secret = "CLIENT_SECRET+reserved/characters=";
+    const flow = setup({ revocation: true,
+      ...(path === "static" ? { auth: { type: "oauth", client: { issuer: ISSUER, clientId, clientSecret: secret, tokenEndpointAuthMethod: method } } as RemoteMcpAuth }
+        : { registeredClientId: clientId, registeredClientSecret: secret, clientMethod: method }) });
+    const started = await flow.start();
+    expect((await flow.callback(started.authorizationUrl!)).status).toBe(200);
+    const ctx = flow.ctx();
+    const secrets = sentSecretsFor(ctx);
+    const send = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/revoke")) expect(secrets.text(`${clientId}; ${secret}; REFRESH_TOKEN_SENTINEL`)).toBe("[redacted]; [redacted]; [redacted]");
+      return await send(input, init);
+    });
+    await flow.connector.disconnectAuth!(ctx);
+    expect(flow.sent.filter(request => request.url.endsWith("/revoke"))).toHaveLength(1);
+    expect(secrets.text(`${clientId}; ${secret}; REFRESH_TOKEN_SENTINEL`)).toBe("[redacted]; [redacted]; [redacted]");
+  });
+
+  it("INV-5: keeps a public CIMD client ID visible after refreshing its grant", async () => {
+    const flow = setup({ cimd: true, echo: `Public client ${DOCUMENT}` });
+    const started = await flow.start();
+    expect((await flow.callback(started.authorizationUrl!)).status).toBe(200);
+    flow.requireRefresh();
+    const result = await createMetaTools(flow.app.registry, BASE).callTool({ address: "svc.read" });
+    expect(flow.sent.filter(request => request.form.get("grant_type") === "refresh_token")).toHaveLength(1);
+    expect(result.isError).not.toBe(true);
+    expect(JSON.stringify(result)).toContain(DOCUMENT);
   });
 
   it("INV-5: refuses a static client's different discovered issuer before sending credentials", async () => {

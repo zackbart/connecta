@@ -1,5 +1,6 @@
 import type { OAuthClientMetadata } from "@modelcontextprotocol/client";
 import type { Connector } from "../types.js";
+import type { SentSecrets } from "../sent-secrets.js";
 import { classifyHost } from "../url-safety.js";
 
 /** A deployment-owned identity, bound to one authorization server. */
@@ -13,6 +14,41 @@ export interface RemoteOAuthClient {
 /** Normalize the deployment-selected default once, including revocation. */
 export function remoteClientAuthMethod(client: RemoteOAuthClient): "none" | "client_secret_basic" | "client_secret_post" {
   return client.tokenEndpointAuthMethod ?? (client.clientSecret === undefined ? "none" : "client_secret_basic");
+}
+
+/** Register raw OAuth client credentials from the final request before dispatch.
+ * Basic components use RFC 6749 form encoding, unlike ordinary Basic auth.
+ * Public client IDs remain visible; confidential IDs join their client secret. */
+export function trackRemoteClientRequest(secrets: SentSecrets, input: RequestInfo | URL, init?: RequestInit): void {
+  const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+  const basic = /^Basic\s+(.+)$/i.exec(headers.get("Authorization") ?? "");
+  if (basic) {
+    try {
+      const decoded = atob(basic[1]!);
+      const colon = decoded.indexOf(":");
+      if (colon !== -1) {
+        const decode = (value: string) => new URLSearchParams(`value=${value}`).get("value")!;
+        const secret = decode(decoded.slice(colon + 1));
+        if (secret) {
+          secrets.add(decode(decoded.slice(0, colon)));
+          secrets.add(secret);
+        }
+      }
+    } catch { /* The wire value is still registered below. */ }
+  }
+  if (headers.get("Content-Type")?.startsWith("application/x-www-form-urlencoded") &&
+      (typeof init?.body === "string" || init?.body instanceof URLSearchParams)) {
+    const form = new URLSearchParams(init.body);
+    const secret = form.get("client_secret");
+    if (secret) {
+      secrets.add(form.get("client_id") ?? "");
+      secrets.add(secret);
+    }
+    // RFC 7009 uses token, rather than the token endpoint's refresh_token.
+    const token = form.get("token");
+    if (token) secrets.add(token);
+  }
+  secrets.request(input, init);
 }
 
 export function assertRemoteOAuthClient(id: string, client: RemoteOAuthClient | undefined): void {
