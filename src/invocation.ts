@@ -365,6 +365,7 @@ export class InvocationService {
           address: `${identity.connectorId}.${toolName}`,
           source: context.source,
           outcome,
+          ...(activityTarget?.connector.authScope === "personal" ? { personal: true } : {}),
           durationMs: Date.now() - started,
           attempts,
           ...defined({

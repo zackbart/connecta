@@ -123,9 +123,9 @@ describe("Phase 4 behavior fixes", () => {
   });
 
 
-  it("INV-4 INV-6: principal-only API callers cannot read another principal's personal history or ownerless legacy rows", async () => {
+  it.each([false, true])("INV-4 INV-6: API principals cannot read another owner or ownerless legacy rows with shared subject=%s", async sharedSubject => {
     const events: ToolCallActivityEvent[] = [];
-    const auth: InboundAuth = { kind: "api", authorize: request => ({ ok: true, principal: { namespace: "directory", id: request.headers.get("X-Principal") ?? "alice" } }) };
+    const auth: InboundAuth = { kind: "api", authorize: request => ({ ok: true, ...(sharedSubject ? { subjectId: "shared-service" } : {}), principal: { namespace: "directory", id: request.headers.get("X-Principal") ?? "alice" } }) };
     const deployment = app({ connectors: [{ ...connector("personal"), authScope: "personal" }], auth, logger: "silent", identity: { activityAccess: () => true }, activity: activityHistory({ store: { record: e => { events.push(e); }, list: async () => ({ events }) } }) });
     const request = modernRequest("tools/call", { name: "call_tool", arguments: { address: "personal.read" } });
     expect((await readJsonRpc(await deployment.fetch(request))).result.isError).not.toBe(true);
@@ -156,7 +156,7 @@ describe("Phase 4 behavior fixes", () => {
     const deployment = app({ connectors: [c], logger: "silent", discovery: { catalogTtlSeconds: 0 }, activity: activityHistory({ store: { record: () => new Promise<void>(resolve => { release = resolve; }) } }) });
     expect((await deployment.fetch(new Request(BASE + path))).status).toBe(200);
     description = "Changed";
-    const response = await deployment.fetch(new Request(BASE + path), undefined, { waitUntil: pending => { writes.push(pending); } });
+    const response = await deployment.fetch(new Request(BASE + path), undefined, { waitUntil: (pending: Promise<unknown>) => { writes.push(pending); } });
     expect(response.status).toBe(200);
     expect(writes.length).toBeGreaterThan(0);
     expect(release).toBeTypeOf("function");

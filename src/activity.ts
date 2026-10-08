@@ -299,6 +299,8 @@ export interface ActivityRequestContext {
   recordTool?: typeof recordToolActivity | undefined;
   sink: ActivitySink;
   actor: ActivityActor;
+  /** Personal rows identify their admitted owner in the existing actor fields. */
+  principalActor?: ActivityActor;
   requestId: string;
   pool?: string;
   serverInfo: { name: string; version: string };
@@ -328,6 +330,7 @@ export type ActivityEventInput = Pick<
    * others, so the stored event keeps `string`; a new row never does.
    */
   errorCode?: ClassificationCode;
+  personal?: boolean;
 };
 
 /**
@@ -354,7 +357,7 @@ export function recordToolActivity(
     id: crypto.randomUUID(),
     occurredAt: new Date().toISOString(),
     requestId: context.requestId,
-    actor: context.actor,
+    actor: input.personal ? context.principalActor ?? { kind: context.actor.kind } : context.actor,
     ...activityBehaviorFacts({ ...input, pool: context.pool }),
     connectorId: boundedEchoText(input.connectorId, MAX_ACTIVITY_NAME_BYTES),
     toolName: boundedEchoText(input.toolName, MAX_ACTIVITY_NAME_BYTES),
@@ -433,7 +436,7 @@ export function recordCatalogDriftActivity(
 /** A discrete catalog change, with no catalog names, descriptions or schemas. */
 export function recordCatalogChangeActivity(
   context: CatalogDriftActivityContext | undefined,
-  input: { connectorId: string; drift: ActivityCatalogChange },
+  input: { connectorId: string; drift: ActivityCatalogChange; personal?: boolean },
   request?: ActivityRequestContext,
 ): void {
   if (!context) return;
@@ -443,6 +446,7 @@ export function recordCatalogChangeActivity(
     connectorId: input.connectorId, toolName: "<catalog>", address: `${input.connectorId}.<catalog>`,
     source: "catalog_refresh", outcome: "success", durationMs: 0, attempts: 1,
     kind: "catalog_drift", drift: input.drift,
+    ...(input.personal ? { personal: true } : {}),
   });
 }
 

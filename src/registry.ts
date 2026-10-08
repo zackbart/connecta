@@ -1601,7 +1601,7 @@ export class Registry implements RegistryView {
       const changedTools = [...after].filter(([name, fact]) => before.has(name) && before.get(name) !== fact).length;
       if (addedTools || removedTools || changedTools) this.opts.catalogDriftActivity?.recordChange?.(
         this.opts.catalogDriftActivity ? { ...this.opts.catalogDriftActivity, logger: this.opts.logger, ...(ctx.defer ? { defer: ctx.defer } : {}) } : undefined,
-        { connectorId: id, drift: { kind: "catalog_changed", addedTools, removedTools, changedTools } },
+        { connectorId: id, drift: { kind: "catalog_changed", addedTools, removedTools, changedTools }, ...(connector.authScope === "personal" ? { personal: true } : {}) },
         activityRequest(ctx.requestScope),
       );
     }

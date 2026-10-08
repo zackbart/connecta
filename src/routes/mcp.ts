@@ -366,6 +366,7 @@ function serveMcp(
   runtimeContext?: RuntimeExecutionContext,
   trust: import("../tool-safety.js").PoolTrust = "read-only",
   pool?: string,
+  principalActor?: ActivityActor,
 ): Effect.Effect<Response, never, Scope.Scope> {
   const sentSecrets = sentSecretsForRequest(requestScope);
   // Every McpServer the request builds is fresh and closes with its scope.
@@ -391,6 +392,7 @@ function serveMcp(
           sink: opts.config.activity?.store,
           recordTool: opts.config.activity?.recordTool,
           actor,
+          ...(principalActor ? { principalActor } : {}),
           requestId: crypto.randomUUID(),
           ...(pool !== undefined ? { pool } : {}),
           serverInfo: opts.config.serverInfo,
@@ -781,6 +783,7 @@ export function createMcpRoute(
         runtimeContext,
         trust,
         poolName,
+        authz.identity.principal ? { kind: authz.actor.kind, id: authz.identity.principal.id, namespace: authz.identity.principal.namespace } : undefined,
       ));
       });
       if (remainingMs === undefined) return yield* handled;

@@ -659,7 +659,9 @@ principal may pass it without an interactive session. This includes a `cta_`
 token's stored principal and a non-interactive API principal; subject-only
 callers and anonymous requests cannot qualify. The optional activity `readGate`
 also applies. Reads remain GET-only and filter connector/tool grants, personal
-ownership and recorded pool access before any actor-label lookup. Non-interactive
+ownership and recorded pool access before any actor-label lookup. Personal rows
+use the admitted principal in the existing typed actor id and namespace fields;
+rows without a provable owner are withheld. Non-interactive
 reads return typed actors without directory labels. Old rows without a pool
 remain subject to connector, tool and owner checks. Undeclared, it admits every
 interactive human, the one default here that is open, because a single-operator

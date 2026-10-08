@@ -22,7 +22,10 @@ export function activityEventVisible(
 ): boolean {
   const connector = registry.getConnector(event.connectorId);
   if (!connector || event.pool !== undefined && !admittedPools.has(event.pool)) return false;
-  if (connector.authScope === "personal" && (!event.actor.id || !authz.actor.id || event.actor.kind !== authz.actor.kind || event.actor.id !== authz.actor.id || event.actor.namespace !== authz.actor.namespace)) return false;
+  if (connector.authScope === "personal") {
+    const owner = authz.identity.principal;
+    if (!owner || event.actor.id !== owner.id || event.actor.namespace !== owner.namespace) return false;
+  }
   const pool = event.pool ? context.opts.pools.get(event.pool) : undefined;
   if (event.pool && !pool) return false;
   const access = pool ? intersectAccess(authz, pool.access) : authz;
