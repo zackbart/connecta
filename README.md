@@ -106,7 +106,11 @@ Both deployment shapes write configuration as `defineConfig((env) => …)`, with
 each optional module a type-checked expression the environment switches on.
 `createConnecta` validates it against one schema — an unknown option or an
 unusable value refuses to boot — and `connecta.describeConfig()` returns a
-secret-free snapshot of what the deployment runs with.
+secret-free snapshot of what the deployment runs with. With `operatorUi()` enabled,
+`GET /ui/api/config` returns that snapshot scoped to the caller, live connector
+facts, and the caller's grants and permissions. `CONNECTA_TOKEN=<bearer> connecta
+doctor --config --url https://connecta.example` prints only the scoped snapshot
+as JSON, using the same serializer. It does not run the diagnostic program.
 
 The optional UI shows each person's connections and effective permissions.
 Authentication controls live inside each connection, with optional activity

@@ -24,6 +24,7 @@ import {
   privateJson,
   type RouteContext,
 } from "./shared.js";
+import { routeUiConfig } from "./ui-config.js";
 import { uiData } from "./ui-data.js";
 
 /**
@@ -152,6 +153,8 @@ export async function routeUi(
       },
     );
   }
+  const configResponse = await routeUiConfig(context);
+  if (configResponse) return configResponse;
   const detail = /^\/ui\/connectors\/([a-z0-9_-]+)$/.exec(path);
   if (path !== "/ui/data" && !detail) return null;
   if (request.method !== "GET") return privateJson({ error: "method not allowed" }, { status: 405 });

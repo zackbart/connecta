@@ -12,6 +12,8 @@
     // A published subpath the Worker example now imports by name, which
     // otherwise hides that it is an entry of its own.
     "src/activity.ts",
+    // Published operator contract types are consumed by external UI clients.
+    "src/ui.ts",
     "src/providers/basecamp/index.ts",
     "src/providers/breeze/index.ts",
     "src/providers/ccb/index.ts",

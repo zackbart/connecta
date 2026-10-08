@@ -28,7 +28,7 @@ function usage() {
   console.log(`Usage:
   connecta init [directory]
   connecta migrate-state <state.json> <connecta.sqlite>
-  CONNECTA_TOKEN=<bearer> connecta doctor [--url http://localhost:8787]
+  CONNECTA_TOKEN=<bearer> connecta doctor [--config] [--url http://localhost:8787]
   CF_ACCESS_CLIENT_ID=<id> CF_ACCESS_CLIENT_SECRET=<secret> connecta doctor --url https://worker.example`);
 }
 
@@ -157,9 +157,9 @@ async function doctorFetch(url, init = {}) {
 }
 
 async function doctor() {
-  const known = new Set(["--url"]);
-  for (let index = 0; index < args.length; index += 2) {
-    if (!known.has(args[index]) || !args[index + 1]) {
+  for (let index = 0; index < args.length; index++) {
+    if (args[index] === "--config") continue;
+    if (args[index] !== "--url" || !args[++index] || args[index].startsWith("--")) {
       usage();
       process.exitCode = 1;
       return;
@@ -205,6 +205,27 @@ async function doctor() {
         }
       : {}),
   };
+
+  if (args.includes("--config")) {
+    const response = await doctorFetch(`${baseUrl}/ui/api/config`, { headers: authHeaders });
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      throw new Error(`HTTP ${response.status}: config snapshot unavailable.`);
+    }
+    let contract;
+    try {
+      contract = await response.json();
+    } catch {
+      throw new Error("Deployment returned an invalid config contract.");
+    }
+    if (contract?.schemaVersion !== 1 || contract.config?.schemaVersion !== 1) {
+      throw new Error("Deployment returned an unsupported config contract.");
+    }
+    // The server builds this with describeConfig's allowlist; do not print
+    // the overlay, identity, health deploymentInfo, or a raw error body.
+    console.log(JSON.stringify(contract.config, null, 2));
+    return;
+  }
 
   const health = await jsonResponse(
     await doctorFetch(`${baseUrl}/health`, { headers: authHeaders }),

@@ -885,3 +885,37 @@ compiling and configuring the real thing.
   through `customExecutor(executor, { lifecycle: "self-managed" })` from the root
   entry and own their termination and cleanup. Plain upstream executors need
   the `/worker` adapter, regardless of constructor name.
+
+## Operator data contract
+
+`GET /ui/api/config`, owned by `operatorUi()`, returns `OperatorUiContract`
+from `connecta/ui`. `src/operator-ui/contract.ts` is also the browser's type
+source. The response has `schemaVersion: 1`, `config`, `live`, and `you`.
+`config` is the construction-time `describeConfig()` snapshot, filtered to
+visible connectors, granted tools, classification overrides, and admitted
+pools. Pool tools are the intersection with the caller's identity grants.
+Every response is private, `no-store` JSON. Only GET is allowed, with the
+same auth gate and identity partition as `/ui/data` and `/ui/connectors/:id`.
+
+`live.connectors` carries status and problem codes, complete registry tools
+with their final read/write classification, catalog age in milliseconds, and
+last-call time/outcome. Catalog descriptions and schemas are allowed for an
+authenticated reader; grammar-failing names and addresses become `<withheld>`.
+Status prose, error text, credential values or suffixes, arguments, results,
+and code are excluded. Static and unobserved catalogs have a null age;
+persisted catalogs retain their original fetch time. Probes run with bounded
+concurrency and the configured probe deadline, and release their scopes.
+
+Last-call lookup requires the existing activity permission and read gate. It
+scans up to 1,000 recent rows, filters connector/tool grants, and restricts
+personal connectors to the caller's activity identity. Each retained fact
+copies a validated timestamp and outcome only. A null call means unknown or
+absent in that window, not proof of no calls. `live.activity` distinguishes
+available, unconfigured, forbidden, and unavailable history. `you` names no
+identity or auth material; it reports grants, root and admitted-pool trust,
+and effective activity, token, artifact, and per-connector auth permissions.
+
+`connecta doctor --config` fetches this authenticated contract and prints only
+`config` as indented JSON. It requires the UI module and the existing doctor
+authentication environment variables; it runs no diagnostic program, follows
+no redirects, and prints no raw HTTP failure body.

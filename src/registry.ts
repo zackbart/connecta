@@ -160,6 +160,7 @@ export function resolveMaxResultBytes(
 }
 
 interface CacheEntry {
+  fetchedAt: number;
   tools: ToolDef[];
   fingerprint: string;
   exp: number; // epoch ms
@@ -407,6 +408,8 @@ export interface RegistryView {
     definition: ToolDef,
     value: unknown,
   ): void;
+  /** Age of the complete cached catalog; null for static or unobserved catalogs. */
+  catalogAgeMs(id: string): number | null;
   statusFor(
     id: string,
     baseUrl: string,
@@ -1549,6 +1552,7 @@ export class Registry implements RegistryView {
     this.cache.set(id, {
       tools: facts,
       fingerprint: snapshot.fingerprint,
+      fetchedAt: now,
       exp: now + this.ttlMs,
       staleUntil: now + this.ttlMs + this.staleMs,
     });
@@ -1980,6 +1984,7 @@ export class Registry implements RegistryView {
         this.cache.set(id, {
           tools: persisted.tools,
           fingerprint: persisted.fingerprint,
+          fetchedAt: persisted.fetchedAt,
           exp: persisted.expiresAt,
           staleUntil: persisted.staleUntil,
         });
@@ -2125,6 +2130,12 @@ export class Registry implements RegistryView {
       logFailure(this.opts.logger, "credential shape read failed", failureRecord({ connector: id }, error));
       return undefined;
     }
+  }
+
+  /** Age of a complete cache entry; reads never refresh it. */
+  catalogAgeMs(id: string): number | null {
+    const entry = this.cache.get(id);
+    return entry ? Math.max(0, Date.now() - entry.fetchedAt) : null;
   }
 
   /** Best-effort connector status for the operator UI. */
@@ -2332,6 +2343,10 @@ class ScopedRegistryView implements RegistryView {
       definition,
       value,
     );
+  }
+
+  catalogAgeMs(id: string): number | null {
+    return this.registryFor(id)?.catalogAgeMs(id) ?? null;
   }
 
   statusFor(

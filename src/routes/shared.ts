@@ -21,6 +21,8 @@ export interface ServerOptions {
    * read it here rather than from fields copied out of it one by one.
    */
   config: ResolvedConfig;
+  /** Construction-time allowlisted snapshot, frozen by describeConfig. */
+  configDescription: import("../describe-config.js").ConnectaConfigDescription;
   registry: Registry;
   /** Validated named pools served at `/mcp/<name>`; empty when none declared. */
   pools: ReadonlyMap<string, ResolvedPool>;
