@@ -796,6 +796,17 @@ try {
       deployment,
       () => serverOutput,
     );
+    const shell = await fetch(`http://127.0.0.1:${port}/`);
+    const html = await shell.text();
+    if (shell.status !== 200 || html.length > 5000 || !shell.headers.get("content-security-policy")?.startsWith("script-src 'self'")) {
+      throw new Error("Installed package did not serve a small same-origin operator shell");
+    }
+    const assets = [...html.matchAll(/(?:src|href)="(\/ui\/assets\/[^" ]+)"/g)].map(match => match[1]);
+    if (!assets.some(path => path.endsWith(".js")) || !assets.some(path => path.endsWith(".css"))) throw new Error("Installed shell missing hashed assets");
+    for (const path of assets) {
+      const response = await fetch(`http://127.0.0.1:${port}${path}`);
+      if (response.status !== 200 || !response.headers.get("cache-control")?.includes("immutable") || !(await response.arrayBuffer()).byteLength) throw new Error(`Installed asset failed: ${path}`);
+    }
     const generatedConnecta = join(
       generatedRoot,
       "node_modules",

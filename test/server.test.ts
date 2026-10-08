@@ -1639,7 +1639,7 @@ describe("server open routes", () => {
     for (const path of ["/"]) {
       const ui = await c.fetch(new Request(`${BASE}${path}`));
       const csp = ui.headers.get("Content-Security-Policy") ?? "";
-      expect(csp).toContain("script-src 'nonce-");
+      expect(csp).toContain("script-src 'self'");
       expect(csp).toContain("frame-ancestors 'none'");
       expect(ui.headers.get("X-Frame-Options")).toBe("DENY");
     }

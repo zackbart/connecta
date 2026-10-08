@@ -14,8 +14,9 @@ import {
   type UiToolSafety,
 } from "./operator-ui/model.js";
 import {
-  OPERATOR_UI_CSS,
-  OPERATOR_UI_SCRIPT,
+  OPERATOR_UI_STYLE_PATH,
+  OPERATOR_UI_SCRIPT_PATH,
+  OPERATOR_UI_NOTICES_PATH,
 } from "./operator-ui/generated.js";
 import type { RegistryView } from "./registry.js";
 import type {
@@ -42,14 +43,6 @@ import {
   resolveBranding,
 } from "./branding.js";
 export { CONNECTA_FAVICON_SVG, resolveBranding, isSafeHttpUrl, isSafeHttpsUrl, isSafeIconHref } from "./branding.js";
-/**
- * A JS string literal safe to inline in a script element. Escaping `/` keeps
- * an operator-supplied `</script>` from terminating the element early.
- */
-function stringForInlineScript(value: string): string {
-  return JSON.stringify(value).replace(/\//g, "\\/");
-}
-
 export type OperatorPage =
   | "tokens"
   | "connections"
@@ -179,7 +172,8 @@ export function renderUiHtml(
   uiAuth?: UiAuthConfig,
   mcpUrl = "/mcp",
   branding?: ConnectaBranding,
-  nonce?: string,
+  /** @deprecated Scripts load from same-origin assets; ignored. */
+  _nonce?: string,
   page: OperatorPage = "connections",
   options: {
     /** Where the Connections page lives, when this shell is on another origin. */
@@ -202,7 +196,7 @@ export function renderUiHtml(
       ? clerk.frontendApiUrl
       : undefined;
   // Enumerated field by field, because this object is serialized into the page's
-  // inline script: a rejected frontendApiUrl must not reach the document through
+  // JSON config: a rejected frontendApiUrl must not reach the document through
   // `AUTH` after being kept out of the `<script src>`, and a rejected
   // signInUrl/signUpUrl — which `AUTH` is the only path into the page for — must
   // not reach it at all. Dropping one leaves the key absent, so `Clerk.load`
@@ -221,12 +215,10 @@ export function renderUiHtml(
       }
     : (uiAuth ?? { kind: "bearer" as const });
   const brand = resolveBranding(branding);
-  // When an operator shell ships a nonce-based CSP, every script it emits must
-  // carry that nonce to run; without a nonce the markup is unchanged.
-  const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+
   const clerkScript =
     clerk && clerkScriptOrigin
-      ? `<script${nonceAttr} crossorigin="anonymous" data-clerk-publishable-key="${escapeHtml(clerk.publishableKey)}" src="${escapeHtml(clerkScriptOrigin)}/npm/@clerk/clerk-js@6/dist/clerk.browser.js"></script>`
+      ? `<script crossorigin="anonymous" data-clerk-publishable-key="${escapeHtml(clerk.publishableKey)}" src="${escapeHtml(clerkScriptOrigin)}/npm/@clerk/clerk-js@6/dist/clerk.browser.js"></script>`
       : "";
 
   // The shared layout owns the head, scheme, theme, and masthead; the shell
@@ -235,9 +227,10 @@ export function renderUiHtml(
   return renderPage(branding, {
     title: operatorPageTitle(page, brand.pageTitle),
     uiMounted: true,
+    operatorShell: true,
     iconOrigin: options.iconOrigin,
-    styles: OPERATOR_UI_CSS,
-    head: clerkScript,
+    styles: "",
+    head: `<link rel="stylesheet" href="${OPERATOR_UI_STYLE_PATH}"><link rel="license" href="${OPERATOR_UI_NOTICES_PATH}">` + clerkScript,
     skipTo: { id: "operatorContent", label: "Skip to operator page" },
     mastheadEnd: '<div id="operatorNav"></div>',
     body: `
@@ -252,16 +245,11 @@ export function renderUiHtml(
   </div>
 </main>
 `,
-    tail: `<script${nonceAttr}>
-const AUTH = ${jsonForInlineScript(auth)};
-const MCP_URL = ${jsonForInlineScript(mcpUrl)};
-const INITIAL_PAGE = ${jsonForInlineScript(page)};
-const HOME_URL = ${jsonForInlineScript(options.homeUrl ?? "/")};
-const TITLE_SUFFIX = ${jsonForInlineScript(brand.pageTitle)};
-const PRODUCT_NAME = ${stringForInlineScript(brand.productName)};
-const PRODUCT_DESCRIPTION = ${stringForInlineScript(brand.description)};
-const PRODUCT_OPERATOR_LABEL = ${stringForInlineScript(brand.productName + " operator")};
-${OPERATOR_UI_SCRIPT}</script>`,
+    tail: `<script id="operatorConfig" type="application/json">${jsonForInlineScript({
+      auth, mcpUrl, initialPage: page, homeUrl: options.homeUrl ?? "/",
+      titleSuffix: brand.pageTitle, productName: brand.productName,
+      productDescription: brand.description, productOperatorLabel: brand.productName + " operator",
+    })}</script><script defer src="${OPERATOR_UI_SCRIPT_PATH}"></script>`,
   });
 }
 

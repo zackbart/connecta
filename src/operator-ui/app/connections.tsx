@@ -1,4 +1,6 @@
-import { useState } from "preact/hooks";
+import { DataTable } from "./primitives.js";
+import type { ColumnDef } from "@tanstack/react-table";
+import { useState } from "react";
 import { CredentialCard } from "./credentials.js";
 import { filterUiConnectors, type UiConnector } from "../model.js";
 import {
@@ -70,17 +72,17 @@ function DriftPanel({ connector }: { connector: UiConnector }) {
     {/* Kept outside the counted panel, so the panel stays counts only. */}
     <div
       id={`drift-${connector.id}`}
-      class={`connector-drift ${state}`}
+      className={`connector-drift ${state}`}
       data-drift={state}
     >
-      <p class="cap">{DRIFT_HEADING[state]}</p>
-      <p class="meta">{driftSummary(drift)}</p>
+      <p className="cap">{DRIFT_HEADING[state]}</p>
+      <p className="meta">{driftSummary(drift)}</p>
       {state === "unavailable" ? null : (
-        <ul class="drift-counts">
+        <ul className="drift-counts">
           {driftCounts(drift).map(({ key, label, count }) => (
-            <li key={key} class={count > 0 ? "drift-count flagged" : "drift-count"}>
-              <span class="drift-count-value">{count}</span>
-              <span class="drift-count-label">{label}</span>
+            <li key={key} className={count > 0 ? "drift-count flagged" : "drift-count"}>
+              <span className="drift-count-value">{count}</span>
+              <span className="drift-count-label">{label}</span>
             </li>
           ))}
         </ul>
@@ -106,11 +108,16 @@ function SafetyBadge({ safety }: { safety: UiConnector["tools"][number]["safety"
   const badge = safety ? TOOL_SAFETY_BADGE[safety] : undefined;
   if (!badge) return null;
   return (
-    <span class="tool-safety" title={badge.title} data-safety={safety}>
+    <span className="tool-safety" title={badge.title} data-safety={safety}>
       <Badge tone={badge.tone}>{badge.label}</Badge>
     </span>
   );
 }
+
+const toolColumns: ColumnDef<UiConnector["tools"][number]>[] = [
+  { accessorKey: "address", header: "Tool", cell: ({ row }) => <div className="tool"><div className="tool-head"><code>{row.original.address}</code></div>{row.original.description ? <span className="td">{row.original.description}</span> : null}</div> },
+  { accessorKey: "safety", header: "Classification", cell: ({ row }) => <SafetyBadge safety={row.original.safety} /> },
+];
 
 /**
  * One MCP endpoint: its URL, a copy button, and the client snippets for it.
@@ -129,10 +136,10 @@ function Endpoint({
   primary?: boolean;
 }) {
   return (
-    <div class="endpoint-block" data-endpoint={name}>
-      <div class="endpoint">
-        {label ? <span class="endpoint-label cap">{label}</span> : null}
-        <code {...(primary ? { id: "mcpUrl" } : {})} class="mono">
+    <div className="endpoint-block" data-endpoint={name}>
+      <div className="endpoint">
+        {label ? <span className="endpoint-label cap">{label}</span> : null}
+        <code {...(primary ? { id: "mcpUrl" } : {})} className="mono">
           {url}
         </code>
         <CopyButton
@@ -141,26 +148,26 @@ function Endpoint({
           {...(label ? { ariaLabel: `Copy URL for ${label}` } : {})}
         />
       </div>
-      <details class="setup">
-        <summary class="disclosure">
+      <details className="setup">
+        <summary className="disclosure">
           Client setup{label ? ` · ${label}` : ""}
         </summary>
-        <div class="setup-list">
+        <div className="setup-list">
           {clientSetupCommands(name, url).map((command) => (
-            <div class="setup-item" key={command.id} data-setup={command.id}>
-              <div class="setup-head">
-                <span class="cap">{command.label}</span>
+            <div className="setup-item" key={command.id} data-setup={command.id}>
+              <div className="setup-head">
+                <span className="cap">{command.label}</span>
                 <CopyButton
                   value={command.text}
                   label="Copy"
-                  class="btn quiet"
+                  className="btn quiet"
                   ariaLabel={`Copy ${command.label} setup${label ? ` for ${label}` : ""}`}
                 />
               </div>
-              <pre class="setup-code">{command.text}</pre>
+              <pre className="setup-code">{command.text}</pre>
             </div>
           ))}
-          <p class="meta">
+          <p className="meta">
             No token is included. Clients sign in through this deployment's inbound auth.
           </p>
         </div>
@@ -195,7 +202,7 @@ function AuthActions({
   // one thing this identity can do.
   if (!connector.oauth || !manage) {
     return authorization && connector.status !== "ok" ? (
-      <a class="btn primary" href={authorization} target="_blank" rel="noopener noreferrer">
+      <a className="btn primary" href={authorization} target="_blank" rel="noopener noreferrer">
         Authorize connector
       </a>
     ) : null;
@@ -206,7 +213,7 @@ function AuthActions({
     return (
       <a
         id={`authorize-${id}`}
-        class="btn primary"
+        className="btn primary"
         href={authorization}
         target="_blank"
         rel="noopener noreferrer"
@@ -221,7 +228,7 @@ function AuthActions({
       <button
         type="button"
         id={`connect-${id}`}
-        class={needsAuth ? "btn primary" : "btn"}
+        className={needsAuth ? "btn primary" : "btn"}
         aria-label={`${needsAuth ? "Connect" : "Reconnect"} ${name}`}
         disabled={busy}
         onClick={() => void startOAuth(id, "continue")}
@@ -236,7 +243,7 @@ function AuthActions({
       <button
         type="button"
         id={`reconnect-${id}`}
-        class="btn"
+        className="btn"
         aria-label={`${switching ? "Switch account for" : "Reconnect"} ${name}`}
         disabled={busy}
         onClick={() => askConfirm(id, "oauth_restart")}
@@ -246,7 +253,7 @@ function AuthActions({
       <button
         type="button"
         id={`disconnect-${id}`}
-        class="btn danger"
+        className="btn danger"
         aria-label={`Disconnect ${name}`}
         disabled={busy}
         onClick={() => askConfirm(id, "oauth_disconnect")}
@@ -308,15 +315,15 @@ function ConnectorRow({
       : null;
   const statusTone = local ? "warn" : connectorStatusTone(connector.status);
   return (
-    <div class={shown ? "conn open" : "conn"} data-connector={id}>
-      <div class="conn-head">
-        <span class="conn-main">
-          <span class={`dot ${local ? "warn" : connector.status}`} aria-hidden="true" />
-          <h2 class="conn-name">
+    <div className={shown ? "conn open" : "conn"} data-connector={id}>
+      <div className="conn-head">
+        <span className="conn-main">
+          <span className={`dot ${local ? "warn" : connector.status}`} aria-hidden="true" />
+          <h2 className="conn-name">
             <button
               type="button"
               id={`conn-toggle-${id}`}
-              class="conn-toggle"
+              className="conn-toggle"
               aria-expanded={shown ? "true" : "false"}
               aria-controls={`conn-body-${id}`}
               aria-describedby={`conn-state-${id}`}
@@ -325,9 +332,9 @@ function ConnectorRow({
               {name}
             </button>
           </h2>
-          {connector.title ? <span class="conn-id mono">{id}</span> : null}
+          {connector.title ? <span className="conn-id mono">{id}</span> : null}
         </span>
-        <span class="conn-badges" id={`conn-state-${id}`}>
+        <span className="conn-badges" id={`conn-state-${id}`}>
           {drift === "warning" ? <Badge tone="warn">drift</Badge> : null}
           <Badge>{authScopeLabel(connector.authScope)}</Badge>
           <Badge>
@@ -336,36 +343,36 @@ function ConnectorRow({
               : toolCountLabel(connector.toolCount)}
           </Badge>
           <Badge tone={statusTone}>{statusLabel}</Badge>
-          <span class="conn-caret" aria-hidden="true" />
+          <span className="conn-caret" aria-hidden="true" />
         </span>
       </div>
       {/* A plain `hidden`, not `until-found`: WebKit implements the latter
           but still lays out the closed body, and the filter above already
           finds a connector or tool by name. */}
-      <div class="conn-body" id={`conn-body-${id}`} hidden={!shown}>
+      <div className="conn-body" id={`conn-body-${id}`} hidden={!shown}>
         {connector.description ? (
-          <p class="conn-note">{connector.description}</p>
+          <p className="conn-note">{connector.description}</p>
         ) : null}
         {/* Fixed copy keyed by the server's classification — never a status
             message, which can quote a downstream error body (see PROBLEM_COPY). */}
         {problem && connector.problem ? (
           <p
-            class={problemTone(connector.problem) === "warn" ? "msg warn" : "msg"}
+            className={problemTone(connector.problem) === "warn" ? "msg warn" : "msg"}
             data-problem={connector.problem}
           >
             {problem}
           </p>
         ) : null}
         {local ? (
-          <p class="msg warn" data-load-failure={local}>
+          <p className="msg warn" data-load-failure={local}>
             {connectorLoadFailureCopy(local, productName)}
           </p>
         ) : null}
         {connector.authorizationUrl && !safeHttpHref(connector.authorizationUrl) ? (
-          <p class="meta">Authorization URL: {connector.authorizationUrl}</p>
+          <p className="meta">Authorization URL: {connector.authorizationUrl}</p>
         ) : null}
-        {manage ? null : <p class="meta">{permissionLabel(connector)}</p>}
-        <div class="actions">
+        {manage ? null : <p className="meta">{permissionLabel(connector)}</p>}
+        <div className="actions">
           {/* A row that failed on this side of the deployment has one thing to
               try — reading it again — and no authorization to redo. */}
           {local ? null : (
@@ -373,7 +380,7 @@ function ConnectorRow({
           )}
           {fixKind ? <FixPromptButton kind={fixKind} connectorId={id} name={name} /> : null}
           <button
-            class={local ? "btn primary" : "btn quiet"}
+            className={local ? "btn primary" : "btn quiet"}
             type="button"
             aria-label={`Refresh ${name}`}
             disabled={connector.status === "loading"}
@@ -417,35 +424,25 @@ function ConnectorRow({
         ) : null}
         {tools.length ? (
           <details open={forceOpen}>
-            <summary class="disclosure">Tools ({tools.length})</summary>
-            <div class="tool-list">
+            <summary className="disclosure">Tools ({tools.length})</summary>
+            <div className="tool-list">
               {tools.some((tool) => tool.safety) ? (
-                <p class="meta tool-legend">
+                <p className="meta tool-legend">
                   Reads run inside execute_code programs. Writes run in trusted
                   pools, or through call_destructive_tool in read-only pools.
                   Approval belongs to the host.
                 </p>
               ) : null}
-              {tools.map((tool) => (
-                <div class="tool" key={tool.address}>
-                  <div class="tool-head">
-                    <code>{tool.address}</code>
-                    <SafetyBadge safety={tool.safety} />
-                  </div>
-                  {tool.description ? (
-                    <span class="td">{tool.description}</span>
-                  ) : null}
-                </div>
-              ))}
+              <DataTable data={tools} columns={toolColumns} label={`Tools for ${name}`} />
             </div>
           </details>
         ) : null}
         <details>
-          <summary class="disclosure">Diagnostics</summary>
-          <div class="subcard">
+          <summary className="disclosure">Diagnostics</summary>
+          <div className="subcard">
             <DriftPanel connector={connector} />
             {connector.catalogAccess ? (
-              <p class="meta">
+              <p className="meta">
                 Agents last read its catalog{" "}
                 {connector.catalogAccess.state === "stale" ? "from a stale cache" : "fresh"}
                 {" · "}
@@ -472,7 +469,7 @@ function Endpoints({
   serverName: string | undefined;
 }) {
   return (
-    <div class="endpoints">
+    <div className="endpoints">
       <Endpoint
         url={mcpUrl}
         name={clientServerName(serverName)}
@@ -495,11 +492,11 @@ function Endpoints({
 function SummaryLine({ connectors }: { connectors: UiConnector[] }) {
   const parts = connectorSummaryParts(summarizeConnectors(connectors));
   return (
-    <p class="summary" id="connectorSummary">
+    <p className="summary" id="connectorSummary">
       {parts.map((part, index) => (
         <span key={part.text}>
-          {index > 0 ? <span class="sep"> · </span> : null}
-          <span class={part.tone === "neutral" ? "" : part.tone}>{part.text}</span>
+          {index > 0 ? <span className="sep"> · </span> : null}
+          <span className={part.tone === "neutral" ? "" : part.tone}>{part.text}</span>
         </span>
       ))}
     </p>
@@ -512,14 +509,14 @@ export function ConnectionsPage({ state }: { state: OperatorState }) {
   const filtered = data ? filterUiConnectors(data.connectors, query) : [];
   return (
     <section id="connectionsView">
-      <div class="lead">
+      <div className="lead">
         <h1 id="connectionsHeading" tabIndex={-1}>
           Connections
         </h1>
-        <div class="lead-copy">
+        <div className="lead-copy">
           <p>Point an MCP client at this endpoint to reach the tools below.</p>
           <Endpoints pools={data?.pools ?? []} serverName={data?.serverInfo?.name} />
-          <p class="cap" id="serverInfo">
+          <p className="cap" id="serverInfo">
             {data
               ? `${data.serverInfo?.name || productName} v${data.connectaVersion || "?"}`
               : productOperatorLabel}
@@ -527,13 +524,13 @@ export function ConnectionsPage({ state }: { state: OperatorState }) {
           {data ? <SummaryLine connectors={data.connectors} /> : null}
         </div>
       </div>
-      <section class="section" aria-labelledby="connectorLedgerHeading">
-        <div class="section-head">
+      <section className="section" aria-labelledby="connectorLedgerHeading">
+        <div className="section-head">
           <h2 id="connectorLedgerHeading" tabIndex={-1}>Connectors</h2>
           <input
             id="filter"
             type="search"
-            class="filter"
+            className="filter"
             placeholder="Filter connectors or tools…"
             aria-label="Filter connectors or tools"
             value={state.connectorFilter}
@@ -543,7 +540,7 @@ export function ConnectionsPage({ state }: { state: OperatorState }) {
         </div>
         <div
           id="list"
-          class={!data || filtered.length === 0 ? "" : "rows"}
+          className={!data || filtered.length === 0 ? "" : "rows"}
           aria-busy={state.refreshing || (!data && !state.loadFailure) ? "true" : "false"}
         >
           {!data ? (

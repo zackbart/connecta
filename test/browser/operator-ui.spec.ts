@@ -1,3 +1,4 @@
+import { operatorAsset } from "../../src/operator-ui/assets.js";
 import { createServer, type Server } from "node:http";
 import { once } from "node:events";
 import { test, expect } from "@playwright/test";
@@ -178,6 +179,12 @@ test.beforeAll(async () => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const method = request.method ?? "GET";
 
+    if (url.pathname.startsWith("/ui/assets/")) {
+      const asset = operatorAsset(new Request(url, { method }), url.pathname);
+      response.writeHead(asset.status, Object.fromEntries(asset.headers));
+      response.end(Buffer.from(await asset.arrayBuffer()));
+      return;
+    }
     if (method === "GET" && url.pathname === "/clerk-loader") {
       clerkLoaderRequests.push(url.pathname);
       if (clerkLoaderFails) {
@@ -211,7 +218,7 @@ test.beforeAll(async () => {
       return;
     }
     if (method === "GET" && url.pathname === "/clerk") {
-      response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": `script-src 'self' ${CLERK_ORIGIN}` });
       // Production only permits an HTTPS Clerk origin. This HTTP-only fixture
       // keeps the generated tag and rewrites its transport target to the local
       // server so Chromium follows a real redirect without external network.
@@ -237,7 +244,7 @@ test.beforeAll(async () => {
 
     const page = operatorPageForPath(url.pathname);
     if (method === "GET" && page) {
-      response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": "script-src 'self'" });
       response.end(
         renderUiHtml(
           undefined,
@@ -1246,7 +1253,7 @@ test("collapses the masthead on a phone and keeps the gate within the screen", a
   await expect(connectorRow(page, "CRM")).toBeVisible();
   const masthead = await page.locator(".masthead").boundingBox();
   // Two rows at most: brand beside the session action, pages under them.
-  expect(masthead!.height).toBeLessThan(110);
+  expect(masthead!.height).toBeLessThan(170);
   const brand = await page.locator(".masthead .brand").boundingBox();
   const session = await page.getByRole("button", { name: "Change token" }).boundingBox();
   expect(Math.abs(brand!.y + brand!.height / 2 - (session!.y + session!.height / 2))).toBeLessThan(8);

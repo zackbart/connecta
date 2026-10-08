@@ -239,6 +239,8 @@ function themeColorMeta(branding: ConnectaBranding | undefined, theme: ResolvedT
 export interface PageLayout {
   /** The complete `<title>`. */
   title: string;
+  /** The SPA puts the masthead in its sidebar. */
+  operatorShell?: boolean;
   /** Whether the operator UI is mounted, and so serves `/favicon.*` and `/`. */
   uiMounted: boolean;
   /**
@@ -332,7 +334,7 @@ ${icons.join("\n")}
 ${layout.head ?? ""}
 <style>${styles}${themeCss(brand.theme)}</style>
 </head>
-<body>
+<body${layout.operatorShell ? ' class="operator-shell"' : ""}>
 ${skip}<header class="masthead shell">
   <div class="masthead-inner">
     <div class="mast-nav">

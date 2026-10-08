@@ -13,3 +13,6 @@ test-results/
 assets/icon-options/
 eval/results/
 eval/deploy/.wrangler/
+
+# Browser assets are generated before builds and tests.
+src/operator-ui/generated.ts

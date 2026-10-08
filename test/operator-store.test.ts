@@ -88,11 +88,6 @@ async function loadStore(
     },
     confirm: () => true,
   };
-  for (const [name, value] of Object.entries(PAGE_CONSTANTS)) {
-    vi.stubGlobal(name, value);
-  }
-  vi.stubGlobal("INITIAL_PAGE", page);
-  vi.stubGlobal("AUTH", browserAuth);
   vi.stubGlobal("window", window);
   vi.stubGlobal("localStorage", {
     getItem: () => null,
@@ -101,6 +96,12 @@ async function loadStore(
   });
   vi.stubGlobal("fetch", fetchMock);
   vi.resetModules();
+  vi.doMock("../src/operator-ui/app/config.js", () => ({
+    auth: browserAuth, initialPage: page, mcpUrl: PAGE_CONSTANTS.MCP_URL,
+    homeUrl: PAGE_CONSTANTS.HOME_URL, titleSuffix: PAGE_CONSTANTS.TITLE_SUFFIX,
+    productName: PAGE_CONSTANTS.PRODUCT_NAME, productDescription: PAGE_CONSTANTS.PRODUCT_DESCRIPTION,
+    productOperatorLabel: PAGE_CONSTANTS.PRODUCT_OPERATOR_LABEL, TOKEN_KEY: "connecta:token",
+  }));
   const store = await import("../src/operator-ui/app/store.js");
   return {
     store,
