@@ -92,7 +92,9 @@ it("routes every production refresh send through the fingerprint resolution CAS 
   const staticOAuth = source("auth/static-oauth.ts");
   expect(staticOAuth.getText()).not.toContain("redirectSafeFetch");
   const tokenEndpoint = nodes(staticOAuth).find((node) => ts.isVariableDeclaration(node) && node.name.getText() === "tokenEndpointFetch")!;
-  const staticSends = nodes(tokenEndpoint).filter(ts.isCallExpression).filter((call) => call.expression.getText() === "fetch");
+  const tokenCalls = nodes(tokenEndpoint).filter(ts.isCallExpression);
+  const staticSends = tokenCalls.filter((call) => call.expression.getText() === "sentSecretsFetch(ctx)");
   expect(staticSends).toHaveLength(2);
+  expect(tokenCalls.filter((call) => call.expression.getText() === "fetch")).toHaveLength(0);
   for (const send of staticSends) expect(send.arguments[1]!.getText()).toContain('redirect: "manual"');
 });
