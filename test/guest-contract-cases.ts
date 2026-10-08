@@ -995,6 +995,24 @@ return fs;
     },
   },
   {
+    clauses: "E1, E6, X11",
+    name: "INV-6: guest failure metadata cannot rewrite retained host recovery",
+    code: `async () => {
+      try { await connecta.call("missing.read"); }
+      catch (error) {
+        try { error.details.nextAction.function = "forged_function"; } catch {}
+        try { error.details.nextAction.arguments.query = "forged_query"; } catch {}
+        throw error;
+      }
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(true);
+      expect(outcome.value.error).toMatchObject({ code: "unknown_address", nextAction: {
+        function: "connecta.search", arguments: { query: "read" }
+      } });
+    },
+  },
+  {
     clauses: "E6, X11",
     name: "INV-6: codec hooks cannot steal an authenticated host failure frame",
     code: `async () => {

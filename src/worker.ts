@@ -126,7 +126,7 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
               defineProperties(error, {
                 code: { value: reply.call.code, enumerable: true },
                 retryable: { value: reply.call.retryable, enumerable: true },
-                details: { value: freeze(reply.call), enumerable: true }
+                details: { value: freeze(clone(reply.call)), enumerable: true }
               });
             }
             throw error;
@@ -137,6 +137,7 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
     const NativeError = Error;
     const defineProperties = Object.defineProperties;
     const freeze = Object.freeze;
+    const clone = structuredClone;
     const retain = Function.prototype.call.bind(WeakMap.prototype.set);
     const lookup = Function.prototype.call.bind(WeakMap.prototype.get);
     const slice = Function.prototype.call.bind(String.prototype.slice);
