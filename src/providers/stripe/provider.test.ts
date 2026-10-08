@@ -396,7 +396,7 @@ describe("stripe()", () => {
 
   it("rejects an empty purpose and an unknown static mode at construction", () => {
     expect(() => stripe("billing", { purpose: "  " })).toThrow(
-      "a non-empty purpose",
+      "a non-empty account purpose",
     );
     expect(() =>
       stripe("billing", {

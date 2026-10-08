@@ -69,7 +69,7 @@ import type {
 } from "../../types.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
-import { defineProvider } from "../../provider.js";
+import { asProviderFactory } from "../../provider.js";
 
 /** Every church's API lives at `https://<subdomain>.breezechms.com/api`. */
 export const BREEZE_HOST_SUFFIX = ".breezechms.com";
@@ -1488,7 +1488,7 @@ function normalizeSubdomain(raw: unknown): string {
 const BREEZE_OPTIONS = optionsOf<BreezeOptions>()({ ...PROVIDER_COMMON, ...keys("subdomain", "defaultPageSize") });
 
 /** A maintained Breeze ChMS connection for one church's subdomain. */
-export const breeze = defineProvider<BreezeOptions>({
+export const breeze = asProviderFactory<BreezeOptions>({
   name: "breeze",
   title: "Breeze ChMS",
   kind: "api",

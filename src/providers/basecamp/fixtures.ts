@@ -3,7 +3,7 @@ const options: Parameters<typeof basecamp>[1] = { "purpose":"Audit fixture","cli
 export const fixture = {
   name: "basecamp",
   options,
-  cases: [{"label":"default","options":{}},{"label":"personal","options":{"authScope":"personal"}}],
+  cases: [{"label":"padded-purpose","options":{"purpose":"  Audit fixture  "}},{"label":"empty-title","options":{"title":""}},{"label":"blank-title","options":{"title":" "}},{"label":"default","options":{}},{"label":"personal","options":{"authScope":"personal"}}],
   create(id = "fixture", overrides: Partial<Parameters<typeof basecamp>[1]> = {}) { return basecamp(id, { ...options, ...overrides } as Parameters<typeof basecamp>[1]); },
   conventions: undefined,
 };

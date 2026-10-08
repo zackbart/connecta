@@ -3,7 +3,7 @@ const options: Parameters<typeof tithely>[1] = { "purpose":"Audit fixture","envi
 export const fixture = {
   name: "tithely",
   options,
-  cases: [{"label":"default","options":{}},{"label":"test","options":{"environment":"test"}}],
+  cases: [{"label":"padded-purpose","options":{"purpose":"  Audit fixture  "}},{"label":"empty-title","options":{"title":""}},{"label":"blank-title","options":{"title":" "}},{"label":"default","options":{}},{"label":"test","options":{"environment":"test"}}],
   create(id = "fixture", overrides: Partial<Parameters<typeof tithely>[1]> = {}) { return tithely(id, { ...options, ...overrides } as Parameters<typeof tithely>[1]); },
   conventions: {"verbs":["list","get","tithely"],"nestedDescriptionExceptions":[],"auth":"credential"},
 };

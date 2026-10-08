@@ -12,7 +12,7 @@ import type {
 } from "../../types.js";
 import { optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON, REMOTE_MCP_AUTH } from "../../connectors/option-shapes.js";
-import { defineProvider } from "../../provider.js";
+import { asProviderFactory } from "../../provider.js";
 
 /** RevenueCat publishes one hosted MCP endpoint, streamable HTTP. */
 export const REVENUECAT_MCP_ENDPOINT = "https://mcp.revenuecat.ai/mcp";
@@ -329,7 +329,7 @@ Single-project connection: ${purpose}${skill.fragments.guide_3}${sharedUsageGuid
 const REVENUECAT_OPTIONS = optionsOf<RevenueCatOptions>()({ ...PROVIDER_COMMON, auth: REMOTE_MCP_AUTH });
 
 /** A maintained RevenueCat hosted-MCP connection. */
-export const revenuecat = defineProvider<RevenueCatOptions>({
+export const revenuecat = asProviderFactory<RevenueCatOptions>({
   name: "revenuecat",
   title: "RevenueCat",
   kind: "mcp",

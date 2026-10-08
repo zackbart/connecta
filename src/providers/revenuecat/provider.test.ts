@@ -376,7 +376,7 @@ describe("revenuecat()", () => {
 
   it("rejects an empty purpose at construction (P2)", () => {
     expect(() => revenuecat("revenuecat", { purpose: "  " })).toThrow(
-      "a non-empty purpose",
+      "a non-empty project purpose",
     );
   });
 

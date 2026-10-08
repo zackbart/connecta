@@ -8,7 +8,7 @@ import { skill } from "./skill.generated.js";
  * header-authenticated JSON over thirty-eight operations, so `fetch` through
  * the shared guarded transport keeps this subpath Workers-clean and adds
  * nothing to install. Every tool below is hand-written. Overflow's OpenAPI
- * document is drift evidence only — `scripts/drift/overflow-endpoints.json`
+ * document is drift evidence only — `src/providers/overflow/drift.json`
  * records the operations the named tools touch, and
  * `npm run providers:check -- --provider overflow` compares them with the
  * published document without a credential. That document is served only by
@@ -45,7 +45,7 @@ import type {
 } from "../../types.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
-import { defineProvider } from "../../provider.js";
+import { asProviderFactory } from "../../provider.js";
 
 /**
  * Overflow's two published environments. They are separate deployments with
@@ -1763,7 +1763,7 @@ const OVERFLOW_OPTIONS = optionsOf<OverflowOptions>()({ ...PROVIDER_COMMON, ...k
  * cannot infer — Overflow's keys carry no recognizable environment marker — so
  * the operator states it, and the title and the guide's first line repeat it.
  */
-export const overflow = defineProvider<OverflowOptions>({
+export const overflow = asProviderFactory<OverflowOptions>({
   name: "overflow",
   title: "Overflow",
   kind: "api",

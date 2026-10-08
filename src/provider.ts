@@ -264,6 +264,23 @@ export function defineProvider<O extends ProviderOptions>(
 }
 
 /**
+ * Attach the same validated definition to an existing provider constructor.
+ * Its option policy stays in its builder during the mechanical folder move;
+ * adopting defineProvider's common-value policy is a separate conversion.
+ */
+export function asProviderFactory<O extends ProviderOptions>(
+  definition: Omit<ProviderDefinition<O>, "create"> & {
+    create(id: string, options: Readonly<O>): Connector;
+  },
+): ProviderFactory<O> {
+  const frozen = defineProvider(definition).definition;
+  const create = definition.create;
+  const factory = (id: string, options: O): Connector =>
+    asProvider(frozen.name, frozen.options, id, options, create);
+  return Object.freeze(Object.assign(factory, { definition: frozen }));
+}
+
+/**
  * Build a maintained provider's connector: refuse unknown options and
  * accessors by path before the builder reads any of them, then stamp the
  * provider onto its description, so the operator surface can say "Linear"
@@ -311,8 +328,9 @@ function providerConstructionError(provider: string, id: string, error: unknown)
   const at = `${provider}(${JSON.stringify(id)})`;
   // The same helper handles legacy provider validation and shared config
   // validation. Retain the original error class and the actionable detail.
-  const prefix = new RegExp(`^${provider}\\((?:"[^"]*")?\\)\\s*`);
-  const detail = error.message.replace(prefix, "").replace(/^requires\s+/, "")
+  const prefix = error.message.startsWith(at) ? at
+    : error.message.startsWith(`${provider}()`) ? `${provider}()` : "";
+  const detail = error.message.slice(prefix.length).trimStart().replace(/^requires\s+/, "")
     .replace(/^(.+) must be /, "$1 to be ")
     .replace(/^declares /, "a consistent declaration of ")
     .replace(/^with headers or credential auth requires /, "headers or credential auth to declare ");

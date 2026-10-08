@@ -138,7 +138,7 @@ function toolNamed(tools: ToolDef[], name: string): ToolDef {
 describe("cloudflare() construction", () => {
   it("rejects an empty account purpose", () => {
     expect(() => cloudflare("edge", { purpose: "   " })).toThrow(
-      "a non-empty purpose",
+      "a non-empty account purpose",
     );
   });
 

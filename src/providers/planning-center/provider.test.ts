@@ -104,7 +104,7 @@ function person(id: string, attributes: Record<string, unknown>, relationships: 
 
 describe("planningCenter() construction", () => {
   it("refuses a blank purpose, an out-of-range page size, and a multi-line user agent", () => {
-    expect(() => planningCenter("church", { purpose: "  " })).toThrow("non-empty purpose");
+    expect(() => planningCenter("church", { purpose: "  " })).toThrow("non-empty organization purpose");
     expect(() => connection({ defaultPageSize: 101 })).toThrow("between 1 and 100");
     expect(() => connection({ defaultPageSize: 0 })).toThrow("between 1 and 100");
     expect(() => connection({ userAgent: "connecta\r\nX-Evil: 1" })).toThrow("single line");

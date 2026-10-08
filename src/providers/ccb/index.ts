@@ -23,7 +23,7 @@ import { skill } from "./skill.generated.js";
  * pledges, scheduled gifts, and financial settings, and that is all this
  * connector reaches.
  *
- * Drift is handled the Vercel way: `scripts/drift/ccb-endpoints.json` records
+ * Drift is handled the Vercel way: `src/providers/ccb/drift.json` records
  * every endpoint a named tool touches, and
  * `npm run providers:check -- --provider ccb` compares those rows with the
  * published, credential-free OpenAPI document at
@@ -47,7 +47,7 @@ import type {
 } from "../../types.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { CALL_ADMISSION } from "../../connectors/option-shapes.js";
-import { defineProvider } from "../../provider.js";
+import { asProviderFactory } from "../../provider.js";
 
 /** CCB's v2 media type. The API and its token endpoint both require it. */
 export const CCB_MEDIA_TYPE = "application/vnd.ccbchurch.v2+json";
@@ -1765,7 +1765,7 @@ const CCB_OPTIONS = optionsOf<CcbOptions>()({
 });
 
 /** A maintained Church Community Builder (Pushpay ChMS) v2 connection. */
-export const ccb = defineProvider<CcbOptions>({
+export const ccb = asProviderFactory<CcbOptions>({
   name: "ccb",
   title: "Church Community Builder",
   kind: "api",

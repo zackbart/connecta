@@ -25,7 +25,7 @@ import { skill } from "./skill.generated.js";
  * is not. Every write that overwrites content, renames, moves, trashes, or
  * changes sharing is destructive and crosses the host's approval prompt.
  *
- * Drift. `scripts/drift/drive-endpoints.json` records the eleven methods the
+ * Drift. `src/providers/drive/drift.json` records the eleven methods the
  * tools call, and `npm run providers:check -- --provider drive` reports a
  * touched contract that moved or a method that stopped accepting the scope
  * below.
@@ -42,7 +42,7 @@ import {
   type GoogleWorkspaceClient,
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
-import { defineProvider } from "../../provider.js";
+import { asProviderFactory } from "../../provider.js";
 
 export type {
   GoogleServiceAccount,
@@ -1866,7 +1866,7 @@ function usageGuide(purpose: string, instructions: string | undefined): string {
  * ownership. Every write crosses the host's approval unless the deployment
  * exempts it in `execute.approval`.
  */
-export const drive = defineProvider<DriveOptions>({
+export const drive = asProviderFactory<DriveOptions>({
   name: "drive",
   title: "Google Drive",
   kind: "api",

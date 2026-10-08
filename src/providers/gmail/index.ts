@@ -20,7 +20,7 @@ import { skill } from "./skill.generated.js";
  * not offer.
  *
  * Drift. Google publishes a credential-free Discovery document per API.
- * `scripts/drift/gmail-endpoints.json` records the nine methods the tools
+ * `src/providers/gmail/drift.json` records the nine methods the tools
  * call, and `npm run providers:check -- --provider gmail` reports a touched
  * contract that moved or a method that stopped accepting the scopes below.
  */
@@ -35,7 +35,7 @@ import {
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
-import { defineProvider } from "../../provider.js";
+import { asProviderFactory } from "../../provider.js";
 
 export type {
   GoogleServiceAccount,
@@ -1717,7 +1717,7 @@ function usageGuide(purpose: string, instructions: string | undefined): string {
  * because no tool reaches a send method. Drafts are additive writes the host
  * approves unless the deployment exempts `create_draft` in `execute.approval`.
  */
-export const gmail = defineProvider<GmailOptions>({
+export const gmail = asProviderFactory<GmailOptions>({
   name: "gmail",
   title: "Gmail",
   kind: "api",

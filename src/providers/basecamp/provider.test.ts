@@ -95,7 +95,7 @@ describe("basecamp()", () => {
 
   it("rejects an empty purpose at construction (P2)", () => {
     expect(() => connection({ purpose: "  " })).toThrow(
-      "a non-empty purpose",
+      "a non-empty account purpose",
     );
   });
 

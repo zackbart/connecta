@@ -147,7 +147,7 @@ const FULL_CHARGE = {
 describe("tithely() construction", () => {
   it("rejects a blank purpose, a missing environment, and invalid page sizes (H1, P4)", () => {
     expect(() => tithely("giving", { purpose: "  ", environment: "live" })).toThrow(
-      "a non-empty purpose",
+      "a non-empty account purpose",
     );
     expect(() =>
       tithely("giving", { purpose: "reports" } as Parameters<typeof tithely>[1]),

@@ -3,7 +3,7 @@ const options: Parameters<typeof ccb>[1] = { "purpose":"Audit fixture","environm
 export const fixture = {
   name: "ccb",
   options,
-  cases: [{"label":"default","options":{}},{"label":"identity","options":{"mode":"identity","access":"read"}}],
+  cases: [{"label":"padded-purpose","options":{"purpose":"  Audit fixture  "}},{"label":"empty-title","options":{"title":""}},{"label":"blank-title","options":{"title":" "}},{"label":"default","options":{}},{"label":"identity","options":{"mode":"identity","access":"read"}}],
   create(id = "fixture", overrides: Partial<Parameters<typeof ccb>[1]> = {}) { return ccb(id, { ...options, ...overrides } as Parameters<typeof ccb>[1]); },
   conventions: {"verbs":["list","get","ccb"],"nestedDescriptionExceptions":[],"auth":"oauth"},
 };

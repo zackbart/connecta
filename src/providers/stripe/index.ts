@@ -12,7 +12,7 @@ import type {
 } from "../../types.js";
 import { keys, optionsOf, strings, variants } from "../../config-schema.js";
 import { CREDENTIAL } from "../../connectors/option-shapes.js";
-import { defineProvider } from "../../provider.js";
+import { asProviderFactory } from "../../provider.js";
 
 /** Which Stripe environment a static credential reaches. */
 export type StripeMode = "production" | "sandbox";
@@ -281,7 +281,7 @@ const STRIPE_OPTIONS = optionsOf<StripeOptions>()({
 });
 
 /** A maintained Stripe hosted-MCP connection. */
-export const stripe = defineProvider<StripeOptions>({
+export const stripe = asProviderFactory<StripeOptions>({
   name: "stripe",
   title: "Stripe",
   kind: "mcp",

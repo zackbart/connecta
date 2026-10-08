@@ -39,7 +39,7 @@ import { skill } from "./skill.generated.js";
  * all or none, and tells the caller to re-read, not repeat.
  *
  * Drift. Google publishes a credential-free Discovery document per API.
- * `scripts/drift/slides-endpoints.json` records the five methods the tools
+ * `src/providers/slides/drift.json` records the five methods the tools
  * call, and `npm run providers:check -- --provider slides` reports a touched
  * contract that moved or a method that stopped accepting the scope below.
  */
@@ -55,7 +55,7 @@ import {
   type GoogleWorkspaceClient,
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
-import { defineProvider } from "../../provider.js";
+import { asProviderFactory } from "../../provider.js";
 
 export type {
   GoogleServiceAccount,
@@ -100,7 +100,7 @@ const MAX_REPLACEMENTS = 50;
  * new kind to review here, and refusing it locally costs no round trip. The
  * contents are Slides' to validate. Too many names for a schema enum inside
  * the H7 budget, so the handler holds the list. A kind Google adds moves
- * the batchUpdate contract `scripts/drift/slides-endpoints.json` records.
+ * the batchUpdate contract `src/providers/slides/drift.json` records.
  */
 const REQUEST_KINDS: ReadonlySet<string> = new Set([
   "addCommentReply",
@@ -3038,7 +3038,7 @@ function usageGuide(purpose: string, instructions: string | undefined): string {
  * `delete_comment`, `delete_comment_reply`, and `batch_update_presentation`
  * are destructive.
  */
-export const slides = defineProvider<SlidesOptions>({
+export const slides = asProviderFactory<SlidesOptions>({
   name: "slides",
   title: "Google Slides",
   kind: "api",

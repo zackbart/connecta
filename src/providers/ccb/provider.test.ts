@@ -203,7 +203,7 @@ function guide(connector: Connector): ConnectorUsageGuide {
 
 describe("ccb() construction", () => {
   it.each([
-    ["a blank purpose", { purpose: "  " }, /non-empty purpose/],
+    ["a blank purpose", { purpose: "  " }, /non-empty church purpose/],
     ["no environment", { environment: undefined }, /requires environment/],
     ["an unknown environment", { environment: "staging" }, /requires environment/],
     ["no mode", { mode: undefined }, /requires mode/],

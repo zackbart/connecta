@@ -4,7 +4,7 @@ const options: Parameters<typeof sheets>[1] = { "purpose":"Audit fixture", ...go
 export const fixture = {
   name: "sheets",
   options,
-  cases: [{"label":"default","options":{}}],
+  cases: [{"label":"padded-purpose","options":{"purpose":"  Audit fixture  "}},{"label":"empty-title","options":{"title":""}},{"label":"blank-title","options":{"title":" "}},{"label":"default","options":{}}],
   create(id = "fixture", overrides: Partial<Parameters<typeof sheets>[1]> = {}) { return sheets(id, { ...options, ...overrides } as Parameters<typeof sheets>[1]); },
   conventions: {"verbs":["get","create","add","append","update","clear","batch"],"nestedDescriptionExceptions":[],"auth":"delegated"},
 };

@@ -20,7 +20,7 @@ import { skill } from "./skill.generated.js";
  * connector deliberately does not ask for.
  *
  * Drift. Google publishes a credential-free Discovery document per API.
- * `scripts/drift/docs-endpoints.json` records the three methods the tools
+ * `src/providers/docs/drift.json` records the three methods the tools
  * call, and `npm run providers:check -- --provider docs` reports a touched
  * contract that moved or a method that stopped accepting the scope below.
  */
@@ -37,7 +37,7 @@ import {
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
-import { defineProvider } from "../../provider.js";
+import { asProviderFactory } from "../../provider.js";
 
 export type {
   GoogleServiceAccount,
@@ -1451,7 +1451,7 @@ function usageGuide(purpose: string, instructions: string | undefined): string {
  * `execute.approval`; `replace_all_text` and `batch_update_document` are
  * destructive.
  */
-export const docs = defineProvider<DocsOptions>({
+export const docs = asProviderFactory<DocsOptions>({
   name: "docs",
   title: "Google Docs",
   kind: "api",

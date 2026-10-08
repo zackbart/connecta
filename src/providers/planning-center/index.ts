@@ -20,7 +20,7 @@ import { skill } from "./skill.generated.js";
  * Drift. Planning Center publishes an OpenAPI 3.1 document per product and
  * dated version (`/<app>/v2/open_api/<version>`) and a credential-free
  * documentation graph listing every version (`/<app>/v2/documentation`).
- * `scripts/drift/planning-center-endpoints.json` records each endpoint a named
+ * `src/providers/planning-center/drift.json` records each endpoint a named
  * tool calls, digested at the version pinned below, and
  * `npm run providers:check -- --provider planning-center` reports a touched
  * contract that moved and a newly published version of any pinned product.
@@ -46,7 +46,7 @@ import type {
 } from "../../types.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
-import { defineProvider } from "../../provider.js";
+import { asProviderFactory } from "../../provider.js";
 
 /** Planning Center's REST origin. Override only for a proxy or test double. */
 export const PLANNING_CENTER_API_BASE_URL = "https://api.planningcenteronline.com";
@@ -2403,7 +2403,7 @@ function usageGuide(purpose: string, instructions: string | undefined): string {
 const PLANNING_CENTER_OPTIONS = optionsOf<PlanningCenterOptions>()({ ...PROVIDER_COMMON, ...keys("userAgent", "defaultPageSize", "baseUrl") });
 
 /** A maintained Planning Center Online connection over the REST API. */
-export const planningCenter = defineProvider<PlanningCenterOptions>({
+export const planningCenter = asProviderFactory<PlanningCenterOptions>({
   name: "planning-center",
   title: "Planning Center",
   kind: "api",

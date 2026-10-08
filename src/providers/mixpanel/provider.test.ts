@@ -276,7 +276,7 @@ describe("mixpanel()", () => {
 
   it("rejects an empty account purpose at construction", () => {
     expect(() => mixpanel("analytics", { purpose: "  " })).toThrow(
-      "a non-empty purpose",
+      "a non-empty account purpose",
     );
   });
 });

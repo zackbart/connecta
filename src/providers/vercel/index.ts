@@ -4,7 +4,7 @@ import { skill } from "./skill.generated.js";
  * Direct fetch keeps the root Workers-safe, avoids shipping the SDK's generated
  * model graph, and lets the reviewed named operations and the REST hatches share
  * one guarded transport. The trade is API drift, handled explicitly rather than
- * by the SDK's version bumps: `scripts/drift/vercel-endpoints.json` records the
+ * by the SDK's version bumps: `src/providers/vercel/drift.json` records the
  * method, versioned path, spec revision, and request/response digest for every
  * fixed endpoint, and `npm run providers:check -- --provider vercel` compares
  * those rows with Vercel's published OpenAPI document at
@@ -29,7 +29,7 @@ import type {
 } from "../../types.js";
 import { keys, optionsOf, variants } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
-import { defineProvider } from "../../provider.js";
+import { asProviderFactory } from "../../provider.js";
 
 /** Vercel's public REST origin. Override only for a proxy or test double. */
 export const VERCEL_API_BASE_URL = "https://api.vercel.com";
@@ -1566,7 +1566,7 @@ const VERCEL_OPTIONS = variants("surface", {
 }, "api");
 
 /** A maintained Vercel connection using the selected provider surface. */
-export const vercel = defineProvider<VercelConnectionOptions>({
+export const vercel = asProviderFactory<VercelConnectionOptions>({
   name: "vercel",
   title: "Vercel",
   kind: "composed",

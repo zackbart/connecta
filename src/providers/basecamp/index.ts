@@ -8,7 +8,7 @@ import type {
 } from "../../types.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
-import { defineProvider } from "../../provider.js";
+import { asProviderFactory } from "../../provider.js";
 
 /**
  * Basecamp's one hosted MCP endpoint, streamable HTTP.
@@ -444,7 +444,7 @@ One account per authorization: ${purpose}${skill.fragments.guide_0}${grant}${ski
 const BASECAMP_OPTIONS = optionsOf<BasecampOptions>()({ ...PROVIDER_COMMON, ...keys("clientMetadataUrl") });
 
 /** A maintained Basecamp hosted-MCP connection. */
-export const basecamp = defineProvider<BasecampOptions>({
+export const basecamp = asProviderFactory<BasecampOptions>({
   name: "basecamp",
   title: "Basecamp",
   kind: "mcp",

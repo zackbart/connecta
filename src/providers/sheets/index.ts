@@ -27,7 +27,7 @@ import { skill } from "./skill.generated.js";
  * table, and a tool that could do that is not additive.
  *
  * Drift. Google publishes a credential-free Discovery document per API.
- * `scripts/drift/sheets-endpoints.json` records the seven methods the tools
+ * `src/providers/sheets/drift.json` records the seven methods the tools
  * call, and `npm run providers:check -- --provider sheets` reports a touched
  * contract that moved or a method that stopped accepting the scope below.
  */
@@ -43,7 +43,7 @@ import {
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
 import { clampText, jsonBytes, RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
-import { defineProvider } from "../../provider.js";
+import { asProviderFactory } from "../../provider.js";
 
 export type {
   GoogleServiceAccount,
@@ -1288,7 +1288,7 @@ function usageGuide(purpose: string, instructions: string | undefined): string {
  * `execute.approval`; the value writes, `clear_values`, and the raw
  * `batch_update_spreadsheet` are destructive.
  */
-export const sheets = defineProvider<SheetsOptions>({
+export const sheets = asProviderFactory<SheetsOptions>({
   name: "sheets",
   title: "Google Sheets",
   kind: "api",

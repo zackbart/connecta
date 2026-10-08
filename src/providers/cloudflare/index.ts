@@ -33,7 +33,7 @@ import type {
 } from "../../types.js";
 import { keys, optionsOf, variants } from "../../config-schema.js";
 import { CREDENTIAL, PROVIDER_COMMON, REMOTE_MCP_AUTH } from "../../connectors/option-shapes.js";
-import { defineProvider } from "../../provider.js";
+import { asProviderFactory } from "../../provider.js";
 
 /** Cloudflare's v4 REST base. Override only for a proxy or a test double. */
 export const CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4";
@@ -3861,7 +3861,7 @@ const CLOUDFLARE_OPTIONS = variants("surface", {
 }, "api");
 
 /** A maintained Cloudflare connection using the selected provider interface. */
-export const cloudflare = defineProvider<CloudflareConnectionOptions>({
+export const cloudflare = asProviderFactory<CloudflareConnectionOptions>({
   name: "cloudflare",
   title: "Cloudflare",
   kind: "composed",

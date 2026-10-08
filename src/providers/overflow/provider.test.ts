@@ -155,7 +155,7 @@ describe("overflow() construction", () => {
   it("requires a purpose and an explicit environment, with no default", () => {
     expect(() =>
       overflow("giving", { environment: "production", purpose: "  " }),
-    ).toThrow("a non-empty purpose");
+    ).toThrow("a non-empty nonprofit purpose");
     expect(() =>
       overflow("giving", { purpose: "Giving" } as unknown as Parameters<typeof overflow>[1]),
     ).toThrow('requires environment: "production" or "staging"');

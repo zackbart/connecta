@@ -40,7 +40,10 @@ Additional provider-local tests and references may accompany these files.
 
 ## Definition and behavior
 
-`defineProvider()` is transport-independent. Declare the closed option shape
+`defineProvider()` is transport-independent. Existing providers use
+`asProviderFactory()` to attach that same definition while retaining their
+existing constructor's option policy during the folder migration. Use
+`defineProvider()` for new providers. Declare the closed option shape
 with `optionsOf<Options>()`; no per-provider classification override option.
 Supply `name`, `title`, `kind`, `skill`, `options`, `create`, and reviewed
 `bundle` facts (`baselineGzip`, `maxGzip`, optional `note`). The optional `readme`

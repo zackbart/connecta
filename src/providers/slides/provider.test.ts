@@ -2392,7 +2392,7 @@ describe("comments: partial saves are reported, not hidden (#696)", () => {
 
     it("accepts every Request kind in Slides' Discovery document, comment kinds included", async () => {
       // `Request`'s properties at Discovery revision 20260930, the revision
-      // scripts/drift/slides-endpoints.json records. A kind Google adds moves
+      // src/providers/slides/drift.json records. A kind Google adds moves
       // batchUpdate's digested contract, and the drift check says so.
       const discovery = [
         "addCommentReply", "createImage", "createLine", "createParagraphBullets", "createShape", "createSheetsChart",

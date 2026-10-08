@@ -45,7 +45,7 @@ import { skill } from "./skill.generated.js";
  * Drift: there is no combined specification, but each reference page served
  * as `.md` embeds a one-operation OpenAPI 3.1 snippet. `scripts/drift-check.mjs`
  * assembles those snippets for the pages listed in
- * `scripts/drift/tithely-endpoints.json` and digests each operation like any
+ * `src/providers/tithely/drift.json` and digests each operation like any
  * other provider's, so `npm run providers:check -- --provider tithely` runs
  * credential-free.
  */
@@ -68,7 +68,7 @@ import type {
 } from "../../types.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
-import { defineProvider } from "../../provider.js";
+import { asProviderFactory } from "../../provider.js";
 
 /** Tithe.ly's two published v1 endpoints, one per environment. */
 export const TITHELY_API_BASE_URLS = {
@@ -1256,7 +1256,7 @@ async function testKeyPair(
 const TITHELY_OPTIONS = optionsOf<TithelyOptions>()({ ...PROVIDER_COMMON, ...keys("environment", "defaultPageSize", "baseUrl") });
 
 /** A maintained Tithe.ly giving connection over the v1 REST API. */
-export const tithely = defineProvider<TithelyOptions>({
+export const tithely = asProviderFactory<TithelyOptions>({
   name: "tithely",
   title: "Tithe.ly",
   kind: "api",

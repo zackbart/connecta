@@ -112,7 +112,7 @@ describe("breeze() construction", () => {
   it("requires a purpose and a single-label subdomain", () => {
     expect(() =>
       breeze("church", { subdomain: "gracechurch", purpose: "  " }),
-    ).toThrow("non-empty purpose");
+    ).toThrow("non-empty church purpose");
     for (const subdomain of [
       "",
       "https://gracechurch.breezechms.com",

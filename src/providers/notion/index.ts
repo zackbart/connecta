@@ -16,7 +16,7 @@ import type {
 } from "../../types.js";
 import { keys, optionsOf, variants } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
-import { defineProvider } from "../../provider.js";
+import { asProviderFactory } from "../../provider.js";
 
 /** Notion's REST origin. Every tool below speaks to exactly this host. */
 export const NOTION_API_BASE_URL = "https://api.notion.com";
@@ -1910,7 +1910,7 @@ const NOTION_OPTIONS = variants("surface", {
 }, "api");
 
 /** A maintained Notion connection using the selected provider interface. */
-export const notion = defineProvider<NotionConnectionOptions>({
+export const notion = asProviderFactory<NotionConnectionOptions>({
   name: "notion",
   title: "Notion",
   kind: "composed",

@@ -21,7 +21,7 @@ import { skill } from "./skill.generated.js";
  * is the only response scope requested.
  *
  * Drift. Google publishes a credential-free Discovery document per API.
- * `scripts/drift/forms-endpoints.json` records the five methods the tools
+ * `src/providers/forms/drift.json` records the five methods the tools
  * call, and `npm run providers:check -- --provider forms` reports a touched
  * contract that moved or a method that stopped accepting the scopes below.
  */
@@ -37,7 +37,7 @@ import {
   type GoogleWorkspaceClient,
   type GoogleWorkspaceOptions,
 } from "../_shared/google/workspace.js";
-import { defineProvider } from "../../provider.js";
+import { asProviderFactory } from "../../provider.js";
 
 export type {
   GoogleServiceAccount,
@@ -1379,7 +1379,7 @@ function usageGuide(purpose: string, instructions: string | undefined): string {
  * host approves unless the deployment exempts it in `execute.approval`;
  * `update_form_info` and `batch_update_form` are destructive.
  */
-export const forms = defineProvider<FormsOptions>({
+export const forms = asProviderFactory<FormsOptions>({
   name: "forms",
   title: "Google Forms",
   kind: "api",

@@ -12,7 +12,7 @@ import type {
 } from "../../types.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON, REMOTE_MCP_AUTH } from "../../connectors/option-shapes.js";
-import { defineProvider } from "../../provider.js";
+import { asProviderFactory } from "../../provider.js";
 
 export type MixpanelRegion = "us" | "eu" | "in";
 
@@ -250,7 +250,7 @@ Account purpose: ${purpose}${skill.fragments.guide_1}${
 const MIXPANEL_OPTIONS = optionsOf<MixpanelOptions>()({ ...PROVIDER_COMMON, ...keys("region"), auth: REMOTE_MCP_AUTH });
 
 /** A maintained Mixpanel hosted-MCP connection. */
-export const mixpanel = defineProvider<MixpanelOptions>({
+export const mixpanel = asProviderFactory<MixpanelOptions>({
   name: "mixpanel",
   title: "Mixpanel",
   kind: "mcp",
