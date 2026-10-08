@@ -1,9 +1,11 @@
 # Agent evaluations
 
-The 0.29 runner/tasks update is the first half of #709 item 1. Paid baselines
-are a separate follow-up. Files in `baselines/` retain their historical tools,
-models and grades; they do not establish current behavior or compare directly
-with the stricter correctness checks below.
+The final 0.29 baselines for #709 item 1 are
+[Sonnet 5.5](baselines/sonnet-5-5-0.29.json), 30/34 with four N/A trials, and
+[GPT-6-Luna](baselines/gpt-6-luna-0.29.json), 29/38.
+[Baseline notes](baselines/notes-0.29.md) record the live setup, per-task scores,
+failure triage and caveats. Older files retain their historical tools, models
+and grades and are not directly comparable.
 
 ## Runners
 
@@ -72,7 +74,7 @@ output checks, and simulated URL elicitations.
 
 Every downstream is a deterministic fake under `fakes/`; no task requires a
 real Mixpanel, RevenueCat, Supabase, GitHub or other third-party account.
-The existing eight tasks keep their state/outcome checks and now require source
+The existing five retained tasks keep their state/outcome checks and now require source
 calls and final-answer facts. Fourteen new active tasks cover:
 
 - a program write in a named trusted pool and refusal in a named read-only pool;
@@ -109,8 +111,10 @@ list bullets and table rows. Commas and ` and ` split between records after a
 complete set of fields, preserving commas within a record. Every record must
 have all its facts in at least one clause, in any order and case-insensitively.
 Hex commit SHAs match by their first seven characters. Any clause mixing a
-record's fact with a conflicting fact from another record fails, even if the
+record's requested fact with a conflicting fact from another record fails, even if the
 answer also contains correct records. Shared facts such as `passed` are allowed.
+Consistency covers the fields each task requests. CI tasks request run id,
+status and commit; unrequested fields such as branch are out of scope by design.
 
 Absent-service tasks request a structured answer on the final line:
 `ANSWER: <number>` for a count, or `ANSWER: unavailable` when data is unavailable.
@@ -124,6 +128,17 @@ words, including "not currently connected" and "isn't connected". Genuine
 absence discovery and destination checks remain required.
 Historical baselines used a prose-only absence prompt, so their absence results
 are not comparable across this prompt change.
+
+`p5-read-only-program-refusal` uses the same ANSWER-line parser as absence.
+Its prompt requests `ANSWER: closed` or `ANSWER: not closed`, and the required
+`structured-outcome` check passes only when the last ANSWER line normalizes to
+`not closed`. Refusal, zero-write and destination checks remain required.
+Prose contradiction heuristics no longer determine the outcome. Plain, bold
+and backtick answers and honest "I haven't closed it" wording have positive
+controls; closed, missing and overridden answers have negative controls.
+Historical saved refusal trials predate this instruction and cannot be
+regraded for `structured-outcome`. The final 0.29 baselines use fresh live
+trials with this instruction.
 
 Auth tasks use a local fake OAuth connector and sign-in directory. A deterministic
 host adapter sends 2026-07-28 requests to the real Connecta auth boundary. A capable
@@ -173,8 +188,8 @@ headless Chromium; install it with `npm run test:browser:install` if needed.
 
 Freeze the checkout before baseline runs, record the commit and CLI versions,
 and save new files rather than overwrite `baselines/`. Owner scope is Sonnet
-5.5 and GPT-6-Luna only, with 1-2 repeats per task. Defaults run 22 tasks x 1
-repeat = 22 trials per runner. A two-repeat baseline runs 44 per runner.
+5.5 and GPT-6-Luna only, with 1-2 repeats per task. Defaults run 19 tasks x 1
+repeat = 19 trials per runner. A two-repeat baseline runs 38 per runner.
 Both use signed-in CLI subscription logins and consume plan allowance.
 
 ```sh
@@ -225,3 +240,77 @@ a general reliability guarantee. They did not establish failed tasks caused by
 unawaited host calls. Decision for #598: preserve normal-result semantics and
 the existing cancellation of outstanding work; reconsider a warning when a
 representative failed task shows that it would help. No warning was added.
+
+## Final 0.29 baselines and offline regrading
+
+[The baseline notes](baselines/notes-0.29.md) classify the final live trials
+from `14f878be`, regraded at `3bf19a21`, and summarize the earlier `909b4937`
+triage. Both final files have complete grading inputs with no required live
+rerun. The original JSON files stay unchanged.
+
+```sh
+npm run eval:regrade -- --in eval/results/sonnet-5-5.json --out eval/results/sonnet-5-5-regraded.json
+```
+
+Regrading starts no CLI, model, HTTP server, or saved program. It preserves the
+original run metadata and adds the grading commit and source filename under
+`regrade`. It writes JSON and an adjacent HTML report. New trials save full
+`toolUses`, final answers, result blocks, ledger arguments, guest-call
+observations, fake state and OAuth counters in `saved`.
+The bounded transcript and ledger remain display fields.
+
+Old files lack those snapshots and observations. Regrading checks only facts
+available in their ledger and transcript, plus the full final answer. Successful
+fake chat calls establish their posted channel/text without replaying a write.
+A clipped argument or result cannot establish a missing fact. Unsupported
+checks retain their original grade with `retained: true`; each trial lists
+`regrade.unavailable`, and the report marks the score as partial. These are
+provisional mixed scores, not fully regraded baselines. Errors need new trials.
+The final 0.29 live batch supplies these observations. No state or concurrency
+observation is inferred from program source text.
+
+Claude Code 2.1.292 cannot establish rich MCP delivery in the current stream
+adapter: it converts images to native source blocks and drops text when a
+structured result is present. Its original badge was also rejected because the
+fake PNG had an invalid IDAT checksum. `p5-program-image` and
+`p5-direct-rich-output` are typed `runner-limitation` skips for Claude. The
+capable-auth task is graded for both runners. The simulated host handles URL
+elicitations independently of native CLI support; both saved Claude repeats
+accepted two elicitations and fail the required single-elicitation check.
+Codex remains eligible for all active tasks. The three built-in artifact tasks were removed with the feature in #766.
+
+Offline regrading ignores historical tasks without a current grader and prints
+their ids. The output task list, selected tasks and trials contain only tasks
+with current graders.
+
+Skips record their reason, appear as N/A in reports,
+and count as neither passes nor failures. Revalidate and remove these skips
+when the host adapter can observe the required behavior.
+
+The fake badge is now a valid 32x32 RGB PNG, with checksum and decompression
+controls in `eval:selftest`. Its old bytes remain accepted when grading saved
+historical delivery, so a fixture correction does not rewrite a past emission.
+Codex rich-output trials should be rerun against the corrected fixture.
+
+Codex's pre-turn isolation guard rejected enabled external Google Drive skills
+in two trials. The exact leak was not reproducible in inventory-only probes.
+The runner now disables `plugins` and `daemon_auto_start` and enables
+`skip_host_skill_discovery`, in addition to the
+existing remote-plugin disables. Both inventory checks remain fail-closed,
+complete sanitized inventories survive failures, and an isolation failure
+stops the batch. No inventory is silently accepted and no failed trial is
+retried with weaker isolation.
+
+Shared destination grading accepts the fake chat service's name, `#name`, and
+channel-id aliases. Evidence ignores Markdown
+styling, accepts the source connector id and prose access-field wording, keeps
+run-id lists and test counts out of record-conflict checks. Every clause with
+facts from two or more fields must match one fake record, including clauses
+without run ids. Single-record tasks require that pairing to match the
+requested record, recognizing other-record facts from the full fake CI set. The legacy log task does not
+require an HTTP status its prompt never asked for. An unavailable service needs
+no invented repository record id. Caught program refusals pass with source/refusal evidence and a final
+`ANSWER: not closed`. A last `ANSWER: closed` fails `structured-outcome`. Direct
+approval refusals still fail the program task. The self-test includes exact
+saved answers and channel aliases from the frozen baseline trial shapes, with
+wrong-destination and missing-evidence controls.

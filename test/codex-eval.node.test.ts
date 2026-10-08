@@ -15,7 +15,9 @@ const send = x => process.stdout.write(JSON.stringify(x) + '\n');
 const config = fs.readFileSync(process.env.CODEX_HOME + '/config.toml', 'utf8');
 const skills = ['imagegen','openai-docs','review-agent','skill-creator','skill-installer'];
 if (skills.some(name => !config.includes('name = "' + name + '"\nenabled = false')) ||
-    !config.includes('[plugins]') || !config.includes('remote_plugin = false')) process.exit(1);
+    !config.includes('[plugins]') || !config.includes('remote_plugin = false') ||
+    !config.includes('plugins = false') || !config.includes('skip_host_skill_discovery = true') ||
+    !config.includes('daemon_auto_start = false')) process.exit(1);
 let threadStarted = false;
 readline.createInterface({ input: process.stdin }).on('line', line => {
   const m = JSON.parse(line);
@@ -94,6 +96,11 @@ describe("Codex eval app-server", () => {
     ['bad-inventory', 'could not be verified']] as const)("fails closed on %s before any model turn", async (mode, diagnostic) => {
     const run = await fixture(mode);
     expect(run.turnStarts).toEqual([]);
+    if (mode !== "bad-inventory") {
+      const trace = parseTrace(run.events, [], []);
+      expect(trace.skillInventory).toBeDefined();
+      expect(trace.pluginInventory).toBeDefined();
+    }
     const errors = run.events.filter(e => e.type === 'result').map(e => String(e.result)).join('\n');
     expect(errors).toContain(diagnostic);
     expect(errors).not.toContain('fake-secret');

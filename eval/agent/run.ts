@@ -13,6 +13,7 @@ import { runClaude } from "./claude.js";
 import { assertSurface } from "./surface.js";
 import { startAuthHost } from "./auth-host.js";
 import { infraError, stopsBatch } from "./infra.js";
+import { saveGradeInputs, type SavedGradeInputs } from "./saved.js";
 import {
   countBy,
   downstreamMetrics,
@@ -51,7 +52,10 @@ export interface TrialResult {
   task: string;
   model: string;
   repeat: number;
-  status: "pass" | "fail" | "error";
+  status: "pass" | "fail" | "error" | "skipped";
+  skip?: { code: "runner-limitation"; reason: string };
+  saved?: SavedGradeInputs;
+  regrade?: { applied: string[]; unavailable: string[]; reason?: string };
   error?: string;
   checks: Check[];
   metrics: TrialMetrics;
@@ -129,6 +133,16 @@ async function runTrial(
   options: TrialOptions,
 ): Promise<TrialResult> {
   const startedAt = new Date().toISOString();
+  const skip = task.runnerSkips?.[options.runner ?? "codex"];
+  if (skip) return {
+    task: task.id, model, repeat, startedAt, status: "skipped", skip, checks: [],
+    metrics: { wallMs: 0, apiMs: undefined, modelTurns: undefined, conversationTurns: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 }, costUsd: undefined,
+      metaTools: {}, otherTools: {}, toolErrors: 0, confirmationNudges: 0,
+      downstream: downstreamMetrics([], []) },
+    approvals: { allowed: [], denied: [], gated: [], exercised: [], permissionDenials: [] },
+    transcript: [], ledger: [],
+  };
   const world = new World(task.world);
   await world.start();
   for (const { service, fault } of task.faults ?? []) world.service(service).faults.push(fault);
@@ -242,6 +256,7 @@ async function runTrial(
       status: error ? "error" : passed ? "pass" : "fail",
       ...(error ? { error } : {}),
       checks,
+      saved: saveGradeInputs(world, trace),
       metrics,
       approvals: {
         allowed: allow,

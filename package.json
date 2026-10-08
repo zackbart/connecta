@@ -219,7 +219,8 @@
     "pretest:browser": "npm run build:operator-ui",
     "pretypecheck": "node scripts/generate-version.mjs && npm run build:operator-ui",
     "precheck:bundle": "npm run build:operator-ui",
-    "precheck:fast": "npm run check:operator-ui"
+    "precheck:fast": "npm run check:operator-ui",
+    "eval:regrade": "tsx eval/regrade.ts"
   },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",

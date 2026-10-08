@@ -16,6 +16,43 @@ import { startAuthHost } from "./agent/auth-host.js";
 import { parseTrace, type StreamEvent } from "./agent/trace.js";
 import { flags } from "./support/meta.js";
 import type { ActiveTask, Check } from "./tasks/types.js";
+import { readFile } from "node:fs/promises";
+import { saveGradeInputs } from "./agent/saved.js";
+import { regradeTrial } from "./agent/regrade.js";
+import { summarize } from "./report/summary.js";
+import type { TrialResult } from "./agent/run.js";
+import { BADGE_PNG, LEGACY_BADGE_PNG } from "./fakes/prerequisites.js";
+import { inflateSync } from "node:zlib";
+
+function validPng(base64: string): boolean {
+  const bytes = Buffer.from(base64, "base64");
+  if (bytes.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") return false;
+  const imageData: Buffer[] = [];
+  for (let offset = 8; offset < bytes.length;) {
+    const size = bytes.readUInt32BE(offset);
+    const end = offset + 8 + size;
+    if (end + 4 > bytes.length) return false;
+    let crc = 0xffffffff;
+    for (const byte of bytes.subarray(offset + 4, end)) {
+      crc ^= byte;
+      for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+    if (((crc ^ 0xffffffff) >>> 0) !== bytes.readUInt32BE(end)) return false;
+    if (bytes.subarray(offset + 4, offset + 8).toString() === "IDAT") imageData.push(bytes.subarray(offset + 8, end));
+    offset = end + 4;
+  }
+  return inflateSync(Buffer.concat(imageData)).length === 32 * (1 + 32 * 3);
+}
+if (!validPng(BADGE_PNG) || validPng(LEGACY_BADGE_PNG)) throw new Error("Badge PNG integrity controls failed");
+
+interface TrialControl {
+  task: string; runner: string; repeat: number; checks: string[];
+  finalAnswer: string; channel?: string;
+  urlElicitations?: AgentTrace["urlElicitations"];
+  expectedFailures?: string[];
+  program?: string; programResult?: string;
+}
+const trialControls = JSON.parse(await readFile(new URL("./tasks/fixtures/baseline-909b-controls.json", import.meta.url), "utf8")) as TrialControl[];
 
 function emptyTrace(toolUses: ToolUse[], finalAnswer = "", transcript: TranscriptEntry[] = []): AgentTrace {
   return {
@@ -99,6 +136,63 @@ async function play(task: ActiveTask, mode: "reference" | "noop"): Promise<{ cor
     const correct = task.grade({ world, trace });
     const regressions = mode === "reference" ? counterexamples(task, world, trace) : [];
     const positives = mode === "reference" ? positiveVariants(task, world, trace) : [];
+    if (mode === "reference") {
+      for (const control of trialControls.filter(c => c.task === task.id)) {
+        const saved = structuredClone(saveGradeInputs(world, trace));
+        saved.trace.finalAnswer = control.finalAnswer;
+        if (control.urlElicitations) saved.trace.urlElicitations = control.urlElicitations;
+        if (control.channel) for (const call of saved.world.calls) {
+          if (call.service === "chat" && call.tool === "post_message") call.args.channel = control.channel;
+        }
+        if (control.program) {
+          // Same observed refused target, but the actual trial caught the
+          // rejection and successfully returned its error code to the host.
+          const use = saved.trace.toolUses.find(u => u.tool === "execute_code")!;
+          use.input.code = control.program;
+          use.isError = false;
+          use.resultText = control.programResult;
+        }
+        const trial: TrialResult = { task: task.id, model: "control", repeat: 1, status: "fail", saved,
+          checks: [], metrics: { wallMs: 0, apiMs: 0, modelTurns: 0, conversationTurns: 1,
+            tokens: trace.tokens, costUsd: undefined, metaTools: {}, otherTools: {}, toolErrors: 0,
+            confirmationNudges: 0, downstream: { reads: 0, writes: 0, duplicateReads: 0, duplicateWrites: 0, errors: 0, unauthorizedRequests: 0, byTool: {} } },
+          approvals: { allowed: [], denied: [], gated: [], exercised: [], permissionDenials: [] },
+          transcript: saved.trace.transcript, ledger: [], startedAt: "control" };
+        // Grade without the runner skip to exercise corrected evidence even
+        // when the live CLI cannot deliver the task's rich output.
+        const graded = regradeTrial({ ...task, runnerSkips: {} }, trial, "codex");
+        positives.push({ name: `saved ${control.runner} #${control.repeat}: ${control.checks.join(", ")}`,
+          passed: control.checks.every(id => graded.checks.some(c => c.id === id && c.pass)) && !graded.regrade?.unavailable.length });
+        if (control.expectedFailures) {
+          const measured = regradeTrial(task, trial, control.runner as "claude" | "codex");
+          regressions.push({ name: `saved ${control.runner} #${control.repeat}: measurable URL-auth failure`,
+            rejected: measured.status === "fail" && !measured.skip && control.expectedFailures.every(id =>
+              measured.checks.some(c => c.id === id && !c.pass)) });
+        }
+        const missing = regradeTrial({ ...task, runnerSkips: {} }, { ...trial,
+          saved: { ...saved, trace: { ...saved.trace, finalAnswer: "Completed." } } }, "codex");
+        regressions.push({ name: `saved ${control.runner} #${control.repeat} without evidence`,
+          rejected: missing.checks.some(c => c.id === "answer-evidence" && !c.pass) });
+        const wrong = structuredClone(saved);
+        for (const call of wrong.world.calls) call.service = "wrong_destination";
+        for (const program of wrong.world.programs) for (const call of program.calls) {
+          call.args[0] = "wrong_destination";
+          if (call.name === "connecta.search") call.result = { absence: { service: "wrong_destination" } };
+        }
+        for (const use of wrong.trace.toolUses) {
+          if (use.tool === "search_tools") { use.input.query = "wrong_destination"; use.input.connector = "wrong_destination"; }
+        }
+        const bad = regradeTrial({ ...task, runnerSkips: {} }, { ...trial, saved: wrong }, "codex");
+        regressions.push({ name: `saved ${control.runner} #${control.repeat} wrong destination`,
+          rejected: bad.checks.some(c => c.id === "correct-destination" && !c.pass) });
+        if (task.runnerSkips?.claude) {
+          const skipped = regradeTrial(task, trial, "claude");
+          const summary = summarize([skipped])[0]!;
+          positives.push({ name: "typed runner skip excluded from pass rate",
+            passed: skipped.status === "skipped" && skipped.skip?.code === "runner-limitation" && summary.passRate === undefined && summary.skipped === 1 });
+        }
+      }
+    }
     if (mode === "reference" && task.id === "p5-absent-github") {
       for (const route of ["search_tools", "execute_code"]) {
         const programs = world.programs;
@@ -143,6 +237,18 @@ for (const task of ACTIVE_TASKS) {
     continue;
   }
   const played = await play(task, "reference");
+  const caught = trialControls.find(c => c.task === task.id && c.program);
+  if (caught) {
+    const actual = await play({ ...task, reference: async ctx => {
+      await ctx.call("execute_code", { code: caught.program! });
+      // Historical prose is retained; this synthetic replay uses the new prompt contract.
+      ctx.answer(`${caught.finalAnswer}\nANSWER: not closed`);
+    } }, "reference");
+    if (required(actual.correct).some(c => !c.pass)) {
+      failures += 1;
+      console.log(`FAIL ${task.id}: replay of the real caught-refusal program against fresh fakes`);
+    } else console.log(`ok   ${task.id}: real caught-refusal program against fresh fakes`);
+  }
   const reference = played.correct;
   const refFailed = required(reference).filter((item) => !item.pass);
   const noop = (await play(task, "noop")).correct;

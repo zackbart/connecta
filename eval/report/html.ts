@@ -71,8 +71,12 @@ function matrix(file: AgentResultFile): string {
     const tds = models.map((model) => {
       const cell = cells.find((candidate) => candidate.task === task.id && candidate.model === model);
       if (!cell) return `<td class="na">not run</td>`;
+      if (cell.skipped === cell.trials) {
+        const reason = file.trials.find(t => t.task === task.id && t.model === model)?.skip?.reason ?? "Runner limitation";
+        return `<td class="na">N/A<div class="sub">${esc(reason)}</div></td>`;
+      }
       return `<td class="cell ${rateClass(cell.passRate)}">
-        <div class="rate">${cell.passed}/${cell.trials - cell.errored}${cell.errored ? ` <span class="err">+${cell.errored} err</span>` : ""}</div>
+        <div class="rate">${cell.passed}/${cell.trials - cell.errored - cell.skipped}${cell.errored ? ` <span class="err">+${cell.errored} err</span>` : ""}</div>
         <div class="sub">${fmtMs(cell.medianWallMs)} · ${fmtUsd(cell.medianCostUsd)} · ${fmtNum(cell.meanMetaCalls)} calls</div>
         <div class="sub">reads ${fmtNum(cell.meanReads)} · writes ${fmtNum(cell.meanWrites)}${cell.duplicateWrites ? ` · <b class="worse">${cell.duplicateWrites} dup writes</b>` : ""}</div>
       </td>`;
@@ -81,14 +85,14 @@ function matrix(file: AgentResultFile): string {
   });
   const totals = models.map((model) => {
     const trials = file.trials.filter((trial) => trial.model === model);
-    const graded = trials.filter((trial) => trial.status !== "error");
+    const graded = trials.filter((trial) => trial.status !== "error" && trial.status !== "skipped");
     const passed = graded.filter((trial) => trial.status === "pass").length;
     const cost = trials.reduce((sum, trial) => sum + (trial.metrics.costUsd ?? 0), 0);
     return `<td class="cell ${rateClass(graded.length ? passed / graded.length : undefined)}"><div class="rate">${passed}/${graded.length} (${fmtPct(graded.length ? passed / graded.length : undefined)})</div><div class="sub">total ${fmtUsd(cost)}</div></td>`;
   });
   return `<table class="matrix"><thead><tr><th>task</th>${models.map((model) => `<th>${esc(shortModel(model))}</th>`).join("")}</tr></thead>
   <tbody>${rows.join("")}<tr class="total"><th>all tasks</th>${totals.join("")}</tr></tbody></table>
-  <p class="note">Cell: passed/graded trials, then median wall time · median cost · mean meta-tool calls; mean downstream reads and writes. Errors (API, rate limit, harness) are excluded from the rate and counted separately.</p>`;
+  <p class="note">Cell: passed/graded trials, then median wall time · median cost · mean meta-tool calls; mean downstream reads and writes. N/A runner skips and errors (API, rate limit, harness) are excluded from the rate and counted separately.</p>`;
 }
 
 function comparison(current: AgentResultFile, base: AgentResultFile): string {
@@ -141,14 +145,15 @@ function transcriptHtml(entries: TranscriptEntry[]): string {
 function trialHtml(trial: TrialResult): string {
   const m = trial.metrics;
   const checks = trial.checks
-    .map((item) => `<li class="${item.pass ? "ok" : item.advisory ? "adv" : "no"}">${item.pass ? "✓" : item.advisory ? "○" : "✗"} ${esc(item.description)}${item.detail ? ` <span class="muted">— ${esc(item.detail)}</span>` : ""}${item.advisory ? ` <span class="tag">advisory</span>` : ""}</li>`)
+    .map((item) => `<li class="${item.pass ? "ok" : item.advisory ? "adv" : "no"}">${item.pass ? "✓" : item.advisory ? "○" : "✗"} ${esc(item.description)}${item.detail ? ` <span class="muted">— ${esc(item.detail)}</span>` : ""}${item.advisory ? ` <span class="tag">advisory</span>` : ""}${item.retained ? ` <span class="tag">original grade, inputs unavailable</span>` : ""}</li>`)
     .join("");
   const approvals = trial.approvals.exercised.length
     ? trial.approvals.exercised.map((use) => `<li>turn ${use.turn}: <b>${esc(use.tool)}</b> ${esc(use.target ?? "")}${use.reason ? ` — “${esc(use.reason)}”` : ""}${use.isError ? ` <span class="worse">(error)</span>` : ""}</li>`).join("")
     : `<li class="muted">none</li>`;
   const downstream = Object.entries(m.downstream.byTool).map(([tool, count]) => `${esc(tool)}×${count}`).join(", ") || "none";
   return `<details class="trial ${trial.status}"><summary><span class="badge ${trial.status}">${trial.status}</span> ${esc(shortModel(trial.model))} #${trial.repeat}
-    <span class="muted">${fmtMs(m.wallMs)} · ${fmtUsd(m.costUsd)} · ${Object.entries(m.metaTools).map(([tool, count]) => `${tool}×${count}`).join(" ")}</span>${trial.error ? ` <span class="worse">${esc(trial.error)}</span>` : ""}</summary>
+    <span class="muted">${fmtMs(m.wallMs)} · ${fmtUsd(m.costUsd)} · ${Object.entries(m.metaTools).map(([tool, count]) => `${tool}×${count}`).join(" ")}</span>${trial.error ? ` <span class="worse">${esc(trial.error)}</span>` : ""}${trial.skip ? ` <span class="muted">N/A: ${esc(trial.skip.reason)}</span>` : ""}</summary>
+    ${trial.regrade?.unavailable.length ? `<p class="note">Partial regrade. Requires a live rerun for: ${esc(trial.regrade.unavailable.join(", "))}. ${esc(trial.regrade.reason ?? "")}</p>` : ""}
     <div class="grid">
       <div><h4>Checks</h4><ul class="checks">${checks || `<li class="muted">not graded</li>`}</ul></div>
       <div><h4>Metrics</h4><table class="kv">
@@ -186,6 +191,7 @@ function agentSection(file: AgentResultFile, base: AgentResultFile | undefined):
       </tbody></table>`
     : "";
   return `<h2>Agent task evals</h2>
+    ${file.regrade ? `<p class="note">Offline regrade from ${esc(file.regrade.source)} using ${esc(file.regrade.meta.git.commit)}. ${file.trials.some(t => t.regrade?.unavailable.length) ? "Provisional mixed scores: checks without saved inputs retain original grades. See each trial for missing inputs and required reruns." : "All grading inputs were available."}</p>` : ""}
     <p class="note">${file.trials.length} trials · models ${file.config.models.map(shortModel).join(", ")} · ${file.config.repeats} repeat(s) · concurrency ${file.config.concurrency} · ${esc(file.codexVersion ?? file.claudeVersion ?? "unknown runner")}${file.config.effort ? ` · effort ${esc(file.config.effort)}` : ""}${file.config.runner === "codex" ? "" : ` · MCP output cap ${esc(file.config.mcpOutputTokens ?? "host default")}`}${file.stopped ? ` · <b class="worse">stopped early: ${esc(file.stopped)}</b>` : ""}</p>
     ${matrix(file)}
     ${base ? `<h2>Baseline vs current</h2>${comparison(file, base)}` : ""}

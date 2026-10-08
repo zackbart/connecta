@@ -109,6 +109,11 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
       pluginInventory = event.pluginInventory as AgentTrace["pluginInventory"];
       return;
     }
+    if (event.type === "eval_inventory") {
+      skillInventory = event.skillInventory as AgentTrace["skillInventory"];
+      pluginInventory = event.pluginInventory as AgentTrace["pluginInventory"];
+      return;
+    }
     if (event.type === "rate_limit_event") {
       rateLimit = event.rate_limit_info as Record<string, unknown>;
       return;
@@ -174,7 +179,13 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
           if (use) {
             use.isError = isError;
             use.resultText = text;
-            use.resultBlocks = Array.isArray(block.content) ? block.content as Record<string, unknown>[] : [];
+            use.resultBlocks = Array.isArray(block.content) ? block.content.map(raw => {
+              const value = raw as Record<string, unknown>;
+              const source = value.source as Record<string, unknown> | undefined;
+              // Claude represents a received MCP image in its native format.
+              return value.type === "image" && source?.type === "base64" ?
+                { type: "image", data: source.data, mimeType: source.media_type } : value;
+            }) : [];
           }
           transcript.push({
             kind: "tool_result",

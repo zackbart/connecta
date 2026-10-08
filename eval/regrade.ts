@@ -1,0 +1,37 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { regradeTrial } from "./agent/regrade.js";
+import { renderReport } from "./report/html.js";
+import { summarize, type AgentResultFile } from "./report/summary.js";
+import { flags, runMeta } from "./support/meta.js";
+import { ACTIVE_TASKS } from "./tasks/index.js";
+
+const args = flags(process.argv.slice(2));
+if (!args.has("in") || !args.has("out")) throw new Error("Usage: eval:regrade -- --in <results.json> --out <file.json>");
+const source = resolve(args.get("in")!);
+const out = resolve(args.get("out")!);
+if (source === out) throw new Error("Regrade output must differ from the source file");
+const file = JSON.parse(await readFile(source, "utf8")) as AgentResultFile;
+if (file.kind !== "connecta-eval/agent" || file.version !== 1) throw new Error("Expected agent result file version 1");
+const runner = file.config.runner ?? (file.claudeVersion ? "claude" : "codex");
+// Historical result files can include tasks whose feature and grader were removed.
+const currentIds = new Set(ACTIVE_TASKS.map(task => task.id));
+const ignored = [...new Set(file.trials.filter(trial => !currentIds.has(trial.task)).map(trial => trial.task))];
+if (ignored.length) console.log(`Ignoring historical tasks without current graders: ${ignored.join(", ")}`);
+file.trials = file.trials.filter(trial => currentIds.has(trial.task));
+file.tasks = file.tasks.filter(task => currentIds.has(task.id));
+file.config.tasks = file.config.tasks.filter(id => currentIds.has(id));
+file.trials = file.trials.map(trial => {
+  const task = ACTIVE_TASKS.find(t => t.id === trial.task);
+  if (!task) throw new Error(`No current grader for ${trial.task}`);
+  return regradeTrial(task, trial, runner);
+});
+file.regrade = { source, meta: runMeta() };
+await mkdir(dirname(out), { recursive: true });
+await writeFile(out, `${JSON.stringify(file, null, 1)}\n`);
+const report = out.replace(/\.json$/, "") + ".html";
+await writeFile(report, renderReport({ current: [file], baseline: [] }));
+for (const cell of summarize(file.trials)) console.log(`${cell.task}: ${cell.skipped ? "N/A" : `${cell.passed}/${cell.trials - cell.errored - cell.skipped} pass`}${cell.errored ? `, ${cell.errored} error` : ""}`);
+const reruns = [...new Set(file.trials.filter(t => t.regrade?.unavailable.length).map(t => t.task))];
+console.log(`Requires live rerun for complete current grading: ${reruns.join(", ") || "none"}`);
+console.log(`Saved ${out} and ${report}`);

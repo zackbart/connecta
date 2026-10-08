@@ -312,12 +312,15 @@ function ciRunLog(runId: number, now: number): string {
   return lines.join("\n");
 }
 
-export function ciTools(now: number): FakeTool[] {
-  const runs = [
+export function ciState(now: number) {
+  return [
     { runId: 4812, branch: "main", status: "failed", commit: "9f2c1ab", startedAt: new Date(now - 40 * 60_000).toISOString() },
     { runId: 4811, branch: "main", status: "passed", commit: "71d0e3c", startedAt: new Date(now - 3 * 3_600_000).toISOString() },
     { runId: 4810, branch: "feature/export", status: "passed", commit: "c0ffee1", startedAt: new Date(now - 5 * 3_600_000).toISOString() },
   ];
+}
+
+export function ciTools(now: number, runs = ciState(now)): FakeTool[] {
   return [
     {
       name: "list_runs",

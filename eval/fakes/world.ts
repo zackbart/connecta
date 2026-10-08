@@ -13,6 +13,7 @@ import {
   chatState,
   chatTools,
   ciTools,
+  ciState,
   type AuditState,
   type ChatState,
 } from "./services.js";
@@ -63,6 +64,7 @@ export class World {
   readonly ledger = new Ledger();
   readonly tracker: TrackerState;
   readonly chat: ChatState;
+  readonly ci = ciState(this.now);
   readonly audit: AuditState = { exports: [] };
   readonly services: Map<ServiceId, FakeService>;
   readonly billingToken = BILLING_TOKEN;
@@ -81,7 +83,7 @@ export class World {
       ["chat", make("chat", chatTools(this.chat, clock))],
       ["analytics", make("analytics", analyticsTools())],
       ["billing", make("billing", billingTools(this.now), () => BILLING_TOKEN)],
-      ["ci", make("ci", ciTools(this.now))],
+      ["ci", make("ci", ciTools(this.now, this.ci))],
       ["audit", make("audit", auditTools(this.audit, clock))],
       ...(options.prerequisites ? [
         ["mixpanel", make("mixpanel", mixpanelTools())],

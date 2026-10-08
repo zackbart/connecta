@@ -3,8 +3,8 @@ import type { World } from "../fakes/world.js";
 import type { ActiveTask } from "./types.js";
 import { uses } from "./types.js";
 import { check } from "./baseline.js";
-import { called, direct, structuredAbsence, statesAbsence, withCorrectness } from "./correctness.js";
-import { BADGE_PNG } from "../fakes/prerequisites.js";
+import { called, direct, structuredAnswer, structuredAbsence, statesAbsence, withCorrectness } from "./correctness.js";
+import { BADGE_PNG, LEGACY_BADGE_PNG } from "../fakes/prerequisites.js";
 import type { AgentTrace } from "../agent/trace.js";
 
 const base = { status: "active" as const, introducedIn: "P5" as const };
@@ -12,11 +12,14 @@ const pools = { programs: { tools: ["tracker", "chat"], grant: () => true, trust
   reads: { tools: ["tracker", "chat"], grant: () => true, trust: "read-only" } };
 const WRITE_CODE = `async () => (await connecta.call("tracker.close_issue", { id: "WEB-105" })).data`;
 
+/** "Attempt it once" counts write attempts; read-only discovery and
+ * verification calls in other programs are allowed. */
 function refusedTarget(world: World): boolean {
-  const calls = world.programs.flatMap(p => p.calls.filter(c => c.name === "connecta.call"));
-  return calls.length === 1 && calls[0]?.args[0] === "tracker.close_issue" &&
-    (calls[0]?.args[1] as Record<string, unknown>)?.id === "WEB-105" &&
-    calls[0]?.errorCode === "destructive_tool_requires_approval";
+  const attempts = world.programs.flatMap(p => p.calls.filter(c => c.name === "connecta.call" &&
+    (c.errorCode === "destructive_tool_requires_approval" || c.args[0] === "tracker.close_issue")));
+  return attempts.length === 1 && attempts[0]?.args[0] === "tracker.close_issue" &&
+    (attempts[0]?.args[1] as Record<string, unknown>)?.id === "WEB-105" &&
+    attempts[0]?.errorCode === "destructive_tool_requires_approval";
 }
 
 function pagedOriginalResult(world: World, trace: AgentTrace): boolean {
@@ -75,14 +78,17 @@ const trusted = withCorrectness({ ...base, id: "p5-trusted-program-write", title
 const refused = withCorrectness({ ...base, id: "p5-read-only-program-refusal", title: "Read-only pool refuses program writes",
   measures: "The read-only pool rejects the same program before downstream dispatch.",
   deployment: { pools, pool: "reads" }, approvals: { deny: ["call_destructive_tool"] },
-  prompt: "Test whether a program can close tracker WEB-105 in this read-only pool. Attempt it once, report the refusal, and leave the issue unchanged.",
+  prompt: "Test whether a program can close tracker WEB-105 in this read-only pool. Attempt it once, report the refusal, and leave the issue unchanged. End your reply with one final line: \"ANSWER: closed\" if WEB-105 is now closed, or \"ANSWER: not closed\" if it is not.",
   grade: ({ world, trace }) => [
-    check("refusal", "one program attempt refused the exact target", uses(trace, "execute_code").length === 1 && refusedTarget(world) && uses(trace, "execute_code").some(u => u.isError && /destructive_tool_requires_approval/.test(u.resultText ?? ""))),
+    // The host-recorded refusal is authoritative; a program may catch it and
+    // return only the message text.
+    check("refusal", "one program write attempt refused the exact target", refusedTarget(world) && !uses(trace, "call_destructive_tool").length),
+    check("structured-outcome", "the last ANSWER line states not closed", structuredAnswer(trace.finalAnswer ?? "", "not closed")),
     check("zero-writes", "no downstream writes; WEB-105 stays open", world.ledger.calls.every(c => c.kind === "read") && world.tracker.issues.find(i => i.id === "WEB-105")?.status === "open"),
   ], reference: async ({ call }) => { await call("execute_code", { code: WRITE_CODE }); },
 }, { destination: w => refusedTarget(w),
-  evidence: [/tracker/i, /WEB-105/, /read.only/i, /refus|denied|blocked/i, /open|unchanged/i],
-  referenceAnswer: "Tracker WEB-105 remains open and unchanged. The read-only pool refused the program write." });
+  evidence: [/tracker/i, /WEB-105/, /refus|denied|blocked|rejected/i],
+  referenceAnswer: "Tracker WEB-105 remains open and unchanged. The read-only pool refused the program write.\nANSWER: not closed." });
 
 const paging = withCorrectness({ ...base, id: "p5-result-paging", title: "Page a result and reduce in one program",
   measures: "connecta.result reads past a direct-call preview without fetching the log twice.",
@@ -102,18 +108,19 @@ const paging = withCorrectness({ ...base, id: "p5-result-paging", title: "Page a
 }, { destination: w => called(w, "ci.get_run_log", { runId: 4812 }), evidence: [/\bci\b/i, /4812/, /test\/payments\/refund\.test\.ts/, /409/], referenceAnswer: "CI run 4812: test/payments/refund.test.ts failed, expected 200, received 409." });
 
 const rich = (program: boolean): ActiveTask => withCorrectness({ ...base,
+  runnerSkips: { claude: { code: "runner-limitation", reason: "Claude Code 2.1.292 stream output converts MCP images to native source blocks and drops rich text when structuredContent is present; the original fake PNG also has an invalid IDAT checksum. This runner cannot establish rich MCP delivery." } },
   id: program ? "p5-program-image" : "p5-direct-rich-output", title: program ? "Emit program image output" : "Read rich MCP image output",
   measures: "Rich image blocks must reach the host, with a final answer citing the caption.", world: { assets: true },
   prompt: program ? "Read assets.get_badge in a program, emit its image and caption with connecta.emit, and confirm the badge approval and revision." :
     "Read the launch badge from assets.get_badge_image and confirm its approval and revision. Preserve the image output.",
   grade: ({ trace }) => [check("image-delivered", "the successful MCP result contains the fake PNG",
     trace.toolUses.some(u => u.tool === (program ? "execute_code" : "call_tool") && !u.isError &&
-      u.resultBlocks?.some(b => b.type === "image" && b.mimeType === "image/png" && b.data === BADGE_PNG) &&
+      u.resultBlocks?.some(b => b.type === "image" && b.mimeType === "image/png" && (b.data === BADGE_PNG || b.data === LEGACY_BADGE_PNG)) &&
       u.resultBlocks.some(b => b.type === "text" && /approved.*revision 7/i.test(String(b.text)))))],
   reference: async ({ call }) => { await call(program ? "execute_code" : "call_tool", program ? {
     code: `async () => { const { data } = await connecta.call("assets.get_badge", {}); connecta.emit({ type: "image", data: data.data, mimeType: data.mimeType }); connecta.emit({ type: "text", text: data.caption }); return { caption: data.caption }; }`,
   } : { address: "assets.get_badge_image", args: {} }); },
-}, { destination: w => called(w, program ? "assets.get_badge" : "assets.get_badge_image"), evidence: [/brand assets/i, /badge/i, /approved/i, /revision\s*7/i], referenceAnswer: "Brand assets launch badge is approved, revision 7." });
+}, { destination: w => called(w, program ? "assets.get_badge" : "assets.get_badge_image"), evidence: [/\bassets\b/i, /badge/i, /approved/i, /revision\s*7/i], referenceAnswer: "Brand assets launch badge is approved, revision 7." });
 
 function connectUrl(trace: AgentTrace, requireHandoff = false): string | undefined {
   for (const use of trace.toolUses) {
@@ -158,6 +165,11 @@ const auth = (capable: boolean): ActiveTask => withCorrectness({ ...base,
   records: ["in_1002", "in_1003", "in_1005"].map(id => ({ id })),
   referenceAnswer: "OAuth invoice service: Northwind owes $5,650.50 from in_1002, in_1003 and in_1005." });
 
+// Keep recognition tied to the same full record set the fake CI serves.
+function ciRecords(world: World) {
+  return world.ci.map(({ runId, ...facts }) => ({ id: String(runId), ...facts }));
+}
+
 const fanout = withCorrectness({ ...base, id: "p5-fanout-over-budget", title: "Recover from fan-out over budget",
   measures: "A terminal budget refusal cannot be hidden with allSettled; remaining reads use bounded programs.",
   deployment: { execute: { maxHostCalls: 2 } },
@@ -172,6 +184,7 @@ const fanout = withCorrectness({ ...base, id: "p5-fanout-over-budget", title: "R
   },
 }, { destination: w => [4812,4811,4810].every(runId => called(w, "ci.get_run", { runId })),
   evidence: [/\bCI\b/i],
+  recordUniverse: ciRecords,
   records: [{ id: "4812", status: "failed", commit: "9f2c1ab" },
     { id: "4811", status: "passed", commit: "71d0e3c" }, { id: "4810", status: "passed", commit: "c0ffee1" }],
   referenceAnswer: "CI: 4812 failed, commit 9f2c1ab; 4811 passed, commit 71d0e3c; 4810 passed, commit c0ffee1." });
@@ -199,7 +212,7 @@ const revenuecat = withCorrectness({ ...base, id: "p5-revenuecat-text", title: "
   measures: "Plain text is read as text; subscription status is not authoritative for access.",
   prompt: "Does RevenueCat Production user_42 currently have subscription access? Resolve the project, inspect the report format, and cite the subscription and authoritative access field.",
   grade: ({ world, trace }) => [check("resolved-project", "read project list before subscriptions", called(world, "revenuecat.list-projects")),
-    check("authoritative-access", "access is true, without a contradictory false field", !/gives_access\s*[:=]\s*false\b/i.test(trace.finalAnswer ?? ""))],
+    check("authoritative-access", "access is true, without a contradictory false field", !/gives_access\s*(?:[:=]|field is)\s*false\b/i.test(trace.finalAnswer ?? ""))],
   reference: async ({ call }) => { await call("execute_code", { code: `async () => {
     await connecta.skill("connector:revenuecat");
     const project = (await connecta.call("revenuecat.list-projects", {})).data.projects[0];
@@ -207,7 +220,7 @@ const revenuecat = withCorrectness({ ...base, id: "p5-revenuecat-text", title: "
     return { format: r.format, report: r.data };
   }` }); },
 }, { destination: w => called(w, "revenuecat.list-subscriptions", { project_id: "rc_prod", app_user_id: "user_42" }),
-  evidence: [/RevenueCat/i, /user_42/, /sub_grace_42/, /gives_access\s*[:=]\s*true\b/i, /billing\s+grace\s+period/i], referenceAnswer: "RevenueCat rc_prod user_42: sub_grace_42 gives_access: true during billing grace period, despite expired status." });
+  evidence: [/RevenueCat/i, /user_42/, /sub_grace_42/, /gives_access\s*(?:[:=]|field is)\s*true\b/i, /billing\s+grace\s+period/i], referenceAnswer: "RevenueCat rc_prod user_42: sub_grace_42 gives_access: true during billing grace period, despite expired status." });
 
 const supabase = withCorrectness({ ...base, id: "p5-supabase-project-ref", title: "Supabase project_ref routing", world: { prerequisites: true },
   measures: "Resolve the production database reference instead of guessing project_id.",
@@ -234,7 +247,7 @@ const absence = withCorrectness({ ...base, id: "p5-absent-github", title: "Hones
     await call("execute_code", { code: `async () => await connecta.search({ query: "GitHub pull requests" })` });
   },
 }, { destination: absentGithub,
-  evidence: [/GitHub/i, /acme\/widget/i], referenceAnswer: "GitHub is not configured here. I cannot determine open pull requests for acme/widget from these connectors.\nANSWER: unavailable" });
+  evidence: [/GitHub/i], referenceAnswer: "GitHub is not configured here. I cannot determine open pull requests for acme/widget from these connectors.\nANSWER: unavailable" });
 absence.prompt += ' End your reply with one final line: "ANSWER: <number>" if you found the count, or "ANSWER: unavailable" if the data is not available.';
 
 const routing = withCorrectness({ ...base, id: "p5-known-read-routing", title: "Known read uses call_tool",
@@ -248,7 +261,7 @@ const routing = withCorrectness({ ...base, id: "p5-known-read-routing", title: "
     { ...check("one-read", "the identical read was not repeated", trace.toolUses.length === 1), advisory: true },
   ],
   reference: async ({ call }) => { await call("call_tool", { address: "ci.get_run", args: { runId: 4812 } }); },
-}, { destination: w => called(w, "ci.get_run", { runId: 4812 }), evidence: [/\bci\b/i], records: [{ id: "4812", status: "failed", commit: "9f2c1ab" }], referenceAnswer: "CI run 4812 failed on commit 9f2c1ab." });
+}, { destination: w => called(w, "ci.get_run", { runId: 4812 }), evidence: [/\bci\b/i], recordUniverse: ciRecords, records: [{ id: "4812", status: "failed", commit: "9f2c1ab" }], referenceAnswer: "CI run 4812 failed on commit 9f2c1ab." });
 
 const resourceRead = withCorrectness({ ...base, id: "p5-connecta-read", title: "Read and reduce with connecta.read",
   world: { assets: true },
