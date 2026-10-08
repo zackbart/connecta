@@ -51,8 +51,6 @@ describe("describeConfig", () => {
     const builtIn = config.connectors.filter((connector) => connector.id !== "custom_conn");
     const outputs = [
       ...builtIn.map((connector) => [connector.id, connector.describe?.()] as const),
-      ["artifacts connector", config.artifacts.connector.describe?.()] as const,
-      ["artifacts module", config.artifacts.describe?.()] as const,
       ["accessTokens module", config.accessTokens.describe?.()] as const,
     ];
     for (const [where, described] of outputs) {
@@ -148,9 +146,6 @@ describe("describeConfig", () => {
       expect(byId.billing?.source).toEqual({ kind: "remote-mcp", provider: "stripe" });
       expect(byId.billing?.usageGuide?.summary).toEqual(expect.any(String));
       expect(byId.tracker?.source).toEqual({ kind: "remote-mcp", provider: "linear" });
-      expect(byId.artifacts).toMatchObject({
-        source: { kind: "builtin", provider: "artifacts" },
-      });
       // A custom describe() is re-validated: unknown fields are dropped and
       // endpoints are re-parsed down to origin and path.
       expect(byId.custom_conn).toEqual({
@@ -220,7 +215,6 @@ describe("describeConfig", () => {
           vault: { enabled: true, sealsOAuth: true },
           activity: { enabled: true, readable: false, deploymentId: "production", store: { kind: "custom" } },
           accessTokens: { enabled: true, maxActive: 100 },
-          artifacts: { enabled: true, renderCheck: true, allowlist: { scripts: [], styles: [], fonts: [] } },
         },
         storage: { configured: true, kind: "memory" },
         branding: { productName: "Connecta" },
@@ -235,7 +229,6 @@ describe("describeConfig", () => {
       expect(snapshot.limits.results.maxStashEntries).toEqual({ value: 64, source: "default" });
       expect(snapshot.limits.requests.concurrency).toEqual({ value: 4, source: "config" });
       expect(snapshot.limits.requests.maxDurationMs).toEqual({ value: 300_000, source: "default" });
-      expect(snapshot.modules.artifacts.limits).toEqual(expect.objectContaining({ documents: expect.any(Number) }));
       // Built once and frozen: every call returns the same snapshot.
       expect(app.describeConfig()).toBe(snapshot);
       expect(Object.isFrozen(snapshot.connectors[0])).toBe(true);
@@ -280,7 +273,6 @@ describe("describeConfig", () => {
       vault: { enabled: false },
       activity: { enabled: false },
       accessTokens: { enabled: false },
-      artifacts: { enabled: false },
     });
     await app.close();
   });

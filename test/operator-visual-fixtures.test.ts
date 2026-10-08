@@ -36,7 +36,7 @@ describe("operator visual fixture contract", () => {
     }
     if (state === "restricted") {
       expect(ids).toEqual(["github", "slot"]);
-      expect(contract.you.permissions).toMatchObject({ activity: false, artifacts: false, accessTokenManagement: false });
+      expect(contract.you.permissions).toMatchObject({ activity: false, accessTokenManagement: false });
       expect(contract.you.permissions.connectors.every(p => !p.manageSharedAuth && !p.connectPersonal)).toBe(true);
     } else if (state === "empty") {
       expect(ids).toEqual([]);

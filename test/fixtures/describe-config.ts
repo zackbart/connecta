@@ -10,7 +10,6 @@
 
 import { accessTokens } from "../../src/access-tokens.js";
 import { activityHistory, type ActivityStore } from "../../src/activity.js";
-import { artifacts, kvArtifactStore } from "../../src/artifacts.js";
 import { machineAuth } from "../helpers/machine-auth.js";
 import { clerkAuth } from "../../src/auth/clerk.js";
 import { encryptedCredentialVault } from "../../src/credentials.js";
@@ -131,7 +130,6 @@ export function secretBearingDeployment() {
         },
       }),
       activity: activityHistory({ store: activityStore, deploymentId: "production" }),
-      artifacts: artifacts({ store: kvArtifactStore(storage), renderCheck: fn({ ok: true }) as never }),
       identity: {
         connectorAccess: fn("all") as never,
         credentialAdministration: fn("all") as never,

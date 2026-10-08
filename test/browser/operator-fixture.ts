@@ -21,7 +21,7 @@ export async function fixtureContract(data: UiData): Promise<OperatorUiContract>
     you: {
       interactive: true, trust: "read-only", grants: data.connectors.map(c => ({ connectorId: c.id, tools: "all" })),
       pools: (data.pools ?? []).map(name => ({ name, path: `/mcp/${name}`, trust: "read-only", grants: data.connectors.map(c => ({ connectorId: c.id, tools: "all" })) })),
-      permissions: { activity: data.activityEnabled, artifacts: Boolean(data.artifactsEnabled), accessTokenManagement: data.accessTokenManagement === "available",
+      permissions: { activity: data.activityEnabled, accessTokenManagement: data.accessTokenManagement === "available",
         connectors: data.connectors.map(c => ({ id: c.id, use: true, manageSharedAuth: c.permissions?.manageSharedAuth ?? false, connectPersonal: c.permissions?.connectPersonal ?? false })),
       },
     },

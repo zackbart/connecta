@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { accessTokens } from "../src/access-tokens.js";
-import { artifacts, kvArtifactStore } from "../src/artifacts.js";
 import { describeConfigSources } from "../src/config-value-sources.js";
 import { customExecutor, remoteMcp } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -51,20 +50,6 @@ describe("factory configuration provenance", () => {
       expect(sources["config.connectors.remote.transport.requireHttps"]).toBe("default");
       expect(sources["config.connectors.remote.transport.redirects"]).toBe("config");
       expect(sources["config.connectors.remote.transport.versionNegotiation"]).toBe("default");
-    } finally { await app.close(); }
-  });
-
-  it("INV-10: marks artifact policy defaults per option, including nested allowlists", async () => {
-    const module = artifacts({ store: kvArtifactStore(memoryStorage()), allowlist: { scripts: [] }, limits: { titleChars: 120 } });
-    const raw = { executor, publicUrl: "https://connecta.example", logger: "silent" as const, connectors: [], artifacts: module };
-    const app = createTestConnecta(raw);
-    try {
-      const sources = describeConfigSources(app.describeConfig(), raw);
-      expect(sources["config.modules.artifacts.allowlist.scripts"]).toBe("config");
-      expect(sources["config.modules.artifacts.allowlist.styles"]).toBe("default");
-      expect(sources["config.modules.artifacts.limits.titleChars"]).toBe("config");
-      expect(sources["config.modules.artifacts.limits.sourceBytes"]).toBe("default");
-      expect(sources["config.modules.artifacts.renderCheck"]).toBe("default");
     } finally { await app.close(); }
   });
 });

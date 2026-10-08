@@ -8,7 +8,6 @@ import { createMetaTools } from "../src/meta-tools.js";
 import { InvocationService } from "../src/invocation.js";
 import { SentSecrets, sentSecretsFor, trackCredentialReads } from "../src/sent-secrets.js";
 import { CredentialVault } from "../src/credentials.js";
-import { artifacts, kvArtifactStore } from "../src/artifacts.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { scopes } from "../src/storage/keys.js";
 import { seedGrant } from "./fixtures/oauth.js";
@@ -165,7 +164,7 @@ describe("call-scoped sent credentials", () => {
     }
   });
 
-  it.each(["unicode", "split", "escaped"])("INV-5: %s MCP text is redacted after unwrapping, before paging, emits and artifact storage", async (form) => {
+  it.each(["unicode", "split", "escaped"])("INV-5: %s MCP text is redacted after unwrapping, before paging and emits", async (form) => {
     const token = 'credential/"with-escapes';
     const storage = memoryStorage();
     const vault = new CredentialVault(storage, KEY);
@@ -183,8 +182,7 @@ describe("call-scoped sent credentials", () => {
         return { content };
       },
     };
-    const store = kvArtifactStore(memoryStorage());
-    const registry = makeRegistry([connector, artifacts({ store }).connector], { storage, credentialVault: vault, maxResultBytes: 256 });
+    const registry = makeRegistry([connector], { storage, credentialVault: vault, maxResultBytes: 256 });
     const meta = createMetaTools(registry, BASE);
     const page = await meta.callTool({ address: "remote.read", resultMode: "value" });
     const notice = (page.structuredContent as any).data;
@@ -206,11 +204,6 @@ describe("call-scoped sent credentials", () => {
       const result = await host.call!("remote.read", {}) as { data: { echo: string }; format: string };
       expect(result.data.echo).toBe("[redacted]");
       await host.emit!({ type: "text", text: token });
-      // Even a program reconstructing a sent value cannot write it to a page.
-      await host.call!("artifacts.create_artifact", {
-        id: "redacted", title: "Redacted", kind: "markdown", source: token,
-        documents: { data: { echoed: token } },
-      });
       return { result: { echoed: token }, logs: [token] };
     } };
     const run = createExecuteTool(registry, BASE, executor, silentLogger, undefined, { trust: "trusted" });
@@ -219,9 +212,6 @@ describe("call-scoped sent credentials", () => {
     expect(JSON.stringify(result)).not.toContain(token);
     expect(result.structuredContent).toMatchObject({ result: { echoed: "[redacted]" }, logs: "[redacted]" });
     expect(result.content.at(-1)?.text).toBe("[redacted]");
-    const head = (await store.head("redacted"))!.head;
-    expect(await store.body(head.view.body!)).toBe("[redacted]");
-    expect(JSON.parse((await store.body(head.documents.data!.body!))!)).toEqual({ echoed: "[redacted]" });
     const failed = createExecuteTool(registry, BASE, { execute: async (_code, providers) => {
       await providers[0]!.fns.call!("remote.read", {});
       return { result: undefined, error: token, logs: [token] };

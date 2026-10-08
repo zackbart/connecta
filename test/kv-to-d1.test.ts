@@ -17,7 +17,6 @@ import {
 } from "../src/d1.js";
 import {
   accessTokenKeys,
-  artifactKeys,
   catalogKeys,
   credentialKeys,
   kvCopyKeys,
@@ -150,7 +149,6 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
       [oauthHandoffKeys.handoff("svc", "hash"), "principal", 900],
       [catalogKeys.manifest("svc"), "{}", 3600],
       [`${scopes.results}${resultKeys.chunk("r1", 0)}`, "page", 900],
-      [artifactKeys.under("artifact:").head("a1"), "{}"],
       ["legacy:key", "old"],
     ];
     const expiryOf = new Map<string, number>();
@@ -178,7 +176,6 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
       "oauth-handoff": copied(1),
       catalog: copied(1),
       result: copied(1),
-      artifact: copied(1),
       unclassified: copied(1),
     });
 

@@ -115,7 +115,7 @@ describe("public package boundary", () => {
     expect(Object.keys(packageJson.exports ?? {}).sort()).toEqual(
       [
         ".",
-        "./ui", "./credentials", "./activity", "./artifacts", "./auth/access-tokens",
+        "./ui", "./credentials", "./activity", "./auth/access-tokens",
         "./package.json",
         "./node",
         "./sqlite",
@@ -135,7 +135,7 @@ describe("public package boundary", () => {
     // guarded-fetch.ts is transport, not a third authoring path: it knows no
     // provider, and a provider-named file here would still be a failure.
     // api-connector.ts is api() itself without its OAuth grant, split so the
-    // artifacts module and providers do not carry machinery they never use.
+    // providers do not carry machinery they never use.
     // option-shapes.ts holds the closed option shapes those factories and the
     // providers walk for unknown keys; it builds nothing.
     // negotiation-cache.ts stores redacted protocol verdicts, without a client.
@@ -164,7 +164,6 @@ describe("public package boundary", () => {
     expect(readdirSync(join(ROOT, "examples", "worker", "src")).sort()).toEqual([
       "connecta.config.ts",
       "index.ts",
-      "r2-artifact-blobs.ts",
     ]);
   });
 
@@ -233,7 +232,7 @@ describe("public package boundary", () => {
 
   it("INV-13: keeps the Workers executor an optional peer with a published range", () => {
     // Every Cloudflare deployment installs `@cloudflare/codemode` by hand, and
-    // until #376 the only range anywhere in the artifact was a devDependency
+    // until #376 the only range anywhere in the package was a devDependency
     // nobody who installs the package can read. A declared optional peer makes
     // npm answer the question — silence when the version is one this release
     // supports, an ERESOLVE the consumer can act on when it is not — while the

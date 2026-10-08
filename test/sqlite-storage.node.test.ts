@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { kvArtifactStore } from "../src/artifacts.js";
 import { Registry } from "../src/registry.js";
 import {
   importStateFile,
@@ -12,7 +11,6 @@ import {
   sqliteActivityStore,
   sqliteStorage,
 } from "../src/sqlite.js";
-import { artifactStoreContract, headRecord } from "./artifact-store-contract.js";
 import { silentLogger } from "./helpers.js";
 import { sqlStorageContract, type SqlFixture } from "./sql-storage-contract.js";
 import { NUL_VALUES } from "./storage-contract.js";
@@ -113,22 +111,6 @@ describe("sqliteStorage in a file", () => {
     const path = join(tempDirectory(), "connecta.sqlite");
     await sqliteStorage(path).set("k", "v");
     expect(await sqliteStorage(path).get("k")).toBe("v");
-  });
-});
-
-describe("kvArtifactStore over SQLite", () => {
-  artifactStoreContract(() => kvArtifactStore(sqliteStorage(track(openSqlite(":memory:")))));
-
-  it("keeps an artifact across a restart", async () => {
-    const path = join(tempDirectory(), "connecta.sqlite");
-    const first = track(openSqlite(path));
-    const store = kvArtifactStore(sqliteStorage(first));
-    await store.swapHead("page", null, headRecord(1, "Survives"));
-    await store.putBody("c".repeat(64), "body");
-    first.close();
-    const reopened = kvArtifactStore(sqliteStorage(track(openSqlite(path))));
-    expect((await reopened.head("page"))?.head.title).toBe("Survives");
-    expect(await reopened.body("c".repeat(64))).toBe("body");
   });
 });
 

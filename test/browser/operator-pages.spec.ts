@@ -6,7 +6,6 @@ import { fakeClerkAuth, mcpRpc, readJsonRpc } from "../fixtures/http.js";
 import { encryptedCredentialVault } from "../../src/credentials.js";
 import { memoryStorage } from "../../src/storage/memory.js";
 import { activityHistory, type ToolCallActivityEvent } from "../../src/activity.js";
-import { artifacts, kvArtifactStore } from "../../src/artifacts.js";
 import { accessTokens } from "../../src/access-tokens.js";
 import type { Connector } from "../../src/types.js";
 import type { OperatorUiContract } from "../../src/operator-ui/contract.js";
@@ -48,7 +47,6 @@ test.beforeAll(async () => {
   server.listen(0, "127.0.0.1"); await once(server, "listening");
   origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const storage = memoryStorage();
-  const module = artifacts({ store: kvArtifactStore(storage) });
   const github: Connector = { id: "github", title: "GitHub", description: "Repositories and issues", staticTools: catalog,
     listTools: async () => catalog, callTool: async () => null, status: async () => ({ state: "ok" }),
   };
@@ -60,12 +58,11 @@ test.beforeAll(async () => {
   app = createTestConnecta({ connectors: [github, slack, { ...github, id: "slot", title: "Empty slot", credential: { label: "API key" } }, { ...github, id: "hidden", title: "Hidden connector" }], auth: fakeClerkAuth({ token: TOKEN, userId: "pages-user" }),
     publicUrl: origin, storage, vault: encryptedCredentialVault(storage, "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="),
     logger: "silent", serverInfo: { name: "Production", version: "1" }, calls: { maxResultBytes: CONFIG_DEFAULTS.calls.maxResultBytes },
-    identity: { connectorAccess: () => ["github", "slack", "slot", "artifacts"], accessTokenManagement: () => true },
+    identity: { connectorAccess: () => ["github", "slack", "slot"], accessTokenManagement: () => true },
     pools: { support: { tools: ["github.read"], trust: "read-only", grant: () => true }, denied: { tools: ["hidden"], grant: () => false } },
-    accessTokens: accessTokens(storage), artifacts: module,
+    accessTokens: accessTokens(storage),
     activity: activityHistory({ store: { record: () => {}, list: async () => ({ events: [event("a", "request-one", "read"), event("b", "request-one", "write"), event("c", "request-two", "read")] }) } }),
   });
-  await module.connector.callTool("create_artifact", { id: "report", title: "Weekly report", kind: "html", source: '<!doctype html><main id="artifact-root">Report</main>' }, { storage, logger: console, baseUrl: origin });
 });
 test.afterAll(async () => { await app.close(); await new Promise<void>(resolve => server.close(() => resolve())); });
 

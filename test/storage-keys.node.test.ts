@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   accessTokenKeys,
-  artifactKeys,
   catalogKeys,
   responseCacheKeys,
   credentialKeys,
@@ -104,12 +103,6 @@ describe("storage key families", () => {
     within(oauthV2Keys.family, oauthV2Keys.generation);
     within(oauthV2Keys.family, oauthV2Keys.value(oauthV2Keys.field.tokens, "v2:epoch"));
     within(oauthV2Keys.family, oauthV2Keys.value(oauthV2Keys.field.tokens, null));
-    const artifact = artifactKeys.under("artifact:");
-    for (const key of [artifact.head("a"), artifact.blob("b"), artifact.scanCursor,
-      artifact.versionPrefix("a", "view"), artifact.runPrefix("a"), artifact.run("a", "0", "r")]) {
-      within(artifactKeys.family, key);
-    }
-    expect(artifact.run("a", "0", "r").startsWith(artifact.runPrefix("a"))).toBe(true);
     // A credential sits in its connector's namespace, under a principal when personal.
     expect(credentialKeys.credential("svc")).toBe(`${scopes.connector("svc")}credential:v1`);
     expect(credentialKeys.credential("svc", "owner"))
@@ -119,7 +112,6 @@ describe("storage key families", () => {
   it("name the family of every key their builders write, in every scope", () => {
     const connector = (key: string) => `${scopes.connector("svc")}${key}`;
     const personal = (key: string) => `${scopes.principal("ab12")}${key}`;
-    const artifact = artifactKeys.under("artifact:");
     const cases: [key: string, family: string][] = [
       [`${scopes.results}${resultKeys.chunk("id", 0)}`, "result"],
       [`${scopes.subject("ab12")}${resultKeys.chunk("id", 2)}`, "result"],
@@ -136,8 +128,6 @@ describe("storage key families", () => {
       [credentialKeys.credential("svc"), "credential"],
       [credentialKeys.credential("svc", "ab12"), "credential"],
       [connector(inputRetryKeys.used("nonce")), "downstream-input-retry"],
-      [artifact.head("a"), "artifact"],
-      [artifact.run("a", "0", "r"), "artifact"],
       [connector(oauthV2Keys.value(oauthV2Keys.field.tokens, null)), "oauth-v2"],
       [connector(oauthV2Keys.value(oauthV2Keys.field.client, "v2:epoch")), "oauth-v2"],
       [connector(negotiationKeys.verdict("digest")), "negotiation"],
@@ -156,7 +146,6 @@ describe("storage key families", () => {
       [connector("my:key"), "connector-owned"],
       [personal(connector("my:key")), "connector-owned"],
       [`${scopes.results}other`, "unclassified"],
-      [artifactKeys.under("pages:").head("a"), "unclassified"],
       ["", "unclassified"],
       // A family's key outside its scope is not that family's.
       [oauthV2Keys.generation, "unclassified"],
@@ -174,7 +163,6 @@ describe("storage key families", () => {
 
   it("rejects NUL in every unencoded key component, including identity scopes", () => {
     const bad = "a\0b";
-    const artifact = artifactKeys.under("artifact:");
     const builders = [
       () => scopes.principal(bad),
       () => scopes.subject(bad),
@@ -190,15 +178,6 @@ describe("storage key families", () => {
       () => accessTokenKeys.lookup(bad),
       () => credentialKeys.credential(bad),
       () => credentialKeys.credential("svc", bad),
-      () => artifactKeys.under(bad),
-      () => artifact.head(bad),
-      () => artifact.versionPrefix(bad, "view"),
-      () => artifact.versionPrefix("id", bad),
-      () => artifact.runPrefix(bad),
-      () => artifact.run(bad, "0", "run"),
-      () => artifact.run("id", bad, "run"),
-      () => artifact.run("id", "0", bad),
-      () => artifact.blob(bad),
       () => oauthFlowKeys.flow(bad),
       () => oauthV2Keys.value(oauthV2Keys.field.tokens, bad),
       () => oauthConnectKeys.used(bad),
