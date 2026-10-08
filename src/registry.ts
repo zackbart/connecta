@@ -275,8 +275,8 @@ const STASH_LEDGER_BACKOFF_CAP_MS = 250;
  */
 const STASH_LEDGER_GRACE_MS = 30_000;
 
-/** One live stash charge: its header key, bytes, and expiry (epoch ms). */
-type StashCharge = readonly [key: string, bytes: number, expiresAt: number];
+/** One live stash charge: reservation id, bytes, and expiry (epoch ms). */
+type StashCharge = readonly [reservation: string, bytes: number, expiresAt: number];
 
 /**
  * Live charges in a stored ledger. Anything malformed reads as empty: the
@@ -304,16 +304,17 @@ function liveStashCharges(raw: string | null, now: number): StashCharge[] {
   );
 }
 
+type StashSwap<A> = { readonly status: "applied"; readonly result: A } | { readonly status: "exhausted" };
+
 /**
- * Rewrite the stash ledger by compare-and-set. `plan` sees the live charges
- * and the time it read them at, and answers its result with the entries to
- * store, or without them when there is nothing to write. Only `plan` refuses:
- * a lost swap backs off and plans again from a fresh read. Answers undefined
- * once the attempts run out.
+ * Rewrite the ledger, distinguishing a completed plan from exhausted retries.
+ * Storage failures and lost comparisons share the bounded backoff. Booking
+ * reconciles completed reservations when capacity would otherwise refuse it.
  */
 function swapStashLedger<A>(
   plan: (live: StashCharge[], now: number) => { readonly entries?: StashCharge[]; readonly result: A },
-): Effect.Effect<A | undefined, unknown, Storage> {
+  reconcile = false,
+): Effect.Effect<StashSwap<A>, never, Storage> {
   return Effect.gen(function* () {
     const ledger = stashLedgerKeys.ledger;
     for (let attempt = 0; attempt < STASH_LEDGER_ATTEMPTS; attempt++) {
@@ -321,15 +322,46 @@ function swapStashLedger<A>(
         const window = Math.min(STASH_LEDGER_BACKOFF_CAP_MS, STASH_LEDGER_BACKOFF_MS * 2 ** (attempt - 1));
         yield* Effect.sleep(Duration.millis(Math.floor((yield* Random.next) * window) + 1));
       }
-      const raw = yield* storageGet(ledger);
-      const now = yield* Clock.currentTimeMillis;
-      const planned = plan(liveStashCharges(raw, now), now);
-      if (planned.entries === undefined) return planned.result;
-      if (yield* storageCompareAndSet(ledger, raw, jsonCodec.encode({ v: 1, entries: planned.entries }))) {
-        return planned.result;
-      }
+      const outcome = yield* Effect.gen(function* () {
+        const raw = yield* storageGet(ledger);
+        const now = yield* Clock.currentTimeMillis;
+        let live = liveStashCharges(raw, now);
+        let planned = plan(live, now);
+        const receipts: string[] = [];
+        if (reconcile && planned.entries === undefined) {
+          const recovered: StashCharge[] = [];
+          for (const entry of live) {
+            if (entry[2] === Number.MAX_SAFE_INTEGER) {
+              const key = stashLedgerKeys.completion(entry[0]);
+              const expiry = Number(yield* storageGet(key));
+              if (Number.isSafeInteger(expiry) && expiry > 0 && expiry < Number.MAX_SAFE_INTEGER) {
+                receipts.push(key);
+                if (expiry > now) recovered.push([entry[0], entry[1], expiry]);
+                continue;
+              }
+            }
+            recovered.push(entry);
+          }
+          if (receipts.length > 0) {
+            live = recovered;
+            planned = plan(live, now);
+            // Even a still-full ledger must record reconciled finite expiries
+            // before their receipts can be removed.
+            planned = { ...planned, entries: planned.entries ?? live };
+          }
+        }
+        if (
+          planned.entries !== undefined &&
+          !(yield* storageCompareAndSet(ledger, raw, jsonCodec.encode({ v: 1, entries: planned.entries })))
+        ) {
+          return undefined;
+        }
+        for (const key of receipts) yield* storageDelete(key).pipe(Effect.ignore);
+        return { status: "applied", result: planned.result } as const;
+      }).pipe(Effect.catch(() => Effect.succeed(undefined)));
+      if (outcome !== undefined) return outcome;
     }
-    return undefined;
+    return { status: "exhausted" } as const;
   });
 }
 
@@ -802,38 +834,59 @@ export class Registry implements RegistryView {
         const bytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
         if (bytes > maxBytes || maxEntries === 0) return false;
         const keys = chunks.map((_, index) => partition + resultKeys.chunk(id, index));
-        const charge = keys[0]!;
+        // Keep the three-field ledger layout readable by older isolates. The
+        // opaque reservation id prevents stale receipts from matching reused
+        // result ids, including across partitions.
+        const charge = crypto.randomUUID();
         // Chunk TTLs use one deadline. Reserve the charge while writes are
         // pending: a slow write can persist after any precomputed expiry.
         // Once every write settles, replace the reservation with a deadline
         // covering the latest possible chunk expiry, including failed writes.
-        const deadline = yield* swapStashLedger((live, now) => {
+        const booking = yield* swapStashLedger((live, now) => {
           const used = live.reduce((sum, entry) => sum + entry[1], 0);
           if (live.length >= maxEntries || used + bytes > maxBytes) return { result: undefined };
           const end = now + ttlSeconds * 1000;
           return { entries: [...live, [charge, bytes, Number.MAX_SAFE_INTEGER]], result: end };
-        });
-        if (deadline === undefined) return false;
+        }, true);
+        if (booking.status === "exhausted" || booking.result === undefined) return false;
+        const deadline = booking.result;
         let expiresAt = deadline + STASH_LEDGER_GRACE_MS;
-        const settle = swapStashLedger((live) => ({
-          entries: live.map((entry) => (entry[0] === charge ? [charge, bytes, expiresAt] : entry)),
-          result: undefined,
-        })).pipe(Effect.ignore);
-        // A failed write may still have persisted. Delete every key it could
-        // have written and release the charge only when all of them are gone;
-        // otherwise the charge stays booked until it expires, by which time the
-        // storage TTL has removed whatever did land.
-        const release = Effect.gen(function* () {
-          for (const key of keys) yield* storageDelete(key);
-          yield* swapStashLedger((live) =>
-            live.some((entry) => entry[0] === charge)
-              ? { entries: live.filter((entry) => entry[0] !== charge), result: undefined }
-              : { result: undefined },
+        const completion = stashLedgerKeys.completion(charge);
+        const owns = (entry: StashCharge) => entry[0] === charge;
+        const settle = Effect.gen(function* () {
+          // Persist completion independently of the contested ledger. It has
+          // no TTL until a ledger CAS consumes it: expiring it first would pin
+          // the reservation again. A fresh Registry can reconcile it on booking.
+          const recorded = yield* storageSet(completion, jsonCodec.encode(expiresAt)).pipe(
+            Effect.retry({ times: STASH_LEDGER_ATTEMPTS - 1 }),
+            Effect.map(() => true),
+            Effect.catch(() => Effect.succeed(false)),
           );
-        }).pipe(
-          Effect.catch(() => settle),
-          Effect.ignore,
-        );
+          const settled = yield* swapStashLedger((live) => ({
+            entries: live.map((entry) => (owns(entry) ? [charge, bytes, expiresAt] : entry)),
+            result: undefined,
+          }));
+          if (settled.status === "applied") yield* storageDelete(completion).pipe(Effect.ignore);
+          else if (!recorded) return yield* Effect.fail(new Error("Result stash settlement unavailable"));
+        });
+        // A failed write may still have persisted. Release only after every
+        // possible chunk is deleted. Failed or exhausted release falls back
+        // to a finite settlement, with its receipt available for reconciliation.
+        const release = Effect.gen(function* () {
+          const deleted = yield* Effect.gen(function* () {
+            for (const key of keys) yield* storageDelete(key);
+            return true;
+          }).pipe(Effect.catch(() => Effect.succeed(false)));
+          if (deleted) {
+            const released = yield* swapStashLedger((live) =>
+              live.some(owns)
+                ? { entries: live.filter((entry) => !owns(entry)), result: undefined }
+                : { result: undefined },
+            );
+            if (released.status === "applied") return;
+          }
+          yield* settle;
+        });
         // Trailing chunks first: the header chunk is what makes an id readable, so
         // a write that fails midway leaves no envelope pointing at absent chunks.
         const written = yield* Effect.gen(function* () {
@@ -855,7 +908,7 @@ export class Registry implements RegistryView {
             if ((yield* Clock.currentTimeMillis) - before > STASH_LEDGER_GRACE_MS) return false;
           }
           return true;
-        }).pipe(Effect.onError(() => release));
+        }).pipe(Effect.onError(() => release.pipe(Effect.ignore)));
         if (!written) yield* release;
         else yield* settle;
         return written;

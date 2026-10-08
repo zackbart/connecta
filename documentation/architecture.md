@@ -455,13 +455,20 @@ reads only what it covers. Its bounds (`results.maxStashBytes`,
 `results.maxStashEntries`) are the deployment's, not an isolate's: every charge
 is a row in one ledger record, booked by compare-and-set before any chunk is
 written, so isolates and processes sharing the store see one count. A lost swap
-backs off and re-reads; only a full ledger refuses. Each chunk's TTL is what
+backs off and re-reads, up to 32 attempts; a full ledger or exhausted booking
+returns no result id. Each chunk's TTL is what
 remains of the stash's deadline when the write begins. The charge stays
 reserved while writes are pending, then expires 30 seconds past the latest
 possible chunk expiry, measured at write completion even when a write rejects.
-Failed cleanup retains that charge; successful cleanup releases it. A crash or
-an unavailable ledger during settlement can leave a reservation booked, keeping
-the bounds conservative until the ledger is repaired. A full
+Failed cleanup retains that charge. Successful cleanup attempts release; if
+release exhausts its 32 retries, it falls back to the same finite settlement.
+Settlement retries transient storage errors and records a completion receipt
+independently of the ledger. If its CAS retries exhaust, a later booking that
+would otherwise refuse capacity consumes the receipt and reconciles the finite
+expiry. Receipts stay stored until a ledger CAS consumes them, so recovery works
+across Registry instances. Pending writes have no receipt and stay reserved.
+A crash before recording completion, or storage unavailable for both receipt
+and settlement, can still require ledger repair. A full
 stash returns the successful call's preview and a paging-unavailable notice
 rather than a result id. The shared storage cases live in
 `test/storage-contract.ts` and `test/sql-storage-contract.ts`.

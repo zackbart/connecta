@@ -2045,7 +2045,7 @@ describe("bounded result stash", () => {
       expect(second).toHaveProperty("resultId");
       expect(await storage.get(`results:result:${first.resultId}`)).toBeNull();
       const ledger = JSON.parse((await storage.get("result-stash:v1:ledger")) ?? "null");
-      expect(ledger.entries).toEqual([[`results:result:${second.resultId}`, expect.any(Number), expect.any(Number)]]);
+      expect(ledger.entries).toEqual([[expect.any(String), expect.any(Number), expect.any(Number)]]);
     } finally {
       now.mockRestore();
     }

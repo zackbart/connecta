@@ -77,6 +77,7 @@ describe("storage key families", () => {
     within(resultKeys.family, resultKeys.chunk("id", 0));
     within(resultKeys.family, resultKeys.chunk("id", 3));
     within(stashLedgerKeys.family, stashLedgerKeys.ledger);
+    within(stashLedgerKeys.family, stashLedgerKeys.completion("reservation"));
     const responseNamespace = responseCacheKeys.namespace("svc", "config", "generation");
     const responseEntry = responseCacheKeys.entry(responseNamespace, "partition");
     for (const key of [
@@ -121,6 +122,7 @@ describe("storage key families", () => {
       [`${scopes.subject("ab12")}${resultKeys.chunk("id", 2)}`, "result"],
       [personal(`${scopes.results}${resultKeys.chunk("id", 0)}`), "result"],
       [stashLedgerKeys.ledger, "result-stash-ledger"],
+      [stashLedgerKeys.completion("reservation"), "result-stash-ledger"],
       [catalogKeys.manifest("svc"), "catalog"],
       [responseCacheKeys.generation("svc"), "response-cache"],
       [
@@ -171,6 +173,7 @@ describe("storage key families", () => {
   it("rejects NUL in every unencoded key component, including identity scopes", () => {
     const bad = "a\0b";
     const builders = [
+      () => stashLedgerKeys.completion(bad),
       () => scopes.principal(bad),
       () => scopes.subject(bad),
       () => scopes.connector(bad),

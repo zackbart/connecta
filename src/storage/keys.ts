@@ -115,8 +115,8 @@ export const resultKeys = {
 // --- root families --------------------------------------------------------
 
 /**
- * The runtime-wide result stash ledger: every live stash entry's partition
- * key, byte charge, and expiry. One record, swapped by compare-and-set, so the
+ * The runtime-wide result stash ledger: every live stash entry's reservation
+ * id, byte charge, and expiry. One record, swapped by compare-and-set, so the
  * stash bounds hold across isolates and processes sharing the store.
  */
 export const stashLedgerKeys = {
@@ -132,6 +132,8 @@ export const stashLedgerKeys = {
     durable: false,
   },
   ledger: "result-stash:v1:ledger",
+  /** Consumed by settlement or a later booking CAS; must survive until then. */
+  completion: (reservation: string) => validateStorageKey(`result-stash:v1:completion:${reservation}`),
 } as const satisfies Keyed;
 
 /**
