@@ -2327,7 +2327,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
           credentialHeader, credentialScheme, opts.authScope ?? "shared",
           opts.redirects ?? "none", oauthConfig, oauthScope,
-          state.credentialDigest, genAtStart, callerOf(ctx),
+          state.credentialDigest, genAtStart, callerOf(ctx), skillsEnabled === true,
         ])));
         const prior = opts.versionNegotiation === "legacy" ? undefined
           : yield* promised(() => readNegotiation(ctx, negotiationDigest));
