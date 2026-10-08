@@ -5,6 +5,8 @@ import { createMetaTools } from "../src/meta-tools.js";
 import { SkillsRegistry, downstreamSkillUri } from "../src/skills.js";
 import { sentSecretsFor } from "../src/sent-secrets.js";
 import { callerOf } from "../src/connector-caller.js";
+import { CredentialVault } from "../src/credentials.js";
+import { memoryStorage } from "../src/storage/memory.js";
 import { createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
 import type { Connector, ConnectorContext } from "../src/types.js";
 
@@ -94,6 +96,30 @@ it("INV-5: preserves uncredentialed skill examples and redacts credentials insid
   const meta = await createMetaTools(makeRegistry([remote]), BASE).skills({ name: downstreamSkillUri("remote", URI) });
   expect(meta.content[0]?.text).toBe(examples);
   await c.close();
+});
+
+it("INV-4 INV-5: fetches personal downstream skills with each principal's credential partition", async () => {
+  const storage = memoryStorage();
+  const vault = new CredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(9))));
+  await vault.set("remote", "alice-downstream-skills-token", "operator", "alice");
+  await vault.set("remote", "bob-downstream-skills-token", "operator", "bob");
+  const fetched: string[] = [];
+  const remote = downstream("remote", {
+    list: async ctx => { const token = (await ctx.credential!.get())!; fetched.push(token); return downstream().downstreamSkills!.list(ctx); },
+    read: async (uri, ctx) => [{ uri, text: TEXT + ((await ctx.credential!.get())!.startsWith("alice") ? "alice guide" : "bob guide") }],
+  });
+  remote.authScope = "personal";
+  remote.credential = { label: "Token" };
+  const root = makeRegistry([remote], { storage, credentialVault: vault });
+  const uri = downstreamSkillUri("remote", URI);
+  for (const principalKey of ["alice", "bob", "alice"]) {
+    const view = root.scoped({ connectorIds: ["remote"], principalKey });
+    const registry = new SkillsRegistry(view, BASE);
+    expect((await registry.read(uri)).contents[0]?.text).toBe(TEXT + `${principalKey} guide`);
+  }
+  expect(fetched).toEqual(["alice-downstream-skills-token", "bob-downstream-skills-token", "alice-downstream-skills-token"]);
+  const anonymous = new SkillsRegistry(root.scoped({ connectorIds: "all" }), BASE);
+  expect((await anonymous.list()).skills).not.toContainEqual(expect.objectContaining({ uri }));
 });
 
 it("INV-8: rejects malformed, out-of-root and oversized manifests atomically", async () => {
