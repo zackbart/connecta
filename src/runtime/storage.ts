@@ -17,7 +17,7 @@
 // runtime holds, because createConnecta passes the same two objects to both.
 // A scoped view holds no storage of its own: it reaches Storage through the
 // registry it delegates to, and the result stash is always the root's,
-// because its capacity is runtime-wide.
+// because its capacity is deployment-wide.
 
 import { Context, Effect } from "effect";
 import type { KVStorage, Logger as LoggerShape } from "../types.js";
@@ -59,6 +59,21 @@ export function storageDelete(
   return Storage.use((storage) =>
     Effect.tryPromise({
       try: () => Promise.resolve(storage.delete(key)),
+      catch: (error) => error,
+    }),
+  );
+}
+
+/** Atomic compare-and-set of one key, as `KVStorage.compareAndSet`. */
+export function storageCompareAndSet(
+  key: string,
+  expected: string | null,
+  next: string | null,
+  options?: { ttlSeconds?: number },
+): Effect.Effect<boolean, unknown, Storage> {
+  return Storage.use((storage) =>
+    Effect.tryPromise({
+      try: () => Promise.resolve(storage.compareAndSet(key, expected, next, options)),
       catch: (error) => error,
     }),
   );

@@ -41,7 +41,7 @@ describe("rendered TypeScript signatures parse", () => {
 
   it("parses every Notion tool", async () => {
     const tools = await notion("workspace", { purpose: "Docs" }).listTools({
-      storage: { get: async () => null, set: async () => {}, delete: async () => {} },
+      storage: { get: async () => null, set: async () => {}, delete: async () => {}, list: async () => [], compareAndSet: async () => false },
       logger: silentLogger,
       baseUrl: "https://connecta.test",
       credential: { get: async () => "token", getAll: async () => ({ value: "token" }) },

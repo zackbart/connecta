@@ -223,26 +223,55 @@ exposed by the deployment; these findings are tied to the date and flags above.
 
 ## Storage, credentials, and connectors
 
-`KVStorage` is `get`/`set`/`delete` with optional `list(prefix)`; core uses it for
-connector state, catalogs, and result paging — a 15-minute TTL with one
-runtime-wide accounting of stash bytes and entries, where a full stash returns the
-successful call's preview and a paging-unavailable notice rather than a result id.
-A second optional method, `compareAndSet(key, expected, next, options?)`, is an
-atomic claim: `null` means absent (expired counts) on the way in and delete on
-the way out. A successful write accepts the same optional `ttlSeconds` as
-`set`. Artifacts require it, because every write commits by swapping a head,
-and so does issuing access tokens; a read and a write standing in for the
-claim would let two writers both win. Downstream OAuth uses it where the store
-has it, so
-resealing legacy plaintext and discarding a refused grant cannot overwrite a
-consent that landed in between, and falls back to a read and a write where it
-does not.
-Adapters: `src/storage/memory.ts` and `src/storage/file.ts` (Node) both provide
-it, and the namespaced views core hands connectors forward it only when the
-underlying store has it. `examples/worker/` carries two more: Cloudflare KV,
-eventually consistent and so declaring none, and a D1 store that provides it —
-copyable reference source beside the D1 activity store, deliberately not an
-importable subpath. The shared cases live in `test/storage-contract.ts`.
+A deployment has one store. On Workers it is one D1 database
+(`d1Storage(env.CONNECTA_DB)` from `@zackbart/connecta/d1`); on Node it is one
+SQLite file (`sqliteStorage(path)` from `@zackbart/connecta/sqlite`, over the
+built-in `node:sqlite`). Both are the same SQL key-value store
+(`src/storage/sql.ts`) over a three-method driver, so every statement runs
+unchanged on each, and the same module carries the activity table beside it.
+Each store creates its tables on first use. `memoryStorage()` is the default
+and the test double. Workers KV and the 0.28 JSON file store are gone: KV is
+eventually consistent and cannot compare-and-set, and the file store rewrote
+its whole file on every write.
+
+`KVStorage` is `get`/`set`/`delete`/`list(prefix)`/`compareAndSet`, all
+required, and `createConnecta` refuses storage missing one (INV-11).
+`compareAndSet(key, expected, next, options?)` is an atomic claim: `null` means
+absent (expired counts) on the way in and delete on the way out, and a
+successful write takes the same optional `ttlSeconds` as `set`. Each SQL claim
+is one statement, which SQLite executes atomically and D1 serializes on its
+primary. Everything that must claim a key exactly once relies on it with no
+read-then-write fallback: artifact head swaps, access-token issuance and
+capacity, OAuth handoff ownership, single-use connect links, downstream OAuth
+generation fences and grant discards, and the result stash.
+
+Every key is built in `src/storage/keys.ts`, which lists each family with its
+scope, version, codec, and TTL policy; `test/storage-keys.node.test.ts` fails when
+two families overlap, another source file spells a prefix (constant concatenation
+folded), or a storage call passes a key holding literal text. Core hands
+subsystems namespaced views: `conn:<id>:` per connector, `principal:<key>:` per
+personal registry, `results:` and `subject:<key>:` for result paging.
+
+Keys and list prefixes must not contain U+0000 (NUL). D1, SQLite, and memory
+storage reject them with `TypeError` before accessing storage: Node 22's
+`node:sqlite` truncates TEXT results at NUL. Builders reject NUL in unencoded
+components; OAuth cleanup builders already percent-encode their components.
+State-file import validates all keys before writing. The `connecta_kv` table
+keeps its existing TEXT keys, including compatibility with the 0.28 schema.
+Storage writes no log lines. A refused import names the file and an entry's
+position, never a key, a value, or the JSON parser's account, which quotes
+the file (INV-6).
+
+Result paging stores each oversized result for 15 minutes, chunked so a page
+reads only what it covers. Its bounds (`results.maxStashBytes`,
+`results.maxStashEntries`) are the deployment's, not an isolate's: every charge
+is a row in one ledger record, booked by compare-and-set before any chunk is
+written, so isolates and processes sharing the store see one count. A lost swap
+backs off and re-reads; only a full ledger refuses. Each chunk's TTL is what
+remains of its charge's deadline, so no chunk outlives its charge. A full
+stash returns the successful call's preview and a paging-unavailable notice
+rather than a result id. The shared storage cases live in
+`test/storage-contract.ts` and `test/sql-storage-contract.ts`.
 
 `src/credentials.ts` is the AES-GCM vault behind the root-exported
 `CredentialVault` contract, selected through the `vault` slot. It binds connector
@@ -403,8 +432,9 @@ Storage is an `ArtifactStore`, and `kvArtifactStore` is the reference: over any
 `KVStorage` with `compareAndSet` and `list`, one head record per artifact is
 the only key ever compared-and-set, earlier versions sit beside it immutable,
 and bodies are content-addressed — in the key-value store, or in R2 through the
-Worker example's `r2-artifact-blobs.ts`. Workers KV is refused at construction,
-because a write that cannot swap its head can lose a teammate's edit. Every
+Worker example's `r2-artifact-blobs.ts`. Storage without `compareAndSet` is
+refused at construction, because a write that cannot swap its head can lose a
+teammate's edit. Every
 rule lives once, in `src/artifacts/operations.ts`: a write checks its base
 against the one stream it touches, so of two writes from the same base exactly
 one wins and the other is a `conflict` carrying a bounded `current` map, while
@@ -442,7 +472,7 @@ flight's deadline, never touching the owner's signal or response.
 
 Nothing reachable from `src/index.ts` may import a `node:` builtin, so the same
 core runs unchanged in workerd and in Node. The Node-touching paths — `src/node.ts`
-(the `node:http` adapter), `src/storage/file.ts`, and the QuickJS process pool
+(the `node:http` adapter), `src/sqlite.ts` (`node:sqlite`), and the QuickJS process pool
 (`src/executors/quickjs.ts` plus its child) — each sit behind an explicit subpath
 and must stay unreachable from the root. `./auth/clerk` is separate because
 `@clerk/backend` is an optional peer rather than a dependency, and
@@ -557,7 +587,7 @@ would be another partition's.
   wrapping them would buy nothing and could starve a request.
 - **The MCP edges.** `@modelcontextprotocol/server` upward and the SDK client
   downstream; Effect's own `McpServer` is not used.
-- **The Node and browser leaves.** `node.ts`, `fileStorage`, the QuickJS
+- **The Node and browser leaves.** `node.ts`, `sqlite.ts`, the QuickJS
   child, runtime, and protocol, and the operator UI's browser app.
 
 ### Across requests
@@ -683,7 +713,8 @@ src/
   activity.ts         optional history factory and best-effort recorder
   auth/               bearer, Cloudflare Access, clerk (optional peer), downstream OAuth (remote and static)
   executors/          the QuickJS pool and child (Node only)
-  node.ts             listen() + fileStorage re-export (Node only)
+  node.ts             listen() (Node only)
+  d1.ts, sqlite.ts    the two storage drivers; storage/ holds the SQL core and key families
 ```
 
 There are exactly two deployment shapes — `templates/node/`, which

@@ -5,9 +5,6 @@ import { pipeline } from "node:stream/promises";
 import type { Connecta } from "./index.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 
-export { fileStorage } from "./storage/file.js";
-export type { FileStorageOptions } from "./storage/file.js";
-
 /** 10 MiB. Tool arguments are JSON; nothing legitimate approaches this. */
 const DEFAULT_MAX_BODY_BYTES = 10 * 1024 * 1024;
 

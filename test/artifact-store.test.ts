@@ -36,7 +36,7 @@ describe("kvArtifactStore construction", () => {
   it("refuses storage without compareAndSet, naming the stores that have it", () => {
     const { compareAndSet: _omitted, ...eventual } = memoryStorage();
     expect(() => kvArtifactStore(eventual as KVStorage)).toThrow(
-      /compareAndSet and list[\s\S]*Workers KV[\s\S]*d1Storage[\s\S]*fileStorage[\s\S]*memoryStorage/,
+      /compareAndSet and list[\s\S]*d1Storage[\s\S]*sqliteStorage[\s\S]*memoryStorage/,
     );
   });
 

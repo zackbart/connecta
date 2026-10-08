@@ -43,12 +43,9 @@ describe("v0.23 client-token migration", () => {
     for (const [key, value] of Object.entries(fixture.records)) expect(await storage.get(key)).toBe(value);
   });
 
-  it("verifies old tokens on adapters without compareAndSet, but refuses new issuance", async () => {
-    const base = await legacyStorage();
-    const storage: KVStorage = { get: base.get, set: base.set, delete: base.delete, list: base.list! };
-    const manager = new AccessTokenManager(storage);
-    expect((await manager.auth.authorize(request(fixture.bound.token), BASE)).ok).toBe(true);
-    await expect(manager.create("new", owner)).rejects.toThrow("compareAndSet");
+  it("INV-11: refuses storage without compareAndSet at construction, as a Workers KV adapter is", async () => {
+    const { compareAndSet: _omitted, ...eventual } = await legacyStorage();
+    expect(() => accessTokens(eventual as KVStorage)).toThrow(/list and compareAndSet/);
   });
 
   it.each([fixture.revoked.token, "cta_" + "x".repeat(43), "cta_bad", "", "other-secret"])("refuses revoked, unknown and malformed credentials: %s", async token => {

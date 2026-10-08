@@ -1,4 +1,4 @@
-# One service, no database: state is the fileStorage JSON on a named volume.
+# One service, no database server: state is one SQLite file on a named volume.
 #
 #   cp .env.example .env    # then set CONNECTA_TOKEN
 #   docker compose up -d --build
@@ -21,16 +21,14 @@ services:
       # Downstream OAuth calls back to this origin. Unset is fine until this
       # deployment is reachable from somewhere other than this machine.
       PUBLIC_URL: ${PUBLIC_URL:-}
-      # Keep the state file under /data so it lands on the volume below.
-      CONNECTA_STATE_FILE: ${CONNECTA_STATE_FILE:-/data/connecta-state.json}
+      # Keep the database under /data so it lands on the volume below.
+      CONNECTA_DATABASE: ${CONNECTA_DATABASE:-/data/connecta.sqlite}
       # Operator surface. Passed through so the matching blocks in
       # src/index.ts work in the container the moment they are uncommented;
-      # until then these are unread. The activity log joins the state file on
-      # the volume for the same reason it does.
+      # until then these are unread.
       CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY:-}
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
       CONNECTA_CREDENTIAL_KEY: ${CONNECTA_CREDENTIAL_KEY:-}
-      CONNECTA_ACTIVITY_FILE: ${CONNECTA_ACTIVITY_FILE:-/data/connecta-activity.jsonl}
     volumes:
       - connecta-state:/data
     restart: unless-stopped

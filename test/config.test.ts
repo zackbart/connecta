@@ -87,6 +87,16 @@ describe("ConnectaConfig boundary", () => {
     }
   });
 
+  it("INV-11: refuses storage without list or compareAndSet, as a Workers KV adapter is", () => {
+    // The 0.28 Worker example's Workers KV adapter: no atomic claim.
+    const kv = { get: async () => null, set: async () => {}, delete: async () => {}, list: async () => [] };
+    expect(() => unsafeCreateConnecta({ connectors: [], executor, storage: kv }))
+      .toThrow(/storage must implement compareAndSet[\s\S]*d1Storage[\s\S]*sqliteStorage[\s\S]*Workers KV is not supported/);
+    const { list: _list, ...unlisted } = memoryStorage();
+    expect(() => unsafeCreateConnecta({ connectors: [], executor, storage: unlisted }))
+      .toThrow("storage must implement list");
+  });
+
   it("validates result stash limits and accepts zero to disable stashing", async () => {
     for (const field of ["maxStashBytes", "maxStashEntries"]) {
       for (const value of [-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "64", null]) {
@@ -98,7 +108,7 @@ describe("ConnectaConfig boundary", () => {
       expect(() => unsafeCreateConnecta({ connectors: [], executor, results })).toThrow("results");
     }
     const app = createConnecta({ connectors: [], executor, results: { maxStashBytes: 0, maxStashEntries: 0 } });
-    expect(await app.registry.stashResult("result:disabled", ["body"], 900)).toBe(false);
+    expect(await app.registry.stashResult("disabled", ["body"], 900)).toBe(false);
     await app.close();
   });
 

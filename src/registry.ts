@@ -6,6 +6,7 @@ import {
   Effect,
   Exit,
   Option,
+  Random,
   Result,
 } from "effect";
 import type { CredentialVault } from "./credential-contract.js";
@@ -68,10 +69,20 @@ import { SharedRead } from "./runtime/shared-read.js";
 import { Logger as LoggerService, type Storage } from "./runtime/services.js";
 import {
   runOnPartition,
+  storageCompareAndSet,
   storageDelete,
   storageGet,
   storageSet,
 } from "./runtime/storage.js";
+import {
+  catalogKeys,
+  jsonCodec,
+  OAUTH_HANDOFF_TTL_SECONDS,
+  oauthHandoffKeys,
+  resultKeys,
+  scopes,
+  stashLedgerKeys,
+} from "./storage/keys.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs } from "./timeout.js";
 import { isExplicitlyReadOnly } from "./tool-safety.js";
 
@@ -270,24 +281,12 @@ function namespaced(storage: KVStorage, prefix: string): KVStorage {
     get: (k) => storage.get(prefix + k),
     set: (k, v, o) => storage.set(prefix + k, v, o),
     delete: (k) => storage.delete(prefix + k),
-    ...(storage.list
-      ? {
-          list: async (keyPrefix: string) =>
-            (await storage.list!(prefix + keyPrefix)).map((key) =>
-              key.slice(prefix.length),
-            ),
-        }
-      : {}),
-    ...(storage.compareAndSet
-      ? {
-          compareAndSet: (
-            k: string,
-            expected: string | null,
-            next: string | null,
-            o?: { ttlSeconds?: number },
-          ) => storage.compareAndSet!(prefix + k, expected, next, o),
-        }
-      : {}),
+    list: async (keyPrefix) =>
+      (await storage.list(prefix + keyPrefix)).map((key) =>
+        key.slice(prefix.length),
+      ),
+    compareAndSet: (k, expected, next, o) =>
+      storage.compareAndSet(prefix + k, expected, next, o),
   };
 }
 
@@ -340,8 +339,8 @@ export interface RegistryView {
     input: { toolName: string; args: unknown; signal?: AbortSignal },
   ): Promise<CallAdmissionPermit>;
   resultsStorage(): KVStorage;
-  /** Reserve runtime-wide capacity before writing a paging envelope's chunks. */
-  stashResult(key: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean>;
+  /** Reserve deployment-wide capacity before writing a paging envelope's chunks. */
+  stashResult(id: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean>;
   /** Local declared-vs-stored credential mismatch, with no downstream I/O. */
   credentialDriftFor(id: string): Promise<string | undefined>;
   /** Value-free shape learned from successful calls, never a provider declaration. */
@@ -385,7 +384,80 @@ export interface RegistryScope {
 
 const MAX_PERSONAL_REGISTRIES = 1_024;
 const MAX_ABSENT_GRANT_WARNINGS = 1_024;
-const OAUTH_HANDOFF_TTL_SECONDS = 15 * 60;
+/**
+ * Compare-and-set attempts one stash makes on the ledger. A lost swap means
+ * another stash changed the ledger first, never that capacity ran out, so
+ * the loser re-reads and plans again after a jittered, growing pause: of 64
+ * simultaneous claims, each one either books a charge or meets a full ledger.
+ * Exhausting the attempts takes seconds of sustained contention on the one
+ * ledger record, and then the caller keeps its preview.
+ */
+const STASH_LEDGER_ATTEMPTS = 32;
+/** First backoff window after a lost swap; it doubles up to the cap. */
+const STASH_LEDGER_BACKOFF_MS = 4;
+const STASH_LEDGER_BACKOFF_CAP_MS = 250;
+/**
+ * Slack past a stash's deadline before its charge leaves the ledger, and the
+ * longest one chunk write may take. A chunk's TTL is what remains of the
+ * deadline on the clock read before its write, and the store starts that TTL
+ * no later than the write returns, so the chunk expires within the write's
+ * duration of the deadline. A write slower than this fails the stash.
+ */
+const STASH_LEDGER_GRACE_MS = 30_000;
+
+/** One live stash charge: its header key, bytes, and expiry (epoch ms). */
+type StashCharge = readonly [key: string, bytes: number, expiresAt: number];
+
+/**
+ * Live charges in a stored ledger. Anything malformed reads as empty: the
+ * ledger bounds an advisory cache, and the next successful swap replaces it.
+ */
+function liveStashCharges(raw: string | null, now: number): StashCharge[] {
+  if (raw === null) return [];
+  let parsed: unknown;
+  try {
+    parsed = jsonCodec.decode(raw);
+  } catch {
+    return [];
+  }
+  const entries = (parsed as { v?: unknown; entries?: unknown } | null)?.entries;
+  if (!Array.isArray(entries)) return [];
+  return entries.filter((entry): entry is StashCharge =>
+    Array.isArray(entry) && entry.length === 3 &&
+    typeof entry[0] === "string" &&
+    Number.isSafeInteger(entry[1]) && entry[1] >= 0 &&
+    typeof entry[2] === "number" && entry[2] > now);
+}
+
+/**
+ * Rewrite the stash ledger by compare-and-set. `plan` sees the live charges
+ * and the time it read them at, and answers its result with the entries to
+ * store, or without them when there is nothing to write. Only `plan` refuses:
+ * a lost swap backs off and plans again from a fresh read. Answers undefined
+ * once the attempts run out.
+ */
+function swapStashLedger<A>(
+  plan: (live: StashCharge[], now: number) =>
+    { readonly entries?: StashCharge[]; readonly result: A },
+): Effect.Effect<A | undefined, unknown, Storage> {
+  return Effect.gen(function* () {
+    const ledger = stashLedgerKeys.ledger;
+    for (let attempt = 0; attempt < STASH_LEDGER_ATTEMPTS; attempt++) {
+      if (attempt > 0) {
+        const window = Math.min(STASH_LEDGER_BACKOFF_CAP_MS, STASH_LEDGER_BACKOFF_MS * 2 ** (attempt - 1));
+        yield* Effect.sleep(Duration.millis(Math.floor((yield* Random.next) * window) + 1));
+      }
+      const raw = yield* storageGet(ledger);
+      const now = yield* Clock.currentTimeMillis;
+      const planned = plan(liveStashCharges(raw, now), now);
+      if (planned.entries === undefined) return planned.result;
+      if (yield* storageCompareAndSet(ledger, raw, jsonCodec.encode({ v: 1, entries: planned.entries }))) {
+        return planned.result;
+      }
+    }
+    return undefined;
+  });
+}
 
 async function sha256Hex(value: string): Promise<string> {
   const bytes = new Uint8Array(
@@ -439,15 +511,6 @@ export class Registry implements RegistryView {
   private readonly persistToolCatalog: boolean;
   /** Result-size guard cap threaded to the meta-tools. */
   readonly maxResultBytes: number;
-  /** Only keys, byte counts, and expiry survive requests; never write promises. */
-  private readonly resultStash = new Map<string, {
-    /** Every backing key this envelope wrote, so expiry reclaims all of them. */
-    keys: readonly string[];
-    bytes: number;
-    expiresAt: number;
-    busy: boolean;
-  }>();
-  private resultStashBytes = 0;
   private readonly configuredConnectors: Connector[];
   private readonly personalRegistries = new Map<string, Registry>();
   private readonly oauthPartition = {};
@@ -556,7 +619,7 @@ export class Registry implements RegistryView {
       ),
       {
         ...this.opts,
-        storage: namespaced(this.opts.storage, `principal:${principalKey}:`),
+        storage: namespaced(this.opts.storage, scopes.principal(principalKey)),
         credentialOwner: principalKey,
         constructionChecks: false,
       },
@@ -582,7 +645,7 @@ export class Registry implements RegistryView {
   }
 
   scopedStorage(subjectKey: string): KVStorage {
-    return namespaced(this.opts.storage, `subject:${subjectKey}:`);
+    return namespaced(this.opts.storage, scopes.subject(subjectKey));
   }
 
   /**
@@ -610,16 +673,12 @@ export class Registry implements RegistryView {
     );
   }
 
-  private oauthHandoffKey(connectorId: string, stateHash: string): string {
-    return `oauth-handoff:v1:${connectorId}:${stateHash}`;
-  }
-
   async storeOAuthHandoff(
     connectorId: string,
     state: string,
     principalKey: string,
   ): Promise<void> {
-    const key = this.oauthHandoffKey(connectorId, await sha256Hex(state));
+    const key = oauthHandoffKeys.handoff(connectorId, await sha256Hex(state));
     for (let attempt = 0; attempt < 32; attempt++) {
       const existing = await this.opts.storage.get(key);
       if (existing && existing !== principalKey) {
@@ -627,15 +686,11 @@ export class Registry implements RegistryView {
           `Connector "${connectorId}" reused one OAuth state across principals`,
         );
       }
-      const expiry = { ttlSeconds: OAUTH_HANDOFF_TTL_SECONDS };
-      if (this.opts.storage.compareAndSet) {
-        // Bind ownership atomically, including renewal of the same owner's
-        // handoff. Two owners reading a miss must not overwrite each other.
-        if (!await this.opts.storage.compareAndSet(key, existing, principalKey, expiry)) continue;
-      } else {
-        await this.opts.storage.set(key, principalKey, expiry);
-      }
-      return;
+      // Bind ownership atomically, including renewal of the same owner's
+      // handoff. Two owners reading a miss must not overwrite each other.
+      if (await this.opts.storage.compareAndSet(key, existing, principalKey, {
+        ttlSeconds: OAUTH_HANDOFF_TTL_SECONDS,
+      })) return;
     }
     throw new Error(`OAuth handoff for "${connectorId}" is busy; retry authorization`);
   }
@@ -649,7 +704,7 @@ export class Registry implements RegistryView {
   } | null> {
     if (!state) return null;
     const principalKey = await this.opts.storage.get(
-      this.oauthHandoffKey(connectorId, await sha256Hex(state)),
+      oauthHandoffKeys.handoff(connectorId, await sha256Hex(state)),
     );
     const connector = this.connectors.get(connectorId);
     if (!connector || !principalKey) return null;
@@ -669,15 +724,8 @@ export class Registry implements RegistryView {
     principalKey: string,
   ): Promise<boolean> {
     if (!state) return false;
-    const key = this.oauthHandoffKey(connectorId, await sha256Hex(state));
-    if (this.opts.storage.compareAndSet) {
-      return this.opts.storage.compareAndSet(key, principalKey, null);
-    }
-    // Without CAS, concurrent readers can both pass before either deletes.
-    // Eventually consistent stores can also read the handoff after deletion.
-    if (await this.opts.storage.get(key) !== principalKey) return false;
-    await this.opts.storage.delete(key);
-    return true;
+    const key = oauthHandoffKeys.handoff(connectorId, await sha256Hex(state));
+    return this.opts.storage.compareAndSet(key, principalKey, null);
   }
 
   /**
@@ -783,7 +831,7 @@ export class Registry implements RegistryView {
       };
     }
     const context: ConnectorContext = {
-      storage: namespaced(this.opts.storage, `conn:${id}:`),
+      storage: namespaced(this.opts.storage, scopes.connector(id)),
       logger: this.opts.logger,
       baseUrl,
       ...(credentialAccess ? { credential: credentialAccess } : {}),
@@ -904,73 +952,80 @@ export class Registry implements RegistryView {
   }
 
   /**
-   * Reserve capacity and write one ASCII paging envelope in this runtime.
+   * Reserve capacity and write one ASCII paging envelope.
    *
-   * `chunks[0]` lands on `<prefix><key>` and `chunks[n]` on `<prefix><key>#<n>`
-   * — the layout get_result reads back, so a page fetches only the chunks it
-   * covers instead of the whole stored result (issue #540). Chunking is a
-   * read-cost decision, not a capacity one: however many keys an envelope
-   * occupies, it is one stash entry charged its total ASCII length.
+   * `chunks[n]` lands on `resultKeys.chunk(id, n)` inside `partition` — the
+   * layout get_result reads back, so a page fetches only the chunks it covers
+   * instead of the whole stored result (issue #540). Chunking is a read-cost
+   * decision, not a capacity one: however many keys an envelope occupies, it
+   * is one stash entry charged its total ASCII length.
+   *
+   * The bounds are the deployment's, not this isolate's. Every charge is a
+   * row in one ledger record in storage, booked by compare-and-set before any
+   * chunk is written, so every isolate and process sharing the store sees the
+   * same entries and bytes. A charge leaves the ledger just after its
+   * result's deadline, which every chunk's TTL ends by; the storage TTL
+   * reclaims the rows themselves.
    */
-  stashResult(key: string, chunks: readonly string[], ttlSeconds: number, prefix = "results:"): Promise<boolean> {
-    // The fiber runs synchronously up to its first storage call. With nothing
-    // expired to reclaim, that is the first chunk write, after the
-    // reservation: a concurrent stash already sees this one's charge.
+  stashResult(
+    id: string,
+    chunks: readonly string[],
+    ttlSeconds: number,
+    partition: string = scopes.results,
+  ): Promise<boolean> {
     return runOnPartition(Effect.gen({ self: this }, function* () {
       const maxBytes = this.opts.results?.maxStashBytes ?? 8 * 1024 * 1024;
       const maxEntries = this.opts.results?.maxStashEntries ?? 64;
       // The paging envelope is ASCII, so its string length is its stored byte count.
       const bytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
       if (bytes > maxBytes || maxEntries === 0) return false;
-      const now = yield* Clock.currentTimeMillis;
-      for (const [oldKey, entry] of this.resultStash) {
-        if (entry.busy || entry.expiresAt > now) continue;
-        entry.busy = true;
-        // TTL alone cannot reclaim a lazy backend. Keep the charge until
-        // deletion succeeds, including writes which persisted before throwing;
-        // a failed delete fails this stash, and the entry waits for the next.
-        yield* Effect.gen({ self: this }, function* () {
-          for (const staleKey of entry.keys) yield* storageDelete(staleKey);
-          this.resultStash.delete(oldKey);
-          this.resultStashBytes -= entry.bytes;
-        }).pipe(Effect.ensuring(Effect.sync(() => { entry.busy = false; })));
-      }
-      if (this.resultStash.size >= maxEntries || this.resultStashBytes + bytes > maxBytes) return false;
-      const fullKey = prefix + key;
-      const keys = chunks.map((_, index) => index === 0 ? fullKey : `${fullKey}#${index}`);
-      const entry = { keys, bytes, expiresAt: Infinity, busy: true };
-      this.resultStash.set(fullKey, entry);
-      this.resultStashBytes += bytes;
+      const keys = chunks.map((_, index) => partition + resultKeys.chunk(id, index));
+      const charge = keys[0]!;
+      // One deadline for the charge and every chunk under it. Writes take
+      // time, so a chunk's TTL is whatever remains of the deadline when it is
+      // written, never a fresh `ttlSeconds`, and no single write may take
+      // longer than the grace: no chunk outlives the charge that bounds it.
+      const deadline = yield* swapStashLedger((live, now) => {
+        const used = live.reduce((sum, entry) => sum + entry[1], 0);
+        if (live.length >= maxEntries || used + bytes > maxBytes) return { result: undefined };
+        const end = now + ttlSeconds * 1000;
+        return { entries: [...live, [charge, bytes, end + STASH_LEDGER_GRACE_MS]], result: end };
+      });
+      if (deadline === undefined) return false;
+      // A failed write may still have persisted. Delete every key it could
+      // have written and release the charge only when all of them are gone;
+      // otherwise the charge stays booked until it expires, by which time the
+      // storage TTL has removed whatever did land.
+      const release = Effect.gen(function* () {
+        for (const key of keys) yield* storageDelete(key);
+        yield* swapStashLedger((live) => live.some((entry) => entry[0] === charge)
+          ? { entries: live.filter((entry) => entry[0] !== charge), result: undefined }
+          : { result: undefined });
+      }).pipe(Effect.ignore);
       // Trailing chunks first: the header chunk is what makes an id readable, so
       // a write that fails midway leaves no envelope pointing at absent chunks.
-      yield* Effect.gen(function* () {
+      const written = yield* Effect.gen(function* () {
         for (let index = keys.length - 1; index >= 0; index--) {
-          yield* storageSet(keys[index]!, chunks[index]!, { ttlSeconds });
+          const before = yield* Clock.currentTimeMillis;
+          const remaining = Math.floor((deadline - before) / 1000);
+          // Zero would mean no expiry: a stash that outlasts its deadline fails.
+          if (remaining < 1) return false;
+          yield* storageSet(keys[index]!, chunks[index]!, { ttlSeconds: remaining });
+          if ((yield* Clock.currentTimeMillis) - before > STASH_LEDGER_GRACE_MS) return false;
         }
-      }).pipe(
-        // A failed write expires at once, still charged, so the next stash
-        // reclaims every key it may have persisted before failing.
-        Effect.onExit((exit) =>
-          Clock.currentTimeMillis.pipe(
-            Effect.map((writtenAt) => {
-              entry.expiresAt = Exit.isSuccess(exit)
-                ? writtenAt + ttlSeconds * 1000
-                : 0;
-              entry.busy = false;
-            }),
-          ),
-        ),
-      );
-      return true;
+        return true;
+      }).pipe(Effect.onError(() => release));
+      if (!written) yield* release;
+      return written;
     }), this.opts);
   }
 
   /**
-   * Storage namespaced to the meta-tool result store (`results:` prefix), kept
-   * separate from any connector's `conn:<id>:` namespace. Backs get_result.
+   * Storage namespaced to the root result partition, kept separate from any
+   * connector's namespace. Backs get_result.
    */
   resultsStorage(): KVStorage {
-    return namespaced(this.opts.storage, "results:");
+    return namespaced(this.opts.storage, scopes.results);
   }
 
   credentialUiAvailable(): boolean { return Boolean(this.opts.credentialUi); }
@@ -1008,11 +1063,11 @@ export class Registry implements RegistryView {
   }
 
   private catalogKey(id: string): string {
-    return `catalog:${id}`;
+    return catalogKeys.manifest(id);
   }
 
   private catalogChunkKey(id: string, revision: string, index: number): string {
-    return `${this.catalogKey(id)}:chunk:${revision}:${index}`;
+    return catalogKeys.chunk(id, revision, index);
   }
 
   private validCatalogTools(value: unknown[]): value is ToolDef[] {
@@ -2045,9 +2100,9 @@ class ScopedRegistryView implements RegistryView {
     return registry.admitCall(...args);
   }
 
-  stashResult(key: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean> {
-    return this.root.stashResult(key, chunks, ttlSeconds,
-      this.scope.subjectKey ? `subject:${this.scope.subjectKey}:` : "results:");
+  stashResult(id: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean> {
+    return this.root.stashResult(id, chunks, ttlSeconds,
+      this.scope.subjectKey ? scopes.subject(this.scope.subjectKey) : scopes.results);
   }
 
   resultsStorage(): KVStorage {

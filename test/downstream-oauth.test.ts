@@ -1,6 +1,7 @@
 import { callbackAuth, bindCallback, oauthVault } from "./fixtures/oauth.js";
 import { fetchTestUiDetails } from "./helpers.js";
 import { auth, UnauthorizedError } from "@modelcontextprotocol/client";
+import type { OAuthValueKey } from "../src/storage/keys.js";
 import type {
   FetchLike,
   OAuthClientInformationContext,
@@ -57,7 +58,7 @@ function consoleOutput(): () => string {
 
 async function storeCurrentOAuthValue(
   storage: KVStorage,
-  key: string,
+  key: OAuthValueKey,
   value: unknown,
   issuer?: string,
 ): Promise<void> {
@@ -137,6 +138,7 @@ describe("KvOAuthProvider over memoryStorage", () => {
     const blocked = deferred<void>();
     const writing = deferred<void>();
     const storage: KVStorage = {
+      list: (prefix) => inner.list(prefix),
       get: (key) => inner.get(key),
       delete: (key) => inner.delete(key),
       async set(key, value, options) {
@@ -575,6 +577,8 @@ describe("KvOAuthProvider over memoryStorage", () => {
     const backing = memoryStorage();
     const deleted: string[] = [];
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       get: (key) => backing.get(key),
       set: (key, value, opts) => backing.set(key, value, opts),
       async delete(key) {
@@ -626,6 +630,8 @@ describe("KvOAuthProvider over memoryStorage", () => {
     const { promise: writing, resolve: reachedWrite } = deferred<void>();
     const { promise: writeGate, resolve: releaseWrite } = deferred<void>();
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       get: (key) => backing.get(key),
       async set(key, value, opts) {
         if (key === "oauth:tokens") {
@@ -709,6 +715,8 @@ describe("KvOAuthProvider over memoryStorage", () => {
     let heldFirstCleanup = false;
     let secondGeneration: string | null = null;
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       get: (key) => backing.get(key),
       async set(key, value, opts) {
         if (key === "oauth:generation" && heldFirstCleanup) {
@@ -751,6 +759,8 @@ describe("KvOAuthProvider over memoryStorage", () => {
     let failTokenDelete = false;
     let oldTokenKey = "";
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       get: (key) => backing.get(key),
       set: (key, value, opts) => backing.set(key, value, opts),
       async delete(key) {
@@ -792,6 +802,8 @@ describe("KvOAuthProvider over memoryStorage", () => {
     const backing = memoryStorage();
     let failures = 1;
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       get: (key) => backing.get(key),
       set: (key, value, opts) => backing.set(key, value, opts),
       async delete(key) {
@@ -820,6 +832,10 @@ describe("KvOAuthProvider over memoryStorage", () => {
       get: (key) => backing.get(`conn:svc:${key}`),
       set: (key, value, opts) => backing.set(`conn:svc:${key}`, value, opts),
       delete: (key) => backing.delete(`conn:svc:${key}`),
+      list: async (prefix) =>
+        (await backing.list(`conn:svc:${prefix}`)).map((key) => key.slice("conn:svc:".length)),
+      compareAndSet: (key, expected, next, opts) =>
+        backing.compareAndSet(`conn:svc:${key}`, expected, next, opts),
     }, REDIRECT);
     await grant.resetAuthorization();
     const granted = await grant.generation();
@@ -861,6 +877,16 @@ describe("KvOAuthProvider over memoryStorage", () => {
     let failLateDelete = false;
     let lateCleanupFailed = false;
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      // The late writer removes its own residue by compare-and-set delete.
+      async compareAndSet(key, expected, next, options) {
+        if (failLateDelete && key === "oauth:tokens" && next === null) {
+          failLateDelete = false;
+          lateCleanupFailed = true;
+          throw new Error("late cleanup unavailable");
+        }
+        return backing.compareAndSet(key, expected, next, options);
+      },
       async get(key) {
         if (
           lateCleanupFailed &&
@@ -938,6 +964,8 @@ describe("KvOAuthProvider over memoryStorage", () => {
     const backing = memoryStorage();
     const deleted: string[] = [];
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       get: (key) => backing.get(key),
       set: (key, value, opts) => backing.set(key, value, opts),
       async delete(key) {
@@ -1126,6 +1154,8 @@ describe("KvOAuthProvider cleanup lineage", () => {
   function countingStorage(backing: KVStorage) {
     const counter = { ops: 0 };
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       get: (key) => (counter.ops++, backing.get(key)),
       set: (key, value, opts) => (counter.ops++, backing.set(key, value, opts)),
       delete: (key) => (counter.ops++, backing.delete(key)),
@@ -1291,6 +1321,8 @@ describe("KvOAuthProvider cleanup lineage", () => {
     let failing = true;
     const failingKey = oauthValueStorageKey("oauth:tokens", "v2:a");
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       get: (key) => backing.get(key),
       set: (key, value, opts) => backing.set(key, value, opts),
       async delete(key) {
@@ -1338,6 +1370,8 @@ describe("KvOAuthProvider cleanup lineage", () => {
     let maxInFlight = 0;
     const deleted: string[] = [];
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       get: (key) => backing.get(key),
       set: (key, value, opts) => backing.set(key, value, opts),
       async delete(key) {
@@ -1371,6 +1405,8 @@ describe("KvOAuthProvider cleanup lineage", () => {
     const backing = memoryStorage();
     let rejectKey: string | undefined;
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       get: (key) => backing.get(key),
       set: (key, value, opts) => backing.set(key, value, opts),
       async delete(key) {
@@ -1417,6 +1453,15 @@ describe("KvOAuthProvider cleanup lineage", () => {
     const { promise: sweepGate, resolve: releaseSweep } = deferred<void>();
     let failSiblingDelete = true;
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      // The late writer removes its own residue by compare-and-set delete.
+      async compareAndSet(key, expected, next, options) {
+        if (failSiblingDelete && key === siblingTokens && next === null) {
+          failSiblingDelete = false;
+          throw new Error("late cleanup unavailable");
+        }
+        return backing.compareAndSet(key, expected, next, options);
+      },
       get: (key) => backing.get(key),
       async set(key, value, opts) {
         if (key === siblingTokens) {
@@ -1493,6 +1538,14 @@ describe("KvOAuthProvider cleanup lineage", () => {
     const { promise: sweepGate, resolve: releaseSweep } = deferred<void>();
     let lateWriteLanded = false;
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      // The late writer removes its own residue by compare-and-set delete.
+      async compareAndSet(key, expected, next, options) {
+        if (lateWriteLanded && key === expiredTokens && next === null) {
+          throw new Error("late cleanup unavailable");
+        }
+        return backing.compareAndSet(key, expected, next, options);
+      },
       get: (key) => backing.get(key),
       async set(key, value, opts) {
         if (key === expiredTokens) {
@@ -1569,6 +1622,8 @@ describe("KvOAuthProvider cleanup lineage", () => {
     const gatedKey = oauthValueStorageKey("oauth:tokens", "v2:old-0");
     const fences: string[] = [];
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       get: (key) => backing.get(key),
       async set(key, value, opts) {
         if (key === "oauth:generation") fences.push(value);
@@ -1622,6 +1677,9 @@ describe("KvOAuthProvider cleanup lineage", () => {
         key === "oauth:generation" ? Promise.resolve(loser) : backing.get(key),
       set: (key, value, opts) => backing.set(key, value, opts),
       delete: (key) => backing.delete(key),
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, opts) =>
+        backing.compareAndSet(key, expected, next, opts),
     }, REDIRECT);
     await staleReplica.saveTokens({
       access_token: "loser-access",
@@ -1755,8 +1813,8 @@ describe("KvOAuthProvider sealed state", () => {
     await p.redirectToAuthorization(new URL("https://auth.example/authorize?x=1"));
     await p.saveDiscoveryState(discovery);
 
-    const raw = (key: string) => storage.get(oauthValueStorageKey(key, generation));
-    for (const key of ["oauth:tokens", "oauth:client", "oauth:verifier"]) {
+    const raw = (key: OAuthValueKey) => storage.get(oauthValueStorageKey(key, generation));
+    for (const key of ["oauth:tokens", "oauth:client", "oauth:verifier"] as const) {
       const value = await raw(key);
       expect(isSealed(value)).toBe(true);
       for (const secret of ["secret-access", "secret-refresh", "dcr-secret", "secret-verifier"]) {
@@ -3126,6 +3184,8 @@ describe("OAuthRefreshCoordinator", () => {
       releaseBasisRead = resolve;
     });
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       get: async (key) => {
         const snapshot = await backing.get(key);
         if (blockBasisRead && key === "oauth:tokens") {
@@ -3269,6 +3329,8 @@ describe("OAuthRefreshCoordinator", () => {
       releaseTokenRead = resolve;
     });
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       get: async (key) => {
         const snapshot = await backing.get(key);
         if (blockTokenRead && key === "oauth:tokens") {
@@ -3332,6 +3394,8 @@ describe("OAuthRefreshCoordinator", () => {
       releaseBlockedWrite = resolve;
     });
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       get: (key) => backing.get(key),
       set: async (key, value, options) => {
         if (blockTokenWrite && key === "oauth:tokens") {
@@ -3496,6 +3560,8 @@ describe("OAuthRefreshCoordinator", () => {
       releaseFailedWrite = resolve;
     });
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       get: (key) => backing.get(key),
       set: async (key, value, options) => {
         if (failTokenWrite && key === "oauth:tokens") {
@@ -3944,6 +4010,8 @@ describe("OAuthRefreshCoordinator", () => {
       releaseOldWrite = resolve;
     });
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       get: (key) => backing.get(key),
       set: async (key, value, options) => {
         if (blockOldWrite && key === "oauth:tokens") {
@@ -6506,6 +6574,7 @@ describe("/oauth/callback/<id> route", () => {
     const reads: string[] = [];
     const inner = memoryStorage();
     const counting: KVStorage = {
+      compareAndSet: (key, expected, next, options) => inner.compareAndSet(key, expected, next, options),
       get: async (k) => {
         reads.push(k);
         return inner.get(k);
@@ -6692,6 +6761,8 @@ describe("/oauth/callback/<id> route", () => {
     const reads: string[] = [];
     const inner = memoryStorage();
     const counting: KVStorage = {
+      list: (prefix) => inner.list(prefix),
+      compareAndSet: (key, expected, next, options) => inner.compareAndSet(key, expected, next, options),
       get: async (k) => {
         reads.push(k);
         return inner.get(k);
@@ -7184,17 +7255,6 @@ describe("remoteMcp() dead and transient refresh grants", () => {
         access_token: "access-consented",
         refresh_token: "refresh-consented",
       });
-    });
-
-    it("falls back to a plain delete on a store without compareAndSet", async () => {
-      const seeded = await seededStorage();
-      const { compareAndSet: _omitted, ...rest } = seeded;
-      const storage: KVStorage = rest;
-      const del = vi.spyOn(storage, "delete");
-      const p = new KvOAuthProvider("svc", storage, REDIRECT, undefined, false);
-      await p.discardRefusedGrant("refresh-old", "legacy");
-      expect(del).toHaveBeenCalledWith(tokenKey);
-      expect(await storage.get(tokenKey)).toBeNull();
     });
 
     it("leaves a different refresh token alone", async () => {

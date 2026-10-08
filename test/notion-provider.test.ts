@@ -87,6 +87,8 @@ function context(token: string | null = "secret_token"): ConnectorContext {
       get: async () => null,
       set: async () => {},
       delete: async () => {},
+      list: async () => [],
+      compareAndSet: async () => false,
     },
     logger: silentLogger,
     baseUrl: "https://connecta.example",

@@ -3,20 +3,26 @@
 /** A JSON Schema object describing a tool's input. */
 export type JsonSchema = Record<string, unknown>;
 
-/** Minimal key/value store — the only state connecta needs. */
+/**
+ * Minimal key/value store — the only state connecta needs. Keys and list
+ * prefixes must not contain U+0000 (NUL); adapters reject them with TypeError
+ * before accessing storage. SQL TEXT results truncate at NUL on Node 22.
+ */
 export interface KVStorage {
+  /** The live value at `key`; null when absent or expired. */
   get(key: string): Promise<string | null>;
+  /**
+   * Write `value`. With `opts.ttlSeconds` the entry reads as absent once that
+   * many seconds pass; omitted or zero means no expiry.
+   */
   set(
     key: string,
     value: string,
     opts?: { ttlSeconds?: number },
   ): Promise<void>;
   delete(key: string): Promise<void>;
-  /**
-   * Sorted keys beginning with `prefix`. Optional for existing adapters;
-   * subsystems that need independent, enumerable records require it explicitly.
-   */
-  list?(prefix: string): Promise<string[]>;
+  /** Live keys beginning with `prefix`, sorted by UTF-16 code unit. */
+  list(prefix: string): Promise<string[]>;
   /**
    * Atomic compare-and-set: write `next` only if the key's current value is
    * exactly `expected`, and report whether the write happened. `expected:
@@ -29,12 +35,14 @@ export interface KVStorage {
    * store, `set` and `delete` included: of N concurrent `compareAndSet(key,
    * null, value)` claims on an absent key, exactly one returns true.
    *
-   * Optional, because not every backend can promise it: an eventually
-   * consistent store such as Cloudflare Workers KV must omit the method
-   * rather than emulate it with a read followed by a write. Subsystems that
-   * need an atomic claim require it explicitly.
+   * Required. Every subsystem that must claim a key exactly once relies on
+   * it, and none of them carries a read-then-write fallback. The shipped
+   * adapters are `memoryStorage()`, `d1Storage()` from
+   * `@zackbart/connecta/d1`, and `sqliteStorage()` from
+   * `@zackbart/connecta/sqlite`; an eventually consistent store such as
+   * Cloudflare Workers KV cannot implement it and is not supported.
    */
-  compareAndSet?(
+  compareAndSet(
     key: string,
     expected: string | null,
     next: string | null,

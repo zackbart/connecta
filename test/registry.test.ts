@@ -69,9 +69,8 @@ describe("Registry construction", () => {
 });
 
 describe("personal OAuth handoffs", () => {
-  it.each([true, false])("consumes only the expected principal once with CAS=%s", async atomic => {
+  it("consumes only the expected principal once", async () => {
     const storage = memoryStorage();
-    if (!atomic) delete storage.compareAndSet;
     const registry = new Registry([calcConnector], { storage, logger: silentLogger });
     await registry.storeOAuthHandoff("calc", "state", "alice");
     expect(await registry.consumeOAuthHandoff("calc", null, "alice")).toBe(false);
@@ -256,6 +255,8 @@ describe("tool cache TTL", () => {
     let storageReads = 0;
     let storageWrites = 0;
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       async get(key) {
         storageReads++;
         return backing.get(key);
@@ -582,6 +583,8 @@ describe("tool cache TTL", () => {
       release = resolve;
     });
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       async get(key) {
         if (key.startsWith("catalog:bounded_reads:chunk:")) {
           active++;
@@ -626,6 +629,8 @@ describe("tool cache TTL", () => {
       release = resolve;
     });
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       get: (key) => backing.get(key),
       set: (key, value, options) => backing.set(key, value, options),
       async delete(key) {
@@ -705,6 +710,8 @@ describe("tool cache TTL", () => {
       release = resolve;
     });
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       get: (key) => backing.get(key),
       async set(key, value, options) {
         if (key.startsWith("catalog:parallel_write_failure:chunk:")) {
@@ -924,6 +931,8 @@ describe("tool cache TTL", () => {
     const backing = memoryStorage();
     let manifestWrites = 0;
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       get: (key) => backing.get(key),
       async set(key, value, options) {
         if (key === "catalog:fingerprinted") manifestWrites++;
@@ -1040,6 +1049,8 @@ describe("tool cache TTL", () => {
       const started = new Promise<void>((resolve) => { reached = resolve; });
       let blocked = false;
       const storage: KVStorage = {
+        list: (prefix) => backing.list(prefix),
+        compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
         get: (key) => backing.get(key),
         delete: (key) => backing.delete(key),
         async set(key, value, options) {
@@ -1093,6 +1104,12 @@ describe("tool cache TTL", () => {
       async delete() {
         deletes++;
         throw new Error("storage delete unavailable");
+      },
+      async list() {
+        throw new Error("storage list unavailable");
+      },
+      async compareAndSet() {
+        throw new Error("storage write unavailable");
       },
     };
     let calls = 0;
@@ -1635,6 +1652,8 @@ describe("catalog stale-while-revalidate", () => {
       vi.advanceTimersByTime(2_000);
       let delayed = false;
       const storage: KVStorage = {
+        list: (prefix) => backing.list(prefix),
+        compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
         async get(key) {
           const value = await backing.get(key);
           if (!delayed && key === "catalog:swr_deadline") {
@@ -1693,6 +1712,8 @@ describe("catalog stale-while-revalidate", () => {
       const releaseManifest = deferred<void>();
       let delayed = false;
       const storage: KVStorage = {
+        list: (prefix) => backing.list(prefix),
+        compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
         async get(key) {
           const value = await backing.get(key);
           if (!delayed && key === "catalog:swr_storage_race") {

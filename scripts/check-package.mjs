@@ -240,7 +240,6 @@ try {
     "templates/node/docker-compose.yml",
     "templates/node/package.json",
     "templates/node/src/index.ts",
-    "templates/node/src/file-activity.ts",
     "dist/index.js",
     "dist/index.d.ts",
     "dist/types.d.ts",
@@ -295,6 +294,12 @@ try {
     "dist/providers/forms.d.ts",
     "dist/artifacts.js",
     "dist/artifacts.d.ts",
+    "dist/d1.js",
+    "dist/d1.d.ts",
+    "dist/sqlite.js",
+    "dist/sqlite.d.ts",
+    "dist/storage/sql.js",
+    "dist/storage/keys.js",
     "examples/worker/src/r2-artifact-blobs.ts",
   ]) {
     if (!paths.has(required)) {
@@ -325,20 +330,15 @@ try {
     ) {
       throw new Error(`Redundant deployment scaffold leaked into ${path}`);
     }
-    // A platform-bound adapter belongs to a deployment, never to the package's
-    // importable surface. This is the blunt version of that rule: a
-    // Cloudflare-named connector or storage path fails anywhere in the
-    // artifact, `dist/` and `examples/` alike. The Worker example's own KV and
-    // D1 adapters ship on purpose — nothing under examples/ is in `exports`,
-    // so they are reference source a consumer copies, not a subpath anyone can
-    // import — and they clear this gate because of what they are named
-    // (`cloudflare-kv.ts`, `d1-activity.ts`), not because examples/ is exempt.
-    // Renaming one to `src/storage/cloudflare.ts` inside the example would
-    // trip it; that is a collision with a deliberately blunt pattern, not a
-    // published-surface violation (#377).
+    // A Cloudflare-named connector or storage path fails anywhere in the
+    // artifact, `dist/` and `examples/` alike (#377). The supported platform
+    // storage is the explicit `/d1` and `/sqlite` subpaths; Workers KV is no
+    // longer supported, so no KV adapter may grow back under either tree.
     if (
       path.includes("connectors/cloudflare") ||
-      path.includes("storage/cloudflare")
+      path.includes("storage/cloudflare") ||
+      path.includes("cloudflare-kv") ||
+      path.includes("storage/file")
     ) {
       throw new Error(`Platform-specific implementation leaked into ${path}`);
     }
@@ -402,6 +402,17 @@ if (typeof core.validateToolInput !== "function") {
 const tokenModule = await import("@zackbart/connecta/auth/access-tokens");
 if (typeof tokenModule.accessTokens !== "function") throw new Error("missing managed-token module");
 if ("accessTokens" in core || "AccessTokenManager" in core) throw new Error("token implementation leaked into core");
+const d1Module = await import("@zackbart/connecta/d1");
+if (typeof d1Module.d1Storage !== "function" || typeof d1Module.d1ActivityStore !== "function") {
+  throw new Error("missing D1 storage adapters");
+}
+const sqliteModule = await import("@zackbart/connecta/sqlite");
+const smokeStorage = sqliteModule.sqliteStorage(sqliteModule.openSqlite(":memory:"));
+if (!(await smokeStorage.compareAndSet("smoke", null, "1")) ||
+    (await smokeStorage.compareAndSet("smoke", null, "2")) ||
+    (await smokeStorage.get("smoke")) !== "1") {
+  throw new Error("packed sqliteStorage did not compare-and-set");
+}
 const jsonSchema = await import("@zackbart/connecta/json-schema");
 if (typeof jsonSchema.Validator !== "function") {
   throw new Error("missing Validator re-export");
@@ -745,7 +756,12 @@ for (const name of [
   "clerkAuth",
   "cloudflareApi",
   "cloudflareKvStorage",
+  "fileStorage",
+  "d1Storage",
   "d1ActivityStore",
+  "sqliteStorage",
+  "sqliteActivityStore",
+  "openSqlite",
   "quickJsExecutor",
   "mixpanel",
   "MIXPANEL_MCP_ENDPOINTS",
@@ -886,7 +902,6 @@ try {
     "AGENTS.md",
     "CLAUDE.md",
     "src/index.ts",
-    "src/file-activity.ts",
     "tsconfig.json",
   ]) {
     if (!existsSync(join(work, "generated-deployment", generated))) {
@@ -1018,10 +1033,22 @@ try {
   const legacyTokens = JSON.parse(await readFile(
     join(root, "test", "fixtures", "access-tokens-v023.json"), "utf8",
   ));
-  const legacyState = join(generatedRoot, "legacy-token-state.json");
-  await writeFile(legacyState, JSON.stringify(Object.fromEntries(
+  // The v0.23 records arrive the way a 0.28 Node deployment kept them, in a
+  // `fileStorage` JSON state file, and reach SQLite through the installed
+  // CLI's one-shot migration: the upgrade path the template documents.
+  const legacyStateFile = join(generatedRoot, "legacy-token-state.json");
+  await writeFile(legacyStateFile, JSON.stringify(Object.fromEntries(
     Object.entries(legacyTokens.records).map(([key, value]) => [key, { value }]),
   )));
+  const legacyState = join(generatedRoot, "legacy-token-state.sqlite");
+  const migrated = run(
+    join(generatedRoot, "node_modules", ".bin", process.platform === "win32" ? "connecta.cmd" : "connecta"),
+    ["migrate-state", legacyStateFile, legacyState], generatedRoot,
+  );
+  const recordCount = Object.keys(legacyTokens.records).length;
+  if (!migrated.includes(`Imported ${recordCount} entries`)) {
+    throw new Error(`migrate-state did not import the legacy records: ${migrated}`);
+  }
   await writeFile(join(generatedRoot, "src", "managed-tokens.ts"),
     'import { accessTokens } from "@zackbart/connecta/auth/access-tokens";\n' +
     generatedSource.replace(createCall, createCall + '  accessTokens: accessTokens(storage),\n'),
@@ -1030,7 +1057,7 @@ try {
   let legacyOutput = "";
   const legacyDeployment = spawn(generatedTsx, ["src/managed-tokens.ts"], {
     cwd: generatedRoot,
-    env: { ...process.env, CONNECTA_TOKEN: smokeToken, CONNECTA_STATE_FILE: legacyState, PORT: String(legacyPort) },
+    env: { ...process.env, CONNECTA_TOKEN: smokeToken, CONNECTA_DATABASE: legacyState, PORT: String(legacyPort) },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const retainLegacyOutput = chunk => { legacyOutput = (legacyOutput + chunk.toString()).slice(-8_000); };

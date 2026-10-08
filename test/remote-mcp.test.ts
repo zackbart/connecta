@@ -1020,6 +1020,8 @@ describe("remoteMcp() connector", () => {
     const { promise: secondRead, resolve: reachedSecondRead } = deferred<void>();
     const { promise: generationGate, resolve: releaseSecondRead } = deferred<void>();
     const storage: KVStorage = {
+      list: (prefix) => backing.list(prefix),
+      compareAndSet: (key, expected, next, options) => backing.compareAndSet(key, expected, next, options),
       async get(key) {
         if (key === "oauth:generation" && ++generationReads === 2) {
           reachedSecondRead();

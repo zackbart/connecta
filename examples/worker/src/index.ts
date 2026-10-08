@@ -5,15 +5,17 @@ import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
  * connecta on Cloudflare Workers.
  *
  * One MCP endpoint aggregating a downstream remote MCP and an HTTP API, guarded
- * by Cloudflare Access, with OAuth/cache state in a KV namespace. Access
+ * by Cloudflare Access. It needs three resources and nothing else: one D1
+ * database (CONNECTA_DB) holding every piece of state, the Worker Loader
+ * binding (LOADER) behind execute_code, and one secret
+ * (CREDENTIAL_ENCRYPTION_KEY) sealing credentials in that database. Access
  * authenticates the request before this Worker runs and supplies the trusted
- * identity through ctx.access. The required Worker Loader binding in
- * wrangler.jsonc backs the seven-tool surface.
+ * identity through ctx.access.
  *
- * The operator surface is wired here except for activity history, which needs
- * a database this example does not create for you: sign-in and the credential
- * vault are on, and activity is three commented lines below. README.md
- * § "Select optional modules" walks through all three.
+ * The operator surface is wired here except for activity history, which is
+ * commented below because retention is a decision for the deployment; it uses
+ * the same database. README.md § "Select optional modules" walks through all
+ * three.
  *
  * Setup (this example has no package.json of its own — it self-references the
  * installed `@zackbart/connecta` package):
@@ -21,7 +23,8 @@ import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
  *      package import and wrangler resolve. A copy in its own repository
  *      installs `@zackbart/connecta @cloudflare/codemode` instead. Codemode is
  *      an optional peer.
- *   2. Create a KV namespace and put its id in wrangler.jsonc under `kv_namespaces`.
+ *   2. `wrangler d1 create connecta` and put its id in wrangler.jsonc under
+ *      `d1_databases`. connecta creates its tables on first use.
  *   3. Set secrets:
  *        wrangler secret put DOWNSTREAM_TOKEN
  *        wrangler secret put CREDENTIAL_ENCRYPTION_KEY
@@ -42,24 +45,22 @@ import {
   remoteMcp,
 } from "@zackbart/connecta";
 import { cloudflareAccessAuth } from "@zackbart/connecta/auth/cloudflare-access";
-import { cloudflareKvStorage } from "./cloudflare-kv.js";
+import { d1Storage } from "@zackbart/connecta/d1";
 // import { artifacts, kvArtifactStore } from "@zackbart/connecta/artifacts";
-// import { d1Storage } from "./d1-storage.js";
-// Activity history, off by default because it needs a D1 database.
-// import { d1ActivityStore } from "./d1-activity.js";
+// Activity history, in the same database.
+// import { d1ActivityStore } from "@zackbart/connecta/d1";
 
 interface Env {
-  CONNECTA_KV: KVNamespace;
+  /** The one D1 database: OAuth grants, sealed credentials, catalogs, activity. */
+  CONNECTA_DB: D1Database;
   /**
-   * Base64 32-byte AES key encrypting operator-managed credentials in KV.
+   * Base64 32-byte AES key encrypting operator-managed credentials in D1.
    * Unset means no vault: credential management is unavailable in the operator
-   * UI. Never put it in KV, since it is what protects KV.
+   * UI. Never put it in D1, since it is what protects D1.
    */
   CREDENTIAL_ENCRYPTION_KEY: string;
   DOWNSTREAM_TOKEN: string;
   PUBLIC_URL: string;
-  /** Uncomment with the `d1_databases` binding to enable activity history. */
-  // ACTIVITY_DB: D1Database;
   /**
    * Worker Loader binding (wrangler.jsonc `worker_loaders`) powering
    * execute_code. Dynamic Workers require the Workers Paid plan.
@@ -68,9 +69,9 @@ interface Env {
 }
 
 function build(env: Env) {
-  const storage = cloudflareKvStorage(env.CONNECTA_KV);
-  // Optional refreshable pages need the D1 binding, not Workers KV:
-  // const artifactModule = artifacts({ store: kvArtifactStore(d1Storage(env.STORAGE_DB)) });
+  const storage = d1Storage(env.CONNECTA_DB);
+  // Optional refreshable pages live in the same database:
+  // const artifactModule = artifacts({ store: kvArtifactStore(storage) });
   // scheduledArtifacts.module = artifactModule;
   return createConnecta({
     publicUrl: env.PUBLIC_URL,
@@ -97,7 +98,7 @@ function build(env: Env) {
     // },
     // Connectors that declare a `credential` slot become editable by every
     // signed-in human who can see that connector, inside its connection on /,
-    // encrypted with this key before anything reaches KV. A saved replacement takes
+    // encrypted with this key before anything reaches D1. A saved replacement takes
     // effect on the next call — no redeploy, and no liveness probe:
     // credentials fail at use.
     //
@@ -128,12 +129,12 @@ function build(env: Env) {
     ui: operatorUi(),
     // artifacts: artifactModule,
     identity: { credentialAdministration: () => "all", personalConnection: () => "all" },
-    // Payload-free activity at /activity, off until a database exists to hold
-    // it. Uncomment the `d1_databases` binding in wrangler.jsonc, apply the
-    // schema in README.md § "Activity history", then these three lines and the
-    // import above.
+    // Payload-free activity at /activity, in CONNECTA_DB beside everything
+    // else. Commented because retention is yours to choose: 90 days by
+    // default, or `d1ActivityStore(env.CONNECTA_DB, { retentionDays })`.
+    // Uncomment these lines and the two imports above.
     // activity: activityHistory({
-    //   store: d1ActivityStore(env.ACTIVITY_DB),
+    //   store: d1ActivityStore(env.CONNECTA_DB),
     //   deploymentId: "production",
     // }),
     connectors: [

@@ -225,7 +225,7 @@ async function nodeTemplate(): Promise<SmokeTarget> {
         CONNECTA_TOKEN: token,
         PORT: String(port),
         PUBLIC_URL: origin,
-        CONNECTA_STATE_FILE: join(work, "state.json"),
+        CONNECTA_DATABASE: join(work, "connecta.sqlite"),
       },
     });
     const running = proc;
@@ -304,7 +304,7 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
     target: kind,
     description:
       kind === "worker-example"
-        ? "examples/worker, unmodified, under wrangler dev (workerd, local KV, Worker Loader) behind an Access stand-in"
+        ? "examples/worker, unmodified, under wrangler dev (workerd, local D1, Worker Loader) behind an Access stand-in"
         : "the Worker example's composition with loopback fakes as connectors, under wrangler dev",
     status: "fail",
     checks,

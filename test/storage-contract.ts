@@ -2,28 +2,35 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { KVStorage } from "../src/index.js";
 
 /**
- * Shared compare-and-set cases for every `KVStorage` that declares the
- * capability. Not a suite: each adapter's own suite calls this inside its
- * `describe`, so the same contract runs against memory, namespaced, file, and
- * the Worker example's D1 adapter.
+ * Values with NUL at the start, middle, and end, beside multi-byte UTF-8 and a
+ * leading U+FEFF (a decoder must not take it for a byte order mark), and one
+ * large enough to span many SQLite pages.
+ */
+export const NUL_VALUES: readonly string[] = [
+  "\0",
+  "\0\0\0",
+  "\0start",
+  "before\0after",
+  "end\0",
+  "é\0中\0😀",
+  "\0😀",
+  "😀\0",
+  "\uFEFF\0bom",
+  JSON.parse('{"sealed":"x\\u0000y"}').sealed as string,
+  `${"x".repeat(256 * 1024)}\0${"é".repeat(1024)}\0`,
+];
+
+/**
+ * Shared compare-and-set cases for every `KVStorage`. Not a suite: each
+ * adapter's own suite calls this inside its `describe`, so the same contract
+ * runs against memory, namespaced, SQLite, and D1 storage.
  *
  * Expiry is driven by faking `Date` alone. Every adapter computes expiry from
  * `Date.now()` in the calling process, and leaving real timers alone keeps a
- * file store's heartbeat and a local D1 proxy's I/O untouched.
+ * local D1 proxy's I/O untouched.
  */
-export type CasStorage = KVStorage &
-  Required<Pick<KVStorage, "compareAndSet">>;
-
-/** Assert at runtime that `storage` declares the capability, and say so in its type. */
-export function requireCas<T extends KVStorage>(storage: T): T & CasStorage {
-  if (typeof storage.compareAndSet !== "function") {
-    throw new Error("Expected storage to declare compareAndSet");
-  }
-  return storage as T & CasStorage;
-}
-
 export function compareAndSetContract(
-  open: () => CasStorage | Promise<CasStorage>,
+  open: () => KVStorage | Promise<KVStorage>,
 ): void {
   const start = Date.parse("2026-01-01T00:00:00.000Z");
   const fakeClock = () => {
@@ -33,6 +40,60 @@ export function compareAndSetContract(
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("rejects NUL in every key operation and list prefix without touching other keys", async () => {
+    const storage = await open();
+    await storage.set("a", "original");
+    for (const key of ["\0a", "a\0b", "a\0"]) {
+      const operations = [
+        () => storage.get(key),
+        () => storage.set(key, "replacement"),
+        () => storage.delete(key),
+        () => storage.list(key),
+        () => storage.compareAndSet(key, null, "new"),
+        () => storage.compareAndSet(key, "original", "replacement"),
+        () => storage.compareAndSet(key, "original", null),
+        () => storage.compareAndSet(key, null, null),
+      ];
+      for (const operation of operations) {
+        await expect(operation()).rejects.toThrow(new TypeError(
+          "Storage keys and list prefixes must not contain U+0000 (NUL)",
+        ));
+      }
+    }
+    expect(await storage.get("a")).toBe("original");
+    expect(await storage.list("")).toEqual(["a"]);
+  });
+
+  it("keeps a value's NUL (U+0000) wherever it falls through get, set, list, and compareAndSet", async () => {
+    // Keys may not hold NUL; values may. Node 22's `node:sqlite` ended a text
+    // result at its first NUL, so every one of these once read back cut short.
+    const storage = await open();
+    for (const [index, value] of NUL_VALUES.entries()) {
+      await storage.set(`nul:${index}`, value);
+    }
+    for (const [index, value] of NUL_VALUES.entries()) {
+      expect(await storage.get(`nul:${index}`)).toBe(value);
+    }
+    expect(await storage.list("nul:"))
+      .toEqual(NUL_VALUES.map((_, index) => `nul:${index}`).sort());
+
+    await storage.set("cas", "a\0b");
+    expect(await storage.compareAndSet("cas", "a", "x")).toBe(false);
+    expect(await storage.compareAndSet("cas", "a\0", "x")).toBe(false);
+    expect(await storage.compareAndSet("cas", "a\0c", "x")).toBe(false);
+    expect(await storage.get("cas")).toBe("a\0b");
+    expect(await storage.compareAndSet("cas", "a\0b", null)).toBe(true);
+    expect(await storage.get("cas")).toBeNull();
+    expect(await storage.compareAndSet("cas", null, "\0é\0next")).toBe(true);
+    expect(await storage.get("cas")).toBe("\0é\0next");
+    expect(await storage.compareAndSet("cas", "\0é\0nex", "x")).toBe(false);
+    expect(await storage.compareAndSet("cas", "\0é\0next", "then\0", { ttlSeconds: 60 }))
+      .toBe(true);
+    expect(await storage.get("cas")).toBe("then\0");
+    expect(await storage.compareAndSet("cas", "then\0", null)).toBe(true);
+    expect(await storage.get("cas")).toBeNull();
   });
 
   it("lets exactly one of 50 concurrent claims on an absent key win", async () => {
@@ -77,7 +138,7 @@ export function compareAndSetContract(
     expect(await storage.get("lease")).toBe("held");
     expect(await storage.compareAndSet("lease", "held", null)).toBe(true);
     expect(await storage.get("lease")).toBeNull();
-    if (storage.list) expect(await storage.list("lease")).toEqual([]);
+    expect(await storage.list("lease")).toEqual([]);
     expect(await storage.compareAndSet("lease", null, "again")).toBe(true);
     expect(await storage.get("lease")).toBe("again");
   });
@@ -109,7 +170,7 @@ export function compareAndSetContract(
     expect(await storage.compareAndSet("lease", null, "thief")).toBe(false);
     advance(2_000);
     expect(await storage.get("lease")).toBeNull();
-    if (storage.list) expect(await storage.list("lease")).toEqual([]);
+    expect(await storage.list("lease")).toEqual([]);
     expect(await storage.compareAndSet("lease", null, "next")).toBe(true);
   });
 

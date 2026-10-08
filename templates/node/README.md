@@ -38,6 +38,31 @@ the named volume `connecta-state`, mounted at `/data`. `docker compose down`
 stops the service and keeps state; `down -v` wipes it. `/health` is always
 open, so the container's health probe never carries the bearer token.
 
+## Storage
+
+Every piece of state lives in one SQLite file, `CONNECTA_DATABASE`
+(`./.connecta.sqlite` locally, `/data/connecta.sqlite` in the container):
+downstream OAuth grants, sealed vault credentials, catalogs, result paging,
+access tokens, artifacts, and activity. `@zackbart/connecta/sqlite` uses
+Node's built-in `node:sqlite` (Node 22.13 or later), creates its tables on
+first use, and commits one row per write. Back it up as one file, together
+with its `-wal` file while the server runs. Node 22 and 23 print an
+experimental-feature warning for `node:sqlite` once at startup.
+
+Upgrading from 0.28, which kept state in `.connecta-state.json`: stop the
+server, then copy the old file into the database once, before the first start:
+
+```sh
+npx connecta migrate-state .connecta-state.json .connecta.sqlite
+```
+
+In the container, run it against the volume, e.g. `docker compose run --rm
+connecta npx connecta migrate-state /data/connecta-state.json
+/data/connecta.sqlite`. It copies every live entry with its expiry, keeps any
+key the database already holds, and never changes the old file; delete that
+once the deployment is verified. The 0.28 activity log
+(`.connecta-activity.jsonl`) is not imported; history starts fresh.
+
 A build with no lockfile in the context resolves the pinned Connecta version
 itself, and a lockfile npm writes inside the image never reaches this project.
 So commit the `package-lock.json` that the `npm install` above wrote on this
@@ -47,8 +72,8 @@ reproducible `npm ci` path.
 ## Select optional modules
 
 For scheduled artifact pages, uncomment the `artifacts()` module and hourly
-`setInterval` block in `src/index.ts`. The module uses the same CAS-capable
-state file and exposes `runDue()` for the timer; core starts no job on its own.
+`setInterval` block in `src/index.ts`. The module uses the same SQLite storage
+and exposes `runDue()` for the timer; core starts no job on its own.
 Each tick starts at most 10 due pages. Refresh programs can call only shared
 connectors' explicitly read-only tools within the program owner's current
 grants. Revoking refresh or pool access stops future runs. Failed runs leave the last good data
@@ -117,14 +142,14 @@ connector where each person should connect their own downstream account.
 
 Import `encryptedCredentialVault` from `@zackbart/connecta/credentials`, then
 set `vault: encryptedCredentialVault(storage, credentialKey)` — `storage` is
-the `fileStorage` binding `src/index.ts` already passes to `createConnecta`. Set
+the `sqliteStorage` binding `src/index.ts` already passes to `createConnecta`. Set
 `CONNECTA_CREDENTIAL_KEY` to a base64 32-byte AES key:
 
 ```sh
 node -e "console.log(crypto.randomBytes(32).toString('base64'))"
 ```
 
-Keep this key outside the state file. Losing it makes saved values unreadable;
+Keep this key outside the database. Losing it makes saved values unreadable;
 upgrades must reuse it. The shipped `time` connector declares no credential
 slot. Add `credential: { label: "API token" }` to an `api()` connector and read
 it through `await ctx.credential?.get()`, or use a provider such as `notion()`
@@ -143,15 +168,16 @@ static credential recovery reports unavailable instead of offering a dead link.
 
 ### Activity history and diagnostics
 
-Import `activityHistory` from `@zackbart/connecta/activity` and wire the template's
-`fileActivityStore` through `activity: activityHistory({ store })`. The Activity
-tab appears for authorized readers when the store supports listing. Omit this
-option and its store wiring to record no activity.
+Import `activityHistory` from `@zackbart/connecta/activity` and
+`sqliteActivityStore` from `@zackbart/connecta/sqlite`, then set
+`activity: activityHistory({ store: sqliteActivityStore(database) })`. The
+Activity tab appears for authorized readers. Omit this option and its store
+wiring to record no activity.
 
-`src/file-activity.ts` belongs to the deployment. It appends payload-free events
-and periodically retains the newest 5,000, allowing a small slack window between
-rewrites. Docker stores the log on the state volume. It records no arguments,
-results, generated code, or raw errors. Adjust retention in that file if needed.
+Activity shares the one database file. Each write prunes a bounded batch of
+rows older than the retention window, 90 days by default
+(`sqliteActivityStore(database, { retentionDays })`), so nothing has to be
+scheduled. It records no arguments, results, generated code, or raw errors.
 
 Diagnostics are independent. Keep the default logger or provide your own;
 `logger: "silent"` suppresses diagnostic output explicitly.

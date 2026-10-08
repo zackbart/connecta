@@ -40,6 +40,7 @@ import {
   normalizeTimeoutMs,
 } from "./timeout.js";
 import { isExplicitlyReadOnly, type ApprovalPolicy } from "./tool-safety.js";
+import { RESULT_TTL_SECONDS, resultKeys } from "./storage/keys.js";
 
 export {
   MAX_DESCRIBE_ADDRESSES,
@@ -60,7 +61,6 @@ export interface ToolResult {
   [x: string]: unknown;
 }
 
-const RESULT_TTL_SECONDS = 900;
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
@@ -195,7 +195,7 @@ const RESULT_CHUNK_BYTES = 49_152;
 /**
  * Keys one stashed result may occupy. Chunking trades write count for read
  * count, and both are real: every chunk is a storage write at stash time, and
- * `fileStorage` rewrites its whole file per write. Above roughly 1.5 MB the
+ * a SQL store commits one row per write. Above roughly 1.5 MB the
  * chunks widen instead of multiplying, so a result costs a bounded number of
  * writes and a page still reads a small fraction of it.
  */
@@ -330,7 +330,7 @@ async function stashResult(
       if (offset === 0) chunks[0] += chunk;
       else chunks.push(chunk);
     }
-    if (!await results.set(`result:${id}`, chunks, RESULT_TTL_SECONDS)) {
+    if (!await results.set(id, chunks, RESULT_TTL_SECONDS)) {
       throw new Error("Result stash capacity exhausted");
     }
   } catch {
@@ -688,7 +688,7 @@ export function createMetaTools(
           const results: ResultStash = {
             write: !isExplicitlyReadOnly(resolved.definition),
             cap,
-            set: (key, value, ttlSeconds) => registry.stashResult(key, value, ttlSeconds),
+            set: (id, value, ttlSeconds) => registry.stashResult(id, value, ttlSeconds),
             // The catalog entry, never `toolName`: a record names a tool
             // only through the grammar check (src/operator-record.ts).
             warn: () => logFailure(
@@ -910,7 +910,7 @@ export function createMetaTools(
           return false;
         }
       };
-      const stored = await read(`result:${args.id}`);
+      const stored = await read(resultKeys.chunk(args.id, 0));
       if (stored === false) return unavailableResult();
       if (stored === null) {
         return errorResult(`Unknown or expired result id "${boundedEchoText(args.id)}"`);
@@ -947,7 +947,7 @@ export function createMetaTools(
         for (let index = Math.floor(start / chunkBytes); index <= lastChunk; index++) {
           const encoded = index === 0
             ? stored.slice(header[0].length)
-            : await read(`result:${args.id}#${index}`);
+            : await read(resultKeys.chunk(args.id, index));
           if (encoded === false) return unavailableResult();
           if (encoded === null) {
             // A chunk expired or was evicted under its own header; the id can no

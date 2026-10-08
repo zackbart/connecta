@@ -5,6 +5,7 @@ import type {
 } from "./types.js";
 
 import { deriveOAuthHandoffKey } from "./oauth-sealing.js";
+import { credentialKeys } from "./storage/keys.js";
 
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
@@ -44,9 +45,7 @@ function oauthStateAdditionalData(
 }
 
 function storageKey(connectorId: string, owner?: string): string {
-  return owner
-    ? `principal:${owner}:conn:${connectorId}:credential:v1`
-    : `conn:${connectorId}:credential:v1`;
+  return credentialKeys.credential(connectorId, owner);
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -143,7 +142,7 @@ function validateValues(
 
 /**
  * Encrypted, connector-scoped credential vault over the deployment's existing
- * KVStorage. Only ciphertext enters KV; the AES-GCM key remains an environment
+ * KVStorage. Only ciphertext enters storage; the AES-GCM key remains an environment
  * secret outside the store. The same key seals downstream OAuth state, which
  * the OAuth provider stores itself.
  */

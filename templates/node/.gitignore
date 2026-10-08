@@ -1,4 +1,3 @@
-.connecta-state.json
-.connecta-activity.jsonl
+.connecta.sqlite*
 .env
 node_modules/

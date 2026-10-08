@@ -12,7 +12,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const [command, ...args] = process.argv.slice(2);
@@ -27,6 +27,7 @@ function shellCd(path) {
 function usage() {
   console.log(`Usage:
   connecta init [directory]
+  connecta migrate-state <state.json> <connecta.sqlite>
   CONNECTA_TOKEN=<bearer> connecta doctor [--url http://localhost:8787]
   CF_ACCESS_CLIENT_ID=<id> CF_ACCESS_CLIENT_SECRET=<secret> connecta doctor --url https://worker.example`);
 }
@@ -65,7 +66,7 @@ async function init() {
     // Restore both conventions explicitly in the generated project.
     await writeFile(
       join(stage, ".gitignore"),
-      ".connecta-state.json\n.connecta-activity.jsonl\n.env\nnode_modules/\n",
+      ".connecta.sqlite*\n.env\nnode_modules/\n",
     );
     await rm(join(stage, "CLAUDE.md"), { force: true });
     try {
@@ -316,9 +317,37 @@ async function doctor() {
   );
 }
 
+/**
+ * One-shot copy of a 0.28 `fileStorage` JSON state file into the SQLite
+ * database 0.29 stores everything in. Stop the old deployment first; the file
+ * is read, never changed.
+ */
+async function migrateState() {
+  if (args.length !== 2 || args.some((arg) => arg.startsWith("--"))) {
+    usage();
+    process.exitCode = 1;
+    return;
+  }
+  const [statePath, databasePath] = args.map((arg) => resolve(process.cwd(), arg));
+  const { importStateFile, openSqlite } = await import(
+    pathToFileURL(join(packageRoot, "dist", "sqlite.js")).href
+  );
+  const database = openSqlite(databasePath);
+  try {
+    const result = importStateFile(database, statePath);
+    console.log(
+      `Imported ${result.imported} entries from ${statePath} into ${databasePath}` +
+        ` (${result.kept} already present, ${result.expired} expired).`,
+    );
+  } finally {
+    database.close();
+  }
+}
+
 try {
   if (command === "init") await init();
   else if (command === "doctor") await doctor();
+  else if (command === "migrate-state") await migrateState();
   else {
     usage();
     process.exitCode = command === "--help" || command === "-h" ? 0 : 1;

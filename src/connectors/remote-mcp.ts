@@ -1567,7 +1567,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         throw operatorDisconnectedError();
       }
     }
-    // Cross-isolate force re-auth: another isolate bumped the KV generation and
+    // Cross-isolate force re-auth: another isolate bumped the stored generation and
     // wiped credentials. This request's cached client still speaks the old
     // token — drop it so the next connect runs against current state.
     if (state.client && oauthGeneration !== undefined && state.connectedGeneration !== null) {
@@ -1831,7 +1831,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       await reset;
     } finally {
       // Abandon any connect in flight and close whichever half of the
-      // client/transport exists. Reset is unconditional because KV may already
+      // client/transport exists. Reset is unconditional because storage may already
       // be fenced behind a newer epoch after a cleanup error.
       closeHalf(state);
     }

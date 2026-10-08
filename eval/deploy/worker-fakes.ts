@@ -1,5 +1,5 @@
 /**
- * The Worker example's composition — KV storage, the Dynamic Worker executor,
+ * The Worker example's composition — D1 storage, the Dynamic Worker executor,
  * Cloudflare Access auth, the vault, the operator UI — with the Node-hosted
  * fake downstreams as its connectors, so a write can be verified on workerd.
  * The example itself ships no write-capable tool; this is its shape, not a
@@ -10,11 +10,11 @@ import { createConnecta, remoteMcp } from "@zackbart/connecta";
 import { cloudflareAccessAuth } from "@zackbart/connecta/auth/cloudflare-access";
 import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
 import { operatorUi } from "@zackbart/connecta/ui";
-import { cloudflareKvStorage } from "../../examples/worker/src/cloudflare-kv.js";
+import { d1Storage } from "@zackbart/connecta/d1";
 import { withAccess } from "./access-shim.js";
 
 interface Env {
-  CONNECTA_KV: KVNamespace;
+  CONNECTA_DB: D1Database;
   CREDENTIAL_ENCRYPTION_KEY: string;
   PUBLIC_URL: string;
   TRACKER_URL: string;
@@ -23,7 +23,7 @@ interface Env {
 }
 
 function build(env: Env) {
-  const storage = cloudflareKvStorage(env.CONNECTA_KV);
+  const storage = d1Storage(env.CONNECTA_DB);
   return createConnecta({
     publicUrl: env.PUBLIC_URL,
     storage,

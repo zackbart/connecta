@@ -26,6 +26,8 @@ export const context: ConnectorContext = {
     get: vi.fn(),
     set: vi.fn(),
     delete: vi.fn(),
+    list: vi.fn(),
+    compareAndSet: vi.fn(),
   },
   logger: silentLogger,
   baseUrl: "https://connecta.example",

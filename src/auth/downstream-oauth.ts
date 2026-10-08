@@ -19,6 +19,7 @@ import {
 import { inheritOAuthSealer } from "../oauth-sealing.js";
 import type { OAuthStateSealer } from "../oauth-sealing.js";
 import { detach, fromSignal, runEdge } from "../runtime/run.js";
+import { oauthKeys, type OAuthValueKey } from "../storage/keys.js";
 import type { ConnectorContext, KVStorage } from "../types.js";
 
 /** RFC 6749 section 3.3: one or more scope tokens, separated by single spaces. */
@@ -60,18 +61,20 @@ function timingSafeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
+const OAUTH = oauthKeys.field;
+
 export const LEGACY_GENERATION = "legacy";
 const ACTIVE_GENERATION_PREFIX = "v2:";
 const RESETTING_GENERATION_PREFIX = "reset:";
 const DISCONNECTED_GENERATION_PREFIX = "disconnected:";
 const STORED_VALUE_VERSION = 2;
 const OAUTH_VALUE_KEYS = [
-  "oauth:client",
-  "oauth:tokens",
-  "oauth:pending",
-  "oauth:verifier",
-  "oauth:state",
-  "oauth:discovery",
+  OAUTH.client,
+  OAUTH.tokens,
+  OAUTH.pending,
+  OAUTH.verifier,
+  OAUTH.state,
+  OAUTH.discovery,
 ] as const;
 /**
  * The values that are credentials: tokens, a registered client (which may
@@ -81,9 +84,9 @@ const OAUTH_VALUE_KEYS = [
  * and none of it authenticates anything on its own.
  */
 const SEALED_OAUTH_KEYS: ReadonlySet<string> = new Set([
-  "oauth:client",
-  "oauth:tokens",
-  "oauth:verifier",
+  OAUTH.client,
+  OAUTH.tokens,
+  OAUTH.verifier,
 ]);
 const SEALED_VALUE_VERSION = 1;
 /**
@@ -92,7 +95,7 @@ const SEALED_VALUE_VERSION = 1;
  * after the fence and sweeps at most MAX_EXPIRED_SWEEP before it — so this
  * guards only the size of the two records every reset reads. A generation
  * name is 39 characters, so 5,000 entries is about 210 KB of manifest and
- * 280 KB of times: far under Workers KV's 25 MiB value limit, and a few
+ * 280 KB of times: each far under D1's 2 MB value limit, and a few
  * milliseconds to parse. Reaching it takes more than 4,000 resets of one
  * connector in a day on top of the 1,000 an earlier release allowed, which
  * is a loop, not an operator. An earlier release refuses a lineage longer
@@ -104,9 +107,8 @@ const MAX_CLEANUP_BACKLOG = 5_000;
  * How long a retired generation stays in the cleanup lineage. A late write
  * lands in a retired namespace only from a request that captured that
  * generation before the reset and is still running — an OAuth flow, a token
- * refresh, or a reader whose eventually consistent store (Workers KV serves a
- * stale generation for a minute or more) has not yet seen the fence. None of
- * those outlive a day. A late writer's own cleanup deletes what it wrote, and
+ * refresh, or a reader that read the generation just before the fence. None
+ * of those outlive a day. A late writer's own cleanup deletes what it wrote, and
  * if that delete fails it records the generation as retired again from that
  * moment; residue it leaves is unreadable behind the fence either way. Once
  * the grace has passed, a reset sweeps the generation, and one whose keys
@@ -1217,16 +1219,16 @@ function isModernGeneration(generation: string): boolean {
  * affect only its own flow, even if it lands after a replacement flow.
  */
 export function oauthValueStorageKey(
-  key: string,
+  key: OAuthValueKey,
   generation: string | null,
 ): string {
   return generation !== null && isModernGeneration(generation)
-    ? `${key}:epoch:${generation}`
-    : key;
+    ? oauthKeys.value(key, generation)
+    : oauthKeys.value(key, null);
 }
 
 function cleanupBacklogKey(generation: string): string {
-  return `oauth:cleanup:${encodeURIComponent(generation)}`;
+  return oauthKeys.cleanup(generation);
 }
 
 /**
@@ -1238,7 +1240,7 @@ function cleanupBacklogKey(generation: string): string {
  * interleaving of the two keys errs toward a longer grace.
  */
 function cleanupTimesKey(generation: string): string {
-  return `oauth:cleanup-at:${encodeURIComponent(generation)}`;
+  return oauthKeys.cleanupAt(generation);
 }
 
 /** Parse a times record, reading anything malformed as "no times known". */
@@ -1358,12 +1360,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
   /**
    * @internal Delete the grant the authorization server just refused, but only
    * while storage still holds exactly that refresh token in this generation: a
-   * consent that completed meanwhile must survive. Where the store has
-   * `compareAndSet`, the delete is conditional on the exact raw string read
-   * (ciphertext, when sealed), so a write landing in between wins. A store
-   * without it (Workers KV) gets the read followed by a plain delete, and a
-   * write landing between the two can still be lost — the same window the
-   * SDK's own invalidation has. Best effort: if storage fails, the next
+   * consent that completed meanwhile must survive. The delete is a
+   * compare-and-set on the exact raw string read (ciphertext, when sealed), so
+   * a write landing in between wins. Best effort: if storage fails, the next
    * refresh is refused again and ends the same way.
    */
   async discardRefusedGrant(
@@ -1372,7 +1371,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   ): Promise<void> {
     try {
       const read = await this.readStoredValue(
-        "oauth:tokens",
+        OAUTH.tokens,
         (raw) => JSON.parse(raw) as OAuthTokens,
       );
       if (
@@ -1382,12 +1381,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
       ) {
         return;
       }
-      const physicalKey = oauthValueStorageKey("oauth:tokens", generation);
-      if (this.storage.compareAndSet) {
-        await this.storage.compareAndSet(physicalKey, read.raw, null);
-      } else {
-        await this.storage.delete(physicalKey);
-      }
+      const physicalKey = oauthValueStorageKey(OAUTH.tokens, generation);
+      await this.storage.compareAndSet(physicalKey, read.raw, null);
     } catch {
       // See above: a refusal that could not be recorded recurs, it does not hide.
     }
@@ -1483,7 +1478,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * flow's value because the two writes have different physical keys.
    */
   private async writeValue<T>(
-    key: string,
+    key: OAuthValueKey,
     value: T,
     serializeLegacy: (value: T) => string,
     issuer?: string,
@@ -1516,7 +1511,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * another request replaced in the meantime.
    */
   private async storeInGeneration(
-    key: string,
+    key: OAuthValueKey,
     generation: string,
     serialize: () => string,
     expected?: string,
@@ -1551,7 +1546,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     try {
       if (expected === undefined) {
         await this.storage.set(physicalKey, serialized);
-      } else if (!(await this.replaceExactly(physicalKey, expected, serialized))) {
+      } else if (!(await this.storage.compareAndSet(physicalKey, expected, serialized))) {
         return;
       }
     } catch (error) {
@@ -1573,11 +1568,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
       try {
         // On cancellation the generation may still be active. A newer flow
         // could have written this key while the old storage set was pending.
-        if (this.storage.compareAndSet) {
-          await this.storage.compareAndSet(physicalKey, serialized, null);
-        } else if ((await this.storage.get(physicalKey)) === serialized) {
-          await this.storage.delete(physicalKey);
-        }
+        await this.storage.compareAndSet(physicalKey, serialized, null);
       } catch {
         // Make a transient cleanup failure retryable by the next force reset.
         // This is still best-effort if storage cannot accept the backlog write.
@@ -1596,31 +1587,13 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   /**
-   * Compare-and-set where the store has it. A store without it gets a re-read
-   * immediately before the write: it narrows the race to one round trip, the
-   * same exposure that store already has for every other OAuth write.
-   */
-  private async replaceExactly(
-    physicalKey: string,
-    expected: string,
-    next: string,
-  ): Promise<boolean> {
-    if (this.storage.compareAndSet) {
-      return this.storage.compareAndSet(physicalKey, expected, next);
-    }
-    if ((await this.storage.get(physicalKey)) !== expected) return false;
-    await this.storage.set(physicalKey, next);
-    return true;
-  }
-
-  /**
    * Open a sealed credential. Anything that does not open — a tampered value,
    * a rotated vault key, ciphertext copied from another connector or owner, or
    * sealed state with no sealer configured — reads as absent, which fails
    * closed to reauthorization.
    */
   private async openValue(
-    key: string,
+    key: OAuthValueKey,
     physicalKey: string,
     sealed: string,
   ): Promise<string | undefined> {
@@ -1644,7 +1617,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * write. A failure leaves the plaintext readable; the next write seals it.
    */
   private async sealInPlace(
-    key: string,
+    key: OAuthValueKey,
     generation: string,
     raw: string,
   ): Promise<void> {
@@ -1666,7 +1639,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * then sealed where it lies.
    */
   private async readValue<T>(
-    key: string,
+    key: OAuthValueKey,
     parseLegacy: (raw: string) => T,
   ): Promise<
     | OAuthValueRead<T>
@@ -1685,7 +1658,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * (ciphertext, when sealed) the value came from, for a compare-and-set.
    */
   private async readStoredValue<T>(
-    key: string,
+    key: OAuthValueKey,
     parseLegacy: (raw: string) => T,
   ): Promise<
     | {
@@ -1717,7 +1690,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
   /** Decode one physical value: unseal it, then read its envelope or legacy form. */
   private async openStoredValue<T>(
-    key: string,
+    key: OAuthValueKey,
     generation: string,
     raw: string,
     parseLegacy: (raw: string) => T,
@@ -1805,7 +1778,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * to register and consent within the same epoch.
    */
   private async readIssuerBoundValue<T>(
-    key: "oauth:client" | "oauth:tokens",
+    key: typeof OAUTH.client | typeof OAUTH.tokens,
     parseLegacy: (raw: string) => T,
     ctx?: OAuthClientInformationContext,
   ): Promise<T | undefined> {
@@ -1856,8 +1829,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
     ) {
       const json = (raw: string) => JSON.parse(raw) as unknown;
       const [client, tokens, issuer] = await Promise.all([
-        this.readStoredValueIn("oauth:client", generation, json),
-        this.readStoredValueIn("oauth:tokens", generation, json),
+        this.readStoredValueIn(OAUTH.client, generation, json),
+        this.readStoredValueIn(OAUTH.tokens, generation, json),
         this.recordedIssuer(generation),
       ]);
       // Every stored credential must carry a stamp, the stamps must agree, and
@@ -1894,7 +1867,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   /** The issuer the epoch's own discovery names, as the SDK would derive it. */
   protected async recordedIssuer(generation: string): Promise<string | undefined> {
     const read = await this.readStoredValueIn(
-      "oauth:discovery",
+      OAUTH.discovery,
       generation,
       (raw) => JSON.parse(raw) as OAuthDiscoveryState,
     );
@@ -1906,7 +1879,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
   /** A stored value in a named epoch, outside any flow's binding. */
   private async readStoredValueIn<T>(
-    key: string,
+    key: OAuthValueKey,
     generation: string,
     parseLegacy: (raw: string) => T,
   ) {
@@ -2093,7 +2066,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     ctx?: OAuthClientInformationContext,
   ): Promise<OAuthClientInformationMixed | undefined> {
     return this.readIssuerBoundValue(
-      "oauth:client",
+      OAUTH.client,
       (raw) => JSON.parse(raw) as OAuthClientInformationMixed,
       ctx,
     );
@@ -2104,7 +2077,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     ctx?: OAuthClientInformationContext,
   ): Promise<void> {
     await this.writeValue(
-      "oauth:client",
+      OAUTH.client,
       info,
       (value) => JSON.stringify(value),
       ctx?.issuer,
@@ -2116,7 +2089,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
     return (
       await this.readValue(
-        "oauth:discovery",
+        OAUTH.discovery,
         (raw) => JSON.parse(raw) as OAuthDiscoveryState,
       )
     )?.value;
@@ -2124,7 +2097,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
   async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
     await this.writeValue(
-      "oauth:discovery",
+      OAUTH.discovery,
       state,
       (value) => JSON.stringify(value),
     );
@@ -2139,7 +2112,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
         ? this.refreshCoordinator?.successfulRefreshIdentity(refreshGeneration)
         : undefined;
     const tokens = await this.readIssuerBoundValue(
-      "oauth:tokens",
+      OAUTH.tokens,
       (raw) => JSON.parse(raw) as OAuthTokens,
       ctx,
     );
@@ -2219,7 +2192,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
       this.refreshCoordinator?.beginMutation(owned.generation, owned.flight) === true;
     try {
       await this.writeValue(
-        "oauth:tokens",
+        OAUTH.tokens,
         tokens,
         (value) => JSON.stringify(value),
         ctx?.issuer,
@@ -2252,7 +2225,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   async state(): Promise<string> {
     if (!this.allowAuthorization) throw this.authorizationRefused();
     const value = randomState();
-    await this.writeValue("oauth:state", value, (raw) => raw);
+    await this.writeValue(OAUTH.state, value, (raw) => raw);
     return value;
   }
 
@@ -2261,7 +2234,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * value. Absent stored state or absent candidate → false (fail closed).
    */
   async verifyState(candidate: string | null): Promise<boolean> {
-    const expected = await this.readValue("oauth:state", (raw) => raw);
+    const expected = await this.readValue(OAUTH.state, (raw) => raw);
     if (!expected || candidate === null) return false;
     const matches = timingSafeEqual(candidate, expected.value);
     if (matches) this.captureGeneration(expected.generation);
@@ -2270,11 +2243,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
   async saveCodeVerifier(verifier: string): Promise<void> {
     if (!this.allowAuthorization) throw this.authorizationRefused();
-    await this.writeValue("oauth:verifier", verifier, (raw) => raw);
+    await this.writeValue(OAUTH.verifier, verifier, (raw) => raw);
   }
 
   async codeVerifier(): Promise<string> {
-    const stored = await this.readValue("oauth:verifier", (raw) => raw);
+    const stored = await this.readValue(OAUTH.verifier, (raw) => raw);
     if (!stored) {
       throw new Error(`No PKCE code verifier for "${this.connectorId}"`);
     }
@@ -2288,7 +2261,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
       // stale one. A pre-envelope (legacy-generation) write keeps its raw
       // format for older readers and carries no time.
       await this.writeValue(
-        "oauth:pending",
+        OAUTH.pending,
         authorizationUrl.toString(),
         (raw) => raw,
         undefined,
@@ -2308,7 +2281,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   /** The stored authorization URL, if a flow is pending. */
   async pendingAuthorizationUrl(): Promise<string | undefined> {
     return (
-      await this.readValue("oauth:pending", (raw) => raw)
+      await this.readValue(OAUTH.pending, (raw) => raw)
     )?.value;
   }
 
@@ -2325,7 +2298,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * consent the server has already refused, where a fresh flow registers.
    */
   async reusablePendingAuthorizationUrl(): Promise<string | undefined> {
-    const pending = await this.readValue("oauth:pending", (raw) => raw);
+    const pending = await this.readValue(OAUTH.pending, (raw) => raw);
     if (
       pending?.writtenAt === undefined ||
       Math.abs(Date.now() - pending.writtenAt) >= PENDING_AUTHORIZATION_MAX_AGE_MS
@@ -2348,9 +2321,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
   async clearPending(): Promise<void> {
     const generation = await this.writeGeneration();
     await this.deleteAll([
-      oauthValueStorageKey("oauth:pending", generation),
-      oauthValueStorageKey("oauth:verifier", generation),
-      oauthValueStorageKey("oauth:state", generation),
+      oauthValueStorageKey(OAUTH.pending, generation),
+      oauthValueStorageKey(OAUTH.verifier, generation),
+      oauthValueStorageKey(OAUTH.state, generation),
     ]);
   }
 
@@ -2360,7 +2333,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * nonces, avoiding the lost-update race of read/increment/write.
    */
   async generation(): Promise<string> {
-    return (await this.storage.get("oauth:generation")) ?? LEGACY_GENERATION;
+    return (await this.storage.get(oauthKeys.generation)) ?? LEGACY_GENERATION;
   }
 
   /** True only after an operator disconnect, until an explicit authorization starts. */
@@ -2376,7 +2349,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   /** Publish a unique active epoch without a read/modify/write race. */
   async bumpGeneration(): Promise<string> {
     const next = `${ACTIVE_GENERATION_PREFIX}${crypto.randomUUID()}`;
-    await this.storage.set("oauth:generation", next);
+    await this.storage.set(oauthKeys.generation, next);
     return next;
   }
 
@@ -2432,8 +2405,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   /**
    * The epoch it published. With `expected`, the reset is conditional on the
    * live epoch still being that one: it is checked before anything is
-   * touched, and the activation is a compare-and-set where the store offers
-   * one (a recheck just before the write where it cannot).
+   * touched, and the activation is a compare-and-set.
    */
   private async performResetAuthorization(
     operatorDisconnected: boolean,
@@ -2441,7 +2413,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     expected?: string,
   ): Promise<string> {
     const nonce = crypto.randomUUID();
-    const rawGeneration = await this.storage.get("oauth:generation");
+    const rawGeneration = await this.storage.get(oauthKeys.generation);
     const previous = rawGeneration ?? LEGACY_GENERATION;
     if (expected !== undefined && previous !== expected) throw this.flowSuperseded();
     // Only an explicitly forced restart may carry a registration forward, and
@@ -2504,16 +2476,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
     // the answer is lost: the next reset must still find the retired grants.
     // A manifest for an epoch that never activated is harmless residue.
     if (expected === undefined) {
-      await this.storage.set("oauth:generation", active);
-    } else if (this.storage.compareAndSet) {
-      if (!(await this.storage.compareAndSet("oauth:generation", rawGeneration, active))) {
-        throw this.flowSuperseded();
-      }
-    } else {
-      // An eventually consistent store has no atomic swap; recheck as late
-      // as possible, and leave the residue an abandoned manifest is.
-      if ((await this.generation()) !== expected) throw this.flowSuperseded();
-      await this.storage.set("oauth:generation", active);
+      await this.storage.set(oauthKeys.generation, active);
+    } else if (!(await this.storage.compareAndSet(oauthKeys.generation, rawGeneration, active))) {
+      throw this.flowSuperseded();
     }
     this.refreshCoordinator?.retire(previous);
 
@@ -2521,7 +2486,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
       // readValue opened the old physical key; the write seals the plaintext
       // under the new one. Copying ciphertext would fail its AAD check.
       this.captureGeneration(active);
-      await this.storeInGeneration("oauth:client", active, () =>
+      await this.storeInGeneration(OAUTH.client, active, () =>
         JSON.stringify({
           connectaOAuthVersion: STORED_VALUE_VERSION,
           generation: active,
@@ -2599,7 +2564,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     | (OAuthValueRead<OAuthClientInformationMixed> & { issuer: string; binding: string })
     | undefined
   > {
-    const prior = await this.readValue("oauth:client", (raw) => {
+    const prior = await this.readValue(OAUTH.client, (raw) => {
       try {
         return JSON.parse(raw) as OAuthClientInformationMixed;
       } catch {
@@ -2622,7 +2587,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     const carriable = { ...prior, issuer: prior.issuer, binding: prior.binding };
     if (!prior.carried) return carriable;
     const earnedGrant =
-      (await this.storage.get(oauthValueStorageKey("oauth:tokens", previous))) !== null;
+      (await this.storage.get(oauthValueStorageKey(OAUTH.tokens, previous))) !== null;
     return earnedGrant ? carriable : undefined;
   }
 
@@ -2634,26 +2599,26 @@ export class KvOAuthProvider implements OAuthClientProvider {
       const generation = await this.writeGeneration();
       if (scope === "all") {
         await this.deleteAll([
-          oauthValueStorageKey("oauth:client", generation),
-          oauthValueStorageKey("oauth:tokens", generation),
-          oauthValueStorageKey("oauth:verifier", generation),
-          oauthValueStorageKey("oauth:discovery", generation),
+          oauthValueStorageKey(OAUTH.client, generation),
+          oauthValueStorageKey(OAUTH.tokens, generation),
+          oauthValueStorageKey(OAUTH.verifier, generation),
+          oauthValueStorageKey(OAUTH.discovery, generation),
         ]);
       } else if (scope === "client") {
         await this.storage.delete(
-          oauthValueStorageKey("oauth:client", generation),
+          oauthValueStorageKey(OAUTH.client, generation),
         );
       } else if (scope === "tokens") {
         await this.storage.delete(
-          oauthValueStorageKey("oauth:tokens", generation),
+          oauthValueStorageKey(OAUTH.tokens, generation),
         );
       } else if (scope === "verifier") {
         await this.storage.delete(
-          oauthValueStorageKey("oauth:verifier", generation),
+          oauthValueStorageKey(OAUTH.verifier, generation),
         );
       } else if (scope === "discovery") {
         await this.storage.delete(
-          oauthValueStorageKey("oauth:discovery", generation),
+          oauthValueStorageKey(OAUTH.discovery, generation),
         );
       }
       if (endsRefresh) {

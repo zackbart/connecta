@@ -33,6 +33,10 @@ This repository is deployment configuration, not a copy of Connecta itself.
   `@cloudflare/codemode` optional peer installed.
 - Keep credentials in Worker secrets. Never commit credential values, Access
   service-token secrets, or `CREDENTIAL_ENCRYPTION_KEY`.
+- All state lives in the one D1 database bound as `CONNECTA_DB`, through
+  `d1Storage` (and `d1ActivityStore`) from `@zackbart/connecta/d1`. Do not add
+  a KV namespace, a second database, or a copied storage adapter; connecta
+  creates its own tables.
 - Add application logic only inside deliberate `api()` connector handlers.
   Do not copy or modify Connecta package internals here.
 - Prefer `api()` when the agent must see an exact reviewed capability set;

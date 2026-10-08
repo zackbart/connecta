@@ -11,9 +11,9 @@ import { resolveAllowlist, resolveLimits } from "./validate.js";
 
 export interface ArtifactsOptions {
   /**
-   * Where artifacts live: `kvArtifactStore(storage)` over storage with
-   * `compareAndSet` — the Worker example's D1 store (optionally with R2 for
-   * bodies), `fileStorage` on Node, `memoryStorage` in tests.
+   * Where artifacts live: `kvArtifactStore(storage)` over the deployment's
+   * storage — `d1Storage` on Workers (optionally with R2 for bodies),
+   * `sqliteStorage` on Node, `memoryStorage` in tests.
    */
   store: ArtifactStore;
   /**

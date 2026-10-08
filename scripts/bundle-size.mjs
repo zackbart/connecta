@@ -6,7 +6,7 @@
 // conditions, minified — straight from src/, so the number is the code a
 // deployment ships rather than what tsc happened to emit. The Worker example
 // is bundled too, as the composite a real deployment loads. The Node-only
-// entries (/node, /quickjs) are reported for information and never capped.
+// entries (/node, /quickjs, /sqlite) are reported for information and never capped.
 //
 // The report is a markdown table on stdout (and appended to
 // $GITHUB_STEP_SUMMARY when set), with the minified bytes each entry spends on
@@ -32,7 +32,7 @@ const budget = JSON.parse(
   readFileSync(join(root, "scripts", "bundle-budget.json"), "utf8"),
 ).entries;
 
-const NODE_ENTRIES = new Set(["./node", "./quickjs"]);
+const NODE_ENTRIES = new Set(["./node", "./quickjs", "./sqlite"]);
 const OPTIONAL_PEERS = Object.keys(manifest.peerDependencies ?? {});
 const WORKER_EXAMPLE = "examples/worker";
 

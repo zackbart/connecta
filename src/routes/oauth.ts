@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import { closeConnectorScope } from "../connector-scope.js";
 import { oauthValueStorageKey } from "../auth/downstream-oauth.js";
 import { failureRecord, logFailure } from "../operator-record.js";
+import { oauthKeys } from "../storage/keys.js";
 import type { ConnectorContext } from "../types.js";
 import { escapeHtml, renderPage, resolveBranding, STATUS_ICONS } from "../branding.js";
 import {
@@ -105,9 +106,9 @@ async function equalizeRefusalCost(
   context: ConnectorContext,
 ): Promise<void> {
   try {
-    const generation = await context.storage.get("oauth:generation");
+    const generation = await context.storage.get(oauthKeys.generation);
     await context.storage.get(
-      oauthValueStorageKey("oauth:state", generation),
+      oauthValueStorageKey(oauthKeys.field.state, generation),
     );
   } catch {
     // Deliberately ignored — see above.
