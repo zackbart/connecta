@@ -2,10 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolDef } from "../src/types.js";
 import { required } from "./helpers.js";
 import {
-  context,
   guideOf,
   itClassifiesLikeARelease,
   mockRemoteMcp,
+  servedTools,
 } from "./fixtures/hosted-provider.js";
 
 const mocks = vi.hoisted(() => ({
@@ -272,7 +272,7 @@ describe("linear()", () => {
       purpose: "Delivery planning",
       access: "read-write",
     });
-    const tools = await connector.listTools(context);
+    const tools = await servedTools(connector);
 
     expect(tools[0]?.annotations).toEqual({
       readOnlyHint: true,
@@ -301,7 +301,7 @@ describe("linear()", () => {
       purpose: "Delivery planning",
       access: "read-write",
     });
-    const tools = await connector.listTools(context);
+    const tools = await servedTools(connector);
 
     expect(tools[0]?.annotations).toMatchObject({ readOnlyHint: true });
     expect(tools[1]?.annotations).toMatchObject({ destructiveHint: true });
@@ -328,7 +328,7 @@ describe("linear()", () => {
       purpose: "Delivery planning",
       access: "read-write",
     });
-    expect((await connector.listTools(context))[0]?.annotations).toEqual({
+    expect((await servedTools(connector))[0]?.annotations).toEqual({
       readOnlyHint: false,
       destructiveHint: true,
     });

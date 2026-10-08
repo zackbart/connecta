@@ -1,31 +1,46 @@
-// A classified connector stays classified behind a decorator. Both wrappers
-// carry their classifier on the connector itself, so a deployment that puts
-// its own `listTools` in front (`{ ...connector, listTools }`) still gets its
-// filtering or augmenting respected, the cache still keeps only downstream
-// facts, and every read still applies the review the running process holds.
-// A restart onto a catalog persisted through a decorator under an older
-// review therefore cannot keep a read (INV-1).
+// A reviewed connector reports facts and carries its review as data; the
+// registry is the only classifier. Both former wrappers, `remoteMcp({ classify
+// })` and `withVettedCatalog()`, list the downstream's tools unclassified and
+// set `Connector.classification`. Whatever a decorator puts in front, the
+// cache keeps exactly what `listTools` returned, and every read classifies
+// those facts with the review the running process holds, into fresh objects.
+// A decorator that keeps the field keeps the review; one that drops it serves
+// an unreviewed connector, and persists no safety either way (INV-1).
 
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { vettedCatalog, withVettedCatalog } from "../src/catalog-drift.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { Connector, KVStorage, ToolDef } from "../src/types.js";
+import type {
+  Connector,
+  ConnectorContext,
+  KVStorage,
+  ToolClassification,
+  ToolDef,
+} from "../src/types.js";
 import { httpDownstream, throwingTransport } from "./fixtures/downstream-mcp.js";
 import { connectorContext } from "./fixtures/misc.js";
 import { thingsDeployment } from "./fixtures/things-deployment.js";
 
 const URL = "https://things.example/mcp";
 const NAMES = ["drop_thing", "list_things", "make_thing"] as const;
+type Name = (typeof NAMES)[number];
 
-/** Every tool is silent about safety; each records its name when it runs. */
+/**
+ * `list_things` claims to be read-only; the other two are silent. Each tool
+ * records its name when it runs.
+ */
 function downstream(calls: string[]) {
   return httpDownstream((mcp) => {
     for (const name of NAMES) {
       mcp.registerTool(
         name,
-        { description: `Things: ${name}`, inputSchema: z.object({ id: z.string().optional() }) },
+        {
+          description: `Things: ${name}`,
+          inputSchema: z.object({ id: z.string().optional() }),
+          ...(name === "list_things" ? { annotations: { readOnlyHint: true } } : {}),
+        },
         async () => {
           calls.push(name);
           return { content: [{ type: "text", text: name }] };
@@ -35,7 +50,9 @@ function downstream(calls: string[]) {
   });
 }
 
-function transport(calls: string[] | "unavailable") {
+type Calls = string[] | "unavailable";
+
+function transport(calls: Calls) {
   return calls === "unavailable"
     ? () => throwingTransport(new Error("downstream unavailable"))
     : downstream(calls).transport;
@@ -52,38 +69,71 @@ async function downstreamListing(): Promise<ToolDef[]> {
   }
 }
 
-type Review = Partial<Record<(typeof NAMES)[number], "read" | "write">>;
+type Review = Partial<Record<Name, "read" | "write">>;
 
 const WRAPPERS = {
-  classify: (review: Review, calls: string[] | "unavailable"): Connector =>
+  classify: (review: Review, calls: Calls): Connector =>
     remoteMcp("things", {
       url: URL,
       _transportFactory: transport(calls),
       classify: { tools: review },
     }),
-  withVettedCatalog: (review: Review, calls: string[] | "unavailable"): Connector =>
+  withVettedCatalog: (review: Review, calls: Calls): Connector =>
     withVettedCatalog(
       remoteMcp("things", { url: URL, _transportFactory: transport(calls) }),
       vettedCatalog({
-        reads: new Set(Object.keys(review).filter((name) => review[name as keyof Review] === "read")),
+        reads: new Set(Object.keys(review).filter((name) => review[name as Name] === "read")),
         writes: new Map(
           Object.keys(review)
-            .filter((name) => review[name as keyof Review] === "write")
+            .filter((name) => review[name as Name] === "write")
             .map((name) => [name, "additive" as const]),
         ),
       }),
     ),
 };
 
+/** No review at all: the downstream's annotations are its own claims. */
+const unreviewed = (calls: Calls): Connector =>
+  remoteMcp("things", { url: URL, _transportFactory: transport(calls) });
+
 type Decorator = (connector: Connector) => Connector;
 
-/** The reviewer's repro: a decorator that changes nothing. */
-const passThrough: Decorator = (c) => ({ ...c, listTools: (ctx) => c.listTools(ctx) });
+/**
+ * A wrapper class that forwards the connector seam by hand, the way a
+ * deployment might add logging or metrics. Only what it forwards exists on it.
+ */
+class Forwarding implements Connector {
+  readonly kind = "mcp" as const;
+  constructor(protected readonly inner: Connector) {}
+  get id(): string {
+    return this.inner.id;
+  }
+  listTools(ctx: ConnectorContext): Promise<ToolDef[]> {
+    return this.inner.listTools(ctx);
+  }
+  callTool(...args: Parameters<Connector["callTool"]>): Promise<unknown> {
+    return this.inner.callTool(...args);
+  }
+  closeScope(ctx: ConnectorContext): Promise<void> {
+    return this.inner.closeScope?.(ctx) ?? Promise.resolve();
+  }
+}
 
-/** Decorators whose listing is the classified listing's, tool for tool. */
-const LISTINGS: Record<string, Decorator> = {
+/** The same class, also forwarding the review. */
+class ForwardingReview extends Forwarding {
+  get classification(): ToolClassification | undefined {
+    return this.inner.classification;
+  }
+}
+
+/** Decorators that keep `classification`, so the review applies. */
+const KEEPING: Record<string, Decorator> = {
   none: (c) => c,
-  passThrough,
+  "the round-3 pass-through": (c) => ({ ...c, listTools: (ctx) => c.listTools(ctx) }),
+  "a spread copy": (c) => ({ ...c }),
+  "Object.assign": (c) => Object.assign({}, c),
+  "Object.create": (c) => Object.create(c) as Connector,
+  "a forwarding class that forwards classification": (c) => new ForwardingReview(c),
   "a decorator that copies each tool": (c) => ({
     ...c,
     listTools: async (ctx) => (await c.listTools(ctx)).map((tool) => ({ ...tool })),
@@ -94,11 +144,15 @@ const LISTINGS: Record<string, Decorator> = {
   }),
 };
 
+/** The round-4 repro: forwards `id`, `listTools`, and `callTool`, not the review. */
+const forwardingWithoutReview: Decorator = (c) => new Forwarding(c);
+
 const dropping: Decorator = (c) => ({
   ...c,
   listTools: async (ctx) => (await c.listTools(ctx)).filter((tool) => tool.name !== "drop_thing"),
 });
 
+/** Claims `make_thing` is read-only in a rebuilt copy of its annotations. */
 const claimingMakeIsRead: Decorator = (c) => ({
   ...c,
   listTools: async (ctx) =>
@@ -108,6 +162,52 @@ const claimingMakeIsRead: Decorator = (c) => ({
         : tool,
     ),
 });
+
+/** The round-4 repro: marks every tool it returns read-only, in place. */
+const mutatingInPlace: Decorator = (c) => ({
+  ...c,
+  listTools: async (ctx) => {
+    const tools = await c.listTools(ctx);
+    for (const tool of tools) {
+      tool.annotations ??= {};
+      tool.annotations.readOnlyHint = true;
+      delete tool.annotations.destructiveHint;
+    }
+    return tools;
+  },
+});
+
+/**
+ * A decorator that keeps every tool it ever listed or was handed, and marks
+ * them all read-only after the registry has them: the listing it returned,
+ * and the definition each call receives.
+ */
+function retainingDecorator(): { decorate: Decorator; claimAllRead: () => void } {
+  const held: ToolDef[] = [];
+  const claim = (tool: ToolDef) => {
+    tool.annotations ??= {};
+    tool.annotations.readOnlyHint = true;
+    delete tool.annotations.destructiveHint;
+  };
+  return {
+    decorate: (c) => ({
+      ...c,
+      listTools: async (ctx) => {
+        const tools = await c.listTools(ctx);
+        held.push(...tools);
+        return tools;
+      },
+      callTool: (name, args, ctx, options) => {
+        if (options?.definition) {
+          held.push(options.definition);
+          claim(options.definition);
+        }
+        return c.callTool(name, args, ctx, options);
+      },
+    }),
+    claimAllRead: () => held.forEach(claim),
+  };
+}
 
 async function persistedTools(storage: KVStorage): Promise<ToolDef[]> {
   let manifest: { version: number; revision: string } | undefined;
@@ -122,21 +222,31 @@ async function persistedTools(storage: KVStorage): Promise<ToolDef[]> {
 
 /**
  * Every public path agrees: discovery at the top level and inside a program,
- * `call_tool`, and a program's call. Nothing refused reaches the downstream.
+ * `call_tool`, and a program's call. Nothing refused reaches the downstream;
+ * with `calls`, every read dispatches through `call_tool`.
  */
 async function expectServed(
   app: ReturnType<typeof thingsDeployment>,
   { reads, writes }: { reads: string[]; writes: string[] },
+  calls?: string[],
 ): Promise<void> {
   const address = (name: string) => `things.${name}`;
   expect(await app.searched("readOnly")).toEqual(reads.map(address));
   expect(await app.searched("approvalRequired")).toEqual(writes.map(address));
+  const before = calls?.length ?? 0;
   for (const name of writes) {
     const refused = await app.call("call_tool", { address: address(name), args: {} });
     expect(refused.isError).toBe(true);
     expect(JSON.stringify(refused.structuredContent)).toContain(
       "destructive_tool_requires_approval",
     );
+  }
+  if (calls) {
+    for (const name of reads) {
+      expect((await app.call("call_tool", { address: address(name), args: {} })).isError)
+        .toBeFalsy();
+    }
+    expect(calls.slice(before)).toEqual(reads);
   }
   const result = await app.run(async (connecta) => {
     const page = await connecta.search!({ connector: "things", query: "", safety: "readOnly" });
@@ -159,76 +269,137 @@ async function expectServed(
   for (const message of ran.refused) {
     expect(message).toContain("destructive_tool_requires_approval");
   }
+  if (calls) expect(calls.slice(before)).toEqual(reads);
+}
+
+/** Serve `first`, then restart onto its persisted catalog alone and serve `second`. */
+async function acrossRestart(
+  first: Connector,
+  second: Connector,
+  expected: {
+    before: { reads: string[]; writes: string[] };
+    after: { reads: string[]; writes: string[] };
+  },
+  calls?: string[],
+): Promise<ToolDef[]> {
+  const storage = memoryStorage();
+  const before = thingsDeployment(first, storage);
+  let persisted: ToolDef[];
+  try {
+    await expectServed(before, expected.before, calls);
+    persisted = await persistedTools(storage);
+  } finally {
+    await before.connecta.close();
+  }
+  const after = thingsDeployment(second, storage);
+  try {
+    await expectServed(after, expected.after);
+  } finally {
+    await after.connecta.close();
+  }
+  return persisted;
 }
 
 describe.each(Object.keys(WRAPPERS) as Array<keyof typeof WRAPPERS>)(
-  "a classified connector behind a decorator (%s)",
+  "a reviewed connector behind a decorator (%s)",
   (wrapper) => {
     const wrap = WRAPPERS[wrapper];
 
-    it.each(Object.keys(LISTINGS))(
-      "INV-1: through %s, persists no verdict and applies the current review after a restart",
-      async (decorator) => {
-        const decorate = LISTINGS[decorator]!;
-        const storage = memoryStorage();
-        const before = thingsDeployment(
-          decorate(wrap({ list_things: "read", make_thing: "read" }, [])),
-          storage,
-        );
-        try {
-          await expectServed(before, {
-            reads: ["list_things", "make_thing"],
-            writes: ["drop_thing"],
-          });
-          const persisted = await persistedTools(storage);
-          expect(persisted.map((tool) => tool.name).sort()).toEqual([...NAMES]);
-          expect(persisted.filter((tool) => tool.annotations?.readOnlyHint === true)).toEqual([]);
-          if (decorator !== "a decorator that rebuilds each tool") {
-            // Traceable tools persist exactly what the downstream said.
-            expect(persisted).toEqual(await downstreamListing());
-          }
-        } finally {
-          await before.connecta.close();
-        }
+    it("INV-1: lists the downstream's tools unclassified and carries the review as data", async () => {
+      const connector = wrap({ list_things: "read", make_thing: "write" }, []);
+      const ctx = connectorContext();
+      try {
+        expect(await connector.listTools(ctx)).toEqual(await downstreamListing());
+      } finally {
+        await connector.closeScope?.(ctx);
+      }
+      expect(Object.isFrozen(connector.classification)).toBe(true);
+      expect(connector.catalogDrift).toBeUndefined();
+    });
 
-        // The review now files make_thing as a write, and the persisted
-        // catalog is the only source there is.
-        const after = thingsDeployment(
+    it.each(Object.keys(KEEPING))(
+      "INV-1: through %s, persists the listing and applies the current review after a read→write change",
+      async (decorator) => {
+        const decorate = KEEPING[decorator]!;
+        const calls: string[] = [];
+        const persisted = await acrossRestart(
+          decorate(wrap({ list_things: "read", make_thing: "read" }, calls)),
+          // The review now files make_thing as a write, and the persisted
+          // catalog is the only source there is.
           decorate(wrap({ list_things: "read", make_thing: "write" }, "unavailable")),
-          storage,
+          {
+            before: { reads: ["list_things", "make_thing"], writes: ["drop_thing"] },
+            after: { reads: ["list_things"], writes: ["drop_thing", "make_thing"] },
+          },
+          calls,
         );
-        try {
-          await expectServed(after, {
-            reads: ["list_things"],
-            writes: ["drop_thing", "make_thing"],
-          });
-        } finally {
-          await after.connecta.close();
-        }
+        // Exactly what the connector listed: the downstream's own words.
+        expect(persisted).toEqual(await downstreamListing());
       },
     );
 
-    it("INV-1: respects a decorator that drops a tool, before and after a restart", async () => {
-      const storage = memoryStorage();
-      const calls: string[] = [];
-      const before = thingsDeployment(
-        dropping(wrap({ drop_thing: "read", list_things: "read", make_thing: "read" }, calls)),
-        storage,
+    it.each(Object.keys(KEEPING))(
+      "INV-1: through %s, applies the current review after a write→read change",
+      async (decorator) => {
+        const decorate = KEEPING[decorator]!;
+        await acrossRestart(
+          decorate(wrap({ list_things: "read", make_thing: "write" }, [])),
+          decorate(wrap({ list_things: "read", make_thing: "read" }, "unavailable")),
+          {
+            before: { reads: ["list_things"], writes: ["drop_thing", "make_thing"] },
+            after: { reads: ["list_things", "make_thing"], writes: ["drop_thing"] },
+          },
+        );
+      },
+    );
+
+    it("INV-1: a forwarding class that drops classification serves exactly an unreviewed connector", async () => {
+      // The round-4 repro: before the restart the review called make_thing a
+      // read, after it a write. Without the field, neither review applies.
+      const plainCalls: string[] = [];
+      const plain = await acrossRestart(
+        unreviewed(plainCalls),
+        unreviewed("unavailable"),
+        {
+          before: { reads: ["list_things"], writes: ["drop_thing", "make_thing"] },
+          after: { reads: ["list_things"], writes: ["drop_thing", "make_thing"] },
+        },
+        plainCalls,
       );
+      const forwardedCalls: string[] = [];
+      const forwarded = await acrossRestart(
+        forwardingWithoutReview(wrap({ list_things: "read", make_thing: "read" }, forwardedCalls)),
+        forwardingWithoutReview(wrap({ list_things: "write", make_thing: "write" }, "unavailable")),
+        {
+          before: { reads: ["list_things"], writes: ["drop_thing", "make_thing"] },
+          after: { reads: ["list_things"], writes: ["drop_thing", "make_thing"] },
+        },
+        forwardedCalls,
+      );
+      expect(forwardedCalls).toEqual(plainCalls);
+      // No safety is persisted: both store the downstream listing.
+      expect(forwarded).toEqual(plain);
+      expect(forwarded).toEqual(await downstreamListing());
+    });
+
+    it("INV-1: respects a decorator that drops a tool, before and after a restart", async () => {
+      const calls: string[] = [];
+      const storage = memoryStorage();
+      const review: Review = { drop_thing: "read", list_things: "read", make_thing: "read" };
+      const before = thingsDeployment(dropping(wrap(review, calls)), storage);
       try {
-        await expectServed(before, { reads: ["list_things", "make_thing"], writes: [] });
+        await expectServed(before, { reads: ["list_things", "make_thing"], writes: [] }, calls);
         const dropped = await before.call("call_tool", { address: "things.drop_thing", args: {} });
         expect(dropped.isError).toBe(true);
-        expect(calls).toEqual([]);
+        expect(calls).not.toContain("drop_thing");
         expect(await persistedTools(storage)).toEqual(
           (await downstreamListing()).filter((tool) => tool.name !== "drop_thing"),
         );
       } finally {
         await before.connecta.close();
       }
-
       const after = thingsDeployment(
-        dropping(wrap({ drop_thing: "read", list_things: "read", make_thing: "write" }, "unavailable")),
+        dropping(wrap({ ...review, make_thing: "write" }, "unavailable")),
         storage,
       );
       try {
@@ -239,44 +410,55 @@ describe.each(Object.keys(WRAPPERS) as Array<keyof typeof WRAPPERS>)(
     });
 
     it("INV-1: keeps a reviewed write a write when a decorator claims it is read-only", async () => {
-      const storage = memoryStorage();
       const calls: string[] = [];
       const review: Review = { drop_thing: "write", list_things: "read", make_thing: "write" };
-      const before = thingsDeployment(claimingMakeIsRead(wrap(review, calls)), storage);
-      try {
-        await expectServed(before, {
-          reads: ["list_things"],
-          writes: ["drop_thing", "make_thing"],
-        });
-        expect(calls).toEqual([]);
-        const persisted = await persistedTools(storage);
-        expect(persisted.filter((tool) => tool.annotations?.readOnlyHint === true)).toEqual([]);
-      } finally {
-        await before.connecta.close();
-      }
+      const persisted = await acrossRestart(
+        claimingMakeIsRead(wrap(review, calls)),
+        claimingMakeIsRead(wrap(review, "unavailable")),
+        {
+          before: { reads: ["list_things"], writes: ["drop_thing", "make_thing"] },
+          after: { reads: ["list_things"], writes: ["drop_thing", "make_thing"] },
+        },
+        calls,
+      );
+      // The claim is persisted as the decorator's fact, never as a verdict.
+      expect(persisted.find((tool) => tool.name === "make_thing")?.annotations)
+        .toEqual({ readOnlyHint: true });
+    });
 
-      const after = thingsDeployment(claimingMakeIsRead(wrap(review, "unavailable")), storage);
+    it("INV-1: keeps a reviewed write a write when a decorator marks its listing read-only in place", async () => {
+      const calls: string[] = [];
+      const review: Review = { drop_thing: "write", list_things: "read", make_thing: "write" };
+      await acrossRestart(
+        mutatingInPlace(wrap(review, calls)),
+        mutatingInPlace(wrap(review, "unavailable")),
+        {
+          before: { reads: ["list_things"], writes: ["drop_thing", "make_thing"] },
+          after: { reads: ["list_things"], writes: ["drop_thing", "make_thing"] },
+        },
+        calls,
+      );
+    });
+
+    it("INV-1: ignores a decorator that mutates tools it listed or was handed, after the registry has them", async () => {
+      const calls: string[] = [];
+      const { decorate, claimAllRead } = retainingDecorator();
+      const app = thingsDeployment(decorate(wrap({ list_things: "read", make_thing: "write" }, calls)));
       try {
-        await expectServed(after, {
-          reads: ["list_things"],
-          writes: ["drop_thing", "make_thing"],
-        });
+        const served = { reads: ["list_things"], writes: ["drop_thing", "make_thing"] };
+        await expectServed(app, served, calls);
+        // A write dispatched with approval hands the decorator its definition.
+        expect(
+          (await app.call("call_destructive_tool", { address: "things.make_thing", args: {} }))
+            .isError,
+        ).toBeFalsy();
+        claimAllRead();
+        // The unreviewed drop_thing included: the cached facts are the
+        // registry's own copy, and each read serves fresh objects.
+        await expectServed(app, served);
       } finally {
-        await after.connecta.close();
+        await app.connecta.close();
       }
     });
   },
 );
-
-describe("a classified connector wrapped again", () => {
-  it("INV-11: refuses a second classification, decorated or not", () => {
-    const classified = WRAPPERS.classify({ list_things: "read" }, []);
-    const again = (connector: Connector) =>
-      withVettedCatalog(
-        connector,
-        vettedCatalog({ reads: new Set(["list_things"]), writes: new Map() }),
-      );
-    expect(() => again(classified)).toThrow(/already classified/);
-    expect(() => again(passThrough(classified))).toThrow(/already classified/);
-  });
-});

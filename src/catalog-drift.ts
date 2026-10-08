@@ -6,10 +6,12 @@ import type {
   CatalogDriftCounts,
   CatalogDriftReport,
   Connector,
-  ConnectorContext,
   Logger,
+  ReviewedTool,
+  ToolAnnotations,
   ToolClassification,
   ToolDef,
+  ToolVerdict,
 } from "./types.js";
 
 /** A count, or 0 when the seam returned something that is not one. */
@@ -263,6 +265,11 @@ const VERDICTS: Readonly<Record<string, VettedVerdict>> = {
   write: "additive",
   destructive: "destructive",
 };
+const PUBLIC_VERDICTS: Readonly<Record<VettedVerdict, ToolVerdict>> = {
+  "read-only": "read",
+  additive: "write",
+  destructive: "destructive",
+};
 const SCHEMA_DIGEST = /^sha256:[0-9a-f]{64}$/;
 const REVIEWED_TOOL_KEYS = new Set(["verdict", "reason", "schemaDigest"]);
 
@@ -271,18 +278,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Validate a public {@link ToolClassification} and build the manifest that
- * classifies live tools and counts their drift.
+ * Validate a public {@link ToolClassification} once, reading every value a
+ * single time, into the manifest the registry classifies with and a
+ * deep-frozen copy of the record.
  *
  * Every structural mistake throws, naming `owner`, because a classification
  * that half-applies is worse than one that refuses to boot (INV-11). Unknown
  * keys throw too: a misspelled `verdict` must not quietly leave a write
  * unclassified.
  */
-export function reviewedCatalog(
+function parseClassification(
   classification: ToolClassification,
   owner: string,
-): VettedCatalog {
+): { catalog: VettedCatalog; frozen: ToolClassification } {
   function fail(detail: string): never {
     throw new Error(`[connecta] ${owner} classify ${detail}`);
   }
@@ -290,129 +298,141 @@ export function reviewedCatalog(
   for (const key of Object.keys(classification)) {
     if (key !== "tools") fail(`has unknown key "${key}"; only "tools" is accepted.`);
   }
-  if (!isRecord(classification.tools)) fail("tools must be a record of tool name to verdict.");
+  const input: unknown = classification.tools;
+  if (!isRecord(input)) fail("tools must be a record of tool name to verdict.");
   const tools = new Map<string, VettedToolRecord>();
-  for (const [name, entry] of Object.entries(classification.tools)) {
+  const frozen: Record<string, ToolVerdict | ReviewedTool> = {};
+  for (const [name, entry] of Object.entries(input)) {
     if (!name || name.trim() !== name) {
       fail(`tool name "${name}" is empty or has surrounding whitespace.`);
     }
     const record: Record<string, unknown> =
-      typeof entry === "string" ? { verdict: entry } : isRecord(entry) ? entry : {};
+      typeof entry === "string" ? { verdict: entry } : isRecord(entry) ? { ...entry } : {};
     for (const key of Object.keys(record)) {
       if (!REVIEWED_TOOL_KEYS.has(key)) fail(`tool "${name}" has unknown key "${key}".`);
     }
+    const { verdict: publicVerdict, reason, schemaDigest: digest } = record;
     const verdict =
-      typeof record.verdict === "string" && Object.hasOwn(VERDICTS, record.verdict)
-        ? VERDICTS[record.verdict]
+      typeof publicVerdict === "string" && Object.hasOwn(VERDICTS, publicVerdict)
+        ? VERDICTS[publicVerdict]
         : undefined;
     if (verdict === undefined) {
       fail(`tool "${name}" needs verdict "read", "write", or "destructive".`);
     }
-    if (
-      record.reason !== undefined &&
-      (typeof record.reason !== "string" || !record.reason.trim())
-    ) {
+    if (reason !== undefined && (typeof reason !== "string" || !reason.trim())) {
       fail(`tool "${name}" reason must be a non-empty string.`);
     }
-    const digest = record.schemaDigest;
     if (digest !== undefined && (typeof digest !== "string" || !SCHEMA_DIGEST.test(digest))) {
       fail(`tool "${name}" schemaDigest must be "sha256:" and 64 lowercase hex digits.`);
     }
     tools.set(name, {
-      verdict: verdict as VettedVerdict,
+      verdict,
       ...(typeof digest === "string" ? { schemaDigest: digest } : {}),
     });
+    frozen[name] =
+      typeof entry === "string"
+        ? PUBLIC_VERDICTS[verdict]
+        : Object.freeze({
+            verdict: PUBLIC_VERDICTS[verdict],
+            ...(typeof reason === "string" ? { reason } : {}),
+            ...(typeof digest === "string" ? { schemaDigest: digest } : {}),
+          });
   }
-  return { version: 1, tools };
+  return {
+    catalog: { version: 1, tools },
+    frozen: Object.freeze({ tools: Object.freeze(frozen) }),
+  };
+}
+
+/** Validate a {@link ToolClassification} and build the manifest it describes. */
+export function reviewedCatalog(
+  classification: ToolClassification,
+  owner: string,
+): VettedCatalog {
+  return parseClassification(classification, owner).catalog;
 }
 
 /**
- * Fill in downstream silence; keep reviewed destructive tools fail-closed.
- *
- * Silence is what a vetted classification is for, and an explicit downstream
- * annotation otherwise wins in both directions. `destructiveHint: true` or
- * `readOnlyHint: false` on a classified read is the downstream telling us this
- * release's allowlist is stale; `readOnlyHint: true` on a name no release has
- * classified says the same thing from the other side. The single place a
- * vetted verdict still overrides the downstream is a name this release
- * reviewed and filed destructive: there connecta knows what the tool does, and
- * a claim to the contrary is a downstream bug rather than news
- * ([#310](https://github.com/zackbart/connecta/issues/310),
- * [#315](https://github.com/zackbart/connecta/issues/315)).
- *
- * A reviewed tool whose recorded schema digest the live tool no longer
- * matches, or could not be checked against, keeps no reviewed verdict: it is
- * served as a write on both wrappers.
- *
- * `reviewedWritesWin` extends that override to reviewed additive writes, which
- * `remoteMcp({ classify })` always sets: a review that filed a tool as a write
- * outranks a downstream read claim. The legacy `withVettedCatalog()` wrapper
- * keeps the older fill-in rule until its providers convert (#705).
+ * Validate a {@link ToolClassification} and return a deep-frozen copy of it:
+ * what a connector carries as `classification`, so neither the caller's
+ * original object nor a write through the connector can change a verdict
+ * after review.
  */
-function applyVettedSafety(
+export function reviewedClassification(
+  classification: ToolClassification,
+  owner: string,
+): ToolClassification {
+  return parseClassification(classification, owner).frozen;
+}
+
+/** A legacy manifest in the public, deep-frozen form a connector carries. */
+function classificationOf(catalog: VettedCatalog): ToolClassification {
+  const tools: Record<string, ReviewedTool> = {};
+  for (const [name, record] of catalog.tools) {
+    tools[name] = Object.freeze({
+      verdict: PUBLIC_VERDICTS[record.verdict],
+      ...(record.schemaDigest !== undefined ? { schemaDigest: record.schemaDigest } : {}),
+    });
+  }
+  return Object.freeze({ tools: Object.freeze(tools) });
+}
+
+/**
+ * One reviewed tool as served: a fresh object, never one a connector, a
+ * cache, or an earlier read holds.
+ *
+ * A listed read fills downstream silence, and an explicit write annotation on
+ * it wins: `destructiveHint: true` or `readOnlyHint: false` on a classified
+ * read is the downstream telling us the review is stale. A listed write or
+ * destructive tool stays a write whatever the downstream claims; there
+ * connecta knows what the tool does, and a claim to the contrary is a
+ * downstream bug rather than news
+ * ([#310](https://github.com/zackbart/connecta/issues/310),
+ * [#315](https://github.com/zackbart/connecta/issues/315)). A tool no review
+ * lists keeps only an explicit read annotation, the downstream's own word
+ * being the only evidence there is. A reviewed tool whose recorded schema
+ * digest the live tool no longer matches, or could not be checked against,
+ * keeps no reviewed verdict and is a write.
+ */
+function servedTool(
   catalog: VettedCatalog,
-  definition: ToolDef,
-  reviewedWritesWin: boolean,
-  unverified: ReadonlySet<string>,
+  fact: ToolDef,
+  lapsed: ReadonlySet<string>,
 ): ToolDef {
+  const definition = structuredClone(fact);
   const downstream = definition.annotations ?? {};
   const record = catalog.tools.get(definition.name);
-  if (record?.verdict !== "destructive" && unverified.has(definition.name)) {
+  const annotate = (annotations: ToolAnnotations): ToolDef => ({
+    ...definition,
+    annotations,
+  });
+  if (record?.verdict === "destructive") {
+    return annotate({ ...downstream, readOnlyHint: false, destructiveHint: true });
+  }
+  if (record && lapsed.has(definition.name)) {
     // A review vouches for the schema it read. When the live schema no longer
     // matches that digest, or the digest could not be checked, the verdict is
     // about some other tool: the read becomes a write until a release reviews
-    // it again (INV-1). A reviewed destructive tool is already closed below.
-    return {
-      ...definition,
-      annotations: { ...downstream, readOnlyHint: false },
-    };
+    // it again (INV-1).
+    return annotate({ ...downstream, readOnlyHint: false });
   }
   if (record?.verdict === "read-only") {
-    if (
-      downstream.destructiveHint === true ||
-      downstream.readOnlyHint === false
-    ) {
+    if (downstream.destructiveHint === true || downstream.readOnlyHint === false) {
       return definition;
     }
-    return {
-      ...definition,
-      annotations: {
-        ...downstream,
-        readOnlyHint: true,
-        destructiveHint: downstream.destructiveHint ?? false,
-      },
-    };
-  }
-  if (record?.verdict === "destructive") {
-    return {
-      ...definition,
-      annotations: {
-        ...downstream,
-        readOnlyHint: false,
-        destructiveHint: true,
-      },
-    };
-  }
-  if (record?.verdict === "additive" && reviewedWritesWin) {
-    return {
-      ...definition,
-      annotations: { ...downstream, readOnlyHint: false },
-    };
-  }
-  // Maintained additive creates and tools this release has never seen land
-  // here alike. Fill-in only: a silent tool is not read-only, so drift still
-  // fails closed onto `call_destructive_tool`, and neither population gets a
-  // `destructiveHint` it has not earned. A tool that arrives explicitly
-  // read-only keeps that annotation — on a name no release has reviewed, the
-  // downstream's own word is the only evidence there is, and rewriting it
-  // would be an overrule rather than a fill-in.
-  return {
-    ...definition,
-    annotations: {
+    return annotate({
       ...downstream,
-      readOnlyHint: downstream.readOnlyHint ?? false,
-    },
-  };
+      readOnlyHint: true,
+      destructiveHint: downstream.destructiveHint ?? false,
+    });
+  }
+  if (record?.verdict === "additive") {
+    return annotate({ ...downstream, readOnlyHint: false });
+  }
+  // Fill-in only: a silent tool is not read-only, so drift fails closed onto
+  // `call_destructive_tool`, and it gets no `destructiveHint` it has not
+  // earned. An explicit read claim on a name no review lists is believed.
+  return annotate({ ...downstream, readOnlyHint: downstream.readOnlyHint ?? false });
 }
 
 /**
@@ -512,8 +532,10 @@ export async function detectCatalogDrift(
 }
 
 /**
- * Wrap a hosted-MCP connector in its vetted manifest: the classification the
- * catalog is normalized with, and the drift check that rides the same listing.
+ * Give a hosted-MCP connector its vetted manifest as a `classification`: the
+ * review the registry classifies every read with and counts drift against.
+ * The connector itself is unchanged, and its `listTools` still returns what
+ * the downstream said.
  *
  * Retained for the hosted providers that have not converted to
  * `remoteMcp({ classify })` yet (#705); it is deleted with the last of them.
@@ -522,178 +544,109 @@ export function withVettedCatalog(
   connector: Connector,
   catalog: VettedCatalog,
 ): Connector {
-  return observedCatalog(connector, catalog, false);
-}
-
-/** The `remoteMcp({ classify })` wrapper: reviewed writes always stay writes. */
-export function withReviewedCatalog(
-  connector: Connector,
-  catalog: VettedCatalog,
-): Connector {
-  return observedCatalog(connector, catalog, true);
+  return { ...connector, classification: classificationOf(catalog) };
 }
 
 /**
- * How the registry keeps a wrapped connector's safety out of its caches.
- *
- * A classification is derived from the downstream listing and the reviewed
- * manifest this process runs, so it is never stored: the registry lists
- * through the connector's current `listTools` (a decorator that filters or
- * augments it is respected), keeps only the {@link facts} behind that listing
- * in both cache layers, and every read runs {@link classify} with the
- * classifier that is current then. A catalog cached under an older manifest,
- * or by an older release, therefore gets no say in what is a read.
+ * Each connector object's review, validated the first time a registry reads
+ * it. Read once per object, so a getter or a record mutated later cannot
+ * hand a later registry (a principal's, say) a different review.
  */
-export interface CatalogClassifier {
-  /**
-   * The downstream facts behind a listing this connector's `listTools`
-   * served, directly or through a decorator: every tool this classifier
-   * produced is traced back to what the downstream said. A tool a decorator
-   * rebuilt cannot be traced, so its read-only claim on a reviewed name, the
-   * one hint this classifier adds, is dropped; the next read decides it again.
-   */
-  facts(tools: readonly ToolDef[]): ToolDef[];
-  /** The current classification of facts from any cache layer. */
-  classify(tools: readonly ToolDef[], logger: Logger): Promise<ToolDef[]>;
-}
+const reviews = new WeakMap<Connector, VettedCatalog | null>();
 
 /**
- * Where a vetted wrapper carries its classifier: an enumerable own property
- * under a symbol no other module holds, so a decorator's `{ ...connector }`
- * copies it, nothing outside connecta can forge it, and the registry finds it
- * whatever `listTools` the decorator put in front of the wrapper's own.
+ * The review `connector.classification` declares, or undefined when it
+ * declares none. Throws on a malformed one (INV-11).
  */
-const CATALOG_CLASSIFIER = Symbol("connecta.catalogClassifier");
-
-type ClassifiedConnector = Connector & {
-  readonly [CATALOG_CLASSIFIER]?: CatalogClassifier;
-};
-
-/** The classifier a vetted wrapper attached to `connector`, or its copies. */
-export function catalogClassifierOf(
-  connector: Connector,
-): CatalogClassifier | undefined {
-  return (connector as ClassifiedConnector)[CATALOG_CLASSIFIER];
-}
-
-/**
- * Classify a listing and observe its drift.
- *
- * The check happens where the tools are already in hand and still unmodified —
- * after the downstream answered, before the classification is applied. It adds
- * no request of its own, which is the whole boundary: connecta watches a
- * contract while it is serving a refresh the deployment asked for, and never
- * initiates one to go looking ([#179](https://github.com/zackbart/connecta/issues/179),
- * [#343](https://github.com/zackbart/connecta/issues/343)).
- */
-function observedCatalog(
-  connector: Connector,
-  catalog: VettedCatalog,
-  reviewedWritesWin: boolean,
-): Connector {
-  if (catalogClassifierOf(connector)) {
-    // The inner classification would reach this one as downstream facts,
-    // and its verdicts would be cached as if a downstream had said them.
-    throw new Error(
-      `[connecta] connector "${connector.id}" is already classified; wrap the unclassified connector once.`,
-    );
+export function catalogReviewOf(connector: Connector): VettedCatalog | undefined {
+  let review = reviews.get(connector);
+  if (review === undefined) {
+    const classification = connector.classification;
+    review =
+      classification === undefined
+        ? null
+        : reviewedCatalog(classification, `connector "${connector.id}"`);
+    reviews.set(connector, review);
   }
-  let observed: CatalogDriftReport | undefined;
-  // Digest verification per listing, held only as long as the listing is.
-  // A failed verification is not kept, so the next read tries again.
-  const verified = new WeakMap<readonly ToolDef[], ReadonlySet<string>>();
-  const classified = new WeakMap<readonly ToolDef[], ToolDef[]>();
-  // What each classified listing, tool, and annotations object was derived
-  // from, so facts() can hand back the downstream's own words.
-  const factsOfListing = new WeakMap<readonly ToolDef[], readonly ToolDef[]>();
-  const factsOfTool = new WeakMap<ToolDef, ToolDef>();
-  const factsOfAnnotations = new WeakMap<object, ToolDef>();
+  return review ?? undefined;
+}
 
-  async function list(ctx: ConnectorContext): Promise<ToolDef[]> {
-    const downstream = await connector.listTools(ctx);
+/**
+ * Classify downstream facts with a review: what the registry serves on every
+ * read, from whichever cache layer the facts came from.
+ *
+ * Every tool returned is a fresh object, so nothing a caller does to one can
+ * reach the facts, `memo`, or a later read. `memo` holds digest verification
+ * per facts array; the registry passes one only for deep-frozen arrays it
+ * owns. A failed verification is not kept, so the next read tries again, and
+ * meanwhile no digested review vouches for a read (INV-1).
+ */
+export async function classifyCatalog(
+  catalog: VettedCatalog,
+  connectorId: string,
+  facts: readonly ToolDef[],
+  logger: Logger,
+  memo?: WeakMap<readonly ToolDef[], ReadonlySet<string>>,
+): Promise<ToolDef[]> {
+  let lapsed = memo?.get(facts);
+  if (!lapsed) {
     try {
-      const changed = await changedSchemas(catalog, downstream);
-      verified.set(downstream, changed);
-      observed = {
-        observedAt: new Date().toISOString(),
-        ...countDrift(catalog, downstream, changed),
-      };
+      lapsed = await changedSchemas(catalog, facts);
+      memo?.set(facts, lapsed);
     } catch (error) {
-      // A drift check is a report about a catalog, never a condition for
-      // serving one. Keep the last good observation rather than replacing it
-      // with a lie, and let the refresh through; classify() fails closed.
-      ctx.logger.warn(
-        `[connecta] connector "${connector.id}" catalog drift check failed: ` +
-          (error instanceof Error ? error.message : String(error)),
+      lapsed = digestedTools(catalog, facts);
+      logFailure(
+        logger,
+        "schema digest check failed; serving digested reviews as writes",
+        failureRecord({ connector: connectorId }, error),
       );
     }
-    return downstream;
   }
+  const unverified = lapsed;
+  return facts.map((fact) => servedTool(catalog, fact, unverified));
+}
 
-  async function classify(
-    tools: readonly ToolDef[],
-    logger: Logger,
-  ): Promise<ToolDef[]> {
-    const done = classified.get(tools);
-    if (done) return done;
-    let unverified = verified.get(tools);
-    let settled = unverified !== undefined;
-    if (!unverified) {
-      try {
-        unverified = await changedSchemas(catalog, tools);
-        settled = true;
-      } catch (error) {
-        // With the schemas uncheckable, no digested review vouches for a
-        // read (INV-1).
-        unverified = digestedTools(catalog, tools);
-        logFailure(logger, "schema digest check failed; serving digested reviews as writes", failureRecord({ connector: connector.id }, error));
-      }
-    }
-    const result = tools.map((definition) => {
-      const served = applyVettedSafety(catalog, definition, reviewedWritesWin, unverified);
-      factsOfTool.set(served, definition);
-      if (served.annotations) factsOfAnnotations.set(served.annotations, definition);
-      return served;
+/**
+ * The drift each reviewed connector object showed on its last listing in this
+ * runtime. Keyed by the connector rather than by registry, so a principal's
+ * registry and the root report one observation, as they serve one connector.
+ */
+const observations = new WeakMap<Connector, CatalogDriftReport>();
+
+/**
+ * Compare a listing a refresh just received with the connector's review, and
+ * keep the counts as its latest observation.
+ *
+ * The check happens where the tools are already in hand, while serving a
+ * refresh the deployment asked for. It adds no request of its own, which is
+ * the whole boundary: connecta watches a contract while it is serving a
+ * refresh, and never initiates one to go looking
+ * ([#179](https://github.com/zackbart/connecta/issues/179),
+ * [#343](https://github.com/zackbart/connecta/issues/343)).
+ */
+export async function observeReviewedDrift(
+  connector: Connector,
+  catalog: VettedCatalog,
+  listed: readonly ToolDef[],
+  logger: Logger,
+): Promise<void> {
+  try {
+    const changed = await changedSchemas(catalog, listed);
+    observations.set(connector, {
+      observedAt: new Date().toISOString(),
+      ...countDrift(catalog, listed, changed),
     });
-    factsOfListing.set(result, tools);
-    if (settled) classified.set(tools, result);
-    return result;
+  } catch (error) {
+    // A drift check is a report about a catalog, never a condition for
+    // serving one. Keep the last good observation rather than replacing it
+    // with a lie, and let the refresh through; classification fails closed.
+    logFailure(logger, "catalog drift check failed", failureRecord({ connector: connector.id }, error));
   }
+}
 
-  function facts(tools: readonly ToolDef[]): ToolDef[] {
-    // The listing itself, so its digest verification is reused on read.
-    const listing = factsOfListing.get(tools);
-    if (listing) return listing as ToolDef[];
-    return tools.map((tool) => {
-      const traced = factsOfTool.get(tool);
-      if (traced) return traced;
-      // A decorator that copied the tool but kept its annotations object
-      // changed something else; restore the downstream's annotations.
-      const behind = tool.annotations && factsOfAnnotations.get(tool.annotations);
-      if (behind) {
-        const { annotations: _served, ...rest } = tool;
-        return behind.annotations ? { ...rest, annotations: behind.annotations } : rest;
-      }
-      if (tool.annotations?.readOnlyHint !== true || !catalog.tools.has(tool.name)) {
-        // Every other hint this classifier adds closes a path, and an
-        // unreviewed name's read-only claim is never one it added.
-        return tool;
-      }
-      const { readOnlyHint: _claimed, ...annotations } = tool.annotations;
-      return { ...tool, annotations };
-    });
-  }
-
-  async function listTools(ctx: ConnectorContext): Promise<ToolDef[]> {
-    return classify(await list(ctx), ctx.logger);
-  }
-  const wrapped: ClassifiedConnector = {
-    ...connector,
-    listTools,
-    catalogDrift(): CatalogDriftReport | undefined {
-      return observed;
-    },
-    [CATALOG_CLASSIFIER]: { facts, classify },
-  };
-  return wrapped;
+/** The latest drift {@link observeReviewedDrift} kept for `connector`. */
+export function observedCatalogDrift(
+  connector: Connector,
+): CatalogDriftReport | undefined {
+  return observations.get(connector);
 }

@@ -44,7 +44,13 @@ import {
   type CallAdmissionPermit,
   type ConnectorCallAdmissionSnapshot,
 } from "./call-admission.js";
-import { boundedCatalogDrift, catalogClassifierOf } from "./catalog-drift.js";
+import {
+  boundedCatalogDrift,
+  catalogReviewOf,
+  classifyCatalog,
+  observeReviewedDrift,
+  observedCatalogDrift,
+} from "./catalog-drift.js";
 import {
   fingerprintSerializedCatalog,
   snapshotCatalog,
@@ -195,11 +201,11 @@ class AbandonedCatalogRefresh extends Error {
 
 /**
  * Version 3 manifests name downstream facts only: what `listTools` returned,
- * before any classification connecta derives from them (see
- * `CatalogClassifier` in `src/catalog-drift.ts`). Version 2, written by 0.28 and
- * earlier, stored listings a vetted wrapper had already classified, so its
- * read-only claims may be connecta's own; {@link legacyCatalogFacts} keeps
- * them out of safety decisions.
+ * before the classification {@link Registry} derives from them on every read
+ * (`Connector.classification`). Version 2, written by 0.28 and earlier, stored
+ * listings a vetted wrapper had classified, so its read-only claims may be
+ * connecta's own; {@link legacyCatalogFacts} keeps them out of safety
+ * decisions.
  */
 interface PersistedCatalogManifest {
   version: 2 | 3;
@@ -238,6 +244,25 @@ function legacyCatalogFacts(tools: ToolDef[]): ToolDef[] {
     const { readOnlyHint: _claimed, ...annotations } = tool.annotations;
     return { ...tool, annotations };
   });
+}
+
+const catalogDecoder = new TextDecoder();
+
+/**
+ * Freeze a parsed catalog all the way down, iteratively, since a schema may
+ * nest deeper than the host stack. Only reviewed connectors' facts are frozen:
+ * the registry owns them, classification copies what it serves, and a digest
+ * verified against them stays true while they are cached.
+ */
+function frozenFacts(tools: ToolDef[]): ToolDef[] {
+  const pending: unknown[] = [tools];
+  while (pending.length > 0) {
+    const value = pending.pop();
+    if (typeof value !== "object" || value === null || Object.isFrozen(value)) continue;
+    Object.freeze(value);
+    for (const item of Object.values(value)) pending.push(item);
+  }
+  return tools;
 }
 
 /**
@@ -531,6 +556,11 @@ export class Registry implements RegistryView {
   >();
   /** Last drift counts reported to activity, per connector, in this runtime. */
   private readonly reportedDrift = new Map<string, CatalogDriftCounts>();
+  /**
+   * Schema digest verification per reviewed facts array. Only the registry's
+   * own deep-frozen arrays are keys, so an entry stays true while they live.
+   */
+  private readonly verifiedFacts = new WeakMap<readonly ToolDef[], ReadonlySet<string>>();
   private readonly observedOutputSchemas: ObservedOutputSchemas;
   private readonly ttlMs: number;
   private readonly staleMs: number;
@@ -596,6 +626,14 @@ export class Registry implements RegistryView {
             `${configuredGuideSummary.length} characters after whitespace ` +
             `normalization; the discovery bound is ${GUIDE_SUMMARY_LENGTH}. ` +
             "Shorten it or omit it to derive one.",
+        );
+      }
+      // Validated here, before any request (INV-11), and read once per
+      // connector object.
+      if (catalogReviewOf(c) && c.staticTools) {
+        throw new Error(
+          `Connector "${c.id}" declares both staticTools and a classification; ` +
+            "annotate static tools directly.",
         );
       }
       this.connectors.set(c.id, c);
@@ -920,10 +958,23 @@ export class Registry implements RegistryView {
   catalogDriftSnapshot(): Record<string, CatalogDriftReport> {
     const snapshot: Record<string, CatalogDriftReport> = {};
     for (const connector of this.connectors.values()) {
-      const report = boundedCatalogDrift(connector.catalogDrift?.());
+      const report = this.catalogDriftOf(connector);
       if (report) snapshot[connector.id] = report;
     }
     return snapshot;
+  }
+
+  /**
+   * The drift a connector last showed in this runtime: the registry's own
+   * observation against a connector's `classification`, otherwise whatever
+   * the connector's `catalogDrift()` seam reports, bounded either way.
+   */
+  private catalogDriftOf(connector: Connector): CatalogDriftReport | undefined {
+    return boundedCatalogDrift(
+      catalogReviewOf(connector)
+        ? observedCatalogDrift(connector)
+        : connector.catalogDrift?.(),
+    );
   }
 
   /**
@@ -937,7 +988,7 @@ export class Registry implements RegistryView {
    * waiting for.
    */
   private observeCatalogDrift(connector: Connector): void {
-    const report = boundedCatalogDrift(connector.catalogDrift?.());
+    const report = this.catalogDriftOf(connector);
     if (!report) return;
     const previous = this.reportedDrift.get(connector.id);
     // Bounded counts, so a seam returning NaN cannot make every refresh look
@@ -1268,20 +1319,16 @@ export class Registry implements RegistryView {
         );
         return null;
       }
-      if (manifest.version === 2) {
-        return {
-          tools: legacyCatalogFacts(tools),
-          fingerprint: stored.fingerprint,
-          fetchedAt: manifest.fetchedAt,
-          expiresAt: Math.min(manifest.expiresAt, now),
-          staleUntil: manifest.staleUntil,
-        };
-      }
+      const facts = manifest.version === 2 ? legacyCatalogFacts(tools) : tools;
+      const connector = this.connectors.get(id);
       return {
-        tools,
+        tools: connector && catalogReviewOf(connector) ? frozenFacts(facts) : facts,
         fingerprint: stored.fingerprint,
         fetchedAt: manifest.fetchedAt,
-        expiresAt: manifest.expiresAt,
+        expiresAt:
+          manifest.version === 2
+            ? Math.min(manifest.expiresAt, now)
+            : manifest.expiresAt,
         staleUntil: manifest.staleUntil,
       };
     });
@@ -1413,15 +1460,16 @@ export class Registry implements RegistryView {
     flight?: CatalogRefreshFlight,
   ): Promise<ToolDef[]> {
     const generation = this.catalogGeneration(id);
-    // The connector's current listing, decorators included; both cache
-    // layers keep only the downstream facts behind it, and loadTools
-    // classifies them on every read.
-    const classifier = catalogClassifierOf(connector);
-    const listed = await connector.listTools(ctx);
-    const tools = classifier ? classifier.facts(listed) : listed;
-    // The listing a maintained proxy just served is also the only catalog
+    // What the connector reports, decorators included. Both cache layers keep
+    // exactly this listing, and loadTools classifies it on every read.
+    const tools = await connector.listTools(ctx);
+    const review = catalogReviewOf(connector);
+    // The listing a reviewed connector just served is also the only catalog
     // comparison connecta ever makes. It rides this refresh whether or not the
     // result reaches a cache, because what drifted drifted.
+    if (review) {
+      await observeReviewedDrift(connector, review, tools, this.opts.logger);
+    }
     this.observeCatalogDrift(connector);
     // A deferred deadline may close the owned scope while a connector that
     // ignores abort is still listing. The completed list remains a valid drift
@@ -1447,6 +1495,12 @@ export class Registry implements RegistryView {
       this.opts.logger.warn(`[connecta] ${message}`);
       throw new Error(message);
     }
+    // A reviewed connector's facts are the registry's own copy of what was
+    // serialized, the same bytes the persisted layer holds: nothing the
+    // connector or a decorator does to its listing afterwards reaches them.
+    const facts = review
+      ? frozenFacts(JSON.parse(catalogDecoder.decode(snapshot.serializedBytes)) as ToolDef[])
+      : tools;
     // The caller that began this refresh may still use its bounded result,
     // but credential changes, abandoned flights, and deferred cancellation
     // prevent publication. Recheck after snapshotting, which is asynchronous.
@@ -1454,7 +1508,7 @@ export class Registry implements RegistryView {
       !this.mayPublish(id, generation, flight) ||
       (skipPublicationWhenAborted && ctx.signal?.aborted)
     ) {
-      return tools;
+      return facts;
     }
     const now = Date.now();
     const catalogChanged =
@@ -1464,7 +1518,7 @@ export class Registry implements RegistryView {
       (previous !== undefined && previous.exp <= now) ||
       this.invalidated.has(id);
     this.cache.set(id, {
-      tools,
+      tools: facts,
       fingerprint: snapshot.fingerprint,
       exp: now + this.ttlMs,
       staleUntil: now + this.ttlMs + this.staleMs,
@@ -1486,7 +1540,7 @@ export class Registry implements RegistryView {
         ),
       );
     }
-    return tools;
+    return facts;
   }
 
   /**
@@ -1762,9 +1816,11 @@ export class Registry implements RegistryView {
 
   /**
    * One connector's catalog as served: the cached downstream facts, classified
-   * by the connector's current classifier on every read. Safety is derived
-   * here and nowhere else, so no cache layer can carry a stale verdict — from
-   * an older manifest, an older release, or a stale fallback.
+   * on every read by the connector's `classification`, into fresh objects.
+   * Safety is derived here and nowhere else, so no cache layer can carry a
+   * stale verdict — from an older review, an older release, or a stale
+   * fallback — and nothing a caller or decorator does to a served tool reaches
+   * the next read.
    */
   private async loadTools(
     id: string,
@@ -1782,8 +1838,10 @@ export class Registry implements RegistryView {
     );
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
-    const classifier = catalogClassifierOf(connector);
-    return classifier ? classifier.classify(tools, this.opts.logger) : tools;
+    const review = catalogReviewOf(connector);
+    return review
+      ? classifyCatalog(review, id, tools, this.opts.logger, this.verifiedFacts)
+      : tools;
   }
 
   /** Cached downstream listing with in-memory + persisted serializable layers. */
@@ -2017,7 +2075,7 @@ export class Registry implements RegistryView {
     // is third-party output, and status is read by the operator UI and copied
     // into responses.
     const withObservations = (status: ConnectorStatus): ConnectorStatus => {
-      const report = boundedCatalogDrift(connector.catalogDrift?.());
+      const report = this.catalogDriftOf(connector);
       const access = this.catalogAccess.get(id);
       // Connector.status is an open plugin seam. Rebuild its public fields so
       // a connector cannot smuggle payload through either registry-owned

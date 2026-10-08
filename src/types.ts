@@ -255,7 +255,8 @@ export interface ReviewedTool {
 /**
  * A reviewed classification of a downstream MCP catalog, keyed by exact tool
  * name. Plain data, validated at construction, so the same record classifies
- * live tools and feeds the drift check.
+ * live tools and feeds the drift check. A connector carries it as
+ * `Connector.classification`, and the registry applies it on every read.
  *
  * It fails closed. A name it does not list keeps only an explicit downstream
  * read annotation; silence and contradiction classify as writes. A listed read
@@ -400,12 +401,32 @@ export interface Connector {
    */
   staticTools?: ToolDef[];
   /**
+   * Optional reviewed classification of the tools `listTools` returns: data
+   * the registry applies, never something the connector applies itself.
+   * `remoteMcp({ classify })` and maintained providers set it to a
+   * deep-frozen record; a custom connector may set one too. It is validated
+   * when a registry first reads it (INV-11), and read once per connector
+   * object. A connector that sets it lists raw downstream tools; the
+   * registry caches and persists only that listing, and classifies it on
+   * every read with this record, so no cache layer carries a verdict.
+   * Connectors with `staticTools` cannot set it: annotate those directly.
+   *
+   * A wrapper that rebuilds a connector must forward this field to keep the
+   * review. `{ ...connector }`, `Object.assign`, and `Object.create` keep it;
+   * a forwarding class that omits it serves an unreviewed connector, whose
+   * downstream annotations are its own claims and fail closed when absent.
+   * Phase 2's deployment-level classifier overrides, keyed by connector id
+   * and tool ([#706](https://github.com/zackbart/connecta/issues/706)), apply
+   * regardless of wrapping.
+   */
+  readonly classification?: ToolClassification | undefined;
+  /**
    * Optional: the drift this connector saw the last time it listed tools,
-   * or undefined when it has not listed any yet. Implemented by maintained
-   * hosted-MCP proxies, which compare the live catalog with the manifest a
-   * release reviewed *while* serving a refresh the deployment already asked
-   * for. It is a getter over an observation, never a probe: calling it makes
-   * no request, touches no credential, and returns counts only.
+   * or undefined when it has not listed any yet. A getter over an
+   * observation, never a probe: calling it makes no request, touches no
+   * credential, and returns counts only. Ignored for a connector with a
+   * `classification`, whose drift the registry observes itself, against
+   * that record, while serving a refresh the deployment already asked for.
    */
   catalogDrift?(): CatalogDriftReport | undefined;
   listTools(ctx: ConnectorContext): Promise<ToolDef[]>;

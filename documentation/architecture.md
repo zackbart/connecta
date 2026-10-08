@@ -346,20 +346,32 @@ reason?, schemaDigest? } } }`, validated at construction. It fails closed
 annotation, a reviewed write stays a write whatever the downstream claims, an
 unlisted tool is a read only when it says so, and a reviewed tool whose
 `schemaDigest` no longer matches, or cannot be checked, is a write on discovery
-and every invocation path until a release reviews it again; this holds for the
-legacy wrapper too. A digest covers the whole schema; one too large to hash
-whole is unchecked. Classification is never cached: the classifier travels
-on the connector under a private symbol, so a decorator's `{ ...connector }`
-keeps it; the registry lists through the current `listTools`, decorators
-included, traces that listing back to downstream facts for both catalog
-layers, and every read classifies them with the current record. A restart onto
-a catalog persisted under an older review, or by 0.28 (whose read-only claims
-are dropped), cannot keep a read. The same record counts catalog
-drift during refreshes the deployment already asked for, and `scripts/drift-check.mjs` compares
-its names with published inventories. Unconverted hosted providers still use
-the internal `withVettedCatalog()`, whose reviewed creates still yield to a
-downstream read claim (`test/provider-definition.test.ts`,
-`test/linear-snapshot.test.ts`).
+and every invocation path until a release reviews it again. A digest covers
+the whole schema; one too large to hash whole is unchecked.
+
+Connectors report facts; the registry is the only classifier. A reviewed
+connector carries its review as data, the deep-frozen
+`Connector.classification`, and its `listTools` returns the downstream's
+listing unclassified. The registry validates the field when it first reads a
+connector (INV-11), caches and persists exactly what `listTools` returned
+(manifest version 3), and classifies those facts on every read into fresh
+objects, so neither a cache layer nor a decorator holding a served or listed
+tool can carry a verdict. A restart onto a catalog persisted under an older
+review applies the current one; a 0.28 (version 2) catalog loses its
+read-only claims, which may be an older classifier's, and is refreshed on
+first read. During refreshes the deployment already asked for, the registry
+counts drift against the same record, and `scripts/drift-check.mjs` compares
+its names with published inventories. The legacy `withVettedCatalog()` only
+sets the field, so unconverted hosted providers follow the same rules
+(`test/classified-decorators.test.ts`, `test/linear-snapshot.test.ts`).
+
+Wrappers must forward `classification` to keep the review. `{ ...connector }`,
+`Object.assign`, and `Object.create` keep it. A forwarding class that omits it
+serves an unreviewed connector: the downstream's annotations are its own
+claims and fail closed when absent, and nothing it persists carries safety.
+Phase 2's deployment-level classifier overrides, keyed by connector id and
+tool ([#706](https://github.com/zackbart/connecta/issues/706)), apply
+regardless of wrapping.
 
 ## Optional deployment modules
 

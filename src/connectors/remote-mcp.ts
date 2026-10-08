@@ -39,7 +39,7 @@ import {
 import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
 import { byteReadResponse } from "../byte-read-response.js";
 import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
-import { reviewedCatalog, withReviewedCatalog } from "../catalog-drift.js";
+import { reviewedClassification } from "../catalog-drift.js";
 import { connectorScopeCleanupClaimed } from "../connector-scope.js";
 import {
   boundedEchoText,
@@ -183,8 +183,10 @@ export interface RemoteMcpOptions {
    * `schemaDigest` no longer matches, or cannot be checked, is served as a
    * write. Setting it also reports
    * catalog drift against the list: unclassified, unserved, contradicted, and
-   * schema-changed tools, as counts. Omit it to keep the downstream's own
-   * annotations, which still fail closed.
+   * schema-changed tools, as counts. The connector carries it as
+   * `classification`, and its `listTools` returns the downstream's listing
+   * unclassified: the registry classifies every read. Omit it to keep the
+   * downstream's own annotations, which still fail closed.
    */
   classify?: ToolClassification | undefined;
   /**
@@ -981,10 +983,10 @@ interface ConnectionState {
  * server or hide other connectors).
  */
 export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
-  const reviewed =
+  const classification =
     opts.classify === undefined
       ? undefined
-      : reviewedCatalog(opts.classify, `connector "${id}"`);
+      : reviewedClassification(opts.classify, `connector "${id}"`);
   const clientMetadataUrl = opts.auth?.type === "oauth" ? opts.auth.clientMetadataUrl : undefined;
   const oauthScope = opts.auth?.type === "oauth" ? opts.auth.scope : undefined;
   assertOAuthScope(id, oauthScope);
@@ -1871,6 +1873,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       ? { callAdmission: opts.callAdmission }
       : {}),
     ...(opts.usageGuide !== undefined ? { usageGuide: opts.usageGuide } : {}),
+    // Data the registry classifies every read with; listTools below returns
+    // the downstream's listing unclassified.
+    ...(classification !== undefined ? { classification } : {}),
     // Declaring the slot is what makes the rest of the operator surface work:
     // the connection's credential form renders it, the shape check compares
     // against it, and authorize_connector returns the operator handoff rather than
@@ -2285,5 +2290,5 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     connector.verifyState = retain(connector.verifyState!, 1);
     connector.finishAuth = retain(connector.finishAuth!, 1);
   }
-  return reviewed ? withReviewedCatalog(connector, reviewed) : connector;
+  return connector;
 }

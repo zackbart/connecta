@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolDef } from "../src/types.js";
 import {
-  context,
   guideOf,
   itClassifiesLikeARelease,
   mockRemoteMcp,
+  servedTools,
 } from "./fixtures/hosted-provider.js";
 
 const mocks = vi.hoisted(() => ({
@@ -244,7 +244,7 @@ describe("basecamp()", () => {
         annotations: { readOnlyHint: false, destructiveHint: true },
       },
     ]);
-    const tools = await connection().listTools(context);
+    const tools = await servedTools(connection());
     expect(tools[0]?.annotations).toEqual({
       readOnlyHint: true,
       destructiveHint: false,

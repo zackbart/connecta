@@ -6,6 +6,7 @@ import type { ToolDef } from "../src/types.js";
 import {
   itClassifiesLikeARelease,
   mockRemoteMcp,
+  servedTools,
 } from "./fixtures/hosted-provider.js";
 
 const mcpMocks = vi.hoisted(() => ({
@@ -136,7 +137,7 @@ describe("vercel() construction", () => {
 
   it("ships a dependency-free static API surface with split safety", async () => {
     const connector = connection();
-    const tools = await connector.listTools(context());
+    const tools = await servedTools(connector, context());
     expect(connector.kind).toBe("api");
     expect(connector.title).toBe("Vercel");
     expect(connector.credential?.label).toBe("Vercel access token");

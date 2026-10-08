@@ -3,7 +3,7 @@
 // acquire the MCP client, OAuth, or Effect graph by using it, and a hosted
 // provider does not acquire `api()`. Its only runtime import validates a
 // reviewed classification, which is Web-API code with no I/O.
-import { reviewedCatalog } from "./catalog-drift.js";
+import { reviewedClassification } from "./catalog-drift.js";
 import type {
   Connector,
   ConnectorCallAdmissionPolicy,
@@ -111,22 +111,6 @@ export interface ProviderFactory<O extends ProviderOptions> {
   readonly definition: Readonly<ProviderDefinition<O>>;
 }
 
-/**
- * A validated classification as a deep-frozen copy. The definition is what
- * build and check tools read and what every later connector classifies with,
- * so nothing reachable from it may change a verdict after review: neither the
- * caller's original object nor a write through `factory.definition`.
- */
-function frozenClassification(classify: ToolClassification): ToolClassification {
-  const tools = Object.fromEntries(
-    Object.entries(classify.tools).map(([name, entry]) => [
-      name,
-      typeof entry === "string" ? entry : Object.freeze({ ...entry }),
-    ]),
-  );
-  return Object.freeze({ tools: Object.freeze(tools) });
-}
-
 const PROVIDER_NAME = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const KINDS: ReadonlySet<string> = new Set(["mcp", "api", "composed"]);
 
@@ -162,23 +146,26 @@ export function defineProvider<O extends ProviderOptions>(
       `${label} skill requires non-empty content and instructionsHeading.`,
     );
   }
-  if (definition.classify !== undefined) {
-    if (definition.kind === "api") {
-      throw new Error(
-        `${label} is an api() provider; annotate each authored tool instead of classifying a hosted catalog.`,
-      );
-    }
-    reviewedCatalog(definition.classify, label);
+  if (definition.classify !== undefined && definition.kind === "api") {
+    throw new Error(
+      `${label} is an api() provider; annotate each authored tool instead of classifying a hosted catalog.`,
+    );
   }
+  // A validated, deep-frozen copy. The definition is what build and check
+  // tools read and what every later connector classifies with, so nothing
+  // reachable from it may change a verdict after review: neither the
+  // caller's original object nor a write through `factory.definition`.
+  const classify =
+    definition.classify === undefined
+      ? undefined
+      : reviewedClassification(definition.classify, label);
   if (typeof definition.create !== "function") {
     throw new Error(`${label} requires a create function.`);
   }
   const frozen: Readonly<ProviderDefinition<O>> = Object.freeze({
     ...definition,
     skill: Object.freeze({ ...definition.skill }),
-    ...(definition.classify !== undefined
-      ? { classify: frozenClassification(definition.classify) }
-      : {}),
+    ...(classify !== undefined ? { classify } : {}),
   });
   const factoryName = `${frozen.name}()`;
 

@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { observedCatalogDrift } from "../src/catalog-drift.js";
 import type { ToolDef } from "../src/types.js";
 import {
-  context,
   guideOf,
   itClassifiesLikeARelease,
   mockRemoteMcp,
+  servedTools,
 } from "./fixtures/hosted-provider.js";
 
 const mocks = vi.hoisted(() => ({
@@ -264,13 +265,13 @@ describe("mixpanel()", () => {
       { name: "Delete-Dashboard" },
     ]);
     const connector = mixpanel("analytics", { purpose: "Product decisions" });
-    const tools = await connector.listTools(context);
+    const tools = await servedTools(connector);
     expect(tools.map((tool) => tool.annotations)).toEqual([
       { readOnlyHint: false },
       { readOnlyHint: false },
       { readOnlyHint: false, destructiveHint: true },
     ]);
-    expect(connector.catalogDrift?.()).toMatchObject({ schemaChanges: 3 });
+    expect(observedCatalogDrift(connector)).toMatchObject({ schemaChanges: 3 });
   });
 
   it("rejects an empty account purpose at construction", () => {

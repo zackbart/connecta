@@ -7,7 +7,9 @@ import type { Transport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import before from "./fixtures/linear-0.28-snapshot.json";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
+import { servedTools } from "./fixtures/hosted-provider.js";
 import { connectorContext } from "./fixtures/misc.js";
+import { observedCatalogDrift } from "../src/catalog-drift.js";
 import { isExplicitlyReadOnly } from "../src/tool-safety.js";
 import type { Connector, ToolAnnotations } from "../src/types.js";
 
@@ -37,7 +39,10 @@ const OLD_VERDICT = { read: "read-only", write: "additive", destructive: "destru
 const variants = before.variants as Record<string, ToolAnnotations | null>;
 const classified = before.classified as Record<string, Record<string, ToolAnnotations | null>>;
 
-/** Serve `names`, each with the same annotations, and list them through Linear. */
+/**
+ * Serve `names`, each with the same annotations, list them through Linear, and
+ * classify the listing as the registry does on a read.
+ */
 async function listThroughLinear(
   names: readonly string[],
   annotations: ToolAnnotations | null,
@@ -59,7 +64,7 @@ async function listThroughLinear(
   });
   const ctx = connectorContext();
   try {
-    return { connector, tools: await connector.listTools(ctx) };
+    return { connector, tools: await servedTools(connector, ctx) };
   } finally {
     await connector.closeScope?.(ctx);
   }
@@ -157,7 +162,7 @@ describe("linear() before and after defineProvider", () => {
       [...reviewed.slice(1), "summon_new_thing"],
       null,
     );
-    const { observedAt, ...counts } = connector.catalogDrift?.() ?? {
+    const { observedAt, ...counts } = observedCatalogDrift(connector) ?? {
       observedAt: "",
     };
     expect(observedAt).not.toBe("");

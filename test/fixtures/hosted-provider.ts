@@ -1,6 +1,11 @@
 import { expect, it, vi } from "vitest";
 import { silentLogger } from "../helpers.js";
-import { reviewedCatalog, withReviewedCatalog } from "../../src/catalog-drift.js";
+import {
+  catalogReviewOf,
+  classifyCatalog,
+  observeReviewedDrift,
+  reviewedClassification,
+} from "../../src/catalog-drift.js";
 import type { RemoteMcpOptions } from "../../src/connectors/remote-mcp.js";
 import type { Connector, ConnectorContext, ToolDef } from "../../src/types.js";
 
@@ -11,26 +16,37 @@ export function mockRemoteMcp(mocks: {
   mocks.listTools.mockReset();
   mocks.remoteMcp.mockReset();
   // Only the transport is stubbed. A provider that declares `classify` gets
-  // the same classification and drift wrapper the real `remoteMcp()` applies.
+  // the same validated, frozen `classification` the real `remoteMcp()` sets.
   mocks.remoteMcp.mockImplementation(
-    (id: string, options: RemoteMcpOptions): Connector => {
-      const connector: Connector = {
-        id,
-        kind: "mcp",
-        ...options,
-        listTools: mocks.listTools,
-        async callTool() {
-          return [];
-        },
-      };
-      return options.classify === undefined
-        ? connector
-        : withReviewedCatalog(
-            connector,
-            reviewedCatalog(options.classify, `connector "${id}"`),
-          );
-    },
+    (id: string, options: RemoteMcpOptions): Connector => ({
+      id,
+      kind: "mcp",
+      ...options,
+      ...(options.classify === undefined
+        ? {}
+        : { classification: reviewedClassification(options.classify, `connector "${id}"`) }),
+      listTools: mocks.listTools,
+      async callTool() {
+        return [];
+      },
+    }),
   );
+}
+
+/**
+ * What a registry refresh serves from one listing: the connector's raw tools,
+ * classified with its `classification` when it carries one, after observing
+ * their drift against it (`observedCatalogDrift(connector)`).
+ */
+export async function servedTools(
+  connector: Connector,
+  ctx: ConnectorContext = context,
+): Promise<ToolDef[]> {
+  const listed = await connector.listTools(ctx);
+  const review = catalogReviewOf(connector);
+  if (!review) return listed;
+  await observeReviewedDrift(connector, review, listed, ctx.logger);
+  return classifyCatalog(review, connector.id, listed, ctx.logger);
 }
 
 export const context: ConnectorContext = {
@@ -75,7 +91,7 @@ export function itClassifiesLikeARelease(
       { name: names.write },
       { name: names.unknown[0] },
     ]);
-    const tools = await factory().listTools(context);
+    const tools = await servedTools(factory());
     expect(tools[0]?.annotations).toMatchObject({
       readOnlyHint: true,
       destructiveHint: false,
@@ -93,7 +109,7 @@ export function itClassifiesLikeARelease(
     listTools.mockResolvedValue([
       { name: names.destructive, annotations: { readOnlyHint: true } },
     ]);
-    const tools = await factory().listTools(context);
+    const tools = await servedTools(factory());
     expect(tools[0]?.annotations).toEqual({
       readOnlyHint: false,
       destructiveHint: true,
@@ -105,7 +121,7 @@ export function itClassifiesLikeARelease(
       { name: names.unknown[1], annotations: { readOnlyHint: true } },
       { name: names.unknown[2], annotations: { destructiveHint: true } },
     ]);
-    const tools = await factory().listTools(context);
+    const tools = await servedTools(factory());
     expect(tools[0]?.annotations).toEqual({ readOnlyHint: true });
     expect(tools[1]?.annotations).toEqual({
       readOnlyHint: false,
@@ -121,7 +137,7 @@ export function itClassifiesLikeARelease(
       },
       { name: names.read[2], annotations: { readOnlyHint: false } },
     ]);
-    const tools = await factory().listTools(context);
+    const tools = await servedTools(factory());
     expect(tools[0]?.annotations).toEqual({
       destructiveHint: true,
       openWorldHint: true,

@@ -7,7 +7,9 @@ import {
   type ProviderOptions,
 } from "../src/index.js";
 import type { Connector, ToolClassification } from "../src/types.js";
+import { observedCatalogDrift } from "../src/catalog-drift.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
+import { servedTools } from "./fixtures/hosted-provider.js";
 import { connectorContext } from "./fixtures/misc.js";
 
 const SKILL = {
@@ -283,7 +285,7 @@ describe("remoteMcp({ classify })", () => {
     const ctx = connectorContext();
     try {
       const tools = Object.fromEntries(
-        (await connector.listTools(ctx)).map((tool) => [tool.name, tool.annotations]),
+        (await servedTools(connector, ctx)).map((tool) => [tool.name, tool.annotations]),
       );
       expect(tools).toEqual({
         list_things: { readOnlyHint: true, destructiveHint: false },
@@ -304,8 +306,10 @@ describe("remoteMcp({ classify })", () => {
     try {
       const strip = (tools: Awaited<ReturnType<Connector["listTools"]>>) =>
         tools.map(({ annotations: _annotations, ...rest }) => rest);
-      const [before, after] = [await plain.listTools(ctx), await classified.listTools(ctx)];
+      const [before, after] = [await plain.listTools(ctx), await servedTools(classified, ctx)];
       expect(strip(after)).toEqual(strip(before));
+      // The connector itself lists exactly what the downstream said.
+      expect(await classified.listTools(ctx)).toEqual(before);
       expect(after.find((tool) => tool.name === "make_thing")?.inputSchema).toMatchObject({
         properties: { name: { type: "string" } },
       });
@@ -314,6 +318,7 @@ describe("remoteMcp({ classify })", () => {
         readOnlyHint: true,
       });
       expect(plain.catalogDrift).toBeUndefined();
+      expect(plain.classification).toBeUndefined();
       expect(await classified.callTool("make_thing", { name: "x" }, ctx)).toEqual(
         await plain.callTool("make_thing", { name: "x" }, ctx),
       );
@@ -335,9 +340,9 @@ describe("remoteMcp({ classify })", () => {
     });
     const ctx = connectorContext();
     try {
-      expect(connector.catalogDrift?.()).toBeUndefined();
-      await connector.listTools(ctx);
-      const { observedAt, ...counts } = connector.catalogDrift?.() ?? { observedAt: "" };
+      expect(observedCatalogDrift(connector)).toBeUndefined();
+      await servedTools(connector, ctx);
+      const { observedAt, ...counts } = observedCatalogDrift(connector) ?? { observedAt: "" };
       expect(observedAt).toMatch(/^\d{4}-/);
       expect(counts).toEqual({
         unclassifiedTools: 2,
@@ -348,6 +353,32 @@ describe("remoteMcp({ classify })", () => {
     } finally {
       await connector.closeScope?.(ctx);
     }
+  });
+
+  it("INV-1: carries a frozen copy of the review the caller cannot change later", () => {
+    const tools: Record<string, ToolClassification["tools"][string]> = {
+      list_things: "read",
+      drop_thing: { verdict: "destructive", reason: "Deletes a thing." },
+    };
+    const connector = remoteMcp("things", {
+      url: "https://things.example/mcp",
+      classify: { tools },
+    });
+    tools.list_things = "destructive";
+    (tools.drop_thing as { verdict: string }).verdict = "read";
+    tools.make_thing = "read";
+    expect(connector.classification).toEqual({
+      tools: {
+        list_things: "read",
+        drop_thing: { verdict: "destructive", reason: "Deletes a thing." },
+      },
+    });
+    expect(Object.isFrozen(connector.classification)).toBe(true);
+    expect(Object.isFrozen(connector.classification?.tools)).toBe(true);
+    expect(Object.isFrozen(connector.classification?.tools.drop_thing)).toBe(true);
+    expect(() => {
+      (connector.classification!.tools as Record<string, string>).list_things = "write";
+    }).toThrow(TypeError);
   });
 
   it("INV-11: rejects a malformed classification at construction", () => {

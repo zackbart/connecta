@@ -6,12 +6,12 @@ import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import {
   detectCatalogDrift,
-  reviewedCatalog,
+  observedCatalogDrift,
   vettedCatalog,
   vettedSchemaDigest,
-  withReviewedCatalog,
   withVettedCatalog,
 } from "../src/catalog-drift.js";
+import { servedTools } from "./fixtures/hosted-provider.js";
 import { connectorContext } from "./fixtures/misc.js";
 // From the root entry on purpose: a deployment writing an activity store reaches
 // these by name, and only naming them here proves the re-export exists.
@@ -232,15 +232,37 @@ describe("withVettedCatalog()", () => {
       outputSchema,
     };
     const { connector } = proxy("linear_test", () => [definition]);
-    const [served] = await connector.listTools(context);
+    // The connector lists the downstream's own definition, unclassified.
+    expect(await connector.listTools(context)).toEqual([definition]);
+    expect((await connector.listTools(context))[0]).toBe(definition);
+    const [served] = await servedTools(connector, context);
 
-    expect(served?.inputSchema).toBe(inputSchema);
-    expect(served?.outputSchema).toBe(outputSchema);
+    expect(served?.inputSchema).toEqual(inputSchema);
+    expect(served?.outputSchema).toEqual(outputSchema);
     expect(served?.description).toBe(definition.description);
     expect(served?.annotations).toEqual({
       readOnlyHint: true,
       destructiveHint: false,
     });
+    // A fresh object: nothing done to it reaches the downstream's definition.
+    expect(served?.inputSchema).not.toBe(inputSchema);
+    expect(definition.annotations).toBeUndefined();
+  });
+
+  it("carries the review as frozen data on the connector", () => {
+    const { connector } = proxy("linear_test", currentCatalog);
+    expect(connector.classification).toEqual({
+      tools: {
+        list_issues: { verdict: "read" },
+        get_issue: { verdict: "read" },
+        save_issue: { verdict: "destructive" },
+        create_issue_label: { verdict: "write" },
+      },
+    });
+    expect(Object.isFrozen(connector.classification)).toBe(true);
+    expect(Object.isFrozen(connector.classification?.tools)).toBe(true);
+    expect(Object.isFrozen(connector.classification?.tools.save_issue)).toBe(true);
+    expect(connector.catalogDrift).toBeUndefined();
   });
 
   it("classifies exactly as the provider lists say", async () => {
@@ -249,7 +271,7 @@ describe("withVettedCatalog()", () => {
       tool("merge_issues"),
     ]);
     const byName = new Map(
-      (await connector.listTools(context)).map((t) => [t.name, t.annotations]),
+      (await servedTools(connector, context)).map((t) => [t.name, t.annotations]),
     );
     expect(byName.get("list_issues")).toMatchObject({
       readOnlyHint: true,
@@ -276,16 +298,16 @@ describe("withVettedCatalog()", () => {
       "linear_test",
       () => served[Math.min(listing++, served.length - 1)]!,
     );
-    expect(connector.catalogDrift?.()).toBeUndefined();
+    expect(observedCatalogDrift(connector)).toBeUndefined();
 
-    await connector.listTools(context);
-    expect(connector.catalogDrift?.()).toMatchObject({
+    await servedTools(connector, context);
+    expect(observedCatalogDrift(connector)).toMatchObject({
       unclassifiedTools: 0,
       unservedTools: 0,
     });
 
-    await connector.listTools(context);
-    expect(connector.catalogDrift?.()).toMatchObject({ unclassifiedTools: 1 });
+    await servedTools(connector, context);
+    expect(observedCatalogDrift(connector)).toMatchObject({ unclassifiedTools: 1 });
     // One downstream listing per refresh: the check rode both, added neither.
     expect(listings()).toBe(2);
   });
@@ -297,12 +319,54 @@ describe("withVettedCatalog()", () => {
     vi.stubGlobal("fetch", fetchSpy);
     try {
       const { connector } = proxy("linear_test", currentCatalog);
-      await connector.listTools(context);
-      connector.catalogDrift?.();
+      await servedTools(connector, context);
+      observedCatalogDrift(connector);
     } finally {
       vi.unstubAllGlobals();
     }
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("Connector.classification", () => {
+  it("INV-11: a registry refuses a malformed classification at construction", () => {
+    const connector: Connector = {
+      ...connectorWith({ id: "custom", tools: async () => [] }),
+      classification: { tools: { list: "readonly" } } as never,
+    };
+    expect(() => new Registry([connector], { storage: memoryStorage(), logger: silentLogger }))
+      .toThrow('[connecta] connector "custom" classify tool "list" needs verdict');
+  });
+
+  it("INV-11: a registry refuses a classification on static tools", () => {
+    const connector: Connector = {
+      ...connectorWith({ id: "custom", tools: [tool("list_issues")] }),
+      staticTools: [tool("list_issues")],
+      classification: { tools: { list_issues: "read" } },
+    };
+    expect(() => new Registry([connector], { storage: memoryStorage(), logger: silentLogger }))
+      .toThrow(/declares both staticTools and a classification/);
+  });
+
+  it("INV-1: classifies a custom connector's listing on every read, into fresh objects", async () => {
+    const listed = [tool("list_issues"), tool("save_issue", { readOnlyHint: true })];
+    const connector: Connector = {
+      ...connectorWith({ id: "custom", kind: "mcp", tools: async () => listed, call: async () => null }),
+      classification: { tools: { list_issues: "read", save_issue: "write" } },
+    };
+    const registry = new Registry([connector], { storage: memoryStorage(), logger: silentLogger });
+    const first = await registry.getTools("custom", BASE);
+    expect(first.map((t) => t.annotations)).toEqual([
+      { readOnlyHint: true, destructiveHint: false },
+      { readOnlyHint: false },
+    ]);
+    first[1]!.annotations!.readOnlyHint = true;
+    listed[1]!.annotations!.readOnlyHint = true;
+    const second = await registry.getTools("custom", BASE);
+    expect(second[1]).not.toBe(first[1]);
+    expect(second[1]?.annotations).toEqual({ readOnlyHint: false });
+    // The connector's own objects never carry a verdict.
+    expect(listed[0]?.annotations).toBeUndefined();
   });
 });
 
@@ -634,13 +698,15 @@ async function sha256(text: string): Promise<string> {
   return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
-/** One reviewed read with a recorded digest, through both wrappers. */
+/**
+ * One reviewed read with a recorded digest: declared on a custom connector's
+ * public `classification`, and through the legacy wrapper.
+ */
 const DIGESTED_READ = {
-  classify: (digest: string, served: ToolDef) =>
-    withReviewedCatalog(
-      connectorWith({ id: "deep", kind: "mcp", tools: [served] }),
-      reviewedCatalog({ tools: { deep: { verdict: "read", schemaDigest: digest } } }, "deep"),
-    ),
+  classification: (digest: string, served: ToolDef): Connector => ({
+    ...connectorWith({ id: "deep", kind: "mcp", tools: [served] }),
+    classification: { tools: { deep: { verdict: "read", schemaDigest: digest } } },
+  }),
   withVettedCatalog: (digest: string, served: ToolDef) =>
     withVettedCatalog(
       connectorWith({ id: "deep", kind: "mcp", tools: [served] }),
@@ -691,10 +757,10 @@ describe("schema digests", () => {
       const reviewed: ToolDef = { name: "deep", inputSchema: deepSchema("string", 80) };
       const digest = await vettedSchemaDigest(reviewed);
       const same = DIGESTED_READ[path](digest, reviewed);
-      expect((await same.listTools(connectorContext()))[0]?.annotations?.readOnlyHint).toBe(true);
+      expect((await servedTools(same, connectorContext()))[0]?.annotations?.readOnlyHint).toBe(true);
       const changed = DIGESTED_READ[path](digest, { name: "deep", inputSchema: deepSchema("number", 80) });
-      expect((await changed.listTools(connectorContext()))[0]?.annotations?.readOnlyHint).toBe(false);
-      expect(changed.catalogDrift?.()).toMatchObject({ schemaChanges: 1 });
+      expect((await servedTools(changed, connectorContext()))[0]?.annotations?.readOnlyHint).toBe(false);
+      expect(observedCatalogDrift(changed)).toMatchObject({ schemaChanges: 1 });
     });
 
     it("INV-1: serve a reviewed read whose schema is past the digest bound as a write", async () => {
@@ -708,7 +774,7 @@ describe("schema digests", () => {
         outputSchema: null,
       })));
       const connector = DIGESTED_READ[path](recorded, wide);
-      expect((await connector.listTools(connectorContext()))[0]?.annotations?.readOnlyHint).toBe(false);
+      expect((await servedTools(connector, connectorContext()))[0]?.annotations?.readOnlyHint).toBe(false);
     });
   });
 });

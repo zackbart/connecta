@@ -1,5 +1,5 @@
-// Reviewed reads with recorded schema digests, served through both
-// classification wrappers: `list_things` matches its digest, `peek_things`
+// Reviewed reads with recorded schema digests, declared through both
+// `remoteMcp({ classify })` and `withVettedCatalog()`: `list_things` matches its digest, `peek_things`
 // (silent) and `scan_things` (claiming `readOnlyHint: true`) have changed
 // schemas since review. A deployment can also restart onto a catalog an
 // earlier process persisted, in today's layout or in 0.28's, with the
