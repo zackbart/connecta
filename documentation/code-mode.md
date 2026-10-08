@@ -693,7 +693,7 @@ it sits a ceiling connecta enforces outside the sandbox, `execute.watchdogMs`
 (120 s by default, above both executors' own deadlines), because an executor's
 deadline may live inside the sandbox it is meant to stop: a wedged Dynamic
 Worker never fires its in-isolate timer. A run whose executor has not settled
-by the ceiling ends as a non-retryable `executor_failed` whose message calls
+by the ceiling ends as a non-retryable `timeout` whose message calls
 the sandbox unresponsive, with no partial result, and its admission lease is
 released, so wedged runs cannot fill the code pool. Raising an executor's
 deadline past the ceiling means raising the ceiling too.
@@ -730,8 +730,9 @@ access. The upstream `Executor` shape remains unchanged.
 The failure adds payload-free `hostCalls: { attempted, admitted, succeeded, failed }`
 without diagnostics. `attempted` includes the first refusal, normally 21; `admitted`
 counts the 20 calls past the gate, local refusals included. `succeeded` and `failed`
-count settlements at response time, the budget refusal as failed. Pending calls
-may be in neither count. `emit` and later attempts are excluded; no budget refills.
+count outcomes at response time, the budget refusal and abandoned pending calls
+as failed, so `succeeded + failed === attempted`. `emit` and later attempts are
+excluded; no budget refills.
 
 **L5.** The guest is memory-, stack-, and CPU-bounded, and a program that
 exhausts a bound ends the run with an error instead of degrading the host. The
