@@ -570,6 +570,10 @@ describe("server route contracts", () => {
             acceptedOrder.push(`verify:${state}`);
             return state === "valid-state";
           },
+          async verifyCallbackIssuer(issuer) {
+            acceptedOrder.push(`verify-issuer:${issuer}`);
+            return issuer === "https://auth.example";
+          },
           async finishAuth(code, _ctx, callbackParams) {
             acceptedOrder.push(`finish:${code}`);
             acceptedOrder.push(`iss:${callbackParams?.get("iss")}`);
@@ -614,6 +618,7 @@ describe("server route contracts", () => {
     expectGlobalSecurityHeaders(accepted);
     expect(acceptedOrder).toEqual([
       "verify:valid-state",
+      "verify-issuer:https://auth.example",
       "finish:auth-code",
       "iss:https://auth.example",
     ]);
