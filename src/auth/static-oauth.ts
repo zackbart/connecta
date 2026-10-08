@@ -6,6 +6,7 @@ import type {
   StoredOAuthClientInformation,
 } from "@modelcontextprotocol/client";
 import { byteReadResponse } from "../byte-read-response.js";
+import { sentSecretsFor } from "../sent-secrets.js";
 import type {
   ApiOAuthClientAuthentication,
   ApiOAuthConfig,
@@ -388,19 +389,21 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
    * from configuration the token endpoint is the only URL the SDK fetches here;
    * the check keeps the headers on it even if that ever changes.
    */
-  const tokenEndpointFetch = async (input: string | URL, init: RequestInit = {}) => {
+  const tokenEndpointFetch = async (ctx: ConnectorContext, input: string | URL, init: RequestInit = {}) => {
     const url = new URL(input);
     if (
       settings.tokenRequestHeaders.length === 0 ||
       `${url.origin}${url.pathname}` !== settings.identity
     ) {
+      sentSecretsFor(ctx).request(input, init);
       return byteReadResponse(await fetch(input, { ...init, redirect: "manual" }));
     }
     const headers = new Headers(init.headers);
     for (const [name, value] of settings.tokenRequestHeaders) headers.set(name, value);
+    for (const [, value] of settings.tokenRequestHeaders) sentSecretsFor(ctx).header(value);
+    sentSecretsFor(ctx).request(input, { ...init, headers });
     return byteReadResponse(await fetch(input, { ...init, headers, redirect: "manual" }));
   };
-
   /**
    * The SDK's `auth()` over this provider. The token endpoint is fetched
    * through the refresh coordinator, with permanent spent fingerprints,
@@ -417,7 +420,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
       ...exchange,
       fetchFn: coordinatorFor(ctx).coordinatedFetch(
         provider,
-        tokenEndpointFetch,
+        (input, init) => tokenEndpointFetch(ctx, input, init),
         ctx.signal,
         ctx.defer,
       ),
@@ -473,6 +476,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         ? AbortSignal.any([init.signal, ctx.signal])
         : (init.signal ?? ctx.signal);
     const send = async (accessToken: string) => {
+      sentSecretsFor(ctx).add(accessToken);
       const sent = new Headers(headers);
       sent.set("Authorization", `Bearer ${accessToken}`);
       // The token rides to a declared origin and no further: a redirect is

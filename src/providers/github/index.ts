@@ -1,6 +1,7 @@
 import { remoteMcp } from "../../connectors/remote-mcp.js";
 import { array, keys, optionsOf } from "../../config-schema.js";
 import { ConnectorCallError } from "../../errors.js";
+import { redactSentSecrets } from "../../sent-secrets.js";
 import { defineProvider, PROVIDER_COMMON, type ProviderOptions } from "../../provider.js";
 import type { Connector, ConnectorContext, ToolClassification } from "../../types.js";
 import { AppAuth, type GitHubApp } from "./auth.js";
@@ -60,7 +61,7 @@ export const github = defineProvider<GitHubOptions>({
       try { return await run(client); }
       catch (error) {
         if (error instanceof ConnectorCallError && error.code === "auth_required") await auth.rejectToken(token);
-        throw error;
+        throw redactSentSecrets(ctx, error);
       } finally { await client.closeScope?.(ctx); }
     };
     const credential = options.app.privateKey === undefined ? {

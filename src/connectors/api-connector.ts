@@ -10,6 +10,7 @@ import { array, assertKnownOptions, instance, keys, optionsOf, strings } from ".
 import { describedEndpoint, describedOrigin, describedTools } from "../described.js";
 import { CALL_ADMISSION, CREDENTIAL, USAGE_GUIDE } from "./option-shapes.js";
 import { assertStaticToolNames } from "../tool-name.js";
+import { carrySentSecrets, redactSentSecrets, trackCredentialReads } from "../sent-secrets.js";
 import type {
   Connector,
   ConnectorAuthDescription,
@@ -371,6 +372,7 @@ export function apiConnector(
       return defs;
     },
     async callTool(name, args, ctx) {
+      trackCredentialReads(ctx);
       const tool = byName.get(name);
       if (!tool) {
         throw new Error(`Unknown tool "${name}" on connector "${id}"`);
@@ -396,14 +398,15 @@ export function apiConnector(
       const handlerCtx: ApiHandlerContext = oauth
         ? { ...ctx, oauth: oauth.access(ctx) }
         : ctx;
+      carrySentSecrets(ctx, handlerCtx);
       try {
-        return await tool.handler(input, handlerCtx);
+        return redactSentSecrets(ctx, await tool.handler(input, handlerCtx));
       } catch (error) {
         // The request's own abort reason, by identity, is the caller's.
         if (ctx.signal?.aborted === true && error === ctx.signal.reason) throw error;
         // A handler owns its destinations. ctx.baseUrl is Connecta's inbound
         // URL, so it must never masquerade as the failed downstream host.
-        if (error instanceof ConnectorCallError) throw error;
+        if (error instanceof ConnectorCallError) throw redactSentSecrets(ctx, error);
         if (!networkErrorCode(error)) {
           // Anything else is a runtime's, parser's, or stream's account of
           // what the handler read (a JSON parser quotes the reply it choked

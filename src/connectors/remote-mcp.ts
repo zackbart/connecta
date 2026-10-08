@@ -39,6 +39,7 @@ import {
 } from "../auth/downstream-oauth.js";
 import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
 import { byteReadResponse } from "../byte-read-response.js";
+import { redactSentSecrets, sentSecretsFor, trackCredentialReads, type SentSecrets } from "../sent-secrets.js";
 import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
 import { reviewedClassification } from "../catalog-drift.js";
 import { connectorScopeCleanupClaimed } from "../connector-scope.js";
@@ -1113,6 +1114,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // A closed scope keeps its (emptied) entry, so a late or future lookup finds
   // it closed rather than recreating an ownerless connection under it.
   const states = new WeakMap<object, ConnectionState>();
+  // A cached transport may dispatch concurrent calls. Register the auth it
+  // actually sends with every call currently using that authenticated client,
+  // including a token rotated by an SDK OAuth flow. Never keep a finished call.
+  const activeSecrets = new WeakMap<ConnectionState, Set<SentSecrets>>();
+  const trackSentRequest = (ctx: ConnectorContext, input: RequestInfo | URL, init?: RequestInit): void => {
+    const recipients = new Set([sentSecretsFor(ctx), ...activeSecrets.get(entryFor(ctx)) ?? []]);
+    for (const secrets of recipients) secrets.request(input, init);
+  };
   const connectingWaiters = new WeakMap<Deferred.Deferred<Client, unknown>, number>();
   const isOauth = opts.auth?.type === "oauth";
   // Long-lived enough for distinct request scopes in this connector runtime to
@@ -1269,6 +1278,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    * one, and the error's class, classified as `verdict` would have been.
    */
   const atMcpBoundary = (
+    ctx: ConnectorContext,
     err: unknown,
     step: "MCP handshake" | "tools/list" | "tools/call",
     transport: Transport | undefined,
@@ -1279,7 +1289,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     if (failureRecord({}, err).step?.startsWith("OAuth ")) return downstreamCallError(err);
     const httpStatus = err instanceof SdkHttpError ? err.status : undefined;
     const facts = { step, origin: endpointOrigin, ...(httpStatus ? { httpStatus } : {}) };
-    const classified = downstreamCallError(err);
+    const classified = downstreamCallError(redactSentSecrets(ctx, err));
     const verdict = isOauth && classified instanceof ConnectorCallError && classified.code === "auth_required"
       ? carryFailureFacts(err, authRequiredError()) : classified;
     if (ownAbortReasonAsSdkReports(err, signals)) {
@@ -1295,9 +1305,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       ownAbortReason(err, signals) ||
       keepsItsText(err, transport)
     ) {
-      return attachFailureFacts(carryFailureFacts(err,
+      return attachFailureFacts(carryFailureFacts(err, redactSentSecrets(ctx,
         err instanceof UnauthorizedError || (ownAbortReason(err, signals) && !hasSdkPayload(err))
-          ? err : verdict), facts);
+          ? err : verdict)), facts);
     }
     // The SDK wraps a failure of connecta's own fetch (a refused redirect, an
     // unreachable host) in an error of its own, such as the version probe's;
@@ -1333,6 +1343,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    * than run flows unbounded.
    */
   const boundOAuthFlows = (
+    ctx: ConnectorContext,
     transport: StreamableHTTPClientTransport,
     endpoint: URL,
     /** The request's and connection's signals: only their reasons pass as written. */
@@ -1361,7 +1372,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     ): Promise<T> => {
       const trail: OAuthTrail = {};
       try {
-        return await start((fetchFn) => tracedOAuthFetch(trail, endpoint, fetchFn));
+        return await start((fetchFn) => tracedOAuthFetch(trail, endpoint, async (input, init) => {
+          trackSentRequest(ctx, input, init);
+          return await fetchFn(input, init);
+        }));
       } catch (err) {
         throw withoutAuthorizationServerText(err, trail, signals);
       }
@@ -1529,7 +1543,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       );
     } catch (err) {
       if (!isCursorShapeError(err)) {
-        throw atMcpBoundary(err, "tools/list", client.transport, [ctx.signal]);
+        throw atMcpBoundary(ctx, err, "tools/list", client.transport, [ctx.signal]);
       }
       // No cause: the validator's error describes the downstream's page.
       throw new Error(
@@ -1623,6 +1637,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   ): Transport => {
     if (opts._transportFactory) return opts._transportFactory(ctx);
     const url = new URL(opts.url);
+    const trackedFetch: FetchLike = async (input, init) => {
+      trackSentRequest(ctx, input, init);
+      return await fetch(input, init);
+    };
     // A runtime refusing the assembled header quotes it, and the transport
     // error below keeps none of what the runtime said. So whether the
     // rejection quoted the credential is decided here, first, and survives
@@ -1631,10 +1649,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       id,
       opts.redirects,
       credentialFramed === null
-        ? fetch
+        ? trackedFetch
         : async (input, init) => {
             try {
-              return await fetch(input, init);
+              return await trackedFetch(input, init);
             } catch (err) {
               throw withoutCredential(err, credentialValue, credentialFramed);
             }
@@ -1653,7 +1671,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           learnedUrlSafeFetch(id, url, guardedFetch),
         ),
       });
-      boundOAuthFlows(transport, url, [signal, ctx.signal]);
+      boundOAuthFlows(ctx, transport, url, [signal, ctx.signal]);
       return transport;
     }
     const headers =
@@ -1921,6 +1939,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         yield* promised(() => c.connect(t, { signal: handshakeAbort.signal })).pipe(
           Effect.mapError((err) =>
             atMcpBoundary(
+              ctx,
               // First, while the runtime's text can still be read for it.
               withoutCredential(err, credentialValue, credentialFramed),
               "MCP handshake",
@@ -2302,7 +2321,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             },
           )
           .catch((err: unknown) => {
-            throw atMcpBoundary(err, "tools/call", client.transport, [ctx.signal]);
+            throw atMcpBoundary(ctx, err, "tools/call", client.transport, [ctx.signal]);
           });
         if (isInputRequiredResult(result)) {
           throw new ConnectorCallError(
@@ -2473,6 +2492,31 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }
     };
   }
+
+  const callTool = connector.callTool;
+  connector.callTool = async (name, args, ctx, options) => {
+    trackCredentialReads(ctx);
+    const secrets = sentSecretsFor(ctx);
+    if (opts.auth?.type === "headers") {
+      for (const value of Object.values(opts.auth.headers)) secrets.header(value);
+    }
+    const state = entryFor(ctx);
+    let active = activeSecrets.get(state);
+    if (!active) { active = new Set(); activeSecrets.set(state, active); }
+    active.add(secrets);
+    try { return redactSentSecrets(ctx, await callTool(name, args, ctx, options)); }
+    catch (error) { throw redactSentSecrets(ctx, error); }
+    finally { active.delete(secrets); }
+  };
+  const listTools = connector.listTools;
+  connector.listTools = async (ctx) => {
+    trackCredentialReads(ctx);
+    if (opts.auth?.type === "headers") {
+      for (const value of Object.values(opts.auth.headers)) sentSecretsFor(ctx).header(value);
+    }
+    try { return redactSentSecrets(ctx, await listTools(ctx)); }
+    catch (error) { throw redactSentSecrets(ctx, error); }
+  };
 
   if (isOauth) {
     // Pin before the first asynchronous storage/discovery read, not only once

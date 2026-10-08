@@ -37,6 +37,7 @@ import {
 import { splitAddress, type RegistryView } from "./registry.js";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { validateCatalogToolInput } from "./validate.js";
+import { SentSecrets, sentSecretsFor, trackCredentialReads } from "./sent-secrets.js";
 
 function defined<T extends object>(
   values: T,
@@ -312,6 +313,7 @@ export class InvocationService {
       let attempts = 0;
       let dispatchedToConnector = false;
       let answered = false;
+      let sentSecrets = new SentSecrets();
       // A write gate's refusal that is no attempt; see WriteGateDecision.
       let unrecorded = false;
       let resolved: ResolvedCatalogTool | undefined;
@@ -460,7 +462,7 @@ export class InvocationService {
       const failed = (error: CallErrorDetails): InvocationOutcome<T> => {
         const diagnostics = timing();
         const target = resolved ?? activityTarget;
-        const details = enrich(error, target);
+        const details = sentSecrets.redact(enrich(error, target));
         const outcome = (): InvocationOutcome<T> => ({
           ok: false,
           durationMs: Date.now() - started,
@@ -601,6 +603,8 @@ export class InvocationService {
               defined({ signal: callSignal, timeoutMs: context.timeoutMs, defer: this.catalog.defer }),
             );
             if (context.source === "execute_code") markProgramCall(connectorContext);
+            trackCredentialReads(connectorContext);
+            sentSecrets = sentSecretsFor(connectorContext);
             if (
               target.connector.credential &&
               !connectorContext.credential
@@ -634,13 +638,14 @@ export class InvocationService {
                 (elapsed) => { admissionMs += elapsed; },
                 admitted(this.registry, target, args, admissionSignal),
               );
-              const raw = yield* timed(
+              const reply = yield* timed(
                 (elapsed) => { connectorMs += elapsed; },
                 Effect.tryPromise({
                   try: () => Promise.resolve(call()),
                   catch: (error) => error,
                 }),
               );
+              const raw = sentSecrets.redact(reply);
               // isError is checked here for BOTH result shapes so every adapter
               // reports the same downstream-failure wording, and the throw lands
               // inside the attempt where it feeds health.

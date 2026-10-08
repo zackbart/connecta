@@ -13,6 +13,7 @@
  * public surface. Web APIs only.
  */
 import { ConnectorCallError, unavailableCallError } from "../errors.js";
+import { sentSecretsFor } from "../sent-secrets.js";
 import type { ConnectorContext } from "../types.js";
 import type { ApiHandlerContext } from "./api-connector.js";
 
@@ -533,10 +534,12 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         );
       }
       headers[name] = value;
+      sentSecretsFor(ctx).header(value);
     }
 
     let response: Response;
     try {
+      sentSecretsFor(ctx).request(url);
       response = await send(url.toString(), {
         method: request.method,
         headers,

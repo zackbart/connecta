@@ -37,7 +37,9 @@
 //
 // Agent-facing results are a different surface with a different rule: a
 // downstream's own answer to a call may reach the agent that made it (see
-// documentation/architecture.md, "Errors and records").
+// documentation/architecture.md, "Errors and records"). Core's sent-secrets
+// boundary removes credentials used by the call from those answers, including
+// allowed diagnostics, tool results and nested error causes/data (INV-5).
 
 import {
   classificationCode,

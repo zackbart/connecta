@@ -9,6 +9,10 @@ import { failureRecord, logFailure } from "../../operator-record.js";
 import { servedTools } from "../../../test/fixtures/hosted-provider.js";
 import { deferred, spyLogger, waitFor } from "../../../test/fixtures/misc.js";
 import { activitySink, invokeTestCall, makeRegistry } from "../../../test/helpers.js";
+import { CatalogService } from "../../catalog-service.js";
+import { InvocationService } from "../../invocation.js";
+import { buildSandboxProviders } from "../../execute.js";
+import { silentLogger } from "../../../test/helpers.js";
 
 function value(result: any): any { return result.structuredContent; }
 
@@ -402,6 +406,42 @@ describe("GitHub App provider", () => {
     expect(logger.warnings().join(" ")).not.toContain(SENTINEL);
     expect(activity.events).toHaveLength(1);
     expect(activity.events[0]?.outcome).toBe("error");
+  });
+
+  it.each([-32602, -32603, 400, 403, "isError"])("INV-5 INV-6: hosted %s credential echoes are redacted for agents, guest calls and nested errors", async (responseKind) => {
+    const fixture = apiFixture();
+    const sent = new Set<string>();
+    fixture.respond((request) => {
+      if (request.body?.method !== "tools/call") return undefined;
+      const authorization = request.headers.get("authorization")!;
+      const secret = authorization.slice(7); sent.add(secret);
+      // Put a full secret across the diagnostic's 512-byte clamp boundary:
+      // redaction must happen before truncation to avoid leaking its prefix.
+      const message = `Refused ${"x".repeat(460)} ${authorization}; ${encodeURIComponent(authorization)}; ${btoa(secret)}\nAuthorization: ${authorization}`;
+      if (responseKind === 400 || responseKind === 403) return Response.json({ message }, { status: responseKind });
+      if (responseKind === "isError") return Response.json({ jsonrpc: "2.0", id: request.body.id, result: { resultType: "complete", isError: true, content: [{ type: "text", text: message }], structuredContent: { echo: secret } } });
+      return Response.json({ jsonrpc: "2.0", id: request.body.id, error: { code: responseKind, message, data: { token: secret, nested: { authorization } } } });
+    });
+    const connector = connection(); const logger = spyLogger();
+    const registry = makeRegistry([connector], { logger: logger.logger });
+    const activity = activitySink(); const base = "https://connecta.test";
+    const args = { owner: "acme", repo: "one" };
+    const outcome = await new InvocationService(registry, new CatalogService(registry, base), activity.activity).invoke("github.get_file_contents", args, { source: "call_tool" });
+    const providers = await buildSandboxProviders(registry, base, silentLogger);
+    let guestError: any;
+    try { await providers[0]!.fns.call!("github.get_file_contents", args); }
+    catch (error) { guestError = error; }
+    const direct = await connector.callTool("get_file_contents", args, context()).catch((error) => error);
+    expect(outcome).toMatchObject({ ok: false }); expect(guestError).toBeInstanceOf(Error);
+    if (!outcome.ok) expect(outcome.error.message).toContain("[redacted]");
+    const visible = [JSON.stringify(outcome), guestError.message, guestError.stack ?? "", JSON.stringify(guestError), JSON.stringify(guestError.cause) ?? "", JSON.stringify(direct), String(direct), direct instanceof Error ? JSON.stringify(Object.getOwnPropertyDescriptors(direct)) : "", JSON.stringify(activity.events), logger.warnings().join(" ")];
+    expect(sent.size).toBeGreaterThan(0);
+    for (const secret of sent) for (const text of visible) {
+      expect(text).not.toContain(secret);
+      expect(text).not.toContain(encodeURIComponent(secret));
+      expect(text).not.toContain(btoa(secret));
+      expect(text).not.toContain(secret.slice(0, 8));
+    }
   });
 
   it("INV-9: release update/publish/delete use explicit write tokens and correct repository paths", async () => {

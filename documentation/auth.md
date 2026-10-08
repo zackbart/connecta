@@ -601,9 +601,13 @@ is told from the reviewed findings, never the validator's sentence. Every
 withheld error keeps its original classification, and no connector error keeps
 a runtime, stream, or parser error as `cause`.
 
-The JSON-RPC and 4xx exception is deliberate: tool results already carry that
-server's text verbatim, so redacting its errors buys nothing, and agents need
-the prose to correct their arguments.
+The JSON-RPC and 4xx exception preserves diagnostics agents need to correct
+their arguments. Core redacts credentials used by that call before these
+messages, nested causes/data, or tool results reach an agent or guest program.
+The memory-only set covers credential-slot values, static auth headers,
+outbound bearer tokens, and their URL-encoded and base64 forms. Echoed
+Authorization and Cookie lines are also withheld. See
+[the agent boundary](./architecture.md#errors-and-records).
 
 ## URLs a downstream advertises
 

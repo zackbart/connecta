@@ -323,7 +323,15 @@ change who owns its auth.
 A failure has two audiences with two rules. The agent that made a call may read
 the downstream's own answer to it: a JSON-RPC error message, an HTTP 4xx
 refusal, `isError` content, or the words a handler put in a
-`ConnectorCallError`. Anything else (a transport, parser, stream, validator, or
+`ConnectorCallError`. Core records credentials used by that call in a
+memory-only set beside its connector context. Credential-slot reads, static
+auth headers, and outbound bearer tokens join the set, including tokens
+rotated during a call. Before any diagnostic is truncated or returned, the
+agent boundary replaces these values and their auth prefixes, URL encodings,
+and base64 forms with `[redacted]`. Results and nested error causes/data pass
+through the same boundary. Echoed Authorization and Cookie lines are also
+withheld. This applies to every connector and to guest program calls; the set
+is never persisted or logged. Anything else (a transport, parser, stream, validator, or
 runtime error) reaches it in connecta's words: step, origin, HTTP status, and
 class, classified as the original would have been ([auth](./auth.md#what-a-servers-errors-may-say)).
 Operators read logs, status messages, and activity, and none of them carries
