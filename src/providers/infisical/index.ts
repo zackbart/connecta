@@ -5,6 +5,7 @@ import { ConnectorCallError } from "../../errors.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { defineProvider, PROVIDER_COMMON, type ProviderOptions } from "../../provider.js";
 import type { ConnectorContext, JsonSchema } from "../../types.js";
+import { sentSecretsFor } from "../../sent-secrets.js";
 import { requestTokenCache } from "../_shared/request-token.js";
 import { skill } from "./skill.generated.js";
 
@@ -79,6 +80,8 @@ export const infisical = defineProvider<InfisicalOptions>({
       authenticate: () => ({}),
     });
     async function exchange(clientId: string, clientSecret: string, ctx: ConnectorContext) {
+      sentSecretsFor(ctx).add(clientId);
+      sentSecretsFor(ctx).secret(clientSecret);
       const issuedAt = Date.now();
       return await send(
         { method: "POST", path: "/v1/auth/universal-auth/login", body: { clientId, clientSecret } },
@@ -117,6 +120,10 @@ export const infisical = defineProvider<InfisicalOptions>({
           "auth_required",
           "No Infisical machine identity is configured. Call authorize_connector for recovery options; an operator adds the Universal Auth client ID and secret in this connection.",
         );
+      // Stored values may be padded; register the exact login fields even
+      // when this request reuses a token and sends no login body.
+      sentSecretsFor(ctx).add(clientId);
+      sentSecretsFor(ctx).secret(clientSecret);
       return {
         key: JSON.stringify([clientId, clientSecret]),
         mint: (loginCtx: ConnectorContext) => exchange(clientId, clientSecret, loginCtx),
@@ -510,7 +517,11 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
           projectId,
           environment,
           secretName,
-          secretValue: { type: "string", description: "The value. May reference others as ${env.KEY}." },
+          secretValue: {
+            type: "string",
+            writeOnly: true,
+            description: "The value. May reference others as ${env.KEY}.",
+          },
           secretPath,
           secretComment: { type: "string", description: "Optional note shown beside the secret." },
           type: secretType,
@@ -562,7 +573,7 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
           environment,
           secretName,
           secretPath,
-          secretValue: { type: "string", description: "New value." },
+          secretValue: { type: "string", writeOnly: true, description: "New value." },
           secretComment: { type: "string", description: "New comment." },
           newSecretName: { type: "string", minLength: 1, description: "Rename the secret to this key." },
           type: secretType,
@@ -571,7 +582,7 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
         additionalProperties: false,
       },
       outputSchema: WRITE_RESULT,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
       handler: async (
         args: {
           projectId: string;
@@ -621,7 +632,7 @@ function tools(call: (request: GuardedRequest, ctx: ConnectorContext) => Promise
         additionalProperties: false,
       },
       outputSchema: WRITE_RESULT,
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
       handler: async (
         args: { projectId: string; environment: string; secretName: string; secretPath?: string; type?: string },
         ctx: ConnectorContext,

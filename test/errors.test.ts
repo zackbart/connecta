@@ -6,7 +6,32 @@ import {
   networkErrorCode,
   unavailableCallError,
   WithheldTextError,
+  echoedCallArgs,
 } from "../src/errors.js";
+
+describe("sensitive argument echoes", () => {
+  it.each([
+    ["short", "z"],
+    ["ordinary", "ordinary-secret-value"],
+    ["over-budget", "large-secret-value".repeat(100)],
+  ])("omits %s writeOnly input fields before budgeting, independent of value length (INV-5)", (_label, secretValue) => {
+    const args = { project: "p1", secretValue };
+    const schema = { properties: { project: { type: "string" }, secretValue: { type: "string", writeOnly: true } } };
+    const echoed = echoedCallArgs(args, schema);
+    expect(echoed).toEqual({ args: { project: "p1" }, argsRedacted: true });
+    expect(args.secretValue).toBe(secretValue);
+  });
+
+  it("keeps complete public echoes and snapshots partial echoes (INV-5, INV-9)", () => {
+    const schema = { properties: { public: { writeOnly: false }, private: { writeOnly: true } } };
+    expect(echoedCallArgs({ public: "original" }, schema)).toEqual({ args: { public: "original" } });
+    const args = { public: "original", private: "secret" };
+    const echoed = echoedCallArgs(args, schema);
+    args.public = "mutated";
+    expect(echoed).toEqual({ args: { public: "original" }, argsRedacted: true });
+    expect(echoedCallArgs({ ...args, public: "x".repeat(600) }, schema)).toEqual({});
+  });
+});
 
 describe("WithheldTextError", () => {
   it.each([

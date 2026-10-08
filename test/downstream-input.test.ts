@@ -50,6 +50,7 @@ function setup(
     continuationTimeout?: boolean;
     catalogEcho?: boolean;
     skills?: boolean;
+    privateArguments?: boolean;
   } = {},
 ) {
   const storage = memoryStorage();
@@ -77,7 +78,10 @@ function setup(
         server.registerTool(
           name,
           {
-            inputSchema: z.object({ id: z.number().optional() }),
+            inputSchema: z.object({
+              id: z.number().optional(),
+              ...(options.privateArguments ? { password: z.string().meta({ writeOnly: true }).optional() } : {}),
+            }),
             ...(options.output ? { outputSchema: z.object({ done: z.boolean() }) } : {}),
             annotations: { readOnlyHint: read },
           },
@@ -300,6 +304,33 @@ function setup(
 }
 
 describe("downstream input relay", () => {
+  it.each([
+    ["short", "z"],
+    ["over-budget", "private-value".repeat(100)],
+  ])("INV-5: continuation retry hints omit %s writeOnly arguments", async (_label, password) => {
+    const flow = setup({ privateArguments: true, failureStatus: 429 });
+    const args = { address: "service.read", args: { id: 1, password } };
+    const first = (await flow.rpc({ args })).result;
+    const result = (
+      await flow.rpc({
+        args,
+        state: first.requestState,
+        responses: { question: { action: "accept" } },
+      })
+    ).result;
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent.error).toMatchObject({
+      code: "rate_limited",
+      nextAction: {
+        tool: "call_tool",
+        arguments: { address: "service.read", args: { id: 1 }, argsRedacted: true },
+      },
+    });
+    expect(result.structuredContent.error.nextAction.arguments.args).not.toHaveProperty("password");
+    expect(result.structuredContent.error.nextAction.purpose).toContain("original arguments");
+    expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent);
+    expect(flow.continuationSend).toHaveBeenCalledOnce();
+  });
   it("INV-2 INV-4 INV-5 INV-9: relays accept, decline, and cancel as bound read and write continuations", async () => {
     for (const write of [false, true])
       for (const action of ["accept", "decline", "cancel"]) {

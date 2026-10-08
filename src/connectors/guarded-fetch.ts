@@ -209,19 +209,17 @@ function confinementBase(provider: string, baseUrl: string): URL {
   try {
     base = new URL(baseUrl);
   } catch {
-    throw new Error(`${provider} baseUrl must be an absolute URL: ${baseUrl}`);
+    throw new Error(`${provider} baseUrl must be an absolute URL.`);
   }
   const loopback = base.hostname === "localhost" || base.hostname === "127.0.0.1" || base.hostname === "[::1]";
   if (base.protocol !== "https:" && !(base.protocol === "http:" && loopback)) {
-    throw new Error(
-      `${provider} baseUrl must be https (http is allowed only for a loopback proxy or test double): ${baseUrl}`,
-    );
+    throw new Error(`${provider} baseUrl must be https (http is allowed only for a loopback proxy or test double).`);
   }
   if (base.username || base.password) {
     throw new Error(`${provider} baseUrl must not embed URL credentials; authentication belongs in headers.`);
   }
   if (base.search || base.hash) {
-    throw new Error(`${provider} baseUrl must not carry a query or fragment: ${baseUrl}`);
+    throw new Error(`${provider} baseUrl must not carry a query or fragment.`);
   }
   return base;
 }

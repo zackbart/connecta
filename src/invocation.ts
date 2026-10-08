@@ -36,6 +36,7 @@ import {
 } from "./invocation-auth.js";
 import {
   downstreamContinuation,
+  recordDownstreamArgumentEcho,
   isDownstreamInputResult,
   assertDownstreamOutputSafe,
   type DownstreamInputResult,
@@ -313,7 +314,7 @@ export class InvocationService {
   pipeline<T>(address: string, args: unknown, context: InvocationContext<T>): Effect.Effect<InvocationOutcome<T>> {
     return Effect.gen({ self: this }, function* () {
       const started = Date.now();
-      const argumentEcho = echoedCallArgs(args ?? {});
+      let argumentEcho: ReturnType<typeof echoedCallArgs> = {};
       let catalogMs = 0;
       let admissionMs = 0;
       let connectorMs = 0;
@@ -389,7 +390,11 @@ export class InvocationService {
             },
             retry:
               "Do not retry automatically. Check whether the write took effect first." +
-              ("args" in echoed ? "" : " The arguments exceed the echo budget; use the exact arguments you sent."),
+              (echoed.argsRedacted
+                ? " Sensitive fields are omitted; use the original arguments if reconciliation requires another call."
+                : "args" in echoed
+                  ? ""
+                  : " The arguments exceed the echo budget; use the exact arguments you sent."),
           };
         }
         if (error.code === "auth_required" && target.connector.startAuth) {
@@ -403,12 +408,14 @@ export class InvocationService {
               ...error,
               nextAction: {
                 tool: resolved?.definition.classification === "read" ? "call_tool" : "call_destructive_tool",
-                arguments: { address: `${target.connector.id}.${target.toolName}`, ...echoedCallArgs(args) },
-                purpose: "Use this direct call so the host can fulfill the downstream input request.",
+                arguments: { address: `${target.connector.id}.${target.toolName}`, ...argumentEcho },
+                purpose:
+                  "Use this direct call so the host can fulfill the downstream input request." +
+                  (argumentEcho.argsRedacted ? " Re-send the original arguments; sensitive fields are omitted." : ""),
               },
             };
           case "destructive_tool_requires_approval": {
-            const echoed = echoedCallArgs(args);
+            const echoed = argumentEcho;
             return {
               ...error,
               nextAction: {
@@ -419,9 +426,11 @@ export class InvocationService {
                 },
                 purpose:
                   "Ask the MCP host to approve this consequential call. " +
-                  ("args" in echoed
-                    ? "Re-send these arguments and add a short reason for the human reviewer."
-                    : "Re-send the arguments you just sent — they are too large to echo back — and add a short reason for the human reviewer."),
+                  (echoed.argsRedacted
+                    ? "Re-send the original arguments; sensitive fields are omitted from this hint. Add a short reason for the human reviewer."
+                    : "args" in echoed
+                      ? "Re-send these arguments and add a short reason for the human reviewer."
+                      : "Re-send the arguments you just sent — they are too large to echo back — and add a short reason for the human reviewer."),
               },
             };
           }
@@ -574,6 +583,7 @@ export class InvocationService {
           const target = resolution.resolved;
           resolved = target;
           activityTarget = target;
+          argumentEcho = echoedCallArgs(args ?? {}, target.definition.inputSchema);
 
           const write = target.definition.classification !== "read";
           const canonicalAddress = `${target.connector.id}.${target.toolName}`;
@@ -581,6 +591,7 @@ export class InvocationService {
             context.source !== "execute_code"
               ? downstreamContinuation(this.catalog.requestScope, target.connector.id, canonicalAddress)
               : undefined;
+          if (input) recordDownstreamArgumentEcho(this.catalog.requestScope, argumentEcho);
           const expectedDigest = replayClassificationDigest(this.catalog.requestScope, canonicalAddress);
           if (
             expectedDigest !== undefined &&

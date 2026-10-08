@@ -57,6 +57,16 @@ describe("Infisical connector", () => {
     const tools = await connector.listTools(context());
     const readOnly = Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations?.readOnlyHint]));
     expect(tools.find((tool) => tool.name === "delete_secret")?.annotations?.destructiveHint).toBe(true);
+    expect(
+      Object.fromEntries(
+        tools.filter((tool) => !tool.annotations?.readOnlyHint).map((tool) => [tool.name, tool.annotations]),
+      ),
+    ).toEqual({
+      create_secret: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      update_secret: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
+      delete_secret: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
+      create_folder: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    });
     expect(readOnly).toEqual({
       list_projects: true,
       list_folders: true,

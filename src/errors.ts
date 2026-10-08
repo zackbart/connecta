@@ -2,6 +2,7 @@
 // imports here.
 
 import type { ExecutorAdmissionErrorCode } from "./executor-admission.js";
+import type { JsonSchema } from "./types.js";
 
 /**
  * Machine-readable classification of a failed connector tool call.
@@ -228,18 +229,42 @@ export function boundedEchoText(value: string, maxBytes: number = MAX_ECHOED_BYT
  * `{}` when they do not. All or nothing: a clipped echo would be a *different*
  * call than the one that was refused, and the routes this feeds end at a human
  * approving one. Unserializable arguments are treated the same way as oversized
- * ones — there is nothing honest to put in the field.
+ * ones — there is nothing honest to put in the field. Top-level input fields
+ * declared writeOnly are omitted before budgeting, regardless of value length.
+ * argsRedacted marks the remaining arguments as reconciliation context, not a
+ * complete call that can be replayed.
  */
-export function echoedCallArgs(args: unknown): { args?: unknown } {
+export function echoedCallArgs(args: unknown, schema?: JsonSchema): { args?: unknown; argsRedacted?: true } {
   if (args === undefined) return {};
   let text: string | undefined;
+  let redacted = false;
   try {
-    text = JSON.stringify(args);
+    const properties = schema?.["properties"];
+    const privateFields = new Set(
+      properties && typeof properties === "object"
+        ? Object.entries(properties).flatMap(([name, field]) =>
+            field && typeof field === "object" && field.writeOnly === true ? [name] : [],
+          )
+        : [],
+    );
+    const safeArgs =
+      privateFields.size && args !== null && typeof args === "object" && !Array.isArray(args)
+        ? Object.fromEntries(
+            Object.entries(args).filter(([name]) => {
+              if (!privateFields.has(name)) return true;
+              redacted = true;
+              return false;
+            }),
+          )
+        : args;
+    text = JSON.stringify(safeArgs);
   } catch {
     return {};
   }
   if (text === undefined) return {};
-  return echoEncoder.encode(text).length <= MAX_ECHOED_BYTES ? { args: JSON.parse(text) as unknown } : {};
+  return echoEncoder.encode(text).length <= MAX_ECHOED_BYTES
+    ? { args: JSON.parse(text) as unknown, ...(redacted ? { argsRedacted: true as const } : {}) }
+    : {};
 }
 
 function boundedValidation(details: ArgumentValidationDetails | undefined): ArgumentValidationDetails | undefined {
@@ -576,7 +601,7 @@ export interface CallErrorDetails {
   /** Configured connectors in this request's registry view only. */
   configuredConnectors?: string[];
   /** Agent-only uncertain write, never copied to an operator record. */
-  uncertainCall?: { address: string; args?: unknown; argsOmitted?: true };
+  uncertainCall?: { address: string; args?: unknown; argsOmitted?: true; argsRedacted?: true };
   /** Explicit retry guidance; recovery never retries or mutates by itself. */
   retry?: string;
 }

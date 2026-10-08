@@ -90,6 +90,24 @@ describe("guardedFetch() construction", () => {
     expect(() => transport({ baseUrl: "http://127.0.0.1:8787" })).not.toThrow();
   });
 
+  it.each([
+    ["marker-secret-12345", "absolute URL"],
+    ["https://[marker-secret-12345]/api", "absolute URL"],
+    ["http://operator:marker-secret-12345@secrets.example/api", "must be https"],
+    ["ftp://secrets.example/api?secret=marker-secret-12345", "must be https"],
+    ["https://operator:marker-secret-12345@secrets.example/api", "URL credentials"],
+    ["https://secrets.example/api?secret=marker-secret-12345", "query or fragment"],
+    ["https://secrets.example/api#marker-secret-12345", "query or fragment"],
+  ])("refuses a secret-bearing base URL without quoting it: %s (INV-5, INV-11)", (baseUrl, rule) => {
+    expect(() => transport({ baseUrl })).toThrow(rule);
+    try {
+      transport({ baseUrl });
+    } catch (error) {
+      expect(String(error)).toContain("Example baseUrl");
+      expect(String(error)).not.toContain("marker-secret-12345");
+    }
+  });
+
   it("refuses a response ceiling that is not a whole positive byte count", () => {
     expect(() => transport({ maxResponseBytes: 0 })).toThrow(/>= 1/);
     expect(() => transport({ maxResponseBytes: 1.5 })).toThrow(/>= 1/);

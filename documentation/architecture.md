@@ -549,6 +549,11 @@ credentials produce one payload-free warning per connector; use secrets of
 at least eight characters. Encoded and JSON-escaped echoes of registered
 credentials follow the same redaction rules. Connecta's own messages
 never quote a credential.
+Core uncertainty and retry envelopes omit top-level input fields whose JSON
+Schema declares `writeOnly: true`, before applying the argument echo budget.
+This omission covers values of every length and does not depend on credential
+resolution or dispatch. A partial echo carries `argsRedacted: true`; it identifies
+the target for reconciliation, and retry guidance requires the original arguments.
 OAuth discovery and consent URLs are refused as a typed, non-retryable failure
 when they contain a known credential, before persistence or reuse. This guard
 checks the request's sent credentials and the current grant's credentials,
