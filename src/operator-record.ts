@@ -516,6 +516,7 @@ export function describeFailure(connectorId: string, failure: unknown): string {
  */
 interface OwnStatus {
   readonly state: ConnectorStatus["state"];
+  readonly resourceTemplateRefusals?: ConnectorStatus["resourceTemplateRefusals"];
   readonly message?: string;
   readonly registrationPath?: ConnectorStatus["registrationPath"];
   readonly failure?: unknown;
@@ -528,6 +529,7 @@ function snapshot(status: ConnectorStatus, failure?: unknown): OwnStatus {
     state: member(status.state, STATUS_STATES) as ConnectorStatus["state"] | undefined ?? "error",
     ...(typeof status.message === "string" ? { message: status.message } : {}),
     ...(["cimd", "dcr", "static"].includes(status.registrationPath ?? "") ? { registrationPath: status.registrationPath } : {}),
+    ...(status.resourceTemplateRefusals ? { resourceTemplateRefusals: [...new Set(status.resourceTemplateRefusals.filter(code => code === "resource_template_ambiguous" || code === "resource_match_budget_exceeded"))] } : {}),
     ...(failure === undefined ? {} : { failure }),
   };
 }
@@ -558,6 +560,7 @@ export function boundedStatus(status: ConnectorStatus): ConnectorStatus {
   if (own) {
     const rebuilt: ConnectorStatus = {
       state: own.state,
+      ...(own.resourceTemplateRefusals ? { resourceTemplateRefusals: [...own.resourceTemplateRefusals] } : {}),
       ...(own.message === undefined ? {} : { message: own.message }),
       ...(own.registrationPath === undefined ? {} : { registrationPath: own.registrationPath }),
     };

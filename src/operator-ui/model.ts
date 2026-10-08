@@ -102,6 +102,7 @@ export interface UiConnector {
   catalogDrift?: CatalogDriftReport;
   /** Last agent-facing catalog read in this runtime; never persisted. */
   catalogAccess?: CatalogAccessObservation;
+  resourceTemplateRefusals?: import("../types.js").ResourceTemplateRefusalCode[];
 }
 
 export type CredentialManagementCapability =

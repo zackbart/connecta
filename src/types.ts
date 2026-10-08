@@ -318,7 +318,11 @@ export interface CatalogAccessObservation {
   observedAt: string;
 }
 
+export type ResourceTemplateRefusalCode = "resource_template_ambiguous" | "resource_match_budget_exceeded";
+
 export interface ConnectorStatus {
+  /** Distinct host-observed refusal codes, without URI or template text. */
+  resourceTemplateRefusals?: ResourceTemplateRefusalCode[];
   state: ConnectorStatusState;
   /** When state === "auth_required", the URL the operator should open. */
   authorizationUrl?: string;

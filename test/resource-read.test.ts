@@ -260,7 +260,7 @@ it("INV-3, INV-5, INV-7: remote resource reads use resources/read, redact sent h
   expect(requests.filter(request => request.method === "POST").every(request => request.headers.get("X-API-Key") === token)).toBe(true);
 });
 
-function advertisedRemote() {
+function advertisedRemote(uriTemplates?: string[]) {
   const storage = memoryStorage();
   const calls: Array<{ method: string; uri?: string }> = [];
   let token = "alice-resource-token";
@@ -278,7 +278,7 @@ function advertisedRemote() {
         resultType: "complete", ttlMs: 60_000, cacheScope: "public",
         ...(!message.params?.cursor || mode === "loop" ? { nextCursor: "second" } : {}),
         ...(resources ? { resources: [{ name: "manual", uri: !message.params?.cursor ? "docs://public/manual" : `docs://${owner}/manual` }] }
-          : { resourceTemplates: [{ name: "entry", uriTemplate: !message.params?.cursor ? "docs://public/{entry}" : `docs://${owner}/records/{record}{?format}` }] }),
+          : { resourceTemplates: uriTemplates ? uriTemplates.map((uriTemplate, i) => ({ name: `entry${i}`, uriTemplate })) : [{ name: "entry", uriTemplate: !message.params?.cursor ? "docs://public/{entry}" : `docs://${owner}/records/{record}?format={format}` }] }),
       } });
     }
     if (message?.method === "resources/read") return Response.json({ jsonrpc: "2.0", id: message.id, result: { resultType: "complete", ttlMs: 0, cacheScope: "private", contents: [{ uri: message.params?.uri, text: "synthetic-resource-payload" }] } });
@@ -339,4 +339,21 @@ it.each(["loop", "error"] as const)("INV-3 INV-8: incomplete %s resource invento
   f.mode("ok");
   expect((await read(f.view(), qualified("docs", "docs://alice/manual"))).isError).toBeUndefined();
   expect(f.calls.filter(call => call.method === "resources/list").length).toBeGreaterThan(2);
+});
+
+
+it.each([
+  [["x:{a},{b},{c}!"], "resource_template_ambiguous"],
+  [Array.from({ length: 500 }, (_, i) => `x:{value}/literal${i}!`), "resource_match_budget_exceeded"],
+] as const)("INV-3 INV-6 INV-7: typed template refusal prevents dispatch and appears once in operator status (case %#)", async (templates, code) => {
+  const f = advertisedRemote([...templates]);
+  const uri = "x:" + ",".repeat(8189) + "?";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    expect((await read(f.view(), qualified("docs", uri))).structuredContent).toMatchObject({ error: { code, retryable: false } });
+  }
+  expect(f.calls.filter(call => call.method === "resources/read")).toEqual([]);
+  const status = await f.view().statusFor("docs", BASE);
+  expect(status.resourceTemplateRefusals).toEqual([code]);
+  expect(JSON.stringify(status)).not.toContain(uri);
+  expect(JSON.stringify(status)).not.toContain(templates[0]);
 });

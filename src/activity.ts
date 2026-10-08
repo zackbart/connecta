@@ -219,7 +219,6 @@ export interface ActivityReadPage {
 /** Write-only deployments can implement only this small, vendor-neutral seam. */
 export interface ActivitySink {
   record(event: ToolCallActivityEvent): void | Promise<void>;
-
 }
 
 /** Optional read side used by Connecta's authenticated Activity UI. */

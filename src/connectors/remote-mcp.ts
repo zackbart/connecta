@@ -75,7 +75,7 @@ import { detach, runEdge } from "../runtime/run.js";
 import { assertKnownOptions, keys, optionsOf } from "../config-schema.js";
 import { describedEndpoint, describedUrl } from "../described.js";
 import { retryAfterMs } from "./guarded-fetch.js";
-import { resourceUriMatchesTemplate } from "./resource-uri.js";
+import { resourceUriMatchesTemplates, type ResourceTemplateRefusal } from "./resource-uri.js";
 import { callerOf } from "../connector-caller.js";
 import { readNegotiation, storeNegotiation } from "./negotiation-cache.js";
 import { CALL_ADMISSION, REMOTE_MCP_AUTH, USAGE_GUIDE } from "./option-shapes.js";
@@ -2220,6 +2220,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     ...Object.fromEntries(["versionNegotiation", "redirects", "requireHttps"].map(key =>
       [`transport.${key}`, opts[key as "versionNegotiation" | "redirects" | "requireHttps"] === undefined ? "default" : "config"] as const)),
   });
+  const resourceTemplateRefusals = new Set<ResourceTemplateRefusal>();
   const connector: Connector = {
     id,
     ...(opts.title !== undefined ? { title: opts.title } : {}),
@@ -2429,8 +2430,15 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           if (!client.getServerCapabilities()?.resources) throw unadvertisedResource();
           const resources = await client.listResources(undefined, options);
           const templates = await client.listResourceTemplates(undefined, options);
-          if (!resources.resources.some(resource => resource.uri === uri) &&
-              !templates.resourceTemplates.some(template => resourceUriMatchesTemplate(uri, template.uriTemplate))) throw unadvertisedResource();
+          const exact = resources.resources.some(resource => resource.uri === uri);
+          if (!exact) {
+            const match = resourceUriMatchesTemplates(uri, templates.resourceTemplates, code => resourceTemplateRefusals.add(code));
+            if (!match.matched) {
+              if (match.refusal) throw new ConnectorCallError(match.refusal,
+                match.refusal === "resource_template_ambiguous" ? "The advertised resource templates have ambiguous expression boundaries." : "Resource template matching exceeds the read work limit.", { retryable: false });
+              throw unadvertisedResource();
+            }
+          }
         } catch (err) {
           throw atMcpBoundary(ctx, err, "resources/read", client.transport, [ctx.signal]);
         } finally { listingContexts.delete(options); }
@@ -2481,7 +2489,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const state = stateFor(ctx);
       const report = async (status: ConnectorStatus) => {
         const path = isOauth ? await newProvider(ctx, state).registrationPath() : undefined;
-        return ownStatus({ ...status, ...(path ? { registrationPath: path } : {}) });
+        return ownStatus({ ...status, ...(path ? { registrationPath: path } : {}), ...(resourceTemplateRefusals.size ? { resourceTemplateRefusals: [...resourceTemplateRefusals] } : {}) });
       };
       try {
         await ensureConnected(ctx, state);

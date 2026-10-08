@@ -174,6 +174,7 @@ export function ConnectorDiagnostics({ connector, state }: { connector: UiConnec
     <div className="actions"><button className="btn" type="button" aria-label={`Refresh ${connector.title || connector.id}`} disabled={connector.status === "loading"} onClick={() => void refreshConnector(connector.id)}>Refresh diagnostics</button>{fixKind ? <FixPromptButton kind={fixKind} connectorId={connector.id} name={connector.title || connector.id} /> : null}</div>
     {fixKind ? <FixPromptPreview kind={fixKind} connectorId={connector.id} standalone /> : null}
     <DriftPanel connector={connector} />
+    {connector.resourceTemplateRefusals?.map(code => <p className="meta" key={code}>Resource dispatch refusal: {code}</p>)}
     {connector.catalogAccess ? <p className="meta">Catalog cache {connector.catalogAccess.state} · {formatDate(connector.catalogAccess.observedAt)}</p> : null}
   </div>;
 }
