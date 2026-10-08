@@ -439,14 +439,15 @@ const ACTIVITY_SCHEMA: readonly string[] = [
     added_tools     INTEGER,
     removed_tools   INTEGER,
     changed_tools   INTEGER,
-    pool_name       TEXT
+    pool_name       TEXT,
+    actor_basis     TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS tool_call_activity_recent
     ON tool_call_activity (occurred_at_ms DESC, id DESC)`,
 ];
 
 /** Columns added after the table first shipped, in the order they arrived. */
-const LATER_ACTIVITY_COLUMNS = ["actor_namespace", "friction", "approval", "client_name", "client_version", "package_version", "classification", "result_bytes", "event_kind", "drift_kind", "added_tools", "removed_tools", "changed_tools", "pool_name"];
+const LATER_ACTIVITY_COLUMNS = ["actor_namespace", "friction", "approval", "client_name", "client_version", "package_version", "classification", "result_bytes", "event_kind", "drift_kind", "added_tools", "removed_tools", "changed_tools", "pool_name", "actor_basis"];
 
 interface ActivityRow {
   classification: string | null;
@@ -457,6 +458,7 @@ interface ActivityRow {
   removed_tools: number | null;
   changed_tools: number | null;
   pool_name: string | null;
+  actor_basis: string | null;
   id: string;
   occurred_at_ms: number;
   request_id: string;
@@ -485,7 +487,7 @@ interface ActivityRow {
 const ACTIVITY_TEXT_COLUMNS = [
   "id", "request_id", "actor_kind", "actor_id", "actor_namespace",
   "connector_id", "tool_name", "source", "outcome", "error_code", "friction",
-  "approval", "package_version", "server_name", "server_version", "client_name", "client_version", "deployment_id", "classification", "event_kind", "drift_kind", "pool_name",
+  "approval", "package_version", "server_name", "server_version", "client_name", "client_version", "deployment_id", "classification", "event_kind", "drift_kind", "pool_name", "actor_basis",
 ] as const;
 
 const ACTIVITY_SELECT = `SELECT occurred_at_ms, duration_ms, attempts, result_bytes, added_tools, removed_tools, changed_tools,
@@ -523,7 +525,7 @@ function rowToEvent(row: ActivityRow): ToolCallActivityEvent {
     id: row.id,
     occurredAt: new Date(row.occurred_at_ms).toISOString(),
     requestId: row.request_id,
-    ...activityBehaviorFacts({ classification: row.classification, resultBytes: row.result_bytes, kind: row.event_kind, pool: row.pool_name,
+    ...activityBehaviorFacts({ classification: row.classification, resultBytes: row.result_bytes, kind: row.event_kind, pool: row.pool_name, actorBasis: row.actor_basis,
       drift: { kind: row.drift_kind, addedTools: row.added_tools, removedTools: row.removed_tools, changedTools: row.changed_tools } }),
     actor: {
       kind: row.actor_kind as ToolCallActivityEvent["actor"]["kind"],
@@ -638,8 +640,8 @@ export function sqlActivityStore(
             actor_namespace, connector_id, tool_name, source, outcome,
             duration_ms, attempts, error_code, friction, approval,
             package_version, server_name, server_version, client_name, client_version, deployment_id,
-            classification, result_bytes, event_kind, drift_kind, added_tools, removed_tools, changed_tools, pool_name
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            classification, result_bytes, event_kind, drift_kind, added_tools, removed_tools, changed_tools, pool_name, actor_basis
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           event.id,
           occurredAtMs,
           event.requestId,
@@ -665,7 +667,7 @@ export function sqlActivityStore(
           activityClientFact(event.clientVersion, "version") ?? null,
           event.deploymentId ?? null,
           facts.classification ?? null, facts.resultBytes ?? null, facts.kind ?? null, facts.drift?.kind ?? null,
-          facts.drift?.addedTools ?? null, facts.drift?.removedTools ?? null, facts.drift?.changedTools ?? null, facts.pool ?? null,
+          facts.drift?.addedTools ?? null, facts.drift?.removedTools ?? null, facts.drift?.changedTools ?? null, facts.pool ?? null, facts.actorBasis ?? null,
         ),
         sql(
           `DELETE FROM tool_call_activity WHERE id IN (

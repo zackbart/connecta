@@ -669,6 +669,11 @@ deployment would otherwise be locked out of its own event stream. Team
 deployments should set it. There is no general administrator role and no
 implicit token-management authority. `identity.accessTokenManagement` is a separate boolean permission, false by default, evaluated only for interactive humans. Lifecycle routes also require a stable principal.
 
+Personal activity rows must carry the checked `principal` actor basis as well as
+a matching principal ID and namespace. Legacy subject actors cannot prove
+personal ownership and are withheld. Activity pagination advances past hidden
+boundary rows so their timestamp and event ID never appear in a returned cursor.
+
 ```ts
 createConnecta({
   auth: cloudflareAccessAuth(),

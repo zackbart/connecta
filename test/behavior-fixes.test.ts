@@ -131,9 +131,30 @@ describe("Phase 4 behavior fixes", () => {
     expect((await readJsonRpc(await deployment.fetch(request))).result.isError).not.toBe(true);
     expect(events[0]?.actor).toEqual({ kind: "api", id: "alice", namespace: "directory" });
     events.push(event("legacy", { connectorId: "personal", actor: { kind: "api" } }));
+    // Pre-fix subjectId could name Bob even though Alice was the admitted owner.
+    events.push(event("ambiguous-legacy", { connectorId: "personal", actor: { kind: "api", id: "bob", namespace: "directory" } }));
     const read = async (principal: string) => await (await deployment.fetch(new Request(BASE + "/ui/api/activity", { headers: { "X-Principal": principal } }))).json() as { events: ToolCallActivityEvent[] };
     expect((await read("bob")).events).toEqual([]);
     expect((await read("alice")).events.map(e => e.id)).toEqual([events[0]!.id]);
+  });
+
+  it("INV-4 INV-6: pagination never returns a hidden row's cursor and advances to visible history", async () => {
+    const rows = [event("alice-1", { connectorId: "personal", actorBasis: "principal", actor: { kind: "api", id: "alice", namespace: "directory" } }), event("alice-2", { connectorId: "personal", actorBasis: "principal", actor: { kind: "api", id: "alice", namespace: "directory" } })];
+    const auth: InboundAuth = { kind: "api", authorize: () => ({ ok: true, principal: { namespace: "directory", id: "bob" } }) };
+    const deployment = app({ connectors: [connector("visible"), { ...connector("personal"), authScope: "personal" }], auth, logger: "silent", identity: { activityAccess: () => true }, activity: activityHistory({ store: { record: () => {}, list: async ({ cursor, limit }) => {
+      const start = cursor ? rows.findIndex(e => e.id === cursor) + 1 : 0;
+      const events = rows.slice(start, start + limit!);
+      return { events, ...(start + events.length < rows.length ? { nextCursor: events[events.length - 1]!.id } : {}) };
+    } } }) });
+    const read = async (cursor = "") => await (await deployment.fetch(new Request(BASE + "/ui/api/activity?limit=1" + (cursor ? "&cursor=" + cursor : "")))).json() as { events: ToolCallActivityEvent[]; nextCursor?: string };
+    expect(await read()).toEqual({ events: [] });
+    rows.push(event("visible-1"), event("alice-3", { ...rows[0], id: "alice-3" }), event("visible-2"));
+    const first = await read();
+    expect(first.events.map(e => e.id)).toEqual(["visible-1"]);
+    expect(first.nextCursor).toBe("visible-1");
+    const second = await read(first.nextCursor);
+    expect(second.events.map(e => e.id)).toEqual(["visible-2"]);
+    expect(second.nextCursor).toBeUndefined();
   });
 
   it("INV-4 INV-6: keeps long configured pool names scoped through recording and disclosure", async () => {

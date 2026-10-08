@@ -129,8 +129,8 @@ export function activityCount(value: unknown): number | undefined {
 }
 
 export function activityBehaviorFacts(event: {
-  classification?: unknown; resultBytes?: unknown; kind?: unknown; drift?: unknown; pool?: unknown;
-}): Pick<ToolCallActivityEvent, "classification" | "resultBytes" | "kind" | "drift" | "pool"> {
+  classification?: unknown; resultBytes?: unknown; kind?: unknown; drift?: unknown; pool?: unknown; actorBasis?: unknown;
+}): Pick<ToolCallActivityEvent, "classification" | "resultBytes" | "kind" | "drift" | "pool" | "actorBasis"> {
   const classification = event.classification === "read" || event.classification === "write" ? event.classification : undefined;
   const resultBytes = activityCount(event.resultBytes);
   const change = event.drift as Partial<ActivityCatalogChange> | undefined;
@@ -142,6 +142,7 @@ export function activityBehaviorFacts(event: {
   const pool = event.pool === undefined || event.pool === null ? undefined
     : typeof event.pool === "string" && /^[a-z0-9_-]+(?![\s\S])/.test(event.pool) ? event.pool : "<withheld>";
   return {
+    ...(event.actorBasis === "principal" ? { actorBasis: "principal" as const } : {}),
     ...(classification !== undefined ? { classification } : {}),
     ...(resultBytes !== undefined ? { resultBytes } : {}),
     ...(drift ? { kind: "catalog_drift", drift } : {}),
@@ -162,6 +163,8 @@ export interface ToolCallActivityEvent {
   /** UTF-8 bytes of the downstream value before result paging or truncation. */
   resultBytes?: number;
   pool?: string;
+  /** Personal ownership is provable only for rows recorded from the admitted principal. */
+  actorBasis?: "principal";
   actor: ActivityActor;
   connectorId: string;
   toolName: string;
@@ -358,7 +361,7 @@ export function recordToolActivity(
     occurredAt: new Date().toISOString(),
     requestId: context.requestId,
     actor: input.personal ? context.principalActor ?? { kind: context.actor.kind } : context.actor,
-    ...activityBehaviorFacts({ ...input, pool: context.pool }),
+    ...activityBehaviorFacts({ ...input, pool: context.pool, actorBasis: input.personal && context.principalActor ? "principal" : undefined }),
     connectorId: boundedEchoText(input.connectorId, MAX_ACTIVITY_NAME_BYTES),
     toolName: boundedEchoText(input.toolName, MAX_ACTIVITY_NAME_BYTES),
     address: boundedEchoText(input.address, MAX_ACTIVITY_ADDRESS_BYTES),

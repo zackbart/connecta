@@ -72,7 +72,7 @@ function enrichActivityActorLabels(
               : {}),
           };
           // Re-check stored client facts, including custom readers and old rows.
-          const { packageVersion: suppliedPackageVersion, clientName: suppliedName, clientVersion: suppliedVersion, classification: _classification, resultBytes: _resultBytes, kind: _kind, drift: _drift, pool: _pool, ...record } = event;
+          const { packageVersion: suppliedPackageVersion, clientName: suppliedName, clientVersion: suppliedVersion, classification: _classification, resultBytes: _resultBytes, kind: _kind, drift: _drift, pool: _pool, actorBasis: _actorBasis, ...record } = event;
           const packageVersion = activityPackageVersion(suppliedPackageVersion);
           const clientName = activityClientFact(suppliedName, "name");
           const clientVersion = activityClientFact(suppliedVersion, "version");
@@ -116,10 +116,23 @@ function activityRead(context: RouteContext): Effect.Effect<Response, Answer> {
       ? Math.min(100, Math.max(1, Math.trunc(requestedLimit)))
       : 50;
     return yield* Effect.tryPromise({
-      try: () => list({ ...(cursor !== undefined ? { cursor } : {}), limit }),
+      try: async () => {
+        let page = await list({ ...(cursor !== undefined ? { cursor } : {}), limit });
+        const events = page.events.filter(visible);
+        // Store cursors may encode their boundary row's timestamp and id. A
+        // rejected boundary must never reach the caller. Advance one row at a
+        // time until the boundary is visible or history is exhausted.
+        const seen = new Set<string>();
+        while (page.nextCursor && (!page.events.length || !visible(page.events[page.events.length - 1]!))) {
+          if (seen.has(page.nextCursor)) throw new Error("activity cursor did not advance");
+          seen.add(page.nextCursor);
+          page = await list({ cursor: page.nextCursor, limit: 1 });
+          events.push(...page.events.filter(visible));
+        }
+        return { events, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
+      },
       catch: (error) => error,
     }).pipe(
-      Effect.map(page => ({ ...page, events: page.events.filter(visible) })),
       Effect.flatMap((page) => enrichActivityActorLabels(page, authz.identity.interactive ? opts.config.auth : [])),
       Effect.map((page) => privateJson(page)),
       // A page too malformed to label or serialize is the store's failure,

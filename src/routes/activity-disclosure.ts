@@ -24,7 +24,7 @@ export function activityEventVisible(
   if (!connector || event.pool !== undefined && !admittedPools.has(event.pool)) return false;
   if (connector.authScope === "personal") {
     const owner = authz.identity.principal;
-    if (!owner || event.actor.id !== owner.id || event.actor.namespace !== owner.namespace) return false;
+    if (!owner || event.actorBasis !== "principal" || event.actor.id !== owner.id || event.actor.namespace !== owner.namespace) return false;
   }
   const pool = event.pool ? context.opts.pools.get(event.pool) : undefined;
   if (event.pool && !pool) return false;
@@ -34,4 +34,3 @@ export function activityEventVisible(
   if (event.kind === "catalog_drift") return !access.toolAccess?.has(event.connectorId);
   return activityToolVisible(access, event);
 }
-

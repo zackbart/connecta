@@ -589,6 +589,8 @@ written before 0.28.0 removed program pauses.
 
 Activity uses `d1ActivityStore` and the shared SQL row mapping. On first access,
 it adds nullable classification, result byte count, event kind, catalog-change
-counts and pool columns. Existing rows retain unknown facts. Request IDs already
+counts, pool and actor-basis columns. Existing rows retain unknown facts. Personal
+rows require the checked `principal` actor basis before their ownership is trusted.
+Request IDs already
 exist in the table. Catalog-change events contain checked counts only; tool-call
 results and payloads are never stored.
