@@ -55,7 +55,10 @@ export function guestPrelude(secret: string): string {
   // codec and its object prototypes from guest hooks before a frame can arrive.
   freeze(JSON);
   freeze(Object.prototype);
-  defineProperties(globalThis, { JSON: { value: JSON, writable: false, configurable: false } });
+  defineProperties(globalThis, {
+    JSON: { value: JSON, writable: false, configurable: false },
+    Promise: { value: NativePromise, writable: false, configurable: false }
+  });
   const weakGet = Function.prototype.call.bind(WeakMap.prototype.get);
   const weakSet = Function.prototype.call.bind(WeakMap.prototype.set);
   const promiseThen = Function.prototype.call.bind(NativePromise.prototype.then);

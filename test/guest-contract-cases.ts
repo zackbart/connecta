@@ -829,6 +829,7 @@ return fs;
       Reflect.set(Promise, Symbol.species, class extends Promise {});
       const racePrototype = Object.getPrototypeOf(Promise.race([]));
       try { Object.defineProperty(racePrototype, "then", { value() { observed = true; } }); } catch {}
+      Reflect.set(globalThis, "Promise", { race() { observed = true; } });
       try { await connecta.call("missing.read"); }
       catch (error) { throw new Error(observed ? "observed frame" : "wrapped: " + error.message); }
     }`,
