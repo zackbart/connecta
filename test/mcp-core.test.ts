@@ -22,6 +22,16 @@ describe("2026-07-28 core", () => {
     expect(client).toEqual({});
   });
 
+  it("INV-4: drops prototype keys from declared client capabilities", () => {
+    const client: McpClientContext = {};
+    const declared = JSON.parse('{"__proto__":{"polluted":true},"constructor":{},"prototype":{},"elicitation":{"url":{}}}');
+    bindMcpClient({ mcpReq: { envelope: { "io.modelcontextprotocol/clientCapabilities": declared } } } as unknown as ServerContext, client);
+    const capabilities = required(client.clientCapabilities);
+    expect(Object.keys(capabilities)).toEqual(["elicitation"]);
+    expect(Object.getPrototypeOf(capabilities)).toBeNull();
+    expect((capabilities as { polluted?: unknown }).polluted).toBeUndefined();
+  });
+
   it("INV-6: records only bounded typed client name and version facts", () => {
     const events: ToolCallActivityEvent[] = [];
     const context: ActivityRequestContext = {

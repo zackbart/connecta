@@ -23,13 +23,14 @@ const MAX_ACTIVITY_NAME_BYTES = 128;
 
 /**
  * Client facts use bounded ASCII grammars, never truncation or escaping.
- * Names are 1 to 64 characters: alphanumeric first, then alphanumerics, space,
- * dot, underscore, @, /, + or -. Versions are 1 to 32 characters: alphanumeric
+ * Names are 1 to 64 characters: alphanumeric or @ first (scoped package names
+ * such as `@modelcontextprotocol/inspector`), then alphanumerics, space, dot,
+ * underscore, @, /, + or -. Versions are 1 to 32 characters: alphanumeric
  * first, then alphanumerics, dot, underscore, + or -. Prototype-key names are
  * withheld too. The end assertion rejects even a final CR/LF, unlike `$`.
  */
 const CLIENT_FACT_GRAMMARS = {
-  name: /^[A-Za-z0-9][A-Za-z0-9 ._@/+-]{0,63}(?![\s\S])/,
+  name: /^[A-Za-z0-9@][A-Za-z0-9 ._@/+-]{0,63}(?![\s\S])/,
   version: /^[A-Za-z0-9][A-Za-z0-9._+-]{0,31}(?![\s\S])/,
 };
 const RESERVED_CLIENT_FACTS = new Set(["__proto__", "constructor", "prototype"]);

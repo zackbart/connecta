@@ -15,6 +15,9 @@ export const VALID_CLIENT_IDENTITIES = [
   { name: "Codex Desktop @acme/host+test-1.0", version: "1.2.3-rc.1+build_2" },
   { name: "n".repeat(64), version: "v".repeat(32) },
   { name: "a", version: "0" },
+  { name: "@modelcontextprotocol/inspector", version: "0.17.0" },
+  { name: "Claude Code", version: "2.1.0" },
+  { name: "codex-cli", version: "0.50.0" },
 ];
 
 export function modernRequest(method: string, params: Record<string, unknown> = {}, clientInfo?: unknown): Request {

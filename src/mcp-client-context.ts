@@ -7,6 +7,17 @@ export interface McpClientContext {
   clientInfo?: { name: string; version: string };
 }
 
+const RESERVED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+/** A null-prototype copy, so a declared key can never shadow an inherited one. */
+function ownCapabilities(capabilities: Record<string, unknown>): Record<string, unknown> {
+  const copy: Record<string, unknown> = Object.create(null);
+  for (const [key, value] of Object.entries(capabilities)) {
+    if (!RESERVED_KEYS.has(key)) copy[key] = value;
+  }
+  return copy;
+}
+
 /** Lift only the SDK-validated envelope, without retaining unrelated metadata. */
 export function bindMcpClient(
   context: ServerContext,
@@ -19,7 +30,7 @@ export function bindMcpClient(
   delete client.clientCapabilities;
   delete client.clientInfo;
   if (capabilities && typeof capabilities === "object" && !Array.isArray(capabilities)) {
-    client.clientCapabilities = capabilities as Record<string, unknown>;
+    client.clientCapabilities = ownCapabilities(capabilities as Record<string, unknown>);
   }
   if (info && typeof info === "object" && "name" in info && "version" in info &&
       typeof info.name === "string" && typeof info.version === "string") {
