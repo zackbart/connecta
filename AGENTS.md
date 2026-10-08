@@ -112,13 +112,9 @@ Read the matching skill before that work: [add-provider](./.claude/skills/add-pr
 
 ## Agent policy
 
-Opus builds the important work (features, refactors, security fixes, anything
-with design weight) through T3 `delegate_task` (`claudeAgent`, `claude-opus-5-5`).
-GPT-6.1-Sol (`codex`, `gpt-6.1-sol`) does every independent review (xhigh for
-security) and grunt work: rebases, mechanical conversions, docs compression,
-small review-finding fixes. Builders never review their own PRs. Parallel
-builders use separate worktrees off `origin/main`. One phase checklist item is
-one PR; reference its phase issue in the body. Under #703 the orchestrator
-squash-merges clean, green PRs with the PR title as summary and deletes the
-branch. Deployments, advisory publication, and npm publishing wait until the
-end of Phase 5.
+Lean on GPT-6.1-Sol through T3 `delegate_task` (`codex`, `gpt-6.1-sol`) for nearly everything: building, fix rounds, rebases, and every independent review (xhigh reasoning for security reviews).
+Use Opus (`claudeAgent`, `claude-opus-5-5`) sparingly: orchestration and the rare design-heavy or cross-cutting rework where Sol has stalled.
+Every PR gets an independent review before merge; the builder never reviews its own PR. Parallel builders use separate worktrees off `origin/main`.
+One phase checklist item is one PR; reference its phase issue in the body.
+Under #703 the orchestrator squash-merges clean, green PRs with the PR title as summary and deletes the branch.
+Deployments, advisory publication, and npm publishing wait until the end of Phase 5.
