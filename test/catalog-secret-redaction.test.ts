@@ -87,6 +87,11 @@ describe("discovery sent credentials", () => {
       await expectCleanCache(storage, connector);
       expect(listings).toBe(transient ? 2 : 1);
       expect(connects).toBe(1);
+      expect(contexts).toHaveLength(transient ? 2 : 1);
+      if (transient) {
+        expect(contexts[1]).not.toBe(contexts[0]);
+        expect(contexts[1]!.requestScope).toBe(contexts[0]!.requestScope);
+      }
     } finally { for (const ctx of contexts) await connector.closeScope?.(ctx); }
   });
 

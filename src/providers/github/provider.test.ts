@@ -14,6 +14,7 @@ import { InvocationService } from "../../invocation.js";
 import { buildSandboxProviders } from "../../execute.js";
 import { silentLogger } from "../../../test/helpers.js";
 import { memoryStorage } from "../../storage/memory.js";
+import { catalogKeys } from "../../storage/keys.js";
 
 function value(result: any): any { return result.structuredContent; }
 
@@ -45,7 +46,7 @@ describe("GitHub App provider", () => {
       annotations: { title: "[redacted]" },
     });
     const token = fixture.tokens[0]!.value;
-    for (const key of await storage.list("catalog:github")) expect(await storage.get(key)).not.toContain(token);
+    for (const key of await storage.list(catalogKeys.manifest("github"))) expect(await storage.get(key)).not.toContain(token);
     expect(await makeRegistry([connector], { storage }).getTools("github", "https://connecta.test")).toEqual(tools);
     expect(fixture.requests.filter((request) => request.body?.method === "tools/list")).toHaveLength(1);
   });
