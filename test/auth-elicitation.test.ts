@@ -7,6 +7,7 @@ import { operatorUi } from "../src/ui.js";
 import { createTestConnecta, required } from "./helpers.js";
 import { fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { CREDENTIAL_KEY } from "./fixtures/ui.js";
+import { guestErrorText, guestFailureFacts } from "./fixtures/misc.js";
 
 const BASE = "https://connecta.test";
 const apps: ReturnType<typeof createTestConnecta>[] = [];
@@ -53,7 +54,7 @@ function setup(options: { manage?: boolean; vault?: boolean; publicUrl?: boolean
         if (options.programWrite) await fn("service.write", {});
         const result = await fn("service.read", {});
         return { result };
-      } catch (error) { return { result: undefined, error: (error as Error).message }; }
+      } catch (error) { return { result: undefined, error: guestErrorText(error), failure: guestFailureFacts(error) }; }
     } },
   });
   apps.push(app);
