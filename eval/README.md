@@ -84,7 +84,7 @@ calls and final-answer facts. Fourteen new active tasks cover:
 - RevenueCat plain text and the authoritative `gives_access` fact;
 - Supabase Production `project_ref`, with a Sandbox decoy;
 - honest GitHub absence, without substituting another service;
-- one known read routed through `call_tool`, with no program or discovery;
+- a known read routed through `call_tool`, with no program, discovery or other route;
 - an advertised MCP resource read through `connecta.read` with its qualified URI.
 
 Each grader has independent required `correct-destination` and
@@ -96,6 +96,16 @@ still verify posted channels, exact writes, artifact documents and versions.
 Regex evidence checks are deterministic acceptance criteria, not a general
 semantic evaluator. Prompts explicitly request the source system, record ids
 and supporting facts.
+
+`p5-known-read-routing` tests routing. Its required `direct-read` check fails
+when the agent does not use `call_tool` for the requested read, or uses
+`execute_code`, discovery or any other route. Repeating the identical
+`call_tool` read passes the task and misses only the advisory `one-read` check,
+which is recorded like `no-confirmation-needed` without changing pass/fail.
+CI fact evidence accepts any order within each line or semicolon-separated
+record, while keeping each record's id, status and commit together.
+Absent GitHub answers must report uncertainty without asserting a count or
+other repository facts.
 
 Auth tasks use a local fake OAuth connector and sign-in directory. A deterministic
 host adapter sends 2026-07-28 requests to the real Connecta auth boundary. A capable
@@ -128,9 +138,11 @@ grader rejects a wrong-source attribution with the expected answer intact,
 and a right-source run without answer evidence. It also rejects a no-op, wrong-issue
 refusals, comment-only paging/fan-out, another retained result, direct images
 substituted for program emissions, sequential budget exhaustion, direct-only
-recovery, swapped CI facts, fabricated service absence, and contradictory/missing
+recovery, swapped CI facts, missing/mismatched auth handoffs, fabricated
+repository facts after service absence, alternate known-read routes, and contradictory/missing
 RevenueCat access evidence. Positive controls also verify both discovery routes
-and recovery after a schema-rejected program request. The deployment
+and recovery after a schema-rejected program request, CI fact permutations,
+honest absence answers and advisory-only duplicate direct reads. The deployment
 adapter observes the real QuickJS provider bridge for paging and fan-out checks;
 source text alone cannot satisfy them.
 Skipped features remain untested until enabled against a supporting checkout.

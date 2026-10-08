@@ -24,6 +24,15 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
   }
   if (task.id === "p5-program-image") cases.push({ name: "image delivered by direct call", trace: { ...trace,
     toolUses: trace.toolUses.map(u => ({ ...u, tool: "call_tool", input: { address: "assets.get_badge_image", args: {} } })) } });
+  if (task.id === "p5-known-read-routing") {
+    cases.push({ name: "known read without call_tool", trace: { ...trace, toolUses: [] } });
+    for (const tool of ["execute_code", "call_destructive_tool", "search_tools"]) {
+      cases.push({ name: `known read through ${tool}`, trace: { ...trace,
+        toolUses: trace.toolUses.map(use => ({ ...use, tool })) } });
+      cases.push({ name: `direct known read plus ${tool}`, trace: { ...trace,
+        toolUses: [...trace.toolUses, { ...trace.toolUses[0]!, id: "other-route", tool }] } });
+    }
+  }
   if (task.id === "p5-auth-connect-incapable") {
     cases.push({ name: "operator connected without agent handoff", trace: { ...trace,
       transcript: trace.transcript.filter(entry => entry.kind !== "assistant" || !entry.text.includes("/connect/oauth")) } });
@@ -61,7 +70,9 @@ export function counterexamples(task: ActiveTask, world: World, trace: AgentTrac
 
 /** Answer permutations keep the real source calls and change only fact order. */
 export function positiveVariants(task: ActiveTask, world: World, trace: AgentTrace): { name: string; passed: boolean }[] {
-  const cases: { name: string; trace: AgentTrace }[] = [];
+  const cases: { name: string; trace: AgentTrace; advisoryMiss?: string }[] = [];
+  if (task.id === "p5-known-read-routing") cases.push({ name: "duplicate direct read remains a pass with advisory miss",
+    trace: { ...trace, toolUses: [...trace.toolUses, { ...trace.toolUses[0]!, id: "duplicate-read" }] }, advisoryMiss: "one-read" });
   if (task.id === "p5-absent-github") for (const answer of [
     "GitHub data is unavailable. The open pull request count for acme/widget is unknown.",
     "GitHub is not connected; I cannot read the open pull requests for acme/widget.",
@@ -75,5 +86,9 @@ export function positiveVariants(task: ActiveTask, world: World, trace: AgentTra
     cases.push({ name: "CI commit-first sentence", trace: { ...trace,
       finalAnswer: "CI " + records.map(([id, status, commit]) => `${commit}: ${id} ${status}.`).join("\n") } });
   }
-  return cases.map(c => ({ name: c.name, passed: task.grade({ world, trace: c.trace }).every(check => check.advisory || check.pass) }));
+  return cases.map(c => {
+    const checks = task.grade({ world, trace: c.trace });
+    return { name: c.name, passed: checks.every(check => check.advisory || check.pass) &&
+      (!c.advisoryMiss || checks.some(check => check.id === c.advisoryMiss && check.advisory && !check.pass)) };
+  });
 }

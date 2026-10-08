@@ -253,10 +253,16 @@ const absence = withCorrectness({ ...base, id: "p5-absent-github", title: "Hones
 }, { destination: absentGithub,
   evidence: [/GitHub/i, /absent|unavailable|not configured|no .*connector|not connected/i, /acme\/widget/i], referenceAnswer: "GitHub is not configured here. I cannot determine open pull requests for acme/widget from these connectors." });
 
-const routing = withCorrectness({ ...base, id: "p5-known-read-routing", title: "One known read uses call_tool",
-  measures: "A known read has no discovery or program overhead.",
+const routing = withCorrectness({ ...base, id: "p5-known-read-routing", title: "Known read uses call_tool",
+  measures: "A known read must use call_tool without other routes; duplicate identical reads are advisory.",
   prompt: "Read ci.get_run with runId 4812 and report its status and commit.",
-  grade: ({ trace }) => [check("direct-read", "exactly one call_tool and no execute_code or discovery", trace.toolUses.length === 1 && direct(trace, "call_tool", "ci.get_run"))],
+  grade: ({ trace }) => [
+    check("direct-read", "read through call_tool with no execute_code, discovery or other route",
+      direct(trace, "call_tool", "ci.get_run") && trace.toolUses.every(use => use.tool === "call_tool" &&
+        use.input.address === "ci.get_run" && typeof use.input.args === "object" && use.input.args !== null &&
+        Object.keys(use.input.args).length === 1 && (use.input.args as { runId?: unknown }).runId === 4812)),
+    { ...check("one-read", "the identical read was not repeated", trace.toolUses.length === 1), advisory: true },
+  ],
   reference: async ({ call }) => { await call("call_tool", { address: "ci.get_run", args: { runId: 4812 } }); },
 }, { destination: w => called(w, "ci.get_run", { runId: 4812 }), evidence: [/\bci\b/i, runEvidence(4812, "failed", "9f2c1ab")], referenceAnswer: "CI run 4812 failed on commit 9f2c1ab." });
 
