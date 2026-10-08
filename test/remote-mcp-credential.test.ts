@@ -7,7 +7,7 @@ import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { oauthFlowKeys, oauthGrantKeys } from "../src/storage/keys.js";
 import type { ConnectorContext, InboundAuth } from "../src/types.js";
-import { connectorContext, spyLogger } from "./fixtures/misc.js";
+import { connectorContext, deferred, spyLogger } from "./fixtures/misc.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import {
   activitySink,
@@ -383,6 +383,50 @@ describe("remoteMcp() credential auth — rotation", () => {
 
     expect(JSON.stringify(status)).not.toContain("do-not-leak-this");
     expect(String((err as Error).message)).not.toContain("do-not-leak-this");
+  });
+
+  it("INV-5: a stale credential read cannot replace a newer connected credential", async () => {
+    const captured = serveDownstream();
+    const connector = remoteMcp("down", { url: URL_UNDER_TEST, auth: { type: "credential" } });
+    const ctx = credentialCtx(() => "second-secret");
+    const release = deferred<string>();
+    vi.spyOn(ctx.credential!, "get").mockImplementationOnce(() => release.promise);
+    const first = connector.listTools(ctx);
+    const rejected = expect(first).rejects.toMatchObject({ code: "connector_call_failed", retryable: true });
+    await connector.listTools(ctx);
+    release.resolve("first-secret");
+    await rejected;
+    await connector.closeScope?.(ctx);
+    expect(sessionOpenAuthorizations(captured)).toEqual(["Bearer second-secret"]);
+  });
+
+  it.each(["credential", "request"] as const)("INV-5: a delayed %s re-read cannot close a replacement connection", async (type) => {
+    const captured = serveDownstream();
+    let stored = "original-secret";
+    let reads = 0;
+    const entered = deferred<void>();
+    const release = deferred<string>();
+    const read = async () => {
+      const value = stored;
+      if (++reads === 3) { entered.resolve(); return release.promise; }
+      return value;
+    };
+    const connector = remoteMcp("down", { url: URL_UNDER_TEST,
+      auth: type === "request" ? { type, token: read } : { type } });
+    const ctx = credentialCtx(() => stored);
+    ctx.credential!.get = read;
+    await connector.listTools(ctx);
+    stored = "older-secret";
+    const older = connector.listTools(ctx);
+    const rejected = expect(older).rejects.toMatchObject({ code: "connector_call_failed", retryable: true });
+    await entered.promise;
+    stored = "current-secret";
+    await connector.listTools(ctx);
+    release.resolve("older-secret");
+    await rejected;
+    await expect(connector.callTool("echo", { text: "still connected" }, ctx)).resolves.toBeDefined();
+    await connector.closeScope?.(ctx);
+    expect(sessionOpenAuthorizations(captured)).toEqual(["Bearer original-secret", "Bearer current-secret"]);
   });
 
   it("reconnects when the value rotates while the first connect is in flight", async () => {

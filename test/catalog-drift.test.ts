@@ -1,8 +1,8 @@
 import { reviewedFixture } from "./fixtures/reviewed-connector.js";
-import { recordCatalogDriftActivity } from "../src/activity.js";
+import { activityHistory } from "../src/activity.js";
 import { describe, expect, it, vi } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
-import { customExecutor, createConnecta, CONNECTA_VERSION } from "../src/index.js";
+import { customExecutor, createConnecta } from "../src/index.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import {
@@ -15,12 +15,6 @@ import { servedTools } from "./fixtures/hosted-provider.js";
 import { connectorContext } from "./fixtures/misc.js";
 // From the root entry on purpose: a deployment writing an activity store reaches
 // these by name, and only naming them here proves the re-export exists.
-import type {
-  ActivitySink,
-  CatalogDriftActivityEvent,
-  CatalogDriftCounts,
-  CatalogDriftReport,
-} from "../src/index.js";
 import type { Connector, ToolDef } from "../src/types.js";
 import { silentLogger } from "./helpers.js";
 
@@ -86,13 +80,7 @@ const context = {
   baseUrl: BASE,
 };
 
-/** /health keys drift reports by a truncated SHA-256 of the id, never the id. */
-async function driftKey(id: string): Promise<string> {
-  const hash = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(id)),
-  );
-  return Array.from(hash.subarray(0, 8), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
+
 
 describe("vettedCatalog()", () => {
   it("refuses a name classified as both a read and a write", () => {
@@ -414,151 +402,24 @@ describe("drift on the registry surface", () => {
       toolCacheTtlSeconds: 0,
     });
     await registry.getTools("plain", BASE);
-    expect(await registry.statusFor("plain", BASE)).toEqual({ state: "ok" });
+    expect(await registry.statusFor("plain", BASE)).toMatchObject({ state: "ok" });
   });
 
-  it("emits one payload-free activity event, and only when counts move", async () => {
-    const events: CatalogDriftActivityEvent[] = [];
-    let drifting = false;
-    const { connector } = proxy("linear_test", () =>
-      drifting
-        ? [...currentCatalog(), tool("merge_issues")]
-        : currentCatalog(),
-    );
-    const registry = new Registry([connector], {
-      storage: memoryStorage(),
-      logger: silentLogger,
-      toolCacheTtlSeconds: 0,
-      catalogDriftActivity: {
-        recordDrift: recordCatalogDriftActivity,
-        sink: {
-          record() {},
-          recordCatalogDrift(event) {
-            events.push(event);
-          },
-        },
-        serverInfo: { name: "connecta-test", version: "9.9.9" },
-        deploymentId: "deploy-1",
-      },
-    });
-
-    // A first clean observation is not news.
-    await registry.getTools("linear_test", BASE);
-    expect(events).toHaveLength(0);
-
-    drifting = true;
-    await registry.getTools("linear_test", BASE);
-    expect(events).toHaveLength(1);
-
-    // The same drift on the next refresh is a heartbeat, not a second finding.
-    await registry.getTools("linear_test", BASE);
-    expect(events).toHaveLength(1);
-
-    // Resolved is worth an event: the timeline should say when it stopped.
-    drifting = false;
-    await registry.getTools("linear_test", BASE);
-    expect(events).toHaveLength(2);
-
-    const [drift] = events;
-    expect(drift).toMatchObject({
-      schemaVersion: 1,
-      connectorId: "linear_test",
-      unclassifiedTools: 1,
-      unservedTools: 0,
-      annotationConflicts: 0,
-      schemaChanges: 0,
-      serverName: "connecta-test",
-      serverVersion: "9.9.9",
-      deploymentId: "deploy-1",
-    });
-    // Payload-free by construction: there is no field for a tool name, a
-    // schema, an argument, a result, or downstream error prose.
-    expect(Object.keys(drift!).sort()).toEqual([
-      "annotationConflicts",
-      "connectorId",
-      "deploymentId",
-      "id",
-      "occurredAt",
-      "packageVersion",
-      "schemaChanges",
-      "schemaVersion",
-      "serverName",
-      "serverVersion",
-      "unclassifiedTools",
-      "unservedTools",
-    ]);
-    expect(JSON.stringify(drift)).not.toContain("merge_issues");
-  });
-
-  it("keeps serving a refresh when an activity sink throws", async () => {
-    const { connector } = proxy("linear_test", () => [
-      ...currentCatalog(),
-      tool("merge_issues"),
-    ]);
-    const registry = new Registry([connector], {
-      storage: memoryStorage(),
-      logger: silentLogger,
-      toolCacheTtlSeconds: 0,
-      catalogDriftActivity: {
-        recordDrift: recordCatalogDriftActivity,
-        sink: {
-          record() {},
-          recordCatalogDrift() {
-            throw new Error("sink is down");
-          },
-        },
-        serverInfo: { name: "connecta-test", version: "9.9.9" },
-      },
-    });
-    await expect(
-      registry.getTools("linear_test", BASE),
-    ).resolves.toHaveLength(5);
-  });
-});
-
-describe("/health", () => {
-  it("carries observed drift counts for connecta doctor", async () => {
-    const observed: Connector = connectorWith({
-      id: "linear_test",
-      tools: [],
-      call: async () => null,
-      catalogDrift() {
-        return {
-          observedAt: "2026-08-12T00:00:00.000Z",
-          unclassifiedTools: 2,
-          unservedTools: 1,
-          annotationConflicts: 0,
-          schemaChanges: 0,
-        };
-      },
-    });
-    const quiet: Connector = connectorWith({
-      id: "quiet",
-      tools: [],
-      call: async () => null,
-    });
+  it("INV-6: catalog refreshes produce no activity drift events", async () => {
+    const drift = vi.fn();
+    const { connector } = proxy("linear_test", () => [...currentCatalog(), tool("merge_issues")]);
+    const store = { record() {}, recordCatalogDrift: drift };
     const connecta = createConnecta({
       executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
-      storage: memoryStorage(),
-      logger: silentLogger,
-      publicUrl: BASE,
-      connectors: [observed, quiet],
+      connectors: [connector], storage: memoryStorage(), logger: silentLogger,
+      activity: activityHistory({ store }),
     });
-    const health = (await (
-      await connecta.fetch(new Request(`${BASE}/health`))
-    ).json()) as { catalogDrift: Record<string, unknown> };
-    expect(JSON.stringify(health)).not.toContain("linear_test");
-    expect(health.catalogDrift).toEqual({
-      [await driftKey("linear_test")]: {
-        observedAt: "2026-08-12T00:00:00.000Z",
-        unclassifiedTools: 2,
-        unservedTools: 1,
-        annotationConflicts: 0,
-        schemaChanges: 0,
-      },
-    });
+    await connecta.registry.getTools("linear_test", BASE);
+    expect(drift).not.toHaveBeenCalled();
+    await connecta.close();
   });
 });
+
 
 describe("the connector seam is projected, not echoed", () => {
   /**
@@ -593,27 +454,19 @@ describe("the connector seam is projected, not echoed", () => {
     "unservedTools",
   ];
 
-  it("strips extra fields and re-serializes the timestamp on /health", async () => {
+  it("INV-6: health neither reads nor reports a connector drift seam", async () => {
+    const connector = leaky();
+    const drift = vi.fn(() => { throw new Error("downstream payload"); });
+    connector.catalogDrift = drift;
     const connecta = createConnecta({
       executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
-      storage: memoryStorage(),
-      logger: silentLogger,
-      publicUrl: BASE,
-      connectors: [leaky()],
+      storage: memoryStorage(), logger: silentLogger, publicUrl: BASE, connectors: [connector],
     });
-    const health = (await (
-      await connecta.fetch(new Request(`${BASE}/health`))
-    ).json()) as { catalogDrift: Record<string, Record<string, unknown>> };
+    const health = await (await connecta.fetch(new Request(`${BASE}/health`))).json();
+    expect(health).not.toHaveProperty("catalogDrift");
     expect(JSON.stringify(health)).not.toContain("leaky");
-    const report = health.catalogDrift[await driftKey("leaky")] ?? {};
-    expect(Object.keys(report).sort()).toEqual(REPORT_KEYS);
-    expect(report).toMatchObject({
-      unclassifiedTools: 2,
-      unservedTools: 0,
-      annotationConflicts: 0,
-      schemaChanges: 1,
-    });
-    expect(report.observedAt).toBe("2026-08-12T00:00:00.000Z");
+    expect(drift).not.toHaveBeenCalled();
+    await connecta.close();
   });
 
   it("strips them on connector status too", async () => {
@@ -623,53 +476,6 @@ describe("the connector seam is projected, not echoed", () => {
     });
     const status = await registry.statusFor("leaky", BASE);
     expect(Object.keys(status.catalogDrift ?? {}).sort()).toEqual(REPORT_KEYS);
-  });
-});
-
-describe("the drift types are on the public surface", () => {
-  it("types an activity adapter written outside this package", () => {
-    // Contextual typing carries an inline object literal, so only naming the
-    // types catches a missing re-export — which is what an activity store in
-    // examples/ has to do.
-    const rows: CatalogDriftCounts[] = [];
-    const sink: Pick<ActivitySink, "recordCatalogDrift"> = {
-      recordCatalogDrift(event: CatalogDriftActivityEvent) {
-        rows.push(event);
-      },
-    };
-    const report: CatalogDriftReport = {
-      observedAt: "2026-08-12T00:00:00.000Z",
-      unclassifiedTools: 1,
-      unservedTools: 0,
-      annotationConflicts: 0,
-      schemaChanges: 0,
-    };
-    sink.recordCatalogDrift?.({
-      schemaVersion: 1,
-      id: "evt-1",
-      occurredAt: report.observedAt,
-      connectorId: "linear",
-      unclassifiedTools: report.unclassifiedTools,
-      unservedTools: report.unservedTools,
-      annotationConflicts: report.annotationConflicts,
-      schemaChanges: report.schemaChanges,
-      serverName: "connecta",
-      serverVersion: CONNECTA_VERSION,
-    });
-    expect(rows).toEqual([
-      {
-        schemaVersion: 1,
-        id: "evt-1",
-        occurredAt: report.observedAt,
-        connectorId: "linear",
-        unclassifiedTools: 1,
-        unservedTools: 0,
-        annotationConflicts: 0,
-        schemaChanges: 0,
-        serverName: "connecta",
-        serverVersion: CONNECTA_VERSION,
-      },
-    ]);
   });
 });
 

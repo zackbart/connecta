@@ -42,8 +42,8 @@ function setup(connector: Connector, options: { additional?: Connector[]; catalo
     } },
   });
   apps.push(app);
-  const rpc = async (name = "call_destructive_tool", state?: string, address = "service.write") => {
-    const args = name === "execute_code" ? { code: "write" } : { address, args: {} };
+  const rpc = async (name = "call_destructive_tool", state?: string, address = "service.write", trusted = false) => {
+    const args = name === "execute_code" ? { code: "write" } : name === "search_tools" ? { query: "", connector: "service" } : { address, args: {} };
     const request = mcpRpc("tools/call", {
       name, arguments: args, ...(state ? { requestState: state, inputResponses: { connecta_auth: { action: "accept" } } } : {}),
       _meta: {
@@ -55,8 +55,8 @@ function setup(connector: Connector, options: { additional?: Connector[]; catalo
     request.headers.set("Mcp-Method", "tools/call");
     request.headers.set("Mcp-Name", name);
     request.headers.set("Authorization", "Bearer alice");
-    if (name !== "execute_code") request.headers.set("Mcp-Param-Address", address);
-    return (await readJsonRpc(await app.fetch(name === "execute_code" ? new Request(`${BASE}/mcp/trusted`, request) : request))).result;
+    if (name !== "execute_code" && name !== "search_tools") request.headers.set("Mcp-Param-Address", address);
+    return (await readJsonRpc(await app.fetch(name === "execute_code" || trusted ? new Request(`${BASE}/mcp/trusted`, request) : request))).result;
   };
   const connect = async () => {
     const ctx = () => app.registry.contextFor("service", BASE);
@@ -66,7 +66,7 @@ function setup(connector: Connector, options: { additional?: Connector[]; catalo
     expect(await connector.verifyState!(state, callback)).toBe(true);
     await connector.finishAuth!("consented", callback, new URLSearchParams({ code: "consented", state }));
   };
-  return { app, rpc, connect, vault };
+  return { app, rpc, connect, vault, warmCatalog: (trusted = false) => rpc("search_tools", undefined, undefined, trusted) };
 }
 
 function apiFlow(options: { plain?: boolean; guarded?: boolean; resetScope?: boolean } = {}) {
@@ -192,7 +192,7 @@ describe("auth recovery invocation eligibility", () => {
     let now = Date.now();
     vi.spyOn(Date, "now").mockImplementation(() => now);
     const flow = remoteReadFlow(program);
-    await flow.app.registry.getTools("service", BASE);
+    await flow.warmCatalog(program);
     now += 1100;
     flow.change({ readOnly: false, listingFails: true });
     expectReconciliation(await flow.request());
@@ -216,7 +216,7 @@ describe("auth recovery invocation eligibility", () => {
     let now = Date.now();
     vi.spyOn(Date, "now").mockImplementation(() => now);
     const flow = remoteReadFlow(program);
-    await flow.app.registry.getTools("service", BASE);
+    await flow.warmCatalog(program);
     now += 1100;
     flow.change({ readOnly: false, listingFails: true, authFails: false });
     expect((await flow.request()).isError).toBeFalsy();
@@ -242,7 +242,7 @@ describe("auth recovery invocation eligibility", () => {
       await call("service.read", {});
       return call("protected.read", {});
     } });
-    await flow.app.registry.getTools("service", BASE);
+    await flow.warmCatalog(true);
     now += 1100;
     listingFails = true;
     const result = await flow.rpc("execute_code");

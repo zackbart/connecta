@@ -27,6 +27,8 @@ is \`connecta.call({ address, args, timeoutMs })\`. Both return \`{ data, format
 For \`format: "json"\`, data is the JSON value. For \`format: "text"\`, data is a
 string: parse only if the provider documents JSON text. Never guess collection roots.
 
+\`connecta.read("resource://id/"+encodeURIComponent(uri))\` returns \`{ contents }\` for advertised URIs.
+
 Search and describe return \`{ tools }\`, never an array. Search also returns
 \`catalogErrors\`, pagination, and possible \`absence\`; check failures before
 selecting a match. JSON schemas are the program default. Compact schemas have
@@ -125,6 +127,7 @@ export const GUEST_API_DECLARATION = `search(args?: CatalogSearchArgs): Promise<
 describe(args?: CatalogDescribeArgs): Promise<{ tools: CatalogDescription[] }>;
 call(address: string, args?: unknown, options?: { timeoutMs?: number }): Promise<GuestResult>;
 call(request: { address: string; args?: unknown; timeoutMs?: number }): Promise<GuestResult>;
+read(uri: string): Promise<GuestResourceResult>;
 result(id: string, options?: { offset?: number; maxBytes?: number }): Promise<GuestResultPage>;
 skill(name: string): Promise<{ name: string; text: string; format: "text" }>;
 emit(block: GuestBlock): PromiseLike<void>;`;

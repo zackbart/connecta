@@ -140,17 +140,6 @@ export function seconds(options: { default: number }): Field<number, number, tru
   };
 }
 
-export function bool(options: { default: boolean }): Field<boolean, boolean, true> {
-  return {
-    optional: true,
-    parse: (value, path) => {
-      if (typeof value !== "boolean") fail(`${path} must be true or false.`);
-      return value;
-    },
-    absent: () => options.default,
-  };
-}
-
 export function text(): Field<string, string | undefined, true> {
   return {
     optional: true,

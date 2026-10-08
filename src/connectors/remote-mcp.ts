@@ -19,6 +19,7 @@ import {
   UrlElicitationRequiredError,
   isInputRequiredResult,
   isJSONRPCErrorResponse,
+  isJSONRPCNotification,
   specTypeSchemas,
   StreamableHTTPClientTransport,
   UnauthorizedError,
@@ -26,6 +27,7 @@ import {
 import type {
   FetchLike,
   ListToolsResult,
+  RequestOptions,
   StandardSchemaV1,
   Tool,
   Transport,
@@ -41,7 +43,8 @@ import {
 import { trackOAuthStartReset } from "../auth/oauth-start-reset.js";
 import { byteReadResponse } from "../byte-read-response.js";
 import { redactCatalog, redactSentSecrets, sentSecretsFor, shortSecretWarning, trackCredentialReads, type SentSecrets } from "../sent-secrets.js";
-import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
+import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "../catalog-limits.js";
+import { catalogClientOptions, catalogItems, observeCompletedCatalogRefresh, type CatalogMethod, type CatalogResult, closeCatalogCacheScope, observeCatalogChange, observeCatalogFetch, observeCatalogExpiry } from "../catalog-cache.js";
 import { reviewedClassification } from "../catalog-drift.js";
 import { connectorScopeCleanupClaimed } from "../connector-scope.js";
 import {
@@ -72,6 +75,9 @@ import { detach, runEdge } from "../runtime/run.js";
 import { assertKnownOptions, keys, optionsOf } from "../config-schema.js";
 import { describedEndpoint, describedUrl } from "../described.js";
 import { retryAfterMs } from "./guarded-fetch.js";
+import { resourceUriMatchesTemplates, type ResourceTemplateRefusal } from "./resource-uri.js";
+import { callerOf } from "../connector-caller.js";
+import { readNegotiation, storeNegotiation } from "./negotiation-cache.js";
 import { CALL_ADMISSION, REMOTE_MCP_AUTH, USAGE_GUIDE } from "./option-shapes.js";
 import type {
   Connector,
@@ -275,21 +281,12 @@ const TERMINATE_SESSION_BUDGET_MS = 1_000;
  */
 const LOCAL_CLOSE_BUDGET_MS = 1_000;
 
-/**
- * Absolute backstop on `tools/list` pages in one refresh — a runaway guard, not
- * the primary defense.
- *
- * The walk terminates on its own well before this: a cursor handed back twice
- * is a definite loop, two consecutive pages that add no new tools are a server
- * going nowhere, and MAX_CATALOG_TOOLS caps what any of it can accumulate.
- * This exists only so the loop is finite even if a downstream somehow
- * satisfies all three forever on a path with no discovery deadline. Set high
- * enough that no honest server reaches it.
- */
-const MAX_TOOL_PAGES = 10_000;
+function unadvertisedResource(): ConnectorCallError {
+  return new ConnectorCallError("not_found", "The resource URI is not advertised by this connector.", { retryable: false });
+}
 
-/** One entry of the SDK's `tools/list` result, before it becomes a ToolDef. */
-type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
+/** SDK aggregation cap; intake also refuses loops and non-progress (INV-8). */
+const MAX_TOOL_PAGES = 10_000;
 
 /**
  * Compatibility concession for hand-rolled servers that serialize
@@ -852,10 +849,13 @@ function wireErrorKey(code: unknown, message: unknown): string {
  * `onmessage` it finds there ahead of its own for every message, and whose
  * version probe restores it when the probe is done.
  */
-function recordWireErrors(transport: Transport): void {
+function recordWireErrors(transport: Transport, catalogChanged: () => void): void {
   const seen = new Set<string>();
   wireErrors.set(transport, seen);
   transport.onmessage = (message) => {
+    // The public transport observer runs before SDK 2.3.1's delete-based
+    // eviction. Ordinary opposite-scope cleanup never rotates this fence.
+    if (isJSONRPCNotification(message) && (message.method === "notifications/tools/list_changed" || message.method === "notifications/resources/list_changed")) catalogChanged();
     if (isJSONRPCErrorResponse(message) && seen.size < MAX_WIRE_ERRORS) {
       seen.add(wireErrorKey(message.error.code, message.error.message));
     }
@@ -1121,6 +1121,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // A closed scope keeps its (emptied) entry, so a late or future lookup finds
   // it closed rather than recreating an ownerless connection under it.
   const states = new WeakMap<object, ConnectionState>();
+  const cacheOwner = {};
   // A cached transport may dispatch concurrent calls and listings. Register
   // its actual sent auth with every operation using that client, including
   // handshake/discovery requests and OAuth rotations. Remove settled users.
@@ -1315,7 +1316,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const atMcpBoundary = (
     ctx: ConnectorContext,
     err: unknown,
-    step: "MCP handshake" | "tools/list" | "tools/call",
+    step: "MCP handshake" | "tools/list" | "tools/call" | "resources/read",
     transport: Transport | undefined,
     signals: readonly (AbortSignal | undefined)[],
   ): unknown => {
@@ -1557,34 +1558,96 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         }
       : undefined;
 
-  /**
-   * One `tools/list` request. The SDK schema is retained wholesale except for
-   * accepting `null` as the common, unambiguous end-of-chain spelling. Other
-   * cursor shapes still get a useful connector-level diagnosis.
-   */
-  const listPage = async (
-    client: Client,
-    cursor: string | undefined,
-    ctx: ConnectorContext,
-  ) => {
-    try {
-      return await client.request(
-        {
-          method: "tools/list",
-          ...(cursor === undefined ? {} : { params: { cursor } }),
-        },
-        CompatibleListToolsResultSchema,
-        requestOptions(ctx),
-      );
-    } catch (err) {
-      if (!isCursorShapeError(err)) {
-        throw atMcpBoundary(ctx, err, "tools/list", client.transport, [ctx.signal]);
+  /** Wrap the public request seam, before listTools aggregates or auto-caches.
+   * SDK 2.3.1 treats an identical repeated page as completion. Refuse it here:
+   * an advertised successor is never proof of a complete catalog (INV-8). */
+  const listingContexts = new WeakMap<RequestOptions, ConnectorContext>();
+  const installCatalogIntake = (client: Client, ctx: ConnectorContext, cache: Awaited<ReturnType<typeof catalogClientOptions>>): void => {
+    let toolPages = 0;
+    const listingContext = (options?: RequestOptions) => {
+      const { signal: _signal, timeoutMs: _timeout, ...base } = ctx;
+      return (options && listingContexts.get(options)) ?? { ...base, requestScope: ctx.requestScope ?? ctx,
+        ...(options?.signal ? { signal: options.signal } : {}), ...(options?.timeout ? { timeoutMs: options.timeout } : {}) };
+    };
+    const listTools = client.listTools.bind(client);
+    client.listTools = (params, options) => cache.withListing(listingContext(options), async () => {
+      const before = toolPages;
+      let result: ListToolsResult;
+      try { result = await listTools(params, options); }
+      catch (error) {
+        const bounded = atMcpBoundary(cache.currentContext(), error, "tools/list", client.transport, [cache.currentContext().signal]);
+        const transient = error instanceof SdkHttpError && [502, 503, 504].includes(error.status) || bounded instanceof ConnectorCallError && bounded.code === "unavailable";
+        const fallback = transient && toolPages === before ? await cache.fallbackTools() : undefined;
+        if (!fallback) throw error;
+        return fallback;
       }
-      // No cause: the validator's error describes the downstream's page.
-      throw new Error(
-        `Connector "${id}" returned a tools/list page whose nextCursor is neither a string, null, nor absent — this catalog cannot be walked.`,
-      );
-    }
+      if (toolPages !== before && params?.cursor === undefined) {
+        const refresh = await cache.completeCatalogRefresh(result);
+        if (refresh) {
+          try { await observeCompletedCatalogRefresh(cache.currentContext(), refresh); }
+          catch (error) { logFailure(cache.currentContext().logger, "catalog refresh observation failed", failureRecord({ connector: id }, error)); }
+        }
+      }
+      return result;
+    });
+    const listResources = client.listResources.bind(client);
+    client.listResources = (params, options) => cache.withListing(listingContext(options), () => listResources(params, options));
+    const listResourceTemplates = client.listResourceTemplates.bind(client);
+    client.listResourceTemplates = (params, options) => cache.withListing(listingContext(options), () => listResourceTemplates(params, options));
+    const request = client.request.bind(client);
+    const walks = new WeakMap<object, { names: Set<string>; cursors: Set<string>; barren: number; bytes: number; first?: CatalogResult & { ttlMs: number; cacheScope: "public" | "private" } }>();
+    client.request = (async (...args: unknown[]) => {
+      const message = args[0] as { method: string; params?: { cursor?: string } };
+      if (message.method !== "tools/list" && message.method !== "resources/list" && message.method !== "resources/templates/list") return Reflect.apply(request, client, args);
+      const method: CatalogMethod = message.method;
+      const ctx = cache.currentContext();
+      const options = (args.length === 3 ? args[2] : args[1]) as RequestOptions | undefined;
+      if (isClosed(entryFor(ctx))) throw scopeEndedError();
+      if (options?.signal?.aborted) throw options.signal.reason;
+      const key = options ?? message;
+      let walk = walks.get(key);
+      if (message.params?.cursor === undefined || !walk) {
+        walk = { names: new Set(), cursors: new Set(), barren: 0, bytes: 0 };
+        walks.set(key, walk);
+      }
+      let page: CatalogResult;
+      try {
+        page = await request(message as Parameters<Client["request"]>[0], method === "tools/list" ? CompatibleListToolsResultSchema : method === "resources/list" ? specTypeSchemas.ListResourcesResult : specTypeSchemas.ListResourceTemplatesResult, options);
+      } catch (error) {
+        if (isCursorShapeError(error)) throw new ConnectorCallError("connector_call_failed", "Downstream catalog nextCursor must be a string, null, or absent.", { retryable: false });
+        throw error;
+      }
+      const clean = cache.intake(ctx, method, page);
+      if (method === "tools/list") toolPages++;
+      if (message.params?.cursor === undefined) observeCatalogFetch(ctx, Date.now(), method);
+      const tools = catalogItems(method, clean).filter(item => {
+        const name = method === "tools/list" ? item.name : method === "resources/list" ? (item as { uri: string }).uri : (item as { uriTemplate: string }).uriTemplate;
+        if (walk.names.has(name)) return false;
+        walk.names.add(name);
+        return true;
+      });
+      walk.bytes += new TextEncoder().encode(JSON.stringify(tools)).byteLength;
+      if (walk.names.size > MAX_CATALOG_TOOLS || walk.bytes > MAX_SERIALIZED_CATALOG_BYTES) {
+        throw new ConnectorCallError("connector_call_failed", "Downstream catalog exceeds the complete-catalog ceiling.", { retryable: false });
+      }
+      if (clean.nextCursor !== undefined) {
+        if (walk.cursors.has(clean.nextCursor)) throw new ConnectorCallError("connector_call_failed", "Downstream catalog pagination chain loops.", { retryable: false });
+        if (tools.length === 0 && ++walk.barren > 1) throw new ConnectorCallError("connector_call_failed", "Downstream catalog pagination is not advancing.", { retryable: false });
+        if (tools.length > 0) walk.barren = 0;
+        walk.cursors.add(clean.nextCursor);
+      }
+      const field = method === "tools/list" ? "tools" : method === "resources/list" ? "resources" : "resourceTemplates";
+      const result = { ...clean, [field]: tools };
+      if (!walk.first) walk.first = result;
+      else {
+        // SDK aggregation retains page-one metadata. A later page may only
+        // narrow its reuse grant, never broaden the complete catalog's scope.
+        walk.first.ttlMs = Math.min(walk.first.ttlMs, clean.ttlMs);
+        if (clean.cacheScope !== "public") walk.first.cacheScope = "private";
+      }
+      observeCatalogExpiry(ctx, method, walk.first.ttlMs);
+      return result;
+    }) as Client["request"];
   };
 
   /** This request scope's entry, open or closed, created on first sight. */
@@ -1826,7 +1889,17 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         state.credentialDigest !== null &&
         state.credentialDigest !== credentialDigest
       ) {
+        // A slow vault/token read or digest can resume after a newer caller
+        // connected with the replacement. Never let that stale read tear down
+        // the newer connection and install the rotated-away credential.
+        const observedConnection = state.client ?? state.connecting;
+        const currentCredential = await readCredential(ctx);
         if (isClosed(state)) throw scopeEndedError();
+        if (currentCredential !== credentialValue ||
+            (state.client ?? state.connecting) !== observedConnection) {
+          throw new ConnectorCallError("connector_call_failed",
+            "The downstream credential changed while connecting; retry the operation.", { retryable: true });
+        }
         closeHalf(state);
       }
     }
@@ -1951,26 +2024,77 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // SDK v2 selects its validator by runtime export condition: AJV on
         // Node and @cfworker/json-schema under workerd. The Workers-safe path
         // no longer needs Connecta-specific wiring.
-        const c = new Client(
-          { name: "connecta", version: CONNECTA_VERSION },
-          {
-            versionNegotiation: {
-              mode: opts.versionNegotiation ?? "auto",
+        const oauthConfig = isOauth ? {
+          client: staticClient,
+          clientMetadataUrl: staticClient ? undefined : clientMetadataUrl ?? selfHostedClientUrl(ctx.publicUrl, id),
+          redirectUri: downstreamRedirectUri(ctx.baseUrl, ctx.publicUrl, id),
+          clientName: ctx.oauthClientName,
+        } : undefined;
+        const negotiationDigest = yield* promised(() => digestOf(JSON.stringify([
+          opts.url, opts.versionNegotiation ?? "auto", opts.auth?.type,
+          opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
+          credentialHeader, credentialScheme, opts.authScope ?? "shared",
+          opts.redirects ?? "none", oauthConfig, oauthScope,
+          state.credentialDigest, genAtStart, callerOf(ctx),
+        ])));
+        const prior = opts.versionNegotiation === "legacy" ? undefined
+          : yield* promised(() => readNegotiation(ctx, negotiationDigest));
+        if (!owned()) return yield* Effect.fail(scopeEndedError());
+        const cacheOptions = yield* promised(() => catalogClientOptions(ctx, id, JSON.stringify({
+          url: new URL(opts.url).href, auth: opts.auth?.type ?? null,
+          headers: opts.auth?.type === "headers" ? opts.auth.headers : requestAuth?.headers,
+          credentialHeader, credentialScheme, authScope: opts.authScope ?? "shared",
+          redirects: opts.redirects ?? "none", versionNegotiation: opts.versionNegotiation ?? "auto",
+          oauthConfig, oauthScope,
+        }), JSON.stringify([genAtStart, state.credentialDigest]), connectionAbort.signal, cacheOwner, requestAuth || opts.authScope === "personal" ? "private" : "shared",
+          provider ? async () => digestOf(JSON.stringify(await provider.tokens())) : undefined));
+        if (!owned()) return yield* Effect.fail(scopeEndedError());
+        const makeClient = () => {
+          const { intake: _intake, completeCatalogRefresh: _refresh, withListing: _listing, currentContext: _context, ...clientOptions } = cacheOptions;
+          const client = new Client(
+            { name: "connecta", version: CONNECTA_VERSION },
+            {
+              ...clientOptions,
+              listMaxPages: MAX_TOOL_PAGES,
+              versionNegotiation: {
+                mode: opts.versionNegotiation ?? "auto",
+              },
+              // Connecta has no interactive relay. Surface the result manually
+              // below as one structured, non-retryable connector failure.
+              inputRequired: { autoFulfill: false },
             },
-            // Connecta has no interactive relay. Surface the result manually
-            // below as one structured, non-retryable connector failure.
-            inputRequired: { autoFulfill: false },
-          },
-        );
-        const t = buildTransport(ctx, provider, credentialFramed, connectionAbort.signal, credentialValue);
+          );
+          installCatalogIntake(client, ctx, cacheOptions);
+          return client;
+        };
+        let c = makeClient();
+        let t = buildTransport(ctx, provider, credentialFramed, connectionAbort.signal, credentialValue);
         if (!owned()) {
           held.transport = t;
           return yield* Effect.fail(scopeEndedError());
         }
         state.transport = t;
         held.transport = t;
-        recordWireErrors(t);
-        yield* promised(() => c.connect(t, { signal: handshakeAbort.signal })).pipe(
+        recordWireErrors(t, () => observeCatalogChange(ctx, id, connectionAbort.signal, cacheOwner));
+        yield* promised(async () => {
+          try {
+            await c.connect(t, { signal: handshakeAbort.signal, ...(prior ? { prior } : {}) });
+          } catch (error) {
+            // Some legacy servers crash on an unknown pre-initialize method.
+            // Only an auto probe's typed HTTP 5xx permits a fresh legacy
+            // handshake. An auth failure, timeout or initialize failure does not.
+            if (prior || opts.versionNegotiation === "legacy" ||
+                !(error instanceof SdkHttpError) || error.code !== SdkErrorCode.EraNegotiationFailed ||
+                error.status < 500 || error.status >= 600 || !owned() || handshakeAbort.signal.aborted) throw error;
+            // The SDK closed the failed probe transport. Its replacement owns
+            // a new connection, with the same credential and OAuth generation.
+            c = makeClient();
+            t = buildTransport(ctx, provider, credentialFramed, connectionAbort.signal, credentialValue);
+            state.transport = held.transport = t;
+            recordWireErrors(t, () => observeCatalogChange(ctx, id, connectionAbort.signal, cacheOwner));
+            await c.connect(t, { signal: handshakeAbort.signal, prior: { kind: "legacy" } });
+          }
+        }).pipe(
           Effect.mapError((err) =>
             atMcpBoundary(
               ctx,
@@ -2008,6 +2132,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         state.client = c;
         state.connectedGeneration = genAtStart;
         state.authRequired = false;
+        const discover = c.getDiscoverResult();
+        if (!prior) yield* promised(() => storeNegotiation(ctx, negotiationDigest,
+          discover ? { kind: "modern", discover } : { kind: "legacy" }));
+        if (!owned()) return yield* Effect.fail(scopeEndedError());
         return c;
       }).pipe(
         Effect.catch((err) => {
@@ -2101,6 +2229,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     ...Object.fromEntries(["versionNegotiation", "redirects", "requireHttps"].map(key =>
       [`transport.${key}`, opts[key as "versionNegotiation" | "redirects" | "requireHttps"] === undefined ? "default" : "config"] as const)),
   });
+  const resourceTemplateRefusals = new Set<ResourceTemplateRefusal>();
   const connector: Connector = {
     id,
     ...(opts.title !== undefined ? { title: opts.title } : {}),
@@ -2181,119 +2310,26 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         }
       : {}),
 
-    // `tools/list` is cursor-paginated: the server chooses the page size and
-    // signals "there is more" with a `nextCursor`, which the SDK's
-    // Client.listTools() returns without following. Collect the whole chain
-    // here, because a half-collected catalog is indistinguishable from a small
-    // one — later-page tools would simply appear not to exist, unsearchable and
-    // unaddressable, with nothing anywhere saying why.
-    //
-    // All pages ride the one request-scoped client already connected above, and
-    // the accumulator is returned rather than stored: a cursor is opaque and
-    // session-bound, so nothing here may outlive this call.
+    // The SDK walks the whole chain and writes one complete result. Intake
+    // runs on its public request seam before any page can enter that cache.
     async listTools(ctx) {
-      // The catalog contract: a downstream catalog is complete or it is a
-      // failure. Follow every page to the end of the cursor chain, preserve
-      // schemas and annotations, and never cache or serve a partial walk.
       const state = stateFor(ctx);
-      // The client this call connected or joined, bound once so the whole walk
-      // provably rides one session — a cursor is only meaningful to the
-      // connection that issued it. Never re-read from `state`: a force reset
-      // or rotation can null it before this call resumes, and teardown is
-      // caught instead by the `closed` check before every page.
       const client = await ensureConnected(ctx, state);
-      // Collect SDK tools for same-scope calls; sanitize the completed walk
-      // before retaining definitions or returning cross-request metadata.
-      const listed: ListedTool[] = [];
-      const names = new Set<string>();
-      const spent = new Set<string>();
-      let cursor: string | undefined;
-      /** Consecutive pages that advertised a successor but added nothing. */
-      let barren = 0;
-      let complete = false;
+      let clean: ListToolsResult["tools"];
+      const options = requestOptions(ctx) ?? {};
+      listingContexts.set(options, ctx);
       try {
-        for (let page = 0; page < MAX_TOOL_PAGES; page++) {
-          // The scope can end between pages (probe timeout, teardown). Stop
-          // rather than keep paging into a transport that is being closed.
-          if (isClosed(state)) throw scopeEndedError();
-          // A discovery deadline uses the same signal for the whole chain.
-          // Check it before issuing each page as well as passing it to the
-          // in-flight SDK request, so expiry never starts one more round trip.
-          if (ctx.signal?.aborted) {
-            throw ctx.signal.reason instanceof Error
-              ? ctx.signal.reason
-              : new Error(`Connector "${id}" catalog deadline expired.`);
-          }
-          // Page one sends no params at all, so a non-paginated server sees
-          // exactly the request it saw before pagination existed.
-          const res = await listPage(client, cursor, ctx);
-          let added = 0;
-          for (const t of res.tools) {
-            // First page wins. An unstable cursor can serve the same tool on
-            // two pages — a duplicate would inflate `toolCount`, double the
-            // `search_tools` row, and churn catalog persistence.
-            if (names.has(t.name)) continue;
-            names.add(t.name);
-            listed.push(t);
-            added++;
-          }
-          // Pagination ends when `nextCursor` is absent or null — never merely
-          // falsy. Empty string is present and means "keep going".
-          const next = res.nextCursor;
-          if (next === undefined || next === null) {
-            complete = true;
-            break;
-          }
-          // A page that adds nothing and still claims a successor made no
-          // progress. Allow exactly one: the widespread idiom is to advertise
-          // a cursor whenever a page came back full and then serve one empty
-          // page to terminate. Two in a row is a downstream going nowhere.
-          if (added === 0 && ++barren > 1) {
-            throw new Error(
-              `Connector "${id}" returned two consecutive tools/list pages that added no tools and still advertised another — the catalog is not advancing.`,
-            );
-          }
-          if (added > 0) barren = 0;
-          // A cursor handed back a second time is a loop, not a slow server.
-          if (spent.has(next)) {
-            throw new Error(
-              `Connector "${id}" handed back a tools/list cursor it had already issued — the pagination chain loops.`,
-            );
-          }
-          // Checked here rather than on arrival: this bounds what a *walk* may
-          // accumulate; a one-page server was always free to send its page.
-          if (listed.length > MAX_CATALOG_TOOLS) {
-            throw new Error(
-              `Connector "${id}" advertised further tools/list pages past ${listed.length} tools, over the ${MAX_CATALOG_TOOLS}-tool ceiling one catalog refresh will collect.`,
-            );
-          }
-          // Opaque by contract: handed straight back, never parsed, rewritten,
-          // or persisted.
-          spent.add(next);
-          cursor = next;
-        }
+        const result = await client.listTools(undefined, options);
+        clean = redactCatalog(ctx, result.tools);
       } catch (err) {
-        // A grant can be revoked after connect and after any earlier page.
-        // Classify that exactly like connect-time and call-time authorization
-        // failures, and latch it for the rest of this request scope.
         if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
-        if (requiresAuthorization(err)) {
+        const bounded = atMcpBoundary(ctx, err, "tools/list", client.transport, [ctx.signal]);
+        if (requiresAuthorization(bounded)) {
           if (state.client === client) state.authRequired = true;
-          if (err instanceof UnauthorizedError) throw carryFailureFacts(err, authRequiredError());
+          if (bounded instanceof UnauthorizedError) throw carryFailureFacts(bounded, authRequiredError());
         }
-        throw err;
-      }
-      // Fail the refresh outright. Returning what we have would publish a
-      // partial catalog that looks complete; throwing lets the registry keep
-      // serving the last complete one via its stale fallback.
-      if (!complete) {
-        throw new Error(
-          `Connector "${id}" kept advertising more tools/list pages after ${MAX_TOOL_PAGES} — refusing to page further.`,
-        );
-      }
-      // Publish definitions only after the full walk succeeds. A later-page
-      // failure must not leave a partial validation/header view behind.
-      const clean = redactCatalog(ctx, listed);
+        throw bounded;
+      } finally { listingContexts.delete(options); }
       state.toolDefinitions = new Map(clean.map((tool) => [tool.name, tool]));
       return clean.map((t) => ({
         name: t.name,
@@ -2393,6 +2429,50 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }
     },
 
+    async readResource(uri, ctx) {
+      const state = stateFor(ctx);
+      const client = await ensureConnected(ctx, state);
+      try {
+        const options = requestOptions(ctx) ?? {};
+        listingContexts.set(options, ctx);
+        try {
+          if (!client.getServerCapabilities()?.resources) throw unadvertisedResource();
+          const resources = await client.listResources(undefined, options);
+          const templates = await client.listResourceTemplates(undefined, options);
+          const exact = resources.resources.some(resource => resource.uri === uri);
+          if (!exact) {
+            const match = resourceUriMatchesTemplates(uri, templates.resourceTemplates, code => resourceTemplateRefusals.add(code));
+            if (!match.matched) {
+              if (match.refusal) throw new ConnectorCallError(match.refusal,
+                match.refusal === "resource_template_ambiguous" ? "The advertised resource templates have ambiguous expression boundaries." : "Resource template matching exceeds the read work limit.", { retryable: false });
+              throw unadvertisedResource();
+            }
+          }
+        } catch (err) {
+          throw atMcpBoundary(ctx, err, "resources/read", client.transport, [ctx.signal]);
+        } finally { listingContexts.delete(options); }
+        const result = await client.readResource({ uri }, {
+          ...requestOptions(ctx), cacheMode: "bypass", allowInputRequired: true,
+        }).catch((err: unknown) => {
+          if (err instanceof ResourceNotFoundError) {
+            throw new ConnectorCallError("not_found", "The downstream resource does not exist.");
+          }
+          throw atMcpBoundary(ctx, err, "resources/read", client.transport, [ctx.signal]);
+        });
+        if (isInputRequiredResult(result)) {
+          throw new ConnectorCallError("input_required_unsupported", "Resource reads inside programs cannot request mid-call input.");
+        }
+        return result;
+      } catch (err) {
+        if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
+        if (requiresAuthorization(err)) {
+          if (state.client === client) state.authRequired = true;
+          if (err instanceof UnauthorizedError) throw carryFailureFacts(err, authRequiredError());
+        }
+        throw downstreamCallError(err, undefined, undefined, undefined, sentSecretsFor(ctx));
+      }
+    },
+
     async closeScope(ctx) {
       // A scope closed before its first use gets an entry too, closed at once,
       // so it cannot spring into existence later.
@@ -2401,16 +2481,24 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // from here on sees the scope ended. A duplicate teardown finds it
       // closed and has nothing to run.
       const release = Scope.closeUnsafe(state.scope, Exit.void);
+      const cacheClosing = closeCatalogCacheScope(ctx, id, cacheOwner);
+      // Storage cannot cancel an already-started write. Bound the join in
+      // parallel with transport cleanup so it adds no unbounded teardown tail.
+      const cacheClosed = cacheClosing && runEdge(Effect.raceAllFirst([
+        Effect.promise(() => cacheClosing),
+        Effect.sleep(Duration.millis(LOCAL_CLOSE_BUDGET_MS)),
+      ]));
       reset(state);
       // Runs the live connection's lease finalizer, if there is one.
       if (release) await runEdge(release);
+      await cacheClosed;
     },
 
     async status(ctx): Promise<ConnectorStatus> {
       const state = stateFor(ctx);
       const report = async (status: ConnectorStatus) => {
         const path = isOauth ? await newProvider(ctx, state).registrationPath() : undefined;
-        return ownStatus({ ...status, ...(path ? { registrationPath: path } : {}) });
+        return ownStatus({ ...status, ...(path ? { registrationPath: path } : {}), ...(resourceTemplateRefusals.size ? { resourceTemplateRefusals: [...resourceTemplateRefusals] } : {}) });
       };
       try {
         await ensureConnected(ctx, state);
@@ -2575,6 +2663,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     withActiveSecrets(ctx, () => callTool(name, args, ctx, options));
   const listTools = connector.listTools;
   connector.listTools = (ctx) => withActiveSecrets(ctx, () => listTools(ctx));
+  const readResource = connector.readResource!;
+  connector.readResource = (uri, ctx) => withActiveSecrets(ctx, () => readResource(uri, ctx));
 
   if (isOauth && !staticClient && clientMetadataUrl === undefined) declareSelfHostedClient(connector, oauthScope);
   if (isOauth) {
@@ -2589,6 +2679,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     const retain = retainingOAuthPartition;
     connector.listTools = retain(connector.listTools, 0);
     connector.callTool = retain(connector.callTool, 2);
+    connector.readResource = retain(connector.readResource, 1);
     connector.status = retain(connector.status!, 0);
     connector.startAuth = retain(connector.startAuth!, 0);
     connector.disconnectAuth = retain(connector.disconnectAuth!, 0);
@@ -2599,6 +2690,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   }
   connector.listTools = payloadFree(connector.listTools);
   connector.callTool = payloadFree(connector.callTool);
+  connector.readResource = payloadFree(connector.readResource);
   if (connector.startAuth) connector.startAuth = payloadFree(connector.startAuth);
   if (connector.finishAuth) connector.finishAuth = payloadFree(connector.finishAuth);
   if (isOauth) registerInvocationAuth(connector, retainingOAuthPartition(async ctx => {

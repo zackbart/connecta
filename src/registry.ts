@@ -1,22 +1,18 @@
 import { markCatalogFreshness, carryCatalogFreshness } from "./catalog-freshness.js";
-import { activityRequest, bindActivityRequest } from "./activity-request.js";
+import { activityRequest } from "./activity-request.js";
+import type { CatalogDriftActivityContext } from "./activity.js";
+import { attachCatalogCache, catalogExpiry, customCatalogFallback, storeCustomCatalogFallback, catalogFetchedAt, invalidateCatalogCache, observeUncachedCatalogRefresh, type CatalogToolFingerprint } from "./catalog-cache.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { assertStaticToolNames, hasControlCharacters } from "./tool-name.js";
 import {
-  Cause,
   Clock,
-  Deferred,
   Duration,
   Effect,
-  Exit,
-  Option,
   Random,
-  Result,
 } from "effect";
 import type { CredentialVault } from "./credential-contract.js";
 import type {
   CatalogAccessObservation,
-  CatalogDriftCounts,
   CatalogDriftReport,
   Connector,
   ConnectorContext,
@@ -25,12 +21,6 @@ import type {
   Logger,
   ToolDef,
 } from "./types.js";
-import {
-  type DeferredWork,
-} from "./connector-scope.js";
-import {
-  type CatalogDriftActivityContext,
-} from "./activity.js";
 import {
   storedCredentialShape,
 } from "./credential-rules.js";
@@ -55,16 +45,7 @@ import {
   observeReviewedDrift,
   observedCatalogDrift,
 } from "./catalog-drift.js";
-import {
-  fingerprintSerializedCatalog,
-  snapshotCatalog,
-  type CatalogSnapshot,
-} from "./catalog-fingerprint.js";
-import {
-  MAX_CATALOG_CHUNK_BYTES,
-  MAX_CATALOG_TOOLS,
-  MAX_SERIALIZED_CATALOG_BYTES,
-} from "./catalog-limits.js";
+import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "./catalog-limits.js";
 import { ObservedOutputSchemas } from "./result-shapes.js";
 import { redactCatalog, sentSecretsFor, sentSecretsForRequest, trackCredentialReads } from "./sent-secrets.js";
 import {
@@ -74,10 +55,9 @@ import {
 import { attachOAuthSealer, vaultOAuthSealer } from "./oauth-sealing.js";
 import { attachOAuthPartition, oauthPartitionIdle } from "./oauth-partition.js";
 import { attachCaller, type ConnectorCaller } from "./connector-caller.js";
-import { closeScopeOnExit } from "./runtime/connector-scope.js";
-import { detach, runEdge, withDeadlineEffect } from "./runtime/run.js";
+import { runEdge } from "./runtime/run.js";
 import { SharedRead } from "./runtime/shared-read.js";
-import { Logger as LoggerService, type Storage } from "./runtime/services.js";
+import { type Storage } from "./runtime/services.js";
 import {
   runOnPartition,
   storageCompareAndSet,
@@ -86,7 +66,6 @@ import {
   storageSet,
 } from "./runtime/storage.js";
 import {
-  catalogKeys,
   jsonCodec,
   OAUTH_HANDOFF_TTL_SECONDS,
   oauthHandoffKeys,
@@ -94,13 +73,9 @@ import {
   scopes,
   stashLedgerKeys,
 } from "./storage/keys.js";
-import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs } from "./timeout.js";
 import { classifyTool } from "./tool-safety.js";
 
 const ID_RE = /^[a-z0-9_-]+$/;
-const DEFAULT_TTL_SECONDS = CONFIG_DEFAULTS.discovery.catalogTtlSeconds;
-const DEFAULT_STALE_SECONDS = CONFIG_DEFAULTS.discovery.staleCatalogSeconds;
-const CATALOG_CHUNK_TTL_GRACE_SECONDS = 300;
 const DEFAULT_MAX_RESULT_BYTES = CONFIG_DEFAULTS.calls.maxResultBytes;
 const encoder = new TextEncoder();
 
@@ -162,103 +137,7 @@ export function resolveMaxResultBytes(
     : inherited;
 }
 
-interface CacheEntry {
-  fetchedAt: number;
-  tools: ToolDef[];
-  fingerprint: string;
-  exp: number; // epoch ms
-  staleUntil: number;
-}
-
-interface CatalogRefreshFlight {
-  generation: number;
-  /**
-   * Epoch ms at which the flight is abandoned: its owner's deadline, or the
-   * default probe timeout for an owner with none. A connector that ignores
-   * its abort signal can go on listing past it, but nobody waits for it any
-   * longer, and what it lists then reaches neither cache layer (#570).
-   */
-  abandonAt: number;
-  /** Set once a reader gives up on it; its result can no longer publish. */
-  abandoned: boolean;
-  /**
-   * Completed once: by the request that owns the refresh, when its work and
-   * teardown are done, or by the reader that abandons it at its bound. Every
-   * other caller only awaits it, each through a Promise edge of its own. No
-   * fiber outlives a request to hold it open.
-   */
-  outcome: Deferred.Deferred<ToolDef[], unknown>;
-  /** One caught/logged tail shared by every stale reader that joins. */
-  deferredTail?: Promise<void>;
-}
-
-/**
- * What a joiner hears from a flight that will not answer for it: one that
- * passed its bound, or failed for a reason that was its owner's alone. It
- * never reaches a caller; a joiner that hears it makes a fresh attempt.
- */
-class AbandonedCatalogRefresh extends Error {
-  constructor(id: string) {
-    super(`The catalog refresh of "${id}" was abandoned.`);
-    this.name = "AbandonedCatalogRefresh";
-  }
-}
-
-/**
- * Version 3 manifests name downstream facts only: what `listTools` returned,
- * before the classification {@link Registry} derives from them on every read
- * (`Connector.classification`). Version 2, written by 0.28 and earlier, stored
- * listings a vetted wrapper had classified, so its read-only claims may be
- * connecta's own; {@link legacyCatalogFacts} keeps them out of safety
- * decisions.
- */
-interface PersistedCatalogManifest {
-  version: 2 | 3;
-  revision: string;
-  toolCount: number;
-  byteCount: number;
-  chunkCount: number;
-  fetchedAt: number;
-  expiresAt: number;
-  staleUntil: number;
-}
-
-interface PersistedCatalog {
-  tools: ToolDef[];
-  fingerprint: string;
-  fetchedAt: number;
-  expiresAt: number;
-  staleUntil: number;
-}
-
-const CATALOG_CHUNK_IO_CONCURRENCY = 4;
-
-/**
- * Read a version 2 catalog as downstream facts it might not be.
- *
- * 0.28 persisted a vetted wrapper's output, so a `readOnlyHint: true` there may
- * be a verdict an older classifier filled in rather than anything the
- * downstream said. Every such claim is dropped: the current classifier then
- * decides from silence, which fails closed for every tool no current review
- * vouches for. Claims that close a path stay. The catalog is never fresh, so
- * the next read refreshes it, and it is only ever a stale fallback.
- */
-function legacyCatalogFacts(tools: ToolDef[]): ToolDef[] {
-  return tools.map((tool) => {
-    if (tool.annotations?.readOnlyHint !== true) return tool;
-    const { readOnlyHint: _claimed, ...annotations } = tool.annotations;
-    return { ...tool, annotations };
-  });
-}
-
-const catalogDecoder = new TextDecoder();
-
-/**
- * Freeze a parsed catalog all the way down, iteratively, since a schema may
- * nest deeper than the host stack. The registry owns these raw facts,
- * classification copies what it serves, and a digest
- * verified against them stays true while they are cached.
- */
+/** Freeze registry-owned facts so review digest memoization remains valid. */
 function frozenFacts(tools: ToolDef[]): ToolDef[] {
   const pending: unknown[] = [tools];
   while (pending.length > 0) {
@@ -270,44 +149,12 @@ function frozenFacts(tools: ToolDef[]): ToolDef[] {
   return tools;
 }
 
-/**
- * Run `operation` over every chunk index or chunk with the fixed chunk I/O
- * bound, settling each: one failure neither interrupts its siblings nor
- * leaves their storage calls running behind the caller. Results keep input
- * order, so the first failure by index is the one a caller reports.
- */
-function forEachChunk<T, A>(
-  items: readonly T[],
-  operation: (item: T, index: number) => Effect.Effect<A, unknown, Storage>,
-): Effect.Effect<Array<Result.Result<A, unknown>>, never, Storage> {
-  return Effect.forEach(
-    items,
-    (item, index) => Effect.result(operation(item, index)),
-    { concurrency: CATALOG_CHUNK_IO_CONCURRENCY },
-  );
-}
-
-/**
- * A persisted-catalog mutation that logs its storage failure rather than
- * failing, so its turn in the mutation queue always ends.
- */
-function warnOnFailure<R>(
-  mutation: Effect.Effect<void, unknown, R>,
-  connector: string,
-  event: "catalog persistence failed" | "catalog invalidation failed",
-): Effect.Effect<void, never, R | LoggerService> {
-  return Effect.catch(mutation, (err) =>
-    LoggerService.use((logger) =>
-      Effect.sync(() => logFailure(logger, event, failureRecord({ connector }, err))),
-    ),
-  );
-}
-
 export interface RegistryOptions {
   publicUrl?: string | undefined;
   oauthClientName?: string | undefined;
   classification?: Readonly<Record<string, Readonly<Record<string, "read" | "write">>>> | undefined;
   storage: KVStorage;
+  catalogStorage?: KVStorage;
   logger: Logger;
   credentialVault?: CredentialVault | undefined;
   credentialUi?: boolean | undefined;
@@ -315,9 +162,10 @@ export interface RegistryOptions {
   credentialOwner?: string | undefined;
   /** Internal child registries skip deployment-wide construction warnings. */
   constructionChecks?: boolean | undefined;
+  catalogDriftActivity?: Omit<CatalogDriftActivityContext, "logger"> | undefined;
   toolCacheTtlSeconds?: number | undefined;
-  persistToolCatalog?: boolean | undefined;
-  toolCatalogStaleSeconds?: number | undefined;
+  catalogMinTtlSeconds?: number | undefined;
+  catalogMaxTtlSeconds?: number | undefined;
   /**
    * Cap on inline result size before truncation + connecta.result paging. Must be a
    * whole number of bytes >= 1; anything else throws at construction. Default
@@ -325,14 +173,7 @@ export interface RegistryOptions {
    */
   maxResultBytes?: number | undefined;
   results?: { maxStashBytes?: number; maxStashEntries?: number } | undefined;
-  /**
-   * Where payload-free catalog-drift observations go. Present only when the
-   * deployment configured an activity store; drift is reported through
-   * connector status either way.
-   */
-  catalogDriftActivity?:
-    | Omit<CatalogDriftActivityContext, "logger">
-    | undefined;
+
 }
 
 function namespaced(storage: KVStorage, prefix: string): KVStorage {
@@ -353,13 +194,6 @@ export type ConnectorOperationOptions = Pick<
   ConnectorContext,
   "signal" | "timeoutMs" | "defer"
 >;
-
-/** Agent-only catalog behavior. This never enters a ConnectorContext. */
-export interface CatalogReadOptions {
-  defer?: DeferredWork;
-  /** Fresh deadline for a deferred refresh; never an inbound signal. */
-  refreshTimeoutMs: number;
-}
 
 /**
  * The registry surface a per-connection MCP server consumes: every meta-tool
@@ -384,6 +218,8 @@ export interface RegistryView {
   readonly maxResultBytes: number;
   listConnectors(): Connector[];
   getConnector(id: string): Connector | undefined;
+  /** Only whole-connector grants authorize resource reads. */
+  getResourceConnector(id: string): Connector | undefined;
   resolveAddress(
     address: string,
   ): { connector: Connector; toolName: string } | null;
@@ -392,7 +228,6 @@ export interface RegistryView {
     baseUrl: string,
     requestScope?: object,
     callOptions?: ConnectorOperationOptions,
-    readOptions?: CatalogReadOptions,
   ): Promise<ToolDef[]>;
   contextFor(
     id: string,
@@ -544,8 +379,8 @@ async function sha256Hex(value: string): Promise<string> {
 }
 
 /**
- * Holds the connector set, resolves addresses, and caches per-connector tool
- * lists in memory with a TTL. Connector failures are isolated: a broken
+ * Holds the connector set, resolves addresses, and coalesces tool listings
+ * within one request. Remote MCP clients own persisted response caching. Connector failures are isolated: a broken
  * connector surfaces status "error"; the rest keep working.
  */
 export class Registry implements RegistryView {
@@ -554,25 +389,9 @@ export class Registry implements RegistryView {
     string,
     ConnectorCallAdmissionController
   >();
-  private readonly cache = new Map<string, CacheEntry>();
-  private readonly invalidated = new Set<string>();
-  /** Per-connector epoch preventing a pre-invalidation refresh from publishing. */
-  private readonly catalogGenerations = new Map<string, number>();
-  // The last queued mutation per connector, as the turn its own request
-  // completes once its storage work is done; see enqueueCatalogMutation.
-  /** Serialize persisted catalog set/delete operations within this isolate. */
-  private readonly catalogMutations = new Map<string, Deferred.Deferred<void>>();
-  /** Same-request cold loads share one read without retaining the request.
-   * See documentation/architecture.md#the-two-lifetimes. */
-  private readonly requestCatalogLoads = new WeakMap<
-    object,
-    Map<string, SharedRead<ToolDef[]>>
-  >();
-  /** One live refresh per connector across agent and operator requests. */
-  private readonly catalogRefreshes = new Map<
-    string,
-    CatalogRefreshFlight
-  >();
+  /** Coalesce listings only within one request and authorization partition. */
+  private readonly requestCatalogLoads = new WeakMap<object, Map<string, SharedRead<ToolDef[]>>>();
+  private readonly catalogObservedAt = new Map<string, number>();
   /** Last payload-free agent catalog access in this runtime. */
   private readonly catalogAccess = new Map<
     string,
@@ -580,17 +399,12 @@ export class Registry implements RegistryView {
   >();
   /** Count-only intake findings, including catalogs loaded from storage. */
   private droppedToolNames = new Map<string, { count: number; observedAt: string }>();
-  /** Last drift counts reported to activity, per connector, in this runtime. */
-  private readonly reportedDrift = new Map<string, CatalogDriftCounts>();
   /**
    * Schema digest verification per reviewed facts array. Only the registry's
    * own deep-frozen arrays are keys, so an entry stays true while they live.
    */
   private readonly verifiedFacts = new WeakMap<readonly ToolDef[], ReadonlySet<string>>();
   private readonly observedOutputSchemas: ObservedOutputSchemas;
-  private readonly ttlMs: number;
-  private readonly staleMs: number;
-  private readonly persistToolCatalog: boolean;
   /** Result-size guard cap threaded to the meta-tools. */
   readonly maxResultBytes: number;
   private readonly classification: Readonly<Record<string, Readonly<Record<string, "read" | "write">>>>;
@@ -607,11 +421,6 @@ export class Registry implements RegistryView {
   ) {
     this.configuredConnectors = [...connectors];
     this.observedOutputSchemas = new ObservedOutputSchemas();
-    this.ttlMs =
-      (opts.toolCacheTtlSeconds ?? DEFAULT_TTL_SECONDS) * 1000;
-    this.staleMs =
-      (opts.toolCatalogStaleSeconds ?? DEFAULT_STALE_SECONDS) * 1000;
-    this.persistToolCatalog = opts.persistToolCatalog ?? true;
     this.maxResultBytes = resolveMaxResultBytes(
       opts.maxResultBytes,
       DEFAULT_MAX_RESULT_BYTES,
@@ -701,16 +510,10 @@ export class Registry implements RegistryView {
     }
     if (this.personalRegistries.size >= MAX_PERSONAL_REGISTRIES) {
       // Eviction must not reset a live rolling budget or orphan queued calls.
-      // Nor may it drop catalog work in flight: a replacement for the same
-      // principal starts with no generations and no mutation queue, so a
-      // refresh the evicted registry finishes later would persist a listing
-      // that a credential change on the replacement had just deleted.
       // OAuth status/start work bypasses both gates, and accepted rotations
       // may still be saving after their caller leaves. Preserve its partition.
       const idle = [...this.personalRegistries].find(([, candidate]) =>
         [...candidate.callAdmission.values()].every(admission => admission.isIdle()) &&
-        candidate.catalogRefreshes.size === 0 &&
-        candidate.catalogMutations.size === 0 &&
         oauthPartitionIdle(candidate.oauthPartition),
       );
       if (!idle) {
@@ -729,6 +532,7 @@ export class Registry implements RegistryView {
           this.connectors.get(id)?.authScope === "personal")),
         storage: namespaced(this.opts.storage, scopes.principal(principalKey)),
         credentialOwner: principalKey,
+        catalogStorage: this.opts.catalogStorage ?? this.opts.storage,
         constructionChecks: false,
       },
     );
@@ -903,11 +707,16 @@ export class Registry implements RegistryView {
     return this.connectors.get(id);
   }
 
+  getResourceConnector(id: string): Connector | undefined {
+    return this.getConnector(id);
+  }
+
   contextFor(
     id: string,
     baseUrl: string,
     requestScope: object = {},
     callOptions: ConnectorOperationOptions = {},
+    scope?: RegistryScope,
   ): ConnectorContext {
     const credentialConfig = this.connectors.get(id)?.credential;
     let credentialAccess: ConnectorContext["credential"];
@@ -939,6 +748,20 @@ export class Registry implements RegistryView {
       requestScope,
       ...callOptions,
     };
+    attachCaller(context, scope?.caller);
+    attachCatalogCache(context, {
+      storage: this.opts.catalogStorage ?? this.opts.storage,
+      partition: JSON.stringify([scope?.principalKey ?? this.opts.credentialOwner ?? null,
+        scope?.subjectKey ?? null, scope?.caller?.identity ?? null, scope?.caller?.authenticated ?? false,
+        scope?.caller?.pool ?? null]),
+      sharedPartition: JSON.stringify([baseUrl, this.opts.publicUrl ?? null, scope?.caller?.pool ?? null]),
+      defaultTtlMs: (this.opts.toolCacheTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds) * 1000,
+      minTtlMs: (this.opts.catalogMinTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogMinTtlSeconds) * 1000,
+      maxTtlMs: (this.opts.catalogMaxTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogMaxTtlSeconds) * 1000,
+      ...(this.opts.catalogDriftActivity?.recordChange ? {
+        onCompletedCatalogRefresh: (refresh, ctx) => this.recordCatalogDrift(refresh.previous, refresh.next, { id, connector: this.connectors.get(id)!, ctx, privateCatalog: refresh.private }),
+      } : {}),
+    });
     sentSecretsFor(context);
     trackCredentialReads(context);
     attachOAuthPartition(context, this.oauthPartition);
@@ -983,27 +806,6 @@ export class Registry implements RegistryView {
   }
 
   /**
-   * Payload-free drift counts for the open health endpoint, so `connecta
-   * doctor` can report a stale allowlist without asking any downstream
-   * anything. Connectors with a reviewed refresh, an intake finding, or a
-   * plugin drift observation *in this runtime* appear — a process or isolate that has
-   * answered no catalog request yet honestly reports nothing, and drift is not
-   * persisted the way the catalog itself is.
-   *
-   * Every report is rebuilt by {@link boundedCatalogDrift} on the way out:
-   * `Connector.catalogDrift()` is the open plugin seam, and this snapshot is
-   * serialized into an unauthenticated response.
-   */
-  catalogDriftSnapshot(): Record<string, CatalogDriftReport> {
-    const snapshot: Record<string, CatalogDriftReport> = {};
-    for (const connector of this.connectors.values()) {
-      const report = this.catalogDriftOf(connector);
-      if (report) snapshot[connector.id] = report;
-    }
-    return snapshot;
-  }
-
-  /**
    * The drift a connector last showed in this runtime: the registry's own
    * observation against a connector's `classification`, otherwise whatever
    * the connector's `catalogDrift()` seam reports, bounded either way.
@@ -1024,53 +826,6 @@ export class Registry implements RegistryView {
       observedAt: dropped.observedAt,
       ...(dropped.count > 0 ? { droppedTools: dropped.count } : {}),
     };
-  }
-
-  /**
-   * Turn the observation a refresh just took into at most one activity event.
-   *
-   * Emitted on change rather than on every refresh: an identical report every
-   * TTL is a heartbeat, not news, and the current counts are already on
-   * connector status. A first observation that is clean is not an event
-   * either — nothing moved — but a later return to clean is, because "the
-   * drift is gone" is exactly what an operator watching the timeline is
-   * waiting for.
-   */
-  private observeCatalogDrift(connector: Connector): void {
-    const report = this.catalogDriftOf(connector);
-    if (!report) return;
-    const previous = this.reportedDrift.get(connector.id);
-    // Bounded counts, so a seam returning NaN cannot make every refresh look
-    // like a change and emit an event per refresh forever.
-    const counts: CatalogDriftCounts = {
-      unclassifiedTools: report.unclassifiedTools,
-      unservedTools: report.unservedTools,
-      annotationConflicts: report.annotationConflicts,
-      schemaChanges: report.schemaChanges,
-      ...(report.droppedTools ? { droppedTools: report.droppedTools } : {}),
-    };
-    const unchanged =
-      previous !== undefined &&
-      previous.unclassifiedTools === counts.unclassifiedTools &&
-      previous.unservedTools === counts.unservedTools &&
-      previous.annotationConflicts === counts.annotationConflicts &&
-      previous.schemaChanges === counts.schemaChanges &&
-      (previous.droppedTools ?? 0) === (counts.droppedTools ?? 0);
-    if (unchanged) return;
-    const clean =
-      counts.unclassifiedTools === 0 &&
-      counts.unservedTools === 0 &&
-      counts.annotationConflicts === 0 &&
-      counts.schemaChanges === 0 &&
-      (counts.droppedTools ?? 0) === 0;
-    this.reportedDrift.set(connector.id, counts);
-    if (previous === undefined && clean) return;
-    this.opts.catalogDriftActivity?.recordDrift?.(
-      this.opts.catalogDriftActivity
-        ? { ...this.opts.catalogDriftActivity, logger: this.opts.logger }
-        : undefined,
-      { connectorId: connector.id, ...counts },
-    );
   }
 
   /** Reject queued/future downstream admission; active permits release safely. */
@@ -1199,726 +954,66 @@ export class Registry implements RegistryView {
     return { connector, toolName: parts.toolName };
   }
 
-  private catalogKey(id: string): string {
-    return catalogKeys.manifest(id);
-  }
-
-  private catalogChunkKey(id: string, revision: string, index: number): string {
-    return catalogKeys.chunk(id, revision, index);
-  }
-
-  private validCatalogTools(value: unknown[]): value is ToolDef[] {
-    return value.every(
-      (tool) =>
-        tool !== null &&
-        typeof tool === "object" &&
-        typeof (tool as ToolDef).name === "string",
-    );
-  }
-
-  private validCatalogManifest(
-    value: unknown,
-  ): PersistedCatalogManifest | null {
-    if (!value || typeof value !== "object") return null;
-    const manifest = value as Partial<PersistedCatalogManifest>;
-    const maxChunks =
-      Math.ceil(MAX_SERIALIZED_CATALOG_BYTES / MAX_CATALOG_CHUNK_BYTES) + 1;
-    if (
-      (manifest.version !== 2 && manifest.version !== 3) ||
-      typeof manifest.revision !== "string" ||
-      !/^sha256:[0-9]{1,8}:[0-9a-f]{64}$/.test(manifest.revision) ||
-      !Number.isInteger(manifest.toolCount) ||
-      manifest.toolCount! < 0 ||
-      manifest.toolCount! > MAX_CATALOG_TOOLS ||
-      !Number.isInteger(manifest.byteCount) ||
-      manifest.byteCount! < 2 ||
-      manifest.byteCount! > MAX_SERIALIZED_CATALOG_BYTES ||
-      !manifest.revision.startsWith(`sha256:${manifest.byteCount}:`) ||
-      !Number.isInteger(manifest.chunkCount) ||
-      manifest.chunkCount! < 1 ||
-      manifest.chunkCount! > maxChunks ||
-      typeof manifest.fetchedAt !== "number" ||
-      typeof manifest.expiresAt !== "number" ||
-      typeof manifest.staleUntil !== "number"
-    ) {
-      return null;
-    }
-    return manifest as PersistedCatalogManifest;
-  }
-
-  private parseCatalogManifest(
-    raw: string | null,
-  ): PersistedCatalogManifest | null {
-    if (!raw) return null;
-    try {
-      return this.validCatalogManifest(JSON.parse(raw));
-    } catch {
-      return null;
-    }
-  }
-
-  private splitCatalogChunks(snapshot: CatalogSnapshot): string[] {
-    const chunks: string[] = [];
-    const decoder = new TextDecoder("utf-8", {
-      fatal: true,
-      ignoreBOM: true,
-    });
-    let offset = 0;
-    while (offset < snapshot.serializedBytes.byteLength) {
-      let end = Math.min(
-        offset + MAX_CATALOG_CHUNK_BYTES,
-        snapshot.serializedBytes.byteLength,
-      );
-      // Move a boundary that landed inside a multibyte UTF-8 sequence back to
-      // the next character start. Every stored string then remains valid UTF-8.
-      while (
-        end < snapshot.serializedBytes.byteLength &&
-        ((snapshot.serializedBytes[end] ?? 0) & 0xc0) === 0x80
-      ) {
-        end--;
-      }
-      chunks.push(
-        decoder.decode(snapshot.serializedBytes.subarray(offset, end)),
-      );
-      offset = end;
-    }
-    return chunks;
-  }
-
-  // The persisted catalog's one reader: the manifest at `catalog:<id>`, then
-  // the chunks it names. A storage failure fails the effect, and the caller
-  // logs it; a manifest or chunk that is invalid, missing, torn, or does not
-  // match its fingerprint is logged here and read as no catalog, because a
-  // catalog is complete or it is nothing.
-  private readCatalog(
-    id: string,
-    now: number,
-  ): Effect.Effect<PersistedCatalog | null, unknown, Storage | LoggerService> {
-    return Effect.gen({ self: this }, function* () {
-      const raw = yield* storageGet(this.catalogKey(id));
-      if (!raw) return null;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        return null;
-      }
-
-      const logger = yield* LoggerService;
-      const manifest = this.validCatalogManifest(parsed);
-      if (!manifest) {
-        logger.warn(
-          `[connecta] connector "${id}" catalog manifest is invalid; ignoring persisted catalog.`,
-        );
-        return null;
-      }
-      if (manifest.staleUntil <= now) return null;
-
-      const chunkReads = yield* forEachChunk(
-        Array.from({ length: manifest.chunkCount }, (_, index) => index),
-        (index) => storageGet(this.catalogChunkKey(id, manifest.revision, index)),
-      );
-      const chunks: string[] = [];
-      let chunkBytes = 0;
-      for (const [index, read] of chunkReads.entries()) {
-        if (Result.isFailure(read)) return yield* Effect.fail(read.failure);
-        const chunk = read.success;
-        if (chunk === null) {
-          logger.warn(
-            `[connecta] connector "${id}" catalog chunk ${index + 1}/${manifest.chunkCount} is missing; ignoring persisted catalog.`,
-          );
-          return null;
-        }
-        const byteLength = encoder.encode(chunk).byteLength;
-        chunkBytes += byteLength;
-        if (
-          byteLength > MAX_CATALOG_CHUNK_BYTES ||
-          chunkBytes > manifest.byteCount
-        ) {
-          logger.warn(
-            `[connecta] connector "${id}" catalog chunk bounds do not match its manifest; ignoring persisted catalog.`,
-          );
-          return null;
-        }
-        chunks.push(chunk);
-      }
-
-      const serializedTools = chunks.join("");
-      const stored = yield* Effect.tryPromise({
-        try: () => fingerprintSerializedCatalog(serializedTools),
-        catch: (error) => error,
-      });
-      if (
-        stored.byteLength !== manifest.byteCount ||
-        stored.fingerprint !== manifest.revision
-      ) {
-        logger.warn(
-          `[connecta] connector "${id}" catalog fingerprint mismatch; ignoring persisted catalog.`,
-        );
-        return null;
-      }
-
-      let tools: unknown;
-      try {
-        tools = JSON.parse(serializedTools);
-      } catch {
-        logger.warn(
-          `[connecta] connector "${id}" catalog chunks are torn; ignoring persisted catalog.`,
-        );
-        return null;
-      }
-      if (!Array.isArray(tools) || !this.validCatalogTools(tools)) {
-        logger.warn(
-          `[connecta] connector "${id}" catalog chunks contain invalid tools; ignoring persisted catalog.`,
-        );
-        return null;
-      }
-      if (tools.length !== manifest.toolCount) {
-        logger.warn(
-          `[connecta] connector "${id}" catalog tool count does not match its manifest; ignoring persisted catalog.`,
-        );
-        return null;
-      }
-      const facts = manifest.version === 2 ? legacyCatalogFacts(tools) : tools;
-      const connector = this.connectors.get(id);
-      return {
-        tools: connector && catalogReviewOf(connector) ? frozenFacts(facts) : facts,
-        fingerprint: stored.fingerprint,
-        fetchedAt: manifest.fetchedAt,
-        expiresAt:
-          manifest.version === 2
-            ? Math.min(manifest.expiresAt, now)
-            : manifest.expiresAt,
-        staleUntil: manifest.staleUntil,
-      };
-    });
-  }
-
-  // Persist one complete catalog: every chunk, then the manifest. A snapshot
-  // only reaches here after the tool and byte ceilings accepted it whole.
-  private storeCatalog(
-    id: string,
-    snapshot: CatalogSnapshot,
-  ): Effect.Effect<void, unknown, Storage> {
-    return Effect.gen({ self: this }, function* () {
-      if (!this.persistToolCatalog) return;
-      const fetchedAt = yield* Clock.currentTimeMillis;
-      const expiresAt = fetchedAt + this.ttlMs;
-      const staleUntil = expiresAt + this.staleMs;
-      const ttlSeconds = Math.max(
-        60,
-        Math.ceil((this.ttlMs + this.staleMs) / 1000),
-      );
-      const chunks = this.splitCatalogChunks(snapshot);
-      const chunkWrites = yield* forEachChunk(chunks, (chunk, index) =>
-        storageSet(this.catalogChunkKey(id, snapshot.fingerprint, index), chunk, {
-          ttlSeconds: ttlSeconds + CATALOG_CHUNK_TTL_GRACE_SECONDS,
-        }),
-      );
-      for (const write of chunkWrites) {
-        if (Result.isFailure(write)) return yield* Effect.fail(write.failure);
-      }
-      // The manifest is the only publication point. A failed/partial chunk write
-      // therefore leaves the previous manifest authoritative (or no catalog);
-      // unreachable chunks carry a bounded TTL and require no prefix scan.
-      const manifest: PersistedCatalogManifest = {
-        version: 3,
-        revision: snapshot.fingerprint,
-        toolCount: snapshot.tools.length,
-        byteCount: snapshot.serializedBytes.byteLength,
-        chunkCount: chunks.length,
-        fetchedAt,
-        expiresAt,
-        staleUntil,
-      };
-      yield* storageSet(this.catalogKey(id), JSON.stringify(manifest), {
-        ttlSeconds,
-      });
-    });
-  }
-
-  // Remove the persisted catalog: the manifest and every chunk it names, all
-  // at once under the chunk I/O bound. Every delete is attempted; the effect
-  // fails with the manifest read's error first, then the manifest delete's,
-  // then the first chunk delete's by index.
-  private deleteCatalog(id: string): Effect.Effect<void, unknown, Storage> {
-    return Effect.gen({ self: this }, function* () {
-      const read = yield* Effect.result(storageGet(this.catalogKey(id)));
-      const manifest = Result.isSuccess(read)
-        ? this.parseCatalogManifest(read.success)
-        : null;
-      // The root is authoritative, so attempt its deletion even when the
-      // best-effort read needed for physical chunk cleanup failed. It need
-      // not land first: a reader that finds the root but not a chunk has an
-      // incomplete catalog, which is never served, and an eventually
-      // consistent store could show it that way whatever the order.
-      const keys = [
-        this.catalogKey(id),
-        ...Array.from({ length: manifest?.chunkCount ?? 0 }, (_, index) =>
-          this.catalogChunkKey(id, manifest!.revision, index),
-        ),
-      ];
-      const deleted = yield* forEachChunk(keys, (key) => storageDelete(key));
-      if (Result.isFailure(read)) return yield* Effect.fail(read.failure);
-      const failed = deleted.find(Result.isFailure);
-      if (failed) return yield* Effect.fail(failed.failure);
-    });
-  }
-
-  private catalogGeneration(id: string): number {
-    return this.catalogGenerations.get(id) ?? 0;
-  }
-
-  private advanceCatalogGeneration(id: string): void {
-    this.catalogGenerations.set(id, this.catalogGeneration(id) + 1);
-  }
-
-  /**
-   * Keep this isolate's writes and invalidations ordered. Without the queue, an
-   * old refresh can finish its storage.set after a credential change deletes
-   * the catalog and resurrect the pre-change listing.
-   */
-  private async enqueueCatalogMutation(
-    id: string,
-    operation: Effect.Effect<void, never, Storage | LoggerService>,
-  ): Promise<void> {
-    // Mutations run in arrival order, each taking its turn from the one
-    // queued before it. That one may belong to another request, and
-    // completing a Deferred resumes its waiters inside the completing call,
-    // so the wait is an edge of its own and this request's storage work
-    // starts only after it. (Effect's Semaphore would do neither: it resumes
-    // a waiter from the releasing fiber, and a newcomer can take the permit
-    // before a waiter that queued earlier.) An operation logs its own storage
-    // failure, so a turn always ends.
-    const previous = this.catalogMutations.get(id);
-    const turn = Deferred.makeUnsafe<void>();
-    this.catalogMutations.set(id, turn);
-    try {
-      if (previous) {
-        // A cross-request Deferred alone looks hung to workerd. Keep a timer
-        // owned by this request until the preceding mutation hands over its
-        // turn; the race interrupts the timer as soon as the wait settles.
-        await runEdge(Effect.raceFirst(
-          Deferred.await(previous),
-          Effect.forever(Effect.sleep(Duration.seconds(1))),
-        ));
-      }
-      await runOnPartition(operation, this.opts);
-    } finally {
-      if (this.catalogMutations.get(id) === turn) {
-        this.catalogMutations.delete(id);
-      }
-      Deferred.doneUnsafe(turn, Exit.void);
-    }
-  }
-
-  private readonly observedCatalogs = new Map<string, readonly ToolDef[]>();
-
-  /** Compare published catalogs and emit counts through one relocatable hook. */
+  /** Compare only the fingerprints accepted in this exact cache partition. */
   private recordCatalogDrift(
-    previous: readonly ToolDef[] | undefined,
-    next: readonly ToolDef[],
-    attribution: { id: string; connector: Connector; ctx: ConnectorContext },
+    previous: readonly CatalogToolFingerprint[] | undefined,
+    next: readonly CatalogToolFingerprint[],
+    attribution: { id: string; connector: Connector; ctx: ConnectorContext; privateCatalog: boolean },
   ): void {
-    const { id, connector, ctx } = attribution;
-    if (previous) {
-      const before = new Map(previous.map(tool => [tool.name, JSON.stringify(tool)]));
-      const after = new Map(next.map(tool => [tool.name, JSON.stringify(tool)]));
-      const addedTools = [...after.keys()].filter(name => !before.has(name)).length;
-      const removedTools = [...before.keys()].filter(name => !after.has(name)).length;
-      const changedTools = [...after].filter(([name, fact]) => before.has(name) && before.get(name) !== fact).length;
-      if (addedTools || removedTools || changedTools) this.opts.catalogDriftActivity?.recordChange?.(
-        this.opts.catalogDriftActivity ? { ...this.opts.catalogDriftActivity, logger: this.opts.logger, ...(ctx.defer ? { defer: ctx.defer } : {}) } : undefined,
-        { connectorId: id, drift: { kind: "catalog_changed", addedTools, removedTools, changedTools }, ...(connector.authScope === "personal" ? { personal: true } : {}) },
-        activityRequest(ctx.requestScope),
-      );
-    }
-  }
-
-  private async refreshToolsWithContext(
-    id: string,
-    connector: Connector,
-    ctx: ConnectorContext,
-    skipPublicationWhenAborted = false,
-    flight?: CatalogRefreshFlight,
-  ): Promise<ToolDef[]> {
-    const generation = this.catalogGeneration(id);
-    // Track custom/provider slot reads too. Sanitize all listing strings before
-    // drift observation, snapshotting, either cache, or an agent sees them.
-    trackCredentialReads(ctx);
-    let listed: ToolDef[];
-    try {
-      listed = await connector.listTools(ctx);
-    } catch (error) {
-      // Shared refresh flights may return this failure to another request.
-      // Sanitize it at intake, before publishing either success or failure.
-      throw sentSecretsForRequest(ctx.requestScope ?? ctx).redact(error);
-    }
-    const tools = redactCatalog(ctx, listed).map(tool => {
-      const { classification: _ignored, ...fact } = tool;
-      return fact;
-    });
-    const accepted = this.acceptToolNames(tools);
-    this.observeDroppedToolNames(connector, tools.length - accepted.length);
-    const review = catalogReviewOf(connector);
-    // The listing a reviewed connector just served is also the only catalog
-    // comparison connecta ever makes. It rides this refresh whether or not the
-    // result reaches a cache, because what drifted drifted.
-    if (review) {
-      await observeReviewedDrift(connector, review, accepted, this.opts.logger);
-    }
-    this.observeCatalogDrift(connector);
-    // A deferred deadline may close the owned scope while a connector that
-    // ignores abort is still listing. The completed list remains a valid drift
-    // observation, but must not overwrite a newer same-generation refresh.
-    // Blocking callers do not set this flag and retain their prior publication
-    // behavior when an inbound abort races a completed listing.
-    // Every returned listing must pass the ceilings, even when invalidation
-    // or abandonment means it can no longer enter either shared cache layer.
-    if (tools.length > MAX_CATALOG_TOOLS) {
-      const message =
-        `Connector "${id}" returned ${tools.length} tools, over the ` +
-        `${MAX_CATALOG_TOOLS}-tool catalog ceiling; refusing the complete catalog.`;
-      this.opts.logger.warn(`[connecta] ${message}`);
-      throw new Error(message);
-    }
-    const previous = this.cache.get(id);
-    const snapshot = await snapshotCatalog(tools);
-    if (snapshot.serializedBytes.byteLength > MAX_SERIALIZED_CATALOG_BYTES) {
-      const message =
-        `Connector "${id}" returned a ${snapshot.serializedBytes.byteLength}-byte ` +
-        `serialized catalog, over the ${MAX_SERIALIZED_CATALOG_BYTES}-byte ceiling; ` +
-        "refusing the complete catalog.";
-      this.opts.logger.warn(`[connecta] ${message}`);
-      throw new Error(message);
-    }
-    // Every connector's facts are the registry's own copy of what was
-    // serialized, the same bytes the persisted layer holds: nothing the
-    // connector or a decorator does to its listing afterwards reaches them.
-    const facts = frozenFacts(JSON.parse(catalogDecoder.decode(snapshot.serializedBytes)) as ToolDef[]);
-    // The caller that began this refresh may still use its bounded result,
-    // but credential changes, abandoned flights, and deferred cancellation
-    // prevent publication. Recheck after snapshotting, which is asynchronous.
-    if (
-      !this.mayPublish(id, generation, flight) ||
-      (skipPublicationWhenAborted && ctx.signal?.aborted)
-    ) {
-      return facts;
-    }
-    const now = Date.now();
-    const catalogChanged =
-      !previous || previous.fingerprint !== snapshot.fingerprint;
-    const shouldPersist =
-      catalogChanged ||
-      (previous !== undefined && previous.exp <= now) ||
-      this.invalidated.has(id);
-    // One publication hook for discrete changes. The first complete catalog is
-    // a baseline; rejected, abandoned and identical refreshes emit nothing.
-    const baseline = this.observedCatalogs.get(id) ?? previous?.tools;
-    this.recordCatalogDrift(baseline, facts, { id, connector, ctx });
-    this.observedCatalogs.set(id, facts);
-    this.cache.set(id, {
-      tools: facts,
-      fingerprint: snapshot.fingerprint,
-      fetchedAt: now,
-      exp: now + this.ttlMs,
-      staleUntil: now + this.ttlMs + this.staleMs,
-    });
-    this.invalidated.delete(id);
-    if (shouldPersist) {
-      await this.enqueueCatalogMutation(
-        id,
-        // The generation is read when the turn comes, not when it is queued:
-        // an invalidation queued meanwhile has already deleted the catalog.
-        warnOnFailure(
-          Effect.suspend(() =>
-            generation === this.catalogGeneration(id)
-              ? this.storeCatalog(id, snapshot)
-              : Effect.void,
-          ),
-          id,
-          "catalog persistence failed",
-        ),
-      );
-    }
-    return facts;
-  }
-
-  /**
-   * Whether a refresh may still enter the shared cache layers: its generation
-   * is current, and the flight it runs in has been neither abandoned nor
-   * outlived its bound. Asked at each publication point, since listing and
-   * snapshotting both yield, and a late result must never overwrite the one a
-   * fresh attempt published in the meantime.
-   */
-  private mayPublish(
-    id: string,
-    generation: number,
-    flight: CatalogRefreshFlight | undefined,
-  ): boolean {
-    return (
-      generation === this.catalogGeneration(id) &&
-      (!flight || (!flight.abandoned && Date.now() < flight.abandonAt))
+    if (!previous) return;
+    const { id, connector, ctx, privateCatalog } = attribution;
+    const before = new Map(previous.map(tool => [tool.name, tool.fact]));
+    const after = new Map(next.map(tool => [tool.name, tool.fact]));
+    const addedTools = [...after.keys()].filter(name => !before.has(name)).length;
+    const removedTools = [...before.keys()].filter(name => !after.has(name)).length;
+    const changedTools = [...after].filter(([name, fact]) => before.has(name) && before.get(name) !== fact).length;
+    if (addedTools || removedTools || changedTools) this.opts.catalogDriftActivity?.recordChange?.(
+      { ...this.opts.catalogDriftActivity, logger: this.opts.logger, ...(ctx.defer ? { defer: ctx.defer } : {}) },
+      { connectorId: id, drift: { kind: "catalog_changed", addedTools, removedTools, changedTools },
+        privateCatalog, ...(connector.authScope === "personal" ? { personal: true } : {}) },
+      activityRequest(ctx.requestScope),
     );
   }
 
-  /**
-   * Publish one shared refresh before starting its connector work. The first
-   * caller owns the scope and signal, and the flight lives `boundMs` from now
-   * at most; every later caller joins the result without gaining access to
-   * that context. A flight found past its bound is abandoned here, and this
-   * caller starts the fresh attempt.
-   */
-  private startCatalogRefresh(
-    id: string,
-    generation: number,
-    boundMs: number,
-    work: (flight: CatalogRefreshFlight) => Effect.Effect<ToolDef[], unknown>,
-    ownerLeft: () => boolean = () => false,
-  ): {
-    flight: CatalogRefreshFlight;
-    // Present only for the caller that published the flight, which must run
-    // it, in its own request, at once.
-    owner?: Effect.Effect<ToolDef[], unknown>;
-  } {
-    const existing = this.catalogRefreshes.get(id);
-    if (existing?.generation === generation) {
-      if (Date.now() < existing.abandonAt) return { flight: existing };
-      this.abandonCatalogRefresh(id, existing);
-    }
-    const flight: CatalogRefreshFlight = {
-      generation,
-      abandonAt: Date.now() + boundMs,
-      abandoned: false,
-      outcome: Deferred.makeUnsafe(),
-    };
-    this.catalogRefreshes.set(id, flight);
-    const owner = Effect.onExit(work(flight), (exit) =>
-      Effect.sync(() => {
-        if (this.catalogRefreshes.get(id) === flight) {
-          this.catalogRefreshes.delete(id);
-        }
-        // A failure that was the owner's alone is no answer for anyone
-        // else: its own cancellation (its signal, read here in its own
-        // request), or anything that arrives once the flight is past its
-        // bound. Joiners make a fresh attempt under their own deadlines.
-        const ownersAlone =
-          Exit.isFailure(exit) &&
-          (flight.abandoned ||
-            Date.now() >= flight.abandonAt ||
-            ownerLeft());
-        // Last, because joined fibers resume inside this call.
-        Deferred.doneUnsafe(
-          flight.outcome,
-          ownersAlone ? Exit.fail(new AbandonedCatalogRefresh(id)) : exit,
-        );
-      }),
-    );
-    return { flight, owner };
-  }
-
-  /**
-   * Give up on a flight that outlived its bound. Later readers start a fresh
-   * attempt, its joiners are told to, and nothing its owner lists from now on
-   * reaches a cache. The owner's work is left alone: it belongs to another
-   * request, which nothing here may reach into, and it can no longer publish.
-   */
-  private abandonCatalogRefresh(
-    id: string,
-    flight: CatalogRefreshFlight,
-  ): void {
-    if (flight.abandoned) return;
-    flight.abandoned = true;
-    if (this.catalogRefreshes.get(id) === flight) {
-      this.catalogRefreshes.delete(id);
-    }
-    this.opts.logger.warn(
-      `[connecta] connector "${id}" catalog refresh outlived its bound; abandoning it for a fresh attempt.`,
-    );
-    Deferred.doneUnsafe(
-      flight.outcome,
-      Exit.fail(new AbandonedCatalogRefresh(id)),
-    );
-  }
-
-  /**
-   * Wait on another caller's flight, no longer than its bound. Succeeds with
-   * its tools, or with `undefined` when it will not answer for this caller —
-   * past its bound, when this waiter abandons it, or failed for its owner
-   * alone — so the caller makes a fresh attempt. The timer is this waiter's
-   * own: on workerd it is what keeps a request that waits on another alive,
-   * and bounded.
-   */
-  private joinCatalogRefresh(
-    id: string,
-    flight: CatalogRefreshFlight,
-  ): Effect.Effect<ToolDef[] | undefined, unknown> {
-    return Effect.suspend(() =>
-      Deferred.await(flight.outcome).pipe(
-        Effect.timeoutOption(
-          Duration.millis(Math.max(0, flight.abandonAt - Date.now())),
-        ),
-        Effect.flatMap((joined) =>
-          Option.isSome(joined)
-            ? Effect.succeed<ToolDef[] | undefined>(joined.value)
-            : Effect.sync(() => {
-                this.abandonCatalogRefresh(id, flight);
-                return undefined;
-              }),
-        ),
-        Effect.catch((error) =>
-          error instanceof AbandonedCatalogRefresh
-            ? Effect.succeed(undefined)
-            : Effect.fail(error),
-        ),
-      ),
-    );
-  }
-
-  /** Force a live listTools refresh and replace both catalog cache layers. */
-  private async refreshTools(
+  private async loadDownstreamTools(
     id: string,
     baseUrl: string,
     requestScope?: object,
     callOptions: ConnectorOperationOptions = {},
+    scope?: RegistryScope,
   ): Promise<ToolDef[]> {
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
-    if (connector.staticTools) return connector.staticTools;
-    // A flight lives as long as its owner will wait for it. Past that, the
-    // owner may have answered and gone, and on workerd its I/O went with it.
-    const boundMs =
-      normalizeTimeoutMs(callOptions.timeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
-    for (;;) {
-      const { flight, owner } = this.startCatalogRefresh(
-        id,
-        this.catalogGeneration(id),
-        boundMs,
-        (flight) =>
-          Effect.tryPromise({
-            try: () =>
-              this.refreshToolsWithContext(
-                id,
-                connector,
-                this.contextFor(id, baseUrl, requestScope, callOptions),
-                false,
-                flight,
-              ),
-            catch: (error) => error,
-          }),
-        () => callOptions.signal?.aborted === true,
-      );
-      // The owner lists in its own request. A joiner waits through an edge of
-      // its own, under its own signal, and whatever it does with the tools
-      // happens after that, back in its request (see "Effect inside" in
-      // documentation/architecture.md). A flight that will not answer for it
-      // sends it round again, to join a fresh attempt or to own one.
-      if (owner) return runEdge(owner);
-      const joined = await runEdge(this.joinCatalogRefresh(id, flight), {
-        signal: callOptions.signal,
-      });
-      if (joined) return joined;
-    }
-  }
-
-  private observeCatalogAccess(
-    id: string,
-    state: CatalogAccessObservation["state"],
-  ): void {
-    this.catalogAccess.set(id, {
-      state,
-      observedAt: new Date().toISOString(),
-    });
-  }
-
-  /**
-   * Start or join one shared refresh. A newly deferred task owns its scope,
-   * deadline, and teardown; no inbound signal or request scope crosses into it.
-   */
-  private deferCatalogRefresh(
-    id: string,
-    baseUrl: string,
-    expectedGeneration: number,
-    options: CatalogReadOptions,
-    requestScope?: object,
-  ): void {
-    const connector = this.connectors.get(id);
-    const defer = options.defer;
-    if (!connector || connector.staticTools || !defer) return;
-    // The refresh this request starts, if none of this generation is live.
-    // Its scope is closed however it ends, deadline included, before the
-    // flight completes.
-    const refresh = (flight: CatalogRefreshFlight) => withDeadlineEffect(
-      (signal) =>
-        Effect.gen({ self: this }, function* () {
-          const current = this.cache.get(id);
-          if (current && current.exp > Date.now()) return current.tools;
-          if (
-            expectedGeneration !== this.catalogGeneration(id) ||
-            this.invalidated.has(id)
-          ) {
-            return yield* Effect.fail(
-              new Error(
-                `Deferred catalog refresh of "${id}" was invalidated before it started.`,
-              ),
-            );
-          }
-          const refreshScope = {};
-          const activity = activityRequest(requestScope);
-          if (activity) bindActivityRequest(refreshScope, activity);
-          if (requestScope) sentSecretsForRequest(requestScope).include(sentSecretsForRequest(refreshScope));
-          const ctx = this.contextFor(id, baseUrl, refreshScope, {
-            signal,
-            timeoutMs: options.refreshTimeoutMs,
-            defer,
-          });
-          yield* closeScopeOnExit(connector, ctx, defer);
-          return yield* Effect.tryPromise({
-            try: () =>
-              this.refreshToolsWithContext(id, connector, ctx, true, flight),
-            catch: (error) => error,
-          });
-        }),
-      {
-        timeoutMs: options.refreshTimeoutMs,
-        timeoutError: new ConnectorCallError("timeout",
-          `deferred catalog refresh of "${id}" timed out after ${options.refreshTimeoutMs}ms`,
-        ),
-      },
-    );
-    const refreshFailed = (err: unknown) => {
-      logFailure(this.opts.logger, "deferred catalog refresh failed", failureRecord({ connector: id }, err));
-    };
-    const { flight, owner } = this.startCatalogRefresh(
-      id,
-      expectedGeneration,
-      options.refreshTimeoutMs,
-      (flight) => Effect.scoped(refresh(flight)),
-    );
-    if (owner) {
-      // Runs past this response, under the runtime's waitUntil below.
-      flight.deferredTail = detach(
-        Effect.catchCause(owner, (cause) =>
-          Effect.sync(() => refreshFailed(Cause.squash(cause))),
-        ),
-      );
-    }
-    // A stale reader that joins a blocking refresh logs its failure once for
-    // every reader after it, and waits through an edge of its own, no longer
-    // than the flight's bound.
-    flight.deferredTail ??= runEdge(this.joinCatalogRefresh(id, flight)).then(
-      () => {},
-      refreshFailed,
-    );
+    if (connector.staticTools) return markCatalogFreshness(connector.staticTools, Infinity);
+    const ctx = this.contextFor(id, baseUrl, requestScope, callOptions, scope);
+    let listed: ToolDef[];
     try {
-      defer(flight.deferredTail);
-    } catch (err) {
-      logFailure(
-        this.opts.logger,
-        "deferred catalog refresh could not attach to the runtime",
-        failureRecord({ connector: id }, err),
-      );
+      listed = await connector.listTools(ctx);
+    } catch (error) {
+      const fallback = error instanceof ConnectorCallError && error.code === "unavailable" ? await customCatalogFallback(ctx, id).catch(() => undefined) : undefined;
+      if (!fallback) throw sentSecretsForRequest(ctx.requestScope ?? ctx).redact(error);
+      listed = fallback;
     }
+    const tools = redactCatalog(ctx, listed).map(({ classification: _ignored, ...fact }) => fact);
+    if (tools.length > MAX_CATALOG_TOOLS || encoder.encode(JSON.stringify(tools)).byteLength > MAX_SERIALIZED_CATALOG_BYTES) {
+      throw new ConnectorCallError("connector_call_failed", "Downstream catalog exceeds the complete-catalog ceiling.", { retryable: false });
+    }
+    const facts = frozenFacts(structuredClone(tools));
+    const accepted = this.acceptToolNames(facts);
+    this.observeDroppedToolNames(connector, facts.length - accepted.length);
+    const review = catalogReviewOf(connector);
+    if (review) await observeReviewedDrift(connector, review, accepted, this.opts.logger);
+    if (catalogFetchedAt(ctx) === undefined) {
+      try { await storeCustomCatalogFallback(ctx, id, facts); }
+      catch (error) { logFailure(this.opts.logger, "catalog refresh observation failed", failureRecord({ connector: id }, error)); }
+      try { await observeUncachedCatalogRefresh(ctx, id, facts); }
+      catch (error) { logFailure(this.opts.logger, "catalog refresh observation failed", failureRecord({ connector: id }, error)); }
+    }
+    this.catalogObservedAt.set(id, catalogFetchedAt(ctx) ?? Date.now());
+    const provenance = catalogExpiry(ctx);
+    const freshUntil = provenance && !provenance.staleFallback ? provenance.expiresAt : 0;
+    this.catalogAccess.set(id, { state: freshUntil > Date.now() ? "fresh" : "stale", observedAt: new Date().toISOString() });
+    return markCatalogFreshness(facts, freshUntil);
   }
 
   /** The served catalog excludes control-character names; raw caches stay complete. */
@@ -1947,14 +1042,14 @@ export class Registry implements RegistryView {
     baseUrl: string,
     requestScope?: object,
     callOptions: ConnectorOperationOptions = {},
-    readOptions?: CatalogReadOptions,
+    scope?: RegistryScope,
   ): Promise<ToolDef[]> {
-    const { tools, freshUntil } = await this.loadDownstreamTools(
+    const tools = await this.loadDownstreamTools(
       id,
       baseUrl,
       requestScope,
       callOptions,
-      readOptions,
+      scope,
     );
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
@@ -1962,9 +1057,9 @@ export class Registry implements RegistryView {
     const overrides = this.classification[id];
     this.validateClassification(id, accepted, overrides);
     const review = catalogReviewOf(connector);
-    return markCatalogFreshness(review
+    return carryCatalogFreshness(tools, review
       ? await classifyCatalog(review, id, accepted, this.opts.logger, this.verifiedFacts, overrides)
-      : accepted.map(tool => this.publishUnreviewedTool(id, tool)), freshUntil);
+      : accepted.map(tool => this.publishUnreviewedTool(id, tool)));
   }
 
   private publishUnreviewedTool(id: string, tool: ToolDef): ToolDef {
@@ -1989,165 +1084,13 @@ export class Registry implements RegistryView {
     }
   }
 
-  /** Cached downstream listing with in-memory + persisted serializable layers. */
-  private async loadDownstreamTools(
-    id: string,
-    baseUrl: string,
-    requestScope?: object,
-    callOptions: ConnectorOperationOptions = {},
-    readOptions?: CatalogReadOptions,
-  ): Promise<{ tools: ToolDef[]; freshUntil: number }> {
-    const connector = this.connectors.get(id);
-    if (!connector) throw new Error(`Unknown connector "${id}"`);
-    if (connector.staticTools) return { tools: connector.staticTools, freshUntil: Infinity };
 
-    const now = Date.now();
-    const requestGeneration = this.catalogGeneration(id);
-    const hit = this.cache.get(id);
-    if (hit && hit.exp > now) {
-      if (readOptions?.defer) this.observeCatalogAccess(id, "fresh");
-      return { tools: hit.tools, freshUntil: hit.exp };
-    }
-
-    let stale =
-      hit && hit.staleUntil > now
-        ? { tools: hit.tools, staleUntil: hit.staleUntil }
-        : undefined;
-    if (this.persistToolCatalog && !this.invalidated.has(id)) {
-      const generation = this.catalogGeneration(id);
-      let persisted: PersistedCatalog | null = null;
-      try {
-        persisted = await runOnPartition(
-          this.readCatalog(id, now),
-          this.opts,
-        );
-      } catch (err) {
-        logFailure(this.opts.logger, "catalog read failed", failureRecord({ connector: id }, err));
-      }
-      if (generation !== this.catalogGeneration(id)) {
-        persisted = null;
-        stale = undefined;
-      }
-      // Storage can yield while another request finishes a live refresh. Read
-      // the shared cache again before an older manifest gets any authority.
-      // The candidate with the later fresh deadline wins; both candidates have
-      // already passed their own fingerprint and completeness checks.
-      const reconciledAt = Date.now();
-      const current = this.cache.get(id);
-      const usableCurrent =
-        current && current.staleUntil > reconciledAt ? current : undefined;
-      if (usableCurrent) {
-        stale = {
-          tools: usableCurrent.tools,
-          staleUntil: usableCurrent.staleUntil,
-        };
-        if (usableCurrent.exp > reconciledAt) {
-          if (readOptions?.defer) this.observeCatalogAccess(id, "fresh");
-          return { tools: usableCurrent.tools, freshUntil: usableCurrent.exp };
-        }
-      }
-      if (
-        persisted &&
-        persisted.staleUntil > reconciledAt &&
-        (!usableCurrent || persisted.expiresAt > usableCurrent.exp)
-      ) {
-        const accepted = this.acceptToolNames(persisted.tools);
-        this.observeDroppedToolNames(connector, persisted.tools.length - accepted.length);
-        this.observeCatalogDrift(connector);
-        this.cache.set(id, {
-          tools: persisted.tools,
-          fingerprint: persisted.fingerprint,
-          fetchedAt: persisted.fetchedAt,
-          exp: persisted.expiresAt,
-          staleUntil: persisted.staleUntil,
-        });
-        if (persisted.expiresAt > reconciledAt) {
-          if (readOptions?.defer) this.observeCatalogAccess(id, "fresh");
-          return { tools: persisted.tools, freshUntil: persisted.expiresAt };
-        }
-        stale = {
-          tools: persisted.tools,
-          staleUntil: persisted.staleUntil,
-        };
-      }
-    }
-
-    if (
-      stale &&
-      stale.staleUntil > Date.now() &&
-      readOptions?.defer &&
-      requestGeneration === this.catalogGeneration(id) &&
-      !this.invalidated.has(id)
-    ) {
-      this.deferCatalogRefresh(
-        id,
-        baseUrl,
-        requestGeneration,
-        readOptions,
-        requestScope,
-      );
-      // Invalidation can land synchronously while the refresh is attached.
-      // Repeat the authority check at the exact stale publication point.
-      if (
-        stale.staleUntil > Date.now() &&
-        requestGeneration === this.catalogGeneration(id) &&
-        !this.invalidated.has(id)
-      ) {
-        this.observeCatalogAccess(id, "stale");
-        return { tools: stale.tools, freshUntil: 0 };
-      }
-    }
-
-    try {
-      const tools = await this.refreshTools(
-        id,
-        baseUrl,
-        requestScope,
-        callOptions,
-      );
-      if (readOptions?.defer) this.observeCatalogAccess(id, "fresh");
-      const accepted = this.cache.get(id);
-      return { tools, freshUntil: accepted?.tools === tools ? accepted.exp : 0 };
-    } catch (err) {
-      if (
-        stale &&
-        stale.staleUntil > Date.now() &&
-        requestGeneration === this.catalogGeneration(id) &&
-        !this.invalidated.has(id)
-      ) {
-        if (readOptions?.defer) this.observeCatalogAccess(id, "stale");
-        logFailure(
-          this.opts.logger,
-          "catalog refresh failed; serving stale catalog",
-          failureRecord({ connector: id }, err),
-        );
-        return { tools: stale.tools, freshUntil: 0 };
-      }
-      throw err;
-    }
-  }
-
-  /**
-   * Coalesce one connector's catalog traversal inside one inbound request. The
-   * WeakMap neither roots the request scope nor lets its connector context
-   * escape into another request; settled entries are also removed eagerly.
-   *
-   * The read owns its signal, and each caller waits under its own: one that
-   * is cancelled while others wait leaves with its own failure, and the read
-   * is cancelled only when every caller has gone (src/runtime/shared-read.ts).
-   *
-   * The deployment-wide flight below this layer coalesces the actual live
-   * refresh across requests. Its owner's context governs the listing, and its
-   * owner's deadline bounds it; later callers join only its result, never its
-   * request scope, and a failure that was the owner's alone sends them to a
-   * fresh attempt rather than to them.
-   */
   async getTools(
     id: string,
     baseUrl: string,
     requestScope?: object,
     callOptions: ConnectorOperationOptions = {},
-    readOptions?: CatalogReadOptions,
+    scope?: RegistryScope,
   ): Promise<ToolDef[]> {
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
@@ -2157,7 +1100,7 @@ export class Registry implements RegistryView {
         baseUrl,
         requestScope,
         callOptions,
-        readOptions,
+        scope,
       );
     }
 
@@ -2167,7 +1110,8 @@ export class Registry implements RegistryView {
       this.requestCatalogLoads.set(requestScope, loads);
     }
     const requestLoads = loads;
-    let load = requestLoads.get(id);
+    const key = JSON.stringify([id, scope?.principalKey, scope?.subjectKey, scope?.caller]);
+    let load = requestLoads.get(key);
     if (!load) {
       const started: SharedRead<ToolDef[]> = new SharedRead(
         (signal) =>
@@ -2176,18 +1120,18 @@ export class Registry implements RegistryView {
             baseUrl,
             requestScope,
             { ...callOptions, signal },
-            readOptions,
+            scope,
           ),
         // Settled or cancelled, the read leaves the map before any caller
         // resumes, so the next one asks the caches afresh.
         () => {
-          if (requestLoads.get(id) === started) requestLoads.delete(id);
+          if (requestLoads.get(key) === started) requestLoads.delete(key);
           if (requestLoads.size === 0) {
             this.requestCatalogLoads.delete(requestScope);
           }
         },
       );
-      requestLoads.set(id, started);
+      requestLoads.set(key, started);
       load = started;
     }
     return runEdge(load.join(callOptions.signal));
@@ -2209,8 +1153,8 @@ export class Registry implements RegistryView {
 
   /** Age of a complete cache entry; reads never refresh it. */
   catalogAgeMs(id: string): number | null {
-    const entry = this.cache.get(id);
-    return entry ? Math.max(0, Date.now() - entry.fetchedAt) : null;
+    const observedAt = this.catalogObservedAt.get(id);
+    return observedAt === undefined ? null : Math.max(0, Date.now() - observedAt);
   }
 
   /** Best-effort connector status for the operator UI. */
@@ -2219,10 +1163,11 @@ export class Registry implements RegistryView {
     baseUrl: string,
     requestScope: object = {},
     callOptions: ConnectorOperationOptions = {},
+    scope?: RegistryScope,
   ): Promise<ConnectorStatus> {
     const connector = this.connectors.get(id);
     if (!connector) return ownStatus({ state: "error", message: "Unknown connector" });
-    const ctx = this.contextFor(id, baseUrl, requestScope, callOptions);
+    const ctx = this.contextFor(id, baseUrl, requestScope, callOptions, scope);
     // Whatever the state turns out to be, it carries the drift the last
     // refresh saw. Reading it is a lookup, not a probe: a connector that has
     // listed nothing yet reports nothing, and status never lists on its own to
@@ -2262,41 +1207,25 @@ export class Registry implements RegistryView {
       }
     }
     try {
-      await this.getTools(id, baseUrl, requestScope, callOptions);
+      await this.getTools(id, baseUrl, requestScope, callOptions, scope);
       return withObservations({ state: "ok" });
     } catch (err) {
       return withObservations(failureStatus(id, err));
     }
   }
 
-  private markCatalogInvalid(id: string): void {
-    this.advanceCatalogGeneration(id);
-    this.cache.delete(id);
-    this.invalidated.add(id);
-  }
+  /** Rotate the storage generation; in-flight old readers cannot republish it. */
+  invalidate(id: string): void { void this.invalidateStored(id); }
 
-  private deleteStoredCatalog(id: string): Promise<void> {
-    return this.enqueueCatalogMutation(
-      id,
-      warnOnFailure(
-        this.deleteCatalog(id),
-        id,
-        "catalog invalidation failed",
-      ),
-    );
-  }
-
-  /** Drop a connector's cached tool list (e.g. after auth completes). */
-  invalidate(id: string): void {
-    this.markCatalogInvalid(id);
-    if (this.persistToolCatalog) void this.deleteStoredCatalog(id);
-  }
-
-  /** Drop both in-memory and persisted tool catalogs. */
   async invalidateStored(id: string): Promise<void> {
-    this.markCatalogInvalid(id);
-    if (this.persistToolCatalog) await this.deleteStoredCatalog(id);
+    this.catalogObservedAt.delete(id);
+    try {
+      await invalidateCatalogCache(this.opts.catalogStorage ?? this.opts.storage, id);
+    } catch (error) {
+      logFailure(this.opts.logger, "catalog invalidation failed", failureRecord({ connector: id }, error));
+    }
   }
+
 }
 
 class ScopedRegistryView implements RegistryView {
@@ -2341,6 +1270,11 @@ class ScopedRegistryView implements RegistryView {
     return this.registryFor(id)?.getConnector(id);
   }
 
+  getResourceConnector(id: string): Connector | undefined {
+    if (this.scope.toolAccess?.has(id) || this.scope.guardedToolAccess?.has(id)) return undefined;
+    return this.getConnector(id);
+  }
+
   resolveAddress(
     address: string,
   ): { connector: Connector; toolName: string } | null {
@@ -2355,7 +1289,7 @@ class ScopedRegistryView implements RegistryView {
     if (!registry) {
       throw new Error(`Unknown connector "${args[0]}"`);
     }
-    const tools = await registry.getTools(...args);
+    const tools = await registry.getTools(args[0], args[1], args[2], args[3], this.scope);
     const guarded = this.scope.guardedToolAccess?.get(args[0]);
     const granted = this.scope.toolAccess?.get(args[0]) ?? guarded;
     if (!granted) return tools;
@@ -2379,7 +1313,7 @@ class ScopedRegistryView implements RegistryView {
   ): ConnectorContext {
     const registry = this.registryFor(args[0]);
     if (!registry) throw new Error(`Unknown connector "${args[0]}"`);
-    return attachCaller(registry.contextFor(...args), this.scope.caller);
+    return registry.contextFor(args[0], args[1], args[2], args[3], this.scope);
   }
 
   admitCall(
@@ -2454,7 +1388,7 @@ class ScopedRegistryView implements RegistryView {
   ): Promise<ConnectorStatus> {
     const registry = this.registryFor(args[0]);
     return registry
-      ? registry.statusFor(...args)
+      ? registry.statusFor(args[0], args[1], args[2], args[3], this.scope)
       : Promise.resolve({ state: "error", message: "Unknown connector" });
   }
 

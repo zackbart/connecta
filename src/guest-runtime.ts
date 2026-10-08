@@ -113,6 +113,7 @@ export function guestInitializer(): string {
     search: provider.search,
     describe: provider.describe,
     call: provider.call,
+    read: provider.read,
     result: provider.result,
     skill: provider.skill,
     emit(block) { return trackEmission(emit(block)); }

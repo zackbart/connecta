@@ -18,7 +18,7 @@ import { vercel } from "../src/providers/vercel/index.js";
 import { tithely } from "../src/providers/tithely/index.js";
 import { connectorGuideSummary } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { activityFor, activitySink, invokeTestCall, seedCatalog, silentLogger } from "./helpers.js";
+import { activityFor, activitySink, invokeTestCall, silentLogger } from "./helpers.js";
 import type { Connector, KVStorage } from "../src/types.js";
 
 const BASE_URL = "https://connecta.example";
@@ -46,7 +46,7 @@ function deployment(storage: KVStorage, connectors: Connector[], credentials = f
     storage,
     logger: silentLogger,
     publicUrl: BASE_URL,
-    discovery: { persistCatalog: true },
+    discovery: { catalogTtlSeconds: 300 },
     ...(credentials ? { vault: encryptedCredentialVault(storage, CREDENTIAL_KEY) } : {}),
     connectors,
   });
@@ -271,9 +271,11 @@ describe.each(providers)("$name() inside a real deployment", ({ factory, ids, to
 
   it("keeps catalogs and storage in separate namespaces", async () => {
     const storage = memoryStorage();
-    await seedCatalog(storage, ids[0], toolName);
-    await seedCatalog(storage, ids[1], secondToolName);
     const { registry } = factory(storage);
+    if (!staticCatalog) {
+      vi.spyOn(registry.getConnector(ids[0])!, "listTools").mockResolvedValue([{ name: toolName }]);
+      vi.spyOn(registry.getConnector(ids[1])!, "listTools").mockResolvedValue([{ name: secondToolName }]);
+    }
     const firstNames = (await registry.getTools(ids[0], BASE_URL)).map((tool) => tool.name);
     const secondNames = (await registry.getTools(ids[1], BASE_URL)).map((tool) => tool.name);
     if (staticCatalog) {
@@ -294,7 +296,6 @@ describe.each(providers)("$name() inside a real deployment", ({ factory, ids, to
 
   it("meters and observes each connector separately", async () => {
     const storage = memoryStorage();
-    await seedCatalog(storage, ids[0], toolName);
     const { registry } = factory(storage);
     expect(Object.keys(registry.callAdmissionSnapshot()).sort()).toEqual([...admissionIds].sort());
     const permit = await registry.admitCall(meteredId, { toolName, args: {} });

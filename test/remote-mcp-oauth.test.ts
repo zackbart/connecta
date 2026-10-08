@@ -539,12 +539,16 @@ describe("remoteMcp() startAuth", () => {
   it("force fences an in-flight connect before wiping", async () => {
     const storage = memoryStorage();
     let started = 0;
-    // A transport whose start() rejects after a tick, standing in for a slow
-    // connect that is still in flight when force lands.
+    const reachedStart = deferred<void>();
+    const releaseStart = deferred<void>();
+    // Hold the first transport at start, regardless of cache lookup timing.
     const slowFailing = (): Transport => ({
       async start() {
         started++;
-        await new Promise((r) => setTimeout(r, 5));
+        if (started === 1) {
+          reachedStart.resolve();
+          await releaseStart.promise;
+        }
         throw new Error("ECONNREFUSED");
       },
       async send() {},
@@ -559,10 +563,12 @@ describe("remoteMcp() startAuth", () => {
 
     // Kick a connect without awaiting so it is in flight when force runs.
     const inflight = c.listTools(context).catch(() => {});
+    await reachedStart.promise;
     const result = await c.startAuth!(context, { force: true });
+    releaseStart.resolve();
     await inflight;
 
-    // force awaited the in-flight connect (fence) then ran its own connect.
+    // Force abandoned the old connection, then ran its own connect.
     expect(started).toBe(2);
     // Network failure on an oauth connector surfaces as error, not auth_required.
     expect(result.state).toBe("error");
@@ -2366,29 +2372,7 @@ describe("remoteMcp() dispatched refresh grants", () => {
    * token endpoint, measured on a store of its own: a follower makes the
    * same ones before it joins a flight.
    */
-  async function grantReadsBeforeRefresh(): Promise<number> {
-    const seeded = await seededStorage();
-    let reads = 0;
-    let counting = true;
-    const storage: KVStorage = { ...seeded,
-      get: async (key) => {
-        if (counting && key === GRANT) reads++;
-        return seeded.get(key);
-      },
-    };
-    downstream({
-      current: () => {
-        counting = false;
-        return Response.json({ error: "server_error" }, { status: 503 });
-      },
-    });
-    const passive = scope(storage);
-    await failureOf(connector().listTools(passive));
-    return reads;
-  }
-
   it("gives every caller joined on a dispatched failure the same re-consent verdict (INV-5)", async () => {
-    const perCaller = await grantReadsBeforeRefresh();
     const seeded = await seededStorage();
     // Hold the owner's token request until every follower has joined its
     // flight, so none can arrive after the flight ends and redeem again.
@@ -2405,10 +2389,9 @@ describe("remoteMcp() dispatched refresh grants", () => {
     const scopes = Array.from({ length: 3 }, () => scope(storage));
     const calls = Promise.all(scopes.map((s) => failureOf(c.listTools(s))));
     await gate.ready;
-    // The owner reads the grant perCaller times before its token request; a
-    // follower joins before the owner's three shared-lease grant reads.
-    // Release once every caller has read and the reads have gone quiet.
-    await vi.waitFor(() => expect(grantReads).toBeGreaterThanOrEqual(3 * perCaller - 6));
+    // All callers reached their 401 and the owner dispatched its refresh.
+    // Wait for followers' grant reads to settle before releasing the response;
+    // joining a local flight need not repeat the owner's storage reads.
     await vi.waitFor(async () => {
       const seen = grantReads;
       await new Promise((resolve) => setTimeout(resolve, 5));

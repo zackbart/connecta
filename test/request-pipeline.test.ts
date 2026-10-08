@@ -168,7 +168,7 @@ describe("request pipeline lifetime", () => {
       connectors: [connector],
       auth: [],
       logger: silentLogger,
-      discovery: { probeTimeoutMs: 60_000, persistCatalog: false },
+      discovery: { probeTimeoutMs: 60_000, catalogTtlSeconds: 0 },
     });
     const controller = new AbortController();
     const pending = connecta.fetch(mcpRpc(

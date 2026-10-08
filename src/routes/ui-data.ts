@@ -263,6 +263,7 @@ export function uiData(
           // schema even if the plugin seam returned one.
           ...(status.catalogDrift ? { catalogDrift: status.catalogDrift } : {}),
           ...(status.catalogAccess ? { catalogAccess: status.catalogAccess } : {}),
+          ...(status.resourceTemplateRefusals ? { resourceTemplateRefusals: status.resourceTemplateRefusals } : {}),
           ...(status.state === "auth_required" && c.startAuth && options.mayManage?.(c.id) && options.oauthConnectUrl
             ? { authorizationUrl: yield* attempt(() => options.oauthConnectUrl!(c.id)) }
             : {}),

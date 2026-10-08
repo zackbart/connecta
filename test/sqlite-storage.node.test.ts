@@ -100,7 +100,7 @@ describe("sqliteStorage in a file", () => {
     const processes = [openSqlite(path), openSqlite(path)].map((db) => new Registry([], {
       logger: silentLogger,
       results: { maxStashEntries: 64 },
-      persistToolCatalog: false,
+
       storage: sqliteStorage(track(db)),
     }));
     const accepted = await Promise.all(Array.from({ length: 65 }, (_, index) =>

@@ -2,6 +2,7 @@ import type { OperatorConnectorOverlay, OperatorTool, OperatorUiContract, Operat
 import type {
   CatalogAccessObservation,
   CatalogDriftReport,
+  ResourceTemplateRefusalCode,
 } from "../types.js";
 
 /** Tool verdicts, independent of the selected pool's trust. */
@@ -102,6 +103,7 @@ export interface UiConnector {
   catalogDrift?: CatalogDriftReport;
   /** Last agent-facing catalog read in this runtime; never persisted. */
   catalogAccess?: CatalogAccessObservation;
+  resourceTemplateRefusals?: ResourceTemplateRefusalCode[];
 }
 
 export type CredentialManagementCapability =

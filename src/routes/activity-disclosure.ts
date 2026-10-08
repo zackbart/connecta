@@ -29,7 +29,7 @@ export function activityEventVisible(
 ): boolean {
   const connector = registry.getConnector(event.connectorId);
   if (!connector || event.pool !== undefined && !admittedPools.has(event.pool)) return false;
-  if (connector.authScope === "personal") {
+  if (connector.authScope === "personal" || event.kind === "catalog_drift" && event.actorBasis === "principal") {
     const owner = authz.identity.principal;
     if (!owner || event.actorBasis !== "principal" || event.actor.id !== owner.id || event.actor.namespace !== owner.namespace) return false;
   }

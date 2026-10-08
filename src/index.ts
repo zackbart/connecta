@@ -284,7 +284,6 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     catalogDriftActivity: resolved.activity?.store
       ? {
           sink: resolved.activity.store,
-          recordDrift: resolved.activity.recordDrift,
           recordChange: resolved.activity.recordChange,
           serverInfo: resolved.serverInfo,
           ...(resolved.activity.deploymentId !== undefined
@@ -293,8 +292,8 @@ export function createConnecta(config: ConnectaConfig): Connecta {
         }
       : undefined,
     toolCacheTtlSeconds: resolved.discovery.catalogTtlSeconds,
-    persistToolCatalog: resolved.discovery.persistCatalog,
-    toolCatalogStaleSeconds: resolved.discovery.staleCatalogSeconds,
+    catalogMinTtlSeconds: resolved.discovery.catalogMinTtlSeconds,
+    catalogMaxTtlSeconds: resolved.discovery.catalogMaxTtlSeconds,
     maxResultBytes: resolved.calls.maxResultBytes,
     results: resolved.results,
     classification: resolved.classification,
@@ -427,7 +426,7 @@ export { validateToolInput } from "./validate.js";
 export type { ValidateToolInputOptions } from "./validate.js";
 export { memoryStorage } from "./storage/memory.js";
 export { CONNECTA_VERSION } from "./version.js";
-export type { GuestApi, GuestResult, GuestResultPage, GuestBlock } from "./guest-types.js";
+export type { GuestApi, GuestResourceResult, GuestResult, GuestResultPage, GuestBlock } from "./guest-types.js";
 // Registry is reachable through `Connecta.registry`, so its type is public;
 // the class itself, the credential vault, and the meta-tool/sandbox factories
 // are internal factoring and are deliberately not part of the API surface.
@@ -503,7 +502,6 @@ export type {
   ActivitySink,
   ActivityStore,
   AgentFriction,
-  CatalogDriftActivityEvent,
   ToolCallActivityEvent,
 } from "./activity.js";
 

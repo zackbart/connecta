@@ -59,6 +59,7 @@ describe.each([["memory", false], ["delayed", true]] as const)("round-1 OAuth re
     const storage = backingStore(delayed);
     const metadata = "https://resource.example/.well-known/oauth-protected-resource";
     const resource = "https://resource.example/mcp";
+    const firstEntered = deferred<void>();
     const secondEntered = deferred<void>();
     const releaseSecond = deferred<void>();
     let discoveries = 0;
@@ -67,7 +68,7 @@ describe.each([["memory", false], ["delayed", true]] as const)("round-1 OAuth re
       const url = new URL(input);
       if (url.href === metadata) {
         const n = ++discoveries;
-        if (n === 1) await secondEntered.promise;
+        if (n === 1) { firstEntered.resolve(); await secondEntered.promise; }
         else { secondEntered.resolve(); await releaseSecond.promise; }
         return Response.json({ resource, authorization_servers: [n === 1 ? A : B] });
       }
@@ -84,6 +85,9 @@ describe.each([["memory", false], ["delayed", true]] as const)("round-1 OAuth re
     const ctx = () => ({ ...connectorContext(storage), requestScope: {} });
     const firstConnector = c();
     const first = firstConnector.startAuth!(ctx());
+    // Bind A to the first metadata exchange before starting B; async cache
+    // fingerprinting does not promise launch-order network dispatch.
+    await firstEntered.promise;
     const second = c().startAuth!(ctx());
     await secondEntered.promise;
     const startA = await first;

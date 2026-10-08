@@ -89,7 +89,7 @@ Connecta passes exactly one provider, named `connecta`. An executor must:
 
 1. **Expose each provider as a guest global** whose properties are its `fns`,
    called with the program's arguments and awaited. Connecta supplies `search`,
-   `describe`, `call`, `result`, `skill`, and `emit`.
+   `describe`, `call`, `read`, `result`, `skill`, and `emit`.
 2. **Evaluate `prelude` after the provider globals exist and before the
    program.** It is trusted host code that installs the immutable namespace
    and waits for emission acknowledgements. Capture runner intrinsics first;
@@ -135,7 +135,7 @@ statements, and bare statement bodies are outside host recovery. QuickJS may
 wrap a bare body when driven directly; that is outside the portable contract.
 
 **P2.** The only capabilities in the contract are `connecta.search`,
-`connecta.describe`, `connecta.call`, `connecta.result`, `connecta.skill`, `connecta.emit`, and `console.log` /
+`connecta.describe`, `connecta.call`, `connecta.read`, `connecta.result`, `connecta.skill`, `connecta.emit`, and `console.log` /
 `console.warn` / `console.error`, captured and returned. Anything else a runtime
 exposes is outside the portable contract and must not be used. QuickJS grants
 none of it. A loader-only Dynamic Worker denies external egress and filesystem
@@ -178,7 +178,7 @@ belonged to shortcut dispatch and stay retired; nothing reuses those ids.
 
 ## The surface
 
-Six functions: `search`, `describe`, `call`, `result`, `skill`, and `emit`.
+Seven functions: `search`, `describe`, `call`, `read`, `result`, `skill`, and `emit`.
 All return awaitable values; emission also works without `await`. The namespace
 has no inherited members. Unknown properties are undefined, and calling them
 fails as a guest `TypeError`. The host also dispatches only own members of `fns`.
@@ -397,6 +397,66 @@ successful call. No discovery read, timer, refresh, background job, or storage
 adapter executes or persists work for this cache: the result-sampling refusal in
 [#282](https://github.com/zackbart/connecta/issues/282) stands.
 
+### connecta.read
+
+```js
+const resource = await connecta.read(
+  "resource://docs/" + encodeURIComponent("docs://manual/start"),
+);
+return resource.contents.map(content => content.text);
+```
+
+**S10.** Reads a downstream resource through a configured connector that
+implements `readResource`. The routing URI is exactly
+`resource://<connectorId>/<encodeURIComponent(downstreamUri)>`, at most 8,192
+UTF-8 bytes. The downstream URI must have a scheme and no control characters.
+Encode it once, including any path, query and fragment. Bare URLs, malformed
+encoding, routing userinfo, ports and extra routing query or fragment fields
+fail with `invalid_args`. Remote MCP connectors first load the complete,
+paginated resources and URI-template inventories through the same host-auth
+partitioned catalog cache. The decoded URI must exactly match an advertised
+resource or match an advertised URI template. An unmatched URI fails with a
+fixed `not_found` message before any downstream read. Template matching keeps
+the scheme and authority fixed and supports bounded RFC 6570 scalar and list
+expansions, including prefix modifiers and safe multi-segment `{+path}` and
+`{/p*}` paths. Variables cannot supply authority, backslashes, dot segments,
+a scheme change, query delimiters, controls or Unicode format characters,
+including through repeated percent encoding. The matcher scans forward to the
+leftmost following literal without backtracking. Adjacent expressions and
+literals that the preceding expression can contain are refused with
+`resource_template_ambiguous`. Matching all templates is capped at 262144
+combined template and URI characters per read, with
+`resource_match_budget_exceeded` beyond that bound. Operator status retains
+each typed refusal once, without URI or template text. Mixed exploded
+composites remain unsupported.
+Connecta passes an admitted decoded URI as an opaque MCP `resources/read`
+argument to the configured endpoint. It never fetches that
+URI or creates a connector from it.
+
+Resources are protocol reads in both `read-only` and `trusted` pools. A read
+requires a grant to the whole connector through the endpoint/pool and identity
+intersection. Exact-tool grants, including guarded grants, authorize no
+resources. An absent, hidden, tool-restricted or resource-incapable connector
+fails with `unknown_address`. The URI and extra arguments cannot select a
+different credential owner or downstream subject. Personal credentials come
+from the admitted principal, just as they do for tool calls.
+
+The return is the downstream JSON `{ contents }` result, with text or base64
+blob entries and available metadata. It is not unwrapped or JSON-parsed.
+Every read spends one shared host call and uses the connector's call admission
+with `toolName: "resources/read"` and `args: { uri: downstreamUri }`. One deadline
+covers admission and dispatch; cancellation ends the wait and releases its
+permit. Reads share the execution's downstream request scope. They make one
+attempt, bypass response caching, and never start authorization. A downstream
+resource miss is `not_found`; a mid-call input request is
+`input_required_unsupported`. Other failures use the existing typed error
+contract, including credential recovery. Values and failures cross the same
+credential redaction boundary as `call`. Diagnostics use the fixed operation
+name `read`; resource URIs and bodies enter no activity or diagnostic record.
+This function exposes no resource listing, template discovery, subscriptions
+or upward proxy to programs. Native upward skill resources are separate
+[Phase 3](https://github.com/zackbart/connecta/issues/707) work.
+
 ### connecta.emit
 
 ```js
@@ -415,7 +475,7 @@ access (`L4`); Workers guest computation may continue briefly until teardown (`X
 | Channel | Shape | Typed? |
 | --- | --- | --- |
 | A caught Connecta host failure | `Error` with `message`, `code`, `retryable`, and `details` | yes |
-| An uncaught **tool or discovery** failure, as the model sees it | `{ error: { code, message, retryable, … } }` with `isError` | yes |
+| An uncaught **tool, resource or discovery** failure, as the model sees it | `{ error: { code, message, retryable, … } }` with `isError` | yes |
 | Program or execution failure (`E5`, `E6`, a bridge bound in `L6`) | `{ error: { code, message, retryable, details? } }` | yes |
 
 Both executor bridges rebuild typed host rejections as guest Errors and retain
@@ -425,7 +485,7 @@ JSON-serialized characters including quotes and an `…` marker when clipped.
 classification and fits 3,700 serialized characters. Optional recovery metadata
 that would exceed that bound is omitted whole, preserving `code`, `message`,
 `retryable`, and `retryAfterMs`, because a clipped recovery address or argument
-describes a different call. This covers `call`, `search`, `describe`, `result`, `skill`, `emit`, and
+describes a different call. This covers `call`, `read`, `search`, `describe`, `result`, `skill`, `emit`, and
 write and emitted-output budgets. Program-authored errors use `program_error`; code must never
 parse error prose. An `unavailable` classification may add `details.host`, an
 HTTP(S) origin of at most 253 UTF-8 bytes, and `details.code`, a validated
@@ -438,7 +498,7 @@ caller what to do next, and never invents a cause it was not told.
 
 | Code | Raised when | `retryable` |
 | --- | --- | --- |
-| `unknown_address` | no connector owns the address | false |
+| `unknown_address` | no visible connector owns the tool address or grants the resource reader | false |
 | `unknown_tool` | the connector has no such tool | false |
 | `destructive_tool_requires_approval` | a program in a read-only pool attempted a write (`E4`) | false |
 | `auth_required` | the credential is missing, expired, or rejected | false |
@@ -590,7 +650,7 @@ change the counts. These numbers are outside the program's returned `result`.
 **R7.** Diagnostic timing separates admission, provider setup, total executor
 wall time, catalog work, and connector work. Catalog and connector values are
 cumulative, so parallel work can exceed executor wall time. Each used operation
-kind (`search`, `describe`, `call`) gets one aggregate with count, failures,
+kind (`search`, `describe`, `call`, `read`) gets one aggregate with count, failures,
 duration, returned serialized bytes, and catalog/connector time.
 
 **R8.** Diagnostics contain measurements and fixed operation names only: no
@@ -651,7 +711,7 @@ exactly as much as the return value. Preservation is re-emission of the raw
 downstream block, so `S5`'s uncapped fallthrough is contract.
 
 **M7.** `emit` alone spends no host-call budget (`L4`); `search`, `describe`,
-`call`, `result`, and `skill` share it. Text also observes `R2`.
+`call`, `read`, `result`, and `skill` share it. Text also observes `R2`.
 
 **M8.** `emit` is a provider function; blocks cross the guest boundary once as
 an argument. `ExecuteResult` remains compatible with upstream codemode's types;
@@ -730,7 +790,7 @@ because connecta enforces them above the sandbox:
 
 | Bound | Value |
 | --- | --- |
-| Host calls per execution, shared by `search`, `describe`, and `call` | 20 by default, `execute.maxHostCalls` |
+| Host calls per execution, shared by `search`, `describe`, `call`, and `read` | 20 by default, `execute.maxHostCalls` |
 | Trusted-pool writes per run, on top of the host calls they also spend (`W10`) | 10 by default, `execute.maxWrites` |
 | Deadline per host call | 15 s, `execute.hostCallTimeoutMs`; one deadline covers catalog resolution, admission, and the connector call |
 | Discovery page | ≤ 100 tools, ≤ 256,000 serialized bytes |
@@ -740,7 +800,7 @@ because connecta enforces them above the sandbox:
 | Result | 24,000 serialized characters |
 | Logs presented to the model | 4,000 characters |
 
-Every `call`, `search`, and `describe` spends one host call on entry, before
+Every `call`, `read`, `search`, and `describe` spends one host call on entry, before
 resolution, validation, or dispatch. Catching a local refusal refunds nothing.
 The first call beyond the budget ends the host run with one non-retryable
 `budget_exceeded` (`E2`). Its bridge stays pending until lease disposal so guest
@@ -1026,6 +1086,7 @@ rejection, and branded adapter acceptance across module copies.
 | `S7` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (parallel calls and shared admission) |
 | `S8`, `E1`, `X11` | both guest-contract executors (caught call, discovery, utility, removed-function, and forgery cases; typed promise rejections), `test/quickjs-executor.node.test.ts` (oversized messages, private transport, forged outcomes) |
 | `S9` | `test/result-shapes.test.ts` (value exclusion, bounds, merging, LRU and time expiry, runtime isolation, read-only admission, declared precedence, definition invalidation, unwrapped MCP results, discovery provenance, copy isolation, failure isolation) |
+| `S10` | `test/resource-read.test.ts` (qualified routing, whole-connector grants, personal credentials, redaction, admission, timeout, cancellation and downstream MCP reads), both guest-contract executors (successful resource reads and caught/uncaught typed failures) |
 | `E2`, `E8` | `test/guest-api-contract.test.ts` (code → `retryable`, caught, parallel, and uncaught validation recovery, a conflict's bounded `current`), `test/meta-tools-call.test.ts` (direct, destructive, provider fallback), `test/validate.test.ts` (bounded payload-free findings), `test/errors.test.ts` |
 | `E3`, `E4` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`auth_required`, destructive reroute), `test/program-writes.test.ts` (the refusal's `nextAction`, nothing sent, a caught refusal) |
 | `E5` | `test/guest-api-contract.test.ts` (execution-failure channel, in-flight `cancelled`), `test/execute.test.ts` (admission), `test/executor-admission.test.ts`, `test/quickjs-executor.node.test.ts` (mid-run shutdown) |

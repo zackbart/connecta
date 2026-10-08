@@ -66,7 +66,7 @@ function fixture(legacy = false, destructive = false) {
     }, async () => ({ content: [] }));
     // Raw handlers let the server return an invalid result deliberately, while
     // its registered schema still enforces header/body parity before dispatch.
-    server.server.setRequestHandler("tools/list", async () => ({ tools: definitions }));
+    server.server.setRequestHandler("tools/list", async () => ({ tools: definitions, ttlMs: 300_000, cacheScope: "public" }));
     server.server.setRequestHandler("tools/call", async () => ({
       content: [{ type: "text", text: "ran" }],
       ...(output !== undefined ? { structuredContent: output } : {}),
@@ -141,7 +141,14 @@ describe.each(cases)("downstream definitions from $cache via $caller in $view", 
       identity: { connectorAccess: () => allowed },
       pools: { readers: { tools: allowed, grant: () => true } },
     }) : undefined;
-    if (deployment) closers.push(() => deployment.close());
+    if (deployment) {
+      closers.push(() => deployment.close());
+      // Warm the admitted pool's own host partition. A root catalog cannot
+      // seed a different pool, even when the downstream marks it public.
+      const warmed = await mcpRpc(deployment, "tools/call", { name: "search_tools", arguments: { query: "numeric" } }, { query: "/readers", token: "reader" });
+      expect(warmed.status).toBe(200);
+      expect((await readJsonRpc(warmed)).result).not.toMatchObject({ isError: true });
+    }
     const invoke = async (address: string, args: Record<string, unknown>): Promise<ToolResult> => {
       target = { address, args };
       const code = `async () => await connecta.call(${JSON.stringify(address)}, ${JSON.stringify(args)})`;
@@ -225,7 +232,7 @@ describe.each(cases)("downstream definitions from $cache via $caller in $view", 
   });
 });
 
-it("still calls tools from older stored catalogs without the added metadata or an input schema", async () => {
+it("ignores retired registry catalogs and obtains current downstream definitions", async () => {
   const f = fixture();
   const storage = memoryStorage();
   await seedCatalog(storage, "down", "numeric");
@@ -233,7 +240,7 @@ it("still calls tools from older stored catalogs without the added metadata or a
   const meta = createMetaTools(registry, BASE);
   const result = await meta.callTool({ address: "down.numeric", args: {} });
   expect(result.isError).toBeFalsy();
-  expect(f.requests.filter((r) => r.method === "tools/list")).toHaveLength(0);
+  expect(f.requests.filter((r) => r.method === "tools/list")).toHaveLength(1);
 });
 
 describe.each([
@@ -262,21 +269,21 @@ describe.each([
     expect(required(tools[1]).icons).toEqual([]);
     expect(numeric.icons[0]?.src.length).toBeGreaterThan(iconBytes);
 
-    const manifest = JSON.parse((await storage.get("catalog:down"))!) as {
-      revision: string; toolCount: number; byteCount: number; chunkCount: number;
-    };
-    expect(manifest).toMatchObject({ toolCount: f.definitions.length, chunkCount });
-    const serialized = JSON.stringify(rawTools);
-    expect(manifest.byteCount).toBe(new TextEncoder().encode(serialized).byteLength);
-    expect(manifest.byteCount).toBeLessThan(MAX_SERIALIZED_CATALOG_BYTES);
+    const roots = (await storage.list("response-cache:v1:down:")).filter(key => !key.includes(":chunk:") && !key.endsWith(":generation") && !key.includes(":refresh-digest:"));
+    expect(roots).toHaveLength(1);
+    const root = required(roots[0]);
+    const manifest = JSON.parse((await storage.get(root))!) as { revision: string; chunkCount: number };
+    expect(manifest.chunkCount).toBe(chunkCount);
     const chunks: string[] = [];
     for (let index = 0; index < manifest.chunkCount; index++) {
-      const chunk = (await storage.get(`catalog:down:chunk:${manifest.revision}:${index}`))!;
+      const chunk = (await storage.get(`${root}:chunk:${manifest.revision}:${index}`))!;
       expect(new TextEncoder().encode(chunk).byteLength).toBeLessThanOrEqual(MAX_CATALOG_CHUNK_BYTES);
       chunks.push(chunk);
     }
-    expect(chunks.join("")).toBe(serialized);
-    expect(serialized).not.toMatch(/data:/i);
+    const stored = JSON.parse(chunks.join(""));
+    expect(stored.tools).toHaveLength(rawTools.length);
+    expect(chunks.join("")).not.toMatch(/data:/i);
+    expect(chunks.join("")).not.toContain("do not persist");
 
     f.requests.length = 0;
     const reloaded = makeRegistry([f.connector], { storage });

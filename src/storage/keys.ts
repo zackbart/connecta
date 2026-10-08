@@ -144,18 +144,33 @@ export const catalogKeys = {
     name: "catalog",
     scope: "root",
     prefixes: ["catalog:"],
-    // Version 3 stores raw listings; the reader still accepts version 2.
+    // Retired v2/v3 listings are inventoried for migration; no runtime reads them.
     version: { number: 3, in: "value" },
     codec: textCodec,
     ttl: {
       kind: "configured",
-      by: "discovery.catalogTtlSeconds + discovery.staleCatalogSeconds",
+      by: "retired catalog layout; expires on its original TTL",
     },
     durable: false,
   },
   manifest: (connectorId: string) => validateStorageKey(`catalog:${connectorId}`),
   chunk: (connectorId: string, revision: string, index: number) =>
     validateStorageKey(`catalog:${connectorId}:chunk:${revision}:${index}`),
+} as const satisfies Keyed;
+
+/** SDK catalog response cache, complete manifests published after their chunks. */
+export const responseCacheKeys = {
+  family: {
+    name: "response-cache", scope: "root", prefixes: ["response-cache:v1:"],
+    version: { number: 1, in: "key" }, codec: textCodec,
+    ttl: { kind: "configured", by: "bounded downstream ttlMs; generations and hash refresh baselines expire after 48 hours" }, durable: false,
+  },
+  prefix: (id: string) => validateStorageKey(`response-cache:v1:${id}:`),
+  generation: (id: string) => validateStorageKey(`response-cache:v1:${id}:generation`),
+  namespace: (id: string, config: string, generation: string) => validateStorageKey(`response-cache:v1:${id}:${config}:${generation}:`),
+  entry: (namespace: string, partition: string) => validateStorageKey(`${namespace}${partition}`),
+  refreshDigest: (id: string, config: string, partition: string) => validateStorageKey(`response-cache:v1:${id}:refresh-digest:${config}:${partition}`),
+  chunk: (entry: string, revision: string, index: number) => validateStorageKey(`${entry}:chunk:${revision}:${index}`),
 } as const satisfies Keyed;
 
 /** Seconds an OAuth callback's owner binding stays claimable. */
@@ -431,6 +446,21 @@ export const oauthConnectKeys = {
   retry: (nonce: string) => validateStorageKey(`oauth:request-used:${nonce}`),
 } as const satisfies Keyed;
 
+/** A bounded, credential-partitioned downstream protocol verdict. */
+export const NEGOTIATION_TTL_SECONDS = 300;
+export const negotiationKeys = {
+  family: {
+    name: "negotiation",
+    scope: "connector",
+    prefixes: ["negotiation:v1:"],
+    version: { number: 1, in: "key" },
+    codec: jsonCodec,
+    ttl: { kind: "fixed", seconds: NEGOTIATION_TTL_SECONDS },
+    durable: false,
+  },
+  verdict: (partitionDigest: string) => validateStorageKey(`negotiation:v1:${partitionDigest}`),
+} as const satisfies Keyed;
+
 /**
  * Every family, for the overlap and coverage checks and for migrations that
  * copy only what a deployment cannot recreate. Keys a custom connector writes
@@ -441,6 +471,7 @@ export const KEY_FAMILIES: readonly KeyFamily[] = [
   resultKeys.family,
   stashLedgerKeys.family,
   catalogKeys.family,
+  responseCacheKeys.family,
   oauthHandoffKeys.family,
   accessTokenKeys.family,
   credentialKeys.family,
@@ -452,6 +483,7 @@ export const KEY_FAMILIES: readonly KeyFamily[] = [
   oauthRefreshActiveKeys.family,
   oauthV2Keys.family,
   oauthConnectKeys.family,
+  negotiationKeys.family,
   kvCopyKeys.family,
   kvCutoverKeys.family,
 ];

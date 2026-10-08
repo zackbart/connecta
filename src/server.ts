@@ -64,21 +64,6 @@ export function createFetchHandler(
       ...(opts.executorName !== undefined
         ? { executor: { name: opts.executorName } }
         : {}),
-      // Counts only, from refreshes that already happened — the endpoint
-      // asks no downstream anything, and `connecta doctor` reads it to
-      // report a stale allowlist without a probe of its own (#343).
-      // Stable 64-bit hashes preserve that shape without publishing ids.
-      catalogDrift: Object.fromEntries(await Promise.all(
-        Object.entries(registry.catalogDriftSnapshot()).map(async ([id, report]) => {
-          const hash = new Uint8Array(await crypto.subtle.digest(
-            "SHA-256", new TextEncoder().encode(id),
-          ));
-          const key = Array.from(hash.subarray(0, 8), byte =>
-            byte.toString(16).padStart(2, "0"),
-          ).join("");
-          return [key, report];
-        }),
-      )),
       admission: {
         policy: "global-fifo",
         requests: opts.requestAdmission.snapshot(),

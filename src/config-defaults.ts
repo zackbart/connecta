@@ -10,8 +10,8 @@ export const CONFIG_DEFAULTS = {
   discovery: {
     concurrency: 4,
     catalogTtlSeconds: 300,
-    persistCatalog: true,
-    staleCatalogSeconds: 3_600,
+    catalogMinTtlSeconds: 0,
+    catalogMaxTtlSeconds: 86_400,
     probeTimeoutMs: 30_000,
   },
   calls: {

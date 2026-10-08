@@ -471,7 +471,7 @@ describe("an OAuth flow on a live client", () => {
     const secondArrived = new Promise<void>((resolve) => (secondMetadataArrived = resolve));
     let registrationArrived!: () => void;
     const registering = new Promise<void>((resolve) => (registrationArrived = resolve));
-    let secondSettled: Promise<unknown> = Promise.resolve();
+    let aFlowSettled: Promise<unknown> = Promise.resolve();
     vi.stubGlobal(
       "fetch",
       downstream({
@@ -487,7 +487,7 @@ describe("an OAuth flow on a live client", () => {
         },
         register: async (body) => {
           registrationArrived();
-          await secondSettled;
+          await aFlowSettled;
           return echoingRefusal(400, "invalid_redirect_uri")(body);
         },
       }),
@@ -498,16 +498,17 @@ describe("an OAuth flow on a live client", () => {
     expect(await connector.status!(context)).toMatchObject({ state: "ok" });
     const first = connector.callTool("read", {}, context).then(() => null, (err: unknown) => err);
     const second = connector.callTool("read", {}, context).then(() => null, (err: unknown) => err);
-    secondSettled = second;
+    aFlowSettled = Promise.race([first, second]);
     const [firstError, secondError] = (await Promise.all([first, second])) as Error[];
     await connector.closeScope!(context);
 
-    expect(firstError?.message).toContain(
-      "could not register an OAuth client with https://auth.example: the registration endpoint answered HTTP 400 with OAuth error invalid_redirect_uri.",
-    );
-    expect(secondError?.message).toContain(
-      'Connector "svc" OAuth discovery with https://auth.example failed (IssuerMismatchError).',
-    );
+    // Cache reads can reorder dispatch. The two flow-local trails must still
+    // identify one failed registration and one failed metadata request.
+    const messages = [firstError?.message, secondError?.message];
+    expect(messages).toEqual(expect.arrayContaining([
+      expect.stringContaining("could not register an OAuth client with https://auth.example: the registration endpoint answered HTTP 400 with OAuth error invalid_redirect_uri."),
+      expect.stringContaining('Connector "svc" OAuth discovery with https://auth.example failed (IssuerMismatchError).'),
+    ]));
     expectWithheld(rendered(firstError), rendered(secondError), ...lines);
   });
 });
@@ -746,7 +747,7 @@ describe("the SDK seams OAuth flows are bounded at", () => {
       expect(await connector.status!(context)).toMatchObject({ state: "ok" });
       try {
         const errors = await Promise.all([0, 1].map(() => connector.callTool("write", {}, context).catch((error: unknown) => error)));
-        expect(errors.map(error => classifyCallError(error).code)).toEqual(["provider_permission_denied", "connector_call_failed"]);
+        expect(errors.map(error => classifyCallError(error).code).sort()).toEqual(["connector_call_failed", "provider_permission_denied"]);
         expect(registrations).toBe(1);
         expectWithheld(...errors.map(rendered));
       } finally {
@@ -1191,10 +1192,10 @@ describe("SDK failure facts", () => {
     const connector = remoteMcp("svc", { url: MCP_URL, auth: { type: "oauth" }, versionNegotiation: "legacy" });
     const context = scope();
     try {
+      const operation = step === "tools/list" ? vi.spyOn(Client.prototype, "listTools") : vi.spyOn(Client.prototype, "callTool");
       await connector.status!(context);
       const original = new UnauthorizedError(`refused ${SECRET}`);
-      if (step === "tools/list") vi.spyOn(Client.prototype, "request").mockRejectedValueOnce(original);
-      else vi.spyOn(Client.prototype, "callTool").mockRejectedValueOnce(original);
+      operation.mockRejectedValueOnce(original);
       const error = await (step === "tools/list"
         ? connector.listTools(context) : connector.callTool("read", {}, context)).catch((error: unknown) => error);
       expect(classifyCallError(error)).toMatchObject({ code: "downstream_oauth_required", retryable: false });

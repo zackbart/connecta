@@ -21,6 +21,7 @@ export function httpDownstream(
   options: {
     capture?: (request: Request) => void | Promise<void>;
     url?: string;
+    catalogTtlMs?: number;
   } = {},
 ) {
   const url = options.url ?? "https://downstream.test/mcp";
@@ -32,7 +33,17 @@ export function httpDownstream(
   const fetch: FetchLike = async (input, init) => {
     const request = new Request(input, init);
     await options.capture?.(request.clone());
-    return handler.fetch(request);
+    const catalogRequest = options.catalogTtlMs !== undefined ? request.clone() : undefined;
+    const response = await handler.fetch(request);
+    if (options.catalogTtlMs !== undefined && request.method === "POST" && response.headers.get("content-type")?.includes("application/json")) {
+      const message = await catalogRequest!.json() as { method?: string };
+      if (message.method === "tools/list") {
+        const body = await response.json() as { result?: Record<string, unknown> };
+        if (body.result) Object.assign(body.result, { ttlMs: options.catalogTtlMs, cacheScope: "public" });
+        return Response.json(body, { status: response.status, headers: response.headers });
+      }
+    }
+    return response;
   };
   return {
     url,

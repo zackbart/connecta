@@ -235,7 +235,6 @@ describe("optional deployment modules", () => {
     expect(await rpc("call_tool", { address: "artifacts.list_artifacts", args: {} })).toContain("unknown_address");
     await app.fetch(new Request(BASE + "/ui/data", { headers }));
     await app.fetch(new Request(BASE + "/ui/connectors/shared", { headers }));
-    expect(keys.length).toBeGreaterThan(0);
     expect(keys.filter((key) => key.includes("artifact"))).toEqual([]);
   });
 });

@@ -43,6 +43,7 @@ import {
 import { guestPrelude, programError, wrapGuestProgram } from "./guest-runtime.js";
 import { EXECUTE_OUTPUT } from "./meta-output.js";
 import { normalizeProgramSource } from "./program-source.js";
+import { readResource } from "./resource-read.js";
 import { agentOutputOperations, redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import type { RegistryView } from "./registry.js";
 import { normalizeTimeoutMs, underAnySignal } from "./timeout.js";
@@ -90,7 +91,7 @@ export const EXECUTE_MAX_EMITTED_BLOCKS = CONFIG_DEFAULTS.execute.maxEmittedBloc
 const CALL_SIGNATURE = "Use connecta.call(address, args?, { timeoutMs? }) or connecta.call({ address, args?, timeoutMs? }). address must be a canonical connector.tool string.";
 const diagnosticsEncoder = new TextEncoder();
 
-type ExecuteDiagnosticOperation = "search" | "describe" | "call";
+type ExecuteDiagnosticOperation = "search" | "describe" | "call" | "read";
 
 interface ExecuteOperationDiagnostics {
   operation: ExecuteDiagnosticOperation;
@@ -165,6 +166,15 @@ class ExecuteDiagnostics {
     stats.durationMs += outcome.durationMs;
     stats.catalogMs += outcome.timing.catalogMs;
     stats.connectorMs += outcome.timing.connectorMs;
+  }
+
+  recordRead(durationMs: number, connectorMs: number, ok: boolean, value?: unknown): void {
+    const stats = this.stats("read");
+    stats.count++;
+    stats.failures += ok ? 0 : 1;
+    stats.durationMs += durationMs;
+    stats.connectorMs += connectorMs;
+    if (ok) stats.resultBytes += serializedDiagnosticBytes(value);
   }
 
   finish(): {
@@ -662,6 +672,17 @@ function sandboxProvider(
         return { name, format: "text", text: skill.content };
       },
       catch: (err) => err,
+    }),
+    read: (uri) => Effect.suspend(() => {
+      const started = Date.now();
+      let connectorMs = 0;
+      return readResource(registry, uri, {
+        baseUrl, requestScope, sentSecrets, timeoutMs: hostCallTimeoutMs,
+        onConnectorTime: elapsed => { connectorMs += elapsed; },
+        ...(hostAccessSignal ? { signal: hostAccessSignal } : {}),
+      }).pipe(Effect.onExit(exit => Effect.sync(() => diagnostics?.recordRead(
+        Date.now() - started, connectorMs, Exit.isSuccess(exit), Exit.isSuccess(exit) ? exit.value : undefined,
+      ))));
     }),
     // Emission is a provider function, never an ExecuteResult field —
     // that is what keeps the Executor contract untouched and parity

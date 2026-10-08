@@ -379,7 +379,7 @@ describe("call_tool", () => {
     expect(calls).toEqual(["unannotated"]);
   });
 
-  it("deduplicates concurrent request-local catalog loads", async () => {
+  it("isolates catalog loads for separate direct invocations", async () => {
     let catalogLoads = 0;
     const connector: Connector = connectorWith({
       id: "shared",
@@ -407,7 +407,7 @@ describe("call_tool", () => {
       mt.callTool({ address: "shared.read", resultMode: "value" }),
     ]);
     expect(results.every((result) => !result.isError)).toBe(true);
-    expect(catalogLoads).toBe(1);
+    expect(catalogLoads).toBe(2);
   });
 
   it("does not retain failed request-local catalog loads", async () => {
@@ -2064,7 +2064,7 @@ describe("bounded result stash", () => {
     const root = new Registry([capped("large", 100)], {
       logger: silentLogger,
       results: { maxStashEntries: 1 },
-      persistToolCatalog: false,
+
       storage,
     });
     try {
@@ -2092,7 +2092,7 @@ describe("bounded result stash", () => {
     const root = new Registry([], {
       logger: silentLogger,
       results: { maxStashEntries: 1, maxStashBytes: 3 },
-      persistToolCatalog: false,
+
       storage: { ...inner, async set(key, value, options) {
         if (slow) clock += 20_500;
         await inner.set(key, value, options);
@@ -2130,7 +2130,7 @@ describe("bounded result stash", () => {
     const root = new Registry([], {
       logger: silentLogger,
       results: { maxStashEntries: 1 },
-      persistToolCatalog: false,
+
       storage: { ...inner, async set(key, value, options) {
         clock += delayMs;
         await inner.set(key, value, options);
@@ -2148,7 +2148,7 @@ describe("bounded result stash", () => {
     const isolates = Array.from({ length: 5 }, () => new Registry([], {
       logger: silentLogger,
       results: { maxStashEntries: 64 },
-      persistToolCatalog: false,
+
       storage,
     }));
     const accepted = await Promise.all(Array.from({ length: 65 }, (_, index) =>

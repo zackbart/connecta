@@ -23,7 +23,6 @@ import {
 } from "./errors.js";
 import type { CallErrorDetails } from "./errors.js";
 import type {
-  CatalogReadOptions,
   ConnectorOperationOptions,
   RegistryView,
 } from "./registry.js";
@@ -647,7 +646,6 @@ export class CatalogService {
   private readonly probeTimeoutMs: number;
   private readonly concurrency: number;
   private readonly searchRoute: SearchRoute;
-  private readonly readOptions: CatalogReadOptions | undefined;
   private readonly requestSignal: AbortSignal | undefined;
   // The request-scoped catalog cache: one shared read per connector asked
   // about, started by the first asker and joined by every later one. A
@@ -674,7 +672,7 @@ export class CatalogService {
       concurrency?: number | undefined;
       /** The discovery route recovery records name. Default `search_tools`. */
       searchRoute?: SearchRoute | undefined;
-      /** Runtime-owned tail for stale-while-revalidate catalog reads. */
+      /** Runtime-owned connector teardown tail. */
       defer?: DeferredWork | undefined;
       /** The request's cancellation; discovery probes end with it. */
       requestSignal?: AbortSignal | undefined;
@@ -687,12 +685,6 @@ export class CatalogService {
     this.searchRoute = options.searchRoute ?? "search_tools";
     this.requestSignal = options.requestSignal;
     this.defer = options.defer;
-    this.readOptions = options.defer
-      ? {
-          defer: options.defer,
-          refreshTimeoutMs: this.probeTimeoutMs,
-        }
-      : undefined;
   }
 
   /**
@@ -748,7 +740,6 @@ export class CatalogService {
               this.baseUrl,
               this.requestScope,
               { signal, timeoutMs: this.probeTimeoutMs, ...(this.defer ? { defer: this.defer } : {}) },
-              this.readOptions,
             ).then((tools) => carryCatalogFreshness(tools, structuredClone(tools))),
           (succeeded) => {
             // Evicted before the read resumes anyone, so an asker that

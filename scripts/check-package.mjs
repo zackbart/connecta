@@ -666,7 +666,12 @@ try {
     [
       'import { createConnecta, customExecutor, defineConfig, type AdmittingExecutor, type Connecta, type ConnectaCallsConfig, type ConnectaConfig, type ConnectaConfigDescription, type ConnectaDiscoveryConfig, type ExecutorLease } from "@zackbart/connecta";',
       'const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });',
-      "const discovery: ConnectaDiscoveryConfig = { concurrency: 2, catalogTtlSeconds: 1, persistCatalog: false, staleCatalogSeconds: 1, probeTimeoutMs: 1 };",
+      "const discovery: ConnectaDiscoveryConfig = { concurrency: 2, catalogTtlSeconds: 1, catalogMinTtlSeconds: 0, catalogMaxTtlSeconds: 2, probeTimeoutMs: 1 };",
+      "// @ts-expect-error registry persistence was retired",
+      "const retiredPersistence: ConnectaDiscoveryConfig = { persistCatalog: false };",
+      "// @ts-expect-error stale catalogs were retired",
+      "const retiredStale: ConnectaDiscoveryConfig = { staleCatalogSeconds: 1 };",
+      "void retiredPersistence; void retiredStale;",
       "const calls: ConnectaCallsConfig = { defaultTimeoutMs: 1, maxResultBytes: 1 };",
       "const config: ConnectaConfig = { connectors: [], executor, discovery, calls, vault: undefined, activity: undefined, ui: undefined, artifacts: undefined };",
       "// @ts-expect-error executor is required",

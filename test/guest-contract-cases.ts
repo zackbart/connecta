@@ -449,6 +449,11 @@ function contractConnectors(state: ContractState): Connector[] {
     kind: "api",
     description: "Reader",
     usageGuide: "# Reader usage\n\nRead one value at a time.",
+    async readResource(uri) {
+      count("reader.resources/read");
+      if (uri === "docs://missing") throw new ConnectorCallError("not_found", "Resource missing.");
+      return { contents: [{ uri, text: "manual" }] };
+    },
     async listTools() {
       return [
         readOnly("text"),
@@ -1340,6 +1345,41 @@ return fs;
       expect(required(follow).value.error).toMatchObject({ code: "unknown_address" });
     },
   })),
+  {
+    clauses: "S10, INV-3, INV-4",
+    name: "reads connector-qualified resources and catches typed failures",
+    code: `async () => {
+      const page = await connecta.read("resource://reader/" + encodeURIComponent("docs://manual/start"));
+      const failures = [];
+      for (const uri of ["resource://reader/" + encodeURIComponent("docs://missing"), "resource://absent/" + encodeURIComponent("docs://manual/start"), "https://arbitrary.example/read"]) {
+        try { await connecta.read(uri); }
+        catch (error) { failures.push({ code: error.code, retryable: error.retryable, detailCode: error.details.code }); }
+      }
+      return { page, failures };
+    }`,
+    check(outcome, state) {
+      expect(record(outcome)).toEqual({
+        page: { contents: [{ uri: "docs://manual/start", text: "manual" }] },
+        failures: [
+          { code: "not_found", retryable: false, detailCode: "not_found" },
+          { code: "unknown_address", retryable: false, detailCode: "unknown_address" },
+          { code: "invalid_args", retryable: false, detailCode: "invalid_args" },
+        ],
+      });
+      expect(state.calls["reader.resources/read"]).toBe(2);
+      expect(outcome.value.hostCalls).toEqual({ attempted: 4, admitted: 4, succeeded: 1, failed: 3 });
+    },
+  },
+  {
+    clauses: "S10, E1",
+    name: "uncaught resource failures retain their type",
+    code: `async () => await connecta.read("resource://reader/" + encodeURIComponent("docs://missing"))`,
+    check(outcome) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.value).toMatchObject({ error: { code: "not_found", retryable: false } });
+      expect(outcome.value.hostCalls).toEqual({ attempted: 1, admitted: 1, succeeded: 0, failed: 1 });
+    },
+  },
   {
     clauses: "P1",
     name: "TypeScript syntax is not JavaScript and does not run",
@@ -2327,7 +2367,7 @@ return fs;
     clauses: "E6, X8",
     name: "only provider functions are callable, inherited members included",
     code: `async () => {
-      const out = { inheritedType: typeof connecta.toString };
+      const out = { inheritedType: typeof connecta.toString, methods: Object.keys(connecta).sort(), frozen: Object.isFrozen(connecta) };
       for (const removed of ["ui", "batch", "__callNamespace"]) {
         try { await connecta[removed]("unused"); } catch (err) { out[removed] = err.message; }
       }
@@ -2339,6 +2379,8 @@ return fs;
       const result = record(outcome);
       // Both executors expose the same finite namespace without inherited members.
       expect(result.inheritedType).toBe("undefined");
+      expect(result.methods).toEqual(["call", "describe", "emit", "read", "result", "search", "skill"]);
+      expect(result.frozen).toBe(true);
       for (const removed of ["ui", "batch", "__callNamespace"]) {
         expect(String(result[removed]).length).toBeGreaterThan(0);
       }

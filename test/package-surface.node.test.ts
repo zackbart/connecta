@@ -138,12 +138,16 @@ describe("public package boundary", () => {
     // artifacts module and providers do not carry machinery they never use.
     // option-shapes.ts holds the closed option shapes those factories and the
     // providers walk for unknown keys; it builds nothing.
+    // negotiation-cache.ts stores redacted protocol verdicts, without a client.
+    // resource-uri.ts matches advertised templates without fetching any URI.
     expect(readdirSync(join(ROOT, "src", "connectors")).sort()).toEqual([
       "api-connector.ts",
       "api.ts",
       "guarded-fetch.ts",
+      "negotiation-cache.ts",
       "option-shapes.ts",
       "remote-mcp.ts",
+      "resource-uri.ts",
     ]);
   });
 

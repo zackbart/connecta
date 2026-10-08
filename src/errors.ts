@@ -36,6 +36,8 @@ export type ConnectorCallErrorCode =
    * call can never succeed, and waiting will not help either.
    */
   | "conflict"
+  | "resource_template_ambiguous"
+  | "resource_match_budget_exceeded"
   | "input_required_unsupported"
   | "connector_call_failed";
 
@@ -68,6 +70,7 @@ const CLASSIFICATION_CODE_TABLE = {
   timeout: true, auth_required: true, downstream_oauth_required: true,
   oauth_revocation_failed: true, provider_permission_denied: true, rate_limited: true, unavailable: true,
   invalid_args: true, not_found: true, conflict: true,
+  resource_template_ambiguous: true, resource_match_budget_exceeded: true,
   input_required_unsupported: true, connector_call_failed: true,
   executor_overloaded: true, executor_cancelled: true, executor_closed: true,
   cancelled: true, unknown_address: true, unknown_tool: true,
@@ -393,6 +396,8 @@ const RETRYABLE_BY_CODE: Record<ConnectorCallErrorCode, boolean> = {
   invalid_args: false,
   not_found: false,
   conflict: false,
+  resource_template_ambiguous: false,
+  resource_match_budget_exceeded: false,
   input_required_unsupported: false,
   connector_call_failed: false,
 };
