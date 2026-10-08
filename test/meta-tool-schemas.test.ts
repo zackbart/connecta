@@ -1,3 +1,5 @@
+import { CATALOG_SEARCH_RESULT_SCHEMA } from "../src/catalog-service.js";
+import { SEARCH_OUTPUT } from "../src/meta-output.js";
 // Golden: the input schema of every meta-tool exactly as `tools/list` renders
 // it today, from the zod definitions in meta-tools.ts and execute.ts.
 //
@@ -142,6 +144,18 @@ describe("meta-tool output schemas", () => {
         expect(response.error, tool.name).toBeUndefined();
         expect(response.result.isError, tool.name).toBeFalsy();
         expect(new Validator(tool.outputSchema).validate(response.result.structuredContent).valid, tool.name).toBe(true);
+      }
+      const search = list.result.tools.find((tool: { name: string }) => tool.name === "search_tools");
+      expect(search.outputSchema).toEqual(CATALOG_SEARCH_RESULT_SCHEMA);
+      const searchValidator = new Validator(search.outputSchema);
+      const flat = { catalogErrors: [], tools: [], total: 0, offset: 0, limit: 8, hasMore: false };
+      expect(searchValidator.validate(flat).valid).toBe(true);
+      expect(searchValidator.validate({ connectors: [], total: 0 }).valid).toBe(false);
+      for (const key of Object.keys(flat)) {
+        const incomplete = { ...flat } as Record<string, unknown>;
+        delete incomplete[key];
+        expect(searchValidator.validate(incomplete).valid, key).toBe(false);
+        expect(SEARCH_OUTPUT["~standard"].validate(incomplete)).toHaveProperty("issues");
       }
       const execute = list.result.tools.find((tool: { name: string }) => tool.name === "execute_code");
       expect(new Validator(execute.outputSchema).validate({ result: null }).valid).toBe(false);

@@ -1,3 +1,6 @@
+import type { StandardSchemaWithJSON } from "@modelcontextprotocol/server";
+import { Validator } from "@cfworker/json-schema";
+import { CATALOG_SEARCH_RESULT_SCHEMA, type CatalogSearchResult } from "./catalog-service.js";
 import { z } from "zod";
 import { advertisedSchema } from "./advertised-schema.js";
 
@@ -32,15 +35,21 @@ export const SKILLS_OUTPUT = advertisedSchema(z.object({
   error: error.optional(),
 }).passthrough());
 
-export const SEARCH_OUTPUT = advertisedSchema(z.object({
-  connectors: z.array(z.object({ id: z.string(), tools: z.array(z.record(z.string(), z.unknown())) }).passthrough()).optional(),
-  total: z.number().int().nonnegative().optional(),
-  offset: z.number().int().nonnegative().optional(),
-  limit: z.number().int().positive().optional(),
-  hasMore: z.boolean().optional(),
-  nextOffset: z.number().int().nonnegative().optional(),
-  error: error.optional(),
-}).passthrough());
+// Catalog publication, SDK advertisement and validation share one schema.
+const searchValidator = new Validator(CATALOG_SEARCH_RESULT_SCHEMA as never, "2020-12", false);
+export const SEARCH_OUTPUT: StandardSchemaWithJSON<CatalogSearchResult, CatalogSearchResult> = {
+  "~standard": {
+    version: 1,
+    vendor: "connecta",
+    validate: value => searchValidator.validate(value).valid
+      ? { value: value as CatalogSearchResult }
+      : { issues: [{ message: "Expected a CatalogSearchResult." }] },
+    jsonSchema: {
+      input: () => CATALOG_SEARCH_RESULT_SCHEMA,
+      output: () => CATALOG_SEARCH_RESULT_SCHEMA,
+    },
+  },
+};
 
 export const CALL_OUTPUT = advertisedSchema(z.object({
   ok: z.boolean().optional(),

@@ -83,13 +83,12 @@ A `read-only` pool refuses writes before validation or dispatch with
 own top-level call. Connecta never pauses, replays, or approves a program.
 Top-level discovery remains available for catalog inspection and write routing.
 
-Both search routes use one page envelope. Describe returns an ordered tool list
-without pagination. These examples omit optional row metadata:
+Both search routes return the flat page specified under
+[lexical discovery](#lexical-discovery), using the catalog's shared output schema.
+Describe returns an ordered tool list without pagination. Optional row metadata
+is omitted in this example:
 
 ```js
-// search_tools and connecta.search with includeSchemas: "json"
-{ catalogErrors: [], tools: [{ name: "get_run", address: "ci.get_run", schemaFormat: "json", inputSchema: { type: "object" } }], total: 1, offset: 0, limit: 8, hasMore: false }
-
 // connecta.describe defaults to JSON
 { tools: [{ name: "get_run", address: "ci.get_run", schemaFormat: "json", inputSchema: { type: "object" } }] }
 ```
@@ -416,7 +415,7 @@ a fixed warning without storage error prose. Never repeat a write to recover out
 ## Lexical discovery
 
 `search_tools` and in-program `connecta.search` return the same flat discovery
-page. Select from `page.tools`, never from the page itself or connector groups.
+page. Select tool rows from `page.tools`.
 With the same schema format, schema-key option, and scoped registry, both paths
 return identical data. Top-level search omits schemas unless requested; programs
 default to JSON schemas and schema-key metadata.
