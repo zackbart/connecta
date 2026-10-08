@@ -39,6 +39,8 @@ import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { validateCatalogToolInput } from "./validate.js";
 import { sentSecretsFor, sentSecretsForRequest, trackCredentialReads, type SentSecrets } from "./sent-secrets.js";
 import { classificationDigest, recordAuthFailure, recordCallEntry, replayClassificationDigest, resolveInvocationAuth } from "./invocation-auth.js";
+import { downstreamContinuation } from "./downstream-input.js";
+import { isInputRequiredResult, type InputRequiredResult } from "@modelcontextprotocol/server";
 
 function defined<T extends object>(
   values: T,
@@ -231,6 +233,8 @@ export interface InvocationContext<T> {
   /** Run ended: cancel resolution/admission, but spare a dispatched write. */
   dispatchSignal?: AbortSignal;
   unwrapResult?: boolean;
+  /** MCP direct calls capture a suspension before redaction and value shaping. */
+  processInputRequired?: (value: InputRequiredResult, resolved: ResolvedCatalogTool, secrets: SentSecrets) => T | Promise<T>;
   /**
    * Caller-owned result policy. MCP applies result paging here; code mode
    * normally accepts the already-unwrapped value unchanged.
@@ -407,6 +411,16 @@ export class InvocationService {
         }
         const enteredWrite = resolved?.definition.classification === "write" && dispatchedToConnector;
         switch (error.code) {
+          case "input_required_unsupported":
+            if (context.processInputRequired) return error;
+            return {
+              ...error,
+              nextAction: {
+                tool: resolved?.definition.classification === "read" ? "call_tool" : "call_destructive_tool",
+                arguments: { address: `${target.connector.id}.${target.toolName}`, ...echoedCallArgs(args) },
+                purpose: "Use this direct call so the host can fulfill the downstream input request.",
+              },
+            };
           case "destructive_tool_requires_approval": {
             const echoed = echoedCallArgs(args);
             return {
@@ -550,6 +564,7 @@ export class InvocationService {
         return failed(callerCancelledDetails());
       }
       let result: unknown;
+      let inputRequiredValue: { value: T } | undefined;
       let observedResult: unknown;
       let valueFormat: "json" | "text" = "json";
       // Everything up to the downstream result: resolution, the safety and
@@ -588,6 +603,8 @@ export class InvocationService {
 
           const write = target.definition.classification !== "read";
           const canonicalAddress = `${target.connector.id}.${target.toolName}`;
+          const input = context.source !== "execute_code"
+            ? downstreamContinuation(this.catalog.requestScope, target.connector.id, canonicalAddress) : undefined;
           const expectedDigest = replayClassificationDigest(this.catalog.requestScope, canonicalAddress);
           if (expectedDigest !== undefined && (target.classificationFresh !== true ||
               (yield* Effect.promise(() => classificationDigest(target.definition))) !== expectedDigest)) {
@@ -677,7 +694,9 @@ export class InvocationService {
               // The connector may retain or mutate its definition. Keep the
               // invocation's classification and schema private, even during
               // this call, and give every dispatch its own deep copy.
-              { definition: structuredClone(target.definition) },
+              { definition: structuredClone(target.definition),
+                ...defined({ input }),
+              },
             );
           };
           // The permit belongs to this scope, so success, failure, and the
@@ -699,6 +718,14 @@ export class InvocationService {
                   catch: (error) => error,
                 }),
               );
+              if (target.connector.kind === "mcp" && isInputRequiredResult(reply)) {
+                if (!context.processInputRequired) throw new ConnectorCallError("input_required_unsupported",
+                  "The downstream returned input_required. Use the equivalent direct MCP call to provide input.");
+                const value = yield* Effect.tryPromise({
+                  try: () => Promise.resolve(context.processInputRequired!(reply, target, sentSecrets)), catch: error => error,
+                });
+                return { inputRequired: true as const, value };
+              }
               const raw = sentSecrets.redact(reply);
               // isError is checked here for BOTH result shapes so every adapter
               // reports the same downstream-failure wording, and the throw lands
@@ -715,6 +742,10 @@ export class InvocationService {
             return isCallerCancellation(attemptError, context.requestSignal)
               ? callerCancelledDetails()
               : carryFailureFacts(attemptError, classifyCallError(sentSecrets.redact(attemptError)));
+          }
+          if ("inputRequired" in attempt.value) {
+            inputRequiredValue = { value: attempt.value.value as T };
+            return undefined;
           }
           observedResult = attempt.value.observed.data;
           try {
@@ -761,7 +792,7 @@ export class InvocationService {
       }
 
       const processResult = context.processResult;
-      const processing: Effect.Effect<T, unknown> = processResult
+      const processing: Effect.Effect<T, unknown> = inputRequiredValue ? Effect.succeed(inputRequiredValue.value) : processResult
         ? Effect.tryPromise({
             try: () => Promise.resolve(processResult(sentSecrets.redact(result), completed, sentSecrets, valueFormat)) as Promise<T>,
             catch: (error) => error,
@@ -770,6 +801,7 @@ export class InvocationService {
       const processed = yield* Effect.exit(timed(
         (elapsed) => { resultProcessingMs += elapsed; },
         Effect.tap(processing, () => Effect.sync(() => {
+          if (inputRequiredValue) return;
           try {
             this.registry.observeOutputShape(
               completed.connector.id,

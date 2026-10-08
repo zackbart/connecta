@@ -39,6 +39,8 @@ export type ConnectorCallErrorCode =
   | "resource_template_ambiguous"
   | "resource_match_budget_exceeded"
   | "input_required_unsupported"
+  | "input_required_invalid"
+  | "input_required_limit"
   | "connector_call_failed";
 
 /**
@@ -71,7 +73,7 @@ const CLASSIFICATION_CODE_TABLE = {
   oauth_revocation_failed: true, provider_permission_denied: true, rate_limited: true, unavailable: true,
   invalid_args: true, not_found: true, conflict: true,
   resource_template_ambiguous: true, resource_match_budget_exceeded: true,
-  input_required_unsupported: true, connector_call_failed: true,
+  input_required_unsupported: true, input_required_invalid: true, input_required_limit: true, connector_call_failed: true,
   executor_overloaded: true, executor_cancelled: true, executor_closed: true,
   cancelled: true, unknown_address: true, unknown_tool: true,
   ambiguous_tool_alias: true, catalog_lookup_failed: true,
@@ -399,6 +401,8 @@ const RETRYABLE_BY_CODE: Record<ConnectorCallErrorCode, boolean> = {
   resource_template_ambiguous: false,
   resource_match_budget_exceeded: false,
   input_required_unsupported: false,
+  input_required_invalid: false,
+  input_required_limit: false,
   connector_call_failed: false,
 };
 
@@ -535,7 +539,7 @@ export interface CallErrorDetails {
     };
     purpose: string;
   } | {
-    tool: "call_destructive_tool";
+    tool: "call_tool" | "call_destructive_tool";
     arguments: {
       address: string;
       /**

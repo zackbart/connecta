@@ -817,18 +817,13 @@ describe("remoteMcp() connector", () => {
     expect(required(result.content[0]).text).toContain("downstream boom");
   });
 
-  it("fails loudly and structurally when a downstream returns input_required", async () => {
+  it("INV-4: preserves downstream input_required for the MCP relay and refuses it in programs and in-process meta-tools", async () => {
     const connector = await makeInputRequiredConnector();
-    const direct = await connector
-      .callTool("needs_input", {}, ctx())
-      .then(() => undefined, (error: unknown) => error);
+    const direct = await connector.callTool("needs_input", {}, ctx());
     expect(direct).toMatchObject({
-      name: "ConnectorCallError",
-      code: "input_required_unsupported",
-      retryable: false,
+      resultType: "input_required",
+      requestState: "opaque-resume-state",
     });
-    expect((direct as Error).message).toContain("input_required");
-    expect((direct as Error).message).toContain("gated");
 
     const meta = createMetaTools(makeRegistry([connector]), BASE);
     const single = await meta.callTool({

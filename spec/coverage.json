@@ -445,7 +445,7 @@
       "id": "elicitation",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation",
-      "notes": "Auth URL elicitation on capable 2026-07-28 hosts, with identity-checked connect links, decline/cancel termination, and ordinary recovery fallback. Writes elicit only for Connecta-owned pre-invocation credential resolution failures. Programs also require that no write-classified handler was entered in that run. Raw fetches and custom transport errors after invocation are ineligible for writes. Reads may re-run after dispatch. Downstream input relay and general form elicitation remain outside this item.",
+      "notes": "Auth URL elicitation on capable 2026-07-28 hosts with identity-checked connect links and ordinary recovery fallback. Direct calls relay downstream form and URL elicitation only when the client declares that mode, with namespaced keys, validated bare responses, HTTPS URLs without known credentials, and agent-output redaction. Programs keep downstream elicitation unsupported; sampling and roots remain declined under #703. Auth writes still elicit only before invocation, independently of downstream continuations.",
       "issue": "https://github.com/zackbart/connecta/issues/707",
       "tests": [
         {
@@ -459,6 +459,22 @@
         {
           "file": "test/auth-elicitation.test.ts",
           "title": "INV-4 INV-5: credential completion requires fields compatible with the current declaration"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-2 INV-4 INV-5 INV-9: relays accept, decline, and cancel as bound read and write continuations"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-4: refuses undeclared kinds, malformed requests, and excessive payloads with typed errors"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-4 INV-5: forwards HTTPS URLs as downstream-provided and refuses unsafe or credential-bearing URLs"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-5 INV-6: redacts sent credential echoes in elicitation through the agent boundary without operator payloads"
         }
       ]
     },
@@ -466,7 +482,7 @@
       "id": "multi-round-trip-requests",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr",
-      "notes": "Auth retries use createRequestStateCodec with a deployment-held key, principal/endpoint/connector/tool/digest/round/expiry binding, and bounded rounds. Each accepted retry checks host-owned auth failure origins and write handler entry. Writes only elicit for pre-invocation credential resolution failures; programs stop elicitation after any write handler entry and retain reconciliation and manual connection guidance. Downstream state relay on direct calls remains planned in #707 item 5.",
+      "notes": "Auth recovery uses createRequestStateCodec and host-owned invocation facts; writes elicit auth only before invocation and entered reads require unchanged fresh classifications. Direct calls now relay downstream state inside vault encryption and the signed codec envelope, bound to principal, endpoint/pool, connector, original and resolved addresses, arguments digest, round, expiry, and a one-use storage CAS nonce. Original downstream keys stay encrypted behind numbered namespaced keys. Three prompts and a ten-minute window span auth-to-downstream composition; payload and response limits apply. Programs refuse downstream input with a direct-call nextAction. Sampling, roots, prompts, and other deferred request kinds are not relayed.",
       "issue": "https://github.com/zackbart/connecta/issues/707",
       "tests": [
         {
@@ -528,6 +544,26 @@
         {
           "file": "test/auth-elicitation-dispatch.test.ts",
           "title": "INV-2 INV-9: a program cannot elicit after an earlier write handler entered and a read lacks credentials"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-4 INV-5 INV-9: rejects tamper, replay, concurrent forks, cross-principal, cross-pool, and expiry"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-2 INV-4 INV-9: refuses changed write arguments, address, and meta-tool before continuation dispatch"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-4 INV-9: bounds downstream rounds and preserves the original expiry"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-2 INV-4: programs retain input_required_unsupported with the equivalent direct call"
+        },
+        {
+          "file": "test/downstream-input.test.ts",
+          "title": "INV-4: namespaces downstream connecta keys and ignores unrelated input responses"
         }
       ]
     },

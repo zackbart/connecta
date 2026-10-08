@@ -485,7 +485,11 @@ export interface Connector {
     args: unknown,
     ctx: ConnectorContext,
     /** A fresh deep copy of the catalog definition for this dispatch. */
-    options?: { definition?: ToolDef },
+    options?: {
+      definition?: ToolDef;
+      /** Verified direct-call continuation, never populated by a program. */
+      input?: { requestState?: string; inputResponses: Record<string, unknown> } | undefined;
+    },
   ): Promise<unknown>;
   /**
    * Optional read-only downstream resource operation. The URI is an opaque

@@ -18,6 +18,7 @@ import {
   UnsupportedProtocolVersionError,
   UrlElicitationRequiredError,
   isInputRequiredResult,
+  fromJsonSchema,
   isJSONRPCErrorResponse,
   isJSONRPCNotification,
   specTypeSchemas,
@@ -26,6 +27,7 @@ import {
 } from "@modelcontextprotocol/client";
 import type {
   FetchLike,
+  JsonSchemaType,
   ListToolsResult,
   RequestOptions,
   StandardSchemaV1,
@@ -71,6 +73,7 @@ import { learnedUrlRefusal } from "../url-safety.js";
 import { oauthSealerFor } from "../oauth-sealing.js";
 import { retainingOAuthPartition } from "../oauth-partition.js";
 import { registerInvocationAuth } from "../invocation-auth.js";
+import { downstreamInputCapabilities } from "../downstream-input.js";
 import { detach, runEdge } from "../runtime/run.js";
 import { assertKnownOptions, keys, optionsOf } from "../config-schema.js";
 import { describedEndpoint, describedUrl } from "../described.js";
@@ -2352,8 +2355,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
               versionNegotiation: {
                 mode: opts.versionNegotiation ?? "auto",
               },
-              // Connecta has no interactive relay. Surface the result manually
-              // below as one structured, non-retryable connector failure.
+              capabilities: downstreamInputCapabilities(ctx.requestScope ?? ctx),
+              // The host owns each sealed continuation; never auto-retry a write.
               inputRequired: { autoFulfill: false },
             },
           );
@@ -2757,28 +2760,36 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             `Tool "${name}" requires task-based execution, which Connecta does not support.`,
           );
         }
+        let output: StandardSchemaV1 | undefined;
+        if (toolDefinition?.outputSchema) {
+          try { output = fromJsonSchema(toolDefinition.outputSchema as JsonSchemaType); }
+          catch { throw new ConnectorCallError("invalid_args", "The downstream tool has an invalid output schema. Nothing was dispatched."); }
+        }
         const result = await client
           .callTool(
             {
               name,
               arguments: (args ?? {}) as Record<string, unknown>,
+              ...options?.input,
             },
             {
               ...requestOptions(ctx),
               allowInputRequired: true,
-              ...(toolDefinition ? { toolDefinition } : {}),
+              // SDK 2.3.1's callTool checks outputSchema even for a suspension.
+              // Retain its header mirroring, then validate only final results.
+              ...(toolDefinition ? { toolDefinition: { ...toolDefinition, outputSchema: undefined } } : {}),
             },
           )
           .catch((err: unknown) => {
             throw atMcpBoundary(ctx, err, "tools/call", client.transport, [ctx.signal]);
           });
         if (isInputRequiredResult(result)) {
-          throw new ConnectorCallError(
-            "input_required_unsupported",
-            `Connector "${id}" returned input_required for "${name}". ` +
-              "Connecta cannot relay multi-round-trip input yet; this " +
-              "capability is gated pending real host and downstream adoption.",
-          );
+          return result;
+        }
+        if (output && !result.isError) {
+          if (result.structuredContent === undefined) throw new ConnectorCallError("connector_call_failed", "The downstream omitted its declared structured output.");
+          const validation = await output["~standard"].validate(result.structuredContent);
+          if (validation.issues) throw new ConnectorCallError("connector_call_failed", "The downstream result does not match its declared output schema.");
         }
         return result;
       } catch (err) {
@@ -3007,7 +3018,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     };
   }
 
-  const withActiveSecrets = async <T>(ctx: ConnectorContext, run: () => Promise<T>, redactResult = true): Promise<T> => {
+  const withActiveSecrets = async <T>(ctx: ConnectorContext, run: () => Promise<T>, redactResult = true, preserveInput = false): Promise<T> => {
     trackCredentialReads(ctx);
     const secrets = sentSecretsFor(ctx);
     if (opts.auth?.type === "headers") {
@@ -3019,14 +3030,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     active.add(ctx);
     try {
       const result = await run();
-      return redactResult ? redactSentSecrets(ctx, result) : result;
+      // Opaque state must reach the sealing handler byte-exact. Invocation
+      // intercepts it before ordinary result processing or guest exposure.
+      return preserveInput && isInputRequiredResult(result) || !redactResult ? result : redactSentSecrets(ctx, result);
     }
     catch (error) { throw redactSentSecrets(ctx, error); }
     finally { active.delete(ctx); }
   };
   const callTool = connector.callTool;
   connector.callTool = (name, args, ctx, options) =>
-    withActiveSecrets(ctx, () => callTool(name, args, ctx, options));
+    withActiveSecrets(ctx, () => callTool(name, args, ctx, options), true, true);
   const listTools = connector.listTools;
   connector.listTools = (ctx) => withActiveSecrets(ctx, () => listTools(ctx));
   const readResource = connector.readResource!;
