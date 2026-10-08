@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 // Hosted reviewed names and endpoints are vendor evidence, independent of runtime modules.
@@ -185,11 +185,22 @@ async function documentedVercelWorkspace(): Promise<{
   temporary.push(directory);
   const toolReference = join(directory, "vercel-tools.md");
   const setupReference = join(directory, "vercel-setup.md");
-  const headings = (vercelEvidence.reviewed as string[])
-    .sort()
-    .map((name) => `### ${name.replaceAll("_", "\\_")}`)
-    .join("\n\n");
-  await writeFile(toolReference, `# Vercel tools\n\n${headings}\n`);
+  const categories = vercelEvidence.inventory.categories as Record<string, string[]>;
+  await writeFile(
+    toolReference,
+    "# Vercel tools\n\n" +
+      Object.entries(categories)
+        .map(
+          ([category, names]) =>
+            `[${category}\n${names.length} tools](/docs/agent-resources/vercel-mcp/tools/${category})`,
+        )
+        .join("\n"),
+  );
+  await Promise.all(
+    Object.entries(categories).map(([category, names]) =>
+      writeFile(join(directory, `${category}.md`), names.map((name) => `## \`${name}\``).join("\n\n")),
+    ),
+  );
   await writeFile(setupReference, `# Vercel MCP setup\n\nEndpoint: ${VERCEL_MCP_ENDPOINT}\n\nOAuth is required.\n`);
   return { directory, toolReference, setupReference };
 }
@@ -647,18 +658,48 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     const cleanReport = JSON.parse(clean.output).docs[0];
     expect(cleanReport).toMatchObject({
       provider: "vercel",
-      documentedTools: 39,
-      added: [],
+      documentedTools: 217,
+      added: expect.any(Array),
       removed: [],
       findings: [],
       schemaAuthority: "live-tools-list",
       schemasVendored: false,
     });
 
-    await writeFile(toolReference, `${await readFile(toolReference, "utf8")}\n### new\\_vercel\\_tool\n`);
+    expect(cleanReport.added).toHaveLength(178);
+    await writeFile(toolReference, (await readFile(toolReference, "utf8")).replace("14 tools", "15 tools"));
+    const category = join(dirname(toolReference), "deployments.md");
+    await writeFile(category, `${await readFile(category, "utf8")}\n## ` + "`new_vercel_tool`\n");
     const drifted = runDocumented("vercel", toolReference, setupReference);
     expect(drifted.status).toBe(0);
-    expect(JSON.parse(drifted.output).docs[0].added).toEqual(["new_vercel_tool"]);
+    expect(JSON.parse(drifted.output).docs[0].added).toEqual([...cleanReport.added, "new_vercel_tool"].sort());
+  });
+
+  it("INV-8 refuses a removal with no known category evidence", async () => {
+    const { toolReference, setupReference } = await documentedVercelWorkspace();
+    const directory = await recordWorkspace({
+      vercel: {
+        version: 1,
+        provider: "vercel",
+        checks: [{ ...vercelEvidence, reviewed: [...vercelEvidence.reviewed, "unknown_category_tool"] }],
+      },
+    });
+    const result = reportFor(directory, [
+      "--docs",
+      "--tool-reference",
+      `vercel=${toolReference}`,
+      "--setup-reference",
+      `vercel=${setupReference}`,
+    ]);
+    const docs = JSON.parse(result.output).docs[0];
+    expect(docs.findings).toEqual([
+      expect.objectContaining({
+        kind: "unavailable",
+        detail: expect.stringContaining("no known category for removed tool unknown_category_tool"),
+      }),
+    ]);
+    expect(docs.added).toBeUndefined();
+    expect(docs.removed).toBeUndefined();
   });
 
   it("reads table inventories and treats documented additions as findings", async () => {
@@ -1269,7 +1310,7 @@ describe("discovered provider drift evidence", { timeout: CASE_TIMEOUT_MS }, () 
     const report = JSON.parse(result.output);
     expect(result.status).toBe(0);
     expect(report.docs).toMatchObject([
-      { provider: "vercel", findings: [{ kind: "parser-error" }] },
+      { provider: "vercel", findings: [{ kind: "unavailable" }] },
       { provider: "z-vendor", findings: [] },
     ]);
     expect(report.manual).toMatchObject([{ provider: "vercel", findings: [{ kind: "manual-required" }] }]);

@@ -267,6 +267,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "cmdk": "^1.1.1",
+    "commonmark": "^0.31.2",
     "esbuild": "^0.28.0",
     "knip": "^6.29.0",
     "oxfmt": "0.72.0",

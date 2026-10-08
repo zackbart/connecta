@@ -7,6 +7,7 @@
 // hosted reviewed names/annotations, or runtime code. MCP schemas remain live tools/list.
 import { createHash } from "node:crypto";
 import { discoverProviders } from "./providers.mjs";
+import { readVercelInventory } from "./vercel-inventory.mjs";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -293,11 +294,19 @@ function validateCheck(check, allowUnrecorded) {
     if (check.inventory !== undefined) {
       const inventory = check.inventory;
       require(nonempty(inventory.url) &&
-        ["headings", "inline", "inline-calls", "table"].includes(
+        ["headings", "inline", "inline-calls", "table", "vercel-categories"].includes(
           inventory.format,
         ), "inventory requires URL and supported parser format");
       for (const key of ["start", "end", "prefix"])
         require(inventory[key] === undefined || nonempty(inventory[key]), `inventory ${key} must be non-empty`);
+      require(inventory.categories === undefined ||
+        (inventory.format === "vercel-categories" &&
+          inventory.categories !== null &&
+          typeof inventory.categories === "object" &&
+          !Array.isArray(inventory.categories) &&
+          Object.entries(inventory.categories).every(
+            ([category, names]) => /^[a-z0-9-]+$/.test(category) && strings(names),
+          )), "inventory categories must map category slugs to known tool names");
       require(inventory.acknowledgedUnclassified === undefined ||
         strings(
           inventory.acknowledgedUnclassified,
@@ -1044,13 +1053,23 @@ async function checkDocumentedProvider(provider, defaults, options) {
     setup: options.setupReferenceSources.get(provider) ?? defaults.setup,
     tools: options.toolReferenceSources.get(provider) ?? defaults.inventory?.url,
   };
-  const [setup, markdown] = await Promise.all([
+  const categorized = defaults.inventory?.format === "vercel-categories";
+  const [setup, inventory] = await Promise.all([
     loadPublished(provider, "official MCP setup reference", sources.setup),
     sources.tools === undefined
       ? Promise.resolve(undefined)
-      : loadPublished(provider, "MCP tool reference", sources.tools),
+      : categorized
+        ? readVercelInventory(sources.tools, defaults.inventory.categories).catch((error) => {
+            throw new UnavailableError(error.message);
+          })
+        : loadPublished(provider, "MCP tool reference", sources.tools),
   ]);
-  const documented = markdown === undefined ? undefined : documentedToolNames(markdown, defaults.inventory);
+  const documented =
+    inventory === undefined
+      ? undefined
+      : categorized
+        ? inventory.names
+        : documentedToolNames(inventory, defaults.inventory);
   if (documented !== undefined && documented.length === 0) {
     throw new ParserError(`${provider}'s MCP tool reference contained no recognizable tool names`);
   }
@@ -1063,6 +1082,15 @@ async function checkDocumentedProvider(provider, defaults, options) {
     (name) => !reviewedSet.has(name) && acknowledged.has(name),
   );
   const removed = documented === undefined ? [] : reviewed.filter((name) => !documentedSet.has(name));
+
+  if (categorized) {
+    for (const name of removed) {
+      if (!Object.values(defaults.inventory.categories ?? {}).some((names) => names.includes(name)))
+        throw new UnavailableError(
+          `Vercel inventory unavailable/incomplete: no known category for removed tool ${name}; needs review`,
+        );
+    }
+  }
 
   if (defaults.type === "oauth-discovery") {
     const discovery = await checkOAuthDiscovery(
@@ -1110,6 +1138,7 @@ async function checkDocumentedProvider(provider, defaults, options) {
     setupReference: sources.setup,
     inventoryChecked: documented !== undefined,
     documentedTools: documented?.length,
+    ...(categorized ? { inventoryPages: inventory.pages } : {}),
     added,
     removed,
     intentionallyUnclassified,
@@ -1163,7 +1192,7 @@ function printDocs(result) {
   for (const finding of result.findings) {
     console.log(`  ${finding.kind.padEnd(16)} ${finding.detail}`);
   }
-  if (result.added.length + result.findings.length === 0) {
+  if (result.added.length + result.removed.length + result.findings.length === 0) {
     console.log(
       result.inventoryChecked
         ? "  documented additions are classified; connection metadata matches"
@@ -1176,7 +1205,7 @@ function printDocs(result) {
 function findingCount(report) {
   let total = 0;
   for (const result of [...report.specs, ...report.docs, ...report.manual, ...report.records]) {
-    total += result.findings.length + (result.added?.length ?? 0);
+    total += result.findings.length + (result.added?.length ?? 0) + (result.removed?.length ?? 0);
   }
   return total;
 }

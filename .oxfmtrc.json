@@ -26,6 +26,7 @@
     "/knip.jsonc",
     "scripts/bundle-budget.json",
     "**/fixtures/**",
+    "src/providers/vercel/inventory-fixtures/*.md",
     "**/fixtures.ts",
     "**/__snapshots__/**",
     "**/*-snapshots/**",
