@@ -406,6 +406,14 @@
         {
           "file": "test/auth-elicitation.test.ts",
           "title": "INV-4 INV-5 INV-9: a claimed forced reconnect cannot complete against the old grant before reset finishes"
+        },
+        {
+          "file": "test/auth-elicitation.test.ts",
+          "title": "INV-4 INV-9: a failed browser start is terminal and does not block a later successful retry"
+        },
+        {
+          "file": "test/auth-elicitation.test.ts",
+          "title": "INV-4 INV-5 INV-9: retires unused forced links before the completion status check"
         }
       ]
     },

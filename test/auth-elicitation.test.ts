@@ -296,6 +296,53 @@ describe("auth URL elicitation", () => {
     expect(completed.structuredContent).toEqual({ connector: "service", status: "ok" });
   });
 
+  it("INV-4 INV-9: a failed browser start is terminal and does not block a later successful retry", async () => {
+    const flow = setup();
+    vi.mocked(flow.connector.startAuth!).mockRejectedValueOnce(new Error("Start failed"));
+    const args = { connector: "service", force: true };
+    const first = (await flow.rpc("authorize_connector", args)).result;
+    expect((await flow.browser(first.inputRequests.connecta_auth.params.url)).status).toBe(400);
+    expect((await flow.browser(first.inputRequests.connecta_auth.params.url)).status).toBe(400);
+    const pending = (await flow.rpc("authorize_connector", args, { state: first.requestState, action: "accept" })).result;
+    expect(pending.resultType).toBe("input_required");
+    vi.mocked(flow.connector.startAuth!).mockImplementationOnce(async () => {
+      flow.connect();
+      return { state: "ok" };
+    });
+    expect((await flow.browser(pending.inputRequests.connecta_auth.params.url)).status).toBe(200);
+    expect(flow.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: true });
+    const completed = (await flow.rpc("authorize_connector", args, { state: pending.requestState, action: "accept" })).result;
+    expect(completed.structuredContent).toEqual({ connector: "service", status: "ok" });
+  });
+
+  it("INV-4 INV-5 INV-9: retires unused forced links before the completion status check", async () => {
+    const flow = setup();
+    const args = { connector: "service", force: true };
+    const first = (await flow.rpc("authorize_connector", args)).result;
+    const second = (await flow.rpc("authorize_connector", args, { state: first.requestState, action: "accept" })).result;
+    vi.mocked(flow.connector.startAuth!).mockImplementationOnce(async () => {
+      flow.connect();
+      return { state: "ok" };
+    });
+    expect((await flow.browser(first.inputRequests.connecta_auth.params.url)).status).toBe(200);
+    let resume!: () => void;
+    let entered!: () => void;
+    const paused = new Promise<void>(resolve => { resume = resolve; });
+    const checking = new Promise<void>(resolve => { entered = resolve; });
+    vi.spyOn(flow.connector, "status").mockImplementation(async () => {
+      entered();
+      await paused;
+      return { state: "ok" };
+    });
+    const retry = flow.rpc("authorize_connector", args, { state: second.requestState, action: "accept" });
+    await checking;
+    try {
+      expect((await flow.browser(second.inputRequests.connecta_auth.params.url)).status).toBe(400);
+      expect(flow.connector.startAuth).toHaveBeenCalledOnce();
+    } finally { resume(); }
+    expect((await retry).result.structuredContent).toEqual({ connector: "service", status: "ok" });
+  });
+
   it("INV-4 INV-5: credential handoffs respect configured UI paths and reject external redirects", async () => {
     for (const uiPath of ["/operator", "https://evil.test/operator"]) {
       const flow = setup({ credential: true, uiPath });

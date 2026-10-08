@@ -75,7 +75,8 @@ export class AuthElicitation {
     registry: RegistryView;
     canManage: (id: string) => boolean;
     connectLink: (id: string, force?: boolean) => Promise<{ url: string; nonce: string }>;
-    linkProgress: (id: string, nonce: string) => Promise<"claimed" | "started" | undefined>;
+    linkProgress: (id: string, nonce: string) => Promise<"claimed" | "started" | "failed" | undefined>;
+    closeLinks: (id: string, nonces: string[]) => Promise<void>;
     unavailable: string | undefined;
     credentialUi: boolean;
     requestSignal: AbortSignal;
@@ -109,7 +110,7 @@ export class AuthElicitation {
     let pending = false;
     for (const nonce of state.browserNonces) {
       const progress = await this.options.linkProgress(state.connector, nonce);
-      visited ||= progress !== undefined;
+      visited ||= progress === "claimed" || progress === "started";
       completed ||= progress === "started";
       pending ||= progress === "claimed";
     }
@@ -152,9 +153,14 @@ export class AuthElicitation {
       if (response.action !== "accept") throw new ProtocolError(INVALID_PARAMS, "Invalid auth elicitation response", { reason: "invalid_input_response" });
     }
     const browser = previous && tool === "authorize_connector" ? await this.browserProgress(previous) : undefined;
-    if (browser?.completed && previous && await this.connected(previous.connector, context)) {
-      const structuredContent = { connector: previous.connector, status: "ok" };
-      return { structuredContent, content: [{ type: "text", text: JSON.stringify(structuredContent) }] };
+    if (browser?.completed && previous) {
+      // Retire unspent links before the status read. A browser claim racing
+      // these CASes either wins and is observed as pending, or is refused.
+      await this.options.closeLinks(previous.connector, previous.browserNonces);
+      if ((await this.browserProgress(previous)).completed && await this.connected(previous.connector, context)) {
+        const structuredContent = { connector: previous.connector, status: "ok" };
+        return { structuredContent, content: [{ type: "text", text: JSON.stringify(structuredContent) }] };
+      }
     }
     const result = await operation();
     const error = result.structuredContent?.error;

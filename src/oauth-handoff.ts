@@ -69,9 +69,17 @@ export async function oauthConnectLink(
 }
 
 /** A claim precedes OAuth reset; only a completed start can prove recovery. */
-export async function oauthConnectLinkProgress(opts: ServerOptions, baseUrl: string, id: string, nonce: string): Promise<"claimed" | "started" | undefined> {
+export async function oauthConnectLinkProgress(opts: ServerOptions, baseUrl: string, id: string, nonce: string): Promise<"claimed" | "started" | "failed" | undefined> {
   const stage = await opts.registry.contextFor(id, baseUrl).storage.get(oauthConnectKeys.used(nonce));
-  return stage === "used" ? "claimed" : stage === "started" ? "started" : undefined;
+  return stage === "used" ? "claimed" : stage === "started" || stage === "failed" ? stage : undefined;
+}
+
+/** Make outstanding flow links single-use refusals before a completion check. */
+export async function closeOAuthConnectLinks(opts: ServerOptions, baseUrl: string, id: string, nonces: string[]): Promise<void> {
+  const storage = opts.registry.contextFor(id, baseUrl).storage;
+  for (const nonce of nonces) {
+    await storage.compareAndSet(oauthConnectKeys.used(nonce), null, "closed", { ttlSeconds: HANDOFF_TTL_MS / 1000 });
+  }
 }
 
 export async function verifyOAuthHandoff(
@@ -109,10 +117,10 @@ export async function consumeOAuthConnectLink(opts: ServerOptions, handoff: Hand
   return storage.compareAndSet(oauthConnectKeys.used(handoff.nonce), null, "used", expiry);
 }
 
-/** Mark only after the start, reset, and consent binding have finished. */
-export async function completeOAuthConnectStart(opts: ServerOptions, handoff: Handoff): Promise<boolean> {
+/** Terminal marker only after the start and every tracked reset have settled. */
+export async function finishOAuthConnectStart(opts: ServerOptions, handoff: Handoff, outcome: "started" | "failed"): Promise<boolean> {
   if (handoff.expiresAt <= Date.now()) return false;
   const storage = opts.registry.contextFor(handoff.connector, handoff.origin).storage;
   const expiry = { ttlSeconds: Math.max(1, Math.ceil((handoff.expiresAt - Date.now()) / 1000)) };
-  return storage.compareAndSet(oauthConnectKeys.used(handoff.nonce), "used", "started", expiry);
+  return storage.compareAndSet(oauthConnectKeys.used(handoff.nonce), "used", outcome, expiry);
 }

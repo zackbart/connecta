@@ -883,6 +883,9 @@ its reset and consent binding), valid stored credential fields where declared,
 and a healthy passive connector status where available before completing.
 An in-progress start cannot complete against an old grant. A forced flow switches to
 Continue after that visit, so another prompt cannot restart pending consent.
+Failed starts remain single-use but do not block a later successful attempt.
+Before checking completion, unspent links in the retry flow are atomically
+retired so an older forced link cannot begin a reset during the status check.
 
 The `/connect` link issued by the elicitation boundary encrypts its browser
 handoff with the vault's `seal`/`open` methods before signing it. The URL carries
