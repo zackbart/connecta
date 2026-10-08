@@ -1,7 +1,7 @@
 import { callbackAuth, bindCallback } from "./fixtures/oauth.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { describe, expect, it, vi } from "vitest";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import { api } from "../src/connectors/api.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
@@ -117,7 +117,7 @@ describe("server route contracts", () => {
       { allowedOrigins: ["https://client.example"] },
       { allowedOrigins: "*" as const },
     ]) {
-      const connecta = createTestConnecta({ connectors: [], auth: bearerToken(TOKEN), ...config });
+      const connecta = createTestConnecta({ connectors: [], auth: machineAuth(TOKEN), ...config });
       for (const origin of [undefined, BASE, "https://client.example", "http://localhost:4321", "https://127.0.0.1:99", "http://[::1]:4321", "https://attacker.example", "null", "https://localhost.attacker.example", `${BASE}/`, "https://user:pass@localhost"]) {
         const allowed = origin === undefined || config.allowedOrigins === "*" ||
           (Array.isArray(config.allowedOrigins) ? config.allowedOrigins.includes(origin) :
@@ -155,7 +155,7 @@ describe("server route contracts", () => {
 
   it("authenticates every pool suffix before returning the same pool refusal", async () => {
     const connecta = createTestConnecta({
-      connectors: [testConnector("docs")], auth: bearerToken(TOKEN), publicUrl: BASE,
+      connectors: [testConnector("docs")], auth: machineAuth(TOKEN), publicUrl: BASE,
       pools: { support: { tools: ["docs"], grant: () => false }, broken: { tools: ["docs"], grant: () => { throw new Error("private"); } } },
     });
     let baseline: Awaited<ReturnType<typeof responseShape>> | undefined;
@@ -196,7 +196,7 @@ describe("server route contracts", () => {
       ...testConnector("private_connector_id"),
       callAdmission: { rules: [{ maxConcurrency: 1 }] },
       catalogDrift: () => ({ observedAt: "2026-09-16T00:00:00.000Z", unclassifiedTools: 2, unservedTools: 1, annotationConflicts: 0, schemaChanges: 3 }),
-    }], auth: bearerToken(TOKEN), publicUrl: BASE });
+    }], auth: machineAuth(TOKEN), publicUrl: BASE });
     let previous: unknown;
     for (let i = 0; i < 2; i++) {
       const response = await connecta.fetch(new Request(`${BASE}/health`, { headers: { Origin: "https://attacker.example" } }));
@@ -233,7 +233,7 @@ describe("server route contracts", () => {
     const connector = surfaceConnector();
     const connecta = createTestConnecta({
       connectors: [connector],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
       logger: silentLogger,
@@ -301,7 +301,7 @@ describe("server route contracts", () => {
   it("answers a browser's 404 with one themed page that names no path", async () => {
     const connecta = createTestConnecta({
       connectors: [surfaceConnector()],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
       logger: silentLogger,
@@ -355,7 +355,7 @@ describe("server route contracts", () => {
   it("keeps operator shells open, framed off, and data-free", async () => {
     const connecta = createTestConnecta({
       connectors: [surfaceConnector()],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
       logger: silentLogger,
@@ -391,7 +391,7 @@ describe("server route contracts", () => {
   it("pins authentication and same-origin requirements per private route", async () => {
     const connecta = createTestConnecta({
       connectors: [surfaceConnector()],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
       logger: silentLogger,
@@ -509,7 +509,7 @@ describe("server route contracts", () => {
     const warn = vi.fn();
     const connecta = createTestConnecta({
       connectors: [testConnector("alpha")],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
       logger: { ...silentLogger, warn },

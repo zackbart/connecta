@@ -1,5 +1,5 @@
 import { api } from "../../src/connectors/api.js";
-import { bearerToken } from "../../src/auth/bearer.js";
+import { machineAuth } from "../helpers/machine-auth.js";
 import { memoryStorage } from "../../src/storage/memory.js";
 import type { ConnectaConfig } from "../../src/index.js";
 import type { Connector, InboundAuth } from "../../src/types.js";
@@ -171,7 +171,7 @@ export function makeDeployment(
   return createTestConnecta({
     ...config,
     connectors: config.connectors ?? [calcApi()],
-    auth: config.auth ?? bearerToken(TEST_TOKEN),
+    auth: config.auth ?? machineAuth(TEST_TOKEN),
     storage: config.storage ?? memoryStorage(),
     publicUrl: config.publicUrl ?? TEST_BASE,
   });

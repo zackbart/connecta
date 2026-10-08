@@ -2,7 +2,7 @@
 // operator UI and `connecta doctor --config` read.
 //
 // The sentinel suite plants a distinct secret in every position that can
-// carry one — header values, bearer and Clerk secrets, vault keys, OAuth
+// carry one — header values, machine and Clerk secrets, vault keys, OAuth
 // client secrets, URL userinfo and queries, stored credentials and access
 // tokens, function bodies — and asserts none survives serialization. The
 // snapshot is an allowlist serializer, so a secret added to a config object
@@ -11,7 +11,7 @@
 import { accessTokens } from "../../src/access-tokens.js";
 import { activityHistory, type ActivityStore } from "../../src/activity.js";
 import { artifacts, kvArtifactStore } from "../../src/artifacts.js";
-import { bearerToken } from "../../src/auth/bearer.js";
+import { machineAuth } from "../helpers/machine-auth.js";
 import { clerkAuth } from "../../src/auth/clerk.js";
 import { encryptedCredentialVault } from "../../src/credentials.js";
 import {
@@ -40,7 +40,7 @@ export const SECRETS = {
   urlQuery: "SENTINEL-url-query",
   urlFragment: "SENTINEL-url-fragment",
   cimdQuery: "SENTINEL-cimd-query",
-  bearerToken: "SENTINEL-inbound-bearer",
+  machineToken: "SENTINEL-inbound-machine",
   clerkSecretKey: "SENTINEL-clerk-secret-key",
   oauthClientId: "SENTINEL-oauth-client-id",
   oauthClientSecret: "SENTINEL-oauth-client-secret",
@@ -112,7 +112,7 @@ export function secretBearingDeployment() {
       executor,
       logger: { debug() {}, info() {}, warn() {}, error() {}, token: SECRETS.loggerField },
       auth: [
-        bearerToken(SECRETS.bearerToken, { subjectId: "operator" }),
+        machineAuth(SECRETS.machineToken, { subjectId: "operator" }),
         clerkAuth({ publishableKey, secretKey: SECRETS.clerkSecretKey, publicUrl: BASE }),
       ],
       accessTokens: accessTokens(storage),

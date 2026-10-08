@@ -4,7 +4,7 @@ import { encryptedCredentialVault } from "../src/credentials.js";
 import { describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
 import type { ConnectorContext } from "../src/types.js";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import {
   STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
 } from "../src/credential-rules.js";
@@ -43,7 +43,7 @@ describe("status UI credential management", () => {
     const connector = { ...credentialConnector(), id: "key", testCredential, closeScope };
     const connecta = createTestConnecta({
       connectors: [connector],
-      auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
+      auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
       storage,
       publicUrl: BASE,
       vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
@@ -80,7 +80,7 @@ describe("status UI credential management", () => {
           tools: [],
         }),
       ],
-      auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
+      auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
       storage,
       publicUrl: BASE,
       vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
@@ -146,7 +146,7 @@ describe("status UI credential management", () => {
           tools: [],
         }),
       ],
-      auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
+      auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
       storage,
       publicUrl: BASE,
       vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
@@ -193,7 +193,7 @@ describe("status UI credential management", () => {
     });
     const connecta = createTestConnecta({
       connectors: [connector],
-      auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
+      auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
       storage: memoryStorage(),
       publicUrl: BASE,
       vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),

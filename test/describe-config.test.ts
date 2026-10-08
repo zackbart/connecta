@@ -2,7 +2,7 @@
 // operator UI and `connecta doctor --config` read.
 //
 // The sentinel suite plants a distinct secret in every position that can
-// carry one — header values, bearer and Clerk secrets, vault keys, OAuth
+// carry one — header values, machine and Clerk secrets, vault keys, OAuth
 // client secrets, URL userinfo and queries, stored credentials and access
 // tokens, function bodies — and asserts none survives serialization. The
 // snapshot is an allowlist serializer, so a secret added to a config object
@@ -203,7 +203,7 @@ describe("describeConfig", () => {
         trust: "trusted",
         classification: { static_api: { read: "write" } },
         auth: [
-          { kind: "bearer", interactive: false },
+          { kind: "access_token", interactive: false },
           { kind: "access_token", interactive: false },
           { kind: "clerk", interactive: true, ui: "clerk" },
         ],

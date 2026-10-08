@@ -1,7 +1,7 @@
 import { operatorUi } from "../src/ui.js";
 import { activityHistory } from "../src/activity.js";
 import { describe, expect, it, vi } from "vitest";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { resolveBranding } from "../src/ui.js";
 import { droppedThemeTokens, renderPage, resolveTheme, themeCss } from "../src/branding.js";
@@ -24,7 +24,7 @@ function brandingConfig(
 ) {
   return {
     connectors: [calcApi({ empty: true })],
-    auth: bearerToken("test-token-123"),
+    auth: machineAuth("test-token-123"),
     storage: memoryStorage(),
     publicUrl: BASE,
     ui: operatorUi(branding ? { branding } : {}),

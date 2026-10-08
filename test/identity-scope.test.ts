@@ -1,4 +1,4 @@
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import { fetchTestUiDetails } from "./helpers.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { describe, expect, it } from "vitest";
@@ -48,11 +48,11 @@ function visible(id: string): Connector {
 }
 
 describe("identity-scoped connectors", () => {
-  it.each(["subject", "principal"] as const)("isolates result pages for bearer %s identities without an activity namespace", async (identityKind) => {
+  it.each(["subject", "principal"] as const)("isolates result pages for machine %s identities without an activity namespace", async (identityKind) => {
     const auth: InboundAuth | InboundAuth[] = identityKind === "subject"
-      ? [bearerToken("alice", { subjectId: "alice" }), bearerToken("bob", { subjectId: "bob" })]
+      ? [machineAuth("alice", { subjectId: "alice" }), machineAuth("bob", { subjectId: "bob" })]
       : {
-          kind: "bearer",
+          kind: "access_token",
           authorize(request) {
             const id = /^Bearer (alice|bob)$/.exec(request.headers.get("authorization") ?? "")?.[1];
             return id ? { ok: true, principal: { namespace: "directory", id } }

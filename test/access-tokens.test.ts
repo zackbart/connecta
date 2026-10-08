@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { accessTokens, AccessTokenManager } from "../src/access-tokens.js";
 import { CredentialVault } from "../src/credentials.js";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { authorize } from "../src/routes/shared.js";
 import { createTestConnecta } from "./helpers.js";
@@ -114,10 +114,10 @@ describe("optional token lifecycle", () => {
     } finally { await app.close(); }
   });
 
-  it("denies bearer management, missing permission, cross-origin and oversized writes", async () => {
+  it("denies machine token management, missing permission, cross-origin and oversized writes", async () => {
     const storage = await legacyStorage();
     let permission = false;
-    const app = createTestConnecta({ connectors: [], vault: new CredentialVault(storage, btoa("x".repeat(32))), auth: [human, bearerToken("static")], accessTokens: accessTokens(storage), identity: { accessTokenManagement: () => permission } });
+    const app = createTestConnecta({ connectors: [], vault: new CredentialVault(storage, btoa("x".repeat(32))), auth: [human, machineAuth("static")], accessTokens: accessTokens(storage), identity: { accessTokenManagement: () => permission } });
     try {
       for (const token of ["clerk-operator", "static", fixture.bound.token]) {
         const res = await app.fetch(request(token, "/ui/access-tokens", "POST", { name: "Denied" }));

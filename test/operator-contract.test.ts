@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { activityHistory, type ToolCallActivityEvent } from "../src/activity.js";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import { createConnecta, customExecutor, type Connector, type InboundAuth } from "../src/index.js";
 import { operatorUi, type OperatorUiContract } from "../src/ui.js";
 import { seedThingsCatalog } from "./fixtures/stale-schema.js";
@@ -37,7 +37,7 @@ describe("operator config contract", () => {
     // avoids outbound calls while also trying to publish a secret in status.
     for (const c of config.connectors) c.status = async () => ({ state: "error", message: SECRETS.headerValue, authorizationUrl: SECRETS.storedAccessToken });
     const app = deployment(config);
-    const data = await read(app, { Authorization: `Bearer ${SECRETS.bearerToken}` });
+    const data = await read(app, { Authorization: `Bearer ${SECRETS.machineToken}` });
     const json = JSON.stringify(data);
     for (const [position, secret] of Object.entries(SECRETS)) expect(json, position).not.toContain(secret);
     expect(json).not.toContain(VAULT_KEY);
@@ -123,7 +123,7 @@ describe("operator config contract", () => {
 
   it.each(["forbidden", "gate_throws", "unavailable", "machine", "unconfigured"])("INV-4 INV-6: handles %s activity without widening access or returning errors", async mode => {
     let calls = 0;
-    const app = deployment({ connectors: [connector("svc")], executor, auth: mode === "machine" ? bearerToken("token") : human, ui: operatorUi(), logger: "silent",
+    const app = deployment({ connectors: [connector("svc")], executor, auth: mode === "machine" ? machineAuth("token") : human, ui: operatorUi(), logger: "silent",
       ...(mode === "unconfigured" ? {} : { activity: activityHistory({ readGate: () => { if (mode === "gate_throws") throw new Error("SENTINEL-gate"); return mode !== "forbidden"; }, store: { record() {}, list: async () => { calls++; throw new Error("SENTINEL-store"); } } }) }),
     });
     const data = await read(app, { Authorization: "Bearer token" });
@@ -135,7 +135,7 @@ describe("operator config contract", () => {
   });
 
   it("INV-4 INV-10: preserves the data-route auth challenge, rejects mutations, and requires the UI module", async () => {
-    const app = deployment({ connectors: [], executor, auth: bearerToken("token"), ui: operatorUi(), logger: "silent" });
+    const app = deployment({ connectors: [], executor, auth: machineAuth("token"), ui: operatorUi(), logger: "silent" });
     const response = await app.fetch(new Request(`${BASE}/ui/api/config`));
     expect(response.status).toBe(401);
     expect(response.headers.get("WWW-Authenticate")).toBe("Bearer");

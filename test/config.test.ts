@@ -1,5 +1,5 @@
 import { api } from "../src/connectors/api.js";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import { operatorUi } from "../src/ui.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { activityHistory } from "../src/activity.js";
@@ -120,7 +120,7 @@ describe("ConnectaConfig boundary", () => {
       handler: () => fetchProvider("https://provider.example", { headers: { Authorization: "Bearer private" } }),
     }] });
     for (const connectors of [[], [connector], [{ ...connector, credential: { label: "Token" } }]]) {
-      for (const auth of [undefined, bearerToken("secret")]) {
+      for (const auth of [undefined, machineAuth("secret")]) {
         const warn = vi.fn();
         const connecta = createConnecta({ connectors, executor, ...(auth ? { auth } : {}), logger: { ...silentLogger, warn } });
         const warnings = warn.mock.calls.filter(([message]) => String(message).includes("no inbound authentication"));
@@ -478,7 +478,7 @@ describe("ConnectaConfig schema", () => {
     ["serverInfo", { icons: [{ mimeType: "image/png" }] }, "serverInfo.icons[0].src is required"],
     ["storage", { get() {} }, "ConnectaConfig.storage must implement set and delete and list and compareAndSet"],
     ["logger", "quiet", 'ConnectaConfig.logger must be a Logger or "silent"'],
-    ["auth", [{ kind: "bearer" }], "ConnectaConfig.auth[0] must be an inbound auth adapter"],
+    ["auth", [{ kind: "access_token" }], "ConnectaConfig.auth[0] must be an inbound auth adapter"],
     ["publicUrl", "connecta.example", "ConnectaConfig.publicUrl must be an absolute http(s) URL"],
     ["publicUrl", "https://user:pass@connecta.example", "without credentials"],
     ["identity", { connectorAccess: "all" }, "ConnectaConfig.identity.connectorAccess must be a function"],

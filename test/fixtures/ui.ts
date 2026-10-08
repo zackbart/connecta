@@ -1,6 +1,6 @@
 import { encryptedCredentialVault } from "../../src/credentials.js";
 import { vi } from "vitest";
-import { bearerToken } from "../../src/auth/bearer.js";
+import { machineAuth } from "../helpers/machine-auth.js";
 import { api } from "../../src/connectors/api.js";
 import { memoryStorage } from "../../src/storage/memory.js";
 import type { Connector } from "../../src/types.js";
@@ -53,7 +53,7 @@ export function makeCredentialConnecta() {
   const storage = memoryStorage();
   const connecta = createTestConnecta({
     connectors: [credentialConnector()],
-    auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
+    auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
     storage,
     publicUrl: BASE,
     vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
@@ -97,7 +97,7 @@ export function makeMultiCredentialConnecta() {
   });
   const connecta = createTestConnecta({
     connectors: [connector],
-    auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
+    auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
     storage,
     publicUrl: BASE,
     vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
@@ -126,7 +126,7 @@ export function makeFieldsWithSingleHookConnecta() {
   });
   const connecta = createTestConnecta({
     connectors: [connector],
-    auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
+    auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
     storage: memoryStorage(),
     publicUrl: BASE,
     vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
@@ -150,7 +150,7 @@ export function makeSingleWithFieldsHookConnecta() {
   });
   const connecta = createTestConnecta({
     connectors: [connector],
-    auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
+    auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
     storage: memoryStorage(),
     publicUrl: BASE,
     vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
@@ -191,7 +191,7 @@ export function makeBothHooksConnecta(shape: CredentialShape) {
   });
   const connecta = createTestConnecta({
     connectors: [connector],
-    auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
+    auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
     storage: memoryStorage(),
     publicUrl: BASE,
     vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
@@ -227,7 +227,7 @@ export function makeShapeDriftConnecta(
         });
   const connecta = createTestConnecta({
     connectors: [connector],
-    auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
+    auth: [machineAuth(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
     storage,
     publicUrl: BASE,
     vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),

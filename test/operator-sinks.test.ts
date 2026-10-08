@@ -4,7 +4,7 @@ import { createExecuteTool } from "../src/execute.js";
 import { snapshotCatalog } from "../src/catalog-fingerprint.js";
 import { Registry } from "../src/registry.js";
 import { recordCatalogDriftActivity, recordToolActivity } from "../src/activity.js";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import { parseConnectorAccess } from "../src/connector-access.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
@@ -650,7 +650,7 @@ describe("a plugin status seam", () => {
 
     const connecta = createTestConnecta({
       connectors: [seam(status)],
-      auth: bearerToken("t"),
+      auth: machineAuth("t"),
       storage: memoryStorage(),
       publicUrl: BASE,
       logger,
@@ -687,7 +687,7 @@ describe("a status decorator", () => {
 
     const connecta = createTestConnecta({
       connectors: [decorated()],
-      auth: bearerToken("t"),
+      auth: machineAuth("t"),
       storage: memoryStorage(),
       publicUrl: BASE,
       logger,
@@ -818,7 +818,7 @@ describe("the operator page's catalog", () => {
     ] }));
     const connecta = createTestConnecta({
       connectors: [remote()],
-      auth: bearerToken("t"),
+      auth: machineAuth("t"),
       storage: memoryStorage(),
       publicUrl: BASE,
       logger: capturingLogger().logger,
@@ -865,7 +865,7 @@ describe("a forwarded catalog drift report", () => {
     const { logger, lines } = capturingLogger();
     const connecta = createTestConnecta({
       connectors: [drifting(observedAt)],
-      auth: bearerToken("t"),
+      auth: machineAuth("t"),
       storage: memoryStorage(),
       publicUrl: BASE,
       logger,
@@ -965,7 +965,7 @@ describe("control-character tool names at catalog intake", () => {
     }, logger);
     expect((await execute({ code: "" })).isError).toBeFalsy();
     expect(calls).toBe(4);
-    const app = createTestConnecta({ connectors: [connector()], auth: bearerToken("t"), storage, publicUrl: BASE, logger });
+    const app = createTestConnecta({ connectors: [connector()], auth: machineAuth("t"), storage, publicUrl: BASE, logger });
     const ui = await (await app.fetch(new Request(`${BASE}/ui/connectors/svc`, { headers: { Authorization: "Bearer t" } }))).text();
     const health = await (await app.fetch(new Request(`${BASE}/health`))).text();
     const status = JSON.stringify(await registry.statusFor("svc", BASE));

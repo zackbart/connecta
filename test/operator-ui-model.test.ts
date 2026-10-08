@@ -1,6 +1,6 @@
 import { connectRequest } from "./fixtures/oauth.js";
 import { describe, expect, it, vi } from "vitest";
-import { bearerToken } from "../src/auth/bearer.js";
+import { machineAuth } from "./helpers/machine-auth.js";
 import { api } from "../src/connectors/api.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { classifyTool } from "../src/tool-safety.js";
@@ -109,7 +109,7 @@ describe("tool safety classification", () => {
   it("ships the classification in connector details", async () => {
     const connecta = createTestConnecta({
       connectors: [docsApi()],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
     });
@@ -143,7 +143,7 @@ describe("connector problem classification", () => {
   it("reports a failed catalog behind an ok status, and nothing for a healthy one", async () => {
     const connecta = createTestConnecta({
       connectors: [docsApi(), throwingCatalog()],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
     });
@@ -204,7 +204,7 @@ describe("connector status messages", () => {
         withStatus("locked", async () => ({ state: "auth_required", message: LEAK })),
         withStatus("fine", async () => ({ state: "ok", message: `Connected with ${SECRET}` })),
       ],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
       logger: { ...silentLogger, warn, info },
@@ -449,7 +449,7 @@ describe("pools on the operator page", () => {
   it("lists only the pools this identity's grant admits", async () => {
     const connecta = createTestConnecta({
       connectors: [docsApi()],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
       pools: {
@@ -471,7 +471,7 @@ describe("pools on the operator page", () => {
   it("omits the field when no pool is declared", async () => {
     const connecta = createTestConnecta({
       connectors: [docsApi()],
-      auth: bearerToken(TOKEN),
+      auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
     });
