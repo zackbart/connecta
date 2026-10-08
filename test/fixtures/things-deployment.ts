@@ -1,4 +1,4 @@
-import { guestSource } from "./misc.js";
+import { guestSource, guestError, guestFailureFacts } from "./misc.js";
 // One "things" connector behind a full deployment, driven through the public
 // MCP surface: top-level discovery and calls, and programs that discover and
 // call from inside `execute_code`. Programs are JavaScript closures run by a
@@ -27,12 +27,12 @@ function closureExecutor(programs: Map<string, Program>): Executor {
       const provider = required(providers[0]);
       const connecta = new Proxy({} as Guest, {
         get: (_target, name: string) => (...args: unknown[]) =>
-          required(provider.fns[name])(...args),
+          required(provider.fns[name])(...args).catch(error => { throw guestError(error); }),
       });
       try {
         return { result: await program(connecta) };
       } catch (error) {
-        return { result: undefined, error: error instanceof Error ? error.message : String(error) };
+        return { result: undefined, error: error instanceof Error ? error.message : String(error), failure: guestFailureFacts(error) };
       }
     },
   };

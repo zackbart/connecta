@@ -100,21 +100,23 @@ export function guestSource(code: string): string {
   return from >= 0 && to > from ? code.slice(from + start.length, to).trim() : code.trim();
 }
 
-const decodedFrames = new WeakMap<Error, string>();
-
-/** The same frame-to-Error contract as the real guest, without evaluating JavaScript. */
+/** Simulate a guest Error while keeping host failure identity in private test state. */
+const guestFailures = new WeakMap<Error, InvocationFailure>();
 export function guestError(error: unknown): Error {
-  const message = error instanceof Error ? error.message : String(error);
-  const prefix = "\u001econnecta-error:";
-  if (!message.startsWith(prefix)) return error instanceof Error ? error : new Error(message);
-  const rest = message.slice(prefix.length);
-  const frame = JSON.parse(rest.slice(rest.indexOf(":") + 1)) as { details: { code: string; message: string; retryable: boolean } };
-  const guest = Object.assign(new Error(frame.details.message), { code: frame.details.code, retryable: frame.details.retryable, details: frame.details });
-  decodedFrames.set(guest, message);
+  if (!(error instanceof InvocationFailure)) return error instanceof Error ? error : new Error(String(error));
+  const guest = Object.assign(new Error(error.message), {
+    code: error.details.code, retryable: error.details.retryable, details: error.details,
+  });
+  guestFailures.set(guest, error);
   return guest;
 }
 
-/** Unchanged uncaught host failures retain the authenticated frame. */
 export function guestErrorText(error: unknown): string {
-  return error instanceof Error ? decodedFrames.get(error) ?? error.message : String(error);
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Only a host-retained identity can supply typed failure facts. */
+export function guestFailureFacts(error: unknown) {
+  const failure = error instanceof InvocationFailure ? error : error instanceof Error ? guestFailures.get(error) : undefined;
+  return { name: error instanceof Error ? error.name : "Error", ...(failure ? { call: failure.details } : {}) };
 }

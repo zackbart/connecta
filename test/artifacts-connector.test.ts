@@ -1,4 +1,4 @@
-import { guestError, guestErrorText, guestSource } from "./fixtures/misc.js";
+import { guestError, guestErrorText, guestFailureFacts, guestSource } from "./fixtures/misc.js";
 // The built-in artifacts connector through a real deployment: the typed slot,
 // the tool surface, approval exemption, conflicts, authorship, the guide, and
 // the render-check hook.
@@ -50,7 +50,7 @@ function scriptedExecutor(programs: Map<string, Program>): Executor {
       try {
         return { result: await program(connecta) };
       } catch (error) {
-        return { result: undefined, error: guestErrorText(error) };
+        return { result: undefined, error: guestErrorText(error), failure: guestFailureFacts(error) };
       }
     },
   };

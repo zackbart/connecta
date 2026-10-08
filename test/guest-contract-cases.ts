@@ -1086,6 +1086,39 @@ return fs;
       expect(outcome.value.hostCalls).toEqual({ attempted: 0, admitted: 0, succeeded: 0, failed: 0 });
     },
   },
+  {
+    clauses: "P2, X11",
+    name: "INV-3 INV-6: builtin module loaders cannot resolve runner modules",
+    code: `async () => {
+      if (typeof process === "undefined") return { reachable: false };
+      const modules = [];
+      for (const specifier of ["node:module", "node:process"]) {
+        try { modules.push(await import(specifier)); } catch {}
+      }
+      for (const specifier of ["module", "node:module", "process", "node:process", { toString: () => "node:module" }]) {
+        try { const module = process.getBuiltinModule(specifier); if (module) modules.push(module); } catch {}
+      }
+      for (const module of modules) {
+        if (typeof module.getBuiltinModule === "function") {
+          const loader = module.getBuiltinModule("node:module");
+          if (loader) modules.push(loader);
+        }
+        for (const base of ["/connecta-guest.js", "file:///connecta-guest.js", "file:///executor.js"]) {
+          for (const specifier of ["./executor.js", "executor.js", "./connecta-guest.js"]) {
+            try {
+              const loaded = module.createRequire(base)(specifier);
+              if (loaded) return { reachable: true, specifier };
+            } catch {}
+          }
+        }
+      }
+      return { reachable: false };
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({ reachable: false });
+    },
+  },
   ...[
     'await import(/* runner */ "./executor.js")',
     'await import(["..", "executor.js"].join("/"))',

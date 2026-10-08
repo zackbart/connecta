@@ -38,7 +38,7 @@ import {
   timed,
   type WriteDecision,
 } from "./invocation.js";
-import { guestPrelude, guestSecret, programError, wrapGuestProgram } from "./guest-runtime.js";
+import { guestPrelude, programError, wrapGuestProgram } from "./guest-runtime.js";
 import { EXECUTE_OUTPUT } from "./meta-output.js";
 import { normalizeProgramSource } from "./program-source.js";
 import { agentOutputOperations, redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
@@ -398,7 +398,7 @@ interface SandboxLimits {
   discoveryConcurrency?: number | undefined;
   /** Per-connector deadline for in-program catalog probes. Default 30_000. */
   probeTimeoutMs?: number | undefined;
-  onInvocationFailure?: ((failure: InvocationFailure, id: string) => void) | undefined;
+  onInvocationFailure?: ((failure: InvocationFailure) => void) | undefined;
   /** Terminal host refusal, never delivered as a guest rejection. */
   onHostCallBudgetExceeded?: ((failure: InvocationFailure) => void) | undefined;
   diagnostics?: ExecuteDiagnostics | undefined;
@@ -627,7 +627,7 @@ function sandboxProvider(
       );
     });
 
-  const meta = createMetaTools(registry, baseUrl, { trust: limits.trust });
+  const meta = createMetaTools(registry, baseUrl, { trust: limits.trust, requestScope });
   const operations: Record<
     string,
     (...args: unknown[]) => Effect.Effect<unknown, unknown>
@@ -722,12 +722,11 @@ function sandboxProvider(
   };
   // Recoverable failures remain typed at the host-owned executor bridge. Terminal host-budget exhaustion bypasses it.
   // Anything that is not an InvocationFailure crosses unchanged.
-  const framed = (err: unknown): Effect.Effect<never, unknown> =>
+  const typedFailure = (err: unknown): Effect.Effect<never, unknown> =>
     Effect.suspend(() => {
       if (!(err instanceof InvocationFailure)) return Effect.fail(err);
       const failure = boundedGuestFailure(sentSecrets.redact(err));
-      const id = guestSecret();
-      limits.onInvocationFailure?.(failure, id);
+      limits.onInvocationFailure?.(failure);
       return Effect.fail(failure);
     });
   return {
@@ -769,16 +768,16 @@ function sandboxProvider(
             timeoutError: guestFailure("timeout", `connecta.${name} timed out.`),
           }) : invoke;
           const settled = runEdge(guarded.pipe(Effect.catch((error) => {
-            if (utility && hostAccessSignal?.aborted) return framed(guestFailure("cancelled", `connecta.${name} was cancelled because the run ended.`));
+            if (utility && hostAccessSignal?.aborted) return typedFailure(guestFailure("cancelled", `connecta.${name} was cancelled because the run ended.`));
             if (utility && error instanceof InvocationFailure && error.code === "timeout") {
               const elapsedMs = Date.now() - started;
               const message = `Operation "connecta.${name}" timed out during ${name === "result" ? "result storage" : "skill lookup"} after ${elapsedMs}ms (effective deadline ${hostCallTimeoutMs}ms).`;
-              return framed(new InvocationFailure({
+              return typedFailure(new InvocationFailure({
                 code: "timeout", message, retryable: true,
                 details: { operation: `connecta.${name}`, stage: name === "result" ? "result storage" : "skill lookup", elapsedMs, deadlineMs: hostCallTimeoutMs },
               }));
             }
-            return framed(error);
+            return typedFailure(error);
           }))).then(
             (value) => {
               if (counted) hostCalls.succeeded++;
@@ -1019,7 +1018,7 @@ export function createExecuteTool(
         resolveBudget(config.maxEmittedBlocks, EXECUTE_MAX_EMITTED_BLOCKS),
         diagnostics,
       );
-      const invocationFailures = new Map<string, InvocationFailure>();
+      const invocationFailures = new Set<InvocationFailure>();
       const hostCalls = { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
       const programWrites = new ProgramWrites();
       const dispatchController = new AbortController();
@@ -1068,7 +1067,7 @@ export function createExecuteTool(
               budgetFailure = failure;
               Deferred.doneUnsafe(terminal, Effect.fail(failure));
             },
-            onInvocationFailure: (failure, id) => { invocationFailures.set(id, failure); },
+            onInvocationFailure: (failure) => { invocationFailures.add(failure); },
             emitCollector: emitted,
             ...(diagnostics ? { diagnostics } : {}),
             discoveryConcurrency: config.discoveryConcurrency,
@@ -1123,7 +1122,7 @@ export function createExecuteTool(
           return programWrites.drain();
         }))));
       });
-      const reported = { emitted, diagnostics, invocationFailures, program };
+      const reported = { emitted, diagnostics, program };
       const exited = Effect.exit(Effect.scoped(run)).pipe(Effect.flatMap((exit) =>
         // Releasing a QuickJS lease ends its child and rejects execute() with
         // the retained log prefix. Give that report one timer turn, just as
@@ -1193,7 +1192,6 @@ export function createExecuteTool(
 interface RunReport {
   emitted: EmitCollector;
   diagnostics: ExecuteDiagnostics | undefined;
-  invocationFailures: ReadonlyMap<string, InvocationFailure>;
   program: string;
 }
 

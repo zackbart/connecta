@@ -141,9 +141,13 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
     const lookup = Function.prototype.call.bind(WeakMap.prototype.get);
     const slice = Function.prototype.call.bind(String.prototype.slice);
     const failures = new WeakMap();
+    const nativeSetTimeout = setTimeout;
+    const toNumber = Number;
+    const exec = Function.prototype.call.bind(RegExp.prototype.exec);
     const timeoutError = new NativeError("Execution timed out");
     const __logs = [];`);
             isolated = isolated.replace('new Error("Execution timed out")', 'timeoutError');
+            isolated = isolated.replace('setTimeout(() => reject(timeoutError)', 'nativeSetTimeout(() => reject(timeoutError)');
             isolated = isolated.replace('return { result: undefined, error: err.message, logs: __logs };', `
       const call = lookup(failures, err);
       let name = "Error", message = "Program threw a value.", stack = "";
@@ -155,9 +159,9 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
           if (typeof err.stack === "string") stack = slice(err.stack, 0, 1000);
         }
       } catch {}
-      const location = /connecta-guest\\.js:(\\d+):\\d+/.exec(stack);
+      const location = exec(/connecta-guest\\.js:(\\d+):\\d+/, stack);
       return { result: undefined, error: message, logs: __logs, failure: {
-        name, ...(call ? { call } : {}), ...(location ? { line: Number(location[1]) - 1 } : {}),
+        name, ...(call ? { call } : {}), ...(location ? { line: toNumber(location[1]) - 1 } : {}),
         ...(err === timeoutError ? { timeout: { elapsedMs: ${options.timeout ?? 60_000}, deadlineMs: ${options.timeout ?? 60_000} } } : {})
       } };`);
             const preludes: string[] = [];
@@ -180,11 +184,19 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
               ? 'import __connecta_user_program from "./connecta-guest.js";\n'
               : 'import __connecta_program from "./connecta-guest.js";\n';
             const wrapper = guest ? `const __connecta_program = (${guest.wrapper});\n` : "";
-            const main = imports + "let initialized = false;\n" + initializer + wrapper + isolated.slice(0, before) + globals + "\n" + isolated.slice(before);
+            const hardening = `
+const builtinAllowed = name => typeof name === "string" && name !== "module" && name !== "node:module" && name !== "process" && name !== "node:process";
+if (typeof process !== "undefined" && typeof process.getBuiltinModule === "function") {
+  const getBuiltin = process.getBuiltinModule.bind(process);
+  Object.defineProperty(process, "getBuiltinModule", { configurable: false, writable: false,
+    value: name => builtinAllowed(name) ? getBuiltin(name) : undefined });
+}
+`;
+            const main = imports + hardening + "let initialized = false;\n" + initializer + wrapper + isolated.slice(0, before) + globals + "\n" + isolated.slice(before);
             return track(Reflect.apply(Reflect.get(target, key), target, [{ ...definition, modules: {
               ...definition.modules,
               "executor.js": main,
-              "connecta-guest.js": `const startsWith = Function.prototype.call.bind(String.prototype.startsWith); const reject = Promise.reject.bind(Promise); const NativeError = Error; const __connecta_import = specifier => typeof specifier === "string" && (startsWith(specifier, "node:") || specifier === "cloudflare:workers") ? import(specifier) : reject(new NativeError("Imports of runner modules are outside the guest API."));\nexport default (${routeGuestImports(guest?.program ?? executableCode)});`,
+              "connecta-guest.js": `const startsWith = Function.prototype.call.bind(String.prototype.startsWith); const reject = Promise.reject.bind(Promise); const NativeError = Error; const __connecta_import = specifier => typeof specifier === "string" && ((startsWith(specifier, "node:") && specifier !== "node:module" && specifier !== "node:process") || specifier === "cloudflare:workers") ? import(specifier) : reject(new NativeError("Imports of runner modules are outside the guest API."));\nexport default (${routeGuestImports(guest?.program ?? executableCode)});`,
             } }, ...args.slice(1)]));
           };
           const value = Reflect.get(target, key);

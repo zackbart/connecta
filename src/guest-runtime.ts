@@ -1,7 +1,3 @@
-export function guestSecret(): string {
-  return crypto.randomUUID().replaceAll("-", "");
-}
-
 /** Capture the single-use runner before evaluating the guest expression. */
 export function wrapGuestProgram(code: string): string {
   return `async () => globalThis.__connecta_run()(async (connecta) => await (\n${code}\n)())`;

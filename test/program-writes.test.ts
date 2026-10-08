@@ -1,4 +1,4 @@
-import { guestError, guestErrorText, guestSource } from "./fixtures/misc.js";
+import { guestError, guestErrorText, guestFailureFacts, guestSource } from "./fixtures/misc.js";
 // Trust-tier program writes, with one attempt and bounded outcome accounting.
 import { describe, expect, it } from "vitest";
 import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
@@ -45,7 +45,7 @@ function scriptedExecutor(programs: Map<string, Program>): Executor {
       } catch (error) {
         return {
           result: undefined,
-          error: guestErrorText(error),
+          error: guestErrorText(error), failure: guestFailureFacts(error),
         };
       }
     },

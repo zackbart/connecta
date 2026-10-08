@@ -925,8 +925,10 @@ explicit environment holding only `TZ=UTC`, so local time matches a Dynamic
 Worker's, rather than inheriting
 deployment variables or `NODE_OPTIONS`. A Dynamic Worker exposes runtime-only
 builtins through `import()` and `process.getBuiltinModule()`, including `node:path`,
-`node:crypto`, `node:net`, `node:tls`, `node:dns`, `node:module`, and
+`node:crypto`, `node:net`, `node:tls`, `node:dns`, and
 `cloudflare:workers`; the upstream set drifts, so that is not an allowlist.
+The adapter refuses `node:module` and `node:process` imports and removes their
+builtin lookup routes, so `createRequire` cannot resolve runner modules.
 The supported adapter uses `new DynamicWorkerExecutor({ loader, timeout })`.
 `bindings`, `modules`, and `globalOutbound` each grant ambient configuration,
 code, or egress. Under it, `process.env` and `cloudflare:workers.env` are empty,

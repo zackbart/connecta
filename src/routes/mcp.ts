@@ -1,3 +1,4 @@
+import { closeConnectorScope } from "../connector-scope.js";
 import { executeLimits } from "../config.js";
 import { oauthConnectUrl, oauthConnectUnavailable } from "../oauth-handoff.js";
 import {
@@ -737,10 +738,16 @@ export function createMcpRoute(
             });
             const resolved = view.resolveAddress(address);
             if (!resolved) return false;
-            const tool = (await view.getTools(resolved.connector.id, baseUrl, {}, signal ? { signal } : {}))
-              .find(tool => tool.name === resolved.toolName);
-            signal?.throwIfAborted();
-            return Boolean(tool && ((classification === "read" && tool.classification === "read") || currentTrust === "trusted"));
+            const requestScope = {};
+            try {
+              const tool = (await view.getTools(resolved.connector.id, baseUrl, requestScope, signal ? { signal } : {}))
+                .find(tool => tool.name === resolved.toolName);
+              signal?.throwIfAborted();
+              return Boolean(tool && ((classification === "read" && tool.classification === "read") || currentTrust === "trusted"));
+            } finally {
+              await closeConnectorScope(resolved.connector, view.contextFor(resolved.connector.id, baseUrl, requestScope),
+                runtimeContext?.waitUntil?.bind(runtimeContext));
+            }
           },
           caller: {
             identity: authz.identity,

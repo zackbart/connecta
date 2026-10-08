@@ -1848,6 +1848,7 @@ describe("execute_code handler", () => {
           return {
             result: undefined,
             error: error instanceof Error ? error.message : String(error),
+            failure: { name: error instanceof Error ? error.name : "Error", ...(error instanceof InvocationFailure ? { call: error.details } : {}) },
           };
         }
       },
@@ -1891,6 +1892,7 @@ describe("execute_code handler", () => {
           return {
             result: undefined,
             error: error instanceof Error ? error.message : String(error),
+            failure: { name: error instanceof Error ? error.name : "Error", ...(error instanceof InvocationFailure ? { call: error.details } : {}) },
           };
         }
       },
@@ -2106,15 +2108,16 @@ it.each([
   }
 });
 
-it.each([0, 1, 64])("INV-6: authenticates failures older than 64 without matching prose (failure %i)", async (escapedIndex) => {
+it.each([0, 1, 64])("INV-6: retains typed failures older than 64 without matching prose (failure %i)", async (escapedIndex) => {
   const executor: Executor = {
     async execute(_code, providers) {
-      const messages: string[] = [];
+      const failures: InvocationFailure[] = [];
       for (let i = 0; i < 65; i++) {
         await required(connectaProvider(providers).fns.call)(`missing_${i}.read`, {})
-          .catch((err: Error) => { messages.push(err.message); });
+          .catch((err: InvocationFailure) => { failures.push(err); });
       }
-      return { result: undefined, error: required(messages[escapedIndex]) };
+      const failure = required(failures[escapedIndex]);
+      return { result: undefined, error: failure.message, failure: { name: failure.name, call: failure.details } };
     },
   };
   const out = await createExecuteTool(

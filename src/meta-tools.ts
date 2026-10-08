@@ -616,6 +616,8 @@ function metaToolsForRequest(
   opts: {
     /** Deadline applied when a call passes no `timeoutMs`. Off when unset. */
     defaultToolTimeoutMs?: number | undefined;
+    /** Run-owned scope shared by paging and downstream invocation. */
+    requestScope?: object | undefined;
     /** Current endpoint trust for program result paging. */
     trust?: import("./tool-safety.js").PoolTrust | undefined;
     /** Per-connector deadline for the search/describe probe fan-out. Default 30_000. */
