@@ -60,7 +60,7 @@ export class SentSecrets {
     if (this.values.has(value)) return;
     this.values.add(value);
     this.matcher = undefined;
-    this.unicode ||= /[^\x00-\x7f]/.test(value);
+    this.unicode ||= [...value].some(char => char.charCodeAt(0) > 127);
     for (const recipient of this.recipients) recipient.form(value);
   }
 
