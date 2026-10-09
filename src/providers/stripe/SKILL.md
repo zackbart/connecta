@@ -1,45 +1,64 @@
 ---
 {
   "name": "stripe",
-  "instructionsHeading": "Account instructions"
+  "instructionsHeading": "Account instructions",
+  "content": "shared"
 }
 ---
 
-<!-- fragment: guide_0 -->
+<!-- fragment: oauth -->
 
 
 This OAuth session may expose both live and sandbox Stripe accounts. Discover the live account-selection tools, select the intended account and mode, then carry exact context fields such as `stripe_context` and `livemode` wherever the schema requires them. A live-mode write moves real money; a sandbox write changes test data. Never infer the account or mode from connector metadata.
 
 - Discover account and mode with the live account-selection tools before every account-scoped read or write. The published inventory has changed account-tool names; do not assume `list_available_accounts_or_orgs` is available. Select the intended result and carry the exact context fields required by the live schema unchanged. If the account, mode, or supported selector is ambiguous, stop and ask; never guess.
-- Organization accounts are not Stripe Connect connected accounts. A Connect call requires a separate connector with a deployment-configured restricted key plus Stripe's documented `Stripe-Account` header; OAuth does not support that path.
-<!-- endfragment -->
-
-<!-- fragment: guide_1 -->
-
-
-- Organization accounts are not Stripe Connect connected accounts. A Connect call requires a deployment-configured restricted key plus Stripe's documented `Stripe-Account` header; OAuth does not support that path. Do not try to turn an organization-account call into a Connect call inside tool arguments.
-<!-- endfragment -->
-
-<!-- fragment: guide_2 -->
-
+- Organization accounts are not Stripe Connect connected accounts. A Connect call requires a separate API-key connector whose `connectedAccount` sends Stripe's documented `Stripe-Account` header; OAuth does not support that path.
 - Four generic tools reach any Stripe API method. Find the method with `stripe_api_search`, read its parameters with `stripe_api_details`, then call `stripe_api_read` (GET) or `stripe_api_write` (POST/PATCH/PUT/DELETE). Never guess a path or a parameter name — `stripe_api_details` is cheaper than a rejected write.
 - Prefer a dedicated tool when one covers the task: `get_balance_summary` for balances and `stripe_analytics` for Sigma or Metrics reporting. Use `stripe_api_search` for everything else instead of assuming a retired dedicated tool still exists.
 - `stripe_implementation_planner` and the query-execution intents of `stripe_analytics` create provider-side planning or query-run state. Connecta therefore classifies both as writes and enforces the configured pool trust policy; their retrieval paths stay behind the same tool boundary.
 - `stripe_api_write` carries the blast radius of the entire write API — every POST, PATCH, PUT, and DELETE, from a customer edit to a subscription cancellation. State the method and path explicitly; execution follows the configured pool trust policy.
-- Lists are cursor-paginated: `limit` defaults to 10 and caps at 100, `starting_after` and `ending_before` take an object id and are mutually exclusive, and `has_more` says whether to continue. Page inside `execute_code`.
 - Any `stripe_api_read` list or `stripe_api_search` that returns full objects belongs inside `execute_code`, projected to the fields the question needs before `return`. Neither `limit` nor `expand` substitutes for that: an unprojected list of customers or invoices truncates long before it answers, and a projected one keeps the customer's name, email, and address out of the transcript.
+- Find an object with `stripe_api_search` (or a list endpoint through `stripe_api_read`) and carry the `id` it returned into the write.
+- This connection's tool list is not a fixed set. Stripe gates parts of its MCP catalog by account, integration, and beta enrollment, so search this connector for what it actually exposes rather than assuming a documented tool is here.
+- Send an `Idempotency-Key` on every write you might retry, if the tool accepts it, and reuse the same key for the retry. A retry with a fresh key is a second charge, not a second attempt.
+<!-- endfragment -->
+
+<!-- fragment: key -->
+
+
+- This is Connecta's REST connector to `api.stripe.com`, holding one operator-managed key. It reaches exactly one account in one mode, so there is no account selection and no `stripe_context` or `livemode` argument.
+- `stripe_api_search` finds API operations, not records: it searches the pinned API index and names the tool that calls each operation. `stripe_api_details` returns one operation's parameters with types, enums, and required names. Neither sends a request.
+- `stripe_api_read` calls GET operations, plus `POST /v1/invoices/create_preview`, which only previews. `stripe_api_write` calls every other POST and every DELETE, from a customer edit to a subscription cancellation, with `method` and `path` stated; execution follows the configured pool trust policy.
+- Paths are concrete: substitute ids into the template search returned (`/v1/payment_intents/pi_123`). Pass `query` and `body` as JSON objects named as `stripe_api_details` lists them. Connecta form-encodes v1 bodies and query lists (`expand: ["latest_charge"]`), sends v2 bodies as JSON, and pins `Stripe-Version` to the index's API version. Send `null` or `""` to unset a field.
+- Every call is checked against the pinned index before it is sent. An unknown path returns the nearest operations; an unknown or missing parameter returns `validation.issues` with the accepted names. Nothing reached Stripe, so fix the call from that answer.
+- Results arrive as `{ status, data, page? }`. On a list, `page.next` is the cursor and `page.param` the query parameter to pass it as: `starting_after`, or `page` for search and v2 lists. Lists belong inside `execute_code`; pass `select` (dot paths such as `data.id` and `data.status`) to keep only the fields the question needs, which also keeps customer names, emails, and addresses out of the transcript.
+- `get_stripe_account_info` confirms the account, mode, and connected account; `get_balance_summary` returns available and pending balances. Use them when they answer the question.
+- Find records with list and search operations through `stripe_api_read` (`GET /v1/customers/search`, `GET /v1/charges` with `customer`) and carry the returned `id` into the write.
+- `stripe_api_write` sends an `Idempotency-Key` on every POST. Pass `idempotencyKey` for anything you might retry, or reuse the generated one the result returns (an ambiguous failure's message carries it too). A retry with a fresh key is a second charge, not a second attempt.
+- Refused by design: Stripe Apps secret payloads (`expand` of `payload`), Issuing card `number` and `cvc` expansion, multipart uploads such as `POST /v1/files` (use the Dashboard), and the meter event stream (send single events with `POST /v2/billing/meter_events`). Quote PDFs arrive from `files.stripe.com` as base64.
+- The hosted OAuth connection's natural-language Sigma, metrics, documentation search, implementation planner, and feedback tools do not exist with a key.
+<!-- endfragment -->
+
+<!-- fragment: shared -->
+- Lists are cursor-paginated: `limit` defaults to 10 and caps at 100, `starting_after` and `ending_before` take an object id and are mutually exclusive, and `has_more` says whether to continue. Page inside `execute_code`.
 - Search filters on a documented per-resource field set, not on arbitrary attributes. Charges search takes `amount`, `created`, `currency`, `customer`, `status`, `refunded`, `disputed`, `metadata`, `billing_details.address.postal_code`, and `payment_method_details.<source>.*` card fields — there is no `payment_intent` field. When the field you want is not searchable, retrieve the parent object and follow its reference (the PaymentIntent's `latest_charge`) instead of retrying the search with another spelling.
 - The account → `stripe_api_search` → `stripe_api_details` → `stripe_api_read` sequence is one program, not four turns: resolve the method once, then call that method as many times as the investigation needs in the same run.
 - Decline outcomes live on the charge — `outcome`, `failure_code`, `failure_message` — reached from the PaymentIntent's `latest_charge`, so "why did this payment fail" is a PaymentIntent read followed by one charge read.
-- Resolve ids before acting; never guess one. Stripe ids are typed prefixes — `cus_` customer, `sub_` subscription, `ch_` charge, `pi_` payment intent, `in_` invoice, `acct_` account — and a plausible-looking id belongs to a different object or to nobody. Find the object with `stripe_api_search` (or a list endpoint through `stripe_api_read`) and carry the `id` it returned into the write.
-- This connection's tool list is not a fixed set. Stripe gates parts of its MCP catalog by account, integration, and beta enrollment, so search this connector for what it actually exposes rather than assuming a documented tool is here.
+- Resolve ids before acting; never guess one. Stripe ids are typed prefixes — `cus_` customer, `sub_` subscription, `ch_` charge, `pi_` payment intent, `in_` invoice, `acct_` account — and a plausible-looking id belongs to a different object or to nobody.
 - Amounts are integers in the currency's minor unit: `1099` is 10.99 USD, and zero-decimal currencies like JPY take `10` for 10 JPY. Never send a decimal.
-- Send an `Idempotency-Key` on every write you might retry, if the tool accepts it, and reuse the same key for the retry. A retry with a fresh key is a second charge, not a second attempt.
+- Treat every create, update, delete, refund, and report run as a write. For guest calls, classification, and routing, fetch `skills({ name: "usage" })`.
+<!-- endfragment -->
+
+<!-- fragment: oauth_limits -->
+- Stripe answers a rate limit with `429` and a `Stripe-Rate-Limited-Reason` header; back off on that rather than retrying immediately. Stripe documents an account ceiling of 100 requests per second in live mode and 25 in sandbox mode, and any single endpoint is capped at 25 per second regardless of mode, so paging one list is the real constraint.
+- Use `search_stripe_documentation` when the shape of an object or a flow is unclear; it is a read and costs nothing but a call.
+- An `auth_required` failure means this connector's Stripe authorization is missing or expired: run `authorize_connector` for this connector id, then retry the same call unchanged. A rejected argument or a plan restriction comes back in Stripe's own words instead — read it rather than re-authorizing.
+<!-- endfragment -->
+
+<!-- fragment: key_limits -->
 - Stripe answers a rate limit with `429` and a `Stripe-Rate-Limited-Reason` header; back off on that rather than retrying immediately. Stripe documents an account ceiling of <!-- endfragment -->
 
-<!-- fragment: guide_3 -->
-, and any single endpoint is capped at 25 per second regardless of mode, so paging one list is the real constraint.
-- Use `search_stripe_documentation` when the shape of an object or a flow is unclear; it is a read and costs nothing but a call.
-- Treat every create, update, delete, refund, and report run as a write. For guest calls, classification, and routing, fetch `skills({ name: "usage" })`.
-- An `auth_required` failure means this connector's Stripe authorization is missing or expired: run `authorize_connector` for this connector id, then retry the same call unchanged. A rejected argument or a plan restriction comes back in Stripe's own words instead — read it rather than re-authorizing.
+<!-- fragment: key_tail -->
+, and any single endpoint is capped at 25 per second regardless of mode, so paging one list is the real constraint. A `429` with code `lock_timeout` is a lock conflict on one object, not a rate limit: retry after the other request finishes.
+- An `auth_required` failure means the key is missing, revoked, or for the other mode: an operator must replace it in this connection in the operator UI, and `authorize_connector` returns that handoff. A restricted key without a permission fails as `provider_permission_denied` naming it; ask for the permission rather than retrying. A rejected argument comes back in Stripe's own words — read it rather than replacing the key.
 <!-- endfragment -->

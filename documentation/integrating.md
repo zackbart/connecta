@@ -49,6 +49,10 @@ mapping from admitted identity to the downstream account; a request must not
 choose its own account. Gmail never sends mail, and Drive never permanently
 deletes files.
 
+Stripe requires `auth`: `{ type: "oauth" }` reaches Stripe's hosted MCP
+server, and `{ type: "apiKey" }` with `mode` reaches Connecta's REST connector
+with an operator-managed key. See the
+[provider auth migration](./provider-auth-migration.md).
 Notion, Vercel, and Cloudflare default to hosted MCP. Their explicit
 `surface: "api"` choices retain selected REST capabilities, with Notion's
 internal-integration identity preserved. To use both, configure distinct IDs

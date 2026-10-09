@@ -16,6 +16,15 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 const script = fileURLToPath(new URL("../scripts/generate-providers.mjs", import.meta.url));
+
+/** The maintainer OpenAPI compiler, typed for these tests (it is plain ESM). */
+interface OpenApiGenerator {
+  buildOperationIndex(document: unknown, source: object): any;
+  renderOpenApiModule(data: unknown, source: object): string;
+  sha256(bytes: string | Uint8Array): string;
+}
+const generator = async (): Promise<OpenApiGenerator> =>
+  (await import(new URL("../scripts/generate-openapi.mjs", import.meta.url).href)) as OpenApiGenerator;
 const directories: string[] = [];
 const read = (root: string, path: string) => readFileSync(join(root, path), "utf8");
 const json = (root: string, path: string) => JSON.parse(read(root, path));
@@ -289,5 +298,193 @@ describe("provider folder generation", () => {
       expect(snapshot(root)).toEqual(before);
       write(root, output, original);
     }
+  });
+
+  it("publishes the fragment the frontmatter names as content, so a dual guide never mixes modes", () => {
+    const root = repository();
+    provider(root, "alpha");
+    const path = "src/providers/alpha/SKILL.md";
+    const original = read(root, path);
+    const named = (content: string) =>
+      original.replace(
+        '"instructionsHeading":"Deployment instructions"}',
+        `"instructionsHeading":"Deployment instructions","content":${JSON.stringify(content)}}`,
+      );
+    write(root, path, named("footer"));
+    expect(run(root).status).toBe(0);
+    const source = read(root, "src/providers/alpha/skill.generated.ts");
+    const skill = JSON.parse(source.slice(source.indexOf("= ") + 2, source.lastIndexOf(" as const")));
+    expect(skill.content).toBe("Tail without final newline");
+    expect(Object.keys(skill.fragments)).toEqual(["content", "footer"]);
+    write(root, path, named("missing"));
+    const before = snapshot(root);
+    const result = run(root);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("providers/alpha: SKILL.md frontmatter content must name one of its fragments");
+    expect(snapshot(root)).toEqual(before);
+  });
+
+  it("checks each operation index against its pinned source offline and never regenerates it", async () => {
+    const { buildOperationIndex, renderOpenApiModule, sha256 } = await generator();
+    const root = repository();
+    provider(root, "alpha");
+    expect(run(root).status).toBe(0);
+    const document = JSON.stringify({ openapi: "3.0.0", info: { version: "1" }, paths: { "/v1/items": { get: {} } } });
+    const source = { url: "https://vendor.example/openapi.json", revision: "r1", digest: sha256(document) };
+    write(root, "src/providers/alpha/openapi.source.json", JSON.stringify(source));
+    const stale = run(root, true);
+    expect(stale.status).toBe(1);
+    expect(stale.stderr).toContain("Operation indexes differ from openapi.source.json (run providers:spec)");
+    expect(stale.stderr).toContain("src/providers/alpha/openapi.generated.ts");
+    const generated = renderOpenApiModule(buildOperationIndex(JSON.parse(document), source), source);
+    write(root, "src/providers/alpha/openapi.generated.ts", generated);
+    expect(run(root, true).status).toBe(0);
+    write(root, "src/providers/alpha/openapi.source.json", JSON.stringify({ ...source, options: { depth: 1 } }));
+    expect(run(root, true).stderr).toContain("src/providers/alpha/openapi.generated.ts");
+    write(root, "src/providers/alpha/openapi.source.json", JSON.stringify({ ...source, revision: "r2" }));
+    const before = snapshot(root);
+    const moved = run(root, true);
+    expect(moved.status).toBe(1);
+    expect(moved.stderr).toContain("src/providers/alpha/openapi.generated.ts");
+    // The offline pass reports; only the network-backed providers:spec writes an index.
+    expect(snapshot(root)).toEqual(before);
+    expect(run(root).status).toBe(1);
+    expect(read(root, "src/providers/alpha/openapi.generated.ts")).toBe(generated);
+  });
+});
+
+describe("OpenAPI operation index generation", () => {
+  const document = {
+    openapi: "3.0.0",
+    info: { version: "2026-09-30.test" },
+    servers: [{ url: "https://api.vendor.example/" }],
+    components: {
+      schemas: {
+        address: {
+          type: "object",
+          description: "<p>Postal address.</p> More prose.",
+          properties: { city: { type: "string", maxLength: 5000 }, line1: { type: "string" } },
+        },
+      },
+    },
+    paths: {
+      "/v1/things": {
+        get: {
+          operationId: "GetThings",
+          summary: "List things",
+          parameters: [
+            { name: "limit", in: "query", schema: { type: "integer" }, description: "A limit. Ignored prose." },
+            {
+              name: "created",
+              in: "query",
+              style: "deepObject",
+              schema: { type: "object", properties: { gte: { type: "integer" } } },
+            },
+          ],
+        },
+        post: {
+          operationId: "PostThings",
+          summary: "Create a thing",
+          requestBody: {
+            content: {
+              "application/x-www-form-urlencoded": {
+                schema: {
+                  type: "object",
+                  required: ["name"],
+                  properties: {
+                    name: { type: "string", description: "The name." },
+                    shipping: { $ref: "#/components/schemas/address" },
+                    billing: { $ref: "#/components/schemas/address" },
+                    deep: {
+                      type: "object",
+                      properties: { inner: { type: "object", properties: { leaf: { type: "string" } } } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      "/v1/things/{thing}": {
+        delete: {
+          operationId: "DeleteThing",
+          summary: "Delete a thing",
+          parameters: [{ name: "thing", in: "path", required: true, schema: { type: "string" } }],
+          requestBody: {
+            content: { "application/x-www-form-urlencoded": { schema: { type: "object", properties: {} } } },
+          },
+        },
+        get: { operationId: "GetThing", summary: "Old", deprecated: true },
+      },
+      "/v1/uploads": {
+        post: {
+          operationId: "PostUploads",
+          summary: "Upload",
+          servers: [{ url: "https://files.vendor.example/" }],
+          requestBody: {
+            content: {
+              "multipart/form-data": {
+                schema: { type: "object", properties: { file: { type: "string", format: "binary" } } },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+  const source = { url: "https://vendor.example/r1.json", revision: "r1", digest: `sha256:${"0".repeat(64)}` };
+
+  it("drops deprecated operations, records per-operation servers, and shares repeated schema nodes", async () => {
+    const { buildOperationIndex } = await generator();
+    const data = buildOperationIndex(document, { ...source, options: { depth: 2, descriptions: 40 } });
+    expect(data.version).toBe("2026-09-30.test");
+    expect(data.servers).toEqual(["https://api.vendor.example", "https://files.vendor.example"]);
+    expect(data.ops.map((row: unknown[]) => `${row[0]} ${row[1]}`)).toEqual([
+      "GET /v1/things",
+      "POST /v1/things",
+      "DELETE /v1/things/{thing}",
+      "POST /v1/uploads",
+    ]);
+    expect(data.ops[3]).toEqual(["POST", "/v1/uploads", "PostUploads", "Upload", 1, 1]);
+    const details = JSON.parse(data.details);
+    // The repeated address schema is one shared node referenced twice.
+    const create = details.o[1][1][1];
+    expect(create.p.shipping).toEqual({ $: expect.any(Number) });
+    expect(create.p.billing).toEqual(create.p.shipping);
+    expect(details.d[create.p.shipping.$]).toEqual({
+      t: "object",
+      d: "Postal address.",
+      p: { city: { t: "string" }, line1: { t: "string" } },
+    });
+    // Past the depth an object keeps its type and is marked truncated; top-level descriptions are clipped.
+    expect(create.p.deep).toEqual({ t: "object", p: { inner: { t: "object", x: 1 } } });
+    expect(details.o[0][0]).toEqual([
+      ["limit", "query", 0, { t: "integer" }, "A limit."],
+      ["created", "query", 0, { t: "object", p: { gte: { t: "integer" } } }],
+    ]);
+    // An empty form body is no body at all.
+    expect(details.o[2]).toEqual([[["thing", "path", 1, { t: "string" }]], 0]);
+  });
+
+  it("round-trips through the runtime index: resolve, search, contract, and validation", async () => {
+    const { buildOperationIndex } = await generator();
+    const { OperationIndex } = await import("../src/providers/_shared/rest/operation-index.js");
+    const index = new OperationIndex(buildOperationIndex(document, source), { vendor: "acme", title: "Acme" });
+    expect(index.resolve("DELETE", "/v1/things/th_1")).toMatchObject({
+      op: { path: "/v1/things/{thing}" },
+      params: { thing: "th_1" },
+    });
+    expect(index.search("create thing", { limit: 5 }).map((op) => op.operationId)).toEqual(["PostThings"]);
+    expect(index.contract(index.operation("POST", "/v1/things")!).body?.schema).toMatchObject({
+      required: ["name"],
+      properties: { shipping: { type: "object", properties: { city: { type: "string" } } } },
+    });
+    expect(() => index.check(index.operation("POST", "/v1/things")!, {}, { name: "x", shiping: {} })).toThrow(
+      "/body/shiping (additionalProperties: shipping? one of",
+    );
+    expect(() => index.check(index.operation("POST", "/v1/things")!, {}, { deep: { inner: { anything: 1 } } })).toThrow(
+      "/body/name (required: a value)",
+    );
   });
 });

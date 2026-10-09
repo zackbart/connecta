@@ -46,6 +46,14 @@ export interface GuardedRequest {
    * shadow it.
    */
   headers?: Record<string, string | undefined>;
+  /**
+   * Headers whose values the tool returns to its caller by contract, such as
+   * an idempotency key. They are added after the request's sent secrets are
+   * registered, so a name like `Idempotency-Key` does not mark the value a
+   * credential and redact it from the result that must carry it. They may not
+   * collide with any other header.
+   */
+  visibleHeaders?: Record<string, string>;
   /** JSON request body. Serialized here, with the `Content-Type` to match. */
   body?: unknown;
   /**
@@ -495,6 +503,13 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         ...(ctx.signal ? { signal: ctx.signal } : {}),
       };
       sentSecretsFor(ctx).request(url, init);
+      for (const [name, value] of Object.entries(request.visibleHeaders ?? {})) {
+        const shadow = hasHeader(headers, name);
+        if (shadow) {
+          throw new ConnectorCallError("invalid_args", `A ${provider} request sets the ${shadow} header twice.`);
+        }
+        headers[name] = value;
+      }
       response = await send(url.toString(), init, ctx);
     } catch (cause) {
       if (cause instanceof ConnectorCallError) throw cause;

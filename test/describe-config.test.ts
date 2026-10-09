@@ -143,7 +143,8 @@ describe("describeConfig", () => {
         properties: { id: { type: "string" } },
       });
       expect(byId.church?.source).toEqual({ kind: "api", provider: "ccb" });
-      expect(byId.billing?.source).toEqual({ kind: "remote-mcp", provider: "stripe" });
+      expect(byId.billing?.source).toEqual({ kind: "api", provider: "stripe" });
+      expect(byId.billing?.auth).toEqual({ mode: "credential" });
       expect(byId.billing?.usageGuide?.summary).toEqual(expect.any(String));
       expect(byId.tracker?.source).toEqual({ kind: "remote-mcp", provider: "linear" });
       // A custom describe() is re-validated: unknown fields are dropped and

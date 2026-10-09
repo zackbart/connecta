@@ -46,6 +46,12 @@ function expectedGuide(name: Name, content: string): string {
   return content;
 }
 
+/** The fixture override that selects each provider's hosted MCP implementation. */
+function hostedCase(name: Name): never {
+  if (name === "stripe") return { auth: { type: "oauth" } } as never;
+  return (["notion", "vercel", "cloudflare"].includes(name) ? { surface: "mcp" } : {}) as never;
+}
+
 const registryFor = (connector: Connector) =>
   new Registry([connector], {
     storage: memoryStorage(),
@@ -94,10 +100,7 @@ describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name
   it("INV-1: preserves every reviewed verdict and digest with a frozen per-tool reason", () => {
     const classify = factories[name].definition.classify!;
     const fixture = providerFixtures.find((fixture) => fixture.name === name)!;
-    const connector = fixture.create(
-      "fixture",
-      ["notion", "vercel", "cloudflare"].includes(name) ? ({ surface: "mcp" } as never) : {},
-    );
+    const connector = fixture.create("fixture", hostedCase(name));
     const review = catalogReviewOf(connector)!;
     expect(Object.fromEntries([...review.tools].filter(([name]) => Object.hasOwn(recorded.verdicts, name)))).toEqual(
       recorded.verdicts,
@@ -117,10 +120,7 @@ describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name
     const names = [...Object.keys(recorded.verdicts), "unknown_silent", "unknown_read"];
     for (const [index, hints] of before.variants.entries()) {
       const annotations = hints as ToolAnnotations | null;
-      const real = fixture.create(
-        "fixture",
-        ["notion", "vercel", "cloudflare"].includes(name) ? ({ surface: "mcp" } as never) : {},
-      );
+      const real = fixture.create("fixture", hostedCase(name));
       const facts = names.map((name) => ({ name, ...(annotations ? { annotations } : {}) }));
       const connector = { ...real, listTools: async () => structuredClone(facts) };
       const registry = registryFor(connector);
@@ -137,7 +137,8 @@ describe.each(Object.keys(before.providers) as Name[])("%s hosted preset", (name
   });
 
   it("INV-11: rejects blank titles and malformed common values before serving", () => {
-    const options = Object.values(recorded.configs)[0]!.options;
+    const configs = configChanges[name as keyof typeof configChanges] ?? recorded.configs;
+    const options = Object.values(configs)[0]!.options;
     for (const title of ["", " "]) expect(() => construct(name, { ...options, title })).toThrow("title");
     expect(() => construct(name, { ...options, purpose: 3 })).toThrow("purpose");
     expect(() => construct(name, { ...options, instructions: 3 })).toThrow("instructions");

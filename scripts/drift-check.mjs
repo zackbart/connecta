@@ -6,6 +6,7 @@
 // revisions and latest-published evidence. It never changes pins, check config,
 // hosted reviewed names/annotations, or runtime code. MCP schemas remain live tools/list.
 import { createHash } from "node:crypto";
+import { readOpenApiSource, sha256 } from "./generate-openapi.mjs";
 import { discoverProviders } from "./providers.mjs";
 import { readVercelInventory } from "./vercel-inventory.mjs";
 import { readFile, readdir, writeFile } from "node:fs/promises";
@@ -21,7 +22,8 @@ const defaultProviderDirectory = resolvePath(repositoryRoot, "src/providers");
  * {type: "mcp-docs", setup: string, inventory?: object, endpoints: string[], reviewed: string[]} |
  * {type: "oauth-discovery", setup: string, endpoints: string[], reviewed: string[]} |
  * {type: "mcp-catalog", endpoint: string, reviewed: object[]} |
- * {type: "manual", source: string, rationale: string, evidence?: object}} DriftCheck
+ * {type: "manual", source: string, rationale: string, evidence?: object} |
+ * {type: "openapi-index", source: "openapi.source.json"}} DriftCheck
  * @typedef {{version: 1, provider: string, checks: DriftCheck[]}} DriftRecord
  */
 
@@ -142,7 +144,7 @@ function errorFinding(error) {
 }
 
 function checkMode(type) {
-  if (type === "endpoints" || type === "versioned-endpoints") return "specs";
+  if (type === "endpoints" || type === "versioned-endpoints" || type === "openapi-index") return "specs";
   if (type === "manual") return "manual";
   if (type === "mcp-docs" || type === "oauth-discovery" || type === "mcp-catalog") return "docs";
   return "records";
@@ -219,7 +221,7 @@ function validateSelection(options, providers) {
     const entry = known.get(provider);
     if (entry.error) continue;
     const check = entry.record.checks.find(
-      (item) => item?.type === "endpoints" || item?.type === "versioned-endpoints",
+      (item) => item?.type === "endpoints" || item?.type === "versioned-endpoints" || item?.type === "openapi-index",
     );
     if (!check && entry.record.checks.some((item) => checkMode(item?.type) === "records")) continue;
     if (!check) usage(`${provider} has no endpoint specification check`);
@@ -283,6 +285,10 @@ function validateCheck(check, allowUnrecorded) {
   }
   if (check.type === "manual") {
     require(nonempty(check.source) && nonempty(check.rationale), "manual check requires source and rationale");
+    return;
+  }
+  if (check.type === "openapi-index") {
+    require(check.source === "openapi.source.json", "OpenAPI index check reads openapi.source.json");
     return;
   }
   if (check.type === "mcp-docs" || check.type === "oauth-discovery") {
@@ -645,6 +651,47 @@ function operationFor(document, endpoint) {
   const operation = item[endpoint.method.toLowerCase()];
   if (!operation) return { missing: "operation" };
   return { operation };
+}
+
+/**
+ * Compare a pinned operation index with the vendor's current document. The
+ * pin is a digest of exact bytes, so any change is drift to review; accepting
+ * it is `providers:spec -- --provider <name> --record` after moving the pin.
+ */
+async function checkOpenApiIndex(provider, options) {
+  let source;
+  try {
+    source = await readOpenApiSource(resolvePath(options.providerDirectory, provider));
+  } catch (error) {
+    throw new EvidenceError(error instanceof Error ? error.message : String(error));
+  }
+  if (!source) throw new EvidenceError(`${provider} declares an OpenAPI index check without openapi.source.json`);
+  const live = options.specSources.get(provider) ?? source.latest ?? source.url;
+  const text = await loadPublished(provider, "published specification", live);
+  let version;
+  try {
+    version = JSON.parse(text)?.info?.version;
+  } catch {
+    throw new ParserError(`${provider}'s published specification at ${live} is not JSON`);
+  }
+  const digest = sha256(new TextEncoder().encode(text));
+  return {
+    provider,
+    specification: live,
+    revision: source.revision,
+    findings:
+      digest === source.digest
+        ? []
+        : [
+            {
+              kind: "spec-drift",
+              detail:
+                `pinned ${source.revision} (${source.digest}) differs from ${live} (${digest}` +
+                `${typeof version === "string" ? `, info.version ${version}` : ""}). Review it, move the pin in ` +
+                `openapi.source.json, then run providers:spec -- --provider ${provider} --record.`,
+            },
+          ],
+  };
 }
 
 function checkSpecProvider(provider, manifest, specification) {
@@ -1229,7 +1276,9 @@ async function main() {
       if (mode !== "records" && !options[mode]) continue;
       try {
         validateCheck(check, options.record);
-        if (mode === "specs") {
+        if (check.type === "openapi-index") {
+          report.specs.push({ ...(await checkOpenApiIndex(provider, options)), check: index, index: true });
+        } else if (mode === "specs") {
           const versioned = check.type === "versioned-endpoints";
           const specification = versioned
             ? { source: "per-product OpenAPI documents" }
@@ -1292,7 +1341,12 @@ async function main() {
   if (options.json) console.log(JSON.stringify({ ...report, findings }, null, 2));
   else {
     for (const result of report.specs) {
-      if (result.endpoints !== undefined) printSpec(result, result.recordedTo);
+      if (result.index) {
+        console.log(
+          `${result.provider} OpenAPI index — ${result.findings.length ? `${result.findings.length} finding(s)` : "no drift"} against pin ${result.revision}`,
+        );
+        for (const finding of result.findings) console.log(`  ${finding.kind.padEnd(16)} ${finding.detail}`);
+      } else if (result.endpoints !== undefined) printSpec(result, result.recordedTo);
       else printFailure(result);
     }
     for (const result of report.docs) {

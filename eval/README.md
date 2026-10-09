@@ -243,6 +243,10 @@ calls and final-answer facts. Fourteen new active tasks cover:
 - a known read routed through `call_tool`, with no program, discovery or other route;
 - an advertised MCP resource read through `connecta.read` with its qualified URI.
 
+[Planned tasks](tasks/planned.ts) record #801's Stripe REST acceptance tests
+(a failed payment, recovery from a refused guess, an idempotent refund). They
+need a fake Stripe service before promotion and never run.
+
 Each grader has independent required `correct-destination` and
 `answer-evidence` checks. Destination checks require the connector, tool and
 relevant ids in the successful fake call ledger, or the explicit refused/search

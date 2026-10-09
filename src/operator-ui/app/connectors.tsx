@@ -3,6 +3,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import type { OperatorConnectorOverlay } from "../contract.js";
 import {
   connectorStatusLabel,
+  connectorSourceLabel,
   connectorStatusTone,
   formatDate,
   registrationPathLabel,
@@ -91,7 +92,7 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
               ...live,
               title: config.title ?? config.id,
               authScope: config.authScope,
-              source: config.source.provider ?? config.source.kind,
+              source: connectorSourceLabel(config.source),
             },
           ]
         : [];

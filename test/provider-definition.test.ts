@@ -6,9 +6,11 @@ import {
   PROVIDER_COMMON,
   keys,
   optionsOf,
+  variants,
   type ProviderContext,
   type ProviderOptions,
 } from "../src/index.js";
+import { byAuth } from "../src/providers/_shared/rest/dispatch.js";
 import type { Connector, ConnectorDescription, ToolClassification, ToolDef } from "../src/types.js";
 import { observedCatalogDrift } from "../src/catalog-drift.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
@@ -342,7 +344,7 @@ describe("defineProvider()", () => {
       [{ name: "Acme" }, "name must be lowercase words"],
       [{ name: "acme_crm" }, "name must be lowercase words"],
       [{ title: "" }, "requires a non-empty title"],
-      [{ kind: "graphql" }, 'kind must be "mcp", "api", or "composed"'],
+      [{ kind: "graphql" }, 'kind must be "mcp", "api", "composed", or "dual"'],
       [{ skill: { content: "x" } }, "skill requires non-empty content and instructionsHeading"],
       [{ skill: { content: " ", instructionsHeading: "x" } }, "skill requires non-empty"],
       [{ create: undefined }, "requires a create function"],
@@ -355,9 +357,9 @@ describe("defineProvider()", () => {
     }
   });
 
-  it("passes the reviewed classification to create for hosted and composed providers", () => {
+  it("passes the reviewed classification to create for hosted, composed, and dual providers", () => {
     const classify: ToolClassification = { tools: { list: "read", purge: "destructive" } };
-    for (const kind of ["mcp", "composed"] as const) {
+    for (const kind of ["mcp", "composed", "dual"] as const) {
       const create = createStub();
       const factory = defineProvider<ProviderOptions>({
         name: "acme",
@@ -373,6 +375,53 @@ describe("defineProvider()", () => {
       expect(create.mock.calls[0]?.[2]?.classify).toBe(factory.definition.classify);
       expect(factory.definition.classify).not.toBe(classify);
     }
+  });
+
+  it("INV-11: selects a dual provider's closed options by its nested auth.type and dispatches on it", () => {
+    type OAuth = ProviderOptions & { auth: { type: "oauth" } };
+    type Key = ProviderOptions & { auth: { type: "key" }; region?: string };
+    const oauth = vi.fn((id: string, _options: unknown) => stub(id, { kind: "mcp" }));
+    const key = vi.fn((id: string, _options: unknown) => stub(id, { kind: "api" }));
+    const factory = defineProvider<OAuth | Key>({
+      name: "acme",
+      title: "Acme",
+      kind: "dual",
+      skill: SKILL,
+      options: variants(["auth", "type"], {
+        oauth: optionsOf<OAuth>()({ ...PROVIDER_COMMON, auth: optionsOf<OAuth["auth"]>()(keys("type")) }).shape,
+        key: optionsOf<Key>()({
+          ...PROVIDER_COMMON,
+          ...keys("region"),
+          auth: optionsOf<Key["auth"]>()(keys("type")),
+        }).shape,
+      }),
+      create: byAuth<OAuth | Key>({ oauth, key }),
+    });
+    expect(factory("a", { purpose: "Ops", auth: { type: "key" }, region: "eu" }).kind).toBe("api");
+    expect(factory("b", { purpose: "Ops", auth: { type: "oauth" } }).kind).toBe("mcp");
+    expect(key.mock.calls[0]?.[1]).toEqual({ purpose: "Ops", auth: { type: "key" }, region: "eu" });
+    const refusals: Array<[unknown, string]> = [
+      [{ purpose: "Ops", auth: { type: "oauth" }, region: "eu" }, 'Unknown option: acme("c").region.'],
+      [{ purpose: "Ops", auth: { type: "oauth", scope: "x" } }, 'Unknown option: acme("c").auth.scope.'],
+      [{ purpose: "Ops" }, 'acme("c") requires auth.type is required: one of "oauth", "key".'],
+      [{ purpose: "Ops", auth: {} }, 'acme("c") requires auth.type is required: one of "oauth", "key".'],
+      [{ purpose: "Ops", auth: { type: "token" } }, 'acme("c") requires auth.type to be one of "oauth", "key".'],
+      [{ purpose: "Ops", auth: "oauth" }, 'acme("c") requires auth to be an object.'],
+      [{ purpose: "Ops", auth: [{ type: "oauth" }] }, 'acme("c") requires auth to be an object.'],
+    ];
+    for (const [options, message] of refusals) {
+      expect(() => factory("c", options as never)).toThrow(message);
+    }
+    const read = vi.fn(() => "oauth");
+    expect(() =>
+      factory("c", {
+        purpose: "Ops",
+        auth: Object.defineProperty({}, "type", { get: read, enumerable: true }),
+      } as never),
+    ).toThrow('acme("c") requires auth.type to be a plain value, not a getter or setter.');
+    expect(read).not.toHaveBeenCalled();
+    expect(oauth).toHaveBeenCalledTimes(1);
+    expect(key).toHaveBeenCalledTimes(1);
   });
 
   it("INV-1: freezes a copy of the classification, so no verdict changes after review", () => {

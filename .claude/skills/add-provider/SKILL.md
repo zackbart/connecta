@@ -67,6 +67,26 @@ facts, never recomputed from observed sizes. Keep them out of `drift.json`.
   are currently adapted to `ConnectorUsageGuide`; future Skills work owns
   reference exposure. Preserve existing guide bytes on mechanical moves.
 
+## Dual providers and REST indexes
+
+A vendor with both a hosted MCP server and a REST API is kind `"dual"`
+([decision 0005](https://github.com/zackbart/connecta/blob/main/decisions/0005-auth-selects-implementation.md)).
+Declare options with `variants(["auth", "type"], …)` so `auth` is required and
+each case refuses the other's keys, and `create: byAuth({ … })`. OAuth uses
+`hostedOAuth()` only; a key uses `restTools()` from `src/providers/_shared/rest/`
+with an operator-managed credential and a `testCredential`. Supply vendor
+configuration only: transport, failure mapper, `scope`, `encode`, `page`,
+`refuse`, `readPosts` (each with a reason), and an idempotency header.
+
+The REST connector reads `openapi.generated.ts`. Pin the vendor's document in
+`openapi.source.json` (`url`, `revision`, `digest`, optional `latest` and
+generation `options`), run `npm run providers:spec -- --provider <name>
+--record` to accept a pin, and add `{ "type": "openapi-index", "source":
+"openapi.source.json" }` to `drift.json`. Shrink details (depth, descriptions,
+long enums) before raising a bundle cap. Give the SKILL.md separate fragments
+per implementation plus a shared one, and name the published fragment with
+frontmatter `"content"`.
+
 ## Derived lists
 
 Run `npm run providers:generate`. Folder discovery derives provider exports,

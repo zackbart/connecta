@@ -32,6 +32,10 @@
         "stripe_report",
         "send_stripe_mcp_feedback"
       ]
+    },
+    {
+      "type": "openapi-index",
+      "source": "openapi.source.json"
     }
   ]
 }
