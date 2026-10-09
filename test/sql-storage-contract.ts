@@ -18,6 +18,29 @@ export interface SqlFixture {
   rows<Row>(sql: string, ...params: (string | number | null)[]): Promise<Row[]>;
 }
 
+export async function sqlStashFixture(db: Pick<SqlFixture, "storage" | "exec" | "rows">) {
+  const inner = db.storage();
+  await inner.get("warm");
+  let offset = 0;
+  const options = (opts?: Parameters<KVStorage["set"]>[2]) =>
+    opts?.expiresAtMs === undefined ? opts : { ...opts, expiresAtMs: opts.expiresAtMs - offset };
+  return {
+    storage: {
+      ...inner,
+      set: (key, value, opts) => inner.set(key, value, options(opts)),
+      compareAndSet: (key, expected, next, opts) => inner.compareAndSet(key, expected, next, options(opts)),
+    } satisfies KVStorage,
+    advance: async (ms: number) => {
+      offset += ms;
+      await db.exec("UPDATE connecta_kv SET expires_at_ms = expires_at_ms - ? WHERE expires_at_ms IS NOT NULL", ms);
+    },
+    expiries: async () =>
+      (await db.rows<{ expires_at_ms: number | null }>("SELECT expires_at_ms FROM connecta_kv")).map((row) =>
+        row.expires_at_ms === null ? null : row.expires_at_ms + offset,
+      ),
+  };
+}
+
 /**
  * The cases both SQL drivers share — D1 through a local Miniflare database,
  * SQLite through `node:sqlite` — so one statement set is proven on each. Not a
@@ -29,29 +52,7 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     vi.restoreAllMocks();
   });
 
-  stashChargeContract(async () => {
-    const db = await open();
-    const inner = db.storage();
-    await inner.get("warm");
-    let offset = 0;
-    const options = (opts?: Parameters<KVStorage["set"]>[2]) =>
-      opts?.expiresAtMs === undefined ? opts : { ...opts, expiresAtMs: opts.expiresAtMs - offset };
-    return {
-      storage: {
-        ...inner,
-        set: (key, value, opts) => inner.set(key, value, options(opts)),
-        compareAndSet: (key, expected, next, opts) => inner.compareAndSet(key, expected, next, options(opts)),
-      },
-      advance: async (ms) => {
-        offset += ms;
-        await db.exec("UPDATE connecta_kv SET expires_at_ms = expires_at_ms - ? WHERE expires_at_ms IS NOT NULL", ms);
-      },
-      expiries: async () =>
-        (await db.rows<{ expires_at_ms: number | null }>("SELECT expires_at_ms FROM connecta_kv")).map((row) =>
-          row.expires_at_ms === null ? null : row.expires_at_ms + offset,
-        ),
-    };
-  });
+  stashChargeContract(async () => sqlStashFixture(await open()));
 
   let casDatabase: SqlFixture;
   compareAndSetContract(

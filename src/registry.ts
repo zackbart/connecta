@@ -59,6 +59,7 @@ import {
   resultKeys,
   scopes,
   stashLedgerKeys,
+  stashExpiryKeys,
 } from "./storage/keys.js";
 import { classifyTool } from "./tool-safety.js";
 
@@ -291,7 +292,7 @@ type StashCharge = readonly [reservation: string, bytes: number, expiresAt: numb
  * Live charges in a stored ledger. Anything malformed reads as empty: the
  * ledger bounds an advisory cache, and the next successful swap replaces it.
  */
-function liveStashCharges(raw: string | null, now: number): StashCharge[] {
+function stashCharges(raw: string | null): StashCharge[] {
   if (raw === null) return [];
   let parsed: unknown;
   try {
@@ -308,9 +309,35 @@ function liveStashCharges(raw: string | null, now: number): StashCharge[] {
       typeof entry[0] === "string" &&
       Number.isSafeInteger(entry[1]) &&
       entry[1] >= 0 &&
-      Number.isSafeInteger(entry[2]) &&
-      entry[2] > now,
+      Number.isSafeInteger(entry[2]),
   );
+}
+
+/** Caller time can nominate a charge for pruning, but only storage proves expiry. */
+function liveStashCharges(raw: string | null, now: number): Effect.Effect<StashCharge[], unknown, Storage> {
+  return Effect.gen(function* () {
+    const live: StashCharge[] = [];
+    const expired = new Map<number, boolean>();
+    for (const entry of stashCharges(raw)) {
+      const deadline = entry[2];
+      if (deadline > now) {
+        live.push(entry);
+        continue;
+      }
+      let proven = expired.get(deadline);
+      if (proven === undefined) {
+        // A successful absolute-expiry write followed by an absent read proves
+        // storage has passed this deadline, even when the caller runs ahead.
+        // These probes expire at the deadline they check; no cleanup is needed.
+        const key = stashExpiryKeys.deadline(deadline);
+        yield* storageSet(key, "live", { expiresAtMs: deadline });
+        proven = (yield* storageGet(key)) === null;
+        expired.set(deadline, proven);
+      }
+      if (!proven) live.push(entry);
+    }
+    return live;
+  });
 }
 
 type StashSwap<A> = { readonly status: "applied"; readonly result: A } | { readonly status: "exhausted" };
@@ -329,13 +356,13 @@ function swapStashLedger<A>(
       const outcome = yield* Effect.gen(function* () {
         const raw = yield* storageGet(ledger);
         const now = yield* Clock.currentTimeMillis;
-        const planned = plan(liveStashCharges(raw, now), now);
+        const planned = plan(yield* liveStashCharges(raw, now), now);
         if (planned.entries !== undefined) {
           const entries = planned.entries;
           // The ledger row itself expires with its last charge. A delayed CAS
           // cannot create an immortal row or restart any reservation's lifetime.
           const next = entries.length ? jsonCodec.encode({ v: 1, entries }) : null;
-          const expiresAtMs = entries.reduce((latest, entry) => Math.max(latest, entry[2]), now);
+          const expiresAtMs = entries.reduce((latest, entry) => Math.max(latest, entry[2]), entries[0]?.[2] ?? now);
           if (!(yield* storageCompareAndSet(ledger, raw, next, { expiresAtMs }))) return undefined;
         }
         return { status: "applied", result: planned.result } as const;
@@ -347,7 +374,7 @@ function swapStashLedger<A>(
     return yield* Effect.gen(function* () {
       const raw = yield* storageGet(ledger);
       const now = yield* Clock.currentTimeMillis;
-      const planned = plan(liveStashCharges(raw, now), now);
+      const planned = plan(yield* liveStashCharges(raw, now), now);
       return planned.entries === undefined
         ? ({ status: "applied", result: planned.result } as const)
         : ({ status: "exhausted" } as const);

@@ -133,6 +133,22 @@ export const stashLedgerKeys = {
   ledger: "result-stash:v1:ledger",
 } as const satisfies Keyed;
 
+/** Storage-side proof that a stash charge's absolute deadline has passed. */
+export const stashExpiryKeys = {
+  family: {
+    name: "result-stash-expiry",
+    scope: "root",
+    prefixes: ["result-stash-expiry:v1:"],
+    version: { number: 1, in: "key" },
+    codec: textCodec,
+    ttl: { kind: "configured", by: "probed stash charge deadline" },
+    durable: false,
+  },
+  // Different deadlines cannot overwrite one another's proof. Repeated probes
+  // of the same deadline always use the same value and absolute expiry.
+  deadline: (expiresAtMs: number) => `result-stash-expiry:v1:${expiresAtMs}`,
+} as const satisfies Keyed;
+
 /**
  * A persisted downstream catalog: the manifest at `catalog:<id>`, then its
  * chunks at `catalog:<id>:chunk:<revision>:<index>`.
@@ -448,6 +464,7 @@ export const inputRetryKeys = {
 export const KEY_FAMILIES: readonly KeyFamily[] = [
   resultKeys.family,
   stashLedgerKeys.family,
+  stashExpiryKeys.family,
   catalogKeys.family,
   responseCacheKeys.family,
   oauthHandoffKeys.family,

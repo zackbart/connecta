@@ -1,3 +1,5 @@
+import { stashClockSkewContract } from "./stash-charge-contract.js";
+import { sqlStashFixture } from "./sql-storage-contract.js";
 import { skewedRefresh } from "./fixtures/oauth-refresh-clock.js";
 // The one-shot Workers KV → D1 copy, against a real local KV namespace and D1
 // database: the workers vitest project binds both (vitest.config.ts). The
@@ -757,5 +759,29 @@ describe.skipIf(!bindings)("copyKvToD1 over a local Workers KV and D1", () => {
     expect(error.message).toBe("Workers KV to D1 copy stopped: recording the resume point in D1 failed (Error)");
     expect(error.cursor).toBeUndefined();
     expect(`${error.message}${error.stack}`).not.toContain("SECRET");
+  });
+});
+
+describe.skipIf(!bindings)("stash capacity over native Workers D1", () => {
+  stashClockSkewContract(async () => {
+    const db = bindings!.db;
+    await db.prepare("DROP TABLE IF EXISTS connecta_kv").run();
+    return sqlStashFixture({
+      storage: () => d1Storage(db),
+      async exec(sql, ...params) {
+        await db
+          .prepare(sql)
+          .bind(...params)
+          .run();
+      },
+      async rows<Row>(sql: string, ...params: (string | number | null)[]) {
+        return (
+          await db
+            .prepare(sql)
+            .bind(...params)
+            .all<Row>()
+        ).results;
+      },
+    });
   });
 });

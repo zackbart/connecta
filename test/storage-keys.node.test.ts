@@ -26,6 +26,7 @@ import {
   resultKeys,
   scopes,
   stashLedgerKeys,
+  stashExpiryKeys,
 } from "../src/storage/keys.js";
 
 const ts = createRequire(import.meta.url)("typescript") as typeof import("typescript");
@@ -77,6 +78,7 @@ describe("storage key families", () => {
     within(resultKeys.family, resultKeys.chunk("id", 0));
     within(resultKeys.family, resultKeys.chunk("id", 3));
     within(stashLedgerKeys.family, stashLedgerKeys.ledger);
+    within(stashExpiryKeys.family, stashExpiryKeys.deadline(123));
     const responseNamespace = responseCacheKeys.namespace("svc", "config", "generation");
     const responseEntry = responseCacheKeys.entry(responseNamespace, "partition");
     for (const key of [
@@ -121,6 +123,7 @@ describe("storage key families", () => {
       [`${scopes.subject("ab12")}${resultKeys.chunk("id", 2)}`, "result"],
       [personal(`${scopes.results}${resultKeys.chunk("id", 0)}`), "result"],
       [stashLedgerKeys.ledger, "result-stash-ledger"],
+      [stashExpiryKeys.deadline(123), "result-stash-expiry"],
       [catalogKeys.manifest("svc"), "catalog"],
       [responseCacheKeys.generation("svc"), "response-cache"],
       [

@@ -3,7 +3,7 @@ import { Clock, Duration, Effect, Random } from "effect";
 import * as storageRuntime from "../src/runtime/storage.js";
 import { Registry } from "../src/registry.js";
 import { createConnecta, customExecutor } from "../src/index.js";
-import { resultKeys, scopes, stashLedgerKeys } from "../src/storage/keys.js";
+import { resultKeys, scopes, stashLedgerKeys, stashExpiryKeys } from "../src/storage/keys.js";
 import type { KVStorage } from "../src/types.js";
 import { silentLogger } from "./helpers.js";
 
@@ -16,72 +16,131 @@ const WRITE_MS = 30_000;
 const COMPLETION_MS = 15_000;
 const TTL_MS = 900_000;
 
+type StashFixtureFactory = () => Promise<{
+  storage: KVStorage;
+  advance?: (ms: number) => Promise<void>;
+  expiries?: () => Promise<(number | null)[]>;
+}>;
+
 /** SQL fixtures age rows and translate new absolute expiries with the mocked clock. */
-export function stashChargeContract(
-  open: () => Promise<{
-    storage: KVStorage;
-    advance?: (ms: number) => Promise<void>;
-    expiries?: () => Promise<(number | null)[]>;
-  }>,
-): void {
-  const clocked = async () => {
-    const fixture = await open();
-    let clock = Date.now();
-    const start = clock;
-    const spy = vi.spyOn(Date, "now").mockImplementation(() => clock);
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const liveClock = Clock.Clock.defaultValue();
-    // Drive retry sleeps only after the preceding adapter I/O finishes. Advancing
-    // while D1 is still answering would charge runner load against the budget.
-    // Longer write/completion timers stay pending until explicitly advanced.
-    let retryMs = 0;
-    const testClock: Clock.Clock = {
-      ...liveClock,
-      currentTimeMillisUnsafe: () => clock,
-      currentTimeNanosUnsafe: () => BigInt(clock) * 1_000_000n,
-      monotonicTimeNanosUnsafe: () => liveClock.monotonicTimeNanosUnsafe(),
-      sleep: (duration) => {
-        const ms = Duration.toMillis(duration);
-        if (ms > 250) return liveClock.sleep(duration);
-        return Effect.promise(() => {
-          retryMs += ms;
-          return vi.advanceTimersByTimeAsync(ms);
-        });
-      },
-    };
-    const runOnPartition = storageRuntime.runOnPartition;
-    const runner = vi.spyOn(storageRuntime, "runOnPartition").mockImplementation((effect, partition) =>
-      runOnPartition(
-        effect.pipe(
-          Effect.provideService(Clock.Clock, testClock),
-          // Exercise the largest possible retry windows, without random timing.
-          Effect.provideService(Random.Random, { nextDoubleUnsafe: () => 0.999999, nextIntUnsafe: () => 0 }),
-        ),
-        partition,
-      ),
-    );
-    return {
-      ...fixture,
-      start,
-      now: () => clock,
-      retryMs: () => retryMs,
-      restore: () => {
-        runner.mockRestore();
-        vi.useRealTimers();
-        spy.mockRestore();
-      },
-      tick: async (ms: number) => {
-        clock += ms;
-        await fixture.advance?.(ms);
-      },
-      boundedRows: async (deadline: number) => {
-        for (const expiry of (await fixture.expiries?.()) ?? []) {
-          expect(expiry).not.toBeNull();
-          expect(expiry).toBeLessThanOrEqual(deadline);
-        }
-      },
-    };
+async function clocked(open: StashFixtureFactory) {
+  const fixture = await open();
+  let clock = Date.now();
+  const start = clock;
+  let callerSkew = 0;
+  const spy = vi.spyOn(Date, "now").mockImplementation(() => clock);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const liveClock = Clock.Clock.defaultValue();
+  // Drive retry sleeps only after the preceding adapter I/O finishes. Advancing
+  // while D1 is still answering would charge runner load against the budget.
+  // Longer write/completion timers stay pending until explicitly advanced.
+  let retryMs = 0;
+  const testClock: Clock.Clock = {
+    ...liveClock,
+    currentTimeMillisUnsafe: () => clock + callerSkew,
+    currentTimeMillis: Effect.sync(() => clock + callerSkew),
+    currentTimeNanosUnsafe: () => BigInt(clock + callerSkew) * 1_000_000n,
+    currentTimeNanos: Effect.sync(() => BigInt(clock + callerSkew) * 1_000_000n),
+    monotonicTimeNanosUnsafe: () => liveClock.monotonicTimeNanosUnsafe(),
+    sleep: (duration) => {
+      const ms = Duration.toMillis(duration);
+      if (ms > 250) return liveClock.sleep(duration);
+      return Effect.promise(() => {
+        retryMs += ms;
+        return vi.advanceTimersByTimeAsync(ms);
+      });
+    },
   };
+  const runOnPartition = storageRuntime.runOnPartition;
+  const runner = vi.spyOn(storageRuntime, "runOnPartition").mockImplementation((effect, partition) =>
+    runOnPartition(
+      effect.pipe(
+        Effect.provideService(Clock.Clock, testClock),
+        // Exercise the largest possible retry windows, without random timing.
+        Effect.provideService(Random.Random, { nextDoubleUnsafe: () => 0.999999, nextIntUnsafe: () => 0 }),
+      ),
+      partition,
+    ),
+  );
+  return {
+    ...fixture,
+    start,
+    now: () => clock,
+    skewCaller: (ms: number) => {
+      callerSkew = ms;
+    },
+    retryMs: () => retryMs,
+    restore: () => {
+      runner.mockRestore();
+      vi.useRealTimers();
+      spy.mockRestore();
+    },
+    tick: async (ms: number) => {
+      clock += ms;
+      await fixture.advance?.(ms);
+    },
+    boundedRows: async (deadline: number) => {
+      for (const expiry of (await fixture.expiries?.()) ?? []) {
+        expect(expiry).not.toBeNull();
+        expect(expiry).toBeLessThanOrEqual(deadline);
+      }
+    },
+  };
+}
+
+export function stashClockSkewContract(open: StashFixtureFactory): void {
+  it("INV-7: refuses a second stash while its charge is live in storage despite an ahead caller clock", async () => {
+    const f = await clocked(open);
+    try {
+      expect(await make(f.storage).stashResult("first", ["x"], 900)).toBe(true);
+      const charged = entries(await f.storage.get(stashLedgerKeys.ledger));
+      expect(charged).toHaveLength(1);
+      // Leave ample database-time margin; only the injected Effect clock runs
+      // past the charge deadline. Memory's Date clock remains independent too.
+      await f.tick(TTL_MS - 60_000);
+      f.skewCaller(120_000);
+      expect(await f.storage.get(chunk("first"))).toBe("x");
+      expect(await make(f.storage).stashResult("second", ["x"], 900)).toBe(false);
+      expect(await f.storage.get(chunk("first"))).toBe("x");
+      expect(await f.storage.get(chunk("second"))).toBeNull();
+      expect(entries(await f.storage.get(stashLedgerKeys.ledger))).toEqual(charged);
+      expect(await f.storage.get(stashExpiryKeys.deadline(charged[0]![2]))).toBe("live");
+      // Storage expiry, not the caller's skew, eventually frees the slot.
+      await f.tick(120_000);
+      expect(await f.storage.get(chunk("first"))).toBeNull();
+      expect(await f.storage.get(stashExpiryKeys.deadline(charged[0]![2]))).toBeNull();
+      f.skewCaller(0);
+      expect(await make(f.storage).stashResult("recovered", ["x"], 900)).toBe(true);
+    } finally {
+      f.restore();
+    }
+  });
+}
+
+export function stashChargeContract(open: StashFixtureFactory): void {
+  stashClockSkewContract(open);
+
+  it("INV-7: prunes an expired charge from a still-live ledger with aligned clocks", async () => {
+    const f = await clocked(open);
+    try {
+      expect(await make(f.storage, 2).stashResult("short", ["x"], 60)).toBe(true);
+      const short = entries(await f.storage.get(stashLedgerKeys.ledger))[0]!;
+      expect(await make(f.storage, 2).stashResult("long", ["x"], 900)).toBe(true);
+      const long = entries(await f.storage.get(stashLedgerKeys.ledger))[1]!;
+      await f.tick(120_000);
+      expect(await f.storage.get(chunk("short"))).toBeNull();
+      expect(await f.storage.get(chunk("long"))).toBe("x");
+      expect(await make(f.storage, 2).stashResult("replacement", ["x"], 900)).toBe(true);
+      const charged = entries(await f.storage.get(stashLedgerKeys.ledger));
+      expect(charged).toHaveLength(2);
+      expect(charged).toContainEqual(long);
+      expect(charged).not.toContainEqual(short);
+      expect(await f.storage.get(stashExpiryKeys.deadline(short[2]))).toBeNull();
+      expect(await make(f.storage, 2).stashResult("full", ["x"], 900)).toBe(false);
+    } finally {
+      f.restore();
+    }
+  });
 
   it("INV-11: rejects a legacy ttlSeconds-only adapter at construction", async () => {
     const { storage: inner } = await open();
@@ -110,7 +169,7 @@ export function stashChargeContract(
   });
 
   it.each([0, 1])("INV-7: retains a rejected write's charge through its late chunk %s commit", async (index) => {
-    const f = await clocked();
+    const f = await clocked(open);
     const inner = f.storage;
     let finish!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -161,7 +220,7 @@ export function stashChargeContract(
   it.each(["timeout", "rejection"])(
     "INV-7: returns within the cleanup budget with stalled deletion after %s",
     async (failure) => {
-      const f = await clocked();
+      const f = await clocked(open);
       const inner = f.storage;
       let entered!: () => void, finishWrite!: () => void, deleting!: () => void, finishDelete!: () => void;
       const writing = new Promise<void>((resolve) => {
@@ -247,7 +306,7 @@ export function stashChargeContract(
   it.each(["get", "compareAndSet"] as const)(
     "INV-7: returns within the settlement budget with stalled %s",
     async (operation) => {
-      const f = await clocked();
+      const f = await clocked(open);
       const inner = f.storage;
       let entered!: () => void, finish!: () => void;
       const settling = new Promise<void>((resolve) => {
@@ -337,7 +396,7 @@ export function stashChargeContract(
   ])(
     "INV-7: recovers stash capacity after $name",
     async ({ slow, releaseLosses, settlementLosses, transient }) => {
-      const f = await clocked();
+      const f = await clocked(open);
       const inner = f.storage;
       let reservation: string | undefined;
       let booked = 0;
@@ -427,7 +486,7 @@ export function stashChargeContract(
   ])(
     "INV-7: books an ambiguous CAS once (capacity=$capacity, final=$final, confirmFails=$confirmFails)",
     async ({ capacity, final, confirmFails }) => {
-      const f = await clocked();
+      const f = await clocked(open);
       const inner = f.storage;
       let attempts = 0,
         commits = 0;
@@ -477,7 +536,7 @@ export function stashChargeContract(
   it.each(["failed cleanup", "interrupted settlement"])(
     "INV-7: leaves no completion rows after %s",
     async (failure) => {
-      const f = await clocked();
+      const f = await clocked(open);
       const inner = f.storage;
       let deletionAttempts = 0;
       let interrupted = false;
@@ -529,7 +588,7 @@ export function stashChargeContract(
   ])(
     "INV-7: holds orphan capacity after a $delay ms write and failed cleanup ($capacity entries, $maxBytes bytes, rejects=$rejects)",
     async ({ delay, rejects, capacity, maxBytes }) => {
-      const f = await clocked();
+      const f = await clocked(open);
       const inner = f.storage;
       const storage: KVStorage = {
         ...inner,
@@ -564,7 +623,7 @@ export function stashChargeContract(
   it.each([false, true])(
     "INV-7: aborts a pending write within 30 seconds and bounds its late commit (cleanupFails=%s)",
     async (cleanupFails) => {
-      const f = await clocked();
+      const f = await clocked(open);
       const inner = f.storage;
       let entered!: () => void, finish!: () => void;
       const writing = new Promise<void>((resolve) => {
