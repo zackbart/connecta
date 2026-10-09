@@ -1,3 +1,4 @@
+import { withAuthorizationHandoff } from "./authorization-handoff.js";
 import { hasControlCharacters } from "./tool-name.js";
 import { surfaceAllowsTool, type PoolTrust } from "./tool-safety.js";
 import { Cause, Effect, Exit, type Scope } from "effect";
@@ -271,6 +272,7 @@ export class InvocationFailure extends Error {
   readonly recovery: CallErrorDetails["recovery"];
   readonly nextAction: CallErrorDetails["nextAction"];
   readonly retry: string | undefined;
+  readonly data: CallErrorDetails;
 
   constructor(readonly details: CallErrorDetails) {
     super(details.message);
@@ -283,6 +285,7 @@ export class InvocationFailure extends Error {
     this.recovery = details.recovery;
     this.nextAction = details.nextAction;
     this.retry = details.retry;
+    this.data = details;
   }
 }
 
@@ -849,7 +852,7 @@ export class InvocationService {
         const friction = context.activityFriction?.(value);
         record("success", friction ? { friction } : {});
         return {
-          ok: true,
+          ok: true as const,
           value,
           format: valueFormat,
           resolved: completed,
@@ -861,6 +864,15 @@ export class InvocationService {
       } catch {
         return unprocessable();
       }
-    });
+    }).pipe(
+      Effect.flatMap((outcome: InvocationOutcome<T>): Effect.Effect<InvocationOutcome<T>> =>
+        outcome.ok
+          ? Effect.succeed(outcome)
+          : Effect.promise(async () => ({
+              ...outcome,
+              error: await withAuthorizationHandoff(this.catalog.requestScope, outcome.error),
+            })),
+      ),
+    );
   }
 }

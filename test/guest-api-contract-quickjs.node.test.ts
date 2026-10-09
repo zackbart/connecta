@@ -2,6 +2,7 @@
 // The QuickJS arm of the guest API contract. The same case table runs against
 // the Dynamic Worker executor in test/guest-api-contract.test.ts.
 
+import { checkAuthHandoffProgram } from "./fixtures/authorization-handoff.js";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { customExecutor } from "../src/executor-contract.js";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
@@ -45,6 +46,10 @@ afterAll(async () => {
 });
 
 describe("guest API contract (QuickJS executor)", () => {
+  it("INV-4 INV-5 INV-7: program error data carries a reusable handoff that completes OAuth", async () => {
+    // The deployment fixture owns its executor and closes it with the app.
+    await checkAuthHandoffProgram(quickJsExecutor({ cpuTimeMs: 5_000 }));
+  });
   it("INV-3 INV-7: native snapshots prevent mutation budget bypass and cross-run leakage", async () => {
     const concurrent = quickJsExecutor({ concurrency: 2, cpuTimeMs: 5_000 });
     try {

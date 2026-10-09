@@ -283,7 +283,12 @@ function installBridge(
             // The error identity and typed facts stay in host state. A guest
             // may edit public fields without changing the retained failure.
             bridge.failures.push({ error: error.dup(), call });
-            for (const [key, value] of Object.entries({ code: call.code, retryable: call.retryable, details: call })) {
+            for (const [key, value] of Object.entries({
+              code: call.code,
+              retryable: call.retryable,
+              details: call,
+              data: call,
+            })) {
               const property = ctx.unwrapResult(ctx.evalCode(`(${JSON.stringify(value)})`));
               ctx.setProp(error, key, property);
               property.dispose();

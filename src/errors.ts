@@ -511,8 +511,20 @@ export class ConnectorCallError extends Error {
   }
 }
 
+/** Secret-free payload returned by authorize_connector and auth failures. */
+export interface AuthorizationHandoff {
+  connector: string;
+  recovery: AuthRecoveryMode;
+  message?: string;
+  status?: "auth_required";
+  authorizationUrl?: string;
+  operatorUrl?: string;
+  instructions?: string;
+  credential?: { label: string; fields: { name: string; guidance?: string }[] };
+}
+
 /** The `error` object surfaced in value-mode call results and rejected promises. */
-export interface CallErrorDetails {
+export interface CallErrorDetails extends Partial<AuthorizationHandoff> {
   /** Sanitized transport diagnostics, absent when the runtime supplies none. */
   details?: UnavailableDetails;
   code: string;

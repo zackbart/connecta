@@ -392,7 +392,14 @@ longer live; one left behind cannot complete and expires with its link.
 | `DELETE /ui/oauth/<id>`                  | Disconnects and invalidates the cached catalog, even if the browser leaves.                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 `authorize_connector` issues the same browser link, with `force` carried in the
-signed handoff. Status reads never call `startAuth` and never expose the
+signed handoff. On hosts without URL elicitation, direct and program auth
+failures and search/describe catalog failures include the same authorization
+handoff. The admitted registry and management permission govern issuance.
+Each call or program run shares at most one handoff per connector; errors never
+request a forced restart. Signed links retain their fifteen-minute expiry,
+initiating-user and owner binding, origin check, and single-use browser nonce.
+Minting a link stores no nonce and starts no consent. When an auth error includes
+a handoff, give it to the user or operator. Status reads never call `startAuth` and never expose the
 provider's consent URL. A UI start answers `{ state: "auth_required",
 authorizationUrl }`, where the URL belongs to connecta. Continue hands back the
 latest consent only while it is unclaimed, in the live epoch, written within

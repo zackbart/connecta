@@ -1,3 +1,4 @@
+import { withAuthorizationHandoff } from "./authorization-handoff.js";
 import { carryCatalogFreshness, catalogIsFresh } from "./catalog-freshness.js";
 import { hasControlCharacters } from "./tool-name.js";
 import { Effect, Result } from "effect";
@@ -353,7 +354,9 @@ function schemaKeyMetadata(
  * its own type rather than `CallErrorDetails` so widening the call-path
  * classifier cannot widen this discovery-surface field by accident.
  */
-interface CatalogFailureDetail {
+interface CatalogFailureDetail extends Partial<import("./errors.js").AuthorizationHandoff> {
+  nextAction?: CallErrorDetails["nextAction"];
+  retry?: string;
   code: string;
   message: string;
   retryable: boolean;
@@ -369,7 +372,6 @@ interface CatalogDescriptionFailureDetail extends CatalogFailureDetail {
 
 interface CatalogSearchFailure extends CatalogFailureDetail {
   connector: string;
-  recovery?: CallErrorDetails["recovery"];
   nextAction?: Extract<NonNullable<CallErrorDetails["nextAction"]>, { tool: "authorize_connector" }>;
   retry?: string;
 }
@@ -434,6 +436,45 @@ const catalogFailureProperties = {
   message: { type: "string" },
   retryable: { type: "boolean" },
   retryAfterMs: { type: "integer", minimum: 0 },
+  connector: { type: "string" },
+  recovery: { enum: ["oauth", "operator_config", "unavailable"] },
+  status: { const: "auth_required" },
+  authorizationUrl: { type: "string" },
+  operatorUrl: { type: "string" },
+  instructions: { type: "string" },
+  credential: {
+    type: "object",
+    required: ["label", "fields"],
+    additionalProperties: false,
+    properties: {
+      label: { type: "string" },
+      fields: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["name"],
+          additionalProperties: false,
+          properties: { name: { type: "string" }, guidance: { type: "string" } },
+        },
+      },
+    },
+  },
+  retry: { type: "string" },
+  nextAction: {
+    type: "object",
+    required: ["tool", "arguments", "operatorHandoff"],
+    additionalProperties: false,
+    properties: {
+      tool: { const: "authorize_connector" },
+      arguments: {
+        type: "object",
+        required: ["connector"],
+        additionalProperties: false,
+        properties: { connector: { type: "string" } },
+      },
+      operatorHandoff: { type: "string" },
+    },
+  },
 };
 
 /**
@@ -452,25 +493,7 @@ export const CATALOG_SEARCH_RESULT_SCHEMA: JsonSchema = {
         required: ["connector", "code", "message", "retryable"],
         additionalProperties: false,
         properties: {
-          connector: { type: "string" },
           ...catalogFailureProperties,
-          recovery: { enum: ["oauth", "operator_config", "unavailable"] },
-          retry: { type: "string" },
-          nextAction: {
-            type: "object",
-            required: ["tool", "arguments", "operatorHandoff"],
-            additionalProperties: false,
-            properties: {
-              tool: { const: "authorize_connector" },
-              arguments: {
-                type: "object",
-                required: ["connector"],
-                additionalProperties: false,
-                properties: { connector: { type: "string" } },
-              },
-              operatorHandoff: { type: "string" },
-            },
-          },
         },
       },
     },
@@ -828,6 +851,45 @@ export class CatalogService {
     });
   }
 
+  private async catalogFailure(connector: Connector, failure: unknown): Promise<CatalogSearchFailure> {
+    const classified = classifyCallError(failure, "catalog_lookup_failed");
+    const error: CatalogSearchFailure = {
+      connector: connector.id,
+      code: classified.code,
+      // Catalog discovery reports recovery facts, never connector-authored
+      // error text. Clipping a downstream message does not make it safe.
+      message:
+        classified.code === "downstream_oauth_required"
+          ? `Connector "${connector.id}" requires downstream OAuth authorization. When an auth error includes a handoff, give it to the user or operator.`
+          : classified.code === "auth_required"
+            ? `Connector "${connector.id}" requires operator-managed credentials or configuration. When an auth error includes a handoff, give it to the user or operator.`
+            : classified.code === "provider_permission_denied"
+              ? `Connector "${connector.id}" requires permission from the provider's resource owner or administrator. Reconnecting alone will not grant access.`
+              : `Connector "${connector.id}" catalog lookup failed (${classified.code}).`,
+      retryable: classified.retryable,
+      ...(classified.retryAfterMs === undefined ? {} : { retryAfterMs: classified.retryAfterMs }),
+    };
+    if (error.code === "auth_required" || error.code === "downstream_oauth_required") {
+      error.recovery = connector.startAuth
+        ? "oauth"
+        : this.registry.credentialUiAvailable() &&
+            connector.credential &&
+            this.registry.contextFor(connector.id, this.baseUrl, this.requestScope).credential
+          ? "operator_config"
+          : "unavailable";
+      error.nextAction = {
+        tool: "authorize_connector",
+        arguments: { connector: connector.id },
+        operatorHandoff: "Give the URL and instructions it returns to the operator.",
+      };
+      error.retry = `Retry discovery after the operator completes recovery for "${connector.id}".`;
+    } else if (error.code === "provider_permission_denied") {
+      error.retry =
+        "Ask the provider's resource owner or administrator to grant the required permission or scope, then retry. Reconnecting alone will not grant access.";
+    }
+    return withAuthorizationHandoff(this.requestScope, error);
+  }
+
   async search(args: CatalogSearchArgs): Promise<CatalogSearchPage> {
     if (args.query !== undefined && typeof args.query !== "string") {
       throw new DiscoveryPolicyError(
@@ -1095,46 +1157,14 @@ export class CatalogService {
       }
     }
     const unavailableCatalogs = catalogs.filter(Result.isFailure).length;
-    const catalogErrors: CatalogSearchFailure[] = catalogs.flatMap((catalog, index) => {
-      if (Result.isSuccess(catalog)) return [];
-      const connector = connectors[index]!;
-      const classified = classifyCallError(catalog.failure, "catalog_lookup_failed");
-      const error: CatalogSearchFailure = {
-        connector: connector.id,
-        code: classified.code,
-        // Catalog discovery reports recovery facts, never connector-authored
-        // error text. Clipping a downstream message does not make it safe.
-        message:
-          classified.code === "downstream_oauth_required"
-            ? `Connector "${connector.id}" requires downstream OAuth authorization. Call authorize_connector and give its handoff to the operator.`
-            : classified.code === "auth_required"
-              ? `Connector "${connector.id}" requires operator-managed credentials or configuration. Call authorize_connector and give its handoff to the operator.`
-              : classified.code === "provider_permission_denied"
-                ? `Connector "${connector.id}" requires permission from the provider's resource owner or administrator. Reconnecting alone will not grant access.`
-                : `Connector "${connector.id}" catalog lookup failed (${classified.code}).`,
-        retryable: classified.retryable,
-        ...(classified.retryAfterMs === undefined ? {} : { retryAfterMs: classified.retryAfterMs }),
-      };
-      if (error.code === "auth_required" || error.code === "downstream_oauth_required") {
-        error.recovery = connector.startAuth
-          ? "oauth"
-          : this.registry.credentialUiAvailable() &&
-              connector.credential &&
-              this.registry.contextFor(connector.id, this.baseUrl, this.requestScope).credential
-            ? "operator_config"
-            : "unavailable";
-        error.nextAction = {
-          tool: "authorize_connector",
-          arguments: { connector: connector.id },
-          operatorHandoff: "Give the URL and instructions it returns to the operator.",
-        };
-        error.retry = `Retry discovery after the operator completes recovery for "${connector.id}".`;
-      } else if (error.code === "provider_permission_denied") {
-        error.retry =
-          "Ask the provider's resource owner or administrator to grant the required permission or scope, then retry. Reconnecting alone will not grant access.";
-      }
-      return [error];
-    });
+    const catalogErrors = (
+      await Promise.all(
+        catalogs.map(async (catalog, index) => {
+          if (Result.isSuccess(catalog)) return [];
+          return [await this.catalogFailure(connectors[index]!, catalog.failure)];
+        }),
+      )
+    ).flat();
     const needsAuth = (error: CatalogSearchFailure) =>
       error.code === "auth_required" ||
       error.code === "downstream_oauth_required" ||
@@ -1142,12 +1172,14 @@ export class CatalogService {
     catalogErrors.sort((a, b) => Number(needsAuth(b)) - Number(needsAuth(a)));
     const scopedFailure = args.connector ? catalogErrors[0] : undefined;
     const scopedCatalogError: CatalogFailureDetail | undefined = scopedFailure
-      ? {
-          code: scopedFailure.code,
-          message: scopedFailure.message,
-          retryable: scopedFailure.retryable,
-          ...(scopedFailure.retryAfterMs === undefined ? {} : { retryAfterMs: scopedFailure.retryAfterMs }),
-        }
+      ? scopedFailure.code === "auth_required" || scopedFailure.code === "downstream_oauth_required"
+        ? scopedFailure
+        : {
+            code: scopedFailure.code,
+            message: scopedFailure.message,
+            retryable: scopedFailure.retryable,
+            ...(scopedFailure.retryAfterMs === undefined ? {} : { retryAfterMs: scopedFailure.retryAfterMs }),
+          }
       : undefined;
     const safetyLabel =
       safety === "readOnly" ? "read-only " : safety === "approvalRequired" ? "approval-required " : "";
@@ -1313,6 +1345,22 @@ export class CatalogService {
     ];
     const loaded = await runEdge(this.discoveryCatalogs(connectorIds, "connecta.describe"));
     const catalogs = new Map(connectorIds.map((id, index) => [id, loaded[index]]));
+    const authFailures = new Map(
+      await Promise.all(
+        connectorIds.map(async (id) => {
+          const catalog = catalogs.get(id);
+          if (!catalog || !Result.isFailure(catalog)) return [id, undefined] as const;
+          const classified = classifyCallError(catalog.failure, "catalog_lookup_failed");
+          const connector = this.registry.getConnector(id)!;
+          const error =
+            classified.code === "auth_required" || classified.code === "downstream_oauth_required"
+              ? await this.catalogFailure(connector, catalog.failure)
+              : undefined;
+          return [id, error] as const;
+        }),
+      ),
+    );
+
     return resolved.map(({ address, resolved: addressResolution }) => {
       if (!addressResolution) {
         const message = `Unknown address "${boundedEchoText(address)}"`;
@@ -1331,6 +1379,10 @@ export class CatalogService {
       }
       const catalog = catalogs.get(addressResolution.connector.id);
       if (catalog && Result.isFailure(catalog)) {
+        const authFailure = authFailures.get(addressResolution.connector.id);
+        if (authFailure)
+          return { address: boundedEchoText(address), error: authFailure.message, errorDetails: authFailure };
+
         const classified = classifyCallError(catalog.failure, "catalog_lookup_failed");
         const message = boundedEchoText(classified.message);
         return {

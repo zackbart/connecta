@@ -9,6 +9,7 @@
 // neither module resolves — there the arm skips and the host-side clauses below
 // carry the file.
 
+import { checkAuthHandoffProgram } from "./fixtures/authorization-handoff.js";
 import { describe, expect, it } from "vitest";
 import { customExecutor } from "../src/executor-contract.js";
 import {
@@ -196,6 +197,10 @@ describe("guest API contract (executor-independent)", () => {
 });
 
 describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)", () => {
+  it("INV-4 INV-5 INV-7: program error data carries a reusable handoff that completes OAuth", async () => {
+    // The deployment fixture owns its executor and closes it with the app.
+    await checkAuthHandoffProgram(required(await loadWorkerExecutor()));
+  });
   it("INV-3 INV-6 INV-7: Worker RPC failure ids resolve only to this run's host records", async () => {
     const { workerExecutor } = await import("../src/worker.js");
     const details = {

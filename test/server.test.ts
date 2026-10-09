@@ -128,10 +128,12 @@ describe("server /mcp end-to-end", () => {
     expect(body.result.instructions).toContain("call_destructive_tool");
     expect(body.result.instructions).not.toContain("resume_execution");
     expect(body.result.instructions).toContain('skills({ name: "usage" })');
-    expect(body.result.instructions).toContain("Guidance is on demand");
+    expect(body.result.instructions).toContain(
+      "When an auth error includes a handoff, give it to the user or operator.",
+    );
     expect(body.result.instructions).toContain("Sample unfamiliar reads");
     expect(body.result.instructions).toContain("discover, call, and return the answer");
-    expect(body.result.instructions).toContain("only when");
+    expect(body.result.instructions).toContain("only for missing guidance or program repair");
   });
 
   it("legacy initialize passes through title, websiteUrl, and icons (MCP icons spec)", async () => {
