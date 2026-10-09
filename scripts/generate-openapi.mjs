@@ -28,10 +28,10 @@ import { pathToFileURL } from "node:url";
 import { discoverProviders, repositoryRoot } from "./providers.mjs";
 
 /** Bump when the generated shape changes, so every output reads as stale. */
-export const OPENAPI_FORMAT = 1;
+export const OPENAPI_FORMAT = 2;
 const SOURCE = "openapi.source.json";
 const OUTPUT = "openapi.generated.ts";
-const VERBS = ["get", "post", "put", "patch", "delete"];
+const VERBS = ["get", "head", "post", "put", "patch", "delete"];
 const DEFAULT_DEPTH = 2;
 /** Characters kept from a top-level property or parameter description; nested ones are dropped. */
 const DEFAULT_DESCRIPTION = 160;
@@ -102,13 +102,76 @@ function resolveRef(document, value, seen = new Set()) {
   return node && typeof node === "object" ? node : {};
 }
 
+/** Longest cross product of two unions merged under one `allOf`. */
+const MAX_UNION = 64;
+
+/**
+ * Merge two schemas that must both hold (`allOf`): properties union (a
+ * property both declare must satisfy both), required union, the first type,
+ * description, and enum, and unions combined branch by branch.
+ */
+function mergeSchemas(a, b) {
+  const out = { ...a };
+  for (const [key, value] of Object.entries(b)) {
+    if (key === "properties" && value && typeof value === "object") {
+      const properties = { ...a.properties };
+      for (const [name, schema] of Object.entries(value)) {
+        properties[name] = properties[name] === undefined ? schema : { allOf: [properties[name], schema] };
+      }
+      out.properties = properties;
+    } else if (key === "required" && Array.isArray(value)) {
+      out.required = [...new Set([...(Array.isArray(a.required) ? a.required : []), ...value])];
+    } else if ((key === "anyOf" || key === "oneOf") && Array.isArray(value)) {
+      const existing = out.anyOf ?? out.oneOf;
+      delete out.oneOf;
+      out.anyOf =
+        existing && existing.length * value.length <= MAX_UNION
+          ? existing.flatMap((left) => value.map((right) => ({ allOf: [left, right] })))
+          : (existing ?? value);
+    } else if (key === "additionalProperties") {
+      // Either side closing the object, or typing its extra members, wins over silence.
+      if (out.additionalProperties === undefined || out.additionalProperties === true) out.additionalProperties = value;
+    } else if (!(key in out)) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/**
+ * Resolve references and fold `allOf` into one schema, then distribute what
+ * the schema itself requires into each `anyOf`/`oneOf` branch, so a branch is
+ * a complete alternative: Cloudflare's DNS records are `oneOf` of `allOf`
+ * (shared fields plus a per-type `type` and `content`).
+ */
+function normalized(document, schema, depth = 0) {
+  let node = resolveRef(document, schema);
+  if (depth > 16) return node;
+  if (Array.isArray(node.allOf)) {
+    const { allOf, ...base } = node;
+    node = allOf.reduce((merged, branch) => mergeSchemas(merged, normalized(document, branch, depth + 1)), base);
+  }
+  const union = Array.isArray(node.anyOf) ? node.anyOf : Array.isArray(node.oneOf) ? node.oneOf : undefined;
+  if (union && (node.properties || node.required || node.additionalProperties !== undefined)) {
+    const { anyOf: _anyOf, oneOf: _oneOf, description, ...base } = node;
+    node = {
+      ...(description !== undefined ? { description } : {}),
+      anyOf: union.map((branch) => mergeSchemas(base, normalized(document, branch, depth + 1))),
+    };
+  }
+  return node;
+}
+
 /**
  * One request-side schema in the compact form the runtime reads
  * (`src/providers/_shared/rest/operation-index.ts`). Below `depth` an object,
- * array, or union keeps its type and is marked truncated (`x: 1`).
+ * array, or union keeps its type and is marked truncated (`x: 1`). An
+ * explicit `additionalProperties: true` stays open (`m: {}`); a schema that
+ * declares properties and says nothing else is read as closed, so a
+ * misspelled name is refused before it is sent.
  */
 function compactSchema(document, schema, shape, level) {
-  const node = resolveRef(document, schema);
+  const node = normalized(document, schema);
   const out = {};
   if (node.type !== undefined) out.t = node.type;
   if (Array.isArray(node.enum) && node.enum.length <= shape.maxEnum) out.e = node.enum;
@@ -131,10 +194,11 @@ function compactSchema(document, schema, shape, level) {
     out.p = Object.fromEntries(
       Object.entries(node.properties).map(([key, value]) => [key, compactSchema(document, value, shape, level + 1)]),
     );
-    if (Array.isArray(node.required) && node.required.length > 0) out.r = node.required;
   }
+  if (Array.isArray(node.required) && node.required.length > 0) out.r = node.required;
   if (node.items !== undefined) out.i = compactSchema(document, node.items, shape, level + 1);
-  if (node.additionalProperties && typeof node.additionalProperties === "object") {
+  if (node.additionalProperties === true) out.m = {};
+  else if (node.additionalProperties && typeof node.additionalProperties === "object") {
     out.m = compactSchema(document, node.additionalProperties, shape, level + 1);
   }
   return out;
@@ -203,7 +267,7 @@ function share(rows) {
               replace(schema),
               ...description,
             ]),
-            row[1] === 0 ? 0 : [row[1][0], replace(row[1][1])],
+            row[1] === 0 ? 0 : [row[1][0], replace(row[1][1]), ...row[1].slice(2)],
           ],
     ),
   };
@@ -264,13 +328,26 @@ export function buildOperationIndex(document, source) {
         params.push(entry);
       }
       let body = 0;
-      const content = resolveRef(document, operation.requestBody).content;
-      if (verb !== "get" && content && typeof content === "object") {
+      const requestBody = resolveRef(document, operation.requestBody);
+      const content = requestBody.content;
+      if (verb !== "get" && verb !== "head" && content && typeof content === "object") {
         const [contentType, media] = Object.entries(content)[0] ?? [];
         const schema = compactSchema(document, media?.schema ?? {}, shape, 0);
-        // Stripe frames every operation with a form body, most of them empty.
-        const empty = !schema.a && !schema.m && !schema.x && Object.keys(schema.p ?? {}).length === 0;
-        if (contentType && !empty) body = [contentType, schema];
+        // Stripe frames nearly every operation with an optional form body that
+        // declares no fields. Only that is no body; an array, a binary or
+        // unrestricted body, and any required body keep their contract.
+        const empty =
+          requestBody.required !== true &&
+          /^application\/x-www-form-urlencoded\b/.test(contentType ?? "") &&
+          schema.t === "object" &&
+          schema.p !== undefined &&
+          Object.keys(schema.p).length === 0 &&
+          !schema.a &&
+          !schema.m &&
+          !schema.x &&
+          !schema.r;
+        if (contentType && !empty)
+          body = requestBody.required === true ? [contentType, schema, 1] : [contentType, schema];
       }
       details.push(params.length || body ? [params, body] : 0);
     }

@@ -11,7 +11,7 @@
 import { ConnectorCallError, type ArgumentRepairDetails, type ArgumentValidationIssue } from "../../../errors.js";
 import type { JsonSchema } from "../../../types.js";
 
-export type RestMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+export type RestMethod = "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 /**
  * One request-side schema, compacted: `t` type, `e` enum, `f` format (only
@@ -62,7 +62,8 @@ type ParamRow = readonly [
   schema: SchemaNode,
   description?: string,
 ];
-type DetailsRow = readonly [params: readonly ParamRow[], body: 0 | readonly [contentType: string, schema: SchemaNode]];
+type BodyRow = readonly [contentType: string, schema: SchemaNode, required?: 1];
+type DetailsRow = readonly [params: readonly ParamRow[], body: 0 | BodyRow];
 
 export interface Operation {
   readonly method: RestMethod;
@@ -92,10 +93,10 @@ export interface OperationContract {
   summary: string;
   server?: string;
   parameters: { name: string; in: "path" | "query"; required: boolean; description?: string; schema: JsonSchema }[];
-  body?: { contentType: string; schema: JsonSchema };
+  body?: { contentType: string; required?: true; schema: JsonSchema };
 }
 
-const METHODS: ReadonlySet<string> = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+const METHODS: ReadonlySet<string> = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]);
 const MAX_ISSUES = 20;
 
 function words(text: string): string[] {
@@ -389,7 +390,7 @@ export class OperationIndex {
           },
         };
       } else if (only === undefined) {
-        body = { contentType, schema: this.#schema(schema) };
+        body = { contentType, ...(row[1][2] === 1 ? { required: true } : {}), schema: this.#schema(schema) };
       }
     }
     if (only !== undefined && parameters.length === 0 && body === undefined) {
@@ -445,10 +446,9 @@ export class OperationIndex {
       } else {
         this.#check(bodyRow[1], body, "/body", issues, repair);
       }
-    } else if (bodyRow && (this.#deref(bodyRow[1]).r?.length ?? 0) > 0) {
-      for (const name of this.#deref(bodyRow[1]).r!) {
-        issues.push({ path: `/body/${name}`, code: "required", expected: "a value" });
-      }
+    } else if (bodyRow?.[2] === 1) {
+      // An optional body may be omitted whole; a required one may not.
+      issues.push({ path: "/body", code: "required", expected: `a ${bodyRow[0]} body` });
     }
     if (issues.length > 0) {
       const shown = issues

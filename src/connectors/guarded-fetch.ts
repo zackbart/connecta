@@ -24,7 +24,7 @@ import type { ApiHandlerContext } from "./api-connector.js";
 // surface, and not before.
 
 /** The methods a hand-written provider surface actually uses. */
-type GuardedMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+type GuardedMethod = "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export interface GuardedRequest {
   method: GuardedMethod;

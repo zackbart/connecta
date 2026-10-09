@@ -924,8 +924,11 @@ scoped registry, including an empty list when none are accessible. They never
 list connectors from another pool or identity's grants.
 
 A write that times out after dispatch returns `write_outcome_unknown` with
-`retryable: false` and an agent-only `uncertainCall: { address, args?, argsOmitted?, argsRedacted? }`.
-No write is automatically replayed. `args` may be partial reconciliation context
+`retryable: false` and an agent-only `uncertainCall: { address, args?, argsOmitted?, argsRedacted?, recovery? }`.
+No write is automatically replayed. `recovery` carries facts the connector
+recorded before dispatch (`src/call-recovery.ts`), such as the `idempotencyKey`
+a REST connector generated; a deliberate retry that reuses it cannot repeat the
+write. `args` may be partial reconciliation context
 with `argsRedacted: true`. A withheld echo or arguments over the 512-byte budget
 carry `argsOmitted: true`; sensitive or unresolved schemas also carry
 `argsRedacted: true`. When `args` is absent or redacted, use the original

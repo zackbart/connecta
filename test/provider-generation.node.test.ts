@@ -487,4 +487,138 @@ describe("OpenAPI operation index generation", () => {
       "/body/name (required: a value)",
     );
   });
+
+  // Shapes from Cloudflare's and Vercel's documents: DNS records are oneOf
+  // allOf (shared fields plus per-type fields), KV bulk writes take a root
+  // array, uploads take binary, and Vercel serves HEAD for artifacts.
+  const vendor = {
+    openapi: "3.0.0",
+    info: { version: "1" },
+    servers: [{ url: "https://api.vendor.example/client/v4" }],
+    components: {
+      schemas: {
+        base: {
+          type: "object",
+          required: ["name"],
+          properties: { name: { type: "string" }, ttl: { type: "number" }, proxied: { type: "boolean" } },
+        },
+        a: {
+          allOf: [
+            { $ref: "#/components/schemas/base" },
+            {
+              type: "object",
+              required: ["type", "content"],
+              properties: { type: { type: "string", enum: ["A"] }, content: { type: "string", format: "ipv4" } },
+            },
+          ],
+        },
+        cname: {
+          allOf: [
+            { $ref: "#/components/schemas/base" },
+            {
+              properties: { type: { type: "string", enum: ["CNAME"] }, content: { type: "string" } },
+              required: ["type", "content"],
+            },
+          ],
+        },
+      },
+    },
+    paths: {
+      "/zones/{zone_id}/dns_records": {
+        post: {
+          operationId: "dns-records-create",
+          parameters: [{ name: "zone_id", in: "path", required: true, schema: { type: "string" } }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { oneOf: [{ $ref: "#/components/schemas/a" }, { $ref: "#/components/schemas/cname" }] },
+              },
+            },
+          },
+        },
+      },
+      "/accounts/{account_id}/storage/kv/namespaces/{namespace_id}/bulk": {
+        put: {
+          operationId: "kv-bulk-write",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    required: ["key", "value"],
+                    properties: { key: { type: "string" }, value: { type: "string" }, metadata: {} },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      "/accounts/{account_id}/scripts/{name}/content": {
+        put: {
+          operationId: "script-content",
+          requestBody: { content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } },
+        },
+      },
+      "/accounts/{account_id}/settings": {
+        patch: {
+          operationId: "settings",
+          requestBody: {
+            content: { "application/json": { schema: { type: "object", additionalProperties: true } } },
+          },
+        },
+      },
+      "/v8/artifacts/{hash}": { head: { operationId: "artifactExists", summary: "Check an artifact" } },
+    },
+  };
+
+  it("folds allOf into complete oneOf alternatives, so misspelled and missing DNS fields are refused", async () => {
+    const { buildOperationIndex } = await generator();
+    const { OperationIndex } = await import("../src/providers/_shared/rest/operation-index.js");
+    const index = new OperationIndex(buildOperationIndex(vendor, source), { vendor: "cf", title: "Cloudflare" });
+    const create = index.resolve("POST", "/zones/z1/dns_records").op;
+    const body = index.contract(create).body!;
+    expect(body.required).toBe(true);
+    expect((body.schema as any).anyOf).toHaveLength(2);
+    expect((body.schema as any).anyOf[0]).toMatchObject({
+      type: "object",
+      required: ["name", "type", "content"],
+      properties: { name: {}, ttl: {}, proxied: {}, type: { enum: ["A"] }, content: {} },
+    });
+    expect(() => index.check(create, {}, { type: "A", name: "www", content: "192.0.2.1", ttl: 60 })).not.toThrow();
+    expect(() => index.check(create, {}, { type: "CNAME", name: "www", content: "example.com" })).not.toThrow();
+    let refusal: any;
+    try {
+      index.check(create, {}, { typ: "A", nmae: "x", contnet: "192.0.2.1" });
+    } catch (error) {
+      refusal = error;
+    }
+    expect(refusal?.code).toBe("invalid_args");
+    expect(refusal.validation.issues.map((issue: any) => `${issue.path} ${issue.code}`)).toEqual(
+      expect.arrayContaining(["/body/typ additionalProperties", "/body/nmae additionalProperties"]),
+    );
+    expect(() => index.check(create, {}, undefined)).toThrow("/body (required: a application/json body)");
+  });
+
+  it("keeps array, binary, and open bodies with their requiredness, and HEAD operations", async () => {
+    const { buildOperationIndex } = await generator();
+    const { OperationIndex } = await import("../src/providers/_shared/rest/operation-index.js");
+    const data = buildOperationIndex(vendor, source);
+    expect(data.ops.map((row: unknown[]) => `${row[0]} ${row[1]}`)).toContain("HEAD /v8/artifacts/{hash}");
+    const index = new OperationIndex(data, { vendor: "cf", title: "Cloudflare" });
+    const bulk = index.resolve("PUT", "/accounts/a1/storage/kv/namespaces/n1/bulk").op;
+    expect(index.contract(bulk).body).toMatchObject({ contentType: "application/json", required: true });
+    expect(() => index.check(bulk, {}, [{ key: "k", value: "v" }])).not.toThrow();
+    expect(() => index.check(bulk, {}, [{ key: "k" }])).toThrow("/body/0/value (required: a value)");
+    expect(() => index.check(bulk, {}, { key: "k", value: "v" })).toThrow("/body (type: array)");
+    const script = index.resolve("PUT", "/accounts/a1/scripts/s/content").op;
+    expect(index.bodyType(script)).toBe("application/octet-stream");
+    const settings = index.resolve("PATCH", "/accounts/a1/settings").op;
+    expect(() => index.check(settings, {}, { anything: { goes: true } })).not.toThrow();
+    expect(index.resolve("HEAD", "/v8/artifacts/abc").op.operationId).toBe("artifactExists");
+  });
 });

@@ -123,6 +123,9 @@ The Stripe conversion (#801, PR #803) settled facts the plan above left open:
   `stripe_api_details` serves rather than the account's default version.
 - A connected account is sent as `Stripe-Account` on v1 and `Stripe-Context`
   on v2.
-- `_api_read` admits GET and the reviewed `readPosts`; Stripe's spec has no
-  HEAD operations. `POST /v1/tax/calculations` stays a write: it persists a
-  Calculation and Stripe bills each call.
+- `_api_read` admits GET, HEAD, and the reviewed `readPosts`; Stripe's spec
+  has no HEAD operations. `POST /v1/tax/calculations` stays a write: it
+  persists a Calculation and Stripe bills each call.
+- A generated idempotency key reaches the caller on every ambiguous route: in
+  the result, in a failure's message, and, when the invocation deadline
+  interrupts the call, as `uncertainCall.recovery.idempotencyKey`.

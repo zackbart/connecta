@@ -28,6 +28,7 @@ import { splitAddress, type RegistryView } from "./registry.js";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { validateCatalogToolInput } from "./validate.js";
 import { sentSecretsFor, sentSecretsForRequest, trackCredentialReads, type SentSecrets } from "./sent-secrets.js";
+import { recoveryFor } from "./call-recovery.js";
 import {
   classificationDigest,
   recordAuthFailure,
@@ -326,6 +327,9 @@ export class InvocationService {
       let attempts = 0;
       let resultBytes: number | undefined;
       let dispatchedToConnector = false;
+      // The context a dispatched call ran with, read for recovery facts the
+      // connector recorded before an interrupting deadline (call-recovery.ts).
+      let dispatchContext: object | undefined;
       let preInvocationAuthFailure = false;
       let answered = false;
       const sentSecrets = sentSecretsForRequest(this.catalog.requestScope);
@@ -380,6 +384,7 @@ export class InvocationService {
         if (!target) return error;
         if (isTimeoutFailure(error) && dispatchedToConnector && resolved?.definition.classification === "write") {
           const echoed = argumentEcho;
+          const recovery = recoveryFor(dispatchContext);
           return {
             ...error,
             code: "write_outcome_unknown",
@@ -391,9 +396,13 @@ export class InvocationService {
               address: `${target.connector.id}.${target.toolName}`,
               ...echoed,
               ...("args" in echoed ? {} : { argsOmitted: true as const }),
+              ...(recovery ? { recovery } : {}),
             },
             retry:
               "Do not retry automatically. Check whether the write took effect first." +
+              (recovery?.["idempotencyKey"]
+                ? " A deliberate retry with uncertainCall.recovery.idempotencyKey cannot repeat the write."
+                : "") +
               (echoed.argsRedacted
                 ? " Sensitive fields are omitted; use the original arguments if reconciliation requires another call."
                 : "args" in echoed
@@ -662,6 +671,7 @@ export class InvocationService {
             );
             trackCredentialReads(connectorContext);
             sentSecrets.include(sentSecretsFor(connectorContext));
+            dispatchContext = connectorContext;
             try {
               if (target.connector.credential) {
                 if (!connectorContext.credential) {

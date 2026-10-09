@@ -8,6 +8,9 @@ import { ConnectorCallError } from "../src/errors.js";
 import { OperationIndex, type OpenApiData, type SchemaNode } from "../src/providers/_shared/rest/operation-index.js";
 import { restTools, restTransport, type RestVendor } from "../src/providers/_shared/rest/tools.js";
 import { byAuth, hostedOAuth } from "../src/providers/_shared/rest/dispatch.js";
+import { recordRecovery, recoveryFor } from "../src/call-recovery.js";
+import { createTestConnecta, silentLogger } from "./helpers.js";
+import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import type { ProviderContext } from "../src/provider.js";
 import type { Connector, ConnectorContext } from "../src/types.js";
 import { connectorContext } from "./fixtures/misc.js";
@@ -29,6 +32,7 @@ const DATA: OpenApiData = {
     ["DELETE", "/v1/widgets/{widget}", "DeleteWidget", "Delete a widget", 0],
     ["POST", "/v1/uploads", "CreateUpload", "Upload a file", 1],
     ["GET", "/v1/exports", "ListExports", "List exports", 1, 1],
+    ["HEAD", "/v1/widgets/{widget}", "HeadWidget", "Check a widget", 0],
   ],
   details: JSON.stringify({
     d: [widget],
@@ -51,6 +55,7 @@ const DATA: OpenApiData = {
       [[["widget", "path", 1, { t: "string" }]], 0],
       [[], ["multipart/form-data", { t: "object", p: { file: { t: "string", f: "binary" } } }]],
       0,
+      [[["widget", "path", 1, { t: "string" }]], 0],
     ],
   }),
 };
@@ -137,7 +142,7 @@ describe("restTools()", () => {
     // No idempotency header configured, so no idempotency argument.
     expect((write.inputSchema as any).properties.idempotencyKey).toBeUndefined();
     const read = tools.find((tool) => tool.name === "acme_api_read")!;
-    expect((read.inputSchema as any).properties.method.enum).toEqual(["GET", "POST"]);
+    expect((read.inputSchema as any).properties.method.enum).toEqual(["GET", "HEAD", "POST"]);
   });
 
   it("INV-10: searches and describes the pinned index without sending a request", async () => {
@@ -361,6 +366,98 @@ describe("restTools()", () => {
     );
     expect(error.message).toBe('Acme 500: {"message":"boom"}');
     expect(sent).toHaveLength(1);
+  });
+
+  it("reads HEAD as a read whose data is the response headers, and refuses it as a write", async () => {
+    respond = () => new Response(null, { status: 200, headers: { etag: '"v1"', "content-length": "42" } });
+    const acme = connector();
+    const result = (await acme.callTool("acme_api_read", { method: "HEAD", path: "/v1/widgets/w_1" }, ctx())) as any;
+    expect(result).toMatchObject({ status: 200, data: { etag: '"v1"', "content-length": "42" } });
+    expect(sent[0]!.method).toBe("HEAD");
+    const write = await refusal(acme.callTool("acme_api_write", { method: "HEAD", path: "/v1/widgets/w_1" }, ctx()));
+    expect(write.code).toBe("invalid_args");
+    const body = await refusal(
+      acme.callTool("acme_api_read", { method: "HEAD", path: "/v1/widgets/w_1", body: {} }, ctx()),
+    );
+    expect(body.message).toContain("takes query, not body");
+    expect(sent).toHaveLength(1);
+  });
+
+  it("INV-9: returns a generated idempotency key when the response body is lost after dispatch", async () => {
+    respond = () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(Object.assign(new Error("socket hang up"), { code: "ECONNRESET" }));
+          },
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    const callCtx = ctx();
+    const error = await refusal(
+      connector({ idempotencyHeader: "Idempotency-Key" }).callTool(
+        "acme_api_write",
+        { method: "POST", path: "/v1/widgets", body: { name: "a" } },
+        callCtx,
+      ),
+    );
+    const key = sent[0]!.headers.get("idempotency-key");
+    expect(key).toMatch(/^[0-9a-f-]{36}$/);
+    expect(error.code).toBe("unavailable");
+    expect(error.details).toMatchObject({ code: "ECONNRESET" });
+    expect(error.message).toContain("its response could not be read");
+    expect(error.message).toContain(`Idempotency-Key: ${key}`);
+    expect(error.message).not.toContain("socket hang up");
+    // Recorded before dispatch, for a deadline that interrupts the call.
+    expect(recoveryFor(callCtx)).toEqual({ idempotencyKey: key });
+    expect(sent).toHaveLength(1);
+  });
+
+  it("INV-9: returns the generated idempotency key with write_outcome_unknown when the call deadline interrupts it", async () => {
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      sent.push({
+        url: new URL(String(input)),
+        method: init?.method ?? "GET",
+        headers: new Headers(init?.headers),
+        body: typeof init?.body === "string" ? init.body : undefined,
+      });
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+      });
+    }) as typeof fetch;
+    const app = createTestConnecta({
+      connectors: [apiConnector("acme", { tools: restTools(vendor({ idempotencyHeader: "Idempotency-Key" })) })],
+      logger: silentLogger,
+    });
+    try {
+      const rpc = await readJsonRpc(
+        await mcpRpc(app, "tools/call", {
+          name: "call_destructive_tool",
+          arguments: {
+            address: "acme.acme_api_write",
+            args: { method: "POST", path: "/v1/widgets", body: { name: "a" } },
+            timeoutMs: 200,
+          },
+        }),
+      );
+      const error = rpc.result.structuredContent.error;
+      expect(error.code).toBe("write_outcome_unknown");
+      expect(sent).toHaveLength(1);
+      const key = sent[0]!.headers.get("idempotency-key");
+      expect(key).toMatch(/^[0-9a-f-]{36}$/);
+      expect(error.uncertainCall).toMatchObject({ address: "acme.acme_api_write", recovery: { idempotencyKey: key } });
+      expect(error.retry).toContain("uncertainCall.recovery.idempotencyKey");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("bounds recovery facts to a few short named strings", () => {
+    const callCtx = ctx();
+    recordRecovery(callCtx, { idempotencyKey: "k1", "bad name": "x", long: "y".repeat(200) });
+    recordRecovery(callCtx, { a: "1", b: "2", c: "3", d: "4" });
+    expect(recoveryFor(callCtx)).toEqual({ idempotencyKey: "k1", a: "1", b: "2", c: "3" });
+    expect(recoveryFor(ctx())).toBeUndefined();
   });
 
   it("INV-11: refuses a reviewed read-only POST the pinned index no longer carries", () => {

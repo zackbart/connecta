@@ -518,6 +518,30 @@ describe("stripe() over an API key", () => {
     expect(sent).toHaveLength(3);
   });
 
+  it("INV-9: keeps a refund's generated Idempotency-Key when the connection drops while reading the reply", async () => {
+    const connector = stripe("billing", SANDBOX);
+    respond = () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
+          },
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    const error = await refusal(
+      connector.callTool(
+        "stripe_api_write",
+        { method: "POST", path: "/v1/refunds", body: { charge: "ch_1" } },
+        keyed(),
+      ),
+    );
+    const key = sent[0]!.headers.get("idempotency-key");
+    expect(error.code).toBe("unavailable");
+    expect(error.message).toContain(`Idempotency-Key: ${key}`);
+    expect(sent).toHaveLength(1);
+  });
+
   it("maps Stripe failures by the caller's next move", async () => {
     const connector = stripe("billing", SANDBOX);
     const cases: Array<[number, Record<string, string>, Record<string, string>, string, string]> = [

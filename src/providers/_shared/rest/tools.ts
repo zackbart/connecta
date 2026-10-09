@@ -29,7 +29,8 @@ import {
   type GuardedRequest,
   type GuardedTransport,
 } from "../../../connectors/guarded-fetch.js";
-import { ConnectorCallError } from "../../../errors.js";
+import { recordRecovery } from "../../../call-recovery.js";
+import { ConnectorCallError, unavailableCallError } from "../../../errors.js";
 import type { ConnectorContext, JsonSchema } from "../../../types.js";
 import type { Operation, OperationIndex, RestMethod } from "./operation-index.js";
 
@@ -217,7 +218,10 @@ async function successBody(
         details: { code: "timeout" },
       });
     }
-    throw error;
+    // The request was sent and the status arrived; only the body was lost. Told
+    // in Connecta's words (the runtime's can quote the transport), never raw,
+    // so a write's caller still learns it is ambiguous and gets its key.
+    throw unavailableCallError(error, undefined, `${vendor.title} answered, but its response could not be read.`);
   }
 }
 
@@ -250,10 +254,20 @@ export async function callRest(
   };
   return await send(request, ctx, async (response) => {
     if (!response.ok) throw vendor.failure(response.status, response.headers, await failureBody(response));
-    const data = await successBody(vendor, response, ctx);
+    // HEAD answers with headers alone; they are its data.
+    const data = call.method === "HEAD" ? headerData(response.headers) : await successBody(vendor, response, ctx);
     const page = vendor.page?.(data, call);
     return { status: response.status, data, ...(page ? { page } : {}) };
   });
+}
+
+/** A HEAD response's headers as data, without cookies. */
+function headerData(headers: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  headers.forEach((value, name) => {
+    if (name !== "set-cookie") out[name] = value;
+  });
+  return out;
 }
 
 /** Keep only the named dot paths; a path through an array applies to each item. */
@@ -326,7 +340,9 @@ function envelope(extra: Record<string, JsonSchema> = {}): JsonSchema {
     type: "object",
     properties: {
       status: { type: "integer", description: "HTTP status." },
-      data: { description: "Response body: JSON, text, NDJSON rows, or { contentType, bytes, base64 }." },
+      data: {
+        description: "Response body: JSON, text, NDJSON rows, { contentType, bytes, base64 }, or HEAD's headers.",
+      },
       page: PAGE,
       ...extra,
     },
@@ -350,9 +366,12 @@ export function restTools(vendor: RestVendor): ApiTool[] {
     }
   }
   const reads = (op: Operation): boolean =>
-    op.method === "GET" || readPosts.some(([method, path]) => method === op.method && path === op.path);
-  const writeMethods = index.methods.filter((method) => method !== "GET");
-  const readMethods = [...new Set(["GET", ...readPosts.map(([method]) => method)])];
+    op.method === "GET" ||
+    op.method === "HEAD" ||
+    readPosts.some(([method, path]) => method === op.method && path === op.path);
+  const writeMethods = index.methods.filter((method) => method !== "GET" && method !== "HEAD");
+  const head = index.methods.includes("HEAD");
+  const readMethods = [...new Set(["GET", ...(head ? ["HEAD"] : []), ...readPosts.map(([method]) => method)])];
   const routeOf = (op: Operation) => (reads(op) ? tool("read") : tool("write"));
 
   // An unreachable host and a reviewed refusal are answered before argument
@@ -460,22 +479,22 @@ export function restTools(vendor: RestVendor): ApiTool[] {
     {
       name: tool("read"),
       description:
-        `Call a ${title} API GET operation${readPosts.length ? ", or a reviewed read-only POST" : ""}. ` +
+        `Call a ${title} API GET${head ? " or HEAD" : ""} operation${readPosts.length ? ", or a reviewed read-only POST" : ""}. ` +
         "Arguments are checked against the pinned index before anything is sent.",
       annotations: READ,
       inputSchema: closed(
         {
           path: PATH,
-          ...(readPosts.length
+          ...(readMethods.length > 1
             ? {
                 method: {
                   type: "string",
                   enum: readMethods,
-                  description: "GET by default; POST only for an operation search routes here.",
+                  description: "GET by default; another method only for an operation search routes here.",
                 },
-                body: { type: "object", description: "Body for a reviewed read-only POST." },
               }
             : {}),
+          ...(readPosts.length ? { body: { type: "object", description: "Body for a reviewed read-only POST." } } : {}),
           query: QUERY,
           select: SELECT,
         },
@@ -491,7 +510,9 @@ export function restTools(vendor: RestVendor): ApiTool[] {
         if (!reads(call.op)) {
           invalid(`${call.method} ${call.op.path} is not a reviewed read; call it with ${tool("write")}.`);
         }
-        if (call.method === "GET" && call.body !== undefined) invalid("A GET operation takes query, not body.");
+        if ((call.method === "GET" || call.method === "HEAD") && call.body !== undefined) {
+          invalid(`A ${call.method} operation takes query, not body.`);
+        }
         guard(call);
         index.check(call.op, call.query, call.body);
         return selected(args, await callRest(vendor, call, ctx));
@@ -536,7 +557,9 @@ export function restTools(vendor: RestVendor): ApiTool[] {
           query: isRecord(args["query"]) ? args["query"] : {},
           body: args["body"],
         });
-        if (call.method === "GET") invalid(`GET operations are reads; call them with ${tool("read")}.`);
+        if (call.method === "GET" || call.method === "HEAD") {
+          invalid(`${call.method} operations are reads; call them with ${tool("read")}.`);
+        }
         guard(call);
         const framing = index.bodyType(call.op);
         if (framing && /^multipart\/|octet-stream/.test(framing)) {
@@ -549,6 +572,10 @@ export function restTools(vendor: RestVendor): ApiTool[] {
         const header = vendor.idempotencyHeader && call.method !== "DELETE" ? vendor.idempotencyHeader : undefined;
         const given = typeof args["idempotencyKey"] === "string" ? args["idempotencyKey"] : undefined;
         const key = header ? (given ?? crypto.randomUUID()) : undefined;
+        // Recorded before dispatch: if the invocation deadline interrupts this
+        // call, no failure of ours arrives, and the invocation returns the key
+        // from here with write_outcome_unknown.
+        if (key) recordRecovery(ctx, { idempotencyKey: key });
         try {
           const result = await callRest(vendor, call, ctx, header && key ? { [header]: key } : {});
           return { ...selected(args, result), ...(key ? { idempotencyKey: key } : {}) };

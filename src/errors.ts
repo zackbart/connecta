@@ -603,7 +603,14 @@ export interface CallErrorDetails extends Partial<AuthorizationHandoff> {
    * marks partial or withheld schema-filtered arguments; argsOmitted means args
    * is absent. Reconciliation and any explicit retry require the original input.
    */
-  uncertainCall?: { address: string; args?: unknown; argsOmitted?: true; argsRedacted?: true };
+  uncertainCall?: {
+    address: string;
+    args?: unknown;
+    argsOmitted?: true;
+    argsRedacted?: true;
+    /** Facts the connector recorded before dispatch, such as a generated `idempotencyKey`. */
+    recovery?: Readonly<Record<string, string>>;
+  };
   /** Explicit retry guidance; recovery never retries or mutates by itself. */
   retry?: string;
 }
