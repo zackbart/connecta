@@ -470,7 +470,11 @@ anything before it returns.
 
 ### Paging with connecta.result
 
-Paging is a guest operation, never another top-level tool. A direct call's
+Paging is a guest operation, never another top-level tool. Program calls also
+return handles for oversized values; see [program result limits](./code-mode.md#cancellation-and-limits).
+`connecta.result(handle, { page: 0 })` accepts those handles alongside direct
+result IDs. Numbered pages are zero-based and mutually exclusive with offset.
+Keep maxBytes fixed while incrementing pages. A direct call's
 notice carries a `resultId`, `nextOffset`, and an executable `execute_code`
 recovery action. Read and reduce the result in one program:
 
@@ -488,7 +492,7 @@ async () => {
 
 A page is `{ resultId, offset, bytes, totalBytes, hasMore, nextOffset?,
 format: "text", text }`. The page size is clamped to the original call's inline
-cap, with UTF-8 alignment and forward progress. Reassemble inside the sandbox;
+cap and a 32 KiB program bridge ceiling, with UTF-8 alignment and forward progress. Reassemble inside the sandbox;
 returning pages unchanged can hit the program result cap. The admitted subject
 and principal, endpoint/pool, request origin, connector, and tool bindings must
 match. The host rechecks current access and trust before returning each page; a

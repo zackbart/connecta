@@ -1,6 +1,8 @@
 // Node-only: drives the D1 storage and activity adapters through wrangler's getPlatformProxy local D1.
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, vi } from "vitest";
+import { afterAll, beforeAll, describe, it, vi } from "vitest";
+import { quickJsExecutor } from "../src/executors/quickjs.js";
+import { checkLargeProgramRead, checkLargeProgramWrite } from "./program-result-cases.js";
 import { getPlatformProxy } from "wrangler";
 import { d1ActivityStore, d1Storage } from "../src/d1.js";
 import { sqlStorageContract } from "./sql-storage-contract.js";
@@ -57,5 +59,15 @@ async function open() {
 }
 
 describe("d1Storage and d1ActivityStore over a local D1", () => {
+  it("INV-9: program result transfers and write handles share the D1 stash", async () => {
+    const executor = quickJsExecutor({ cpuTimeMs: 5_000 });
+    try {
+      const storage = (await open()).storage();
+      await checkLargeProgramRead(executor, storage);
+      await checkLargeProgramWrite(executor, storage);
+    } finally {
+      await executor.close?.();
+    }
+  });
   sqlStorageContract(open);
 });

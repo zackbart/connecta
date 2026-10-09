@@ -34,6 +34,9 @@ import { AUTHORIZE_OUTPUT, SEARCH_OUTPUT, SKILLS_OUTPUT } from "./meta-output.js
 import { RESULT_TTL_SECONDS, resultKeys } from "./storage/keys.js";
 import { agentOutputOperations, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import { captureDownstreamInput } from "./downstream-input.js";
+import type { ResolvedCatalogTool } from "./catalog-service.js";
+import type { PoolTrust } from "./tool-safety.js";
+import { PROGRAM_RESULT_WIRE_BYTES, type ProgramResultHandle } from "./program-result.js";
 
 export { MAX_DESCRIBE_ADDRESSES, MAX_DISCOVERY_RESULT_BYTES, MAX_SEARCH_LIMIT };
 
@@ -338,6 +341,58 @@ async function stashResult(bytes: Uint8Array, results: ResultStash, preview: Pre
   };
 }
 
+/** Program calls use the direct-call envelope, ledger, expiry and authority. */
+export async function pageProgramResult(
+  registry: RegistryView,
+  baseUrl: string,
+  resolved: ResolvedCatalogTool,
+  value: unknown,
+  format: "json" | "text",
+  secrets: SentSecrets,
+  trust: PoolTrust | undefined,
+  requestScope: object,
+): Promise<{ data: unknown; format: "json" | "text" } | ProgramResultHandle> {
+  const data = secrets.redact(value);
+  const wire = JSON.stringify({ data, format });
+  if (enc.encode(wire).length <= PROGRAM_RESULT_WIRE_BYTES) return { data, format };
+  const text = secrets.text(format === "text" ? String(data) : serializeResultText(data));
+  const bytes = enc.encode(text);
+  const write = resolved.definition.classification !== "read";
+  const notice = await stashResult(
+    bytes,
+    {
+      pageable: !write || trust === "trusted",
+      binding: {
+        identity: registry.resultIdentity(),
+        baseUrl,
+        connector: resolved.connector.id,
+        tool: resolved.definition.name,
+        classification: write ? "write" : "read",
+      },
+      write,
+      cap: resolveMaxResultBytes(resolved.connector.maxResultBytes, registry.maxResultBytes),
+      set: (id, chunks, ttl) => registry.stashResult(id, chunks, ttl),
+      warn: () =>
+        logFailure(
+          registry.contextFor(resolved.connector.id, baseUrl, requestScope).logger,
+          "result paging unavailable",
+          failureRecord({ connector: resolved.connector.id, tool: resolved.definition }),
+        ),
+    },
+    { kind: "none" },
+  );
+  return {
+    format: "paged",
+    valueFormat: format,
+    ...(notice.resultId ? { resultId: notice.resultId } : {}),
+    totalBytes: bytes.length,
+    truncated: true,
+    hint: notice.resultId
+      ? `${write ? WRITE_ALREADY_RAN + " " : ""}Page this result with connecta.result(handle); do not repeat the call for output.`
+      : notice.hint,
+  };
+}
+
 interface GuardedResult<T> {
   result: T;
   truncated: boolean;
@@ -524,6 +579,8 @@ interface DestructiveCallArgs extends CallArgs {
 }
 interface GetResultArgs {
   id: string;
+  /** Zero-based fixed-width page; mutually exclusive with offset. */
+  page?: number;
   /**
    * Byte offset to page from; a whole number >= 0, aligned back to the nearest
    * character boundary and reported as the response's `offset`. Defaults to 0.
@@ -872,6 +929,9 @@ function metaToolsForRequest(
             `>= ${MIN_RESULT_OFFSET}. Omit it to start at the beginning.`,
         );
       }
+      if (args.page !== undefined && (!Number.isSafeInteger(args.page) || args.page < 0 || args.offset !== undefined)) {
+        return errorResult("Use a whole page >= 0, without offset.");
+      }
       const results = registry.resultsStorage();
       const unavailableResult = () => ({
         ...jsonResult({
@@ -949,7 +1009,7 @@ function metaToolsForRequest(
         }
       };
       if (!(await allowed())) return denied();
-      const requestedOffset = args.offset ?? 0;
+      let requestedOffset = args.offset ?? 0;
       const cap = Number(header[4]);
       if (!isValidMaxResultBytes(cap)) return denied();
       const maxBytes = Math.min(args.maxBytes ?? cap, cap);
@@ -967,6 +1027,12 @@ function metaToolsForRequest(
           chunkBytes % 3 !== 0
         )
           return denied();
+        if (args.page !== undefined) {
+          // At least one complete UTF-8 codepoint per nominal window. Adjacent
+          // pages align both edges backwards, so no character repeats or vanishes.
+          const width = Math.max(4, maxBytes);
+          requestedOffset = Math.min(total, Math.min(args.page, Math.ceil(total / width)) * width);
+        }
         start = Math.floor(Math.max(0, Math.min(requestedOffset, total) - 3) / 3) * 3;
         const end = Math.min(total, requestedOffset + maxBytes + 4);
         bytes = new Uint8Array(Math.max(0, end - start));
@@ -1002,7 +1068,11 @@ function metaToolsForRequest(
       // never split across pages (which would emit U+FFFD on both sides).
       // `nextOffset` is this aligned end, so it is a valid boundary for the
       // next call and paging reassembles the original byte-for-byte.
-      const end = start + alignEndToCharBoundary(bytes, offset - start, offset - start + maxBytes, total - start);
+      const end =
+        args.page === undefined
+          ? start + alignEndToCharBoundary(bytes, offset - start, offset - start + maxBytes, total - start)
+          : start +
+            alignStartToCharBoundary(bytes, Math.min(total - start, requestedOffset - start + Math.max(4, maxBytes)));
       const slice = dec.decode(bytes.subarray(offset - start, end - start));
       const hasMore = end < total;
       // The same notice-first shape as a truncated call: one line of header,

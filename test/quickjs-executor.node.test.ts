@@ -776,31 +776,19 @@ describe("quickJsExecutor", () => {
     // the one a program reads. Every shortcut namespace dispatches through one
     // internal function; reporting that name would tell a program nothing about
     // which call was too large.
-    const bulky: Connector = {
-      id: "reader",
-      kind: "api",
-      async listTools() {
-        return [{ name: "big", annotations: { readOnlyHint: true } }];
-      },
-      async callTool() {
-        return { blob: "x".repeat(400_000) };
-      },
-    };
     const ex = quickJsExecutor({ cpuTimeMs: 2_000 });
-    const out = await createExecuteTool(
-      makeRegistry([bulky]),
-      "https://connecta.test",
-      ex,
-      silentLogger,
-    )({
-      code: `async () => {
-        try { await connecta.call("reader.big", {}).then(({ data }) => data); } catch (err) { return err.message; }
+    // Raw custom provider results still obey the transport bound. Connecta's
+    // shared program-call path now pages these before reaching this bridge.
+    const out = await ex.execute(
+      `async () => {
+        try { await connecta.call("reader.big", {}); } catch (err) { return err.message; }
         return "no failure";
       }`,
-    });
+      [{ name: "connecta", fns: { call: async () => ({ blob: "x".repeat(400_000) }) } }],
+    );
 
-    expect(out.isError).toBeUndefined();
-    const message = String((out.structuredContent as { result?: unknown }).result);
+    expect(out.error).toBeUndefined();
+    const message = String(out.result);
     expect(message).toContain("serialized bridge limit");
     expect(message).toContain("reader.big");
     expect(message).not.toContain("__callNamespace");

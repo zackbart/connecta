@@ -11,6 +11,7 @@
 
 import { describe, expect, it } from "vitest";
 import { customExecutor } from "../src/executor-contract.js";
+import { checkLargeProgramRead, checkLargeProgramWrite } from "./program-result-cases.js";
 import { InvocationFailure } from "../src/invocation.js";
 import { createConnecta } from "../src/index.js";
 import { createExecuteTool } from "../src/execute.js";
@@ -433,6 +434,16 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
     expect(lateReads).toBe(0);
   });
   for (const custom of [false, true]) {
+    it(`INV-3 INV-9: ${custom ? "customExecutor: " : ""}oversized program reads arrive whole through bounded stash pages`, async () => {
+      await checkLargeProgramRead(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    });
+    it(`INV-2 INV-9: ${custom ? "customExecutor: " : ""}oversized program writes run once and return a shared pageable handle`, async () => {
+      await checkLargeProgramWrite(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    });
     it(`INV-3 INV-6: ${custom ? "customExecutor: " : ""}codec array hooks cannot change host validation and repair`, async () => {
       const executor = required(workerExecutor);
       await checkHostFailureArrays(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);

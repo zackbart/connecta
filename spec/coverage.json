@@ -357,7 +357,7 @@
       "id": "tool-content",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
-      "notes": "Default-mode direct-call successes preserve downstream content and bounded notice-first previews, omit structuredContent, and carry format in _meta[\"dev.connecta/format\"]. Value-mode and error results carry complete data in structuredContent and serialized JSON in content. Guest emission permits text, image and audio only; internal result pages retain their text and paging fields.",
+      "notes": "Default-mode direct-call successes preserve downstream content and bounded notice-first previews, omit structuredContent, and carry format in _meta[\"dev.connecta/format\"]. Value-mode and error results carry complete data in structuredContent and serialized JSON in content. Guest emission permits text, image and audio only; internal result pages retain their text and paging fields. Program calls transparently reconstruct bounded oversized values through the same stash and return larger values as format:paged handles for connecta.result(handle, { page?, offset?, maxBytes? }); completed writes remain successful and are never repeated for output.",
       "tests": [
         {
           "file": "test/remote-mcp.test.ts",
@@ -382,6 +382,14 @@
         {
           "file": "test/direct-call-content.test.ts",
           "title": "INV-9: result pages retain the same bytes and metadata in both internal forms without recalling the tool"
+        },
+        {
+          "file": "test/guest-api-contract-quickjs.node.test.ts",
+          "title": "INV-3 INV-9: oversized program reads arrive whole through bounded stash pages"
+        },
+        {
+          "file": "test/guest-api-contract-quickjs.node.test.ts",
+          "title": "INV-2 INV-9: oversized program writes run once and return a shared pageable handle"
         }
       ]
     },

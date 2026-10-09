@@ -1055,14 +1055,14 @@ export const CONTRACT_CASES: ContractCase[] = [
     clauses: "R4, E1",
     name: "INV-4: guest paging rejects malformed options before storage",
     code: `async () => {
-      return await Promise.all([{ offset: -1 }, { maxBytes: 0 }, { maxBytes: 1.5 }, { id: "invented" }].map(async options => {
+      return await Promise.all([{ offset: -1 }, { maxBytes: 0 }, { maxBytes: 1.5 }, { id: "invented" }, { page: -1 }, { page: 0, offset: 0 }].map(async options => {
         try { await connecta.result("missing", options); return "unexpected"; }
         catch (error) { return error.code; }
       }));
     }`,
     check(outcome) {
-      expect(outcome.result).toEqual(["invalid_args", "invalid_args", "invalid_args", "invalid_args"]);
-      expect(outcome.value.hostCalls).toEqual({ attempted: 4, admitted: 4, succeeded: 0, failed: 4 });
+      expect(outcome.result).toEqual(Array(6).fill("invalid_args"));
+      expect(outcome.value.hostCalls).toEqual({ attempted: 6, admitted: 6, succeeded: 0, failed: 6 });
     },
   },
   {

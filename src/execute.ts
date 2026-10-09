@@ -16,7 +16,8 @@ import {
   type ResolvedCatalogTool,
 } from "./catalog-service.js";
 import type { DeferredWork } from "./connector-scope.js";
-import { createMetaTools, jsonResult, type ToolResult } from "./meta-tools.js";
+import { createMetaTools, jsonResult, pageProgramResult, type ToolResult } from "./meta-tools.js";
+import { PROGRAM_RESULT_INLINE_BYTES, PROGRAM_RESULT_PAGE_BYTES, type ProgramResultHandle } from "./program-result.js";
 import {
   guardExecuteResultValue,
   MAX_EXECUTE_LOG_CHARS,
@@ -472,6 +473,8 @@ function sandboxProvider(
   stopped.catch(() => {});
   const maxWrites = resolveBudget(limits.maxWrites, DEFAULT_MAX_WRITES);
   let writes = 0;
+  // These are transfer cursors only. All result bytes live in the existing stash.
+  const transfers = new Map<string, { id: string; offset: number }>();
   /** Budget and account for writes admitted by the pool trust decision. */
   const invocationContext = (sending: { settle?: SettleWrite }, timeoutMs: number) => ({
     source: "execute_code" as const,
@@ -481,6 +484,8 @@ function sandboxProvider(
     ...(limits.dispatchController ? { dispatchSignal: limits.dispatchController.signal } : {}),
     unwrapResult: true,
     trust: limits.trust,
+    processResult: (value: unknown, resolved: ResolvedCatalogTool, secrets: SentSecrets, format: "json" | "text") =>
+      pageProgramResult(registry, baseUrl, resolved, value, format, secrets, limits.trust, requestScope),
     beforeWrite: (target: ResolvedCatalogTool): Effect.Effect<WriteDecision> =>
       Effect.sync((): WriteDecision => {
         if (programWrites?.isClosed) {
@@ -561,9 +566,17 @@ function sandboxProvider(
           ),
         );
       diagnostics?.recordCall(outcome);
-      return outcome.ok
-        ? { data: outcome.value, format: outcome.format }
-        : yield* Effect.fail(new InvocationFailure(outcome.error));
+      if (!outcome.ok) return yield* Effect.fail(new InvocationFailure(outcome.error));
+      const value = outcome.value as { format: string };
+      if (value.format === "paged") {
+        const handle = value as ProgramResultHandle;
+        if (handle.resultId && handle.totalBytes <= PROGRAM_RESULT_INLINE_BYTES) {
+          const transfer = `transfer:${crypto.randomUUID()}`;
+          transfers.set(transfer, { id: handle.resultId, offset: 0 });
+          return { transfer, handle };
+        }
+      }
+      return value;
     });
 
   // Discovery gets the same treatment from here (L2): once the run has
@@ -605,16 +618,29 @@ function sandboxProvider(
     result: (id, options, signal) =>
       Effect.tryPromise({
         try: async () => {
+          const transfer = typeof id === "string" ? transfers.get(id) : undefined;
+          const transferId = id;
+          if (transfer) {
+            id = transfer.id;
+            options = { offset: transfer.offset, maxBytes: PROGRAM_RESULT_PAGE_BYTES };
+          } else if (id !== null && typeof id === "object" && !Array.isArray(id)) {
+            id = (id as { resultId?: unknown }).resultId;
+          }
           if (
             typeof id !== "string" ||
             (!options && options !== undefined) ||
             (options !== undefined && (typeof options !== "object" || Array.isArray(options)))
           ) {
-            throw guestFailure("invalid_args", "Use connecta.result(id, { offset?, maxBytes? }).");
+            throw guestFailure("invalid_args", "Use connecta.result(handleOrId, { page?, offset?, maxBytes? }).");
           }
-          const args = (options ?? {}) as Record<string, unknown>;
+          const args = { ...((options ?? {}) as Record<string, unknown>) };
           if (
-            Object.keys(args).some((key) => !["offset", "maxBytes"].includes(key)) ||
+            Object.keys(args).some((key) => !["page", "offset", "maxBytes"].includes(key)) ||
+            (args.page !== undefined &&
+              (typeof args.page !== "number" ||
+                !Number.isSafeInteger(args.page) ||
+                args.page < 0 ||
+                args.offset !== undefined)) ||
             (args.offset !== undefined &&
               (typeof args.offset !== "number" || !Number.isSafeInteger(args.offset) || args.offset < 0)) ||
             (args.maxBytes !== undefined &&
@@ -622,9 +648,14 @@ function sandboxProvider(
           ) {
             throw guestFailure(
               "invalid_args",
-              "Use connecta.result(id, { offset?, maxBytes? }) with whole byte offsets >= 0 and maxBytes >= 1.",
+              "Use connecta.result(handleOrId, { page?, offset?, maxBytes? }) with whole page/offset >= 0 and maxBytes >= 1; page and offset are mutually exclusive.",
             );
           }
+          // A page must fit every shipped bridge even when the connector cap is raised.
+          args.maxBytes = Math.min(
+            (args.maxBytes as number | undefined) ?? PROGRAM_RESULT_PAGE_BYTES,
+            PROGRAM_RESULT_PAGE_BYTES,
+          );
           const page = await meta.readResult({ id, ...args }, { signal: signal as AbortSignal | undefined });
           if (page.isError)
             throw new InvocationFailure(
@@ -634,6 +665,10 @@ function sandboxProvider(
                 retryable: false,
               }) as CallErrorDetails,
             );
+          if (transfer) {
+            if (page.structuredContent?.hasMore) transfer.offset = page.structuredContent.nextOffset as number;
+            else transfers.delete(transferId as string);
+          }
           return page.structuredContent;
         },
         catch: (err) => err,
@@ -767,7 +802,9 @@ function sandboxProvider(
           }
           // L4/M7: spend on entry, before even invalid arguments are checked;
           // emit has a separate budget and never spends this one.
-          const counted = name !== "emit";
+          // Transparent transfer pages consume the already-admitted call, not guest host calls.
+          const counted =
+            name !== "emit" && !(name === "result" && typeof args[0] === "string" && transfers.has(args[0]));
           if (counted && ++hostCalls.attempted > maxHostCalls) {
             hostCalls.failed++;
             budgetFailure = new HostCallBudgetExceeded(hostCalls, maxHostCalls);
@@ -1411,7 +1448,7 @@ declare const connecta: {
 ${GUEST_API_DECLARATION}
 };
 \`\`\`
-Discovery: { tools }; check search catalogErrors/absence. JSON schemas default; compact is text. GuestResult is { data, format: "json" | "text" }; inspect format before fields. Pages: text, hasMore, nextOffset in UTF-8 bytes. Promise.allSettled keeps typed failures. Host-call budget_exceeded is terminal, even through catch/allSettled. Runs report hostCalls.
+Search: { tools }; check catalogErrors/absence. JSON schemas default; compact is text. Calls: { data, format: "json" | "text" }; >1 MiB: { format: "paged", resultId? }. Page with connecta.result(handle); nextOffset is UTF-8 bytes. allSettled keeps typed failures. Host budget_exceeded is terminal through catch/allSettled.
 
 Reduce JSON. Never repeat writes for output. emit: text or base64 image/audio, safe without await, ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes. Text shares the result cap. skills({ name: "investigate" }): workflow; skills({ name: "usage" }): repair${connectorGuides ? ", guide handling" : ""}.`;
 

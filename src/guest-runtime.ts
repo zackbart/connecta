@@ -83,10 +83,28 @@ export function guestInitializer(): string {
   const promiseCatch = Function.prototype.call.bind(NativePromise.prototype.catch);
   const promiseFinally = Function.prototype.call.bind(NativePromise.prototype.finally);
   const push = Function.prototype.call.bind(Array.prototype.push);
+  const apply = Function.prototype.call.bind(Function.prototype.apply);
   const NativeError = Error;
   return freeze((provider) => {
   const pending = [];
   const emit = provider.emit;
+  const hostCall = provider.call;
+  const hostResult = provider.result;
+  async function call() {
+    const value = await apply(hostCall, undefined, arguments);
+    if (!value || typeof value.transfer !== "string" || !value.handle) return value;
+    // A completed downstream call stays successful if transfer storage fails.
+    // Preserve its handle so the caller can page later, without repeating a write.
+    try {
+      let text = "", page;
+      do {
+        page = await hostResult(value.transfer);
+        text += page.text;
+      } while (page.hasMore);
+      return { data: value.handle.valueFormat === "json" ? JSON.parse(text) : text,
+        format: value.handle.valueFormat };
+    } catch { return value.handle; }
+  }
   function trackEmission(task) {
     const entry = { handled: false, settled: promiseThen(task,
       () => ({ ok: true }), error => ({ ok: false, error })) };
@@ -112,7 +130,7 @@ export function guestInitializer(): string {
     __proto__: null,
     search: provider.search,
     describe: provider.describe,
-    call: provider.call,
+    call,
     read: provider.read,
     result: provider.result,
     skill: provider.skill,

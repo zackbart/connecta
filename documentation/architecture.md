@@ -227,6 +227,13 @@ same credential resolution, and the same fail-closed read-only check.
 `test/execute.test.ts` asserts the parity directly, because a sandbox path that
 quietly diverges is how generated code would mint a capability.
 
+Program result paging shares `meta-tools.ts`'s direct-call stash envelope and
+reader. `program-result.ts` owns executor-independent byte limits;
+`execute.ts` issues bounded transfer cursors, and `guest-runtime.ts` reconstructs
+values through provider preludes. Cursors hold only an ID and offset for the
+current run. Result bytes, expiry, authority and capacity charges stay in the
+existing storage and ledger; no executor-specific store or storage key is added.
+
 ## Admission, in two places
 
 Request admission (`src/executor-admission.ts`, applied in `src/routes/mcp.ts`)

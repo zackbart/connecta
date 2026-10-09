@@ -11,7 +11,7 @@ import type { Connector, ConnectorContext, ConnectorSkill, ConnectorSkillResourc
 const ROUTE =
   "Choose a route before discovery. One known-address read uses call_tool; one known-address write uses call_destructive_tool. Unknown-address read-only work starts with execute_code to discover, call, and return the answer; use the same route for reduction, multiple or dependent calls, loops, joins, or branches. Keep discovery and calls together when schemas suffice; do not return catalog matches alone. Sample unfamiliar reads.";
 const RECOVERY =
-  'After auth_required use authorize_connector. After a truncated direct result use connecta.result. Guidance is on demand: fetch skills({ name: "usage" }) only when these instructions and the tool description are insufficient or a run needs repair.';
+  'After auth_required use authorize_connector. Page direct results and program format:"paged" handles with connecta.result(handleOrId, { page? }). Guidance is on demand: fetch skills({ name: "usage" }) only when these instructions and the tool description are insufficient or a run needs repair.';
 
 /**
  * The always-loaded MCP `instructions` string. A program runs reads and the

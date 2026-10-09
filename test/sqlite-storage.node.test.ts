@@ -12,6 +12,8 @@ import { importStateFile, openSqlite, sqliteActivityStore, sqliteStorage } from 
 import { silentLogger } from "./helpers.js";
 import { sqlStorageContract, type SqlFixture } from "./sql-storage-contract.js";
 import { NUL_VALUES } from "./storage-contract.js";
+import { quickJsExecutor } from "../src/executors/quickjs.js";
+import { checkLargeProgramRead, checkLargeProgramWrite } from "./program-result-cases.js";
 
 const directories: string[] = [];
 const databases: DatabaseSync[] = [];
@@ -50,6 +52,16 @@ function fixture(db: DatabaseSync): SqlFixture {
 }
 
 describe("sqliteStorage in memory", () => {
+  it("INV-9: program result transfers and write handles share the SQLite stash", async () => {
+    const executor = quickJsExecutor({ cpuTimeMs: 5_000 });
+    try {
+      const storage = sqliteStorage(track(openSqlite(":memory:")));
+      await checkLargeProgramRead(executor, storage);
+      await checkLargeProgramWrite(executor, storage);
+    } finally {
+      await executor.close?.();
+    }
+  }, 30_000);
   sqlStorageContract(async () => fixture(track(openSqlite(":memory:"))));
 });
 
