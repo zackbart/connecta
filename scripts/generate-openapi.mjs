@@ -371,6 +371,14 @@ export function buildOperationIndex(document, source) {
     describe: source.options?.descriptions ?? DEFAULT_DESCRIPTION,
     maxEnum: source.options?.maxEnum ?? DEFAULT_MAX_ENUM,
   };
+  // Opt-in shrinking for very large documents (Cloudflare's is 27 MB):
+  // `operationIds: false` drops ids that only restate the summary,
+  // `pathParams: "typed"` drops path parameters that are plain strings (the
+  // template names them; `OperationIndex.contract` lists them again), and
+  // `opBudget` caps one operation's serialized details by lowering its depth.
+  const keepIds = source.options?.operationIds !== false;
+  const typedPathParams = source.options?.pathParams === "typed";
+  const opBudget = source.options?.opBudget;
   const defaultServer = serverOf(document.servers);
   const servers = defaultServer ? [defaultServer] : [];
   const tags = [];
@@ -386,7 +394,7 @@ export function buildOperationIndex(document, source) {
       const row = [
         verb.toUpperCase(),
         path,
-        typeof operation.operationId === "string" ? operation.operationId : `${verb}${path}`,
+        !keepIds ? "" : typeof operation.operationId === "string" ? operation.operationId : `${verb}${path}`,
         plainText(operation.summary ?? operation.description, 120) ?? "",
         tags.indexOf(tag),
       ];
@@ -396,44 +404,7 @@ export function buildOperationIndex(document, source) {
         row.push(servers.indexOf(server));
       }
       ops.push(row);
-      const params = [];
-      const seen = new Set();
-      for (const raw of [...(operation.parameters ?? []), ...(item.parameters ?? [])]) {
-        const parameter = resolveRef(document, raw);
-        if (!["path", "query"].includes(parameter.in) || typeof parameter.name !== "string") continue;
-        const key = `${parameter.in}:${parameter.name}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        // A parameter is a top-level property; its own description is the one kept.
-        const { d: _, ...schema } = compactSchema(document, parameter.schema ?? {}, shape, 1);
-        const entry = [parameter.name, parameter.in, parameter.required === true ? 1 : 0, schema];
-        const description = plainText(parameter.description, shape.describe);
-        if (description) entry.push(description);
-        params.push(entry);
-      }
-      let body = 0;
-      const requestBody = resolveRef(document, operation.requestBody);
-      const content = requestBody.content;
-      if (verb !== "get" && verb !== "head" && content && typeof content === "object") {
-        const [contentType, media] = Object.entries(content)[0] ?? [];
-        const schema = compactSchema(document, media?.schema ?? {}, shape, 0);
-        // Stripe frames nearly every operation with an optional form body that
-        // declares no fields. Only that is no body; an array, a binary or
-        // unrestricted body, and any required body keep their contract.
-        const empty =
-          requestBody.required !== true &&
-          /^application\/x-www-form-urlencoded\b/.test(contentType ?? "") &&
-          schema.t === "object" &&
-          schema.p !== undefined &&
-          Object.keys(schema.p).length === 0 &&
-          !schema.a &&
-          !schema.m &&
-          !schema.x &&
-          !schema.r;
-        if (contentType && !empty)
-          body = requestBody.required === true ? [contentType, schema, 1] : [contentType, schema];
-      }
-      details.push(params.length || body ? [params, body] : 0);
+      details.push(operationDetails(document, item, operation, verb, shape, typedPathParams, opBudget));
     }
   }
   return {
@@ -450,6 +421,62 @@ export function buildOperationIndex(document, source) {
     ops,
     details: JSON.stringify(share(details)),
   };
+}
+
+/**
+ * One operation's details row. Past `opBudget` serialized characters the
+ * operation is rebuilt one level shallower, down to depth 0, so one sprawling
+ * schema cannot dominate the shipped index.
+ */
+function operationDetails(document, item, operation, verb, shape, typedPathParams, opBudget) {
+  let row = detailsAt(document, item, operation, verb, shape, typedPathParams);
+  for (let depth = shape.depth - 1; opBudget && depth >= 0 && JSON.stringify(row).length > opBudget; depth -= 1) {
+    row = detailsAt(document, item, operation, verb, { ...shape, depth }, typedPathParams);
+  }
+  return row;
+}
+
+function detailsAt(document, item, operation, verb, shape, typedPathParams) {
+  const params = [];
+  const seen = new Set();
+  for (const raw of [...(operation.parameters ?? []), ...(item.parameters ?? [])]) {
+    const parameter = resolveRef(document, raw);
+    if (!["path", "query"].includes(parameter.in) || typeof parameter.name !== "string") continue;
+    const key = `${parameter.in}:${parameter.name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    // A parameter is a top-level property; its own description is the one kept.
+    const { d: _, ...schema } = compactSchema(document, parameter.schema ?? {}, shape, 1);
+    const entry = [parameter.name, parameter.in, parameter.required === true ? 1 : 0, schema];
+    const description = plainText(parameter.description, shape.describe);
+    if (description) entry.push(description);
+    if (typedPathParams && parameter.in === "path" && !description && JSON.stringify(schema) === '{"t":"string"}') {
+      continue;
+    }
+    params.push(entry);
+  }
+  let body = 0;
+  const requestBody = resolveRef(document, operation.requestBody);
+  const content = requestBody.content;
+  if (verb !== "get" && verb !== "head" && content && typeof content === "object") {
+    const [contentType, media] = Object.entries(content)[0] ?? [];
+    const schema = compactSchema(document, media?.schema ?? {}, shape, 0);
+    // Stripe frames nearly every operation with an optional form body that
+    // declares no fields. Only that is no body; an array, a binary or
+    // unrestricted body, and any required body keep their contract.
+    const empty =
+      requestBody.required !== true &&
+      /^application\/x-www-form-urlencoded\b/.test(contentType ?? "") &&
+      schema.t === "object" &&
+      schema.p !== undefined &&
+      Object.keys(schema.p).length === 0 &&
+      !schema.a &&
+      !schema.m &&
+      !schema.x &&
+      !schema.r;
+    if (contentType && !empty) body = requestBody.required === true ? [contentType, schema, 1] : [contentType, schema];
+  }
+  return params.length || body ? [params, body] : 0;
 }
 
 /** The source record's generation options, as the header states them. */
@@ -579,8 +606,18 @@ async function main() {
     }
     const data = buildOperationIndex(JSON.parse(new TextDecoder().decode(bytes)), source);
     await writeFile(join(provider.directory, OUTPUT), renderOpenApiModule(data, source));
+    const rows = JSON.parse(data.details).o;
+    const largest = rows.reduce(
+      (best, row, at) => {
+        const size = JSON.stringify(row).length;
+        return size > best.size ? { size, at } : best;
+      },
+      { size: 0, at: -1 },
+    );
+    const op = data.ops[largest.at];
     console.log(
-      `providers/${provider.name}: ${data.ops.length} operations at ${source.revision} (API ${data.version || "unversioned"})`,
+      `providers/${provider.name}: ${data.ops.length} operations at ${source.revision} (API ${data.version || "unversioned"}); ` +
+        `largest details ${op ? `${op[0]} ${op[1]}` : "none"} at ${largest.size} characters after sharing`,
     );
   }
 }

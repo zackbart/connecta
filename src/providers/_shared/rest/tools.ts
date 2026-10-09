@@ -20,8 +20,12 @@
 // A vendor adopts this module with configuration only: its transport, its
 // failure mapper, and optional `scope` (defaults and pins), `encode` (body
 // and query framing), `page` (cursor extraction), `refuse` (safety tables),
-// `readPosts`, and an idempotency header. Named tools reuse `restCall` and
-// `callRest` to share the same validation-free request path.
+// `readPosts`, and an idempotency header. Optional hooks cover the rest:
+// `path` (fill default ids before matching), `admit` (an awaited check in
+// `callRest`, which every tool passes, such as an account pin), `result`
+// (unwrap a vendor envelope), a reviewed `headers` allowlist, and
+// `textBodies`. Named tools reuse `restCall` and `callRest` to share the same
+// validation-free request path.
 import type { ApiTool } from "../../../connectors/api-connector.js";
 import {
   guardedFetch,
@@ -44,6 +48,8 @@ export interface RestCall {
   readonly params: Readonly<Record<string, string>>;
   readonly query: Readonly<Record<string, unknown>>;
   readonly body: unknown;
+  /** Request headers from the vendor's reviewed `headers` allowlist. */
+  readonly headers?: Readonly<Record<string, string>>;
 }
 
 /** How the vendor frames one call on the wire. */
@@ -92,13 +98,33 @@ export interface RestVendor {
    */
   transport(server: string | undefined): GuardedTransport | string;
   /** Map a failed response to what the caller does next (H11). */
-  failure(status: number, headers: Headers, body: unknown): ConnectorCallError;
+  failure(status: number, headers: Headers, body: unknown, call?: RestCall): ConnectorCallError;
   /** Reviewed POSTs that only read; `_api_read` admits exactly these. */
   readonly readPosts?: readonly RestReadPost[];
   /** Reviewed safety refusals: return the reason to refuse, before any request. */
   refuse?(call: RestCall): string | undefined;
+  /** Rewrite a caller's path before it is matched, such as filling configured default ids. */
+  path?(path: string): string;
   /** Apply configured defaults and enforce pins; throw to refuse. */
   scope?(call: RestCall): RestCall;
+  /**
+   * Admit one prepared call before it is sent; throw to refuse. Runs in
+   * `callRest`, so generic and named tools alike pass through it, and may
+   * await, as a pin check that resolves which account owns a zone does.
+   */
+  admit?(call: RestCall, ctx: ConnectorContext): void | Promise<void>;
+  /**
+   * Map a successful body into the envelope's `data`, such as unwrapping a
+   * vendor envelope; throw to fail a success-status body that reports an
+   * error. `page` still reads the body as it arrived.
+   */
+  result?(body: unknown, call: RestCall, response: { status: number; headers: Headers }): unknown;
+  /** Request headers the generic tools accept, by name, with what each does; the vendor validates values. */
+  readonly headers?: Readonly<Record<string, string>>;
+  /** Whether the generic tools accept a string body, for operations framed as text. */
+  readonly textBodies?: boolean;
+  /** A concrete path in this vendor's API, for the path argument's description. */
+  readonly pathExample?: string;
   /** Frame the request. Defaults to scalar query values and a JSON body. */
   encode?(call: RestCall): RestFraming;
   /** Read the next-page cursor from a successful body. */
@@ -144,10 +170,19 @@ export function restCall(
   vendor: RestVendor,
   method: RestMethod,
   path: string,
-  input: { query?: Readonly<Record<string, unknown>>; body?: unknown } = {},
+  input: { query?: Readonly<Record<string, unknown>>; body?: unknown; headers?: Readonly<Record<string, string>> } = {},
 ): RestCall {
-  const { op, params } = vendor.index.resolve(method, path);
-  const call: RestCall = { method: op.method, path, op, params, query: input.query ?? {}, body: input.body };
+  const concrete = vendor.path ? vendor.path(path) : path;
+  const { op, params } = vendor.index.resolve(method, concrete);
+  const call: RestCall = {
+    method: op.method,
+    path: concrete,
+    op,
+    params,
+    query: input.query ?? {},
+    body: input.body,
+    ...(input.headers ? { headers: input.headers } : {}),
+  };
   return vendor.scope ? vendor.scope(call) : call;
 }
 
@@ -160,7 +195,11 @@ function defaultFraming(vendor: RestVendor, call: RestCall): RestFraming {
     if (scalar(value) || (Array.isArray(value) && value.every(scalar))) query[name] = value;
     else invalid(`${vendor.title} query parameter ${name} takes a string, number, boolean, or a list of them.`);
   }
-  return { query, ...(call.body !== undefined ? { body: call.body } : {}) };
+  return {
+    query,
+    ...(call.headers ? { headers: { ...call.headers } } : {}),
+    ...(call.body !== undefined ? { body: call.body } : {}),
+  };
 }
 
 async function failureBody(response: Parameters<Parameters<GuardedTransport>[2]>[0]): Promise<unknown> {
@@ -280,6 +319,7 @@ export async function callRest(
 ): Promise<RestResult> {
   const send = vendor.transport(call.op.server);
   if (typeof send === "string") invalid(send);
+  await vendor.admit?.(call, ctx);
   const framing = vendor.encode ? vendor.encode(call) : defaultFraming(vendor, call);
   // Safe to repeat: a read, or a write that carried the vendor's idempotency key.
   const header = vendor.idempotencyHeader?.toLowerCase();
@@ -306,10 +346,11 @@ export async function callRest(
   try {
     return await send(request, ctx, async (response) => {
       responded = true;
-      if (!response.ok) throw vendor.failure(response.status, response.headers, await failureBody(response));
+      if (!response.ok) throw vendor.failure(response.status, response.headers, await failureBody(response), call);
       // HEAD answers with headers alone; they are its data.
-      const data = call.method === "HEAD" ? headerData(response.headers) : await successBody(vendor, response, ctx);
-      const page = vendor.page?.(data, call);
+      const body = call.method === "HEAD" ? headerData(response.headers) : await successBody(vendor, response, ctx);
+      const data = vendor.result && call.method !== "HEAD" ? vendor.result(body, call, response) : body;
+      const page = vendor.page?.(body, call);
       return { status: response.status, data, ...(page ? { page } : {}) };
     });
   } catch (error) {
@@ -366,12 +407,14 @@ function selected(args: Record<string, unknown>, result: RestResult): RestResult
   return { ...result, data: project(result.data, select as string[]) };
 }
 
-const PATH: JsonSchema = {
-  type: "string",
-  minLength: 2,
-  maxLength: 2048,
-  description: "Concrete path from search with ids filled in, e.g. /v1/customers/cus_123. No query string.",
-};
+function pathSchema(example = "/v1/customers/cus_123"): JsonSchema {
+  return {
+    type: "string",
+    minLength: 2,
+    maxLength: 2048,
+    description: `Concrete path from search with ids filled in, e.g. ${example}. No query string.`,
+  };
+}
 
 const QUERY: JsonSchema = {
   type: "object",
@@ -422,6 +465,25 @@ function closed(properties: Record<string, JsonSchema>, required: string[]): Jso
 export function restTools(vendor: RestVendor): ApiTool[] {
   const { index, title } = vendor;
   const tool = (kind: string) => `${vendor.vendor}_api_${kind}`;
+  const PATH = pathSchema(vendor.pathExample);
+  const headerNames = Object.keys(vendor.headers ?? {});
+  const HEADERS: Record<string, JsonSchema> = headerNames.length
+    ? {
+        headers: {
+          type: "object",
+          description: "Optional request headers this vendor's operations read; nothing else is accepted.",
+          properties: Object.fromEntries(
+            Object.entries(vendor.headers!).map(([name, description]) => [
+              name,
+              { type: "string", minLength: 1, maxLength: 200, description },
+            ]),
+          ),
+          additionalProperties: false,
+        },
+      }
+    : {};
+  const headersOf = (args: Record<string, unknown>) =>
+    isRecord(args["headers"]) ? { headers: args["headers"] as Record<string, string> } : {};
   const readPosts = vendor.readPosts ?? [];
   for (const [method, path] of readPosts) {
     // A reviewed exception the index no longer carries is a stale review.
@@ -558,8 +620,16 @@ export function restTools(vendor: RestVendor): ApiTool[] {
                 },
               }
             : {}),
-          ...(readPosts.length ? { body: { type: "object", description: "Body for a reviewed read-only POST." } } : {}),
+          ...(readPosts.length
+            ? {
+                body: {
+                  type: vendor.textBodies ? ["object", "string"] : "object",
+                  description: `Body for a reviewed read-only POST${vendor.textBodies ? "; a string for a text-framed operation" : ""}.`,
+                },
+              }
+            : {}),
           query: QUERY,
+          ...HEADERS,
           select: SELECT,
         },
         ["path"],
@@ -570,6 +640,7 @@ export function restTools(vendor: RestVendor): ApiTool[] {
         const call = restCall(vendor, method, String(args["path"]), {
           query: isRecord(args["query"]) ? args["query"] : {},
           body: args["body"],
+          ...headersOf(args),
         });
         if (!reads(call.op)) {
           invalid(`${call.method} ${call.op.path} is not a reviewed read; call it with ${tool("write")}.`);
@@ -594,9 +665,10 @@ export function restTools(vendor: RestVendor): ApiTool[] {
           path: PATH,
           query: QUERY,
           body: {
-            type: ["object", "array"],
+            type: vendor.textBodies ? ["object", "array", "string"] : ["object", "array"],
             description: `Request body as JSON${vendor.bodyHint ? `; ${vendor.bodyHint}` : ""}.`,
           },
+          ...HEADERS,
           ...(vendor.idempotencyHeader
             ? {
                 idempotencyKey: {
@@ -625,6 +697,7 @@ export function restTools(vendor: RestVendor): ApiTool[] {
         const call = restCall(vendor, args["method"] as RestMethod, String(args["path"]), {
           query: isRecord(args["query"]) ? args["query"] : {},
           body: args["body"],
+          ...headersOf(args),
         });
         if (call.method === "GET" || call.method === "HEAD") {
           invalid(`${call.method} operations are reads; call them with ${tool("read")}.`);

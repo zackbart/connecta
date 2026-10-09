@@ -152,3 +152,22 @@ The Stripe conversion (#801, PR #803) settled facts the plan above left open:
   shapes and drops the one-operation wrappers the generic set replaces.
   `test/fixtures/provider-reconciliation.ts` stays until Vercel and Cloudflare
   convert, since their reconciliation tests still use it.
+
+### Amendment: what the Cloudflare PR established
+
+The Cloudflare conversion (#801) settled these:
+
+- A pin with `accountIds` covers every zone in those accounts. A zone id not
+  named in `zoneIds` is admitted after one `GET /zones/{id}` ownership read,
+  cached per connector; GraphQL `zoneTag`/`accountTag` filters, query and body
+  ids, and `/zones`, `/accounts` and `/memberships` list results are held to
+  the same pin, and `/organizations`, `/tenants` and the unscoped SQL API are
+  refused on a pinned connector.
+- Cloudflare's index is 3,336 operations from a 27 MB document. Generator
+  options drop restated operation ids and plain path parameters and cap one
+  operation's details, taking the index from 157 KB to 125 KB gzip before the
+  cap moved to baseline + 60,000 B.
+- R2 object keys and KV key names may carry an encoded `/` in a path's final
+  segment; every other segment still refuses one.
+- Hosted `execute` stays destructive, so the guide sends read-only pools that
+  need API reads to an API-token connector.

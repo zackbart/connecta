@@ -393,29 +393,14 @@ describe("hand-written providers refuse schemas they cannot enforce (H5)", () =>
   });
 });
 
-describe("Cloudflare states its second pagination convention in the schema (H10)", () => {
-  it("says on both ends that the cursor family has no page object", async () => {
+describe("Cloudflare states its two pagination conventions in the schema (H10)", () => {
+  it("names the page parameter beside every next value", async () => {
     const { tools } = providers.find((provider) => provider.name === "cloudflare")!;
-    const cursorTools = ["list_zone_rulesets", "list_kv_keys", "list_r2_buckets", "list_r2_objects"];
-    for (const name of cursorTools) {
-      const tool = tools.find((candidate) => candidate.name === name);
-      expect(tool, name).toBeDefined();
-      const input = (tool!.inputSchema as any).properties.cursor;
-      const output = (tool!.outputSchema as any).properties.nextCursor;
-      expect(input.description, name).toContain("pages by cursor");
-      expect(output.description, name).toContain("no page object");
-      // The branch is one field, and it is not the page object the rest of
-      // the connector returns.
-      expect((tool!.outputSchema as any).properties.page, name).toBeUndefined();
+    for (const name of ["cloudflare_api_read", "list_zones", "list_accounts"]) {
+      const page = (tools.find((tool) => tool.name === name)!.outputSchema as any).properties.page;
+      expect(page.properties.hasMore, name).toBeDefined();
+      expect(page.properties.param, name).toBeDefined();
     }
-  });
-
-  it("keeps the page-numbered majority on page.hasMore", async () => {
-    const { tools } = providers.find((provider) => provider.name === "cloudflare")!;
-    const paged = tools.find((tool) => tool.name === "list_dns_records")!;
-    const page = (paged.outputSchema as any).properties.page;
-    expect(page.properties.hasMore).toBeDefined();
-    expect((paged.inputSchema as any).properties.cursor).toBeUndefined();
   });
 });
 

@@ -40,15 +40,16 @@ var fixture3 = {
 
 // src/providers/cloudflare/fixtures.ts
 import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
-var options4 = { "purpose": "Audit fixture", "surface": "api" };
+var options4 = { "purpose": "Audit fixture", "auth": { "type": "apiToken" } };
 var fixture4 = {
   name: "cloudflare",
   options: options4,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "mcp", "options": { "surface": "mcp" } }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "pinned", "options": { "accountId": "acct-fixture", "pin": { "accountIds": ["acct-fixture"] } } }, { "label": "global-key", "options": { "auth": { "type": "globalApiKey" }, "pin": { "zoneIds": ["zone-fixture"] } } }, { "label": "oauth", "options": { "auth": { "type": "oauth" } } }],
   create(id = "fixture", overrides = {}) {
-    return cloudflare(id, { ...options4, ...overrides });
+    const base = overrides.auth?.type === "oauth" ? { purpose: options4.purpose } : options4;
+    return cloudflare(id, { ...base, ...overrides });
   },
-  conventions: { "verbs": ["list", "get", "search", "create", "update", "delete", "add", "bulk", "purge", "rollback", "write", "verify", "upload", "rename", "retry", "set", "cloudflare"], "nestedDescriptionExceptions": ["cloudflare_api_get.query[].name", "cloudflare_api_get.query[].value", "cloudflare_api_get.headers[].name", "cloudflare_api_get.headers[].value", "cloudflare_api_mutate.query[].name", "cloudflare_api_mutate.query[].value", "cloudflare_api_mutate.headers[].name", "cloudflare_api_mutate.headers[].value", "cloudflare_api_upload.query[].name", "cloudflare_api_upload.query[].value", "cloudflare_api_upload.headers[].name", "cloudflare_api_upload.headers[].value", "cloudflare_api_upload.fields[].name", "cloudflare_api_upload.fields[].value", "cloudflare_api_upload.fields[].contentType", "cloudflare_api_upload.fields[].fileName", "cloudflare_api_upload.files[].name", "cloudflare_api_upload.files[].fileName", "cloudflare_api_upload.files[].contentType", "cloudflare_api_upload.files[].text", "cloudflare_api_upload.files[].base64"], "auth": "credential" }
+  conventions: { "verbs": ["verify", "list", "graphql", "cloudflare"], "nestedDescriptionExceptions": [], "auth": "credential" }
 };
 
 // src/providers/docs/fixtures.ts

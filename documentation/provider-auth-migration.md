@@ -19,16 +19,27 @@ restricted keys on 2026-10-31. Every `stripe()` call must now name `auth`:
 
 ```ts
 connectors: [
-  stripe("stripe", { purpose: "Organization billing", auth: { type: "oauth" } }),
-  stripe("stripe_live", { purpose: "Live billing", auth: { type: "apiKey" }, mode: "production" }),
-  stripe("stripe_sandbox", { purpose: "Rehearsal", auth: { type: "apiKey" }, mode: "sandbox" }),
+  stripe("stripe", {
+    purpose: "Organization billing",
+    auth: { type: "oauth" },
+  }),
+  stripe("stripe_live", {
+    purpose: "Live billing",
+    auth: { type: "apiKey" },
+    mode: "production",
+  }),
+  stripe("stripe_sandbox", {
+    purpose: "Rehearsal",
+    auth: { type: "apiKey" },
+    mode: "sandbox",
+  }),
   stripe("stripe_merchant", {
     purpose: "One connected merchant",
     auth: { type: "apiKey" },
     mode: "production",
     connectedAccount: "acct_…",
   }),
-]
+];
 ```
 
 | 0.30 configuration                               | Now                                                                                                                  |
@@ -99,4 +110,64 @@ conversion. An OAuth connector acts as the user, and has none of the generic
 REST tools or the `integration_*` projections and authoring helpers. Configure
 both ids when a deployment needs both; a failed call is never retried on the
 other. The [Notion skill](https://github.com/zackbart/connecta/blob/main/src/providers/notion/SKILL.md)
+owns the conventions for both.
+
+## Cloudflare
+
+Every `cloudflare()` call must now name `auth`. 0.30 defaulted to hosted MCP
+when `surface` was omitted; that default is gone with `surface` itself:
+
+```ts
+connectors: [
+  cloudflare("cloudflare", {
+    purpose: "Estate changes",
+    auth: { type: "oauth" },
+  }),
+  cloudflare("cloudflare_api", {
+    purpose: "Production DNS and Workers",
+    auth: { type: "apiToken" },
+    accountId: "<account id>",
+    zoneId: "<zone id>",
+    pin: { accountIds: ["<account id>"] },
+  }),
+  cloudflare("cloudflare_legacy", {
+    purpose: "Legacy zones behind a user key",
+    auth: { type: "globalApiKey" },
+    pin: { zoneIds: ["<zone id>"] },
+  }),
+];
+```
+
+| 0.30 configuration                                   | Now                                                                                                                                      |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| No `surface`, or `surface: "mcp"`, with OAuth        | `auth: { type: "oauth" }`. Same endpoint, catalog, and grant.                                                                            |
+| `surface: "mcp"` with `auth: { type: "credential" }` | `auth: { type: "apiToken" }`: bearer tokens no longer reach `mcp.cloudflare.com`. A token stored for the same connector id carries over. |
+| `surface: "api"` (API token)                         | `auth: { type: "apiToken" }` with the same `accountId`, `zoneId`, `baseUrl`, and `maxConcurrency`.                                       |
+| `surface: "api"`, `authentication: "globalApiKey"`   | `auth: { type: "globalApiKey" }` plus `pin: { accountIds, zoneIds }`, or `unpinned: true` to accept the user's whole estate.             |
+| `credential` override                                | Removed; the credential slot's copy is fixed.                                                                                            |
+| `callAdmission` with hosted MCP                      | Unchanged under `auth: { type: "oauth" }`.                                                                                               |
+
+The key connector is complete on its own. JSON writes that 0.30 refused on an
+API token (they belonged to hosted `execute`) go through
+`cloudflare_api_write`, checked against a pinned API index before they are
+sent. The 23 hand-written reads (`get_zone`, `list_dns_records`,
+`list_r2_objects`, `list_pages_deployments`, and the rest) are replaced by
+`cloudflare_api_read` on the same paths; results are Cloudflare's own
+`result`, unprojected, so programs pass `select` instead of reading the old
+projections. `list_accounts`, `list_zones`, and `cloudflare_api_upload` keep
+their names (upload now takes `parts` for multipart); `verify_api_token` and
+`verify_global_api_key` become `verify_credential`; `cloudflare_api_get` and
+`cloudflare_api_mutate` become `cloudflare_api_read` and `cloudflare_api_write`.
+`graphql_query` is new.
+
+Read-only pools: hosted `execute` is always a write, even for a program that
+only reads, so a read-only pool on an OAuth connector reaches only `search`.
+Use an API-token connector for read-only API access.
+
+Lost on each path. OAuth has no index validation, named tools, GraphQL tool,
+upload tool, or pin; Cloudflare's OAuth grant is the only boundary. A key has
+no hosted `search` over Cloudflare's live OpenAPI document; the pinned index
+replaces it and `providers:check` reports when it falls behind. A Global API
+Key cannot reach R2, which accepts API tokens only. The
+[Cloudflare skill](https://github.com/zackbart/connecta/blob/main/src/providers/cloudflare/SKILL.md)
 owns the conventions for both.

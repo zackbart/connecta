@@ -11,6 +11,11 @@ BePresent and One&Many use Notion and Cloudflare; their actual grants and
 connector ids must be checked in deployment configuration before that release.
 The provider audit establishes available auth modes, not production OAuth grants.
 
+Cloudflare's part of this guide is superseded: `cloudflare()` now selects its
+implementation by `auth` and its key connector is complete on its own. Follow
+the [provider auth migration](./provider-auth-migration.md#cloudflare) for
+Cloudflare; the Cloudflare lines below record the 0.29 transition only.
+
 All three providers now default to hosted MCP. `surface: "api"` explicitly
 selects a REST complement and accepts only its API-specific options. The old
 Vercel/Cloudflare API modes are no longer complete alternatives; Notion retains
@@ -65,7 +70,7 @@ creation/update. Do not copy REST argument
 shapes into vendor tools, even when a tool name is unchanged.
 
 The per-provider tables map every removed name and explain retained API tools:
-[Vercel](https://github.com/zackbart/connecta/blob/main/src/providers/vercel/reconciliation.md) and
-[Cloudflare](https://github.com/zackbart/connecta/blob/main/src/providers/cloudflare/reconciliation.md).
-Notion's table is retired with `surface`; the
-[provider auth migration](./provider-auth-migration.md#notion) maps its names.
+[Vercel](https://github.com/zackbart/connecta/blob/main/src/providers/vercel/reconciliation.md).
+Notion's and Cloudflare's tables are retired with `surface`; the provider auth
+migration maps their names ([Notion](./provider-auth-migration.md#notion),
+[Cloudflare](./provider-auth-migration.md#cloudflare)).

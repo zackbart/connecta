@@ -1,1585 +1,978 @@
-// The Cloudflare connection is hand-written fetch, so the seam worth testing
-// is the request it builds and the result it projects. `fetch` is stubbed for
-// the whole file; nothing here reaches the network.
-import { afterEach, beforeEach, describe, expect, it, it as test, vi } from "vitest";
-import type { ToolDef } from "../../types.js";
-import { mockRemoteMcp, servedTools } from "../../../test/fixtures/hosted-provider.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ConnectorContext, ToolDef } from "../../types.js";
+import { guideOf, mockRemoteMcp, servedTools } from "../../../test/fixtures/hosted-provider.js";
+import { connectorContext } from "../../../test/fixtures/misc.js";
+import { ConnectorCallError } from "../../errors.js";
 
-const mcpMocks = vi.hoisted(() => ({
+const mocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
   remoteMcp: vi.fn(),
 }));
 
 vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
+  // Only the hosted constructor is stubbed; the REST connector never touches it.
   ...(await importOriginal<typeof import("../../connectors/remote-mcp.js")>()),
-  remoteMcp: mcpMocks.remoteMcp,
+  remoteMcp: mocks.remoteMcp,
 }));
 
-import { CLOUDFLARE_API_BASE, CLOUDFLARE_MCP_ENDPOINT, CLOUDFLARE_MCP_VETTED_CATALOG, cloudflare } from "./index.js";
-import { ConnectorCallError } from "../../errors.js";
-import { memoryStorage } from "../../storage/memory.js";
-import { silentLogger } from "../../../test/helpers.js";
-import type { Connector, ConnectorContext, ConnectorUsageGuide } from "../../types.js";
+import { CLOUDFLARE_API_BASE, CLOUDFLARE_MCP_ENDPOINT, cloudflare } from "./index.js";
+import { connectorGuideSummary } from "../../skills.js";
 
-const TOKEN = "cf-token";
+const ACCOUNT = "0123456789abcdef0123456789abcdef";
+const OTHER_ACCOUNT = "ffffffffffffffffffffffffffffffff";
+const ZONE = "023e105f4ecef8ad9ca31a8372d0c353";
+const OTHER_ZONE = "aaaaaaaabbbbbbbbccccccccdddddddd";
+const TOKEN = {
+  purpose: "Production DNS and Workers",
+  auth: { type: "apiToken" },
+} as const;
+const GLOBAL = {
+  purpose: "Legacy estate",
+  auth: { type: "globalApiKey" },
+  pin: { accountIds: [ACCOUNT] },
+} as const;
 
-/** The guide is structured (H13); assertions read its parts, not the field. */
-function structuredGuide(connector: Connector): ConnectorUsageGuide {
-  const guide = connector.usageGuide;
-  if (typeof guide !== "object" || guide === undefined) {
-    throw new Error("expected a structured usage guide");
-  }
-  return guide;
-}
+describe("cloudflare() over OAuth", () => {
+  beforeEach(() => {
+    mockRemoteMcp(mocks);
+  });
 
-function contextWithToken(token: string | null = TOKEN): ConnectorContext {
-  return {
-    storage: memoryStorage(),
-    logger: silentLogger,
-    baseUrl: "https://connecta.example",
-    credential: {
-      get: async () => token,
-      getAll: async () => (token === null ? null : { value: token }),
-    },
-  };
-}
-
-function contextWithGlobalApiKey(
-  email: string | null = "operator@example.com",
-  apiKey: string | null = "global-key",
-): ConnectorContext {
-  const values = email && apiKey ? { email, apiKey } : null;
-  return {
-    storage: memoryStorage(),
-    logger: silentLogger,
-    baseUrl: "https://connecta.example",
-    credential: {
-      get: async (field?: string) => (field && values ? (values[field as keyof typeof values] ?? null) : null),
-      getAll: async () => values,
-    },
-  };
-}
-
-interface StubResponse {
-  status?: number;
-  body?: unknown;
-  headers?: Record<string, string>;
-  nonJson?: boolean;
-  text?: string;
-  bytes?: Uint8Array;
-}
-
-let calls: Array<{ url: string; init: RequestInit }>;
-
-function stubFetch(...responses: StubResponse[]): void {
-  const queue = [...responses];
-  globalThis.fetch = vi.fn(async (input: unknown, init: RequestInit = {}) => {
-    calls.push({ url: String(input), init });
-    const next = queue.shift() ?? { status: 200, body: { success: true, result: {} } };
-    const body = next.bytes
-      ? new Blob([next.bytes])
-      : next.nonJson || next.text !== undefined
-        ? (next.text ?? "<html>gateway</html>")
-        : JSON.stringify(next.body ?? {});
-    return new Response(body, {
-      status: next.status ?? 200,
-      headers: next.headers ?? {},
+  it("owns the hosted endpoint, OAuth only, and says execute is always a write", () => {
+    const connector = cloudflare("cf", {
+      purpose: "Estate changes",
+      auth: { type: "oauth" },
+      instructions: "Never touch the apex record.",
     });
-  }) as unknown as typeof fetch;
-}
-
-function urlOf(index = 0): URL {
-  return new URL(calls[index]!.url);
-}
-
-function bodyOf(index = 0): Record<string, unknown> {
-  return JSON.parse(String(calls[index]!.init.body)) as Record<string, unknown>;
-}
-
-const realFetch = globalThis.fetch;
-
-beforeEach(() => {
-  calls = [];
-  mockRemoteMcp(mcpMocks);
-});
-
-afterEach(() => {
-  globalThis.fetch = realFetch;
-});
-
-function connection(options: Record<string, unknown> = {}) {
-  return cloudflare("edge", {
-    surface: "api",
-    purpose: "Production edge and DNS administration",
-    ...options,
-  } as Parameters<typeof cloudflare>[1]);
-}
-
-function toolNamed(tools: ToolDef[], name: string): ToolDef {
-  const tool = tools.find((candidate) => candidate.name === name);
-  if (!tool) throw new Error(`no tool named ${name}`);
-  return tool;
-}
-
-describe("cloudflare() construction", () => {
-  it("rejects an empty account purpose", () => {
-    expect(() => cloudflare("edge", { purpose: "   " })).toThrow("a non-empty purpose");
-  });
-
-  it("rejects a nonsensical concurrency bound", () => {
-    expect(() => cloudflare("edge", { surface: "api", purpose: "ops", maxConcurrency: 0 })).toThrow(
-      "maxConcurrency to be a positive integer.",
-    );
-  });
-
-  it("declares an operator-managed token credential and the documented budget", () => {
-    const connector = connection();
-    expect(connector.kind).toBe("api");
-    expect(connector.title).toBe("Cloudflare");
-    expect(connector.credential?.label).toBe("Cloudflare API token");
-    // The credential guidance names the permissions, so an operator does not
-    // have to guess which token scopes the tools need.
-    expect(connector.credential?.description).toContain("DNS Write");
-    expect(connector.credential?.description).toContain("not a Global API Key");
-    expect(connector.callAdmission).toEqual({
-      rules: [
-        {
-          maxConcurrency: 6,
-          budget: {
-            kind: "rolling-window",
-            maxCalls: 1200,
-            windowMs: 300_000,
-          },
-        },
-      ],
-    });
-  });
-
-  it("binds the explicit MCP interface to Cloudflare's whole-API endpoint", () => {
-    const callAdmission = { rules: [{ maxConcurrency: 2 }] };
-    const connector = connection({ surface: "mcp", callAdmission });
-    expect(mcpMocks.remoteMcp).toHaveBeenCalledWith(
-      "edge",
+    expect(mocks.remoteMcp).toHaveBeenCalledWith(
+      "cf",
       expect.objectContaining({
         url: CLOUDFLARE_MCP_ENDPOINT,
         title: "Cloudflare (MCP)",
         auth: { type: "oauth" },
-        callAdmission,
         requireHttps: true,
       }),
     );
-    expect(connector.kind).toBe("mcp");
-    expect(structuredGuide(connector).content).toContain("search");
-    expect(structuredGuide(connector).content).toContain("classifies `execute` as a write");
-    expect(calls).toEqual([]);
+    const guide = guideOf(connector);
+    for (const text of [
+      "Hosted MCP over OAuth",
+      "A read-only pool therefore gets only `search` here",
+      "configure an API-token connector",
+      "no `graphql_query`",
+      "authorize_connector",
+      "## Account instructions",
+      "Never touch the apex record.",
+    ]) {
+      expect(guide, text).toContain(text);
+    }
+    // The REST connector's mechanics never leak into the OAuth guide.
+    expect(guide).not.toContain("page.param");
+    expect(guide).not.toContain("Global API Key");
+    expect(connectorGuideSummary(connector)).toContain("execute programs always classify as writes");
   });
 
-  it("classifies Cloudflare's two code-mode tools fail-closed", async () => {
-    expect([...CLOUDFLARE_MCP_VETTED_CATALOG.tools.entries()]).toEqual([
-      ["search", { verdict: "read-only" }],
-      ["execute", { verdict: "destructive" }],
-    ]);
-    mcpMocks.listTools.mockResolvedValue([
+  it("INV-11: refuses REST-only options and bearer or credential auth on the hosted path by name", () => {
+    for (const [key, value] of [
+      ["accountId", ACCOUNT],
+      ["zoneId", ZONE],
+      ["pin", { accountIds: [ACCOUNT] }],
+      ["baseUrl", "https://proxy.example"],
+      ["maxConcurrency", 2],
+      ["unpinned", true],
+    ] as const) {
+      expect(() =>
+        cloudflare("cf", {
+          purpose: "Ops",
+          auth: { type: "oauth" },
+          [key]: value,
+        } as never),
+      ).toThrow(`Unknown option: cloudflare("cf").${key}.`);
+    }
+    for (const type of ["headers", "credential", "request", "bearer"]) {
+      expect(() => cloudflare("cf", { purpose: "Ops", auth: { type } } as never)).toThrow(
+        'cloudflare("cf") requires auth.type to be one of "oauth", "apiToken", "globalApiKey".',
+      );
+    }
+    expect(() => cloudflare("cf", { purpose: "Ops", surface: "mcp" } as never)).toThrow("auth.type is required");
+    expect(mocks.remoteMcp).not.toHaveBeenCalled();
+  });
+
+  it("INV-1: keeps execute destructive despite a read claim and fails closed on an unknown tool", async () => {
+    mocks.listTools.mockResolvedValue([
       { name: "search" },
       { name: "execute", annotations: { readOnlyHint: true } },
-      { name: "new-cloudflare-tool" },
+      { name: "list_zones" },
     ]);
-    const tools = await servedTools(connection({ surface: "mcp" }), contextWithToken());
-    expect(tools[0]?.annotations).toEqual({
-      readOnlyHint: true,
-      destructiveHint: false,
-    });
-    expect(tools[1]?.annotations).toEqual({
-      readOnlyHint: false,
-      destructiveHint: true,
-    });
-    expect(tools[2]?.annotations).toEqual({ readOnlyHint: false });
-  });
-
-  it("declares the two fields required by legacy Global API Key authentication", () => {
-    const connector = connection({ authentication: "globalApiKey" });
-    expect(connector.credential).toMatchObject({
-      label: "Cloudflare Global API Key",
-      fields: [
-        { name: "email", inputType: "email" },
-        { name: "apiKey", inputType: "password" },
-      ],
-    });
-    expect(connector.testCredential).toBeUndefined();
-    expect(connector.testCredentials).toBeTypeOf("function");
-  });
-
-  it("rejects a credential shape that cannot supply the selected authentication", () => {
-    expect(() =>
-      connection({
-        authentication: "apiToken",
-        credential: {
-          label: "Wrong shape",
-          fields: [{ name: "apiKey", label: "API key" }],
-        },
-      }),
-    ).toThrow("single-value credential");
-    expect(() =>
-      connection({
-        authentication: "globalApiKey",
-        credential: {
-          label: "Wrong fields",
-          fields: [{ name: "value", label: "One value" }],
-        },
-      }),
-    ).toThrow('fields named "email" and "apiKey"');
-  });
-
-  it("carries a guide covering only what the schemas cannot say", () => {
-    const guide = structuredGuide(connection({ instructions: "Never touch the legacy zone." }));
-    expect(guide.content).toContain("Production edge and DNS administration");
-    expect(guide.content).toContain("list_zones");
-    expect(guide.content).toContain("1,200 calls per five minutes");
-    expect(guide.content).toContain("page.hasMore");
-    expect(guide.content).toContain("## Account instructions");
-    expect(guide.content).toContain("Never touch the legacy zone.");
-    // Real markdown, not a diff hunk: agents read this string verbatim.
-    expect(guide.content).not.toContain("+## Account instructions");
-  });
-
-  it("declares an explicit guide summary rather than leaning on the first line", () => {
-    // H13: the derived summary would be the zone-scoping rule, which varies
-    // per deployment and reads as an instruction rather than a routing fact.
-    const guide = structuredGuide(connection({ zoneId: "zone-1" }));
-    expect(guide.summary).toBeTruthy();
-    expect(guide.summary?.length).toBeLessThanOrEqual(120);
-    expect(guide.summary).not.toContain("zone-1");
-    // Not required: every named schema is complete enough to call on its own.
-    expect(guide.required).toBeUndefined();
-  });
-
-  it("tells the guide which discovery step a default makes unnecessary", () => {
-    const scoped = structuredGuide(connection({ zoneId: "zone-1", accountId: "acct-1" })).content;
-    expect(scoped).toContain("defaults to zone `zone-1`");
-    expect(scoped).toContain("defaults to account `acct-1`");
-    const unscoped = structuredGuide(connection()).content;
-    expect(unscoped).toContain("declares no default zone");
-    expect(unscoped).toContain("declares no default account");
-  });
-});
-
-describe("cloudflare() tool surface", () => {
-  it("leaves R2 metrics and CORS writes to the raw tools", async () => {
-    // #350 measured all three as unprojected wrappers around a path, and
-    // set_r2_cors accepted a rule body it never validated. A removal is only
-    // honest if the capability survives and the guide says where it went, so
-    // this pins the absence, the surviving read, the guide line, and the
-    // approval-gated route an operator now takes instead.
-    const tools = await servedTools(connection(), contextWithToken());
-    const names = tools.map((tool) => tool.name);
-    for (const removed of ["get_r2_metrics", "set_r2_cors", "delete_r2_cors"]) {
-      expect(names, `${removed} is measured out of the named surface`).not.toContain(removed);
-    }
-    expect(names).toContain("get_r2_cors");
-
-    const { content: guide } = connection().usageGuide as { content: string };
-    expect(guide).toContain("/accounts/{accountId}/r2/buckets/{bucketName}/cors");
-    expect(guide).toContain("/accounts/{accountId}/r2/metrics");
-
-    stubFetch({ body: { success: true, result: null } });
-    await connection({ authentication: "globalApiKey" }).callTool(
-      "cloudflare_api_mutate",
-      {
-        method: "PUT",
-        path: "/accounts/acct-1/r2/buckets/assets/cors",
-        body: { rules: [{ allowed: { methods: ["GET"], origins: ["https://a.test"] } }] },
-      },
-      contextWithGlobalApiKey(),
-    );
-    expect(calls[0]!.init.method).toBe("PUT");
-    expect(urlOf(0).pathname).toBe("/client/v4/accounts/acct-1/r2/buckets/assets/cors");
-  });
-
-  it("names no tool over Cloudflare's deprecated bulk zone-settings read", async () => {
-    // #361: Cloudflare publishes GET /zones/{zone_id}/settings as deprecated
-    // and offers no bulk replacement, so the read the tool wrapped is now only
-    // reachable by a caller who names it. Pin the absence, the supported
-    // per-setting route that survives, the guide line that says where the
-    // capability went, and — the part a rename would quietly break — that no
-    // surviving schema still points an agent at a tool that is gone.
-    const tools = await servedTools(connection(), contextWithToken());
-    const names = tools.map((tool) => tool.name);
-    expect(names).not.toContain("list_zone_settings");
-    expect(names).toContain("get_zone_setting");
-    for (const tool of tools) {
-      expect(JSON.stringify(tool), `${tool.name} still refers an agent to list_zone_settings`).not.toContain(
-        "list_zone_settings",
-      );
-    }
-
-    const { content: guide } = connection().usageGuide as { content: string };
-    expect(guide).toContain("/zones/{zoneId}/settings");
-
-    stubFetch({ body: { success: true, result: { id: "ssl", value: "full" } } });
-    await connection().callTool("get_zone_setting", { zoneId: "zone-1", settingId: "ssl" }, contextWithToken());
-    expect(urlOf(0).pathname).toBe("/client/v4/zones/zone-1/settings/ssl");
-  });
-
-  it("hand-writes a complete schema for every tool", async () => {
-    const tools = await servedTools(connection(), contextWithToken());
-    for (const tool of tools) {
-      const input = tool.inputSchema as Record<string, unknown>;
-      expect(tool.description, `${tool.name} needs a description`).toBeTruthy();
-      expect(input, `${tool.name} needs an inputSchema`).toBeTruthy();
-      expect(input["type"]).toBe("object");
-      // The anti-`arguments?: {}[]` mandate: a closed object with a declared
-      // required list, so a compact schema alone tells an agent what to send.
-      expect(input["additionalProperties"], tool.name).toBe(false);
-      expect(Array.isArray(input["required"]), tool.name).toBe(true);
-      expect(tool.outputSchema, `${tool.name} needs an outputSchema`).toBeTruthy();
-      const output = tool.outputSchema as Record<string, unknown>;
-      if (!tool.name.startsWith("cloudflare_api_")) {
-        expect(
-          Object.keys((output["properties"] ?? {}) as Record<string, unknown>),
-          `${tool.name} needs useful output keys`,
-        ).not.toHaveLength(0);
-      }
-      const properties = input["properties"] as Record<string, unknown>;
-      for (const key of input["required"] as string[]) {
-        expect(properties, `${tool.name}.${key} is required but undeclared`).toHaveProperty(key);
-      }
-      // The guide claims "a description on every property"; assert it so the
-      // claim cannot rot into a half-truth the next time a field is added.
-      for (const [key, value] of Object.entries(properties)) {
-        const property = value as Record<string, unknown>;
-        expect(property["type"], `${tool.name}.${key} needs a type`).toBeTruthy();
-        expect(property["description"], `${tool.name}.${key} needs a description`).toBeTruthy();
-      }
-    }
-  });
-
-  it("requires a scope argument only when the deployment declares no default", async () => {
-    const unscoped = await servedTools(connection(), contextWithToken());
-    expect((toolNamed(unscoped, "list_dns_records").inputSchema as Record<string, unknown>)["required"]).toEqual([
-      "zoneId",
-    ]);
-    expect((toolNamed(unscoped, "get_dns_record").inputSchema as Record<string, unknown>)["required"]).toEqual([
-      "zoneId",
-      "recordId",
-    ]);
-
-    const scoped = await servedTools(connection({ zoneId: "zone-1" }), contextWithToken());
-    expect((toolNamed(scoped, "list_dns_records").inputSchema as Record<string, unknown>)["required"]).toEqual([]);
-    expect((toolNamed(scoped, "get_dns_record").inputSchema as Record<string, unknown>)["required"]).toEqual([
-      "recordId",
+    const tools = await servedTools(cloudflare("cf", { purpose: "Ops", auth: { type: "oauth" } }));
+    expect(tools.map((tool) => [tool.name, tool.annotations])).toEqual([
+      ["search", { readOnlyHint: true, destructiveHint: false }],
+      ["execute", { readOnlyHint: false, destructiveHint: true }],
+      ["list_zones", { readOnlyHint: false }],
     ]);
   });
 });
 
-describe("cloudflare() request building", () => {
-  it("uses the user email and Global API Key headers when selected", async () => {
-    stubFetch({ body: { success: true, result: [] } });
-    await connection({ authentication: "globalApiKey" }).callTool("list_zones", {}, contextWithGlobalApiKey());
-    expect(calls[0]!.init.headers).toMatchObject({
-      "X-Auth-Email": "operator@example.com",
-      "X-Auth-Key": "global-key",
+interface Sent {
+  url: URL;
+  method: string;
+  headers: Headers;
+  body: BodyInit | null | undefined;
+}
+
+describe("cloudflare() over a key", () => {
+  let sent: Sent[];
+  let respond: (request: Sent) => Response;
+  const realFetch = globalThis.fetch;
+
+  const envelope = (result: unknown, extra: Record<string, unknown> = {}) =>
+    Response.json({
+      success: true,
+      errors: [],
+      messages: [],
+      result,
+      ...extra,
     });
-    expect(calls[0]!.init.headers).not.toHaveProperty("Authorization");
+
+  beforeEach(() => {
+    mockRemoteMcp(mocks);
+    sent = [];
+    respond = () => envelope([]);
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request: Sent = {
+        url: new URL(String(input)),
+        method: init?.method ?? "GET",
+        headers: new Headers(init?.headers),
+        body: init?.body,
+      };
+      sent.push(request);
+      return respond(request);
+    }) as typeof fetch;
   });
 
-  it("keeps arbitrary GET access read-only while forwarding query pairs", async () => {
-    stubFetch({
-      body: {
-        success: true,
-        result: [{ id: "image-1" }],
-        result_info: { page: 2 },
-      },
-    });
-    const result = await connection().callTool(
-      "cloudflare_api_get",
-      {
-        path: "/accounts/acct-1/images/v1",
-        query: [
-          { name: "page", value: 2 },
-          { name: "per_page", value: 50 },
-        ],
-      },
-      contextWithToken(),
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  const token = (value = "cf-token-123"): ConnectorContext => ({
+    ...connectorContext(),
+    credential: { get: async () => value, getAll: async () => ({ value }) },
+  });
+  const globalKey = (): ConnectorContext => ({
+    ...connectorContext(),
+    credential: {
+      get: async (field?: string) => (field === "email" ? "ops@example.com" : field === "apiKey" ? "gk-1" : null),
+      getAll: async () => ({ email: "ops@example.com", apiKey: "gk-1" }),
+    },
+  });
+
+  async function refusal(promise: Promise<unknown>): Promise<ConnectorCallError> {
+    const error = await promise.then(
+      () => undefined,
+      (caught: unknown) => caught,
     );
-    expect(calls[0]!.init.method).toBe("GET");
-    expect(urlOf().pathname).toBe("/client/v4/accounts/acct-1/images/v1");
-    expect(urlOf().searchParams.get("page")).toBe("2");
-    expect(result).toEqual({
-      result: [{ id: "image-1" }],
-      resultInfo: { page: 2 },
-    });
-  });
-
-  it("returns text and binary GET bodies without forcing a JSON envelope", async () => {
-    stubFetch(
-      {
-        text: "export default { fetch() {} }",
-        headers: { "content-type": "application/javascript", etag: "abc" },
-      },
-      {
-        bytes: new Uint8Array([0, 1, 2, 255]),
-        headers: { "content-type": "application/octet-stream" },
-      },
-    );
-    const connector = connection();
-    await expect(
-      connector.callTool(
-        "cloudflare_api_get",
-        {
-          path: "/accounts/acct-1/workers/scripts/site/content",
-          responseType: "text",
-        },
-        contextWithToken(),
-      ),
-    ).resolves.toEqual({
-      contentType: "application/javascript",
-      etag: "abc",
-      text: "export default { fetch() {} }",
-    });
-    await expect(
-      connector.callTool(
-        "cloudflare_api_get",
-        {
-          path: "/accounts/acct-1/r2/buckets/assets/objects/logo.bin",
-          responseType: "base64",
-        },
-        contextWithToken(),
-      ),
-    ).resolves.toEqual({
-      contentType: "application/octet-stream",
-      base64: "AAEC/w==",
-    });
-  });
-
-  it("sends JSON mutations through the approval-gated raw API tool", async () => {
-    stubFetch({ body: { success: true, result: { enabled: true } } });
-    await connection({ authentication: "globalApiKey" }).callTool(
-      "cloudflare_api_mutate",
-      {
-        method: "PUT",
-        path: "/zones/zone-1/email/routing/rules/rule-1",
-        body: { enabled: true },
-      },
-      contextWithGlobalApiKey(),
-    );
-    expect(calls[0]!.init.method).toBe("PUT");
-    expect(bodyOf()).toEqual({ enabled: true });
-  });
-
-  it("preserves non-envelope JSON from endpoints such as GraphQL", async () => {
-    stubFetch({ body: { data: { viewer: { zones: [{ zoneTag: "zone-1" }] } } } });
-    await expect(
-      connection({ authentication: "globalApiKey" }).callTool(
-        "cloudflare_api_mutate",
-        {
-          method: "POST",
-          path: "/graphql",
-          body: { query: "query { viewer { zones { zoneTag } } }" },
-        },
-        contextWithGlobalApiKey(),
-      ),
-    ).resolves.toEqual({
-      result: { data: { viewer: { zones: [{ zoneTag: "zone-1" }] } } },
-    });
-  });
-
-  it("uploads raw content without JSON encoding it", async () => {
-    stubFetch({ body: { success: true, result: { key: "config.json" } } });
-    await connection().callTool(
-      "cloudflare_api_upload",
-      {
-        method: "PUT",
-        path: "/accounts/acct-1/r2/buckets/assets/objects/config.json",
-        contentType: "application/json",
-        textBody: '{"enabled":true}',
-      },
-      contextWithToken(),
-    );
-    expect(calls[0]!.init.method).toBe("PUT");
-    expect(calls[0]!.init.body).toBe('{"enabled":true}');
-    expect(calls[0]!.init.headers).toMatchObject({
-      "Content-Type": "application/json",
-    });
-  });
-
-  it("builds multipart uploads without overriding fetch's boundary", async () => {
-    stubFetch({ body: { success: true, result: { id: "worker-version" } } });
-    await connection().callTool(
-      "cloudflare_api_upload",
-      {
-        method: "PUT",
-        path: "/accounts/acct-1/workers/scripts/site",
-        fields: [
-          {
-            name: "metadata",
-            value: '{"main_module":"worker.js"}',
-            contentType: "application/json",
-            fileName: "metadata.json",
-          },
-        ],
-        files: [
-          {
-            name: "worker.js",
-            fileName: "worker.js",
-            contentType: "application/javascript+module",
-            text: "export default { fetch() {} }",
-          },
-        ],
-      },
-      contextWithToken(),
-    );
-    const form = calls[0]!.init.body as FormData;
-    expect(form).toBeInstanceOf(FormData);
-    const metadata = form.get("metadata") as File;
-    expect(metadata.name).toBe("metadata.json");
-    expect(metadata.type).toBe("application/json");
-    expect(await metadata.text()).toBe('{"main_module":"worker.js"}');
-    const file = form.get("worker.js") as File;
-    expect(file.name).toBe("worker.js");
-    expect(file.type).toBe("application/javascript+module");
-    expect(await file.text()).toBe("export default { fetch() {} }");
-    expect(calls[0]!.init.headers).not.toHaveProperty("Content-Type");
-  });
-
-  it("refuses absolute, traversal, and query-bearing raw API paths locally", async () => {
-    const connector = connection();
-    for (const path of [
-      "https://example.com/steal",
-      "//example.com/steal",
-      "/accounts/../user/tokens",
-      "/%2e%2e/user",
-      "/accounts/acct-1/%252e%252e/user",
-      "/accounts/acct-1/%2fuser",
-      "/accounts\\..\\..\\user",
-      "/accounts/acct-1/images/v1?page=2",
-    ]) {
-      await expect(connector.callTool("cloudflare_api_get", { path }, contextWithToken())).rejects.toBeInstanceOf(
-        ConnectorCallError,
-      );
-    }
-    expect(calls).toHaveLength(0);
-  });
-
-  it("sends endpoint-specific raw headers but keeps authentication connector-owned", async () => {
-    stubFetch({ body: { success: true, result: [] } });
-    const connector = connection();
-    await connector.callTool(
-      "cloudflare_api_get",
-      {
-        path: "/accounts/acct-1/r2/buckets",
-        headers: [{ name: "cf-r2-jurisdiction", value: "eu" }],
-      },
-      contextWithToken(),
-    );
-    expect(calls[0]!.init.headers).toMatchObject({
-      Authorization: `Bearer ${TOKEN}`,
-      "cf-r2-jurisdiction": "eu",
-    });
-
-    await expect(
-      connector.callTool(
-        "cloudflare_api_get",
-        {
-          path: "/user/tokens/verify",
-          headers: [{ name: "Authorization", value: "Bearer attacker" }],
-        },
-        contextWithToken(),
-      ),
-    ).rejects.toBeInstanceOf(ConnectorCallError);
-    expect(calls).toHaveLength(1);
-
-    await expect(
-      connection({ authentication: "globalApiKey" }).callTool(
-        "cloudflare_api_get",
-        {
-          path: "/user",
-          headers: [{ name: "X-Auth-Key", value: "attacker" }],
-        },
-        contextWithGlobalApiKey(),
-      ),
-    ).rejects.toBeInstanceOf(ConnectorCallError);
-    expect(calls).toHaveLength(1);
-  });
-
-  it("paginates zone rulesets with opaque cursors", async () => {
-    stubFetch({
-      body: {
-        success: true,
-        result: [{ id: "ruleset-1", name: "transform" }],
-        result_info: { cursors: { after: "NEXT" } },
-      },
-    });
-    const result = await connection().callTool(
-      "list_zone_rulesets",
-      { zoneId: "zone-1", perPage: 25, cursor: "CURRENT" },
-      contextWithToken(),
-    );
-    expect(urlOf().searchParams.get("per_page")).toBe("25");
-    expect(urlOf().searchParams.get("cursor")).toBe("CURRENT");
-    expect(result).toMatchObject({
-      rulesets: [{ id: "ruleset-1", name: "transform" }],
-      nextCursor: "NEXT",
-    });
-  });
-
-  it("authenticates with a bearer token against the documented v4 base", async () => {
-    stubFetch({
-      body: { success: true, result: { id: "tok", status: "active" } },
-    });
-    const result = await connection().callTool("verify_api_token", {}, contextWithToken());
-    expect(urlOf().toString()).toBe(`${CLOUDFLARE_API_BASE}/user/tokens/verify`);
-    const headers = calls[0]!.init.headers as Record<string, string>;
-    expect(headers["Authorization"]).toBe(`Bearer ${TOKEN}`);
-    expect(result).toEqual({ id: "tok", status: "active" });
-  });
-
-  it("maps camelCase arguments onto Cloudflare's snake_case query", async () => {
-    stubFetch({ body: { success: true, result: [], result_info: {} } });
-    await connection().callTool(
-      "list_dns_records",
-      {
-        zoneId: "zone-1",
-        name: "www.example.com",
-        type: "A",
-        perPage: 50,
-        page: 2,
-        direction: "desc",
-      },
-      contextWithToken(),
-    );
-    const url = urlOf();
-    expect(url.pathname).toBe("/client/v4/zones/zone-1/dns_records");
-    expect(url.searchParams.get("name")).toBe("www.example.com");
-    expect(url.searchParams.get("type")).toBe("A");
-    expect(url.searchParams.get("per_page")).toBe("50");
-    expect(url.searchParams.get("page")).toBe("2");
-    expect(url.searchParams.get("direction")).toBe("desc");
-  });
-
-  it("falls back to the configured zone and account defaults", async () => {
-    stubFetch({ body: { success: true, result: [] } }, { body: { success: true, result: [] } });
-    const connector = connection({ zoneId: "zone-9", accountId: "acct-9" });
-    await connector.callTool("list_dns_records", {}, contextWithToken());
-    await connector.callTool("list_kv_namespaces", {}, contextWithToken());
-    expect(urlOf(0).pathname).toBe("/client/v4/zones/zone-9/dns_records");
-    expect(urlOf(1).pathname).toBe("/client/v4/accounts/acct-9/storage/kv/namespaces");
-  });
-
-  it("never narrows zone discovery to the configured account", async () => {
-    stubFetch({ body: { success: true, result: [] } }, { body: { success: true, result: [] } });
-    const connector = connection({ accountId: "acct-9" });
-    // list_zones is how an agent finds a zone at all. A configured account is
-    // a default for the tools that need one, not a filter on discovery — the
-    // property says "defaults to every account the token can see" and there
-    // would be no argument that escapes a silent narrowing.
-    await connector.callTool("list_zones", {}, contextWithToken());
-    expect(urlOf(0).searchParams.has("account.id")).toBe(false);
-    // An explicit argument still filters.
-    await connector.callTool("list_zones", { accountId: "acct-other" }, contextWithToken());
-    expect(urlOf(1).searchParams.get("account.id")).toBe("acct-other");
-  });
-
-  it("lets a call override the configured default", async () => {
-    stubFetch({ body: { success: true, result: [] } });
-    await connection({ zoneId: "zone-9" }).callTool("list_dns_records", { zoneId: "zone-other" }, contextWithToken());
-    expect(urlOf().pathname).toBe("/client/v4/zones/zone-other/dns_records");
-  });
-
-  it("honors a base URL override for a proxy or test double", async () => {
-    stubFetch({ body: { success: true, result: {} } });
-    await connection({ baseUrl: "https://cf.proxy.internal/v4/" }).callTool("verify_api_token", {}, contextWithToken());
-    expect(urlOf().toString()).toBe("https://cf.proxy.internal/v4/user/tokens/verify");
-  });
-});
-
-describe("cloudflare() projections", () => {
-  it("preserves new ruleset and Worker settings fields in bounded results", async () => {
-    stubFetch(
-      {
-        body: {
-          success: true,
-          result: {
-            id: "ruleset-1",
-            name: "origin controls",
-            rules: [
-              {
-                id: "rule-1",
-                action_parameters: { origin_range_requests: { mode: "on" } },
-              },
-            ],
-          },
-        },
-      },
-      {
-        body: {
-          success: true,
-          result: {
-            compatibility_date: "2026-08-30",
-            bindings: [
-              {
-                type: "vpc_network",
-                name: "NETWORK",
-                network_id: "cf1:network",
-                identity: "runtime-email-alpha",
-              },
-            ],
-            observability: {
-              enabled: true,
-              redact_query_string: false,
-              traces: { propagation_policy: null },
-            },
-          },
-        },
-      },
-      {
-        body: {
-          success: true,
-          result: [
-            {
-              id: "worker-a",
-              observability: {
-                redact_query_string: false,
-                traces: { propagation_policy: null },
-              },
-            },
-          ],
-        },
-      },
-    );
-    const connector = connection();
-    const ruleset = await connector.callTool(
-      "get_zone_ruleset",
-      { zoneId: "zone-1", rulesetId: "ruleset-1" },
-      contextWithToken(),
-    );
-    expect((ruleset as any).rules[0].action_parameters.origin_range_requests).toEqual({
-      mode: "on",
-    });
-
-    const settings = await connector.callTool(
-      "get_worker_settings",
-      { accountId: "acct-1", scriptName: "worker-a" },
-      contextWithToken(),
-    );
-    expect((settings as any).bindings[0].identity).toBe("runtime-email-alpha");
-    expect((settings as any).observability).toEqual({
-      enabled: true,
-      redact_query_string: false,
-      traces: { propagation_policy: null },
-    });
-
-    const raw = await connector.callTool("list_worker_scripts", { accountId: "acct-1", raw: true }, contextWithToken());
-    expect((raw as any).scripts[0].observability.traces.propagation_policy).toBeNull();
-  });
-
-  it("declares and returns the R2 CORS rule collection", async () => {
-    stubFetch({
-      body: {
-        success: true,
-        result: {
-          rules: [
-            {
-              id: "browser",
-              allowed: { methods: ["GET"], origins: ["https://example.com"] },
-            },
-          ],
-        },
-      },
-    });
-    const result = await connection().callTool(
-      "get_r2_cors",
-      { accountId: "acct-1", bucketName: "assets" },
-      contextWithToken(),
-    );
-    expect(result).toEqual({
-      rules: [
-        {
-          id: "browser",
-          allowed: { methods: ["GET"], origins: ["https://example.com"] },
-        },
-      ],
-    });
-  });
-
-  it("unwraps the zone envelope and surfaces pagination", async () => {
-    stubFetch({
-      body: {
-        success: true,
-        errors: [],
-        messages: [],
-        result: [
-          {
-            id: "zone-1",
-            name: "example.com",
-            status: "active",
-            paused: false,
-            type: "full",
-            account: { id: "acct-1", name: "Example Inc" },
-            plan: { id: "plan-1", name: "Pro", price: 20, currency: "usd" },
-            name_servers: ["ns1.cloudflare.com", "ns2.cloudflare.com"],
-            created_on: "2024-01-01T00:00:00Z",
-            modified_on: "2024-02-01T00:00:00Z",
-            owner: { id: "own-1", email: "noise@example.com" },
-            meta: { step: 2, custom_certificate_quota: 0 },
-            permissions: ["#zone:read", "#zone:edit"],
-          },
-        ],
-        result_info: {
-          page: 1,
-          per_page: 20,
-          count: 1,
-          total_count: 45,
-          total_pages: 3,
-        },
-      },
-    });
-    const result = (await connection().callTool("list_zones", {}, contextWithToken())) as {
-      zones: Array<Record<string, unknown>>;
-      page: Record<string, unknown>;
-    };
-
-    expect(result.zones[0]).toEqual({
-      id: "zone-1",
-      name: "example.com",
-      status: "active",
-      paused: false,
-      type: "full",
-      accountId: "acct-1",
-      accountName: "Example Inc",
-      plan: "Pro",
-      nameServers: ["ns1.cloudflare.com", "ns2.cloudflare.com"],
-      createdOn: "2024-01-01T00:00:00Z",
-      modifiedOn: "2024-02-01T00:00:00Z",
-    });
-    // Noise Cloudflare returns and an agent never needs.
-    expect(result.zones[0]).not.toHaveProperty("permissions");
-    expect(result.zones[0]).not.toHaveProperty("meta");
-    expect(result.zones[0]).not.toHaveProperty("owner");
-    expect(result.page).toEqual({
-      page: 1,
-      perPage: 20,
-      count: 1,
-      totalCount: 45,
-      totalPages: 3,
-      hasMore: true,
-    });
-  });
-
-  it("reports the last page as complete", async () => {
-    stubFetch({
-      body: {
-        success: true,
-        result: [],
-        result_info: {
-          page: 3,
-          per_page: 20,
-          count: 5,
-          total_count: 45,
-          total_pages: 3,
-        },
-      },
-    });
-    const result = (await connection().callTool("list_zones", {}, contextWithToken())) as {
-      page: { hasMore: boolean };
-    };
-    expect(result.page.hasMore).toBe(false);
-  });
-
-  it("projects DNS records and drops the fields agents never use", async () => {
-    stubFetch({
-      body: {
-        success: true,
-        result: [
-          {
-            id: "rec-1",
-            zone_id: "zone-1",
-            zone_name: "example.com",
-            name: "www.example.com",
-            type: "A",
-            content: "203.0.113.10",
-            proxiable: true,
-            proxied: true,
-            ttl: 1,
-            comment: "apex alias",
-            tags: [],
-            created_on: "2024-01-01T00:00:00Z",
-            modified_on: "2024-01-02T00:00:00Z",
-            meta: { auto_added: false, source: "primary" },
-            settings: {},
-          },
-        ],
-        result_info: { page: 1, per_page: 100, count: 1, total_count: 1, total_pages: 1 },
-      },
-    });
-    const result = (await connection().callTool("list_dns_records", { zoneId: "zone-1" }, contextWithToken())) as {
-      records: Array<Record<string, unknown>>;
-    };
-    expect(result.records[0]).toEqual({
-      id: "rec-1",
-      name: "www.example.com",
-      type: "A",
-      content: "203.0.113.10",
-      ttl: 1,
-      proxied: true,
-      comment: "apex alias",
-      createdOn: "2024-01-01T00:00:00Z",
-      modifiedOn: "2024-01-02T00:00:00Z",
-    });
-    // An empty tag array is noise, not information.
-    expect(result.records[0]).not.toHaveProperty("tags");
-    expect(result.records[0]).not.toHaveProperty("meta");
-    expect(result.records[0]).not.toHaveProperty("zone_name");
-  });
-
-  it("offers a raw escape hatch that skips the projection", async () => {
-    stubFetch({
-      body: {
-        success: true,
-        result: [{ id: "rec-1", meta: { source: "primary" } }],
-        result_info: { page: 1, per_page: 100, count: 1, total_count: 1, total_pages: 1 },
-      },
-    });
-    const result = (await connection().callTool(
-      "list_dns_records",
-      { zoneId: "zone-1", raw: true },
-      contextWithToken(),
-    )) as { records: Array<Record<string, unknown>> };
-    expect(result.records[0]).toEqual({ id: "rec-1", meta: { source: "primary" } });
-  });
-
-  it("unwraps R2's nested bucket list", async () => {
-    stubFetch({
-      body: {
-        success: true,
-        result: {
-          buckets: [
-            {
-              name: "assets",
-              creation_date: "2024-03-01T00:00:00Z",
-              location: "wnam",
-              storage_class: "Standard",
-            },
-          ],
-        },
-      },
-    });
-    const result = (await connection().callTool("list_r2_buckets", { accountId: "acct-1" }, contextWithToken())) as {
-      buckets: Array<Record<string, unknown>>;
-    };
-    expect(result.buckets).toEqual([
-      {
-        name: "assets",
-        location: "wnam",
-        storageClass: "Standard",
-        creationDate: "2024-03-01T00:00:00Z",
-      },
-    ]);
-  });
-
-  it("carries R2's cursor forward instead of a page object", async () => {
-    stubFetch({
-      body: {
-        success: true,
-        result: { buckets: [{ name: "assets" }] },
-        // R2's result_info carries a cursor and no page counters at all, so
-        // the tool returns nextCursor and omits `page` entirely.
-        result_info: { cursor: "CUR" },
-      },
-    });
-    const result = (await connection().callTool(
-      "list_r2_buckets",
-      { accountId: "acct-1" },
-      contextWithToken(),
-    )) as Record<string, unknown>;
-    expect(result["nextCursor"]).toBe("CUR");
-    expect(result).not.toHaveProperty("page");
-
-    // An exhausted listing drops the cursor, which is the stop condition.
-    stubFetch({
-      body: {
-        success: true,
-        result: { buckets: [] },
-        result_info: { cursor: "" },
-      },
-    });
-    const last = (await connection().callTool(
-      "list_r2_buckets",
-      { accountId: "acct-1", cursor: "CUR" },
-      contextWithToken(),
-    )) as Record<string, unknown>;
-    expect(last).not.toHaveProperty("nextCursor");
-  });
-
-  it("flattens a Pages project's latest deployment", async () => {
-    stubFetch({
-      body: {
-        success: true,
-        result: [
-          {
-            name: "marketing",
-            subdomain: "marketing.pages.dev",
-            domains: ["example.com"],
-            production_branch: "main",
-            created_on: "2024-01-01T00:00:00Z",
-            latest_deployment: {
-              id: "dep-1",
-              environment: "production",
-              url: "https://dep-1.marketing.pages.dev",
-              created_on: "2024-05-01T00:00:00Z",
-              build_config: { build_command: "npm run build" },
-            },
-          },
-        ],
-      },
-    });
-    const result = (await connection().callTool(
-      "list_pages_projects",
-      { accountId: "acct-1" },
-      contextWithToken(),
-    )) as { projects: Array<Record<string, unknown>> };
-    expect(result.projects[0]!["latestDeployment"]).toEqual({
-      id: "dep-1",
-      environment: "production",
-      url: "https://dep-1.marketing.pages.dev",
-      createdOn: "2024-05-01T00:00:00Z",
-    });
-  });
-
-  it("omits pagination for an endpoint that reports none", async () => {
-    stubFetch({ body: { success: true, result: [{ id: "worker-a" }] } });
-    const result = (await connection().callTool(
-      "list_worker_scripts",
-      { accountId: "acct-1" },
-      contextWithToken(),
-    )) as { scripts: unknown[]; page?: unknown };
-    expect(result.scripts).toEqual([{ id: "worker-a", createdOn: undefined, modifiedOn: undefined }]);
-    expect(result.page).toBeUndefined();
-  });
-});
-
-describe("cloudflare() typed failures", () => {
-  const cases: Array<[string, () => Promise<void>]> = [];
-  const caseOf = (name: string, run: () => Promise<void>) => {
-    cases.push([name, run]);
-  };
-
-  async function failure(
-    stub: StubResponse,
-    tool = "list_zones",
-    args: Record<string, unknown> = {},
-  ): Promise<ConnectorCallError> {
-    stubFetch(stub);
-    try {
-      await connection().callTool(tool, args, contextWithToken());
-    } catch (error) {
-      return error as ConnectorCallError;
-    }
-    throw new Error("expected a failure");
+    expect(error).toBeInstanceOf(ConnectorCallError);
+    return error as ConnectorCallError;
   }
 
-  caseOf("routes a missing token to auth_required before any request", async () => {
-    stubFetch({ body: { success: true, result: [] } });
-    await expect(connection().callTool("list_zones", {}, contextWithToken(null))).rejects.toMatchObject({
-      code: "auth_required",
-      retryable: false,
-    });
-    expect(calls).toHaveLength(0);
-  });
-
-  caseOf("routes an incomplete Global API Key pair to auth_required before any request", async () => {
-    stubFetch({ body: { success: true, result: [] } });
-    await expect(
-      connection({ authentication: "globalApiKey" }).callTool("list_zones", {}, contextWithGlobalApiKey(null, null)),
-    ).rejects.toMatchObject({ code: "auth_required", retryable: false });
-    expect(calls).toHaveLength(0);
-  });
-
-  caseOf("routes an invalid token to auth_required and walks the error chain", async () => {
-    // Cloudflare answers an unusable token with 401 on resource endpoints and
-    // nests the real reason in error_chain, so the chain must be flattened for
-    // the agent to see anything actionable.
-    const chained = await failure({
-      status: 401,
-      body: {
-        success: false,
-        errors: [
-          {
-            code: 10000,
-            message: "Authentication error",
-            error_chain: [{ code: 6111, message: "Invalid API Token" }],
-          },
-        ],
-        result: null,
+  it("builds Connecta's REST connector with an operator credential, admission, and its tool set", async () => {
+    const connector = cloudflare("cf", { ...TOKEN, maxResultBytes: 30_000 });
+    expect(mocks.remoteMcp).not.toHaveBeenCalled();
+    expect(connector).toMatchObject({
+      kind: "api",
+      title: "Cloudflare",
+      maxResultBytes: 30_000,
+      credential: { label: "Cloudflare API token" },
+      callAdmission: {
+        rules: [{ maxConcurrency: 6, budget: { maxCalls: 1200, windowMs: 300_000 } }],
       },
     });
-    expect(chained.code).toBe("auth_required");
-    expect(chained.retryable).toBe(false);
-    expect(chained.message).toContain("10000");
-    expect(chained.message).toContain("Invalid API Token");
-  });
-
-  caseOf("reads a credential-shaped 400 as auth, not as repairable arguments", async () => {
-    // 6003 "Invalid request headers" arrives on HTTP 400, so status alone
-    // would tell the agent to fix its arguments when the token is malformed.
-    const error = await failure({
-      status: 400,
-      body: {
-        success: false,
-        errors: [
-          {
-            code: 6003,
-            message: "Invalid request headers",
-            error_chain: [{ code: 6111, message: "Invalid format for Authorization header" }],
-          },
-        ],
-        result: null,
+    expect(connector.testCredential).toBeInstanceOf(Function);
+    expect(connector.describe?.()).toMatchObject({
+      source: { kind: "api", provider: "cloudflare" },
+    });
+    expect((await connector.listTools(token())).map((tool) => tool.name)).toEqual([
+      "cloudflare_api_search",
+      "cloudflare_api_details",
+      "cloudflare_api_read",
+      "cloudflare_api_write",
+      "verify_credential",
+      "list_accounts",
+      "list_zones",
+      "graphql_query",
+      "cloudflare_api_upload",
+    ]);
+    const global = cloudflare("legacy", { ...GLOBAL, maxConcurrency: 2 });
+    expect(global).toMatchObject({
+      title: "Cloudflare (Global API Key)",
+      credential: {
+        label: "Cloudflare Global API Key",
+        fields: [{ name: "email" }, { name: "apiKey" }],
       },
+      callAdmission: { rules: [{ maxConcurrency: 2 }] },
     });
-    expect(error.code).toBe("auth_required");
-    expect(error.retryable).toBe(false);
+    expect(global.testCredentials).toBeInstanceOf(Function);
+    expect(sent).toEqual([]);
   });
 
-  caseOf("does not read the overloaded 10000 code as an auth failure on its own", async () => {
-    // Cloudflare reuses 10000 as a generic validation code. On a 400 it means
-    // the arguments are wrong; treating it as auth would strand the agent.
-    const error = await failure({
-      status: 400,
-      body: {
-        success: false,
-        errors: [{ code: 10000, message: "Invalid pagination cursor" }],
-        result: null,
-      },
-    });
-    expect(error.code).toBe("invalid_args");
-  });
-
-  caseOf("keeps a typed invalid-token 403 on credential recovery", async () => {
-    const error = await failure({
-      status: 403,
-      body: { success: false, errors: [{ code: 6111, message: "Invalid API Token" }], result: null },
-    });
-    expect(error).toMatchObject({ code: "auth_required", retryable: false });
-  });
-
-  caseOf("INV-6: treats an insufficient-permission 403 as provider_permission_denied", async () => {
-    const error = await failure({
-      status: 403,
-      body: {
-        success: false,
-        errors: [{ code: 9109, message: "Unauthorized to access requested resource" }],
-        result: null,
-      },
-    });
-    expect(error.code).toBe("provider_permission_denied");
-    expect(error.retryable).toBe(false);
-    expect(error.message).toContain("permission");
-  });
-
-  caseOf("maps a 429 to rate_limited and honors retry-after", async () => {
-    const withHeader = await failure({
-      status: 429,
-      headers: { "retry-after": "42" },
-      body: { success: false, errors: [{ code: 10000, message: "rate limited" }] },
-    });
-    expect(withHeader.code).toBe("rate_limited");
-    expect(withHeader.retryable).toBe(true);
-    expect(withHeader.retryAfterMs).toBe(42_000);
-
-    const withoutHeader = await failure({
-      status: 429,
-      body: { success: false, errors: [] },
-    });
-    // Cloudflare blocks the rest of the five-minute window, so that is the
-    // honest fallback rather than an optimistic guess.
-    expect(withoutHeader.retryAfterMs).toBe(300_000);
-  });
-
-  caseOf("maps a duplicate-record rejection to invalid_args", async () => {
-    const error = await failure(
-      {
-        status: 400,
-        body: {
-          success: false,
-          errors: [{ code: 81057, message: "Record already exists." }],
-          result: null,
-        },
-      },
-      "list_dns_records",
-      { zoneId: "zone-1" },
+  it("INV-11: requires a pin or unpinned: true for a Global API Key and refuses malformed pins", () => {
+    expect(() => cloudflare("cf", { purpose: "Ops", auth: { type: "globalApiKey" } })).toThrow(
+      'cloudflare("cf") requires pin: { accountIds, zoneIds } with globalApiKey auth, or unpinned: true',
     );
-    expect(error.code).toBe("invalid_args");
-    expect(error.retryable).toBe(false);
-    expect(error.message).toContain("81057");
+    expect(() => cloudflare("cf", { ...GLOBAL, unpinned: true })).toThrow("takes pin or unpinned: true, not both");
+    expect(() =>
+      cloudflare("cf", {
+        purpose: "Ops",
+        auth: { type: "globalApiKey" },
+        unpinned: false,
+      } as never),
+    ).toThrow("unpinned to be true");
+    expect(() =>
+      cloudflare("cf", {
+        purpose: "Ops",
+        auth: { type: "globalApiKey" },
+        unpinned: true,
+      }),
+    ).not.toThrow();
+    expect(() => cloudflare("cf", { ...TOKEN, pin: {} })).toThrow("pin names accountIds, zoneIds, or both");
+    expect(() => cloudflare("cf", { ...TOKEN, pin: { zoneIds: [] } })).toThrow("pin.zoneIds to be a non-empty list");
+    expect(() =>
+      cloudflare("cf", {
+        ...TOKEN,
+        pin: { accountIds: [ACCOUNT] },
+        accountId: OTHER_ACCOUNT,
+      }),
+    ).toThrow("outside its pin");
+    expect(() => cloudflare("cf", { ...TOKEN, zoneId: "a/b" })).toThrow("zoneId to be a Cloudflare id");
+    expect(() => cloudflare("cf", { ...TOKEN, maxConcurrency: 0 })).toThrow(
+      /maxConcurrency (must|to) be a positive integer/,
+    );
+    expect(() => cloudflare("cf", { ...TOKEN, purpose: " " })).toThrow("a non-empty purpose");
   });
 
-  caseOf("maps an unknown identifier to not_found, naming the fix", async () => {
-    // Cloudflare refuses a token that may not touch a resource with 401 or
-    // 403, so a 404 here is an absence rather than a permission gap wearing a
-    // miss — the unambiguous case not_found exists for (H11). A program can
-    // skip this id and keep going instead of aborting the run.
-    const error = await failure({
-      status: 404,
-      body: {
-        success: false,
-        errors: [{ code: 7003, message: "Could not route to /zones/nope" }],
-        result: null,
+  it("opens the Global API Key guide with its blast radius and states the pin", () => {
+    const guide = guideOf(cloudflare("legacy", GLOBAL));
+    const warning = guide.indexOf("This connector holds a Global API Key.");
+    expect(warning).toBeGreaterThan(0);
+    expect(warning).toBeLessThan(guide.indexOf("- This is Connecta's REST connector"));
+    expect(guide).toContain("R2 accepts API tokens only");
+    expect(guide).toContain(`Pinned to accounts \`${ACCOUNT}\` and every zone in them.`);
+    expect(connectorGuideSummary(cloudflare("legacy", GLOBAL))).toMatch(/^GLOBAL API KEY/);
+    const tokenGuide = guideOf(cloudflare("cf", { ...TOKEN, zoneId: ZONE }));
+    expect(tokenGuide).not.toContain("Global API Key");
+    expect(tokenGuide).toContain(`\`{zone_id}\` fills with \`${ZONE}\``);
+    for (const summary of [
+      connectorGuideSummary(cloudflare("cf", TOKEN)),
+      connectorGuideSummary(cloudflare("l", GLOBAL)),
+    ]) {
+      expect(new TextEncoder().encode(summary ?? "").length).toBeLessThanOrEqual(120);
+    }
+  });
+
+  it("INV-1: annotates its own tools and keeps SQL, AI runs, and ordinary POSTs out of the read tool", async () => {
+    const connector = cloudflare("cf", TOKEN);
+    const tools = await connector.listTools(token());
+    expect(Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations]))).toEqual({
+      cloudflare_api_search: { readOnlyHint: true },
+      cloudflare_api_details: { readOnlyHint: true },
+      cloudflare_api_read: { readOnlyHint: true },
+      cloudflare_api_write: { readOnlyHint: false, destructiveHint: true },
+      verify_credential: { readOnlyHint: true },
+      list_accounts: { readOnlyHint: true },
+      list_zones: { readOnlyHint: true },
+      graphql_query: { readOnlyHint: true },
+      cloudflare_api_upload: { readOnlyHint: false, destructiveHint: true },
+    });
+    for (const path of [
+      `/zones/${ZONE}/purge_cache`,
+      `/accounts/${ACCOUNT}/d1/database/db1/query`,
+      `/accounts/${ACCOUNT}/ai/run/@cf/meta/llama`.replace("@cf/meta/llama", "%40cf"),
+    ]) {
+      const error = await refusal(
+        connector.callTool("cloudflare_api_read", { method: "POST", path, body: {} }, token()),
+      );
+      expect(error.message, path).toContain("is not a reviewed read");
+    }
+    expect(sent).toEqual([]);
+    respond = () => Response.json({ meta: [], data: [{ count: 3 }] });
+    await connector.callTool(
+      "cloudflare_api_read",
+      {
+        method: "POST",
+        path: `/accounts/${ACCOUNT}/analytics_engine/sql`,
+        body: "SELECT count() FROM events",
       },
-      // list_zones is a stand-in; the mapping is status-driven.
+      token(),
+    );
+    expect(sent[0]).toMatchObject({
+      method: "POST",
+      body: "SELECT count() FROM events",
     });
-    expect(error.code).toBe("not_found");
-    expect(error.retryable).toBe(false);
-    expect(error.message).toContain("list_zones");
+    expect(sent[0]!.headers.get("content-type")).toBe("text/plain");
   });
 
-  caseOf("maps a 5xx to a retryable unavailable", async () => {
-    const error = await failure({
-      status: 502,
-      body: { success: false, errors: [] },
+  it("INV-10: finds operations and their contracts in the pinned index without a request", async () => {
+    const connector = cloudflare("cf", TOKEN);
+    const found = (await connector.callTool(
+      "cloudflare_api_search",
+      { query: "dns records", method: "PATCH" },
+      token(),
+    )) as any;
+    expect(found.operations).toContainEqual(
+      expect.objectContaining({
+        method: "PATCH",
+        path: "/zones/{zone_id}/dns_records/{dns_record_id}",
+        tool: "cloudflare_api_write",
+      }),
+    );
+    const details = (await connector.callTool(
+      "cloudflare_api_details",
+      { method: "GET", path: "/zones/{zone_id}/dns_records" },
+      token(),
+    )) as any;
+    expect(details.tool).toBe("cloudflare_api_read");
+    expect(details.parameters.map((parameter: any) => parameter.name)).toEqual(
+      expect.arrayContaining(["zone_id", "type", "page", "per_page"]),
+    );
+    expect(sent).toEqual([]);
+  });
+
+  it("refuses unknown paths, guessed parameters, and unpinned placeholders before anything reaches Cloudflare", async () => {
+    const connector = cloudflare("cf", TOKEN);
+    const path = await refusal(
+      connector.callTool("cloudflare_api_read", { path: `/zones/${ZONE}/dns_record` }, token()),
+    );
+    expect(path.message).toContain("Nearest:");
+    expect(path.message).toContain("/zones/{zone_id}/dns_records");
+    const param = await refusal(
+      connector.callTool(
+        "cloudflare_api_read",
+        { path: `/zones/${ZONE}/dns_records`, query: { zone_name: "x" } },
+        token(),
+      ),
+    );
+    expect(param.message).toContain("Not sent:");
+    expect(param.validation?.issues[0]).toMatchObject({
+      path: "/query/zone_name",
+      code: "additionalProperties",
     });
-    expect(error.code).toBe("unavailable");
-    expect(error.retryable).toBe(true);
+    const placeholder = await refusal(
+      connector.callTool("cloudflare_api_read", { path: "/zones/{zone_id}/dns_records" }, token()),
+    );
+    expect(placeholder.message).toContain("{placeholder}");
+    const slash = await refusal(
+      connector.callTool("cloudflare_api_read", { path: `/zones/a%2Fb/dns_records` }, token()),
+    );
+    expect(slash.message).toContain("encoded separator");
+    expect(sent).toEqual([]);
   });
 
-  caseOf("survives a non-JSON gateway page", async () => {
-    const error = await failure({ status: 503, nonJson: true });
-    expect(error.code).toBe("unavailable");
-  });
-
-  caseOf("keeps a malformed 2xx body's parser error out of the error it throws (#695)", async () => {
-    globalThis.fetch = vi.fn(async () => new Response("s3cr3t")) as unknown as typeof fetch;
-    const error = (await connection()
-      .callTool("list_zones", {}, contextWithToken())
-      .catch((thrown: unknown) => thrown)) as ConnectorCallError;
-    expect(error).toMatchObject({ code: "unavailable", retryable: true });
-    expect(error.cause).toBeUndefined();
-    expect(`${String(error)} ${error.stack ?? ""} ${JSON.stringify({ ...error })}`).not.toContain("s3cr3t");
-  });
-
-  caseOf("reports an oversized 2xx body as the ceiling failure it is", async () => {
-    // A body past the ceiling fails from inside the same `json()` a gateway
-    // page fails from, and the two are not the same failure: this one is not
-    // a retryable "non-JSON body", it is a non-retryable refusal to read a
-    // response this connection was never going to return whole.
-    globalThis.fetch = vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify({
-            success: true,
-            result: { blob: "x".repeat(9 * 1024 * 1024) },
-          }),
-        ),
-    ) as unknown as typeof fetch;
-    const error = (await connection()
-      .callTool("list_zones", {}, contextWithToken())
-      .catch((thrown: unknown) => thrown)) as ConnectorCallError;
-    expect(error).toBeInstanceOf(ConnectorCallError);
-    expect(error.code).toBe("connector_call_failed");
-    expect(error.retryable).toBe(false);
-    expect(error.message).toContain("response ceiling");
-  });
-
-  caseOf("treats success: false with a 200 as a failure", async () => {
-    const error = await failure({
-      status: 200,
-      body: {
-        success: false,
-        errors: [{ code: 1004, message: "DNS Validation Error" }],
-        result: null,
-      },
-    });
-    expect(error.code).toBe("connector_call_failed");
-    expect(error.message).toContain("1004");
-  });
-
-  caseOf("maps a transport failure to unavailable", async () => {
-    globalThis.fetch = vi.fn(async () => {
-      throw new TypeError("network unreachable");
-    }) as unknown as typeof fetch;
-    await expect(connection().callTool("list_zones", {}, contextWithToken())).rejects.toMatchObject({
-      code: "unavailable",
-      retryable: true,
-    });
-  });
-
-  caseOf("refuses an omitted scope at the schema, before any request", async () => {
-    stubFetch({ body: { success: true, result: [] } });
-    await expect(connection().callTool("get_zone", {}, contextWithToken())).rejects.toMatchObject({
-      code: "invalid_args",
-      retryable: false,
-    });
-    // Never reached Cloudflare: the round trip is the thing being saved.
-    expect(calls).toHaveLength(0);
-    // And the schema itself tells the agent where the id comes from, so the
-    // repair does not need a documentation read.
-    const tools = await servedTools(connection(), contextWithToken());
-    const zoneProperty = (
-      (toolNamed(tools, "get_zone").inputSchema as Record<string, unknown>)["properties"] as Record<
-        string,
-        Record<string, unknown>
-      >
-    )["zoneId"]!;
-    expect(zoneProperty["description"]).toContain("list_zones");
-  });
-
-  caseOf("refuses a blank scope the schema cannot catch, naming the discovery tool", async () => {
-    stubFetch({ body: { success: true, result: [] } });
-    await expect(connection().callTool("get_zone", { zoneId: "   " }, contextWithToken())).rejects.toMatchObject({
-      code: "invalid_args",
-      retryable: false,
-      message: expect.stringContaining("list_zones"),
-      validation: {
-        issues: [
+  it("fills configured default ids, sends Bearer auth, unwraps the envelope, and pages by number", async () => {
+    const connector = cloudflare("cf", { ...TOKEN, zoneId: ZONE });
+    respond = () =>
+      envelope(
+        [
           {
-            path: "/zoneId",
-            code: "required",
-            expected: "a Cloudflare zone id",
+            id: "r1",
+            name: "a.example.com",
+            type: "A",
+            ttl: 1,
+            content: "192.0.2.1",
+          },
+          {
+            id: "r2",
+            name: "b.example.com",
+            type: "A",
+            ttl: 300,
+            content: "192.0.2.2",
           },
         ],
+        {
+          result_info: {
+            page: 1,
+            per_page: 2,
+            count: 2,
+            total_count: 5,
+            total_pages: 3,
+          },
+        },
+      );
+    const result = await connector.callTool(
+      "cloudflare_api_read",
+      {
+        path: "/zones/{zone_id}/dns_records",
+        query: { type: "A", per_page: 2 },
+        select: ["id", "ttl"],
       },
-    });
-    expect(calls).toHaveLength(0);
-  });
-
-  test.each(cases)("%s", async (_name, run) => run());
-});
-
-describe("cloudflare() credential test", () => {
-  it("reports an active token as ok", async () => {
-    stubFetch({ body: { success: true, result: { status: "active" } } });
-    const result = await connection().testCredential?.("candidate-token", contextWithToken(null));
-    expect(result).toEqual({ ok: true, message: "Token verified: active." });
-    // The candidate is tested, never the stored value.
-    const headers = calls[0]!.init.headers as Record<string, string>;
-    expect(headers["Authorization"]).toBe("Bearer candidate-token");
-  });
-
-  it("reports a rejected token as not ok without throwing", async () => {
-    stubFetch({
-      status: 401,
-      body: {
-        success: false,
-        errors: [{ code: 10000, message: "Invalid API Token" }],
-      },
-    });
-    const result = await connection().testCredential?.("bad-token", contextWithToken(null));
-    expect(result?.ok).toBe(false);
-    expect(result?.message).toContain("Invalid API Token");
-  });
-
-  it("verifies a Global API Key against the authenticated user endpoint", async () => {
-    stubFetch({
-      body: {
-        success: true,
-        result: { id: "user-1", email: "operator@example.com" },
-      },
-    });
-    const result = await connection({
-      authentication: "globalApiKey",
-    }).testCredentials?.(
-      { email: "operator@example.com", apiKey: "candidate-key" },
-      contextWithGlobalApiKey(null, null),
+      token(),
     );
     expect(result).toEqual({
-      ok: true,
-      message: "Global API Key verified for operator@example.com.",
+      status: 200,
+      data: [
+        { id: "r1", ttl: 1 },
+        { id: "r2", ttl: 300 },
+      ],
+      page: { hasMore: true, next: "2", param: "page" },
     });
-    expect(urlOf().pathname).toBe("/client/v4/user");
-    expect(calls[0]!.init.headers).toMatchObject({
-      "X-Auth-Email": "operator@example.com",
-      "X-Auth-Key": "candidate-key",
-    });
+    expect(sent[0]!.url.href).toBe(`${CLOUDFLARE_API_BASE}/zones/${ZONE}/dns_records?type=A&per_page=2`);
+    expect(sent[0]!.headers.get("authorization")).toBe("Bearer cf-token-123");
+    respond = () => envelope([{ name: "k1" }], { result_info: { count: 1, cursor: "abc" } });
+    expect(
+      (
+        (await connector.callTool(
+          "cloudflare_api_read",
+          { path: `/accounts/${ACCOUNT}/storage/kv/namespaces/ns1/keys` },
+          token(),
+        )) as any
+      ).page,
+    ).toEqual({ hasMore: true, next: "abc", param: "cursor" });
+    respond = () => envelope([], { result_info: { count: 0, cursor: "" } });
+    expect(
+      (
+        (await connector.callTool(
+          "cloudflare_api_read",
+          { path: `/accounts/${ACCOUNT}/storage/kv/namespaces/ns1/keys` },
+          token(),
+        )) as any
+      ).page,
+    ).toEqual({ hasMore: false });
   });
-});
 
-describe("Cloudflare canonical mutations", () => {
-  it("INV-9: refuses ordinary token-auth JSON writes locally and keeps the R2 jurisdiction gap explicit", async () => {
-    stubFetch({ body: { success: true, result: { id: "bucket" } } });
-    const args = {
-      method: "PUT",
-      path: "/accounts/acct-1/r2/buckets/bucket",
-      body: { storageClass: "InfrequentAccess" },
-    };
-    await expect(connection().callTool("cloudflare_api_mutate", args, contextWithToken())).rejects.toMatchObject({
-      code: "invalid_args",
-      message: expect.stringContaining("MCP execute"),
-    });
-    expect(calls).toHaveLength(0);
-    await connection().callTool(
-      "cloudflare_api_mutate",
-      { ...args, headers: [{ name: "cf-r2-jurisdiction", value: "eu" }] },
-      contextWithToken(),
-    );
-    expect(calls).toHaveLength(1);
-    expect(new Headers(calls[0]!.init.headers).get("cf-r2-jurisdiction")).toBe("eu");
-  });
-});
-
-describe("Cloudflare mutation bypass refusal", () => {
-  it.each(["Accept", "cf-r2-jurisdiction"])("INV-9: a %s header cannot restore a DNS JSON duplicate", async (name) => {
-    await expect(
-      connection().callTool(
-        "cloudflare_api_mutate",
-        {
-          method: "POST",
-          path: "/zones/zone-1/dns_records",
-          body: { type: "A", name: "site", content: "192.0.2.1" },
-          headers: [{ name, value: name === "Accept" ? "application/json" : "eu" }],
-        },
-        contextWithToken(),
-      ),
-    ).rejects.toMatchObject({ code: "invalid_args" });
-    expect(calls).toHaveLength(0);
-  });
-  it.each(["application/json", "application/octet-stream"])(
-    "INV-9: %s cannot route an ordinary DNS mutation through upload",
-    async (contentType) => {
-      await expect(
-        connection().callTool(
-          "cloudflare_api_upload",
-          {
-            method: "POST",
-            path: "/zones/zone-1/dns_records",
-            contentType,
-            textBody: '{"type":"A","name":"site","content":"192.0.2.1"}',
-          },
-          contextWithToken(),
-        ),
-      ).rejects.toMatchObject({ code: "invalid_args" });
-      expect(calls).toHaveLength(0);
-    },
-  );
-});
-
-describe("Cloudflare reviewed mutation exceptions", () => {
-  it.each(["Standard", "InfrequentAccess"])(
-    "INV-1 INV-9: preserves bucket PATCH with %s storage class without jurisdiction",
-    async (storageClass) => {
-      stubFetch({ body: { success: true, result: { name: "assets", storage_class: storageClass } } });
-      const connector = connection();
-      const result = await connector.callTool(
-        "cloudflare_api_mutate",
+  it("sends a JSON write once and maps a 500 without retrying (INV-9)", async () => {
+    const connector = cloudflare("cf", TOKEN);
+    respond = () => envelope({ id: "r1", ttl: 300 });
+    expect(
+      await connector.callTool(
+        "cloudflare_api_write",
         {
           method: "PATCH",
-          path: "/accounts/acct-1/r2/buckets/assets",
-          headers: [{ name: "CF-R2-Storage-Class", value: storageClass }],
+          path: `/zones/${ZONE}/dns_records/r1`,
+          body: { ttl: 300 },
         },
-        contextWithToken(),
+        token(),
+      ),
+    ).toEqual({ status: 200, data: { id: "r1", ttl: 300 } });
+    expect(sent[0]!.method).toBe("PATCH");
+    expect(JSON.parse(String(sent[0]!.body))).toEqual({ ttl: 300 });
+    respond = () =>
+      Response.json(
+        {
+          success: false,
+          errors: [{ code: 10001, message: "boom" }],
+          result: null,
+        },
+        { status: 500 },
       );
-      expect(result).toEqual({ result: { name: "assets", storage_class: storageClass } });
-      expect(calls).toHaveLength(1);
-      expect(calls[0]!.init.method).toBe("PATCH");
-      expect(urlOf().pathname).toBe("/client/v4/accounts/acct-1/r2/buckets/assets");
-      expect(new Headers(calls[0]!.init.headers).get("cf-r2-storage-class")).toBe(storageClass);
-      expect(new Headers(calls[0]!.init.headers).has("cf-r2-jurisdiction")).toBe(false);
-      expect(
-        (await servedTools(connector)).find((tool) => tool.name === "cloudflare_api_mutate")?.annotations,
-      ).toMatchObject({ readOnlyHint: false, destructiveHint: true });
-    },
-  );
-  it("INV-9: preserves jurisdiction alongside bucket storage-class PATCH", async () => {
-    stubFetch({ body: { success: true, result: { name: "assets", storage_class: "Standard", jurisdiction: "eu" } } });
-    await connection().callTool(
-      "cloudflare_api_mutate",
-      {
-        method: "PATCH",
-        path: "/accounts/acct-1/r2/buckets/assets",
-        headers: [
-          { name: "cf-r2-storage-class", value: "Standard" },
-          { name: "cf-r2-jurisdiction", value: "eu" },
-        ],
-      },
-      contextWithToken(),
+    const failure = await refusal(
+      connector.callTool(
+        "cloudflare_api_write",
+        {
+          method: "PATCH",
+          path: `/zones/${ZONE}/dns_records/r1`,
+          body: { ttl: 60 },
+        },
+        token(),
+      ),
     );
-    expect(new Headers(calls[0]!.init.headers).get("cf-r2-storage-class")).toBe("Standard");
-    expect(new Headers(calls[0]!.init.headers).get("cf-r2-jurisdiction")).toBe("eu");
+    expect(failure.code).toBe("unavailable");
+    expect(sent).toHaveLength(2);
   });
-  it.each(["standard", "Archive", "", "Standard, InfrequentAccess"])(
-    "INV-9: refuses invalid storage class %s even with jurisdiction",
-    async (value) => {
-      await expect(
-        connection().callTool(
-          "cloudflare_api_mutate",
-          {
-            method: "PATCH",
-            path: "/accounts/acct-1/r2/buckets/assets",
-            headers: [
-              { name: "cf-r2-storage-class", value },
-              { name: "cf-r2-jurisdiction", value: "eu" },
-            ],
-          },
-          contextWithToken(),
-        ),
-      ).rejects.toMatchObject({
-        code: "invalid_args",
-        message: expect.stringContaining("Standard or InfrequentAccess"),
+
+  it("maps Cloudflare failures by the caller's next move and surfaces Retry-After", async () => {
+    const connector = cloudflare("cf", TOKEN);
+    const cases: Array<[number, unknown, Record<string, string>, string, string]> = [
+      [
+        429,
+        { success: false, errors: [{ code: 10000, message: "Rate limited" }] },
+        { "retry-after": "7" },
+        "rate_limited",
+        "1,200 requests",
+      ],
+      [
+        400,
+        {
+          success: false,
+          errors: [{ code: 9106, message: "Missing X-Auth-Key" }],
+        },
+        {},
+        "auth_required",
+        "verify_credential",
+      ],
+      [
+        403,
+        {
+          success: false,
+          errors: [{ code: 10000, message: "Authentication error" }],
+        },
+        {},
+        "provider_permission_denied",
+        "lacks this permission",
+      ],
+      [
+        404,
+        {
+          success: false,
+          errors: [{ code: 81044, message: "Record does not exist." }],
+        },
+        { "cf-ray": "8abc-SJC" },
+        "not_found",
+        "Ray 8abc-SJC.",
+      ],
+      [
+        400,
+        {
+          success: false,
+          errors: [
+            {
+              code: 1004,
+              message: "DNS Validation Error",
+              error_chain: [{ code: 9005, message: "Content bad" }],
+            },
+          ],
+        },
+        {},
+        "invalid_args",
+        "9005: Content bad",
+      ],
+      [
+        200,
+        {
+          success: false,
+          errors: [{ code: 1000, message: "Odd" }],
+          result: null,
+        },
+        {},
+        "invalid_args",
+        "1000: Odd",
+      ],
+      [502, undefined, {}, "unavailable", "HTTP 502"],
+    ];
+    for (const [status, body, headers, code, message] of cases) {
+      respond = () =>
+        body === undefined
+          ? new Response("<html>bad gateway</html>", { status, headers })
+          : Response.json(body, { status, headers });
+      const failure = await refusal(connector.callTool("cloudflare_api_read", { path: `/zones/${ZONE}` }, token()));
+      expect(failure.code, `${status}`).toBe(code);
+      expect(failure.message).toContain(message);
+      if (status === 429) expect(failure.retryAfterMs).toBe(7_000);
+    }
+  });
+
+  it("INV-5: authenticates a Global API Key with its two fields and refuses a missing credential before sending", async () => {
+    const connector = cloudflare("legacy", GLOBAL);
+    respond = () => envelope({ id: "u1", email: "ops@example.com" });
+    // The email is sent as credential material, so results redact it (INV-5).
+    expect(await connector.callTool("verify_credential", {}, globalKey())).toMatchObject({
+      auth: "globalApiKey",
+      status: "active",
+      email: "[redacted]",
+    });
+    expect(sent[0]!.url.pathname).toBe("/client/v4/user");
+    expect(sent[0]!.headers.get("x-auth-email")).toBe("ops@example.com");
+    expect(sent[0]!.headers.get("x-auth-key")).toBe("gk-1");
+    expect(sent[0]!.headers.get("authorization")).toBeNull();
+    const missing = await refusal(connector.callTool("verify_credential", {}, connectorContext()));
+    expect(missing.code).toBe("auth_required");
+    expect(await connector.testCredentials!({ email: "ops@example.com", apiKey: "gk-1" }, connectorContext())).toEqual({
+      ok: true,
+      message: "Global API Key verified for ops@example.com.",
+    });
+    const bare = await refusal(cloudflare("cf", TOKEN).callTool("list_zones", {}, connectorContext()));
+    expect(bare.code).toBe("auth_required");
+    expect(sent).toHaveLength(2);
+  });
+
+  it("tests a user token, then an account token under its account", async () => {
+    const connector = cloudflare("cf", { ...TOKEN, accountId: ACCOUNT });
+    respond = () => envelope({ id: "t1", status: "active" });
+    expect(await connector.testCredential!(" cf-token ", connectorContext())).toEqual({
+      ok: true,
+      message: "Token verified: active.",
+    });
+    expect(sent[0]!.url.pathname).toBe("/client/v4/user/tokens/verify");
+    expect(sent[0]!.headers.get("authorization")).toBe("Bearer cf-token");
+    respond = (request) =>
+      request.url.pathname.startsWith("/client/v4/user/")
+        ? Response.json(
+            {
+              success: false,
+              errors: [{ code: 1000, message: "Invalid API Token" }],
+            },
+            { status: 401 },
+          )
+        : envelope({ id: "t2", status: "active" });
+    expect(await connector.testCredential!("cf-token", connectorContext())).toEqual({
+      ok: true,
+      message: `Token verified: active (account token for ${ACCOUNT}).`,
+    });
+    expect(sent[2]!.url.pathname).toBe(`/client/v4/accounts/${ACCOUNT}/tokens/verify`);
+    respond = () =>
+      Response.json(
+        {
+          success: false,
+          errors: [{ code: 1000, message: "Invalid API Token" }],
+        },
+        { status: 401 },
+      );
+    const rejected = await cloudflare("cf", TOKEN).testCredential!("bad", connectorContext());
+    expect(rejected.ok).toBe(false);
+    expect(rejected.message).toContain("Invalid API Token");
+  });
+
+  it("refuses credential GETs, side-effect GETs, and token writes, and redacts embedded secrets", async () => {
+    const connector = cloudflare("cf", TOKEN);
+    const cases: Array<[string, Record<string, unknown>, string]> = [
+      ["cloudflare_api_read", { path: `/accounts/${ACCOUNT}/cfd_tunnel/t1/token` }, "tunnel token"],
+      ["cloudflare_api_read", { path: `/accounts/${ACCOUNT}/warp_connector/t1/token` }, "Mesh node token"],
+      [
+        "cloudflare_api_read",
+        {
+          path: `/accounts/${ACCOUNT}/workflows/w/instances/i/subscribe/token`,
+        },
+        "does not mint",
+      ],
+      [
+        "cloudflare_api_read",
+        {
+          path: `/accounts/${ACCOUNT}/alerting/v3/policies/p1/email/unsubscribe`,
+        },
+        "unsubscribe",
+      ],
+      [
+        "cloudflare_api_write",
+        {
+          method: "POST",
+          path: "/user/tokens",
+          body: { name: "x", policies: [] },
+        },
+        "does not create",
+      ],
+      ["cloudflare_api_write", { method: "PUT", path: "/user/tokens/t1/value", body: {} }, "does not create"],
+      ["cloudflare_api_write", { method: "PUT", path: `/accounts/${ACCOUNT}/tokens/t1`, body: {} }, "does not create"],
+    ];
+    for (const [tool, args, message] of cases) {
+      const error = await refusal(connector.callTool(tool, args, token()));
+      expect(error.code, JSON.stringify(args)).toBe("invalid_args");
+      expect(error.message).toContain(message);
+    }
+    expect(sent).toEqual([]);
+    respond = () => envelope({ sitekey: "0x4AAA", secret: "0x4AAA-secret", mode: "managed" });
+    expect(
+      await connector.callTool(
+        "cloudflare_api_read",
+        { path: `/accounts/${ACCOUNT}/challenges/widgets/0x4AAA` },
+        token(),
+      ),
+    ).toEqual({
+      status: 200,
+      data: { sitekey: "0x4AAA", secret: "[redacted]", mode: "managed" },
+    });
+    respond = () =>
+      new Response("export default {}", {
+        headers: { "content-type": "application/javascript" },
       });
-      expect(calls).toHaveLength(0);
-    },
-  );
-  it.each([
-    ["POST", "/accounts/acct-1/r2/buckets"],
-    ["PUT", "/accounts/acct-1/r2/buckets/assets"],
-    ["PATCH", "/accounts/acct-1/r2/buckets/assets/cors"],
-    ["PATCH", "/zones/zone-1/dns_records/record"],
-  ])("INV-9: storage-class header cannot restore %s %s", async (method, path) => {
-    await expect(
-      connection().callTool(
-        "cloudflare_api_mutate",
-        { method, path, headers: [{ name: "cf-r2-storage-class", value: "Standard" }] },
-        contextWithToken(),
-      ),
-    ).rejects.toMatchObject({ code: "invalid_args" });
-    expect(calls).toHaveLength(0);
-  });
-  it("INV-9: creates a jurisdictional bucket through the explicit API header complement", async () => {
-    stubFetch({ body: { success: true, result: { name: "assets", jurisdiction: "eu" } } });
-    await connection().callTool(
-      "cloudflare_api_mutate",
-      {
-        method: "POST",
-        path: "/accounts/acct-1/r2/buckets",
-        headers: [{ name: "cf-r2-jurisdiction", value: "eu" }],
-        body: { name: "assets" },
-      },
-      contextWithToken(),
+    // Script content is code, not a credential: readable on purpose.
+    await connector.callTool(
+      "cloudflare_api_read",
+      { path: `/accounts/${ACCOUNT}/workers/scripts/s1/content/v2` },
+      token(),
     );
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.init.method).toBe("POST");
-    expect(new Headers(calls[0]!.init.headers).get("cf-r2-jurisdiction")).toBe("eu");
-    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ name: "assets" });
+    expect(sent).toHaveLength(2);
   });
-  it.each([
-    ["POST", "/accounts/acct-1/stream/video-id"],
-    ["POST", "/accounts/acct-1/stream/copy"],
-    ["POST", "/accounts/acct-1/stream/direct_upload"],
-    ["PUT", "/accounts/acct-1/stream"],
-    ["POST", "/accounts/acct-1/workers/scripts/site"],
-    ["POST", "/accounts/acct-1/storage/kv/namespaces/ns/values/key"],
-    ["POST", "/accounts/acct-1/r2/buckets/assets/objects/key"],
-    ["PUT", "/accounts/acct-1/images/v1"],
-    ["PUT", "/accounts/acct-1/pages/projects/site/deployments"],
-  ])("INV-9: refuses %s %s because it is not the reviewed upload operation", async (method, path) => {
-    await expect(
-      connection().callTool(
-        "cloudflare_api_upload",
-        { method, path, contentType: "application/json", textBody: '{"requireSignedURLs":true}' },
-        contextWithToken(),
-      ),
-    ).rejects.toMatchObject({ code: "invalid_args" });
-    expect(calls).toHaveLength(0);
+
+  it("refuses Global API Key writes to the user and memberships", async () => {
+    const connector = cloudflare("legacy", {
+      purpose: "Legacy",
+      auth: { type: "globalApiKey" },
+      unpinned: true,
+    });
+    for (const [method, path] of [
+      ["PATCH", "/user"],
+      ["DELETE", "/memberships/m1"],
+      ["PUT", "/memberships/m1"],
+    ] as const) {
+      const error = await refusal(connector.callTool("cloudflare_api_write", { method, path, body: {} }, globalKey()));
+      expect(error.message, `${method} ${path}`).toContain("never writes user-level settings or memberships");
+    }
+    expect(sent).toEqual([]);
   });
-  it("INV-9: retains an actual Stream collection upload", async () => {
-    stubFetch({ body: { success: true, result: { uid: "video" } } });
-    await connection().callTool(
+
+  describe("INV-4: a pin no argument can widen", () => {
+    const pinned = () =>
+      cloudflare("cf", {
+        ...TOKEN,
+        pin: { accountIds: [ACCOUNT], zoneIds: [ZONE] },
+      });
+
+    it("refuses paths, query, and body ids outside the pin, in every spelling, before sending", async () => {
+      const connector = pinned();
+      const attempts: Array<[string, Record<string, unknown>]> = [
+        ["cloudflare_api_read", { path: `/accounts/${OTHER_ACCOUNT}/workers/scripts` }],
+        ["cloudflare_api_read", { path: `/accounts/${OTHER_ACCOUNT.toUpperCase()}/workers/scripts` }],
+        ["cloudflare_api_read", { path: `/accounts/%66${OTHER_ACCOUNT.slice(1)}/workers/scripts` }],
+        ["cloudflare_api_read", { path: "/zones", query: { "account.id": OTHER_ACCOUNT } }],
+        [
+          "cloudflare_api_write",
+          {
+            method: "POST",
+            path: "/zones",
+            body: { name: "evil.example", account: { id: OTHER_ACCOUNT } },
+          },
+        ],
+        ["cloudflare_api_read", { path: "/organizations/o1/accounts" }],
+        [
+          "cloudflare_api_read",
+          {
+            method: "POST",
+            path: "/analytics/sql",
+            body: { query: "SELECT 1" },
+          },
+        ],
+        ["list_zones", { accountId: OTHER_ACCOUNT }],
+      ];
+      for (const [tool, args] of attempts) {
+        const error = await refusal(connector.callTool(tool, args, token()));
+        expect(["provider_permission_denied", "invalid_args"], JSON.stringify(args)).toContain(error.code);
+      }
+      expect(sent).toEqual([]);
+    });
+
+    it("admits a zone of a pinned account after one ownership read, and refuses another account's zone", async () => {
+      const connector = cloudflare("cf", {
+        ...TOKEN,
+        pin: { accountIds: [ACCOUNT] },
+      });
+      respond = (request) => {
+        if (request.url.pathname === `/client/v4/zones/${OTHER_ZONE}`) {
+          return envelope({ id: OTHER_ZONE, account: { id: ACCOUNT } });
+        }
+        if (request.url.pathname === `/client/v4/zones/${ZONE}`)
+          return envelope({ id: ZONE, account: { id: OTHER_ACCOUNT } });
+        return envelope([]);
+      };
+      await connector.callTool("cloudflare_api_read", { path: `/zones/${OTHER_ZONE}/dns_records` }, token());
+      await connector.callTool("cloudflare_api_read", { path: `/zones/${OTHER_ZONE}/dns_records` }, token());
+      expect(sent.map((request) => request.url.pathname)).toEqual([
+        `/client/v4/zones/${OTHER_ZONE}`,
+        `/client/v4/zones/${OTHER_ZONE}/dns_records`,
+        `/client/v4/zones/${OTHER_ZONE}/dns_records`,
+      ]);
+      const error = await refusal(
+        connector.callTool(
+          "cloudflare_api_write",
+          { method: "DELETE", path: `/zones/${ZONE}/dns_records/r1` },
+          token(),
+        ),
+      );
+      expect(error.code).toBe("provider_permission_denied");
+      expect(sent.filter((request) => request.method === "DELETE")).toEqual([]);
+    });
+
+    it("filters account and zone lists to the pin, in the generic and named tools", async () => {
+      const connector = pinned();
+      respond = () =>
+        envelope(
+          [
+            { id: ZONE, name: "mine.example", account: { id: ACCOUNT } },
+            {
+              id: OTHER_ZONE,
+              name: "theirs.example",
+              account: { id: OTHER_ACCOUNT },
+            },
+          ],
+          { result_info: { page: 1, per_page: 20, count: 2, total_pages: 1 } },
+        );
+      expect(((await connector.callTool("list_zones", {}, token())) as any).zones.map((zone: any) => zone.id)).toEqual([
+        ZONE,
+      ]);
+      expect(((await connector.callTool("cloudflare_api_read", { path: "/zones" }, token())) as any).data).toHaveLength(
+        1,
+      );
+      respond = () =>
+        envelope([
+          { id: ACCOUNT, name: "Mine" },
+          { id: OTHER_ACCOUNT, name: "Theirs" },
+        ]);
+      expect(await connector.callTool("list_accounts", {}, token())).toEqual({
+        accounts: [{ id: ACCOUNT, name: "Mine", type: null }],
+      });
+    });
+
+    it("holds GraphQL to pinned tags and refuses unscoped or negated filters", async () => {
+      const connector = pinned();
+      const attempts = [
+        `{ viewer { zones(filter: { zoneTag: "${OTHER_ZONE}" }) { httpRequests1dGroups(limit: 1) { sum { requests } } } } }`,
+        `{ viewer { zones { httpRequests1dGroups(limit: 1) { sum { requests } } } } }`,
+        `{ viewer { zones(filter: { zoneTag_neq: "${ZONE}" }) { x } } }`,
+        `query Q($z: String!) { viewer { zones(filter: { zoneTag: $z }) { x } } }`,
+      ];
+      for (const query of attempts) {
+        await refusal(connector.callTool("graphql_query", { query, variables: { z: OTHER_ZONE } }, token()));
+      }
+      // Only ownership reads of the unpinned zone left; no query was sent.
+      expect(sent.filter((request) => request.url.pathname.endsWith("/graphql"))).toEqual([]);
+      sent = [];
+      respond = () => Response.json({ data: { viewer: { zones: [] } }, errors: null });
+      await connector.callTool(
+        "graphql_query",
+        {
+          query: `query Q($z: String!) { viewer { zones(filter: { zoneTag: $z }) { x } } }`,
+          variables: { z: ZONE },
+        },
+        token(),
+      );
+      expect(sent).toHaveLength(1);
+    });
+  });
+
+  it("runs read-only GraphQL and refuses mutations however they are hidden", async () => {
+    const connector = cloudflare("cf", TOKEN);
+    for (const query of [
+      "mutation { deleteZone(id: 1) }",
+      "query A { viewer { x } }\nmutation B { y }",
+      "{ viewer { x } } subscription S { y }",
+      "# comment\n  mutation{y}",
+      "﻿mutation { y }",
+      "schema { query: Q }",
+      '{ viewer { x(s: "unterminated) } }',
+      "{ viewer { x }",
+    ]) {
+      const error = await refusal(connector.callTool("graphql_query", { query }, token()));
+      expect(error.code, query).toBe("invalid_args");
+    }
+    expect(sent).toEqual([]);
+    respond = () =>
+      Response.json({
+        data: { viewer: { zones: [{ dimensions: { date: "2026-10-01" } }] } },
+      });
+    const query = `# mutation in a comment\nquery Daily { viewer { zones(filter: { zoneTag: "${ZONE}", note: "mutation { x }" }) { dimensions { date } } } }`;
+    expect(await connector.callTool("graphql_query", { query, operationName: "Daily" }, token())).toEqual({
+      data: { viewer: { zones: [{ dimensions: { date: "2026-10-01" } }] } },
+    });
+    expect(sent[0]!.url.href).toBe(`${CLOUDFLARE_API_BASE}/graphql`);
+    expect(JSON.parse(String(sent[0]!.body))).toEqual({
+      query,
+      operationName: "Daily",
+    });
+    respond = () => Response.json({ data: null, errors: [{ message: "unknown field 'x'" }] });
+    expect(
+      (await refusal(connector.callTool("graphql_query", { query: "{ viewer { x } }" }, token()))).message,
+    ).toContain("unknown field");
+  });
+
+  it("uploads reviewed multipart and binary bodies, with R2 headers and slash-bearing keys", async () => {
+    const connector = cloudflare("cf", TOKEN);
+    respond = () => envelope({ id: "s1" });
+    await connector.callTool(
       "cloudflare_api_upload",
       {
-        method: "POST",
-        path: "/accounts/acct-1/stream",
-        files: [{ name: "file", fileName: "video.mp4", contentType: "video/mp4", base64: "AAEC" }],
+        method: "PUT",
+        path: `/accounts/${ACCOUNT}/workers/scripts/s1`,
+        parts: [
+          {
+            name: "metadata",
+            text: JSON.stringify({ main_module: "index.js" }),
+            contentType: "application/json",
+          },
+          {
+            name: "index.js",
+            text: "export default {}",
+            fileName: "index.js",
+            contentType: "application/javascript+module",
+          },
+        ],
       },
-      contextWithToken(),
+      token(),
     );
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.init.body).toBeInstanceOf(FormData);
+    expect(sent[0]!.body).toBeInstanceOf(FormData);
+    expect(((sent[0]!.body as FormData).get("index.js") as File).name).toBe("index.js");
+    await connector.callTool(
+      "cloudflare_api_upload",
+      {
+        method: "PUT",
+        path: `/accounts/${ACCOUNT}/r2/buckets/b1/objects/logs%2F2026%2Fa.txt`,
+        base64Body: btoa("hello"),
+        contentType: "text/plain",
+        headers: { "cf-r2-jurisdiction": "eu" },
+      },
+      token(),
+    );
+    expect(sent[1]!.url.pathname).toBe(`/client/v4/accounts/${ACCOUNT}/r2/buckets/b1/objects/logs%2F2026%2Fa.txt`);
+    expect(sent[1]!.headers.get("cf-r2-jurisdiction")).toBe("eu");
+    expect(sent[1]!.headers.get("content-type")).toBe("text/plain");
+    expect(new TextDecoder().decode(sent[1]!.body as Uint8Array)).toBe("hello");
+    const refusals: Array<[Record<string, unknown>, string]> = [
+      [{ method: "POST", path: `/zones/${ZONE}/dns_records`, textBody: "x" }, "not a reviewed upload operation"],
+      [
+        {
+          method: "PUT",
+          path: `/accounts/${ACCOUNT}/r2/buckets/b1/objects/a%2F..%2Fb`,
+          textBody: "x",
+        },
+        "encoded separator",
+      ],
+      [
+        {
+          method: "PUT",
+          path: `/accounts/${ACCOUNT}/r2/buckets/b1/objects/a`,
+          textBody: "x",
+          base64Body: "eA==",
+        },
+        "exactly one body",
+      ],
+      [
+        {
+          method: "PUT",
+          path: `/accounts/${ACCOUNT}/r2/buckets/b1/objects/a`,
+          textBody: "x",
+          headers: { "cf-r2-jurisdiction": "mars" },
+        },
+        "must be one of",
+      ],
+    ];
+    for (const [args, message] of refusals) {
+      expect((await refusal(connector.callTool("cloudflare_api_upload", args, token()))).message).toContain(message);
+    }
+    const write = await refusal(
+      connector.callTool(
+        "cloudflare_api_write",
+        { method: "POST", path: `/zones/${ZONE}/dns_records/import`, body: {} },
+        token(),
+      ),
+    );
+    expect(write.message).toContain("cloudflare_api_upload");
+    const header = await refusal(
+      connector.callTool(
+        "cloudflare_api_read",
+        {
+          path: `/zones/${ZONE}`,
+          headers: { "cf-r2-storage-class": "Standard" },
+        },
+        token(),
+      ),
+    );
+    expect(header.message).toContain("applies only to R2 operations");
+    expect(sent).toHaveLength(2);
+  });
+
+  it("INV-4: lets no argument choose the credential, the host, or an arbitrary header", async () => {
+    const connector = cloudflare("cf", TOKEN);
+    for (const tool of await connector.listTools(token())) {
+      const properties = Object.keys(((tool.inputSchema as any)?.properties ?? {}) as object);
+      expect(
+        properties.filter((name) => /auth|key$|credential|token|host|url/i.test(name)),
+        tool.name,
+      ).toEqual([]);
+      const headers = (tool.inputSchema as any)?.properties?.headers;
+      if (headers) expect(Object.keys(headers.properties)).toEqual(["cf-r2-jurisdiction", "cf-r2-storage-class"]);
+    }
+    const error = await refusal(
+      connector.callTool(
+        "cloudflare_api_read",
+        { path: `/zones/${ZONE}`, headers: { Authorization: "Bearer x" } },
+        token(),
+      ),
+    );
+    expect(error.code).toBe("invalid_args");
+    expect(sent).toEqual([]);
   });
 });

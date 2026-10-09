@@ -168,7 +168,7 @@ const providers: ProviderCase[] = [
     name: "cloudflare",
     ids: ["cloudflare_prod", "cloudflare_staging"] as const,
     toolName: "list_zones",
-    secondToolName: "list_dns_records",
+    secondToolName: "cloudflare_api_read",
     descriptionMarks: ["Production zones and edge cache", "Staging zones only"],
     admissionIds: ["cloudflare_prod", "cloudflare_staging"],
     meteredId: "cloudflare_prod",
@@ -176,12 +176,16 @@ const providers: ProviderCase[] = [
     factory: (storage: KVStorage) =>
       deployment(storage, [
         cloudflare("cloudflare_prod", {
-          surface: "api",
+          auth: { type: "apiToken" },
           purpose: "Production zones and edge cache",
           zoneId: "zone-prod",
           accountId: "acct-prod",
         }),
-        cloudflare("cloudflare_staging", { surface: "api", purpose: "Staging zones only", zoneId: "zone-staging" }),
+        cloudflare("cloudflare_staging", {
+          auth: { type: "apiToken" },
+          purpose: "Staging zones only",
+          zoneId: "zone-staging",
+        }),
       ]),
   },
   {
@@ -528,8 +532,8 @@ describe("provider-specific registry behavior", () => {
   it("serves Cloudflare's complete static catalog", async () => {
     const { registry } = byName("cloudflare").factory(memoryStorage());
     const tools = await registry.getTools("cloudflare_prod", BASE_URL);
-    expect(tools).toHaveLength(29);
-    expect(tools.filter((tool) => tool.annotations?.readOnlyHint === true)).toHaveLength(27);
+    expect(tools).toHaveLength(9);
+    expect(tools.filter((tool) => tool.annotations?.readOnlyHint === true)).toHaveLength(7);
   });
 
   it("serves equal complete Notion catalogs and refuses unknown addresses", async () => {
@@ -563,7 +567,7 @@ describe("provider-specific registry behavior", () => {
     expect(guide("cloudflare_prod")).toContain("zone-prod");
     expect(guide("cloudflare_prod")).toContain("acct-prod");
     expect(guide("cloudflare_staging")).toContain("zone-staging");
-    expect(guide("cloudflare_staging")).toContain("declares no default account");
+    expect(guide("cloudflare_staging")).not.toContain("`{account_id}` in a path fills");
     expect(guide("cloudflare_staging")).not.toContain("acct-prod");
   });
 
