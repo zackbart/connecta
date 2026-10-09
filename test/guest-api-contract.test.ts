@@ -40,6 +40,7 @@ import {
   checkSharedPreludes,
   checkStashAuthority,
   checkProgramReadDependencies,
+  checkProgramVisibilityDependencies,
   checkWriteDeadlineDiagnostics,
   CONTRACT_BASE,
   CONTRACT_CASES,
@@ -452,6 +453,11 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
     await checkNativeSnapshots(required(workerExecutor));
   });
   for (const custom of [false, true]) {
+    it(`INV-3 INV-4: ${custom ? "customExecutor: " : ""}unresolved failures and local guides retain connector visibility on return pages`, async () => {
+      await checkProgramVisibilityDependencies(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    });
     it(`INV-2 INV-3 INV-4: ${custom ? "customExecutor: " : ""}program return pages recheck identity, live grants, pool membership and trust`, async () => {
       await checkStashAuthority(
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,

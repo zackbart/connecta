@@ -679,9 +679,12 @@ earlier write result does not count as a new write.
 aggregate capacity charges, and credential redaction before persistence.
 Their pages bind the admitted subject, principal, endpoint/pool, origin, and
 all contributing tool calls, resource and skill reads, and catalog metadata.
-Skill and resource dependencies require a whole-connector grant. Catalog
-dependencies require visibility of the contributing connector or tool, even
+Downstream skill and resource dependencies require a whole-connector grant.
+Local guides and catalog dependencies require visibility of the contributing connector or tool, even
 when the metadata describes a write on a read-only endpoint.
+Caught call failures retain that connector visibility when catalog loading or
+tool resolution fails. Recovery messages listing configured connectors or
+local guides retain visibility of those contributors too.
 Each page rechecks current auth,
 grants, pool membership, and trust. Reading a stash inside a program carries
 its dependencies forward to any new return stash. The page cap is the smallest

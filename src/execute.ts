@@ -794,6 +794,13 @@ function sandboxProvider(
           // A refusal exposes catalog metadata, not a completed write's result.
           ...(!outcome.dispatched ? { access: "catalog" as const } : {}),
         });
+      } else {
+        // Resolution failures can expose a catalog error or connector metadata
+        // without ever finding a tool. Such bytes depend on connector visibility,
+        // not on the existence of the requested (possibly unknown) tool.
+        const target = registry.resolveAddress(address);
+        if (target) catalogDependency(target.connector.id);
+        if (!outcome.ok) for (const connector of outcome.error.configuredConnectors ?? []) catalogDependency(connector);
       }
       diagnostics?.recordCall(outcome);
       if (!outcome.ok) return yield* Effect.fail(new InvocationFailure(outcome.error));
@@ -919,7 +926,12 @@ function sandboxProvider(
           const skills = new SkillsRegistry(registry, baseUrl, {
             requestScope,
             requestSignal: (utilitySignal as AbortSignal | undefined) ?? hostAccessSignal,
-            onRead: (connector) => limits.resultDependencies?.push({ connector: connector.id, classification: "read" }),
+            onRead: (connector, source) =>
+              limits.resultDependencies?.push({
+                connector: connector.id,
+                classification: "read",
+                ...(source === "local" ? { access: "catalog" as const } : {}),
+              }),
             probeTimeoutMs: limits.probeTimeoutMs,
             defer: limits.defer,
           });

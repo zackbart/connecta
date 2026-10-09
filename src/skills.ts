@@ -493,7 +493,7 @@ async function withManifest(record: SkillRecord): Promise<SkillRecord> {
 }
 
 export interface SkillsRegistryOptions {
-  onRead?: ((connector: Connector) => void) | undefined;
+  onRead?: ((connector: Connector, source: "local" | "downstream") => void) | undefined;
   requestScope?: object | undefined;
   requestSignal?: AbortSignal | undefined;
   probeTimeoutMs?: number | undefined;
@@ -653,18 +653,18 @@ export class SkillsRegistry {
   }
 
   private missing(name: string): ConnectorCallError {
-    const available = [
-      "usage",
-      ...this.registry
-        .listConnectors()
-        .filter((connector) => connectorGuide(connector) !== undefined)
-        .map((connector) => connectorSkillName(connector.id)),
-      "investigate",
-    ].join(", ");
+    const guides = this.registry.listConnectors().filter((connector) => connectorGuide(connector) !== undefined);
+    // The recovery message exposes these guide names even though no skill was
+    // read. Keep their visibility bindings if a guest catches and returns it.
+    for (const connector of guides) this.options.onRead?.(connector, "local");
+    const available = ["usage", ...guides.map((connector) => connectorSkillName(connector.id)), "investigate"].join(
+      ", ",
+    );
     // Caller-authored URI/error text never enters operator records. Preserve
     // legacy guidance without allowing a missing name to probe a hidden view.
     const id = name.startsWith(CONNECTOR_SKILL_PREFIX) ? name.slice(CONNECTOR_SKILL_PREFIX.length) : name;
     const connector = this.registry.getConnector(id);
+    if (connector) this.options.onRead?.(connector, "local");
     const message = name.startsWith(CONNECTOR_SKILL_PREFIX)
       ? connector
         ? `Connector "${boundedEchoText(id)}" has no usage guide.`
@@ -714,7 +714,7 @@ export class SkillsRegistry {
     if (local) {
       const record = await withManifest(local);
       this.assertSafe([record]);
-      if (record.connector) this.options.onRead?.(record.connector);
+      if (record.connector) this.options.onRead?.(record.connector, "local");
       return { ...PRIVATE, contents: [{ uri: record.entry.uri, mimeType: "text/markdown", text: record.content! }] };
     }
     if (!uri.startsWith("skill://downstream/")) throw this.missing(uri);
@@ -741,7 +741,7 @@ export class SkillsRegistry {
     }
     if (bytes > MAX_SKILL_BYTES)
       throw new ConnectorCallError("unavailable", "Downstream skill file exceeds the byte bound.");
-    this.options.onRead?.(record.connector);
+    this.options.onRead?.(record.connector, "downstream");
     return { ...PRIVATE, contents: [{ ...content, uri } as ConnectorSkillResourceContents] };
   }
 

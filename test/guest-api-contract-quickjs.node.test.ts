@@ -25,6 +25,7 @@ import {
   checkSharedPreludes,
   checkStashAuthority,
   checkProgramReadDependencies,
+  checkProgramVisibilityDependencies,
   checkWriteDeadlineDiagnostics,
   CONTRACT_CASES,
   contractHarness,
@@ -59,6 +60,11 @@ describe("guest API contract (QuickJS executor)", () => {
   });
 
   for (const custom of [false, true]) {
+    it(`INV-3 INV-4: ${custom ? "customExecutor: " : ""}unresolved failures and local guides retain connector visibility on return pages`, async () => {
+      await checkProgramVisibilityDependencies(
+        custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor,
+      );
+    });
     it(`INV-3 INV-4: ${custom ? "customExecutor: " : ""}skill and catalog return pages enforce contributing live grants`, async () => {
       await checkProgramReadDependencies(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
     });
