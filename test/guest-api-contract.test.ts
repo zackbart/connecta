@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import { customExecutor } from "../src/executor-contract.js";
 import {
   checkProgramReturnPaging,
+  checkProgramReturnWriteWarning,
   checkProgramReturnFallback,
   checkLargeProgramRead,
   checkLargeProgramWrite,
@@ -38,6 +39,7 @@ import {
   checkQueuedWriteAtExhaustion,
   checkSharedPreludes,
   checkStashAuthority,
+  checkProgramReadDependencies,
   checkWriteDeadlineDiagnostics,
   CONTRACT_BASE,
   CONTRACT_CASES,
@@ -454,6 +456,17 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
       await checkStashAuthority(
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
         true,
+      );
+    });
+
+    it(`INV-3 INV-4: ${custom ? "customExecutor: " : ""}skill and catalog return pages enforce contributing live grants`, async () => {
+      await checkProgramReadDependencies(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    });
+    it(`INV-2 INV-9: ${custom ? "customExecutor: " : ""}return paging warns only about writes completed in this run`, async () => {
+      await checkProgramReturnWriteWarning(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
       );
     });
 

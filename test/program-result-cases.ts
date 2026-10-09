@@ -464,3 +464,57 @@ export async function checkProgramReturnFallback(executor: Executor): Promise<vo
     expect(sink.events[0]).toMatchObject({ outcome: "success", attempts: 1 });
   }
 }
+
+/** Paging a prior write preserves authority without claiming a write ran again. */
+export async function checkProgramReturnWriteWarning(executor: Executor): Promise<void> {
+  for (const exhausted of [false, true]) {
+    let writes = 0;
+    const registry = new Registry(
+      [
+        {
+          id: "exporter",
+          kind: "api",
+          async listTools() {
+            return [{ name: "write", annotations: { readOnlyHint: false } }];
+          },
+          async callTool() {
+            writes++;
+            return { text: "w".repeat(30_000) };
+          },
+        },
+      ],
+      { storage: memoryStorage(), logger: silentLogger, ...(exhausted ? { results: { maxStashEntries: 1 } } : {}) },
+    );
+    const execute = createExecuteTool(registry, BASE, executor, silentLogger, undefined, { trust: "trusted" });
+    const original = await execute({ code: 'async () => (await connecta.call("exporter.write")).data' });
+    expect(original.isError).toBeUndefined();
+    const first = original.structuredContent!.result as { resultId: string; hint: string };
+    expect(first.resultId).toMatch(/^[a-f0-9-]{36}$/);
+    expect(first.hint).toContain("This write already ran");
+    const derived = await execute({
+      code: `async () => {
+      let text = "", offset = 0, page;
+      do { page = await connecta.result(${JSON.stringify(first.resultId)}, { offset });
+        text += page.text; offset = page.nextOffset; } while (page.hasMore);
+      return JSON.parse(text);
+    }`,
+    });
+    expect(derived.isError).toBeUndefined();
+    const notice = derived.structuredContent!.result as { resultId?: string; hint: string };
+    expect(notice.hint).not.toContain("This write already ran");
+    expect(derived.structuredContent).not.toHaveProperty("writes");
+    expect(writes).toBe(1);
+    if (exhausted) {
+      expect(notice.resultId).toBeUndefined();
+      expect(notice.hint).toContain("Paging is unavailable");
+    } else {
+      expect(notice.resultId).toMatch(/^[a-f0-9-]{36}$/);
+      const trusted = await createMetaTools(registry, BASE, { trust: "trusted" }).readResult({ id: notice.resultId! });
+      expect(trusted.isError).toBeUndefined();
+      const readonly = await createMetaTools(registry, BASE, { trust: "read-only" }).readResult({
+        id: notice.resultId!,
+      });
+      expect(readonly.isError).toBe(true);
+    }
+  }
+}

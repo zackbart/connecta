@@ -159,6 +159,8 @@ const RESULT_ENVELOPE_V4 = "connecta-result-v4:";
 const RESULT_ENVELOPE_V4_HEADER = /^connecta-result-v4:([A-Za-z0-9+/=]+):(\d+):(\d+):(\d+):/;
 
 export interface ProgramResultDependency {
+  /** Catalog metadata needs visibility, not permission to invoke a write. */
+  access?: "catalog";
   connector: string;
   tool?: string;
   classification: "read" | "write";
@@ -440,6 +442,7 @@ export async function guardProgramReturn(
   trust: PoolTrust | undefined,
   logger: Logger,
   maxChars: number,
+  completedWrite: boolean,
 ): Promise<unknown> {
   const serialized = serializeResultText(value);
   if (serialized.length <= maxChars) return value;
@@ -461,7 +464,7 @@ export async function guardProgramReturn(
       classification: write ? "write" : "read",
       program: dependencies,
     },
-    write,
+    write: completedWrite,
     cap,
     set: (id, chunks, ttl) => registry.stashResult(id, chunks, ttl),
     warn: () => logFailure(logger, "result paging unavailable", failureRecord({})),
@@ -1082,6 +1085,8 @@ function metaToolsForRequest(
                 !dependency ||
                 typeof dependency.connector !== "string" ||
                 (dependency.tool !== undefined && typeof dependency.tool !== "string") ||
+                (dependency.access !== undefined &&
+                  (dependency.access !== "catalog" || dependency.classification !== "read")) ||
                 !["read", "write"].includes(dependency.classification),
             )) ||
         !["read", "write"].includes(binding.classification)
@@ -1100,9 +1105,22 @@ function metaToolsForRequest(
           for (const dependency of dependencies) {
             const address =
               dependency.tool === undefined ? dependency.connector : `${dependency.connector}.${dependency.tool}`;
-            if (!(await registry.recheckResultAccess(address, dependency.classification, options.signal))) return false;
+            if (
+              !(await registry.recheckResultAccess(
+                address,
+                dependency.classification,
+                options.signal,
+                dependency.access,
+              ))
+            )
+              return false;
             if (dependency.tool === undefined) {
-              if (!registry.getResourceConnector(dependency.connector)) return false;
+              if (
+                dependency.access === "catalog"
+                  ? !registry.getConnector(dependency.connector)
+                  : !registry.getResourceConnector(dependency.connector)
+              )
+                return false;
               continue;
             }
             if (!registry.getConnector(dependency.connector)) return false;
@@ -1115,7 +1133,11 @@ function metaToolsForRequest(
             const tool = tools.find((tool) => tool.name === dependency.tool);
             if (
               !tool ||
-              !((dependency.classification === "read" && tool.classification === "read") || opts.trust === "trusted")
+              !(
+                dependency.access === "catalog" ||
+                (dependency.classification === "read" && tool.classification === "read") ||
+                opts.trust === "trusted"
+              )
             )
               return false;
           }

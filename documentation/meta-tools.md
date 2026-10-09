@@ -373,8 +373,10 @@ distinct within that namespace. An explicit principal is the fallback subject
 when neither id is supplied, and open deployments and auth providers that supply
 no identity share one partition. Each new stash also binds the principal,
 endpoint/pool, request origin, connector, tool, and classification. Program-return
-stashes bind every contributing call and resource read, including dependencies
-inherited from pages read during the run. Returns with no downstream calls still
+stashes bind every contributing call, resource or skill read, and catalog lookup,
+including dependencies inherited from pages read during the run. Skill and
+resource content requires a whole-connector grant on every page. Catalog
+metadata requires the contributing connector or tool to remain visible. Returns with no downstream calls still
 require matching identity, origin and endpoint, current auth, and pool membership. A page must
 match those bindings and pass current auth, connector/tool grants, pool membership,
 and trust checks. Old entries lacking bindings fail closed. A random UUID is a

@@ -218,6 +218,7 @@ export interface RegistryView {
     address: string | undefined,
     classification: "read" | "write",
     signal?: AbortSignal,
+    access?: "catalog",
   ): Promise<boolean>;
   /** Reserve deployment-wide capacity before writing a paging envelope's chunks. */
   stashResult(id: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean>;
@@ -259,6 +260,7 @@ export interface RegistryScope {
     address: string | undefined,
     classification: "read" | "write",
     signal?: AbortSignal,
+    access?: "catalog",
   ) => Promise<boolean>;
   /** The admitted caller, readable only by built-in connectors; see connector-caller.ts. */
   caller?: ConnectorCaller;
@@ -952,6 +954,7 @@ export class Registry implements RegistryView {
     _address: string | undefined,
     _classification: "read" | "write",
     _signal?: AbortSignal,
+    _access?: "catalog",
   ): Promise<boolean> {
     return Promise.resolve(true);
   }
@@ -1395,8 +1398,9 @@ class ScopedRegistryView implements RegistryView {
     address: string | undefined,
     classification: "read" | "write",
     signal?: AbortSignal,
+    access?: "catalog",
   ): Promise<boolean> {
-    return this.scope.currentResultAccess?.(address, classification, signal) ?? Promise.resolve(true);
+    return this.scope.currentResultAccess?.(address, classification, signal, access) ?? Promise.resolve(true);
   }
 
   resultsStorage(): KVStorage {

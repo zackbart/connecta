@@ -672,11 +672,17 @@ Small returns pass through unchanged; Connecta does not select fields.
 return can be read without running it again. Prefer filtering or reducing reads
 before returning them. If the run completed a write, the notice opens with
 "This write already ran: do not call it again to see its result."
+This warning uses host accounting for writes completed in this run. Paging an
+earlier write result does not count as a new write.
 
 **R4.** Program returns share direct-call stash envelopes, 15-minute expiry,
 aggregate capacity charges, and credential redaction before persistence.
 Their pages bind the admitted subject, principal, endpoint/pool, origin, and
-all contributing tool calls and resource reads. Each page rechecks current auth,
+all contributing tool calls, resource and skill reads, and catalog metadata.
+Skill and resource dependencies require a whole-connector grant. Catalog
+dependencies require visibility of the contributing connector or tool, even
+when the metadata describes a write on a read-only endpoint.
+Each page rechecks current auth,
 grants, pool membership, and trust. Reading a stash inside a program carries
 its dependencies forward to any new return stash. The page cap is the smallest
 of the deployment cap and contributing connectors' effective `maxResultBytes`.

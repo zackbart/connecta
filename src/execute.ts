@@ -610,11 +610,6 @@ function sandboxProvider(
       format: "json" | "text",
       raw: unknown,
     ) => {
-      limits.resultDependencies?.push({
-        connector: resolved.connector.id,
-        tool: resolved.definition.name,
-        classification: resolved.definition.classification === "read" ? "read" : "write",
-      });
       const page = (data: unknown, valueFormat: "json" | "text", wireBytes?: number) =>
         pageProgramResult(
           registry,
@@ -790,6 +785,16 @@ function sandboxProvider(
             Effect.sync(() => sending.settle?.(Exit.isSuccess(exit) ? writeStateOf(exit.value) : "unknown")),
           ),
         );
+      if (outcome.resolved) {
+        const resolved = outcome.resolved;
+        limits.resultDependencies?.push({
+          connector: resolved.connector.id,
+          tool: resolved.definition.name,
+          classification: outcome.dispatched && resolved.definition.classification !== "read" ? "write" : "read",
+          // A refusal exposes catalog metadata, not a completed write's result.
+          ...(!outcome.dispatched ? { access: "catalog" as const } : {}),
+        });
+      }
       diagnostics?.recordCall(outcome);
       if (!outcome.ok) return yield* Effect.fail(new InvocationFailure(outcome.error));
       return outcome.value;
@@ -833,6 +838,19 @@ function sandboxProvider(
     requestScope,
     onResultRead: (dependencies) => limits.resultDependencies?.push(...dependencies),
   });
+  const catalogDependency = (connector: string, tool?: string) => {
+    if (registry.getConnector(connector))
+      limits.resultDependencies?.push({
+        connector,
+        ...(tool ? { tool } : {}),
+        classification: "read",
+        access: "catalog",
+      });
+  };
+  const catalogAddressDependency = (address: string) => {
+    const resolved = registry.resolveAddress(address);
+    if (resolved) catalogDependency(resolved.connector.id, resolved.toolName);
+  };
   const operations: Record<string, (...args: unknown[]) => Effect.Effect<unknown, unknown>> = {
     call,
     result: (id, options, signal) =>
@@ -901,6 +919,7 @@ function sandboxProvider(
           const skills = new SkillsRegistry(registry, baseUrl, {
             requestScope,
             requestSignal: (utilitySignal as AbortSignal | undefined) ?? hostAccessSignal,
+            onRead: (connector) => limits.resultDependencies?.push({ connector: connector.id, classification: "read" }),
             probeTimeoutMs: limits.probeTimeoutMs,
             defer: limits.defer,
           });
@@ -1003,6 +1022,11 @@ function sandboxProvider(
           result,
           "Request a smaller limit, omit fullDescriptions, use compact schemas, or pass includeSchemaKeys: false.",
         );
+        for (const tool of result.tools) catalogAddressDependency(tool.address);
+        for (const error of result.catalogErrors) catalogDependency(error.connector);
+        for (const connector of result.absence?.configuredConnectors ?? []) catalogDependency(connector);
+        for (const connector of result.queryAnalysis?.configuredConnectors ?? []) catalogDependency(connector);
+        if (result.queryAnalysis?.connectorScope) catalogDependency(result.queryAnalysis.connectorScope);
         return result;
       }),
     describe: (raw) =>
@@ -1015,6 +1039,15 @@ function sandboxProvider(
         };
         const result = { tools: await catalog.describe({ ...args, format: args.format ?? "json" }) };
         boundedDiscoveryText(result, 'Split the address list or use format: "compact".');
+        for (const tool of result.tools) {
+          if (!tool.error) catalogAddressDependency(tool.address);
+          else {
+            const resolved = registry.resolveAddress(tool.address);
+            if (resolved) catalogDependency(resolved.connector.id);
+            for (const connector of tool.errorDetails?.configuredConnectors ?? []) catalogDependency(connector);
+            for (const suggestion of tool.errorDetails?.suggestions ?? []) catalogAddressDependency(suggestion);
+          }
+        }
         return result;
       }),
   };
@@ -1434,6 +1467,7 @@ export function createExecuteTool(
             config.trust,
             logger,
             maxChars,
+            programWrites.hasSucceeded,
           ),
       };
       const exited = Effect.exit(Effect.scoped(run)).pipe(

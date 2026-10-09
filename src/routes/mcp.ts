@@ -786,7 +786,7 @@ export function createMcpRoute(opts: ServerOptions): {
               ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
               endpoint: new URL(request.url).pathname,
               origin: request.headers.get("Origin"),
-              currentResultAccess: async (address, classification, signal) => {
+              currentResultAccess: async (address, classification, signal, access) => {
                 signal?.throwIfAborted();
                 const current = await authorize(
                   localRequest,
@@ -817,8 +817,11 @@ export function createMcpRoute(opts: ServerOptions): {
                 });
                 if (classification === "write" && currentTrust !== "trusted") return false;
                 if (address === undefined) return true;
-                // Connector-only dependencies come from resource reads, which require a whole grant.
-                if (!address.includes(".")) return Boolean(view.getResourceConnector(address));
+                // Skill and resource content requires a whole grant; catalog metadata requires visibility.
+                if (!address.includes("."))
+                  return Boolean(
+                    access === "catalog" ? view.getConnector(address) : view.getResourceConnector(address),
+                  );
                 const resolved = view.resolveAddress(address);
                 if (!resolved) return false;
                 const requestScope = {};
@@ -829,7 +832,9 @@ export function createMcpRoute(opts: ServerOptions): {
                   signal?.throwIfAborted();
                   return Boolean(
                     tool &&
-                    ((classification === "read" && tool.classification === "read") || currentTrust === "trusted"),
+                    (access === "catalog" ||
+                      (classification === "read" && tool.classification === "read") ||
+                      currentTrust === "trusted"),
                   );
                 } finally {
                   await closeConnectorScope(

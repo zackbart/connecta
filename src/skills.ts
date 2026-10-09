@@ -384,11 +384,14 @@ async function localRecords(connectors: readonly Connector[]): Promise<SkillReco
         const description = connectorGuideSummary(connector)!;
         const root = `skill://connecta/connectors/${encodeURIComponent(name)}`;
         const content = `---\n${JSON.stringify({ name, description }, null, 2)}\n---\n\n${connectorGuide(connector)!}`;
-        return localRecord(name, `${root}/SKILL.md`, description, content, [
-          connectorSkillName(connector.id),
-          `skill://connecta/connectors/${encodeURIComponent(connector.id)}`,
-          root,
-        ]);
+        return {
+          ...localRecord(name, `${root}/SKILL.md`, description, content, [
+            connectorSkillName(connector.id),
+            `skill://connecta/connectors/${encodeURIComponent(connector.id)}`,
+            root,
+          ]),
+          connector,
+        };
       }),
   );
   if (new Set(guides.map((guide) => guide.entry.uri)).size !== guides.length)
@@ -490,6 +493,7 @@ async function withManifest(record: SkillRecord): Promise<SkillRecord> {
 }
 
 export interface SkillsRegistryOptions {
+  onRead?: ((connector: Connector) => void) | undefined;
   requestScope?: object | undefined;
   requestSignal?: AbortSignal | undefined;
   probeTimeoutMs?: number | undefined;
@@ -710,6 +714,7 @@ export class SkillsRegistry {
     if (local) {
       const record = await withManifest(local);
       this.assertSafe([record]);
+      if (record.connector) this.options.onRead?.(record.connector);
       return { ...PRIVATE, contents: [{ uri: record.entry.uri, mimeType: "text/markdown", text: record.content! }] };
     }
     if (!uri.startsWith("skill://downstream/")) throw this.missing(uri);
@@ -736,6 +741,7 @@ export class SkillsRegistry {
     }
     if (bytes > MAX_SKILL_BYTES)
       throw new ConnectorCallError("unavailable", "Downstream skill file exceeds the byte bound.");
+    this.options.onRead?.(record.connector);
     return { ...PRIVATE, contents: [{ ...content, uri } as ConnectorSkillResourceContents] };
   }
 

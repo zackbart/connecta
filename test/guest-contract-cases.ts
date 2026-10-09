@@ -301,6 +301,157 @@ export async function checkStashAuthority(executor: Executor, programReturn = fa
   }
 }
 
+/** Skill and catalog returns retain live grants through a second return stash. */
+export async function checkProgramReadDependencies(executor: Executor): Promise<void> {
+  let access: string[] = ["remote", "control"];
+  const uri = "skill://vendor/private/SKILL.md";
+  const text = "s".repeat(30_000) + "private-skill-sentinel";
+  const schema = { type: "object", description: "s".repeat(30_000) + "private-catalog-sentinel" };
+  const remote: Connector = {
+    id: "remote",
+    kind: "mcp",
+    usageGuide: text,
+    downstreamSkills: {
+      async list() {
+        return [
+          {
+            uri,
+            frontmatter: { name: "private", description: "Private instructions." },
+            resources: [{ uri, size: text.length, digest: "sha256:" + "0".repeat(64) }],
+          },
+        ];
+      },
+      async read(uri) {
+        return [{ uri, text }];
+      },
+    },
+    async listTools() {
+      return [readOnly("read", { inputSchema: schema }), readOnly("failure"), { name: "write", inputSchema: schema }];
+    },
+    async callTool(name) {
+      if (name === "failure") throw new ConnectorCallError("unavailable", "e".repeat(300) + "private-error-sentinel");
+      throw new Error("This regression must never dispatch remote tools");
+    },
+  };
+  const control: Connector = {
+    id: "control",
+    kind: "api",
+    async listTools() {
+      return [readOnly("revoke")];
+    },
+    async callTool() {
+      access = ["control"];
+      return true;
+    },
+  };
+  const app = createConnecta({
+    connectors: [remote, control],
+    storage: memoryStorage(),
+    logger: "silent",
+    allowedOrigins: ["https://caller.test"],
+    executor: customExecutor({ execute: executor.execute.bind(executor) }, { lifecycle: "self-managed" }),
+    auth: {
+      kind: "read-dependencies",
+      activityActorNamespace: "read-dependencies",
+      authorize: () => ({ ok: true, subjectId: "alice" }),
+    },
+    identity: { connectorAccess: () => access },
+    pools: { reader: { tools: ["remote", "control"], trust: "read-only", grant: () => true } },
+  });
+  const run = async (code: string) => {
+    const response = await app.fetch(
+      new Request(`${CONTRACT_BASE}/mcp/reader`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+          Authorization: "Bearer alice",
+          Origin: "https://caller.test",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "execute_code", arguments: { code } },
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    return (await readJsonRpc(response)).result as ToolResult;
+  };
+  try {
+    for (const [read, grant, sentinel] of [
+      [
+        `(await connecta.skill(${JSON.stringify(downstreamSkillUri("remote", uri))})).text`,
+        "remote.read",
+        "private-skill-sentinel",
+      ],
+      ['(await connecta.skill("connector:remote")).text', "remote.read", "private-skill-sentinel"],
+      [
+        'await connecta.search({ connector: "remote", includeSchemas: "json" })',
+        "remote.read",
+        "private-catalog-sentinel",
+      ],
+      [
+        'await (async () => { try { await connecta.call("remote.failure"); } catch (e) { return e.message.repeat(100); } })()',
+        "remote.read",
+        "private-error-sentinel",
+      ],
+      [
+        'await connecta.describe({ address: "remote.write", format: "json" })',
+        "remote.write",
+        "private-catalog-sentinel",
+      ],
+    ]) {
+      access = ["remote", "control"];
+      const original = await run(`async () => ${read}`);
+      expect(original.isError, JSON.stringify(original)).toBeFalsy();
+      const id = (original.structuredContent!.result as { resultId: string }).resultId;
+      expect(id).toMatch(/^[a-f0-9-]{36}$/);
+      // Carry the dependency through paging, without another source read.
+      const derived = await run(`async () => {
+        let text = "", offset = 0, page;
+        do { page = await connecta.result(${JSON.stringify(id)}, { offset });
+          text += page.text; offset = page.nextOffset; } while (page.hasMore);
+        return JSON.parse(text);
+      }`);
+      expect(derived.isError, JSON.stringify(derived)).toBeFalsy();
+      const derivedId = (derived.structuredContent!.result as { resultId: string }).resultId;
+      expect(derivedId).toMatch(/^[a-f0-9-]{36}$/);
+      for (const saved of [id, derivedId]) {
+        const pageCode = `return await connecta.result(${JSON.stringify(saved)}, { offset: 29990, maxBytes: 1000 });`;
+        const visible = await run(`async () => { ${pageCode} }`);
+        expect(visible.isError).toBeFalsy();
+        expect(JSON.stringify(visible)).toContain(sentinel);
+        access = [grant!, "control"];
+        const narrowed = await run(`async () => { ${pageCode} }`);
+        if (read!.includes("connecta.skill")) {
+          expect(narrowed.structuredContent).toMatchObject({ error: { code: "not_found" } });
+          expect(JSON.stringify(narrowed)).not.toContain(sentinel);
+        } else if (read!.includes("connecta.describe")) {
+          // Describing a visible write is still a read on a read-only pool.
+          expect(narrowed.isError).toBeFalsy();
+          expect(JSON.stringify(narrowed)).toContain(sentinel);
+        } else {
+          // Search included both tools; losing the write grant invalidates the stash.
+          expect(narrowed.structuredContent).toMatchObject({ error: { code: "not_found" } });
+        }
+        access = ["control"];
+        const revoked = await run(`async () => { ${pageCode} }`);
+        expect(revoked.structuredContent).toMatchObject({ error: { code: "not_found" } });
+        expect(JSON.stringify(revoked)).not.toContain(sentinel);
+        access = ["remote", "control"];
+        const live = await run(`async () => { await connecta.call("control.revoke"); ${pageCode} }`);
+        expect(live.structuredContent).toMatchObject({ error: { code: "not_found" } });
+        expect(JSON.stringify(live)).not.toContain(sentinel);
+        access = ["remote", "control"];
+      }
+    }
+  } finally {
+    await app.close();
+  }
+}
+
 /** Provider preludes run together before a guest's callback in both sandboxes. */
 export async function checkSharedPreludes(executor: Executor): Promise<void> {
   const result = await executor.execute("async () => combineFromPrelude(2, 3)", [

@@ -8,6 +8,7 @@ import { customExecutor } from "../src/executor-contract.js";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
 import {
   checkProgramReturnPaging,
+  checkProgramReturnWriteWarning,
   checkProgramReturnFallback,
   checkLargeProgramRead,
   checkLargeProgramWrite,
@@ -23,6 +24,7 @@ import {
   checkQueuedWriteAtExhaustion,
   checkSharedPreludes,
   checkStashAuthority,
+  checkProgramReadDependencies,
   checkWriteDeadlineDiagnostics,
   CONTRACT_CASES,
   contractHarness,
@@ -55,6 +57,15 @@ describe("guest API contract (QuickJS executor)", () => {
   it("INV-2 INV-3 INV-4: program return pages recheck identity, live grants, pool membership and trust", async () => {
     await checkStashAuthority(executor, true);
   });
+
+  for (const custom of [false, true]) {
+    it(`INV-3 INV-4: ${custom ? "customExecutor: " : ""}skill and catalog return pages enforce contributing live grants`, async () => {
+      await checkProgramReadDependencies(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
+    });
+    it(`INV-2 INV-9: ${custom ? "customExecutor: " : ""}return paging warns only about writes completed in this run`, async () => {
+      await checkProgramReturnWriteWarning(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
+    });
+  }
 
   it("INV-2 INV-5 INV-9: oversized returns page completely after exactly one recorded write", async () => {
     await checkProgramReturnPaging(executor);
