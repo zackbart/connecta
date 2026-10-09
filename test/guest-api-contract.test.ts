@@ -13,6 +13,9 @@ import { checkAuthHandoffProgram } from "./fixtures/authorization-handoff.js";
 import { describe, expect, it } from "vitest";
 import { customExecutor } from "../src/executor-contract.js";
 import {
+  checkProgramReturnPaging,
+  checkProgramReturnWriteWarning,
+  checkProgramReturnFallback,
   checkLargeProgramRead,
   checkLargeProgramWrite,
   checkProgramResultBom,
@@ -36,6 +39,8 @@ import {
   checkQueuedWriteAtExhaustion,
   checkSharedPreludes,
   checkStashAuthority,
+  checkProgramReadDependencies,
+  checkProgramVisibilityDependencies,
   checkWriteDeadlineDiagnostics,
   CONTRACT_BASE,
   CONTRACT_CASES,
@@ -93,9 +98,8 @@ describe("guest API contract (executor-independent)", () => {
   });
 
   it("[R2] truncates once however many hops the value takes", () => {
-    // The QuickJS path guards inside the child and again in the parent. A
-    // non-idempotent guard would report the envelope's own length as
-    // totalChars and bury the real size behind a nested preview.
+    // Repeated fallback guards must retain the original serialized size.
+    // IPC validation now preserves the full value for the host stash.
     const value = { blob: '{"quoted":"'.repeat(40_000) };
     const once = guardExecuteResultValue(value);
     const twice = guardExecuteResultValue(once);
@@ -103,6 +107,7 @@ describe("guest API contract (executor-independent)", () => {
       result: value,
     }).result;
 
+    expect(throughTransport).toEqual(value);
     expect(twice).toEqual(once);
     expect(guardExecuteResultValue(throughTransport)).toEqual(once);
     expect((once as { totalChars: number }).totalChars).toBe(JSON.stringify(value).length);
@@ -448,6 +453,40 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
     await checkNativeSnapshots(required(workerExecutor));
   });
   for (const custom of [false, true]) {
+    it(`INV-3 INV-4: ${custom ? "customExecutor: " : ""}unresolved failures and local guides retain connector visibility on return pages`, async () => {
+      await checkProgramVisibilityDependencies(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    });
+    it(`INV-2 INV-3 INV-4: ${custom ? "customExecutor: " : ""}program return pages recheck identity, live grants, pool membership and trust`, async () => {
+      await checkStashAuthority(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+        true,
+      );
+    });
+
+    it(`INV-3 INV-4: ${custom ? "customExecutor: " : ""}skill and catalog return pages enforce contributing live grants`, async () => {
+      await checkProgramReadDependencies(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    });
+    it(`INV-2 INV-9: ${custom ? "customExecutor: " : ""}return paging warns only about writes completed in this run`, async () => {
+      await checkProgramReturnWriteWarning(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    });
+
+    it(`INV-2 INV-5 INV-9: ${custom ? "customExecutor: " : ""}oversized returns page completely after exactly one recorded write`, async () => {
+      await checkProgramReturnPaging(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    });
+    it(`INV-2 INV-9: ${custom ? "customExecutor: " : ""}unavailable return paging preserves success and a bounded fallback`, async () => {
+      await checkProgramReturnFallback(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    });
+
     it(`INV-9: ${custom ? "customExecutor: " : ""}lone surrogates refuse raw-text paging without replaying writes and round-trip as JSON`, async () => {
       await checkProgramResultSurrogates(
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,

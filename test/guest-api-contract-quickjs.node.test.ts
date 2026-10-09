@@ -7,6 +7,9 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { customExecutor } from "../src/executor-contract.js";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
 import {
+  checkProgramReturnPaging,
+  checkProgramReturnWriteWarning,
+  checkProgramReturnFallback,
   checkLargeProgramRead,
   checkLargeProgramWrite,
   checkProgramPagingFailure,
@@ -21,6 +24,8 @@ import {
   checkQueuedWriteAtExhaustion,
   checkSharedPreludes,
   checkStashAuthority,
+  checkProgramReadDependencies,
+  checkProgramVisibilityDependencies,
   checkWriteDeadlineDiagnostics,
   CONTRACT_CASES,
   contractHarness,
@@ -50,6 +55,31 @@ describe("guest API contract (QuickJS executor)", () => {
     // The deployment fixture owns its executor and closes it with the app.
     await checkAuthHandoffProgram(quickJsExecutor({ cpuTimeMs: 5_000 }));
   });
+  it("INV-2 INV-3 INV-4: program return pages recheck identity, live grants, pool membership and trust", async () => {
+    await checkStashAuthority(executor, true);
+  });
+
+  for (const custom of [false, true]) {
+    it(`INV-3 INV-4: ${custom ? "customExecutor: " : ""}unresolved failures and local guides retain connector visibility on return pages`, async () => {
+      await checkProgramVisibilityDependencies(
+        custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor,
+      );
+    });
+    it(`INV-3 INV-4: ${custom ? "customExecutor: " : ""}skill and catalog return pages enforce contributing live grants`, async () => {
+      await checkProgramReadDependencies(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
+    });
+    it(`INV-2 INV-9: ${custom ? "customExecutor: " : ""}return paging warns only about writes completed in this run`, async () => {
+      await checkProgramReturnWriteWarning(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
+    });
+  }
+
+  it("INV-2 INV-5 INV-9: oversized returns page completely after exactly one recorded write", async () => {
+    await checkProgramReturnPaging(executor);
+  });
+  it("INV-2 INV-9: unavailable return paging preserves success and a bounded fallback", async () => {
+    await checkProgramReturnFallback(executor);
+  });
+
   it("INV-3 INV-7: native snapshots prevent mutation budget bypass and cross-run leakage", async () => {
     const concurrent = quickJsExecutor({ concurrency: 2, cpuTimeMs: 5_000 });
     try {

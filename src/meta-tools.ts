@@ -20,7 +20,7 @@ import type { DeferredWork } from "./connector-scope.js";
 import { resolveDiscoveryConcurrency } from "./concurrency.js";
 import { boundedEchoText, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
 import { failureRecord, logFailure } from "./operator-record.js";
-import { MAX_EXECUTE_RESULT_CHARS, serializeResultText } from "./executor-result.js";
+import { guardExecuteResultValue, MAX_EXECUTE_RESULT_CHARS, serializeResultText } from "./executor-result.js";
 import { InvocationService, type InvocationTiming } from "./invocation.js";
 import {
   isValidMaxResultBytes,
@@ -36,6 +36,7 @@ import { RESULT_TTL_SECONDS, resultKeys } from "./storage/keys.js";
 import { agentOutputOperations, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import { captureDownstreamInput } from "./downstream-input.js";
 import type { ResolvedCatalogTool } from "./catalog-service.js";
+import type { Logger } from "./types.js";
 import type { PoolTrust } from "./tool-safety.js";
 import { PROGRAM_RESULT_WIRE_BYTES, type ProgramResultHandle } from "./program-result.js";
 
@@ -157,12 +158,21 @@ export function alignEndToCharBoundary(bytes: Uint8Array, offset: number, end: n
 const RESULT_ENVELOPE_V4 = "connecta-result-v4:";
 const RESULT_ENVELOPE_V4_HEADER = /^connecta-result-v4:([A-Za-z0-9+/=]+):(\d+):(\d+):(\d+):/;
 
+export interface ProgramResultDependency {
+  /** Catalog metadata needs visibility, not permission to invoke a write. */
+  access?: "catalog";
+  connector: string;
+  tool?: string;
+  classification: "read" | "write";
+}
+
 interface ResultBinding {
   identity: ResultIdentity;
   baseUrl: string;
-  connector: string;
-  tool: string;
+  connector?: string;
+  tool?: string;
   classification: "read" | "write";
+  program?: ProgramResultDependency[];
 }
 
 /**
@@ -272,6 +282,8 @@ const READ_REDUCE_FIRST =
 
 function pagingHint(results: ResultStash, totalBytes: number, preview: PreviewShape): string {
   if (!results.write) {
+    if (results.binding.program)
+      return "filter/map/slice data inside execute_code and return only what you need; page this completed return with connecta.result using nextAction.";
     const [shown, full] =
       preview.kind === "prefix"
         ? [`Bytes 0-${preview.bytes} of ${totalBytes} follow.`, "to read it in full, page the rest"]
@@ -418,6 +430,60 @@ export async function pageProgramResult(
       ? `${write ? WRITE_ALREADY_RAN + " " : ""}Page this result with connecta.result(handle); do not repeat the call for output.`
       : notice.hint,
   };
+}
+
+/** Program returns share the direct stash, with all host-admitted call dependencies. */
+export async function guardProgramReturn(
+  value: unknown,
+  registry: RegistryView,
+  baseUrl: string,
+  dependencies: ProgramResultDependency[],
+  secrets: SentSecrets,
+  trust: PoolTrust | undefined,
+  logger: Logger,
+  maxChars: number,
+  completedWrite: boolean,
+): Promise<unknown> {
+  const serialized = serializeResultText(value);
+  if (serialized.length <= maxChars) return value;
+  const text = secrets.text(serialized);
+  const bytes = enc.encode(text);
+  const write = dependencies.some((dependency) => dependency.classification === "write");
+  const cap = Math.min(
+    registry.maxResultBytes,
+    ...dependencies.map((dependency) =>
+      resolveMaxResultBytes(registry.getConnector(dependency.connector)?.maxResultBytes, registry.maxResultBytes),
+    ),
+  );
+  const results: ResultStash = {
+    secrets,
+    pageable: !write || trust === "trusted",
+    binding: {
+      identity: registry.resultIdentity(),
+      baseUrl,
+      classification: write ? "write" : "read",
+      program: dependencies,
+    },
+    write: completedWrite,
+    cap,
+    set: (id, chunks, ttl) => registry.stashResult(id, chunks, ttl),
+    warn: () => logFailure(logger, "result paging unavailable", failureRecord({})),
+  };
+  const notice = await stashResult(bytes, results, { kind: "none" }, text);
+  // Put the entire recovery route ahead of the preview in both response forms.
+  // A client retaining only the first 2,000 characters still sees the action.
+  if (notice.resultId) {
+    const base = { ...notice, totalChars: text.length, preview: "" };
+    const budget = Math.max(0, maxChars - JSON.stringify(base).length);
+    return { ...base, preview: escapedHeadOf(bytes, Math.min(512, budget)) };
+  }
+  const fallback = guardExecuteResultValue(secrets.redact(value), maxChars, notice.hint) as {
+    truncated: true;
+    preview: string;
+    totalChars: number;
+    hint: string;
+  };
+  return { truncated: true, totalChars: fallback.totalChars, hint: fallback.hint, preview: fallback.preview };
 }
 
 interface GuardedResult<T> {
@@ -678,6 +744,7 @@ function metaToolsForRequest(
     defer?: DeferredWork | undefined;
     /** Request identity shared by credential redaction, paging, and downstream invocation. */
     requestScope?: object | undefined;
+    onResultRead?: (dependencies: ProgramResultDependency[]) => void;
     downstreamInput?: boolean;
   } = {},
 ) {
@@ -1010,33 +1077,78 @@ function metaToolsForRequest(
         binding.identity.principal !== identity.principal ||
         binding.identity.endpoint !== identity.endpoint ||
         binding.identity.origin !== identity.origin ||
-        typeof binding.connector !== "string" ||
-        typeof binding.tool !== "string" ||
+        (binding.program === undefined
+          ? typeof binding.connector !== "string" || typeof binding.tool !== "string"
+          : !Array.isArray(binding.program) ||
+            binding.program.some(
+              (dependency) =>
+                !dependency ||
+                typeof dependency.connector !== "string" ||
+                (dependency.tool !== undefined && typeof dependency.tool !== "string") ||
+                (dependency.access !== undefined &&
+                  (dependency.access !== "catalog" || dependency.classification !== "read")) ||
+                !["read", "write"].includes(dependency.classification),
+            )) ||
         !["read", "write"].includes(binding.classification)
       )
         return denied();
       const allowed = async (): Promise<boolean> => {
         options.signal?.throwIfAborted();
         try {
-          const address = `${binding.connector}.${binding.tool}`;
-          if (!(await registry.recheckResultAccess(address, binding.classification, options.signal))) return false;
-          if (!registry.getConnector(binding.connector)) return false;
-          const tools = await registry.getTools(
-            binding.connector,
-            baseUrl,
-            requestScope,
-            options.signal ? { signal: options.signal } : {},
-          );
-          const tool = tools.find((tool) => tool.name === binding.tool);
-          return Boolean(
-            tool && ((binding.classification === "read" && tool.classification === "read") || opts.trust === "trusted"),
-          );
+          if (
+            binding.program &&
+            !(await registry.recheckResultAccess(undefined, binding.classification, options.signal))
+          )
+            return false;
+          if (binding.classification === "write" && opts.trust !== "trusted") return false;
+          const dependencies = binding.program ?? [binding as ProgramResultDependency];
+          for (const dependency of dependencies) {
+            const address =
+              dependency.tool === undefined ? dependency.connector : `${dependency.connector}.${dependency.tool}`;
+            if (
+              !(await registry.recheckResultAccess(
+                address,
+                dependency.classification,
+                options.signal,
+                dependency.access,
+              ))
+            )
+              return false;
+            if (dependency.tool === undefined) {
+              if (
+                dependency.access === "catalog"
+                  ? !registry.getConnector(dependency.connector)
+                  : !registry.getResourceConnector(dependency.connector)
+              )
+                return false;
+              continue;
+            }
+            if (!registry.getConnector(dependency.connector)) return false;
+            const tools = await registry.getTools(
+              dependency.connector,
+              baseUrl,
+              requestScope,
+              options.signal ? { signal: options.signal } : {},
+            );
+            const tool = tools.find((tool) => tool.name === dependency.tool);
+            if (
+              !tool ||
+              !(
+                dependency.access === "catalog" ||
+                (dependency.classification === "read" && tool.classification === "read") ||
+                opts.trust === "trusted"
+              )
+            )
+              return false;
+          }
+          return true;
         } catch {
           options.signal?.throwIfAborted();
           return false;
         }
       };
       if (!(await allowed())) return denied();
+      opts.onResultRead?.(binding.program ?? [binding as ProgramResultDependency]);
       let requestedOffset = args.offset ?? 0;
       const cap = Number(header[4]);
       if (!isValidMaxResultBytes(cap)) return denied();

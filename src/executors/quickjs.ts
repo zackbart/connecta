@@ -26,6 +26,8 @@ import type { AdmittingExecutor, AdmissionSnapshot, ExecuteResult, ExecutorLease
 import {
   hostCallLabel,
   MAX_QUICKJS_IPC_BYTES,
+  MAX_QUICKJS_RESULT_BYTES,
+  QUICKJS_RESULT_CHUNK_CHARS,
   MAX_QUICKJS_HOST_RPC_BYTES,
   type ChildToParentMessage,
   type ExecutionPayload,
@@ -70,6 +72,8 @@ interface ActiveRun {
   id: number;
   logs: string[];
   logChars: number;
+  resultChunks: string[];
+  resultBytes: number;
   providers: Map<string, ExecutorProvider>;
   outcome: Deferred.Deferred<ExecuteResult, Error>;
 }
@@ -357,6 +361,8 @@ class QuickJsChildPool implements AdmittingExecutor {
         id,
         logs: [],
         logChars: 0,
+        resultChunks: [],
+        resultBytes: 0,
         providers: providerMap,
         outcome: Deferred.makeUnsafe(),
       };
@@ -599,14 +605,29 @@ class QuickJsChildPool implements AdmittingExecutor {
       await this.handleHostCall(slot, child.process, active, message);
       return;
     }
-    if (message.type !== "result" || message.jobId !== active.id) return;
-    if (serializedBytes(message.payloadJson) > MAX_QUICKJS_IPC_BYTES) {
+    if ((message.type !== "result" && message.type !== "result-chunk") || message.jobId !== active.id) return;
+    if (
+      message.payloadJson.length > QUICKJS_RESULT_CHUNK_CHARS ||
+      (message.type === "result-chunk" && message.payloadJson.length !== QUICKJS_RESULT_CHUNK_CHARS) ||
+      message.payloadJson.length === 0
+    ) {
+      this.rejectActive(slot, new Error("QuickJS execution result exceeded the IPC limit."));
+      this.recycle(slot);
+      return;
+    }
+    const bytes = serializedBytes(message.payloadJson);
+    if (active.resultBytes + bytes > MAX_QUICKJS_RESULT_BYTES) {
       this.rejectActive(slot, new Error("QuickJS execution result exceeded the IPC limit."));
       this.recycle(slot);
       return;
     }
     try {
-      const payload = JSON.parse(message.payloadJson) as ExecutionPayload;
+      stringifyBounded(message, "QuickJS result IPC envelope");
+      active.resultBytes += bytes;
+      active.resultChunks.push(message.payloadJson);
+      if (message.type === "result-chunk") return;
+      const payload = JSON.parse(active.resultChunks.join("")) as ExecutionPayload;
+      active.resultChunks.length = 0;
       // A result ends any crash streak: the next crash backs off from 100 ms.
       slot.crashes.length = 0;
       slot.backoff = undefined;

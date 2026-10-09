@@ -2,6 +2,7 @@ import { expect } from "vitest";
 import { createExecuteTool } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { PROGRAM_RESULT_INLINE_BYTES } from "../src/program-result.js";
+import { sentSecretsFor } from "../src/sent-secrets.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { resultKeys, scopes } from "../src/storage/keys.js";
@@ -320,5 +321,200 @@ export async function checkProgramPagingFailure(executor: Executor): Promise<voi
     expect(sink.events).toHaveLength(1);
     expect(sink.events[0]).toMatchObject({ outcome: "success", attempts: 1 });
     expect(outcome.structuredContent?.hostCalls).toEqual({ attempted: 1, admitted: 1, succeeded: 1, failed: 0 });
+  }
+}
+
+/** A completed program return uses the direct stash without replaying its write. */
+export async function checkProgramReturnPaging(executor: Executor): Promise<void> {
+  // Also crosses the QuickJS per-message IPC ceiling and exercises JSON escaping.
+  const credential = "program-return-credential";
+  const value = { text: '雪"\\\n'.repeat(150_000), credential };
+  const expected = { ...value, credential: "[redacted]" };
+  let writes = 0;
+  const registry = new Registry(
+    [
+      {
+        id: "exporter",
+        kind: "api",
+        maxResultBytes: 9_001,
+        async listTools() {
+          return [{ name: "export", annotations: { readOnlyHint: false } }];
+        },
+        async callTool(_name, _args, ctx) {
+          writes++;
+          sentSecretsFor(ctx).add(credential);
+          return { text: "ready" };
+        },
+      },
+    ],
+    { storage: memoryStorage(), logger: silentLogger },
+  );
+  const sink = activitySink();
+  const execute = createExecuteTool(registry, BASE, executor, silentLogger, sink.activity, {
+    trust: "trusted",
+    maxHostCalls: 512,
+  });
+  const outcome = await execute({
+    code: `async () => {
+    await connecta.call("exporter.export");
+    console.log("program log");
+    return { text: '雪"\\\\\\n'.repeat(150000), credential: ${JSON.stringify(credential)} };
+  }`,
+  });
+  expect(outcome.isError, JSON.stringify(outcome.structuredContent)).toBeUndefined();
+  const notice = outcome.structuredContent!.result as {
+    resultId: string;
+    totalBytes: number;
+    preview: string;
+    nextAction: { arguments: { code: string } };
+    hint: string;
+  };
+  expect(notice.resultId).toMatch(/^[a-f0-9-]{36}$/);
+  expect(notice.totalBytes).toBe(new TextEncoder().encode(JSON.stringify(expected)).length);
+  expect(notice.preview).toBeTruthy();
+  expect(notice.hint).toContain("This write already ran: do not call it again");
+  expect(outcome.structuredContent!.logs).toBe("program log");
+  const spilled = outcome.content[0]!.text.slice(0, 2_000);
+  expect(spilled).toContain(notice.resultId);
+  expect(spilled).toContain("nextAction");
+  expect(spilled).toContain("connecta.result");
+  expect(spilled).toContain("This write already ran");
+  const first = await execute(notice.nextAction.arguments);
+  expect(first.isError).toBeUndefined();
+  expect(first.structuredContent!.result).toMatchObject({ resultId: notice.resultId, offset: 0, hasMore: true });
+  // Recover the entire JSON in a new guest run and return only verification facts.
+  const restored = await execute({
+    code: `async () => {
+    let text = "", offset = 0, page;
+    do {
+      page = await connecta.result(${JSON.stringify(notice.resultId)}, { offset, maxBytes: 9001 });
+      text += page.text; offset = page.nextOffset;
+    } while (page.hasMore);
+    const value = JSON.parse(text);
+    return { exact: value.text === '雪"\\\\\\n'.repeat(150000), credential: value.credential, totalBytes: page.totalBytes };
+  }`,
+  });
+  expect(restored.isError, JSON.stringify(restored.structuredContent)).toBeUndefined();
+  expect(restored.structuredContent!.result).toEqual({
+    exact: true,
+    credential: "[redacted]",
+    totalBytes: notice.totalBytes,
+  });
+  // The same reader obeys the original connector cap and reconstructs all bytes.
+  const meta = createMetaTools(registry, BASE, { trust: "trusted" });
+  let text = "",
+    offset = 0;
+  let hasMore = true;
+  while (hasMore) {
+    const page = await meta.readResult({ id: notice.resultId, offset, maxBytes: 20_000 });
+    expect(page.isError).toBeUndefined();
+    expect(page.structuredContent!.bytes).toBeLessThanOrEqual(9_001);
+    text += page.structuredContent!.text;
+    hasMore = page.structuredContent!.hasMore as boolean;
+    offset = page.structuredContent!.nextOffset as number;
+  }
+  expect(JSON.parse(text)).toEqual(expected);
+  expect(text).not.toContain(credential);
+  expect(writes).toBe(1);
+  expect(sink.events).toHaveLength(1);
+  expect(sink.events[0]).toMatchObject({ classification: "write", outcome: "success", attempts: 1 });
+}
+
+/** Stash exhaustion preserves success, the old preview, and the no-replay warning. */
+export async function checkProgramReturnFallback(executor: Executor): Promise<void> {
+  for (const write of [false, true]) {
+    let calls = 0;
+    const registry = new Registry(
+      [
+        {
+          id: "exporter",
+          kind: "api",
+          async listTools() {
+            return [{ name: "run", annotations: { readOnlyHint: !write } }];
+          },
+          async callTool() {
+            calls++;
+            return { text: "x".repeat(50_000) };
+          },
+        },
+      ],
+      { storage: memoryStorage(), logger: silentLogger, results: { maxStashEntries: 0 } },
+    );
+    const sink = activitySink();
+    const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, sink.activity, {
+      trust: write ? "trusted" : "read-only",
+    })({
+      code: 'async () => (await connecta.call("exporter.run")).data',
+    });
+    expect(outcome.isError).toBeUndefined();
+    const notice = outcome.structuredContent!.result as Record<string, unknown>;
+    expect(notice).toMatchObject({
+      truncated: true,
+      totalChars: 50_011,
+      preview: expect.any(String),
+      hint: expect.stringContaining("Paging is unavailable"),
+    });
+    expect(notice).not.toHaveProperty("resultId");
+    expect(notice).not.toHaveProperty("nextAction");
+    expect(notice.hint).toContain("filter/map/slice");
+    if (write) expect(notice.hint).toContain("This write already ran");
+    expect(JSON.stringify(notice).length).toBeLessThanOrEqual(24_000);
+    expect(calls).toBe(1);
+    expect(sink.events).toHaveLength(1);
+    expect(sink.events[0]).toMatchObject({ outcome: "success", attempts: 1 });
+  }
+}
+
+/** Paging a prior write preserves authority without claiming a write ran again. */
+export async function checkProgramReturnWriteWarning(executor: Executor): Promise<void> {
+  for (const exhausted of [false, true]) {
+    let writes = 0;
+    const registry = new Registry(
+      [
+        {
+          id: "exporter",
+          kind: "api",
+          async listTools() {
+            return [{ name: "write", annotations: { readOnlyHint: false } }];
+          },
+          async callTool() {
+            writes++;
+            return { text: "w".repeat(30_000) };
+          },
+        },
+      ],
+      { storage: memoryStorage(), logger: silentLogger, ...(exhausted ? { results: { maxStashEntries: 1 } } : {}) },
+    );
+    const execute = createExecuteTool(registry, BASE, executor, silentLogger, undefined, { trust: "trusted" });
+    const original = await execute({ code: 'async () => (await connecta.call("exporter.write")).data' });
+    expect(original.isError).toBeUndefined();
+    const first = original.structuredContent!.result as { resultId: string; hint: string };
+    expect(first.resultId).toMatch(/^[a-f0-9-]{36}$/);
+    expect(first.hint).toContain("This write already ran");
+    const derived = await execute({
+      code: `async () => {
+      let text = "", offset = 0, page;
+      do { page = await connecta.result(${JSON.stringify(first.resultId)}, { offset });
+        text += page.text; offset = page.nextOffset; } while (page.hasMore);
+      return JSON.parse(text);
+    }`,
+    });
+    expect(derived.isError).toBeUndefined();
+    const notice = derived.structuredContent!.result as { resultId?: string; hint: string };
+    expect(notice.hint).not.toContain("This write already ran");
+    expect(derived.structuredContent).not.toHaveProperty("writes");
+    expect(writes).toBe(1);
+    if (exhausted) {
+      expect(notice.resultId).toBeUndefined();
+      expect(notice.hint).toContain("Paging is unavailable");
+    } else {
+      expect(notice.resultId).toMatch(/^[a-f0-9-]{36}$/);
+      const trusted = await createMetaTools(registry, BASE, { trust: "trusted" }).readResult({ id: notice.resultId! });
+      expect(trusted.isError).toBeUndefined();
+      const readonly = await createMetaTools(registry, BASE, { trust: "read-only" }).readResult({
+        id: notice.resultId!,
+      });
+      expect(readonly.isError).toBe(true);
+    }
   }
 }

@@ -90,7 +90,7 @@ Otherwise fetch for units, pagination, aliases, or sequences.
 
 ## Large results and recovery
 
-A truncated direct result carries a resultId when paging is available. Follow
+Large direct results and program returns carry resultId when paging is available. Follow
 nextOffset in UTF-8 bytes, reassemble and reduce inside one program. Use the
 returned id in place of result-id below; this example assumes documented JSON.
 
@@ -113,7 +113,7 @@ async () => {
 }
 \`\`\`
 
-Returns have no page handle. Reduce reads; check write results and targets. write_outcome_unknown forbids automatic retry, even if caught.
+Oversized returns lead with nextAction. Never rerun writes for output. write_outcome_unknown forbids retry, even if caught.
 Recovery args may be partial (argsRedacted) or absent (argsOmitted). Reconcile
 before retrying with the original args or repeating a program that sent writes.
 Non-retryable errors need repair.

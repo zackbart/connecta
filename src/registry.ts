@@ -214,7 +214,12 @@ export interface RegistryView {
   resultsStorage(): KVStorage;
   resultIdentity(): ResultIdentity;
   /** Recheck live auth/grants and pool admission before exposing stored data. */
-  recheckResultAccess(address: string, classification: "read" | "write", signal?: AbortSignal): Promise<boolean>;
+  recheckResultAccess(
+    address: string | undefined,
+    classification: "read" | "write",
+    signal?: AbortSignal,
+    access?: "catalog",
+  ): Promise<boolean>;
   /** Reserve deployment-wide capacity before writing a paging envelope's chunks. */
   stashResult(id: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean>;
   /** Local declared-vs-stored credential mismatch, with no downstream I/O. */
@@ -251,7 +256,12 @@ export interface RegistryScope {
   principalKey?: string;
   endpoint?: string;
   origin?: string | null;
-  currentResultAccess?: (address: string, classification: "read" | "write", signal?: AbortSignal) => Promise<boolean>;
+  currentResultAccess?: (
+    address: string | undefined,
+    classification: "read" | "write",
+    signal?: AbortSignal,
+    access?: "catalog",
+  ) => Promise<boolean>;
   /** The admitted caller, readable only by built-in connectors; see connector-caller.ts. */
   caller?: ConnectorCaller;
 }
@@ -940,7 +950,12 @@ export class Registry implements RegistryView {
     return { subject: null, principal: null, endpoint: "/mcp", origin: null };
   }
 
-  recheckResultAccess(_address: string, _classification: "read" | "write", _signal?: AbortSignal): Promise<boolean> {
+  recheckResultAccess(
+    _address: string | undefined,
+    _classification: "read" | "write",
+    _signal?: AbortSignal,
+    _access?: "catalog",
+  ): Promise<boolean> {
     return Promise.resolve(true);
   }
 
@@ -1379,8 +1394,13 @@ class ScopedRegistryView implements RegistryView {
     };
   }
 
-  recheckResultAccess(address: string, classification: "read" | "write", signal?: AbortSignal): Promise<boolean> {
-    return this.scope.currentResultAccess?.(address, classification, signal) ?? Promise.resolve(true);
+  recheckResultAccess(
+    address: string | undefined,
+    classification: "read" | "write",
+    signal?: AbortSignal,
+    access?: "catalog",
+  ): Promise<boolean> {
+    return this.scope.currentResultAccess?.(address, classification, signal, access) ?? Promise.resolve(true);
   }
 
   resultsStorage(): KVStorage {

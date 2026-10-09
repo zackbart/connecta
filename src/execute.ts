@@ -17,19 +17,21 @@ import {
   type ResolvedCatalogTool,
 } from "./catalog-service.js";
 import type { DeferredWork } from "./connector-scope.js";
-import { createMetaTools, jsonResult, pageProgramResult, type ToolResult } from "./meta-tools.js";
+import {
+  createMetaTools,
+  guardProgramReturn,
+  jsonResult,
+  pageProgramResult,
+  type ProgramResultDependency,
+  type ToolResult,
+} from "./meta-tools.js";
 import {
   PROGRAM_RESULT_INLINE_BYTES,
   PROGRAM_RESULT_PAGE_BYTES,
   PROGRAM_RESULT_WIRE_BYTES,
   type ProgramResultHandle,
 } from "./program-result.js";
-import {
-  guardExecuteResultValue,
-  MAX_EXECUTE_LOG_CHARS,
-  MAX_EXECUTE_RESULT_CHARS,
-  truncateExecuteText,
-} from "./executor-result.js";
+import { MAX_EXECUTE_LOG_CHARS, MAX_EXECUTE_RESULT_CHARS, truncateExecuteText } from "./executor-result.js";
 import { ExecutorAdmissionError, ExecutorExecutionError, isAdmittingExecutor } from "./executor-admission.js";
 import { boundedEchoText, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
 import { DEFAULT_MAX_WRITES, ProgramWrites, writeStateOf } from "./program-writes.js";
@@ -464,6 +466,7 @@ export async function buildSandboxProviders(
 }
 
 interface SandboxLimits {
+  resultDependencies?: ProgramResultDependency[];
   sentSecrets?: SentSecrets;
   defaultToolTimeoutMs?: number | undefined;
   programDeadlineAt?: number | undefined;
@@ -782,6 +785,23 @@ function sandboxProvider(
             Effect.sync(() => sending.settle?.(Exit.isSuccess(exit) ? writeStateOf(exit.value) : "unknown")),
           ),
         );
+      if (outcome.resolved) {
+        const resolved = outcome.resolved;
+        limits.resultDependencies?.push({
+          connector: resolved.connector.id,
+          tool: resolved.definition.name,
+          classification: outcome.dispatched && resolved.definition.classification !== "read" ? "write" : "read",
+          // A refusal exposes catalog metadata, not a completed write's result.
+          ...(!outcome.dispatched ? { access: "catalog" as const } : {}),
+        });
+      } else {
+        // Resolution failures can expose a catalog error or connector metadata
+        // without ever finding a tool. Such bytes depend on connector visibility,
+        // not on the existence of the requested (possibly unknown) tool.
+        const target = registry.resolveAddress(address);
+        if (target) catalogDependency(target.connector.id);
+        if (!outcome.ok) for (const connector of outcome.error.configuredConnectors ?? []) catalogDependency(connector);
+      }
       diagnostics?.recordCall(outcome);
       if (!outcome.ok) return yield* Effect.fail(new InvocationFailure(outcome.error));
       return outcome.value;
@@ -820,7 +840,24 @@ function sandboxProvider(
       );
     });
 
-  const meta = createMetaTools(registry, baseUrl, { trust: limits.trust, requestScope });
+  const meta = createMetaTools(registry, baseUrl, {
+    trust: limits.trust,
+    requestScope,
+    onResultRead: (dependencies) => limits.resultDependencies?.push(...dependencies),
+  });
+  const catalogDependency = (connector: string, tool?: string) => {
+    if (registry.getConnector(connector))
+      limits.resultDependencies?.push({
+        connector,
+        ...(tool ? { tool } : {}),
+        classification: "read",
+        access: "catalog",
+      });
+  };
+  const catalogAddressDependency = (address: string) => {
+    const resolved = registry.resolveAddress(address);
+    if (resolved) catalogDependency(resolved.connector.id, resolved.toolName);
+  };
   const operations: Record<string, (...args: unknown[]) => Effect.Effect<unknown, unknown>> = {
     call,
     result: (id, options, signal) =>
@@ -889,6 +926,12 @@ function sandboxProvider(
           const skills = new SkillsRegistry(registry, baseUrl, {
             requestScope,
             requestSignal: (utilitySignal as AbortSignal | undefined) ?? hostAccessSignal,
+            onRead: (connector, source) =>
+              limits.resultDependencies?.push({
+                connector: connector.id,
+                classification: "read",
+                ...(source === "local" ? { access: "catalog" as const } : {}),
+              }),
             probeTimeoutMs: limits.probeTimeoutMs,
             defer: limits.defer,
           });
@@ -906,6 +949,8 @@ function sandboxProvider(
           requestScope,
           sentSecrets,
           timeoutMs: hostCallTimeoutMs,
+          onResolved: (connector) =>
+            limits.resultDependencies?.push({ connector: connector.id, classification: "read" }),
           onConnectorTime: (elapsed) => {
             connectorMs += elapsed;
           },
@@ -989,6 +1034,11 @@ function sandboxProvider(
           result,
           "Request a smaller limit, omit fullDescriptions, use compact schemas, or pass includeSchemaKeys: false.",
         );
+        for (const tool of result.tools) catalogAddressDependency(tool.address);
+        for (const error of result.catalogErrors) catalogDependency(error.connector);
+        for (const connector of result.absence?.configuredConnectors ?? []) catalogDependency(connector);
+        for (const connector of result.queryAnalysis?.configuredConnectors ?? []) catalogDependency(connector);
+        if (result.queryAnalysis?.connectorScope) catalogDependency(result.queryAnalysis.connectorScope);
         return result;
       }),
     describe: (raw) =>
@@ -1001,6 +1051,15 @@ function sandboxProvider(
         };
         const result = { tools: await catalog.describe({ ...args, format: args.format ?? "json" }) };
         boundedDiscoveryText(result, 'Split the address list or use format: "compact".');
+        for (const tool of result.tools) {
+          if (!tool.error) catalogAddressDependency(tool.address);
+          else {
+            const resolved = registry.resolveAddress(tool.address);
+            if (resolved) catalogDependency(resolved.connector.id);
+            for (const connector of tool.errorDetails?.configuredConnectors ?? []) catalogDependency(connector);
+            for (const suggestion of tool.errorDetails?.suggestions ?? []) catalogAddressDependency(suggestion);
+          }
+        }
         return result;
       }),
   };
@@ -1288,6 +1347,7 @@ export function createExecuteTool(
       );
       const hostCalls = { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
       const programWrites = new ProgramWrites();
+      const resultDependencies: ProgramResultDependency[] = [];
       const dispatchController = new AbortController();
       const terminal = Deferred.makeUnsafe<never, InvocationFailure>();
       let budgetFailure: InvocationFailure | undefined;
@@ -1354,6 +1414,7 @@ export function createExecuteTool(
                 trust: config.trust,
                 maxWrites: config.maxWrites,
                 programWrites,
+                resultDependencies,
                 dispatchController,
               },
               requestScope,
@@ -1404,7 +1465,23 @@ export function createExecuteTool(
           ),
         );
       });
-      const reported = { emitted, diagnostics, program };
+      const reported = {
+        emitted,
+        diagnostics,
+        program,
+        guardResult: (value: unknown, maxChars: number) =>
+          guardProgramReturn(
+            value,
+            registry,
+            baseUrl,
+            [...new Map(resultDependencies.map((dependency) => [JSON.stringify(dependency), dependency])).values()],
+            sentSecrets,
+            config.trust,
+            logger,
+            maxChars,
+            programWrites.hasSucceeded,
+          ),
+      };
       const exited = Effect.exit(Effect.scoped(run)).pipe(
         Effect.flatMap((exit) =>
           // Releasing a QuickJS lease ends its child and rejects execute() with
@@ -1414,7 +1491,7 @@ export function createExecuteTool(
         ),
       );
       return Effect.map(
-        Effect.map(exited, (exit) => {
+        Effect.flatMap(exited, (exit) => {
           // A synchronous fire-and-forget burst can also settle its executor in
           // this turn. The host's terminal refusal always wins over that value.
           if (budgetFailure instanceof HostCallBudgetExceeded) {
@@ -1424,12 +1501,12 @@ export function createExecuteTool(
               emitted,
               diagnostics,
             });
-            return failed;
+            return Effect.succeed(failed);
           }
           if (Exit.isFailure(exit)) {
-            return failedRun(sentSecrets.redact(Cause.squash(exit.cause)), logger, reported);
+            return Effect.succeed(failedRun(sentSecrets.redact(Cause.squash(exit.cause)), logger, reported));
           }
-          return finishedRun(sentSecrets.redact(exit.value), reported);
+          return Effect.promise(() => finishedRun(sentSecrets.redact(exit.value), reported));
         }),
         (unfinished) => {
           // Every run response passes through write accounting.
@@ -1478,6 +1555,7 @@ interface RunReport {
   emitted: EmitCollector;
   diagnostics: ExecuteDiagnostics | undefined;
   program: string;
+  guardResult: (value: unknown, maxChars: number) => Promise<unknown>;
 }
 
 /** An execution that never produced an ExecuteResult, as the model sees it. */
@@ -1520,7 +1598,10 @@ function failedRun(err: unknown, logger: Logger, { emitted, diagnostics, program
 }
 
 /** The response for an ExecuteResult: the program's error or its value. */
-function finishedRun(outcome: ExecuteResult, { emitted, diagnostics, program }: RunReport): ToolResult {
+async function finishedRun(
+  outcome: ExecuteResult,
+  { emitted, diagnostics, program, guardResult }: RunReport,
+): Promise<ToolResult> {
   if (outcome === null || typeof outcome !== "object" || Array.isArray(outcome)) {
     return failureResponse("Executor failed: expected an ExecuteResult object.", {
       emitted,
@@ -1576,7 +1657,7 @@ function finishedRun(outcome: ExecuteResult, { emitted, diagnostics, program }: 
   // error path so captured logs survive instead of a raw SDK 500.
   let result: unknown;
   try {
-    result = guardExecuteResultValue(outcome.result, MAX_EXECUTE_RESULT_CHARS - emitted.textChars);
+    result = await guardResult(outcome.result, MAX_EXECUTE_RESULT_CHARS - emitted.textChars);
   } catch (err) {
     const message = `Error: result is not JSON-serializable: ${msg(err)}`;
     return failureResponse(message, {
@@ -1675,13 +1756,13 @@ const executeDescription = (
 ) => `One known read: call_tool. One known write: call_destructive_tool. Everything else: execute_code. ${trust === "trusted" ? "Trusted pool: programs may read and write; the host approves the program as a write." : "Read-only pool: programs read; writes use call_destructive_tool."} Limits: ${hostLimits.maxHostCalls} host calls, ${maxWrites} writes, ${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
 ${connectorInventory(connectors)}
 
-Use async () => { ... }, no arguments, with connecta. No portable ambient capabilities. API:
+Use async () => { ... }, no arguments. No portable ambient capabilities. API:
 \`\`\`ts
 declare const connecta: {
 ${GUEST_API_DECLARATION}
 };
 \`\`\`
-Search: {tools}; check catalogErrors/absence. JSON schemas default; compact is text. Calls: {data, format:"json"|"text"}; >1 MiB: paged handle. connecta.result(handle) pages; nextOffset is UTF-8 bytes. allSettled retains typed errors; host budget_exceeded ends the run.
+Search: {tools}, catalogErrors. JSON schemas default; compact text. Calls: {data, format:"json"|"text"}; >1 MiB: paged handle. Oversized returns: resultId/nextAction. connecta.result pages; UTF-8 byte offsets. allSettled keeps typed errors; host budget_exceeded ends the run.
 
 Never repeat writes for output. emit(result) or emit(block) from result.content forwards MCP blocks. Authored: text/base64 image/audio; no await. Caps: ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes. Text shares result cap. skills({ name: "investigate" }): workflow; skills({ name: "usage" }): repair${connectorGuides ? ", guide handling" : ""}.`;
 

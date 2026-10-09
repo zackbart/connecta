@@ -89,9 +89,9 @@ a small sample for inspection before continuing in another call, which avoids
 repeated guesses at text formats and collection roots without restoring a
 mandatory discovery-only round trip. A one-time write can return the only copy
 of its result. Inspect and reduce the full value before a program returns, or
-use a direct `call_destructive_tool` result and page it with `connecta.result` after
-the write runs once. A program return has no page handle; sampling or slicing
-a write's output there can discard the answer.
+page the completed direct-call result or oversized program return with
+`connecta.result` after the write runs once. Sampling or slicing a write's output
+inside the program can still discard the answer.
 
 A `trusted` pool lets the same program discover and dispatch writes.
 A `read-only` pool refuses writes before validation or dispatch with
@@ -372,7 +372,14 @@ when it has one and `connecta:auth:<provider kind>` otherwise. Keep subject ids
 distinct within that namespace. An explicit principal is the fallback subject
 when neither id is supplied, and open deployments and auth providers that supply
 no identity share one partition. Each new stash also binds the principal,
-endpoint/pool, request origin, connector, tool, and classification. A page must
+endpoint/pool, request origin, connector, tool, and classification. Program-return
+stashes bind every contributing call, resource or skill read, and catalog lookup,
+including dependencies inherited from pages read during the run. Downstream skill and
+resource content requires a whole-connector grant on every page. Local guides and catalog
+metadata require the contributing connector or tool to remain visible, including
+caught catalog-load errors, unknown-tool failures, and recovery messages that
+list visible connectors or local guides. Returns with no downstream calls still
+require matching identity, origin and endpoint, current auth, and pool membership. A page must
 match those bindings and pass current auth, connector/tool grants, pool membership,
 and trust checks. Old entries lacking bindings fail closed. A random UUID is a
 handle, never an access grant.
@@ -472,9 +479,11 @@ When paging is available, `nextAction` is the page handle for either kind of cal
 the one next step connecta can spell out exactly, while a reduction is a
 program the agent has to write. `resultId` stays beside the exact `nextAction`,
 so the handle is actionable without copying an identifier out of prose.
-Program results and oversized discovery responses carry no such route: paging a
-program's return value is a refused shape, because a program can shrink
-anything before it returns.
+Oversized program returns carry the same route, with a bounded preview after
+its notice fields. They stash the compact JSON return and page from offset 0;
+see [program returns](./code-mode.md#results-and-projection). A run that completed
+any write gets the same no-repeat warning. Oversized discovery responses carry
+no paging route.
 
 ### Paging with connecta.result
 
@@ -511,7 +520,7 @@ usable bounded preview. It says paging is unavailable and the write already
 ran; it carries no result handle or recovery action and stores no unreachable
 stash. Write paging remains available on trusted endpoints.
 
-A refused stash write cannot undo a downstream success. Both call tools return
+A refused stash write cannot undo a downstream success. Direct calls and program returns produce
 a paging-unavailable notice, without a handle or recovery action. A write's
 notice still says it already ran. Activity records success; operator logs receive
 a fixed warning without storage error prose. Never repeat a write to recover output.

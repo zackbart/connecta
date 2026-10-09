@@ -4,6 +4,8 @@ import { msg } from "../errors.js";
 import type { ExecutorProvider } from "../types.js";
 import {
   MAX_QUICKJS_IPC_BYTES,
+  MAX_QUICKJS_RESULT_BYTES,
+  QUICKJS_RESULT_CHUNK_CHARS,
   MAX_QUICKJS_HOST_RPC_BYTES,
   type ChildToParentMessage,
   type ExecutionPayload,
@@ -77,6 +79,14 @@ function fixedTransportFailure(message: string): ExecutionPayload {
   };
 }
 
+function sendResult(jobId: number, payloadJson: string): void {
+  for (let offset = 0; offset + QUICKJS_RESULT_CHUNK_CHARS < payloadJson.length; offset += QUICKJS_RESULT_CHUNK_CHARS) {
+    send({ type: "result-chunk", jobId, payloadJson: payloadJson.slice(offset, offset + QUICKJS_RESULT_CHUNK_CHARS) });
+  }
+  const tail = Math.floor((payloadJson.length - 1) / QUICKJS_RESULT_CHUNK_CHARS) * QUICKJS_RESULT_CHUNK_CHARS;
+  send({ type: "result", jobId, payloadJson: payloadJson.slice(tail) });
+}
+
 async function run(payload: RunPayload): Promise<void> {
   if (activeJobId !== undefined) {
     throw new Error("QuickJS child received overlapping executions.");
@@ -97,15 +107,15 @@ async function run(payload: RunPayload): Promise<void> {
     };
     let payloadJson: string;
     try {
-      payloadJson = stringifyBounded(prepared, "QuickJS execution result");
+      payloadJson = stringifyBounded(prepared, "QuickJS execution result", MAX_QUICKJS_RESULT_BYTES);
     } catch (err) {
       payloadJson = JSON.stringify(
         fixedTransportFailure(
-          `QuickJS execution result exceeded the ${MAX_QUICKJS_IPC_BYTES}-byte IPC limit: ${msg(err)}`,
+          `QuickJS execution result exceeded the ${MAX_QUICKJS_RESULT_BYTES}-byte aggregate transport limit: ${msg(err)}`,
         ),
       );
     }
-    send({ type: "result", jobId: payload.id, payloadJson });
+    sendResult(payload.id, payloadJson);
   } finally {
     activeJobId = undefined;
     for (const request of pending.values()) {
@@ -142,7 +152,7 @@ process.on("message", (message: ParentToChildMessage) => {
   const payload = JSON.parse(message.payloadJson) as RunPayload;
   void run(payload).catch((err) => {
     const payloadJson = JSON.stringify(fixedTransportFailure(`QuickJS child failed: ${msg(err)}`));
-    send({ type: "result", jobId: payload.id, payloadJson });
+    sendResult(payload.id, payloadJson);
     activeJobId = undefined;
   });
 });

@@ -130,6 +130,11 @@ export class ProgramWrites {
     return this.closed;
   }
 
+  /** Whether a dispatched write completed successfully in this run. */
+  get hasSucceeded(): boolean {
+    return this.states.includes("ok");
+  }
+
   close(): void {
     this.closed = true;
   }

@@ -27,6 +27,7 @@ function truncationEnvelope(
   text: string,
   maxChars: number,
   totalChars = text.length,
+  hint = TRUNCATION_HINT,
 ): {
   truncated: true;
   preview: string;
@@ -37,7 +38,7 @@ function truncationEnvelope(
     truncated: true as const,
     preview: "",
     totalChars,
-    hint: TRUNCATION_HINT,
+    hint,
   };
   let budget = Math.max(0, maxChars - JSON.stringify(base).length);
   for (let attempt = 0; attempt < 8 && budget > 0; attempt += 1) {
@@ -51,10 +52,15 @@ function truncationEnvelope(
   return { ...base, preview: text.slice(0, budget) };
 }
 
-export function guardExecuteResultValue(value: unknown, maxChars = MAX_EXECUTE_RESULT_CHARS): unknown {
+export function guardExecuteResultValue(
+  value: unknown,
+  maxChars = MAX_EXECUTE_RESULT_CHARS,
+  hintPrefix?: string,
+): unknown {
+  const hint = hintPrefix ? `${hintPrefix} ${TRUNCATION_HINT}` : TRUNCATION_HINT;
   const text = serializeResultText(value);
   if (text.length <= maxChars) return value;
-  // A child may already have guarded this value at a larger transport cap.
+  // A custom executor may already have guarded this value at a larger cap.
   // Shrink its preview once more without nesting notices or losing original size.
   if (value !== null && typeof value === "object") {
     const prior = value as { truncated?: unknown; preview?: unknown; totalChars?: unknown; hint?: unknown };
@@ -67,10 +73,10 @@ export function guardExecuteResultValue(value: unknown, maxChars = MAX_EXECUTE_R
       prior.totalChars >= prior.preview.length &&
       Object.keys(value).length === 4
     ) {
-      return truncationEnvelope(prior.preview, maxChars, prior.totalChars);
+      return truncationEnvelope(prior.preview, maxChars, prior.totalChars, hint);
     }
   }
-  return truncationEnvelope(text, maxChars);
+  return truncationEnvelope(text, maxChars, text.length, hint);
 }
 
 export function truncateExecuteText(text: string, max: number): string {
@@ -79,8 +85,8 @@ export function truncateExecuteText(text: string, max: number): string {
 }
 
 /**
- * Apply the public execute_code result/log policy before a child result enters
- * IPC. The parent repeats the guard for third-party Executor implementations.
+ * Validate serialization before IPC without discarding the program return.
+ * The host applies the presentation cap after it can stash the full value.
  */
 export function prepareExecuteResultForTransport(outcome: ExecuteResult): ExecuteResult {
   // QuickJS already bounds captured logs at source (entries + cumulative
@@ -98,8 +104,9 @@ export function prepareExecuteResultForTransport(outcome: ExecuteResult): Execut
     };
   }
   try {
+    serializeResultText(outcome.result);
     return {
-      result: guardExecuteResultValue(outcome.result),
+      result: outcome.result,
       ...(logs ? { logs } : {}),
     };
   } catch (err) {

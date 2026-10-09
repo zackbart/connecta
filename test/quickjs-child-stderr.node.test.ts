@@ -31,6 +31,7 @@ import { createExecuteTool } from "../src/execute.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { makeRegistry, silentLogger } from "./helpers.js";
 
+import { MAX_QUICKJS_RESULT_BYTES, QUICKJS_RESULT_CHUNK_CHARS } from "../src/executors/quickjs-protocol.js";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
 
 afterEach(() => {
@@ -287,3 +288,49 @@ it.each(["deadline", "shutdown", "malformed result"])("attaches bounded streamed
     await executor.close?.();
   }
 });
+
+for (const fault of ["oversized chunk", "incomplete chunk", "aggregate overflow"] as const) {
+  it(`INV-7: refuses ${fault} from a compromised QuickJS child`, async () => {
+    const child = new CrashingChild();
+    child.kill = () => {
+      child.connected = false;
+      queueMicrotask(() => child.emit("exit", 0, null));
+      return true;
+    };
+    child.send = (raw, callback) => {
+      callback?.(null);
+      const message = raw as { type: string; payloadJson: string };
+      if (message.type === "run") {
+        const run = JSON.parse(message.payloadJson) as { id: number };
+        queueMicrotask(() => {
+          child.emit("message", { type: "log", jobId: run.id, payloadJson: JSON.stringify("before chunks") });
+          const chunk = "x".repeat(QUICKJS_RESULT_CHUNK_CHARS);
+          if (fault === "aggregate overflow") {
+            for (let i = 0; i <= MAX_QUICKJS_RESULT_BYTES / QUICKJS_RESULT_CHUNK_CHARS; i++)
+              child.emit("message", { type: "result-chunk", jobId: run.id, payloadJson: chunk });
+          } else {
+            child.emit("message", {
+              type: "result-chunk",
+              jobId: run.id,
+              payloadJson: fault === "oversized chunk" ? chunk + "x" : chunk.slice(1),
+            });
+          }
+        });
+      }
+      return true;
+    };
+    forkMock.mockImplementationOnce(() => {
+      queueMicrotask(() => child.emit("message", { type: "ready" }));
+      return child;
+    });
+    const executor = quickJsExecutor();
+    try {
+      const error = await executor.execute("async () => 1", []).catch((error: unknown) => error);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("IPC limit");
+      expect((error as Error & { logs: string[] }).logs).toEqual(["before chunks"]);
+    } finally {
+      await executor.close?.();
+    }
+  });
+}
