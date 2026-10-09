@@ -1,10 +1,12 @@
 {
   "notion": {
-    "padded-purpose": {
+    "token-padded-purpose": {
       "options": {
         "purpose": "  Audit fixture  ",
-        "instructions": "Deployment fixture instructions.",
-        "surface": "api"
+        "auth": {
+          "type": "token"
+        },
+        "instructions": "Deployment fixture instructions."
       },
       "metadata": {
         "title": "Notion integration",
@@ -33,13 +35,38 @@
           "placeholder": "Paste the integration token"
         },
         "usageGuide": {
-          "content": "# Notion usage\n\nWorkspace purpose: Audit fixture\n## Identity before routing\n\nThis explicit `surface: \"api\"` connection acts as an internal integration.\nIts `integration_*` tools are canonical for bot-scoped/headless operations.\nHosted MCP is the default and acts as its OAuth-authorized user. Authorization\nis not equivalent: an integration token cannot authorize hosted MCP, and user\nOAuth cannot reproduce the integration bot's ownership/sharing boundary.\nConfigure each under a separate connector id and authorize it independently.\nDo not switch to a user identity to recover a failed integration operation.\n\nUse the bot tools when the task requires that integration identity. Use hosted\n`notion-search`, `notion-fetch`, `notion-get-users`, `notion-get-comments`,\n`notion-create-pages`, `notion-update-page`, and `notion-create-comment` for\nuser-owned content work. Hosted MCP additionally covers sessions, agents,\nattachments and broader workspace operations. REST tool names are not MCP aliases.\n\n\n\n## Databases contain data sources\n\nA Notion database is a container; the rows and the schema live in a *data\nsource* inside it. The two ids are not interchangeable and Notion rejects the\nwrong one.\n\n- The id in a Notion database URL is a **database id**.\n- `integration_get_database` turns it into the `data_sources` list — usually one entry.\n- `integration_get_data_source_schema` and `integration_query_data_source` take that\n  **data_source_id**, and so does `integration_create_page` when adding a row.\n\nSo the sequence for \"find rows in this database\" is `integration_get_database` →\n`integration_get_data_source_schema` → `integration_query_data_source`. `integration_search` returns data\nsources directly and skips the first step.\n\n## Property quirks that break writes\n\n- Property names in filters, sorts, and writes must match the schema exactly,\n  including case. Read `integration_get_data_source_schema` before composing one.\n- `select` and `status` writes must use an existing option name; inventing\n  one fails. The schema lists the valid options.\n- Writes **replace** a property. Sending one item to a `multi_select` or\n  `relation` drops the others, so send the complete intended value.\n- `rollup`, `formula`, `unique_id`, and the created/edited fields are\n  computed. They cannot be written.\n- A page's title column is rarely called \"title\" — pass `title_property` from\n  the schema when creating or updating a row.\n- Notion truncates `title`, `rich_text`, `relation`, and `people` at 25\n  entries. `integration_get_page` reports each one in `truncated_properties` as\n  `{ name, id }`; pass that `id` as `property_id` to\n  `integration_get_page_property` for the complete value.\n\n## Reading page content\n\n`integration_get_page` returns properties. `integration_get_page_content` returns the body as flat\nblocks. Nested blocks (toggles, list children, table rows) need `depth`, and\neach level multiplies requests — a deep read stops at an internal ceiling and\nreports `truncated: true` rather than spending the whole rate-limit budget.\n\n## Appending is append-only\n\n`integration_append_blocks` adds children and nothing else. It cannot move, reorder, or\nreplace an existing block, and a block appended through the API can never be\nrelocated by it afterwards. Get the position right the first time with\n`position` and `after_block_id`. Notion caps one call at 100 blocks.\n\n## Lean by default, raw on request\n\nEvery read projects Notion's payload down to ids, plain text, and flattened\nproperty values. Where the dropped detail can matter — `integration_search`, `integration_get_page`,\n`integration_get_page_content`, `integration_get_page_property`, `integration_get_data_source_schema`,\n`integration_query_data_source`, `integration_list_comments` — pass `raw: true` to get Notion's\nuntouched response instead. It is much larger; reach for it only when a\nspecific field is missing. Narrow `integration_query_data_source` and `integration_get_page` with\n`properties` instead whenever the goal is fewer fields, not more.\n\n`integration_get_page_content` with `raw: true` returns one level exactly as Notion\nsent it and does not walk nested children, so `depth` is ignored alongside\nit. A block type this projection does not model keeps its payload under\n`raw` on the block itself, so nothing silently flattens to an empty string.\n\n## Failures worth reading carefully\n\n- **404** means \"no such object\" *or* \"not shared with this integration\", and\n  Notion will not say which. Never conclude a page was deleted from it; check\n  that the page is shared with the integration in Notion.\n- **403** is not an expired token. The integration is missing a capability\n  (comment capabilities are off by default) or the object was never shared.\n  Re-authorizing cannot fix it; an operator must change it in Notion.\n- **429** carries a retry window. Notion allows roughly three requests per\n  second per integration, so wait it out rather than retrying immediately.\n\n## No escape hatch\n\nThis connection has no guarded raw-REST tool, deliberately. Notion's public\nAPI is small and slow-moving enough for the named surface to cover it, so\nthere is no `notion_api_*` to reach for — an operation absent from the tool\nlist is absent from this connection, not hidden behind a generic call.\n\n## Writes and pagination\n\n- Notion has **no idempotency key**. A retried `integration_create_page` or\n  `integration_add_comment` creates a duplicate. Confirm with `integration_search` before repeating\n  a write that may have partially succeeded.\n- List tools take `page_size` (max 100) and return `has_more` with\n  `next_cursor`. Pass a cursor back verbatim — it is opaque and must never be\n  parsed or constructed. Follow pages inside `execute_code` and reduce there.\n\n## Workspace instructions\n\nDeployment fixture instructions.\n",
-          "summary": "Internal integration identity. Exact REST queries, JSON blocks, properties, paging and bot-scoped content writes.",
+          "content": "# Notion usage\n\nWorkspace purpose: Audit fixture\n## Identity and tools\n\nThis is Connecta's REST connector to `api.notion.com`, acting as one internal\nintegration (a bot) with an operator-managed integration token. It reaches\nexactly the pages and data sources shared with that integration, and the\nintegration's capabilities decide which calls succeed: comment and\nuser-information capabilities are off by default. It never acts as a person.\nHosted Notion MCP is a separate OAuth connector.\n\n- Named tools cover the common path and flatten Notion's payloads:\n  `integration_search` (titles), `integration_get_page` (properties),\n  `integration_get_page_content` (blocks as text),\n  `integration_get_data_source_schema`, and `integration_query_data_source`\n  (rows). `integration_create_page` and `integration_append_blocks` author\n  Notion's rich-text and block shapes from plain text, Markdown, or checklists.\n- Four generic tools reach every other operation in the pinned API index.\n  `notion_api_search` finds operations, not content. `notion_api_details`\n  returns one operation's parameters. `notion_api_read` calls GETs plus the\n  read-only POST queries: search, data source and meeting note queries, and\n  agent, session, and session event queries. `notion_api_write` calls every\n  other POST, PATCH, and DELETE with `method` and `path` stated.\n- Every generic call is checked against the index before it is sent. An\n  unknown path returns the nearest operations, and an unknown or missing\n  parameter returns `validation.issues` with the accepted names. Nothing\n  reached Notion, so fix the call from that answer.\n- The generic set replaces the old one-operation tools. Read a database\n  container with `GET /v1/databases/{database_id}`, users with `GET /v1/users`\n  or `GET /v1/users/me`, comments with `GET /v1/comments`, and a page as\n  Markdown with `GET /v1/pages/{page_id}/markdown`. Update properties, trash or\n  restore (`in_trash`) with `PATCH /v1/pages/{page_id}`, and comment with\n  `POST /v1/comments`.\n- Refused by design: Notion's OAuth token endpoints (`/v1/oauth/*`) and\n  multipart file sends. Import a file with `POST /v1/file_uploads` and\n  `mode: \"external_url\"` instead.\n- Not here: the hosted MCP's user identity, its search across connected\n  apps, page duplication, team and skill search, attachment downloads, and\n  page-to-skill conversion. Those need an OAuth connector.\n\n## Databases contain data sources\n\n- The id in a Notion database URL is a **database id**.\n  `GET /v1/databases/{database_id}` through `notion_api_read` lists its\n  `data_sources`, usually one. `integration_search` returns data sources\n  directly and skips that step.\n- `integration_get_data_source_schema` and `integration_query_data_source`\n  take the **data_source_id**, and so does `integration_create_page` when\n  adding a row.\n\nSo the sequence for \"find rows in this database\" is the database read, then\n`integration_get_data_source_schema`, then `integration_query_data_source`.\n\n## Reading\n\n- `integration_get_page` returns properties. `integration_get_page_content`\n  returns the body as flat blocks. Nested blocks (toggles, list children,\n  table rows) need `depth`, and each level multiplies requests. A deep read\n  stops at an internal ceiling and reports `truncated: true` rather than\n  spending the whole rate-limit budget.\n- Notion truncates `title`, `rich_text`, `relation`, and `people` at 25\n  entries. `integration_get_page` reports each in `truncated_properties` as\n  `{ name, id }`; read the complete value with `notion_api_read`\n  `GET /v1/pages/{page_id}/properties/{property_id}` and follow its cursor.\n- Every named read projects Notion's payload to ids, plain text, and\n  flattened property values. Pass `raw: true` for Notion's untouched response\n  when a specific field is missing. It is much larger. Narrow\n  `integration_query_data_source` and `integration_get_page` with `properties`\n  when the goal is fewer fields. `integration_get_page_content` with\n  `raw: true` returns one level and ignores `depth`.\n\n## Appending is append-only\n\n`integration_append_blocks` adds children and nothing else. It cannot move,\nreorder, or replace an existing block, and a block appended through the API can\nnever be relocated by it afterwards. Get the position right the first time with\n`position` and `after_block_id`. Notion caps one call at 100 blocks.\n\n## Pagination\n\n- Named list tools take `page_size` (max 100) and return `has_more` with\n  `next_cursor`; pass it back as `start_cursor`.\n- Generic results arrive as `{ status, data, page? }`. On a list,\n  `page.next` is the cursor and `page.param` is `start_cursor`: send it in\n  `query` for a GET, and in `body` when `page.in` is `body`, as on the POST\n  queries. Pass `select` dot paths relative to `data`, such as `results.id`.\n- Cursors are opaque: never parse or construct one. Follow pages inside\n  `execute_code` and reduce there.\n\n## Failures worth reading carefully\n\n- **404** means \"no such object\" *or* \"not shared with this integration\", and\n  Notion will not say which. Never conclude a page was deleted from it; check\n  that the page is shared with the integration in Notion.\n- **403** is not an expired token. The integration is missing a capability\n  (comment capabilities are off by default) or the object was never shared.\n  Re-authorizing cannot fix it; an operator must change it in Notion.\n- **429** carries a retry window. Notion allows an average of three requests\n  per second per integration; Connecta admits 180 calls a minute, three at a\n  time, per runtime. Wait out the window rather than retrying immediately.\n\n## Notion's data model\n\n- A database is a container; its rows and schema live in a *data source*\n  inside it. Queries, schema reads, and new rows take the data source, and\n  Notion rejects a database id in its place.\n- Property names in filters, sorts, and writes must match the schema exactly,\n  including case. Read the schema before composing one.\n- `select` and `status` writes must use an existing option name; inventing\n  one fails. The schema lists the valid options.\n- Writes **replace** a property. Sending one item to a `multi_select` or\n  `relation` drops the others, so send the complete intended value.\n- `rollup`, `formula`, `unique_id`, and the created and edited fields are\n  computed. They cannot be written.\n- A data source's title column is rarely called \"title\". Read its name from\n  the schema before creating or renaming a row.\n- Notion has **no idempotency key**. A retried page create or comment makes a\n  duplicate. Confirm with a search before repeating a write that may have\n  partially succeeded.\n\n## Workspace instructions\n\nDeployment fixture instructions.\n",
+          "summary": "Internal integration over REST. Flattened reads, authoring helpers, and the pinned API index for the rest.",
           "required": true
         },
-        "describeSha256": "e1402cea3e777971a4643071b2118e013b86531570598964fc66c26a4713ae30"
+        "describeSha256": "1bb0cc4b191772088567d4b682e5c2f754362de2f05413de4dad9cac32d645ad"
       },
       "tools": [
+        {
+          "name": "notion_api_search",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "notion_api_details",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "notion_api_read",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "notion_api_write",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true
+          }
+        },
         {
           "name": "integration_search",
           "annotations": {
@@ -59,18 +86,6 @@
           }
         },
         {
-          "name": "integration_get_page_property",
-          "annotations": {
-            "readOnlyHint": true
-          }
-        },
-        {
-          "name": "integration_get_database",
-          "annotations": {
-            "readOnlyHint": true
-          }
-        },
-        {
           "name": "integration_get_data_source_schema",
           "annotations": {
             "readOnlyHint": true
@@ -78,24 +93,6 @@
         },
         {
           "name": "integration_query_data_source",
-          "annotations": {
-            "readOnlyHint": true
-          }
-        },
-        {
-          "name": "integration_list_users",
-          "annotations": {
-            "readOnlyHint": true
-          }
-        },
-        {
-          "name": "integration_get_self",
-          "annotations": {
-            "readOnlyHint": true
-          }
-        },
-        {
-          "name": "integration_list_comments",
           "annotations": {
             "readOnlyHint": true
           }
@@ -111,34 +108,16 @@
           "annotations": {
             "readOnlyHint": false
           }
-        },
-        {
-          "name": "integration_update_page_properties",
-          "annotations": {
-            "readOnlyHint": false,
-            "destructiveHint": true
-          }
-        },
-        {
-          "name": "integration_trash_page",
-          "annotations": {
-            "readOnlyHint": false,
-            "destructiveHint": true
-          }
-        },
-        {
-          "name": "integration_add_comment",
-          "annotations": {
-            "readOnlyHint": false
-          }
         }
       ]
     },
-    "default": {
+    "token": {
       "options": {
         "purpose": "Audit fixture",
-        "instructions": "Deployment fixture instructions.",
-        "surface": "api"
+        "auth": {
+          "type": "token"
+        },
+        "instructions": "Deployment fixture instructions."
       },
       "metadata": {
         "title": "Notion integration",
@@ -167,13 +146,38 @@
           "placeholder": "Paste the integration token"
         },
         "usageGuide": {
-          "content": "# Notion usage\n\nWorkspace purpose: Audit fixture\n## Identity before routing\n\nThis explicit `surface: \"api\"` connection acts as an internal integration.\nIts `integration_*` tools are canonical for bot-scoped/headless operations.\nHosted MCP is the default and acts as its OAuth-authorized user. Authorization\nis not equivalent: an integration token cannot authorize hosted MCP, and user\nOAuth cannot reproduce the integration bot's ownership/sharing boundary.\nConfigure each under a separate connector id and authorize it independently.\nDo not switch to a user identity to recover a failed integration operation.\n\nUse the bot tools when the task requires that integration identity. Use hosted\n`notion-search`, `notion-fetch`, `notion-get-users`, `notion-get-comments`,\n`notion-create-pages`, `notion-update-page`, and `notion-create-comment` for\nuser-owned content work. Hosted MCP additionally covers sessions, agents,\nattachments and broader workspace operations. REST tool names are not MCP aliases.\n\n\n\n## Databases contain data sources\n\nA Notion database is a container; the rows and the schema live in a *data\nsource* inside it. The two ids are not interchangeable and Notion rejects the\nwrong one.\n\n- The id in a Notion database URL is a **database id**.\n- `integration_get_database` turns it into the `data_sources` list — usually one entry.\n- `integration_get_data_source_schema` and `integration_query_data_source` take that\n  **data_source_id**, and so does `integration_create_page` when adding a row.\n\nSo the sequence for \"find rows in this database\" is `integration_get_database` →\n`integration_get_data_source_schema` → `integration_query_data_source`. `integration_search` returns data\nsources directly and skips the first step.\n\n## Property quirks that break writes\n\n- Property names in filters, sorts, and writes must match the schema exactly,\n  including case. Read `integration_get_data_source_schema` before composing one.\n- `select` and `status` writes must use an existing option name; inventing\n  one fails. The schema lists the valid options.\n- Writes **replace** a property. Sending one item to a `multi_select` or\n  `relation` drops the others, so send the complete intended value.\n- `rollup`, `formula`, `unique_id`, and the created/edited fields are\n  computed. They cannot be written.\n- A page's title column is rarely called \"title\" — pass `title_property` from\n  the schema when creating or updating a row.\n- Notion truncates `title`, `rich_text`, `relation`, and `people` at 25\n  entries. `integration_get_page` reports each one in `truncated_properties` as\n  `{ name, id }`; pass that `id` as `property_id` to\n  `integration_get_page_property` for the complete value.\n\n## Reading page content\n\n`integration_get_page` returns properties. `integration_get_page_content` returns the body as flat\nblocks. Nested blocks (toggles, list children, table rows) need `depth`, and\neach level multiplies requests — a deep read stops at an internal ceiling and\nreports `truncated: true` rather than spending the whole rate-limit budget.\n\n## Appending is append-only\n\n`integration_append_blocks` adds children and nothing else. It cannot move, reorder, or\nreplace an existing block, and a block appended through the API can never be\nrelocated by it afterwards. Get the position right the first time with\n`position` and `after_block_id`. Notion caps one call at 100 blocks.\n\n## Lean by default, raw on request\n\nEvery read projects Notion's payload down to ids, plain text, and flattened\nproperty values. Where the dropped detail can matter — `integration_search`, `integration_get_page`,\n`integration_get_page_content`, `integration_get_page_property`, `integration_get_data_source_schema`,\n`integration_query_data_source`, `integration_list_comments` — pass `raw: true` to get Notion's\nuntouched response instead. It is much larger; reach for it only when a\nspecific field is missing. Narrow `integration_query_data_source` and `integration_get_page` with\n`properties` instead whenever the goal is fewer fields, not more.\n\n`integration_get_page_content` with `raw: true` returns one level exactly as Notion\nsent it and does not walk nested children, so `depth` is ignored alongside\nit. A block type this projection does not model keeps its payload under\n`raw` on the block itself, so nothing silently flattens to an empty string.\n\n## Failures worth reading carefully\n\n- **404** means \"no such object\" *or* \"not shared with this integration\", and\n  Notion will not say which. Never conclude a page was deleted from it; check\n  that the page is shared with the integration in Notion.\n- **403** is not an expired token. The integration is missing a capability\n  (comment capabilities are off by default) or the object was never shared.\n  Re-authorizing cannot fix it; an operator must change it in Notion.\n- **429** carries a retry window. Notion allows roughly three requests per\n  second per integration, so wait it out rather than retrying immediately.\n\n## No escape hatch\n\nThis connection has no guarded raw-REST tool, deliberately. Notion's public\nAPI is small and slow-moving enough for the named surface to cover it, so\nthere is no `notion_api_*` to reach for — an operation absent from the tool\nlist is absent from this connection, not hidden behind a generic call.\n\n## Writes and pagination\n\n- Notion has **no idempotency key**. A retried `integration_create_page` or\n  `integration_add_comment` creates a duplicate. Confirm with `integration_search` before repeating\n  a write that may have partially succeeded.\n- List tools take `page_size` (max 100) and return `has_more` with\n  `next_cursor`. Pass a cursor back verbatim — it is opaque and must never be\n  parsed or constructed. Follow pages inside `execute_code` and reduce there.\n\n## Workspace instructions\n\nDeployment fixture instructions.\n",
-          "summary": "Internal integration identity. Exact REST queries, JSON blocks, properties, paging and bot-scoped content writes.",
+          "content": "# Notion usage\n\nWorkspace purpose: Audit fixture\n## Identity and tools\n\nThis is Connecta's REST connector to `api.notion.com`, acting as one internal\nintegration (a bot) with an operator-managed integration token. It reaches\nexactly the pages and data sources shared with that integration, and the\nintegration's capabilities decide which calls succeed: comment and\nuser-information capabilities are off by default. It never acts as a person.\nHosted Notion MCP is a separate OAuth connector.\n\n- Named tools cover the common path and flatten Notion's payloads:\n  `integration_search` (titles), `integration_get_page` (properties),\n  `integration_get_page_content` (blocks as text),\n  `integration_get_data_source_schema`, and `integration_query_data_source`\n  (rows). `integration_create_page` and `integration_append_blocks` author\n  Notion's rich-text and block shapes from plain text, Markdown, or checklists.\n- Four generic tools reach every other operation in the pinned API index.\n  `notion_api_search` finds operations, not content. `notion_api_details`\n  returns one operation's parameters. `notion_api_read` calls GETs plus the\n  read-only POST queries: search, data source and meeting note queries, and\n  agent, session, and session event queries. `notion_api_write` calls every\n  other POST, PATCH, and DELETE with `method` and `path` stated.\n- Every generic call is checked against the index before it is sent. An\n  unknown path returns the nearest operations, and an unknown or missing\n  parameter returns `validation.issues` with the accepted names. Nothing\n  reached Notion, so fix the call from that answer.\n- The generic set replaces the old one-operation tools. Read a database\n  container with `GET /v1/databases/{database_id}`, users with `GET /v1/users`\n  or `GET /v1/users/me`, comments with `GET /v1/comments`, and a page as\n  Markdown with `GET /v1/pages/{page_id}/markdown`. Update properties, trash or\n  restore (`in_trash`) with `PATCH /v1/pages/{page_id}`, and comment with\n  `POST /v1/comments`.\n- Refused by design: Notion's OAuth token endpoints (`/v1/oauth/*`) and\n  multipart file sends. Import a file with `POST /v1/file_uploads` and\n  `mode: \"external_url\"` instead.\n- Not here: the hosted MCP's user identity, its search across connected\n  apps, page duplication, team and skill search, attachment downloads, and\n  page-to-skill conversion. Those need an OAuth connector.\n\n## Databases contain data sources\n\n- The id in a Notion database URL is a **database id**.\n  `GET /v1/databases/{database_id}` through `notion_api_read` lists its\n  `data_sources`, usually one. `integration_search` returns data sources\n  directly and skips that step.\n- `integration_get_data_source_schema` and `integration_query_data_source`\n  take the **data_source_id**, and so does `integration_create_page` when\n  adding a row.\n\nSo the sequence for \"find rows in this database\" is the database read, then\n`integration_get_data_source_schema`, then `integration_query_data_source`.\n\n## Reading\n\n- `integration_get_page` returns properties. `integration_get_page_content`\n  returns the body as flat blocks. Nested blocks (toggles, list children,\n  table rows) need `depth`, and each level multiplies requests. A deep read\n  stops at an internal ceiling and reports `truncated: true` rather than\n  spending the whole rate-limit budget.\n- Notion truncates `title`, `rich_text`, `relation`, and `people` at 25\n  entries. `integration_get_page` reports each in `truncated_properties` as\n  `{ name, id }`; read the complete value with `notion_api_read`\n  `GET /v1/pages/{page_id}/properties/{property_id}` and follow its cursor.\n- Every named read projects Notion's payload to ids, plain text, and\n  flattened property values. Pass `raw: true` for Notion's untouched response\n  when a specific field is missing. It is much larger. Narrow\n  `integration_query_data_source` and `integration_get_page` with `properties`\n  when the goal is fewer fields. `integration_get_page_content` with\n  `raw: true` returns one level and ignores `depth`.\n\n## Appending is append-only\n\n`integration_append_blocks` adds children and nothing else. It cannot move,\nreorder, or replace an existing block, and a block appended through the API can\nnever be relocated by it afterwards. Get the position right the first time with\n`position` and `after_block_id`. Notion caps one call at 100 blocks.\n\n## Pagination\n\n- Named list tools take `page_size` (max 100) and return `has_more` with\n  `next_cursor`; pass it back as `start_cursor`.\n- Generic results arrive as `{ status, data, page? }`. On a list,\n  `page.next` is the cursor and `page.param` is `start_cursor`: send it in\n  `query` for a GET, and in `body` when `page.in` is `body`, as on the POST\n  queries. Pass `select` dot paths relative to `data`, such as `results.id`.\n- Cursors are opaque: never parse or construct one. Follow pages inside\n  `execute_code` and reduce there.\n\n## Failures worth reading carefully\n\n- **404** means \"no such object\" *or* \"not shared with this integration\", and\n  Notion will not say which. Never conclude a page was deleted from it; check\n  that the page is shared with the integration in Notion.\n- **403** is not an expired token. The integration is missing a capability\n  (comment capabilities are off by default) or the object was never shared.\n  Re-authorizing cannot fix it; an operator must change it in Notion.\n- **429** carries a retry window. Notion allows an average of three requests\n  per second per integration; Connecta admits 180 calls a minute, three at a\n  time, per runtime. Wait out the window rather than retrying immediately.\n\n## Notion's data model\n\n- A database is a container; its rows and schema live in a *data source*\n  inside it. Queries, schema reads, and new rows take the data source, and\n  Notion rejects a database id in its place.\n- Property names in filters, sorts, and writes must match the schema exactly,\n  including case. Read the schema before composing one.\n- `select` and `status` writes must use an existing option name; inventing\n  one fails. The schema lists the valid options.\n- Writes **replace** a property. Sending one item to a `multi_select` or\n  `relation` drops the others, so send the complete intended value.\n- `rollup`, `formula`, `unique_id`, and the created and edited fields are\n  computed. They cannot be written.\n- A data source's title column is rarely called \"title\". Read its name from\n  the schema before creating or renaming a row.\n- Notion has **no idempotency key**. A retried page create or comment makes a\n  duplicate. Confirm with a search before repeating a write that may have\n  partially succeeded.\n\n## Workspace instructions\n\nDeployment fixture instructions.\n",
+          "summary": "Internal integration over REST. Flattened reads, authoring helpers, and the pinned API index for the rest.",
           "required": true
         },
-        "describeSha256": "e1402cea3e777971a4643071b2118e013b86531570598964fc66c26a4713ae30"
+        "describeSha256": "1bb0cc4b191772088567d4b682e5c2f754362de2f05413de4dad9cac32d645ad"
       },
       "tools": [
+        {
+          "name": "notion_api_search",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "notion_api_details",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "notion_api_read",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "notion_api_write",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true
+          }
+        },
         {
           "name": "integration_search",
           "annotations": {
@@ -193,18 +197,6 @@
           }
         },
         {
-          "name": "integration_get_page_property",
-          "annotations": {
-            "readOnlyHint": true
-          }
-        },
-        {
-          "name": "integration_get_database",
-          "annotations": {
-            "readOnlyHint": true
-          }
-        },
-        {
           "name": "integration_get_data_source_schema",
           "annotations": {
             "readOnlyHint": true
@@ -212,24 +204,6 @@
         },
         {
           "name": "integration_query_data_source",
-          "annotations": {
-            "readOnlyHint": true
-          }
-        },
-        {
-          "name": "integration_list_users",
-          "annotations": {
-            "readOnlyHint": true
-          }
-        },
-        {
-          "name": "integration_get_self",
-          "annotations": {
-            "readOnlyHint": true
-          }
-        },
-        {
-          "name": "integration_list_comments",
           "annotations": {
             "readOnlyHint": true
           }
@@ -245,33 +219,15 @@
           "annotations": {
             "readOnlyHint": false
           }
-        },
-        {
-          "name": "integration_update_page_properties",
-          "annotations": {
-            "readOnlyHint": false,
-            "destructiveHint": true
-          }
-        },
-        {
-          "name": "integration_trash_page",
-          "annotations": {
-            "readOnlyHint": false,
-            "destructiveHint": true
-          }
-        },
-        {
-          "name": "integration_add_comment",
-          "annotations": {
-            "readOnlyHint": false
-          }
         }
       ]
     },
-    "mcp": {
+    "oauth": {
       "options": {
         "purpose": "Audit fixture",
-        "surface": "mcp",
+        "auth": {
+          "type": "oauth"
+        },
         "instructions": "Deployment fixture instructions."
       },
       "metadata": {
@@ -283,11 +239,11 @@
         "callAdmission": null,
         "credential": null,
         "usageGuide": {
-          "content": "# Notion MCP usage\n\nOfficial MCP interface: tool names, descriptions, argument schemas, and result\nschemas come from Notion's live server. Connecta preserves that catalog and\napplies release-reviewed classification. Reviewed writes stay writes even when Notion claims they only read.\n\nWorkspace purpose: Audit fixture\n\n- This connection acts as its OAuth-authorized user. The separately configured\n  `surface: \"api\"` connection retains required internal-integration operations\n  under `integration_*` names, including headless content writes, cursor-complete\n  queries, exact JSON blocks and property items. No identity fallback occurs.\n- Discover the live catalog before assuming a tool exists. Notion can gate\n  tools by workspace, account, client, and rollout independently of Connecta.\n- Start broad discovery with `notion-search`, then use `notion-fetch` on\n  the exact page, database, data source, or object before changing it.\n- Use the live input schema as the contract. Notion owns these MCP schemas;\n  the REST schemas in Connecta's API interface do not apply to MCP tools with\n  similar names.\n- Session and agent tools can launch asynchronous work. Read session state and\n  events before sending another message, waiting, or stopping a session.\n- File uploads and attachment tools create durable workspace state. Keep\n  downloads inside the requested task and do not expose signed attachment URLs.\n- An `auth_required` failure means this connector's OAuth grant is missing or\n  expired. Run `authorize_connector` for this connector id, then retry.\n\n## Workspace instructions\n\nDeployment fixture instructions.\n",
-          "summary": "Official MCP. Live Notion schemas, object discovery, sessions, agents, attachments, and OAuth ownership.",
+          "content": "# Notion MCP usage\n\nOfficial MCP interface: tool names, descriptions, argument schemas, and result\nschemas come from Notion's live server. Connecta preserves that catalog and\napplies release-reviewed classification. Reviewed writes stay writes even when Notion claims they only read.\n\nWorkspace purpose: Audit fixture\n\n- This connection acts as its OAuth-authorized user and reaches what that user\n  can. It holds no integration token. An internal integration (bot) is a\n  separate connector with `auth: { type: \"token\" }` under another id; never\n  switch to it to recover a failed call here.\n- Discover the live catalog before assuming a tool exists. Notion can gate\n  tools by workspace, account, client, and rollout independently of Connecta.\n- Start broad discovery with `notion-search`, then use `notion-fetch` on\n  the exact page, database, data source, or object before changing it.\n- Use the live input schema as the contract. Notion owns these MCP schemas;\n  the REST schemas of Connecta's token connector do not apply to MCP tools with\n  similar names.\n- Session and agent tools can launch asynchronous work. Read session state and\n  events before sending another message, waiting, or stopping a session.\n- File uploads and attachment tools create durable workspace state. Keep\n  downloads inside the requested task and do not expose signed attachment URLs.\n- Connecta's generic REST tools (`notion_api_*`) and the `integration_*`\n  helpers exist only on a token connector.\n- An `auth_required` failure means this connector's OAuth grant is missing or\n  expired. Run `authorize_connector` for this connector id, then retry.\n\n## Notion's data model\n\n- A database is a container; its rows and schema live in a *data source*\n  inside it. Queries, schema reads, and new rows take the data source, and\n  Notion rejects a database id in its place.\n- Property names in filters, sorts, and writes must match the schema exactly,\n  including case. Read the schema before composing one.\n- `select` and `status` writes must use an existing option name; inventing\n  one fails. The schema lists the valid options.\n- Writes **replace** a property. Sending one item to a `multi_select` or\n  `relation` drops the others, so send the complete intended value.\n- `rollup`, `formula`, `unique_id`, and the created and edited fields are\n  computed. They cannot be written.\n- A data source's title column is rarely called \"title\". Read its name from\n  the schema before creating or renaming a row.\n- Notion has **no idempotency key**. A retried page create or comment makes a\n  duplicate. Confirm with a search before repeating a write that may have\n  partially succeeded.\n\n## Workspace instructions\n\nDeployment fixture instructions.\n",
+          "summary": "Official MCP as the OAuth user. Live Notion schemas, object discovery, sessions, agents, attachments.",
           "required": true
         },
-        "describeSha256": "18dcbe46775882d983a290bd47615e1389ad3b2744f286481eab92d8e2dfd5ca"
+        "describeSha256": "6341f3fe6fdd2c2294b2fa151ebbd262da5f254772e43e364501f7967f12343d"
       }
     }
   },

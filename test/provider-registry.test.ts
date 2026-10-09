@@ -197,9 +197,9 @@ const providers: ProviderCase[] = [
       deployment(
         storage,
         [
-          notion("notion_eng", { surface: "api", purpose: "Engineering runbooks and specs" }),
+          notion("notion_eng", { auth: { type: "token" }, purpose: "Engineering runbooks and specs" }),
           notion("notion_ops", {
-            surface: "api",
+            auth: { type: "token" },
             purpose: "Operations handbook",
             title: "Ops wiki",
             defaultPageSize: 50,
@@ -537,9 +537,9 @@ describe("provider-specific registry behavior", () => {
     const eng = await registry.getTools("notion_eng", BASE_URL);
     const ops = await registry.getTools("notion_ops", BASE_URL);
     expect(eng.map((tool) => tool.name)).toEqual(ops.map((tool) => tool.name));
-    expect(eng).toHaveLength(15);
-    expect(registry.resolveAddress("notion_eng.integration_trash_page")?.toolName).toBe("integration_trash_page");
-    expect(registry.resolveAddress("nope.integration_trash_page")).toBeFalsy();
+    expect(eng).toHaveLength(11);
+    expect(registry.resolveAddress("notion_eng.notion_api_write")?.toolName).toBe("notion_api_write");
+    expect(registry.resolveAddress("nope.notion_api_write")).toBeFalsy();
   });
 
   it("carries Cloudflare page bounds in search and compact describe", async () => {

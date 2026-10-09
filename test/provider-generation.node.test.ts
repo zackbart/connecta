@@ -467,6 +467,26 @@ describe("OpenAPI operation index generation", () => {
     expect(details.o[2]).toEqual([[["thing", "path", 1, { t: "string" }]], 0]);
   });
 
+  it("reads the API version from a named header parameter when info.version is not the sent version", async () => {
+    const { buildOperationIndex } = await generator();
+    const versioned = (values: string[]) => ({
+      openapi: "3.1.0",
+      info: { title: "Vendor", version: "1.0.0" },
+      servers: [{ url: "https://api.vendor.example" }],
+      components: {
+        parameters: { version: { name: "Vendor-Version", in: "header", required: true, schema: { enum: values } } },
+      },
+      paths: { "/v1/things": { get: { parameters: [{ $ref: "#/components/parameters/version" }] } } },
+    });
+    const options = { versionHeader: "vendor-version" };
+    expect(buildOperationIndex(versioned(["2026-03-11"]), { ...source, options }).version).toBe("2026-03-11");
+    expect(buildOperationIndex(versioned(["2026-03-11"]), source).version).toBe("1.0.0");
+    // Two offered versions would pin one silently, so generation refuses.
+    expect(() => buildOperationIndex(versioned(["2025-09-03", "2026-03-11"]), { ...source, options })).toThrow(
+      "expected one vendor-version header value in the document, found 2",
+    );
+  });
+
   it("round-trips through the runtime index: resolve, search, contract, and validation", async () => {
     const { buildOperationIndex } = await generator();
     const { OperationIndex } = await import("../src/providers/_shared/rest/operation-index.js");

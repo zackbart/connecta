@@ -178,15 +178,15 @@ var fixture12 = {
 
 // src/providers/notion/fixtures.ts
 import { notion } from "@zackbart/connecta/providers/notion";
-var options13 = { "purpose": "Audit fixture", "surface": "api" };
+var options13 = { "purpose": "Audit fixture", "auth": { "type": "token" } };
 var fixture13 = {
   name: "notion",
   options: options13,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "mcp", "options": { "surface": "mcp" } }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "oauth", "options": { "auth": { "type": "oauth" } } }],
   create(id = "fixture", overrides = {}) {
     return notion(id, { ...options13, ...overrides });
   },
-  conventions: { "verbs": ["integration"], "nestedDescriptionExceptions": [], "auth": "credential" }
+  conventions: { "verbs": ["integration", "notion"], "nestedDescriptionExceptions": [], "auth": "credential" }
 };
 
 // src/providers/overflow/fixtures.ts

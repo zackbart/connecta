@@ -8,10 +8,11 @@
 import type { PlannedTask } from "./types.js";
 
 /**
- * #801: a Stripe key reaches Connecta's REST connector. These need a fake
- * Stripe service (`fakes/`) that serves the pinned operation index's paths,
- * answers form-encoded v1 bodies, and records each request's method, path,
- * query, Idempotency-Key, and Stripe-Account.
+ * #801: a Stripe key or a Notion integration token reaches Connecta's REST
+ * connector. These need fake Stripe and Notion services (`fakes/`) that serve
+ * the pinned operation indexes' paths and record each request's method, path,
+ * query, body, and the vendor headers the tasks grade (Stripe's
+ * Idempotency-Key and Stripe-Account, Notion's Notion-Version).
  */
 export const PLANNED_TASKS: PlannedTask[] = [
   {
@@ -74,6 +75,48 @@ export const PLANNED_TASKS: PlannedTask[] = [
         "state: exactly one refund exists on ch_3Prefund000, amount 1250.",
         "idempotency: every POST /v1/refunds in the ledger carries the same Idempotency-Key.",
         "answer-evidence: the final answer gives the refund id and status succeeded and says the amount was 1250 cents (12.50 USD).",
+      ],
+    },
+  },
+  {
+    status: "planned",
+    id: "801-notion-append-checklist",
+    title: "Find a Notion page by title and append a checklist",
+    introducedIn: "#801",
+    measures:
+      "Whether the agent resolves the page with a title search, appends once at the end with to-do blocks over the token connector, and does not create a duplicate on retry.",
+    prompt:
+      "In the notion_bot workspace, find the page about the Q3 offsite and append a checklist with: Book venue, Send invites, Order catering. Tell me the page id and confirm the three items were added.",
+    sketch: {
+      world:
+        "notion_bot: a token connector over a fake Notion (Notion-Version 2026-03-11) holding 'Q3 Offsite Plan' (page-q3) and a decoy 'Q3 Offsite Retro (2025)' (page-retro) whose titles both match 'offsite'; the fake records each request's method, path, body, and Notion-Version.",
+      turns: ["One prompt; no follow-up."],
+      approvals: "The append write is approved once; a trusted pool may run it inside a program.",
+      grading: [
+        "correct-destination: the ledger shows one successful PATCH /v1/blocks/page-q3/children (integration_append_blocks or notion_api_write) whose children are three to_do blocks in order, unchecked.",
+        "no-decoy: nothing is appended to page-retro, and no page is created.",
+        "answer-evidence: the final answer names page-q3 and the three items.",
+        "advisory: the page is resolved with integration_search or notion_api_read POST /v1/search, not a guessed id; zero invalid_args refusals.",
+      ],
+    },
+  },
+  {
+    status: "planned",
+    id: "801-notion-rows-past-first-page",
+    title: "Count Notion rows across pages from a database URL",
+    introducedIn: "#801",
+    measures:
+      "Whether the agent turns a database id into its data source, filters by the schema's exact option name, and follows the body-borne cursor to the end.",
+    prompt:
+      "How many tasks in our Roadmap database (https://www.notion.so/acme/0f1e2d3c4b5a69788796a5b4c3d2e1f0) are marked Blocked? List their titles.",
+    sketch: {
+      world:
+        "notion_bot over a fake Notion: database 0f1e…e1f0 holds one data source ds-roadmap whose Status options are Todo, In progress, Blocked, Done; 130 rows, 7 Blocked, spread so that page_size 100 needs two pages. Querying the database id as a data source answers 404 object_not_found.",
+      faults: "None beyond the database-id trap and the second page.",
+      grading: [
+        "correct-destination: the ledger shows GET /v1/databases/0f1e…e1f0 (or a search hit naming ds-roadmap) and POST /v1/data_sources/ds-roadmap/query with a status equals Blocked filter, plus a follow-up query carrying start_cursor in the body when the agent did not filter server-side.",
+        "answer-evidence: the final answer says 7 and lists exactly the seven Blocked titles.",
+        "advisory: no query against the database id as a data source; the paging happens inside one execute_code program.",
       ],
     },
   },

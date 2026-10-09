@@ -385,7 +385,9 @@ describe("hand-written providers refuse schemas they cannot enforce (H5)", () =>
     // locally as `invalid_args` instead of becoming a round trip that fails
     // somewhere inside the provider.
     const { connector } = providers.find((provider) => provider.name === "notion")!;
-    await expect(connector.callTool("integration_get_self", { workspace: "nope" }, CONTEXT)).rejects.toMatchObject({
+    await expect(
+      connector.callTool("integration_get_page", { page_id: "page-1", workspace: "nope" }, CONTEXT),
+    ).rejects.toMatchObject({
       code: "invalid_args",
     });
   });
@@ -417,14 +419,22 @@ describe("Cloudflare states its second pagination convention in the schema (H10)
   });
 });
 
-describe("Notion says it has no escape hatch (H14)", () => {
-  it("names the absence in the guide rather than leaving it to be discovered", () => {
+describe("Notion splits its guarded raw access by safety class (H14)", () => {
+  it("reads through GET and reviewed queries, and writes through one destructive tool", () => {
     const { connector, tools } = providers.find((provider) => provider.name === "notion")!;
-    expect(tools.some((tool) => tool.name.startsWith("notion_api_"))).toBe(false);
+    const hatch = Object.fromEntries(
+      tools.filter((tool) => tool.name.startsWith("notion_api_")).map((tool) => [tool.name, tool.annotations]),
+    );
+    expect(hatch).toEqual({
+      notion_api_search: { readOnlyHint: true },
+      notion_api_details: { readOnlyHint: true },
+      notion_api_read: { readOnlyHint: true },
+      notion_api_write: { readOnlyHint: false, destructiveHint: true },
+    });
     const guide = connector.usageGuide;
     if (typeof guide !== "object" || guide === undefined) {
       throw new Error("expected a structured usage guide");
     }
-    expect(guide.content).toContain("no guarded raw-REST tool");
+    expect(guide.content).toContain("Refused by design");
   });
 });

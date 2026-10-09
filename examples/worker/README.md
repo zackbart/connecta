@@ -316,8 +316,8 @@ Rolling back to 0.24.x then requires reauthorizing those OAuth connectors.
 
 The shipped Notion connector uses a deployment-owned static header and echo
 needs no secret. To exercise vault controls, declare a `credential` slot on an
-`api()` connector or use Notion's explicit `surface: "api"` integration
-interface, which declares its own slot.
+`api()` connector or use a Notion connector with `auth: { type: "token" }`,
+which declares its own slot.
 Authorized users manage that slot inside the connection. Configuring a vault
 does not create credentials or permissions by itself.
 

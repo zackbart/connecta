@@ -733,7 +733,7 @@ A `"dual"` provider lets `auth` select the implementation
 `variants(["auth", "type"], …)` closes each case's options, and
 `byAuth()` in `src/providers/_shared/rest/dispatch.ts` sends OAuth to
 `hostedOAuth()` (`remoteMcp()`, OAuth only, the reviewed classification) and a
-key to Connecta's REST connector. Stripe is dual; `auth` is required.
+key to Connecta's REST connector. Stripe and Notion are dual; `auth` is required.
 The REST connector (`src/providers/_shared/rest/`) serves
 `<vendor>_api_search`, `_api_details`, `_api_read`, and `_api_write` over an
 `OperationIndex` that `npm run providers:spec` compiles offline from the
@@ -745,12 +745,13 @@ transport, failure mapper, scope, framing, cursor extraction, refusal table,
 and idempotency header (`test/rest-connector.test.ts`).
 `check:providers-generated` checks each index header against its source record
 offline; `providers:check` reports a pin that differs from the live document.
-Notion, Vercel and Cloudflare default to hosted MCP and select explicit REST
+Vercel and Cloudflare default to hosted MCP and select explicit REST
 complements with `surface: "api"`. Configure both under distinct connector ids
-with independent credentials when both are needed. Notion preserves its
-internal-integration identity under `integration_*` names; Vercel and Cloudflare
+with independent credentials when both are needed. Vercel and Cloudflare
 retain documented REST gaps rather than duplicate hosted operations. See the
-[provider migration guide](./provider-migration-0.29.md).
+[provider migration guide](./provider-migration-0.29.md). Notion's token
+connector keeps its `integration_*` projections and authoring helpers beside
+the generic REST tools.
 
 `remoteMcp({ classify })` is the public way to declare what a downstream's
 tools do: `{ tools: { name: "read" | "write" | "destructive" | { verdict,

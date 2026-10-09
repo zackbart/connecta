@@ -35,7 +35,7 @@ describe("rendered TypeScript signatures parse", () => {
   });
 
   it("parses every Notion tool", async () => {
-    const tools = await notion("workspace", { surface: "api", purpose: "Docs" }).listTools({
+    const tools = await notion("workspace", { auth: { type: "token" }, purpose: "Docs" }).listTools({
       storage: {
         capabilities: { absoluteExpiry: true },
         get: async () => null,

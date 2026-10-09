@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, it as test, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
 import type { ToolDef } from "../../types.js";
-import { itClassifiesLikeARelease, mockRemoteMcp } from "../../../test/fixtures/hosted-provider.js";
+import { guideOf, itClassifiesLikeARelease, mockRemoteMcp } from "../../../test/fixtures/hosted-provider.js";
 
 const mcpMocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
@@ -9,6 +9,7 @@ const mcpMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
+  // Only the hosted constructor is stubbed; the REST connector never touches it.
   ...(await importOriginal<typeof import("../../connectors/remote-mcp.js")>()),
   remoteMcp: mcpMocks.remoteMcp,
 }));
@@ -20,17 +21,19 @@ import {
   NOTION_MCP_VETTED_CATALOG,
   notion,
 } from "./index.js";
+import { openapi } from "./openapi.generated.js";
 import { CatalogService } from "../../catalog-service.js";
 import { InvocationService } from "../../invocation.js";
 import { runEdge } from "../../runtime/run.js";
 import { writeStateOf } from "../../program-writes.js";
 import { classifyTool } from "../../tool-safety.js";
+import { connectorGuideSummary } from "../../skills.js";
 import { makeRegistry, silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext } from "../../types.js";
 
-const isRead = (tool: import("../../types.js").ToolDef) => classifyTool(tool) === "read";
+const isRead = (tool: ToolDef) => classifyTool(tool) === "read";
 
-// The whole surface is hand-written, so there is no downstream catalog to
+// The token connector is Connecta's own, so there is no downstream catalog to
 // stub. What needs stubbing is the network: every assertion below either
 // inspects the request this connection built or the projection it made of a
 // canned Notion payload.
@@ -71,7 +74,7 @@ beforeEach(() => {
     const next = queued.shift() ?? { body: {} };
     return new Response(JSON.stringify(next.body ?? {}), {
       status: next.status ?? 200,
-      headers: next.headers ?? {},
+      headers: { "content-type": "application/json", ...next.headers },
     });
   }) as unknown as typeof fetch;
 });
@@ -99,12 +102,10 @@ function context(token: string | null = "secret_token"): ConnectorContext {
   };
 }
 
+const TOKEN = { auth: { type: "token" }, purpose: "Team knowledge base" } as const;
+
 function build(overrides: Record<string, unknown> = {}): Connector {
-  return notion("workspace", {
-    surface: "api",
-    purpose: "Team knowledge base",
-    ...overrides,
-  } as any);
+  return notion("workspace", { ...TOKEN, ...overrides } as any);
 }
 
 function call(
@@ -114,6 +115,15 @@ function call(
   ctx: ConnectorContext = context(),
 ): Promise<any> {
   return connector.callTool(name, args, ctx) as Promise<any>;
+}
+
+async function refusal(promise: Promise<unknown>): Promise<ConnectorCallError> {
+  const error = await promise.then(
+    () => undefined,
+    (caught: unknown) => caught,
+  );
+  expect(error).toBeInstanceOf(ConnectorCallError);
+  return error as ConnectorCallError;
 }
 
 /** A page carrying one of every property shape the projection flattens. */
@@ -186,69 +196,148 @@ const PAGE_FIXTURE = {
   },
 };
 
-describe("notion() tool surface", () => {
-  it("publishes exactly the maintained tool inventory", () => {
-    const names = build().staticTools?.map((tool) => tool.name);
-    expect(names).toEqual([
-      "integration_search",
-      "integration_get_page",
-      "integration_get_page_content",
-      "integration_get_page_property",
-      "integration_get_database",
-      "integration_get_data_source_schema",
-      "integration_query_data_source",
-      "integration_list_users",
-      "integration_get_self",
-      "integration_list_comments",
-      "integration_create_page",
-      "integration_append_blocks",
-      "integration_update_page_properties",
-      "integration_trash_page",
-      "integration_add_comment",
-    ]);
-  });
+const NAMED = [
+  "integration_search",
+  "integration_get_page",
+  "integration_get_page_content",
+  "integration_get_data_source_schema",
+  "integration_query_data_source",
+  "integration_create_page",
+  "integration_append_blocks",
+];
 
-  it("pins the read/write partition against the fail-closed classifier", () => {
-    const tools = build().staticTools ?? [];
-    const reads = tools.filter(isRead).map((tool) => tool.name);
-    const writes = tools.filter((tool) => !isRead(tool)).map((tool) => tool.name);
-
-    // These are hand-written, so this is not a fill-in check like Mixpanel's —
-    // it is the exact partition the release ships. Moving a name across this
-    // line changes which calls a host asks a human about.
-    expect(reads).toEqual([
-      "integration_search",
-      "integration_get_page",
-      "integration_get_page_content",
-      "integration_get_page_property",
-      "integration_get_database",
-      "integration_get_data_source_schema",
-      "integration_query_data_source",
-      "integration_list_users",
-      "integration_get_self",
-      "integration_list_comments",
-    ]);
-    expect(writes).toEqual([
-      "integration_create_page",
-      "integration_append_blocks",
-      "integration_update_page_properties",
-      "integration_trash_page",
-      "integration_add_comment",
-    ]);
-
-    // Only operations that replace or remove existing state claim destruction;
-    // creates stay off the read path without inflating the approval copy.
-    const destructive = tools.filter((tool) => tool.annotations?.destructiveHint === true).map((tool) => tool.name);
-    expect(destructive).toEqual(["integration_update_page_properties", "integration_trash_page"]);
-  });
-
-  it("gives every tool the description and schemas the registry expects", () => {
-    for (const tool of build().staticTools ?? []) {
-      expect(tool.description, `${tool.name} description`).toBeTruthy();
-      expect(tool.inputSchema, `${tool.name} inputSchema`).toBeTruthy();
-      expect(tool.outputSchema, `${tool.name} outputSchema`).toBeTruthy();
-      expect(tool.inputSchema?.["type"]).toBe("object");
+describe("notion() auth selects the implementation", () => {
+  it("INV-11: requires auth and names the valid types, with no silent default", () => {
+    expect(() => notion("wiki", { purpose: "Docs" } as never)).toThrow(
+      'notion("wiki") requires auth.type is required: one of "oauth", "token".',
+    );
+    for (const type of ["headers", "credential", "apiKey"]) {
+      expect(() => notion("wiki", { purpose: "Docs", auth: { type } } as never)).toThrow(
+        'notion("wiki") requires auth.type to be one of "oauth", "token".',
+      );
     }
+    expect(() => notion("wiki", { purpose: "Docs", auth: { type: "token" }, surface: "api" } as never)).toThrow(
+      'Unknown option: notion("wiki").surface.',
+    );
+    expect(mcpMocks.remoteMcp).not.toHaveBeenCalled();
+  });
+
+  it("INV-11: refuses token-only options under OAuth by name, and OAuth-only options under a token", () => {
+    expect(() =>
+      // @ts-expect-error The hosted server holds no operator credential.
+      notion("wiki", { purpose: "Docs", auth: { type: "oauth" }, credentialLabel: "Docs token" }),
+    ).toThrow('Unknown option: notion("wiki").credentialLabel.');
+    expect(() =>
+      // @ts-expect-error Hosted tools own their own paging.
+      notion("wiki", { purpose: "Docs", auth: { type: "oauth" }, defaultPageSize: 10 }),
+    ).toThrow('Unknown option: notion("wiki").defaultPageSize.');
+    expect(() => build({ callAdmission: { rules: [{ maxConcurrency: 1 }] } })).toThrow(
+      'Unknown option: notion("workspace").callAdmission.',
+    );
+    expect(() => build({ auth: { type: "token", token: "secret_x" } })).toThrow(
+      'Unknown option: notion("workspace").auth.token.',
+    );
+    expect(mcpMocks.remoteMcp).not.toHaveBeenCalled();
+  });
+});
+
+describe("notion() over OAuth", () => {
+  function mcp(): Connector {
+    return notion("workspace_mcp", { auth: { type: "oauth" }, purpose: "Team knowledge base" });
+  }
+
+  it("binds Notion's hosted endpoint over OAuth only, with no network access at construction", () => {
+    const callAdmission = { rules: [{ maxConcurrency: 2 }] };
+    const connector = notion("workspace_mcp", {
+      auth: { type: "oauth" },
+      purpose: "Team knowledge base",
+      callAdmission,
+      instructions: "Prefer the Engineering teamspace.",
+    });
+    expect(mcpMocks.remoteMcp).toHaveBeenCalledWith(
+      "workspace_mcp",
+      expect.objectContaining({
+        url: NOTION_MCP_ENDPOINT,
+        title: "Notion (MCP)",
+        description: "Notion's official hosted MCP interface: Team knowledge base",
+        auth: { type: "oauth" },
+        callAdmission,
+        requireHttps: true,
+      }),
+    );
+    expect(connector.kind).toBe("mcp");
+    expect(connector.credential).toBeUndefined();
+    const guide = guideOf(connector);
+    expect(guide).toContain("live server");
+    expect(guide).toContain("Workspace purpose: Team knowledge base");
+    expect(guide).toContain("acts as its OAuth-authorized user");
+    expect(guide).toContain("## Notion's data model");
+    expect(guide).toContain("no idempotency key");
+    expect(guide).toContain("## Workspace instructions\n\nPrefer the Engineering teamspace.");
+    // The token guide's REST mechanics never leak into the OAuth guide.
+    expect(guide).not.toContain("page.param");
+    expect(guide).not.toContain("surface");
+    expect((connector.usageGuide as { required?: boolean }).required).toBe(true);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("classifies every tool in Notion's published MCP reference", () => {
+    const counts = { "read-only": 0, additive: 0, destructive: 0 };
+    for (const { verdict } of NOTION_MCP_VETTED_CATALOG.tools.values()) {
+      counts[verdict] += 1;
+    }
+    expect(NOTION_MCP_VETTED_CATALOG.tools.size).toBe(34);
+    expect(counts).toEqual({ "read-only": 18, additive: 10, destructive: 6 });
+  });
+
+  itClassifiesLikeARelease(mcp, mcpMocks, {
+    read: ["notion-search", "notion-fetch", "notion-get-users"],
+    write: "notion-create-comment",
+    destructive: "notion-update-page",
+    unknown: ["notion-new-tool", "notion-new-read", "notion-new-write"],
+  });
+});
+
+describe("notion() over an integration token", () => {
+  it("publishes the generic REST set and the named tools that earn their place", () => {
+    const connector = build();
+    expect(mcpMocks.remoteMcp).not.toHaveBeenCalled();
+    expect(connector.staticTools?.map((tool) => tool.name)).toEqual([
+      "notion_api_search",
+      "notion_api_details",
+      "notion_api_read",
+      "notion_api_write",
+      ...NAMED,
+    ]);
+    expect(connector.describe?.()).toMatchObject({
+      source: { kind: "api", provider: "notion" },
+      auth: { mode: "credential" },
+    });
+  });
+
+  it("INV-1: annotates its own tools with the exact read/write partition", () => {
+    const tools = build().staticTools ?? [];
+    expect(tools.filter(isRead).map((tool) => tool.name)).toEqual([
+      "notion_api_search",
+      "notion_api_details",
+      "notion_api_read",
+      "integration_search",
+      "integration_get_page",
+      "integration_get_page_content",
+      "integration_get_data_source_schema",
+      "integration_query_data_source",
+    ]);
+    expect(tools.filter((tool) => !isRead(tool)).map((tool) => tool.name)).toEqual([
+      "notion_api_write",
+      "integration_create_page",
+      "integration_append_blocks",
+    ]);
+    // Only the generic write carries the whole write API's blast radius; the
+    // named writes only add content.
+    expect(tools.filter((tool) => tool.annotations?.destructiveHint === true).map((tool) => tool.name)).toEqual([
+      "notion_api_write",
+    ]);
+    expect(build().classification).toBeUndefined();
   });
 
   it("declares a rate budget and a concurrency cap together", () => {
@@ -266,39 +355,35 @@ describe("notion() tool surface", () => {
   });
 
   it("carries a required guide covering what schemas cannot", () => {
-    const connector = build({
-      instructions: "Use the Engineering wiki unless the request names another.",
-    });
-    const guide = connector.usageGuide as {
-      content: string;
-      summary: string;
-      required: boolean;
-    };
+    const connector = build({ instructions: "Use the Engineering wiki unless the request names another." });
+    const guide = connector.usageGuide as { content: string; summary: string; required: boolean };
     expect(guide.required).toBe(true);
-    expect(guide.summary).toBeTruthy();
-    expect(guide.content).toContain("Databases contain data sources");
-    expect(guide.content).toContain("data_source_id");
-    expect(guide.content).toContain("raw: true");
-    expect(guide.content).toContain("no idempotency key");
-    expect(guide.content).toContain("not shared with this integration");
-    // Real markdown, not a diff hunk: agents read this string verbatim.
-    expect(guide.content).toContain("## Workspace instructions");
+    expect(new TextEncoder().encode(connectorGuideSummary(connector) ?? "").length).toBeLessThanOrEqual(120);
+    for (const text of [
+      "Workspace purpose: Team knowledge base",
+      "Databases contain data sources",
+      "data_source_id",
+      "raw: true",
+      "no idempotency key",
+      "not shared with this integration",
+      "notion_api_search",
+      "`page.in` is `body`",
+      "GET /v1/pages/{page_id}/properties/{property_id}",
+      "/v1/oauth/*",
+      "Those need an OAuth connector.",
+      "## Workspace instructions",
+      "Use the Engineering wiki unless the request names another.",
+    ]) {
+      expect(guide.content, text).toContain(text);
+    }
     expect(guide.content).not.toContain("+## Workspace instructions");
-    expect(guide.content).toContain("Use the Engineering wiki unless the request names another.");
+    expect(guide.content).not.toContain("no guarded raw-REST tool");
+    expect(guide.content).not.toContain("surface");
   });
 
-  it("says in the guide that it deliberately has no escape hatch (H14)", () => {
-    // A finite surface may honestly have no guarded raw-REST tool, but it has
-    // to say so: an agent that assumes one exists spends a search proving it
-    // does not.
-    const guide = build().usageGuide as { content: string };
-    expect(guide.content).toContain("no guarded raw-REST tool");
-    expect(guide.content).toContain("notion_api_");
-  });
-
-  it("rejects a missing purpose or an out-of-range page size", () => {
-    expect(() => notion("workspace", { purpose: "  " })).toThrow("a non-empty purpose");
-    expect(() => notion("workspace", { surface: "api", purpose: "Docs", defaultPageSize: 500 })).toThrow(
+  it("INV-11: rejects a missing purpose or an out-of-range page size", () => {
+    expect(() => notion("workspace", { ...TOKEN, purpose: "  " })).toThrow("a non-empty purpose");
+    expect(() => notion("workspace", { ...TOKEN, defaultPageSize: 500 })).toThrow(
       "defaultPageSize to be a whole number between 1 and 100",
     );
   });
@@ -308,57 +393,19 @@ describe("notion() tool surface", () => {
     expect(build({ credentialLabel: "Docs token" }).credential?.label).toBe("Docs token");
     expect(build().credential?.description).toContain("shared with that integration");
   });
-});
 
-describe("notion() MCP interface", () => {
-  function mcp(): Connector {
-    return notion("workspace_mcp", {
-      surface: "mcp",
-      purpose: "Team knowledge base",
-    });
-  }
+  it("INV-5: tests a pasted token with the cheapest identifying read, and never echoes it", async () => {
+    queue({ body: { object: "user", id: "bot-1", type: "bot", name: "Docs bot", bot: { workspace_name: "Acme" } } });
+    const ok = await build().testCredential!("secret_pasted", context(null));
+    expect(ok).toEqual({ ok: true, message: "Authenticated as Acme." });
+    expect(calls[0]?.url).toBe(`${NOTION_API_BASE_URL}/v1/users/me`);
+    expect(calls[0]?.headers["Authorization"]).toBe("Bearer secret_pasted");
 
-  it("binds the explicit MCP interface to Notion's OAuth endpoint", () => {
-    const callAdmission = { rules: [{ maxConcurrency: 2 }] };
-    const connector = notion("workspace_mcp", {
-      surface: "mcp",
-      purpose: "Team knowledge base",
-      callAdmission,
-    });
-    expect(mcpMocks.remoteMcp).toHaveBeenCalledWith(
-      "workspace_mcp",
-      expect.objectContaining({
-        url: NOTION_MCP_ENDPOINT,
-        title: "Notion (MCP)",
-        auth: { type: "oauth" },
-        callAdmission,
-        requireHttps: true,
-      }),
-    );
-    expect(connector.kind).toBe("mcp");
-    expect(connector.credential).toBeUndefined();
-    expect((connector.usageGuide as { content: string }).content).toContain("live server");
-    expect(globalThis.fetch).not.toHaveBeenCalled();
-  });
-
-  it("classifies every tool in Notion's published MCP reference", () => {
-    const counts = { "read-only": 0, additive: 0, destructive: 0 };
-    for (const { verdict } of NOTION_MCP_VETTED_CATALOG.tools.values()) {
-      counts[verdict] += 1;
-    }
-    expect(NOTION_MCP_VETTED_CATALOG.tools.size).toBe(34);
-    expect(counts).toEqual({
-      "read-only": 18,
-      additive: 10,
-      destructive: 6,
-    });
-  });
-
-  itClassifiesLikeARelease(mcp, mcpMocks, {
-    read: ["notion-search", "notion-fetch", "notion-get-users"],
-    write: "notion-create-comment",
-    destructive: "notion-update-page",
-    unknown: ["notion-new-tool", "notion-new-read", "notion-new-write"],
+    queue({ status: 401, body: { object: "error", code: "unauthorized", message: "API token is invalid." } });
+    const bad = await build().testCredential!("secret_wrong", context(null));
+    expect(bad.ok).toBe(false);
+    expect(bad.message).toContain("unauthorized");
+    expect(bad.message).not.toContain("secret_wrong");
   });
 });
 
@@ -373,14 +420,159 @@ describe("notion() request construction", () => {
     expect(calls[0]?.headers["Authorization"]).toBe("Bearer secret_token");
   });
 
+  it("keeps the sent Notion-Version equal to the pinned index's version", () => {
+    // The index describes one version's contract. Regenerating it against a
+    // newer Notion-Version must move the sent header with it, deliberately.
+    expect(openapi.version).toBe(NOTION_API_VERSION);
+    expect(openapi.servers).toEqual([NOTION_API_BASE_URL]);
+  });
+
   it("fails with auth_required before touching the network", async () => {
-    const error = await call(build(), "integration_get_self", {}, context(null)).catch((thrown) => thrown);
+    const error = await call(build(), "notion_api_read", { path: "/v1/users/me" }, context(null)).catch(
+      (thrown) => thrown,
+    );
     expect(error).toBeInstanceOf(ConnectorCallError);
     expect(error.code).toBe("auth_required");
     expect(error.retryable).toBe(false);
     expect(error.message).toContain("this connection in the operator UI");
     expect(error.message).toContain("authorize_connector");
     expect(calls).toHaveLength(0);
+  });
+
+  it("refuses an id that would escape its path segment, before any request", async () => {
+    const error = await refusal(call(build(), "integration_get_page", { page_id: "../users" }));
+    expect(error.code).toBe("invalid_args");
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe("notion() generic REST tools", () => {
+  it("INV-10: finds operations and their contracts in the pinned index without a request", async () => {
+    const connector = build();
+    const found = await call(connector, "notion_api_search", { query: "query data source" });
+    expect(found.operations).toContainEqual(
+      expect.objectContaining({
+        method: "POST",
+        path: "/v1/data_sources/{data_source_id}/query",
+        tool: "notion_api_read",
+      }),
+    );
+    const details = await call(connector, "notion_api_details", { method: "PATCH", path: "/v1/pages/page-1" });
+    expect(details).toMatchObject({ path: "/v1/pages/{page_id}", tool: "notion_api_write" });
+    expect(Object.keys(details.body.schema.properties)).toContain("in_trash");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("INV-10: admits exactly the reviewed read-only POST queries on the read tool", async () => {
+    const connector = build();
+    for (const path of [
+      "/v1/search",
+      "/v1/data_sources/ds-1/query",
+      "/v1/blocks/meeting_notes/query",
+      "/v1/agents/query",
+      "/v1/sessions/query",
+      "/v1/sessions/s-1/events/query",
+    ]) {
+      queue({ body: { object: "list", results: [], has_more: false, next_cursor: null } });
+      await call(connector, "notion_api_read", { method: "POST", path, body: {} });
+    }
+    expect(calls.map((request) => [request.method, new URL(request.url).pathname])).toEqual([
+      ["POST", "/v1/search"],
+      ["POST", "/v1/data_sources/ds-1/query"],
+      ["POST", "/v1/blocks/meeting_notes/query"],
+      ["POST", "/v1/agents/query"],
+      ["POST", "/v1/sessions/query"],
+      ["POST", "/v1/sessions/s-1/events/query"],
+    ]);
+    calls.length = 0;
+    // A view query is stored until deleted, and a page create is a create:
+    // neither may ride the read path.
+    for (const path of ["/v1/views/v-1/queries", "/v1/pages"]) {
+      const refused = await refusal(call(connector, "notion_api_read", { method: "POST", path, body: {} }));
+      expect(refused.message).toContain("call it with notion_api_write");
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it("refuses unknown paths and guessed parameters before anything reaches Notion", async () => {
+    const connector = build();
+    const path = await refusal(call(connector, "notion_api_read", { path: "/v1/page/page-1" }));
+    expect(path.message).toContain("Nearest: GET /v1/pages/{page_id}");
+    const param = await refusal(
+      call(connector, "notion_api_read", { method: "POST", path: "/v1/search", body: { cursor: "c1" } }),
+    );
+    expect(param.message).toContain("Not sent:");
+    expect(param.validation?.issues[0]).toMatchObject({ path: "/body/cursor", code: "additionalProperties" });
+    const missing = await refusal(
+      call(connector, "notion_api_write", { method: "PATCH", path: "/v1/blocks/b-1/children", body: {} }),
+    );
+    expect(missing.validation?.issues[0]).toMatchObject({ path: "/body/children", code: "required" });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("refuses Notion's OAuth token endpoints and multipart sends with the route to take instead", async () => {
+    const connector = build();
+    const minting = await refusal(
+      call(connector, "notion_api_write", { method: "POST", path: "/v1/oauth/token", body: {} }),
+    );
+    expect(minting.message).toContain("mint and revoke credentials");
+    const upload = await refusal(
+      call(connector, "notion_api_write", { method: "POST", path: "/v1/file_uploads/fu-1/send", body: {} }),
+    );
+    expect(upload.message).toContain("multipart/form-data");
+    expect(upload.message).toContain('mode "external_url"');
+    expect(calls).toHaveLength(0);
+  });
+
+  it("returns one envelope whose cursor names where it goes: query on GET, body on POST queries", async () => {
+    const connector = build();
+    queue({ body: { object: "list", results: [{ id: "u1" }], has_more: true, next_cursor: "c-get" } });
+    const users = await call(connector, "notion_api_read", { path: "/v1/users", query: { page_size: 1 } });
+    expect(new URL(calls[0]!.url).searchParams.get("page_size")).toBe("1");
+    expect(users).toEqual({
+      status: 200,
+      data: { object: "list", results: [{ id: "u1" }], has_more: true, next_cursor: "c-get" },
+      page: { hasMore: true, next: "c-get", param: "start_cursor" },
+    });
+
+    queue({ body: { object: "list", results: [{ id: "p1", url: "u" }], has_more: true, next_cursor: "c-post" } });
+    const found = await call(connector, "notion_api_read", {
+      method: "POST",
+      path: "/v1/search",
+      body: { query: "roadmap", start_cursor: "c-prev" },
+      select: ["results.id"],
+    });
+    expect(calls[1]?.body).toEqual({ query: "roadmap", start_cursor: "c-prev" });
+    expect(found).toEqual({
+      status: 200,
+      data: { results: [{ id: "p1" }] },
+      page: { hasMore: true, next: "c-post", param: "start_cursor", in: "body" },
+    });
+
+    queue({ body: { object: "list", results: [], has_more: false, next_cursor: null } });
+    const last = await call(connector, "notion_api_read", { path: "/v1/users" });
+    expect(last.page).toEqual({ hasMore: false });
+  });
+
+  it("INV-9: sends a write once with method and path stated, and never replays it after a failure", async () => {
+    const connector = build();
+    queue({ body: { object: "page", id: "page-1", in_trash: true } });
+    const trashed = await call(connector, "notion_api_write", {
+      method: "PATCH",
+      path: "/v1/pages/page-1",
+      body: { in_trash: true },
+    });
+    expect(trashed).toMatchObject({ status: 200, data: { in_trash: true } });
+    expect(calls[0]).toMatchObject({ method: "PATCH", body: { in_trash: true } });
+    expect(calls[0]?.headers["Notion-Version"]).toBe(NOTION_API_VERSION);
+    // Notion has no idempotency key, so none is invented.
+    expect(trashed).not.toHaveProperty("idempotencyKey");
+
+    calls.length = 0;
+    queue({ status: 502, body: { object: "error", code: "internal_server_error", message: "boom" } });
+    const failed = await refusal(call(connector, "notion_api_write", { method: "DELETE", path: "/v1/blocks/b-1" }));
+    expect(failed.code).toBe("unavailable");
+    expect(calls).toHaveLength(1);
   });
 });
 
@@ -415,11 +607,10 @@ describe("notion() lean projections", () => {
       Invented: "kept",
     });
     // Notion caps a paginated property at 25 entries and says so only with
-    // has_more. The id travels with the name because get_page_property — the
-    // tool this flag exists to send an agent to — addresses properties by id.
+    // has_more. The id travels with the name because the property-item read
+    // addresses properties by id.
     expect(page.truncated_properties).toEqual([{ name: "Blocked", id: "rel" }]);
 
-    // No rich-text runs, annotations, or property wrappers survived.
     const serialized = JSON.stringify(page);
     expect(serialized).not.toContain("plain_text");
     expect(serialized).not.toContain("annotations");
@@ -438,16 +629,14 @@ describe("notion() lean projections", () => {
 
   it("returns Notion's untouched payload through the raw escape hatch", async () => {
     queue({ body: PAGE_FIXTURE });
-    const page = await call(build(), "integration_get_page", {
-      page_id: "page-1",
-      raw: true,
-    });
+    const page = await call(build(), "integration_get_page", { page_id: "page-1", raw: true });
     expect(page).toEqual(PAGE_FIXTURE);
   });
 
   it("keeps search results to identity fields only", async () => {
     queue({
       body: {
+        object: "list",
         results: [
           PAGE_FIXTURE,
           {
@@ -472,8 +661,6 @@ describe("notion() lean projections", () => {
       parent: { type: "data_source_id", id: "ds-1" },
       last_edited_time: "2026-02-02T00:00:00.000Z",
     });
-    // A search over a populated database must not drag every row's properties
-    // back with it — that is the bloat this connection exists to remove.
     expect(found.results[0].properties).toBeUndefined();
     expect(found.results[1]).toEqual({
       id: "ds-1",
@@ -490,12 +677,7 @@ describe("notion() lean projections", () => {
   it("flattens blocks to text and follows nesting only when asked", async () => {
     const parent = {
       results: [
-        {
-          id: "b1",
-          type: "heading_2",
-          has_children: false,
-          heading_2: { rich_text: [{ plain_text: "Goals" }] },
-        },
+        { id: "b1", type: "heading_2", has_children: false, heading_2: { rich_text: [{ plain_text: "Goals" }] } },
         {
           id: "b2",
           type: "to_do",
@@ -508,15 +690,9 @@ describe("notion() lean projections", () => {
           has_children: false,
           code: { rich_text: [{ plain_text: "const x = 1" }], language: "typescript" },
         },
-        {
-          id: "b4",
-          type: "child_page",
-          has_children: true,
-          child_page: { title: "Appendix" },
-        },
-        // Notion adds block types to every API version at once — meeting_notes
-        // shipped in the pinned one. An unmodelled type must not collapse to
-        // an empty string and lose its whole payload.
+        { id: "b4", type: "child_page", has_children: true, child_page: { title: "Appendix" } },
+        // Notion adds block types to every API version at once. An unmodelled
+        // type must not collapse to an empty string and lose its payload.
         {
           id: "b5",
           type: "meeting_notes",
@@ -530,42 +706,21 @@ describe("notion() lean projections", () => {
         // A divider's payload is empty and a table of contents carries only
         // colour, so neither earns a raw field.
         { id: "b6", type: "divider", has_children: false, divider: {} },
-        {
-          id: "b7",
-          type: "table_of_contents",
-          has_children: false,
-          table_of_contents: { color: "default" },
-        },
+        { id: "b7", type: "table_of_contents", has_children: false, table_of_contents: { color: "default" } },
       ],
       has_more: false,
       next_cursor: null,
     };
 
     queue({ body: parent });
-    const shallow: any = await call(build(), "integration_get_page_content", {
-      block_id: "page-1",
-    });
+    const shallow: any = await call(build(), "integration_get_page_content", { block_id: "page-1" });
     expect(calls).toHaveLength(1);
+    expect(new URL(calls[0]!.url).searchParams.get("page_size")).toBe("25");
     expect(shallow.truncated).toBe(false);
     expect(shallow.results).toEqual([
       { id: "b1", type: "heading_2", depth: 0, text: "Goals", has_children: false },
-      {
-        id: "b2",
-        type: "to_do",
-        depth: 0,
-        text: "Ship it",
-        has_children: true,
-        checked: true,
-      },
-      {
-        id: "b3",
-        type: "code",
-        depth: 0,
-        text: "const x = 1",
-        has_children: false,
-        language: "typescript",
-      },
-      // child_page carries a plain string title, not a rich-text array.
+      { id: "b2", type: "to_do", depth: 0, text: "Ship it", has_children: true, checked: true },
+      { id: "b3", type: "code", depth: 0, text: "const x = 1", has_children: false, language: "typescript" },
       { id: "b4", type: "child_page", depth: 0, text: "Appendix", has_children: true },
       {
         id: "b5",
@@ -580,13 +735,7 @@ describe("notion() lean projections", () => {
         },
       },
       { id: "b6", type: "divider", depth: 0, text: "", has_children: false },
-      {
-        id: "b7",
-        type: "table_of_contents",
-        depth: 0,
-        text: "",
-        has_children: false,
-      },
+      { id: "b7", type: "table_of_contents", depth: 0, text: "", has_children: false },
     ]);
 
     calls.length = 0;
@@ -595,22 +744,14 @@ describe("notion() lean projections", () => {
       {
         body: {
           results: [
-            {
-              id: "b2a",
-              type: "paragraph",
-              has_children: false,
-              paragraph: { rich_text: [{ plain_text: "sub" }] },
-            },
+            { id: "b2a", type: "paragraph", has_children: false, paragraph: { rich_text: [{ plain_text: "sub" }] } },
           ],
           has_more: false,
         },
       },
       { body: { results: [], has_more: false } },
     );
-    const deep: any = await call(build(), "integration_get_page_content", {
-      block_id: "page-1",
-      depth: 1,
-    });
+    const deep: any = await call(build(), "integration_get_page_content", { block_id: "page-1", depth: 1 });
     expect(calls).toHaveLength(3);
     expect(deep.results.map((block: any) => [block.id, block.depth])).toEqual([
       ["b1", 0],
@@ -625,8 +766,6 @@ describe("notion() lean projections", () => {
   });
 
   it("stops the nested walk at its request ceiling and says so", async () => {
-    // The ceiling is the only thing standing between one admitted tool call
-    // and unbounded downstream traffic, so it gets pinned by count.
     const children = Array.from({ length: 25 }, (_unused, index) => ({
       id: `top-${index}`,
       type: "toggle",
@@ -650,34 +789,19 @@ describe("notion() lean projections", () => {
       });
     }
 
-    const walked: any = await call(build(), "integration_get_page_content", {
-      block_id: "page-1",
-      depth: 1,
-    });
-
-    // One request for the top level plus nineteen children: twenty in total,
-    // and not a request more however many blocks claim children.
+    const walked: any = await call(build(), "integration_get_page_content", { block_id: "page-1", depth: 1 });
+    // One request for the top level plus nineteen children: twenty in total.
     expect(calls).toHaveLength(20);
     expect(walked.truncated).toBe(true);
-    // Truncation costs descendants, never the level that was already fetched.
     expect(walked.results.filter((block: any) => block.depth === 0)).toHaveLength(25);
     expect(walked.results.filter((block: any) => block.depth === 1)).toHaveLength(19);
   });
 
   it("reports truncation when a nested level has more than one page", async () => {
-    // Nested levels take their first page only, so a nested has_more is a
-    // second, quieter way for content to go missing.
     queue(
       {
         body: {
-          results: [
-            {
-              id: "b1",
-              type: "toggle",
-              has_children: true,
-              toggle: { rich_text: [{ plain_text: "Deep" }] },
-            },
-          ],
+          results: [{ id: "b1", type: "toggle", has_children: true, toggle: { rich_text: [{ plain_text: "Deep" }] } }],
           has_more: false,
           next_cursor: null,
         },
@@ -697,39 +821,21 @@ describe("notion() lean projections", () => {
         },
       },
     );
-
-    const walked: any = await call(build(), "integration_get_page_content", {
-      block_id: "page-1",
-      depth: 1,
-    });
+    const walked: any = await call(build(), "integration_get_page_content", { block_id: "page-1", depth: 1 });
     expect(calls).toHaveLength(2);
     expect(walked.truncated).toBe(true);
-    // The nested cursor is deliberately not surfaced: next_cursor belongs to
-    // the top level, and re-reading b1 directly is the documented route.
+    // The nested cursor belongs to b1; re-reading it directly is the route.
     expect(walked.next_cursor).toBeNull();
   });
 
   it("does not walk children when raw asks for Notion's own response", async () => {
     const body = {
-      results: [
-        {
-          id: "b1",
-          type: "toggle",
-          has_children: true,
-          toggle: { rich_text: [{ plain_text: "Deep" }] },
-        },
-      ],
+      results: [{ id: "b1", type: "toggle", has_children: true, toggle: { rich_text: [{ plain_text: "Deep" }] } }],
       has_more: false,
       next_cursor: null,
     };
     queue({ body });
-    const raw = await call(build(), "integration_get_page_content", {
-      block_id: "page-1",
-      depth: 2,
-      raw: true,
-    });
-    // depth is ignored alongside raw — one level, one request, no walk. The
-    // input schema says so, because silently returning depth-0 would not.
+    const raw = await call(build(), "integration_get_page_content", { block_id: "page-1", depth: 2, raw: true });
     expect(calls).toHaveLength(1);
     expect(raw).toEqual(body);
   });
@@ -745,22 +851,14 @@ describe("notion() lean projections", () => {
           Status: {
             id: "sta",
             type: "status",
-            status: {
-              options: [{ name: "Todo" }, { name: "Done" }],
-              groups: [{ name: "To-do" }],
-            },
+            status: { options: [{ name: "Todo" }, { name: "Done" }], groups: [{ name: "To-do" }] },
           },
-          Project: {
-            id: "rel",
-            type: "relation",
-            relation: { database_id: "db-2", data_source_id: "ds-2" },
-          },
+          Project: { id: "rel", type: "relation", relation: { database_id: "db-2", data_source_id: "ds-2" } },
         },
       },
     });
-    const schema: any = await call(build(), "integration_get_data_source_schema", {
-      data_source_id: "ds-1",
-    });
+    const schema: any = await call(build(), "integration_get_data_source_schema", { data_source_id: "ds-1" });
+    expect(calls[0]?.url).toBe(`${NOTION_API_BASE_URL}/v1/data_sources/ds-1`);
     expect(schema.database_id).toBe("db-1");
     expect(schema.title_property).toBe("Name");
     expect(schema.properties["Status"]).toEqual({
@@ -769,34 +867,11 @@ describe("notion() lean projections", () => {
       options: ["Todo", "Done"],
       groups: ["To-do"],
     });
-    // Responses carry both ids; writes may only send the data source one.
-    expect(schema.properties["Project"]).toEqual({
-      id: "rel",
-      type: "relation",
-      relation_data_source_id: "ds-2",
-    });
-  });
-
-  it("turns a database id into its queryable data sources", async () => {
-    queue({
-      body: {
-        id: "db-1",
-        title: [{ plain_text: "Roadmap" }],
-        is_inline: false,
-        in_trash: false,
-        parent: { type: "page_id", page_id: "page-0" },
-        data_sources: [{ id: "ds-1", name: "Roadmap" }],
-      },
-    });
-    const database: any = await call(build(), "integration_get_database", {
-      database_id: "db-1",
-    });
-    expect(database.data_sources).toEqual([{ id: "ds-1", name: "Roadmap" }]);
-    expect(database.parent).toEqual({ type: "page_id", id: "page-0" });
+    expect(schema.properties["Project"]).toEqual({ id: "rel", type: "relation", relation_data_source_id: "ds-2" });
   });
 });
 
-describe("notion() pagination", () => {
+describe("notion() named-tool pagination", () => {
   it("defaults to a lean page size and passes cursors back verbatim", async () => {
     queue({ body: { results: [], has_more: false, next_cursor: null } });
     await call(build(), "integration_query_data_source", { data_source_id: "ds-1" });
@@ -804,30 +879,19 @@ describe("notion() pagination", () => {
 
     calls.length = 0;
     queue({ body: { results: [], has_more: false, next_cursor: null } });
-    await call(build({ defaultPageSize: 50 }), "integration_list_users", {});
-    expect(calls[0]?.url).toContain("page_size=50");
-
-    calls.length = 0;
-    queue({ body: { results: [], has_more: false, next_cursor: null } });
-    await call(build(), "integration_list_comments", {
+    await call(build({ defaultPageSize: 50 }), "integration_get_page_content", {
       block_id: "page-1",
       start_cursor: "opaque::cursor+value",
-      page_size: 100,
     });
     const url = new URL(calls[0]!.url);
     expect(url.searchParams.get("start_cursor")).toBe("opaque::cursor+value");
-    expect(url.searchParams.get("page_size")).toBe("100");
-    expect(url.searchParams.get("block_id")).toBe("page-1");
+    expect(url.searchParams.get("page_size")).toBe("50");
   });
 
   it("rejects a page size Notion would reject, before the request", async () => {
-    const error = await call(build(), "integration_query_data_source", {
-      data_source_id: "ds-1",
-      page_size: 5_000,
-    }).catch((thrown: any) => thrown);
-    // api() enforces the declared schema, so an out-of-range page size never
-    // becomes a Notion 400 the agent has to interpret.
-    expect(error).toBeInstanceOf(ConnectorCallError);
+    const error = await refusal(
+      call(build(), "integration_query_data_source", { data_source_id: "ds-1", page_size: 5_000 }),
+    );
     expect(error.code).toBe("invalid_args");
     expect(error.message).toContain("page_size");
     expect(calls).toHaveLength(0);
@@ -842,40 +906,13 @@ describe("notion() pagination", () => {
       start_cursor: "c1",
     });
     expect(calls[0]?.url).toBe(`${NOTION_API_BASE_URL}/v1/data_sources/ds-1/query`);
+    expect(calls[0]?.method).toBe("POST");
     expect(calls[0]?.body).toEqual({
       page_size: 25,
       filter: { property: "Status", status: { equals: "Done" } },
       sorts: [{ property: "Due", direction: "ascending" }],
       start_cursor: "c1",
     });
-  });
-
-  it("passes every verification inequality value through unchanged", async () => {
-    const connector = build();
-    for (const value of ["verified", "expired", "none"]) {
-      queue({ body: { results: [], has_more: false } });
-      await call(connector, "integration_query_data_source", {
-        data_source_id: "ds-1",
-        filter: {
-          property: "Verification",
-          verification: { does_not_equal: value },
-        },
-      });
-    }
-    expect(calls.map((request) => request.body?.filter)).toEqual([
-      {
-        property: "Verification",
-        verification: { does_not_equal: "verified" },
-      },
-      {
-        property: "Verification",
-        verification: { does_not_equal: "expired" },
-      },
-      {
-        property: "Verification",
-        verification: { does_not_equal: "none" },
-      },
-    ]);
   });
 
   it("builds search filter and sort objects from flat arguments", async () => {
@@ -896,141 +933,6 @@ describe("notion() pagination", () => {
     queue({ body: { results: [], has_more: false } });
     await call(build(), "integration_search", { sort: "relevance" });
     expect(calls[0]?.body?.sort).toEqual({ property: "relevance" });
-  });
-});
-
-describe("notion() property pagination", () => {
-  // A property-item list is not shaped like a page. On a page the type key
-  // holds an array; here each result holds a single object under it. Every
-  // payload below is the documented shape from
-  // developers.notion.com/reference/retrieve-a-page-property.
-  function propertyList(type: string, results: Array<Record<string, unknown>>, extra: Record<string, unknown> = {}) {
-    return {
-      object: "list",
-      results: results.map((result) => ({
-        object: "property_item",
-        id: "prop",
-        type,
-        ...result,
-      })),
-      next_cursor: "cursor-2",
-      has_more: true,
-      // The envelope's own type is the literal "property_item"; the real one
-      // is nested. Reading the outer field reports "property_item" forever.
-      type: "property_item",
-      property_item: {
-        id: "prop",
-        next_url: "https://api.notion.com/v1/pages/page-1/properties/prop",
-        type,
-        [type]: {},
-      },
-      ...extra,
-    };
-  }
-
-  it("unwraps a paginated relation into page ids", async () => {
-    queue({
-      body: propertyList("relation", [{ relation: { id: "page-2" } }, { relation: { id: "page-3" } }]),
-    });
-    const property: any = await call(build(), "integration_get_page_property", {
-      page_id: "page-1",
-      property_id: "prop",
-    });
-    expect(property.type).toBe("relation");
-    expect(property.results).toEqual(["page-2", "page-3"]);
-    expect(property.has_more).toBe(true);
-    expect(property.next_cursor).toBe("cursor-2");
-  });
-
-  it("unwraps paginated people into user references", async () => {
-    queue({
-      body: propertyList("people", [
-        {
-          people: {
-            object: "user",
-            id: "user-9",
-            name: "Grace",
-            type: "person",
-            person: { email: "grace@example.com" },
-          },
-        },
-        { people: { object: "user", id: "user-10", name: "Ada" } },
-      ]),
-    });
-    const property: any = await call(build(), "integration_get_page_property", {
-      page_id: "page-1",
-      property_id: "prop",
-    });
-    expect(property.type).toBe("people");
-    expect(property.results).toEqual([
-      { id: "user-9", name: "Grace" },
-      { id: "user-10", name: "Ada" },
-    ]);
-  });
-
-  it("joins paginated title and rich_text runs back into plain text", async () => {
-    for (const type of ["title", "rich_text"] as const) {
-      calls.length = 0;
-      queue({
-        body: propertyList(type, [
-          {
-            [type]: {
-              type: "text",
-              text: { content: "Quarterly ", link: null },
-              annotations: { bold: true },
-              plain_text: "Quarterly ",
-              href: null,
-            },
-          },
-          {
-            [type]: {
-              type: "text",
-              text: { content: "review", link: null },
-              plain_text: "review",
-              href: null,
-            },
-          },
-        ]),
-      });
-      const property: any = await call(build(), "integration_get_page_property", {
-        page_id: "page-1",
-        property_id: "prop",
-      });
-      expect(property.type, type).toBe(type);
-      // One run per result, each a plain string — not the empty strings a
-      // page-shaped projection would produce from these.
-      expect(property.results, type).toEqual(["Quarterly ", "review"]);
-    }
-  });
-
-  it("flattens a single-value property without an envelope", async () => {
-    queue({
-      body: { object: "property_item", id: "num", type: "number", number: 42 },
-    });
-    const property: any = await call(build(), "integration_get_page_property", {
-      page_id: "page-1",
-      property_id: "num",
-    });
-    expect(property).toEqual({ type: "number", value: 42 });
-  });
-
-  it("passes page size and cursor through, and offers the raw escape hatch", async () => {
-    const body = propertyList("relation", [{ relation: { id: "page-2" } }]);
-    queue({ body });
-    const raw = await call(build(), "integration_get_page_property", {
-      page_id: "page-1",
-      property_id: "prop",
-      page_size: 100,
-      start_cursor: "opaque::cursor",
-      raw: true,
-    });
-    const url = new URL(calls[0]!.url);
-    expect(url.pathname).toBe("/v1/pages/page-1/properties/prop");
-    expect(url.searchParams.get("page_size")).toBe("100");
-    expect(url.searchParams.get("start_cursor")).toBe("opaque::cursor");
-    // The only read whose shapes are this easy to be surprised by needs a way
-    // out that does not require a new release.
-    expect(raw).toEqual(body);
   });
 });
 
@@ -1060,13 +962,7 @@ describe("notion() error mapping", () => {
   });
 
   caseOf("does not send a capability failure to re-authorization", async () => {
-    const error = await failWith(403, {
-      object: "error",
-      code: "restricted_resource",
-      message: "Insufficient permissions.",
-    });
-    // auth_required would route the agent to authorize_connector, which cannot
-    // grant a Notion capability or share a page.
+    const error = await failWith(403, { object: "error", code: "restricted_resource", message: "Insufficient." });
     expect(error.code).toBe("provider_permission_denied");
     expect(error.retryable).toBe(false);
     expect(error.message).toContain("capability");
@@ -1074,14 +970,9 @@ describe("notion() error mapping", () => {
   });
 
   caseOf("says a 404 may mean unshared rather than absent", async () => {
-    const error = await failWith(404, {
-      object: "error",
-      code: "object_not_found",
-      message: "Could not find page.",
-    });
-    // Deliberately not not_found: that code asserts the thing is not there,
-    // and Notion's 404 does not know whether it is missing or merely unshared
-    // (H11). A program that skipped the id would be wrong half the time.
+    const error = await failWith(404, { object: "error", code: "object_not_found", message: "Could not find page." });
+    // Deliberately not not_found: Notion's 404 does not know whether the
+    // object is missing or merely unshared (H11).
     expect(error.code).not.toBe("not_found");
     expect(error.code).toBe("connector_call_failed");
     expect(error.retryable).toBe(false);
@@ -1113,7 +1004,6 @@ describe("notion() error mapping", () => {
     );
     expect(error.code).toBe("rate_limited");
     expect(error.retryable).toBe(true);
-    // Notion documents Retry-After as integer seconds; connecta wants ms.
     expect(error.retryAfterMs).toBe(7_000);
     expect(error.message).toContain("public_api_request_rate_limit");
   });
@@ -1129,63 +1019,60 @@ describe("notion() error mapping", () => {
     expect(overloaded.retryable).toBe(true);
     expect(overloaded.retryAfterMs).toBe(2_000);
 
-    const conflict = await failWith(409, {
-      code: "conflict_error",
-      message: "Conflict occurred.",
-    });
+    const conflict = await failWith(409, { code: "conflict_error", message: "Conflict occurred." });
     expect(conflict.code).toBe("unavailable");
     expect(conflict.retryable).toBe(true);
 
-    const upstream = await failWith(503, {
-      code: "service_unavailable",
-      message: "unavailable",
-    });
+    const upstream = await failWith(503, { code: "service_unavailable", message: "unavailable" });
     expect(upstream.code).toBe("unavailable");
     expect(upstream.retryable).toBe(true);
   });
 
   caseOf("survives an error body that is not JSON", async () => {
-    queue({ status: 500, body: undefined });
     globalThis.fetch = vi.fn(
       async () => new Response("<html>gateway</html>", { status: 502 }),
     ) as unknown as typeof fetch;
-    const error = await call(build(), "integration_get_self", {}).catch((thrown: any) => thrown);
+    const error = await call(build(), "notion_api_read", { path: "/v1/users/me" }).catch((thrown: any) => thrown);
     expect(error.code).toBe("unavailable");
     expect(error.message).toContain("HTTP 502");
   });
 
   caseOf("fails an oversized 2xx body instead of reporting an empty success", async () => {
-    // The transport's byte ceiling fires from inside the same `json()` the
-    // mapper tolerates a parse failure from. Reported as a success with no
-    // payload, an agent would read "this page has no properties" out of a
-    // response nobody was allowed to read.
     globalThis.fetch = vi.fn(
-      async () => new Response(JSON.stringify({ blob: "x".repeat(5 * 1024 * 1024) })),
+      async () =>
+        new Response(JSON.stringify({ blob: "x".repeat(5 * 1024 * 1024) }), {
+          headers: { "content-type": "application/json" },
+        }),
     ) as unknown as typeof fetch;
-    const error = await call(build(), "integration_get_self", {}).catch((thrown: any) => thrown);
+    const error = await call(build(), "notion_api_read", { path: "/v1/users/me" }).catch((thrown: any) => thrown);
     expect(error).toBeInstanceOf(ConnectorCallError);
     expect(error.code).toBe("connector_call_failed");
     expect(error.retryable).toBe(false);
-    expect(error.message).toContain("response ceiling");
   });
 
   test.each(cases)("%s", async (_name, run) => run());
 });
 
 describe("notion() successful response integrity", () => {
-  it.each(["<html>synthetic gateway</html>", "", "null", "[]", '"text"'])(
-    "rejects unusable successful JSON without reporting an empty page: %s",
-    async (body) => {
-      globalThis.fetch = vi.fn(async () => new Response(body)) as unknown as typeof fetch;
-      await expect(call(build(), "integration_get_page_content", { block_id: "synthetic" })).rejects.toMatchObject({
-        code: "connector_call_failed",
-        retryable: false,
-      });
-      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-    },
-  );
+  it.each([
+    ["text/html", "<html>synthetic gateway</html>"],
+    ["application/json", ""],
+    ["application/json", "null"],
+    ["application/json", "[]"],
+    ["application/json", '"text"'],
+    ["application/json", "{not json"],
+  ])("rejects an unusable successful %s body without reporting an empty page: %s", async (type, body) => {
+    globalThis.fetch = vi.fn(
+      async () => new Response(body, { headers: { "content-type": type } }),
+    ) as unknown as typeof fetch;
+    await expect(call(build(), "integration_get_page_content", { block_id: "synthetic" })).rejects.toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+    });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
 
-  it("keeps a sent write's unreadable response unknown and does not expose body details", async () => {
+  it("INV-9: keeps a sent write's unreadable response unknown and does not expose body details", async () => {
     globalThis.fetch = vi.fn(
       async () =>
         new Response(
@@ -1194,6 +1081,7 @@ describe("notion() successful response integrity", () => {
               controller.error(new Error("synthetic body detail"));
             },
           }),
+          { headers: { "content-type": "application/json" } },
         ),
     ) as unknown as typeof fetch;
     const provider = build();
@@ -1214,7 +1102,9 @@ describe("notion() successful response integrity", () => {
     );
     expect(outcome.ok).toBe(false);
     if (outcome.ok) throw new Error("Expected failed write response");
-    expect(outcome.error).toMatchObject({ code: "connector_call_failed", retryable: false });
+    // The shared REST read reports a lost body as `unavailable`; the write
+    // state, not the code, is what keeps a caller from repeating it.
+    expect(outcome.error.message).toContain("Notion answered, but its response could not be read.");
     expect(outcome.error.message).not.toContain("synthetic body detail");
     expect(outcome.dispatched).toBe(true);
     expect(writeStateOf(outcome)).toBe("unknown");
@@ -1222,7 +1112,7 @@ describe("notion() successful response integrity", () => {
   });
 });
 
-describe("notion() writes", () => {
+describe("notion() authoring helpers", () => {
   it("creates a data source row with a schema-named title property", async () => {
     queue({ body: PAGE_FIXTURE });
     await call(build(), "integration_create_page", {
@@ -1233,6 +1123,7 @@ describe("notion() writes", () => {
       markdown: "# Body",
       icon: "🚀",
     });
+    expect(calls[0]?.method).toBe("POST");
     expect(calls[0]?.body).toEqual({
       parent: { type: "data_source_id", data_source_id: "ds-1" },
       properties: {
@@ -1245,23 +1136,23 @@ describe("notion() writes", () => {
   });
 
   it("requires exactly one parent and one body form", async () => {
-    const both = await call(build(), "integration_create_page", {
-      parent_page_id: "page-1",
-      parent_data_source_id: "ds-1",
-      title: "x",
-    }).catch((thrown: any) => thrown);
+    const both = await refusal(
+      call(build(), "integration_create_page", { parent_page_id: "page-1", parent_data_source_id: "ds-1", title: "x" }),
+    );
     expect(both.code).toBe("invalid_args");
     expect(both.message).toContain("exactly one");
     expect(both.message).toContain("never by a database_id");
 
-    const neither = await call(build(), "integration_create_page", { title: "x" }).catch((thrown) => thrown);
+    const neither = await refusal(call(build(), "integration_create_page", { title: "x" }));
     expect(neither.code).toBe("invalid_args");
 
-    const twoBodies = await call(build(), "integration_create_page", {
-      parent_page_id: "page-1",
-      markdown: "a",
-      children: [{ object: "block" }],
-    }).catch((thrown: any) => thrown);
+    const twoBodies = await refusal(
+      call(build(), "integration_create_page", {
+        parent_page_id: "page-1",
+        markdown: "a",
+        children: [{ object: "block" }],
+      }),
+    );
     expect(twoBodies.code).toBe("invalid_args");
     expect(twoBodies.message).toContain("not both");
     expect(calls).toHaveLength(0);
@@ -1280,12 +1171,7 @@ describe("notion() writes", () => {
     queue({
       body: {
         results: [
-          {
-            id: "new-1",
-            type: "paragraph",
-            has_children: false,
-            paragraph: { rich_text: [{ plain_text: "first" }] },
-          },
+          { id: "new-1", type: "paragraph", has_children: false, paragraph: { rich_text: [{ plain_text: "first" }] } },
         ],
       },
     });
@@ -1296,6 +1182,7 @@ describe("notion() writes", () => {
       after_block_id: "b3",
     });
     expect(calls[0]?.method).toBe("PATCH");
+    expect(calls[0]?.url).toBe(`${NOTION_API_BASE_URL}/v1/blocks/page-1/children`);
     expect(calls[0]?.body).toEqual({
       children: [
         {
@@ -1314,99 +1201,51 @@ describe("notion() writes", () => {
     });
     expect(appended.appended).toBe(1);
 
-    const missingAnchor = await call(build(), "integration_append_blocks", {
-      block_id: "page-1",
-      text: ["x"],
-      position: "after_block",
-    }).catch((thrown: any) => thrown);
+    const missingAnchor = await refusal(
+      call(build(), "integration_append_blocks", { block_id: "page-1", text: ["x"], position: "after_block" }),
+    );
     expect(missingAnchor.code).toBe("invalid_args");
     expect(missingAnchor.message).toContain("after_block_id");
   });
 
-  it("updates properties without being able to trash a page", async () => {
-    queue({ body: PAGE_FIXTURE });
-    await call(build(), "integration_update_page_properties", {
-      page_id: "page-1",
-      title: "Renamed",
-      title_property: "Name",
-    });
-    expect(calls[0]?.method).toBe("PATCH");
-    expect(calls[0]?.body).toEqual({
-      properties: {
-        Name: { title: [{ type: "text", text: { content: "Renamed" } }] },
-      },
-    });
-    // in_trash is not in this tool's schema, so an update can never trash.
-    expect(
-      build().staticTools?.find((tool) => tool.name === "integration_update_page_properties")?.inputSchema?.[
-        "properties"
-      ],
-    ).not.toHaveProperty("in_trash");
-    const properties = build().staticTools?.find((tool) => tool.name === "integration_update_page_properties")
-      ?.inputSchema?.["properties"];
-    expect(properties).not.toHaveProperty("is_locked");
-    expect(properties).not.toHaveProperty("template");
-    expect(properties).not.toHaveProperty("erase_content");
-
-    const empty = await call(build(), "integration_update_page_properties", {
-      page_id: "page-1",
-    }).catch((thrown: any) => thrown);
-    expect(empty.code).toBe("invalid_args");
-  });
-
-  it("trashes and restores through the same tool", async () => {
-    queue({ body: { ...PAGE_FIXTURE, in_trash: true } });
-    const trashed: any = await call(build(), "integration_trash_page", {
-      page_id: "page-1",
-    });
-    expect(calls[0]?.body).toEqual({ in_trash: true });
-    expect(trashed.in_trash).toBe(true);
-
-    calls.length = 0;
-    queue({ body: PAGE_FIXTURE });
-    await call(build(), "integration_trash_page", { page_id: "page-1", restore: true });
-    expect(calls[0]?.body).toEqual({ in_trash: false });
-  });
-
-  it("comments on a page or replies to a discussion, never both", async () => {
+  it("turns checklist items into unchecked to-do blocks, and takes one body form only", async () => {
     queue({
       body: {
-        id: "comment-1",
-        discussion_id: "disc-1",
-        created_time: "2026-02-02T00:00:00.000Z",
-        created_by: { object: "user", id: "user-1" },
-        rich_text: [{ plain_text: "looks good" }],
+        results: [
+          {
+            id: "todo-1",
+            type: "to_do",
+            has_children: false,
+            to_do: { rich_text: [{ plain_text: "Book venue" }], checked: false },
+          },
+        ],
       },
     });
-    const comment: any = await call(build(), "integration_add_comment", {
-      page_id: "page-1",
-      text: "looks good",
+    const appended: any = await call(build(), "integration_append_blocks", {
+      block_id: "page-1",
+      checklist: ["Book venue", "Send invites"],
     });
     expect(calls[0]?.body).toEqual({
-      rich_text: [{ type: "text", text: { content: "looks good" } }],
-      parent: { type: "page_id", page_id: "page-1" },
+      children: [
+        {
+          object: "block",
+          type: "to_do",
+          to_do: { rich_text: [{ type: "text", text: { content: "Book venue" } }], checked: false },
+        },
+        {
+          object: "block",
+          type: "to_do",
+          to_do: { rich_text: [{ type: "text", text: { content: "Send invites" } }], checked: false },
+        },
+      ],
     });
-    expect(comment).toEqual({
-      id: "comment-1",
-      discussion_id: "disc-1",
-      created_time: "2026-02-02T00:00:00.000Z",
-      created_by: { id: "user-1" },
-      text: "looks good",
-    });
+    expect(appended.results[0]).toMatchObject({ type: "to_do", text: "Book venue", checked: false });
 
     calls.length = 0;
-    queue({ body: { id: "comment-2", rich_text: [] } });
-    await call(build(), "integration_add_comment", {
-      discussion_id: "disc-1",
-      text: "reply",
-    });
-    expect(calls[0]?.body?.discussion_id).toBe("disc-1");
-
-    const ambiguous = await call(build(), "integration_add_comment", {
-      page_id: "page-1",
-      discussion_id: "disc-1",
-      text: "x",
-    }).catch((thrown: any) => thrown);
-    expect(ambiguous.code).toBe("invalid_args");
+    const ambiguous = await refusal(
+      call(build(), "integration_append_blocks", { block_id: "page-1", text: ["a"], checklist: ["b"] }),
+    );
+    expect(ambiguous.message).toContain("exactly one of text, checklist, children");
+    expect(calls).toHaveLength(0);
   });
 });

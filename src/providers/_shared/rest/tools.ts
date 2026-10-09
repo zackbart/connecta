@@ -56,11 +56,16 @@ export interface RestFraming {
   headers?: Record<string, string | undefined>;
 }
 
-/** The cursor for the next page: pass `next` back as the `param` query parameter. */
+/**
+ * The cursor for the next page: pass `next` back as `param`, a query
+ * parameter unless `in` says the operation takes it in its body (Notion's
+ * read-only POST queries do).
+ */
 export interface RestPage {
   hasMore: boolean;
   next?: string;
   param?: string;
+  in?: "query" | "body";
 }
 
 export interface RestResult {
@@ -379,8 +384,14 @@ const SELECT: JsonSchema = {
 
 const PAGE: JsonSchema = {
   type: "object",
-  description: "Present on lists: pass next as the param query parameter for the following page.",
-  properties: { hasMore: { type: "boolean" }, next: { type: "string" }, param: { type: "string" } },
+  description:
+    "Present on lists: pass next as the param query parameter (a body field when in is body) for the next page.",
+  properties: {
+    hasMore: { type: "boolean" },
+    next: { type: "string" },
+    param: { type: "string" },
+    in: { type: "string", enum: ["query", "body"] },
+  },
   required: ["hasMore"],
 };
 

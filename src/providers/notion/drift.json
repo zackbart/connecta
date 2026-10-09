@@ -18,43 +18,25 @@
           "method": "PATCH",
           "path": "/v1/blocks/{block_id}/children",
           "specRevision": "1.0.0",
-          "contract": "sha256:e88adbbb5a1d9976f999712b612ca1395ea980bbcb04f98d36471f2cde5f0554"
-        },
-        {
-          "method": "GET",
-          "path": "/v1/comments",
-          "specRevision": "1.0.0",
-          "contract": "sha256:6a5299d94a969aed198921460d5470800a813c72e777a72b5c98b5df00699234"
-        },
-        {
-          "method": "POST",
-          "path": "/v1/comments",
-          "specRevision": "1.0.0",
-          "contract": "sha256:1e56972472054c65a2265c96355cdd9328e5cf7dd55639da20afe3af170aaa17"
+          "contract": "sha256:a4f9b1b0e53031aac2a7c8d5b7bb30efaf43d32561b2717f1ac441f7e754f96e"
         },
         {
           "method": "GET",
           "path": "/v1/data_sources/{data_source_id}",
           "specRevision": "1.0.0",
-          "contract": "sha256:59607008719ca48177a40a7341b8f3045455b1f1239f70a51a4613a9ac70fc92"
+          "contract": "sha256:459a51d46148e364d71cdb052f70ba5fce7d15c2b49b05def5190538d31d038e"
         },
         {
           "method": "POST",
           "path": "/v1/data_sources/{data_source_id}/query",
           "specRevision": "1.0.0",
-          "contract": "sha256:d50f72ca64da8d3994334d597e12cb4c0531597051d2dc69a370d0fd44882618"
-        },
-        {
-          "method": "GET",
-          "path": "/v1/databases/{database_id}",
-          "specRevision": "1.0.0",
-          "contract": "sha256:18ae68f9522f103c7d5067b678cf43e7c1a40e92c6f54b88e5da979a391c5efc"
+          "contract": "sha256:d42e880d63caac2c9298b753894de722392db187eca146596455b94789aef6b5"
         },
         {
           "method": "POST",
           "path": "/v1/pages",
           "specRevision": "1.0.0",
-          "contract": "sha256:961f5532f6d607185bc264c781d79c2618a2c0d15c6126cd2e648a3cd144a231"
+          "contract": "sha256:414ebdef64f57007f24248bf05cabb3f8a1b8944adba9d4057d1c932c8fd5828"
         },
         {
           "method": "GET",
@@ -63,28 +45,10 @@
           "contract": "sha256:62886b88f7123a1654b7a3e925b45e264fcf82d6f0fa4479b70b58f42be9d27e"
         },
         {
-          "method": "PATCH",
-          "path": "/v1/pages/{page_id}",
-          "specRevision": "1.0.0",
-          "contract": "sha256:92003f9bb7912dac38cad0b16c11a3ee753743f2e5325c8c1d49355b7b9d94a6"
-        },
-        {
-          "method": "GET",
-          "path": "/v1/pages/{page_id}/properties/{property_id}",
-          "specRevision": "1.0.0",
-          "contract": "sha256:8ff6676783cec8a8425443be8b170777dbc0c28e5a26e43d16177275724fff6b"
-        },
-        {
           "method": "POST",
           "path": "/v1/search",
           "specRevision": "1.0.0",
-          "contract": "sha256:ea8c49ee3c14c10d1e0cde66ba75a863fa0484f770173112a789759c0aae9b62"
-        },
-        {
-          "method": "GET",
-          "path": "/v1/users",
-          "specRevision": "1.0.0",
-          "contract": "sha256:ff63a06e141f18982bdd55b0357094a71012c2c02729d88dc1599a4d8780917e"
+          "contract": "sha256:9672287768a78b4e45bdc692184988116ef8459c1edc45110334afe578114086"
         },
         {
           "method": "GET",
@@ -139,6 +103,10 @@
         "notion-update-view",
         "notion-stop-session"
       ]
+    },
+    {
+      "type": "openapi-index",
+      "source": "openapi.source.json"
     }
   ]
 }

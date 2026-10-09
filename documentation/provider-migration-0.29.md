@@ -27,6 +27,11 @@ connectors: [
 ]
 ```
 
+Notion has since moved to auth-selected implementations: `surface` is gone,
+and `auth: { type: "oauth" }` or `{ type: "token" }` selects hosted MCP or the
+REST connector. Upgrade with the
+[provider auth migration](./provider-auth-migration.md#notion); the rest of
+this paragraph records the 0.29 rules.
 Notion preserves headless/internal-integration capabilities. Add explicit
 `surface: "api"` to retain that identity and migrate old REST names to
 `integration_*`, for example `search` to `integration_search`, `create_page`
@@ -60,6 +65,7 @@ creation/update. Do not copy REST argument
 shapes into vendor tools, even when a tool name is unchanged.
 
 The per-provider tables map every removed name and explain retained API tools:
-[Notion](https://github.com/zackbart/connecta/blob/main/src/providers/notion/reconciliation.md),
-[Vercel](https://github.com/zackbart/connecta/blob/main/src/providers/vercel/reconciliation.md), and
+[Vercel](https://github.com/zackbart/connecta/blob/main/src/providers/vercel/reconciliation.md) and
 [Cloudflare](https://github.com/zackbart/connecta/blob/main/src/providers/cloudflare/reconciliation.md).
+Notion's table is retired with `surface`; the
+[provider auth migration](./provider-auth-migration.md#notion) maps its names.
