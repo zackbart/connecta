@@ -246,7 +246,7 @@ calls and final-answer facts. Fourteen new active tasks cover:
 [Planned tasks](tasks/planned.ts) record #801's Stripe REST acceptance tests
 (a failed payment, recovery from a refused guess, an idempotent refund) and
 Notion token-connector tests (append a checklist to a page found by title,
-count rows across a body-cursor second page). They need fake Stripe and Notion
+count filtered rows across body-cursor pages). They need fake Stripe and Notion
 services before promotion and never run.
 
 Each grader has independent required `correct-destination` and

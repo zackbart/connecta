@@ -103,19 +103,20 @@ export const PLANNED_TASKS: PlannedTask[] = [
   {
     status: "planned",
     id: "801-notion-rows-past-first-page",
-    title: "Count Notion rows across pages from a database URL",
+    title: "Count filtered Notion rows across pages from a database URL",
     introducedIn: "#801",
     measures:
-      "Whether the agent turns a database id into its data source, filters by the schema's exact option name, and follows the body-borne cursor to the end.",
+      "Whether the agent turns a database id into its data source, filters by the schema's exact option name, and follows the body-borne cursor through every filtered page.",
     prompt:
       "How many tasks in our Roadmap database (https://www.notion.so/acme/0f1e2d3c4b5a69788796a5b4c3d2e1f0) are marked Blocked? List their titles.",
     sketch: {
       world:
-        "notion_bot over a fake Notion: database 0f1e…e1f0 holds one data source ds-roadmap whose Status options are Todo, In progress, Blocked, Done; 130 rows, 7 Blocked, spread so that page_size 100 needs two pages. Querying the database id as a data source answers 404 object_not_found.",
-      faults: "None beyond the database-id trap and the second page.",
+        "notion_bot over a fake Notion: database 0f1e…e1f0 holds one data source ds-roadmap whose Status options are Todo, In progress, Blocked, Done; 400 rows, 230 of them Blocked. The fake caps every query page at 100 results whatever page_size asks for, so even the server-side Blocked filter answers three pages (100, 100, 30) with next_cursor values c-2 and c-3. Querying the database id as a data source answers 404 object_not_found.",
+      faults: "None beyond the database-id trap and the filtered pages.",
       grading: [
-        "correct-destination: the ledger shows GET /v1/databases/0f1e…e1f0 (or a search hit naming ds-roadmap) and POST /v1/data_sources/ds-roadmap/query with a status equals Blocked filter, plus a follow-up query carrying start_cursor in the body when the agent did not filter server-side.",
-        "answer-evidence: the final answer says 7 and lists exactly the seven Blocked titles.",
+        "correct-destination: the ledger shows GET /v1/databases/0f1e…e1f0 (or a search hit naming ds-roadmap), then three POST /v1/data_sources/ds-roadmap/query requests whose bodies all carry the same status equals Blocked filter: the first without start_cursor, the second with body start_cursor c-2, the third with body start_cursor c-3.",
+        "cursor-placement: no query request carries start_cursor as a URL query parameter, and no cursor value is invented or reused.",
+        "answer-evidence: the final answer says 230 and lists (or reduces over) exactly the Blocked titles from all three pages.",
         "advisory: no query against the database id as a data source; the paging happens inside one execute_code program.",
       ],
     },

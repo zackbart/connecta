@@ -124,7 +124,15 @@ never be relocated by it afterwards. Get the position right the first time with
 - Generic results arrive as `{ status, data, page? }`. On a list,
   `page.next` is the cursor and `page.param` is `start_cursor`: send it in
   `query` for a GET, and in `body` when `page.in` is `body`, as on the POST
-  queries. Pass `select` dot paths relative to `data`, such as `results.id`.
+  queries. Pass `select` dot paths relative to `data`, such as `results.id`;
+  `page` survives any `select`.
+- A view query is created with `notion_api_write`
+  `POST /v1/views/{view_id}/queries`, a write because Notion stores it until
+  `expires_at`. Its first page names the continuation in `page.path`: read
+  `GET /v1/views/{view_id}/queries/{query_id}` with `start_cursor` in `query`.
+- Meeting-note queries have no cursor. `limit` caps at 50, and
+  `page.hasMore` without `page.next` means more notes exist: narrow the
+  filter (for example by `created_time`) rather than paging.
 - Cursors are opaque: never parse or construct one. Follow pages inside
   `execute_code` and reduce there.
 

@@ -185,20 +185,34 @@ function notionFailure(status: number, headers: Headers, payload: unknown): Conn
 }
 
 /**
- * Notion lists are `{ object: "list", results, has_more, next_cursor }`.
- * The cursor goes back as `start_cursor`: a query parameter on GET lists, a
- * body field on the read-only POST queries.
+ * Notion lists carry `results` and `has_more`; the cursor, when there is one,
+ * is `next_cursor` and goes back as `start_cursor`: a query parameter on GET
+ * lists, a body field on the read-only POST queries. Two shapes differ:
+ *
+ * - `POST /v1/views/{view_id}/queries` answers a `view_query` object whose
+ *   first page continues at `GET /v1/views/{view_id}/queries/{query_id}`
+ *   (until `expires_at`), so the page names that path.
+ * - `POST /v1/blocks/meeting_notes/query` has no cursor at all: `has_more`
+ *   past its `limit` (50 at most) can only be answered by a narrower filter.
+ *
+ * Every shape keeps `hasMore`, so a `select` that drops the body's own
+ * completeness fields cannot hide that a list was cut short.
  */
 function page(data: unknown, call: RestCall): RestPage | undefined {
-  if (!isRecord(data) || data["object"] !== "list" || !("has_more" in data)) return undefined;
-  const hasMore = data["has_more"] === true;
+  if (!isRecord(data) || typeof data["has_more"] !== "boolean" || !Array.isArray(data["results"])) return undefined;
+  const hasMore = data["has_more"];
   const next = typeof data["next_cursor"] === "string" && data["next_cursor"] !== "" ? data["next_cursor"] : undefined;
-  return {
-    hasMore,
-    ...(hasMore && next
-      ? { next, param: "start_cursor", ...(call.method === "GET" ? {} : { in: "body" as const }) }
-      : {}),
-  };
+  if (!hasMore || !next) return { hasMore };
+  if (data["object"] === "view_query" && typeof data["id"] === "string" && typeof data["view_id"] === "string") {
+    return {
+      hasMore,
+      next,
+      param: "start_cursor",
+      in: "query",
+      path: `/v1/views/${encodeURIComponent(data["view_id"])}/queries/${encodeURIComponent(data["id"])}`,
+    };
+  }
+  return { hasMore, next, param: "start_cursor", ...(call.method === "GET" ? {} : { in: "body" as const }) };
 }
 
 /** The pinned index, shared by every Notion REST connector in the deployment. */

@@ -554,6 +554,86 @@ describe("notion() generic REST tools", () => {
     expect(last.page).toEqual({ hasMore: false });
   });
 
+  it("refuses a block whose type, payload key, or payload fields disagree with the index, before dispatch", async () => {
+    const connector = build();
+    const append = (children: unknown[]) =>
+      call(connector, "notion_api_write", { method: "PATCH", path: "/v1/blocks/b-1/children", body: { children } });
+    // The `type` discriminator is a const in Notion's document: it must name
+    // the payload key the block carries.
+    const mismatched = await refusal(append([{ type: "to_do", paragraph: { rich_text: [] } }]));
+    expect(mismatched.message).toContain("Not sent:");
+    expect(mismatched.validation?.issues[0]).toMatchObject({ path: "/body/children/0/type", code: "enum" });
+    const invented = await refusal(append([{ object: "block", type: "wizard", wizard: {} }]));
+    expect(invented.validation?.issues.map((issue) => issue.path)).toContain("/body/children/0/wizard");
+    const typo = await refusal(append([{ type: "to_do", to_do: { rich_txt: [] } }]));
+    expect(typo.validation?.issues[0]).toMatchObject({
+      path: "/body/children/0/to_do/rich_txt",
+      code: "additionalProperties",
+    });
+    expect(typo.validation?.issues[0]?.expected).toMatch(/^rich_text\? /);
+    expect(calls).toHaveLength(0);
+
+    queue({ body: { object: "list", results: [{ id: "new-1", type: "to_do" }], has_more: false, next_cursor: null } });
+    const children = [
+      { object: "block", type: "to_do", to_do: { rich_text: [{ type: "text", text: { content: "Ship" } }] } },
+    ];
+    await append(children);
+    expect(calls[0]).toMatchObject({ method: "PATCH", body: { children } });
+  });
+
+  it("keeps a view query's continuation and a meeting-note cut-off through select", async () => {
+    const connector = build();
+    // Creating a view query stores it, so it is a write; its first page
+    // continues at the query's own GET, not at the POST.
+    queue({
+      body: {
+        object: "view_query",
+        id: "q-1",
+        view_id: "v-1",
+        expires_at: "2026-10-09T20:00:00.000Z",
+        total_count: 130,
+        results: [{ object: "page", id: "p1" }],
+        next_cursor: "c-view",
+        has_more: true,
+      },
+    });
+    const created = await call(connector, "notion_api_write", {
+      method: "POST",
+      path: "/v1/views/v-1/queries",
+      body: { page_size: 1 },
+      select: ["results.id"],
+    });
+    expect(created).toEqual({
+      status: 200,
+      data: { results: [{ id: "p1" }] },
+      page: { hasMore: true, next: "c-view", param: "start_cursor", in: "query", path: "/v1/views/v-1/queries/q-1" },
+    });
+
+    queue({
+      body: { object: "list", results: [{ id: "p2" }], has_more: false, next_cursor: null, type: "page", page: {} },
+    });
+    const next = await call(connector, "notion_api_read", {
+      path: created.page.path,
+      query: { [created.page.param]: created.page.next },
+      select: ["results.id"],
+    });
+    expect(calls[1]?.method).toBe("GET");
+    expect(new URL(calls[1]!.url).pathname).toBe("/v1/views/v-1/queries/q-1");
+    expect(new URL(calls[1]!.url).searchParams.get("start_cursor")).toBe("c-view");
+    expect(next).toEqual({ status: 200, data: { results: [{ id: "p2" }] }, page: { hasMore: false } });
+
+    // Meeting notes have no cursor: hasMore without next says the list was
+    // cut at its limit, even when select drops the body's own has_more.
+    queue({ body: { results: [{ id: "m1", type: "meeting_notes" }], has_more: true } });
+    const notes = await call(connector, "notion_api_read", {
+      method: "POST",
+      path: "/v1/blocks/meeting_notes/query",
+      body: { limit: 1 },
+      select: ["results.id"],
+    });
+    expect(notes).toEqual({ status: 200, data: { results: [{ id: "m1" }] }, page: { hasMore: true } });
+  });
+
   it("INV-9: sends a write once with method and path stated, and never replays it after a failure", async () => {
     const connector = build();
     queue({ body: { object: "page", id: "page-1", in_trash: true } });
@@ -1102,9 +1182,10 @@ describe("notion() successful response integrity", () => {
     );
     expect(outcome.ok).toBe(false);
     if (outcome.ok) throw new Error("Expected failed write response");
-    // The shared REST read reports a lost body as `unavailable`; the write
-    // state, not the code, is what keeps a caller from repeating it.
-    expect(outcome.error.message).toContain("Notion answered, but its response could not be read.");
+    // Notion has no idempotency key, so a lost reply on a sent write is not
+    // retryable: repeating it could create the content twice.
+    expect(outcome.error).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(outcome.error.message).toContain("check the target before repeating it");
     expect(outcome.error.message).not.toContain("synthetic body detail");
     expect(outcome.dispatched).toBe(true);
     expect(writeStateOf(outcome)).toBe("unknown");

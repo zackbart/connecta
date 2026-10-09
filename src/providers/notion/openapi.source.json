@@ -4,7 +4,7 @@
   "digest": "sha256:4544d132b1d9d4799a7a0752f0f8007b86411fea6d6a493098e3756c0bc4f040",
   "latest": "https://developers.notion.com/openapi.json",
   "options": {
-    "depth": 3,
+    "depth": 4,
     "descriptions": 160,
     "maxEnum": 50,
     "versionHeader": "Notion-Version"
