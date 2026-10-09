@@ -630,12 +630,13 @@ catalog caches use credentials alone, so later calls receive the original
 submitted data and cached catalogs never depend on one request's arguments.
 
 Payload rules apply where downstream or guest data enters: downstream results
-and errors, resource reads and downstream skill files, program returns, logs,
-and emits, and relayed input prompts. JSON objects, arrays, and string literals
-are parsed and walked, whether they are wire text or a string inside a result,
-so nested JSON strings are decoded too. Every decoded string leaf and property
-name is scanned, and a number, boolean, or null whose canonical text matches
-becomes the string `[redacted]`, so the JSON stays valid. Text is reserialized
+and errors, resource reads, connector usage guides and downstream skill files,
+program returns, logs, and emits, and relayed input prompts. JSON objects,
+arrays, and string literals are parsed and walked, whether they are wire text
+or a string inside a result, so nested JSON strings are decoded too. Every
+decoded string leaf and property name is scanned, and a number, boolean, or
+null whose canonical text matches becomes the string `[redacted]`, so the JSON
+stays valid. Text is reserialized
 only when something changed; otherwise its original bytes remain. The
 serialized bytes are then scanned raw, and a literal the walk cannot see, such
 as one spanning tokens, withholds the whole text. Other text is scanned raw and
@@ -672,10 +673,15 @@ credentials first, and at most 512 Ki indexed units for every registration
 together, so a long credential or private value costs no more automaton memory
 than its prefix. Where a longer form's prefix matches, the scanned view's
 rolling hash confirms the rest once its last unit arrives; equal text always
-confirms, so a hash collision could only redact more. Submitted values register
-at most 512 KiB of encoded forms and 4,096 argument nodes. A form that does not
-fit either limit withholds every string at least as long as that form; an
-argument tree that cannot be walked withholds all downstream text.
+confirms, so a hash collision could only redact more. Forms that share a prefix
+and a length share each confirmation, and overlapping prefix occurrences in
+self-similar text share one run of confirmations, so periodic text stays exact.
+Each confirmation is charged to the call's work budget before it is queued, and
+one scanned view holds at most 16 Ki runs; a view that needs more is withheld.
+Submitted values register at most 512 KiB of encoded forms and 4,096
+argument nodes. A form that does not fit either limit withholds every string
+at least as long as that form; an argument tree that cannot be walked withholds
+all downstream text.
 
 One redaction call has one work budget across parsing and every scanned view:
 64 Mi units with private values, and 1 Gi for credentials alone, which keeps

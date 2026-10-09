@@ -186,11 +186,12 @@ it("INV-5 INV-6: private values containing the placeholder stay redacted through
   }
 });
 
-it("INV-5: program resource and downstream skill reads take payload rules before a guest can pass on a short private value", async () => {
+it("INV-5: program resource, local guide and downstream skill reads take payload rules before a guest can pass on a short private value", async () => {
   const witnessed: unknown[] = [];
   const connector: Connector = {
     id: "wire",
     kind: "mcp",
+    usageGuide: "Use PIN 7931426 to retrieve your report.",
     async listTools() {
       return [
         { name: "register", annotations: { readOnlyHint: true }, inputSchema: VALUE_SCHEMA },
@@ -227,11 +228,13 @@ it("INV-5: program resource and downstream skill reads take payload rules before
       await connecta.call("wire.witness", { echo: resource.contents[0].text });
       const skill = await connecta.skill(${JSON.stringify(downstreamSkillUri("wire", "skill://pin/SKILL.md"))});
       await connecta.call("wire.witness", { echo: skill.text });
+      const guide = await connecta.skill("connector:wire");
+      await connecta.call("wire.witness", { echo: guide.text });
       return "done";
     }`,
   });
   expect(program.isError, JSON.stringify(program.structuredContent)).toBeFalsy();
-  expect(witnessed).toEqual([REDACTED, REDACTED]);
+  expect(witnessed).toEqual([REDACTED, REDACTED, REDACTED]);
 });
 
 it("INV-5: public-schema remote tools redact bare numeric bearer credentials in direct modes and QuickJS", async () => {
@@ -414,4 +417,13 @@ it("INV-5: one cumulative work budget bounds a 2,000-value private set over a 2 
     id: "needed-id",
   });
   expect(performance.now() - started).toBeLessThan(1_000);
+});
+
+it("INV-5: long-form checks spend the cumulative work budget, so self-similar text against many long private values is withheld", () => {
+  const secrets = new SentSecrets();
+  const values = Array.from({ length: 150 }, (_, index) => "s".repeat(257 + index) + "!");
+  secrets.arguments({ values }, { type: "object", properties: { values: { writeOnly: true } } });
+  expect(secrets.text(`a ${values[42]} b`)).toBe(`a ${REDACTED} b`);
+  // Every unit of the body confirms about 150 lengths that share its prefix.
+  expect(secrets.redact({ id: "needed-id", body: "s".repeat(500_000) })).toEqual({ id: "needed-id", body: REDACTED });
 });

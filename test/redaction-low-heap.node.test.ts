@@ -74,3 +74,33 @@ it("INV-5: long credentials bound the matcher, so ordinary output survives a 128
     oneEcho: "before [redacted] after",
   });
 });
+
+it("INV-5: self-similar text shares long-form checks, so it cannot exhaust a 128 MiB heap and stays exact", () => {
+  const outcome = lowHeap(`
+    const { SentSecrets } = await import("./src/sent-secrets.ts");
+    const timed = (secrets, text) => {
+      const started = performance.now();
+      const value = secrets.text(text);
+      return { value: value.length > 64 ? value.length : value, slow: performance.now() - started > 1_000 };
+    };
+    const huge = new SentSecrets();
+    for (let i = 0; i < 20; i++) huge.add("s".repeat(100_000) + "-end-" + i);
+    const many = new SentSecrets();
+    for (let i = 0; i < 20; i++) many.add("s".repeat(4_096) + "-end-" + i);
+    const one = new SentSecrets();
+    one.add("s".repeat(4_096) + "-end-0");
+    const text = "s".repeat(4_000_000);
+    console.log(JSON.stringify({
+      huge: timed(huge, text),
+      many: timed(many, text),
+      echo: timed(one, "before " + "s".repeat(4_096) + "-end-0 after"),
+      clean: timed(one, "s".repeat(1_000_000)),
+    }));
+  `);
+  expect(outcome).toEqual({
+    huge: { value: 4_000_000, slow: false },
+    many: { value: 4_000_000, slow: false },
+    echo: { value: "before [redacted] after", slow: false },
+    clean: { value: 1_000_000, slow: false },
+  });
+});

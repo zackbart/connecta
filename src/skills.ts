@@ -715,7 +715,9 @@ export class SkillsRegistry {
       const record = await withManifest(local);
       this.assertSafe([record]);
       if (record.connector) this.options.onRead?.(record.connector, "local");
-      return { ...PRIVATE, contents: [{ uri: record.entry.uri, mimeType: "text/markdown", text: record.content! }] };
+      // A connector guide is operator-authored payload, like a downstream file; built-in guides are Connecta's own.
+      const text = record.connector ? sentSecretsForRequest(this.scope).redact(record.content!) : record.content!;
+      return { ...PRIVATE, contents: [{ uri: record.entry.uri, mimeType: "text/markdown", text }] };
     }
     if (!uri.startsWith("skill://downstream/")) throw this.missing(uri);
     const record = (await this.records()).find((record) => record.files?.has(uri));

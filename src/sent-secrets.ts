@@ -30,9 +30,18 @@ const MAX_ARGUMENT_DEPTH = 32;
 // The matcher indexes each form's first FORM_PREFIX units, credentials first, up to
 // MAX_MATCHER_UNITS for every registration together. A longer form is confirmed by a rolling
 // hash once its prefix matches. A form left out withholds every string long enough to contain it.
+// Forms sharing a prefix and a length share each check, and overlapping prefix occurrences in
+// self-similar text share one run of checks. A scanned view holds at most MAX_PENDING_RUNS, and
+// each check, which costs about as much as scanning two code units, is paid for from the call's
+// work budget before it is queued; a view that needs more is withheld.
 const FORM_PREFIX = 256;
 const MAX_MATCHER_UNITS = 524_288;
+const MAX_PENDING_RUNS = 16_384;
+const CHECK_WORK = 4;
 const HASH_BASE = 0x01_00_01_93;
+const POWERS = new Int32Array(FORM_PREFIX + 1);
+POWERS[0] = 1;
+for (let length = 1; length <= FORM_PREFIX; length++) POWERS[length] = Math.imul(POWERS[length - 1]!, HASH_BASE);
 // One redaction call visits at most this many structured entries, this deep. A string is
 // decoded at most MAX_DECODE_LEVELS JSON layers, counting nested JSON strings it was parsed from.
 const MAX_WALK_NODES = 1_048_576;
@@ -264,6 +273,66 @@ function replace(text: string, spans: number[]): string {
   return parts.join("").replace(headerLine, `$1$2${REDACTED}`);
 }
 
+/** Forms longer than FORM_PREFIX that share a prefix and a length, so one hash confirms any. */
+interface Group {
+  length: number;
+  /** HASH_BASE raised to the length. */
+  power: number;
+  hashes: Set<number>;
+}
+
+/** Pending checks of one group at prefix occurrences `step` units apart, `stride` source units
+ * apart: a self-similar text extends one run instead of queueing a check per occurrence. The
+ * head check is due at `due`, with the rolling hash before its occurrence and its source start. */
+interface Run {
+  group: Group;
+  count: number;
+  due: number;
+  before: number;
+  start: number;
+  step: number;
+  stride: number;
+  /** The hash of the prefix's first `step` units, and HASH_BASE raised to `step`. */
+  stepHash: number;
+  stepPower: number;
+  /** The unit count and source start of the latest occurrence. */
+  last: number;
+  lastStart: number;
+}
+
+/** A run of one occurrence, whose step is set by the next occurrence that extends it. */
+const UNEXTENDED = { step: 0, stride: 0, stepHash: 0, stepPower: 0 };
+
+/** Runs ordered by their head check's due count: a binary min-heap. */
+class Runs {
+  readonly items: Run[] = [];
+
+  add(run: Run): void {
+    let at = this.items.length;
+    for (let parent = (at - 1) >> 1; at && this.items[parent]!.due > run.due; parent = (at - 1) >> 1) {
+      this.items[at] = this.items[parent]!;
+      at = parent;
+    }
+    this.items[at] = run;
+  }
+
+  /** Restore the order after the earliest run's head advanced, dropping it once empty. */
+  settle(): void {
+    // An empty run leaves, and the last run sifts down from the root in its place.
+    const run = this.items[0]!.count ? this.items[0]! : this.items.pop()!;
+    const size = this.items.length;
+    if (!size) return;
+    let at = 0;
+    for (let child = 1; child < size; child = at * 2 + 1) {
+      if (child + 1 < size && this.items[child + 1]!.due < this.items[child]!.due) child++;
+      if (this.items[child]!.due >= run.due) break;
+      this.items[at] = this.items[child]!;
+      at = child;
+    }
+    this.items[at] = run;
+  }
+}
+
 /** A polynomial hash of code units, modulo 2^32. Equal text always hashes equally, so a
  * collision can only redact more. */
 function hash(text: string): number {
@@ -275,9 +344,9 @@ function hash(text: string): number {
 /** Aho-Corasick over registered forms: amortized constant work per scanned code unit, however
  * many forms are registered, reporting the longest form ending at each unit. Only a bounded
  * prefix of each form is indexed. A longer form is confirmed where its prefix matches by the
- * view's rolling hash once the form's last unit arrives, so no text is read twice. States live
- * in typed arrays: the root's transitions in a table, each state's first child inline, and only
- * further branches in a map. */
+ * view's rolling hash once the form's last unit arrives, so no text is read twice; checks are
+ * budgeted, and their queue is bounded. States live in typed arrays: the root's transitions in a
+ * table, each state's first child inline, and only further branches in a map. */
 class Matcher {
   /** The shortest form left unindexed; any string this long might contain it. */
   readonly unindexed: number = Infinity;
@@ -288,7 +357,7 @@ class Matcher {
   private readonly depth: Uint16Array;
   private readonly kind: Uint8Array;
   /** Forms longer than FORM_PREFIX, by the state their prefix reaches. */
-  private readonly truncated = new Map<number, { length: number; hash: number; power: number }[]>();
+  private readonly truncated = new Map<number, Group[]>();
   private readonly fail: Int32Array;
   private readonly longest: Uint16Array;
   private readonly short: Uint8Array;
@@ -333,12 +402,15 @@ class Matcher {
       }
       if (length === form.length) this.kind[state] = Math.max(this.kind[state]!, kind);
       else {
-        let power = 1;
-        for (let index = 0; index < form.length; index++) power = Math.imul(power, HASH_BASE);
-        const long = { length: form.length, hash: hash(form), power };
-        const shared = this.truncated.get(state);
-        if (shared) shared.push(long);
-        else this.truncated.set(state, [long]);
+        const groups = this.truncated.get(state) ?? [];
+        this.truncated.set(state, groups);
+        const group = groups.find((group) => group.length === form.length);
+        if (group) group.hashes.add(hash(form));
+        else {
+          let power = 1;
+          for (let index = 0; index < form.length; index++) power = Math.imul(power, HASH_BASE);
+          groups.push({ length: form.length, power, hashes: new Set([hash(form)]) });
+        }
       }
       longestForm = Math.max(longestForm, length);
     }
@@ -375,14 +447,15 @@ class Matcher {
     }
   }
 
-  /** Scan one view, mapping each match back to the source units it came from. */
-  scan(units: Units, found: Found, marks?: number[]): void {
+  /** Scan one view, mapping each match back to the source units it came from. False when its
+   * long-form checks exceed the remaining work or MAX_PENDING_RUNS, so the view is withheld. */
+  scan(units: Units, found: Found, budget: { work: number }, marks?: number[]): boolean {
     let state = 0;
     let count = 0;
     let percent = 0;
     let rolling = 0;
-    // Long forms whose prefix matched, each queue in due order: [due, hash before, start, ...].
-    let pending: Map<{ length: number; hash: number; power: number }, { items: number[]; head: number }> | undefined;
+    let runs: Runs | undefined;
+    let tails: Map<Group, Run> | undefined;
     const base = found.spans.length;
     const mask = this.starts.length - 1;
     for (let code = units.next(); code >= 0; code = units.next()) {
@@ -398,31 +471,58 @@ class Matcher {
       const length = this.longest[state]!;
       if (length) push(found.spans, base, this.starts[(count - length) & mask]!, units.end, marks);
       if (this.short[state]) found.short = true;
-      const long = this.depth[state] === FORM_PREFIX ? this.truncated.get(state) : undefined;
-      if (long) {
-        const from = (count - FORM_PREFIX) & mask;
-        pending ??= new Map();
-        for (const form of long) {
-          const queue = pending.get(form) ?? { items: [], head: 0 };
-          queue.items.push(count - FORM_PREFIX + form.length, this.hashes[from]!, this.starts[from]!);
-          pending.set(form, queue);
+      const groups = this.depth[state] === FORM_PREFIX ? this.truncated.get(state) : undefined;
+      if (groups) {
+        if (CHECK_WORK * groups.length > budget.work) return false;
+        budget.work -= CHECK_WORK * groups.length;
+        const before = this.hashes[(count - FORM_PREFIX) & mask]!;
+        const start = this.starts[(count - FORM_PREFIX) & mask]!;
+        runs ??= new Runs();
+        tails ??= new Map();
+        for (const group of groups) {
+          const tail = tails.get(group);
+          if (tail?.count && this.extend(tail, count, start)) continue;
+          if (runs.items.length >= MAX_PENDING_RUNS) return false;
+          const due = count - FORM_PREFIX + group.length;
+          const run: Run = { group, count: 1, due, before, start, last: count, lastStart: start, ...UNEXTENDED };
+          tails.set(group, run);
+          runs.add(run);
         }
       }
-      if (!pending?.size) continue;
-      for (const [form, queue] of pending) {
-        for (; queue.head < queue.items.length && queue.items[queue.head] === count; queue.head += 3) {
-          const before = queue.items[queue.head + 1]!;
-          if (((rolling - Math.imul(before, form.power)) | 0) === form.hash)
-            push(found.spans, base, queue.items[queue.head + 2]!, units.end, marks);
-        }
-        if (queue.head === queue.items.length) pending.delete(form);
-        else if (queue.head * 2 >= queue.items.length) {
-          queue.items.splice(0, queue.head);
-          queue.head = 0;
-        }
+      while (runs?.items.length && runs.items[0]!.due === count) {
+        const run = runs.items[0]!;
+        if (run.group.hashes.has((rolling - Math.imul(run.before, run.group.power)) | 0))
+          push(found.spans, base, run.start, units.end, marks);
+        run.count--;
+        run.due += run.step;
+        run.before = (Math.imul(run.before, run.stepPower) + run.stepHash) | 0;
+        run.start += run.stride;
+        runs.settle();
       }
     }
     if (this.kind[state] === SHORT && this.depth[state] === count) found.exact = true;
+    return true;
+  }
+
+  /** Add an occurrence to a run when it continues the run's step and stride. The prefix has
+   * period `step`, so the text between occurrences is the prefix's first `step` units. */
+  private extend(run: Run, count: number, start: number): boolean {
+    const step = count - run.last;
+    const stride = start - run.lastStart;
+    if (run.step ? step !== run.step || stride !== run.stride : step > FORM_PREFIX) return false;
+    if (!run.step) {
+      const mask = this.starts.length - 1;
+      run.step = step;
+      run.stride = stride;
+      run.stepPower = POWERS[step]!;
+      // The rolling hashes before both occurrences differ by the units between them.
+      const previous = Math.imul(this.hashes[(run.last - FORM_PREFIX) & mask]!, run.stepPower);
+      run.stepHash = (this.hashes[(count - FORM_PREFIX) & mask]! - previous) | 0;
+    }
+    run.count++;
+    run.last = count;
+    run.lastStart = start;
+    return true;
   }
 }
 
@@ -521,8 +621,8 @@ export class SentSecrets {
       );
     const matcher = ignoreCase ? (this.views.lower ??= lower()) : this.matcher();
     if (value.length >= matcher.unindexed) return true;
-    matcher.scan(new Source(ignoreCase ? value.toLowerCase() : value), found);
-    return found.spans.length > 0;
+    const scanned = matcher.scan(new Source(ignoreCase ? value.toLowerCase() : value), found, { work: Infinity });
+    return !scanned || found.spans.length > 0;
   }
 
   containsUrl(value: string): boolean {
@@ -640,7 +740,7 @@ export class SentSecrets {
       if (level + layer > MAX_DECODE_LEVELS || !spend(scan, 2 * text.length * (layer + 1))) return undefined;
       let units: Units = new Source(text);
       for (let depth = 0; depth < layer; depth++) units = new Unescaped(units);
-      this.matcher().scan(units, found, marks);
+      if (!this.matcher().scan(units, found, scan.budget, marks)) return undefined;
       more = escapes && (units instanceof Unescaped ? units.decoded > 0 && units.slashes > 0 : text.includes("\\"));
     }
     return found;
