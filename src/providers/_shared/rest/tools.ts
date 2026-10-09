@@ -177,6 +177,7 @@ async function successBody(
   vendor: RestVendor,
   response: Parameters<Parameters<GuardedTransport>[2]>[0],
   ctx: ConnectorContext,
+  repeatable: boolean,
 ): Promise<unknown> {
   const type = (response.headers.get("content-type") ?? "").toLowerCase();
   try {
@@ -219,9 +220,19 @@ async function successBody(
       });
     }
     // The request was sent and the status arrived; only the body was lost. Told
-    // in Connecta's words (the runtime's can quote the transport), never raw,
-    // so a write's caller still learns it is ambiguous and gets its key.
-    throw unavailableCallError(error, undefined, `${vendor.title} answered, but its response could not be read.`);
+    // in Connecta's words (the runtime's can quote the transport), never raw.
+    // Repeating it is safe only for a read or a write that carried an
+    // idempotency key; any other write's outcome is unknown and must not be
+    // advertised as retryable (INV-9).
+    if (repeatable) {
+      throw unavailableCallError(error, undefined, `${vendor.title} answered, but its response could not be read.`);
+    }
+    throw new ConnectorCallError(
+      "connector_call_failed",
+      `${vendor.title} answered, but its response could not be read, so whether the write took effect is unknown. ` +
+        "It carried no idempotency key; check the target before repeating it.",
+      { retryable: false },
+    );
   }
 }
 
@@ -240,6 +251,13 @@ export async function callRest(
   const send = vendor.transport(call.op.server);
   if (typeof send === "string") invalid(send);
   const framing = vendor.encode ? vendor.encode(call) : defaultFraming(vendor, call);
+  // Safe to repeat: a read, or a write that carried the vendor's idempotency key.
+  const header = vendor.idempotencyHeader?.toLowerCase();
+  const repeatable =
+    call.method === "GET" ||
+    call.method === "HEAD" ||
+    (vendor.readPosts ?? []).some(([method, path]) => method === call.method && path === call.op.path) ||
+    (header !== undefined && Object.keys(visibleHeaders).some((name) => name.toLowerCase() === header));
   const request: GuardedRequest = {
     method: call.method,
     path: call.path,
@@ -255,7 +273,8 @@ export async function callRest(
   return await send(request, ctx, async (response) => {
     if (!response.ok) throw vendor.failure(response.status, response.headers, await failureBody(response));
     // HEAD answers with headers alone; they are its data.
-    const data = call.method === "HEAD" ? headerData(response.headers) : await successBody(vendor, response, ctx);
+    const data =
+      call.method === "HEAD" ? headerData(response.headers) : await successBody(vendor, response, ctx, repeatable);
     const page = vendor.page?.(data, call);
     return { status: response.status, data, ...(page ? { page } : {}) };
   });

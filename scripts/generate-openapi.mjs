@@ -28,7 +28,7 @@ import { pathToFileURL } from "node:url";
 import { discoverProviders, repositoryRoot } from "./providers.mjs";
 
 /** Bump when the generated shape changes, so every output reads as stale. */
-export const OPENAPI_FORMAT = 2;
+export const OPENAPI_FORMAT = 3;
 const SOURCE = "openapi.source.json";
 const OUTPUT = "openapi.generated.ts";
 const VERBS = ["get", "head", "post", "put", "patch", "delete"];
@@ -110,9 +110,46 @@ const MAX_UNION = 64;
  * property both declare must satisfy both), required union, the first type,
  * description, and enum, and unions combined branch by branch.
  */
+/** The values both enum constraints admit; `const` is a one-value enum. */
+function allowedValues(schema) {
+  if (Array.isArray(schema.enum)) return schema.enum;
+  return schema.const !== undefined ? [schema.const] : undefined;
+}
+
+/** JSON types both sides admit; `integer` is a `number`, so it survives their meeting. */
+function sharedTypes(a, b) {
+  const left = Array.isArray(a) ? a : [a];
+  const right = Array.isArray(b) ? b : [b];
+  const both = left.flatMap((type) =>
+    right.includes(type) ? [type] : type === "integer" && right.includes("number") ? ["integer"] : [],
+  );
+  for (const type of right) if (type === "integer" && left.includes("number") && !both.includes(type)) both.push(type);
+  return both;
+}
+
 function mergeSchemas(a, b) {
   const out = { ...a };
+  // Both enums must hold, so only values in both survive; disjoint enums admit
+  // nothing (an empty enum the runtime refuses for every value).
+  const leftValues = allowedValues(a);
+  const rightValues = allowedValues(b);
+  if (leftValues || rightValues) {
+    out.enum =
+      leftValues && rightValues
+        ? leftValues.filter((value) => rightValues.some((other) => JSON.stringify(other) === JSON.stringify(value)))
+        : (leftValues ?? rightValues);
+    delete out.const;
+  }
+  if (a.type !== undefined && b.type !== undefined) {
+    const types = sharedTypes(a.type, b.type);
+    if (types.length === 0) out.enum = [];
+    else out.type = types.length === 1 ? types[0] : types;
+  }
   for (const [key, value] of Object.entries(b)) {
+    if (key === "enum" || key === "const" || key === "type") {
+      if (!(key in out) && key === "type") out.type = value;
+      continue;
+    }
     if (key === "properties" && value && typeof value === "object") {
       const properties = { ...a.properties };
       for (const [name, schema] of Object.entries(value)) {
@@ -174,7 +211,8 @@ function compactSchema(document, schema, shape, level) {
   const node = normalized(document, schema);
   const out = {};
   if (node.type !== undefined) out.t = node.type;
-  if (Array.isArray(node.enum) && node.enum.length <= shape.maxEnum) out.e = node.enum;
+  const values = allowedValues(node);
+  if (values && values.length <= shape.maxEnum) out.e = values;
   if (node.format === "binary") out.f = "binary";
   if (node.nullable === true) out.n = 1;
   const description = level === 1 ? plainText(node.description, shape.describe) : undefined;

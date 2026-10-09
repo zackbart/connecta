@@ -513,6 +513,11 @@ export class OperationIndex {
     if (issues.length >= MAX_ISSUES) return;
     const schema = this.#deref(node);
     if (schema.x === 1 || value === null || value === "") return;
+    if (schema.e?.length === 0) {
+      // Conflicting composed constraints (disjoint enums or types) admit nothing.
+      issues.push({ path: at, code: "enum", expected: "no value: this field's combined constraints admit none" });
+      return;
+    }
     if (schema.a) {
       let fewest: { issues: ArgumentValidationIssue[]; repair: ArgumentRepairDetails["issues"] } | undefined;
       for (const branch of schema.a) {

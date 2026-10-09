@@ -928,7 +928,9 @@ A write that times out after dispatch returns `write_outcome_unknown` with
 No write is automatically replayed. `recovery` carries facts the connector
 recorded before dispatch (`src/call-recovery.ts`), such as the `idempotencyKey`
 a REST connector generated; a deliberate retry that reuses it cannot repeat the
-write. `args` may be partial reconciliation context
+write. When a connector recorded such facts, any other dispatched write whose
+outcome is unknown (a lost response body, a 5xx) also carries `uncertainCall`
+with them under its own code, and trusted-program write accounting keeps it. `args` may be partial reconciliation context
 with `argsRedacted: true`. A withheld echo or arguments over the 512-byte budget
 carry `argsOmitted: true`; sensitive or unresolved schemas also carry
 `argsRedacted: true`. When `args` is absent or redacted, use the original

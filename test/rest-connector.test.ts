@@ -369,11 +369,18 @@ describe("restTools()", () => {
   });
 
   it("reads HEAD as a read whose data is the response headers, and refuses it as a write", async () => {
-    respond = () => new Response(null, { status: 200, headers: { etag: '"v1"', "content-length": "42" } });
+    // A HEAD's Content-Length describes the GET body: past the 1 MiB ceiling, it still answers.
+    respond = () => new Response(null, { status: 200, headers: { etag: '"v1"', "content-length": "10000000" } });
     const acme = connector();
     const result = (await acme.callTool("acme_api_read", { method: "HEAD", path: "/v1/widgets/w_1" }, ctx())) as any;
-    expect(result).toMatchObject({ status: 200, data: { etag: '"v1"', "content-length": "42" } });
+    expect(result).toMatchObject({ status: 200, data: { etag: '"v1"', "content-length": "10000000" } });
     expect(sent[0]!.method).toBe("HEAD");
+    // The same declaration on a GET is still refused before it is read.
+    respond = () =>
+      new Response("{}", { headers: { "content-type": "application/json", "content-length": "10000000" } });
+    const get = await refusal(acme.callTool("acme_api_read", { path: "/v1/widgets/w_1" }, ctx()));
+    expect(get.message).toContain("past this connector's 1048576-byte response ceiling");
+    sent.splice(1);
     const write = await refusal(acme.callTool("acme_api_write", { method: "HEAD", path: "/v1/widgets/w_1" }, ctx()));
     expect(write.code).toBe("invalid_args");
     const body = await refusal(
@@ -411,6 +418,83 @@ describe("restTools()", () => {
     // Recorded before dispatch, for a deadline that interrupts the call.
     expect(recoveryFor(callCtx)).toEqual({ idempotencyKey: key });
     expect(sent).toHaveLength(1);
+  });
+
+  it("INV-9: advertises a lost reply as retryable only for reads and writes that carried an idempotency key", async () => {
+    const lost = () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(Object.assign(new Error("socket hang up"), { code: "ECONNRESET" }));
+          },
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    respond = lost;
+    // No idempotency header: a write's outcome is unknown and must not be retried.
+    const plain = connector();
+    const write = await refusal(
+      plain.callTool("acme_api_write", { method: "POST", path: "/v1/widgets", body: { name: "a" } }, ctx()),
+    );
+    expect(write.code).toBe("connector_call_failed");
+    expect(write.retryable).toBe(false);
+    expect(write.message).toContain("whether the write took effect is unknown");
+    expect(write.message).not.toContain("socket hang up");
+    // A read is safe to repeat.
+    const read = await refusal(plain.callTool("acme_api_read", { path: "/v1/widgets/w_1" }, ctx()));
+    expect(read).toMatchObject({ code: "unavailable", retryable: true });
+    // A reviewed read-only POST is a read.
+    const query = await refusal(
+      plain.callTool("acme_api_read", { method: "POST", path: "/v1/widgets/query", body: { filter: "x" } }, ctx()),
+    );
+    expect(query).toMatchObject({ code: "unavailable", retryable: true });
+    // With the vendor's idempotency header sent, the write is safe to repeat with its key.
+    const keyed = connector({ idempotencyHeader: "Idempotency-Key" });
+    const sentKey = await refusal(
+      keyed.callTool("acme_api_write", { method: "POST", path: "/v1/widgets", body: { name: "a" } }, ctx()),
+    );
+    expect(sentKey).toMatchObject({ code: "unavailable", retryable: true });
+    // DELETE carries no key even for that vendor, so it stays unknown and unretryable.
+    const deleted = await refusal(
+      keyed.callTool("acme_api_write", { method: "DELETE", path: "/v1/widgets/w_1" }, ctx()),
+    );
+    expect(deleted).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(sent.map((request) => request.headers.has("idempotency-key"))).toEqual([false, false, false, true, false]);
+  });
+
+  it("INV-9: carries recorded recovery on a direct write whose reply was lost, not only on a deadline", async () => {
+    respond = () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(Object.assign(new Error("socket hang up"), { code: "ECONNRESET" }));
+          },
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    const app = createTestConnecta({
+      connectors: [apiConnector("acme", { tools: restTools(vendor({ idempotencyHeader: "Idempotency-Key" })) })],
+      logger: silentLogger,
+    });
+    try {
+      const rpc = await readJsonRpc(
+        await mcpRpc(app, "tools/call", {
+          name: "call_destructive_tool",
+          arguments: {
+            address: "acme.acme_api_write",
+            args: { method: "POST", path: "/v1/widgets", body: { name: "a" } },
+          },
+        }),
+      );
+      const error = rpc.result.structuredContent.error;
+      const key = sent[0]!.headers.get("idempotency-key");
+      expect(error.code).toBe("unavailable");
+      expect(error.uncertainCall).toMatchObject({ address: "acme.acme_api_write", recovery: { idempotencyKey: key } });
+      expect(error.retry).toContain("uncertainCall.recovery.idempotencyKey");
+      expect(sent).toHaveLength(1);
+    } finally {
+      await app.close();
+    }
   });
 
   it("INV-9: returns the generated idempotency key with write_outcome_unknown when the call deadline interrupts it", async () => {

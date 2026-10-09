@@ -621,4 +621,64 @@ describe("OpenAPI operation index generation", () => {
     expect(() => index.check(settings, {}, { anything: { goes: true } })).not.toThrow();
     expect(index.resolve("HEAD", "/v8/artifacts/abc").op.operationId).toBe("artifactExists");
   });
+
+  it("intersects duplicate enum and type constraints under allOf, so a narrowed value is refused", async () => {
+    const { buildOperationIndex } = await generator();
+    const { OperationIndex } = await import("../src/providers/_shared/rest/operation-index.js");
+    const narrowing = {
+      openapi: "3.0.0",
+      info: { version: "1" },
+      paths: {
+        "/records": {
+          post: {
+            operationId: "create",
+            requestBody: {
+              required: true,
+              content: {
+                "application/json": {
+                  schema: {
+                    allOf: [
+                      {
+                        type: "object",
+                        properties: {
+                          type: { type: "string", enum: ["A", "CNAME"] },
+                          kind: { type: "string", enum: ["A"] },
+                          ttl: { type: "number" },
+                          priority: { type: "string" },
+                        },
+                      },
+                      {
+                        properties: {
+                          type: { enum: ["A"] },
+                          kind: { const: "MX" },
+                          ttl: { type: "integer" },
+                          priority: { type: "integer" },
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+    const index = new OperationIndex(buildOperationIndex(narrowing, source), { vendor: "cf", title: "Cloudflare" });
+    const create = index.resolve("POST", "/records").op;
+    const properties = (index.contract(create).body!.schema as any).properties;
+    expect(properties.type).toEqual({ type: "string", enum: ["A"] });
+    expect(properties.kind.enum).toEqual([]);
+    expect(properties.ttl.type).toBe("integer");
+    expect(properties.priority.enum).toEqual([]);
+    expect(() => index.check(create, {}, { type: "A" })).not.toThrow();
+    expect(() => index.check(create, {}, { type: "CNAME" })).toThrow("/body/type (enum: one of A)");
+    // Disjoint constraints admit nothing, and say so rather than naming an empty list.
+    for (const value of ["A", "MX", "anything"]) {
+      expect(() => index.check(create, {}, { kind: value })).toThrow(
+        "/body/kind (enum: no value: this field's combined constraints admit none)",
+      );
+    }
+    expect(() => index.check(create, {}, { priority: 5 })).toThrow("admit none");
+  });
 });

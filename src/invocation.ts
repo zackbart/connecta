@@ -29,6 +29,7 @@ import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { validateCatalogToolInput } from "./validate.js";
 import { sentSecretsFor, sentSecretsForRequest, trackCredentialReads, type SentSecrets } from "./sent-secrets.js";
 import { recoveryFor } from "./call-recovery.js";
+import { classifyWriteOutcome } from "./write-outcome.js";
 import {
   classificationDigest,
   recordAuthFailure,
@@ -382,9 +383,12 @@ export class InvocationService {
       };
       const enrich = (error: CallErrorDetails, target: typeof activityTarget): CallErrorDetails => {
         if (!target) return error;
+        const recovery = recoveryFor(dispatchContext);
+        const recoveryRetry = recovery?.["idempotencyKey"]
+          ? " A deliberate retry with uncertainCall.recovery.idempotencyKey cannot repeat the write."
+          : "";
         if (isTimeoutFailure(error) && dispatchedToConnector && resolved?.definition.classification === "write") {
           const echoed = argumentEcho;
-          const recovery = recoveryFor(dispatchContext);
           return {
             ...error,
             code: "write_outcome_unknown",
@@ -400,14 +404,35 @@ export class InvocationService {
             },
             retry:
               "Do not retry automatically. Check whether the write took effect first." +
-              (recovery?.["idempotencyKey"]
-                ? " A deliberate retry with uncertainCall.recovery.idempotencyKey cannot repeat the write."
-                : "") +
+              recoveryRetry +
               (echoed.argsRedacted
                 ? " Sensitive fields are omitted; use the original arguments if reconciliation requires another call."
                 : "args" in echoed
                   ? ""
                   : " The arguments could not be echoed safely; use the exact arguments you sent."),
+          };
+        }
+        // Any other dispatched write whose outcome is unknown (a lost response
+        // body, a 5xx, an unreadable reply) keeps the facts its connector
+        // recorded before dispatch, here and through program write accounting.
+        if (
+          recovery &&
+          !error.uncertainCall &&
+          dispatchedToConnector &&
+          resolved?.definition.classification === "write" &&
+          classifyWriteOutcome({ ok: false, dispatched: true, answered, error }) === "unknown"
+        ) {
+          const echoed = argumentEcho;
+          error = {
+            ...error,
+            uncertainCall: {
+              address: `${target.connector.id}.${target.toolName}`,
+              ...echoed,
+              ...("args" in echoed ? {} : { argsOmitted: true as const }),
+              recovery,
+            },
+            retry:
+              error.retry ?? `Do not retry automatically. Check whether the write took effect first.${recoveryRetry}`,
           };
         }
         if (error.code === "auth_required" && target.connector.startAuth) {

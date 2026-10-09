@@ -525,8 +525,15 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
     }
     const declared = Number(response.headers.get("content-length"));
     // A prefix read takes only what it was asked for, so a long body is not
-    // a reason to refuse it; the ceiling still bounds what is read.
-    if (Number.isFinite(declared) && declared > limit && !(request.prefixOnly && response.ok)) {
+    // a reason to refuse it; the ceiling still bounds what is read. A HEAD
+    // response has no body: its Content-Length describes the GET
+    // representation, which is exactly what a HEAD asks about.
+    if (
+      Number.isFinite(declared) &&
+      declared > limit &&
+      request.method !== "HEAD" &&
+      !(request.prefixOnly && response.ok)
+    ) {
       await response.body?.cancel().catch(() => {});
       throw oversized(provider, limit, `a declared ${declared} bytes`);
     }
