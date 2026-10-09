@@ -794,18 +794,14 @@ describe("quickJsExecutor", () => {
     expect(message).not.toContain("__callNamespace");
   });
 
-  it("bounds the final guest result before child-to-parent IPC", async () => {
+  it("INV-7: transports the complete guest result in bounded IPC chunks", async () => {
     const ex = quickJsExecutor({
       memoryLimitBytes: 16 * 1024 * 1024,
       cpuTimeMs: 1_000,
     });
     const out = await ex.execute(`async () => "x".repeat(5 * 1024 * 1024)`, []);
     expect(out.error).toBeUndefined();
-    expect(out.result).toMatchObject({
-      truncated: true,
-      totalChars: expect.any(Number),
-    });
-    expect(JSON.stringify(out).length).toBeLessThan(100_000);
+    expect(out.result).toBe("x".repeat(5 * 1024 * 1024));
   });
 
   it("bounds guest-to-host call arguments before IPC", async () => {

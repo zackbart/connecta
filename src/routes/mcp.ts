@@ -815,6 +815,10 @@ export function createMcpRoute(opts: ServerOptions): {
                   ...(current.subjectKey ? { subjectKey: current.subjectKey } : {}),
                   ...(current.principalKey ? { principalKey: current.principalKey } : {}),
                 });
+                if (classification === "write" && currentTrust !== "trusted") return false;
+                if (address === undefined) return true;
+                // Connector-only dependencies come from resource reads, which require a whole grant.
+                if (!address.includes(".")) return Boolean(view.getResourceConnector(address));
                 const resolved = view.resolveAddress(address);
                 if (!resolved) return false;
                 const requestScope = {};

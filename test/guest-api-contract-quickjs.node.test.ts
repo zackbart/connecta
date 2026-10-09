@@ -7,6 +7,8 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { customExecutor } from "../src/executor-contract.js";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
 import {
+  checkProgramReturnPaging,
+  checkProgramReturnFallback,
   checkLargeProgramRead,
   checkLargeProgramWrite,
   checkProgramPagingFailure,
@@ -50,6 +52,17 @@ describe("guest API contract (QuickJS executor)", () => {
     // The deployment fixture owns its executor and closes it with the app.
     await checkAuthHandoffProgram(quickJsExecutor({ cpuTimeMs: 5_000 }));
   });
+  it("INV-2 INV-3 INV-4: program return pages recheck identity, live grants, pool membership and trust", async () => {
+    await checkStashAuthority(executor, true);
+  });
+
+  it("INV-2 INV-5 INV-9: oversized returns page completely after exactly one recorded write", async () => {
+    await checkProgramReturnPaging(executor);
+  });
+  it("INV-2 INV-9: unavailable return paging preserves success and a bounded fallback", async () => {
+    await checkProgramReturnFallback(executor);
+  });
+
   it("INV-3 INV-7: native snapshots prevent mutation budget bypass and cross-run leakage", async () => {
     const concurrent = quickJsExecutor({ concurrency: 2, cpuTimeMs: 5_000 });
     try {

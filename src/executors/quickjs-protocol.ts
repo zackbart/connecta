@@ -2,13 +2,12 @@ import type { CallErrorDetails } from "../errors.js";
 import type { ExecuteResult } from "../types.js";
 import type { QuickJsRuntimeOptions } from "./quickjs-runtime.js";
 
-// An execution result is serialized once into payloadJson and again as that
-// string is embedded in ChildToParentMessage. Captured logs therefore get a
-// separate 512 KiB budget measured after both JSON encodings. The final result
-// is shaped to 24k characters; even if every character takes its worst-case
-// seven transport bytes, that leaves ample structural overhead below this hard
-// process.send ceiling.
+// Result messages remain bounded even when a full return travels in chunks.
+// The host's presentation guard stashes the completed value after assembly.
 export const MAX_QUICKJS_IPC_BYTES = 1024 * 1024;
+/** Aggregate result transport bound, independent of per-message IPC and log caps. */
+export const MAX_QUICKJS_RESULT_BYTES = 64 * 1024 * 1024;
+export const QUICKJS_RESULT_CHUNK_CHARS = 65_536;
 export const MAX_QUICKJS_LOG_TRANSPORT_BYTES = 512 * 1024;
 /** Preserve #84's stopgap before a host value enters the child/WASM process. */
 export const MAX_QUICKJS_HOST_RPC_BYTES = 256 * 1024;
@@ -38,6 +37,7 @@ export type ChildToParentMessage =
       payloadJson: string;
     }
   | { type: "log"; jobId: number; payloadJson: string }
+  | { type: "result-chunk"; jobId: number; payloadJson: string }
   | { type: "result"; jobId: number; payloadJson: string };
 
 export interface HostCallPayload {

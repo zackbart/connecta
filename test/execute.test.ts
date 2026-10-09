@@ -1855,15 +1855,16 @@ describe("execute_code handler", () => {
     });
   });
 
-  it("truncates oversized results", async () => {
+  it("stashes oversized results behind a page handle", async () => {
     const registry = makeRegistry([calcConnector]);
     const executor = fakeExecutor({ result: "x".repeat(100_000) });
     const handler = createExecuteTool(registry, BASE, executor, silentLogger);
     const out = await handler({ code: "async () => 1" });
     const parsed = JSON.parse(required(out.content[0]).text) as {
-      result: { truncated: boolean; preview: string; totalChars: number };
+      result: { truncated: boolean; preview: string; totalChars: number; resultId: string };
     };
     expect(parsed.result.truncated).toBe(true);
+    expect(parsed.result.resultId).toMatch(/^[a-f0-9-]{36}$/);
     expect(parsed.result.preview.length).toBeLessThan(30_000);
     expect(parsed.result.totalChars).toBeGreaterThan(100_000);
   });
@@ -1879,6 +1880,9 @@ describe("execute_code handler", () => {
     const executor: Executor = {
       async execute(_code, providers) {
         pending = callCanonical(providers, "hanging", "read");
+        // The helper's derived promise belongs to this custom executor too.
+        // Handle it before async return stashing lets cancellation settle it.
+        pending.catch(() => {});
         return { result: "finished" };
       },
     };

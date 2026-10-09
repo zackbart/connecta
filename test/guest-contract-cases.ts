@@ -145,14 +145,14 @@ export async function checkNativeSnapshots(executor: Executor): Promise<void> {
 }
 
 /** Every executor pages through the admitted route and rechecks live authority. */
-export async function checkStashAuthority(executor: Executor): Promise<void> {
+export async function checkStashAuthority(executor: Executor, programReturn = false): Promise<void> {
   let granted = true;
   let member = true;
   let zero = false;
   let toolOnly = false;
   let mode: "grant" | "pool" = "grant";
   const storage = memoryStorage();
-  const secret = "stash-disclosure-sentinel-".repeat(100);
+  const secret = "stash-disclosure-sentinel-".repeat(programReturn ? 2_000 : 100);
   const docs: Connector = {
     id: "docs",
     kind: "api",
@@ -181,6 +181,7 @@ export async function checkStashAuthority(executor: Executor): Promise<void> {
       storage,
       logger: "silent",
       calls: { maxResultBytes: 512 },
+      execute: { maxHostCalls: 256 },
       allowedOrigins: ["https://first.test", "https://second.test"],
       executor: customExecutor({ execute: executor.execute.bind(executor) }, { lifecycle: "self-managed" }),
       auth: {
@@ -237,9 +238,28 @@ export async function checkStashAuthority(executor: Executor): Promise<void> {
     });
     expect(inlineNotice).not.toHaveProperty("resultId");
     expect(inlineNotice).not.toHaveProperty("nextAction");
-    const direct = await rpc("call_destructive_tool", { address: "docs.write" });
-    const id = JSON.parse(required(direct.content[0]).text.split("\n")[0]!).resultId;
+    const direct = programReturn
+      ? await rpc("execute_code", { code: 'async () => (await connecta.call("docs.write")).data' })
+      : await rpc("call_destructive_tool", { address: "docs.write" });
+    let id = programReturn
+      ? (direct.structuredContent!.result as { resultId: string }).resultId
+      : JSON.parse(required(direct.content[0]).text.split("\n")[0]!).resultId;
     expect(id).toMatch(/^[a-f0-9-]{36}$/);
+    if (programReturn) {
+      const derived = await rpc("execute_code", {
+        code: `async () => {
+        let text = "", offset = 0, page;
+        do {
+          page = await connecta.result(${JSON.stringify(id)}, { offset });
+          text += page.text; offset = page.nextOffset;
+        } while (page.hasMore);
+        return JSON.parse(text);
+      }`,
+      });
+      expect(derived.isError).toBeFalsy();
+      id = (derived.structuredContent!.result as { resultId: string }).resultId;
+      expect(id).toMatch(/^[a-f0-9-]{36}$/);
+    }
     const code = `async () => await connecta.result(${JSON.stringify(id)}, { maxBytes: 20 })`;
     const visible = await rpc("execute_code", { code });
     expect(visible.isError).toBeFalsy();
@@ -2626,12 +2646,15 @@ return fs;
   },
   {
     clauses: "R1, R6",
-    name: "a small result reaches the model unchanged and unadorned",
+    name: "a small result reaches the model byte-identical and unadorned",
     code: `async () => ({ nested: { list: [1, 2, 3] }, text: "kept" })`,
     check(outcome) {
       expect(outcome.isError, outcome.text).toBe(false);
       expect(outcome.result).toEqual({ nested: { list: [1, 2, 3] }, text: "kept" });
       expect(Object.keys(outcome.value)).toEqual(["result", "hostCalls"]);
+      expect(outcome.text).toBe(
+        '{"result":{"nested":{"list":[1,2,3]},"text":"kept"},"hostCalls":{"attempted":0,"admitted":0,"succeeded":0,"failed":0}}',
+      );
     },
   },
   {

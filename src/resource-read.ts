@@ -40,6 +40,7 @@ export function readResource(
   registry: RegistryView,
   raw: unknown,
   options: {
+    onResolved?: (connector: Connector) => void;
     baseUrl: string;
     requestScope: object;
     sentSecrets: SentSecrets;
@@ -55,6 +56,7 @@ export function readResource(
         Effect.gen(function* () {
           const target = yield* Effect.try({ try: () => resourceTarget(registry, raw), catch: (error) => error });
           connector = target.connector;
+          options.onResolved?.(target.connector);
           // Await this Promise in the reader's request context, as invocation.ts does.
           yield* Effect.acquireRelease(
             Effect.suspend(() => {
