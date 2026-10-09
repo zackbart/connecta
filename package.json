@@ -225,6 +225,7 @@
     "precheck:bundle": "npm run build:operator-ui",
     "precheck:fast": "npm run check:operator-ui",
     "eval:regrade": "tsx eval/regrade.ts",
+    "eval:compare": "tsx eval/compare.ts",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check ."
   },

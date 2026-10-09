@@ -1,9 +1,14 @@
 /** Regrade saved facts only. Never execute a saved program or contact a model. */
+import { gradeTask, classifyChecks, passes, type Grading } from "../tasks/grading.js";
+import type { Surface } from "./surface.js";
+import { taskForSurface } from "../tasks/surface.js";
 import type { ActiveTask, Check } from "../tasks/types.js";
 import { World } from "../fakes/world.js";
 import type { AgentTrace, ToolUse } from "./trace.js";
 import type { TrialResult } from "./run.js";
+import { auditGradeInputs } from "./redacted.js";
 import { restoreGradeInputs } from "./saved.js";
+import { conversationCompletion } from "./completion.js";
 
 // Explicit allowlists for legacy files lacking world snapshots and guest-call
 // observations. Unknown/new checks require a rerun rather than invented state.
@@ -68,7 +73,7 @@ const LEGACY_CHECKS: Record<string, string[]> = {
   "p5-revenuecat-text": ["resolved-project", "authoritative-access", "correct-destination"],
   "p5-supabase-project-ref": ["no-wrong-project", "correct-destination"],
   "p5-absent-github": ["no-lookalike-call", "states-absence", "structured-answer"],
-  "p5-known-read-routing": ["direct-read", "one-read", "correct-destination"],
+  "p5-known-read-routing": ["direct-read", "one-read", "reads-only", "correct-destination"],
   "p5-connecta-read": ["reads-only", "correct-destination"],
 };
 
@@ -129,7 +134,15 @@ function legacyTrace(trial: TrialResult): { trace: AgentTrace; complete: boolean
   };
 }
 
-export function regradeTrial(task: ActiveTask, trial: TrialResult, runner: "claude" | "codex"): TrialResult {
+export function regradeTrial(
+  task: ActiveTask,
+  trial: TrialResult,
+  runner: "claude" | "codex",
+  grading: Grading = "route",
+  surface: Surface = trial.surface ?? "six",
+): TrialResult {
+  task = taskForSurface(task, surface);
+  trial = { ...trial, surface, grading };
   const skip = task.runnerSkips?.[runner];
   if (skip) return { ...trial, status: "skipped", skip, checks: [], regrade: { applied: [], unavailable: [] } };
   if (trial.status === "error")
@@ -141,12 +154,17 @@ export function regradeTrial(task: ActiveTask, trial: TrialResult, runner: "clau
         reason: "The CLI did not complete a model trial. Requires a live rerun.",
       },
     };
-  if (trial.status === "skipped") return trial;
+  if (trial.status === "skipped") throw new Error(`Unsupported runner skip: ${runner}/${task.id}`);
   let checks: Check[];
   let unavailable: string[] = [];
   let reason: string | undefined;
   if (trial.saved) {
-    checks = task.grade(restoreGradeInputs(trial.saved));
+    checks = gradeTask(
+      task,
+      restoreGradeInputs(task.id === "truncated-write-export" ? auditGradeInputs(trial.saved) : trial.saved),
+      surface,
+      grading,
+    );
   } else {
     const world = new World(task.world);
     let ledgerComplete = true;
@@ -194,7 +212,7 @@ export function regradeTrial(task: ActiveTask, trial: TrialResult, runner: "clau
           )
         : []),
     ]);
-    const current = task.grade({ world, trace });
+    const current = gradeTask(task, { world, trace }, surface, grading);
     checks = current.map((check) => {
       if (available.has(check.id)) return check;
       unavailable.push(check.id);
@@ -211,12 +229,28 @@ export function regradeTrial(task: ActiveTask, trial: TrialResult, runner: "clau
         ? " Clipped ledger arguments or transcript inputs/results also prevent safe regrading."
         : "");
   }
-  const outer = trial.checks.filter((c) => ["conversation-completed", "no-confirmation-needed"].includes(c.id));
-  checks = [...outer, ...checks];
+  const completionTrace = trial.saved?.trace ?? legacyTrace(trial).trace;
+  const completed = trial.checks.find((c) => c.id === "conversation-completed");
+  const metadata = runner === "codex" ? trial.codex : trial.claude;
+  const completion = conversationCompletion(
+    completionTrace,
+    trial.metrics.conversationTurns,
+    metadata?.timedOut === true,
+    metadata?.aborted === true,
+  );
+  if (!completion.available) {
+    unavailable.push("conversation-completed");
+    reason = "Completion evidence for every observed conversation turn is required. Requires a live rerun.";
+  }
+  const outer: Check[] = [
+    { ...completion.check, pass: completion.check.pass && completed?.pass !== false },
+    ...trial.checks.filter((c) => c.id === "no-confirmation-needed"),
+  ];
+  checks = classifyChecks(task.id, [...outer, ...checks]);
   return {
     ...trial,
     checks,
-    status: checks.every((c) => c.advisory || c.pass) ? "pass" : "fail",
+    status: passes(checks, grading) ? "pass" : "fail",
     regrade: {
       applied: checks.filter((c) => !c.retained && !outer.includes(c)).map((c) => c.id),
       unavailable,

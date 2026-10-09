@@ -20,6 +20,7 @@ import type { AgentTrace, ToolUse } from "../agent/trace.js";
 
 export interface Check {
   id: string;
+  kind?: "route" | "outcome";
   description: string;
   pass: boolean;
   detail?: string;
@@ -49,6 +50,8 @@ interface FollowUp {
 }
 
 interface GradeContext {
+  surface?: import("../agent/surface.js").Surface;
+  grading?: import("./grading.js").Grading;
   world: World;
   trace: AgentTrace;
 }

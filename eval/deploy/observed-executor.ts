@@ -1,5 +1,7 @@
 /** Observe real guest bridge calls while retaining QuickJS's branded lifecycle. */
 import { quickJsExecutor } from "@zackbart/connecta/quickjs";
+import { codeError, codeSkill, codeValue } from "./code-surface.js";
+import type { Surface } from "../agent/surface.js";
 import type { ExecutorProvider } from "@zackbart/connecta";
 
 interface GuestCallObservation {
@@ -17,7 +19,7 @@ export interface ProgramObservation {
   succeeded: boolean;
 }
 
-export function observedExecutor() {
+export function observedExecutor(surface: Surface = "six") {
   const executor = quickJsExecutor();
   const programs: ProgramObservation[] = [];
   const acquire = executor.acquire.bind(executor);
@@ -38,11 +40,18 @@ export function observedExecutor() {
               program.calls.push(call);
               if (call.name === "connecta.call") program.peakCalls = Math.max(program.peakCalls, ++pendingCalls);
               try {
-                const result = await fn(...args);
+                const original = await fn(...args);
+                const result =
+                  surface === "six"
+                    ? original
+                    : call.name === "connecta.skill"
+                      ? codeSkill(args[0], original)
+                      : codeValue(original);
                 call.outcome = "ok";
                 call.result = result;
                 return result;
-              } catch (error) {
+              } catch (original) {
+                const error = surface === "six" ? original : codeError(original);
                 call.outcome = "error";
                 if (error && typeof error === "object" && "code" in error) call.errorCode = String(error.code);
                 throw error;

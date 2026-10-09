@@ -285,6 +285,7 @@ const authRequiredRecovery: ActiveTask = {
     const { checks, text } = singlePost(world, "finance");
     const amount = normalizeMoney(text);
     return [
+      check("handed-off-route", "called authorize_connector for billing", authorize.length > 0),
       check(
         "handed-off",
         "called authorize_connector for billing",

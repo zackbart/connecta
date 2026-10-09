@@ -10,10 +10,13 @@ import { connectMcp, type ListedTool } from "../support/mcp.js";
 import type { ActiveTask, Check } from "../tasks/types.js";
 import { runCodex } from "./codex.js";
 import { runClaude } from "./claude.js";
-import { assertSurface } from "./surface.js";
+import { gradeTask, classifyChecks, passes, type Grading } from "../tasks/grading.js";
+import { taskForSurface } from "../tasks/surface.js";
+import { assertSurface, type Surface } from "./surface.js";
 import { startAuthHost } from "./auth-host.js";
 import { infraError, stopsBatch } from "./infra.js";
 import { saveGradeInputs, type SavedGradeInputs } from "./saved.js";
+import { conversationCompletion } from "./completion.js";
 import {
   countBy,
   downstreamMetrics,
@@ -50,6 +53,8 @@ interface TrialMetrics {
 
 export interface TrialResult {
   task: string;
+  surface?: Surface;
+  grading?: Grading;
   model: string;
   repeat: number;
   status: "pass" | "fail" | "error" | "skipped";
@@ -91,6 +96,8 @@ export interface TrialResult {
 }
 
 interface TrialOptions {
+  surface?: Surface;
+  grading?: Grading;
   runner?: "codex" | "claude";
   maxBudgetUsd?: number;
   timeoutMs: number;
@@ -126,11 +133,16 @@ function clipArgs(args: unknown): string {
 }
 
 async function runTrial(task: ActiveTask, model: string, repeat: number, options: TrialOptions): Promise<TrialResult> {
+  const surfaceArm = options.surface ?? "six";
+  const grading = options.grading ?? "route";
+  task = taskForSurface(task, surfaceArm);
   const startedAt = new Date().toISOString();
   const skip = task.runnerSkips?.[options.runner ?? "codex"];
   if (skip)
     return {
       task: task.id,
+      surface: surfaceArm,
+      grading,
       model,
       repeat,
       startedAt,
@@ -161,6 +173,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
     world.connectorSpecs(),
     task.deployment,
     task.world?.oauth ? world.oauth : undefined,
+    surfaceArm,
   );
   const hostEvents: StreamEvent[] = [];
   const host = task.host
@@ -168,7 +181,10 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
     : undefined;
   try {
     const surface = await surfaceOf(deployment.mcpUrl, deployment.token);
-    assertSurface(surface.map((tool) => tool.name));
+    assertSurface(
+      surface.map((tool) => tool.name),
+      surfaceArm,
+    );
     const deny = task.approvals?.deny ?? [];
     const allow = (task.approvals?.allow ?? surface.map((tool) => tool.name)).filter((tool) => !deny.includes(tool));
     const gated = surface.filter((tool) => !tool.readOnly).map((tool) => tool.name);
@@ -179,6 +195,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
     const runAgent = options.runner === "claude" ? runClaude : runCodex;
     const run = await runAgent({
       model,
+      surface: surfaceArm,
       ...(options.maxBudgetUsd === undefined ? {} : { maxBudgetUsd: options.maxBudgetUsd }),
       mcpUrl: host?.mcpUrl ?? deployment.mcpUrl,
       token: deployment.token,
@@ -252,14 +269,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
       : run.timedOut
         ? `${options.runner ?? "codex"} trial timed out`
         : infraError(run.events, run.exitCode, trace.loadedTools);
-    const completed = check(
-      "conversation-completed",
-      "every turn ended normally within the time limit",
-      !run.timedOut &&
-        trace.resultSubtypes.length > 0 &&
-        trace.resultSubtypes.every((subtype) => subtype === "success"),
-      run.timedOut ? "timed out" : trace.resultSubtypes.join(", "),
-    );
+    const completed = conversationCompletion(trace, run.turnStarts.length, run.timedOut, run.aborted).check;
     const unprompted: Check = {
       id: "no-confirmation-needed",
       description: "finished without stopping to ask permission it had been given",
@@ -267,10 +277,14 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
       ...(nudges ? { detail: `${nudges} nudge(s)` } : {}),
       advisory: true,
     };
-    const checks = error ? [] : [completed, ...task.grade({ world, trace }), unprompted];
-    const passed = checks.every((item) => item.advisory || item.pass);
+    const checks = error
+      ? []
+      : classifyChecks(task.id, [completed, ...gradeTask(task, { world, trace }, surfaceArm, grading), unprompted]);
+    const passed = passes(checks, grading);
     return {
       task: task.id,
+      surface: surfaceArm,
+      grading,
       model,
       repeat,
       status: error ? "error" : passed ? "pass" : "fail",
@@ -323,10 +337,6 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
     await deployment.close();
     await world.stop();
   }
-}
-
-function check(id: string, description: string, pass: boolean, detail?: string): Check {
-  return { id, description, pass, ...(detail ? { detail } : {}) };
 }
 
 export interface BatchOptions extends TrialOptions {

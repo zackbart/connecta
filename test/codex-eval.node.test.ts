@@ -41,10 +41,10 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     send({ id: m.id, result: { marketplaceLoadErrors: [], marketplaces: mode === 'extra-plugin' ?
       [{ plugins: [{ name:'future-plugin', id:'future-plugin@builtin', enabled:true, settings:{token:'fake-secret'} }] }] : [] } });
   } else if (m.method === 'mcpServerStatus/list') {
-    send({ id: m.id, result: { data: [{ name: 'connecta', tools: Object.fromEntries(["execute_code", "call_tool", "call_destructive_tool", "search_tools", "authorize_connector", "skills"].map(t => [t, {}])) }] } });
+    send({ id: m.id, result: { data: [{ name: 'connecta', tools: Object.fromEntries((mode === "code" ? ["execute_code", "authorize_connector", "skills"] : ["execute_code", "call_tool", "call_destructive_tool", "search_tools", "authorize_connector", "skills"]).map(t => [t, {}])) }] } });
   } else if (m.method === 'turn/start') {
     send({ id: m.id, result: { turn: { id: 'turn-1' } } });
-    if (mode === 'complete') {
+    if (mode === 'complete' || mode === 'code') {
       send({ method: 'item/started', params: { item: { type: 'mcpToolCall', id: 'tool-1', server: 'connecta', tool: 'execute_code', arguments: { code: '1' } } } });
       send({ method: 'item/completed', params: { item: { type: 'mcpToolCall', id: 'tool-1', server: 'connecta', tool: 'execute_code', status: 'completed', result: { content: [{ type: 'text', text: 'ok' }] } } } });
       send({ method: 'item/completed', params: { item: { type: 'agentMessage', id: 'text-1', phase: 'commentary', text: 'Earlier evidence.' } } });
@@ -56,7 +56,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
 `;
 
 async function fixture(
-  mode: "complete" | "hang" | "extra-skill" | "late-skill" | "extra-plugin" | "bad-inventory",
+  mode: "complete" | "code" | "hang" | "extra-skill" | "late-skill" | "extra-plugin" | "bad-inventory",
   signal?: AbortSignal,
   nextTurn: () => Promise<string | undefined> = async () => undefined,
   timeoutMs = 10_000,
@@ -69,6 +69,7 @@ async function fixture(
     await writeFile(auth, "{}");
     return await runCodex({
       model: "gpt-6-sol",
+      ...(mode === "code" ? { surface: "code" as const } : {}),
       mcpUrl: "http://127.0.0.1:1/mcp",
       token: "fake-secret",
       allowedTools: [
@@ -92,6 +93,16 @@ async function fixture(
 }
 
 describe("Codex eval app-server", () => {
+  it("asserts the exact code-arm inventory", async () => {
+    const run = await fixture("code");
+    expect(run.loadedTools).toEqual([
+      "mcp__connecta__execute_code",
+      "mcp__connecta__authorize_connector",
+      "mcp__connecta__skills",
+    ]);
+    expect(infraError(run.events, run.exitCode, run.loadedTools)).toBeUndefined();
+  });
+
   it("declines MCP approval with a colliding request id and translates tool events", async () => {
     const run = await fixture("complete");
     const trace = parseTrace(run.events, run.turnStarts, ["test"]);

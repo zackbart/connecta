@@ -15,10 +15,12 @@ interface ToolResult {
 export interface ListedTool {
   name: string;
   readOnly: boolean;
+  description?: string;
 }
 
 export interface McpSession {
   serverName: string | undefined;
+  instructions: string | undefined;
   listTools(): Promise<ListedTool[]>;
   call(name: string, args: Record<string, unknown>): Promise<ToolResult>;
   close(): Promise<void>;
@@ -32,10 +34,12 @@ export async function connectMcp(url: string, headers: Record<string, string>): 
   await client.connect(transport);
   return {
     serverName: client.getServerVersion()?.name,
+    instructions: client.getInstructions(),
     async listTools() {
       const listed = await client.listTools();
       return listed.tools.map((tool) => ({
         name: tool.name,
+        ...(tool.description ? { description: tool.description } : {}),
         readOnly: tool.annotations?.readOnlyHint === true,
       }));
     },

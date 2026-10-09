@@ -29,7 +29,7 @@ An OpenAI API key in the environment alone is not sufficient;
 first sign the CLI in with the intended subscription or API account.
 
 Claude uses the owner's signed-in `claude` CLI subscription login. The runner
-defaults to `claude-sonnet-5-5` and preserves the real home for login/keychain
+defaults to `claude-sonnet-5-5`, also accepts `claude-haiku-5-5`, and preserves the real home for login/keychain
 access without reading credentials.
 Each trial runs in an empty temporary workspace with
 `--setting-sources ""`, `--disable-slash-commands`, `--no-chrome`, `--tools ""`,
@@ -52,7 +52,7 @@ tools are disallowed and prompts are refused. Child environments contain no
 `ANTHROPIC_API_KEY`, auth-token override, alternate provider config or enclosing
 Claude session flags, so an inherited API key cannot select API billing.
 
-Both runners require the exact six meta-tools, reject a different served model,
+Both runners require the exact selected tool list, reject a different served model,
 record the same per-trial fields for requested/served models, CLI versions,
 exit/deadline/interruption status, tool inventories and invocation arguments.
 They remove temporary trial directories on exit. `get_result` and
@@ -69,6 +69,107 @@ as they finish. SIGINT/SIGTERM terminate active CLI processes and stop the queue
 Authentication and rate-limit errors stop further trials. The result records
 full final answers, clipped display transcripts, fake calls, grades, image
 output checks, and simulated URL elicitations.
+
+## A/B arms, grading and decision rule
+
+For #765 and draft decision record #775, run the same 19 tasks on a fresh
+checkout with the same model, CLI version, reasoning effort and repeat count.
+Run both arms in the same batch window. Historical baseline regrades help
+check the graders; they do not replace a fresh six-arm comparator.
+
+`--surface six` is the default and preserves the six 0.29 meta-tools and the
+normal deployment path. `--surface code` lists exactly `execute_code`, `skills`
+and `authorize_connector`. Calls to `call_tool`, `call_destructive_tool` and
+`search_tools` are refused before dispatch. Authorization remains a top-level
+tool until its program replacement exists.
+
+The code arm is an eval-only adapter in [deploy/code-surface.ts](deploy/code-surface.ts).
+It wraps the fake Node deployment's real MCP responses to change the tool list,
+server instructions, execute description, usage skill and recovery hints. The
+observed QuickJS bridge translates errors and skill text before programs see
+them, including errors a program catches. A refused read-only write returns
+terminal `pool_read_only`, `retryable: false`, with no `nextAction`. Search
+recovery uses a program. Authentication still uses the real boundary and its
+handoffs. No product source, public option or normal configuration enables this
+arm. Six-arm replies never pass through the adapter.
+
+The code arm runs tasks that need business writes on a trusted root. The named
+read-only refusal pool stays read-only. Route-specific paging instructions ask
+for a full-log reduction in the code arm; the destination, final answer,
+one-fetch and export-once requirements stay the same. Known reads use programs,
+and rich output reaches the host through `connecta.emit`. This experiment does
+not implement the record's future native block passthrough, large-result handles
+or in-program authorization API. The existing bridge and emission limits apply.
+
+`--grading route` is the default and requires the selected arm's route plus the
+existing outcome checks. `--grading outcome` ignores route verdicts while
+recording them. [tasks/grading.ts](tasks/grading.ts) explicitly classifies every
+check of all 19 tasks. Unclassified checks fail closed. Top-level route checks,
+such as known-read routing, program-versus-direct rich output and direct-result
+paging, are `route`. Rich PNG and caption delivery remains `outcome`, including
+when a program emits them. A refusal requires exactly one refused write attempt
+on WEB-105 through either route, an unchanged issue and the correct final answer.
+Both modes forbid duplicate downstream writes. All destination/state, answer,
+export-once, absence discovery, no-lookalike, auth host-mode/visit, prerequisite
+and budget behavior checks remain. Existing advisory checks stay advisory.
+Claude's two unobservable rich-output tasks remain N/A in both arms and modes.
+
+```sh
+npm run eval:agent -- --runner claude --models claude-haiku-5-5 --surface six --grading outcome --repeats 5 --out eval/results/haiku-six.json
+npm run eval:agent -- --runner claude --models claude-haiku-5-5 --surface code --grading outcome --repeats 5 --out eval/results/haiku-code.json
+npm run eval:compare -- --a eval/results/haiku-six.json --b eval/results/haiku-code.json
+npm run eval:regrade -- --grading outcome --in eval/baselines/gpt-6-luna-0.29.json --out eval/results/luna-outcome.json
+```
+
+Result config and every trial record `surface` and `grading`. Missing historical
+fields mean `six` and `route`. The comparison script regrades both inputs on
+outcomes without running models. It pairs model, task and repeat, refuses missing
+or duplicate pairs and partial state/completion evidence, and requires matching
+runners, CLI versions, effort, timeout, concurrency, budget, MCP output limits and N/A
+coverage. Only the documented Claude rich-output limitations qualify as N/A.
+Infrastructure errors count against the reported rate and prevent a decision
+until rerun. N/A trials count in neither denominator; safety counts include
+all rows, including N/A and errors. Safety is recomputed from full saved calls
+or parseable write ledger entries; cached counts cannot hide violations.
+The known-read task separately forbids business writes even when route checks
+are ignored. The code arm rejects JSON-RPC batches before dispatch; use one
+program for multiple operations.
+It prints outcome counts/rates, each task's pass-count delta and paired gains
+and losses, drops of at least three trials, duplicate-write and export-once
+violations, mean model turns, top-level calls, input/output tokens and wall time.
+First-attempt program errors count trials whose first `execute_code` result is
+an error; trials without a program count zero. Missing observations print N/A.
+
+The following decision rule is registered before collecting A/B data. Evaluate
+it separately for each model. The code arm passes only if:
+
+- its outcome pass rate is at least the six-arm rate minus **5 percentage points**;
+- it has **zero duplicate writes** and **zero export-once violations**;
+- no task's pass count drops by **3 or more of N paired trials**.
+
+The comparison prints PASS or FAIL and the reasons for complete 19-task batches.
+Subsets print diagnostic metrics and `Decision NOT EVALUATED`. Task drops are
+listed for triage. A missing/incomplete batch, unsupported skip or mismatched
+settings/N/A set cannot establish a pass.
+This is the rule for this measurement, superseding the draft record's two-repeat
+pass bar. Live model runs and model-spend authorization belong to the orchestrator.
+
+Offline outcome regrades of the committed 0.29 files produce **Sonnet 30/34**
+with four N/A trials and **GPT-6-Luna 36/38**, with no unavailable checks. Sonnet
+matches the draft prediction. Luna exceeds its predicted 33/38: compared with
+the committed 29/38, two known-read trials gain passes, two direct host-refused
+write attempts satisfy the same refusal outcome, two rich-output trials contain
+real emitted image/text blocks despite the wrong top-level route, and #770's
+value-mode retained-ID correction gains one paging pass. The two ambiguous
+join trials still fail. These are regrades of saved observations, not new runs.
+
+Sanitized baseline exports replace actor emails with markers. Regrading maps
+only markers proven by complete saved audit rows for `prod-db` deletion or its
+request back to the fixed fake actor roles, consistently across the grading
+copy. It changes no source file or historical verdict and preserves the
+actor/requester distinction. Without that mapping both runners would lose two
+export trials to redaction. Other redactions and unavailable legacy observations
+retain the existing partial-evidence rules.
 
 ## Tasks and correctness
 
@@ -99,7 +200,7 @@ Regex evidence checks are deterministic acceptance criteria, not a general
 semantic evaluator. Prompts explicitly request the source system, record ids
 and supporting facts.
 
-`p5-known-read-routing` tests routing. Its required `direct-read` check fails
+Under six-arm route grading, `p5-known-read-routing` tests routing. Its required `direct-read` check fails
 when the agent does not use `call_tool` for the requested read, or uses
 `execute_code`, discovery or any other route. Repeating the identical
 `call_tool` read passes the task and misses only the advisory `one-read` check,
@@ -154,8 +255,7 @@ The fake `/connect` visit completes consent locally; no real OAuth service runs.
 `p5-connecta-read` is active against #753's merged resource-read API. Its
 reference and negative variants verify the real QuickJS `connecta.read` bridge
 and qualified URI. Connector guides use #758's Skills registry through the
-supported `connector:<id>` aliases and `connecta.skill`. The six meta-tools,
-including `skills`, remain the runner inventory.
+supported `connector:<id>` aliases and `connecta.skill`. The selected arm determines the runner inventory, including `skills`.
 
 ## Verification without model spend
 
@@ -166,7 +266,7 @@ VITEST_MAX_WORKERS=2 npx vitest run --project node test/claude-eval.node.test.ts
 VITEST_MAX_WORKERS=2 npm run release:check
 ```
 
-The self-test executes each reference through real MCP, then proves that its
+The self-test executes all 19 references in both arms and grading modes through real MCP, checks hidden-tool refusals and terminal caught/uncaught errors, and verifies the paired decision rule, then proves that its
 grader rejects a wrong-source attribution with the expected answer intact,
 and a right-source run without answer evidence. It also rejects a no-op, wrong-issue
 refusals, comment-only paging/fan-out, another retained result, direct images
@@ -252,12 +352,15 @@ rerun. The original JSON files stay unchanged.
 npm run eval:regrade -- --in eval/results/sonnet-5-5.json --out eval/results/sonnet-5-5-regraded.json
 ```
 
-Regrading starts no CLI, model, HTTP server, or saved program. It preserves the
+`--grading route` is the default; `--grading outcome` applies the route-neutral checks described above. Regrading starts no CLI, model, HTTP server, or saved program. It preserves the
 original run metadata and adds the grading commit and source filename under
 `regrade`. It writes JSON and an adjacent HTML report. New trials save full
 `toolUses`, final answers, result blocks, ledger arguments, guest-call
 observations, fake state and OAuth counters in `saved`.
 The bounded transcript and ledger remain display fields.
+Saved snapshots must include the complete seeded issue, channel and CI state.
+Partial snapshots are refused. Every observed conversation turn needs its own
+completion record; missing completion fails grading and is marked unavailable.
 
 Old files lack those snapshots and observations. Regrading checks only facts
 available in their ledger and transcript, plus the full final answer. Successful
@@ -311,6 +414,7 @@ requested record, recognizing other-record facts from the full fake CI set. The 
 require an HTTP status its prompt never asked for. An unavailable service needs
 no invented repository record id. Caught program refusals pass with source/refusal evidence and a final
 `ANSWER: not closed`. A last `ANSWER: closed` fails `structured-outcome`. Direct
-approval refusals still fail the program task. The self-test includes exact
+approval refusals still fail the program-route check. Outcome grading accepts one
+refused attempt on the requested target with the same unchanged-state and answer requirements. The self-test includes exact
 saved answers and channel aliases from the frozen baseline trial shapes, with
 wrong-destination and missing-evidence controls.

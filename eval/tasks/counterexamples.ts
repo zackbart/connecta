@@ -477,6 +477,9 @@ export function positiveVariants(
     cases.push({
       name: "duplicate direct read remains a pass with advisory miss",
       trace: { ...trace, toolUses: [...trace.toolUses, { ...trace.toolUses[0]!, id: "duplicate-read" }] },
+      world: Object.assign(Object.create(Object.getPrototypeOf(world)), world, {
+        ledger: { ...world.ledger, calls: [...world.ledger.calls, ...world.ledger.calls] },
+      }),
       advisoryMiss: "one-read",
     });
   if (task.id === "p5-absent-github") {

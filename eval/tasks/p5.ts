@@ -16,19 +16,31 @@ const WRITE_CODE = `async () => (await connecta.call("tracker.close_issue", { id
 
 /** "Attempt it once" counts write attempts; read-only discovery and
  * verification calls in other programs are allowed. */
-function refusedTarget(world: World): boolean {
+function refusedTarget(world: World, trace?: AgentTrace): boolean {
   const attempts = world.programs.flatMap((p) =>
     p.calls.filter(
       (c) =>
         c.name === "connecta.call" &&
-        (c.errorCode === "destructive_tool_requires_approval" || c.args[0] === "tracker.close_issue"),
+        (["destructive_tool_requires_approval", "pool_read_only"].includes(c.errorCode ?? "") ||
+          c.args[0] === "tracker.close_issue"),
     ),
   );
+  const directAttempts = trace?.toolUses.filter((u) => u.tool === "call_destructive_tool") ?? [];
+  if (directAttempts.length)
+    return (
+      attempts.length === 0 &&
+      directAttempts.length === 1 &&
+      directAttempts[0]?.isError === true &&
+      Boolean(trace?.permissionDenials.length) &&
+      /user rejected MCP tool call|permission[^.]*denied|host[^.]*refus/i.test(directAttempts[0]?.resultText ?? "") &&
+      directAttempts[0].input.address === "tracker.close_issue" &&
+      (directAttempts[0].input.args as Record<string, unknown>)?.id === "WEB-105"
+    );
   return (
     attempts.length === 1 &&
     attempts[0]?.args[0] === "tracker.close_issue" &&
     (attempts[0]?.args[1] as Record<string, unknown>)?.id === "WEB-105" &&
-    attempts[0]?.errorCode === "destructive_tool_requires_approval"
+    ["destructive_tool_requires_approval", "pool_read_only"].includes(attempts[0]?.errorCode ?? "")
   );
 }
 
@@ -193,10 +205,11 @@ const refused = withCorrectness(
       // The host-recorded refusal is authoritative; a program may catch it and
       // return only the message text.
       check(
-        "refusal",
+        "refusal-route",
         "one program write attempt refused the exact target",
         refusedTarget(world) && !uses(trace, "call_destructive_tool").length,
       ),
+      check("refusal", "one write attempt refused the exact target", refusedTarget(world, trace)),
       check(
         "structured-outcome",
         "the last ANSWER line states not closed",
@@ -214,7 +227,7 @@ const refused = withCorrectness(
     },
   },
   {
-    destination: (w) => refusedTarget(w),
+    destination: (w, trace) => refusedTarget(w, trace),
     evidence: [/tracker/i, /WEB-105/, /refus|denied|blocked|rejected/i],
     referenceAnswer:
       "Tracker WEB-105 remains open and unchanged. The read-only pool refused the program write.\nANSWER: not closed.",
@@ -229,13 +242,23 @@ const paging = withCorrectness(
     measures: "connecta.result reads past a direct-call preview without fetching the log twice.",
     prompt:
       "Read ci.get_run_log for runId 4812 with call_tool. Page its retained result using connecta.result inside programs, and identify the actual failing test and HTTP status.",
-    grade: ({ world, trace }) => [
+    grade: ({ world, trace, surface }) => [
       check(
         "one-fetch",
         "the log was fetched exactly once",
         world.ledger.calls.filter((c) => c.service === "ci" && c.tool === "get_run_log").length === 1,
       ),
-      check("result-api", "used successful result paging", pagedOriginalResult(world, trace)),
+      check(
+        "result-api",
+        "used successful result paging or code-arm reduction",
+        surface === "code"
+          ? world.programs.some(
+              (p) =>
+                p.succeeded &&
+                p.calls.some((c) => c.name === "connecta.call" && c.args[0] === "ci.get_run_log" && c.outcome === "ok"),
+            )
+          : pagedOriginalResult(world, trace),
+      ),
     ],
     reference: async ({ call }) => {
       const first = await call("call_tool", { address: "ci.get_run_log", args: { runId: 4812 } });
@@ -256,6 +279,19 @@ const paging = withCorrectness(
   },
 );
 
+function badgeDelivered(trace: AgentTrace, tools: string[]): boolean {
+  return trace.toolUses.some(
+    (u) =>
+      tools.includes(u.tool) &&
+      !u.isError &&
+      u.resultBlocks?.some(
+        (b) =>
+          b.type === "image" && b.mimeType === "image/png" && (b.data === BADGE_PNG || b.data === LEGACY_BADGE_PNG),
+      ) &&
+      u.resultBlocks.some((b) => b.type === "text" && /approved.*revision 7/i.test(String(b.text))),
+  );
+}
+
 const rich = (program: boolean): ActiveTask =>
   withCorrectness(
     {
@@ -274,22 +310,16 @@ const rich = (program: boolean): ActiveTask =>
       prompt: program
         ? "Read assets.get_badge in a program, emit its image and caption with connecta.emit, and confirm the badge approval and revision."
         : "Read the launch badge from assets.get_badge_image and confirm its approval and revision. Preserve the image output.",
-      grade: ({ trace }) => [
+      grade: ({ trace, surface }) => [
+        check(
+          "image-route",
+          "rich output used the selected top-level route",
+          badgeDelivered(trace, [program || surface === "code" ? "execute_code" : "call_tool"]),
+        ),
         check(
           "image-delivered",
-          "the successful MCP result contains the fake PNG",
-          trace.toolUses.some(
-            (u) =>
-              u.tool === (program ? "execute_code" : "call_tool") &&
-              !u.isError &&
-              u.resultBlocks?.some(
-                (b) =>
-                  b.type === "image" &&
-                  b.mimeType === "image/png" &&
-                  (b.data === BADGE_PNG || b.data === LEGACY_BADGE_PNG),
-              ) &&
-              u.resultBlocks.some((b) => b.type === "text" && /approved.*revision 7/i.test(String(b.text))),
-          ),
+          "the successful MCP result contains the fake PNG and caption",
+          badgeDelivered(trace, ["execute_code", "call_tool"]),
         ),
       ],
       reference: async ({ call }) => {
@@ -651,22 +681,38 @@ const routing = withCorrectness(
     title: "Known read uses call_tool",
     measures: "A known read must use call_tool without other routes; duplicate identical reads are advisory.",
     prompt: "Read ci.get_run with runId 4812 and report its status and commit.",
-    grade: ({ trace }) => [
+    grade: ({ trace, world, surface }) => [
+      check(
+        "reads-only",
+        "the known read dispatched no business writes",
+        world.ledger.calls.every((c) => c.kind === "read"),
+      ),
       check(
         "direct-read",
         "read through call_tool with no execute_code, discovery or other route",
-        direct(trace, "call_tool", "ci.get_run") &&
-          trace.toolUses.every(
-            (use) =>
-              use.tool === "call_tool" &&
-              use.input.address === "ci.get_run" &&
-              typeof use.input.args === "object" &&
-              use.input.args !== null &&
-              Object.keys(use.input.args).length === 1 &&
-              (use.input.args as { runId?: unknown }).runId === 4812,
-          ),
+        surface === "code"
+          ? uses(trace, "execute_code").length === 1 &&
+              trace.toolUses.every((u) => u.tool === "execute_code") &&
+              called(world, "ci.get_run", { runId: 4812 })
+          : direct(trace, "call_tool", "ci.get_run") &&
+              trace.toolUses.every(
+                (use) =>
+                  use.tool === "call_tool" &&
+                  use.input.address === "ci.get_run" &&
+                  typeof use.input.args === "object" &&
+                  use.input.args !== null &&
+                  Object.keys(use.input.args).length === 1 &&
+                  (use.input.args as { runId?: unknown }).runId === 4812,
+              ),
       ),
-      { ...check("one-read", "the identical read was not repeated", trace.toolUses.length === 1), advisory: true },
+      {
+        ...check(
+          "one-read",
+          "the identical read was not repeated",
+          world.ledger.calls.filter((c) => c.service === "ci" && c.tool === "get_run").length === 1,
+        ),
+        advisory: true,
+      },
     ],
     reference: async ({ call }) => {
       await call("call_tool", { address: "ci.get_run", args: { runId: 4812 } });
