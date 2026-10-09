@@ -2,6 +2,73 @@
 
 All notable changes to this package are documented here.
 
+## 0.30.0 — 2026-10-09
+
+Connecta 0.30.0 makes large results, sign-in and rich output dependable for agents, on both direct calls and programs. The six-tool surface from 0.29.0 stays. We measured the alternative, folding everything into `execute_code`, against it on Sonnet 5.5 and GPT-6-Luna (#765). The code-only surface scored lower and made a duplicate billable write, so it was not adopted.
+
+Default `call_tool` and `call_destructive_tool` results now put their data in `content` and no longer send `structuredContent` or advertise `outputSchema`. Clients that prefer structured content, Claude Code among them, previously saw only a `{"format":"json"}` stub. Read the format from `_meta["dev.connecta/format"]`. For a truncated result, parse the first line of the text as a JSON notice. `resultMode: "value"` keeps the full structured envelope.
+
+Programs no longer lose large data. A `connecta.call` result over the executor's inline cap is rebuilt from stash pages up to 1 MiB, and larger results come back as a handle for `connecta.result`. A program that returns more than 24,000 characters gets a pageable `resultId` in place of a truncated preview. If that run made a write, the notice says the write already ran. Paging checks the caller's connector grants on every page. Programs can forward images and other rich content with `connecta.emit(result)` or `result.content`, within the existing byte and block limits.
+
+Downstream-OAuth handoff links use compact, opaque tokens that agents copy intact; links issued before the upgrade keep working until they expire. Auth failures on direct calls, program calls and catalog search now carry the sign-in link or operator instructions themselves, so agents no longer need a separate `authorize_connector` step. URL elicitation is unchanged.
+
+Values submitted in JSON-Schema `writeOnly` argument fields are now treated like credentials. They are redacted from downstream result text, error text, program output and stored pages, with bounded work and memory. Values under 8 characters are replaced only where a structured field equals them, and prose containing them is withheld. Credential redaction of very large or deeply nested results no longer risks exhausting memory.
+
+Custom `KVStorage` adapters must honor the new `expiresAtMs` option on `set` and `compareAndSet` and declare `capabilities: { absoluteExpiry: true }`. Construction rejects adapters without that declaration. The built-in memory, SQLite and D1 drivers already comply. Stash capacity charges now use storage time and hold until orphaned chunks expire, so a skewed or failing host can no longer over-admit stashes. The new maintained Infisical provider lets deployments manage projects, folders and secrets with machine-identity Universal Auth and no hand-written connector.
+
+### Added
+
+- Add a maintained Infisical REST provider for machine-identity Universal Auth, projects, folders, and secret reads and writes. Tokens stay in memory and refresh before expiry, lists omit values by default, writes omit values and expose pending approvals, and credential-free OpenAPI checks cover every endpoint. Value-free results, including imports and approvals, return only validated identifiers and omit comments, descriptions, free-form names, reminder notes, and arbitrary nested objects. Project slugs are withheld because Infisical can derive them from free-text project names. Write recovery echoes omit secret values, secret comments, and folder descriptions without changing dispatched arguments. Comments are available only from explicit value reads. `metadataOmitted` reports withheld or unavailable metadata. This protects against careless human data entry on an honest server; adversarial encodings by a malicious server are out of scope. Known, accepted residual risk: environment slugs are returned as required routing identifiers. Infisical's UI derives them from environment names by default, so secrets entered in those names can appear in returned slugs. Operators must not put secrets in environment names or slugs. Secrets placed in identifiers or key names are out of scope. Submitted-value matching and request-secret registration are removed, preserving later program arguments and repeated writes with the same value. Rejected tokens never automatically resend writes; reconcile before an explicit retry. Existing `clientId`/`clientSecret` credentials work when the connector id is preserved. Core uncertainty and retry envelopes omit nested and composed `writeOnly` fields, withhold argument echoes when sensitivity cannot be resolved, and mark partial or withheld echoes with `argsRedacted: true`. Retry using the original arguments. Guarded base-URL validation refuses invalid configuration without quoting its value.
+- Add an eval-only code arm, explicit route/outcome grading, offline baseline regrading and a paired A/B report with a pre-registered correctness and write-safety decision rule. Both agent runners assert the selected tool list; Claude also supports Haiku 5.5.
+- Forward MCP rich content from programs with `connecta.emit(result)` or `result.content`, preserving native blocks and metadata within the existing paging and emission limits. Snapshot retained native blocks within byte, node, and depth limits before paging can yield so later connector mutations cannot change their content or bypass emission limits. Page oversized structured data before inspecting native presentation, and refuse cyclic or over-budget presentation without retaining it.
+
+### Changed
+
+- Auth failures on direct calls, program calls, and catalog search/describe now include the authorization URL or operator credential instructions that `authorize_connector` returns. Each call or program run reuses one handoff per connector, without forcing reauthorization. Programs can read typed recovery through `error.data` as well as `error.details`; URL elicitation is unchanged.
+- Separate the human product overview from agent task documentation. Route endpoint operation, deployment, integration, and repository maintenance through an agent index, preserve technical contracts and existing section links, and move the operator UI contract into its own guide.
+
+### Fixed
+
+- Read Vercel's complete public MCP inventory from its linked category references, with bounded credential-free fetching and explicit unavailable findings for incomplete documentation.
+  
+  Reconcile category URLs discovered across the entire index with published counts and category tool headings before comparing drift. Unrecognized formatting reports unavailable instead of silently omitting tools, and unused unrelated reference definitions do not block the inventory.
+  
+  Resolve relative category destinations before requiring a count on each category link, exclude CommonMark code examples, and require the tool's known category to reconcile before reporting a removal. Disappearing categories require review, while unrelated count prose does not block the check.
+- **Breaking:** Book each result stash reservation once with a finite deadline of booking time
+  plus a 30-second write budget plus the chunk TTL, normally 15 minutes. Stop the
+  write loop on timeout and return no paging ID. Absolute chunk and ledger expiry
+  prevents late or ambiguous writes from extending that bound. Custom KVStorage
+  adapters must honor the new `expiresAtMs` option on set and compareAndSet and
+  declare `capabilities: { absoluteExpiry: true }`; construction rejects legacy
+  adapters without that explicit opt-in. Rejected write responses retain the
+  original reservation because their dispatched operation may commit later.
+  Settlement and cleanup shorten or remove charges when possible; after failure
+  or exhausted retries, capacity may be over-held until the booked deadline.
+  Bound each cleanup/release or settlement path to 15 seconds, including storage
+  I/O, and abandon further work when its budget expires so stalled operations
+  cannot hang the caller after the write timeout.
+  Remove durable completion receipts and their recovery path.
+  State-file import and `migrate-state` report database failures with fixed
+  step descriptions, preventing SQLite trigger errors from printing imported
+  values (#726).
+- Serve identical eval code-arm usage guidance through text, structured content, resource aliases and guest skills. Require clean matching runtime and task/harness provenance before evaluating the registered A/B decision; explicit mismatch diagnostics mark decisions NON-COMPARABLE.
+- Require strict per-trial model, CLI, task and deadline provenance before the eval A/B decision. Count timeout, interruption and runner errors as failures regardless of cached status, report failure kinds per arm, and derive native code-arm skill manifests from the exact served guide bytes.
+- Clarify the cross-connector join eval to select the highest-MRR customer with an open bug, and accept value-mode retained-result notices in the result-paging grader while preserving same-ID paging and single-fetch checks.
+- **Breaking:** Keep default direct-call data and truncation previews visible in clients that prefer structured content. Successful `call_tool` and `call_destructive_tool` results with `resultMode` omitted or set to `"mcp"` now omit `structuredContent`, including its former `format` and paging fields. These tools also stop advertising `outputSchema`.
+  
+  Migrate clients to read result data from `content` and format from `_meta["dev.connecta/format"]` instead of `structuredContent.format`. For truncated default-mode results, parse the first line of the content text as a JSON notice to read `resultId`, `nextOffset`, and `nextAction`, then page with `connecta.result`. Clients that need a structured envelope can request `resultMode: "value"` and keep reading `structuredContent.format` and the paging notice in `structuredContent.data`. Remove assumptions that either direct-call tool advertises an `outputSchema`; use content handling or the value-mode envelope instead. Value-mode and error envelopes retain their complete JSON mirrors.
+- Require storage-side proof of expiry before pruning stash capacity charges, so an ahead caller clock cannot admit another stash while charged chunks remain readable.
+- Make stash charge deadline tests deterministic under runner load across memory, SQLite, and D1.
+- Page oversized call results inside programs through the existing result stash. Reconstruct bounded values across executors and return pageable handles for larger results, keeping completed writes successful and avoiding duplicate downstream calls. Preserve U+FEFF at result and page starts in program reconstruction and direct paging. Report unpageable oversized raw text containing unpaired UTF-16 surrogates without silently replacing its code units.
+- Issue compact downstream-OAuth handoff URLs with opaque, unpadded base64url tokens so agents can copy them intact. Preserve exact signature verification, all identity and lifetime checks, and pre-upgrade links until their original expiry. Authorization guidance now tells agents to copy the URL unchanged and request a fresh link when it is invalid or expired.
+- Stash oversized execute_code returns behind a pageable resultId, preserving the full redacted value without repeating completed writes. Share direct-call expiry, authority checks, page caps, and capacity limits; keep bounded truncation when paging is unavailable. Skill and catalog reads retain their grant dependencies through subsequent return stashes, including caught resolution failures and recovery metadata. Local guides follow connector visibility under exact-tool grants; downstream skills and resources retain whole-connector enforcement. Write warnings reflect only writes completed during the current run.
+- Count Claude eval runner cleanup after successful conversation completion as a normal exit in paired comparisons.
+  Accept numeric 143 or signal SIGTERM only after successful completion and a harness SIGTERM sent before any observed child exit.
+
+### Security
+
+- Redact submitted `writeOnly` argument values, including property names inside private objects and their encoded forms, from downstream results, errors, resource reads, connector usage guides, downstream skill files, program returns, logs, and emits before they reach agents, guest programs, or result paging storage. JSON results stay valid, with matching numbers and booleans replaced by a placeholder string, and nested JSON strings are decoded and checked. Short private values redact only equal structured fields and withhold prose that contains them, so identifiers and approval state remain; empty strings are exempt. Matching costs amortized constant work per scanned character regardless of how many values are registered, plus one budgeted confirmation per length where a long value's prefix appears; the matcher's memory, including at most 16 Ki runs of waiting confirmations per scanned text, is bounded across every credential and private value, and text that needs more work or runs is withheld. Redaction walks results iteratively and copies only what changes, so an oversized or deeply nested downstream result can no longer exhaust the heap or stack before paging, and one bounded work budget per redaction withholds only the affected field.
+
 ## 0.29.0 — 2026-10-08
 
 Connecta 0.29.0 adopts the MCP 2026-07-28 request envelope, binding client capabilities and client identity to each request. `server/discover` advertises the extensions served and private cache hints. Connecta-owned access, pool and deadline refusals return JSON-RPC errors; admission codes move to `-33001` and `-33002`. Modern clients must preserve the protocol-version and declared argument headers. `tools.listChanged` is false, and `subscriptions/listen` remains unsupported.
