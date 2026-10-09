@@ -682,6 +682,11 @@ descriptions, free-form names, reminder notes and arbitrary nested objects.
 `metadataOmitted: true` reports withheld or unavailable metadata.
 This assumes an honest server and protects against careless human entry in free
 text. A malicious server encoding values into valid identifiers is out of scope.
+Known, accepted residual risk: environment slugs are returned as required
+routing identifiers. Infisical's UI derives them from environment names by
+default, so secrets entered in those names can appear in returned slugs.
+Operators must not put secrets in environment names or slugs. Secrets placed in
+identifiers or key names are out of scope.
 Write input schemas mark secret values, secret comments and folder descriptions
 as `writeOnly`, so recovery argument echoes omit them without changing dispatch.
 Submitted values never join the request's sent-credential set, preserving later
