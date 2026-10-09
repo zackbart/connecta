@@ -13,9 +13,10 @@ hosted MCP the canonical owner of each capability it covered, and the REST
 surface refuses those writes before transport (`mcp-ownership.ts`,
 `API_OWNED_MCP_TOOLS`, Cloudflare's API-token mutation refusals, recorded in
 each provider's `reconciliation.md`). That removed duplicate tools, but it made
-REST an incomplete complement: a key-only Cloudflare or Vercel deployment cannot
-change a DNS record or delete a deployment without also running the hosted MCP
-under OAuth. Stripe sends static keys to `mcp.stripe.com`, which stops accepting
+REST an incomplete complement: a Cloudflare API-token deployment cannot change
+a DNS record, and a token-only Vercel deployment cannot create a deployment
+(`POST /v13/deployments` is refused as owned by hosted `create_deployment`),
+without also running the hosted MCP under OAuth. Stripe sends static keys to `mcp.stripe.com`, which stops accepting
 `sk_` keys and untagged `rk_` keys on 2026-10-31, so key deployments lose Stripe
 entirely on that date.
 
@@ -26,7 +27,9 @@ composition ([0002](./0002-github-app-scopes.md)) is unchanged.
 ## Decision
 
 The auth mode selects the implementation, and each implementation is complete
-on its own.
+on its own. This section describes the planned design. The #801 provider PRs
+implement it one provider at a time; until each lands, that provider's current
+behavior, including `surface` and the ownership refusals, is unchanged.
 
 - `auth: { type: "oauth" }` uses the vendor's hosted MCP through `remoteMcp()`,
   with OAuth only. No bearer key, literal header or operator credential is sent
@@ -78,12 +81,13 @@ Cloudflare OAuth connector gets only `search`; read-only deployments that need
 API reads use a token. Vercel's hosted MCP admits only reviewed and approved AI
 clients, an operational gate outside Connecta's control.
 
-Committed indexes and request-side details grow provider bundles. Vercel and
-Stripe fit their current caps; Cloudflare's spec is large enough that its PR
+Committed indexes and request-side details grow provider bundles. From measured
+gzip sizes, Vercel and Stripe are expected to fit their current caps, which
+their implementation PRs verify; Cloudflare's spec is large enough that its PR
 shrinks details first and then states a cap raise. `surface`, Cloudflare
 `authentication`, Stripe literal `headers` and `credential` auth on MCP, every
-ownership refusal and the reconciliation artifacts are removed: breaking
-changes recorded in each provider PR's fragment and the migration guide. Stripe
+ownership refusal and the reconciliation artifacts will be removed by those
+PRs as breaking changes, recorded in each PR's fragment and the migration guide. Stripe
 lands first because of the cutoff, with the shared module, nested `variants()`
 discriminant and `"dual"` provider kind; Vercel and Cloudflare follow, and
 Notion converts last, after which the shared reconciliation fixture is deleted.
