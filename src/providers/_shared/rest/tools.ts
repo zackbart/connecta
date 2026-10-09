@@ -177,7 +177,6 @@ async function successBody(
   vendor: RestVendor,
   response: Parameters<Parameters<GuardedTransport>[2]>[0],
   ctx: ConnectorContext,
-  repeatable: boolean,
 ): Promise<unknown> {
   const type = (response.headers.get("content-type") ?? "").toLowerCase();
   try {
@@ -221,19 +220,41 @@ async function successBody(
     }
     // The request was sent and the status arrived; only the body was lost. Told
     // in Connecta's words (the runtime's can quote the transport), never raw.
-    // Repeating it is safe only for a read or a write that carried an
-    // idempotency key; any other write's outcome is unknown and must not be
-    // advertised as retryable (INV-9).
-    if (repeatable) {
-      throw unavailableCallError(error, undefined, `${vendor.title} answered, but its response could not be read.`);
-    }
-    throw new ConnectorCallError(
-      "connector_call_failed",
-      `${vendor.title} answered, but its response could not be read, so whether the write took effect is unknown. ` +
-        "It carried no idempotency key; check the target before repeating it.",
-      { retryable: false },
-    );
+    // `callRest` decides whether that is safe to repeat.
+    throw unavailableCallError(error, undefined, `${vendor.title} answered, but its response could not be read.`);
   }
+}
+
+/**
+ * Network failures that prove nothing was sent: no connection was ever
+ * established, so the vendor cannot have acted. Anything else after dispatch
+ * (a reset, a 5xx, a lost body) may follow a write that landed.
+ */
+const NEVER_CONNECTED: ReadonlySet<string> = new Set([
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EAI_FAIL",
+  "EHOSTUNREACH",
+]);
+
+/**
+ * A request that is not safe to repeat (a write without an idempotency key)
+ * must never be advertised as retryable after it may have reached the vendor
+ * (INV-9). Definite answers pass through: refusals and 4xx verdicts, a failure
+ * proven to precede any connection, and timeouts, which the invocation layer
+ * already reports as `write_outcome_unknown`.
+ */
+function unknownOutcome(vendor: RestVendor, error: unknown): unknown {
+  if (!(error instanceof ConnectorCallError) || error.code !== "unavailable" || !error.retryable) return error;
+  const code = error.details?.code;
+  if (code === "timeout" || (code !== undefined && NEVER_CONNECTED.has(code))) return error;
+  return new ConnectorCallError(
+    "connector_call_failed",
+    `${error.message} Whether the write took effect at ${vendor.title} is unknown: it carried no idempotency key, ` +
+      "so check the target before repeating it.",
+    { retryable: false },
+  );
 }
 
 /**
@@ -270,14 +291,18 @@ export async function callRest(
         ? { body: framing.body }
         : {}),
   };
-  return await send(request, ctx, async (response) => {
-    if (!response.ok) throw vendor.failure(response.status, response.headers, await failureBody(response));
-    // HEAD answers with headers alone; they are its data.
-    const data =
-      call.method === "HEAD" ? headerData(response.headers) : await successBody(vendor, response, ctx, repeatable);
-    const page = vendor.page?.(data, call);
-    return { status: response.status, data, ...(page ? { page } : {}) };
-  });
+  try {
+    return await send(request, ctx, async (response) => {
+      if (!response.ok) throw vendor.failure(response.status, response.headers, await failureBody(response));
+      // HEAD answers with headers alone; they are its data.
+      const data = call.method === "HEAD" ? headerData(response.headers) : await successBody(vendor, response, ctx);
+      const page = vendor.page?.(data, call);
+      return { status: response.status, data, ...(page ? { page } : {}) };
+    });
+  } catch (error) {
+    // The whole transport call: connect/send failures, 5xx, and a lost body alike.
+    throw repeatable ? error : unknownOutcome(vendor, error);
+  }
 }
 
 /** A HEAD response's headers as data, without cookies. */
@@ -568,7 +593,12 @@ export function restTools(vendor: RestVendor): ApiTool[] {
       ),
       outputSchema: envelope(
         vendor.idempotencyHeader
-          ? { idempotencyKey: { type: "string", description: "The key sent; reuse it to retry this exact write." } }
+          ? {
+              idempotencyKey: {
+                type: "string",
+                description: "The key sent; reuse it, with the same arguments, while the vendor retains it.",
+              },
+            }
           : {},
       ),
       handler: async (args: Record<string, unknown>, ctx: ConnectorContext) => {
@@ -604,7 +634,8 @@ export function restTools(vendor: RestVendor): ApiTool[] {
           if (!key || given || !(error instanceof ConnectorCallError)) throw error;
           throw new ConnectorCallError(
             error.code,
-            `${error.message} ${header}: ${key} (reuse it to retry this exact write without repeating it).`,
+            `${error.message} ${header}: ${key}. Reusing it with the exact original arguments retries this write ` +
+              "without repeating it only while the vendor retains the key; after that, look the object up before retrying.",
             {
               retryable: error.retryable,
               ...(error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {}),

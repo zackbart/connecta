@@ -681,4 +681,39 @@ describe("OpenAPI operation index generation", () => {
     }
     expect(() => index.check(create, {}, { priority: 5 })).toThrow("admit none");
   });
+
+  it("distributes outer enum constraints into union branches and drops branches they empty", async () => {
+    const { buildOperationIndex } = await generator();
+    const { OperationIndex } = await import("../src/providers/_shared/rest/operation-index.js");
+    const body = (field: unknown) => ({
+      openapi: "3.0.0",
+      info: { version: "1" },
+      paths: {
+        "/records": {
+          post: {
+            operationId: "create",
+            requestBody: {
+              content: {
+                "application/json": { schema: { type: "object", properties: { kind: field } } },
+              },
+            },
+          },
+        },
+      },
+    });
+    const narrowed = new OperationIndex(
+      buildOperationIndex(body({ allOf: [{ enum: ["A"] }, { anyOf: [{ enum: ["A"] }, { enum: ["B"] }] }] }), source),
+      { vendor: "cf", title: "Cloudflare" },
+    );
+    const create = narrowed.resolve("POST", "/records").op;
+    expect(() => narrowed.check(create, {}, { kind: "A" })).not.toThrow();
+    expect(() => narrowed.check(create, {}, { kind: "B" })).toThrow("/body/kind (enum: one of A)");
+    const emptied = new OperationIndex(
+      buildOperationIndex(body({ allOf: [{ enum: ["C"] }, { anyOf: [{ enum: ["A"] }, { enum: ["B"] }] }] }), source),
+      { vendor: "cf", title: "Cloudflare" },
+    );
+    for (const kind of ["A", "B", "C"]) {
+      expect(() => emptied.check(emptied.resolve("POST", "/records").op, {}, { kind })).toThrow("admit none");
+    }
+  });
 });

@@ -927,8 +927,10 @@ A write that times out after dispatch returns `write_outcome_unknown` with
 `retryable: false` and an agent-only `uncertainCall: { address, args?, argsOmitted?, argsRedacted?, recovery? }`.
 No write is automatically replayed. `recovery` carries facts the connector
 recorded before dispatch (`src/call-recovery.ts`), such as the `idempotencyKey`
-a REST connector generated; a deliberate retry that reuses it cannot repeat the
-write. When a connector recorded such facts, any other dispatched write whose
+a REST connector generated; a deliberate retry that reuses it with the exact
+original arguments cannot repeat the write while the vendor retains the key
+(Stripe may prune v1 keys after 24 hours). After that, look the object up before
+retrying. When a connector recorded such facts, any other dispatched write whose
 outcome is unknown (a lost response body, a 5xx) also carries `uncertainCall`
 with them under its own code, and trusted-program write accounting keeps it. `args` may be partial reconciliation context
 with `argsRedacted: true`. A withheld echo or arguments over the 512-byte budget

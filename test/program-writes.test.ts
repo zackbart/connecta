@@ -196,6 +196,52 @@ describe("a trusted program's Stripe refund whose reply is lost", () => {
   });
 });
 
+describe("a trusted program's Stripe refund that meets an object lock", () => {
+  it("INV-9: counts a lock_timeout as a failed write, not an unknown outcome", async () => {
+    const storage = memoryStorage();
+    const credentialVault = new CredentialVault(storage, btoa("k".repeat(32)));
+    await credentialVault.set("billing", "rk_test_51abc", "test");
+    const registry = makeRegistry(
+      [stripe("billing", { purpose: "Refunds", auth: { type: "apiKey" }, mode: "sandbox" })],
+      {
+        storage,
+        credentialVault,
+      },
+    );
+    let sent = 0;
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      sent += 1;
+      return Response.json({ error: { type: "invalid_request_error", code: "lock_timeout" } }, { status: 429 });
+    }) as typeof fetch;
+    try {
+      const programs = new Map<string, Program>();
+      const code = "async () => lockedRefund";
+      programs.set(code, async (connecta) => {
+        try {
+          await connecta.call!("billing.stripe_api_write", {
+            method: "POST",
+            path: "/v1/refunds",
+            body: { charge: "ch_1" },
+          });
+        } catch (error) {
+          return { caught: (error as { code?: string }).code };
+        }
+        return "sent";
+      });
+      const execute = createExecuteTool(registry, BASE, scriptedExecutor(programs), silentLogger, undefined, {
+        trust: "trusted",
+      });
+      const result = await execute({ code });
+      expect(sent).toBe(1);
+      expect(JSON.stringify(result)).not.toContain("write_outcome_unknown");
+      expect(JSON.stringify(result)).toContain("conflict");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});
+
 describe("a program's write", () => {
   for (const { name, schema, args, echo } of privateArgumentCases)
     it(`INV-5 INV-6 INV-9: caught writes retain safe ${name} echoes and original-argument guidance`, async () => {

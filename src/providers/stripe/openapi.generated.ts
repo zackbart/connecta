@@ -3,7 +3,7 @@
 // revision: v2555
 // digest: sha256:9119e72c7ff8ad142e94f7efa9cf49d8e6eec69df3592e17e8fba15099726ed7
 // options: {"depth":2,"descriptions":0,"maxEnum":50}
-// format: 3
+// format: 4
 import type { OpenApiData } from "../_shared/rest/operation-index.js";
 
 export const openapi: OpenApiData = {

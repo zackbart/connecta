@@ -498,7 +498,8 @@ describe("stripe() over an API key", () => {
     expect(key).toMatch(/^[0-9a-f-]{36}$/);
     expect(error.code).toBe("unavailable");
     expect(error.message).toContain("Request req_1.");
-    expect(error.message).toContain(`Idempotency-Key: ${key} (reuse it to retry this exact write`);
+    expect(error.message).toContain(`Idempotency-Key: ${key}. Reusing it with the exact original arguments`);
+    expect(error.message).toContain("only while the vendor retains the key; after that, look the object up");
     // A caller's own key is already the caller's; the failure is passed through.
     const own = await refusal(
       connector.callTool(
@@ -545,7 +546,7 @@ describe("stripe() over an API key", () => {
   it("maps Stripe failures by the caller's next move", async () => {
     const connector = stripe("billing", SANDBOX);
     const cases: Array<[number, Record<string, string>, Record<string, string>, string, string]> = [
-      [429, { code: "lock_timeout", message: "Locked." }, {}, "unavailable", "lock conflict, not a rate limit"],
+      [429, { code: "lock_timeout", message: "Locked." }, {}, "conflict", "Stripe did not process this one"],
       [
         429,
         { code: "rate_limit", message: "Too many." },
@@ -571,6 +572,20 @@ describe("stripe() over an API key", () => {
       expect(failure.code, `${status} ${error.code}`).toBe(code);
       expect(failure.message).toContain(message);
     }
+  });
+
+  it("INV-9: reports a lock_timeout as a retryable conflict Stripe did not process, not an unknown outcome", async () => {
+    const connector = stripe("billing", SANDBOX);
+    respond = () => Response.json({ error: { type: "invalid_request_error", code: "lock_timeout" } }, { status: 429 });
+    const error = await refusal(
+      connector.callTool(
+        "stripe_api_write",
+        { method: "POST", path: "/v1/refunds", body: { charge: "ch_1" } },
+        keyed(),
+      ),
+    );
+    expect(error).toMatchObject({ code: "conflict", retryable: true, retryAfterMs: 1_000 });
+    expect(sent).toHaveLength(1);
   });
 
   it("extracts v1, search, and v2 cursors and projects select paths through lists", async () => {

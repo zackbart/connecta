@@ -128,4 +128,9 @@ The Stripe conversion (#801, PR #803) settled facts the plan above left open:
   persists a Calculation and Stripe bills each call.
 - A generated idempotency key reaches the caller on every ambiguous route: in
   the result, in a failure's message, and, when the invocation deadline
-  interrupts the call, as `uncertainCall.recovery.idempotencyKey`.
+  interrupts the call, as `uncertainCall.recovery.idempotencyKey`. Reusing it
+  is safe only with the exact original arguments and within the vendor's key
+  retention (Stripe may prune v1 keys after 24 hours).
+- A write sent without an idempotency key is never advertised as retryable
+  once it may have reached the vendor (a reset after connecting, a 5xx, a
+  lost body); only failures proven to precede any connection stay retryable.

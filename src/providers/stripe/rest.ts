@@ -165,10 +165,12 @@ function stripeFailure(status: number, headers: Headers, body: unknown): Connect
     `${text(error["message"]) ?? `Stripe returned HTTP ${status}.`}${requestId ? ` Request ${requestId}.` : ""}`;
   if (status === 429) {
     if (code === "lock_timeout") {
+      // Stripe did not process the request (docs.stripe.com/rate-limits#object-lock-timeouts):
+      // a definite conflict, safe to retry once the other request finishes.
       return new ConnectorCallError(
-        "unavailable",
-        `${detail} Another request is changing this object; retry after it finishes. This is a lock conflict, not a rate limit.`,
-        { retryAfterMs: 1_000 },
+        "conflict",
+        `${detail} Another request is changing this object and Stripe did not process this one; retry after it finishes. This is a lock conflict, not a rate limit.`,
+        { retryable: true, retryAfterMs: 1_000 },
       );
     }
     const reason = headers.get("stripe-rate-limited-reason");

@@ -438,7 +438,7 @@ describe("restTools()", () => {
     );
     expect(write.code).toBe("connector_call_failed");
     expect(write.retryable).toBe(false);
-    expect(write.message).toContain("whether the write took effect is unknown");
+    expect(write.message).toContain("Whether the write took effect at Acme is unknown");
     expect(write.message).not.toContain("socket hang up");
     // A read is safe to repeat.
     const read = await refusal(plain.callTool("acme_api_read", { path: "/v1/widgets/w_1" }, ctx()));
@@ -460,6 +460,86 @@ describe("restTools()", () => {
     );
     expect(deleted).toMatchObject({ code: "connector_call_failed", retryable: false });
     expect(sent.map((request) => request.headers.has("idempotency-key"))).toEqual([false, false, false, true, false]);
+  });
+
+  it("INV-9: treats a reset or 5xx on a write without a key as an unknown outcome, but not a failure before connecting", async () => {
+    const failing = (code: string) =>
+      (async (input: RequestInfo | URL, init?: RequestInit) => {
+        sent.push({
+          url: new URL(String(input)),
+          method: init?.method ?? "GET",
+          headers: new Headers(init?.headers),
+          body: undefined,
+        });
+        throw Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error(code), { code }) });
+      }) as typeof fetch;
+    const five = (status: number, body: unknown) =>
+      status >= 500
+        ? new ConnectorCallError("unavailable", `Acme ${status}.`)
+        : new ConnectorCallError("invalid_args", `Acme ${status}: ${JSON.stringify(body)}`);
+    const plain = connector({ failure: five });
+    const keyed = connector({ failure: five, idempotencyHeader: "Idempotency-Key" });
+    const write = { method: "POST", path: "/v1/widgets", body: { name: "a" } };
+    // A reset after connecting: the write may have landed.
+    globalThis.fetch = failing("ECONNRESET");
+    expect(await refusal(plain.callTool("acme_api_write", write, ctx()))).toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+    });
+    expect(await refusal(keyed.callTool("acme_api_write", write, ctx()))).toMatchObject({
+      code: "unavailable",
+      retryable: true,
+    });
+    expect(await refusal(plain.callTool("acme_api_read", { path: "/v1/widgets" }, ctx()))).toMatchObject({
+      code: "unavailable",
+      retryable: true,
+    });
+    // Never connected: nothing was sent, so repeating is safe.
+    globalThis.fetch = failing("ECONNREFUSED");
+    expect(await refusal(plain.callTool("acme_api_write", write, ctx()))).toMatchObject({
+      code: "unavailable",
+      retryable: true,
+    });
+    // A 5xx after dispatch is ambiguous; a 4xx is a definite refusal.
+    globalThis.fetch = (async () => Response.json({ message: "down" }, { status: 503 })) as typeof fetch;
+    const unavailable = await refusal(plain.callTool("acme_api_write", write, ctx()));
+    expect(unavailable).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(unavailable.message).toContain("Whether the write took effect at Acme is unknown");
+    globalThis.fetch = (async () => Response.json({ message: "bad" }, { status: 400 })) as typeof fetch;
+    expect(await refusal(plain.callTool("acme_api_write", write, ctx()))).toMatchObject({ code: "invalid_args" });
+  });
+
+  it("INV-9: never advertises a keyless write's 503 as retryable through call_destructive_tool", async () => {
+    globalThis.fetch = (async () => Response.json({ message: "down" }, { status: 503 })) as typeof fetch;
+    const app = createTestConnecta({
+      connectors: [
+        apiConnector("acme", {
+          tools: restTools(
+            vendor({
+              failure: (status) =>
+                status >= 500
+                  ? new ConnectorCallError("unavailable", `Acme ${status}.`)
+                  : new ConnectorCallError("invalid_args", `Acme ${status}.`),
+            }),
+          ),
+        }),
+      ],
+      logger: silentLogger,
+    });
+    try {
+      const rpc = await readJsonRpc(
+        await mcpRpc(app, "tools/call", {
+          name: "call_destructive_tool",
+          arguments: {
+            address: "acme.acme_api_write",
+            args: { method: "POST", path: "/v1/widgets", body: { name: "a" } },
+          },
+        }),
+      );
+      expect(rpc.result.structuredContent.error).toMatchObject({ code: "connector_call_failed", retryable: false });
+    } finally {
+      await app.close();
+    }
   });
 
   it("INV-9: carries recorded recovery on a direct write whose reply was lost, not only on a deadline", async () => {
@@ -531,6 +611,7 @@ describe("restTools()", () => {
       expect(key).toMatch(/^[0-9a-f-]{36}$/);
       expect(error.uncertainCall).toMatchObject({ address: "acme.acme_api_write", recovery: { idempotencyKey: key } });
       expect(error.retry).toContain("uncertainCall.recovery.idempotencyKey");
+      expect(error.retry).toContain("while the vendor retains that key");
     } finally {
       await app.close();
     }

@@ -385,7 +385,7 @@ export class InvocationService {
         if (!target) return error;
         const recovery = recoveryFor(dispatchContext);
         const recoveryRetry = recovery?.["idempotencyKey"]
-          ? " A deliberate retry with uncertainCall.recovery.idempotencyKey cannot repeat the write."
+          ? " A deliberate retry with uncertainCall.recovery.idempotencyKey and the exact original arguments cannot repeat the write while the vendor retains that key (Stripe keeps v1 keys at least 24 hours); after that, look the object up before retrying."
           : "";
         if (isTimeoutFailure(error) && dispatchedToConnector && resolved?.definition.classification === "write") {
           const echoed = argumentEcho;

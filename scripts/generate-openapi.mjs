@@ -28,7 +28,7 @@ import { pathToFileURL } from "node:url";
 import { discoverProviders, repositoryRoot } from "./providers.mjs";
 
 /** Bump when the generated shape changes, so every output reads as stale. */
-export const OPENAPI_FORMAT = 3;
+export const OPENAPI_FORMAT = 4;
 const SOURCE = "openapi.source.json";
 const OUTPUT = "openapi.generated.ts";
 const VERBS = ["get", "head", "post", "put", "patch", "delete"];
@@ -189,11 +189,23 @@ function normalized(document, schema, depth = 0) {
     node = allOf.reduce((merged, branch) => mergeSchemas(merged, normalized(document, branch, depth + 1)), base);
   }
   const union = Array.isArray(node.anyOf) ? node.anyOf : Array.isArray(node.oneOf) ? node.oneOf : undefined;
-  if (union && (node.properties || node.required || node.additionalProperties !== undefined)) {
+  const constrained =
+    node.properties ||
+    node.required ||
+    node.additionalProperties !== undefined ||
+    node.enum !== undefined ||
+    node.const !== undefined ||
+    node.type !== undefined;
+  if (union && constrained) {
     const { anyOf: _anyOf, oneOf: _oneOf, description, ...base } = node;
+    // Every outer constraint holds in every branch; a branch it empties
+    // (a disjoint enum or type) is no alternative at all.
+    const branches = union
+      .map((branch) => mergeSchemas(base, normalized(document, branch, depth + 1)))
+      .filter((branch) => !(Array.isArray(branch.enum) && branch.enum.length === 0));
     node = {
       ...(description !== undefined ? { description } : {}),
-      anyOf: union.map((branch) => mergeSchemas(base, normalized(document, branch, depth + 1))),
+      ...(branches.length > 0 ? { anyOf: branches } : { enum: [] }),
     };
   }
   return node;
