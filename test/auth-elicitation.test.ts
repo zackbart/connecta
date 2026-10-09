@@ -152,6 +152,7 @@ function setup(
 describe("auth URL elicitation", () => {
   it("INV-4 INV-5 INV-6: asks capable hosts through a fixed same-origin URL elicitation", async () => {
     const flow = setup();
+    const sign = vi.spyOn(flow.vault, "signOAuthHandoff");
     const result = (await flow.rpc()).result;
     expect(result).toMatchObject({
       resultType: "input_required",
@@ -173,6 +174,7 @@ describe("auth URL elicitation", () => {
     expect(JSON.stringify(result)).not.toContain("DOWNSTREAM_PRIVATE_TEXT");
     expect(JSON.stringify(result)).not.toContain("downstream.test");
     expect(flow.connector.startAuth).not.toHaveBeenCalled();
+    expect(sign).toHaveBeenCalledOnce();
   });
 
   it("INV-4: keeps the auth envelope and connect link for incapable and legacy hosts", async () => {

@@ -748,6 +748,8 @@ An OAuth call failure uses this envelope:
   "connector": "service",
   "operation": "service.read",
   "recovery": "oauth",
+  "authorizationUrl": "https://connecta.example/connect/service?h=...",
+  "instructions": "Copy authorizationUrl exactly as returned and sign in as the initiating user.",
   "nextAction": {
     "tool": "authorize_connector",
     "arguments": { "connector": "service" },
@@ -757,9 +759,13 @@ An OAuth call failure uses this envelope:
 }
 ```
 
-`recovery` is `oauth`, `operator_config`, or `unavailable`. Call
-`authorize_connector` only after this error. It returns the class-specific
-handoff:
+`recovery` is `oauth`, `operator_config`, or `unavailable`. On hosts without URL
+elicitation, auth errors carry the same handoff fields that `authorize_connector`
+returns for the admitted user, connector, and pool. Direct calls include them in
+`error`; program `connecta.call` failures include them in `error.data` and
+`error.details`. Search `catalogErrors` and scoped `queryAnalysis.catalogError`,
+and describe `errorDetails`, carry them too. When an auth error includes a
+handoff, give it to the user or operator. The class-specific handoff is:
 
 - `oauth`: an `authorizationUrl` to connecta's `/connect/<connector>?h=...` route
   and instructions to sign in as the initiating user;
@@ -771,6 +777,13 @@ The class follows what the connector declares, not how it was authored: a
 `remoteMcp()` connection using `auth: { type: "credential" }` declares a slot
 and no OAuth flow, so it uses `operator_config` when both vault and UI are
 configured. Without either it returns `unavailable`, never a dead UI link.
+
+Errors mint at most one handoff per connector per direct call or program run,
+including concurrent and repeated call or catalog errors. The request reuses the
+same signed URL; a later request can issue a fresh one. Issuing a link is
+stateless and starts no consent. Errors never request `force`; use an explicit
+`authorize_connector` call for a restart or a fresh expired link. URL-elicitation
+hosts keep the existing prompt and retry flow.
 
 The tool accepts no secret and starts no downstream consent. `force` applies
 only to OAuth and requests a restart when the verified browser opens the signed

@@ -82,7 +82,9 @@ export interface CatalogDescribeArgs {
   fullDescriptions?: boolean;
 }
 type GuideRequiredReason = "connector_required" | "approval_required" | "schema_truncated";
-interface CatalogFailureDetail {
+interface CatalogFailureDetail extends Partial<import("./errors.js").AuthorizationHandoff> {
+  nextAction?: CallErrorDetails["nextAction"];
+  retry?: string;
   code: string;
   message: string;
   retryable: boolean;
@@ -95,7 +97,6 @@ interface CatalogDescriptionFailureDetail extends CatalogFailureDetail {
 }
 interface CatalogSearchFailure extends CatalogFailureDetail {
   connector: string;
-  recovery?: CallErrorDetails["recovery"];
   nextAction?: Extract<
     NonNullable<CallErrorDetails["nextAction"]>,
     {

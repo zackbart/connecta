@@ -1,3 +1,4 @@
+import { enableAuthorizationHandoffs } from "./authorization-handoff.js";
 import {
   createRequestStateCodec,
   inputRequired,
@@ -268,6 +269,15 @@ export class AuthElicitation {
         return { structuredContent, content: [{ type: "text", text: JSON.stringify(structuredContent) }] };
       }
     }
+    const envelope = context.mcpReq.envelope as Record<string, unknown> | undefined;
+    const capabilities = envelope?.[CLIENT_CAPABILITIES_META_KEY];
+    const elicitation = object(capabilities) ? capabilities.elicitation : undefined;
+    const capable =
+      envelope?.[PROTOCOL_VERSION_META_KEY] === "2026-07-28" &&
+      object(elicitation) &&
+      Object.hasOwn(elicitation, "url") &&
+      object(elicitation.url);
+    enableAuthorizationHandoffs(this.options.requestScope, !capable);
     let result = await operation();
     const relayed = await this.downstream.finish(tool, args, context, result, previous);
     if (relayed !== result) return relayed;
@@ -309,21 +319,15 @@ export class AuthElicitation {
       !canManage(id)
     )
       return result;
-    const envelope = context.mcpReq.envelope as Record<string, unknown> | undefined;
-    const capabilities = envelope?.[CLIENT_CAPABILITIES_META_KEY];
-    const elicitation = object(capabilities) ? capabilities.elicitation : undefined;
-    const capable =
-      envelope?.[PROTOCOL_VERSION_META_KEY] === "2026-07-28" &&
-      object(elicitation) &&
-      Object.hasOwn(elicitation, "url") &&
-      object(elicitation.url);
-    if (blocked || !capable || !vault?.requestStateKey || !vault.seal || !vault.open) {
+    // Incapable hosts already received the shared explicit-authorization handoff.
+    if (!capable) return result;
+    if (blocked || !vault?.requestStateKey || !vault.seal || !vault.open) {
       if (!authFailure) return result;
       const structuredContent = {
         ...result.structuredContent,
         error: {
           ...(result.structuredContent?.error as Record<string, unknown>),
-          authorizationUrl: (await this.options.connectLink(id)).url,
+          authorizationUrl: error.authorizationUrl ?? (await this.options.connectLink(id)).url,
         },
       };
       return { ...result, structuredContent, content: [{ type: "text", text: JSON.stringify(structuredContent) }] };

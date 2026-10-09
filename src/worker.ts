@@ -174,7 +174,8 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
               defineProperties(error, {
                 code: { value: reply.error.code, enumerable: true },
                 retryable: { value: reply.error.retryable, enumerable: true },
-                details: { value: freeze(clone(reply.error.details)), enumerable: true }
+                details: { value: freeze(clone(reply.error.details)), enumerable: true },
+                data: { value: freeze(clone(reply.error.details)), enumerable: true }
               });
             }
             throw error;

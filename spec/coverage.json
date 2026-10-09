@@ -485,7 +485,7 @@
       "id": "elicitation",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation",
-      "notes": "Auth URL elicitation on capable 2026-07-28 hosts with identity-checked connect links and ordinary recovery fallback. Direct calls relay downstream form and URL elicitation only when the client declares that mode, with namespaced keys, validated bare responses, HTTPS URLs without known credentials, and agent-output redaction. Programs keep downstream elicitation unsupported; sampling and roots remain declined under #703. Auth writes still elicit only before invocation, independently of downstream continuations.",
+      "notes": "Auth URL elicitation on capable 2026-07-28 hosts with identity-checked connect links and ordinary recovery fallback. Incapable hosts receive the same signed OAuth or operator credential handoff as explicit authorization in direct, program, and catalog auth errors, reused once per connector per request without forcing reauthorization. Direct calls relay downstream form and URL elicitation only when the client declares that mode, with namespaced keys, validated bare responses, HTTPS URLs without known credentials, and agent-output redaction. Programs keep downstream elicitation unsupported; sampling and roots remain declined under #703. Auth writes still elicit only before invocation, independently of downstream continuations.",
       "issue": "https://github.com/zackbart/connecta/issues/707",
       "tests": [
         {
@@ -551,6 +551,18 @@
         {
           "file": "test/downstream-input.test.ts",
           "title": "INV-4 INV-10: composes request-bound elicitation modes with downstream Skills capabilities"
+        },
+        {
+          "file": "test/authorization-handoff.test.ts",
+          "title": "INV-4 INV-5 INV-10: direct auth errors carry an unforced handoff that completes OAuth"
+        },
+        {
+          "file": "test/authorization-handoff.test.ts",
+          "title": "INV-4 INV-7: repeated and concurrent program and catalog errors reuse one handoff per connector per run"
+        },
+        {
+          "file": "test/guest-api-contract-quickjs.node.test.ts",
+          "title": "INV-4 INV-5 INV-7: program error data carries a reusable handoff that completes OAuth"
         }
       ]
     },

@@ -518,17 +518,17 @@ clauses are [Emitted output](#emitted-output) (`M1`–`M10`).
 caught or uncaught. Host-call budget exhaustion ends the host run and blocks host
 access (`L4`); Workers guest computation may continue briefly until teardown (`X3`).
 
-| Channel                                                                   | Shape                                                       | Typed? |
-| ------------------------------------------------------------------------- | ----------------------------------------------------------- | ------ |
-| A caught Connecta host failure                                            | `Error` with `message`, `code`, `retryable`, and `details`  | yes    |
-| An uncaught **tool, resource or discovery** failure, as the model sees it | `{ error: { code, message, retryable, … } }` with `isError` | yes    |
-| Program or execution failure (`E5`, `E6`, a bridge bound in `L6`)         | `{ error: { code, message, retryable, details? } }`         | yes    |
+| Channel                                                                   | Shape                                                              | Typed? |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------ | ------ |
+| A caught Connecta host failure                                            | `Error` with `message`, `code`, `retryable`, `data`, and `details` | yes    |
+| An uncaught **tool, resource or discovery** failure, as the model sees it | `{ error: { code, message, retryable, … } }` with `isError`        | yes    |
+| Program or execution failure (`E5`, `E6`, a bridge bound in `L6`)         | `{ error: { code, message, retryable, details? } }`                | yes    |
 
 Both executor bridges rebuild typed host rejections as guest Errors and retain
 their identity in executor-owned state (`X11`). `message` stays human text, capped at 2,000
 JSON-serialized characters including quotes and an `…` marker when clipped.
-`code` and `retryable` are the stable branch fields; `details` carries the host
-classification and fits 3,700 serialized characters. Optional recovery metadata
+`code` and `retryable` are the stable branch fields; `data` and `details` carry the same host
+classification, which fits 3,700 serialized characters. Optional recovery metadata
 that would exceed that bound is omitted whole, preserving `code`, `message`,
 `retryable`, and `retryAfterMs`, because a clipped recovery address or argument
 describes a different call. This covers `call`, `read`, `search`, `describe`, `result`, `skill`, `emit`, and
@@ -537,6 +537,17 @@ parse error prose. An `unavailable` classification may add `details.host`, an
 HTTP(S) origin of at most 253 UTF-8 bytes, and `details.code`, a validated
 network errno, undici transport code, or `timeout` of at most 32 bytes; neither
 enters activity.
+
+On hosts without URL elicitation, `connecta.call` auth failures carry `recovery`,
+`nextAction`, and the handoff in `error.data`, also exposed as `error.details`.
+An OAuth handoff includes `authorizationUrl` and `instructions`; operator
+credential recovery includes `operatorUrl`, declared credential fields, and
+instructions. `connecta.search` catalog errors and `connecta.describe`
+`errorDetails` carry the same fields. When an auth error includes a handoff, give
+it to the user or operator. One program run reuses one handoff per connector,
+including concurrent call and catalog errors. Errors never request a forced
+restart. Use `authorize_connector` for an explicit connection or a fresh link.
+URL-elicitation hosts retain their existing flow.
 
 **E2.** The taxonomy: `retryable` is what connecta reports, `Y3` what a program
 may do. A provider maps each downstream failure to the code that tells the

@@ -117,9 +117,9 @@ Returns have no page handle. Reduce reads; check write results and targets. writ
 Recovery args may be partial (argsRedacted) or absent (argsOmitted). Reconcile
 before retrying with the original args or repeating a program that sent writes.
 Non-retryable errors need repair.
-Follow typed auth recovery: host_auth_required needs host connection repair;
-downstream_oauth_required or auth_required carries an authorize_connector
-handoff; provider_permission_denied needs the resource owner to grant access.
+host_auth_required needs host connection repair; provider_permission_denied needs
+resource-owner access. Auth failures carry the handoff in error.data. When an auth
+error includes a handoff, give it to the user or operator.
 
 ## Output
 
