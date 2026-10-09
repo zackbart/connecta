@@ -10,6 +10,89 @@ import type { Connector, Executor, KVStorage } from "../src/types.js";
 
 const BASE = "https://program-results.test";
 
+export async function checkProgramResultSurrogates(executor: Executor): Promise<void> {
+  const text = "x".repeat(23_999) + "\ud800!\udc00" + "x".repeat(276_001);
+  for (const route of ["program", "direct"] as const) {
+    let writes = 0;
+    const registry = new Registry(
+      [
+        {
+          id: "surrogates",
+          kind: route === "direct" ? "mcp" : "api",
+          async listTools() {
+            return ["write", "json"].map((name) => ({ name, annotations: { readOnlyHint: name !== "write" } }));
+          },
+          async callTool(name) {
+            if (name === "write") writes++;
+            if (route === "direct")
+              return { content: [{ type: "text", text: name === "json" ? JSON.stringify({ text }) : text }] };
+            return name === "json" ? { text } : text;
+          },
+        },
+      ],
+      { storage: memoryStorage(), logger: silentLogger },
+    );
+    const sink = activitySink();
+    if (route === "program") {
+      const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, sink.activity, {
+        trust: "trusted",
+        maxHostCalls: 2,
+      })({
+        code: `async () => {
+          const notice = await connecta.call("surrogates.write");
+          const json = await connecta.call("surrogates.json");
+          const expected = "x".repeat(23999) + "\\ud800!\\udc00" + "x".repeat(276001);
+          return { notice, exact: json.data.text === expected,
+            units: [json.data.text.charCodeAt(23999), json.data.text.charCodeAt(24001)] };
+        }`,
+      });
+      expect(outcome.isError, JSON.stringify(outcome.structuredContent)).toBeUndefined();
+      expect(outcome.structuredContent).toMatchObject({
+        result: { exact: true, units: [0xd800, 0xdc00], notice: { format: "paged", valueFormat: "text" } },
+        hostCalls: { attempted: 2, admitted: 2, succeeded: 2, failed: 0 },
+      });
+      const notice = (outcome.structuredContent!.result as { notice: Record<string, unknown> }).notice;
+      expect(notice).not.toHaveProperty("resultId");
+      expect(notice).not.toHaveProperty("data");
+      expect(notice.hint).toContain("text contains unpaired surrogates and can't be paged as text");
+      expect(notice.hint).toContain("This write already ran");
+    } else {
+      const direct = createMetaTools(registry, BASE, { trust: "trusted", activity: sink.activity });
+      const call = await direct.callDestructiveTool({ address: "surrogates.write" });
+      expect(call.isError).toBeUndefined();
+      const [line, preview] = call.content[0]!.text.split("\n");
+      const notice = JSON.parse(line!);
+      expect(notice).not.toHaveProperty("resultId");
+      expect(notice).not.toHaveProperty("nextAction");
+      expect(notice.hint).toContain("text contains unpaired surrogates and can't be paged as text");
+      expect(notice.hint).toContain("This write already ran");
+      expect(preview).toBe("");
+      const json = await direct.callTool({ address: "surrogates.json" });
+      const id = JSON.parse(json.content[0]!.text.split("\n")[0]!).resultId as string;
+      expect(id).toMatch(/^[0-9a-f-]{36}$/);
+      for (const mode of ["page", "offset"] as const) {
+        let joined = "",
+          offset = 0;
+        for (let page = 0; ; page++) {
+          const result = await direct.readResult({ id, ...(mode === "page" ? { page } : { offset }) });
+          expect(result.isError).toBeUndefined();
+          const value = result.structuredContent!;
+          joined += value.text;
+          if (!value.hasMore) break;
+          offset = value.nextOffset as number;
+        }
+        const restored = JSON.parse(joined).text as string;
+        expect(restored).toBe(text);
+        expect([restored.charCodeAt(23_999), restored.charCodeAt(24_001)]).toEqual([0xd800, 0xdc00]);
+      }
+    }
+    expect(writes).toBe(1);
+    const records = sink.events.filter((event) => event.classification === "write");
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ outcome: "success", attempts: 1 });
+  }
+}
+
 export async function checkProgramResultBom(executor: Executor): Promise<void> {
   // The text starts with U+FEFF; both payloads also put one at byte 24,000,
   // the start of the second page under the default connector cap.

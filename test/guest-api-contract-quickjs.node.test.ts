@@ -10,6 +10,7 @@ import {
   checkLargeProgramWrite,
   checkProgramPagingFailure,
   checkProgramResultBom,
+  checkProgramResultSurrogates,
 } from "./program-result-cases.js";
 import {
   CAPABILITY_PROBE_CODE,
@@ -43,6 +44,9 @@ afterAll(async () => {
 });
 
 describe("guest API contract (QuickJS executor)", () => {
+  it("INV-9: lone surrogates refuse raw-text paging without replaying writes and round-trip as JSON", async () => {
+    await checkProgramResultSurrogates(executor);
+  });
   it("INV-9: program reconstruction and direct pages preserve leading and page-boundary U+FEFF after one write", async () => {
     await checkProgramResultBom(executor);
   });

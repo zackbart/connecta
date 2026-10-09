@@ -236,6 +236,20 @@ interface ResultStash {
 /** Opens a write's notice, ahead of any paging instruction. */
 const WRITE_ALREADY_RAN = "This write already ran: do not call it again to see its result.";
 
+/** UTF-8 cannot represent lone UTF-16 surrogates without changing them. */
+function isWellFormedText(text: string): boolean {
+  const native = (String.prototype as { isWellFormed?: (this: string) => boolean }).isWellFormed;
+  if (native) return native.call(text);
+  for (let at = 0; at < text.length; at++) {
+    const unit = text.charCodeAt(at);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = text.charCodeAt(++at);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) return false;
+  }
+  return true;
+}
+
 /**
  * How the inline preview relates to what `connecta.result` pages: a byte prefix of
  * it, so paging continues where the preview stops; a readable rendering of a
@@ -284,8 +298,17 @@ function pagingHint(results: ResultStash, totalBytes: number, preview: PreviewSh
  * documentation/meta-tools.md#result-representation). It is one compact JSON
  * line with no raw newline, so the preview starts after the first `\n`.
  */
-async function stashResult(bytes: Uint8Array, results: ResultStash, preview: PreviewShape) {
+async function stashResult(bytes: Uint8Array, results: ResultStash, preview: PreviewShape, rawText?: string) {
   const totalBytes = bytes.length;
+  // Direct pages promise offsets into the original UTF-8 text. JSON-escaping
+  // raw text would change that contract; never stash the encoder's replacement
+  // characters as if they were the completed call's output.
+  if (rawText !== undefined && !isWellFormedText(rawText))
+    return {
+      truncated: true,
+      totalBytes,
+      hint: `${results.write ? WRITE_ALREADY_RAN + " " : ""}Paging is unavailable: text contains unpaired surrogates and can't be paged as text.`,
+    };
   if (!results.pageable)
     return {
       truncated: true,
@@ -381,6 +404,7 @@ export async function pageProgramResult(
         ),
     },
     { kind: "none" },
+    format === "text" ? text : undefined,
   );
   return {
     format: "paged",
@@ -430,6 +454,10 @@ async function guardEncoded(
       result: { content: [{ type: "text", text }] },
       truncated: false,
     };
+  }
+  if (!isWellFormedText(text)) {
+    const notice = await stashResult(bytes, results, { kind: "none" }, text);
+    return { result: noticeFirst(notice, ""), truncated: true };
   }
   const head = headOf(bytes, cap);
   const notice = await stashResult(bytes, results, {

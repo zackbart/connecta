@@ -870,6 +870,11 @@ handle. Pass the handle or its `resultId` to `connecta.result` and reduce the
 pages before returning them. Automatic transfers spend no additional host-call
 budget; explicit paging does. This policy is shared by QuickJS, Worker and custom
 executors that run provider preludes.
+Oversized raw text containing unpaired UTF-16 surrogates returns a handle without
+`resultId`, with a notice that it cannot be paged as text. This preserves the
+UTF-8 byte-offset contract without silently replacing code units. The completed
+call stays successful, including write accounting; JSON-wrapped strings still
+round-trip losslessly.
 
 Stashes retain their existing bindings, 15-minute expiry, per-connector page
 caps and aggregate capacity charges on memory, SQLite and D1. Capacity exhaustion
