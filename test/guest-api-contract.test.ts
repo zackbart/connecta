@@ -31,6 +31,7 @@ import {
   CAPABILITY_PROBE_CODE,
   caseConfig,
   checkHostFailureArrays,
+  checkNativeSnapshots,
   checkQueuedWriteAtExhaustion,
   checkSharedPreludes,
   checkStashAuthority,
@@ -437,6 +438,9 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
     expect(outcome.structuredContent).not.toHaveProperty("result");
     expect(outcome.structuredContent).not.toHaveProperty("emittedDiscarded");
     expect(lateReads).toBe(0);
+  });
+  it("INV-3 INV-7: native snapshots prevent mutation budget bypass and cross-run leakage", async () => {
+    await checkNativeSnapshots(required(workerExecutor));
   });
   for (const custom of [false, true]) {
     it(`INV-9: ${custom ? "customExecutor: " : ""}lone surrogates refuse raw-text paging without replaying writes and round-trip as JSON`, async () => {

@@ -16,8 +16,133 @@ import { memoryStorage } from "../src/storage/memory.js";
 import { readJsonRpc } from "./fixtures/http.js";
 import type { Connector, Executor, ToolDef } from "../src/types.js";
 import { makeRegistry, required, silentLogger } from "./helpers.js";
+import { deferred } from "./fixtures/misc.js";
 
 export const CONTRACT_BASE = "https://connecta.contract";
+
+/** Connector-owned blocks must not change retained output or its budget charges. */
+export async function checkNativeSnapshots(executor: Executor): Promise<void> {
+  const image = { type: "image", data: "aGkA", mimeType: "image/png" };
+  const paused = deferred<void>();
+  const resume = deferred<void>();
+  const link = {
+    type: "resource_link",
+    uri: "asset://A",
+    name: "cached",
+    annotations: { audience: ["user"], priority: 0.5 },
+    _meta: { nested: { owner: "A" } },
+  };
+  const resource = {
+    type: "resource",
+    resource: { uri: "asset://A", text: "A", _meta: { nested: { owner: "A" } } },
+  };
+  const cached: Connector = {
+    id: "cached",
+    kind: "mcp",
+    async listTools() {
+      return [readOnly("image"), readOnly("resources")];
+    },
+    async callTool(name, args) {
+      const options = args as { bytes?: number; owner?: string };
+      if (name === "image") {
+        image.data = "aGkA".repeat((options.bytes ?? 4) / 4);
+        return { content: [image] };
+      }
+      const owner = options.owner ?? "A";
+      link.uri = resource.resource.uri = `asset://${owner}`;
+      link.annotations.audience[0] = owner === "A" ? "user" : "assistant";
+      link._meta.nested.owner = resource.resource._meta.nested.owner = owner;
+      resource.resource.text = owner;
+      return { content: [link, resource] };
+    },
+  };
+  const control: Connector = {
+    id: "control",
+    kind: "api",
+    async listTools() {
+      return [readOnly("pause")];
+    },
+    async callTool() {
+      paused.resolve();
+      await resume.promise;
+      return true;
+    },
+  };
+  const registry = makeRegistry([cached, control]);
+  const images = createExecuteTool(registry, CONTRACT_BASE, executor, silentLogger, undefined, {
+    maxEmittedBytes: 100,
+  });
+  // Exercise mutation both before and after acceptance, with the reviewer's
+  // 1.1 MB result still subject to the ordinary inline/paging limit.
+  for (const before of [true, false]) {
+    const out = await images({
+      diagnostics: true,
+      code: `async () => {
+      const first = await connecta.call("cached.image", { bytes: 4 });
+      ${before ? "" : "await connecta.emit(first);"}
+      const huge = await connecta.call("cached.image", { bytes: 1100000 });
+      ${before ? "await connecta.emit(first);" : ""}
+      let refused;
+      try { await connecta.emit(first.content[0]); } catch (e) { refused = e.code; }
+      return { firstBytes: first.content[0].data.length, hugeFormat: huge.format, refused };
+    }`,
+    });
+    expect(out.isError).toBeFalsy();
+    expect(out.content.slice(1)).toEqual([{ type: "image", data: "aGkA", mimeType: "image/png" }]);
+    expect(out.structuredContent).toMatchObject({
+      result: { firstBytes: 4, hugeFormat: "paged", refused: "budget_exceeded" },
+      diagnostics: { emitted: { count: 1, bytes: 53 } },
+    });
+  }
+  const expectedA = structuredClone([link, resource]);
+  const expectedB = structuredClone(expectedA);
+  expectedB[0] = {
+    ...structuredClone(link),
+    uri: "asset://B",
+    annotations: { audience: ["assistant"], priority: 0.5 },
+    _meta: { nested: { owner: "B" } },
+  };
+  expectedB[1] = { type: "resource", resource: { uri: "asset://B", text: "B", _meta: { nested: { owner: "B" } } } };
+  const bytes = (blocks: unknown[]) =>
+    blocks.reduce<number>((sum, block) => sum + new TextEncoder().encode(JSON.stringify(block)).length, 0);
+  const resources = createExecuteTool(registry, CONTRACT_BASE, executor, silentLogger, undefined, {
+    maxEmittedBytes: bytes(expectedB),
+  });
+  const runA = resources({
+    diagnostics: true,
+    code: `async () => {
+    const first = await connecta.call("cached.resources", { owner: "A" });
+    await connecta.call("control.pause");
+    await connecta.emit(first);
+    return { uri: first.content[0].uri, text: first.content[1].resource.text, owner: first.content[0]._meta.nested.owner };
+  }`,
+  });
+  let outB: ToolResult;
+  try {
+    await paused.promise;
+    outB = await resources({
+      diagnostics: true,
+      code: `async () => {
+      const second = await connecta.call("cached.resources", { owner: "B" });
+      await connecta.emit(second);
+      return second.content[0].uri;
+    }`,
+    });
+  } finally {
+    resume.resolve();
+  }
+  const outA = await runA;
+  for (const [out, expected] of [
+    [outA, expectedA],
+    [outB, expectedB],
+  ] as const) {
+    expect(out.isError).toBeFalsy();
+    expect(out.content.slice(1)).toEqual(expected);
+    expect(out.structuredContent).toMatchObject({ diagnostics: { emitted: { count: 2, bytes: bytes(expected) } } });
+  }
+  expect(outA.structuredContent).toMatchObject({ result: { uri: "asset://A", text: "A", owner: "A" } });
+  expect(outB.structuredContent).toMatchObject({ result: "asset://B" });
+}
 
 /** Every executor pages through the admitted route and rechecks live authority. */
 export async function checkStashAuthority(executor: Executor): Promise<void> {

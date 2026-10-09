@@ -721,8 +721,11 @@ The earlier alternatives are in [decision history](https://github.com/zackbart/c
 resources, resource links, annotations and `_meta`. `connecta.emit(block)` also
 accepts individual entries of that result's `content`. The trusted guest
 prelude maps these objects to opaque request-local references; the host checks
-those references and emits retained originals. Copies and guest-authored
-blocks keep the strict validation below. No program can mint a native URI.
+those references and emits owned deep snapshots taken before result paging.
+Connector mutations after retention cannot change guest output, accepted blocks,
+or their byte and text charges, including nested resource fields and metadata.
+Copies and guest-authored blocks keep the strict validation below. No program
+can mint a native URI.
 
 Guest-authored `connecta.emit(block)` accepts exactly one block: `{ type: "text",
 text }` or `{ type: "image" | "audio", data /* base64 */, mimeType }`, every

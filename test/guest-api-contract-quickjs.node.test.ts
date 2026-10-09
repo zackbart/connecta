@@ -16,6 +16,7 @@ import {
   CAPABILITY_PROBE_CODE,
   caseConfig,
   checkHostFailureArrays,
+  checkNativeSnapshots,
   checkQueuedWriteAtExhaustion,
   checkSharedPreludes,
   checkStashAuthority,
@@ -44,6 +45,14 @@ afterAll(async () => {
 });
 
 describe("guest API contract (QuickJS executor)", () => {
+  it("INV-3 INV-7: native snapshots prevent mutation budget bypass and cross-run leakage", async () => {
+    const concurrent = quickJsExecutor({ concurrency: 2, cpuTimeMs: 5_000 });
+    try {
+      await checkNativeSnapshots(concurrent);
+    } finally {
+      await concurrent.close?.();
+    }
+  });
   it("INV-9: lone surrogates refuse raw-text paging without replaying writes and round-trip as JSON", async () => {
     await checkProgramResultSurrogates(executor);
   });

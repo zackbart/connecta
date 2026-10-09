@@ -539,21 +539,26 @@ function sandboxProvider(
       ) {
         return transportResult(await page(value, format));
       }
+      // Own the envelope before paging can yield. Connectors may reuse and
+      // mutate their blocks; guest output, references and emit accounting must
+      // all use the same deep snapshot, including resource fields and metadata.
+      const snapshot = structuredClone(raw) as { content: GuestNativeBlock[] } & Record<string, unknown>;
       // Inline native envelopes already contain the unwrapped data. Send one
       // copy and tell the prelude which field preserves the existing data shape.
       const dataKey =
-        "toolResult" in (raw as object)
+        "toolResult" in snapshot
           ? "toolResult"
-          : (raw as { structuredContent?: unknown }).structuredContent !== undefined
+          : snapshot.structuredContent !== undefined
             ? "structuredContent"
             : undefined;
       // A separate structured value keeps its original paging contract. Check
       // it first so an oversized value does not allocate a second native stash.
-      const result = dataKey === undefined ? undefined : await page(value, format, PROGRAM_RESULT_WIRE_BYTES - 1024);
+      const result =
+        dataKey === undefined ? undefined : await page(snapshot[dataKey], format, PROGRAM_RESULT_WIRE_BYTES - 1024);
       if (result?.format === "paged" && (!result.resultId || result.totalBytes > PROGRAM_RESULT_INLINE_BYTES)) {
         return result;
       }
-      const native = await page(raw, "json");
+      const native = await page(snapshot, "json");
       let valueResult: unknown;
       if (native.format === "paged") {
         // Raw rich results reuse this same stash and transfer. Only structured
@@ -564,7 +569,7 @@ function sandboxProvider(
         }
       }
       const ref = crypto.randomUUID();
-      nativeResults.set(ref, content);
+      nativeResults.set(ref, snapshot.content);
       return {
         ...(valueResult ? { value: valueResult } : {}),
         native: { ref, value: transportResult(native), dataKey },
