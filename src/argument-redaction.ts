@@ -179,25 +179,28 @@ function apply(value: unknown, plan: Plan, mark: (value: unknown) => void, depth
 /** Output redaction protects the union of private fields across alternatives.
  * Other sensitivity rules and unresolved-schema handling follow echo redaction. */
 export function visitPrivateCallArguments(args: unknown, schema: JsonSchema, visit: (value: unknown) => void): void {
+  // Public-only schemas need no sensitivity compilation, regardless of size.
+  // Iterative traversal visits each object once, including definitions and cycles.
+  const pending: unknown[] = [schema];
+  const seen = new Set<object>();
+  let privateSchema = false;
+  while (pending.length) {
+    const value = pending.pop();
+    if (value === null || typeof value !== "object" || seen.has(value)) continue;
+    seen.add(value);
+    if (Object.hasOwn(value, "writeOnly") && (value as Record<string, unknown>)["writeOnly"] === true) {
+      privateSchema = true;
+      break;
+    }
+    for (const entry of Object.values(value)) pending.push(entry);
+  }
+  if (!privateSchema) return;
   try {
     apply(args, compile(schema, true), visit);
   } catch {
-    // Unsupported public schemas retain their existing downstream behavior.
     // When a private annotation exists but its location cannot be resolved,
     // treat every submitted value as private, just as the echo is withheld.
-    const pending: unknown[] = [schema];
-    const seen = new Set<object>();
-    while (pending.length && seen.size <= MAX_SCHEMAS) {
-      const value = pending.pop();
-      if (value === null || typeof value !== "object" || seen.has(value)) continue;
-      seen.add(value);
-      if (Object.hasOwn(value, "writeOnly") && (value as Record<string, unknown>)["writeOnly"] !== false) {
-        visit(args);
-        return;
-      }
-      pending.push(...Object.values(value));
-    }
-    if (pending.length) visit(args);
+    visit(args);
   }
 }
 

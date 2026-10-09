@@ -2,4 +2,4 @@
 type: security
 ---
 
-Redact submitted writeOnly argument values and their encoded forms from downstream results and errors before agent output or result paging storage. Withhold downstream result detail and error prose for short or non-string private values while preserving typed outcomes and subsequent submitted arguments.
+Redact submitted writeOnly argument values, private object property names, and their encoded forms before agent output or result paging storage. Exempt empty strings; protect short non-empty values by redacting exact structured string matches and withholding matching prose while preserving identifiers and approval state. Bound literal matching and escaped scanning so large private values retain safe success metadata without matcher exceptions. Keep public-only schemas on their existing path.

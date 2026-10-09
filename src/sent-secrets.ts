@@ -15,6 +15,13 @@ const sensitiveName = /key|token|secret|password|auth|signature|session/i;
 const explicitSecretName = /secret|password/i;
 // Short credentials can match protocol fields or legitimate configuration.
 const MIN_SECRET_LENGTH = 8;
+const MAX_FORM_BYTES = 1_048_576;
+const MAX_SCAN_BYTES = 16_777_216;
+// Existing credential-only reads include multi-MiB documents and skill files.
+const MAX_CREDENTIAL_SCAN_BYTES = 1_073_741_824;
+const MAX_ESCAPED_FORM_LENGTH = 2048;
+type ScanBudget = { remaining: number };
+type Match = { start: number; end: number };
 
 type SecretWarning = { code: "short_secret_not_redacted" };
 
@@ -32,24 +39,100 @@ export function shortSecretWarning(): (value: string | undefined, logger: Logger
   };
 }
 
-function literal(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** Same-length normalization keeps match spans in the original source. */
+function wireText(value: string): string {
+  return value.replace(/%[0-9a-f]{2}/gi, (escape) => escape.toUpperCase());
 }
 
-/** Percent escapes are case insensitive; the credential's other bytes are not. */
-function wirePattern(value: string): string {
-  return value
-    .split(/(%[0-9a-f]{2})/i)
-    .map((part) =>
-      /^%[0-9a-f]{2}$/i.test(part)
-        ? `%${part
-            .slice(1)
-            .split("")
-            .map((char) => (/[a-f]/i.test(char) ? `[${char.toUpperCase()}${char.toLowerCase()}]` : char))
-            .join("")}`
-        : literal(part),
-    )
-    .join("");
+/** Literal scans never compile submitted values as regular expressions.
+ * Charge UTF-16 bytes for every scan and cap both work and match storage. */
+function findMatches(
+  source: string,
+  forms: Iterable<string>,
+  budget: ScanBudget,
+  ignoreCase = false,
+  protectPlaceholders = true,
+): Match[] | undefined {
+  budget.remaining -= source.length * 2;
+  if (budget.remaining < 0) return undefined;
+  const view = wireText(ignoreCase ? source.toLowerCase() : source);
+  const matches: Match[] = [];
+  const protectedSpans: Match[] = [];
+  if (protectPlaceholders)
+    for (let at = source.indexOf(REDACTED); at !== -1; at = source.indexOf(REDACTED, at + REDACTED.length)) {
+      budget.remaining -= 16;
+      if (budget.remaining < 0) return undefined;
+      protectedSpans.push({ start: at, end: at + REDACTED.length });
+    }
+  for (const form of forms) {
+    if (form.length > source.length) continue;
+    budget.remaining -= 2 * (source.length + form.length);
+    if (budget.remaining < 0) return undefined;
+    const needle = ignoreCase ? wireText(form.toLowerCase()) : form;
+    let protectedIndex = 0;
+    for (let at = view.indexOf(needle); at !== -1; at = view.indexOf(needle, at + needle.length)) {
+      budget.remaining -= 16;
+      if (budget.remaining < 0) return undefined;
+      const end = at + needle.length;
+      while (protectedSpans[protectedIndex] && protectedSpans[protectedIndex]!.end <= at) protectedIndex++;
+      if (protectedSpans[protectedIndex] && protectedSpans[protectedIndex]!.start < end) continue;
+      matches.push({ start: at, end });
+    }
+  }
+  return matches;
+}
+
+function replaceMatches(source: string, matches: Match[]): string {
+  matches.sort((a, b) => a.start - b.start || b.end - a.end);
+  const output: string[] = [];
+  let cursor = 0;
+  for (let i = 0; i < matches.length; i++) {
+    const match = matches[i]!;
+    let end = match.end;
+    while (matches[i + 1] && matches[i + 1]!.start <= end) end = Math.max(end, matches[++i]!.end);
+    output.push(source.slice(cursor, match.start), REDACTED);
+    cursor = end;
+  }
+  return output.length ? output.join("") + source.slice(cursor) : source;
+}
+
+/** Private arguments must not rewrite Connecta/MCP framing into invalid
+ * tags or lose a typed outcome. Payload children retain exact-leaf matching. */
+function protocolField(item: object, key: string): "key" | "tag" | undefined {
+  if (item instanceof Error && ["name", "message", "stack", "cause", "code"].includes(key))
+    return key === "name" || key === "code" ? "tag" : "key";
+  if (
+    "type" in item &&
+    ["text", "image", "audio", "resource", "resource_link"].includes(String(item.type)) &&
+    ["type", "text", "data", "mimeType", "resource", "uri", "name", "description", "annotations"].includes(key)
+  )
+    return key === "type" ? "tag" : "key";
+  if (
+    "content" in item &&
+    Array.isArray(item.content) &&
+    ["content", "structuredContent", "isError", "_meta", "resultType"].includes(key)
+  )
+    return key === "resultType" ? "tag" : "key";
+  if (
+    "data" in item &&
+    "format" in item &&
+    (item.format === "json" || item.format === "text") &&
+    ["data", "format"].includes(key)
+  )
+    return key === "format" ? "tag" : "key";
+  if ("ok" in item && typeof item.ok === "boolean" && ["ok", "data", "error", "format"].includes(key))
+    return key === "format" ? "tag" : "key";
+  if (
+    "code" in item &&
+    "retryable" in item &&
+    typeof item.retryable === "boolean" &&
+    ["code", "message", "retryable", "retryAfterMs", "cause", "nextAction", "uncertainCall"].includes(key)
+  )
+    return key === "code" ? "tag" : "key";
+  if ("result" in item && "logs" in item && ["result", "logs", "error", "calls", "durationMs", "budget"].includes(key))
+    return "key";
+  if (key === "dev.connecta/format" && key in item) return "tag";
+  return undefined;
 }
 
 const jsonEscape = /\\(?:u[0-9a-fA-F]{4}|["\\/bfnrt])/g;
@@ -72,42 +155,86 @@ function base64(value: string): string {
 
 export class SentSecrets {
   private readonly values = new Set<string>();
+  private readonly shortValues = new Set<string>();
   private readonly credentialValues = new Set<string>();
   private credentialView: SentSecrets | undefined;
-  private matcher: RegExp | undefined;
+  private formBytes = 0;
+  private privateArguments = false;
+  private unmatchedLength = Infinity;
+  private credentialUnmatchedLength = Infinity;
   private unicode = false;
   private readonly recipients = new Set<SentSecrets>();
 
-  private form(value: string, argument = false): void {
+  private limited(length: number, argument: boolean): void {
+    this.privateArguments ||= argument;
+    if (length >= this.unmatchedLength && (argument || length >= this.credentialUnmatchedLength)) return;
+    this.unmatchedLength = Math.min(this.unmatchedLength, length);
+    if (!argument) {
+      this.credentialUnmatchedLength = Math.min(this.credentialUnmatchedLength, length);
+      this.credentialView = undefined;
+    }
+    for (const recipient of this.recipients) recipient.limited(length, argument);
+  }
+
+  private form(value: string, argument = false, short = false): void {
+    this.privateArguments ||= argument;
+    value = wireText(value);
+    const values = short ? this.shortValues : this.values;
     const promoted = !argument && !this.credentialValues.has(value);
+    if (!values.has(value)) {
+      const bytes = encoder.encode(value).byteLength;
+      if (this.formBytes + bytes > MAX_FORM_BYTES) {
+        this.limited(value.length, argument);
+        return;
+      }
+      this.formBytes += bytes;
+    }
     if (promoted) {
       this.credentialValues.add(value);
       this.credentialView = undefined;
     }
-    if (this.values.has(value) && !promoted) return;
-    this.values.add(value);
-    this.matcher = undefined;
-    this.unicode ||= [...value].some((char) => char.charCodeAt(0) > 127);
-    for (const recipient of this.recipients) recipient.form(value, argument);
+    if (values.has(value) && !promoted) return;
+    values.add(value);
+    if (!this.unicode)
+      for (const char of value) {
+        if (char.charCodeAt(0) > 127) {
+          this.unicode = true;
+          break;
+        }
+      }
+    for (const recipient of this.recipients) recipient.form(value, argument, short);
   }
 
   /** The request receives existing and future secrets from every context. */
   include(source: SentSecrets): void {
     if (source === this) return;
     source.recipients.add(this);
+    this.privateArguments ||= source.privateArguments;
     for (const value of source.values) this.form(value, !source.credentialValues.has(value));
+    for (const value of source.shortValues) this.form(value, true, true);
+    if (source.unmatchedLength !== Infinity) this.limited(source.unmatchedLength, true);
+    if (source.credentialUnmatchedLength !== Infinity) this.limited(source.credentialUnmatchedLength, false);
   }
 
   add(value: string, argument = false): void {
-    if (value.length < MIN_SECRET_LENGTH) return;
+    if (!value || (!argument && value.length < MIN_SECRET_LENGTH)) return;
+    if (value.length > MAX_FORM_BYTES) {
+      this.limited(value.length, argument);
+      return;
+    }
+    const short = argument && value.length < MIN_SECRET_LENGTH;
     for (const form of [value, `Bearer ${value}`, `token ${value}`]) {
-      this.form(form, argument);
-      this.form(encodeURIComponent(form), argument);
-      this.form(encodeURI(form), argument);
-      this.form(new URLSearchParams({ value: form }).toString().slice(6), argument);
+      this.form(form, argument, short);
+      try {
+        this.form(encodeURIComponent(form), argument, short);
+        this.form(encodeURI(form), argument, short);
+      } catch {
+        // Invalid Unicode cannot escape as a URI; no encoder diagnostics leave this boundary.
+      }
+      this.form(new URLSearchParams({ value: form }).toString().slice(6), argument, short);
       const encoded = base64(form);
-      this.form(encoded, argument);
-      this.form(encoded.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""), argument);
+      this.form(encoded, argument, short);
+      this.form(encoded.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""), argument, short);
     }
   }
 
@@ -116,11 +243,11 @@ export class SentSecrets {
     this.add(value);
   }
 
-  /** Private arguments share credential encodings. Short or non-string leaves
-   * require withholding this call's downstream detail, never protocol replacement. */
-  arguments(args: unknown, schema: JsonSchema | undefined): boolean {
-    if (!schema) return false;
+  /** Short non-empty strings protect exact leaves and prose. Empty strings cannot leak.
+   * Uncollectable or non-string private data still withholds the whole result. */
+  arguments(args: unknown, schema: JsonSchema | undefined): { withholdDetail: boolean; withholdResult: boolean } {
     let withhold = false;
+    let short = false;
     let visited = 0;
     const active = new Set<object>();
     const collect = (value: unknown, depth = 0): void => {
@@ -129,39 +256,51 @@ export class SentSecrets {
         return;
       }
       if (typeof value === "string") {
-        if (value.length < MIN_SECRET_LENGTH) withhold = true;
-        else this.add(value, true);
+        short ||= value.length > 0 && value.length < MIN_SECRET_LENGTH;
+        this.add(value, true);
       } else if (value !== null && typeof value === "object") {
         if (active.has(value)) {
           withhold = true;
           return;
         }
         active.add(value);
-        for (const entry of Object.values(value)) collect(entry, depth + 1);
+        for (const [key, entry] of Object.entries(value)) {
+          if (!Array.isArray(value)) collect(key, depth + 1);
+          collect(entry, depth + 1);
+        }
         active.delete(value);
       } else {
         // Literal matching cannot protect numeric/boolean structured output.
         withhold = true;
       }
     };
-    visitPrivateCallArguments(args, schema, collect);
-    return withhold;
+    if (schema) visitPrivateCallArguments(args, schema, collect);
+    return { withholdDetail: withhold || short, withholdResult: withhold };
   }
 
   /** Submitted private data is not an auth credential. Keep later program
    * arguments intact while retaining the existing credential exfiltration guard. */
   redactInput<T>(value: T): T {
-    if (this.credentialValues.size === this.values.size) return this.redact(value);
+    if (
+      this.credentialValues.size === this.values.size &&
+      !this.shortValues.size &&
+      this.unmatchedLength === this.credentialUnmatchedLength
+    )
+      return this.redact(value);
     if (!this.credentialView) {
       this.credentialView = new SentSecrets();
       for (const credential of this.credentialValues) this.credentialView.form(credential);
+      if (this.credentialUnmatchedLength !== Infinity)
+        this.credentialView.limited(this.credentialUnmatchedLength, false);
     }
     return this.credentialView.redact(value);
   }
 
   /** Structural fields must be refused, never repaired into different URLs. */
   contains(value: string, ignoreCase = false): boolean {
-    return [...this.values].some((secret) => new RegExp(wirePattern(secret), ignoreCase ? "i" : "").test(value));
+    if (value.length >= this.unmatchedLength) return true;
+    const matches = findMatches(value, this.values, { remaining: MAX_SCAN_BYTES }, ignoreCase, false);
+    return matches === undefined || matches.length > 0;
   }
 
   containsUrl(value: string): boolean {
@@ -222,18 +361,53 @@ export class SentSecrets {
   }
 
   text(value: string): string {
-    if (this.values.size === 0) return value;
+    if (this.values.size || this.shortValues.size || this.unmatchedLength !== Infinity) {
+      // Apply leaf rules before wire scans or budgets can withhold a whole
+      // structured result and erase safe success identifiers.
+      try {
+        const parsed: unknown = JSON.parse(value);
+        const redacted = typeof parsed === "string" ? this.leaf(parsed) : this.redact(parsed);
+        return redacted === parsed ? value : JSON.stringify(redacted);
+      } catch {
+        // Plain text is prose, not a structured metadata container.
+      }
+    }
+    return this.scanText(value, true);
+  }
+
+  private leaf(value: string): string {
+    if (this.shortValues.size) {
+      let decoded = value;
+      for (let pass = 0; pass < 3; pass++) {
+        if (this.shortValues.has(wireText(decoded))) return REDACTED;
+        if (!decoded.includes("\\")) break;
+        decoded = decoded.replace(jsonEscape, (escape) => {
+          const code = escape.slice(1);
+          return code.startsWith("u") ? String.fromCharCode(parseInt(code.slice(1), 16)) : shortEscape[code]!;
+        });
+      }
+    }
+    return this.scanText(value, false);
+  }
+
+  private scanText(value: string, prose: boolean): string {
+    if (!this.values.size && !(prose && this.shortValues.size) && this.unmatchedLength === Infinity) return value;
+    const limit = this.privateArguments ? MAX_SCAN_BYTES : MAX_CREDENTIAL_SCAN_BYTES;
+    if (value.length >= this.unmatchedLength || value.length * 2 > limit) return REDACTED;
     const original = value;
-    // Replace longer forms first so a raw token cannot leave its prefix or
-    // encoded suffix behind. Literal matches only: ordinary diagnostics stay.
-    this.matcher ??= new RegExp(
-      [literal(REDACTED), ...[...this.values].sort((a, b) => b.length - a.length).map(wirePattern)].join("|"),
-      "gu",
-    );
-    // A single pass never scans a newly inserted placeholder as credential
-    // text. Protect existing placeholders when another boundary runs too.
-    value = value.replace(this.matcher, REDACTED);
-    if (value.includes("\\")) value = this.escapedText(value);
+    const budget = { remaining: limit };
+    if (prose && this.shortValues.size) {
+      const short = findMatches(value, this.shortValues, budget);
+      if (short === undefined || short.length) return REDACTED;
+    }
+    const matches = findMatches(value, this.values, budget);
+    if (!matches) return REDACTED;
+    value = replaceMatches(value, matches);
+    if (value.includes("\\")) {
+      const escaped = this.escapedText(value, budget, prose);
+      if (escaped === undefined) return REDACTED;
+      value = escaped;
+    }
     // Ordinary skill bytes, including example credential header names, stay
     // exact. Header-line scrubbing belongs to an actual credential echo.
     if (value === original) return value;
@@ -254,14 +428,10 @@ export class SentSecrets {
     const forms = [...this.values].map((secret) =>
       Array.from(encoder.encode(secret), (byte) => String.fromCharCode(byte)).join(""),
     );
-    const pattern = new RegExp(
-      forms
-        .sort((a, b) => b.length - a.length)
-        .map(literal)
-        .join("|"),
-      "g",
-    );
-    let redacted = this.text(binary.replace(pattern, REDACTED));
+    const matches = findMatches(binary, forms.map(wireText), {
+      remaining: this.privateArguments ? MAX_SCAN_BYTES : MAX_CREDENTIAL_SCAN_BYTES,
+    });
+    let redacted = matches ? this.text(replaceMatches(binary, matches)) : REDACTED;
     if (this.unicode) {
       // atob returns byte-valued code units. A UTF-8 view also detects mixed
       // literal/JSON-escaped Unicode echoes. Never re-encode that view: an
@@ -280,11 +450,15 @@ export class SentSecrets {
   }
 
   /** Decode bounded windows with source spans, including twice-escaped JSON.
-   * Scratch space follows credential length, never the whole skill file. */
-  private escapedText(source: string): string {
+   * Both overlap and cumulative matching work are capped independently of inputs. */
+  private escapedText(source: string, budget: ScanBudget, prose: boolean): string | undefined {
     const step = 65_536;
+    const forms = prose ? [...this.values, ...this.shortValues] : [...this.values];
     let longest = 0;
-    for (const value of this.values) longest = Math.max(longest, value.length);
+    for (const value of forms) {
+      if (value.length > MAX_ESCAPED_FORM_LENGTH && value.length <= source.length) return undefined;
+      longest = Math.max(longest, Math.min(value.length, MAX_ESCAPED_FORM_LENGTH));
+    }
     // Each of two Unicode escape layers expands a code unit at most sixfold.
     const overlap = 36 * longest + 12;
     const output: string[] = [];
@@ -320,10 +494,12 @@ export class SentSecrets {
         view = parts.join("");
         starts = nextStarts.subarray(0, length);
         ends = nextEnds.subarray(0, length);
-        for (const match of view.matchAll(this.matcher!)) {
-          const start = starts[match.index]!;
-          if (match[0] !== REDACTED && start < step)
-            matches.push({ start, end: ends[match.index + match[0].length - 1]! });
+        const found = findMatches(view, forms, budget);
+        if (!found) return undefined;
+        for (const match of found) {
+          if (prose && this.shortValues.has(wireText(view.slice(match.start, match.end)))) return REDACTED;
+          const start = starts[match.start]!;
+          if (start < step) matches.push({ start, end: ends[match.end - 1]! });
         }
       }
       matches.sort((a, b) => a.start - b.start || b.end - a.end);
@@ -360,17 +536,17 @@ export class SentSecrets {
   }
 
   /** Copy, including non-enumerable Error fields; never retain a raw cause. */
-  redact<T>(value: T): T {
-    if (this.values.size === 0) return value;
+  redact<T>(value: T, prose = typeof value === "string", framed = true): T {
+    if (this.values.size === 0 && this.shortValues.size === 0 && this.unmatchedLength === Infinity) return value;
     const seen = new Map<object, object>();
     let changed = false;
-    const text = (value: string): string => {
-      const redacted = this.text(value);
+    const text = (value: string, prose = false, credential = false): string => {
+      const redacted = credential ? this.redactInput(value) : prose ? this.text(value) : this.leaf(value);
       changed ||= redacted !== value;
       return redacted;
     };
-    const visit = (item: unknown): unknown => {
-      if (typeof item === "string") return text(item);
+    const visit = (item: unknown, prose = false, framed = true): unknown => {
+      if (typeof item === "string") return text(item, prose);
       if (item === null || typeof item !== "object") return item;
       const prior = seen.get(item);
       if (prior) return prior;
@@ -384,7 +560,7 @@ export class SentSecrets {
         // V8 lazily renders Error.stack through an own accessor. Snapshot it
         // before rebuilding an error, so its diagnostic is redacted too.
         if (key === "stack" && item instanceof Error && !("value" in descriptor)) {
-          Object.defineProperty(copy, key, { value: visit(item.stack), configurable: true, writable: true });
+          Object.defineProperty(copy, key, { value: visit(item.stack, true), configurable: true, writable: true });
           continue;
         }
         // JSON and errors carry data properties. A downstream-authored getter
@@ -393,7 +569,12 @@ export class SentSecrets {
           changed = true;
           continue;
         }
-        const redactedKey = text(key);
+        const framing = Array.isArray(item)
+          ? "key"
+          : framed || item instanceof Error
+            ? protocolField(item, key)
+            : undefined;
+        const redactedKey = text(key, false, framing !== undefined);
         const blob = key === "blob" && "uri" in item && typeof descriptor.value === "string";
         const field =
           key === "content"
@@ -404,13 +585,26 @@ export class SentSecrets {
         changed ||= field !== descriptor.value;
         Object.defineProperty(copy, redactedKey, {
           ...descriptor,
-          value: blob ? field : visit(field),
+          value: blob
+            ? field
+            : framing === "tag" && typeof field === "string"
+              ? text(field, false, true)
+              : visit(
+                  field,
+                  (prose && Array.isArray(item)) ||
+                    (item instanceof Error && (key === "message" || key === "stack")) ||
+                    (key === "text" && "type" in item && item.type === "text") ||
+                    key === "logs",
+                  framed &&
+                    !["data", "result", "structuredContent"].includes(key) &&
+                    !(key === "toolResult" && ("content" in item || "resultType" in item)),
+                ),
           ...(redactedKey !== key ? { configurable: true } : {}),
         });
       }
       return item instanceof Error ? carryFailureFacts(item, copy) : copy;
     };
-    const copy = visit(value) as T;
+    const copy = visit(value, prose, framed) as T;
     return changed ? copy : value;
   }
 

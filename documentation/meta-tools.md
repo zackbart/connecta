@@ -870,13 +870,18 @@ Submitted `writeOnly` values also enter the call's sent-secret output redaction
 set. Downstream result and error text, including credential-supported encoded
 forms, are redacted before direct-call output, program returns/logs, or result
 stash persistence. Paging in a later request reads already-redacted bytes.
-For a private string shorter than eight characters, including an empty string,
-the entire downstream result is withheld as `[redacted]`; downstream error
-prose and diagnostic fields are withheld while typed classification, retry
-facts, and write outcome remain. Private non-string scalars and traversal
-limits use the same rule. These calls cannot relay downstream input requests.
-The rule is call-specific and does not replace short substrings in protocol
-fields or other calls. See [output redaction](./auth.md#what-a-servers-errors-may-say)
+Submitted property names inside private object subtrees receive the same protection.
+Empty private strings are exempt. For a non-empty private string shorter than
+eight characters, only structured string leaves and property names whose
+entire value equals the private value or a supported encoded form are redacted.
+Other structured metadata, including identifiers and approval state, remains.
+Plain-text results containing the short value are withheld as `[redacted]`;
+the call's downstream error prose and diagnostic fields are withheld while
+typed classification, retry facts, and write outcome remain. These calls
+cannot relay downstream input requests. Matching budgets withhold unsafe text
+while keeping typed success and safe identifiers. Private non-string scalars
+and argument traversal limits still withhold the whole result and error detail.
+See [output redaction](./auth.md#what-a-servers-errors-may-say)
 for the shared encoding and argument-filter contract.
 
 Activity records each of these refusals with the coarse `friction` class derived

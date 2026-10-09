@@ -331,6 +331,7 @@ export class InvocationService {
       const sentSecrets = sentSecretsForRequest(this.catalog.requestScope);
       context.sentSecrets?.include(sentSecrets);
       let withholdDownstreamDetail = false;
+      let withholdDownstreamResult = false;
       const classifyDownstreamError = (error: unknown): CallErrorDetails => {
         const details = classifyCallError(sentSecrets.redact(error));
         if (!withholdDownstreamDetail || !dispatchedToConnector) return details;
@@ -605,7 +606,9 @@ export class InvocationService {
           resolved = target;
           activityTarget = target;
           argumentEcho = echoedCallArgs(args ?? {}, target.definition.inputSchema);
-          withholdDownstreamDetail = sentSecrets.arguments(args ?? {}, target.definition.inputSchema);
+          const protection = sentSecrets.arguments(args ?? {}, target.definition.inputSchema);
+          withholdDownstreamDetail = protection.withholdDetail;
+          withholdDownstreamResult = protection.withholdResult;
 
           const write = target.definition.classification !== "read";
           const canonicalAddress = `${target.connector.id}.${target.toolName}`;
@@ -759,7 +762,7 @@ export class InvocationService {
                   return { inputRequired: true as const, value };
                 }
                 assertDownstreamOutputSafe(this.catalog.requestScope, reply);
-                const raw = withholdDownstreamDetail
+                const raw = withholdDownstreamResult
                   ? target.connector.kind === "mcp"
                     ? {
                         content: [{ type: "text", text: "[redacted]" }],
@@ -768,7 +771,7 @@ export class InvocationService {
                           : {}),
                       }
                     : "[redacted]"
-                  : sentSecrets.redact(reply);
+                  : sentSecrets.redact(reply, typeof reply === "string", target.connector.kind === "mcp");
                 // isError is checked here for BOTH result shapes so every adapter
                 // reports the same downstream-failure wording, and the throw lands
                 // inside the attempt where it feeds health.

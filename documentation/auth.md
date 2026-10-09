@@ -618,7 +618,9 @@ header lines are also withheld.
 
 Submitted values under JSON Schema `writeOnly: true` join this memory-only
 request set, including nested objects, arrays, and local references. They use
-the same literal and encoded matching as credentials. Output redaction protects
+the same literal and encoded matching as credentials. Submitted property names
+inside a private object subtree are private values too; array indices are not.
+Output redaction protects
 the union of private fields across `oneOf`/`anyOf` alternatives. If a schema declares
 private fields but its sensitivity cannot be resolved, all submitted values
 are treated as private. Public-only tools keep their existing behavior.
@@ -627,16 +629,30 @@ outputs/logs; they never enter stored catalogs or operator records. They also
 remain distinct from auth credentials in the program's outgoing-argument
 filter, so later calls receive the original submitted data.
 
-For a call with any private string shorter than eight characters, including
-an empty string, Connecta withholds the entire downstream result as
-`[redacted]` and withholds downstream error prose and diagnostic fields. Typed
-error classification, retryability, retry delay, and write-outcome accounting
-remain intact. Private non-string scalar values and argument traversal limits
-use the same rule. Downstream input requests are refused for these calls
-because their free text cannot be relayed safely. This rule applies only to
-that call; it never replaces short substrings in protocol fields or unrelated
-calls. Ordinary private strings of at least eight characters use literal
-replacement and keep surrounding diagnostics.
+Empty private strings are exempt because they contain nothing to leak. A
+non-empty private string shorter than eight characters redacts a structured
+string leaf or property name only when its entire value equals the submitted
+value or a supported encoded form. Other structured metadata stays usable,
+including identifiers and approval state. Plain-text results containing a
+short private value or encoded form are withheld as `[redacted]`, as are
+matching program logs and emitted text. The call's downstream error prose and
+diagnostic fields are withheld while typed error classification, retryability,
+retry delay, and write-outcome accounting remain intact. These calls refuse
+downstream input requests. Short private values never trigger substring
+replacement in structured metadata. Ordinary private strings of at least eight
+characters use literal replacement and keep surrounding diagnostics.
+
+Matching uses literal scans, with at most 1 MiB of registered encoded forms,
+16 MiB of scan work per string for private arguments measured in UTF-16 bytes, and an escaped-scan
+overlap capped at 73,740 code units. Escaped forms longer than 2,048 code units
+withhold any text that could contain them. A registration or matching limit
+withholds unsafe string fields without throwing matcher diagnostics or
+discarding typed success and safely retained identifiers. Structured wire text
+is filtered as structured data before paging. Credential-only scans allow
+1 GiB of work to retain the existing multi-MiB document and skill-file reads.
+Private non-string scalars and
+argument traversal limits still withhold the entire downstream result and
+error detail while preserving typed outcome facts.
 
 Only credentials of at least eight characters enter the redaction and structural
 matchers. Credentials shorter than 8 characters are not redacted from echoes;

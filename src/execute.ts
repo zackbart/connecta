@@ -1442,12 +1442,12 @@ export function createExecuteTool(
                 : executor.execute(wrapGuestProgram(program), [provider])
               ).then(
                 (outcome) => {
-                  executorLogs = sentSecrets.redact(outcome?.logs);
+                  executorLogs = sentSecrets.redact(outcome?.logs, true);
                   return sentSecrets.redact(outcome);
                 },
                 (err: unknown) => {
                   if (err !== null && typeof err === "object" && "logs" in err) {
-                    executorLogs = sentSecrets.redact(err.logs);
+                    executorLogs = sentSecrets.redact(err.logs, true);
                   }
                   throw sentSecrets.redact(err);
                 },

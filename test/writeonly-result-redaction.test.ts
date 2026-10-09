@@ -32,13 +32,19 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function fixture(kind: "mcp" | "api", privateSchema: JsonSchema = schema) {
+function fixture(
+  kind: "mcp" | "api",
+  privateSchema: JsonSchema = schema,
+  privateValue = (args: unknown) => (args as { config: { password: string } }).config.password,
+) {
   let error = false;
   let padding = "";
+  let boundary = false;
   const received: unknown[] = [];
   const echo = (args: unknown) => {
     received.push(structuredClone(args));
-    const value = (args as { config: { password: string } }).config.password;
+    const value = privateValue(args);
+    if (boundary) return "x".repeat(1016) + value + "x".repeat(8_000);
     return `Downstream quoted ${forms(value).join("; ")}${padding}`;
   };
   const tools = [true, false].map((readOnlyHint) => ({
@@ -71,7 +77,7 @@ function fixture(kind: "mcp" | "api", privateSchema: JsonSchema = schema) {
           result: {
             resultType: "complete",
             content: [{ type: "text", text: echo(args) }],
-            structuredContent: { echo: forms((args as { config: { password: string } }).config.password), padding },
+            ...(!boundary ? { structuredContent: { echo: forms(privateValue(args)), padding } } : {}),
             ...(error ? { isError: true } : {}),
           },
         });
@@ -91,7 +97,7 @@ function fixture(kind: "mcp" | "api", privateSchema: JsonSchema = schema) {
                   cause: new Error(text),
                   retryAfterMs: 100,
                 });
-              return { text, echo: forms((args as { config: { password: string } }).config.password), padding };
+              return boundary ? text : { text, echo: forms(privateValue(args)), padding };
             },
           })),
         });
@@ -103,6 +109,9 @@ function fixture(kind: "mcp" | "api", privateSchema: JsonSchema = schema) {
     },
     pad: () => {
       padding = "x".repeat(8_000);
+    },
+    boundary: () => {
+      boundary = true;
     },
   };
 }
@@ -124,7 +133,7 @@ it.each(["mcp", "api"] as const)(
         const check = (result: unknown) => {
           const text = JSON.stringify(result);
           if (value === SECRET) for (const form of forms(value)) expect(text).not.toContain(form);
-          else {
+          else if (failed || kind === "mcp") {
             expect(text).not.toContain("Downstream quoted");
             expect(text).not.toContain(btoa(value));
           }
@@ -253,7 +262,10 @@ it("INV-5: private argument collection follows references, array items and conse
     { properties: { config: { properties: { password: { writeOnly: false } } } } },
   ]) {
     const secrets = new SentSecrets();
-    expect(secrets.arguments({ config: { password: "q" } }, inputSchema)).toBe(false);
+    expect(secrets.arguments({ config: { password: "q" } }, inputSchema)).toEqual({
+      withholdDetail: false,
+      withholdResult: false,
+    });
     expect(secrets.text(SECRET)).toBe(SECRET);
   }
 });
@@ -317,3 +329,187 @@ it.each(["mcp", "api"] as const)(
     }
   },
 );
+
+it("INV-5: short private strings protect exact leaves and matching prose while empty strings preserve usable metadata", async () => {
+  let reply: unknown;
+  const connector = api("short", {
+    tools: [
+      {
+        name: "write",
+        description: "Write private data",
+        annotations: { readOnlyHint: false },
+        inputSchema: { type: "object", properties: { value: { type: "string", writeOnly: true } } },
+        handler: async () => reply,
+      },
+    ],
+  });
+  const meta = createMetaTools(makeRegistry([connector]), BASE);
+  const metadata = { id: "folder-prod-793", status: "ok", echo: "prod", forms: forms("prod"), label: "production" };
+  for (const value of ["text", "json", "data", "result", "structuredContent"]) {
+    reply = { id: "needed-id", echo: value };
+    for (const resultMode of ["mcp", "value"] as const) {
+      const result = await meta.callDestructiveTool({ address: "short.write", args: { value }, resultMode });
+      expect(result.content[0]!.type).toBe("text");
+      const parsed = JSON.parse(result.content[0]!.text);
+      expect(resultMode === "value" ? parsed.data : parsed).toEqual({ id: "needed-id", echo: "[redacted]" });
+      if (resultMode === "value") expect(parsed).toMatchObject({ ok: true, format: "json" });
+    }
+  }
+  for (const resultMode of ["mcp", "value"] as const) {
+    reply = metadata;
+    const result = await meta.callDestructiveTool({ address: "short.write", args: { value: "prod" }, resultMode });
+    expect(result.isError).toBeFalsy();
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(resultMode === "value" ? parsed.data : parsed).toEqual({
+      ...metadata,
+      echo: "[redacted]",
+      forms: forms("prod").map(() => "[redacted]"),
+    });
+  }
+  for (const text of ["quoted prod", `quoted ${btoa("prod")}`, `quoted ${forms("prod").at(-1)}`]) {
+    reply = text;
+    const result = await meta.callDestructiveTool({
+      address: "short.write",
+      args: { value: "prod" },
+      resultMode: "value",
+    });
+    expect(result.structuredContent).toMatchObject({ ok: true, data: "[redacted]", format: "text" });
+  }
+  reply = { id: "folder-prod-793", status: "ok", echo: "", text: "ordinary prose" };
+  const empty = await meta.callDestructiveTool({ address: "short.write", args: { value: "" }, resultMode: "value" });
+  expect(empty.structuredContent).toMatchObject({ ok: true, data: reply, format: "json" });
+});
+
+it("INV-5 INV-6: private object names and encodings stay redacted through direct calls, programs and split stash pages", async () => {
+  const key = "private-object-key/+793";
+  const args = { config: { [key]: "public-leaf-793" } };
+  for (const kind of ["mcp", "api"] as const) {
+    const source = fixture(
+      kind,
+      { type: "object", properties: { config: { type: "object", writeOnly: true } } },
+      () => key,
+    );
+    const storage = memoryStorage();
+    const registry = makeRegistry([source.connector], { storage, maxResultBytes: 1_024 });
+    const meta = createMetaTools(registry, BASE, { trust: "trusted" });
+    const check = (value: unknown) => {
+      for (const form of forms(key)) expect(JSON.stringify(value)).not.toContain(form);
+      expect(JSON.stringify(value)).toContain("[redacted]");
+    };
+    for (const failed of [false, true]) {
+      source.fail(failed);
+      for (const resultMode of ["mcp", "value"] as const) {
+        const result = await meta.callDestructiveTool({ address: "echo.write", args, resultMode });
+        expect(result.isError === true).toBe(failed);
+        check(result);
+      }
+    }
+    source.fail(false);
+    const run = createExecuteTool(
+      registry,
+      BASE,
+      {
+        execute: async (_code, providers) => {
+          const host = providers[0]!.fns;
+          const result = await host.call!("echo.write", args);
+          await host.emit!({ type: "text", text: forms(key).join("; ") });
+          return { result, logs: [forms(key).join("; ")] };
+        },
+      },
+      silentLogger,
+      undefined,
+      { trust: "trusted" },
+    );
+    check(await run({ code: "async () => {}" }));
+    source.boundary();
+    const result = await meta.callDestructiveTool({ address: "echo.write", args, resultMode: "value" });
+    const notice = result.structuredContent!.data as { resultId: string };
+    expect(notice.resultId).toBeTypeOf("string");
+    let body = "";
+    let offset = 0;
+    for (;;) {
+      const page = await createMetaTools(registry, BASE, { trust: "trusted" }).readResult({
+        id: notice.resultId,
+        offset,
+        maxBytes: 1_024,
+      });
+      const [header, ...text] = page.content[0]!.text.split("\n");
+      body += text.join("\n");
+      const paging = JSON.parse(header!) as { hasMore: boolean; nextOffset: number };
+      if (!paging.hasMore) break;
+      offset = paging.nextOffset;
+    }
+    expect(JSON.parse(body)).toBe("x".repeat(1016) + "[redacted]" + "x".repeat(8_000));
+    check(body);
+  }
+});
+
+it("INV-5 INV-9: large private strings and exhausted scan budgets preserve typed write success and safe identifiers", async () => {
+  const value = "s".repeat(32760) + "793/last";
+  const secrets = new SentSecrets();
+  secrets.arguments({ value }, { type: "object", properties: { value: { writeOnly: true } } });
+  expect(secrets.redact({ id: "needed-id", status: "ok", echo: value })).toEqual({
+    id: "needed-id",
+    status: "ok",
+    echo: "[redacted]",
+  });
+  const escaped = [...value].map((char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`).join("");
+  expect(JSON.parse(secrets.text(JSON.stringify({ id: "needed-id", status: "ok", echo: escaped })))).toEqual({
+    id: "needed-id",
+    status: "ok",
+    echo: "[redacted]",
+  });
+  const many = Array.from({ length: 20 }, (_, index) => `private-value-${index}-793`);
+  let dispatched = 0;
+  const connector = api("large", {
+    tools: [
+      {
+        name: "write",
+        description: "Write large private values",
+        annotations: { readOnlyHint: false },
+        inputSchema: { type: "object", properties: { values: { writeOnly: true } } },
+        handler: async () => {
+          dispatched++;
+          return { id: "needed-id", status: "ok", prose: "x".repeat(200_000) + value };
+        },
+      },
+    ],
+  });
+  const result = await createMetaTools(makeRegistry([connector]), BASE).callDestructiveTool({
+    address: "large.write",
+    args: { values: [value, ...many] },
+    resultMode: "value",
+  });
+  expect(dispatched).toBe(1);
+  expect(result.structuredContent).toMatchObject({
+    ok: true,
+    data: { id: "needed-id", status: "ok", prose: "[redacted]" },
+    format: "json",
+  });
+});
+
+it("INV-5: a public-only 2,100-field schema stays on the unchanged call path", async () => {
+  const expected = { id: "needed-id", status: "ok" };
+  const connector = api("public", {
+    tools: [
+      {
+        name: "read",
+        description: "Read public data",
+        annotations: { readOnlyHint: true },
+        inputSchema: {
+          type: "object",
+          properties: Object.fromEntries(
+            Array.from({ length: 2_100 }, (_, index) => [`field${index}`, { type: "string" }]),
+          ),
+        },
+        handler: async () => expected,
+      },
+    ],
+  });
+  const result = await createMetaTools(makeRegistry([connector]), BASE).callTool({
+    address: "public.read",
+    args: { field0: "hello" },
+    resultMode: "value",
+  });
+  expect(result.structuredContent).toMatchObject({ ok: true, data: expected, format: "json" });
+});

@@ -328,6 +328,24 @@ describe("downstream input relay", () => {
       const flow = setup({ catalogSchema: schema, failureStatus: 429 });
       const args = { address: "service.read", args: original };
       const first = (await flow.rpc({ args })).result;
+      // Whole-private objects also protect submitted names such as "config".
+      // Short private names use the same input-request refusal as short leaves.
+      if (
+        [
+          "root writeOnly",
+          "recursive ref",
+          "sensitive patternProperties",
+          "sensitive additionalProperties ref",
+          "conditional sensitivity",
+        ].includes(name)
+      ) {
+        expect(first.isError).toBe(true);
+        expect(first.structuredContent.error).toMatchObject({ code: "input_required_unsupported", retryable: false });
+        expect(first.requestState).toBeUndefined();
+        expect(JSON.stringify(first)).not.toContain(PRIVATE_MARKER);
+        expect(flow.continuationSend).not.toHaveBeenCalled();
+        return;
+      }
       const result = (
         await flow.rpc({ args, state: first.requestState, responses: { question: { action: "accept" } } })
       ).result;
