@@ -1,4 +1,6 @@
 import { expect, it, vi } from "vitest";
+import { Clock, Duration, Effect, Random } from "effect";
+import * as storageRuntime from "../src/runtime/storage.js";
 import { Registry } from "../src/registry.js";
 import { createConnecta, customExecutor } from "../src/index.js";
 import { resultKeys, scopes, stashLedgerKeys } from "../src/storage/keys.js";
@@ -27,11 +29,47 @@ export function stashChargeContract(
     let clock = Date.now();
     const start = clock;
     const spy = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const liveClock = Clock.Clock.defaultValue();
+    // Drive retry sleeps only after the preceding adapter I/O finishes. Advancing
+    // while D1 is still answering would charge runner load against the budget.
+    // Longer write/completion timers stay pending until explicitly advanced.
+    let retryMs = 0;
+    const testClock: Clock.Clock = {
+      ...liveClock,
+      currentTimeMillisUnsafe: () => clock,
+      currentTimeNanosUnsafe: () => BigInt(clock) * 1_000_000n,
+      monotonicTimeNanosUnsafe: () => liveClock.monotonicTimeNanosUnsafe(),
+      sleep: (duration) => {
+        const ms = Duration.toMillis(duration);
+        if (ms > 250) return liveClock.sleep(duration);
+        return Effect.promise(() => {
+          retryMs += ms;
+          return vi.advanceTimersByTimeAsync(ms);
+        });
+      },
+    };
+    const runOnPartition = storageRuntime.runOnPartition;
+    const runner = vi.spyOn(storageRuntime, "runOnPartition").mockImplementation((effect, partition) =>
+      runOnPartition(
+        effect.pipe(
+          Effect.provideService(Clock.Clock, testClock),
+          // Exercise the largest possible retry windows, without random timing.
+          Effect.provideService(Random.Random, { nextDoubleUnsafe: () => 0.999999, nextIntUnsafe: () => 0 }),
+        ),
+        partition,
+      ),
+    );
     return {
       ...fixture,
       start,
       now: () => clock,
-      restore: () => spy.mockRestore(),
+      retryMs: () => retryMs,
+      restore: () => {
+        runner.mockRestore();
+        vi.useRealTimers();
+        spy.mockRestore();
+      },
       tick: async (ms: number) => {
         clock += ms;
         await fixture.advance?.(ms);
@@ -160,7 +198,6 @@ export function stashChargeContract(
           return inner.compareAndSet(...args);
         },
       };
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       let outcome: boolean | "rejected" | undefined;
       const first = make(storage, 1, 2)
         .stashResult("stalled", ["h", "x"], 900)
@@ -200,7 +237,6 @@ export function stashChargeContract(
       } finally {
         finishDelete();
         finishWrite();
-        vi.useRealTimers();
         await Promise.all([first, lateWrite, lateDelete]);
         f.restore();
       }
@@ -249,7 +285,6 @@ export function stashChargeContract(
           return inner.compareAndSet(...args);
         },
       };
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       let outcome: boolean | undefined;
       const first = make(storage)
         .stashResult("settling", ["x"], 900)
@@ -275,7 +310,6 @@ export function stashChargeContract(
         expect(await make(inner).stashResult("recovered", ["x"], 900)).toBe(true);
       } finally {
         finish();
-        vi.useRealTimers();
         await Promise.all([first, late]);
         f.restore();
       }
@@ -348,6 +382,7 @@ export function stashChargeContract(
         expect(await make(storage, capacity).stashResult("victim", ["x"], 900)).toBe(!slow);
         expect(lostRelease).toBe(releaseLosses);
         expect(lostSettlement).toBe(settlementLosses);
+        expect(f.retryMs()).toBeLessThan(COMPLETION_MS);
         if (transient) expect(errors).toBeGreaterThan(1);
         expect(await inner.get(chunk("victim"))).toBe(slow ? null : "x");
         const victim = entries(await inner.get(stashLedgerKeys.ledger)).find((entry) => entry[0] === reservation)!;
@@ -557,7 +592,6 @@ export function stashChargeContract(
           await inner.delete(key);
         },
       };
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       const first = make(storage, 1, 2).stashResult("pending", ["h", "x"], 900);
       try {
         await writing;
@@ -578,7 +612,6 @@ export function stashChargeContract(
         expect(await make(inner, 1, 2).stashResult("recovered", ["x"], 900)).toBe(true);
       } finally {
         finish();
-        vi.useRealTimers();
         await first.catch(() => undefined);
         f.restore();
       }
