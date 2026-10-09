@@ -79,7 +79,8 @@ export function readResource(
             (permit) => Effect.sync(() => permit.release()),
             { interruptible: true },
           );
-          return yield* timed(
+          // Downstream contents enter the guest here, so they take the full payload rules.
+          const contents = yield* timed(
             (elapsed) => options.onConnectorTime?.(elapsed),
             Effect.tryPromise({
               try: () => {
@@ -100,6 +101,7 @@ export function readResource(
               catch: (error) => error,
             }),
           );
+          return options.sentSecrets.redact(contents);
         }),
       ),
     {

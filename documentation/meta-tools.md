@@ -870,11 +870,13 @@ set, including property names inside private object subtrees. Downstream
 result and error text quoting them, in raw or credential-supported encoded
 forms, is redacted before direct-call output, program returns, logs, and emits,
 or result stash persistence; paging in a later request reads already-redacted
-bytes. JSON stays valid: a matching number or boolean becomes `"[redacted]"`.
-Empty private strings are exempt. A private value shorter than eight
-characters redacts only structured fields that equal it, so identifiers and
-approval state remain, and withholds prose that contains it, including error
-messages, while typed classification, retry facts, and write outcome remain.
+bytes. A program's `connecta.read` resources and downstream `connecta.skill`
+files take the same rules before the program sees them. JSON stays valid: a
+matching number or boolean becomes `"[redacted]"`. Empty private strings are
+exempt. A private value shorter than eight characters redacts only structured
+fields that equal it, so identifiers and approval state remain, and withholds
+prose that contains it, including error messages, while typed classification,
+retry facts, and write outcome remain.
 Work limits withhold the affected text without failing the call. See
 [output redaction](./auth.md#what-a-servers-errors-may-say)
 for the shared encoding, budget, and argument-filter contract.

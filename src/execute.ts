@@ -1504,7 +1504,9 @@ export function createExecuteTool(
             return Effect.succeed(failed);
           }
           if (Exit.isFailure(exit)) {
-            return Effect.succeed(failedRun(redactAgentOutput(sentSecrets, Cause.squash(exit.cause)), logger, reported));
+            return Effect.succeed(
+              failedRun(redactAgentOutput(sentSecrets, Cause.squash(exit.cause)), logger, reported),
+            );
           }
           return Effect.promise(() => finishedRun(redactAgentOutput(sentSecrets, exit.value), reported));
         }),

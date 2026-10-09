@@ -511,3 +511,34 @@ it("INV-5: a public-only 2,100-field schema stays on the unchanged call path", a
   });
   expect(result.structuredContent).toMatchObject({ ok: true, data: expected, format: "json" });
 });
+
+it("INV-5: nested JSON strings decode through a bounded number of layers, and deeper nesting is withheld", () => {
+  const secret = "private-secret-793";
+  const secrets = new SentSecrets();
+  secrets.arguments({ value: secret }, { type: "object", properties: { value: { type: "string", writeOnly: true } } });
+  const wrapped = (count: number) => {
+    let text = `"${[...secret].map((char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`).join("")}"`;
+    for (let index = 0; index < count; index++) text = JSON.stringify({ nested: text });
+    return text;
+  };
+  // Decode as a guest would: parse each layer and follow `nested` until a string stops parsing.
+  const innermost = (text: string): unknown => {
+    let value: unknown = text;
+    while (typeof value === "string") {
+      try {
+        value = JSON.parse(value);
+      } catch {
+        return value;
+      }
+      if (value !== null && typeof value === "object") value = (value as { nested: unknown }).nested;
+    }
+    return value;
+  };
+  for (const count of [3, 12]) {
+    const text = wrapped(count);
+    expect(innermost(text)).toBe(secret);
+    const reply = secrets.redact({ content: [{ type: "text", text }] });
+    expect(innermost(reply.content[0]!.text)).toBe("[redacted]");
+    expect(innermost(secrets.text(text))).toBe("[redacted]");
+  }
+});

@@ -6,6 +6,7 @@ import { createExecuteTool } from "../src/execute.js";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { SentSecrets } from "../src/sent-secrets.js";
+import { downstreamSkillUri } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { activitySink, makeRegistry, silentLogger } from "./helpers.js";
@@ -175,13 +176,62 @@ it("INV-5 INV-6: private values containing the placeholder stay redacted through
     });
     expect(follow.isError).toBeFalsy();
     expect(JSON.stringify(follow)).not.toContain(value);
-    expect(stash).toHaveBeenCalledTimes(2);
+    // Two call results, then the oversized page `follow` returns, stashed as a program return.
+    expect(stash).toHaveBeenCalledTimes(3);
     for (const [, chunks] of stash.mock.calls) {
       const bytes = chunks.map((chunk, i) => atob(i === 0 ? chunk.slice(chunk.lastIndexOf(":") + 1) : chunk)).join("");
       expect(bytes).not.toContain(value);
     }
     expect(JSON.stringify([program, record.mock.calls, sink.events])).not.toContain(value);
   }
+});
+
+it("INV-5: program resource and downstream skill reads take payload rules before a guest can pass on a short private value", async () => {
+  const witnessed: unknown[] = [];
+  const connector: Connector = {
+    id: "wire",
+    kind: "mcp",
+    async listTools() {
+      return [
+        { name: "register", annotations: { readOnlyHint: true }, inputSchema: VALUE_SCHEMA },
+        {
+          name: "witness",
+          annotations: { readOnlyHint: true },
+          inputSchema: { type: "object", properties: { echo: { type: "string" } } },
+        },
+      ];
+    },
+    async callTool(name, args) {
+      if (name === "witness") witnessed.push((args as { echo: unknown }).echo);
+      return { content: [{ type: "text", text: "ok" }] };
+    },
+    async readResource(uri) {
+      return { contents: [{ uri, text: "PIN 7931426" }] };
+    },
+    downstreamSkills: {
+      async list() {
+        return [
+          { uri: "skill://pin/SKILL.md", frontmatter: { name: "pin", description: "PIN." }, resources: "dynamic" },
+        ];
+      },
+      async read(uri) {
+        return [{ uri, text: "PIN 7931426" }];
+      },
+    },
+  };
+  const run = createExecuteTool(makeRegistry([connector]), BASE, executor, silentLogger);
+  const program = await run({
+    code: `async () => {
+      await connecta.call("wire.register", { value: "7931426" });
+      const resource = await connecta.read("resource://wire/file%3A%2F%2F%2Fpin.txt");
+      await connecta.call("wire.witness", { echo: resource.contents[0].text });
+      const skill = await connecta.skill(${JSON.stringify(downstreamSkillUri("wire", "skill://pin/SKILL.md"))});
+      await connecta.call("wire.witness", { echo: skill.text });
+      return "done";
+    }`,
+  });
+  expect(program.isError, JSON.stringify(program.structuredContent)).toBeFalsy();
+  expect(witnessed).toEqual([REDACTED, REDACTED]);
 });
 
 it("INV-5: public-schema remote tools redact bare numeric bearer credentials in direct modes and QuickJS", async () => {

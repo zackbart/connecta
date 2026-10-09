@@ -742,7 +742,9 @@ export class SkillsRegistry {
     if (bytes > MAX_SKILL_BYTES)
       throw new ConnectorCallError("unavailable", "Downstream skill file exceeds the byte bound.");
     this.options.onRead?.(record.connector, "downstream");
-    return { ...PRIVATE, contents: [{ ...content, uri } as ConnectorSkillResourceContents] };
+    // Downstream file contents take the request's full payload rules before any reader sees them.
+    const clean = sentSecretsForRequest(this.scope).redact(content);
+    return { ...PRIVATE, contents: [{ ...clean, uri } as ConnectorSkillResourceContents] };
   }
 
   async text(name: string): Promise<string> {

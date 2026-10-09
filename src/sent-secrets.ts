@@ -27,9 +27,19 @@ const CREDENTIAL = 3;
 const MAX_PRIVATE_FORM_CHARS = 524_288;
 const MAX_ARGUMENT_NODES = 4_096;
 const MAX_ARGUMENT_DEPTH = 32;
+// The matcher indexes each form's first FORM_PREFIX units, credentials first, up to
+// MAX_MATCHER_UNITS for every registration together. A longer form is confirmed by a rolling
+// hash once its prefix matches. A form left out withholds every string long enough to contain it.
+const FORM_PREFIX = 256;
+const MAX_MATCHER_UNITS = 524_288;
+const HASH_BASE = 0x01_00_01_93;
+// One redaction call visits at most this many structured entries, this deep. A string is
+// decoded at most MAX_DECODE_LEVELS JSON layers, counting nested JSON strings it was parsed from.
+const MAX_WALK_NODES = 1_048_576;
 const MAX_WALK_DEPTH = 512;
-// Work for one redaction call, across parsing, visited nodes, and every scanned view.
-// Credential-only sets keep the multi-MiB document and skill-file reads they always allowed.
+const MAX_DECODE_LEVELS = 8;
+// Work for one redaction call, across parsing and every scanned view. Credential-only sets
+// keep the multi-MiB document and skill-file reads they always allowed.
 const PRIVATE_SCAN_WORK = 64 * 1_048_576;
 const CREDENTIAL_SCAN_WORK = 1_024 * 1_048_576;
 // Connecta and MCP framing: these names, tag values, and typed facts are copied unchanged,
@@ -53,15 +63,48 @@ const FACTS = new Set(["isError", "ok", "retryable", "retryAfterMs", "truncated"
 const PROSE_KEYS = new Set(["message", "stack", "error", "logs", "text", "result"]);
 
 /** Payload scans apply every private-value rule; envelope scans only replace literals. */
-type Scan = { budget: { left: number }; payload: boolean };
+type Scan = { budget: { work: number; nodes: number }; payload: boolean };
 type Found = { spans: number[]; short: boolean; exact: boolean };
 
 /** Spend work that fits the call's remaining budget. Work that does not fit is refused
  * without spending, so its field is withheld while smaller fields can still be checked. */
 function spend(scan: Scan, work: number): boolean {
-  if (work > scan.budget.left) return false;
-  scan.budget.left -= work;
+  if (work > scan.budget.work) return false;
+  scan.budget.work -= work;
   return true;
+}
+
+/** A container in the walk, copied only once one of its entries changes. */
+interface Frame {
+  item: object;
+  /** Own property names; an array walks its indices. */
+  names: string[] | undefined;
+  size: number;
+  index: number;
+  prose: boolean;
+  depth: number;
+  typed: boolean;
+  /** The current entry: its name, output name, and original value. */
+  key: string;
+  name: string;
+  field: unknown;
+  copy?: object;
+}
+
+// Walk markers: a container was opened, or an entry is dropped from the copy.
+const OPEN = Symbol("open");
+const DROP = Symbol("drop");
+
+/** Define one entry on a copy. An own accessor here is Error.stack, already snapshotted. */
+function define(copy: object, item: object, key: string, name: string, value: unknown): void {
+  const descriptor = Object.getOwnPropertyDescriptor(item, key)!;
+  Object.defineProperty(
+    copy,
+    name,
+    "value" in descriptor
+      ? { ...descriptor, value, ...(name !== key ? { configurable: true } : {}) }
+      : { value, configurable: true, writable: true },
+  );
 }
 
 type SecretWarning = { code: "short_secret_not_redacted" };
@@ -115,34 +158,62 @@ class Source implements Units {
 
 const shortEscape: Record<number, number> = { 34: 34, 47: 47, 92: 92, 98: 8, 102: 12, 110: 10, 114: 13, 116: 9 };
 
-/** One layer of JSON string escapes decoded; a second layer finds twice-escaped echoes. */
+/** A hex digit's value, or -1. */
+function hex(code: number): number {
+  const lower = code | 0x20;
+  return code >= 0x30 && code <= 0x39 ? code - 0x30 : lower >= 0x61 && lower <= 0x66 ? lower - 0x57 : -1;
+}
+
+/** One layer of JSON string escapes decoded. It counts the escapes it decoded and the
+ * backslashes it produced, which tell whether another layer could decode more. */
 class Unescaped implements Units {
   start = 0;
   end = 0;
-  private readonly ahead: [code: number, start: number, end: number][] = [];
+  decoded = 0;
+  slashes = 0;
+  private readonly codes = new Int32Array(8);
+  private readonly starts = new Int32Array(8);
+  private readonly ends = new Int32Array(8);
+  private head = 0;
+  private size = 0;
   constructor(private readonly from: Units) {}
   private fill(count: number): boolean {
-    while (this.ahead.length < count) {
+    for (; this.size < count; this.size++) {
       const code = this.from.next();
       if (code < 0) return false;
-      this.ahead.push([code, this.from.start, this.from.end]);
+      const at = (this.head + this.size) & 7;
+      this.codes[at] = code;
+      this.starts[at] = this.from.start;
+      this.ends[at] = this.from.end;
     }
     return true;
   }
+  private at(offset: number): number {
+    return this.codes[(this.head + offset) & 7]!;
+  }
   private take(count: number, code: number): number {
-    const taken = this.ahead.splice(0, count);
-    this.start = taken[0]![1];
-    this.end = taken[count - 1]![2];
+    this.start = this.starts[this.head]!;
+    this.end = this.ends[(this.head + count - 1) & 7]!;
+    this.head = (this.head + count) & 7;
+    this.size -= count;
+    if (count > 1) this.decoded++;
+    if (code === 0x5c) this.slashes++;
     return code;
   }
   next(): number {
     if (!this.fill(1)) return -1;
-    const code = this.ahead[0]![0];
+    const code = this.at(0);
     if (code === 0x5c && this.fill(2)) {
-      const escaped = shortEscape[this.ahead[1]![0]];
+      const escaped = shortEscape[this.at(1)];
       if (escaped !== undefined) return this.take(2, escaped);
-      const digits = this.fill(6) ? String.fromCharCode(...this.ahead.slice(1, 6).map(([unit]) => unit)) : "";
-      if (/^u[0-9a-f]{4}$/i.test(digits)) return this.take(6, parseInt(digits.slice(1), 16));
+      if (this.at(1) === 0x75 && this.fill(6)) {
+        let unit = 0;
+        for (let offset = 2; offset < 6 && unit >= 0; offset++) {
+          const digit = hex(this.at(offset));
+          unit = digit < 0 ? -1 : unit * 16 + digit;
+        }
+        if (unit >= 0) return this.take(6, unit);
+      }
     }
     return this.take(1, code);
   }
@@ -193,57 +264,113 @@ function replace(text: string, spans: number[]): string {
   return parts.join("").replace(headerLine, `$1$2${REDACTED}`);
 }
 
+/** A polynomial hash of code units, modulo 2^32. Equal text always hashes equally, so a
+ * collision can only redact more. */
+function hash(text: string): number {
+  let value = 0;
+  for (let index = 0; index < text.length; index++) value = (Math.imul(value, HASH_BASE) + text.charCodeAt(index)) | 0;
+  return value;
+}
+
 /** Aho-Corasick over registered forms: amortized constant work per scanned code unit, however
- * many forms are registered, reporting the longest form ending at each unit. */
+ * many forms are registered, reporting the longest form ending at each unit. Only a bounded
+ * prefix of each form is indexed. A longer form is confirmed where its prefix matches by the
+ * view's rolling hash once the form's last unit arrives, so no text is read twice. States live
+ * in typed arrays: the root's transitions in a table, each state's first child inline, and only
+ * further branches in a map. */
 class Matcher {
-  private readonly edges = new Map<number, number>();
-  private readonly depth = [0];
-  private readonly kind = [0];
+  /** The shortest form left unindexed; any string this long might contain it. */
+  readonly unindexed: number = Infinity;
+  private readonly root = new Int32Array(65_536);
+  private readonly branches = new Map<number, number>();
+  private readonly child: Int32Array;
+  private readonly unit: Uint16Array;
+  private readonly depth: Uint16Array;
+  private readonly kind: Uint8Array;
+  /** Forms longer than FORM_PREFIX, by the state their prefix reaches. */
+  private readonly truncated = new Map<number, { length: number; hash: number; power: number }[]>();
   private readonly fail: Int32Array;
-  private readonly longest: Int32Array;
+  private readonly longest: Uint16Array;
   private readonly short: Uint8Array;
   private readonly starts: Int32Array;
+  private readonly hashes: Int32Array;
 
   constructor(forms: Iterable<readonly [string, number]>) {
-    const parent = [0];
-    const char = [0];
+    // Credentials are indexed first; sorting is stable, so registration order is otherwise kept.
+    const indexed: (readonly [string, number])[] = [];
+    let units = 0;
+    for (const entry of [...forms].sort((a, b) => b[1] - a[1])) {
+      const length = Math.min(entry[0].length, FORM_PREFIX);
+      if (units + length > MAX_MATCHER_UNITS) this.unindexed = Math.min(this.unindexed, entry[0].length);
+      else {
+        units += length;
+        indexed.push(entry);
+      }
+    }
+    const size = units + 1;
+    [this.child, this.fail] = [new Int32Array(size), new Int32Array(size)];
+    [this.unit, this.depth, this.longest] = [new Uint16Array(size), new Uint16Array(size), new Uint16Array(size)];
+    [this.kind, this.short] = [new Uint8Array(size), new Uint8Array(size)];
+    const parent = new Int32Array(size);
+    let states = 1;
     let longestForm = 0;
-    for (const [form, kind] of forms) {
+    for (const [form, kind] of indexed) {
+      const length = Math.min(form.length, FORM_PREFIX);
       let state = 0;
-      for (let index = 0; index < form.length; index++) {
-        const key = state * 65_536 + form.charCodeAt(index);
-        const next = this.edges.get(key) ?? this.depth.length;
-        if (next === this.depth.length) {
-          this.edges.set(key, next);
-          parent.push(state);
-          char.push(form.charCodeAt(index));
-          this.depth.push(this.depth[state]! + 1);
-          this.kind.push(0);
+      for (let index = 0; index < length; index++) {
+        const code = form.charCodeAt(index);
+        let next = this.next(state, code);
+        if (!next) {
+          next = states++;
+          if (!state) this.root[code] = next;
+          else if (!this.child[state]) this.child[state] = next;
+          else this.branches.set(state * 65_536 + code, next);
+          parent[next] = state;
+          this.unit[next] = code;
+          this.depth[next] = this.depth[state]! + 1;
         }
         state = next;
       }
-      this.kind[state] = Math.max(this.kind[state]!, kind);
-      longestForm = Math.max(longestForm, form.length);
+      if (length === form.length) this.kind[state] = Math.max(this.kind[state]!, kind);
+      else {
+        let power = 1;
+        for (let index = 0; index < form.length; index++) power = Math.imul(power, HASH_BASE);
+        const long = { length: form.length, hash: hash(form), power };
+        const shared = this.truncated.get(state);
+        if (shared) shared.push(long);
+        else this.truncated.set(state, [long]);
+      }
+      longestForm = Math.max(longestForm, length);
     }
-    this.fail = new Int32Array(this.depth.length);
-    this.longest = new Int32Array(this.depth.length);
-    this.short = new Uint8Array(this.depth.length);
-    // Breadth-first: a failure link and its outputs depend only on shallower states.
-    const order = Array.from({ length: this.depth.length - 1 }, (_, index) => index + 1);
-    for (const state of order.sort((a, b) => this.depth[a]! - this.depth[b]!)) {
-      const fail = this.depth[state]! > 1 ? this.step(this.fail[parent[state]!]!, char[state]!) : 0;
+    // Breadth-first, by a counting sort on depth: a failure link and its outputs depend only on
+    // shallower states.
+    const offsets = new Int32Array(FORM_PREFIX + 2);
+    for (let state = 1; state < states; state++) offsets[this.depth[state]! + 1]!++;
+    for (let depth = 1; depth < offsets.length; depth++) offsets[depth]! += offsets[depth - 1]!;
+    const order = new Int32Array(states);
+    for (let state = 1; state < states; state++) order[offsets[this.depth[state]!]!++] = state;
+    for (let index = 0; index < states - 1; index++) {
+      const state = order[index]!;
+      const fail = this.depth[state]! > 1 ? this.step(this.fail[parent[state]!]!, this.unit[state]!) : 0;
       this.fail[state] = fail;
       this.longest[state] = this.kind[state]! >= PRIVATE ? this.depth[state]! : this.longest[fail]!;
       this.short[state] = this.kind[state] === SHORT ? 1 : this.short[fail]!;
     }
     this.starts = new Int32Array(1 << (32 - Math.clz32(longestForm)));
+    this.hashes = new Int32Array(this.starts.length);
+  }
+
+  /** The child reached by one code unit, or 0. A first child is stored with its unit. */
+  private next(state: number, code: number): number {
+    if (!state) return this.root[code]!;
+    const child = this.child[state]!;
+    return child && this.unit[child] === code ? child : (this.branches.get(state * 65_536 + code) ?? 0);
   }
 
   private step(state: number, code: number): number {
     for (;;) {
-      const next = this.edges.get(state * 65_536 + code);
-      if (next !== undefined) return next;
-      if (!state) return 0;
+      const next = this.next(state, code);
+      if (next || !state) return next;
       state = this.fail[state]!;
     }
   }
@@ -253,6 +380,9 @@ class Matcher {
     let state = 0;
     let count = 0;
     let percent = 0;
+    let rolling = 0;
+    // Long forms whose prefix matched, each queue in due order: [due, hash before, start, ...].
+    let pending: Map<{ length: number; hash: number; power: number }, { items: number[]; head: number }> | undefined;
     const base = found.spans.length;
     const mask = this.starts.length - 1;
     for (let code = units.next(); code >= 0; code = units.next()) {
@@ -261,11 +391,36 @@ class Matcher {
         percent--;
         if (code >= 0x61 && code <= 0x66) code -= 0x20;
       }
-      this.starts[count++ & mask] = units.start;
+      this.starts[count & mask] = units.start;
+      this.hashes[count++ & mask] = rolling;
+      rolling = (Math.imul(rolling, HASH_BASE) + code) | 0;
       state = this.step(state, code);
       const length = this.longest[state]!;
       if (length) push(found.spans, base, this.starts[(count - length) & mask]!, units.end, marks);
       if (this.short[state]) found.short = true;
+      const long = this.depth[state] === FORM_PREFIX ? this.truncated.get(state) : undefined;
+      if (long) {
+        const from = (count - FORM_PREFIX) & mask;
+        pending ??= new Map();
+        for (const form of long) {
+          const queue = pending.get(form) ?? { items: [], head: 0 };
+          queue.items.push(count - FORM_PREFIX + form.length, this.hashes[from]!, this.starts[from]!);
+          pending.set(form, queue);
+        }
+      }
+      if (!pending?.size) continue;
+      for (const [form, queue] of pending) {
+        for (; queue.head < queue.items.length && queue.items[queue.head] === count; queue.head += 3) {
+          const before = queue.items[queue.head + 1]!;
+          if (((rolling - Math.imul(before, form.power)) | 0) === form.hash)
+            push(found.spans, base, queue.items[queue.head + 2]!, units.end, marks);
+        }
+        if (queue.head === queue.items.length) pending.delete(form);
+        else if (queue.head * 2 >= queue.items.length) {
+          queue.items.splice(0, queue.head);
+          queue.head = 0;
+        }
+      }
     }
     if (this.kind[state] === SHORT && this.depth[state] === count) found.exact = true;
   }
@@ -364,8 +519,9 @@ export class SentSecrets {
       new Matcher(
         [...this.forms].flatMap(([form, kind]) => wireForms(form.toLowerCase()).map((low) => [low, kind] as const)),
       );
-    if (ignoreCase) (this.views.lower ??= lower()).scan(new Source(value.toLowerCase()), found);
-    else this.matcher().scan(new Source(value), found);
+    const matcher = ignoreCase ? (this.views.lower ??= lower()) : this.matcher();
+    if (value.length >= matcher.unindexed) return true;
+    matcher.scan(new Source(ignoreCase ? value.toLowerCase() : value), found);
     return found.spans.length > 0;
   }
 
@@ -428,14 +584,15 @@ export class SentSecrets {
 
   /** Serialized wire text about to be returned, stored, or paged, under payload rules. */
   text(value: string): string {
-    return this.idle() ? value : this.wire(value, this.scan(true), 0);
+    return this.idle() ? value : this.wire(value, this.scan(true), 0, true, 0);
   }
 
-  /** Copy, including non-enumerable Error fields; never retain a raw cause. Payload rules
-   * apply where downstream or guest data enters; envelopes repeat literal replacement. */
+  /** Copy only what changes, including non-enumerable Error fields; never retain a raw cause.
+   * Payload rules apply where downstream or guest data enters; envelopes repeat literal
+   * replacement. */
   redact<T>(value: T, mode: "payload" | "prose" | "envelope" = "payload"): T {
     if (this.idle()) return value;
-    return this.walk(value, this.scan(mode !== "envelope"), mode === "prose" || typeof value === "string", 0) as T;
+    return this.walk(value, this.scan(mode !== "envelope"), mode === "prose" || typeof value === "string", 0, 0) as T;
   }
 
   /** Credentials alone: later calls keep the private arguments they submit, and cached
@@ -449,8 +606,8 @@ export class SentSecrets {
   }
 
   private scan(payload: boolean): Scan {
-    const left = this.privateChars || this.unmatched < Infinity ? PRIVATE_SCAN_WORK : CREDENTIAL_SCAN_WORK;
-    return { budget: { left }, payload };
+    const work = this.privateChars || this.unmatched < Infinity ? PRIVATE_SCAN_WORK : CREDENTIAL_SCAN_WORK;
+    return { budget: { work, nodes: MAX_WALK_NODES }, payload };
   }
 
   private matcher(): Matcher {
@@ -467,26 +624,33 @@ export class SentSecrets {
     return this.views.credentials;
   }
 
-  /** Every raw and JSON-unescaped match, mapped to source spans before any replacement.
-   * Work beyond the call's budget returns undefined, which withholds the string. */
-  private find(text: string, scan: Scan, escapes = true): Found | undefined {
-    const layers = !escapes || !text.includes("\\") ? 0 : /\\\\|\\u005[cC]/.test(text) ? 2 : 1;
-    if (!spend(scan, 2 * text.length * (layers + 1))) return undefined;
+  /** Strings at least this long might hold a form that was never matched. */
+  private floor(scan: Scan): number {
+    return Math.min(scan.payload ? this.unmatched : Infinity, this.matcher().unindexed);
+  }
+
+  /** Every raw and JSON-unescaped match, mapped to source spans before any replacement. Text
+   * decodes one more layer while the last one could still hold an escape, up to
+   * MAX_DECODE_LEVELS counting the JSON strings it came from. Work beyond the call's budget
+   * or that depth returns undefined, which withholds the string. */
+  private find(text: string, scan: Scan, escapes: boolean, level: number): Found | undefined {
     const found: Found = { spans: [], short: false, exact: false };
     const marks = markers(text);
-    for (let layer = 0; layer <= layers; layer++) {
+    for (let layer = 0, more = true; more; layer++) {
+      if (level + layer > MAX_DECODE_LEVELS || !spend(scan, 2 * text.length * (layer + 1))) return undefined;
       let units: Units = new Source(text);
       for (let depth = 0; depth < layer; depth++) units = new Unescaped(units);
       this.matcher().scan(units, found, marks);
+      more = escapes && (units instanceof Unescaped ? units.decoded > 0 && units.slashes > 0 : text.includes("\\"));
     }
     return found;
   }
 
   /** A structured leaf, property name, or prose. A short private form withholds prose
    * wherever it occurs, and a leaf only when the whole leaf is that form. */
-  private string(value: string, scan: Scan, prose: boolean): string {
-    if (scan.payload && value.length >= this.unmatched) return REDACTED;
-    const found = this.find(value, scan);
+  private string(value: string, scan: Scan, prose: boolean, level = 0): string {
+    if (value.length >= this.floor(scan)) return REDACTED;
+    const found = this.find(value, scan, true, level);
     if (!found || (scan.payload && (prose ? found.short : found.exact))) return REDACTED;
     return found.spans.length ? replace(value, found.spans) : value;
   }
@@ -494,99 +658,133 @@ export class SentSecrets {
   /** A number, boolean, or null matching by its canonical text becomes a placeholder string. */
   private scalar(value: number | bigint | boolean | null, scan: Scan): unknown {
     const text = String(value);
-    if ((typeof value === "number" || typeof value === "bigint") && text.length >= this.unmatched) return REDACTED;
-    const found = this.find(text, scan, false);
+    if ((typeof value === "number" || typeof value === "bigint") && text.length >= this.floor(scan)) return REDACTED;
+    const found = this.find(text, scan, false, 0);
     return !found || found.exact || found.spans.length ? REDACTED : value;
   }
 
-  /** A JSON object or array is parsed and walked once; its serialized bytes must then hold
-   * no literal the walk cannot see, such as one spanning tokens. Other text is prose. */
-  private wire(value: string, scan: Scan, depth: number): string {
-    if (scan.payload && value.length >= this.unmatched) return REDACTED;
-    if (/^\s*[[{]/.test(value) && spend(scan, value.length)) {
-      let parsed: unknown;
+  /** JSON objects, arrays, and string literals are parsed and walked, nested JSON strings
+   * included; their serialized bytes must then hold no literal the walk cannot see, such as
+   * one spanning tokens. Other text is prose or a structured leaf. */
+  private wire(value: string, scan: Scan, depth: number, prose: boolean, level: number): string {
+    if (value.length >= this.floor(scan)) return REDACTED;
+    if (level < MAX_DECODE_LEVELS && /^\s*["[{]/.test(value) && spend(scan, value.length)) {
+      let parsed: { json: unknown } | undefined;
       try {
-        parsed = JSON.parse(value);
+        parsed = { json: JSON.parse(value) };
       } catch {
-        // Not JSON: prose.
+        // Not JSON.
       }
-      if (parsed !== null && typeof parsed === "object") {
-        const walked = this.walk(parsed, scan, false, depth);
-        const text = walked === parsed ? value : JSON.stringify(walked);
-        const found = this.find(text, scan, false);
-        return found && !found.spans.length && !(scan.payload && text.length >= this.unmatched) ? text : REDACTED;
+      if (parsed) {
+        const { json } = parsed;
+        const walked = this.walk(json, scan, prose && typeof json === "string", depth, level + 1);
+        const text = walked === json ? value : JSON.stringify(walked);
+        const found = this.find(text, scan, false, level);
+        return found && !found.spans.length && text.length < this.floor(scan) ? text : REDACTED;
       }
     }
-    return this.string(value, scan, true);
+    return this.string(value, scan, prose, level);
   }
 
-  private walk(value: unknown, scan: Scan, prose: boolean, depth: number): unknown {
-    const seen = new Map<object, object>();
-    let changed = false;
-    const note = <V>(before: unknown, after: V): V => {
-      changed ||= after !== before;
-      return after;
-    };
+  /** Iterative and copy-on-write: only containers on a changed path are copied. A container's
+   * entries are counted against the node budget before it is walked; a cycle or a container
+   * past MAX_WALK_DEPTH is withheld, and one past the node budget is checked as serialized text. */
+  private walk(value: unknown, scan: Scan, prose: boolean, depth: number, level: number): unknown {
+    const stack: Frame[] = [];
+    const active = new Set<object>();
     const visit = (item: unknown, prose: boolean, depth: number): unknown => {
-      if (typeof item === "string")
-        return note(item, prose ? this.wire(item, scan, depth) : this.string(item, scan, false));
+      if (typeof item === "string") return this.wire(item, scan, depth, prose, level);
       if (item === null || typeof item === "number" || typeof item === "bigint" || typeof item === "boolean")
-        return scan.payload ? note(item, this.scalar(item, scan)) : item;
+        return scan.payload ? this.scalar(item, scan) : item;
       if (typeof item !== "object") return item;
-      const prior = seen.get(item);
-      if (prior) return prior;
-      if (depth > MAX_WALK_DEPTH || !spend(scan, 1)) return note(item, REDACTED);
-      if (Array.isArray(item)) {
-        const copy: unknown[] = [];
-        seen.set(item, copy);
-        for (let index = 0; index < item.length; index++) copy[index] = visit(item[index], prose, depth + 1);
-        return copy;
-      }
-      const copy = item instanceof Error ? (Object.create(Object.getPrototypeOf(item)) as object) : {};
-      seen.set(item, copy);
+      if (active.has(item) || depth > MAX_WALK_DEPTH) return REDACTED;
+      const names = Array.isArray(item) ? undefined : Object.getOwnPropertyNames(item);
+      const size = names ? names.length : (item as unknown[]).length;
+      if (size > scan.budget.nodes) return this.serialized(item, scan, level);
+      scan.budget.nodes -= size;
+      if (!size) return item;
+      active.add(item);
       const typed = item instanceof Error || typeof (item as { retryable?: unknown }).retryable === "boolean";
-      for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(item))) {
-        // V8 lazily renders Error.stack through an own accessor. Snapshot it
-        // before rebuilding an error, so its diagnostic is redacted too.
-        if (key === "stack" && item instanceof Error && !("value" in descriptor)) {
-          Object.defineProperty(copy, key, {
-            value: visit(item.stack, true, depth + 1),
-            configurable: true,
-            writable: true,
-          });
-          continue;
-        }
-        // JSON and errors carry data properties. A downstream-authored getter
-        // is not a safe way to expose a diagnostic to an agent.
-        if (!("value" in descriptor)) {
-          changed = true;
-          continue;
-        }
-        const field: unknown = descriptor.value;
-        const name = FRAMING_KEYS.has(key) ? key : note(key, this.string(key, scan, false));
-        const redacted =
-          (typeof field === "string" && TAGS.has(`${key}:${field}`)) ||
-          (FACTS.has(key) && (typeof field === "boolean" || typeof field === "number"))
-            ? field
-            : typed && (key === "code" || key === "name") && typeof field === "string"
-              ? note(field, this.credentials().string(field, { ...scan, payload: false }, false))
-              : key === "blob" && "uri" in item && typeof field === "string"
-                ? note(field, this.blob(field, scan))
-                : visit(
-                    key === "content" ? note(field, this.joinedContent(field, scan, depth)) : field,
-                    PROSE_KEYS.has(key),
-                    depth + 1,
-                  );
-        Object.defineProperty(copy, name, {
-          ...descriptor,
-          value: redacted,
-          ...(name !== key ? { configurable: true } : {}),
-        });
-      }
-      return item instanceof Error ? carryFailureFacts(item, copy) : copy;
+      stack.push({ item, names, size, index: 0, prose, depth, typed, key: "", name: "", field: undefined });
+      return OPEN;
     };
-    const copy = visit(value, prose, depth);
-    return changed ? copy : value;
+    // Settle the top frame's next entry, drop it, or open its container.
+    const enter = (frame: Frame): unknown => {
+      const { item, names } = frame;
+      if (!names) return visit((frame.field = (item as unknown[])[frame.index]), frame.prose, frame.depth + 1);
+      const key = (frame.key = frame.name = names[frame.index]!);
+      const descriptor = Object.getOwnPropertyDescriptor(item, key);
+      let prose = PROSE_KEYS.has(key);
+      if (descriptor && "value" in descriptor) frame.field = descriptor.value;
+      // V8 lazily renders Error.stack through an own accessor. Snapshot it
+      // before rebuilding an error, so its diagnostic is redacted too.
+      else if (key === "stack" && item instanceof Error) {
+        frame.field = item.stack;
+        prose = true;
+      }
+      // JSON and errors carry data properties. A downstream-authored getter
+      // is not a safe way to expose a diagnostic to an agent.
+      else return DROP;
+      const field = frame.field;
+      if (!FRAMING_KEYS.has(key)) frame.name = this.string(key, scan, false);
+      if (
+        (typeof field === "string" && TAGS.has(`${key}:${field}`)) ||
+        (FACTS.has(key) && (typeof field === "boolean" || typeof field === "number"))
+      )
+        return field;
+      if (frame.typed && (key === "code" || key === "name") && typeof field === "string")
+        return this.credentials().string(field, { ...scan, payload: false }, false);
+      if (key === "blob" && "uri" in item && typeof field === "string") return this.blob(field, scan);
+      const child = key === "content" ? this.joinedContent(field, scan, frame.depth, level) : field;
+      return visit(child, prose, frame.depth + 1);
+    };
+    // Record a settled entry. The first change copies the container's earlier entries.
+    const settle = (frame: Frame, value: unknown): void => {
+      const { item, names, index } = frame;
+      if (!frame.copy) {
+        if (value === frame.field && frame.name === frame.key) return;
+        if (!names) frame.copy = (item as unknown[]).slice(0, index);
+        else {
+          frame.copy = item instanceof Error ? (Object.create(Object.getPrototypeOf(item)) as object) : {};
+          for (const key of names.slice(0, index))
+            define(frame.copy, item, key, key, (item as Record<string, unknown>)[key]);
+        }
+      }
+      if (!names) (frame.copy as unknown[])[index] = value;
+      else if (value !== DROP) define(frame.copy, item, frame.key, frame.name, value);
+    };
+    let settled = visit(value, prose, depth);
+    while (stack.length) {
+      const frame = stack[stack.length - 1]!;
+      if (settled === OPEN) settled = enter(frame);
+      if (settled === OPEN) continue;
+      settle(frame, settled);
+      settled = OPEN;
+      if (++frame.index < frame.size) continue;
+      stack.pop();
+      active.delete(frame.item);
+      const { item, copy } = frame;
+      settled = !copy ? item : item instanceof Error ? carryFailureFacts(item, copy) : copy;
+    }
+    return settled;
+  }
+
+  /** A container larger than the node budget is scanned as serialized text, Error fields
+   * included: kept unchanged when nothing registered appears, otherwise withheld whole. */
+  private serialized(item: object, scan: Scan, level: number): unknown {
+    let text: string | undefined;
+    try {
+      text = JSON.stringify(item, (_key, value: unknown) =>
+        value instanceof Error
+          ? Object.fromEntries(Object.getOwnPropertyNames(value).map((name) => [name, Reflect.get(value, name)]))
+          : value,
+      );
+    } catch {
+      // A cycle or bigint cannot be serialized, so the container is withheld.
+    }
+    if (text === undefined || text.length >= this.floor(scan)) return REDACTED;
+    const found = this.find(text, scan, true, level);
+    return found && !found.spans.length && !(scan.payload && found.short) ? item : REDACTED;
   }
 
   /** Skill supporting files may contain arbitrary bytes, including echoes. */
@@ -616,14 +814,14 @@ export class SentSecrets {
   }
 
   /** Match across blocks before isError/JSON unwrapping concatenates them. */
-  private joinedContent(value: unknown, scan: Scan, depth: number): unknown {
+  private joinedContent(value: unknown, scan: Scan, depth: number, level: number): unknown {
     if (!Array.isArray(value)) return value;
     const blocks = value.filter((block) => block?.type === "text" && typeof block.text === "string");
     if (blocks.length < 2) return value;
     for (const separator of ["", "\n"]) {
       const joined = blocks.map((block) => block.text).join(separator);
-      const redacted = this.wire(joined, scan, depth);
-      if (redacted === blocks.map((block) => this.wire(block.text, scan, depth)).join(separator)) continue;
+      const redacted = this.wire(joined, scan, depth, true, level);
+      if (redacted === blocks.map((block) => this.wire(block.text, scan, depth, true, level)).join(separator)) continue;
       let first = true;
       return value.map((block) => {
         if (!blocks.includes(block)) return block;
