@@ -6,6 +6,13 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { customExecutor } from "../src/executor-contract.js";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
 import {
+  checkLargeProgramRead,
+  checkLargeProgramWrite,
+  checkProgramPagingFailure,
+  checkProgramResultBom,
+  checkProgramResultSurrogates,
+} from "./program-result-cases.js";
+import {
   CAPABILITY_PROBE_CODE,
   caseConfig,
   checkHostFailureArrays,
@@ -37,6 +44,21 @@ afterAll(async () => {
 });
 
 describe("guest API contract (QuickJS executor)", () => {
+  it("INV-9: lone surrogates refuse raw-text paging without replaying writes and round-trip as JSON", async () => {
+    await checkProgramResultSurrogates(executor);
+  });
+  it("INV-9: program reconstruction and direct pages preserve leading and page-boundary U+FEFF after one write", async () => {
+    await checkProgramResultBom(executor);
+  });
+  it("INV-3 INV-9: oversized program reads arrive whole through bounded stash pages", async () => {
+    await checkLargeProgramRead(executor);
+  });
+  it("INV-2 INV-9: oversized program writes run once and return a shared pageable handle", async () => {
+    await checkLargeProgramWrite(executor);
+  });
+  it("INV-7 INV-9: paging failures preserve completed write accounting and never replay the write", async () => {
+    await checkProgramPagingFailure(executor);
+  });
   it("[L4, W9] cancels an exempt write queued at exhaustion", async () => {
     await checkQueuedWriteAtExhaustion(executor);
   });

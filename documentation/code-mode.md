@@ -353,7 +353,9 @@ const { data: run, format } = await connecta.call("ci.get_run", { runId: 42 });
 **S5.** Takes a canonical address, optional arguments, and optional
 `{ timeoutMs }`; the object form is `{ address, args?, timeoutMs? }`. A malformed
 signature fails with `invalid_args` and both exact signatures, before discovery.
-Returns `{ data, format: "json" | "text" }`. MCP `toolResult` or
+Normally returns `{ data, format: "json" | "text" }`. Oversized values may return
+a `format: "paged"` handle for `connecta.result`, as described in `L6` below.
+MCP `toolResult` or
 `structuredContent` is JSON; all-text content is JSON when it parses, otherwise
 text. API string values are text, other API values are JSON. Check `format`
 before treating `data` as an object. A downstream `isError` throws.
@@ -368,11 +370,14 @@ it can reach.
 
 ### connecta.result and connecta.skill
 
-`await connecta.result(id, { offset?, maxBytes? })` reads a stashed direct-call
-result bound to the admitted subject, principal, endpoint/pool, request origin,
+`await connecta.result(handleOrId, { page?, offset?, maxBytes? })` reads a stashed direct-call
+or program-call result bound to the admitted subject, principal, endpoint/pool, request origin,
 connector, and tool. It returns
 `{ resultId, offset, bytes, totalBytes, hasMore, nextOffset?, format: "text", text }`.
-Offsets and sizes are UTF-8 bytes; the page cap is the original call's inline cap.
+Offsets and sizes are UTF-8 bytes. Pages obey the original call's inline cap
+and a 32 KiB bridge ceiling. `page` is zero-based and mutually exclusive with
+`offset`; keep `maxBytes` fixed while incrementing pages. Nominal page windows
+are at least four bytes wide and align both edges to UTF-8 boundaries.
 Follow `nextOffset`, reassemble inside the program, and return a reduced value.
 Before returning a page, the host rechecks current authentication, connector/tool
 grants, pool membership, and endpoint trust against both the original and current
@@ -855,13 +860,32 @@ the Dynamic Worker inherits the platform isolate's limits (`X2`). A third
 executor must bound all three somehow — this is the clause that makes untrusted
 code safe to run at all.
 
-**L6.** A host call's serialized arguments and its serialized result are each
-bounded — QuickJS caps both at 256 KiB (`X10`) — and exceeding either fails that
-call, not the execution, so a program can catch it and ask for less. The failure
-is executor-owned untyped text, not a Connecta host failure (`E1`). An
-over-bound _result_ names the address the program called rather than only the
-generic bridge function; an over-bound _argument_ payload is refused before it
-is parsed, so it names no address at all.
+**L6.** QuickJS bounds each serialized host-call message at 256 KiB. Oversized
+`connecta.call` results use the existing direct-call stash before crossing that
+bridge. The trusted guest initializer reconstructs values up to 1 MiB from
+bounded pages, retaining JSON versus text format and every payload code point,
+including U+FEFF at page starts. Larger values return a
+`{ format: "paged", valueFormat, resultId, totalBytes, truncated: true, hint }`
+handle. Pass the handle or its `resultId` to `connecta.result` and reduce the
+pages before returning them. Automatic transfers spend no additional host-call
+budget; explicit paging does. This policy is shared by QuickJS, Worker and custom
+executors that run provider preludes.
+Oversized raw text containing unpaired UTF-16 surrogates returns a handle without
+`resultId`, with a notice that it cannot be paged as text. This preserves the
+UTF-8 byte-offset contract without silently replacing code units. The completed
+call stays successful, including write accounting; JSON-wrapped strings still
+round-trip losslessly.
+
+Stashes retain their existing bindings, 15-minute expiry, per-connector page
+caps and aggregate capacity charges on memory, SQLite and D1. Capacity exhaustion
+or a storage failure returns a successful notice without a `resultId`. A failed
+automatic reconstruction retains the handle. Neither result path reissues the
+call or changes a completed write into a failed or unknown write. Guest-return
+truncation remains separate and has no handle.
+
+Over-bound arguments and other unpaged bridge results still fail catchably with
+executor-owned text. An over-bound result names the called address; an argument
+payload is refused before parsing and names no address.
 
 **L7.** Executions are admitted, not queued indefinitely: bounded concurrency
 plus a bounded queue with a wait timeout. Overload is a retryable
@@ -1067,13 +1091,11 @@ Normalizing that would spend real CPU on every program to improve the error
 message of a program that is already wrong. `P3` is the contract: neither
 behavior returns the value.
 
-**X10. Per-host-call payload bound.** `L6`'s 256 KiB ceiling on a host call's
-arguments and result is QuickJS's, enforced at its IPC boundary. The Dynamic
-Worker has no documented equivalent; Workers RPC limits apply and connecta adds
-none, because that boundary is an isolate-to-isolate call rather than a
-`process.send` with a hard ceiling. A program returning a quarter-megabyte from
-one tool call therefore fails on Node and may succeed on Workers — reduce inside
-the program either way (`R1`).
+**X10. Per-host-call payload bound.** QuickJS enforces `L6`'s 256 KiB message
+ceiling at its IPC boundary. The Dynamic Worker uses Workers RPC limits.
+Connecta's shared program result policy keeps call results and result pages
+within the QuickJS message ceiling on every executor. It does not raise the
+argument limit or the guest's heap, CPU, execution, or returned-result limits.
 
 **X12** described a paused sandbox and left with pausing
 ([#672](https://github.com/zackbart/connecta/issues/672)); the id stays retired.
@@ -1136,7 +1158,7 @@ rejection, and branded adapter acceptance across module copies.
 | `L3`, `X1`        | `test/guest-api-contract.test.ts` (short-deadline executors), `test/execute.test.ts` (the watchdog ends a never-settling executor, frees the default pool, spares a slow run, and falls back from an unusable value)                                                                                                                                                                                                                                                                                                            |
 | `L4`, `L8`        | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (shared discovery/call budgets and terminal catch-and-continue loops and queued-write cancellation on both executors), `test/worker-budget-response.node.test.ts` (native handle disposal and admission recovery across completed HTTP responses)                                                                                                                                                                                                                     |
 | `L5`, `L7`, `X2`  | `test/quickjs-executor.node.test.ts` (CPU, heap), `test/execute.test.ts` and `test/executor-admission.test.ts` (bounded admission and queue)                                                                                                                                                                                                                                                                                                                                                                                    |
-| `L6`, `X10`       | `test/quickjs-executor.node.test.ts` (bridge and IPC bounds for arguments and result; the address in the over-bound message), `test/quickjs-child-stderr.node.test.ts` (outer reply serialization failure settles the call)                                                                                                                                                                                                                                                                                                     |
+| `L6`, `X10`       | `test/guest-api-contract-quickjs.node.test.ts` and `test/guest-api-contract.test.ts` (whole oversized reads and one-write pageable handles), `test/sqlite-storage.node.test.ts` and `test/d1-storage.node.test.ts` (shared stash transfers), `test/quickjs-executor.node.test.ts` (bridge and IPC bounds for arguments and result; the address in the over-bound message), `test/quickjs-child-stderr.node.test.ts` (outer reply serialization failure settles the call)                                                        |
 | `V1`–`V4`         | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, the friction each derives, no event for the execution itself), `test/activity.test.ts` (the shared code → friction table, the identity clamp, the one-attempt floor), `test/operator-view.test.ts`, `test/sql-storage-contract.ts`, run by `test/d1-storage.node.test.ts` and `test/sqlite-storage.node.test.ts` (historical pause and approval rows still render and round-trip)                              |
 | `V5`, `W9`        | `test/program-writes.test.ts` (an unawaited trusted-pool write finished and recorded, its unknown outcome reported, counts on a failed program, the classification table), `test/invocation-pipeline.test.ts` (the gate after validation, an unrecorded refusal)                                                                                                                                                                                                                                                                |
 | `W10`, `W12`      | `test/program-writes.test.ts` (a trusted-pool write runs and every other write keeps `E4`, the write budget, pool trust and override precedence, `call_tool` still refusing, search and describe verdicts, construction refusals), `test/operator-ui-model.test.ts`, `test/browser/operator-ui.spec.ts` (the badge)                                                                                                                                                                                                             |

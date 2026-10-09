@@ -14,8 +14,7 @@ description: How to route work between one execute_code program and Connecta's e
 | One known-address write | call_destructive_tool |
 | Discovery, multiple or dependent calls, paging, reduction | execute_code |
 
-For example, read account acct_42 with call_tool arguments
-\`{ "address": "crm.get_account", "args": { "id": "acct_42" } }\`.
+Read one account with call_tool: \`{ "address": "crm.get_account", "args": { "id": "acct_42" } }\`.
 Discover and call in the same program when schemas suffice. Top-level search_tools
 covers catalog inspection and write discovery in read-only pools. Programs may
 write only in trusted pools; the tool description states this endpoint's trust.
@@ -23,14 +22,14 @@ Unannotated tools fail closed to writes.
 
 ## The global and the envelopes
 
-Pass one plain JavaScript async arrow, \`async () => { ... }\`. It receives no
-arguments. Use the supplied \`connecta\` global; do not shadow it with a parameter.
+Pass one JavaScript \`async () => { ... }\` with no arguments. Use the supplied
+\`connecta\` global without shadowing it.
 No imports, require, filesystem, fetch, or timers in portable programs.
 
 \`connecta.call(address, args, { timeoutMs })\` is positional. The object overload
-is \`connecta.call({ address, args, timeoutMs })\`. Both return \`{ data, format }\`.
-For \`format: "json"\`, data is the JSON value. For \`format: "text"\`, data is a
-string: parse only if the provider documents JSON text. Never guess collection roots.
+is \`connecta.call({ address, args, timeoutMs })\`. Both normally return \`{ data, format }\`.
+\`format: "json"\` carries JSON; \`format: "text"\` carries text. Parse text only
+when documented as JSON. Verify collection roots.
 
 \`connecta.read("resource://id/"+encodeURIComponent(uri))\` returns \`{ contents }\` for advertised URIs.
 
@@ -40,28 +39,25 @@ selecting a match. JSON schemas are the program default. Compact schemas have
 \`schemaFormat: "text"\`; do not read their .properties. Select the exact tool and
 account/environment, inspect its schema, and supply its required keys and types.
 
-Discover an unfamiliar run lookup, then reduce its JSON result:
+Discover an unfamiliar read and reduce its result:
 
 \`\`\`js
 async () => {
-  const page = await connecta.search({ connector: "ci", query: "get_run", safety: "readOnly" });
-  if (page.catalogErrors.length || page.absence) return { gap: page.catalogErrors, absence: page.absence };
+  const page = await connecta.search({ connector: "ci", query: "get_run" });
+  if (page.catalogErrors.length || page.absence) return page;
   const tool = page.tools.find(t => t.name === "get_run");
   if (!tool) return { gap: "get_run unavailable" };
-  const { tools } = await connecta.describe({ address: tool.address });
-  if (tools[0].error) return { gap: tools[0].error };
   const result = await connecta.call(tool.address, { runId: 42 });
-  if (result.format !== "json") return { gap: "Expected JSON" };
-  return { status: result.data.status, jobId: result.data.failedJobId };
+  return result.format === "json"
+    ? { status: result.data.status, jobId: result.data.failedJobId } : result;
 }
 \`\`\`
 
 ## Keep partial successes
 
-Await Promise.allSettled for independent calls when one failure must not discard
-other answers. Each rejected reason keeps \`code\`, \`message\`, \`retryable\`, and
-\`details\`. Branch on fields, never error prose. Repair one argument failure
-before repeating it across records. Every run reports hostCalls counts separately.
+Use Promise.allSettled to keep independent successes. Rejections retain \`code\`,
+\`message\`, \`retryable\`, and \`details\`. Branch on fields, not prose. Repair
+arguments before batching. Runs report hostCalls separately.
 
 After verifying these addresses and schemas, read JSON and plain text together:
 
@@ -99,6 +95,13 @@ A truncated direct result carries a resultId when paging is available. Follow
 nextOffset in UTF-8 bytes, reassemble and reduce inside one program. Use the
 returned id in place of result-id below; this example assumes documented JSON.
 
+Program calls reconstruct up to 1 MiB through stash pages. Larger values return
+\`{ format: "paged", valueFormat, resultId?, totalBytes, hint }\`. Pass the handle
+to \`connecta.result\`. Missing resultId means paging unavailable. IDs expire in
+15 minutes. Automatic transfers spend no extra host calls; explicit paging does.
+Use zero-based \`{ page: 0 }\` or UTF-8 \`{ offset }\`, never both. Keep maxBytes
+fixed across pages; connector caps and the 32 KiB bridge ceiling apply.
+
 \`\`\`js
 async () => {
   let text = "", offset = 0, page;
@@ -134,6 +137,9 @@ describe(args?: CatalogDescribeArgs): Promise<{ tools: CatalogDescription[] }>;
 call(address: string, args?: unknown, options?: { timeoutMs?: number }): Promise<GuestResult>;
 call(request: { address: string; args?: unknown; timeoutMs?: number }): Promise<GuestResult>;
 read(uri: string): Promise<GuestResourceResult>;
-result(id: string, options?: { offset?: number; maxBytes?: number }): Promise<GuestResultPage>;
+result(
+  id: string | GuestResultHandle,
+  options?: { page?: number; offset?: number; maxBytes?: number },
+): Promise<GuestResultPage>;
 skill(name: string): Promise<{ name: string; text: string; format: "text" }>;
 emit(block: GuestBlock): PromiseLike<void>;`;

@@ -387,6 +387,13 @@ including pre-upgrade single-key envelopes and raw-text entries. Offsets and `to
 original UTF-8 text, not the envelope. A supplied offset inside a character
 moves back to its start; page ends also align to character boundaries, and a
 page smaller than one character widens just enough to make progress.
+Decoding preserves every payload code point, including U+FEFF at the start of
+the result or any page, so joining pages reproduces the original UTF-8 text.
+Oversized raw text containing unpaired UTF-16 surrogates cannot use this UTF-8
+page/offset contract. It returns a successful truncation notice explaining that
+the text cannot be paged, without a stash id, paging action, or altered preview.
+Completed writes remain successful and must not be repeated. JSON values still
+round-trip such strings through their escaped JSON representation.
 
 A per-call `timeoutMs` covers catalog resolution, admission, and connector
 execution under one deadline. The admission queue's own timeout may expire
@@ -470,7 +477,11 @@ anything before it returns.
 
 ### Paging with connecta.result
 
-Paging is a guest operation, never another top-level tool. A direct call's
+Paging is a guest operation, never another top-level tool. Program calls also
+return handles for oversized values; see [program result limits](./code-mode.md#cancellation-and-limits).
+`connecta.result(handle, { page: 0 })` accepts those handles alongside direct
+result IDs. Numbered pages are zero-based and mutually exclusive with offset.
+Keep maxBytes fixed while incrementing pages. A direct call's
 notice carries a `resultId`, `nextOffset`, and an executable `execute_code`
 recovery action. Read and reduce the result in one program:
 
@@ -488,7 +499,7 @@ async () => {
 
 A page is `{ resultId, offset, bytes, totalBytes, hasMore, nextOffset?,
 format: "text", text }`. The page size is clamped to the original call's inline
-cap, with UTF-8 alignment and forward progress. Reassemble inside the sandbox;
+cap and a 32 KiB program bridge ceiling, with UTF-8 alignment and forward progress. Reassemble inside the sandbox;
 returning pages unchanged can hit the program result cap. The admitted subject
 and principal, endpoint/pool, request origin, connector, and tool bindings must
 match. The host rechecks current access and trust before returning each page; a

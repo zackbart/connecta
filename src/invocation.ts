@@ -241,8 +241,8 @@ export interface InvocationContext<T> {
     secrets: SentSecrets,
   ) => T | Promise<T>;
   /**
-   * Caller-owned result policy. MCP applies result paging here; code mode
-   * normally accepts the already-unwrapped value unchanged.
+   * Caller-owned result policy. Direct and program calls apply their shared
+   * stash policy here, after unwrapping and before reporting completion.
    */
   processResult?: (
     value: unknown,
