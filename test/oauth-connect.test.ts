@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 import { machineAuth } from "./helpers/machine-auth.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
+import { identityStorageKey } from "../src/identity.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
 import { createTestConnecta } from "./helpers.js";
@@ -22,6 +23,7 @@ function setup(
   options: { vault?: boolean; interactive?: boolean; bobAdmin?: boolean; hostedSignIn?: boolean; ui?: boolean } = {},
 ) {
   const storage = memoryStorage();
+  const vault = encryptedCredentialVault(storage, CREDENTIAL_KEY);
   let state = "";
   let permitted = true;
   const startAuth = vi.fn(async (ctx, opts) => {
@@ -62,7 +64,7 @@ function setup(
     storage,
     publicUrl: BASE,
     logger: "silent",
-    ...(options.vault === false ? {} : { vault: encryptedCredentialVault(storage, CREDENTIAL_KEY) }),
+    ...(options.vault === false ? {} : { vault }),
     identity: {
       credentialAdministration: (identity) =>
         permitted && (identity.principal?.id === "alice" || options.bobAdmin) ? "all" : "none",
@@ -117,6 +119,7 @@ function setup(
     startAuth,
     finishAuth,
     storage,
+    vault,
     headers,
     runtime,
     revoke: () => {
@@ -125,14 +128,86 @@ function setup(
   };
 }
 
+it("INV-4: rejects re-encoded payloads with the original valid signature and requests a fresh link", async () => {
+  const flow = setup("clerk", "personal");
+  const { authorizationUrl } = await flow.authorize();
+  const url = new URL(authorizationUrl);
+  const [version, body, signature] = url.searchParams.get("h")!.split(".");
+  const signatureText = atob(signature!.replace(/-/g, "+").replace(/_/g, "/"));
+  expect(await flow.vault.verifyOAuthHandoff!(`${version}.${body}`, signatureText)).toBe(true);
+  const compact = atob(body!.replace(/-/g, "+").replace(/_/g, "/"));
+  // Change the compact force field from false to true while copying the HMAC.
+  expect(compact.endsWith("1:00:")).toBe(true);
+  const changed = btoa(compact.slice(0, -5) + "1:10:")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  for (const encoded of [changed, body + "="]) {
+    url.searchParams.set("h", `${version}.${encoded}.${signature}`);
+    const response = await flow.browser(url.href, "alice");
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "Invalid or expired connection link. Request a new link from connecta.",
+    });
+  }
+  expect(flow.startAuth).not.toHaveBeenCalled();
+});
+
+for (const sealed of [false, true]) {
+  it(`INV-4: accepts pre-upgrade ${sealed ? "sealed v2" : "JSON"} tokens only with their original signature and expiry`, async () => {
+    const flow = setup("clerk", "personal");
+    const principal = await identityStorageKey({ namespace: "https://clerk.example.test", id: "alice" });
+    const handoff = {
+      connector: "service",
+      owner: principal,
+      principal,
+      origin: BASE,
+      expiresAt: Date.now() + 15 * 60_000,
+      nonce: crypto.randomUUID(),
+      force: false,
+    };
+    const json = JSON.stringify(handoff);
+    const payload = sealed
+      ? `v2:${btoa(await flow.vault.seal!("service", "connecta:connect-link:v2", json))}`
+      : btoa(json);
+    const signature = await flow.vault.signOAuthHandoff!(payload);
+    const url = new URL(`${BASE}/connect/service`);
+    url.searchParams.set("h", `${payload}.${signature}`);
+    if (!sealed) {
+      const fresh = await flow.authorize();
+      expect(fresh.authorizationUrl.length).toBeLessThan(url.href.length * 0.9);
+    }
+    const modified = new URL(url);
+    modified.searchParams.set("h", `${btoa(json.replace('"force":false', '"force":0'))}.${signature}`);
+    const refused = await flow.browser(modified.href, "alice");
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toEqual({
+      error: "Invalid or expired connection link. Request a new link from connecta.",
+    });
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now + 16 * 60_000);
+    expect((await flow.browser(url.href, "alice")).status).toBe(400);
+    clock.mockRestore();
+    expect((await flow.browser(url.href, "alice")).status).toBe(302);
+    expect(flow.startAuth).toHaveBeenCalledWith(expect.anything(), { force: false });
+    expect((await flow.browser(url.href, "alice")).status).toBe(400);
+  });
+}
+
 for (const provider of ["clerk", "access"] as const) {
   for (const scope of ["personal", "shared"] as const) {
     describe(`${provider} ${scope} OAuth connection`, () => {
-      it("binds the connect link and callback to the initiating user, including another admin", async () => {
+      it("INV-4: round-trips a compact handoff bound to its initiating user, including another admin", async () => {
         const flow = setup(provider, scope, { bobAdmin: true });
         const handoff = await flow.authorize();
         expect(handoff.authorizationUrl).toMatch(new RegExp(`^${BASE}/connect/service\\?h=`));
         expect(JSON.stringify(handoff)).not.toContain(AS);
+        expect(handoff.authorizationUrl).not.toContain("%");
+        const token = new URL(handoff.authorizationUrl).searchParams.get("h")!;
+        expect(token).toMatch(/^v3\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+        expect(token).not.toContain("=");
+        const compact = atob(token.split(".")[1]!.replace(/-/g, "+").replace(/_/g, "/"));
+        expect(() => JSON.parse(compact)).toThrow();
         expect(flow.startAuth).not.toHaveBeenCalled();
         expect((await flow.browser(handoff.authorizationUrl, "bob")).status).toBe(403);
         expect(flow.startAuth).not.toHaveBeenCalled();
@@ -529,10 +604,9 @@ describe("OAuth identity and signature boundaries", () => {
     const flow = setup("clerk", "personal");
     const { authorizationUrl } = await flow.authorize();
     const original = new URL(authorizationUrl);
-    const [payload, signature] = original.searchParams.get("h")!.split(".");
-    const metadata = JSON.parse(atob(payload!));
+    const [version, payload, signature] = original.searchParams.get("h")!.split(".");
     const altered = new URL(original);
-    altered.searchParams.set("h", `${btoa(JSON.stringify({ ...metadata, principal: "bob" }))}.${signature}`);
+    altered.searchParams.set("h", `${version}.${payload}x.${signature}`);
     expect((await flow.browser(altered.href, "alice")).status).toBe(400);
     const crossOrigin = new URL(original);
     crossOrigin.hostname = "another-deployment.test";

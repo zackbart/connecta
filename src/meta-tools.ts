@@ -1096,7 +1096,7 @@ function metaToolsForRequest(
           status: "auth_required",
           authorizationUrl: await opts.oauthConnectUrl(connector.id, args.force),
           instructions:
-            "Open authorizationUrl in a browser and sign in as the user who requested this connection. Connecta verifies your identity and permission before starting consent. " +
+            "Copy authorizationUrl exactly as returned; do not decode or re-encode it. Open it in a browser and sign in as the user who requested this connection. Connecta verifies your identity and permission before starting consent. " +
             oauthFollowUp(connector.id),
         });
       } catch (err) {
