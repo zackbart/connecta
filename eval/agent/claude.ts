@@ -189,14 +189,16 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
     });
     const exited = new Promise<number | null>((resolve) => {
       const end = (code: number | null, signal?: NodeJS.Signals | null) => {
-        // A numeric 143 can be an independent exit whose notification was
-        // pending when kill() succeeded. Require the OS-reported signal.
-        terminatedAfterCompletion = completionStopRequested && signal === "SIGTERM";
+        terminatedAfterCompletion =
+          completionStopRequested && !timedOut && !options.signal?.aborted && (code === 143 || signal === "SIGTERM");
         ended = true;
         stopWaiting?.();
         finishTurn?.();
         resolve(code);
       };
+      child.on("exit", () => {
+        ended = true;
+      });
       child.on("close", end);
       child.on("error", (error) => {
         push({ type: "result", subtype: "error", result: String(error) });
@@ -229,12 +231,15 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
         prompt === undefined &&
         !timedOut &&
         !options.signal?.aborted &&
+        events.some((e) => e.type === "result" && e.subtype === "success") &&
         events.filter((e) => e.type === "result").every((e) => e.subtype === "success");
     } finally {
       clearTimeout(timer);
       options.signal?.removeEventListener("abort", kill);
       child.stdin.end();
       if (!ended && child.exitCode === null && child.signalCode === null) {
+        // Claude traps SIGTERM and exits 143. Accept the tiny race where an
+        // independent exit is still unprocessed here: success already streamed.
         completionStopRequested = kill() && conversationEnded;
       }
     }

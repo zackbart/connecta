@@ -10,8 +10,9 @@ import { runBatch } from "../eval/agent/run.js";
 import { regradeTrial } from "../eval/agent/regrade.js";
 import { ACTIVE_TASKS } from "../eval/tasks/index.js";
 import type { ActiveTask } from "../eval/tasks/types.js";
-import { parseTrace, type StreamEvent } from "../eval/agent/trace.js";
+import { parseTrace } from "../eval/agent/trace.js";
 import { infraError } from "../eval/agent/infra.js";
+import type { CodexOptions } from "../eval/agent/codex.js";
 
 const CLI = String.raw`
 const fs = require('node:fs');
@@ -42,7 +43,9 @@ if (Object.keys(config.mcpServers).join(',') !== 'connecta' || value('--tools') 
 send({type:'system',subtype:'init',model:mode === 'wrong-model' ? 'wrong-model' : model,
   claude_code_version:'fake-claude',plugins:mode === 'extra-plugin' ? [{name:'unexpected',source:'cc-plugin-future@builtin',settings:{token:'fake-secret'}}] : mode === 'named-plugin' ? [{name:'unexpected'}] : [],skills:mode === 'extra-skill' ? ['future-skill'] : [],tools:mode === 'extra-tool' ? [...tools,'Bash'] : mode === 'duplicate-tool' ? [...tools,tools[0]] : tools});
 let turn = 0;
-if (mode === 'self-terminate') process.on('SIGTERM', () => process.exit(143));
+if (mode === 'self-terminate' || mode === 'cleanup-143') process.on('SIGTERM', () => process.exit(143));
+if (mode === 'cleanup-1') process.on('SIGTERM', () => process.exit(1));
+if (mode === 'cleanup-sigint') process.on('SIGTERM', () => process.kill(process.pid, 'SIGINT'));
 readline.createInterface({input:process.stdin}).on('line', line => {
   const input = JSON.parse(line); turn++;
   if (mode === 'hang') return;
@@ -63,7 +66,7 @@ async function fixture(
     followUp?: boolean;
     model?: string;
     surface?: Surface;
-    onEvent?: (event: StreamEvent) => void;
+    nextTurn?: CodexOptions["nextTurn"];
   } = {},
   invoke = runClaude,
 ) {
@@ -83,9 +86,8 @@ async function fixture(
       deniedTools: [],
       timeoutMs: options.timeoutMs ?? 10_000,
       ...(options.signal ? { signal: options.signal } : {}),
-      ...(options.onEvent ? { onEvent: options.onEvent } : {}),
       firstPrompt: "First",
-      nextTurn: async (n) => (options.followUp && n === 1 ? "Second" : undefined),
+      nextTurn: options.nextTurn ?? (async (n) => (options.followUp && n === 1 ? "Second" : undefined)),
       maxBudgetUsd: 0.1,
       testHost: { executable: process.execPath, args: [script, mode, "--expected-home", process.env.HOME!] },
     });
@@ -212,17 +214,57 @@ describe("Claude eval CLI", () => {
     expect(error?.result).not.toContain("settings");
   });
 
-  it("does not attribute a pending self-termination after success to harness cleanup", async () => {
+  it("completes a successful trial when the CLI traps harness SIGTERM and exits 143", async () => {
+    const original = runClaude;
+    const spy = vi.spyOn(claude, "runClaude").mockImplementation(() => fixture("cleanup-143", {}, original));
+    const task: ActiveTask = {
+      ...ACTIVE_TASKS.find((t) => t.id === "p5-known-read-routing")!,
+      grade: () => [{ id: "answer-evidence", description: "fixture answer", pass: true }],
+    };
+    try {
+      const { trials } = await runBatch([task], ["claude-sonnet-5-5"], 1, {
+        runner: "claude",
+        timeoutMs: 10_000,
+        concurrency: 1,
+      });
+      const trial = trials[0]!;
+      expect(trial.status).toBe("pass");
+      expect(trial.error).toBeUndefined();
+      expect(trial.claude).toMatchObject({
+        exitCode: 143,
+        terminatedAfterCompletion: true,
+        resultSubtypes: ["success"],
+        timedOut: false,
+        aborted: false,
+      });
+      expect(trial.checks.find((c) => c.id === "conversation-completed")?.pass).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("does not attribute a self-termination processed before cleanup to the harness", async () => {
     const run = await fixture("self-terminate", {
-      onEvent: (event) => {
-        // Let the child exit while the parent cannot process its exit notification.
-        if (event.type === "result" && event.subtype === "success") {
-          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
-        }
+      nextTurn: async () => {
+        // Yield so Node processes the child's exit before cleanup checks it.
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        return undefined;
       },
     });
     expect(run.events.at(-1)?.subtype).toBe("success");
     expect(run.exitCode).toBe(143);
+    expect(run.timedOut).toBe(false);
+    expect(run.aborted).toBe(false);
+    expect(run.terminatedAfterCompletion).toBe(false);
+  });
+
+  it.each([
+    ["cleanup-1", 1],
+    ["cleanup-sigint", null],
+  ] as const)("rejects an unexpected exit after harness SIGTERM (%s)", async (mode, exitCode) => {
+    const run = await fixture(mode);
+    expect(run.events.at(-1)?.subtype).toBe("success");
+    expect(run.exitCode).toBe(exitCode);
     expect(run.timedOut).toBe(false);
     expect(run.aborted).toBe(false);
     expect(run.terminatedAfterCompletion).toBe(false);

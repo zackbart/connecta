@@ -163,9 +163,12 @@ A trial passes only after normal runner completion, no timeout, interruption or
 error evidence, and every required outcome check passing. Codex requires exit
 code zero. Claude also accepts its own SIGTERM cleanup after a completed
 conversation, recorded as `terminatedAfterCompletion`, with exit code 143 or
-a signal-only exit. New runs set the marker only when cleanup sends SIGTERM
-before an observed exit and the OS reports SIGTERM termination. A numeric 143
-alone cannot prove cleanup caused the exit and leaves the marker false.
+a signal-only exit. New runs set the marker only after a successful final result,
+when cleanup sends SIGTERM before any observed exit and the CLI exits with
+numeric 143 or signal SIGTERM. The kill-time check requires null child exit and
+signal codes and no processed exit or close event. An independent exit still
+unprocessed in the tiny window after that check is an accepted residual risk;
+the CLI has already streamed a successful final result, so the task outcome is unaffected.
 Older Claude records without that marker accept 143 only
 when all result subtypes are success and `conversation-completed` passes. An
 explicit false marker, another nonzero exit, timeout, abort or incomplete
