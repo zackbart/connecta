@@ -360,6 +360,20 @@ MCP `toolResult` or
 text. API string values are text, other API values are JSON. Check `format`
 before treating `data` as an object. A downstream `isError` throws.
 
+An inline MCP result containing image, audio, resource, or resource_link blocks
+also exposes `content?: GuestNativeBlock[]`, even when `data` comes from
+`structuredContent` or `toolResult`. `data` keeps its existing shape.
+`connecta.emit(result)` forwards all native blocks; iterating `result.content`
+and calling `connecta.emit(block)` forwards selected blocks. Both forward the
+host-retained originals, so guest edits do not change native output. Results
+over the 1 MiB inline cap return paging handles without native content; page
+and reduce them as described in `L6`. If only the native presentation is too
+large or its transfer fails, `data` stays intact and `contentResult` carries
+its paging handle or an unavailable-paging notice for presentation that exceeds
+bounded traversal limits or is cyclic. When a result ID exists,
+`connecta.result(result.contentResult)` pages the original MCP envelope;
+`emit(result)` refuses with `result_too_large`.
+
 **S6.** Every call goes through the same catalog, fail-closed read-only
 predicate, admission, credential containment, timeout classification, health
 accounting, and activity recording as an ordinary meta-tool call. The predicate
@@ -490,7 +504,9 @@ or upward proxy to programs. Native upward skill resources are separate
 ### connecta.emit
 
 ```js
-await connecta.emit({ type: "image", data: shot.data, mimeType: "image/png" });
+const badge = await connecta.call("assets.get_badge_image", {});
+connecta.emit(badge);
+// Or: for (const block of badge.content ?? []) connecta.emit(block);
 ```
 
 The rich-output channel, delivered after the JSON envelope on success. Its
@@ -691,17 +707,37 @@ request; it is not activity, a session, or a stream.
 
 ## Emitted output
 
-Images accept only `image/png`, `image/jpeg`, `image/gif`, or `image/webp`
+Guest-authored images accept only `image/png`, `image/jpeg`, `image/gif`, or `image/webp`
 and nonempty canonical base64. Whitespace, URL-safe alphabets, bad padding,
 and nonzero pad bits are rejected before collection. Size budgets still apply.
 
 MCP-native output a return value cannot carry: base64 is not projectable, so a
-block that survives intake uncapped (`S5`) must not die at the `R2` exit guard.
+block that fits the inline call limit (`S5`, `L6`) can use the separate
+emission transport budget instead of the `R2` return guard.
 The earlier alternatives are in [decision history](https://github.com/zackbart/connecta/blob/main/decisions/0001-ethos-verdict-table.md)
 ([#267](https://github.com/zackbart/connecta/issues/267),
 [#270](https://github.com/zackbart/connecta/issues/270)).
 
-**M1.** `connecta.emit(block)` accepts exactly one block: `{ type: "text",
+**M1.** `connecta.emit(result)` accepts a rich result from this program's
+`connecta.call` and forwards its original native content blocks, including
+resources, resource links, annotations and `_meta`. `connecta.emit(block)` also
+accepts individual entries of that result's `content`. The trusted guest
+prelude maps these objects to opaque request-local references; the host checks
+those references and emits owned deep snapshots of retained native blocks taken
+before result paging can yield. Oversized structured data returns its paging
+handle before native presentation is inspected. Presentation traversal stops at
+64 levels, 32,768 values, or the larger of the default and configured emission
+byte budgets. Only envelopes within the 1 MiB inline cap retain block snapshots.
+Cycles, non-JSON values, and traversal limits refuse presentation with an
+unavailable-paging notice; structured data remains usable. That notice has no
+result ID and reports `totalBytes: 0` because traversal could not measure a
+complete JSON value.
+Connector mutations after retention cannot change guest output, accepted blocks,
+or their byte and text charges, including nested resource fields and metadata.
+Copies and guest-authored blocks keep the strict validation below. No program
+can mint a native URI.
+
+Guest-authored `connecta.emit(block)` accepts exactly one block: `{ type: "text",
 text }` or `{ type: "image" | "audio", data /* base64 */, mimeType }`, every
 field a string, no extra fields, no `annotations`, no `_meta`, no sugar forms.
 An invalid block throws catchably and nothing is accepted — rejected, not
@@ -718,6 +754,8 @@ presentation, not a second data channel.
 serialized block size reduces the return budget, and oversized text fails with
 `result_too_large`. Image/audio blocks use the separate transport budget and
 reach the model as real MCP media content, including when `emit` is not awaited.
+Native embedded resource text also shares the result cap; resource blobs count
+against the serialized-byte emission budget.
 The trusted runner waits for emission acknowledgments before returning success.
 An unobserved emission failure fails the run; an awaited failure remains catchable.
 Rejections propagated through `then` or `finally` can be caught later in that
@@ -729,7 +767,8 @@ chain. A separate unhandled branch still fails the run.
 **M5.** Two budgets (`ConnectaConfig.execute.maxEmittedBytes` /
 `.maxEmittedBlocks`, defaults 4,000,000 serialized bytes and 32 blocks) fail
 loudly at the `emit` call, naming the budget and the room remaining; nothing is
-partially accepted and prior blocks stand. Accepted and rejected emission attempts
+partially accepted and prior blocks stand. Forwarding a whole native result
+checks every block before accepting any of them. Accepted and rejected emission attempts
 also have a terminal limit of four times the configured block cap (at least 128),
 which bounds retained host failures and guest acknowledgement state without
 discarding an older error identity. No result stash for emitted blocks: the program
@@ -738,14 +777,15 @@ bound, not a context bound — emitted media reaches the model as media, not
 base64 text.
 
 **M6.** No provenance is claimed: every emitted block is program output, trusted
-exactly as much as the return value. Preservation is re-emission of the raw
-downstream block, so `S5`'s uncapped fallthrough is contract.
+exactly as much as the return value. Native forwarding preserves the raw
+downstream block through a host-issued reference, within `S5`, `L6` and `M5`.
 
 **M7.** `emit` alone spends no host-call budget (`L4`); `search`, `describe`,
 `call`, `read`, `result`, and `skill` share it. Text also observes `R2`.
 
-**M8.** `emit` is a provider function; blocks cross the guest boundary once as
-an argument. `ExecuteResult` remains compatible with upstream codemode's types;
+**M8.** `emit` is a provider function. Guest-authored blocks cross as arguments;
+native blocks cross once as call output and emissions send only their references.
+Native call output uses the same bounded stash transfers as `L6`. `ExecuteResult` remains compatible with upstream codemode's types;
 construction requires the Worker adapter or explicit custom opt-in. Any executor
 that bridges provider calls gets emission for free.
 
@@ -1162,7 +1202,7 @@ rejection, and branded adapter acceptance across module copies.
 | `V1`–`V4`         | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, the friction each derives, no event for the execution itself), `test/activity.test.ts` (the shared code → friction table, the identity clamp, the one-attempt floor), `test/operator-view.test.ts`, `test/sql-storage-contract.ts`, run by `test/d1-storage.node.test.ts` and `test/sqlite-storage.node.test.ts` (historical pause and approval rows still render and round-trip)                              |
 | `V5`, `W9`        | `test/program-writes.test.ts` (an unawaited trusted-pool write finished and recorded, its unknown outcome reported, counts on a failed program, the classification table), `test/invocation-pipeline.test.ts` (the gate after validation, an unrecorded refusal)                                                                                                                                                                                                                                                                |
 | `W10`, `W12`      | `test/program-writes.test.ts` (a trusted-pool write runs and every other write keeps `E4`, the write budget, pool trust and override precedence, `call_tool` still refusing, search and describe verdicts, construction refusals), `test/operator-ui-model.test.ts`, `test/browser/operator-ui.spec.ts` (the badge)                                                                                                                                                                                                             |
-| `M1`              | `test/guest-api-contract.test.ts` (invalid emits throw catchably, accept nothing), `test/execute-emit.test.ts` (every rejected shape)                                                                                                                                                                                                                                                                                                                                                                                           |
+| `M1`              | `test/guest-api-contract.test.ts` (invalid emits throw catchably, accept nothing), `test/execute-emit.test.ts` (rejected shapes, bounded native snapshots, paging before metadata traversal, and cyclic presentation refusal)                                                                                                                                                                                                                                                                                                   |
 | `M2`, `M3`        | `test/guest-api-contract.test.ts` (delivery order, truncated return plus delivered blocks), `test/execute-emit.test.ts` (envelope, `structuredContent`, byte-for-byte no-emit path)                                                                                                                                                                                                                                                                                                                                             |
 | `M4`              | `test/guest-api-contract.test.ts` (discard is visible), `test/execute-emit.test.ts` (structured and plain paths), `test/quickjs-executor.node.test.ts` (mid-run shutdown)                                                                                                                                                                                                                                                                                                                                                       |
 | `M5`, `M7`        | `test/execute-emit.test.ts` (both budgets fail the crossing block; host-call budget untouched)                                                                                                                                                                                                                                                                                                                                                                                                                                  |

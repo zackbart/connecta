@@ -307,7 +307,7 @@ async function stashResult(bytes: Uint8Array, results: ResultStash, preview: Pre
     return {
       truncated: true,
       totalBytes,
-      hint: `${results.write ? WRITE_ALREADY_RAN + " " : ""}Paging is unavailable: text contains unpaired surrogates and can't be paged as text.`,
+      hint: `${results.write ? WRITE_ALREADY_RAN + " " : ""}Paging is unavailable: text contains unpaired surrogates and can't be paged as text; request the value as JSON (value mode or a JSON-returning call) to recover it.`,
     };
   if (!results.pageable)
     return {
@@ -375,10 +375,11 @@ export async function pageProgramResult(
   secrets: SentSecrets,
   trust: PoolTrust | undefined,
   requestScope: object,
+  wireBytes = PROGRAM_RESULT_WIRE_BYTES,
 ): Promise<{ data: unknown; format: "json" | "text" } | ProgramResultHandle> {
   const data = secrets.redact(value);
   const wire = JSON.stringify({ data, format });
-  if (enc.encode(wire).length <= PROGRAM_RESULT_WIRE_BYTES) return { data, format };
+  if (enc.encode(wire).length <= wireBytes) return { data, format };
   const text = secrets.text(format === "text" ? String(data) : serializeResultText(data));
   const bytes = enc.encode(text);
   const write = resolved.definition.classification !== "read";

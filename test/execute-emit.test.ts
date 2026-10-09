@@ -4,7 +4,7 @@
 // lives in the guest API contract cases, which run the same programs on
 // QuickJS and the Dynamic Worker.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildSandboxProviders,
   createExecuteTool,
@@ -13,6 +13,7 @@ import {
   EXECUTE_MAX_EMITTED_BYTES,
 } from "../src/execute.js";
 import { jsonResult } from "../src/meta-tools.js";
+import { SentSecrets } from "../src/sent-secrets.js";
 import type { Executor } from "../src/types.js";
 import { scriptedExecutor } from "./fixtures/misc.js";
 import { calcConnector, makeRegistry, required, silentLogger } from "./helpers.js";
@@ -22,6 +23,140 @@ const BASE = "https://connecta.test";
 function emitHandler(executor: Executor, config: Parameters<typeof createExecuteTool>[5] = {}) {
   return createExecuteTool(makeRegistry([calcConnector]), BASE, executor, silentLogger, undefined, config);
 }
+
+describe("native presentation retention", () => {
+  async function provider(
+    raw: unknown,
+    sink = new EmitCollector(EXECUTE_MAX_EMITTED_BYTES, EXECUTE_MAX_EMITTED_BLOCKS),
+    sentSecrets?: SentSecrets,
+  ) {
+    const providers = await buildSandboxProviders(
+      makeRegistry([
+        {
+          id: "native",
+          kind: "mcp",
+          async listTools() {
+            return [{ name: "read", annotations: { readOnlyHint: true } }];
+          },
+          async callTool() {
+            return raw;
+          },
+        },
+      ]),
+      BASE,
+      silentLogger,
+      undefined,
+      { emitCollector: sink, ...(sentSecrets ? { sentSecrets } : {}) },
+    );
+    return required(providers.find((p) => p.name === "connecta")).fns;
+  }
+
+  it("INV-3 INV-7: oversized structured data pages without visiting or cloning a million metadata objects", async () => {
+    const items = Array.from({ length: 1_000_000 }, () => ({}));
+    let visits = 0;
+    const raw = {
+      content: [
+        {
+          type: "resource_link",
+          uri: "asset://metadata",
+          name: "metadata",
+          get _meta() {
+            visits++;
+            return { items };
+          },
+        },
+      ],
+      structuredContent: { pad: "p".repeat(1_100_000) },
+    };
+    const fns = await provider(raw);
+    const clone = vi.spyOn(globalThis, "structuredClone");
+    try {
+      const result = await required(fns.call)("native.read");
+      expect(result).toMatchObject({ format: "paged", totalBytes: 1_100_010, resultId: expect.any(String) });
+      expect(visits).toBe(0);
+      expect(clone.mock.calls.some(([input]) => input === raw || input === raw.content || input === items)).toBe(false);
+    } finally {
+      clone.mockRestore();
+    }
+  });
+
+  it.each([false, true])(
+    "INV-3: cyclic custom-connector presentation is refused cleanly with structured data %s",
+    async (structured) => {
+      const meta: Record<string, unknown> = {};
+      meta.self = meta;
+      const sink = new EmitCollector(10_000, 10);
+      const fns = await provider(
+        {
+          content: [{ type: "resource_link", uri: "asset://cycle", name: "cycle", _meta: meta }],
+          ...(structured ? { structuredContent: { ok: true } } : {}),
+        },
+        sink,
+      );
+      const result = await required(fns.call)("native.read");
+      if (structured)
+        expect(result).toMatchObject({
+          value: { data: { ok: true }, format: "json" },
+          native: { value: { format: "paged", truncated: true } },
+        });
+      else expect(result).toMatchObject({ format: "paged", truncated: true });
+      const notice = structured
+        ? (result as { native: { value: Record<string, unknown> } }).native.value
+        : (result as Record<string, unknown>);
+      expect(notice).not.toHaveProperty("resultId");
+      expect(notice.hint).toContain("acyclic JSON");
+      expect(sink.blocks).toEqual([]);
+      // A refusal mints no reference that a guest can replay.
+      await expect(required(fns.emit)({ ref: "forged" })).rejects.toThrow();
+    },
+  );
+
+  it("INV-3 INV-5: redacted native snapshots preserve metadata within retention and emission budgets", async () => {
+    const secrets = new SentSecrets();
+    const secret = "credential".repeat(100);
+    secrets.add(secret);
+    const sink = new EmitCollector(EXECUTE_MAX_EMITTED_BYTES, EXECUTE_MAX_EMITTED_BLOCKS);
+    const fns = await provider(
+      {
+        content: [
+          { type: "resource_link", uri: "asset://redacted", name: "redacted", _meta: { pad: secret.repeat(1100) } },
+        ],
+        structuredContent: { ok: true },
+      },
+      sink,
+      secrets,
+    );
+    const result = (await required(fns.call)("native.read")) as {
+      native: { ref: string; value: Record<string, unknown> };
+    };
+    expect(result).toMatchObject({ native: { ref: expect.any(String), value: { format: "json" } } });
+    await required(fns.emit)({ ref: result.native.ref });
+    expect(sink.blocks).toEqual([
+      { type: "resource_link", uri: "asset://redacted", name: "redacted", _meta: { pad: "[redacted]".repeat(1100) } },
+    ]);
+  });
+
+  it.each(["nodes", "depth", "bytes", "escaped bytes"])(
+    "INV-3: native %s bounds refuse presentation while preserving structured data",
+    async (bound) => {
+      let meta: unknown =
+        bound === "nodes" ? Array.from({ length: 40_000 }, () => ({})) : "x".repeat(EXECUTE_MAX_EMITTED_BYTES + 1);
+      if (bound === "escaped bytes") meta = "\u0000".repeat(700_000);
+      if (bound === "depth") {
+        meta = {};
+        for (let i = 0; i < 65; i++) meta = { nested: meta };
+      }
+      const fns = await provider({
+        content: [{ type: "resource_link", uri: "asset://bounded", name: "bounded", _meta: { meta } }],
+        structuredContent: { ok: true },
+      });
+      expect(await required(fns.call)("native.read")).toMatchObject({
+        value: { data: { ok: true }, format: "json" },
+        native: { value: { format: "paged", truncated: true } },
+      });
+    },
+  );
+});
 
 describe("EmitCollector validation (M1)", () => {
   const collector = () => new EmitCollector(10_000, 10);
@@ -116,6 +251,19 @@ describe("EmitCollector budgets (M5)", () => {
     );
     expect(sink.blocks).toHaveLength(1);
     expect(sink.bytes).toBe(smallSize);
+  });
+  it("INV-3: native batches obey the block budget atomically", () => {
+    const sink = new EmitCollector(10_000, 2);
+    sink.accept({ type: "text", text: "prior" });
+    const previousBytes = sink.bytes;
+    expect(() =>
+      sink.acceptNative([
+        { type: "image", data: "aGk=", mimeType: "image/png" },
+        { type: "resource_link", uri: "asset://badge", name: "badge" },
+      ]),
+    ).toThrow(/block-count budget exceeded/);
+    expect(sink.blocks).toEqual([{ type: "text", text: "prior" }]);
+    expect(sink.bytes).toBe(previousBytes);
   });
 });
 

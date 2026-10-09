@@ -16,8 +16,133 @@ import { memoryStorage } from "../src/storage/memory.js";
 import { readJsonRpc } from "./fixtures/http.js";
 import type { Connector, Executor, ToolDef } from "../src/types.js";
 import { makeRegistry, required, silentLogger } from "./helpers.js";
+import { deferred } from "./fixtures/misc.js";
 
 export const CONTRACT_BASE = "https://connecta.contract";
+
+/** Connector-owned blocks must not change retained output or its budget charges. */
+export async function checkNativeSnapshots(executor: Executor): Promise<void> {
+  const image = { type: "image", data: "aGkA", mimeType: "image/png" };
+  const paused = deferred<void>();
+  const resume = deferred<void>();
+  const link = {
+    type: "resource_link",
+    uri: "asset://A",
+    name: "cached",
+    annotations: { audience: ["user"], priority: 0.5 },
+    _meta: { nested: { owner: "A" } },
+  };
+  const resource = {
+    type: "resource",
+    resource: { uri: "asset://A", text: "A", _meta: { nested: { owner: "A" } } },
+  };
+  const cached: Connector = {
+    id: "cached",
+    kind: "mcp",
+    async listTools() {
+      return [readOnly("image"), readOnly("resources")];
+    },
+    async callTool(name, args) {
+      const options = args as { bytes?: number; owner?: string };
+      if (name === "image") {
+        image.data = "aGkA".repeat((options.bytes ?? 4) / 4);
+        return { content: [image] };
+      }
+      const owner = options.owner ?? "A";
+      link.uri = resource.resource.uri = `asset://${owner}`;
+      link.annotations.audience[0] = owner === "A" ? "user" : "assistant";
+      link._meta.nested.owner = resource.resource._meta.nested.owner = owner;
+      resource.resource.text = owner;
+      return { content: [link, resource] };
+    },
+  };
+  const control: Connector = {
+    id: "control",
+    kind: "api",
+    async listTools() {
+      return [readOnly("pause")];
+    },
+    async callTool() {
+      paused.resolve();
+      await resume.promise;
+      return true;
+    },
+  };
+  const registry = makeRegistry([cached, control]);
+  const images = createExecuteTool(registry, CONTRACT_BASE, executor, silentLogger, undefined, {
+    maxEmittedBytes: 100,
+  });
+  // Exercise mutation both before and after acceptance, with the reviewer's
+  // 1.1 MB result still subject to the ordinary inline/paging limit.
+  for (const before of [true, false]) {
+    const out = await images({
+      diagnostics: true,
+      code: `async () => {
+      const first = await connecta.call("cached.image", { bytes: 4 });
+      ${before ? "" : "await connecta.emit(first);"}
+      const huge = await connecta.call("cached.image", { bytes: 1100000 });
+      ${before ? "await connecta.emit(first);" : ""}
+      let refused;
+      try { await connecta.emit(first.content[0]); } catch (e) { refused = e.code; }
+      return { firstBytes: first.content[0].data.length, hugeFormat: huge.format, refused };
+    }`,
+    });
+    expect(out.isError).toBeFalsy();
+    expect(out.content.slice(1)).toEqual([{ type: "image", data: "aGkA", mimeType: "image/png" }]);
+    expect(out.structuredContent).toMatchObject({
+      result: { firstBytes: 4, hugeFormat: "paged", refused: "budget_exceeded" },
+      diagnostics: { emitted: { count: 1, bytes: 53 } },
+    });
+  }
+  const expectedA = structuredClone([link, resource]);
+  const expectedB = structuredClone(expectedA);
+  expectedB[0] = {
+    ...structuredClone(link),
+    uri: "asset://B",
+    annotations: { audience: ["assistant"], priority: 0.5 },
+    _meta: { nested: { owner: "B" } },
+  };
+  expectedB[1] = { type: "resource", resource: { uri: "asset://B", text: "B", _meta: { nested: { owner: "B" } } } };
+  const bytes = (blocks: unknown[]) =>
+    blocks.reduce<number>((sum, block) => sum + new TextEncoder().encode(JSON.stringify(block)).length, 0);
+  const resources = createExecuteTool(registry, CONTRACT_BASE, executor, silentLogger, undefined, {
+    maxEmittedBytes: bytes(expectedB),
+  });
+  const runA = resources({
+    diagnostics: true,
+    code: `async () => {
+    const first = await connecta.call("cached.resources", { owner: "A" });
+    await connecta.call("control.pause");
+    await connecta.emit(first);
+    return { uri: first.content[0].uri, text: first.content[1].resource.text, owner: first.content[0]._meta.nested.owner };
+  }`,
+  });
+  let outB: ToolResult;
+  try {
+    await paused.promise;
+    outB = await resources({
+      diagnostics: true,
+      code: `async () => {
+      const second = await connecta.call("cached.resources", { owner: "B" });
+      await connecta.emit(second);
+      return second.content[0].uri;
+    }`,
+    });
+  } finally {
+    resume.resolve();
+  }
+  const outA = await runA;
+  for (const [out, expected] of [
+    [outA, expectedA],
+    [outB, expectedB],
+  ] as const) {
+    expect(out.isError).toBeFalsy();
+    expect(out.content.slice(1)).toEqual(expected);
+    expect(out.structuredContent).toMatchObject({ diagnostics: { emitted: { count: 2, bytes: bytes(expected) } } });
+  }
+  expect(outA.structuredContent).toMatchObject({ result: { uri: "asset://A", text: "A", owner: "A" } });
+  expect(outB.structuredContent).toMatchObject({ result: "asset://B" });
+}
 
 /** Every executor pages through the admitted route and rechecks live authority. */
 export async function checkStashAuthority(executor: Executor): Promise<void> {
@@ -429,6 +554,8 @@ export interface ContractCase {
   deadline?: true;
   /** Small output budget for utility-budget contract cases. */
   maxEmittedBytes?: number;
+  /** Bounded stash capacity for native result transfer cases. */
+  maxStashEntries?: number;
   check(outcome: ContractOutcome, state: ContractState, follow?: ContractOutcome): void;
 }
 
@@ -535,6 +662,22 @@ export const CAPABILITY_PROBE_CODE = `async () => {
 function readOnly(name: string, extra: Partial<ToolDef> = {}): ToolDef {
   return { name, annotations: { readOnlyHint: true }, ...extra };
 }
+
+const BADGE_CONTENT = [
+  { type: "text", text: "Launch badge: approved, revision 7" },
+  {
+    type: "image",
+    data: "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKklEQVR4nGNQKXChKWIYtWDUglELRi0YtWDUglELRi0YtWDUglELhooFAL8KYC6q5AcJAAAAAElFTkSuQmCC",
+    mimeType: "image/png",
+  },
+];
+const NATIVE_CONTENT = [
+  BADGE_CONTENT[0],
+  { ...BADGE_CONTENT[1], annotations: { audience: ["assistant"], priority: 0.8 }, _meta: { source: "badge" } },
+  { type: "audio", data: "aGk=", mimeType: "audio/wav" },
+  { type: "resource", resource: { uri: "asset://badge/caption", text: "approved", mimeType: "text/plain" } },
+  { type: "resource_link", uri: "asset://badge", name: "badge", title: "Launch badge", _meta: { revision: 7 } },
+];
 
 function contractConnectors(state: ContractState): Connector[] {
   const count = (address: string) => {
@@ -770,7 +913,45 @@ function contractConnectors(state: ContractState): Connector[] {
       return new Promise<never>(() => {});
     },
   };
-  return [reader, remote, collide, odd, needsAuth, rateLimited, forger, badCatalog, needsStore, retryableLooking, hang];
+  const assets: Connector = {
+    id: "assets",
+    kind: "mcp",
+    async listTools() {
+      return [readOnly("get_badge_image"), readOnly("rich")];
+    },
+    async callTool(name, args) {
+      count(`assets.${name}`);
+      if (name === "get_badge_image") return { content: BADGE_CONTENT };
+      const options = args as { chars?: number; textChars?: number; structured?: boolean; toolResult?: boolean };
+      const content = options.chars
+        ? [{ type: "image", data: "aGkA".repeat(options.chars / 4), mimeType: "image/png" }]
+        : options.textChars
+          ? [
+              { type: "resource", resource: { uri: "asset://text", text: "x".repeat(options.textChars) } },
+              BADGE_CONTENT[1],
+            ]
+          : NATIVE_CONTENT;
+      return {
+        content,
+        ...(options.structured ? { structuredContent: { revision: 7 } } : {}),
+        ...(options.toolResult ? { toolResult: { revision: 8 } } : {}),
+      };
+    },
+  };
+  return [
+    reader,
+    remote,
+    collide,
+    odd,
+    needsAuth,
+    rateLimited,
+    forger,
+    badCatalog,
+    needsStore,
+    retryableLooking,
+    hang,
+    assets,
+  ];
 }
 
 interface CaseConfig {
@@ -783,7 +964,7 @@ export function caseConfig(contractCase: ContractCase): CaseConfig {
 }
 
 /** One fresh registry, activity sink, and call counter per case. */
-export function contractHarness(): {
+export function contractHarness(maxStashEntries?: number): {
   state: ContractState;
   run: (executor: Executor, code: string, config?: CaseConfig) => Promise<ContractOutcome>;
 } {
@@ -800,7 +981,11 @@ export function contractHarness(): {
     serverInfo: { name: "connecta-contract", version: "0" },
     logger: silentLogger,
   };
-  const registry = makeRegistry(contractConnectors(state));
+  const registry = makeRegistry(
+    contractConnectors(state),
+    maxStashEntries !== undefined ? { results: { maxStashEntries } } : {},
+  );
+
   const outcomeOf = (out: ToolResult): ContractOutcome => {
     const text = required(out.content[0]).text ?? "";
     let value: Record<string, unknown> = {};
@@ -856,6 +1041,163 @@ function record(outcome: ContractOutcome): Record<string, unknown> {
 }
 
 export const CONTRACT_CASES: ContractCase[] = [
+  {
+    clauses: "S5, M1, M2, M8",
+    name: "INV-3: emit(call result) delivers original native rich blocks with metadata",
+    code: `async () => {
+      const x = await connecta.call("assets.rich", { structured: true, toolResult: true });
+      connecta.emit(x);
+      return { data: x.data, format: x.format, types: x.content.map(b => b.type) };
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError).toBe(false);
+      expect(outcome.content.slice(1)).toEqual(NATIVE_CONTENT);
+      expect(outcome.result).toEqual({
+        data: { revision: 8 },
+        format: "json",
+        types: ["text", "image", "audio", "resource", "resource_link"],
+      });
+      expect(state.calls["assets.rich"]).toBe(1);
+    },
+  },
+  {
+    clauses: "S5, M1, M2, M8",
+    name: "INV-3: top-level content forwards individual native blocks unchanged",
+    code: `async () => {
+      const x = await connecta.call("assets.rich", {});
+      for (const b of x.content) connecta.emit(b);
+      return { nativeData: x.data.content.length };
+    }`,
+    check(outcome) {
+      expect(outcome.isError).toBe(false);
+      expect(outcome.content.slice(1)).toEqual(NATIVE_CONTENT);
+      expect(outcome.result).toEqual({ nativeData: NATIVE_CONTENT.length });
+    },
+  },
+  {
+    clauses: "S5, M1, M2, M8",
+    name: "INV-3: Luna's exact p5-direct-rich-output program emits the badge and caption",
+    code: `async () => {
+ const x=await connecta.call("assets.get_badge_image",{});
+ for (const b of (x.content||[])) { if(b.type==="image") await connecta.emit({type:"image",data:b.data,mimeType:b.mimeType}); else if(b.type==="text") await connecta.emit({type:"text",text:b.text}); }
+ return {format:x.format,data:x.data};
+}`,
+    check(outcome) {
+      expect(outcome.isError).toBe(false);
+      expect(outcome.content.slice(1)).toEqual(BADGE_CONTENT);
+      expect(outcome.result).toEqual({ format: "json", data: { content: BADGE_CONTENT } });
+    },
+  },
+  {
+    clauses: "L6, M5, M8",
+    name: "INV-7: native images above the wire cap transfer and emit within two stash slots",
+    maxStashEntries: 2,
+    code: `async () => {
+      const x = await connecta.call("assets.rich", { chars: 300000, structured: true });
+      await connecta.emit(x);
+      const raw = await connecta.call("assets.rich", { chars: 300000 });
+      await connecta.emit(raw);
+      return { data: x.data, rawBytes: raw.data.content[0].data.length };
+    }`,
+    check(outcome) {
+      expect(outcome.isError).toBe(false);
+      expect(outcome.result).toEqual({ data: { revision: 7 }, rawBytes: 300000 });
+      expect(outcome.content[1]).toEqual({ type: "image", data: "aGkA".repeat(75000), mimeType: "image/png" });
+      expect(outcome.content[2]).toEqual(outcome.content[1]);
+      expect(outcome.value.hostCalls).toEqual({ attempted: 2, admitted: 2, succeeded: 2, failed: 0 });
+    },
+  },
+  {
+    clauses: "L6, M5, M8",
+    name: "INV-3: oversized native binary results stay paged and cannot bypass inline limits",
+    code: `async () => {
+      const x = await connecta.call("assets.rich", { chars: 1100000, structured: true });
+      let code;
+      try { await connecta.emit(x); } catch (e) { code = e.code; }
+      const page = await connecta.result(x.contentResult, { maxBytes: 100 });
+      return { data: x.data, contentFormat: x.contentResult.format, content: !!x.content, code, page: page.text };
+    }`,
+    check(outcome) {
+      expect(outcome.isError).toBe(false);
+      expect(outcome.content).toHaveLength(1);
+      expect(outcome.result).toMatchObject({
+        data: { revision: 7 },
+        contentFormat: "paged",
+        content: false,
+        code: "result_too_large",
+        page: expect.stringContaining('"type":"image"'),
+      });
+    },
+  },
+  {
+    clauses: "L6, M8",
+    name: "INV-3: raw oversized native results retain their data paging shape within one stash slot",
+    maxStashEntries: 1,
+    code: `async () => {
+      const x = await connecta.call("assets.rich", { chars: 1100000 });
+      const page = await connecta.result(x, { maxBytes: 100 });
+      return { format: x.format, content: !!x.content, page: page.text };
+    }`,
+    check(outcome) {
+      expect(outcome.isError).toBe(false);
+      expect(outcome.content).toHaveLength(1);
+      expect(outcome.result).toMatchObject({
+        format: "paged",
+        content: false,
+        page: expect.stringContaining('"type":"image"'),
+      });
+    },
+  },
+  {
+    clauses: "M1, M5, M8",
+    name: "INV-3: native byte-budget failure accepts no partial blocks",
+    maxEmittedBytes: 200,
+    code: `async () => {
+      const x = await connecta.call("assets.rich", {});
+      let code;
+      try { await connecta.emit(x); } catch (e) { code = e.code; }
+      return { code };
+    }`,
+    check(outcome) {
+      expect(outcome.isError).toBe(false);
+      expect(outcome.content).toHaveLength(1);
+      expect(outcome.result).toEqual({ code: "budget_exceeded" });
+      expect(outcome.value).not.toHaveProperty("emitted");
+    },
+  },
+  {
+    clauses: "M1, M3, M8",
+    name: "INV-3: native resource text shares the result cap",
+    code: `async () => {
+      const x = await connecta.call("assets.rich", { textChars: 30000 });
+      try { await connecta.emit(x); } catch (e) { return { code: e.code }; }
+    }`,
+    check(outcome) {
+      expect(outcome.isError).toBe(false);
+      expect(outcome.content).toHaveLength(1);
+      expect(outcome.result).toEqual({ code: "result_too_large" });
+    },
+  },
+  {
+    clauses: "M1, M8",
+    name: "INV-3: native forwarding cannot mint pointers through guest edits or forged references",
+    code: `async () => {
+      const x = await connecta.call("assets.rich", {});
+      const link = x.content.find(b => b.type === "resource_link");
+      link.uri = "https://guest.example/";
+      await connecta.emit(link);
+      const codes = [];
+      for (const b of [ {...link}, { ref: "forged", index: 0 } ]) {
+        try { await connecta.emit(b); } catch (e) { codes.push(e.code); }
+      }
+      return codes;
+    }`,
+    check(outcome) {
+      expect(outcome.isError).toBe(false);
+      expect(outcome.content.slice(1)).toEqual([NATIVE_CONTENT[4]]);
+      expect(outcome.result).toEqual(["invalid_args", "invalid_args"]);
+    },
+  },
   {
     clauses: "S5, A1",
     name: "INV-3: object and positional calls declare JSON versus text",
@@ -2108,6 +2450,7 @@ return fs;
       // to browse; its absence here is the complete-or-failure rule holding,
       // not a gap in the browse.
       expect(result.connectors).toEqual([
+        "assets",
         "collide",
         "forger",
         "hang",

@@ -55,6 +55,7 @@ export async function checkProgramResultSurrogates(executor: Executor): Promise<
       expect(notice).not.toHaveProperty("resultId");
       expect(notice).not.toHaveProperty("data");
       expect(notice.hint).toContain("text contains unpaired surrogates and can't be paged as text");
+      expect(notice.hint).toContain("request the value as JSON");
       expect(notice.hint).toContain("This write already ran");
     } else {
       const direct = createMetaTools(registry, BASE, { trust: "trusted", activity: sink.activity });
@@ -65,6 +66,7 @@ export async function checkProgramResultSurrogates(executor: Executor): Promise<
       expect(notice).not.toHaveProperty("resultId");
       expect(notice).not.toHaveProperty("nextAction");
       expect(notice.hint).toContain("text contains unpaired surrogates and can't be paged as text");
+      expect(notice.hint).toContain("request the value as JSON");
       expect(notice.hint).toContain("This write already ran");
       expect(preview).toBe("");
       const json = await direct.callTool({ address: "surrogates.json" });

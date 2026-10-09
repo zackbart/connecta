@@ -31,6 +31,7 @@ import {
   CAPABILITY_PROBE_CODE,
   caseConfig,
   checkHostFailureArrays,
+  checkNativeSnapshots,
   checkQueuedWriteAtExhaustion,
   checkSharedPreludes,
   checkStashAuthority,
@@ -438,6 +439,9 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
     expect(outcome.structuredContent).not.toHaveProperty("emittedDiscarded");
     expect(lateReads).toBe(0);
   });
+  it("INV-3 INV-7: native snapshots prevent mutation budget bypass and cross-run leakage", async () => {
+    await checkNativeSnapshots(required(workerExecutor));
+  });
   for (const custom of [false, true]) {
     it(`INV-9: ${custom ? "customExecutor: " : ""}lone surrogates refuse raw-text paging without replaying writes and round-trip as JSON`, async () => {
       await checkProgramResultSurrogates(
@@ -479,7 +483,7 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
     });
     for (const contractCase of CONTRACT_CASES) {
       it(`[${contractCase.clauses}] ${custom ? "customExecutor: " : ""}${contractCase.name}`, async () => {
-        const harness = contractHarness();
+        const harness = contractHarness(contractCase.maxStashEntries);
         const executor = required(contractCase.deadline ? workerDeadlineExecutor : workerExecutor);
         const config = caseConfig(contractCase);
         const chosen = custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor;
