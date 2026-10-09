@@ -1,4 +1,5 @@
 // Node-only: spawns a fake Claude CLI to verify eval isolation, stream protocol and cancellation.
+import * as childProcess from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +14,11 @@ import type { ActiveTask } from "../eval/tasks/types.js";
 import { parseTrace } from "../eval/agent/trace.js";
 import { infraError } from "../eval/agent/infra.js";
 import type { CodexOptions } from "../eval/agent/codex.js";
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:child_process")>();
+  return { ...original, spawn: vi.fn(original.spawn) };
+});
 
 const CLI = String.raw`
 const fs = require('node:fs');
@@ -43,6 +49,8 @@ if (Object.keys(config.mcpServers).join(',') !== 'connecta' || value('--tools') 
 send({type:'system',subtype:'init',model:mode === 'wrong-model' ? 'wrong-model' : model,
   claude_code_version:'fake-claude',plugins:mode === 'extra-plugin' ? [{name:'unexpected',source:'cc-plugin-future@builtin',settings:{token:'fake-secret'}}] : mode === 'named-plugin' ? [{name:'unexpected'}] : [],skills:mode === 'extra-skill' ? ['future-skill'] : [],tools:mode === 'extra-tool' ? [...tools,'Bash'] : mode === 'duplicate-tool' ? [...tools,tools[0]] : tools});
 let turn = 0;
+// Closing stdin must not let the CLI exit before the harness signal arrives.
+setInterval(() => {}, 1_000);
 if (mode === 'self-terminate' || mode === 'cleanup-143') process.on('SIGTERM', () => process.exit(143));
 if (mode === 'cleanup-1') process.on('SIGTERM', () => process.exit(1));
 if (mode === 'cleanup-sigint') process.on('SIGTERM', () => process.kill(process.pid, 'SIGINT'));
@@ -244,18 +252,32 @@ describe("Claude eval CLI", () => {
   });
 
   it("does not attribute a self-termination processed before cleanup to the harness", async () => {
-    const run = await fixture("self-terminate", {
-      nextTurn: async () => {
-        // Yield so Node processes the child's exit before cleanup checks it.
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        return undefined;
-      },
+    const spawn = vi.mocked(childProcess.spawn).getMockImplementation()!;
+    let resolveExit!: () => void;
+    const exited = new Promise<void>((resolve) => {
+      resolveExit = resolve;
     });
-    expect(run.events.at(-1)?.subtype).toBe("success");
-    expect(run.exitCode).toBe(143);
-    expect(run.timedOut).toBe(false);
-    expect(run.aborted).toBe(false);
-    expect(run.terminatedAfterCompletion).toBe(false);
+    const spy = vi.spyOn(childProcess, "spawn").mockImplementation((...args) => {
+      const child = spawn(...args);
+      child.once("exit", resolveExit);
+      return child;
+    });
+    try {
+      const run = await fixture("self-terminate", {
+        nextTurn: async () => {
+          // Wait for Node to process the independent exit before cleanup checks it.
+          await exited;
+          return undefined;
+        },
+      });
+      expect(run.events.at(-1)?.subtype).toBe("success");
+      expect(run.exitCode).toBe(143);
+      expect(run.timedOut).toBe(false);
+      expect(run.aborted).toBe(false);
+      expect(run.terminatedAfterCompletion).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it.each([
