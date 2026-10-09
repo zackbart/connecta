@@ -10,6 +10,7 @@ export interface AgentResultFile {
   kind: "connecta-eval/agent";
   version: 1;
   meta: RunMeta;
+  protocol?: ReturnType<typeof import("../support/meta.js").runProtocol>;
   /** CLI versions, present for the selected runner. */
   codexVersion?: string;
   claudeVersion?: string;

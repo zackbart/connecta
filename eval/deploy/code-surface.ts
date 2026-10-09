@@ -2,10 +2,10 @@
 import type { Connecta } from "@zackbart/connecta";
 import { CODE_TOOLS } from "../agent/surface.js";
 
-const CODE_INSTRUCTIONS =
+export const CODE_INSTRUCTIONS =
   'Use execute_code for every operation: known reads, discovery, reductions and writes. Pass async () => { ... } with the connecta global and no arguments. Discover with connecta.search, inspect schemas with connecta.describe, call with connecta.call, page retained results with connecta.result, and deliver text/images/audio with connecta.emit. Keep discovery and calls together when schemas suffice. Programs may write only in trusted pools. Read-only pools cannot write from programs; pool_read_only is a terminal refusal with no retry. Never repeat a write for its output. After auth_required or downstream_oauth_required use authorize_connector, give its handoff to the operator, and wait before retrying. host_auth_required needs host connection repair. Fetch skills({ name: "usage" }) when instructions are insufficient or a program needs repair.';
 
-const CODE_USAGE = `---
+export const CODE_USAGE = `---
 name: usage
 description: Use Connecta programs for discovery, calls and output.
 ---
@@ -48,7 +48,6 @@ export function codeValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(codeValue);
   if (!value || typeof value !== "object") return value;
   const object = value as Record<string, unknown>;
-  if (object.name === "usage" && typeof object.text === "string") return { ...object, text: CODE_USAGE };
   const result = Object.fromEntries(Object.entries(object).map(([key, item]) => [key, codeValue(item)]));
   if (object.code === "destructive_tool_requires_approval") {
     result.code = "pool_read_only";
@@ -85,11 +84,19 @@ export function codeError(error: unknown): unknown {
 }
 
 export function codeSkill(name: unknown, result: unknown): unknown {
-  return name === "usage" ? { ...(result as object), text: CODE_USAGE } : codeValue(result);
+  return isUsage(name) ? { ...(result as object), text: CODE_USAGE } : codeValue(result);
+}
+
+function isUsage(name: unknown): boolean {
+  return ["usage", "skill://connecta/usage", "skill://connecta/usage/SKILL.md"].includes(String(name));
+}
+
+export function forSurface(connecta: Connecta, surface: "six" | "code"): Connecta {
+  return surface === "six" ? connecta : withCodeSurface(connecta);
 }
 
 /** Preserve authentication, transport and execution; change only eval replies. */
-export function withCodeSurface(connecta: Connecta): Connecta {
+function withCodeSurface(connecta: Connecta): Connecta {
   return {
     ...connecta,
     async fetch(request, env, ctx) {
@@ -148,6 +155,24 @@ export function withCodeSurface(connecta: Connecta): Connecta {
                   "Read-only pool: programs cannot write; a write is terminally refused.",
                 );
           }
+        }
+        // Resolve the skill identity from the request, before rewriting either
+        // host representation. Resource aliases and guest skills use this guide too.
+        if (
+          body?.method === "tools/call" &&
+          body.params?.name === "skills" &&
+          isUsage(body.params.arguments?.name) &&
+          reply.result &&
+          !reply.result.isError
+        ) {
+          reply.result.content = [{ type: "text", text: CODE_USAGE }];
+          reply.result.structuredContent = codeSkill(body.params.arguments.name, reply.result.structuredContent);
+        }
+        if (body?.method === "resources/read" && isUsage(body.params?.uri) && reply.result?.contents) {
+          reply.result.contents = reply.result.contents.map((item: Record<string, unknown>) => ({
+            ...item,
+            text: CODE_USAGE,
+          }));
         }
         return codeValue(reply);
       };

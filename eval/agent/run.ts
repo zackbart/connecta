@@ -53,6 +53,7 @@ interface TrialMetrics {
 
 export interface TrialResult {
   task: string;
+  runner?: "codex" | "claude";
   surface?: Surface;
   grading?: Grading;
   model: string;
@@ -141,6 +142,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
   if (skip)
     return {
       task: task.id,
+      runner: options.runner ?? "codex",
       surface: surfaceArm,
       grading,
       model,
@@ -283,6 +285,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
     const passed = passes(checks, grading);
     return {
       task: task.id,
+      runner: options.runner ?? "codex",
       surface: surfaceArm,
       grading,
       model,

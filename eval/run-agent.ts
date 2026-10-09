@@ -25,7 +25,7 @@ import { codexVersion } from "./agent/codex.js";
 import { runBatch } from "./agent/run.js";
 import { renderReport } from "./report/html.js";
 import { summarize, type AgentResultFile, type ResultFile } from "./report/summary.js";
-import { flags, ROOT, runMeta, stamp } from "./support/meta.js";
+import { flags, ROOT, runMeta, runProtocol, stamp } from "./support/meta.js";
 import { ACTIVE_TASKS, PLANNED } from "./tasks/index.js";
 
 const args = flags(process.argv.slice(2));
@@ -82,6 +82,7 @@ const file: AgentResultFile = {
   kind: "connecta-eval/agent",
   version: 1,
   meta: runMeta(),
+  protocol: runProtocol(args.get("pair-id")),
   [runner === "claude" ? "claudeVersion" : "codexVersion"]: version,
   config: {
     runner,

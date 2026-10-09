@@ -6,6 +6,8 @@
  * nothing must fail it. A grader that passes a no-op or fails the reference is
  * a broken yardstick, and every later phase would be measured with it.
  */
+import { CODE_INSTRUCTIONS, CODE_USAGE, codeValue, forSurface } from "./deploy/code-surface.js";
+import type { Connecta } from "@zackbart/connecta";
 import { taskForSurface } from "./tasks/surface.js";
 import { gradeTask, passes, CHECK_KINDS, type Grading } from "./tasks/grading.js";
 import { assertSurface, type Surface } from "./agent/surface.js";
@@ -19,7 +21,7 @@ import { counterexamples, positiveVariants } from "./tasks/counterexamples.js";
 import { ACTIVE_TASKS } from "./tasks/index.js";
 import { startAuthHost } from "./agent/auth-host.js";
 import { parseTrace, type StreamEvent } from "./agent/trace.js";
-import { flags } from "./support/meta.js";
+import { flags, runProtocol } from "./support/meta.js";
 import type { ActiveTask, Check } from "./tasks/types.js";
 import { readFile } from "node:fs/promises";
 import { saveGradeInputs } from "./agent/saved.js";
@@ -27,6 +29,7 @@ import { regradeTrial } from "./agent/regrade.js";
 import { summarize } from "./report/summary.js";
 import type { TrialResult } from "./agent/run.js";
 import { BADGE_PNG, LEGACY_BADGE_PNG } from "./fakes/prerequisites.js";
+import { spawnSync } from "node:child_process";
 import { inflateSync } from "node:zlib";
 
 function validPng(base64: string): boolean {
@@ -604,33 +607,154 @@ if (failures) {
   process.exitCode = 1;
 }
 
+// Exercise the deployed arm selector and both HTTP encodings. Six returns
+// the original server itself, so its instructions, skills and errors are bytes
+// from the normal implementation, with no adapter or serialization pass.
+{
+  const errors = [
+    {
+      code: "destructive_tool_requires_approval",
+      message: "Use call_destructive_tool",
+      retryable: true,
+      nextAction: { tool: "call_destructive_tool" },
+      retry: "call_destructive_tool",
+    },
+    {
+      code: "invalid_args",
+      message: "Use search_tools",
+      retryable: true,
+      nextAction: { tool: "search_tools", arguments: { query: "ci" } },
+    },
+    ...["call_tool", "call_destructive_tool"].map((tool) => ({
+      code: "not_found",
+      message: `Use ${tool}`,
+      retryable: true,
+      nextAction: { tool },
+    })),
+  ];
+  const fixtures = [
+    { method: "initialize", params: {}, result: { instructions: "Main instructions" } },
+    {
+      method: "tools/list",
+      params: {},
+      result: {
+        tools: [
+          {
+            name: "execute_code",
+            description:
+              "One known read: call_tool. Everything else: execute_code. Read-only pool: programs read; writes use call_destructive_tool.",
+          },
+        ],
+      },
+    },
+    ...errors.map((error) => ({
+      method: "tools/call",
+      params: { name: "execute_code" },
+      result: {
+        isError: true,
+        content: [{ type: "text", text: JSON.stringify({ error }) }],
+        structuredContent: { error },
+      },
+    })),
+  ];
+  for (const type of ["application/json", "text/event-stream"])
+    for (const fixture of fixtures) {
+      const original = JSON.stringify({ jsonrpc: "2.0", id: 1, result: fixture.result });
+      const bytes = type === "application/json" ? original : `event: message\ndata: ${original}\n\n`;
+      const raw = {
+        fetch: async () => new Response(bytes, { headers: { "content-type": type } }),
+      } as unknown as Connecta;
+      const request = new Request("http://eval/mcp", {
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: fixture.method,
+          params: fixture.params,
+        }),
+      });
+      const sixServer = forSurface(raw, "six");
+      if (sixServer !== raw || (await (await sixServer.fetch(request)).text()) !== bytes)
+        throw new Error("Six guidance was not byte-identical to the normal server");
+      const changed = await (await forSurface(raw, "code").fetch(request)).text();
+      const result = JSON.parse(type === "application/json" ? changed : changed.match(/^data: (.+)$/m)![1]!).result;
+      if (fixture.method === "initialize" && result.instructions !== CODE_INSTRUCTIONS)
+        throw new Error("Code initialization guidance differs by HTTP encoding");
+      if (
+        fixture.method === "tools/list" &&
+        result.tools[0].description !==
+          "Every operation uses execute_code. Read-only pool: programs cannot write; a write is terminally refused."
+      )
+        throw new Error("Code tool guidance differs by HTTP encoding");
+      if (
+        result.isError &&
+        (JSON.stringify(JSON.parse(result.content[0].text)) !== JSON.stringify(result.structuredContent) ||
+          JSON.stringify(result.structuredContent) !==
+            JSON.stringify(
+              codeValue("structuredContent" in fixture.result ? fixture.result.structuredContent : undefined),
+            ))
+      )
+        throw new Error("Rewritten error envelope representations disagree");
+    }
+  console.log("ok   six byte parity and code instructions/tool/error guidance in JSON and SSE");
+}
+
 // Boundary controls use actual QuickJS failures, including errors caught by a guest.
 {
-  const world = new World();
+  const world = new World({ prerequisites: true });
   await world.start();
   const deployment = await startNodeDeployment(world.connectorSpecs(), {}, undefined, "code");
   const session = await connectMcp(deployment.mcpUrl, { Authorization: `Bearer ${deployment.token}` });
   try {
     const hidden = /\b(call_tool|call_destructive_tool|search_tools)\b/;
-    if (hidden.test(session.instructions ?? "") || !/Read-only pools cannot write/.test(session.instructions ?? ""))
-      throw new Error("Code instructions leaked routes or omitted trust");
-    if ((await session.listTools()).some((t) => hidden.test(t.description ?? "")))
-      throw new Error("Code tool descriptions leaked routes");
+    if (session.instructions !== CODE_INSTRUCTIONS)
+      throw new Error("Code server instructions differ from the registered guide");
+    const tools = await session.listTools();
+    if (
+      tools.some((t) => hidden.test(t.description ?? "")) ||
+      !tools.find((t) => t.name === "execute_code")?.description?.includes("Every operation uses execute_code.")
+    )
+      throw new Error("Code tool descriptions differ from the registered guidance");
+    for (const name of ["usage", "skill://connecta/usage", "skill://connecta/usage/SKILL.md"]) {
+      const direct = await session.call("skills", { name });
+      if (direct.text !== CODE_USAGE || (direct.structured as { text: string }).text !== CODE_USAGE)
+        throw new Error(`Code usage text/structured parity failed for ${name}`);
+      const guest = await session.call("execute_code", {
+        code: `async () => await connecta.skill(${JSON.stringify(name)})`,
+      });
+      const fromText = JSON.parse(guest.text).result;
+      const fromStructured = (guest.structured as { result: { text: string } }).result;
+      if (fromText.text !== CODE_USAGE || fromStructured.text !== CODE_USAGE)
+        throw new Error(`Guest usage text/structured parity failed for ${name}`);
+      if (name !== "usage") {
+        const resource = (await session.readResource(name)) as { contents: { text: string }[] };
+        if (resource.contents.length !== 1 || resource.contents[0]!.text !== CODE_USAGE)
+          throw new Error(`Code resource usage differed for ${name}`);
+      }
+    }
     for (const result of [
-      await session.call("skills", { name: "usage" }),
-      await session.call("execute_code", { code: 'async () => await connecta.skill("usage")' }),
+      await session.call("skills", { name: "connector:mixpanel" }),
       await session.call("execute_code", { code: 'async () => await connecta.call("ci.no_such_tool", {})' }),
       await session.call("execute_code", {
         code: 'async () => await connecta.call("ci.get_run", { runId: "invalid" })',
       }),
-    ])
+    ]) {
       if (hidden.test(result.text)) throw new Error("Code skill/error leaked a hidden route");
+      const textValue = result.isError
+        ? JSON.parse(result.text)
+        : { name: "connector:mixpanel", format: "text", text: result.text };
+      if (JSON.stringify(textValue) !== JSON.stringify(result.structured))
+        throw new Error("Connector skill/error text and structured guidance differ");
+    }
     const refusal = await session.call("execute_code", {
       code: 'async () => await connecta.call("tracker.close_issue", { id: "WEB-105" })',
     });
     const caught = await session.call("execute_code", {
       code: 'async () => { try { await connecta.call("tracker.close_issue", { id: "WEB-105" }); } catch (e) { return { code: e.code, retryable: e.retryable, nextAction: e.nextAction, details: e.details }; } }',
     });
+    for (const result of [refusal, caught])
+      if (JSON.stringify(JSON.parse(result.text)) !== JSON.stringify(result.structured))
+        throw new Error("Caught/uncaught refusal text and structured guidance differ");
     const uncaughtError = (refusal.structured as { error: Record<string, unknown> }).error;
     const caughtError = (caught.structured as { result: Record<string, unknown> }).result;
     for (const error of [uncaughtError, caughtError])
@@ -821,18 +945,23 @@ function expectRefusal(action: () => unknown, message: string) {
 }
 function comparisonFixture(arm: Surface, repeats: number, task?: string): AgentResultFile {
   const tasks = task ? [task] : ACTIVE_TASKS.map((t) => t.id);
-  return {
-    ...frozen,
-    config: { ...frozen.config, surface: arm, tasks, repeats },
+  const fixture: AgentResultFile = {
+    ...structuredClone(frozen),
+    protocol: runProtocol("synthetic-selftest-pair"),
+    config: { ...frozen.config, surface: arm, grading: "outcome", tasks, repeats },
     trials: tasks.flatMap((id) => {
       const source = frozen.trials.find((t) => t.task === id && t.repeat === 1)!;
       return Array.from({ length: repeats }, (_, index) => ({
         ...structuredClone(source),
         surface: arm,
+        runner: "codex",
+        grading: "outcome",
         repeat: index + 1,
       }));
     }),
   };
+  delete fixture.regrade;
+  return fixture;
 }
 const six = comparisonFixture("six", 20),
   code = comparisonFixture("code", 20);
@@ -904,12 +1033,313 @@ for (const mutate of [
     "Comparison accepted missing pairs, mismatched settings or an unsupported skip",
   );
 }
+// Synthetic paired measurements above use saved baseline facts solely to test
+// the rule. Real historical files remain unmodified and must be refused.
+{
+  const controls: [string, (file: AgentResultFile) => void][] = [
+    [
+      "source commit",
+      (f) => {
+        f.meta.git.commit = "abcdef012345";
+      },
+    ],
+    [
+      "source srcTree",
+      (f) => {
+        f.meta.git.srcTree = "abcdef012345";
+      },
+    ],
+    [
+      "dirty",
+      (f) => {
+        f.meta.git.dirty = true;
+      },
+    ],
+    [
+      "srcDirty",
+      (f) => {
+        f.meta.git.srcDirty = true;
+      },
+    ],
+    [
+      "known source commit",
+      (f) => {
+        f.meta.git.commit = "unknown";
+      },
+    ],
+    [
+      "known source srcTree",
+      (f) => {
+        f.meta.git.srcTree = "unknown";
+      },
+    ],
+    [
+      "taskDefinitionsHash",
+      (f) => {
+        f.protocol!.taskDefinitionsHash = "changed prompts";
+      },
+    ],
+    [
+      "harnessHash",
+      (f) => {
+        f.protocol!.harnessHash = "changed fakes";
+      },
+    ],
+    [
+      "protocol version",
+      (f) => {
+        delete f.protocol;
+      },
+    ],
+    [
+      "pairId",
+      (f) => {
+        f.protocol!.pairId = "another-batch";
+      },
+    ],
+    [
+      "paired batch ID",
+      (f) => {
+        delete f.protocol!.pairId;
+      },
+    ],
+    [
+      "grading",
+      (f) => {
+        f.config.grading = "route";
+      },
+    ],
+    [
+      "grading",
+      (f) => {
+        delete f.config.grading;
+      },
+    ],
+    [
+      "runner",
+      (f) => {
+        f.config.runner = "claude";
+        f.claudeVersion = "control";
+      },
+    ],
+    [
+      "runner",
+      (f) => {
+        delete f.config.runner;
+      },
+    ],
+    [
+      "CLI version",
+      (f) => {
+        f.codexVersion = "different CLI";
+      },
+    ],
+    [
+      "CLI version",
+      (f) => {
+        delete f.codexVersion;
+      },
+    ],
+    [
+      "model set",
+      (f) => {
+        f.config.models = ["other-model"];
+        f.trials.forEach((t) => {
+          t.model = "other-model";
+        });
+      },
+    ],
+    [
+      "served model",
+      (f) => {
+        f.trials[0]!.codex!.servedModel = "other-model";
+      },
+    ],
+    [
+      "requested model",
+      (f) => {
+        f.trials[0]!.codex!.requestedModel = "other-model";
+      },
+    ],
+    [
+      "CLI version contradicts",
+      (f) => {
+        f.trials[0]!.codex!.version = "different CLI";
+      },
+    ],
+    [
+      "task set",
+      (f) => {
+        f.config.tasks.pop();
+        f.trials = f.trials.filter((t) => f.config.tasks.includes(t.task));
+      },
+    ],
+    [
+      "repeats",
+      (f) => {
+        f.config.repeats++;
+      },
+    ],
+    [
+      "timeoutMs",
+      (f) => {
+        f.config.timeoutMs++;
+      },
+    ],
+    [
+      "concurrency",
+      (f) => {
+        f.config.concurrency++;
+      },
+    ],
+    [
+      "valid concurrency",
+      (f) => {
+        f.config.concurrency = 0;
+      },
+    ],
+    [
+      "effort",
+      (f) => {
+        f.config.effort = "xhigh";
+      },
+    ],
+    [
+      "maxBudgetUsd",
+      (f) => {
+        f.config.maxBudgetUsd = 2;
+      },
+    ],
+    [
+      "MCP output limit",
+      (f) => {
+        f.config.mcpOutputTokens = 123;
+      },
+    ],
+    [
+      "arm label",
+      (f) => {
+        delete f.config.surface;
+      },
+    ],
+    [
+      "arm label",
+      (f) => {
+        f.config.surface = "six";
+      },
+    ],
+    [
+      "trial",
+      (f) => {
+        delete f.trials[0]!.surface;
+      },
+    ],
+    [
+      "trial",
+      (f) => {
+        f.trials[0]!.surface = "six";
+      },
+    ],
+    [
+      "trial",
+      (f) => {
+        f.trials[0]!.grading = "route";
+      },
+    ],
+    [
+      "trial",
+      (f) => {
+        f.trials[0]!.runner = "claude";
+      },
+    ],
+    [
+      "packageVersion",
+      (f) => {
+        f.meta.packageVersion = "old";
+      },
+    ],
+    [
+      "node",
+      (f) => {
+        f.meta.node = "old";
+      },
+    ],
+    [
+      "platform",
+      (f) => {
+        f.meta.platform = "other";
+      },
+    ],
+    [
+      "offline regrade",
+      (f) => {
+        f.regrade = { source: "historical.json", meta: f.meta };
+      },
+    ],
+  ];
+  for (const [reason, mutate] of controls) {
+    const left = comparisonFixture("six", 1),
+      right = comparisonFixture("code", 1);
+    mutate(right);
+    let message = "";
+    try {
+      compare(left, right);
+    } catch (error) {
+      message = String(error);
+    }
+    if (!message.includes("Comparison refused:") || !message.includes(reason) || message.includes("Decision"))
+      throw new Error(`Missing provenance refusal for ${reason}: ${message}`);
+  }
+  expectRefusal(() => compare(frozen, comparisonFixture("code", 2)), "Historical baseline established a decision");
+  const left = comparisonFixture("six", 1),
+    right = comparisonFixture("code", 1);
+  right.meta.git.commit = "abcdef012345";
+  right.protocol!.taskDefinitionsHash = "different prompts";
+  const report = compare(left, right, { allowMismatch: true });
+  if (
+    !report.includes("Decision NON-COMPARABLE PASS") ||
+    report.includes("Decision PASS") ||
+    !report.includes("source commit") ||
+    !report.includes("taskDefinitionsHash")
+  )
+    throw new Error("Explicit mismatch diagnostics printed an unqualified decision");
+  // Matching stale protocols are still incompatible with the current grader.
+  left.protocol!.harnessHash = right.protocol!.harnessHash = "stale fakes";
+  expectRefusal(() => compare(left, right), "Equally stale protocols established a decision");
+  const cliArgs = [
+    "--import",
+    "tsx",
+    new URL("./compare.ts", import.meta.url).pathname,
+    "--a",
+    new URL("./baselines/gpt-6-luna-0.29.json", import.meta.url).pathname,
+    "--b",
+    new URL("./baselines/gpt-6-luna-0.29.json", import.meta.url).pathname,
+  ];
+  const refused = spawnSync(process.execPath, cliArgs, { encoding: "utf8" });
+  if (refused.status === 0 || refused.stdout.includes("Decision") || !refused.stderr.includes("Comparison refused:"))
+    throw new Error("CLI provenance mismatch did not exit nonzero without a decision");
+  const allowed = spawnSync(process.execPath, [...cliArgs, "--allow-mismatch"], { encoding: "utf8" });
+  if (
+    allowed.status !== 0 ||
+    !allowed.stdout.includes("Decision NON-COMPARABLE") ||
+    allowed.stdout.includes("Decision PASS")
+  )
+    throw new Error(`CLI mismatch override did not mark its decision: ${allowed.stderr}`);
+  console.log(
+    `ok   comparison provenance: ${controls.length} specific refusals, historical baseline, stale protocol and NON-COMPARABLE override`,
+  );
+}
 {
   const left = comparisonFixture("six", 1),
     right = comparisonFixture("code", 1);
   for (const file of [left, right]) {
     file.config.runner = "claude";
     file.claudeVersion = "control CLI";
+    for (const trial of file.trials) {
+      trial.runner = "claude";
+      delete trial.codex;
+      trial.claude = { requestedModel: trial.model, servedModel: trial.model, version: "control CLI" };
+    }
   }
   const saved = right.trials.find((t) => t.task === "p5-direct-rich-output")!.saved!;
   const write = right.trials

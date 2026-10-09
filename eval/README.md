@@ -91,7 +91,10 @@ them, including errors a program catches. A refused read-only write returns
 terminal `pool_read_only`, `retryable: false`, with no `nextAction`. Search
 recovery uses a program. Authentication still uses the real boundary and its
 handoffs. No product source, public option or normal configuration enables this
-arm. Six-arm replies never pass through the adapter.
+arm. Usage is resolved by request identity, including `usage`,
+`skill://connecta/usage` and `skill://connecta/usage/SKILL.md`. The same guide
+supplies tool text, structured content, resource reads and guest skill results.
+Six-arm replies never pass through the adapter.
 
 The code arm runs tasks that need business writes on a trusted root. The named
 read-only refusal pool stays read-only. Route-specific paging instructions ask
@@ -115,18 +118,41 @@ and budget behavior checks remain. Existing advisory checks stay advisory.
 Claude's two unobservable rich-output tasks remain N/A in both arms and modes.
 
 ```sh
-npm run eval:agent -- --runner claude --models claude-haiku-5-5 --surface six --grading outcome --repeats 5 --out eval/results/haiku-six.json
-npm run eval:agent -- --runner claude --models claude-haiku-5-5 --surface code --grading outcome --repeats 5 --out eval/results/haiku-code.json
+npm run eval:agent -- --runner claude --models claude-haiku-5-5 --surface six --grading outcome --pair-id 765-haiku-2026-10-08 --repeats 5 --out eval/results/haiku-six.json
+npm run eval:agent -- --runner claude --models claude-haiku-5-5 --surface code --grading outcome --pair-id 765-haiku-2026-10-08 --repeats 5 --out eval/results/haiku-code.json
 npm run eval:compare -- --a eval/results/haiku-six.json --b eval/results/haiku-code.json
 npm run eval:regrade -- --grading outcome --in eval/baselines/gpt-6-luna-0.29.json --out eval/results/luna-outcome.json
 ```
 
-Result config and every trial record `surface` and `grading`. Missing historical
-fields mean `six` and `route`. The comparison script regrades both inputs on
-outcomes without running models. It pairs model, task and repeat, refuses missing
-or duplicate pairs and partial state/completion evidence, and requires matching
-runners, CLI versions, effort, timeout, concurrency, budget, MCP output limits and N/A
-coverage. Only the documented Claude rich-output limitations qualify as N/A.
+Result config and every trial record `surface`, `grading` and runner. Historical
+files without these fields remain readable by `eval:regrade`; they cannot
+establish the registered A/B decision. Fresh paired runs must use the same
+explicit `--pair-id`, chosen for that batch window, and `--grading outcome`.
+The runner records SHA-256 hashes of task definitions and the harness, including
+prompts, graders, fakes, deployment adapters, runner code and dependency lockfile.
+The comparator requires those recorded hashes to match each other and the
+current grader's protocol, and original clean Git commit/source-tree provenance
+to match. Missing, unknown or dirty provenance and offline regrade inputs are
+refused. Original metadata is checked, never the later regrade stamp.
+
+The comparison script regrades both inputs on outcomes without running models.
+It pairs model, task and repeat, refuses missing or duplicate pairs and partial
+state/completion evidence, and requires matching task/model sets, repeats,
+runners, recorded CLI versions, effort, deadline, concurrency, budget, MCP output
+limits, package/Node versions, platform and N/A coverage. CLI compatibility
+currently means exact batch version equality; Claude's per-trial version may
+omit the CLI's ` (Claude Code)` suffix. Per-trial runner, requested model,
+observed served model and CLI metadata must agree with the pair and batch.
+Only the documented Claude rich-output limitations qualify as N/A.
+
+A provenance mismatch exits nonzero, lists the reasons and prints no decision.
+`eval:compare -- --a <six.json> --b <code.json> --allow-mismatch` allows diagnostic
+comparison of incompatible provenance and marks every evaluated decision
+`NON-COMPARABLE PASS` or `NON-COMPARABLE FAIL`, with all mismatch reasons. This
+cannot establish the registered decision. The override still requires complete
+pairs, valid saved evidence and matching N/A coverage to compute the report.
+A comparable report identifies its paired batch, source commit and protocol
+hashes before the per-model results.
 Infrastructure errors count against the reported rate and prevent a decision
 until rerun. N/A trials count in neither denominator; safety counts include
 all rows, including N/A and errors. Safety is recomputed from full saved calls
@@ -266,7 +292,7 @@ VITEST_MAX_WORKERS=2 npx vitest run --project node test/claude-eval.node.test.ts
 VITEST_MAX_WORKERS=2 npm run release:check
 ```
 
-The self-test executes all 19 references in both arms and grading modes through real MCP, checks hidden-tool refusals and terminal caught/uncaught errors, and verifies the paired decision rule, then proves that its
+The self-test executes all 19 references in both arms and grading modes through real MCP, checks exact usage-guide parity across aliases and host representations, JSON/SSE guidance, six-arm byte preservation, hidden-tool refusals and terminal caught/uncaught errors, and verifies the paired decision rule and provenance refusals, then proves that its
 grader rejects a wrong-source attribution with the expected answer intact,
 and a right-source run without answer evidence. It also rejects a no-op, wrong-issue
 refusals, comment-only paging/fan-out, another retained result, direct images

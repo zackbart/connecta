@@ -8,7 +8,7 @@
  * API, and it only uses published entry points. When the config surface
  * changes, this adapter changes; the tasks and graders do not.
  */
-import { withCodeSurface } from "./code-surface.js";
+import { forSurface } from "./code-surface.js";
 import type { Surface } from "../agent/surface.js";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
@@ -93,7 +93,7 @@ export async function startNodeDeployment(
       await vault.set(spec.id, spec.credential.value, "operator");
     }
   }
-  const server = listen(surface === "six" ? connecta : withCodeSurface(connecta), {
+  const server = listen(forSurface(connecta, surface), {
     port,
     host: "127.0.0.1",
     gracefulShutdown: false,
