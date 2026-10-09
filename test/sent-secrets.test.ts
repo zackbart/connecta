@@ -104,7 +104,7 @@ describe("call-scoped sent credentials", () => {
     expect(secrets.text(secrets.text(`Bearer ${SECRET}`))).toBe("[redacted]");
   });
 
-  it("INV-5: one cached matcher handles mixed JSON escapes, percent casing and new credentials", () => {
+  it("INV-5: literal scans handle mixed JSON escapes, percent casing and new credentials", () => {
     const secrets = new SentSecrets();
     const token = 'credential/"with\\escapes';
     secrets.add(token);

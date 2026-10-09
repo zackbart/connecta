@@ -75,7 +75,9 @@ function findMatches(
       if (budget.remaining < 0) return undefined;
       const end = at + needle.length;
       while (protectedSpans[protectedIndex] && protectedSpans[protectedIndex]!.end <= at) protectedIndex++;
-      if (protectedSpans[protectedIndex] && protectedSpans[protectedIndex]!.start < end) continue;
+      // Only an exact emitted marker is exempt. A submitted value may
+      // contain the marker or overlap it and must still be redacted.
+      if (protectedSpans[protectedIndex]?.start === at && protectedSpans[protectedIndex]?.end === end) continue;
       matches.push({ start: at, end });
     }
   }
@@ -361,18 +363,62 @@ export class SentSecrets {
   }
 
   text(value: string): string {
-    if (this.values.size || this.shortValues.size || this.unmatchedLength !== Infinity) {
-      // Apply leaf rules before wire scans or budgets can withhold a whole
-      // structured result and erase safe success identifiers.
-      try {
-        const parsed: unknown = JSON.parse(value);
+    // Raw wire bytes are authoritative, including numeric/boolean/null
+    // echoes that JSON parsing would otherwise turn into non-string leaves.
+    let scanned = this.scanText(value, false);
+    if (!this.privateArguments) return scanned;
+    if (scanned === REDACTED && value !== REDACTED) scanned = this.structuredText(value) ?? REDACTED;
+    if (!this.shortValues.size) return scanned;
+    try {
+      const parsed: unknown = JSON.parse(scanned);
+      if (typeof parsed === "string" || (parsed !== null && typeof parsed === "object")) {
+        // Structured parsing only adds exact-leaf protection for short
+        // values; it never restores bytes refused by a literal scan.
         const redacted = typeof parsed === "string" ? this.leaf(parsed) : this.redact(parsed);
-        return redacted === parsed ? value : JSON.stringify(redacted);
-      } catch {
-        // Plain text is prose, not a structured metadata container.
+        return redacted === parsed ? scanned : JSON.stringify(redacted);
       }
+    } catch {
+      // Plain text and JSON scalars still require the prose scan.
     }
-    return this.scanText(value, true);
+    return this.scanText(scanned, true);
+  }
+
+  /** After a whole-wire refusal, independently scan raw JSON tokens to retain
+   * safe metadata. Refused tokens become quoted placeholders before parsing. */
+  private structuredText(source: string): string | undefined {
+    if (!/^\s*[[{]/.test(source) || source.length * 2 > MAX_SCAN_BYTES || source.length >= this.unmatchedLength)
+      return undefined;
+    // A literal spanning JSON tokens cannot be recovered by token scans.
+    // Only quotes or a sequence of JSON scalar/framing characters can cross
+    // those boundaries in valid JSON. Bound this additional check too.
+    const boundaryForms = [...this.values].filter(
+      (form) => form.includes('"') || /^[{}[\],:\s\d.+eEtruefalsn-]+$/.test(form),
+    );
+    const overlap = boundaryForms.reduce((longest, form) => Math.max(longest, form.length), 0);
+    const budget = { remaining: MAX_SCAN_BYTES };
+    let unsafe = false;
+    const filtered = source.replace(/"(?:\\[\s\S]|[^"\\])*"|[^\s{}[\],:]+/g, (token, at: number) => {
+      if (unsafe) return REDACTED;
+      if (overlap)
+        for (const boundary of [at, at + token.length]) {
+          const start = Math.max(0, boundary - overlap);
+          const window = source.slice(start, boundary + overlap);
+          const matches = findMatches(window, boundaryForms, budget);
+          if (!matches || matches.some((match) => match.start < boundary - start && match.end > boundary - start)) {
+            unsafe = true;
+            return REDACTED;
+          }
+        }
+      const redacted = this.scanText(token, false);
+      return redacted === REDACTED ? JSON.stringify(REDACTED) : redacted;
+    });
+    if (unsafe) return undefined;
+    try {
+      JSON.parse(filtered);
+      return filtered;
+    } catch {
+      return undefined;
+    }
   }
 
   private leaf(value: string): string {

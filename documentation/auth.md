@@ -647,8 +647,15 @@ Matching uses literal scans, with at most 1 MiB of registered encoded forms,
 overlap capped at 73,740 code units. Escaped forms longer than 2,048 code units
 withhold any text that could contain them. A registration or matching limit
 withholds unsafe string fields without throwing matcher diagnostics or
-discarding typed success and safely retained identifiers. Structured wire text
-is filtered as structured data before paging. Credential-only scans allow
+discarding typed success and safely retained identifiers. Raw wire text is
+scanned before JSON interpretation, including numeric, boolean, and null echoes.
+After a scan-work refusal, raw JSON tokens are scanned independently so safe
+metadata can remain; refused tokens become placeholders before parsing.
+Registration refusals and literals spanning JSON token boundaries withhold the
+wire text. Short
+private strings receive an additional exact-leaf pass. Literal replacements
+retain surrounding wire bytes, and unchanged text retains its original bytes.
+Credential-only scans allow
 1 GiB of work to retain the existing multi-MiB document and skill-file reads.
 Private non-string scalars and
 argument traversal limits still withhold the entire downstream result and
@@ -662,7 +669,7 @@ this floor produces one operator warning per connector with the typed code
 `short_secret_not_redacted` and no credential value. Remote connectors warn at
 construction; static `api()` OAuth warns on its first provider operation.
 Connecta's own messages never quote credential values, regardless of length.
-One matcher is cached until the secret set changes, and an empty set skips matching. Redaction runs after
+Literal scans use the request's current secret set, and an empty set skips matching. Redaction runs after
 JSON unwrapping or joining text blocks and on final serialized text and every
 structured string, before result paging, emits, and program outputs/errors/logs. See
 [the agent boundary](./architecture.md#errors-and-records).
