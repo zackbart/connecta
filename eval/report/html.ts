@@ -162,10 +162,10 @@ function transcriptHtml(entries: TranscriptEntry[]): string {
 function trialHtml(trial: TrialResult): string {
   const m = trial.metrics;
   const checks = trial.checks
-    .map(
-      (item) =>
-        `<li class="${item.pass ? "ok" : item.advisory ? "adv" : "no"}">${item.pass ? "✓" : item.advisory ? "○" : "✗"} ${esc(item.description)}${item.detail ? ` <span class="muted">— ${esc(item.detail)}</span>` : ""}${item.advisory ? ` <span class="tag">advisory</span>` : ""}${item.retained ? ` <span class="tag">original grade, inputs unavailable</span>` : ""}</li>`,
-    )
+    .map((item) => {
+      const ignored = trial.grading === "outcome" && item.kind === "route";
+      return `<li class="${item.pass ? "ok" : item.advisory || ignored ? "adv" : "no"}">${item.pass ? "✓" : item.advisory || ignored ? "○" : "✗"} ${esc(item.description)}${item.detail ? ` <span class="muted">— ${esc(item.detail)}</span>` : ""}${item.advisory ? ` <span class="tag">advisory</span>` : ""}${ignored ? ` <span class="tag">route ignored</span>` : ""}${item.retained ? ` <span class="tag">original grade, inputs unavailable</span>` : ""}</li>`;
+    })
     .join("");
   const approvals = trial.approvals.exercised.length
     ? trial.approvals.exercised
@@ -233,6 +233,7 @@ function agentSection(file: AgentResultFile, base: AgentResultFile | undefined):
       </tbody></table>`
     : "";
   return `<h2>Agent task evals</h2>
+    <p class="note">Surface: ${esc(file.config.surface ?? "six")}; grading: ${esc(file.config.grading ?? "route")}.</p>
     ${file.regrade ? `<p class="note">Offline regrade from ${esc(file.regrade.source)} using ${esc(file.regrade.meta.git.commit)}. ${file.trials.some((t) => t.regrade?.unavailable.length) ? "Provisional mixed scores: checks without saved inputs retain original grades. See each trial for missing inputs and required reruns." : "All grading inputs were available."}</p>` : ""}
     <p class="note">${file.trials.length} trials · models ${file.config.models.map(shortModel).join(", ")} · ${file.config.repeats} repeat(s) · concurrency ${file.config.concurrency} · ${esc(file.codexVersion ?? file.claudeVersion ?? "unknown runner")}${file.config.effort ? ` · effort ${esc(file.config.effort)}` : ""}${file.config.runner === "codex" ? "" : ` · MCP output cap ${esc(file.config.mcpOutputTokens ?? "host default")}`}${file.stopped ? ` · <b class="worse">stopped early: ${esc(file.stopped)}</b>` : ""}</p>
     ${matrix(file)}

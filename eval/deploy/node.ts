@@ -8,6 +8,8 @@
  * API, and it only uses published entry points. When the config surface
  * changes, this adapter changes; the tasks and graders do not.
  */
+import { forSurface } from "./code-surface.js";
+import type { Surface } from "../agent/surface.js";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -45,6 +47,7 @@ export async function startNodeDeployment(
   connectors: ConnectorSpec[],
   extra: Record<string, unknown> = {},
   oauth?: FakeOAuth,
+  surface: Surface = "six",
 ): Promise<Deployment> {
   const { pool, ...passthrough } = extra;
   const dir = await mkdtemp(join(tmpdir(), "connecta-eval-"));
@@ -54,7 +57,7 @@ export async function startNodeDeployment(
   const { token } = await new AccessTokenManager(storage).create("eval-machine", "eval-provisioning");
   const vault = encryptedCredentialVault(storage, randomBytes(32).toString("base64"));
   const quiet = { debug() {}, info() {}, warn() {}, error() {} };
-  const observed = observedExecutor();
+  const observed = observedExecutor(surface);
   const connecta = createConnecta({
     storage,
     accessTokens: accessTokens(storage),
@@ -90,7 +93,11 @@ export async function startNodeDeployment(
       await vault.set(spec.id, spec.credential.value, "operator");
     }
   }
-  const server = listen(connecta, { port, host: "127.0.0.1", gracefulShutdown: false });
+  const server = listen(forSurface(connecta, surface), {
+    port,
+    host: "127.0.0.1",
+    gracefulShutdown: false,
+  });
   await once(server, "listening");
   return {
     kind: "node-template-shape",

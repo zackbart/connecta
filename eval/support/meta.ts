@@ -1,6 +1,7 @@
 /** Provenance stamped on every result file, so two files can be compared honestly. */
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -34,7 +35,7 @@ export function runMeta(): RunMeta {
     git: {
       commit: git(["rev-parse", "--short=12", "HEAD"]),
       branch: git(["rev-parse", "--abbrev-ref", "HEAD"]),
-      dirty: git(["status", "--porcelain", "--untracked-files=no"]) !== "",
+      dirty: git(["status", "--porcelain"]) !== "",
       srcTree: git(["rev-parse", "--short=12", "HEAD:src"]),
       srcDirty: git(["status", "--porcelain", "--", "src", "examples", "templates"]) !== "",
     },
@@ -63,4 +64,50 @@ export function flags(argv: string[]): Map<string, string> {
     }
   }
   return out;
+}
+
+/** Hash measured file bytes, including uncommitted files, not just HEAD trees. */
+function fingerprint(paths: string[]): string {
+  const hash = createHash("sha256");
+  const visit = (path: string) => {
+    for (const entry of readdirSync(join(ROOT, path), { withFileTypes: true }).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )) {
+      const child = `${path}/${entry.name}`;
+      if (entry.isDirectory()) visit(child);
+      else
+        hash
+          .update(child)
+          .update("\0")
+          .update(readFileSync(join(ROOT, child)))
+          .update("\0");
+    }
+  };
+  for (const path of paths) {
+    if (path.includes("."))
+      hash
+        .update(path)
+        .update("\0")
+        .update(readFileSync(join(ROOT, path)))
+        .update("\0");
+    else visit(path);
+  }
+  return hash.digest("hex");
+}
+
+export function runProtocol(pairId?: string) {
+  return {
+    version: 1 as const,
+    ...(pairId ? { pairId } : {}),
+    taskDefinitionsHash: fingerprint(["eval/tasks"]),
+    harnessHash: fingerprint([
+      "eval/agent",
+      "eval/deploy",
+      "eval/fakes",
+      "eval/support",
+      "eval/run-agent.ts",
+      "package-lock.json",
+      "tsconfig.json",
+    ]),
+  };
 }

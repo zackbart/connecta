@@ -10,16 +10,20 @@ export interface AgentResultFile {
   kind: "connecta-eval/agent";
   version: 1;
   meta: RunMeta;
+  protocol?: ReturnType<typeof import("../support/meta.js").runProtocol>;
   /** CLI versions, present for the selected runner. */
   codexVersion?: string;
   claudeVersion?: string;
   config: {
+    surface?: import("../agent/surface.js").Surface;
+    grading?: import("../tasks/grading.js").Grading;
     models: string[];
     repeats: number;
     tasks: string[];
     concurrency: number;
     timeoutMs: number;
     effort?: string;
+    maxBudgetUsd?: number;
     mcpOutputTokens?: number | "host default";
     runner?: "codex" | "claude";
   };
@@ -128,7 +132,8 @@ export function summarize(trials: TrialResult[]): CellSummary[] {
     const failedChecks: Record<string, number> = {};
     for (const trial of graded) {
       for (const item of trial.checks) {
-        if (!item.pass && !item.advisory) failedChecks[item.id] = (failedChecks[item.id] ?? 0) + 1;
+        if (!item.pass && !item.advisory && !(trial.grading === "outcome" && item.kind === "route"))
+          failedChecks[item.id] = (failedChecks[item.id] ?? 0) + 1;
       }
     }
     const total = (trial: TrialResult) => {

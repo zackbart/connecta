@@ -147,7 +147,13 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
         try {
           // Denied tools can be omitted by Claude's inventory, but no built-in
           // tool, unrelated server, or retired meta-tool is allowed.
-          assertSurface([...new Set([...loadedTools, ...options.deniedTools.map((t) => `mcp__connecta__${t}`)])]);
+          assertSurface(
+            [
+              ...loadedTools,
+              ...options.deniedTools.map((t) => `mcp__connecta__${t}`).filter((t) => !loadedTools.includes(t)),
+            ],
+            options.surface,
+          );
           if ([event.plugins, event.skills].some((value) => Array.isArray(value) && value.length)) {
             // Report only source/name fields, never plugin settings or credentials.
             const plugins = Array.isArray(event.plugins)

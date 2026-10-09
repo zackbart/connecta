@@ -6,7 +6,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { StreamEvent } from "./trace.js";
-import { assertSurface } from "./surface.js";
+import { assertSurface, type Surface } from "./surface.js";
 
 // Bundled skills load even in a fresh HOME in Codex CLI 0.160.1. Disable
 // known names before thread/start; a future enabled item fails the guard.
@@ -27,6 +27,7 @@ export interface CodexRun {
 
 export interface CodexOptions {
   model: string;
+  surface?: Surface;
   mcpUrl: string;
   token: string;
   allowedTools: string[];
@@ -402,7 +403,7 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
       );
     }
     loadedTools = Object.keys(servers[0].tools).map((tool) => `mcp__connecta__${tool}`);
-    assertSurface(loadedTools);
+    assertSurface(loadedTools, options.surface);
     push({
       type: "system",
       subtype: "init",

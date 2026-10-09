@@ -16,6 +16,8 @@
  * isolates settings and tools with CLI flags. Only the fake MCP endpoint loads. Completed trials are written
  * atomically as they finish.
  */
+import { parseSurface } from "./agent/surface.js";
+import { parseGrading } from "./tasks/grading.js";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { claudeVersion, CLAUDE_MODELS } from "./agent/claude.js";
@@ -23,10 +25,12 @@ import { codexVersion } from "./agent/codex.js";
 import { runBatch } from "./agent/run.js";
 import { renderReport } from "./report/html.js";
 import { summarize, type AgentResultFile, type ResultFile } from "./report/summary.js";
-import { flags, ROOT, runMeta, stamp } from "./support/meta.js";
+import { flags, ROOT, runMeta, runProtocol, stamp } from "./support/meta.js";
 import { ACTIVE_TASKS, PLANNED } from "./tasks/index.js";
 
 const args = flags(process.argv.slice(2));
+const surface = parseSurface(args.get("surface"));
+const grading = parseGrading(args.get("grading"));
 const runner = args.get("runner") ?? "codex";
 if (runner !== "codex" && runner !== "claude") throw new Error("--runner must be codex or claude");
 if (
@@ -78,15 +82,19 @@ const file: AgentResultFile = {
   kind: "connecta-eval/agent",
   version: 1,
   meta: runMeta(),
+  protocol: runProtocol(args.get("pair-id")),
   [runner === "claude" ? "claudeVersion" : "codexVersion"]: version,
   config: {
     runner,
+    surface,
+    grading,
     models,
     repeats,
     tasks: tasks.map((task) => task.id),
     concurrency,
     timeoutMs,
     ...(effort ? { effort } : {}),
+    ...(maxBudgetUsd === undefined ? {} : { maxBudgetUsd }),
   },
   tasks: tasks.map(({ id, title, measures, introducedIn }) => ({ id, title, measures, introducedIn })),
   planned: PLANNED,
@@ -109,6 +117,8 @@ process.once("SIGTERM", () => interrupted.abort());
 let saving = Promise.resolve();
 const { trials, stopped } = await runBatch(tasks, models, repeats, {
   runner,
+  surface,
+  grading,
   concurrency,
   timeoutMs,
   signal: interrupted.signal,
@@ -118,7 +128,9 @@ const { trials, stopped } = await runBatch(tasks, models, repeats, {
     file.trials.push(trial);
     saving = saving.then(save);
     await saving;
-    const failed = trial.checks.filter((item) => !item.pass && !item.advisory).map((item) => item.id);
+    const failed = trial.checks
+      .filter((item) => !item.pass && !item.advisory && !(grading === "outcome" && item.kind === "route"))
+      .map((item) => item.id);
     console.error(
       `[eval] ${done}/${total} ${trial.status.toUpperCase()} ${trial.task} ${trial.model} #${trial.repeat} ` +
         `${(trial.metrics.wallMs / 1000).toFixed(0)}s${failed.length ? ` failed: ${failed.join(",")}` : ""}` +

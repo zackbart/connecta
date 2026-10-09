@@ -1,3 +1,4 @@
+import { parseGrading } from "./tasks/grading.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { regradeTrial } from "./agent/regrade.js";
@@ -9,6 +10,7 @@ import { ACTIVE_TASKS } from "./tasks/index.js";
 const args = flags(process.argv.slice(2));
 if (!args.has("in") || !args.has("out"))
   throw new Error("Usage: eval:regrade -- --in <results.json> --out <file.json>");
+const grading = parseGrading(args.get("grading"));
 const source = resolve(args.get("in")!);
 const out = resolve(args.get("out")!);
 if (source === out) throw new Error("Regrade output must differ from the source file");
@@ -25,8 +27,10 @@ file.config.tasks = file.config.tasks.filter((id) => currentIds.has(id));
 file.trials = file.trials.map((trial) => {
   const task = ACTIVE_TASKS.find((t) => t.id === trial.task);
   if (!task) throw new Error(`No current grader for ${trial.task}`);
-  return regradeTrial(task, trial, runner);
+  return regradeTrial(task, trial, runner, grading, trial.surface ?? file.config.surface ?? "six");
 });
+file.config.surface ??= "six";
+file.config.grading = grading;
 file.regrade = { source, meta: runMeta() };
 await mkdir(dirname(out), { recursive: true });
 await writeFile(out, `${JSON.stringify(file, null, 1)}\n`);

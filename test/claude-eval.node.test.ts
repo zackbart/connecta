@@ -3,7 +3,13 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { CODE_TOOLS, type Surface } from "../eval/agent/surface.js";
 import { runClaude } from "../eval/agent/claude.js";
+import * as claude from "../eval/agent/claude.js";
+import { runBatch } from "../eval/agent/run.js";
+import { regradeTrial } from "../eval/agent/regrade.js";
+import { ACTIVE_TASKS } from "../eval/tasks/index.js";
+import type { ActiveTask } from "../eval/tasks/types.js";
 import { parseTrace } from "../eval/agent/trace.js";
 import { infraError } from "../eval/agent/infra.js";
 
@@ -14,7 +20,8 @@ const mode = process.argv[2], argv = process.argv.slice(3);
 const value = flag => argv[argv.indexOf(flag) + 1];
 const send = event => process.stdout.write(JSON.stringify(event) + '\n');
 const model = value('--model');
-const tools = ['authorize_connector','call_destructive_tool','call_tool','execute_code','search_tools','skills'].map(t => 'mcp__connecta__' + t);
+const isCode = mode === 'code' || mode.endsWith('-code');
+const tools = (isCode ? ['authorize_connector','execute_code','skills'] : ['authorize_connector','call_destructive_tool','call_tool','execute_code','search_tools','skills']).map(t => 'mcp__connecta__' + t);
 const config = JSON.parse(fs.readFileSync(value('--mcp-config'), 'utf8'));
 const settings = JSON.parse(value('--settings'));
 const builtins = ['cc-plugin-agents-md@builtin','cc-plugin-telemetry@builtin','cc-plugin-plugin-authoring@builtin'];
@@ -33,38 +40,37 @@ if (Object.keys(config.mcpServers).join(',') !== 'connecta' || value('--tools') 
   send({type:'result',subtype:'error',result:'isolation failed'}); process.exit(1);
 }
 send({type:'system',subtype:'init',model:mode === 'wrong-model' ? 'wrong-model' : model,
-  claude_code_version:'fake-claude',plugins:mode === 'extra-plugin' ? [{name:'unexpected',source:'cc-plugin-future@builtin',settings:{token:'fake-secret'}}] : mode === 'named-plugin' ? [{name:'unexpected'}] : [],skills:mode === 'extra-skill' ? ['future-skill'] : [],tools:mode === 'extra-tool' ? [...tools,'Bash'] : tools});
+  claude_code_version:'fake-claude',plugins:mode === 'extra-plugin' ? [{name:'unexpected',source:'cc-plugin-future@builtin',settings:{token:'fake-secret'}}] : mode === 'named-plugin' ? [{name:'unexpected'}] : [],skills:mode === 'extra-skill' ? ['future-skill'] : [],tools:mode === 'extra-tool' ? [...tools,'Bash'] : mode === 'duplicate-tool' ? [...tools,tools[0]] : tools});
 let turn = 0;
 readline.createInterface({input:process.stdin}).on('line', line => {
   const input = JSON.parse(line); turn++;
   if (mode === 'hang') return;
-  send({type:'assistant',message:{content:[{type:'tool_use',id:'tool-' + turn,name:'mcp__connecta__call_tool',input:{address:'ci.get_run',args:{runId:4812}}}]}});
+  send({type:'assistant',message:{content:[{type:'tool_use',id:'tool-' + turn,name:isCode ? 'mcp__connecta__execute_code' : 'mcp__connecta__call_tool',input:isCode ? {code:'async () => (await connecta.call(\"ci.get_run\", {runId:4812})).data'} : {address:'ci.get_run',args:{runId:4812}}}]}});
   send({type:'user',message:{content:[{type:'tool_result',tool_use_id:'tool-' + turn,content:[{type:'text',text:'{"status":"failed"}'},{type:'image',mimeType:'image/png',data:'ZmFrZQ=='}]}]}});
   send({type:'assistant',message:{content:[{type:'text',text:input.message.content + ' CI run 4812 failed, commit 9f2c1ab.'}]}});
+  if (mode.startsWith('missing-final-result') && turn === 2) { process.exit(0); return; }
   send({type:'result',subtype:'success',total_cost_usd:turn * .01,num_turns:1,modelUsage:{[model]:{inputTokens:turn*100,outputTokens:turn*20}}});
 });
 `;
 
 async function fixture(
   mode = "complete",
-  options: { signal?: AbortSignal; timeoutMs?: number; followUp?: boolean } = {},
+  options: { signal?: AbortSignal; timeoutMs?: number; followUp?: boolean; model?: string; surface?: Surface } = {},
+  invoke = runClaude,
 ) {
   const dir = await mkdtemp(join(tmpdir(), "connecta-claude-test-"));
   try {
     const script = join(dir, "claude.cjs");
     await writeFile(script, CLI);
-    return await runClaude({
-      model: "claude-sonnet-5-5",
+    return await invoke({
+      model: options.model ?? "claude-sonnet-5-5",
+      ...(options.surface ? { surface: options.surface } : {}),
       mcpUrl: "http://127.0.0.1:1/mcp",
       token: "fake-secret",
-      allowedTools: [
-        "authorize_connector",
-        "call_destructive_tool",
-        "call_tool",
-        "execute_code",
-        "search_tools",
-        "skills",
-      ],
+      allowedTools:
+        options.surface === "code"
+          ? [...CODE_TOOLS]
+          : ["authorize_connector", "call_destructive_tool", "call_tool", "execute_code", "search_tools", "skills"],
       deniedTools: [],
       timeoutMs: options.timeoutMs ?? 10_000,
       ...(options.signal ? { signal: options.signal } : {}),
@@ -79,6 +85,72 @@ async function fixture(
 }
 
 describe("Claude eval CLI", () => {
+  it.each([
+    ["six", "route"],
+    ["six", "outcome"],
+    ["code", "route"],
+    ["code", "outcome"],
+  ] as const)("fails live and saved grading when the last turn has no completion (%s/%s)", async (surface, grading) => {
+    const original = runClaude;
+    const spy = vi
+      .spyOn(claude, "runClaude")
+      .mockImplementation(() =>
+        fixture(
+          surface === "code" ? "missing-final-result-code" : "missing-final-result",
+          { followUp: true, surface },
+          original,
+        ),
+      );
+    const task: ActiveTask = {
+      ...ACTIVE_TASKS.find((t) => t.id === "p5-known-read-routing")!,
+      followUps: [{ prompt: "Second" }],
+      // Isolate the outer completion verdict with a successful body grade.
+      grade: ({ trace }) => [
+        { id: "correct-destination", description: "fixture destination", pass: true },
+        {
+          id: "answer-evidence",
+          description: "fixture answer",
+          pass: /4812 failed, commit 9f2c1ab/.test(trace.finalAnswer ?? ""),
+        },
+      ],
+    };
+    try {
+      const { trials } = await runBatch([task], ["claude-sonnet-5-5"], 1, {
+        runner: "claude",
+        surface,
+        grading,
+        timeoutMs: 10_000,
+        concurrency: 1,
+      });
+      const trial = trials[0]!;
+      expect(trial.error).toBeUndefined();
+      expect(trial.metrics.conversationTurns).toBe(2);
+      expect(trial.saved?.trace.resultSubtypes).toEqual(["success"]);
+      expect(trial.checks.filter((c) => c.id !== "conversation-completed").every((c) => c.pass)).toBe(true);
+      expect(trial.status).toBe("fail");
+      expect(trial.checks.find((c) => c.id === "conversation-completed")?.pass).toBe(false);
+      const saved = regradeTrial(task, trial, "claude", grading, surface);
+      expect(saved.status).toBe("fail");
+      expect(saved.regrade?.unavailable).toContain("conversation-completed");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it.each(["six", "code"] as const)(
+    "accepts Haiku 5.5 with the %s inventory and verifies the served model",
+    async (surface) => {
+      const run = await fixture(surface === "code" ? "code" : "complete", { model: "claude-haiku-5-5", surface });
+      expect(run.model).toBe("claude-haiku-5-5");
+      expect(run.loadedTools).toHaveLength(surface === "code" ? 3 : 6);
+      expect(infraError(run.events, run.exitCode, run.loadedTools)).toBeUndefined();
+      const rejected = await fixture("wrong-model", { model: "claude-haiku-5-5" });
+      expect(infraError(rejected.events, rejected.exitCode, rejected.loadedTools)).toContain(
+        "instead of claude-haiku-5-5",
+      );
+    },
+  );
+
   it("isolates config and tools and preserves multi-turn answers, images, cumulative cost and usage", async () => {
     vi.stubEnv("ANTHROPIC_API_KEY", "fake-key-must-not-reach-child");
     vi.stubEnv("ANTHROPIC_AUTH_TOKEN", "fake-token-must-not-reach-child");
@@ -104,7 +176,7 @@ describe("Claude eval CLI", () => {
     expect(infraError(run.events, run.exitCode, trace.loadedTools)).toBeUndefined();
   });
 
-  it.each(["wrong-model", "extra-tool", "extra-plugin", "extra-skill"])(
+  it.each(["wrong-model", "extra-tool", "duplicate-tool", "extra-plugin", "extra-skill"])(
     "refuses %s before accepting a trial",
     async (mode) => {
       const run = await fixture(mode);
