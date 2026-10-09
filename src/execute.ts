@@ -779,7 +779,7 @@ function sandboxProvider(
       // outcome.
       const sending: { settle?: SettleWrite } = {};
       const outcome = yield* invocation
-        .pipeline(address, sentSecrets.redact(args ?? {}), invocationContext(sending, timeoutMs))
+        .pipeline(address, sentSecrets.redactInput(args ?? {}), invocationContext(sending, timeoutMs))
         .pipe(
           Effect.onExit((exit) =>
             Effect.sync(() => sending.settle?.(Exit.isSuccess(exit) ? writeStateOf(exit.value) : "unknown")),

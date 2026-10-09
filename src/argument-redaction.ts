@@ -60,7 +60,7 @@ function mergeItems(left: Plan, right: Plan): Plan {
 }
 
 /** Compile a bounded plan. Unknown sensitivity refuses the entire echo, never just a branch. */
-function compile(root: JsonSchema): Plan {
+function compile(root: JsonSchema, unionAlternatives = false): Plan {
   let visited = 0;
   const active = new Set<object>();
   const unresolved = () => {
@@ -119,7 +119,7 @@ function compile(root: JsonSchema): Plan {
         if (branches === undefined) continue;
         if (!Array.isArray(branches) || !branches.length) return unresolved();
         const plans = branches.map(child);
-        if (keyword === "allOf") for (const branch of plans) plan = merge(plan, branch);
+        if (keyword === "allOf" || unionAlternatives) for (const branch of plans) plan = merge(plan, branch);
         else {
           if (plans.some((branch) => !equal(branch, plans[0]!))) return unresolved();
           plan = merge(plan, plans[0]!);
@@ -155,11 +155,11 @@ function compile(root: JsonSchema): Plan {
 }
 
 /** Omit whole array values when private elements cannot be removed without shifting indices. */
-function apply(value: unknown, plan: Plan, mark: () => void, depth = 0): unknown {
+function apply(value: unknown, plan: Plan, mark: (value: unknown) => void, depth = 0): unknown {
   if (!sensitive(plan)) return value;
   if (depth > MAX_DEPTH) throw new Error("Argument redaction depth exceeded");
   if (plan.omit) {
-    mark();
+    mark(value);
     return OMITTED;
   }
   if (Array.isArray(value)) {
@@ -174,6 +174,31 @@ function apply(value: unknown, plan: Plan, mark: () => void, depth = 0): unknown
       return filtered === OMITTED ? [] : [[name, filtered]];
     }),
   );
+}
+
+/** Output redaction protects the union of private fields across alternatives.
+ * Other sensitivity rules and unresolved-schema handling follow echo redaction. */
+export function visitPrivateCallArguments(args: unknown, schema: JsonSchema, visit: (value: unknown) => void): void {
+  try {
+    apply(args, compile(schema, true), visit);
+  } catch {
+    // Unsupported public schemas retain their existing downstream behavior.
+    // When a private annotation exists but its location cannot be resolved,
+    // treat every submitted value as private, just as the echo is withheld.
+    const pending: unknown[] = [schema];
+    const seen = new Set<object>();
+    while (pending.length && seen.size <= MAX_SCHEMAS) {
+      const value = pending.pop();
+      if (value === null || typeof value !== "object" || seen.has(value)) continue;
+      seen.add(value);
+      if (Object.hasOwn(value, "writeOnly") && (value as Record<string, unknown>)["writeOnly"] !== false) {
+        visit(args);
+        return;
+      }
+      pending.push(...Object.values(value));
+    }
+    if (pending.length) visit(args);
+  }
 }
 
 /** Internal schema filter; the single echo helper owns snapshotting and byte budgeting. */

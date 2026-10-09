@@ -22,7 +22,7 @@ const secret = {
   tags: [{ slug: "web" }], createdAt: identifiers.createdAt, updatedAt: identifiers.updatedAt,
 };
 
-type Case = { name: string; tool: string; args: Record<string, unknown>; response: unknown; expected: unknown; read?: boolean };
+type Case = { name: string; tool: string; args: Record<string, unknown>; response: unknown; expected: unknown; coreWithheld?: boolean; read?: boolean };
 export const infisicalResultCases: Case[] = [];
 infisicalResultCases.push({
   name: "list_projects default slug derived from a free-text name", tool: "list_projects", args: {},
@@ -82,7 +82,7 @@ for (const kind of ["free text", "nested objects", "invalid identifiers", "wrong
 for (const value of ["", "q", "1234567", "Production"]) infisicalResultCases.push({
   name: `create_secret keeps identifiers independent of value length ${value.length}`, tool: "create_secret",
   args: { ...target, secretValue: value }, response: { secret: { ...secret, secretValue: value, secretComment: value } },
-  expected: { secret: identifiers, metadataOmitted: true },
+  expected: { secret: identifiers, metadataOmitted: true }, coreWithheld: value.length < 8,
 });
 
 for (const tool of ["create_secret", "update_secret", "delete_secret", "create_folder"]) {
@@ -156,7 +156,7 @@ export async function checkInfisicalResult(testCase: Case, executor?: Executor) 
       }));
       expect(rpc.result.isError, JSON.stringify(rpc.result)).toBeFalsy();
       const envelope = JSON.parse(rpc.result.content[0].text);
-      const guestResult = { data: testCase.expected, format: "json" };
+      const guestResult = { data: testCase.coreWithheld ? "[redacted]" : testCase.expected, format: testCase.coreWithheld ? "text" : "json" };
       expect(envelope.result).toEqual(guestResult);
       expect(JSON.parse(envelope.logs)).toEqual(guestResult);
       expect(rpc.result.structuredContent).toEqual(envelope);
@@ -177,7 +177,7 @@ export async function checkInfisicalResult(testCase: Case, executor?: Executor) 
         }));
         expect(rpc.result.isError).toBeFalsy();
         const parsed = JSON.parse(rpc.result.content[0].text);
-        expect(resultMode === "value" ? parsed.data : parsed).toEqual(testCase.expected);
+        expect(resultMode === "value" ? parsed.data : parsed).toEqual(testCase.coreWithheld ? "[redacted]" : testCase.expected);
         if (resultMode === "value") expect(rpc.result.structuredContent).toEqual(parsed);
         if (!testCase.read) {
           expect(JSON.stringify(rpc.result)).not.toContain(marker);
@@ -323,7 +323,7 @@ export async function checkInfisicalSequence(executor?: Executor) {
     expect(keys).toEqual(["A", "B"]);
     expect(writes).toEqual([1, 2].map(() => ({ projectId: target.projectId, environment: "prod", secretPath: "/apps", secretValue: "Production" })));
     const envelope = JSON.parse(rpc.result.content[0].text);
-    expect(envelope.result.ordinary).toEqual({ data: { label: "Production" }, format: "json" });
+    expect(envelope.result.ordinary).toEqual({ data: { label: "[redacted]" }, format: "json" });
     expect(envelope.logs).toBe(JSON.stringify(envelope.result.ordinary));
     expect(rpc.result.structuredContent).toEqual(envelope);
   } finally { await deployment.close(); }

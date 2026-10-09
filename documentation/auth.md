@@ -604,7 +604,7 @@ withheld error keeps its original classification, and no connector error keeps
 a runtime, stream, or parser error as `cause`.
 
 The JSON-RPC and 4xx exception preserves diagnostics agents need to correct
-their arguments. Core redacts credentials used by that call before these
+their arguments. Core redacts credentials and submitted `writeOnly` argument values before these
 messages, nested causes/data, or tool results reach an agent or guest program.
 The memory-only set covers credential-slot values, static auth headers,
 outbound bearer tokens, and their JSON-escaped, URL-encoded, base64 and
@@ -615,6 +615,28 @@ contain `key`, `token`, `secret`, `auth`, `signature`, or `session`. Custom
 maintained-provider transports track the final request too. Credential-slot
 reads cover values sent in headers, queries, or bodies. Echoed sensitive
 header lines are also withheld.
+
+Submitted values under JSON Schema `writeOnly: true` join this memory-only
+request set, including nested objects, arrays, and local references. They use
+the same literal and encoded matching as credentials. Output redaction protects
+the union of private fields across `oneOf`/`anyOf` alternatives. If a schema declares
+private fields but its sensitivity cannot be resolved, all submitted values
+are treated as private. Public-only tools keep their existing behavior.
+Private argument values protect downstream results, error text, and program
+outputs/logs; they never enter stored catalogs or operator records. They also
+remain distinct from auth credentials in the program's outgoing-argument
+filter, so later calls receive the original submitted data.
+
+For a call with any private string shorter than eight characters, including
+an empty string, Connecta withholds the entire downstream result as
+`[redacted]` and withholds downstream error prose and diagnostic fields. Typed
+error classification, retryability, retry delay, and write-outcome accounting
+remain intact. Private non-string scalar values and argument traversal limits
+use the same rule. Downstream input requests are refused for these calls
+because their free text cannot be relayed safely. This rule applies only to
+that call; it never replaces short substrings in protocol fields or unrelated
+calls. Ordinary private strings of at least eight characters use literal
+replacement and keep surrounding diagnostics.
 
 Only credentials of at least eight characters enter the redaction and structural
 matchers. Credentials shorter than 8 characters are not redacted from echoes;

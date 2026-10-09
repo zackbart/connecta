@@ -1,9 +1,10 @@
-// Credentials used by one upstream request. Memory only; never part of a context's public
+// Credentials and private argument values used by one upstream request. Memory only; never part of a context's public
 // shape, a failure record, storage, or a log. Web APIs only.
 import { carryFailureFacts } from "./operator-record.js";
 import { ConnectorCallError } from "./errors.js";
 import { credentialUrlViews } from "./credential-url.js";
-import type { ConnectorContext, Logger } from "./types.js";
+import { visitPrivateCallArguments } from "./argument-redaction.js";
+import type { ConnectorContext, JsonSchema, Logger } from "./types.js";
 
 const REDACTED = "[redacted]";
 const encoder = new TextEncoder();
@@ -71,41 +72,91 @@ function base64(value: string): string {
 
 export class SentSecrets {
   private readonly values = new Set<string>();
+  private readonly credentialValues = new Set<string>();
+  private credentialView: SentSecrets | undefined;
   private matcher: RegExp | undefined;
   private unicode = false;
   private readonly recipients = new Set<SentSecrets>();
 
-  private form(value: string): void {
-    if (this.values.has(value)) return;
+  private form(value: string, argument = false): void {
+    const promoted = !argument && !this.credentialValues.has(value);
+    if (promoted) {
+      this.credentialValues.add(value);
+      this.credentialView = undefined;
+    }
+    if (this.values.has(value) && !promoted) return;
     this.values.add(value);
     this.matcher = undefined;
     this.unicode ||= [...value].some((char) => char.charCodeAt(0) > 127);
-    for (const recipient of this.recipients) recipient.form(value);
+    for (const recipient of this.recipients) recipient.form(value, argument);
   }
 
-  /** The request receives existing and future credentials from every context. */
+  /** The request receives existing and future secrets from every context. */
   include(source: SentSecrets): void {
     if (source === this) return;
     source.recipients.add(this);
-    for (const value of source.values) this.form(value);
+    for (const value of source.values) this.form(value, !source.credentialValues.has(value));
   }
 
-  add(value: string): void {
+  add(value: string, argument = false): void {
     if (value.length < MIN_SECRET_LENGTH) return;
     for (const form of [value, `Bearer ${value}`, `token ${value}`]) {
-      this.form(form);
-      this.form(encodeURIComponent(form));
-      this.form(encodeURI(form));
-      this.form(new URLSearchParams({ value: form }).toString().slice(6));
+      this.form(form, argument);
+      this.form(encodeURIComponent(form), argument);
+      this.form(encodeURI(form), argument);
+      this.form(new URLSearchParams({ value: form }).toString().slice(6), argument);
       const encoded = base64(form);
-      this.form(encoded);
-      this.form(encoded.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""));
+      this.form(encoded, argument);
+      this.form(encoded.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""), argument);
     }
   }
 
   /** Explicit secrets use the same floor as every other credential. */
   secret(value: string): void {
     this.add(value);
+  }
+
+  /** Private arguments share credential encodings. Short or non-string leaves
+   * require withholding this call's downstream detail, never protocol replacement. */
+  arguments(args: unknown, schema: JsonSchema | undefined): boolean {
+    if (!schema) return false;
+    let withhold = false;
+    let visited = 0;
+    const active = new Set<object>();
+    const collect = (value: unknown, depth = 0): void => {
+      if (++visited > 2048 || depth > 32) {
+        withhold = true;
+        return;
+      }
+      if (typeof value === "string") {
+        if (value.length < MIN_SECRET_LENGTH) withhold = true;
+        else this.add(value, true);
+      } else if (value !== null && typeof value === "object") {
+        if (active.has(value)) {
+          withhold = true;
+          return;
+        }
+        active.add(value);
+        for (const entry of Object.values(value)) collect(entry, depth + 1);
+        active.delete(value);
+      } else {
+        // Literal matching cannot protect numeric/boolean structured output.
+        withhold = true;
+      }
+    };
+    visitPrivateCallArguments(args, schema, collect);
+    return withhold;
+  }
+
+  /** Submitted private data is not an auth credential. Keep later program
+   * arguments intact while retaining the existing credential exfiltration guard. */
+  redactInput<T>(value: T): T {
+    if (this.credentialValues.size === this.values.size) return this.redact(value);
+    if (!this.credentialView) {
+      this.credentialView = new SentSecrets();
+      for (const credential of this.credentialValues) this.credentialView.form(credential);
+    }
+    return this.credentialView.redact(value);
   }
 
   /** Structural fields must be refused, never repaired into different URLs. */

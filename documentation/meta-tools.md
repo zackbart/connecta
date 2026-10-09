@@ -859,12 +859,25 @@ echo. A private array element omits its containing array to keep indices intact.
 `argsRedacted: true` marks partial or withheld echoes. Use them only to identify
 the target for reconciliation; any new call requires the original arguments.
 The filtered snapshot is never clipped: over-budget arguments are dropped whole.
+
 The address gets the opposite rule
 because it is the thing being corrected: a clipped one still identifies the
 mistake, and a short one — every real one — comes back exact and untagged. A
 scope is rejected outright because a clipped one could select a different
 connector. A failed result-storage read returns typed `unavailable` without
 exposing backend error text.
+Submitted `writeOnly` values also enter the call's sent-secret output redaction
+set. Downstream result and error text, including credential-supported encoded
+forms, are redacted before direct-call output, program returns/logs, or result
+stash persistence. Paging in a later request reads already-redacted bytes.
+For a private string shorter than eight characters, including an empty string,
+the entire downstream result is withheld as `[redacted]`; downstream error
+prose and diagnostic fields are withheld while typed classification, retry
+facts, and write outcome remain. Private non-string scalars and traversal
+limits use the same rule. These calls cannot relay downstream input requests.
+The rule is call-specific and does not replace short substrings in protocol
+fields or other calls. See [output redaction](./auth.md#what-a-servers-errors-may-say)
+for the shared encoding and argument-filter contract.
 
 Activity records each of these refusals with the coarse `friction` class derived
 from its typed error code — `tool_not_found`, `schema_retry`,
