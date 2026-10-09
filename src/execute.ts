@@ -1,3 +1,4 @@
+import type { GuestBlock, GuestNativeBlock } from "./guest-types.js";
 import { GUEST_API_DECLARATION } from "./usage-guide.js";
 import { bindMcpClient, type McpClientContext } from "./mcp-client-context.js";
 import type { AuthElicitation } from "./auth-elicitation.js";
@@ -17,7 +18,12 @@ import {
 } from "./catalog-service.js";
 import type { DeferredWork } from "./connector-scope.js";
 import { createMetaTools, jsonResult, pageProgramResult, type ToolResult } from "./meta-tools.js";
-import { PROGRAM_RESULT_INLINE_BYTES, PROGRAM_RESULT_PAGE_BYTES, type ProgramResultHandle } from "./program-result.js";
+import {
+  PROGRAM_RESULT_INLINE_BYTES,
+  PROGRAM_RESULT_PAGE_BYTES,
+  PROGRAM_RESULT_WIRE_BYTES,
+  type ProgramResultHandle,
+} from "./program-result.js";
 import {
   guardExecuteResultValue,
   MAX_EXECUTE_LOG_CHARS,
@@ -178,14 +184,9 @@ class ExecuteDiagnostics {
 }
 
 /**
- * One MCP content block a program may emit. The complete set, by design:
- * `resource` and `resource_link` are excluded by PRINCIPLES.md INV-3 — pointers get
- * followed, and connecta serves no resources for them to point at.
+ * Guest-authored blocks exclude pointers (INV-3). Native call blocks are
+ * retained on the host and forwarded only through request-local references.
  */
-export type EmittedBlock =
-  | { type: "text"; text: string }
-  | { type: "image"; data: string; mimeType: string }
-  | { type: "audio"; data: string; mimeType: string };
 
 const EMIT_SHAPE_HINT = '{ type: "text", text } or { type: "image" | "audio", data (base64), mimeType }';
 
@@ -195,7 +196,7 @@ const EMIT_SHAPE_HINT = '{ type: "text", text } or { type: "image" | "audio", da
  * stripped, because silently deleting fields would deliver something the
  * program did not ask to emit.
  */
-function requireEmittedBlock(raw: unknown): EmittedBlock {
+function requireEmittedBlock(raw: unknown): GuestBlock {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw guestFailure("invalid_args", `connecta.emit accepts exactly one content block: ${EMIT_SHAPE_HINT}`);
   }
@@ -245,11 +246,11 @@ function requireEmittedBlock(raw: unknown): EmittedBlock {
       );
     }
   }
-  return raw as EmittedBlock;
+  return raw as GuestBlock;
 }
 
 export class EmitCollector {
-  readonly blocks: EmittedBlock[] = [];
+  readonly blocks: GuestNativeBlock[] = [];
   bytes = 0;
   textChars = 0;
   constructor(
@@ -259,32 +260,45 @@ export class EmitCollector {
   ) {}
 
   accept(raw: unknown): void {
-    const block = requireEmittedBlock(raw);
-    if (this.blocks.length >= this.maxBlocks) {
-      // M5: distinguish exhausted block slots from the remaining byte budget.
-      throw guestFailure(
-        "budget_exceeded",
-        `connecta.emit block-count budget exceeded: ${this.maxBlocks} block(s) maximum, 0 blocks remaining; ${this.maxBytes - this.bytes} of ${this.maxBytes} serialized bytes remaining`,
-      );
+    this.acceptNative([requireEmittedBlock(raw)]);
+  }
+
+  /** Only the host's retained downstream result may enter this path. */
+  acceptNative(blocks: GuestNativeBlock[]): void {
+    let bytes = this.bytes;
+    let textChars = this.textChars;
+    let count = this.blocks.length;
+    for (const block of blocks) {
+      if (count >= this.maxBlocks) {
+        throw guestFailure(
+          "budget_exceeded",
+          `connecta.emit block-count budget exceeded: ${this.maxBlocks} block(s) maximum, 0 blocks remaining; ${this.maxBytes - bytes} of ${this.maxBytes} serialized bytes remaining`,
+        );
+      }
+      const serialized = JSON.stringify(block);
+      const size = diagnosticsEncoder.encode(serialized).byteLength;
+      if (bytes + size > this.maxBytes) {
+        throw guestFailure(
+          "budget_exceeded",
+          `connecta.emit byte budget exceeded: block is ${size} serialized bytes with ${this.maxBytes - bytes} of ${this.maxBytes} remaining`,
+        );
+      }
+      textChars += block.type === "text" ? serialized.length : 0;
+      // Embedded resource text shares the result cap too; binary blobs use
+      // the transport budget, just like images and audio.
+      if (block.type === "resource" && "text" in block.resource) textChars += serialized.length;
+      if (textChars > MAX_EXECUTE_RESULT_CHARS - 512) {
+        throw guestFailure(
+          "result_too_large",
+          "Emitted text shares the 24,000-character program result limit. Reduce the text before emitting it.",
+        );
+      }
+      count++;
+      bytes += size;
     }
-    const size = diagnosticsEncoder.encode(JSON.stringify(block)).byteLength;
-    if (this.bytes + size > this.maxBytes) {
-      throw guestFailure(
-        "budget_exceeded",
-        `connecta.emit byte budget exceeded: block is ${size} serialized bytes with ${this.maxBytes - this.bytes} of ${this.maxBytes} remaining`,
-      );
-    }
-    const textChars = block.type === "text" ? JSON.stringify(block).length : 0;
-    // Reserve space for a reduced result envelope even if text fills the budget.
-    if (this.textChars + textChars > MAX_EXECUTE_RESULT_CHARS - 512) {
-      throw guestFailure(
-        "result_too_large",
-        "Emitted text shares the 24,000-character program result limit. Reduce the text before emitting it.",
-      );
-    }
-    this.textChars += textChars;
-    this.blocks.push(block);
-    this.bytes += size;
+    this.textChars = textChars;
+    this.bytes = bytes;
+    this.blocks.push(...blocks);
     this.diagnostics?.recordEmitted(this.blocks.length, this.bytes);
   }
 }
@@ -475,6 +489,18 @@ function sandboxProvider(
   let writes = 0;
   // These are transfer cursors only. All result bytes live in the existing stash.
   const transfers = new Map<string, { id: string; offset: number }>();
+  const nativeResults = new Map<string, GuestNativeBlock[]>();
+  const transportResult = (value: { format: string }) => {
+    if (value.format === "paged") {
+      const handle = value as ProgramResultHandle;
+      if (handle.resultId && handle.totalBytes <= PROGRAM_RESULT_INLINE_BYTES) {
+        const transfer = `transfer:${crypto.randomUUID()}`;
+        transfers.set(transfer, { id: handle.resultId, offset: 0 });
+        return { transfer, handle };
+      }
+    }
+    return value;
+  };
   /** Budget and account for writes admitted by the pool trust decision. */
   const invocationContext = (sending: { settle?: SettleWrite }, timeoutMs: number) => ({
     source: "execute_code" as const,
@@ -484,8 +510,66 @@ function sandboxProvider(
     ...(limits.dispatchController ? { dispatchSignal: limits.dispatchController.signal } : {}),
     unwrapResult: true,
     trust: limits.trust,
-    processResult: (value: unknown, resolved: ResolvedCatalogTool, secrets: SentSecrets, format: "json" | "text") =>
-      pageProgramResult(registry, baseUrl, resolved, value, format, secrets, limits.trust, requestScope),
+    processResult: async (
+      value: unknown,
+      resolved: ResolvedCatalogTool,
+      secrets: SentSecrets,
+      format: "json" | "text",
+      raw: unknown,
+    ) => {
+      const page = (data: unknown, valueFormat: "json" | "text", wireBytes?: number) =>
+        pageProgramResult(
+          registry,
+          baseUrl,
+          resolved,
+          data,
+          valueFormat,
+          secrets,
+          limits.trust,
+          requestScope,
+          wireBytes,
+        );
+      const content =
+        resolved.connector.kind === "mcp" && raw !== null && typeof raw === "object"
+          ? (raw as { content?: GuestNativeBlock[] }).content
+          : undefined;
+      if (
+        !Array.isArray(content) ||
+        !content.some((block) => ["image", "audio", "resource", "resource_link"].includes(block.type))
+      ) {
+        return transportResult(await page(value, format));
+      }
+      // Inline native envelopes already contain the unwrapped data. Send one
+      // copy and tell the prelude which field preserves the existing data shape.
+      const dataKey =
+        "toolResult" in (raw as object)
+          ? "toolResult"
+          : (raw as { structuredContent?: unknown }).structuredContent !== undefined
+            ? "structuredContent"
+            : undefined;
+      // A separate structured value keeps its original paging contract. Check
+      // it first so an oversized value does not allocate a second native stash.
+      const result = dataKey === undefined ? undefined : await page(value, format, PROGRAM_RESULT_WIRE_BYTES - 1024);
+      if (result?.format === "paged" && (!result.resultId || result.totalBytes > PROGRAM_RESULT_INLINE_BYTES)) {
+        return result;
+      }
+      const native = await page(raw, "json");
+      let valueResult: unknown;
+      if (native.format === "paged") {
+        // Raw rich results reuse this same stash and transfer. Only structured
+        // values need a separate fallback if native presentation cannot inline.
+        valueResult = result ? transportResult(result) : undefined;
+        if (!native.resultId || native.totalBytes > PROGRAM_RESULT_INLINE_BYTES) {
+          return valueResult ? { value: valueResult, native: { value: native } } : native;
+        }
+      }
+      const ref = crypto.randomUUID();
+      nativeResults.set(ref, content);
+      return {
+        ...(valueResult ? { value: valueResult } : {}),
+        native: { ref, value: transportResult(native), dataKey },
+      };
+    },
     beforeWrite: (target: ResolvedCatalogTool): Effect.Effect<WriteDecision> =>
       Effect.sync((): WriteDecision => {
         if (programWrites?.isClosed) {
@@ -567,16 +651,7 @@ function sandboxProvider(
         );
       diagnostics?.recordCall(outcome);
       if (!outcome.ok) return yield* Effect.fail(new InvocationFailure(outcome.error));
-      const value = outcome.value as { format: string };
-      if (value.format === "paged") {
-        const handle = value as ProgramResultHandle;
-        if (handle.resultId && handle.totalBytes <= PROGRAM_RESULT_INLINE_BYTES) {
-          const transfer = `transfer:${crypto.randomUUID()}`;
-          transfers.set(transfer, { id: handle.resultId, offset: 0 });
-          return { transfer, handle };
-        }
-      }
-      return value;
+      return outcome.value;
     });
 
   // Discovery gets the same treatment from here (L2): once the run has
@@ -729,7 +804,32 @@ function sandboxProvider(
               true,
             );
           }
-          limits.emitCollector.accept(sentSecrets.redact(block));
+          if (block !== null && typeof block === "object" && "contentResult" in block) {
+            throw guestFailure(
+              "result_too_large",
+              "Native content is not inline; page result.contentResult with connecta.result and reduce it before emitting.",
+            );
+          }
+          if (block !== null && typeof block === "object" && !Array.isArray(block) && "ref" in block) {
+            const reference = block as { ref: unknown; index?: unknown };
+            const native = typeof reference.ref === "string" ? nativeResults.get(reference.ref) : undefined;
+            if (
+              !native ||
+              Object.keys(reference).some((key) => !["ref", "index"].includes(key)) ||
+              (reference.index !== undefined &&
+                (typeof reference.index !== "number" ||
+                  !Number.isSafeInteger(reference.index) ||
+                  reference.index < 0 ||
+                  reference.index >= native.length))
+            ) {
+              throw guestFailure(
+                "invalid_args",
+                "connecta.emit requires a native result from this program's connecta.call.",
+              );
+            }
+            const blocks = reference.index === undefined ? native : [native[reference.index as number]!];
+            limits.emitCollector.acceptNative(sentSecrets.redact(blocks));
+          } else limits.emitCollector.accept(sentSecrets.redact(block));
         },
         catch: (err) => err,
       }),
@@ -1442,15 +1542,15 @@ const executeDescription = (
 ) => `One known read: call_tool. One known write: call_destructive_tool. Everything else: execute_code. ${trust === "trusted" ? "Trusted pool: programs may read and write; the host approves the program as a write." : "Read-only pool: programs read; writes use call_destructive_tool."} Limits: ${hostLimits.maxHostCalls} host calls, ${maxWrites} writes, ${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
 ${connectorInventory(connectors)}
 
-Use async () => { ... }, no arguments, with the connecta global. No portable ambient capabilities. API notation:
+Use async () => { ... }, no arguments, with connecta. No portable ambient capabilities. API:
 \`\`\`ts
 declare const connecta: {
 ${GUEST_API_DECLARATION}
 };
 \`\`\`
-Search: { tools }; check catalogErrors/absence. JSON schemas default; compact is text. Calls: { data, format: "json" | "text" }; >1 MiB: { format: "paged", resultId? }. Page with connecta.result(handle); nextOffset is UTF-8 bytes. allSettled keeps typed failures. Host budget_exceeded is terminal through catch/allSettled.
+Search: {tools}; check catalogErrors/absence. JSON schemas default; compact is text. Calls: {data, format:"json"|"text"}; >1 MiB: paged handle. connecta.result(handle) pages; nextOffset is UTF-8 bytes. allSettled retains typed errors; host budget_exceeded ends the run.
 
-Reduce JSON. Never repeat writes for output. emit: text or base64 image/audio, safe without await, ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes. Text shares the result cap. skills({ name: "investigate" }): workflow; skills({ name: "usage" }): repair${connectorGuides ? ", guide handling" : ""}.`;
+Never repeat writes for output. emit(result) or emit(block) from result.content forwards MCP blocks. Authored: text/base64 image/audio; no await. Caps: ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes. Text shares result cap. skills({ name: "investigate" }): workflow; skills({ name: "usage" }): repair${connectorGuides ? ", guide handling" : ""}.`;
 
 // Module scope, like the other five meta-tool inputs: its JSON Schema is
 // derived once per process. Budgets and connectors vary by deployment and

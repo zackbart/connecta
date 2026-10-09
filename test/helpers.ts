@@ -125,6 +125,7 @@ export function makeRegistry(
     classification?: import("../src/registry.js").RegistryOptions["classification"];
     toolCacheTtlSeconds?: number;
     maxResultBytes?: number;
+    results?: import("../src/registry.js").RegistryOptions["results"];
     /** Share one store between a registry and a credential vault. */
     storage?: KVStorage;
     credentialVault?: CredentialVault;

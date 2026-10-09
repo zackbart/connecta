@@ -117,6 +117,19 @@ describe("EmitCollector budgets (M5)", () => {
     expect(sink.blocks).toHaveLength(1);
     expect(sink.bytes).toBe(smallSize);
   });
+  it("INV-3: native batches obey the block budget atomically", () => {
+    const sink = new EmitCollector(10_000, 2);
+    sink.accept({ type: "text", text: "prior" });
+    const previousBytes = sink.bytes;
+    expect(() =>
+      sink.acceptNative([
+        { type: "image", data: "aGk=", mimeType: "image/png" },
+        { type: "resource_link", uri: "asset://badge", name: "badge" },
+      ]),
+    ).toThrow(/block-count budget exceeded/);
+    expect(sink.blocks).toEqual([{ type: "text", text: "prior" }]);
+    expect(sink.bytes).toBe(previousBytes);
+  });
 });
 
 describe("connecta.emit provider (M7, M8)", () => {

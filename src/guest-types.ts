@@ -13,7 +13,7 @@ export interface GuestApi {
     options?: { page?: number; offset?: number; maxBytes?: number },
   ): Promise<GuestResultPage>;
   skill(name: string): Promise<{ name: string; text: string; format: "text" }>;
-  emit(block: GuestBlock): PromiseLike<void>;
+  emit(block: GuestNativeBlock | GuestResult): PromiseLike<void>;
 }
 
 export interface GuestResourceResult {
@@ -28,7 +28,29 @@ export interface GuestResultHandle {
   truncated: true;
   hint: string;
 }
-export type GuestResult = { data: unknown; format: "json" } | { data: string; format: "text" } | GuestResultHandle;
+/** Inline MCP rich results expose original blocks; emit(result) forwards all of them. */
+export type GuestResult = ({ data: unknown; format: "json" } | { data: string; format: "text" } | GuestResultHandle) & {
+  content?: GuestNativeBlock[];
+  /** Paging handle when native content exceeds the inline cap or transfer fails. */
+  contentResult?: GuestResultHandle;
+};
+/** Native call blocks can be forwarded unchanged, including annotations and metadata. */
+export type GuestNativeBlock = (
+  | GuestBlock
+  | { type: "resource"; resource: { uri: string; mimeType?: string } & ({ text: string } | { blob: string }) }
+  | {
+      type: "resource_link";
+      uri: string;
+      name: string;
+      title?: string;
+      description?: string;
+      mimeType?: string;
+      size?: number;
+    }
+) & {
+  annotations?: { audience?: Array<"user" | "assistant">; priority?: number; lastModified?: string };
+  _meta?: Record<string, unknown>;
+};
 export interface GuestResultPage {
   resultId: string;
   offset: number;

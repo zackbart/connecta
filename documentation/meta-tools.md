@@ -391,7 +391,8 @@ Decoding preserves every payload code point, including U+FEFF at the start of
 the result or any page, so joining pages reproduces the original UTF-8 text.
 Oversized raw text containing unpaired UTF-16 surrogates cannot use this UTF-8
 page/offset contract. It returns a successful truncation notice explaining that
-the text cannot be paged, without a stash id, paging action, or altered preview.
+the text cannot be paged and suggesting a JSON value request for recovery,
+without a stash id, paging action, or altered preview.
 Completed writes remain successful and must not be repeated. JSON values still
 round-trip such strings through their escaped JSON representation.
 

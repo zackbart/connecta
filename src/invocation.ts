@@ -249,6 +249,7 @@ export interface InvocationContext<T> {
     resolved: ResolvedCatalogTool,
     sentSecrets: SentSecrets,
     format: "json" | "text",
+    raw: unknown,
   ) => T | Promise<T>;
   /**
    * Optional payload-free friction class derived from a *successful* result —
@@ -555,6 +556,7 @@ export class InvocationService {
         return failed(callerCancelledDetails());
       }
       let result: unknown;
+      let rawResult: unknown;
       let inputRequiredValue: { value: T } | undefined;
       let observedResult: unknown;
       let valueFormat: "json" | "text" = "json";
@@ -769,7 +771,8 @@ export class InvocationService {
             /* Unserializable values have no measurable byte count. */
           }
           valueFormat = attempt.value.observed.format;
-          result = context.unwrapResult ? observedResult : attempt.value.raw;
+          rawResult = attempt.value.raw;
+          result = context.unwrapResult ? observedResult : rawResult;
           return undefined;
         });
 
@@ -809,7 +812,7 @@ export class InvocationService {
           ? Effect.tryPromise({
               try: () =>
                 Promise.resolve(
-                  processResult(sentSecrets.redact(result), completed, sentSecrets, valueFormat),
+                  processResult(sentSecrets.redact(result), completed, sentSecrets, valueFormat, rawResult),
                 ) as Promise<T>,
               catch: (error) => error,
             })

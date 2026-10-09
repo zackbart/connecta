@@ -77,7 +77,7 @@ describe("guest API contract (QuickJS executor)", () => {
     });
     for (const contractCase of CONTRACT_CASES) {
       it(`[${contractCase.clauses}] ${custom ? "customExecutor: " : ""}${contractCase.name}`, async () => {
-        const harness = contractHarness();
+        const harness = contractHarness(contractCase.maxStashEntries);
         const base = contractCase.deadline ? deadlineExecutor : executor;
         const chosen = custom ? customExecutor(base, { lifecycle: "self-managed" }) : base;
         const config = caseConfig(contractCase);

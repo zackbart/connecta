@@ -479,7 +479,7 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
     });
     for (const contractCase of CONTRACT_CASES) {
       it(`[${contractCase.clauses}] ${custom ? "customExecutor: " : ""}${contractCase.name}`, async () => {
-        const harness = contractHarness();
+        const harness = contractHarness(contractCase.maxStashEntries);
         const executor = required(contractCase.deadline ? workerDeadlineExecutor : workerExecutor);
         const config = caseConfig(contractCase);
         const chosen = custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor;

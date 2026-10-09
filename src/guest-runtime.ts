@@ -85,13 +85,17 @@ export function guestInitializer(): string {
   const push = Function.prototype.call.bind(Array.prototype.push);
   const apply = Function.prototype.call.bind(Function.prototype.apply);
   const NativeError = Error;
+  const NativeWeakMap = WeakMap;
+  const isArray = Array.isArray;
+  const weakGet = Function.prototype.call.bind(WeakMap.prototype.get);
+  const weakSet = Function.prototype.call.bind(WeakMap.prototype.set);
   return freeze((provider) => {
   const pending = [];
   const emit = provider.emit;
   const hostCall = provider.call;
   const hostResult = provider.result;
-  async function call() {
-    const value = await apply(hostCall, undefined, arguments);
+  const nativeRefs = new NativeWeakMap();
+  async function inline(value) {
     if (!value || typeof value.transfer !== "string" || !value.handle) return value;
     // A completed downstream call stays successful if transfer storage fails.
     // Preserve its handle so the caller can page later, without repeating a write.
@@ -104,6 +108,31 @@ export function guestInitializer(): string {
       return { data: value.handle.valueFormat === "json" ? JSON.parse(text) : text,
         format: value.handle.valueFormat };
     } catch { return value.handle; }
+  }
+  async function call() {
+    const reply = await apply(hostCall, undefined, arguments);
+    if (!reply || !reply.native) return inline(reply);
+    const native = await inline(reply.native.value);
+    if (native.format === "paged" && !reply.value) return native;
+    const value = reply.value ? await inline(reply.value) : {
+      data: reply.native.dataKey ? native.data[reply.native.dataKey] : native.data, format: "json"
+    };
+    if (value.format === "paged") return value;
+    if (native.format === "paged") {
+      value.contentResult = native;
+      return value;
+    }
+    if (native.format === "json" && native.data && isArray(native.data.content)) {
+      const content = native.data.content;
+      // Only host-issued refs cross back. Binary data never needs a second
+      // guest-to-host transfer, and guest edits cannot mint native pointers.
+      for (let i = 0; i < content.length; i++) {
+        weakSet(nativeRefs, content[i], { ref: reply.native.ref, index: i });
+      }
+      value.content = content;
+      weakSet(nativeRefs, value, { ref: reply.native.ref });
+    }
+    return value;
   }
   function trackEmission(task) {
     const entry = { handled: false, settled: promiseThen(task,
@@ -134,7 +163,10 @@ export function guestInitializer(): string {
     read: provider.read,
     result: provider.result,
     skill: provider.skill,
-    emit(block) { return trackEmission(emit(block)); }
+    emit(block) {
+      const ref = block && typeof block === "object" ? weakGet(nativeRefs, block) : undefined;
+      return trackEmission(emit(ref || block));
+    }
   });
   globalThis.connecta = namespace;
   defineProperties(globalThis, {
