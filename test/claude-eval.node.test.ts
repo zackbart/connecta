@@ -1,4 +1,5 @@
 // Node-only: spawns a fake Claude CLI to verify eval isolation, stream protocol and cancellation.
+import * as childProcess from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +13,12 @@ import { ACTIVE_TASKS } from "../eval/tasks/index.js";
 import type { ActiveTask } from "../eval/tasks/types.js";
 import { parseTrace } from "../eval/agent/trace.js";
 import { infraError } from "../eval/agent/infra.js";
+import type { CodexOptions } from "../eval/agent/codex.js";
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:child_process")>();
+  return { ...original, spawn: vi.fn(original.spawn) };
+});
 
 const CLI = String.raw`
 const fs = require('node:fs');
@@ -42,6 +49,11 @@ if (Object.keys(config.mcpServers).join(',') !== 'connecta' || value('--tools') 
 send({type:'system',subtype:'init',model:mode === 'wrong-model' ? 'wrong-model' : model,
   claude_code_version:'fake-claude',plugins:mode === 'extra-plugin' ? [{name:'unexpected',source:'cc-plugin-future@builtin',settings:{token:'fake-secret'}}] : mode === 'named-plugin' ? [{name:'unexpected'}] : [],skills:mode === 'extra-skill' ? ['future-skill'] : [],tools:mode === 'extra-tool' ? [...tools,'Bash'] : mode === 'duplicate-tool' ? [...tools,tools[0]] : tools});
 let turn = 0;
+// Closing stdin must not let the CLI exit before the harness signal arrives.
+setInterval(() => {}, 1_000);
+if (mode === 'self-terminate' || mode === 'cleanup-143') process.on('SIGTERM', () => process.exit(143));
+if (mode === 'cleanup-1') process.on('SIGTERM', () => process.exit(1));
+if (mode === 'cleanup-sigint') process.on('SIGTERM', () => process.kill(process.pid, 'SIGINT'));
 readline.createInterface({input:process.stdin}).on('line', line => {
   const input = JSON.parse(line); turn++;
   if (mode === 'hang') return;
@@ -50,12 +62,20 @@ readline.createInterface({input:process.stdin}).on('line', line => {
   send({type:'assistant',message:{content:[{type:'text',text:input.message.content + ' CI run 4812 failed, commit 9f2c1ab.'}]}});
   if (mode.startsWith('missing-final-result') && turn === 2) { process.exit(0); return; }
   send({type:'result',subtype:'success',total_cost_usd:turn * .01,num_turns:1,modelUsage:{[model]:{inputTokens:turn*100,outputTokens:turn*20}}});
+  if (mode === 'self-terminate') process.kill(process.pid, 'SIGTERM');
 });
 `;
 
 async function fixture(
   mode = "complete",
-  options: { signal?: AbortSignal; timeoutMs?: number; followUp?: boolean; model?: string; surface?: Surface } = {},
+  options: {
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    followUp?: boolean;
+    model?: string;
+    surface?: Surface;
+    nextTurn?: CodexOptions["nextTurn"];
+  } = {},
   invoke = runClaude,
 ) {
   const dir = await mkdtemp(join(tmpdir(), "connecta-claude-test-"));
@@ -75,7 +95,7 @@ async function fixture(
       timeoutMs: options.timeoutMs ?? 10_000,
       ...(options.signal ? { signal: options.signal } : {}),
       firstPrompt: "First",
-      nextTurn: async (n) => (options.followUp && n === 1 ? "Second" : undefined),
+      nextTurn: options.nextTurn ?? (async (n) => (options.followUp && n === 1 ? "Second" : undefined)),
       maxBudgetUsd: 0.1,
       testHost: { executable: process.execPath, args: [script, mode, "--expected-home", process.env.HOME!] },
     });
@@ -124,6 +144,7 @@ describe("Claude eval CLI", () => {
       });
       const trial = trials[0]!;
       expect(trial.error).toBeUndefined();
+      expect(trial.claude?.terminatedAfterCompletion).toBe(false);
       expect(trial.metrics.conversationTurns).toBe(2);
       expect(trial.saved?.trace.resultSubtypes).toEqual(["success"]);
       expect(trial.checks.filter((c) => c.id !== "conversation-completed").every((c) => c.pass)).toBe(true);
@@ -165,6 +186,8 @@ describe("Claude eval CLI", () => {
     }
     const trace = parseTrace(run.events, run.turnStarts, ["First", "Second"]);
     expect(run.timedOut).toBe(false);
+    expect(run.exitCode).toBeNull();
+    expect(run.terminatedAfterCompletion).toBe(true);
     expect(run.turnStarts).toHaveLength(2);
     expect(trace.finalAnswer).toBe("Second CI run 4812 failed, commit 9f2c1ab.");
     expect(trace.toolUses).toHaveLength(2);
@@ -199,9 +222,80 @@ describe("Claude eval CLI", () => {
     expect(error?.result).not.toContain("settings");
   });
 
+  it("completes a successful trial when the CLI traps harness SIGTERM and exits 143", async () => {
+    const original = runClaude;
+    const spy = vi.spyOn(claude, "runClaude").mockImplementation(() => fixture("cleanup-143", {}, original));
+    const task: ActiveTask = {
+      ...ACTIVE_TASKS.find((t) => t.id === "p5-known-read-routing")!,
+      grade: () => [{ id: "answer-evidence", description: "fixture answer", pass: true }],
+    };
+    try {
+      const { trials } = await runBatch([task], ["claude-sonnet-5-5"], 1, {
+        runner: "claude",
+        timeoutMs: 10_000,
+        concurrency: 1,
+      });
+      const trial = trials[0]!;
+      expect(trial.status).toBe("pass");
+      expect(trial.error).toBeUndefined();
+      expect(trial.claude).toMatchObject({
+        exitCode: 143,
+        terminatedAfterCompletion: true,
+        resultSubtypes: ["success"],
+        timedOut: false,
+        aborted: false,
+      });
+      expect(trial.checks.find((c) => c.id === "conversation-completed")?.pass).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("does not attribute a self-termination processed before cleanup to the harness", async () => {
+    const spawn = vi.mocked(childProcess.spawn).getMockImplementation()!;
+    let resolveExit!: () => void;
+    const exited = new Promise<void>((resolve) => {
+      resolveExit = resolve;
+    });
+    const spy = vi.spyOn(childProcess, "spawn").mockImplementation((...args) => {
+      const child = spawn(...args);
+      child.once("exit", resolveExit);
+      return child;
+    });
+    try {
+      const run = await fixture("self-terminate", {
+        nextTurn: async () => {
+          // Wait for Node to process the independent exit before cleanup checks it.
+          await exited;
+          return undefined;
+        },
+      });
+      expect(run.events.at(-1)?.subtype).toBe("success");
+      expect(run.exitCode).toBe(143);
+      expect(run.timedOut).toBe(false);
+      expect(run.aborted).toBe(false);
+      expect(run.terminatedAfterCompletion).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it.each([
+    ["cleanup-1", 1],
+    ["cleanup-sigint", null],
+  ] as const)("rejects an unexpected exit after harness SIGTERM (%s)", async (mode, exitCode) => {
+    const run = await fixture(mode);
+    expect(run.events.at(-1)?.subtype).toBe("success");
+    expect(run.exitCode).toBe(exitCode);
+    expect(run.timedOut).toBe(false);
+    expect(run.aborted).toBe(false);
+    expect(run.terminatedAfterCompletion).toBe(false);
+  });
+
   it("terminates a hung CLI on the wall deadline", async () => {
     const run = await fixture("hang", { timeoutMs: 200 });
     expect(run.timedOut).toBe(true);
+    expect(run.terminatedAfterCompletion).toBe(false);
     expect(run.wallMs).toBeLessThan(5_000);
   });
 
@@ -209,7 +303,9 @@ describe("Claude eval CLI", () => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 200);
     try {
-      expect((await fixture("hang", { signal: controller.signal })).aborted).toBe(true);
+      const run = await fixture("hang", { signal: controller.signal });
+      expect(run.aborted).toBe(true);
+      expect(run.terminatedAfterCompletion).toBe(false);
     } finally {
       clearTimeout(timer);
     }

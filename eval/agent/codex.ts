@@ -16,6 +16,8 @@ export interface CodexRun {
   events: StreamEvent[];
   turnStarts: number[];
   exitCode: number | null;
+  /** Claude alone records its successful conversation cleanup. */
+  terminatedAfterCompletion?: boolean;
   timedOut: boolean;
   aborted: boolean;
   stderrTail: string;
