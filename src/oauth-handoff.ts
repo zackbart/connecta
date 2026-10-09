@@ -16,6 +16,67 @@ interface Handoff {
   after?: string;
 }
 
+// Length-prefixed fields avoid JSON keys and escaping without reserving any
+// character in an identity. This is an opaque wire encoding, not encryption.
+function encodeHandoff(h: Handoff): string {
+  return [
+    h.connector,
+    h.owner,
+    h.principal,
+    h.origin,
+    h.expiresAt.toString(36),
+    h.nonce,
+    h.force ? "1" : "0",
+    h.after ?? "",
+  ]
+    .map((field) => `${field.length}:${field}`)
+    .join("");
+}
+
+function decodeHandoff(value: string): Handoff {
+  const fields: string[] = [];
+  let offset = 0;
+  while (offset < value.length && fields.length < 8) {
+    const colon = value.indexOf(":", offset);
+    const lengthText = value.slice(offset, colon);
+    if (colon < offset || !/^(0|[1-9][0-9]*)$/.test(lengthText)) throw new Error("Invalid handoff field");
+    const length = Number(lengthText);
+    offset = colon + 1;
+    if (!Number.isSafeInteger(length) || length > value.length - offset) throw new Error("Invalid handoff length");
+    fields.push(value.slice(offset, offset + length));
+    offset += length;
+  }
+  const [connector, owner, principal, origin, expiry, nonce, force, after] = fields;
+  if (fields.length !== 8 || offset !== value.length || !/^[0-9a-z]+$/.test(expiry!) || !/^[01]$/.test(force!))
+    throw new Error("Invalid handoff fields");
+  return {
+    connector: connector!,
+    owner: owner!,
+    principal: principal!,
+    origin: origin!,
+    expiresAt: parseInt(expiry!, 36),
+    nonce: nonce!,
+    force: force === "1",
+    ...(after ? { after } : {}),
+  };
+}
+
+function encodeSegment(value: string): string {
+  let binary = "";
+  for (const byte of new TextEncoder().encode(value)) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function decodeSegment(value: string): string {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error("Invalid handoff encoding");
+  const binary = atob(value.replace(/-/g, "+").replace(/_/g, "/"));
+  const decoded = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+    Uint8Array.from(binary, (char) => char.charCodeAt(0)),
+  );
+  if (encodeSegment(decoded) !== value) throw new Error("Noncanonical handoff encoding");
+  return decoded;
+}
+
 export function oauthConnectUnavailable(opts: Pick<ServerOptions, "config">): string | undefined {
   if (
     !opts.config.auth.some(
@@ -68,10 +129,13 @@ export async function oauthConnectLink(
   };
   const vault = opts.config.vault!;
   if (opaque && (!vault.seal || !vault.open)) throw new Error("URL elicitation requires a sealing credential vault.");
+  const compact = encodeHandoff(handoff);
   const payload = opaque
-    ? `v2:${btoa(await vault.seal!(connectorId, "connecta:connect-link:v2", JSON.stringify(handoff)))}`
-    : btoa(JSON.stringify(handoff));
-  const signature = await opts.config.vault!.signOAuthHandoff!(payload);
+    ? `v4.${encodeSegment(await vault.seal!(connectorId, "connecta:connect-link:v4", compact))}`
+    : `v3.${encodeSegment(compact)}`;
+  // Preserve the vault's entire signature and its representation, including
+  // custom vaults, while keeping every URL segment unpadded base64url.
+  const signature = encodeSegment(await vault.signOAuthHandoff!(payload));
   const url = new URL(`/connect/${connectorId}`, baseUrl);
   url.searchParams.set("h", `${payload}.${signature}`);
   return { url: url.toString(), nonce: handoff.nonce };
@@ -120,15 +184,29 @@ export async function verifyOAuthHandoff(
   token: string | null,
 ): Promise<Handoff | null> {
   if (!token || token.length > 4096) return null;
-  const [payload, signature, ...rest] = token.split(".");
-  if (!payload || !signature || rest.length) return null;
   try {
-    if (!(await opts.config.vault?.verifyOAuthHandoff?.(payload, signature))) return null;
-    const h: Handoff = JSON.parse(
-      payload.startsWith("v2:")
-        ? await opts.config.vault!.open!(connectorId, "connecta:connect-link:v2", atob(payload.slice(3)))
-        : atob(payload),
-    );
+    const parts = token.split(".");
+    let h: Handoff;
+    if (parts.length === 3 && (parts[0] === "v3" || parts[0] === "v4")) {
+      const [version, body, signature] = parts;
+      const payload = `${version}.${body}`;
+      if (!(await opts.config.vault?.verifyOAuthHandoff?.(payload, decodeSegment(signature!)))) return null;
+      const decoded = decodeSegment(body!);
+      h = decodeHandoff(
+        version === "v4" ? await opts.config.vault!.open!(connectorId, "connecta:connect-link:v4", decoded) : decoded,
+      );
+    } else {
+      // Keep pre-upgrade JSON and sealed v2 links until their original expiry.
+      // Authenticate their exact original text; never normalize before verifying.
+      const [payload, signature, ...rest] = parts;
+      if (!payload || !signature || rest.length) return null;
+      if (!(await opts.config.vault?.verifyOAuthHandoff?.(payload, signature))) return null;
+      h = JSON.parse(
+        payload.startsWith("v2:")
+          ? await opts.config.vault!.open!(connectorId, "connecta:connect-link:v2", atob(payload.slice(3)))
+          : atob(payload),
+      );
+    }
     const connector = opts.registry.getConnector(connectorId);
     if (
       !connector ||

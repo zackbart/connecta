@@ -767,9 +767,12 @@ only through the same-origin interactive-user credential route, and only for a
 connector visible to that user with the relevant shared or personal management
 permission; Issuing an OAuth link, `force` included, requires that permission too. The
 `/connect` visit and callback both verify the same initiating user under Clerk or
-Cloudflare Access, including for shared connectors. The URL expires after fifteen
-minutes and carries no browser authentication. A signing credential vault is
-required; deployments without either interactive provider return `unavailable`
+Cloudflare Access, including for shared connectors.
+
+Copy `authorizationUrl` exactly as returned. Do not decode or re-encode its opaque,
+unpadded base64url handoff token. If the link is invalid or expired, request a fresh link with
+`authorize_connector`. The URL expires after fifteen minutes and carries no browser authentication.
+A signing credential vault is required; deployments without either interactive provider return `unavailable`
 with a clear configuration message. Status reads stay passive and never expose
 a downstream authorization-server URL. These routes work without the UI. After OAuth
 consent or a human update, retry the original operation; a static update is read

@@ -165,9 +165,11 @@ describe("auth URL elicitation", () => {
     expect(result.requestState).toEqual(expect.any(String));
     const url = new URL(result.inputRequests.connecta_auth.params.url);
     expect(url.origin + url.pathname).toBe(`${BASE}/connect/service`);
-    const encrypted = url.searchParams.get("h")!.split(".")[0]!;
-    expect(encrypted.startsWith("v2:")).toBe(true);
-    expect(atob(encrypted.slice(3))).not.toContain("alice");
+    const [version, encrypted] = url.searchParams.get("h")!.split(".");
+    expect(version).toBe("v4");
+    expect(atob(encrypted!.replace(/-/g, "+").replace(/_/g, "/"))).not.toContain("alice");
+    expect(url.href).not.toContain("%");
+    expect(url.searchParams.get("h")).not.toContain("=");
     expect(JSON.stringify(result)).not.toContain("DOWNSTREAM_PRIVATE_TEXT");
     expect(JSON.stringify(result)).not.toContain("downstream.test");
     expect(flow.connector.startAuth).not.toHaveBeenCalled();

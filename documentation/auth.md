@@ -985,8 +985,14 @@ still serve configured credentials. Both routes accept only GET, otherwise retur
 `form_post` is unsupported. Clerk's session-only policy applies regardless of method.
 
 The fifteen-minute signed handoff carries connector ownership, initiating principal, deployment origin, nonce,
-and restart mode. Configure `vault: encryptedCredentialVault(storage, key)`, which derives its HMAC key with
-HKDF. Custom vaults need `signOAuthHandoff` and `verifyOAuthHandoff`; without a signing vault, links cannot be
+restart mode, and any predecessor link binding. New links use versioned, length-prefixed fields instead of
+JSON, with unpadded base64url payload and signature segments. Ordinary handoffs use an opaque wire encoding,
+not encryption; URL elicitation also seals those fields as described above. Copy the complete URL unchanged.
+The signature authenticates the exact version and payload text. Tampered or re-encoded links return
+`Invalid or expired connection link. Request a new link from connecta.` Pre-upgrade signed JSON and sealed
+v2 links still verify against their original text and expire after their original fifteen minutes.
+
+Configure `vault: encryptedCredentialVault(storage, key)`, which derives its HMAC key with HKDF. Custom vaults need `signOAuthHandoff` and `verifyOAuthHandoff`; without a signing vault, links cannot be
 issued or accepted. A link grants no identity. After identity and permissions pass, its nonce is consumed
 before OAuth starts, even while consent is pending. Failed starts need new links; nonce markers expire with
 their links.
