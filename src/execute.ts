@@ -254,7 +254,7 @@ export class EmitCollector {
   bytes = 0;
   textChars = 0;
   constructor(
-    private readonly maxBytes: number,
+    readonly maxBytes: number,
     readonly maxBlocks: number,
     private readonly diagnostics?: ExecuteDiagnostics,
   ) {}
@@ -301,6 +301,96 @@ export class EmitCollector {
     this.blocks.push(...blocks);
     this.diagnostics?.recordEmitted(this.blocks.length, this.bytes);
   }
+}
+
+/** Bound both JSON size and object amplification before retaining native blocks. */
+class NativePresentationLimit extends Error {}
+
+function boundedNativeValue<T>(value: T, maxBytes: number, copy: boolean): { value: T; bytes: number } {
+  let bytes = 0;
+  let nodes = 0;
+  // Empty objects cost only two JSON bytes but much more heap. Derive the
+  // allocation ceiling from the transport budget, with a fixed stack ceiling.
+  const maxNodes = Math.floor(Math.min(maxBytes, PROGRAM_RESULT_INLINE_BYTES) / 32);
+  const active = new Set<object>();
+  const charge = (size: number) => {
+    bytes += size;
+    if (bytes > maxBytes) throw new NativePresentationLimit();
+  };
+  const string = (text: string) => {
+    // Count JSON escapes and UTF-8 directly, without allocating a potentially
+    // six-times-larger escaped string or byte buffer just to reject it.
+    if (text.length > maxBytes - bytes) throw new NativePresentationLimit();
+    charge(2);
+    for (let i = 0; i < text.length; i++) {
+      const unit = text.charCodeAt(i);
+      if (unit === 34 || unit === 92 || unit === 8 || unit === 9 || unit === 10 || unit === 12 || unit === 13)
+        charge(2);
+      else if (unit < 32) charge(6);
+      else if (unit < 128) charge(1);
+      else if (unit < 2048) charge(2);
+      else if (
+        unit >= 0xd800 &&
+        unit <= 0xdbff &&
+        text.charCodeAt(i + 1) >= 0xdc00 &&
+        text.charCodeAt(i + 1) <= 0xdfff
+      ) {
+        charge(4);
+        i++;
+      } else charge(unit >= 0xd800 && unit <= 0xdfff ? 6 : 3);
+    }
+  };
+  const visit = (item: unknown, depth: number): unknown => {
+    if (++nodes > maxNodes || depth > 64) throw new NativePresentationLimit();
+    if (typeof item === "string") {
+      string(item);
+      return item;
+    }
+    if (item === null || typeof item === "boolean" || typeof item === "number") {
+      charge(JSON.stringify(item).length);
+      return item;
+    }
+    if (typeof item !== "object" || active.has(item)) throw new NativePresentationLimit();
+    const array = Array.isArray(item);
+    if (![array ? Array.prototype : Object.prototype, null].includes(Object.getPrototypeOf(item)))
+      throw new NativePresentationLimit();
+    const jsonHook = Object.getOwnPropertyDescriptor(item, "toJSON");
+    if (jsonHook && (!("value" in jsonHook) || typeof jsonHook.value === "function"))
+      throw new NativePresentationLimit();
+    active.add(item);
+    charge(2);
+    if (array) {
+      if (item.length > maxNodes - nodes) throw new NativePresentationLimit();
+      const result: unknown[] | undefined = copy ? [] : undefined;
+      for (let i = 0; i < item.length; i++) {
+        if (i) charge(1);
+        const descriptor = Object.getOwnPropertyDescriptor(item, String(i));
+        if (descriptor && !("value" in descriptor)) throw new NativePresentationLimit();
+        const child = visit(descriptor?.value ?? null, depth + 1);
+        result?.push(child);
+      }
+      active.delete(item);
+      return result;
+    }
+    const result: Record<string, unknown> | undefined = copy ? {} : undefined;
+    let first = true;
+    for (const key in item) {
+      const descriptor = Object.getOwnPropertyDescriptor(item, key);
+      if (!descriptor?.enumerable) continue;
+      if (!("value" in descriptor)) throw new NativePresentationLimit();
+      if (descriptor.value === undefined) continue;
+      if (!first) charge(1);
+      first = false;
+      string(key);
+      charge(1);
+      const child = visit(descriptor.value, depth + 1);
+      if (result)
+        Object.defineProperty(result, key, { value: child, enumerable: true, writable: true, configurable: true });
+    }
+    active.delete(item);
+    return result;
+  };
+  return { value: visit(value, 0) as T, bytes };
 }
 
 /** A positive whole-number budget, or the default when the value is unusable. */
@@ -529,47 +619,85 @@ function sandboxProvider(
           requestScope,
           wireBytes,
         );
-      const content =
+      const envelope =
         resolved.connector.kind === "mcp" && raw !== null && typeof raw === "object"
-          ? (raw as { content?: GuestNativeBlock[] }).content
+          ? (raw as Record<string, unknown>)
           : undefined;
+      const dataKey = envelope
+        ? "toolResult" in envelope
+          ? "toolResult"
+          : envelope.structuredContent !== undefined
+            ? "structuredContent"
+            : undefined
+        : undefined;
+      // Preserve #788 before even inspecting presentation. Paging serializes
+      // the structured value synchronously; no native metadata is visited.
+      if (
+        dataKey !== undefined &&
+        diagnosticsEncoder.encode(JSON.stringify(value)).byteLength > PROGRAM_RESULT_INLINE_BYTES
+      ) {
+        return page(value, format, PROGRAM_RESULT_WIRE_BYTES - 1024);
+      }
+      const content = envelope?.content;
       if (
         !Array.isArray(content) ||
-        !content.some((block) => ["image", "audio", "resource", "resource_link"].includes(block.type))
+        !content.some((block) => block && ["image", "audio", "resource", "resource_link"].includes(block.type))
       ) {
         return transportResult(await page(value, format));
       }
-      // Own the envelope before paging can yield. Connectors may reuse and
-      // mutate their blocks; guest output, references and emit accounting must
-      // all use the same deep snapshot, including resource fields and metadata.
-      const snapshot = structuredClone(raw) as { content: GuestNativeBlock[] } & Record<string, unknown>;
-      // Inline native envelopes already contain the unwrapped data. Send one
-      // copy and tell the prelude which field preserves the existing data shape.
-      const dataKey =
-        "toolResult" in snapshot
-          ? "toolResult"
-          : snapshot.structuredContent !== undefined
-            ? "structuredContent"
-            : undefined;
-      // A separate structured value keeps its original paging contract. Check
-      // it first so an oversized value does not allocate a second native stash.
-      const result =
-        dataKey === undefined ? undefined : await page(snapshot[dataKey], format, PROGRAM_RESULT_WIRE_BYTES - 1024);
-      if (result?.format === "paged" && (!result.resultId || result.totalBytes > PROGRAM_RESULT_INLINE_BYTES)) {
-        return result;
+      const unavailablePresentation = (): ProgramResultHandle => ({
+        format: "paged",
+        valueFormat: "json",
+        totalBytes: 0,
+        truncated: true,
+        hint: "Paging is unavailable. Native presentation exceeds byte, node or depth limits, or is not acyclic JSON. Reduce the downstream presentation before forwarding it.",
+      });
+      let snapshot: Record<string, unknown>;
+      let retained: GuestNativeBlock[] | undefined;
+      try {
+        // Oversized but bounded envelopes may still use the existing stash.
+        // Measure without copying them; only inline native blocks are retained.
+        const measured = boundedNativeValue(
+          envelope,
+          Math.max(EXECUTE_MAX_EMITTED_BYTES, limits.emitCollector?.maxBytes ?? 0),
+          false,
+        );
+        if (measured.bytes <= PROGRAM_RESULT_INLINE_BYTES) {
+          retained = boundedNativeValue(content, PROGRAM_RESULT_INLINE_BYTES, true).value;
+          snapshot = { ...envelope, content: retained };
+        } else {
+          snapshot = envelope!;
+        }
+      } catch (error) {
+        if (!(error instanceof NativePresentationLimit)) throw error;
+        const result = dataKey === undefined ? undefined : transportResult(await page(value, format));
+        const notice = unavailablePresentation();
+        return result ? { value: result, native: { value: notice } } : notice;
       }
-      const native = await page(snapshot, "json");
+      // Snapshot blocks before either stash operation yields. Start both
+      // serializations now so an oversized presentation's pages also own the
+      // original bytes even if the structured-data stash pauses.
+      const resultPending = dataKey === undefined ? undefined : page(value, format, PROGRAM_RESULT_WIRE_BYTES - 1024);
+      const nativePending = page(snapshot, "json");
+      const result = await resultPending;
+      const native = await nativePending;
       let valueResult: unknown;
       if (native.format === "paged") {
-        // Raw rich results reuse this same stash and transfer. Only structured
-        // values need a separate fallback if native presentation cannot inline.
         valueResult = result ? transportResult(result) : undefined;
         if (!native.resultId || native.totalBytes > PROGRAM_RESULT_INLINE_BYTES) {
           return valueResult ? { value: valueResult, native: { value: native } } : native;
         }
       }
+      // Redaction can shrink an oversized original below the inline cap. It
+      // still has no retained snapshot: keep its handle, never mint a ref to
+      // absent or connector-owned blocks.
+      if (!retained) {
+        const notice = native.format === "paged" ? native : unavailablePresentation();
+        const valueResult = result ? transportResult(result) : undefined;
+        return valueResult ? { value: valueResult, native: { value: notice } } : notice;
+      }
       const ref = crypto.randomUUID();
-      nativeResults.set(ref, snapshot.content);
+      nativeResults.set(ref, retained);
       return {
         ...(valueResult ? { value: valueResult } : {}),
         native: { ref, value: transportResult(native), dataKey },

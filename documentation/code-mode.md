@@ -369,8 +369,10 @@ host-retained originals, so guest edits do not change native output. Results
 over the 1 MiB inline cap return paging handles without native content; page
 and reduce them as described in `L6`. If only the native presentation is too
 large or its transfer fails, `data` stays intact and `contentResult` carries
-its paging handle. `connecta.result(result.contentResult)` pages the original
-MCP envelope; `emit(result)` refuses with `result_too_large`.
+its paging handle or an unavailable-paging notice for presentation that exceeds
+bounded traversal limits or is cyclic. When a result ID exists,
+`connecta.result(result.contentResult)` pages the original MCP envelope;
+`emit(result)` refuses with `result_too_large`.
 
 **S6.** Every call goes through the same catalog, fail-closed read-only
 predicate, admission, credential containment, timeout classification, health
@@ -721,7 +723,15 @@ The earlier alternatives are in [decision history](https://github.com/zackbart/c
 resources, resource links, annotations and `_meta`. `connecta.emit(block)` also
 accepts individual entries of that result's `content`. The trusted guest
 prelude maps these objects to opaque request-local references; the host checks
-those references and emits owned deep snapshots taken before result paging.
+those references and emits owned deep snapshots of retained native blocks taken
+before result paging can yield. Oversized structured data returns its paging
+handle before native presentation is inspected. Presentation traversal stops at
+64 levels, 32,768 values, or the larger of the default and configured emission
+byte budgets. Only envelopes within the 1 MiB inline cap retain block snapshots.
+Cycles, non-JSON values, and traversal limits refuse presentation with an
+unavailable-paging notice; structured data remains usable. That notice has no
+result ID and reports `totalBytes: 0` because traversal could not measure a
+complete JSON value.
 Connector mutations after retention cannot change guest output, accepted blocks,
 or their byte and text charges, including nested resource fields and metadata.
 Copies and guest-authored blocks keep the strict validation below. No program
@@ -1192,7 +1202,7 @@ rejection, and branded adapter acceptance across module copies.
 | `V1`–`V4`         | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, the friction each derives, no event for the execution itself), `test/activity.test.ts` (the shared code → friction table, the identity clamp, the one-attempt floor), `test/operator-view.test.ts`, `test/sql-storage-contract.ts`, run by `test/d1-storage.node.test.ts` and `test/sqlite-storage.node.test.ts` (historical pause and approval rows still render and round-trip)                              |
 | `V5`, `W9`        | `test/program-writes.test.ts` (an unawaited trusted-pool write finished and recorded, its unknown outcome reported, counts on a failed program, the classification table), `test/invocation-pipeline.test.ts` (the gate after validation, an unrecorded refusal)                                                                                                                                                                                                                                                                |
 | `W10`, `W12`      | `test/program-writes.test.ts` (a trusted-pool write runs and every other write keeps `E4`, the write budget, pool trust and override precedence, `call_tool` still refusing, search and describe verdicts, construction refusals), `test/operator-ui-model.test.ts`, `test/browser/operator-ui.spec.ts` (the badge)                                                                                                                                                                                                             |
-| `M1`              | `test/guest-api-contract.test.ts` (invalid emits throw catchably, accept nothing), `test/execute-emit.test.ts` (every rejected shape)                                                                                                                                                                                                                                                                                                                                                                                           |
+| `M1`              | `test/guest-api-contract.test.ts` (invalid emits throw catchably, accept nothing), `test/execute-emit.test.ts` (rejected shapes, bounded native snapshots, paging before metadata traversal, and cyclic presentation refusal)                                                                                                                                                                                                                                                                                                   |
 | `M2`, `M3`        | `test/guest-api-contract.test.ts` (delivery order, truncated return plus delivered blocks), `test/execute-emit.test.ts` (envelope, `structuredContent`, byte-for-byte no-emit path)                                                                                                                                                                                                                                                                                                                                             |
 | `M4`              | `test/guest-api-contract.test.ts` (discard is visible), `test/execute-emit.test.ts` (structured and plain paths), `test/quickjs-executor.node.test.ts` (mid-run shutdown)                                                                                                                                                                                                                                                                                                                                                       |
 | `M5`, `M7`        | `test/execute-emit.test.ts` (both budgets fail the crossing block; host-call budget untouched)                                                                                                                                                                                                                                                                                                                                                                                                                                  |
