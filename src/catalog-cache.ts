@@ -310,7 +310,7 @@ export function catalogIntake(
     ...(icons ? { icons: icons.filter((icon) => !/^data:/i.test(icon.src)) } : {}),
   }));
   if (tools.length > MAX_CATALOG_TOOLS) throw catalogCeiling();
-  const clean = sentSecretsForRequest(ctx.requestScope ?? ctx).redact({ ...result, tools });
+  const clean = sentSecretsForRequest(ctx.requestScope ?? ctx).redactCredentials({ ...result, tools });
   if (new TextEncoder().encode(JSON.stringify(clean)).byteLength > MAX_SERIALIZED_CATALOG_BYTES) throw catalogCeiling();
   for (const tool of clean.tools) assertHeaderDeclarations(tool.inputSchema);
   return {
@@ -600,7 +600,7 @@ export async function catalogClientOptions(
     const field = method === "resources/list" ? "resources" : "resourceTemplates";
     const items = catalogItems(method, body).map(({ _meta: _ignored, ...item }) => item);
     if (items.length > MAX_CATALOG_TOOLS) throw catalogCeiling();
-    const clean = sentSecretsForRequest(ctx.requestScope ?? ctx).redact({ ...body, [field]: items });
+    const clean = sentSecretsForRequest(ctx.requestScope ?? ctx).redactCredentials({ ...body, [field]: items });
     if (new TextEncoder().encode(JSON.stringify(clean)).byteLength > MAX_SERIALIZED_CATALOG_BYTES)
       throw catalogCeiling();
     return {

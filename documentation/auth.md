@@ -617,49 +617,61 @@ reads cover values sent in headers, queries, or bodies. Echoed sensitive
 header lines are also withheld.
 
 Submitted values under JSON Schema `writeOnly: true` join this memory-only
-request set, including nested objects, arrays, and local references. They use
-the same literal and encoded matching as credentials. Submitted property names
-inside a private object subtree are private values too; array indices are not.
-Output redaction protects
-the union of private fields across `oneOf`/`anyOf` alternatives. If a schema declares
-private fields but its sensitivity cannot be resolved, all submitted values
-are treated as private. Public-only tools keep their existing behavior.
-Private argument values protect downstream results, error text, and program
-outputs/logs; they never enter stored catalogs or operator records. They also
-remain distinct from auth credentials in the program's outgoing-argument
-filter, so later calls receive the original submitted data.
+request set, including nested objects, arrays, and local references. Strings
+and numbers register with the same raw, URL, form, base64, and base64url forms
+as credentials; booleans and null carry no text. Property names inside a
+private object subtree are private values too; array indices are not. Output
+redaction protects the union of private fields across `oneOf`/`anyOf`
+alternatives. If a schema declares private fields but its sensitivity cannot
+be resolved, all submitted values are treated as private. Schemas without a
+`writeOnly` annotation skip this work. Private values never enter stored
+catalogs or operator records. The program's outgoing-argument filter and
+catalog caches use credentials alone, so later calls receive the original
+submitted data and cached catalogs never depend on one request's arguments.
+
+Payload rules apply where downstream or guest data enters: downstream results
+and errors, program returns, logs, and emits, and relayed input prompts. A JSON
+object or array in wire text is parsed once and walked. Every decoded string
+leaf and property name is scanned, and a number, boolean, or null whose
+canonical text matches becomes the string `[redacted]`, so the JSON stays
+valid. Text is reserialized only when something changed; otherwise its
+original bytes remain. The serialized bytes are then scanned raw, and a
+literal the walk cannot see, such as one spanning tokens, withholds the whole
+text. Other text is scanned raw and through one and two layers of JSON string
+escapes. Every match is mapped back to the original text, overlapping and
+adjacent spans merge, and each merged span is replaced once, so one match can
+never split another. A span wholly inside an existing `[redacted]` placeholder
+is that placeholder; a private value that contains the placeholder text is
+still redacted. Connecta and MCP envelope field names, tag values such as a
+content `type` or result `format`, and typed facts such as `isError` and
+`retryable` are copied unchanged. The agent boundary around Connecta's own
+envelopes repeats credential and literal private-value replacement without the
+short-value rules, so envelope identifiers, counts, and JSON-RPC ids are never
+rewritten.
 
 Empty private strings are exempt because they contain nothing to leak. A
-non-empty private string shorter than eight characters redacts a structured
-string leaf or property name only when its entire value equals the submitted
-value or a supported encoded form. Other structured metadata stays usable,
-including identifiers and approval state. Plain-text results containing a
-short private value or encoded form are withheld as `[redacted]`, as are
-matching program logs and emitted text. The call's downstream error prose and
-diagnostic fields are withheld while typed error classification, retryability,
-retry delay, and write-outcome accounting remain intact. These calls refuse
-downstream input requests. Short private values never trigger substring
-replacement in structured metadata. Ordinary private strings of at least eight
-characters use literal replacement and keep surrounding diagnostics.
+non-empty private value shorter than eight characters redacts a structured
+string leaf, property name, or scalar only when it equals the value or a
+supported encoded form, including after JSON unescaping. A longer structured
+field that merely contains it, such as `prod-db` for `prod`, is kept: this
+documented tradeoff keeps identifiers and approval state usable. Prose that
+contains a short value or encoded form anywhere is withheld as `[redacted]`:
+plain-text results, `message`, `error`, `text`, `logs`, and `stack` strings,
+string program results, and relayed prompts. Typed error classification,
+retryability, retry delay, and write-outcome accounting remain. Private values
+of at least eight characters are replaced wherever they occur.
 
-Matching uses literal scans, with at most 1 MiB of registered encoded forms,
-16 MiB of scan work per string for private arguments measured in UTF-16 bytes, and an escaped-scan
-overlap capped at 73,740 code units. Escaped forms longer than 2,048 code units
-withhold any text that could contain them. A registration or matching limit
-withholds unsafe string fields without throwing matcher diagnostics or
-discarding typed success and safely retained identifiers. Raw wire text is
-scanned before JSON interpretation, including numeric, boolean, and null echoes.
-After a scan-work refusal, raw JSON tokens are scanned independently so safe
-metadata can remain; refused tokens become placeholders before parsing.
-Registration refusals and literals spanning JSON token boundaries withhold the
-wire text. Short
-private strings receive an additional exact-leaf pass. Literal replacements
-retain surrounding wire bytes, and unchanged text retains its original bytes.
-Credential-only scans allow
-1 GiB of work to retain the existing multi-MiB document and skill-file reads.
-Private non-string scalars and
-argument traversal limits still withhold the entire downstream result and
-error detail while preserving typed outcome facts.
+Matching runs one Aho-Corasick automaton over every registered form, so each
+scanned code unit costs amortized constant work however many values are
+registered. Submitted values register at most 512 KiB of encoded forms and 4,096
+argument nodes. A form that does not fit withholds every string at least as
+long as that form; an argument tree that cannot be walked withholds all
+downstream text. One redaction call has one work budget across parsing, every
+visited node, and every scanned view: 64 Mi units with private values, and
+1 Gi for credentials alone, which keeps multi-MiB document and skill-file
+reads. Work that does not fit the remaining budget withholds its field without
+spending, so smaller identifiers can still be checked. No limit throws or
+exposes a matcher diagnostic, and typed success outcomes remain.
 
 Only credentials of at least eight characters enter the redaction and structural
 matchers. Credentials shorter than 8 characters are not redacted from echoes;
@@ -669,7 +681,7 @@ this floor produces one operator warning per connector with the typed code
 `short_secret_not_redacted` and no credential value. Remote connectors warn at
 construction; static `api()` OAuth warns on its first provider operation.
 Connecta's own messages never quote credential values, regardless of length.
-Literal scans use the request's current secret set, and an empty set skips matching. Redaction runs after
+One automaton is cached until the secret set changes, and an empty set skips matching. Redaction runs after
 JSON unwrapping or joining text blocks and on final serialized text and every
 structured string, before result paging, emits, and program outputs/errors/logs. See
 [the agent boundary](./architecture.md#errors-and-records).

@@ -776,10 +776,10 @@ function sandboxProvider(
         hostCallTimeoutMs;
       const timeoutMs = Math.min(requestedMs, Math.max(1, (limits.programDeadlineAt ?? Infinity) - Date.now()));
       // A trusted-pool write settles here — unknown if the call never returned an
-      // outcome.
+      // outcome. Credentials are filtered from arguments; submitted private values are not.
       const sending: { settle?: SettleWrite } = {};
       const outcome = yield* invocation
-        .pipeline(address, sentSecrets.redactInput(args ?? {}), invocationContext(sending, timeoutMs))
+        .pipeline(address, sentSecrets.redactCredentials(args ?? {}), invocationContext(sending, timeoutMs))
         .pipe(
           Effect.onExit((exit) =>
             Effect.sync(() => sending.settle?.(Exit.isSuccess(exit) ? writeStateOf(exit.value) : "unknown")),
@@ -1068,7 +1068,7 @@ function sandboxProvider(
   const typedFailure = (err: unknown): Effect.Effect<never, unknown> =>
     Effect.suspend(() => {
       if (!(err instanceof InvocationFailure)) return Effect.fail(err);
-      const failure = boundedGuestFailure(sentSecrets.redact(err));
+      const failure = boundedGuestFailure(redactAgentOutput(sentSecrets, err));
       return Effect.fail(failure);
     });
   return {
@@ -1442,12 +1442,12 @@ export function createExecuteTool(
                 : executor.execute(wrapGuestProgram(program), [provider])
               ).then(
                 (outcome) => {
-                  executorLogs = sentSecrets.redact(outcome?.logs, true);
+                  executorLogs = sentSecrets.redact(outcome?.logs, "prose");
                   return sentSecrets.redact(outcome);
                 },
                 (err: unknown) => {
                   if (err !== null && typeof err === "object" && "logs" in err) {
-                    executorLogs = sentSecrets.redact(err.logs, true);
+                    executorLogs = sentSecrets.redact(err.logs, "prose");
                   }
                   throw sentSecrets.redact(err);
                 },
@@ -1504,9 +1504,9 @@ export function createExecuteTool(
             return Effect.succeed(failed);
           }
           if (Exit.isFailure(exit)) {
-            return Effect.succeed(failedRun(sentSecrets.redact(Cause.squash(exit.cause)), logger, reported));
+            return Effect.succeed(failedRun(redactAgentOutput(sentSecrets, Cause.squash(exit.cause)), logger, reported));
           }
-          return Effect.promise(() => finishedRun(sentSecrets.redact(exit.value), reported));
+          return Effect.promise(() => finishedRun(redactAgentOutput(sentSecrets, exit.value), reported));
         }),
         (unfinished) => {
           // Every run response passes through write accounting.

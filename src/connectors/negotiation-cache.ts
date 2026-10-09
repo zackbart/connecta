@@ -31,7 +31,7 @@ export async function storeNegotiation(ctx: ConnectorContext, digest: string, pr
   if (ctx.signal?.aborted) return;
   assertDownstreamOutputSafe(ctx.requestScope ?? ctx, prior);
   // DiscoverResult instructions, metadata and capability keys can echo auth.
-  const clean = sentSecretsForRequest(ctx.requestScope ?? ctx).redact(prior);
+  const clean = sentSecretsForRequest(ctx.requestScope ?? ctx).redactCredentials(prior);
   if (clean.kind === "modern" && !isSpecType.DiscoverResult(clean.discover)) return;
   try {
     await ctx.storage.set(

@@ -137,7 +137,7 @@ it.each(["mcp", "api"] as const)(
             expect(text).not.toContain("Downstream quoted");
             expect(text).not.toContain(btoa(value));
           }
-          expect(text).toContain(value === "q" && failed ? "detail withheld" : "[redacted]");
+          expect(text).toContain("[redacted]");
         };
         for (const resultMode of ["mcp", "value"] as const) {
           const read = await meta.callTool({ address: "echo.read", args, resultMode });
@@ -262,10 +262,8 @@ it("INV-5: private argument collection follows references, array items and conse
     { properties: { config: { properties: { password: { writeOnly: false } } } } },
   ]) {
     const secrets = new SentSecrets();
-    expect(secrets.arguments({ config: { password: "q" } }, inputSchema)).toEqual({
-      withholdDetail: false,
-      withholdResult: false,
-    });
+    secrets.arguments({ config: { password: "q" } }, inputSchema);
+    expect(secrets.text("q")).toBe("q");
     expect(secrets.text(SECRET)).toBe(SECRET);
   }
 });
@@ -307,9 +305,9 @@ it("INV-5: writeOnly output protection keeps subsequent submitted arguments inta
   secrets.arguments({ config: { password: SECRET } }, schema);
   const request = new SentSecrets();
   request.include(secrets);
-  expect(request.redactInput(SECRET)).toBe(SECRET);
+  expect(request.redactCredentials(SECRET)).toBe(SECRET);
   secrets.add(SECRET);
-  expect(request.redactInput(SECRET)).toBe("[redacted]");
+  expect(request.redactCredentials(SECRET)).toBe("[redacted]");
 });
 
 it.each(["mcp", "api"] as const)(
@@ -444,7 +442,7 @@ it("INV-5 INV-6: private object names and encodings stay redacted through direct
   }
 });
 
-it("INV-5 INV-9: large private strings and exhausted scan budgets preserve typed write success and safe identifiers", async () => {
+it("INV-5 INV-9: large private strings preserve typed write success and safe identifiers", async () => {
   const value = "s".repeat(32760) + "793/last";
   const secrets = new SentSecrets();
   secrets.arguments({ value }, { type: "object", properties: { value: { writeOnly: true } } });
@@ -470,7 +468,7 @@ it("INV-5 INV-9: large private strings and exhausted scan budgets preserve typed
         inputSchema: { type: "object", properties: { values: { writeOnly: true } } },
         handler: async () => {
           dispatched++;
-          return { id: "needed-id", status: "ok", prose: "x".repeat(200_000) + value };
+          return { id: "needed-id", status: "ok", prose: "x".repeat(2_000) + value };
         },
       },
     ],
@@ -483,7 +481,7 @@ it("INV-5 INV-9: large private strings and exhausted scan budgets preserve typed
   expect(dispatched).toBe(1);
   expect(result.structuredContent).toMatchObject({
     ok: true,
-    data: { id: "needed-id", status: "ok", prose: "[redacted]" },
+    data: { id: "needed-id", status: "ok", prose: "x".repeat(2_000) + "[redacted]" },
     format: "json",
   });
 });

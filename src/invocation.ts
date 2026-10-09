@@ -330,19 +330,6 @@ export class InvocationService {
       let answered = false;
       const sentSecrets = sentSecretsForRequest(this.catalog.requestScope);
       context.sentSecrets?.include(sentSecrets);
-      let withholdDownstreamDetail = false;
-      let withholdDownstreamResult = false;
-      const classifyDownstreamError = (error: unknown): CallErrorDetails => {
-        const details = classifyCallError(sentSecrets.redact(error));
-        if (!withholdDownstreamDetail || !dispatchedToConnector) return details;
-        // Preserve typed outcome/retry facts, never downstream-authored detail.
-        return {
-          code: details.code,
-          message: "Downstream error detail withheld because the call contains a short or non-string writeOnly value.",
-          retryable: details.retryable,
-          ...defined({ retryAfterMs: details.retryAfterMs }),
-        };
-      };
       // A write gate's refusal that is no attempt; see WriteGateDecision.
       let unrecorded = false;
       let resolved: ResolvedCatalogTool | undefined;
@@ -522,7 +509,8 @@ export class InvocationService {
             details: { ...error.details, operation, stage, elapsedMs, ...defined({ deadlineMs: context.timeoutMs }) },
           };
         }
-        const details = sentSecrets.redact(enrich(error, target));
+        // Downstream diagnostics were redacted under payload rules where they entered.
+        const details = sentSecrets.redact(enrich(error, target), "envelope");
         const outcome = (): InvocationOutcome<T> => ({
           ok: false,
           durationMs: Date.now() - started,
@@ -606,9 +594,7 @@ export class InvocationService {
           resolved = target;
           activityTarget = target;
           argumentEcho = echoedCallArgs(args ?? {}, target.definition.inputSchema);
-          const protection = sentSecrets.arguments(args ?? {}, target.definition.inputSchema);
-          withholdDownstreamDetail = protection.withholdDetail;
-          withholdDownstreamResult = protection.withholdResult;
+          sentSecrets.arguments(args ?? {}, target.definition.inputSchema);
 
           const write = target.definition.classification !== "read";
           const canonicalAddress = `${target.connector.id}.${target.toolName}`;
@@ -745,11 +731,6 @@ export class InvocationService {
                   }),
                 );
                 if (target.connector.kind === "mcp" && isDownstreamInputResult(reply)) {
-                  if (withholdDownstreamDetail)
-                    throw new ConnectorCallError(
-                      "input_required_unsupported",
-                      "Downstream input detail withheld because the call contains a short or non-string writeOnly value.",
-                    );
                   if (!context.processInputRequired)
                     throw new ConnectorCallError(
                       "input_required_unsupported",
@@ -762,16 +743,7 @@ export class InvocationService {
                   return { inputRequired: true as const, value };
                 }
                 assertDownstreamOutputSafe(this.catalog.requestScope, reply);
-                const raw = withholdDownstreamResult
-                  ? target.connector.kind === "mcp"
-                    ? {
-                        content: [{ type: "text", text: "[redacted]" }],
-                        ...(reply !== null && typeof reply === "object" && "isError" in reply && reply.isError === true
-                          ? { isError: true }
-                          : {}),
-                      }
-                    : "[redacted]"
-                  : sentSecrets.redact(reply, typeof reply === "string", target.connector.kind === "mcp");
+                const raw = sentSecrets.redact(reply);
                 // isError is checked here for BOTH result shapes so every adapter
                 // reports the same downstream-failure wording, and the throw lands
                 // inside the attempt where it feeds health.
@@ -787,7 +759,7 @@ export class InvocationService {
             answered = answeredFailure(attemptError);
             return isCallerCancellation(attemptError, context.requestSignal)
               ? callerCancelledDetails()
-              : carryFailureFacts(attemptError, classifyDownstreamError(attemptError));
+              : carryFailureFacts(attemptError, classifyCallError(sentSecrets.redact(attemptError)));
           }
           if ("inputRequired" in attempt.value) {
             inputRequiredValue = { value: attempt.value.value as T };
@@ -828,7 +800,7 @@ export class InvocationService {
         const failure = Cause.squash(dispatched.cause);
         const details = context.requestSignal?.aborted
           ? callerCancelledDetails()
-          : carryFailureFacts(failure, classifyDownstreamError(failure));
+          : carryFailureFacts(failure, classifyCallError(sentSecrets.redact(failure)));
         return failed(details);
       }
       if (dispatched.value) return failed(dispatched.value);
@@ -877,7 +849,7 @@ export class InvocationService {
         );
       if (Exit.isFailure(processed)) return unprocessable();
       try {
-        const value = sentSecrets.redact(processed.value);
+        const value = sentSecrets.redact(processed.value, "envelope");
         const diagnostics = timing();
         const friction = context.activityFriction?.(value);
         record("success", friction ? { friction } : {});

@@ -13,7 +13,7 @@ import type { CredentialVault } from "./credential-contract.js";
 import type { ToolResult } from "./meta-tools.js";
 import type { RegistryView } from "./registry.js";
 import { ConnectorCallError } from "./errors.js";
-import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
+import { sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import { inputRetryKeys } from "./storage/keys.js";
 import {
   REQUEST_STATE_TTL_MS,
@@ -144,7 +144,7 @@ export async function captureDownstreamInput(
           url.password ||
           [...params.url].some((char) => char.charCodeAt(0) <= 0x20 || char.charCodeAt(0) === 0x7f) ||
           secrets.containsUrl(params.url) ||
-          redactAgentOutput(secrets, params.url) !== params.url
+          secrets.redact(params.url) !== params.url
         )
           return invalidInput();
       } catch {
@@ -159,8 +159,7 @@ export async function captureDownstreamInput(
       if (parsed.issues) return invalidInput();
       // A schema controls the accepted answer. Refuse redaction changes rather
       // than asking the host to submit different field names or enum values.
-      if (redactAgentOutput(secrets, parsed.value.requestedSchema) !== parsed.value.requestedSchema)
-        return invalidInput();
+      if (secrets.redact(parsed.value.requestedSchema) !== parsed.value.requestedSchema) return invalidInput();
       inputRequests[namespace(connector, index)] = inputRequired.elicit({
         message: `Downstream ${connector}: ${parsed.value.message}`,
         requestedSchema: parsed.value.requestedSchema,
@@ -437,9 +436,8 @@ export class DownstreamElicitation {
     if (requestState.length > MAX_RELAY_STATE_CHARS)
       return failure("input_required_limit", "The sealed downstream state exceeds 128 KiB.");
     // Opaque echoes and mutable schemas/URLs were refused during capture.
-    // Prompt messages take the same #736 agent boundary as ordinary outputs.
-    return redactAgentOutput(
-      sentSecretsForRequest(scope),
+    // Downstream prompt messages are prose under the payload rules.
+    return sentSecretsForRequest(scope).redact(
       inputRequired({
         ...(Object.keys(pending.inputRequests).length ? { inputRequests: pending.inputRequests } : {}),
         requestState,

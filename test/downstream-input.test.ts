@@ -328,24 +328,6 @@ describe("downstream input relay", () => {
       const flow = setup({ catalogSchema: schema, failureStatus: 429 });
       const args = { address: "service.read", args: original };
       const first = (await flow.rpc({ args })).result;
-      // Whole-private objects also protect submitted names such as "config".
-      // Short private names use the same input-request refusal as short leaves.
-      if (
-        [
-          "root writeOnly",
-          "recursive ref",
-          "sensitive patternProperties",
-          "sensitive additionalProperties ref",
-          "conditional sensitivity",
-        ].includes(name)
-      ) {
-        expect(first.isError).toBe(true);
-        expect(first.structuredContent.error).toMatchObject({ code: "input_required_unsupported", retryable: false });
-        expect(first.requestState).toBeUndefined();
-        expect(JSON.stringify(first)).not.toContain(PRIVATE_MARKER);
-        expect(flow.continuationSend).not.toHaveBeenCalled();
-        return;
-      }
       const result = (
         await flow.rpc({ args, state: first.requestState, responses: { question: { action: "accept" } } })
       ).result;
@@ -363,6 +345,7 @@ describe("downstream input relay", () => {
       expect(flow.continuationSend).toHaveBeenCalledOnce();
     });
   it.each([
+    ["top-level", "z", undefined],
     ["top-level", "private-value".repeat(100), undefined],
     ["nested", { label: "db", value: "private-marker-12345" }, { label: "db" }],
     ["array", [{ label: "db", value: "private-marker-12345" }], [{ label: "db" }]],
@@ -401,19 +384,13 @@ describe("downstream input relay", () => {
       expect(flow.continuationSend).toHaveBeenCalledOnce();
     },
   );
-  it("INV-5: short writeOnly arguments withhold downstream input requests", async () => {
+  it("INV-5: relayed prompts quoting a short writeOnly argument are withheld while the relay continues", async () => {
     const flow = setup({ privateArguments: "top-level", message: "Downstream quoted z", failureStatus: 429 });
-    const result = (await flow.rpc({ args: { address: "service.read", args: { id: 1, password: "z" } } })).result;
-    expect(result.isError).toBe(true);
-    expect(result.requestState).toBeUndefined();
-    expect(result.inputRequests).toBeUndefined();
-    expect(result.structuredContent.error).toMatchObject({
-      code: "input_required_unsupported",
-      message: expect.stringContaining("detail withheld"),
-    });
-    expect(JSON.stringify(result)).not.toContain("Downstream quoted");
+    const first = (await flow.rpc({ args: { address: "service.read", args: { id: 1, password: "z" } } })).result;
+    expect(first.resultType).toBe("input_required");
+    expect(first.inputRequests[Object.keys(first.inputRequests)[0]!].params.message).toBe("[redacted]");
+    expect(JSON.stringify(first)).not.toContain("Downstream quoted");
     expect(flow.call).toHaveBeenCalledOnce();
-    expect(flow.continuationSend).not.toHaveBeenCalled();
   });
   it("INV-2 INV-4 INV-5 INV-9: relays accept, decline, and cancel as bound read and write continuations", async () => {
     for (const write of [false, true])
