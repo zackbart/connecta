@@ -5,9 +5,13 @@ import { CODE_TOOLS } from "../agent/surface.js";
 export const CODE_INSTRUCTIONS =
   'Use execute_code for every operation: known reads, discovery, reductions and writes. Pass async () => { ... } with the connecta global and no arguments. Discover with connecta.search, inspect schemas with connecta.describe, call with connecta.call, page retained results with connecta.result, and deliver text/images/audio with connecta.emit. Keep discovery and calls together when schemas suffice. Programs may write only in trusted pools. Read-only pools cannot write from programs; pool_read_only is a terminal refusal with no retry. Never repeat a write for its output. After auth_required or downstream_oauth_required use authorize_connector, give its handoff to the operator, and wait before retrying. host_auth_required needs host connection repair. Fetch skills({ name: "usage" }) when instructions are insufficient or a program needs repair.';
 
+const CODE_USAGE_FRONTMATTER = {
+  name: "usage",
+  description: "Use Connecta programs for discovery, calls and output.",
+};
 export const CODE_USAGE = `---
-name: usage
-description: Use Connecta programs for discovery, calls and output.
+name: ${CODE_USAGE_FRONTMATTER.name}
+description: ${CODE_USAGE_FRONTMATTER.description}
 ---
 
 # Connecta usage
@@ -137,7 +141,80 @@ function withCodeSurface(connecta: Connecta): Connecta {
       if (!response.ok) return response;
       const type = response.headers.get("content-type") ?? "";
       if (!type.includes("application/json") && !type.includes("text/event-stream")) return response;
-      const transform = (reply: Record<string, any>) => {
+      // Hash the exact transformed resource bytes, including non-usage guides
+      // whose hidden route names change. Never retain the original manifest.
+      const files = new Map<string, Promise<{ digest: string; size: number }>>();
+      const fileMetadata = (uri: string) => {
+        let pending = files.get(uri);
+        if (!pending) {
+          pending = (async () => {
+            const headers = new Headers(request.headers);
+            headers.delete("content-length");
+            headers.set("accept", "application/json, text/event-stream");
+            headers.set("MCP-Protocol-Version", "2026-07-28");
+            headers.set("Mcp-Method", "resources/read");
+            headers.set("Mcp-Name", uri);
+            const read = await connecta.fetch(
+              new Request(request.url, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: body?.id ?? 1,
+                  method: "resources/read",
+                  params: {
+                    uri,
+                    _meta: {
+                      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                      "io.modelcontextprotocol/clientCapabilities": {},
+                      "io.modelcontextprotocol/clientInfo": { name: "connecta-eval-manifest", version: "1.0.0" },
+                    },
+                  },
+                }),
+              }),
+              env,
+              ctx,
+            );
+            const wire = await read.text();
+            const payload = read.headers.get("content-type")?.includes("text/event-stream")
+              ? wire
+                  .split("\n")
+                  .filter((line) => line.startsWith("data: "))
+                  .map((line) => JSON.parse(line.slice(6)))
+                  .find((p) => p.result || p.error)
+              : JSON.parse(wire);
+            const content = payload?.result?.contents;
+            if (!read.ok || payload?.error || content?.length !== 1)
+              throw new Error(`Cannot establish eval skill integrity for ${uri}`);
+            const served = isUsage(uri)
+              ? { ...content[0], text: CODE_USAGE }
+              : (codeValue(content[0]) as { text?: string; blob?: string });
+            const bytes =
+              typeof served.text === "string"
+                ? new TextEncoder().encode(served.text)
+                : typeof served.blob === "string"
+                  ? Uint8Array.from(atob(served.blob), (c) => c.charCodeAt(0))
+                  : undefined;
+            if (!bytes) throw new Error(`Missing eval skill bytes for ${uri}`);
+            const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
+              .map((b) => b.toString(16).padStart(2, "0"))
+              .join("");
+            return { digest: `sha256:${digest}`, size: bytes.length };
+          })();
+          files.set(uri, pending);
+        }
+        return pending;
+      };
+      const manifest = async (skill: Record<string, any>) => ({
+        ...skill,
+        ...(isUsage(skill.uri) ? { frontmatter: CODE_USAGE_FRONTMATTER } : {}),
+        resources: Array.isArray(skill.resources)
+          ? await Promise.all(
+              skill.resources.map(async (file: { uri: string }) => ({ ...file, ...(await fileMetadata(file.uri)) })),
+            )
+          : skill.resources,
+      });
+      const transform = async (reply: Record<string, any>) => {
         if (body?.method === "initialize" && reply.result) reply.result.instructions = CODE_INSTRUCTIONS;
         if (body?.method === "tools/list" && reply.result?.tools) {
           reply.result.tools = reply.result.tools.filter((t: { name: string }) =>
@@ -174,18 +251,37 @@ function withCodeSurface(connecta: Connecta): Connecta {
             text: CODE_USAGE,
           }));
         }
+        if (body?.method === "skills/list" && reply.result?.skills)
+          reply.result.skills = await Promise.all(reply.result.skills.map(manifest));
+        if (body?.method === "skills/get" && reply.result?.skill)
+          reply.result.skill = await manifest(reply.result.skill);
+        if (body?.method === "resources/list" && reply.result?.resources)
+          reply.result.resources = await Promise.all(
+            reply.result.resources.map(async (file: { uri: string }) => ({
+              ...file,
+              ...(await fileMetadata(file.uri)),
+              ...(isUsage(file.uri) ? { description: CODE_USAGE_FRONTMATTER.description } : {}),
+            })),
+          );
         return codeValue(reply);
       };
       const text = await response.text();
       const changed = type.includes("application/json")
-        ? JSON.stringify(transform(JSON.parse(text)))
-        : text.replace(/^data: (.+)$/gm, (_, data: string) => {
-            try {
-              return `data: ${JSON.stringify(transform(JSON.parse(data)))}`;
-            } catch {
-              return `data: ${data}`;
-            }
-          });
+        ? JSON.stringify(await transform(JSON.parse(text)))
+        : (
+            await Promise.all(
+              text.split("\n").map(async (line) => {
+                if (!line.startsWith("data: ")) return line;
+                let payload;
+                try {
+                  payload = JSON.parse(line.slice(6));
+                } catch {
+                  return line;
+                }
+                return `data: ${JSON.stringify(await transform(payload))}`;
+              }),
+            )
+          ).join("\n");
       const headers = new Headers(response.headers);
       headers.delete("content-length");
       return new Response(changed, { status: response.status, headers });

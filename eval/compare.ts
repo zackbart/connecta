@@ -1,4 +1,6 @@
 /** Offline paired A/B report. Route-only verdicts never enter the decision rule. */
+import { z } from "zod";
+import { passes } from "./tasks/grading.js";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
@@ -16,6 +18,108 @@ const average = (values: (number | undefined)[]) => {
   return known.length ? `${(sum(known) / known.length).toFixed(1)} (n=${known.length})` : "N/A";
 };
 const key = (t: TrialResult) => JSON.stringify([t.model, t.task, t.repeat]);
+
+// Historical files remain readable, but only this measured-trial contract can
+// establish a decision. Unknown runner fields are refused, not guessed at.
+const knownString = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((s) => !/unknown|unavailable/i.test(s));
+const observationSchema = z
+  .object({
+    requestedModel: knownString,
+    servedModel: knownString,
+    version: knownString,
+    exitCode: z.number().int().nullable(),
+    timedOut: z.boolean(),
+    aborted: z.boolean(),
+    resultSubtypes: z.array(z.string().min(1)).min(1),
+    stderrTail: z.string().optional(),
+    argv: z.array(z.string()).optional(),
+    loadedTools: z.array(z.string()).optional(),
+    skillInventory: z.unknown().optional(),
+    pluginInventory: z.unknown().optional(),
+  })
+  .strict();
+const trialSchema = z
+  .object({
+    task: knownString,
+    taskDefinitionsHash: z.string().regex(/^[a-f0-9]{64}$/),
+    model: knownString,
+    runner: z.enum(["codex", "claude"]),
+    surface: z.enum(["six", "code"]),
+    grading: z.literal("outcome"),
+    repeat: z.number().int().positive(),
+    status: z.enum(["pass", "fail", "error", "skipped"]),
+    timeoutMs: z.number().positive().finite(),
+    error: z.string().min(1).optional(),
+    skip: z
+      .object({ code: z.literal("runner-limitation"), reason: knownString })
+      .strict()
+      .optional(),
+    codex: z.unknown().optional(),
+    claude: z.unknown().optional(),
+    saved: z.unknown().optional(),
+    regrade: z.unknown().optional(),
+    checks: z.array(z.object({ id: knownString, pass: z.boolean() }).passthrough()),
+    metrics: z.unknown(),
+    approvals: z.unknown(),
+    transcript: z.array(z.unknown()),
+    finalAnswer: z.string().optional(),
+    urlElicitations: z.array(z.unknown()).optional(),
+    ledger: z.array(z.unknown()),
+    startedAt: knownString,
+  })
+  .strict();
+
+function observation(trial: TrialResult, runner: "codex" | "claude") {
+  return runner === "claude" ? trial.claude : trial.codex;
+}
+
+/** The only exclusion is an unexecuted, explicitly recorded Claude rich-output N/A. */
+function isNA(trial: TrialResult, runner: "codex" | "claude"): boolean {
+  const skip = ACTIVE_TASKS.find((t) => t.id === trial.task)?.runnerSkips?.[runner];
+  return (
+    runner === "claude" &&
+    !!skip &&
+    trial.status === "skipped" &&
+    trial.skip?.code === skip.code &&
+    trial.skip.reason === skip.reason &&
+    !trial.codex &&
+    !trial.claude &&
+    trial.error === undefined &&
+    trial.metrics.conversationTurns === 0 &&
+    trial.checks.length === 0 &&
+    trial.transcript.length === 0 &&
+    !trial.saved?.trace.resultSubtypes.length
+  );
+}
+
+/** One outcome predicate supplies rates, paired deltas, and infrastructure vetoes. */
+function trialOutcome(trial: TrialResult, runner: "codex" | "claude") {
+  const observed = observation(trial, runner);
+  const timeout = observed?.timedOut === true;
+  const interruption = observed?.aborted === true;
+  const runnerExit = observed?.exitCode !== 0;
+  const error =
+    trial.status === "error" ||
+    trial.error !== undefined ||
+    (Array.isArray(observed?.resultSubtypes) && observed.resultSubtypes.some((s) => s !== "success")) ||
+    trial.saved?.trace.transcript.some((e) => e.kind === "turn_end" && e.isError === true) === true;
+  const completion =
+    !["pass", "fail"].includes(trial.status) ||
+    !Array.isArray(observed?.resultSubtypes) ||
+    !observed.resultSubtypes.length ||
+    observed.resultSubtypes.some((s) => s !== "success") ||
+    !trial.checks.some((c) => c.id === "conversation-completed" && c.pass);
+  const outcome = !passes(trial.checks, "outcome");
+  return {
+    pass: !timeout && !interruption && !runnerExit && !error && !completion && !outcome,
+    infrastructure: timeout || interruption || runnerExit || error,
+    failures: { timeout, interruption, runnerExit, error, completion, outcome },
+  };
+}
 
 function validate(file: AgentResultFile, surface: "six" | "code"): Map<string, TrialResult> {
   if (file.kind !== "connecta-eval/agent" || file.version !== 1)
@@ -45,10 +149,17 @@ function validate(file: AgentResultFile, surface: "six" | "code"): Map<string, T
     // Normal completed trials are validated by the regrader. Validate rows
     // that it deliberately skips too, because their state still feeds safety.
     const runner = file.config.runner ?? (file.claudeVersion ? "claude" : "codex");
-    if (trial.saved && (trial.status === "error" || task.runnerSkips?.[runner])) restoreGradeInputs(trial.saved);
-    const graded = regradeTrial(task, trial, runner, "outcome", surface);
+    const recorded = trialOutcome(trial, runner);
+    if (trial.saved && (recorded.infrastructure || task.runnerSkips?.[runner])) restoreGradeInputs(trial.saved);
+    // Regrading cannot turn a timeout/error into a normal completion or N/A.
+    const graded = isNA(trial, runner)
+      ? trial
+      : recorded.infrastructure
+        ? trial
+        : regradeTrial(task, trial, runner, "outcome", surface);
+    if (graded.status === "skipped" && !isNA(trial, runner)) throw new Error(`Unsupported N/A for ${key(trial)}`);
     if (
-      graded.status !== "error" &&
+      !recorded.infrastructure &&
       graded.regrade?.unavailable.some((id) => graded.checks.find((c) => c.id === id)?.kind !== "route")
     )
       throw new Error(`Incomplete outcome evidence for ${key(trial)}`);
@@ -124,18 +235,33 @@ function provenance(a: AgentResultFile, b: AgentResultFile): string[] {
     )
       reasons.push(`${arm}: valid concurrency and deadline are required`);
     for (const trial of file.trials) {
+      const label = `${arm}: trial ${key(trial)}`;
+      const schema = trialSchema.safeParse(trial);
+      if (!schema.success)
+        for (const issue of schema.error.issues)
+          reasons.push(`${label} invalid ${issue.path.join(".")}: ${issue.message}`);
       if (trial.surface !== arm || trial.grading !== "outcome" || trial.runner !== file.config.runner)
-        reasons.push(`${arm}: trial ${key(trial)} must record its arm, outcome grading and runner`);
+        reasons.push(`${label} must record its arm, outcome grading and runner`);
+      if (trial.taskDefinitionsHash !== file.protocol?.taskDefinitionsHash)
+        reasons.push(`${label} taskDefinitionsHash contradicts batch`);
+      const task = ACTIVE_TASKS.find((t) => t.id === trial.task);
+      if (trial.timeoutMs !== (task?.limits?.timeoutMs ?? file.config.timeoutMs))
+        reasons.push(`${label} deadline contradicts task/batch`);
       if ((trial.codex && file.config.runner !== "codex") || (trial.claude && file.config.runner !== "claude"))
-        reasons.push(`${arm}: trial ${key(trial)} runner metadata contradicts config`);
-      const observed = file.config.runner === "claude" ? trial.claude : trial.codex;
-      if (observed?.requestedModel !== undefined && observed.requestedModel !== trial.model)
-        reasons.push(`${arm}: trial ${key(trial)} requested model contradicts pair`);
-      if (
-        observed?.version !== undefined &&
-        observed.version !== (file.config.runner === "claude" ? cli?.replace(/ \(Claude Code\)$/, "") : cli)
-      )
-        reasons.push(`${arm}: trial ${key(trial)} CLI version contradicts batch`);
+        reasons.push(`${label} runner metadata contradicts config`);
+      const runner = file.config.runner === "claude" ? "claude" : "codex";
+      if (isNA(trial, runner)) continue;
+      const observed = observation(trial, runner);
+      const metadata = observationSchema.safeParse(observed);
+      if (!metadata.success)
+        for (const issue of metadata.error.issues)
+          reasons.push(`${label} invalid runner metadata ${issue.path.join(".")}: ${issue.message}`);
+      if (observed?.requestedModel !== trial.model) reasons.push(`${label} requested model contradicts pair`);
+      if (observed?.servedModel !== trial.model)
+        reasons.push(`${label} served model contradicts requested model/batch`);
+      if (observed?.version !== (runner === "claude" ? cli?.replace(/ \(Claude Code\)$/, "") : cli))
+        reasons.push(`${label} CLI version contradicts batch`);
+      if (trial.status === "skipped") reasons.push(`${label} unsupported skip`);
     }
   }
   equal("task set", JSON.stringify([...a.config.tasks].sort()), JSON.stringify([...b.config.tasks].sort()));
@@ -183,10 +309,11 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
     const pairs = [...six.values()].filter((t) => t.model === model).map((t) => [t, code.get(key(t))!] as const);
     if (pairs.some(([x, y]) => (x.status === "skipped") !== (y.status === "skipped")))
       throw new Error(`N/A mismatch for ${model}`);
-    const eligible = pairs.filter(([t]) => t.status !== "skipped");
+    const runner = a.config.runner === "claude" ? "claude" : "codex";
+    const eligible = pairs.filter(([t]) => !isNA(t, runner));
     const left = eligible.map(([t]) => t),
       right = eligible.map(([, t]) => t);
-    const passed = (ts: TrialResult[]) => ts.filter((t) => t.status === "pass").length;
+    const passed = (ts: TrialResult[]) => ts.filter((t) => trialOutcome(t, runner).pass).length;
     const rateA = left.length ? passed(left) / left.length : 0,
       rateB = right.length ? passed(right) / right.length : 0;
     lines.push(
@@ -197,8 +324,8 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
       const taskPairs = eligible.filter(([t]) => t.task === task);
       const pa = passed(taskPairs.map(([t]) => t)),
         pb = passed(taskPairs.map(([, t]) => t));
-      const losses = taskPairs.filter(([x, y]) => x.status === "pass" && y.status !== "pass").length;
-      const gains = taskPairs.filter(([x, y]) => x.status !== "pass" && y.status === "pass").length;
+      const losses = taskPairs.filter(([x, y]) => trialOutcome(x, runner).pass && !trialOutcome(y, runner).pass).length;
+      const gains = taskPairs.filter(([x, y]) => !trialOutcome(x, runner).pass && trialOutcome(y, runner).pass).length;
       lines.push(
         `  ${task}: six ${pa}/${taskPairs.length}, code ${pb}/${taskPairs.length}, delta ${pb - pa >= 0 ? "+" : ""}${pb - pa}; paired losses ${losses}, gains ${gains}`,
       );
@@ -215,6 +342,12 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
       ["six", left],
       ["code", right],
     ] as const) {
+      const outcomes = ts.map((t) => trialOutcome(t, runner));
+      lines.push(
+        `  ${arm} failures: ${["timeout", "interruption", "runnerExit", "error", "completion", "outcome"]
+          .map((kind) => `${kind} ${outcomes.filter((o) => o.failures[kind as keyof typeof o.failures]).length}`)
+          .join(", ")} (kinds may overlap)`,
+      );
       const firstErrors = ts.map((t) => {
         const first = t.saved?.trace.toolUses.find((u) => u.tool === "execute_code");
         return t.saved ? Number(first?.isError === true) : undefined;
@@ -230,7 +363,9 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
     if (sb.duplicates) reasons.push(`${sb.duplicates} code duplicate write(s)`);
     if (sb.exports) reasons.push(`${sb.exports} code export-once violation(s)`);
     if (drops.length) reasons.push(`task drops require triage: ${drops.join(", ")}`);
-    const errors = eligible.filter(([x, y]) => x.status === "error" || y.status === "error").length;
+    const errors = eligible.filter(
+      ([x, y]) => trialOutcome(x, runner).infrastructure || trialOutcome(y, runner).infrastructure,
+    ).length;
     if (errors) reasons.push(`${errors} pair(s) contain infrastructure errors; rerun before deciding`);
     lines.push(
       fullScope

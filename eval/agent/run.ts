@@ -16,6 +16,7 @@ import { assertSurface, type Surface } from "./surface.js";
 import { startAuthHost } from "./auth-host.js";
 import { infraError, stopsBatch } from "./infra.js";
 import { saveGradeInputs, type SavedGradeInputs } from "./saved.js";
+import { runProtocol } from "../support/meta.js";
 import { conversationCompletion } from "./completion.js";
 import {
   countBy,
@@ -53,6 +54,8 @@ interface TrialMetrics {
 
 export interface TrialResult {
   task: string;
+  taskDefinitionsHash?: string;
+  timeoutMs?: number;
   runner?: "codex" | "claude";
   surface?: Surface;
   grading?: Grading;
@@ -137,11 +140,16 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
   const surfaceArm = options.surface ?? "six";
   const grading = options.grading ?? "route";
   task = taskForSurface(task, surfaceArm);
+  const protocol = {
+    taskDefinitionsHash: runProtocol().taskDefinitionsHash,
+    timeoutMs: task.limits?.timeoutMs ?? options.timeoutMs,
+  };
   const startedAt = new Date().toISOString();
   const skip = task.runnerSkips?.[options.runner ?? "codex"];
   if (skip)
     return {
       task: task.id,
+      ...protocol,
       runner: options.runner ?? "codex",
       surface: surfaceArm,
       grading,
@@ -285,6 +293,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
     const passed = passes(checks, grading);
     return {
       task: task.id,
+      ...protocol,
       runner: options.runner ?? "codex",
       surface: surfaceArm,
       grading,

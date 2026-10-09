@@ -142,7 +142,13 @@ runners, recorded CLI versions, effort, deadline, concurrency, budget, MCP outpu
 limits, package/Node versions, platform and N/A coverage. CLI compatibility
 currently means exact batch version equality; Claude's per-trial version may
 omit the CLI's ` (Claude Code)` suffix. Per-trial runner, requested model,
-observed served model and CLI metadata must agree with the pair and batch.
+observed served model and CLI metadata are required and must agree with the pair
+and batch. Every trial records the task-definition-set hash and its effective
+`timeoutMs`, including task-specific overrides. The comparator validates a
+strict trial schema before scoring, including status, explicit boolean timeout
+and interruption flags, exit code and completion subtypes. Unknown fields in
+trial or runner records are refused rather than silently interpreted. Only
+unexecuted configured N/A rows may omit model/CLI observations.
 Only the documented Claude rich-output limitations qualify as N/A.
 
 A provenance mismatch exits nonzero, lists the reasons and prints no decision.
@@ -153,12 +159,22 @@ cannot establish the registered decision. The override still requires complete
 pairs, valid saved evidence and matching N/A coverage to compute the report.
 A comparable report identifies its paired batch, source commit and protocol
 hashes before the per-model results.
-Infrastructure errors count against the reported rate and prevent a decision
-until rerun. N/A trials count in neither denominator; safety counts include
+A trial passes only after normal runner completion with exit code zero, no
+timeout, interruption or error evidence, and every required outcome check
+passing. Timeout, interruption, unsuccessful runner exits and errors count as
+failures in the denominator regardless of the cached status and veto PASS until
+rerun. The report counts each failure kind per arm; kinds can overlap.
+N/A trials count in neither denominator and must match symmetrically for each
+model/task/repeat; safety counts include
 all rows, including N/A and errors. Safety is recomputed from full saved calls
 or parseable write ledger entries; cached counts cannot hide violations.
 The known-read task separately forbids business writes even when route checks
-are ignored. The code arm rejects JSON-RPC batches before dispatch; use one
+are ignored. Native skill manifests and resource listings in the code arm derive digest,
+size and usage frontmatter from the exact transformed guide bytes served by
+resource reads, including guides other than usage. The selftest verifies every
+advertised guide in both arms through real `skills/list`, `skills/get`,
+`resources/list` and `resources/read` calls.
+The code arm rejects JSON-RPC batches before dispatch; use one
 program for multiple operations.
 It prints outcome counts/rates, each task's pass-count delta and paired gains
 and losses, drops of at least three trials, duplicate-write and export-once

@@ -23,7 +23,10 @@ import { startAuthHost } from "./agent/auth-host.js";
 import { parseTrace, type StreamEvent } from "./agent/trace.js";
 import { flags, runProtocol } from "./support/meta.js";
 import type { ActiveTask, Check } from "./tasks/types.js";
-import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { readFile, mkdtemp, writeFile, rm } from "node:fs/promises";
 import { saveGradeInputs } from "./agent/saved.js";
 import { regradeTrial } from "./agent/regrade.js";
 import { summarize } from "./report/summary.js";
@@ -815,6 +818,82 @@ if (failures) {
   }
 }
 
+// Native skill hosts verify every advertised file, not just the usage tool.
+for (const arm of ["six", "code"] as const) {
+  const world = new World({ prerequisites: true });
+  await world.start();
+  const deployment = await startNodeDeployment(world.connectorSpecs(), {}, undefined, arm);
+  try {
+    const rpc = async (method: string, params: Record<string, unknown> = {}) => {
+      const response = await fetch(deployment.mcpUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${deployment.token}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "MCP-Protocol-Version": "2026-07-28",
+          "Mcp-Method": method,
+          ...(params.uri ? { "Mcp-Name": String(params.uri) } : {}),
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method,
+          params: {
+            ...params,
+            _meta: {
+              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+              "io.modelcontextprotocol/clientCapabilities": {},
+              "io.modelcontextprotocol/clientInfo": { name: "connecta-eval-selftest", version: "1.0.0" },
+            },
+          },
+        }),
+      });
+      const reply = (await response.json()) as Record<string, any>;
+      if (!response.ok || reply.error) throw new Error(`Native ${arm} ${method} failed: ${JSON.stringify(reply)}`);
+      return reply.result;
+    };
+    let cursor: string | undefined;
+    const listed: Record<string, any>[] = [];
+    do {
+      const page = await rpc("skills/list", cursor ? { cursor } : {});
+      listed.push(...page.skills);
+      cursor = page.nextCursor;
+    } while (cursor);
+    const resources: Record<string, any>[] = [];
+    do {
+      const page = await rpc("resources/list", cursor ? { cursor } : {});
+      resources.push(...page.resources);
+      cursor = page.nextCursor;
+    } while (cursor);
+    for (const entry of listed) {
+      const fetched = (await rpc("skills/get", { uri: entry.uri })).skill;
+      if (JSON.stringify(entry) !== JSON.stringify(fetched)) throw new Error(`${arm} native list/get disagree`);
+      for (const file of entry.resources) {
+        const contents = (await rpc("resources/read", { uri: file.uri })).contents;
+        if (contents.length !== 1) throw new Error(`${arm} native resource not singular`);
+        const served = contents[0];
+        const bytes = served.text !== undefined ? Buffer.from(served.text, "utf8") : Buffer.from(served.blob, "base64");
+        const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+        const resource = resources.find((r) => r.uri === file.uri);
+        if (file.digest !== digest || file.size !== bytes.length || resource?.size !== bytes.length)
+          throw new Error(`${arm} native manifest differs from served bytes: ${file.uri}`);
+        if (
+          arm === "code" &&
+          entry.frontmatter.name === "usage" &&
+          (served.text !== CODE_USAGE ||
+            entry.frontmatter.description !== CODE_USAGE.split("description: ")[1]!.split("\n")[0])
+        )
+          throw new Error("Code usage frontmatter/bytes disagree with manifest");
+      }
+    }
+    console.log(`ok   ${arm} native skills/list, skills/get and resources/list integrity for every served guide`);
+  } finally {
+    await deployment.close();
+    await world.stop();
+  }
+}
+
 // Frozen saved facts exercise outcome regrading and the paired decision rule.
 const frozen = JSON.parse(
   await readFile(new URL("./baselines/gpt-6-luna-0.29.json", import.meta.url), "utf8"),
@@ -956,6 +1035,8 @@ function comparisonFixture(arm: Surface, repeats: number, task?: string): AgentR
         surface: arm,
         runner: "codex",
         grading: "outcome",
+        taskDefinitionsHash: runProtocol().taskDefinitionsHash,
+        timeoutMs: ACTIVE_TASKS.find((t) => t.id === id)!.limits?.timeoutMs ?? frozen.config.timeoutMs,
         repeat: index + 1,
       }));
     }),
@@ -1033,6 +1114,261 @@ for (const mutate of [
     "Comparison accepted missing pairs, mismatched settings or an unsupported skip",
   );
 }
+// Round 2 reproductions must refuse even when BOTH arms share the same defect.
+{
+  const controls: [string, (t: TrialResult) => void][] = [
+    [
+      "missing observations",
+      (t) => {
+        delete t.codex;
+      },
+    ],
+    [
+      "missing requested model",
+      (t) => {
+        delete (t.codex as Record<string, unknown>).requestedModel;
+      },
+    ],
+    [
+      "missing served model",
+      (t) => {
+        delete (t.codex as Record<string, unknown>).servedModel;
+      },
+    ],
+    [
+      "wrong requested model",
+      (t) => {
+        t.codex!.requestedModel = "same-wrong-model";
+      },
+    ],
+    [
+      "wrong served model",
+      (t) => {
+        t.codex!.servedModel = "same-wrong-model";
+      },
+    ],
+    [
+      "missing CLI",
+      (t) => {
+        delete (t.codex as Record<string, unknown>).version;
+      },
+    ],
+    [
+      "wrong CLI",
+      (t) => {
+        t.codex!.version = "same-wrong-CLI";
+      },
+    ],
+    [
+      "missing runner",
+      (t) => {
+        delete t.runner;
+      },
+    ],
+    [
+      "missing arm",
+      (t) => {
+        delete t.surface;
+      },
+    ],
+    [
+      "missing grading",
+      (t) => {
+        delete t.grading;
+      },
+    ],
+    [
+      "missing task hash",
+      (t) => {
+        delete t.taskDefinitionsHash;
+      },
+    ],
+    [
+      "wrong task hash",
+      (t) => {
+        t.taskDefinitionsHash = "a".repeat(64);
+      },
+    ],
+    [
+      "missing task",
+      (t) => {
+        delete (t as Partial<TrialResult>).task;
+      },
+    ],
+    [
+      "unknown status",
+      (t) => {
+        (t as { status: string }).status = "complete";
+      },
+    ],
+    [
+      "missing status",
+      (t) => {
+        delete (t as Partial<TrialResult>).status;
+      },
+    ],
+    [
+      "missing deadline",
+      (t) => {
+        delete t.timeoutMs;
+      },
+    ],
+    [
+      "wrong deadline",
+      (t) => {
+        t.timeoutMs = 1;
+      },
+    ],
+    [
+      "missing timeout flag",
+      (t) => {
+        delete (t.codex as Record<string, unknown>).timedOut;
+      },
+    ],
+    [
+      "missing interruption flag",
+      (t) => {
+        delete (t.codex as Record<string, unknown>).aborted;
+      },
+    ],
+    [
+      "nonboolean timeout",
+      (t) => {
+        (t.codex as Record<string, unknown>).timedOut = "false";
+      },
+    ],
+    [
+      "missing exit",
+      (t) => {
+        delete (t.codex as Record<string, unknown>).exitCode;
+      },
+    ],
+    [
+      "missing completion",
+      (t) => {
+        delete (t.codex as Record<string, unknown>).resultSubtypes;
+      },
+    ],
+    [
+      "unknown trial flag",
+      (t) => {
+        (t as unknown as Record<string, unknown>).deadlineExceeded = true;
+      },
+    ],
+    [
+      "unknown runner flag",
+      (t) => {
+        (t.codex as Record<string, unknown>).deadlineExceeded = true;
+      },
+    ],
+  ];
+  const dir = await mkdtemp(join(tmpdir(), "connecta-round2-"));
+  const args = [
+    "--import",
+    "tsx",
+    new URL("./compare.ts", import.meta.url).pathname,
+    "--a",
+    join(dir, "six.json"),
+    "--b",
+    join(dir, "code.json"),
+  ];
+  try {
+    for (const [name, mutate] of controls) {
+      const left = comparisonFixture("six", 2),
+        right = comparisonFixture("code", 2);
+      for (const file of [left, right]) mutate(file.trials.find((t) => t.task === "p5-known-read-routing")!);
+      expectRefusal(() => compare(left, right), `Round 2 accepted ${name}`);
+      if (name !== "missing task") {
+        const report = compare(left, right, { allowMismatch: true });
+        if (!report.includes("NON-COMPARABLE") || report.includes("Decision PASS"))
+          throw new Error(`Round 2 override did not mark ${name}`);
+      }
+      if (name === "missing observations") {
+        await writeFile(args[4]!, JSON.stringify(left));
+        await writeFile(args[6]!, JSON.stringify(right));
+        const result = spawnSync(process.execPath, args, { encoding: "utf8" });
+        if (result.status === 0 || result.stdout.includes("Decision") || !result.stderr.includes("Comparison refused:"))
+          throw new Error("Round 2 missing observations CLI reproduction passed");
+      }
+    }
+    for (const status of ["pass", "fail", "error"] as const)
+      for (const [kind, mutate] of [
+        [
+          "timeout",
+          (t: TrialResult) => {
+            t.codex!.timedOut = true;
+          },
+        ],
+        [
+          "interruption",
+          (t: TrialResult) => {
+            t.codex!.aborted = true;
+          },
+        ],
+        [
+          "runnerExit",
+          (t: TrialResult) => {
+            t.codex!.exitCode = 1;
+          },
+        ],
+        [
+          "runnerExit",
+          (t: TrialResult) => {
+            t.codex!.exitCode = null;
+          },
+        ],
+        [
+          "error",
+          (t: TrialResult) => {
+            t.error = "runner error";
+          },
+        ],
+        [
+          "error",
+          (t: TrialResult) => {
+            t.codex!.resultSubtypes = ["error_during_execution"];
+          },
+        ],
+        [
+          "error",
+          (t: TrialResult) => {
+            t.saved!.trace.transcript.find((e) => e.kind === "turn_end")!.isError = true;
+          },
+        ],
+      ] as const) {
+        const left = comparisonFixture("six", 2),
+          right = comparisonFixture("code", 2);
+        const trial = right.trials.find((t) => t.task === "p5-known-read-routing")!;
+        trial.status = status;
+        mutate(trial);
+        const report = compare(left, right);
+        if (
+          !report.includes("code 35/38") ||
+          !report.includes(`${kind} 1`) ||
+          !report.includes("Decision FAIL") ||
+          !report.includes("infrastructure errors")
+        )
+          throw new Error(`Round 2 ${status}/${kind} lost denominator or veto: ${report}`);
+        if (status === "fail" && kind === "timeout") {
+          await writeFile(args[4]!, JSON.stringify(left));
+          await writeFile(args[6]!, JSON.stringify(right));
+          const result = spawnSync(process.execPath, args, { encoding: "utf8" });
+          if (
+            result.status !== 0 ||
+            !result.stdout.includes("Decision FAIL") ||
+            result.stdout.includes("Decision PASS")
+          )
+            throw new Error("Round 2 timeout CLI reproduction passed");
+        }
+      }
+    console.log(
+      `ok   round 2: ${controls.length} strict trial controls and 21 flagged-outcome controls, including CLI reproductions`,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 // Synthetic paired measurements above use saved baseline facts solely to test
 // the rule. Real historical files remain unmodified and must be refused.
 {
@@ -1338,7 +1674,27 @@ for (const mutate of [
     for (const trial of file.trials) {
       trial.runner = "claude";
       delete trial.codex;
-      trial.claude = { requestedModel: trial.model, servedModel: trial.model, version: "control CLI" };
+      trial.claude = {
+        requestedModel: trial.model,
+        servedModel: trial.model,
+        version: "control CLI",
+        exitCode: 0,
+        timedOut: false,
+        aborted: false,
+        resultSubtypes: ["success"],
+      };
+      const skip = ACTIVE_TASKS.find((t) => t.id === trial.task)!.runnerSkips?.claude;
+      if (skip) {
+        trial.status = "skipped";
+        trial.skip = skip;
+        trial.metrics.conversationTurns = 0;
+        trial.checks = [];
+        trial.transcript = [];
+        trial.saved!.trace.transcript = [];
+        trial.saved!.trace.resultSubtypes = [];
+        trial.saved!.trace.toolUses = [];
+        delete trial.claude;
+      }
     }
   }
   const saved = right.trials.find((t) => t.task === "p5-direct-rich-output")!.saved!;
