@@ -10,7 +10,7 @@ import { runBatch } from "../eval/agent/run.js";
 import { regradeTrial } from "../eval/agent/regrade.js";
 import { ACTIVE_TASKS } from "../eval/tasks/index.js";
 import type { ActiveTask } from "../eval/tasks/types.js";
-import { parseTrace } from "../eval/agent/trace.js";
+import { parseTrace, type StreamEvent } from "../eval/agent/trace.js";
 import { infraError } from "../eval/agent/infra.js";
 
 const CLI = String.raw`
@@ -42,6 +42,7 @@ if (Object.keys(config.mcpServers).join(',') !== 'connecta' || value('--tools') 
 send({type:'system',subtype:'init',model:mode === 'wrong-model' ? 'wrong-model' : model,
   claude_code_version:'fake-claude',plugins:mode === 'extra-plugin' ? [{name:'unexpected',source:'cc-plugin-future@builtin',settings:{token:'fake-secret'}}] : mode === 'named-plugin' ? [{name:'unexpected'}] : [],skills:mode === 'extra-skill' ? ['future-skill'] : [],tools:mode === 'extra-tool' ? [...tools,'Bash'] : mode === 'duplicate-tool' ? [...tools,tools[0]] : tools});
 let turn = 0;
+if (mode === 'self-terminate') process.on('SIGTERM', () => process.exit(143));
 readline.createInterface({input:process.stdin}).on('line', line => {
   const input = JSON.parse(line); turn++;
   if (mode === 'hang') return;
@@ -50,12 +51,20 @@ readline.createInterface({input:process.stdin}).on('line', line => {
   send({type:'assistant',message:{content:[{type:'text',text:input.message.content + ' CI run 4812 failed, commit 9f2c1ab.'}]}});
   if (mode.startsWith('missing-final-result') && turn === 2) { process.exit(0); return; }
   send({type:'result',subtype:'success',total_cost_usd:turn * .01,num_turns:1,modelUsage:{[model]:{inputTokens:turn*100,outputTokens:turn*20}}});
+  if (mode === 'self-terminate') process.kill(process.pid, 'SIGTERM');
 });
 `;
 
 async function fixture(
   mode = "complete",
-  options: { signal?: AbortSignal; timeoutMs?: number; followUp?: boolean; model?: string; surface?: Surface } = {},
+  options: {
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    followUp?: boolean;
+    model?: string;
+    surface?: Surface;
+    onEvent?: (event: StreamEvent) => void;
+  } = {},
   invoke = runClaude,
 ) {
   const dir = await mkdtemp(join(tmpdir(), "connecta-claude-test-"));
@@ -74,6 +83,7 @@ async function fixture(
       deniedTools: [],
       timeoutMs: options.timeoutMs ?? 10_000,
       ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.onEvent ? { onEvent: options.onEvent } : {}),
       firstPrompt: "First",
       nextTurn: async (n) => (options.followUp && n === 1 ? "Second" : undefined),
       maxBudgetUsd: 0.1,
@@ -200,6 +210,22 @@ describe("Claude eval CLI", () => {
     expect(error?.result).toContain(inventory);
     expect(error?.result).not.toContain("fake-secret");
     expect(error?.result).not.toContain("settings");
+  });
+
+  it("does not attribute a pending self-termination after success to harness cleanup", async () => {
+    const run = await fixture("self-terminate", {
+      onEvent: (event) => {
+        // Let the child exit while the parent cannot process its exit notification.
+        if (event.type === "result" && event.subtype === "success") {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+        }
+      },
+    });
+    expect(run.events.at(-1)?.subtype).toBe("success");
+    expect(run.exitCode).toBe(143);
+    expect(run.timedOut).toBe(false);
+    expect(run.aborted).toBe(false);
+    expect(run.terminatedAfterCompletion).toBe(false);
   });
 
   it("terminates a hung CLI on the wall deadline", async () => {

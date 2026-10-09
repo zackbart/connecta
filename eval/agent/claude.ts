@@ -189,7 +189,9 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
     });
     const exited = new Promise<number | null>((resolve) => {
       const end = (code: number | null, signal?: NodeJS.Signals | null) => {
-        terminatedAfterCompletion = completionStopRequested && (signal === "SIGTERM" || code === 143);
+        // A numeric 143 can be an independent exit whose notification was
+        // pending when kill() succeeded. Require the OS-reported signal.
+        terminatedAfterCompletion = completionStopRequested && signal === "SIGTERM";
         ended = true;
         stopWaiting?.();
         finishTurn?.();
@@ -232,7 +234,9 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
       clearTimeout(timer);
       options.signal?.removeEventListener("abort", kill);
       child.stdin.end();
-      if (!ended) completionStopRequested = kill() && conversationEnded;
+      if (!ended && child.exitCode === null && child.signalCode === null) {
+        completionStopRequested = kill() && conversationEnded;
+      }
     }
     const exitCode = await exited;
     return {
