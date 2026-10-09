@@ -471,6 +471,16 @@ ID and reuse its stored deadline, including a final read after an ambiguous
 last CAS. A lost swap or transient storage error backs off and re-reads, up to
 32 attempts. A full ledger or unconfirmed exhausted booking returns no result id.
 
+Caller time only nominates charges for pruning. Before discarding one, the
+ledger writes a probe with that charge's absolute deadline and reads it back.
+Only an absent probe proves storage has passed the deadline; a live probe keeps
+the charge, and a storage error cannot free capacity. Each deadline has its own
+key in `stashExpiryKeys`, so concurrent probes cannot overwrite a different
+deadline's proof. Probes expire at the deadline they check and need no cleanup.
+This uses the same absolute-expiry contract on memory, SQLite and D1 without a
+storage API or schema change. An ahead caller clock cannot admit a second stash
+while the first remains readable.
+
 The whole chunk-write phase has a 30-second timeout measured from booking, with
 a clock check before and after each write. Trailing chunks precede the header;
 failure or timeout returns no result id and stops the write loop. Chunks use an
@@ -496,7 +506,7 @@ budget. If they fail, time out, crash, or exhaust,
 capacity may be over-held until the booked deadline, at most 15 minutes and
 30 seconds for the normal TTL. The ledger row itself has an absolute expiry at
 its latest live reservation deadline. There are no completion receipts or
-separate recovery rows. Expired data reads as absent and normal storage sweeps
+separate recovery rows; expiry probes carry no completion state. Expired data reads as absent and normal storage sweeps
 reclaim the physical rows. A full stash returns the successful call's preview
 and a paging-unavailable notice rather than a result id. Shared failure cases
 live in `test/stash-charge-contract.ts`, exercised by the memory and SQL suites.
