@@ -1,4 +1,4 @@
-import { ConnectorCallError } from "./errors.js";
+import { ConnectorCallError, type echoedCallArgs } from "./errors.js";
 import { percentDecoded } from "./credential-url.js";
 
 /** Host-only MRTR material. This module must stay safe in executor bundles. */
@@ -22,6 +22,7 @@ interface ContinuationTarget {
   input: InputContinuation;
   privateStates: string[];
   write: boolean;
+  argumentEcho?: ReturnType<typeof echoedCallArgs>;
 }
 export interface InputCapabilities {
   elicitation?: { form?: Record<string, never>; url?: Record<string, never> };
@@ -44,6 +45,16 @@ export function bindDownstreamContinuation(scope: object, target: ContinuationTa
 
 export function clearDownstreamContinuation(scope: object): void {
   continuations.delete(scope);
+}
+
+/** The invocation's schema-filtered snapshot, never raw continuation arguments. */
+export function recordDownstreamArgumentEcho(scope: object, echo: ReturnType<typeof echoedCallArgs>): void {
+  const continuation = continuations.get(scope);
+  if (continuation) continuation.argumentEcho = echo;
+}
+
+export function downstreamArgumentEcho(scope: object): ReturnType<typeof echoedCallArgs> {
+  return continuations.get(scope)?.argumentEcho ?? {};
 }
 
 export function downstreamWriteContinuation(scope: object): boolean {

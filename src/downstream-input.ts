@@ -12,7 +12,7 @@ import {
 import type { CredentialVault } from "./credential-contract.js";
 import type { ToolResult } from "./meta-tools.js";
 import type { RegistryView } from "./registry.js";
-import { ConnectorCallError, echoedCallArgs } from "./errors.js";
+import { ConnectorCallError } from "./errors.js";
 import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import { inputRetryKeys } from "./storage/keys.js";
 import {
@@ -27,6 +27,7 @@ import {
   downstreamInputCapabilities,
   bindDownstreamContinuation,
   clearDownstreamContinuation,
+  downstreamArgumentEcho,
   assertNoPrivateStateEchoes,
   assertDownstreamOutputSafe,
 } from "./downstream-input-context.js";
@@ -340,7 +341,7 @@ export class DownstreamElicitation {
       if (!stateObject(error)) return result;
       // The nonce is spent even when the downstream failure would normally
       // allow a retry. Preserve write reconciliation and auth prerequisites.
-      const echoed = echoedCallArgs(args.args);
+      const echoed = downstreamArgumentEcho(this.options.requestScope);
       const structuredContent = {
         ...result.structuredContent,
         error: {
@@ -353,9 +354,11 @@ export class DownstreamElicitation {
                   arguments: { address: state.address, ...echoed },
                   purpose:
                     "Re-issue the original direct call without requestState or inputResponses to start a fresh input round. Do not resend this continuation." +
-                    (args.args !== undefined && !("args" in echoed)
-                      ? " Use the exact arguments you sent; they exceed the echo budget."
-                      : ""),
+                    (echoed.argsRedacted
+                      ? " Re-send the original arguments; sensitive fields are omitted."
+                      : args.args !== undefined && !("args" in echoed)
+                        ? " Use the exact arguments you sent; they could not be echoed safely."
+                        : ""),
                 },
               }
             : {}),

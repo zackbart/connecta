@@ -549,6 +549,14 @@ credentials produce one payload-free warning per connector; use secrets of
 at least eight characters. Encoded and JSON-escaped echoes of registered
 credentials follow the same redaction rules. Connecta's own messages
 never quote a credential.
+Core uncertainty and retry envelopes share one schema-filtered argument snapshot,
+captured before dispatch and byte budgeting. `writeOnly: true` omits values of
+every length, including nested properties, array items and prefixes, local
+`$ref`/`$defs`, and `allOf`. `oneOf`/`anyOf` must agree on sensitivity. Unresolved
+references, sensitive dynamic-property schemas or other unsupported applicators,
+and traversal limits withhold the entire echo. A private array element withholds
+its containing array to preserve indices. `argsRedacted: true` marks a partial
+or withheld echo as reconciliation context; retries require the original arguments.
 OAuth discovery and consent URLs are refused as a typed, non-retryable failure
 when they contain a known credential, before persistence or reuse. This guard
 checks the request's sent credentials and the current grant's credentials,
@@ -664,6 +672,27 @@ shapes write their configuration as `defineConfig((env) => …)` in
 switched by the environment, and keep their entries under 30 lines.
 
 ### Providers and reviewed classification
+
+Infisical separates explicit value reads from identifier results. `get_secret`
+and `list_secrets` with `includeValues: true` return secret values and comments.
+All other results, including imported secrets and pending approvals, allow only
+checked IDs, keys, environment and tag slugs, paths, timestamps, positive versions
+and enum fields. They omit project slugs derived from free-text names, comments,
+descriptions, free-form names, reminder notes and arbitrary nested objects.
+`metadataOmitted: true` reports withheld or unavailable metadata.
+This assumes an honest server and protects against careless human entry in free
+text. A malicious server encoding values into valid identifiers is out of scope.
+Known, accepted residual risk: environment slugs are returned as required
+routing identifiers. Infisical's UI derives them from environment names by
+default, so secrets entered in those names can appear in returned slugs.
+Operators must not put secrets in environment names or slugs. Secrets placed in
+identifiers or key names are out of scope.
+Write input schemas mark secret values, secret comments and folder descriptions
+as `writeOnly`, so recovery argument echoes omit them without changing dispatch.
+Submitted values never join the request's sent-credential set, preserving later
+program arguments. Client credentials and tokens still join that set on every
+call. The [provider guide](https://github.com/zackbart/connecta/blob/main/src/providers/infisical/SKILL.md) owns routing and
+value-read conventions.
 
 A maintained provider is one `defineProvider()` call (`src/provider.ts`): a
 name, title, kind (`"mcp"`, `"api"`, or `"composed"`), a maintained skill, an

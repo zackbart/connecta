@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { privateArgumentCases, PRIVATE_MARKER } from "./fixtures/private-arguments.js";
+import type { JsonSchema } from "../src/types.js";
 import {
   classifyCallError,
   ConnectorCallError,
@@ -6,7 +8,71 @@ import {
   networkErrorCode,
   unavailableCallError,
   WithheldTextError,
+  echoedCallArgs,
 } from "../src/errors.js";
+
+describe("sensitive argument echoes", () => {
+  it.each(privateArgumentCases)("filters or withholds $name echoes (INV-5)", ({ schema, args, echo }) => {
+    const before = JSON.stringify(args);
+    const echoed = echoedCallArgs(args, schema);
+    expect(echoed).toEqual(echo);
+    expect(JSON.stringify(echoed)).not.toContain(PRIVATE_MARKER);
+    expect(JSON.stringify(args)).toBe(before);
+  });
+
+  it("fails closed on schema traversal limits (INV-5)", () => {
+    let schema: JsonSchema = { writeOnly: true };
+    let args: unknown = PRIVATE_MARKER;
+    for (let i = 0; i < 40; i++) {
+      schema = { properties: { child: schema } };
+      args = { child: args };
+    }
+    expect(echoedCallArgs(args, schema)).toEqual({ argsRedacted: true });
+    const wide = { properties: Object.fromEntries(Array.from({ length: 2100 }, (_, i) => [String(i), {}])) };
+    expect(echoedCallArgs({ secret: PRIVATE_MARKER }, wide)).toEqual({ argsRedacted: true });
+  });
+
+  it("keeps public-only alternative and dynamic-property schemas intact (INV-5)", () => {
+    const schema = {
+      oneOf: [{ properties: { mode: { const: "one" } } }, { properties: { mode: { const: "two" } } }],
+      patternProperties: { ".*": { type: "string" } },
+      additionalProperties: { type: "string" },
+    };
+    const args = { mode: "one", public: "value" };
+    expect(echoedCallArgs(args, schema)).toEqual({ args });
+  });
+  it("preserves JSON serialization of public values in partial snapshots (INV-5)", () => {
+    const date = new Date("2026-01-01T00:00:00Z");
+    expect(echoedCallArgs({ date }, {})).toEqual({ args: { date: date.toJSON() } });
+    expect(
+      echoedCallArgs(
+        { config: { date, password: "private" } },
+        { properties: { config: { properties: { password: { writeOnly: true } } } } },
+      ),
+    ).toEqual({ args: { config: { date: date.toJSON() } }, argsRedacted: true });
+  });
+  it.each([
+    ["short", "z"],
+    ["ordinary", "ordinary-secret-value"],
+    ["over-budget", "large-secret-value".repeat(100)],
+  ])("omits %s writeOnly input fields before budgeting, independent of value length (INV-5)", (_label, secretValue) => {
+    const args = { project: "p1", secretValue };
+    const schema = { properties: { project: { type: "string" }, secretValue: { type: "string", writeOnly: true } } };
+    const echoed = echoedCallArgs(args, schema);
+    expect(echoed).toEqual({ args: { project: "p1" }, argsRedacted: true });
+    expect(args.secretValue).toBe(secretValue);
+  });
+
+  it("keeps complete public echoes and snapshots partial echoes (INV-5, INV-9)", () => {
+    const schema = { properties: { public: { writeOnly: false }, private: { writeOnly: true } } };
+    expect(echoedCallArgs({ public: "original" }, schema)).toEqual({ args: { public: "original" } });
+    const args = { public: "original", private: "secret" };
+    const echoed = echoedCallArgs(args, schema);
+    args.public = "mutated";
+    expect(echoed).toEqual({ args: { public: "original" }, argsRedacted: true });
+    expect(echoedCallArgs({ ...args, public: "x".repeat(600) }, schema)).toEqual({ argsRedacted: true });
+  });
+});
 
 describe("WithheldTextError", () => {
   it.each([

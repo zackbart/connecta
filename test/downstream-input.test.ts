@@ -15,6 +15,8 @@ import { inputRetryKeys, negotiationKeys, resultKeys, scopes } from "../src/stor
 import { seedGrant } from "./fixtures/oauth.js";
 import { readNegotiation } from "../src/connectors/negotiation-cache.js";
 import { bindDownstreamContinuation, clearDownstreamContinuation } from "../src/downstream-input-context.js";
+import { privateArgumentCases, PRIVATE_MARKER } from "./fixtures/private-arguments.js";
+import type { JsonSchema } from "../src/types.js";
 
 const BASE = "https://connecta.test";
 const OPAQUE = "DOWNSTREAM_OPAQUE_STATE";
@@ -50,6 +52,8 @@ function setup(
     continuationTimeout?: boolean;
     catalogEcho?: boolean;
     skills?: boolean;
+    privateArguments?: "top-level" | "nested" | "array";
+    catalogSchema?: JsonSchema;
   } = {},
 ) {
   const storage = memoryStorage();
@@ -77,7 +81,21 @@ function setup(
         server.registerTool(
           name,
           {
-            inputSchema: z.object({ id: z.number().optional() }),
+            inputSchema: z
+              .object({
+                id: z.number().optional(),
+                ...(options.privateArguments
+                  ? {
+                      password: (options.privateArguments === "top-level"
+                        ? z.string().meta({ writeOnly: true })
+                        : options.privateArguments === "nested"
+                          ? z.object({ label: z.string(), value: z.string().meta({ writeOnly: true }) })
+                          : z.array(z.object({ label: z.string(), value: z.string().meta({ writeOnly: true }) }))
+                      ).optional(),
+                    }
+                  : {}),
+              })
+              .loose(),
             ...(options.output ? { outputSchema: z.object({ done: z.boolean() }) } : {}),
             annotations: { readOnlyHint: read },
           },
@@ -169,6 +187,11 @@ function setup(
     if (options.failContinuationAuth && request?.method === "tools/call" && request.params.requestState !== undefined)
       return new Response(null, { status: 401 });
     const reply = await downstream.fetch(input as string, init);
+    if (options.catalogSchema && request?.method === "tools/list") {
+      const body = (await reply.json()) as { result: { tools: Array<Record<string, unknown>> } };
+      for (const tool of body.result.tools) tool.inputSchema = options.catalogSchema;
+      return Response.json(body, { status: reply.status, headers: reply.headers });
+    }
     if (options.catalogEcho && request?.method === "tools/list" && ++catalogs === 2) {
       const body = (await reply.json()) as { result: { tools: Array<Record<string, unknown>>; ttlMs: number } };
       body.result.tools[0]!.description = OPAQUE;
@@ -300,6 +323,67 @@ function setup(
 }
 
 describe("downstream input relay", () => {
+  for (const { name, schema, args: original, echo } of privateArgumentCases)
+    it(`INV-5: continuation failures preserve safe ${name} echoes`, async () => {
+      const flow = setup({ catalogSchema: schema, failureStatus: 429 });
+      const args = { address: "service.read", args: original };
+      const first = (await flow.rpc({ args })).result;
+      const result = (
+        await flow.rpc({ args, state: first.requestState, responses: { question: { action: "accept" } } })
+      ).result;
+      expect(result.isError).toBe(true);
+      const error = result.structuredContent.error;
+      expect(error).toMatchObject({
+        code: "rate_limited",
+        retryable: false,
+        nextAction: { tool: "call_tool", arguments: { address: "service.read", ...echo } },
+      });
+      expect(error.nextAction.arguments).toEqual({ address: "service.read", ...echo });
+      expect(error.nextAction.purpose).toContain("original arguments");
+      expect(JSON.stringify(result)).not.toContain(PRIVATE_MARKER);
+      expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent);
+      expect(flow.continuationSend).toHaveBeenCalledOnce();
+    });
+  it.each([
+    ["top-level", "z", undefined],
+    ["top-level", "private-value".repeat(100), undefined],
+    ["nested", { label: "db", value: "private-marker-12345" }, { label: "db" }],
+    ["array", [{ label: "db", value: "private-marker-12345" }], [{ label: "db" }]],
+  ] as const)(
+    "INV-5: continuation retry hints omit %s writeOnly arguments",
+    async (privateArguments, password, safePassword) => {
+      const flow = setup({ privateArguments, failureStatus: 429 });
+      const args = { address: "service.read", args: { id: 1, password } };
+      const first = (await flow.rpc({ args })).result;
+      const result = (
+        await flow.rpc({
+          args,
+          state: first.requestState,
+          responses: { question: { action: "accept" } },
+        })
+      ).result;
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent.error).toMatchObject({
+        code: "rate_limited",
+        nextAction: {
+          tool: "call_tool",
+          arguments: {
+            address: "service.read",
+            args: { id: 1, ...(safePassword ? { password: safePassword } : {}) },
+            argsRedacted: true,
+          },
+        },
+      });
+      expect(result.structuredContent.error.nextAction.arguments.args).toEqual({
+        id: 1,
+        ...(safePassword ? { password: safePassword } : {}),
+      });
+      expect(JSON.stringify(result)).not.toContain("private-marker-12345");
+      expect(result.structuredContent.error.nextAction.purpose).toContain("original arguments");
+      expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent);
+      expect(flow.continuationSend).toHaveBeenCalledOnce();
+    },
+  );
   it("INV-2 INV-4 INV-5 INV-9: relays accept, decline, and cancel as bound read and write continuations", async () => {
     for (const write of [false, true])
       for (const action of ["accept", "decline", "cancel"]) {

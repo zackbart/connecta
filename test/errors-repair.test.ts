@@ -10,6 +10,85 @@ import { activitySink, createTestConnecta, makeRegistry, silentLogger } from "./
 const BASE = "https://connecta.test";
 
 describe("repairing error envelopes", () => {
+  it("INV-5: unresolved catalog recovery requires original arguments without echoing them", async () => {
+    const call = vi.fn();
+    const registry = makeRegistry([
+      connectorWith({
+        id: "private",
+        kind: "api",
+        tools: async () => {
+          throw new ConnectorCallError("input_required_unsupported", "Use a direct call.");
+        },
+        call,
+      }),
+    ]);
+    const outcome = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+      "private.submit",
+      { password: "private-catalog-marker-12345" },
+      { source: "execute_code", trust: "trusted" },
+    );
+    expect(outcome).toMatchObject({
+      ok: false,
+      dispatched: false,
+      attempts: 0,
+      error: {
+        code: "input_required_unsupported",
+        nextAction: {
+          tool: "call_destructive_tool",
+          arguments: { address: "private.submit" },
+          purpose: expect.stringContaining("original arguments"),
+        },
+      },
+    });
+    expect(JSON.stringify(outcome)).not.toContain("private-catalog-marker-12345");
+    expect(call).not.toHaveBeenCalled();
+  });
+  it.each([true, false])(
+    "INV-5: input-required retry hints omit writeOnly arguments on read=%s",
+    async (readOnlyHint) => {
+      const call = vi.fn(async () => {
+        throw new ConnectorCallError("input_required_unsupported", "Use a direct call.");
+      });
+      const registry = makeRegistry([
+        connectorWith({
+          id: "private",
+          kind: "api",
+          tools: [
+            {
+              name: "submit",
+              annotations: { readOnlyHint },
+              inputSchema: {
+                type: "object",
+                properties: { target: { type: "string" }, password: { type: "string", writeOnly: true } },
+              },
+            },
+          ],
+          call,
+        }),
+      ]);
+      const result = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
+        "private.submit",
+        { target: "p1", password: "z" },
+        { source: "execute_code", trust: "trusted" },
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          nextAction: {
+            tool: readOnlyHint ? "call_tool" : "call_destructive_tool",
+            arguments: { address: "private.submit", args: { target: "p1" }, argsRedacted: true },
+          },
+        },
+      });
+      if (result.ok) throw new Error("Expected input-required failure");
+      const action = result.error.nextAction;
+      if (!action || !("tool" in action) || (action.tool !== "call_tool" && action.tool !== "call_destructive_tool"))
+        throw new Error("Expected direct-call recovery");
+      expect(action.arguments["args"]).not.toHaveProperty("password");
+      expect(action.purpose).toContain("original arguments");
+      expect(call).toHaveBeenCalledOnce();
+    },
+  );
   describe.each([undefined, "mcp", "value"] as const)("direct-call result mode %s", (resultMode) => {
     it("INV-4 INV-6 INV-9: preserves every repair envelope in structured content and agent text", async () => {
       const warn = vi.fn();

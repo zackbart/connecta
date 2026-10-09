@@ -17,6 +17,7 @@
     "./providers/forms starts at 26,161 B gzip (#684): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
     "./providers/github initial measured baseline includes the hosted MCP SDK plus portable GitHub App signing, exact routing and REST complements; cap retains the existing 60,000-byte provider headroom policy.",
     "./providers/gmail starts at 27,085 B gzip (#678): a hand-written api() surface over the guarded transport plus the shared Google Workspace delegation layer — Web Crypto RS256 signing, an in-memory token cache, result-size budgeting, bound cursors, and request-outcome tracking, with no OAuth client and no MCP SDK. The other Workspace products share that layer and should land in the same class. The cap uses the existing baseline + 60,000 B policy.",
+    "./providers/infisical starts at 27,673 B gzip (#677): guarded transport, Universal Auth request-local flights and eight named tools, with no MCP client or Effect runtime. The cap uses the measured baseline plus the existing 60,000 B headroom policy.",
     "./providers/overflow starts at 20,410 B gzip: a hand-written api() surface over the guarded transport with no hosted-MCP interface, so it pulls in neither remoteMcp nor the Effect core the other providers carry. The cap uses the existing baseline + 60,000 B policy.",
     "./providers/planning-center starts at 26,970 B gzip. It is api() over the guarded transport with no hosted-MCP surface, so neither the MCP client nor the Effect core is in its graph; the cap uses the existing baseline + 60,000 B policy.",
     "./providers/sheets starts at 26,026 B gzip (#682): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
@@ -74,6 +75,10 @@
     "./providers/gmail": {
       "baselineGzip": 27085,
       "maxGzip": 87085
+    },
+    "./providers/infisical": {
+      "baselineGzip": 27673,
+      "maxGzip": 87673
     },
     "./providers/linear": {
       "baselineGzip": 127244,
