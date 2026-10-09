@@ -85,6 +85,23 @@ for (const value of ["", "q", "1234567", "Production"]) infisicalResultCases.pus
   expected: { secret: identifiers, metadataOmitted: true },
 });
 
+infisicalResultCases.push({
+  name: "create_secret keeps its UUID after a successful 32 KiB private write", tool: "create_secret",
+  args: { ...target, secretValue: "s".repeat(32760) + "793/last" },
+  response: { secret: { id, secretKey: "API_KEY" } },
+  expected: { secret: { id, key: "API_KEY", tags: [] } },
+}, {
+  name: "create_folder keeps its UUID with a short private description", tool: "create_folder",
+  args: { projectId: "project-1", environment: "prod", name: "apps", description: "prod" },
+  response: { folder: { id, name: "apps", description: "prod", relativePath: "/apps" } },
+  expected: { folder: { id, path: "/apps" }, metadataOmitted: true },
+}, {
+  name: "update_secret keeps pending approval when clearing an empty comment", tool: "update_secret",
+  args: { ...target, secretComment: "" },
+  response: { approval: { id: approvalId, status: "open" } },
+  expected: { pendingApproval: { id: approvalId, status: "open" } },
+});
+
 for (const tool of ["create_secret", "update_secret", "delete_secret", "create_folder"]) {
   const args = tool === "create_folder" ? { projectId: target.projectId, environment: "prod", name: "apps" }
     : tool === "delete_secret" ? target : { ...target, secretValue: marker };
@@ -323,7 +340,7 @@ export async function checkInfisicalSequence(executor?: Executor) {
     expect(keys).toEqual(["A", "B"]);
     expect(writes).toEqual([1, 2].map(() => ({ projectId: target.projectId, environment: "prod", secretPath: "/apps", secretValue: "Production" })));
     const envelope = JSON.parse(rpc.result.content[0].text);
-    expect(envelope.result.ordinary).toEqual({ data: { label: "Production" }, format: "json" });
+    expect(envelope.result.ordinary).toEqual({ data: { label: "[redacted]" }, format: "json" });
     expect(envelope.logs).toBe(JSON.stringify(envelope.result.ordinary));
     expect(rpc.result.structuredContent).toEqual(envelope);
   } finally { await deployment.close(); }

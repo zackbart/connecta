@@ -132,7 +132,8 @@ describe("native presentation retention", () => {
     expect(result).toMatchObject({ native: { ref: expect.any(String), value: { format: "json" } } });
     await required(fns.emit)({ ref: result.native.ref });
     expect(sink.blocks).toEqual([
-      { type: "resource_link", uri: "asset://redacted", name: "redacted", _meta: { pad: "[redacted]".repeat(1100) } },
+      // Adjacent echoes merge into one placeholder.
+      { type: "resource_link", uri: "asset://redacted", name: "redacted", _meta: { pad: "[redacted]" } },
     ]);
   });
 

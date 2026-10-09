@@ -509,7 +509,8 @@ export class InvocationService {
             details: { ...error.details, operation, stage, elapsedMs, ...defined({ deadlineMs: context.timeoutMs }) },
           };
         }
-        const details = sentSecrets.redact(enrich(error, target));
+        // Downstream diagnostics were redacted under payload rules where they entered.
+        const details = sentSecrets.redact(enrich(error, target), "envelope");
         const outcome = (): InvocationOutcome<T> => ({
           ok: false,
           durationMs: Date.now() - started,
@@ -593,6 +594,7 @@ export class InvocationService {
           resolved = target;
           activityTarget = target;
           argumentEcho = echoedCallArgs(args ?? {}, target.definition.inputSchema);
+          sentSecrets.arguments(args ?? {}, target.definition.inputSchema);
 
           const write = target.definition.classification !== "read";
           const canonicalAddress = `${target.connector.id}.${target.toolName}`;
@@ -847,7 +849,7 @@ export class InvocationService {
         );
       if (Exit.isFailure(processed)) return unprocessable();
       try {
-        const value = sentSecrets.redact(processed.value);
+        const value = sentSecrets.redact(processed.value, "envelope");
         const diagnostics = timing();
         const friction = context.activityFriction?.(value);
         record("success", friction ? { friction } : {});

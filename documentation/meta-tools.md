@@ -865,6 +865,21 @@ mistake, and a short one — every real one — comes back exact and untagged. A
 scope is rejected outright because a clipped one could select a different
 connector. A failed result-storage read returns typed `unavailable` without
 exposing backend error text.
+Submitted `writeOnly` values also enter the call's sent-secret output redaction
+set, including property names inside private object subtrees. Downstream
+result and error text quoting them, in raw or credential-supported encoded
+forms, is redacted before direct-call output, program returns, logs, and emits,
+or result stash persistence; paging in a later request reads already-redacted
+bytes. A program's `connecta.read` resources, connector usage guides, and
+downstream `connecta.skill` files take the same rules before the program sees
+them. JSON stays valid: a matching number or boolean becomes `"[redacted]"`.
+Empty private strings are exempt. A private value shorter than eight characters
+redacts only structured fields that equal it, so identifiers and approval state
+remain, and withholds prose that contains it, including error messages, while
+typed classification, retry facts, and write outcome remain.
+Work limits withhold the affected text without failing the call. See
+[output redaction](./auth.md#what-a-servers-errors-may-say)
+for the shared encoding, budget, and argument-filter contract.
 
 Activity records each of these refusals with the coarse `friction` class derived
 from its typed error code — `tool_not_found`, `schema_retry`,

@@ -384,6 +384,14 @@ describe("downstream input relay", () => {
       expect(flow.continuationSend).toHaveBeenCalledOnce();
     },
   );
+  it("INV-5: relayed prompts quoting a short writeOnly argument are withheld while the relay continues", async () => {
+    const flow = setup({ privateArguments: "top-level", message: "Downstream quoted z", failureStatus: 429 });
+    const first = (await flow.rpc({ args: { address: "service.read", args: { id: 1, password: "z" } } })).result;
+    expect(first.resultType).toBe("input_required");
+    expect(first.inputRequests[Object.keys(first.inputRequests)[0]!].params.message).toBe("[redacted]");
+    expect(JSON.stringify(first)).not.toContain("Downstream quoted");
+    expect(flow.call).toHaveBeenCalledOnce();
+  });
   it("INV-2 INV-4 INV-5 INV-9: relays accept, decline, and cancel as bound read and write continuations", async () => {
     for (const write of [false, true])
       for (const action of ["accept", "decline", "cancel"]) {

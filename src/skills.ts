@@ -715,7 +715,9 @@ export class SkillsRegistry {
       const record = await withManifest(local);
       this.assertSafe([record]);
       if (record.connector) this.options.onRead?.(record.connector, "local");
-      return { ...PRIVATE, contents: [{ uri: record.entry.uri, mimeType: "text/markdown", text: record.content! }] };
+      // A connector guide is operator-authored payload, like a downstream file; built-in guides are Connecta's own.
+      const text = record.connector ? sentSecretsForRequest(this.scope).redact(record.content!) : record.content!;
+      return { ...PRIVATE, contents: [{ uri: record.entry.uri, mimeType: "text/markdown", text }] };
     }
     if (!uri.startsWith("skill://downstream/")) throw this.missing(uri);
     const record = (await this.records()).find((record) => record.files?.has(uri));
@@ -742,7 +744,9 @@ export class SkillsRegistry {
     if (bytes > MAX_SKILL_BYTES)
       throw new ConnectorCallError("unavailable", "Downstream skill file exceeds the byte bound.");
     this.options.onRead?.(record.connector, "downstream");
-    return { ...PRIVATE, contents: [{ ...content, uri } as ConnectorSkillResourceContents] };
+    // Downstream file contents take the request's full payload rules before any reader sees them.
+    const clean = sentSecretsForRequest(this.scope).redact(content);
+    return { ...PRIVATE, contents: [{ ...clean, uri } as ConnectorSkillResourceContents] };
   }
 
   async text(name: string): Promise<string> {
