@@ -124,6 +124,7 @@ describe("Claude eval CLI", () => {
       });
       const trial = trials[0]!;
       expect(trial.error).toBeUndefined();
+      expect(trial.claude?.terminatedAfterCompletion).toBe(false);
       expect(trial.metrics.conversationTurns).toBe(2);
       expect(trial.saved?.trace.resultSubtypes).toEqual(["success"]);
       expect(trial.checks.filter((c) => c.id !== "conversation-completed").every((c) => c.pass)).toBe(true);
@@ -165,6 +166,8 @@ describe("Claude eval CLI", () => {
     }
     const trace = parseTrace(run.events, run.turnStarts, ["First", "Second"]);
     expect(run.timedOut).toBe(false);
+    expect(run.exitCode).toBeNull();
+    expect(run.terminatedAfterCompletion).toBe(true);
     expect(run.turnStarts).toHaveLength(2);
     expect(trace.finalAnswer).toBe("Second CI run 4812 failed, commit 9f2c1ab.");
     expect(trace.toolUses).toHaveLength(2);
@@ -202,6 +205,7 @@ describe("Claude eval CLI", () => {
   it("terminates a hung CLI on the wall deadline", async () => {
     const run = await fixture("hang", { timeoutMs: 200 });
     expect(run.timedOut).toBe(true);
+    expect(run.terminatedAfterCompletion).toBe(false);
     expect(run.wallMs).toBeLessThan(5_000);
   });
 
@@ -209,7 +213,9 @@ describe("Claude eval CLI", () => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 200);
     try {
-      expect((await fixture("hang", { signal: controller.signal })).aborted).toBe(true);
+      const run = await fixture("hang", { signal: controller.signal });
+      expect(run.aborted).toBe(true);
+      expect(run.terminatedAfterCompletion).toBe(false);
     } finally {
       clearTimeout(timer);
     }

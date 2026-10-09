@@ -42,6 +42,7 @@ const observationSchema = z
     pluginInventory: z.unknown().optional(),
   })
   .strict();
+const claudeObservationSchema = observationSchema.extend({ terminatedAfterCompletion: z.boolean().optional() });
 const trialSchema = z
   .object({
     task: knownString,
@@ -101,7 +102,6 @@ function trialOutcome(trial: TrialResult, runner: "codex" | "claude") {
   const observed = observation(trial, runner);
   const timeout = observed?.timedOut === true;
   const interruption = observed?.aborted === true;
-  const runnerExit = observed?.exitCode !== 0;
   const error =
     trial.status === "error" ||
     trial.error !== undefined ||
@@ -113,6 +113,18 @@ function trialOutcome(trial: TrialResult, runner: "codex" | "claude") {
     !observed.resultSubtypes.length ||
     observed.resultSubtypes.some((s) => s !== "success") ||
     !trial.checks.some((c) => c.id === "conversation-completed" && c.pass);
+  // Older Claude observations predate the explicit cleanup marker. Their 143
+  // is accepted only with successful completion evidence and no failure flags.
+  const expectedTermination =
+    runner === "claude" &&
+    !timeout &&
+    !interruption &&
+    !error &&
+    !completion &&
+    (trial.claude?.terminatedAfterCompletion === true
+      ? observed.exitCode === null || observed.exitCode === 143
+      : trial.claude?.terminatedAfterCompletion === undefined && observed?.exitCode === 143);
+  const runnerExit = observed?.exitCode !== 0 && !expectedTermination;
   const outcome = !passes(trial.checks, "outcome");
   return {
     pass: !timeout && !interruption && !runnerExit && !error && !completion && !outcome,
@@ -252,7 +264,7 @@ function provenance(a: AgentResultFile, b: AgentResultFile): string[] {
       const runner = file.config.runner === "claude" ? "claude" : "codex";
       if (isNA(trial, runner)) continue;
       const observed = observation(trial, runner);
-      const metadata = observationSchema.safeParse(observed);
+      const metadata = (runner === "claude" ? claudeObservationSchema : observationSchema).safeParse(observed);
       if (!metadata.success)
         for (const issue of metadata.error.issues)
           reasons.push(`${label} invalid runner metadata ${issue.path.join(".")}: ${issue.message}`);

@@ -119,6 +119,8 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
     let loadedTools: string[] = [];
     let finishTurn: (() => void) | undefined;
     let ended = false;
+    let completionStopRequested = false;
+    let terminatedAfterCompletion = false;
     const push = (event: StreamEvent) => {
       events.push(event);
       options.onEvent?.(event);
@@ -129,8 +131,9 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
     });
     const kill = () => {
       stopWaiting?.();
-      child.kill("SIGTERM");
+      const sent = child.kill("SIGTERM");
       setTimeout(() => child.kill("SIGKILL"), 5_000).unref();
+      return sent;
     };
     const lines = createInterface({ input: child.stdout });
     lines.on("line", (line) => {
@@ -185,7 +188,8 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
       stderrTail = (stderrTail + String(chunk)).slice(-4_000);
     });
     const exited = new Promise<number | null>((resolve) => {
-      const end = (code: number | null) => {
+      const end = (code: number | null, signal?: NodeJS.Signals | null) => {
+        terminatedAfterCompletion = completionStopRequested && (signal === "SIGTERM" || code === 143);
         ended = true;
         stopWaiting?.();
         finishTurn?.();
@@ -203,6 +207,7 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
     }, options.timeoutMs);
     options.signal?.addEventListener("abort", kill, { once: true });
     if (options.signal?.aborted) kill();
+    let conversationEnded = false;
     try {
       let prompt: string | undefined = options.firstPrompt;
       let turn = 0;
@@ -218,17 +223,23 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
         if (events.at(-1)?.subtype !== "success" || ended || timedOut || options.signal?.aborted) break;
         prompt = await Promise.race([options.nextTurn(turn, events), stopped]);
       }
+      conversationEnded =
+        prompt === undefined &&
+        !timedOut &&
+        !options.signal?.aborted &&
+        events.filter((e) => e.type === "result").every((e) => e.subtype === "success");
     } finally {
       clearTimeout(timer);
       options.signal?.removeEventListener("abort", kill);
       child.stdin.end();
-      if (!ended) kill();
+      if (!ended) completionStopRequested = kill() && conversationEnded;
     }
     const exitCode = await exited;
     return {
       events,
       turnStarts,
       exitCode,
+      terminatedAfterCompletion,
       timedOut,
       aborted: options.signal?.aborted ?? false,
       stderrTail: stderrTail.replaceAll(options.token, "<redacted>"),

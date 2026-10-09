@@ -1318,6 +1318,12 @@ for (const mutate of [
           },
         ],
         [
+          "runnerExit",
+          (t: TrialResult) => {
+            t.codex!.exitCode = 143;
+          },
+        ],
+        [
           "error",
           (t: TrialResult) => {
             t.error = "runner error";
@@ -1362,7 +1368,7 @@ for (const mutate of [
         }
       }
     console.log(
-      `ok   round 2: ${controls.length} strict trial controls and 21 flagged-outcome controls, including CLI reproductions`,
+      `ok   round 2: ${controls.length} strict trial controls and 24 flagged-outcome controls, including CLI reproductions`,
     );
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -1697,6 +1703,53 @@ for (const mutate of [
       }
     }
   }
+  // Claude's stream remains open after success; the harness ends it with SIGTERM.
+  for (const file of [left, right])
+    for (const trial of file.trials)
+      if (trial.claude) {
+        trial.claude.exitCode = 143;
+        trial.claude.terminatedAfterCompletion = true;
+      }
+  const completed = compare(left, right);
+  if (!completed.includes("runnerExit 0") || completed.includes("infrastructure errors"))
+    throw new Error("Claude conversation cleanup counted as a runner failure");
+  const normal = right.trials.find((t) => t.task === "p5-known-read-routing")!;
+  for (const exitCode of [143, null]) {
+    normal.claude!.exitCode = exitCode;
+    const report = compare(left, right);
+    if (report !== completed) throw new Error("Claude signal-only cleanup changed the outcome");
+  }
+  normal.claude!.exitCode = 143;
+  delete normal.claude!.terminatedAfterCompletion;
+  if (compare(left, right) !== completed) throw new Error("Legacy Claude cleanup changed the outcome");
+  normal.claude!.terminatedAfterCompletion = true;
+  for (const mutate of [
+    (t: TrialResult) => {
+      t.claude!.terminatedAfterCompletion = false;
+    },
+    (t: TrialResult) => {
+      t.claude!.exitCode = 1;
+    },
+    (t: TrialResult) => {
+      t.claude!.timedOut = true;
+    },
+    (t: TrialResult) => {
+      t.claude!.aborted = true;
+    },
+    (t: TrialResult) => {
+      t.claude!.resultSubtypes = ["error"];
+    },
+    (t: TrialResult) => {
+      t.checks.find((c) => c.id === "conversation-completed")!.pass = false;
+    },
+  ]) {
+    const bad = structuredClone(right);
+    mutate(bad.trials.find((t) => t.task === normal.task)!);
+    const report = compare(left, bad);
+    if (!report.includes("runnerExit 1") || !report.includes("infrastructure errors"))
+      throw new Error("Claude termination hid a crash, timeout, abort or incomplete conversation");
+  }
+  console.log("ok   Claude cleanup requires completion and preserves runner-failure vetoes");
   const saved = right.trials.find((t) => t.task === "p5-direct-rich-output")!.saved!;
   const write = right.trials
     .find((t) => t.task === "p5-trusted-program-write")!

@@ -333,6 +333,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
         servedModel: run.model,
         version: trace.agentVersion ?? trace.claudeCodeVersion,
         exitCode: run.exitCode,
+        ...(options.runner === "claude" ? { terminatedAfterCompletion: run.terminatedAfterCompletion } : {}),
         timedOut: run.timedOut,
         aborted: run.aborted,
         resultSubtypes: trace.resultSubtypes,
