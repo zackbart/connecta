@@ -387,6 +387,8 @@ including pre-upgrade single-key envelopes and raw-text entries. Offsets and `to
 original UTF-8 text, not the envelope. A supplied offset inside a character
 moves back to its start; page ends also align to character boundaries, and a
 page smaller than one character widens just enough to make progress.
+Decoding preserves every payload code point, including U+FEFF at the start of
+the result or any page, so joining pages reproduces the original UTF-8 text.
 
 A per-call `timeoutMs` covers catalog resolution, admission, and connector
 execution under one deadline. The admission queue's own timeout may expire

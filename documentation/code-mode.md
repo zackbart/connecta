@@ -863,7 +863,8 @@ code safe to run at all.
 **L6.** QuickJS bounds each serialized host-call message at 256 KiB. Oversized
 `connecta.call` results use the existing direct-call stash before crossing that
 bridge. The trusted guest initializer reconstructs values up to 1 MiB from
-bounded pages, retaining JSON versus text format. Larger values return a
+bounded pages, retaining JSON versus text format and every payload code point,
+including U+FEFF at page starts. Larger values return a
 `{ format: "paged", valueFormat, resultId, totalBytes, truncated: true, hint }`
 handle. Pass the handle or its `resultId` to `connecta.result` and reduce the
 pages before returning them. Automatic transfers spend no additional host-call

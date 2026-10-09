@@ -11,7 +11,7 @@
 
 import { describe, expect, it } from "vitest";
 import { customExecutor } from "../src/executor-contract.js";
-import { checkLargeProgramRead, checkLargeProgramWrite } from "./program-result-cases.js";
+import { checkLargeProgramRead, checkLargeProgramWrite, checkProgramResultBom } from "./program-result-cases.js";
 import { InvocationFailure } from "../src/invocation.js";
 import { createConnecta } from "../src/index.js";
 import { createExecuteTool } from "../src/execute.js";
@@ -434,6 +434,11 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
     expect(lateReads).toBe(0);
   });
   for (const custom of [false, true]) {
+    it(`INV-9: ${custom ? "customExecutor: " : ""}program reconstruction and direct pages preserve leading and page-boundary U+FEFF after one write`, async () => {
+      await checkProgramResultBom(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    });
     it(`INV-3 INV-9: ${custom ? "customExecutor: " : ""}oversized program reads arrive whole through bounded stash pages`, async () => {
       await checkLargeProgramRead(
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,

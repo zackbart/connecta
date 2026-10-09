@@ -54,7 +54,8 @@ export interface ToolResult {
 }
 
 const enc = new TextEncoder();
-const dec = new TextDecoder();
+// Each page is a slice of payload bytes, so a leading U+FEFF is data.
+const dec = new TextDecoder("utf-8", { ignoreBOM: true, fatal: false });
 
 export function jsonResult(obj: unknown, text = JSON.stringify(obj)): ToolResult {
   return {

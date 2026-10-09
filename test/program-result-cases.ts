@@ -10,6 +10,88 @@ import type { Connector, Executor, KVStorage } from "../src/types.js";
 
 const BASE = "https://program-results.test";
 
+export async function checkProgramResultBom(executor: Executor): Promise<void> {
+  // The text starts with U+FEFF; both payloads also put one at byte 24,000,
+  // the start of the second page under the default connector cap.
+  const text = "\uFEFF" + "x".repeat(23_997) + "\uFEFF" + "x".repeat(276_003);
+  const json = { text: "x".repeat(23_991) + "\uFEFF" + "x".repeat(276_009) };
+  let writes = 0;
+  const registry = new Registry(
+    [
+      {
+        id: "bom",
+        kind: "api",
+        async listTools() {
+          return ["write", "text", "json"].map((name) => ({ name, annotations: { readOnlyHint: name !== "write" } }));
+        },
+        async callTool(name) {
+          if (name === "write") writes++;
+          return name === "json" ? json : text;
+        },
+      },
+      {
+        id: "bom_direct",
+        kind: "mcp",
+        async listTools() {
+          return ["text", "json"].map((name) => ({ name, annotations: { readOnlyHint: true } }));
+        },
+        async callTool(name) {
+          return { content: [{ type: "text", text: name === "json" ? JSON.stringify(json) : text }] };
+        },
+      },
+    ],
+    { storage: memoryStorage(), logger: silentLogger },
+  );
+  const sink = activitySink();
+  const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, sink.activity, {
+    trust: "trusted",
+    maxHostCalls: 2,
+  })({
+    code: `async () => {
+      const text = await connecta.call("bom.write");
+      const json = await connecta.call("bom.json");
+      return {
+        textExact: text.data === "\\uFEFF" + "x".repeat(23997) + "\\uFEFF" + "x".repeat(276003),
+        jsonExact: json.data.text === "x".repeat(23991) + "\\uFEFF" + "x".repeat(276009),
+        formats: [text.format, json.format]
+      };
+    }`,
+  });
+  expect(outcome.isError, JSON.stringify(outcome.structuredContent)).toBeUndefined();
+  expect(outcome.structuredContent).toMatchObject({
+    result: { textExact: true, jsonExact: true, formats: ["text", "json"] },
+    hostCalls: { attempted: 2, admitted: 2, succeeded: 2, failed: 0 },
+  });
+  expect(writes).toBe(1);
+  const writeEvents = sink.events.filter((event) => event.classification === "write");
+  expect(writeEvents).toHaveLength(1);
+  expect(writeEvents[0]).toMatchObject({ outcome: "success", attempts: 1 });
+
+  const direct = createMetaTools(registry, BASE);
+  for (const [name, expected] of [
+    ["text", text],
+    ["json", JSON.stringify(json)],
+  ] as const) {
+    const call = await direct.callTool({ address: `bom_direct.${name}` });
+    expect(call.isError).toBeUndefined();
+    const id = (JSON.parse(call.content[0]!.text.split("\n")[0]!) as { resultId: string }).resultId;
+    expect(id).toMatch(/^[0-9a-f-]{36}$/);
+    let joined = "";
+    for (let page = 0; ; page++) {
+      const result = await direct.readResult({ id, page });
+      expect(result.isError).toBeUndefined();
+      const value = result.structuredContent!;
+      const pageText = value.text as string;
+      expect(new TextEncoder().encode(pageText).byteLength).toBe(value.bytes);
+      if (page === 1 || (page === 0 && name === "text")) expect(pageText.startsWith("\uFEFF")).toBe(true);
+      joined += pageText;
+      if (!value.hasMore) break;
+    }
+    expect(joined).toBe(expected);
+  }
+  expect(writes).toBe(1);
+}
+
 export async function checkLargeProgramRead(executor: Executor, storage: KVStorage = memoryStorage()): Promise<void> {
   const text = '雪"\\\n'.repeat(60_000);
   let calls = 0;
