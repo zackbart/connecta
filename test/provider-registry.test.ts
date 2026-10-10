@@ -226,13 +226,13 @@ const providers: ProviderCase[] = [
         storage,
         [
           vercel("vercel_prod", {
-            surface: "api",
+            auth: { type: "token" },
             purpose: "Production applications",
             teamId: "team_prod",
             callAdmission: budget,
           }),
           vercel("vercel_preview", {
-            surface: "api",
+            auth: { type: "token" },
             purpose: "Preview applications",
             teamId: "team_preview",
             callAdmission: budget,

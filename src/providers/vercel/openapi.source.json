@@ -1,0 +1,14 @@
+{
+  "url": "https://openapi.vercel.sh/",
+  "revision": "sha256:32399b3ed273",
+  "digest": "sha256:32399b3ed273548c8b14dd4715ff26c7c295399fa0f08bf5c81aee89460cfb90",
+  "latest": "https://openapi.vercel.sh/",
+  "options": {
+    "depth": 2,
+    "descriptions": 0,
+    "maxEnum": 50,
+    "valueSafety": {
+      "operationWords": "global-config"
+    }
+  }
+}

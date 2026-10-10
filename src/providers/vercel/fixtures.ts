@@ -1,9 +1,16 @@
 import { vercel } from "./index.js";
-const options: Parameters<typeof vercel>[1] = { "purpose":"Audit fixture", "surface":"api" };
+type Options = Parameters<typeof vercel>[1];
+// The token connector is the default: its tools are Connecta's own, so the
+// hand-written conventions apply to it. The OAuth case reaches hosted MCP.
+const options: Options = { "purpose":"Audit fixture", "auth":{"type":"token"} };
 export const fixture = {
   name: "vercel",
   options,
-  cases: [{"label":"padded-purpose","options":{"purpose":"  Audit fixture  "}},{"label":"default","options":{}},{"label":"mcp","options":{"surface":"mcp"}}],
-  create(id = "fixture", overrides: Partial<Parameters<typeof vercel>[1]> = {}) { return vercel(id, { ...options, ...overrides } as Parameters<typeof vercel>[1]); },
-  conventions: {"verbs":["list","get","add","verify","remove","upsert","update","delete","promote","cancel","vercel"],"nestedDescriptionExceptions":[],"auth":"credential"},
+  cases: [{"label":"padded-purpose","options":{"purpose":"  Audit fixture  "}},{"label":"default","options":{}},{"label":"team","options":{"teamId":"team_fixture"}},{"label":"oauth","options":{"auth":{"type":"oauth"}}}],
+  create(id = "fixture", overrides: Partial<Options> = {}) {
+    // OAuth takes no team or base URL, so its case starts from the common options alone.
+    const base: Partial<Options> = overrides.auth?.type === "oauth" ? { purpose: options.purpose } : options;
+    return vercel(id, { ...base, ...overrides } as Options);
+  },
+  conventions: {"verbs":["list","get","upsert","update","delete","vercel"],"nestedDescriptionExceptions":[],"auth":"credential"},
 };

@@ -76,10 +76,11 @@ each case refuses the other's keys, and `create: byAuth({ … })`. OAuth uses
 `hostedOAuth()` only; a key uses `restTools()` from `src/providers/_shared/rest/`
 with an operator-managed credential and a `testCredential`. Supply vendor
 configuration only: transport, failure mapper, `scope`, `encode`, `page`,
-`refuse`, `readPosts` (each with a reason), and an idempotency header. Optional
-hooks: `path` (default ids), `admit` (awaited pins every tool passes),
-`result` (envelope unwrapping), a reviewed `headers` allowlist, `textBodies`,
-and `OperationIndex` `slashParams` for keys that carry `/`.
+`refuse`, `redact` (secrets a successful body embeds), `readPosts` (each with
+a reason), and an idempotency header. Optional hooks: `path` (default ids),
+`admit` (awaited pins every tool passes), `result` (envelope unwrapping), a
+reviewed `headers` allowlist, `textBodies`, and `OperationIndex` `slashParams`
+for keys that carry `/`.
 
 The REST connector reads `openapi.generated.ts`. Pin the vendor's document in
 `openapi.source.json` (`url`, `revision`, `digest`, optional `latest` and
@@ -91,6 +92,16 @@ long enums; for very large documents `operationIds: false`, `pathParams:
 prints the largest operation. Give the SKILL.md separate fragments
 per implementation plus a shared one, and name the published fragment with
 frontmatter `"content"`.
+
+Value safety: no response may return a credential or a stored secret value
+unless a reviewed named tool exists to return it. Set `options.valueSafety`
+(optionally `{ "operationWords": "<regex>" }` for vendor secret families) so
+`providers:spec` writes `value-safety.candidates.json` from
+`scripts/value-safety.mjs`, then give every flagged operation a `refuse`,
+`redact` (reviewed field paths), or `safe` verdict with a reason, and test that
+none is unreviewed. Prefer refusing whole secret families; keep the key-name
+heuristic as defense in depth, and give secret-family failures fixed messages
+(Vercel's `value-safety.ts` is the model).
 
 ## Derived lists
 

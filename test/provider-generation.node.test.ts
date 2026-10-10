@@ -799,3 +799,75 @@ describe("OpenAPI operation index generation", () => {
     }
   });
 });
+
+describe("value-safety candidate detection", () => {
+  const detection = async () =>
+    (await import(new URL("../scripts/value-safety.mjs", import.meta.url).href)) as {
+      valueSafetyCandidates(document: unknown, options?: object): Record<string, { fields: string[]; named: boolean }>;
+    };
+  const ok = (schema: object) => ({ responses: { "200": { content: { "application/json": { schema } } } } });
+
+  it("INV-5: flags credential fields by name or description, keyed values, env containers, and secret-family names or descriptions, not metadata", async () => {
+    const { valueSafetyCandidates } = await detection();
+    const document = {
+      openapi: "3.0.3",
+      components: {
+        schemas: { Hook: { type: "object", properties: { url: { type: "string" }, id: { type: "string" } } } },
+      },
+      paths: {
+        "/v1/things": {
+          get: ok({
+            type: "object",
+            properties: {
+              tokenId: { type: "string" },
+              partialKeyValue: { type: "string" },
+              items: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    clientSecret: { type: "object" },
+                    pair: { type: "object", properties: { key: { type: "string" }, value: { type: "string" } } },
+                    newEnvVar: { type: "object" },
+                    deployHooks: { type: "array", items: { $ref: "#/components/schemas/Hook" } },
+                  },
+                },
+              },
+            },
+          }),
+        },
+        "/v1/plain": { get: ok({ type: "object", properties: { name: { type: "string" } } }) },
+        "/v1/stores/{id}/rotate-secret": { post: ok({ type: "object" }) },
+        "/v1/projects/{id}/handoff": {
+          post: {
+            ...ok({ type: "object", properties: { code: { type: "string" } } }),
+            description: "Returns a `code` that remains valid for 24 hours and can be used to accept the handoff.",
+          },
+        },
+        "/v1/sessions": {
+          get: ok({
+            type: "object",
+            properties: {
+              handle: { type: "string", description: "A bearer value that grants access to the session." },
+              handleId: { type: "string", description: "The id of the token." },
+              inviteCode: { type: "string" },
+              teamCode: { type: "string", description: "Code that can be used to join this Team." },
+            },
+          }),
+        },
+        "/v1/config/{id}/items": { get: ok({ type: "object" }) },
+        "/v1/old": { get: { ...ok({ type: "object", properties: { token: { type: "string" } } }), deprecated: true } },
+      },
+    };
+    expect(valueSafetyCandidates(document, { operationWords: "config/\\{id\\}/items" })).toEqual({
+      "GET /v1/config/{id}/items": { fields: [], named: true },
+      "GET /v1/things": {
+        fields: ["items[].clientSecret", "items[].deployHooks[].url", "items[].newEnvVar", "items[].pair.value"],
+        named: false,
+      },
+      "POST /v1/stores/{id}/rotate-secret": { fields: [], named: true },
+      "POST /v1/projects/{id}/handoff": { fields: [], named: true },
+      "GET /v1/sessions": { fields: ["handle", "inviteCode", "teamCode"], named: false },
+    });
+  });
+});

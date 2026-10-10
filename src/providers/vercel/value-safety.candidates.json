@@ -1,0 +1,1197 @@
+{
+  "format": 3,
+  "digest": "sha256:32399b3ed273548c8b14dd4715ff26c7c295399fa0f08bf5c81aee89460cfb90",
+  "candidates": {
+    "GET /ai-gateway/virtual-model-configs": {
+      "fields": [
+        "inferenceRegion",
+        "providerTimeouts",
+        "virtualModelConfigs[].inferenceRegion",
+        "virtualModelConfigs[].providerTimeouts"
+      ],
+      "named": false
+    },
+    "POST /ai-gateway/virtual-model-configs": {
+      "fields": ["inferenceRegion", "providerTimeouts"],
+      "named": false
+    },
+    "PATCH /ai-gateway/virtual-model-configs": {
+      "fields": ["inferenceRegion", "providerTimeouts"],
+      "named": false
+    },
+    "GET /ai-gateway/virtual-model-configs/list": {
+      "fields": ["virtualModelConfigs[].inferenceRegion", "virtualModelConfigs[].providerTimeouts"],
+      "named": false
+    },
+    "GET /ai-gateway/virtual-model-configs/{vmcSlug}": {
+      "fields": ["inferenceRegion", "providerTimeouts"],
+      "named": false
+    },
+    "PATCH /ai-gateway/virtual-model-configs/{vmcSlug}": {
+      "fields": ["inferenceRegion", "providerTimeouts"],
+      "named": false
+    },
+    "PATCH /aliases/{id}/protection-bypass": {
+      "fields": [],
+      "named": true
+    },
+    "POST /api-keys": {
+      "fields": [
+        "apiKey",
+        "apiKey.createdBy",
+        "apiKey.id",
+        "apiKey.leakedUrl",
+        "apiKey.metadata",
+        "apiKey.name",
+        "apiKey.purpose",
+        "apiKeyString"
+      ],
+      "named": true
+    },
+    "PUT /projects/transfer-request/{code}": {
+      "fields": [],
+      "named": true
+    },
+    "POST /projects/{idOrName}/transfer-request": {
+      "fields": [],
+      "named": true
+    },
+    "POST /storage/stores/blob": {
+      "fields": ["store.kind"],
+      "named": false
+    },
+    "GET /v1/ai-gateway/routers": {
+      "fields": ["routers[].inferenceRegion", "routers[].providerTimeouts"],
+      "named": false
+    },
+    "POST /v1/connect/authorize/{connector}": {
+      "fields": ["deviceCode", "verifier"],
+      "named": true
+    },
+    "POST /v1/connect/connectors": {
+      "fields": [
+        "appTokens",
+        "appTokens.crossInstallation",
+        "appTokens.requiresReinstallation",
+        "appTokens.supportsRefinement",
+        "appTokens.supportsResources",
+        "redirectUri",
+        "supportsRevocation",
+        "userTokens",
+        "userTokens.crossInstallation",
+        "userTokens.manualCredentialInput",
+        "userTokens.supportsRefinement",
+        "userTokens.supportsResources"
+      ],
+      "named": false
+    },
+    "GET /v1/connect/connectors/{connector}": {
+      "fields": [
+        "appTokens",
+        "appTokens.crossInstallation",
+        "appTokens.requiresReinstallation",
+        "appTokens.supportsRefinement",
+        "appTokens.supportsResources",
+        "redirectUri",
+        "supportsRevocation",
+        "userTokens",
+        "userTokens.crossInstallation",
+        "userTokens.manualCredentialInput",
+        "userTokens.supportsRefinement",
+        "userTokens.supportsResources"
+      ],
+      "named": false
+    },
+    "POST /v1/connect/connectors/{connector}/managed/eject": {
+      "fields": [
+        "appTokens",
+        "appTokens.crossInstallation",
+        "appTokens.requiresReinstallation",
+        "appTokens.supportsRefinement",
+        "appTokens.supportsResources",
+        "redirectUri",
+        "supportsRevocation",
+        "userTokens",
+        "userTokens.crossInstallation",
+        "userTokens.manualCredentialInput",
+        "userTokens.supportsRefinement",
+        "userTokens.supportsResources"
+      ],
+      "named": false
+    },
+    "PATCH /v1/connect/connectors/{connector}/trigger-destinations": {
+      "fields": [
+        "appTokens",
+        "appTokens.crossInstallation",
+        "appTokens.requiresReinstallation",
+        "appTokens.supportsRefinement",
+        "appTokens.supportsResources",
+        "redirectUri",
+        "supportsRevocation",
+        "userTokens",
+        "userTokens.crossInstallation",
+        "userTokens.manualCredentialInput",
+        "userTokens.supportsRefinement",
+        "userTokens.supportsResources"
+      ],
+      "named": false
+    },
+    "POST /v1/connect/token/{connector}": {
+      "fields": ["claims", "token"],
+      "named": true
+    },
+    "GET /v1/drains": {
+      "fields": ["drains[].delivery.endpoint", "drains[].delivery.secret", "drains[].sampling[].env"],
+      "named": true
+    },
+    "POST /v1/drains": {
+      "fields": ["delivery.endpoint", "delivery.secret", "sampling[].env"],
+      "named": true
+    },
+    "POST /v1/drains/test": {
+      "fields": [],
+      "named": true
+    },
+    "GET /v1/drains/{id}": {
+      "fields": ["delivery.endpoint", "delivery.secret", "sampling[].env"],
+      "named": true
+    },
+    "PATCH /v1/drains/{id}": {
+      "fields": ["delivery.endpoint", "delivery.secret", "sampling[].env"],
+      "named": true
+    },
+    "DELETE /v1/drains/{id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /v1/env": {
+      "fields": ["data[].type", "data[].value"],
+      "named": true
+    },
+    "POST /v1/env": {
+      "fields": ["created[].type", "created[].value", "failed[].error.value"],
+      "named": true
+    },
+    "PATCH /v1/env": {
+      "fields": ["failed[].error.value", "updated[].type", "updated[].value"],
+      "named": true
+    },
+    "DELETE /v1/env": {
+      "fields": ["failed[].error.value"],
+      "named": true
+    },
+    "GET /v1/env/{id}": {
+      "fields": ["type", "value"],
+      "named": true
+    },
+    "PATCH /v1/env/{id}/unlink/{projectId}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /v1/global-config": {
+      "fields": [],
+      "named": true
+    },
+    "POST /v1/global-config": {
+      "fields": [],
+      "named": true
+    },
+    "GET /v1/global-config/{edgeConfigId}": {
+      "fields": [],
+      "named": true
+    },
+    "PUT /v1/global-config/{edgeConfigId}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /v1/global-config/{edgeConfigId}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /v1/global-config/{edgeConfigId}/backups": {
+      "fields": [],
+      "named": true
+    },
+    "GET /v1/global-config/{edgeConfigId}/backups/{edgeConfigBackupVersionId}": {
+      "fields": [],
+      "named": true
+    },
+    "POST /v1/global-config/{edgeConfigId}/backups/{edgeConfigBackupVersionId}/restore": {
+      "fields": [],
+      "named": true
+    },
+    "GET /v1/global-config/{edgeConfigId}/item/{edgeConfigItemKey}": {
+      "fields": ["value"],
+      "named": true
+    },
+    "GET /v1/global-config/{edgeConfigId}/items": {
+      "fields": ["[].value"],
+      "named": true
+    },
+    "PATCH /v1/global-config/{edgeConfigId}/items": {
+      "fields": [],
+      "named": true
+    },
+    "GET /v1/global-config/{edgeConfigId}/schema": {
+      "fields": [],
+      "named": true
+    },
+    "POST /v1/global-config/{edgeConfigId}/schema": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /v1/global-config/{edgeConfigId}/schema": {
+      "fields": [],
+      "named": true
+    },
+    "POST /v1/global-config/{edgeConfigId}/token": {
+      "fields": ["token"],
+      "named": true
+    },
+    "GET /v1/global-config/{edgeConfigId}/token/{token}": {
+      "fields": ["id", "partialToken", "token"],
+      "named": true
+    },
+    "GET /v1/global-config/{edgeConfigId}/tokens": {
+      "fields": ["[].id", "[].partialToken", "[].token"],
+      "named": true
+    },
+    "DELETE /v1/global-config/{edgeConfigId}/tokens": {
+      "fields": [],
+      "named": true
+    },
+    "POST /v1/installations/{integrationConfigurationId}/credentials/revoke": {
+      "fields": [],
+      "named": true
+    },
+    "POST /v1/installations/{integrationConfigurationId}/credentials/rotate": {
+      "fields": ["access_token"],
+      "named": true
+    },
+    "GET /v1/installations/{integrationConfigurationId}/resources/{resourceId}": {
+      "fields": ["customClaims"],
+      "named": false
+    },
+    "GET /v1/installations/{integrationConfigurationId}/resources/{resourceId}/experimentation/global-config": {
+      "fields": [],
+      "named": true
+    },
+    "PUT /v1/installations/{integrationConfigurationId}/resources/{resourceId}/experimentation/global-config": {
+      "fields": [],
+      "named": true
+    },
+    "HEAD /v1/installations/{integrationConfigurationId}/resources/{resourceId}/experimentation/global-config": {
+      "fields": [],
+      "named": true
+    },
+    "PUT /v1/installations/{integrationConfigurationId}/resources/{resourceId}/secrets": {
+      "fields": [],
+      "named": true
+    },
+    "GET /v1/integrations/configuration/{id}/products": {
+      "fields": ["products[].protocols.authentication.appUrlRegistrationSupport"],
+      "named": false
+    },
+    "DELETE /v1/integrations/log-drains/{id}": {
+      "fields": [],
+      "named": true
+    },
+    "POST /v1/integrations/sso/token": {
+      "fields": ["access_token", "id_token", "refresh_token"],
+      "named": true
+    },
+    "GET /v1/kms/issuers": {
+      "fields": ["issuers[].policies[].environments"],
+      "named": false
+    },
+    "POST /v1/kms/issuers": {
+      "fields": ["policies[].environments"],
+      "named": false
+    },
+    "GET /v1/kms/issuers/{issuerId}": {
+      "fields": ["policies[].environments"],
+      "named": false
+    },
+    "PATCH /v1/kms/issuers/{issuerId}": {
+      "fields": ["policies[].environments"],
+      "named": false
+    },
+    "POST /v1/kms/issuers/{issuerId}/keys": {
+      "fields": [],
+      "named": true
+    },
+    "POST /v1/kms/issuers/{issuerId}/keys/{keyId}/activate": {
+      "fields": [],
+      "named": true
+    },
+    "POST /v1/kms/issuers/{issuerId}/keys/{keyId}/revoke": {
+      "fields": ["policies[].environments"],
+      "named": true
+    },
+    "POST /v1/kms/issuers/{issuerId}/policies": {
+      "fields": ["environments"],
+      "named": false
+    },
+    "PATCH /v1/kms/issuers/{issuerId}/policies/{kind}/{policyKey}": {
+      "fields": ["environments"],
+      "named": false
+    },
+    "POST /v1/kms/issuers/{issuerId}/sign/message": {
+      "fields": ["algorithm", "fingerprint", "signature"],
+      "named": true
+    },
+    "POST /v1/kms/issuers/{issuerId}/sign/token": {
+      "fields": ["algorithm", "fingerprint", "token"],
+      "named": true
+    },
+    "GET /v1/log-drains": {
+      "fields": ["drains[].delivery.endpoint", "drains[].delivery.secret", "drains[].sampling[].env"],
+      "named": true
+    },
+    "POST /v1/log-drains": {
+      "fields": [],
+      "named": true
+    },
+    "GET /v1/log-drains/{id}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /v1/log-drains/{id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /v1/microfrontends/groups/{groupId}/projects": {
+      "fields": [
+        "projects[].dismissedToasts[].value",
+        "projects[].env",
+        "projects[].env[].legacyValue",
+        "projects[].env[].value",
+        "projects[].env[].visibility",
+        "projects[].env[].vsmValue",
+        "projects[].internalRoutes[].has[].value",
+        "projects[].link.deployHooks[].url",
+        "projects[].oidcTokenConfig",
+        "projects[].oidcTokenConfig.enabled",
+        "projects[].permissions.aiGatewayApiKey",
+        "projects[].permissions.aiGatewayApiKeyBypassAll",
+        "projects[].permissions.aiGatewayApiKeyOwnedBySelf",
+        "projects[].permissions.aiGatewayApiKeySpendAttribution",
+        "projects[].permissions.aiGatewayApiKeyZdrExemption",
+        "projects[].permissions.aliasProtectionBypass",
+        "projects[].permissions.apiKey",
+        "projects[].permissions.apiKeyAiGateway",
+        "projects[].permissions.apiKeyOwnedBySelf",
+        "projects[].permissions.blobStoreTokenSet",
+        "projects[].permissions.connexToken",
+        "projects[].permissions.domainAuthCodes",
+        "projects[].permissions.edgeConfigToken",
+        "projects[].permissions.gitCredentialGrant",
+        "projects[].permissions.integrationResourceSecrets",
+        "projects[].permissions.integrationStoreTokenSet",
+        "projects[].permissions.passwordProtectionInvoiceItem",
+        "projects[].permissions.postgresStoreTokenSet",
+        "projects[].permissions.productionAliasProtectionBypass",
+        "projects[].permissions.projectOIDCToken",
+        "projects[].permissions.projectProtectionBypass",
+        "projects[].permissions.redisStoreTokenSet",
+        "projects[].permissions.secret",
+        "projects[].permissions.sharedEnvVars",
+        "projects[].permissions.storeTokenSetSensitive",
+        "projects[].permissions.teamInviteCode",
+        "projects[].permissions.teamTokenInvalidation",
+        "projects[].permissions.token",
+        "projects[].protectionBypass",
+        "projects[].security.firewallBypassIps",
+        "projects[].tracing.samplingRules[].env",
+        "projects[].usageStatus.bypassThrottleUntil"
+      ],
+      "named": false
+    },
+    "POST /v1/projects/traces/session": {
+      "fields": ["token"],
+      "named": true
+    },
+    "POST /v1/projects/{idOrName}/avatar": {
+      "fields": [
+        "dismissedToasts[].value",
+        "env",
+        "env[].legacyValue",
+        "env[].value",
+        "env[].visibility",
+        "env[].vsmValue",
+        "internalRoutes[].has[].value",
+        "link.deployHooks[].url",
+        "oidcTokenConfig",
+        "oidcTokenConfig.enabled",
+        "permissions.aiGatewayApiKey",
+        "permissions.aiGatewayApiKeyBypassAll",
+        "permissions.aiGatewayApiKeyOwnedBySelf",
+        "permissions.aiGatewayApiKeySpendAttribution",
+        "permissions.aiGatewayApiKeyZdrExemption",
+        "permissions.aliasProtectionBypass",
+        "permissions.apiKey",
+        "permissions.apiKeyAiGateway",
+        "permissions.apiKeyOwnedBySelf",
+        "permissions.blobStoreTokenSet",
+        "permissions.connexToken",
+        "permissions.domainAuthCodes",
+        "permissions.edgeConfigToken",
+        "permissions.gitCredentialGrant",
+        "permissions.integrationResourceSecrets",
+        "permissions.integrationStoreTokenSet",
+        "permissions.passwordProtectionInvoiceItem",
+        "permissions.postgresStoreTokenSet",
+        "permissions.productionAliasProtectionBypass",
+        "permissions.projectOIDCToken",
+        "permissions.projectProtectionBypass",
+        "permissions.redisStoreTokenSet",
+        "permissions.secret",
+        "permissions.sharedEnvVars",
+        "permissions.storeTokenSetSensitive",
+        "permissions.teamInviteCode",
+        "permissions.teamTokenInvalidation",
+        "permissions.token",
+        "protectionBypass",
+        "security.firewallBypassIps",
+        "tracing.samplingRules[].env",
+        "usageStatus.bypassThrottleUntil"
+      ],
+      "named": false
+    },
+    "DELETE /v1/projects/{idOrName}/avatar": {
+      "fields": [
+        "dismissedToasts[].value",
+        "env",
+        "env[].legacyValue",
+        "env[].value",
+        "env[].visibility",
+        "env[].vsmValue",
+        "internalRoutes[].has[].value",
+        "link.deployHooks[].url",
+        "oidcTokenConfig",
+        "oidcTokenConfig.enabled",
+        "permissions.aiGatewayApiKey",
+        "permissions.aiGatewayApiKeyBypassAll",
+        "permissions.aiGatewayApiKeyOwnedBySelf",
+        "permissions.aiGatewayApiKeySpendAttribution",
+        "permissions.aiGatewayApiKeyZdrExemption",
+        "permissions.aliasProtectionBypass",
+        "permissions.apiKey",
+        "permissions.apiKeyAiGateway",
+        "permissions.apiKeyOwnedBySelf",
+        "permissions.blobStoreTokenSet",
+        "permissions.connexToken",
+        "permissions.domainAuthCodes",
+        "permissions.edgeConfigToken",
+        "permissions.gitCredentialGrant",
+        "permissions.integrationResourceSecrets",
+        "permissions.integrationStoreTokenSet",
+        "permissions.passwordProtectionInvoiceItem",
+        "permissions.postgresStoreTokenSet",
+        "permissions.productionAliasProtectionBypass",
+        "permissions.projectOIDCToken",
+        "permissions.projectProtectionBypass",
+        "permissions.redisStoreTokenSet",
+        "permissions.secret",
+        "permissions.sharedEnvVars",
+        "permissions.storeTokenSetSensitive",
+        "permissions.teamInviteCode",
+        "permissions.teamTokenInvalidation",
+        "permissions.token",
+        "protectionBypass",
+        "security.firewallBypassIps",
+        "tracing.samplingRules[].env",
+        "usageStatus.bypassThrottleUntil"
+      ],
+      "named": false
+    },
+    "DELETE /v1/projects/{idOrName}/env": {
+      "fields": [],
+      "named": true
+    },
+    "GET /v1/projects/{idOrName}/env/{id}": {
+      "fields": ["legacyValue", "value", "visibility"],
+      "named": true
+    },
+    "PATCH /v1/projects/{idOrName}/protection-bypass": {
+      "fields": ["protectionBypass"],
+      "named": true
+    },
+    "POST /v1/projects/{idOrName}/token": {
+      "fields": ["token"],
+      "named": true
+    },
+    "GET /v1/projects/{projectIdOrName}/feature-flags/sdk-keys": {
+      "fields": [],
+      "named": true
+    },
+    "PUT /v1/projects/{projectIdOrName}/feature-flags/sdk-keys": {
+      "fields": ["keyValue", "tokenValue"],
+      "named": true
+    },
+    "DELETE /v1/projects/{projectIdOrName}/feature-flags/sdk-keys/{hashKey}": {
+      "fields": [],
+      "named": true
+    },
+    "PATCH /v1/projects/{projectId}/microfrontends": {
+      "fields": [
+        "dismissedToasts[].value",
+        "env",
+        "env[].legacyValue",
+        "env[].value",
+        "env[].visibility",
+        "env[].vsmValue",
+        "internalRoutes[].has[].value",
+        "link.deployHooks[].url",
+        "oidcTokenConfig",
+        "oidcTokenConfig.enabled",
+        "permissions.aiGatewayApiKey",
+        "permissions.aiGatewayApiKeyBypassAll",
+        "permissions.aiGatewayApiKeyOwnedBySelf",
+        "permissions.aiGatewayApiKeySpendAttribution",
+        "permissions.aiGatewayApiKeyZdrExemption",
+        "permissions.aliasProtectionBypass",
+        "permissions.apiKey",
+        "permissions.apiKeyAiGateway",
+        "permissions.apiKeyOwnedBySelf",
+        "permissions.blobStoreTokenSet",
+        "permissions.connexToken",
+        "permissions.domainAuthCodes",
+        "permissions.edgeConfigToken",
+        "permissions.gitCredentialGrant",
+        "permissions.integrationResourceSecrets",
+        "permissions.integrationStoreTokenSet",
+        "permissions.passwordProtectionInvoiceItem",
+        "permissions.postgresStoreTokenSet",
+        "permissions.productionAliasProtectionBypass",
+        "permissions.projectOIDCToken",
+        "permissions.projectProtectionBypass",
+        "permissions.redisStoreTokenSet",
+        "permissions.secret",
+        "permissions.sharedEnvVars",
+        "permissions.storeTokenSetSensitive",
+        "permissions.teamInviteCode",
+        "permissions.teamTokenInvalidation",
+        "permissions.token",
+        "protectionBypass",
+        "security.firewallBypassIps",
+        "tracing.samplingRules[].env",
+        "usageStatus.bypassThrottleUntil"
+      ],
+      "named": false
+    },
+    "GET /v1/projects/{projectId}/routes": {
+      "fields": [
+        "routes[].route.env",
+        "routes[].route.has[].value",
+        "routes[].route.locale.cookie",
+        "routes[].route.missing[].value",
+        "routes[].route.transforms[].env"
+      ],
+      "named": false
+    },
+    "POST /v1/projects/{projectId}/routes": {
+      "fields": [
+        "route.route.env",
+        "route.route.has[].value",
+        "route.route.locale.cookie",
+        "route.route.missing[].value",
+        "route.route.transforms[].env"
+      ],
+      "named": false
+    },
+    "POST /v1/projects/{projectId}/routes/generate": {
+      "fields": ["route.actions[].headers[].value", "route.conditions[].value"],
+      "named": false
+    },
+    "PATCH /v1/projects/{projectId}/routes/{routeId}": {
+      "fields": [
+        "route.route.env",
+        "route.route.has[].value",
+        "route.route.locale.cookie",
+        "route.route.missing[].value",
+        "route.route.transforms[].env"
+      ],
+      "named": false
+    },
+    "GET /v1/registrar/domains/{domain}/auth-code": {
+      "fields": ["authCode"],
+      "named": true
+    },
+    "GET /v1/registrar/domains/{domain}/transfer": {
+      "fields": [],
+      "named": true
+    },
+    "POST /v1/registrar/domains/{domain}/transfer": {
+      "fields": [],
+      "named": true
+    },
+    "GET /v1/security/firewall/bypass": {
+      "fields": [],
+      "named": true
+    },
+    "POST /v1/security/firewall/bypass": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /v1/security/firewall/bypass": {
+      "fields": [],
+      "named": true
+    },
+    "GET /v1/security/firewall/config": {
+      "fields": [
+        "active.conditions[].conditionGroup[].conditions[].value",
+        "active.rules[].conditionGroup[].conditions[].value",
+        "active.rulesets[].conditionGroup[].conditions[].value",
+        "draft.conditions[].conditionGroup[].conditions[].value",
+        "draft.rules[].conditionGroup[].conditions[].value",
+        "draft.rulesets[].conditionGroup[].conditions[].value",
+        "versions[].conditions[].conditionGroup[].conditions[].value",
+        "versions[].rules[].conditionGroup[].conditions[].value",
+        "versions[].rulesets[].conditionGroup[].conditions[].value"
+      ],
+      "named": false
+    },
+    "PUT /v1/security/firewall/config": {
+      "fields": [
+        "active.conditions[].conditionGroup[].conditions[].value",
+        "active.rules[].conditionGroup[].conditions[].value",
+        "active.rulesets[].conditionGroup[].conditions[].value"
+      ],
+      "named": false
+    },
+    "POST /v1/security/firewall/config/generate-rule": {
+      "fields": ["rule.conditionGroup[].conditions[].value"],
+      "named": false
+    },
+    "GET /v1/security/firewall/config/{configVersion}": {
+      "fields": [
+        "conditions[].conditionGroup[].conditions[].value",
+        "rules[].conditionGroup[].conditions[].value",
+        "rulesets[].conditionGroup[].conditions[].value"
+      ],
+      "named": false
+    },
+    "POST /v1/security/firewall/config/{configVersion}/activate": {
+      "fields": [
+        "conditions[].conditionGroup[].conditions[].value",
+        "rules[].conditionGroup[].conditions[].value",
+        "rulesets[].conditionGroup[].conditions[].value"
+      ],
+      "named": false
+    },
+    "POST /v1/storage/stores/integration/direct": {
+      "fields": ["store.secretRotationRequestedBy", "store.secretRotationRequestedReason", "store.secrets"],
+      "named": false
+    },
+    "DELETE /v1/teams/{teamId}/invites/{inviteId}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /v1/vcr/repository/{idOrName}/images/{imageIdOrDigest}": {
+      "fields": ["image.layers[].env"],
+      "named": false
+    },
+    "GET /v1/webhooks": {
+      "fields": [],
+      "named": true
+    },
+    "POST /v1/webhooks": {
+      "fields": ["secret"],
+      "named": true
+    },
+    "GET /v1/webhooks/{id}": {
+      "fields": [],
+      "named": true
+    },
+    "DELETE /v1/webhooks/{id}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /v10/projects": {
+      "fields": [
+        "[].env",
+        "[].env[].legacyValue",
+        "[].env[].value",
+        "[].env[].visibility",
+        "[].env[].vsmValue",
+        "[].internalRoutes[].has[].value",
+        "[].link.deployHooks[].url",
+        "[].oidcTokenConfig",
+        "[].oidcTokenConfig.enabled",
+        "[].security.firewallBypassIps",
+        "[].security.firewallRoutes[].has[].value",
+        "[].security.firewallRoutes[].missing[].value",
+        "pagination.next",
+        "projects[].dismissedToasts[].value",
+        "projects[].env",
+        "projects[].env[].legacyValue",
+        "projects[].env[].value",
+        "projects[].env[].visibility",
+        "projects[].env[].vsmValue",
+        "projects[].internalRoutes[].has[].value",
+        "projects[].link.deployHooks[].url",
+        "projects[].oidcTokenConfig",
+        "projects[].oidcTokenConfig.enabled",
+        "projects[].permissions.aiGatewayApiKey",
+        "projects[].permissions.aiGatewayApiKeyBypassAll",
+        "projects[].permissions.aiGatewayApiKeyOwnedBySelf",
+        "projects[].permissions.aiGatewayApiKeySpendAttribution",
+        "projects[].permissions.aiGatewayApiKeyZdrExemption",
+        "projects[].permissions.aliasProtectionBypass",
+        "projects[].permissions.apiKey",
+        "projects[].permissions.apiKeyAiGateway",
+        "projects[].permissions.apiKeyOwnedBySelf",
+        "projects[].permissions.blobStoreTokenSet",
+        "projects[].permissions.connexToken",
+        "projects[].permissions.domainAuthCodes",
+        "projects[].permissions.edgeConfigToken",
+        "projects[].permissions.gitCredentialGrant",
+        "projects[].permissions.integrationResourceSecrets",
+        "projects[].permissions.integrationStoreTokenSet",
+        "projects[].permissions.passwordProtectionInvoiceItem",
+        "projects[].permissions.postgresStoreTokenSet",
+        "projects[].permissions.productionAliasProtectionBypass",
+        "projects[].permissions.projectOIDCToken",
+        "projects[].permissions.projectProtectionBypass",
+        "projects[].permissions.redisStoreTokenSet",
+        "projects[].permissions.secret",
+        "projects[].permissions.sharedEnvVars",
+        "projects[].permissions.storeTokenSetSensitive",
+        "projects[].permissions.teamInviteCode",
+        "projects[].permissions.teamTokenInvalidation",
+        "projects[].permissions.token",
+        "projects[].protectionBypass",
+        "projects[].security.firewallBypassIps",
+        "projects[].security.firewallRoutes[].has[].value",
+        "projects[].security.firewallRoutes[].missing[].value",
+        "projects[].tracing.samplingRules[].env",
+        "projects[].usageStatus.bypassThrottleUntil"
+      ],
+      "named": false
+    },
+    "GET /v10/projects/{idOrName}/env": {
+      "fields": ["envs", "envs[].value", "envs[].visibility", "value", "visibility"],
+      "named": true
+    },
+    "POST /v10/projects/{idOrName}/env": {
+      "fields": [
+        "created.legacyValue",
+        "created.value",
+        "created.visibility",
+        "created.vsmValue",
+        "created[].legacyValue",
+        "created[].value",
+        "created[].visibility",
+        "created[].vsmValue",
+        "failed[].error.value"
+      ],
+      "named": true
+    },
+    "POST /v11/projects": {
+      "fields": [
+        "dismissedToasts[].value",
+        "env",
+        "env[].legacyValue",
+        "env[].value",
+        "env[].visibility",
+        "env[].vsmValue",
+        "internalRoutes[].has[].value",
+        "link.deployHooks[].url",
+        "oidcTokenConfig",
+        "oidcTokenConfig.enabled",
+        "permissions.aiGatewayApiKey",
+        "permissions.aiGatewayApiKeyBypassAll",
+        "permissions.aiGatewayApiKeyOwnedBySelf",
+        "permissions.aiGatewayApiKeySpendAttribution",
+        "permissions.aiGatewayApiKeyZdrExemption",
+        "permissions.aliasProtectionBypass",
+        "permissions.apiKey",
+        "permissions.apiKeyAiGateway",
+        "permissions.apiKeyOwnedBySelf",
+        "permissions.blobStoreTokenSet",
+        "permissions.connexToken",
+        "permissions.domainAuthCodes",
+        "permissions.edgeConfigToken",
+        "permissions.gitCredentialGrant",
+        "permissions.integrationResourceSecrets",
+        "permissions.integrationStoreTokenSet",
+        "permissions.passwordProtectionInvoiceItem",
+        "permissions.postgresStoreTokenSet",
+        "permissions.productionAliasProtectionBypass",
+        "permissions.projectOIDCToken",
+        "permissions.projectProtectionBypass",
+        "permissions.redisStoreTokenSet",
+        "permissions.secret",
+        "permissions.sharedEnvVars",
+        "permissions.storeTokenSetSensitive",
+        "permissions.teamInviteCode",
+        "permissions.teamTokenInvalidation",
+        "permissions.token",
+        "protectionBypass",
+        "security.firewallBypassIps",
+        "tracing.samplingRules[].env",
+        "usageStatus.bypassThrottleUntil"
+      ],
+      "named": false
+    },
+    "PATCH /v12/deployments/{id}/cancel": {
+      "fields": [
+        "build.env",
+        "env",
+        "routes[].env",
+        "routes[].has[].value",
+        "routes[].locale.cookie",
+        "routes[].missing[].value",
+        "routes[].transforms[].env",
+        "services[].bindings[].env",
+        "services[].env",
+        "services[].headers[].has[].value",
+        "services[].headers[].headers[].value",
+        "services[].headers[].missing[].value",
+        "services[].redirects[].env",
+        "services[].redirects[].has[].value",
+        "services[].redirects[].missing[].value",
+        "services[].rewrites[].env",
+        "services[].rewrites[].has[].value",
+        "services[].rewrites[].missing[].value",
+        "services[].rewrites[].transforms[].env",
+        "services[].routes[].env",
+        "services[].routes[].has[].value",
+        "services[].routes[].locale.cookie",
+        "services[].routes[].missing[].value",
+        "services[].routes[].transforms[].env"
+      ],
+      "named": false
+    },
+    "POST /v13/deployments": {
+      "fields": [
+        "build.env",
+        "env",
+        "routes[].env",
+        "routes[].has[].value",
+        "routes[].locale.cookie",
+        "routes[].missing[].value",
+        "routes[].transforms[].env",
+        "services[].bindings[].env",
+        "services[].env",
+        "services[].headers[].has[].value",
+        "services[].headers[].headers[].value",
+        "services[].headers[].missing[].value",
+        "services[].redirects[].env",
+        "services[].redirects[].has[].value",
+        "services[].redirects[].missing[].value",
+        "services[].rewrites[].env",
+        "services[].rewrites[].has[].value",
+        "services[].rewrites[].missing[].value",
+        "services[].rewrites[].transforms[].env",
+        "services[].routes[].env",
+        "services[].routes[].has[].value",
+        "services[].routes[].locale.cookie",
+        "services[].routes[].missing[].value",
+        "services[].routes[].transforms[].env"
+      ],
+      "named": false
+    },
+    "GET /v13/deployments/{idOrUrl}": {
+      "fields": [
+        "build.env",
+        "env",
+        "routes[].env",
+        "routes[].has[].value",
+        "routes[].locale.cookie",
+        "routes[].missing[].value",
+        "routes[].transforms[].env",
+        "services[].bindings[].env",
+        "services[].env",
+        "services[].headers[].has[].value",
+        "services[].headers[].headers[].value",
+        "services[].headers[].missing[].value",
+        "services[].redirects[].env",
+        "services[].redirects[].has[].value",
+        "services[].redirects[].missing[].value",
+        "services[].rewrites[].env",
+        "services[].rewrites[].has[].value",
+        "services[].rewrites[].missing[].value",
+        "services[].rewrites[].transforms[].env",
+        "services[].routes[].env",
+        "services[].routes[].has[].value",
+        "services[].routes[].locale.cookie",
+        "services[].routes[].missing[].value",
+        "services[].routes[].transforms[].env"
+      ],
+      "named": false
+    },
+    "GET /v2/connect/connectors": {
+      "fields": [
+        "connectors[].appTokens",
+        "connectors[].appTokens.crossInstallation",
+        "connectors[].appTokens.requiresReinstallation",
+        "connectors[].appTokens.supportsRefinement",
+        "connectors[].appTokens.supportsResources",
+        "connectors[].redirectUri",
+        "connectors[].supportsRevocation",
+        "connectors[].userTokens",
+        "connectors[].userTokens.crossInstallation",
+        "connectors[].userTokens.manualCredentialInput",
+        "connectors[].userTokens.supportsRefinement",
+        "connectors[].userTokens.supportsResources"
+      ],
+      "named": false
+    },
+    "PATCH /v2/connect/connectors/{connector}": {
+      "fields": [
+        "connector.appTokens",
+        "connector.appTokens.crossInstallation",
+        "connector.appTokens.requiresReinstallation",
+        "connector.appTokens.supportsRefinement",
+        "connector.appTokens.supportsResources",
+        "connector.redirectUri",
+        "connector.supportsRevocation",
+        "connector.userTokens",
+        "connector.userTokens.crossInstallation",
+        "connector.userTokens.manualCredentialInput",
+        "connector.userTokens.supportsRefinement",
+        "connector.userTokens.supportsResources"
+      ],
+      "named": false
+    },
+    "GET /v2/deployments/{id}/aliases": {
+      "fields": ["aliases[].protectionBypass"],
+      "named": false
+    },
+    "POST /v2/deployments/{id}/aliases": {
+      "fields": [],
+      "named": true
+    },
+    "GET /v2/integrations/log-drains": {
+      "fields": [],
+      "named": true
+    },
+    "POST /v2/integrations/log-drains": {
+      "fields": [],
+      "named": true
+    },
+    "GET /v2/teams": {
+      "fields": ["teams[].inviteCode", "teams[].limited", "teams[].saml.enforced"],
+      "named": false
+    },
+    "GET /v2/teams/{teamId}": {
+      "fields": ["inviteCode", "saml.enforced"],
+      "named": false
+    },
+    "PATCH /v2/teams/{teamId}": {
+      "fields": ["inviteCode", "saml.enforced"],
+      "named": false
+    },
+    "POST /v2/teams/{teamId}/members": {
+      "fields": [],
+      "named": true
+    },
+    "GET /v2/user": {
+      "fields": ["user.limited", "user.resourceConfig.security.ipBypass"],
+      "named": false
+    },
+    "PATCH /v3/domains/{domain}": {
+      "fields": ["token"],
+      "named": false
+    },
+    "GET /v3/events": {
+      "fields": [
+        "events[].payload.after.claims",
+        "events[].payload.apiKey",
+        "events[].payload.before.claims",
+        "events[].payload.budget",
+        "events[].payload.credential",
+        "events[].payload.env",
+        "events[].payload.gitCredentialSource",
+        "events[].payload.inviteCode",
+        "events[].payload.issuedBefore",
+        "events[].payload.issuerUrl",
+        "events[].payload.newEnvVar",
+        "events[].payload.newEnvVar.type",
+        "events[].payload.newEnvVar.value",
+        "events[].payload.oidcSubject",
+        "events[].payload.oldEnvVar",
+        "events[].payload.oldEnvVar.type",
+        "events[].payload.oldEnvVar.value",
+        "events[].payload.origin",
+        "events[].payload.policy.claims",
+        "events[].payload.sampling[].env",
+        "events[].payload.scope",
+        "events[].payload.type",
+        "events[].payload.value"
+      ],
+      "named": false
+    },
+    "GET /v3/teams/{teamId}/members": {
+      "fields": ["emailInviteCodes"],
+      "named": false
+    },
+    "POST /v3/user/tokens": {
+      "fields": [
+        "bearerToken",
+        "token",
+        "token.id",
+        "token.leakedUrl",
+        "token.name",
+        "token.origin",
+        "token.prefix",
+        "token.scopes",
+        "token.suffix",
+        "token.type"
+      ],
+      "named": true
+    },
+    "DELETE /v3/user/tokens/{tokenId}": {
+      "fields": [],
+      "named": true
+    },
+    "GET /v4/aliases": {
+      "fields": ["aliases[].protectionBypass"],
+      "named": false
+    },
+    "GET /v4/aliases/{idOrAlias}": {
+      "fields": ["protectionBypass"],
+      "named": false
+    },
+    "GET /v5/user/tokens/{tokenId}": {
+      "fields": [
+        "token",
+        "token.id",
+        "token.leakedUrl",
+        "token.name",
+        "token.origin",
+        "token.prefix",
+        "token.scopes",
+        "token.suffix",
+        "token.type"
+      ],
+      "named": true
+    },
+    "GET /v6/user/tokens": {
+      "fields": [
+        "tokens",
+        "tokens[].id",
+        "tokens[].leakedUrl",
+        "tokens[].name",
+        "tokens[].origin",
+        "tokens[].prefix",
+        "tokens[].scopes",
+        "tokens[].suffix",
+        "tokens[].type"
+      ],
+      "named": true
+    },
+    "POST /v7/domains": {
+      "fields": [],
+      "named": true
+    },
+    "POST /v9/domains/{domain}/claim": {
+      "fields": [],
+      "named": true
+    },
+    "GET /v9/projects/{idOrName}": {
+      "fields": [
+        "dismissedToasts[].value",
+        "env",
+        "env[].legacyValue",
+        "env[].value",
+        "env[].visibility",
+        "env[].vsmValue",
+        "internalRoutes[].has[].value",
+        "link.deployHooks[].url",
+        "oidcTokenConfig",
+        "oidcTokenConfig.enabled",
+        "permissions.aiGatewayApiKey",
+        "permissions.aiGatewayApiKeyBypassAll",
+        "permissions.aiGatewayApiKeyOwnedBySelf",
+        "permissions.aiGatewayApiKeySpendAttribution",
+        "permissions.aiGatewayApiKeyZdrExemption",
+        "permissions.aliasProtectionBypass",
+        "permissions.apiKey",
+        "permissions.apiKeyAiGateway",
+        "permissions.apiKeyOwnedBySelf",
+        "permissions.blobStoreTokenSet",
+        "permissions.connexToken",
+        "permissions.domainAuthCodes",
+        "permissions.edgeConfigToken",
+        "permissions.gitCredentialGrant",
+        "permissions.integrationResourceSecrets",
+        "permissions.integrationStoreTokenSet",
+        "permissions.passwordProtectionInvoiceItem",
+        "permissions.postgresStoreTokenSet",
+        "permissions.productionAliasProtectionBypass",
+        "permissions.projectOIDCToken",
+        "permissions.projectProtectionBypass",
+        "permissions.redisStoreTokenSet",
+        "permissions.secret",
+        "permissions.sharedEnvVars",
+        "permissions.storeTokenSetSensitive",
+        "permissions.teamInviteCode",
+        "permissions.teamTokenInvalidation",
+        "permissions.token",
+        "protectionBypass",
+        "security.firewallBypassIps",
+        "tracing.samplingRules[].env",
+        "usageStatus.bypassThrottleUntil"
+      ],
+      "named": false
+    },
+    "PATCH /v9/projects/{idOrName}": {
+      "fields": [
+        "dismissedToasts[].value",
+        "env",
+        "env[].legacyValue",
+        "env[].value",
+        "env[].visibility",
+        "env[].vsmValue",
+        "internalRoutes[].has[].value",
+        "link.deployHooks[].url",
+        "oidcTokenConfig",
+        "oidcTokenConfig.enabled",
+        "permissions.aiGatewayApiKey",
+        "permissions.aiGatewayApiKeyBypassAll",
+        "permissions.aiGatewayApiKeyOwnedBySelf",
+        "permissions.aiGatewayApiKeySpendAttribution",
+        "permissions.aiGatewayApiKeyZdrExemption",
+        "permissions.aliasProtectionBypass",
+        "permissions.apiKey",
+        "permissions.apiKeyAiGateway",
+        "permissions.apiKeyOwnedBySelf",
+        "permissions.blobStoreTokenSet",
+        "permissions.connexToken",
+        "permissions.domainAuthCodes",
+        "permissions.edgeConfigToken",
+        "permissions.gitCredentialGrant",
+        "permissions.integrationResourceSecrets",
+        "permissions.integrationStoreTokenSet",
+        "permissions.passwordProtectionInvoiceItem",
+        "permissions.postgresStoreTokenSet",
+        "permissions.productionAliasProtectionBypass",
+        "permissions.projectOIDCToken",
+        "permissions.projectProtectionBypass",
+        "permissions.redisStoreTokenSet",
+        "permissions.secret",
+        "permissions.sharedEnvVars",
+        "permissions.storeTokenSetSensitive",
+        "permissions.teamInviteCode",
+        "permissions.teamTokenInvalidation",
+        "permissions.token",
+        "protectionBypass",
+        "security.firewallBypassIps",
+        "tracing.samplingRules[].env",
+        "usageStatus.bypassThrottleUntil"
+      ],
+      "named": false
+    },
+    "PATCH /v9/projects/{idOrName}/env/{id}": {
+      "fields": ["legacyValue", "value", "visibility"],
+      "named": true
+    },
+    "DELETE /v9/projects/{idOrName}/env/{id}": {
+      "fields": ["[].legacyValue", "[].value", "[].visibility", "legacyValue", "value", "visibility"],
+      "named": true
+    }
+  }
+}

@@ -57,12 +57,14 @@ with an operator-managed key. Notion requires `auth` the same way:
 connector. Cloudflare requires `auth` too: `{ type: "oauth" }` reaches its
 hosted MCP server, and `{ type: "apiToken" }` or `{ type: "globalApiKey" }`
 reaches Connecta's REST connector, with an optional `pin` of accounts and zones
-(required for a Global API Key unless `unpinned: true`). See the
+(required for a Global API Key unless `unpinned: true`). Vercel requires `auth`
+as well: `{ type: "oauth" }` reaches Vercel's hosted MCP server, and
+`{ type: "token" }` with an optional `teamId` reaches Connecta's REST connector
+with an operator-managed access token. Vercel admits only reviewed and approved
+MCP clients to its hosted server, an operational gate outside Connecta. See the
 [provider auth migration](./provider-auth-migration.md).
-Vercel defaults to hosted MCP. Its explicit
-`surface: "api"` choice retains selected REST capabilities. To use both, configure distinct IDs
-and independent credentials. Read the [0.29 migration guide](./provider-migration-0.29.md)
-and its provider reconciliation tables for retained and removed names.
+To use both implementations of one provider, configure two connector ids with
+independent credentials.
 
 ## Another remote MCP server
 

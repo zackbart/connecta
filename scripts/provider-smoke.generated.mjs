@@ -284,15 +284,16 @@ var fixture20 = {
 
 // src/providers/vercel/fixtures.ts
 import { vercel } from "@zackbart/connecta/providers/vercel";
-var options21 = { "purpose": "Audit fixture", "surface": "api" };
+var options21 = { "purpose": "Audit fixture", "auth": { "type": "token" } };
 var fixture21 = {
   name: "vercel",
   options: options21,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "mcp", "options": { "surface": "mcp" } }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "team", "options": { "teamId": "team_fixture" } }, { "label": "oauth", "options": { "auth": { "type": "oauth" } } }],
   create(id = "fixture", overrides = {}) {
-    return vercel(id, { ...options21, ...overrides });
+    const base = overrides.auth?.type === "oauth" ? { purpose: options21.purpose } : options21;
+    return vercel(id, { ...base, ...overrides });
   },
-  conventions: { "verbs": ["list", "get", "add", "verify", "remove", "upsert", "update", "delete", "promote", "cancel", "vercel"], "nestedDescriptionExceptions": [], "auth": "credential" }
+  conventions: { "verbs": ["list", "get", "upsert", "update", "delete", "vercel"], "nestedDescriptionExceptions": [], "auth": "credential" }
 };
 
 // provider-smoke.ts

@@ -177,3 +177,33 @@ The Cloudflare conversion (#801) settled these:
   segment; every other segment still refuses one.
 - Hosted `execute` stays destructive, so the guide sends read-only pools that
   need API reads to an API-token connector.
+
+### Amendment: what the Vercel PR established
+
+The Vercel conversion (#801) settled these facts:
+
+- Vercel publishes one unversioned OpenAPI document, so its pin is the
+  document's own digest; the revision is the digest's first 12 hex digits and
+  `providers:spec --record` moves it with the digest.
+- Vercel did not fit its cap either. Its recorded baseline predated growth in
+  the shared entry, and the dual entry carries the index; details were shrunk
+  first (depth 2, no descriptions), then the cap moved under the same policy.
+- Field-by-field redaction over Vercel's whole API did not converge, so value
+  safety is a reviewed table. `scripts/value-safety.mjs` flags every operation
+  in the pinned spec whose response schema names or describes a credential, a
+  keyed value, an environment container, or whose name or description marks a
+  secret family (including transfer and claim codes) (`providers:spec` writes the
+  candidates beside the index when the source record opts in); each needs a
+  `refuse`, `redact` (reviewed field paths), or `safe` verdict, and a test fails
+  on any without one. A key-name heuristic runs on every body as defense in
+  depth only, and secret-family failures carry fixed messages. The shared
+  connector gained a `redact` hook (run on every success body after any
+  `result` unwrap and before cursors and `select`). Cloudflare's
+  `responseSecrets` generator output and Vercel's candidates file are two
+  forms of the same review; consolidating them is tracked follow-up work.
+- Removing the 0.29 ownership filter exposed the hosted
+  `filter_project_envs`, `get_project_env`, `create_project_env`, and
+  `edit_project_env`. The two reads can disclose decrypted values, so they are
+  reviewed as writes and the pool trust policy gates them.
+- With Vercel converted, no maintained provider selects an implementation
+  with `surface`, and `test/fixtures/provider-reconciliation.ts` is deleted.

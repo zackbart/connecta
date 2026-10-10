@@ -19,7 +19,9 @@
 // Cloudflare's document alone is 27 MB, past every transport cap a Worker has.
 //
 // `--record` accepts a new pin: it computes the digest of whatever `url` now
-// serves and writes it to openapi.source.json. `--file <path>` reads the
+// serves and writes it to openapi.source.json. A document served from an
+// unversioned URL is pinned by content: its revision is the digest's first 12
+// hex digits (`sha256:32399b3ed273`), and `--record` moves it with the digest. `--file <path>` reads the
 // document from disk instead of the network (tests, offline review).
 //
 // `check:providers-generated` stays offline: it compares each generated
@@ -30,6 +32,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { discoverProviders, repositoryRoot } from "./providers.mjs";
+import { renderValueSafety } from "./value-safety.mjs";
 
 /** Bump when the generated shape changes, so every output reads as stale. */
 export const OPENAPI_FORMAT = 4;
@@ -677,11 +680,20 @@ async function main() {
             "Review the change, then run with --record to accept the new pin.",
         );
       }
+      // An unversioned document (Vercel's) is pinned by its own content: a
+      // revision spelled as the digest's prefix moves with the digest.
+      if (source.revision === source.digest.slice(0, 19)) source.revision = digest.slice(0, 19);
       source.digest = digest;
       await writeFile(join(provider.directory, SOURCE), `${JSON.stringify(source, null, 2)}\n`);
     }
     const data = buildOperationIndex(JSON.parse(new TextDecoder().decode(bytes)), source);
     await writeFile(join(provider.directory, OUTPUT), renderOpenApiModule(data, source));
+    // Opt-in: the operations whose responses may carry credentials or secret
+    // values, for the provider's reviewed value-safety table (value-safety.mjs).
+    if (source.options?.valueSafety) {
+      const document = JSON.parse(new TextDecoder().decode(bytes));
+      await writeFile(join(provider.directory, "value-safety.candidates.json"), renderValueSafety(document, source));
+    }
     const rows = JSON.parse(data.details).o;
     const largest = rows.reduce(
       (best, row, at) => {
