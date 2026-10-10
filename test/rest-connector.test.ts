@@ -509,6 +509,36 @@ describe("restTools()", () => {
     expect(await refusal(plain.callTool("acme_api_write", write, ctx()))).toMatchObject({ code: "invalid_args" });
   });
 
+  it("INV-9: exempts a connect-phase code only before a response exists, never while reading a body", async () => {
+    const plain = connector();
+    const write = { method: "POST", path: "/v1/widgets", body: { name: "a" } };
+    for (const code of ["EHOSTUNREACH", "ECONNREFUSED", "ENOTFOUND"]) {
+      respond = () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(Object.assign(new Error(code), { code }));
+            },
+          }),
+          { headers: { "content-type": "application/json" } },
+        );
+      expect(await refusal(plain.callTool("acme_api_write", write, ctx())), code).toMatchObject({
+        code: "connector_call_failed",
+        retryable: false,
+      });
+    }
+    // The same code from fetch itself, before any response, proves nothing was sent.
+    globalThis.fetch = (async () => {
+      throw Object.assign(new TypeError("fetch failed"), {
+        cause: Object.assign(new Error("EHOSTUNREACH"), { code: "EHOSTUNREACH" }),
+      });
+    }) as typeof fetch;
+    expect(await refusal(plain.callTool("acme_api_write", write, ctx()))).toMatchObject({
+      code: "unavailable",
+      retryable: true,
+    });
+  });
+
   it("INV-9: never advertises a keyless write's 503 as retryable through call_destructive_tool", async () => {
     globalThis.fetch = (async () => Response.json({ message: "down" }, { status: 503 })) as typeof fetch;
     const app = createTestConnecta({
@@ -629,6 +659,27 @@ describe("restTools()", () => {
     expect(() => restTools(vendor({ readPosts: [["POST", "/v1/widgets/preview", "Gone."]] }))).toThrow(
       "Acme reviewed read-only POST /v1/widgets/preview is not in the pinned API index.",
     );
+  });
+});
+
+describe("composed constraints", () => {
+  it("refuses null and an empty string where combined constraints admit no value", () => {
+    const data: OpenApiData = {
+      ...DATA,
+      ops: [["POST", "/v1/widgets", "CreateWidget", "Create a widget", 0]],
+      details: JSON.stringify({
+        d: [],
+        o: [[[], ["application/json", { t: "object", p: { kind: { e: [] }, name: { t: "string" } } }]]],
+      }),
+    };
+    const index = new OperationIndex(data, { vendor: "acme", title: "Acme" });
+    const op = index.operation("POST", "/v1/widgets")!;
+    for (const kind of [null, "", "A"]) {
+      expect(() => index.check(op, {}, { kind }), String(kind)).toThrow("admit none");
+    }
+    // An ordinary field still treats null and "" as unset.
+    expect(() => index.check(op, {}, { name: null })).not.toThrow();
+    expect(() => index.check(op, {}, { name: "" })).not.toThrow();
   });
 });
 

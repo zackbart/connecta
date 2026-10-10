@@ -226,9 +226,10 @@ async function successBody(
 }
 
 /**
- * Network failures that prove nothing was sent: no connection was ever
- * established, so the vendor cannot have acted. Anything else after dispatch
- * (a reset, a 5xx, a lost body) may follow a write that landed.
+ * Network failures that prove nothing was sent, but only when `fetch` itself
+ * rejected before any response existed: no connection was ever established,
+ * so the vendor cannot have acted. Once a response arrived, the same codes
+ * while reading its body prove nothing of the kind.
  */
 const NEVER_CONNECTED: ReadonlySet<string> = new Set([
   "ECONNREFUSED",
@@ -245,10 +246,10 @@ const NEVER_CONNECTED: ReadonlySet<string> = new Set([
  * proven to precede any connection, and timeouts, which the invocation layer
  * already reports as `write_outcome_unknown`.
  */
-function unknownOutcome(vendor: RestVendor, error: unknown): unknown {
+function unknownOutcome(vendor: RestVendor, error: unknown, responded: boolean): unknown {
   if (!(error instanceof ConnectorCallError) || error.code !== "unavailable" || !error.retryable) return error;
   const code = error.details?.code;
-  if (code === "timeout" || (code !== undefined && NEVER_CONNECTED.has(code))) return error;
+  if (code === "timeout" || (!responded && code !== undefined && NEVER_CONNECTED.has(code))) return error;
   return new ConnectorCallError(
     "connector_call_failed",
     `${error.message} Whether the write took effect at ${vendor.title} is unknown: it carried no idempotency key, ` +
@@ -291,8 +292,12 @@ export async function callRest(
         ? { body: framing.body }
         : {}),
   };
+  // Set once a response exists: from then on the connection is proven, and no
+  // network failure means nothing was sent.
+  let responded = false;
   try {
     return await send(request, ctx, async (response) => {
+      responded = true;
       if (!response.ok) throw vendor.failure(response.status, response.headers, await failureBody(response));
       // HEAD answers with headers alone; they are its data.
       const data = call.method === "HEAD" ? headerData(response.headers) : await successBody(vendor, response, ctx);
@@ -301,7 +306,7 @@ export async function callRest(
     });
   } catch (error) {
     // The whole transport call: connect/send failures, 5xx, and a lost body alike.
-    throw repeatable ? error : unknownOutcome(vendor, error);
+    throw repeatable ? error : unknownOutcome(vendor, error, responded);
   }
 }
 
