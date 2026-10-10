@@ -3,7 +3,7 @@
 Use this upgrade guide when moving a Stripe, Notion, Vercel, or Cloudflare
 deployment from 0.30 to 0.31, where `auth` selects each provider's
 implementation ([#801](https://github.com/zackbart/connecta/issues/801)).
-The [0.31.0 release notes](../release-notes/0.31.0.md) summarize the change.
+The [0.31.0 release notes](https://github.com/zackbart/connecta/blob/main/release-notes/0.31.0.md) summarize the change.
 [Deployment upgrades](./deploying.md#upgrade-an-existing-deployment) cover other
 version changes; [integrating services](./integrating.md) covers new connectors.
 
@@ -17,7 +17,10 @@ explains why.
 ## Stripe
 
 Stripe's hosted MCP server stops accepting secret keys and untagged
-restricted keys on 2026-10-31. Every `stripe()` call must now name `auth`:
+restricted keys on 2026-10-31; Stripe still documents agent-tagged restricted
+keys for it. Connecta's hosted Stripe connection is OAuth only either way, and
+every key, tagged or not, uses the REST connector. Every `stripe()` call must
+now name `auth`:
 
 ```ts
 connectors: [
@@ -57,7 +60,12 @@ The key connector keeps Stripe's tool names (`stripe_api_search`,
 `get_stripe_account_info`, and `get_balance_summary`) with Connecta's own
 contracts: search finds operations in a pinned API index, every call is
 checked against that index before it is sent, results arrive as
-`{ status, data, page? }`, and writes return the `Idempotency-Key` they sent.
+`{ status, data, page? }`, and POST writes send the caller's `idempotencyKey`
+or a generated one as `Idempotency-Key` and return it (DELETE sends none).
+Every request, v1 and v2, sends `Stripe-Version: 2026-09-30.endive`, the
+version of the pinned index, whatever the account's default API version, so
+response shapes and accepted parameters follow that version. Check fields
+your programs rely on with `stripe_api_details`.
 A key whose `sk_live_`/`rk_live_` or `sk_test_`/`rk_test_` prefix contradicts
 `mode` is refused before any request. Organization keys (`sk_org_…`) need a
 `Stripe-Context` header the connector does not send; use an account key.
