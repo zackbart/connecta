@@ -154,6 +154,11 @@ describe("built-in factory options", () => {
       'stripe("billing").mode',
     ],
     [
+      "a token-only option under OAuth",
+      () => vercel("deploys", loose({ purpose: "Deploys", auth: { type: "oauth" }, teamId: "team_1" })),
+      'vercel("deploys").teamId',
+    ],
+    [
       "a Workspace service account",
       () =>
         docs(
@@ -271,7 +276,7 @@ describe("discriminated factory options", () => {
   const STRIPE_AUTH = '"oauth", "apiKey"';
   const NOTION_AUTH = '"oauth", "token"';
   const CLOUDFLARE_AUTH = '"oauth", "apiToken", "globalApiKey"';
-  const SURFACE = '"api", "mcp"';
+  const VERCEL_AUTH = '"oauth", "token"';
 
   // A misspelled or missing discriminant used to select no case, so the walk
   // checked nothing and the factory, finding no known `type`, built the
@@ -358,9 +363,10 @@ describe("discriminated factory options", () => {
       `notion("wiki") requires auth.type is required: one of ${NOTION_AUTH}.`,
     ],
     [
-      "vercel() surface",
-      () => vercel("deploys", loose({ purpose: "Deploys", surface: "hosted" })),
-      `vercel("deploys") requires surface to be one of ${SURFACE}.`,
+      // 0.30 defaulted vercel() to hosted MCP and selected REST with surface.
+      "vercel() required auth when omitted",
+      () => vercel("deploys", loose({ purpose: "Deploys", surface: "mcp" })),
+      `vercel("deploys") requires auth.type is required: one of ${VERCEL_AUTH}.`,
     ],
     [
       "cloudflare() required auth when omitted",
@@ -413,7 +419,7 @@ describe("discriminated factory options", () => {
     expect(remoteMcp("docs", loose({ url, auth: undefined })).describe?.().auth?.mode).toBe("none");
     expect(() => notion("wiki", { purpose: "Docs", auth: { type: "oauth" } })).not.toThrow();
     expect(() => notion("wiki", { purpose: "Docs", auth: { type: "token" } })).not.toThrow();
-    expect(() => vercel("deploys", { purpose: "Deploys", surface: "mcp" })).not.toThrow();
+    expect(() => vercel("deploys", { purpose: "Deploys", auth: { type: "oauth" } })).not.toThrow();
   });
 });
 

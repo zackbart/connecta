@@ -299,7 +299,7 @@ describe("Vercel public inventory", () => {
         pages: 29,
       });
       expect(result).toMatchObject({ documentedTools: 213, inventoryPages: 29, findings: [] });
-      expect(result.added).toHaveLength(178);
+      expect(result.added).toHaveLength(174);
       expect(result.added).toContain("artifact_query");
       expect(result.removed).toEqual([
         "check_domain_availability_and_price",
@@ -515,7 +515,7 @@ describe("Vercel public inventory", () => {
     const before = await readFile(evidence, "utf8");
     const result = report();
     expect(result.docs[0]).toMatchObject({ documentedTools: 213, inventoryPages: 29, findings: [] });
-    expect(result.docs[0].added).toHaveLength(178);
+    expect(result.docs[0].added).toHaveLength(174);
     expect(result.docs[0].added).toContain("artifact_query");
     expect(result.docs[0].removed).toEqual([
       "check_domain_availability_and_price",
@@ -523,7 +523,7 @@ describe("Vercel public inventory", () => {
       "get_deployment_build_logs",
       "get_web_analytics",
     ]);
-    expect(result.findings).toBe(182);
+    expect(result.findings).toBe(178);
     expect(spawnSync(process.execPath, [...args, "--strict"]).status).toBe(1);
     await rm(join(directory, "teams.md"));
     const incomplete = report();

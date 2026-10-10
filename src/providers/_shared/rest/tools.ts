@@ -23,9 +23,10 @@
 // `readPosts`, and an idempotency header. Optional hooks cover the rest:
 // `path` (fill default ids before matching), `admit` (an awaited check in
 // `callRest`, which every tool passes, such as an account pin), `result`
-// (unwrap a vendor envelope), a reviewed `headers` allowlist, and
-// `textBodies`. Named tools reuse `restCall` and `callRest` to share the same
-// validation-free request path.
+// (unwrap a vendor envelope), `redact` (secrets embedded in successful
+// bodies, after `result` and before cursors and `select`), a reviewed
+// `headers` allowlist, and `textBodies`. Named tools reuse `restCall` and
+// `callRest` to share the same validation-free request path.
 import type { ApiTool } from "../../../connectors/api-connector.js";
 import {
   guardedFetch,
@@ -97,7 +98,7 @@ export interface RestVendor {
    * origin), or a refusal that says where to go instead.
    */
   transport(server: string | undefined): GuardedTransport | string;
-  /** Map a failed response to what the caller does next (H11). */
+  /** Map a failed response to what the caller does next (H11); `call` lets a vendor withhold text for secret families. */
   failure(status: number, headers: Headers, body: unknown, call?: RestCall): ConnectorCallError;
   /** Reviewed POSTs that only read; `_api_read` admits exactly these. */
   readonly readPosts?: readonly RestReadPost[];
@@ -129,6 +130,13 @@ export interface RestVendor {
   encode?(call: RestCall): RestFraming;
   /** Read the next-page cursor from a successful body. */
   page?(data: unknown, call: RestCall): RestPage | undefined;
+  /**
+   * Remove secrets a successful body embeds, on every success (HEAD header
+   * data and named tools included), after `result` unwraps the envelope and
+   * before cursors or `select` read it: Vercel nests environment values in
+   * project and event objects that are otherwise ordinary reads.
+   */
+  redact?(data: unknown, call: RestCall): unknown;
   /** A header write tools fill with a caller key or a generated one, and return. */
   readonly idempotencyHeader?: string;
   /** Where multipart or binary uploads go instead of `_api_write`. */
@@ -291,9 +299,10 @@ const NEVER_CONNECTED: ReadonlySet<string> = new Set([
  * must never be advertised as retryable after it may have reached the vendor
  * (INV-9). Definite answers pass through: refusals and 4xx verdicts, a failure
  * proven to precede any connection, and timeouts, which the invocation layer
- * already reports as `write_outcome_unknown`.
+ * already reports as `write_outcome_unknown`. Exported so a named write tool
+ * with its own transport (an upload) applies the same rule.
  */
-function unknownOutcome(vendor: RestVendor, error: unknown, responded: boolean): unknown {
+export function unknownOutcome(vendor: RestVendor, error: unknown, responded: boolean): unknown {
   if (!(error instanceof ConnectorCallError) || error.code !== "unavailable" || !error.retryable) return error;
   const code = error.details?.code;
   if (code === "timeout" || (!responded && code !== undefined && NEVER_CONNECTED.has(code))) return error;
@@ -349,8 +358,12 @@ export async function callRest(
       if (!response.ok) throw vendor.failure(response.status, response.headers, await failureBody(response), call);
       // HEAD answers with headers alone; they are its data.
       const body = call.method === "HEAD" ? headerData(response.headers) : await successBody(vendor, response, ctx);
-      const data = vendor.result && call.method !== "HEAD" ? vendor.result(body, call, response) : body;
-      const page = vendor.page?.(body, call);
+      // Order: unwrap the vendor's envelope, then redact, then cursors (and,
+      // in the tools, `select`). Cursors read the envelope when the vendor
+      // unwraps one, and the redacted body otherwise.
+      const unwrapped = vendor.result && call.method !== "HEAD" ? vendor.result(body, call, response) : body;
+      const data = vendor.redact ? vendor.redact(unwrapped, call) : unwrapped;
+      const page = vendor.page?.(vendor.result ? body : data, call);
       return { status: response.status, data, ...(page ? { page } : {}) };
     });
   } catch (error) {

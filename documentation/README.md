@@ -22,7 +22,7 @@ service, or change Connecta itself.
 | [Operator UI](./operator-ui.md)                             | Optional UI setup, scoped configuration and live-data contract, activity disclosure, and UI implementation    |
 | [Operator UI tests](./operator-tests.md)                    | Browser state matrix, real-server flows, and snapshot maintenance                                             |
 | [Provider migration for 0.29](./provider-migration-0.29.md) | Upgrade actions for Notion, Vercel, and Cloudflare; provider reconciliation tables supply exact name mappings |
-| [Provider auth migration](./provider-auth-migration.md)     | Upgrade actions when `auth` selects hosted MCP or Connecta's REST connector, starting with Stripe             |
+| [Provider auth migration](./provider-auth-migration.md)     | Upgrade actions when `auth` selects hosted MCP or Connecta's REST connector, Stripe and Vercel                |
 
 Each long contract starts with task routes. Follow those section links before
 reading the whole guide. Source and test pointers identify where to check a

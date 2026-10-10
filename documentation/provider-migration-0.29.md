@@ -60,7 +60,9 @@ include `cf-r2-jurisdiction` only when the bucket needs it. This remains a write
 `execute` remains a write even when its program only calls GET.
 Trusted pools may execute writes; read-only pools use direct host-approved writes.
 
-For Vercel, authorize the owning teams in hosted OAuth, migrate discovery/logs,
+Vercel's `surface` and ownership rules were later replaced: `auth` now selects
+the implementation. See the [provider auth migration](./provider-auth-migration.md#vercel).
+The 0.29 Vercel guidance follows for history. For Vercel, authorize the owning teams in hosted OAuth, migrate discovery/logs,
 domain listing/adding, deployment cancellation and file uploads to live MCP
 schemas, and keep the independently authorized REST complement for value-safe
 project environment variables (including `upsert: false` create-only writes), domain verification/removal and deployment
@@ -69,8 +71,7 @@ category. Raw hatches refuse all published REST counterparts, including project
 creation/update. Do not copy REST argument
 shapes into vendor tools, even when a tool name is unchanged.
 
-The per-provider tables map every removed name and explain retained API tools:
-[Vercel](https://github.com/zackbart/connecta/blob/main/src/providers/vercel/reconciliation.md).
-Notion's and Cloudflare's tables are retired with `surface`; the provider auth
-migration maps their names ([Notion](./provider-auth-migration.md#notion),
-[Cloudflare](./provider-auth-migration.md#cloudflare)).
+Every provider's table is retired with `surface`; the provider auth migration
+maps their names ([Notion](./provider-auth-migration.md#notion),
+[Cloudflare](./provider-auth-migration.md#cloudflare),
+[Vercel](./provider-auth-migration.md#vercel)).

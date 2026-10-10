@@ -110,6 +110,72 @@ conversion. An OAuth connector acts as the user, and has none of the generic
 REST tools or the `integration_*` projections and authoring helpers. Configure
 both ids when a deployment needs both; a failed call is never retried on the
 other. The [Notion skill](https://github.com/zackbart/connecta/blob/main/src/providers/notion/SKILL.md)
+
+## Vercel
+
+Every `vercel()` call must now name `auth`. `surface` is gone, and so are the
+0.29 ownership rules that made the REST complement refuse whatever the hosted
+server also covered: each implementation is complete on its own.
+
+```ts
+connectors: [
+  vercel("vercel", { purpose: "Deployment diagnosis", auth: { type: "oauth" } }),
+  vercel("vercel_rest", { purpose: "Production apps", auth: { type: "token" }, teamId: "team_…" }),
+]
+```
+
+| 0.30 configuration                                                    | Now                                                                                                                                                           |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No `surface`, or `surface: "mcp"`                                     | `auth: { type: "oauth" }`. Same endpoint, reviewed catalog, and grant.                                                                                        |
+| `surface: "api"` with `teamId` or `baseUrl`                           | `auth: { type: "token" }` with the same options. A token stored for the same connector id carries over; run its Test action.                                  |
+| `defaultPageSize`                                                     | Removed (it already had no effect). Pass `limit` in `query`, and follow `page.next` as `page.param`.                                                          |
+| `teamId` or `baseUrl` with OAuth                                      | Refused by name at construction.                                                                                                                              |
+| `vercel_api_get`, `vercel_api_mutate`                                 | `vercel_api_read` and `vercel_api_write`: `query` is a JSON object, not name/value pairs, and `teamId: null` replaces `personalAccount: true`.                |
+| `verify_project_domain`, `remove_project_domain`, `delete_deployment` | `vercel_api_write` with the operation from `vercel_api_search`, such as `DELETE /v13/deployments/{id}`.                                                       |
+| `vercel_api_upload` with any path and headers                         | `vercel_api_upload` on octet-stream operations in the index (`POST /v2/files`, project avatars, Remote Cache artifacts); Connecta computes `x-vercel-digest`. |
+
+The token connector serves `vercel_api_search`, `vercel_api_details`,
+`vercel_api_read`, and `vercel_api_write` over Vercel's OpenAPI document,
+pinned by content hash because Vercel does not version it. Every call is
+checked against the pinned index before it is sent, and results arrive as
+`{ status, data, page? }`. It adds `list_teams`, the value-safe environment
+variable tools (`list_project_env_vars`, `upsert_project_env_var`,
+`update_project_env_var`, `delete_project_env_var`),
+`get_deployment_build_logs` (build events, never following), `get_runtime_logs`
+(the runtime stream, stopped after `waitMs` or `maxRows`), and
+`vercel_api_upload`.
+
+Value safety follows a reviewed table (`src/providers/vercel/value-safety.ts`).
+Every operation whose response schema in the pinned spec may carry a credential
+or a stored secret has a verdict: refused (credential minting, Connect
+authorization, decrypted environment values, Global Config items and tokens,
+domain transfer codes, KMS signing), redacted at reviewed field paths
+(environment values, protection-bypass secrets, deploy hook URLs, drain and
+webhook headers and destination URLs beyond their origin, external route and
+redirect destinations beyond their origin, the args and values of every header,
+cookie, and query rule (route transforms and conditions, firewall conditions), team invite codes, synced Global Config items, URL credentials, and signing
+secrets, including the one a new webhook or drain returns at creation), or
+safe with a reason. Detection reads field names, field descriptions, and
+operation descriptions, so a project transfer request (whose code lets another
+team claim the project) is refused too. A test fails when
+a newly flagged operation has no verdict. A key-name heuristic covers every
+other body as defense in depth, and secret-family failures carry fixed messages
+instead of Vercel's text. Read or rotate withheld secrets in the Vercel
+dashboard. A domain move-out is refused because its answer is a transfer token.
+
+Lost on the token path: documentation search, runtime error clusters, toolbar
+threads, agent runs, web analytics summaries, purchase quotes and guided
+purchases, `deploy_to_vercel`, and access grants for protected URLs exist only
+on the hosted OAuth connection. Programs calling those tools need an OAuth
+connector beside the token connector.
+
+The hosted connection now lists `filter_project_envs`, `get_project_env`,
+`create_project_env`, and `edit_project_env`, which 0.29 hid. The two reads can
+return decrypted values, so they are reviewed as writes and the pool trust
+policy gates them. Vercel admits only reviewed and approved MCP clients to its
+hosted server; if authorization is refused for that reason, the deployment
+needs Vercel's approval or a token connector. The
+[Vercel skill](https://github.com/zackbart/connecta/blob/main/src/providers/vercel/SKILL.md)
 owns the conventions for both.
 
 ## Cloudflare

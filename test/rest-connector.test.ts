@@ -267,6 +267,24 @@ describe("restTools()", () => {
     }
   });
 
+  it("redacts a success body before cursors and select read it, when the vendor declares redact", async () => {
+    respond = () => Response.json({ items: [{ id: "w_1", secret: "s1" }], next: "w_1", secret: "top" });
+    const seen: unknown[] = [];
+    const result = await connector({
+      redact: (data) => JSON.parse(JSON.stringify(data, (key, value) => (key === "secret" ? undefined : value))),
+      page: (data) => {
+        seen.push(data);
+        return { hasMore: true, next: String((data as { next: string }).next), param: "after" };
+      },
+    }).callTool("acme_api_read", { path: "/v1/widgets", select: ["items", "secret"] }, ctx());
+    expect(result).toEqual({
+      status: 200,
+      data: { items: [{ id: "w_1" }] },
+      page: { hasMore: true, next: "w_1", param: "after" },
+    });
+    expect(seen).toEqual([{ items: [{ id: "w_1" }], next: "w_1" }]);
+  });
+
   it("reads text, NDJSON, and binary success bodies into data", async () => {
     const acme = connector();
     const bodies: Array<[Response, unknown]> = [

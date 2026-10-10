@@ -709,7 +709,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
       schemasVendored: false,
     });
 
-    expect(cleanReport.added).toHaveLength(178);
+    expect(cleanReport.added).toHaveLength(174);
     await writeFile(toolReference, (await readFile(toolReference, "utf8")).replace("14 tools", "15 tools"));
     const category = join(dirname(toolReference), "deployments.md");
     await writeFile(category, `${await readFile(category, "utf8")}\n## ` + "`new_vercel_tool`\n");
