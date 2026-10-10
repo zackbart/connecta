@@ -51,11 +51,12 @@ deletes files.
 
 Stripe requires `auth`: `{ type: "oauth" }` reaches Stripe's hosted MCP
 server, and `{ type: "apiKey" }` with `mode` reaches Connecta's REST connector
-with an operator-managed key. See the
-[provider auth migration](./provider-auth-migration.md).
-Notion, Vercel, and Cloudflare default to hosted MCP. Their explicit
-`surface: "api"` choices retain selected REST capabilities, with Notion's
-internal-integration identity preserved. To use both, configure distinct IDs
+with an operator-managed key. Notion requires `auth` the same way:
+`{ type: "oauth" }` acts as the signed-in user over Notion's hosted MCP, and
+`{ type: "token" }` acts as an internal integration over Connecta's REST
+connector. See the [provider auth migration](./provider-auth-migration.md).
+Vercel and Cloudflare default to hosted MCP. Their explicit
+`surface: "api"` choices retain selected REST capabilities. To use both, configure distinct IDs
 and independent credentials. Read the [0.29 migration guide](./provider-migration-0.29.md)
 and its provider reconciliation tables for retained and removed names.
 

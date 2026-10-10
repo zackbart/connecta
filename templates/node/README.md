@@ -188,8 +188,8 @@ node -e "console.log(crypto.randomBytes(32).toString('base64'))"
 Keep this key outside the database. Losing it makes saved values unreadable;
 upgrades must reuse it. The shipped `time` connector declares no credential
 slot. Add `credential: { label: "API token" }` to an `api()` connector and read
-it through `await ctx.credential?.get()`, or use Notion's explicit
-`surface: "api"` integration interface, which declares its own slot. Authorized humans manage the slot inside that
+it through `await ctx.credential?.get()`, or use a Notion
+connector with `auth: { type: "token" }`, which declares its own slot. Authorized humans manage the slot inside that
 connection on `/`; there is no separate Credentials tab.
 
 In 0.25.0, this vault also seals downstream OAuth tokens on their first read.

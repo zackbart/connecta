@@ -129,8 +129,8 @@ describe("built-in factory options", () => {
       'cloudflare("cf").accountId',
     ],
     [
-      "a provider surface default",
-      () => notion("wiki", loose({ purpose: "Docs", defaultPageSize: 5 })),
+      "a provider's other auth case's option",
+      () => notion("wiki", loose({ purpose: "Docs", auth: { type: "oauth" }, defaultPageSize: 5 })),
       'notion("wiki").defaultPageSize',
     ],
     [
@@ -257,6 +257,7 @@ describe("discriminated factory options", () => {
   const headers = { "X-Key": SECRET };
   const MCP_AUTH = '"request", "headers", "credential", "oauth"';
   const STRIPE_AUTH = '"oauth", "apiKey"';
+  const NOTION_AUTH = '"oauth", "token"';
   const SURFACE = '"api", "mcp"';
 
   // A misspelled or missing discriminant used to select no case, so the walk
@@ -334,9 +335,14 @@ describe("discriminated factory options", () => {
       `stripe("billing") requires auth.type is required: one of ${STRIPE_AUTH}.`,
     ],
     [
-      "notion() surface",
-      () => notion("wiki", loose({ purpose: "Docs", surface: "MCP" })),
-      `notion("wiki") requires surface to be one of ${SURFACE}.`,
+      "notion() auth",
+      () => notion("wiki", loose({ purpose: "Docs", auth: { type: "OAuth" } })),
+      `notion("wiki") requires auth.type to be one of ${NOTION_AUTH}.`,
+    ],
+    [
+      "notion()'s required auth when omitted",
+      () => notion("wiki", loose({ purpose: "Docs" })),
+      `notion("wiki") requires auth.type is required: one of ${NOTION_AUTH}.`,
     ],
     [
       "vercel() surface",
@@ -387,8 +393,8 @@ describe("discriminated factory options", () => {
     expect(remoteMcp("docs", { url, auth: { type: "headers", headers } }).describe?.().auth?.mode).toBe("headers");
     expect(remoteMcp("docs", { url, auth: { type: "oauth" } }).describe?.().auth?.mode).toBe("oauth");
     expect(remoteMcp("docs", loose({ url, auth: undefined })).describe?.().auth?.mode).toBe("none");
-    expect(() => notion("wiki", { purpose: "Docs" })).not.toThrow();
-    expect(() => notion("wiki", loose({ purpose: "Docs", surface: undefined }))).not.toThrow();
+    expect(() => notion("wiki", { purpose: "Docs", auth: { type: "oauth" } })).not.toThrow();
+    expect(() => notion("wiki", { purpose: "Docs", auth: { type: "token" } })).not.toThrow();
     expect(() => vercel("deploys", { purpose: "Deploys", surface: "mcp" })).not.toThrow();
   });
 });

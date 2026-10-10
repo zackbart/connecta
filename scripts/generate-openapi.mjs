@@ -7,6 +7,10 @@
 //     "digest": "sha256:…", "latest": "https://…/openapi.json",
 //     "options": { "depth": 2, "descriptions": 160, "maxEnum": 50 } }
 //
+// `options.versionHeader` names a header parameter (Notion's `Notion-Version`)
+// whose single value is the API version, for documents whose `info.version`
+// is not the version a request sends.
+//
 // `npm run providers:spec` fetches `url`, refuses bytes whose digest differs
 // from the pin, and writes `openapi.generated.ts` beside it: every
 // non-deprecated operation as a search row, plus request-side details (path
@@ -260,6 +264,36 @@ function tagOf(operation, path) {
   return segments.find((segment, index) => index > 0 && !segment.startsWith("{")) ?? segments[0] ?? "";
 }
 
+/**
+ * The API version a vendor sends in a request header rather than in
+ * `info.version`: Notion's document says `1.0.0` and declares the real version
+ * as the single enum value of a required `Notion-Version` header parameter.
+ * Read from `components.parameters` and every operation, it must name exactly
+ * one value, so a document offering two versions fails generation instead of
+ * pinning one silently.
+ */
+function headerVersion(document, header) {
+  const wanted = header.toLowerCase();
+  const values = new Set();
+  const visit = (raw) => {
+    const parameter = resolveRef(document, raw);
+    if (parameter.in !== "header" || String(parameter.name).toLowerCase() !== wanted) return;
+    const schema = resolveRef(document, parameter.schema ?? {});
+    for (const value of Array.isArray(schema.enum) ? schema.enum : []) values.add(String(value));
+    if (typeof schema.default === "string") values.add(schema.default);
+  };
+  for (const parameter of Object.values(document.components?.parameters ?? {})) visit(parameter);
+  for (const item of Object.values(document.paths)) {
+    const resolved = resolveRef(document, item);
+    for (const parameter of resolved.parameters ?? []) visit(parameter);
+    for (const verb of VERBS) for (const parameter of resolved[verb]?.parameters ?? []) visit(parameter);
+  }
+  if (values.size !== 1) {
+    throw new Error(`expected one ${header} header value in the document, found ${values.size}`);
+  }
+  return [...values][0];
+}
+
 function serverOf(servers) {
   const url = Array.isArray(servers) ? servers[0]?.url : undefined;
   return typeof url === "string" ? url.replace(/\/+$/, "") : undefined;
@@ -406,7 +440,11 @@ export function buildOperationIndex(document, source) {
     source: source.url,
     revision: source.revision,
     digest: source.digest,
-    version: typeof document.info?.version === "string" ? document.info.version : "",
+    version: source.options?.versionHeader
+      ? headerVersion(document, source.options.versionHeader)
+      : typeof document.info?.version === "string"
+        ? document.info.version
+        : "",
     servers,
     tags,
     ops,

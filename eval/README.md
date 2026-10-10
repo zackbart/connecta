@@ -244,8 +244,10 @@ calls and final-answer facts. Fourteen new active tasks cover:
 - an advertised MCP resource read through `connecta.read` with its qualified URI.
 
 [Planned tasks](tasks/planned.ts) record #801's Stripe REST acceptance tests
-(a failed payment, recovery from a refused guess, an idempotent refund). They
-need a fake Stripe service before promotion and never run.
+(a failed payment, recovery from a refused guess, an idempotent refund) and
+Notion token-connector tests (append a checklist to a page found by title,
+count filtered rows across body-cursor pages). They need fake Stripe and Notion
+services before promotion and never run.
 
 Each grader has independent required `correct-destination` and
 `answer-evidence` checks. Destination checks require the connector, tool and

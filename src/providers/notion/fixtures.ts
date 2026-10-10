@@ -1,9 +1,12 @@
 import { notion } from "./index.js";
-const options: Parameters<typeof notion>[1] = { "purpose":"Audit fixture", "surface":"api" };
+type Options = Parameters<typeof notion>[1];
+// The token connector is the default: its tools are Connecta's own, so the
+// hand-written conventions apply to it. The OAuth case reaches hosted MCP.
+const options: Options = { "purpose":"Audit fixture", "auth":{"type":"token"} };
 export const fixture = {
   name: "notion",
   options,
-  cases: [{"label":"padded-purpose","options":{"purpose":"  Audit fixture  "}},{"label":"default","options":{}},{"label":"mcp","options":{"surface":"mcp"}}],
-  create(id = "fixture", overrides: Partial<Parameters<typeof notion>[1]> = {}) { return notion(id, { ...options, ...overrides } as Parameters<typeof notion>[1]); },
-  conventions: {"verbs":["integration"],"nestedDescriptionExceptions":[],"auth":"credential"},
+  cases: [{"label":"padded-purpose","options":{"purpose":"  Audit fixture  "}},{"label":"default","options":{}},{"label":"oauth","options":{"auth":{"type":"oauth"}}}],
+  create(id = "fixture", overrides: Partial<Options> = {}) { return notion(id, { ...options, ...overrides } as Options); },
+  conventions: {"verbs":["integration","notion"],"nestedDescriptionExceptions":[],"auth":"credential"},
 };

@@ -56,11 +56,19 @@ export interface RestFraming {
   headers?: Record<string, string | undefined>;
 }
 
-/** The cursor for the next page: pass `next` back as the `param` query parameter. */
+/**
+ * The cursor for the next page: pass `next` back as `param`, a query
+ * parameter unless `in` says the operation takes it in its body (Notion's
+ * read-only POST queries do). `path` names a different GET that continues
+ * the list, when the first page came from a call that created it (Notion's
+ * view queries). `hasMore` without `next` means the operation has no cursor.
+ */
 export interface RestPage {
   hasMore: boolean;
   next?: string;
   param?: string;
+  in?: "query" | "body";
+  path?: string;
 }
 
 export interface RestResult {
@@ -379,8 +387,15 @@ const SELECT: JsonSchema = {
 
 const PAGE: JsonSchema = {
   type: "object",
-  description: "Present on lists: pass next as the param query parameter for the following page.",
-  properties: { hasMore: { type: "boolean" }, next: { type: "string" }, param: { type: "string" } },
+  description:
+    "Present on lists: pass next as the param query parameter (a body field when in is body) for the next page. hasMore without next: no cursor exists.",
+  properties: {
+    hasMore: { type: "boolean" },
+    next: { type: "string" },
+    param: { type: "string" },
+    in: { type: "string", enum: ["query", "body"] },
+    path: { type: "string", description: "GET this path for the next page, when it differs from this call's." },
+  },
   required: ["hasMore"],
 };
 

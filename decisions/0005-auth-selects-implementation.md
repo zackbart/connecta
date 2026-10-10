@@ -134,3 +134,21 @@ The Stripe conversion (#801, PR #803) settled facts the plan above left open:
 - A write sent without an idempotency key is never advertised as retryable
   once it may have reached the vendor (a reset after connecting, a 5xx, a
   lost body); only failures proven to precede any connection stay retryable.
+
+### Amendment: what the Notion PR established
+
+- Notion's published document is unversioned (`info.version` is `1.0.0`), so
+  it is pinned by content digest, and the generator reads the API version from
+  the single value of its required `Notion-Version` header parameter
+  (`options.versionHeader`). The sent header is held equal to it by test.
+- Notion's reads include POST queries (search, data source, meeting note,
+  agent, session, and session event queries); their cursors go back in the
+  body, which the shared envelope states as `page.in: "body"`. A view query
+  is stored until deleted, so `POST /v1/views/{view_id}/queries` stays a
+  write. Notion's OAuth token endpoints are refused.
+- Notion did not fit its cap either: the entry measures 211,946 B gzip with
+  a 14 KB index (depth 4), so the cap moved to baseline + 60,000 B.
+- The token connector keeps the named tools that project or author Notion's
+  shapes and drops the one-operation wrappers the generic set replaces.
+  `test/fixtures/provider-reconciliation.ts` stays until Vercel and Cloudflare
+  convert, since their reconciliation tests still use it.
