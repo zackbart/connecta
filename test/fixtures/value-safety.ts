@@ -54,7 +54,12 @@ export interface Candidates {
   options?: unknown;
   candidates: Record<string, { fields: string[]; named: boolean }>;
   /** The table paths `providers:spec` found in the pinned response schemas. */
-  reviewed?: { operations: Record<string, string[]>; resources: Record<string, string[]> };
+  reviewed?: {
+    operations: Record<string, string[]>;
+    resources: Record<string, string[]>;
+    /** Per resource with a guest condition, the fields the pinned schema says can bind it. */
+    bindings?: Record<string, string[]>;
+  };
 }
 
 /** Table paths an operation's (or resource's) pinned schema lacks, acknowledged in `value-safety.absent.json`. */
@@ -78,8 +83,6 @@ export interface ValueSafetyReview {
    * envelope's paging metadata). Defaults to the field itself.
    */
   dataPath?(field: string): string | undefined;
-  /** Per resource type with a `when` condition, fields that make it hold (a Checkout Session's `customer`). */
-  readonly resourceExamples?: Record<string, Record<string, unknown>>;
 }
 
 export interface ValueSafetyHarness extends ValueSafetyReview {
@@ -312,9 +315,7 @@ export function reviewProblems(review: ValueSafetyReview): ReviewProblems {
     for (const reviewed of [...(rule.paths ?? []), ...(rule.withheld ?? []), ...(rule.verbatim ?? [])]) {
       if (!validPath(reviewed)) problems.invalid.push(`resource ${type}: ${reviewed} is not in the path language`);
     }
-    if (rule.when && !review.resourceExamples?.[type]) {
-      problems.invalid.push(`resource ${type}: a conditional rule needs an example that makes it hold`);
-    }
+    if (rule.guest && !(rule.withheld ?? []).length) problems.invalid.push(`resource ${type}: a guest condition withholds nothing`);
   }
 
   // Every reviewed path names something the pinned response schema can return.
@@ -341,8 +342,22 @@ export function reviewProblems(review: ValueSafetyReview): ReviewProblems {
     if (!Object.hasOwn(table.operations, key)) problems.unresolved.push(`${key}: stamped, but the table lacks it`);
   }
   for (const [type, rule] of Object.entries(resources?.rules ?? {})) {
-    const paths = [...(rule.paths ?? []), ...(rule.withheld ?? []), ...(rule.verbatim ?? [])];
+    const guest = rule.guest
+      ? [...Object.keys(rule.guest.bindings), ...Object.keys(rule.guest.unbound), ...Object.keys(rule.guest.requires ?? {})]
+      : [];
+    const paths = [...(rule.paths ?? []), ...(rule.withheld ?? []), ...(rule.verbatim ?? []), ...guest];
     check(`resource ${type}`, paths, stamped?.resources[type] ?? [], review.absent?.resources?.[type] ?? []);
+    // Deny by default needs every binding field the schema has: a new one fails until it is reviewed.
+    if (rule.guest) {
+      const declared = [...Object.keys(rule.guest.bindings), ...Object.keys(rule.guest.unbound)].sort();
+      const schema = [...(stamped?.bindings?.[type] ?? [])].sort();
+      for (const field of schema) {
+        if (!declared.includes(field)) problems.unresolved.push(`resource ${type}: binding field ${field} is not reviewed`);
+      }
+      for (const field of declared) {
+        if (!schema.includes(field)) problems.unresolved.push(`resource ${type}: ${field} is not a binding field in the pinned schema`);
+      }
+    }
   }
 
   // Every flagged field is accounted for, and the ones a review removes are removed in their schema shape.
@@ -434,10 +449,29 @@ export function reviewProblems(review: ValueSafetyReview): ReviewProblems {
   if (resources) {
     const resourceMarker = "RESOURCE-RULE-SECRET";
     for (const [type, rule] of Object.entries(resources.rules)) {
-      const example = review.resourceExamples?.[type] ?? {};
+      // Objects the guest condition must deny: one per binding field holding a non-guest value, and one per unmet requirement.
+      const guest = rule.guest;
+      const allowed = (values: readonly string[]) => values[0] ?? null;
+      const guestFields: Record<string, unknown> = Object.fromEntries(
+        Object.entries(guest?.requires ?? {}).map(([field, values]) => [field, allowed(values)]),
+      );
+      const bound: Array<[string, Record<string, unknown>]> = guest
+        ? [
+            ...Object.keys(guest.bindings).map(
+              (field): [string, Record<string, unknown>] => [field, { ...guestFields, [field]: "bound_x" }],
+            ),
+            ...Object.keys(guest.requires ?? {}).map(
+              (field): [string, Record<string, unknown>] => [field, { ...guestFields, [field]: "not_reviewed" }],
+            ),
+          ]
+        : [];
       const cases: Array<[string, readonly string[], Record<string, unknown>]> = [
         ["paths", rule.paths ?? [], {}],
-        ["withheld", rule.when ? (rule.withheld ?? []) : [], example],
+        ...bound.map(([field, fields]): [string, readonly string[], Record<string, unknown>] => [
+          `withheld when ${field} binds`,
+          rule.withheld ?? [],
+          fields,
+        ]),
       ];
       for (const [label, paths, extra] of cases) {
         for (const reviewed of paths) {
@@ -462,17 +496,20 @@ export function reviewProblems(review: ValueSafetyReview): ReviewProblems {
           }
         }
       }
-      // A reviewed verbatim URL comes back whole only while the rule's condition does not hold.
+      // A reviewed verbatim URL comes back whole for a guest object, and only for one.
       for (const field of rule.verbatim ?? []) {
         const url = "https://pay.example.com/c/pay/cs_1#opaque-token-state";
-        const plain = safety.redact({ [resources.key]: type, [field]: url }, "GET", "/") as Record<string, unknown>;
-        if (plain[field] !== url) problems.resourceLeaks.push(`${type} verbatim ${field}: altered`);
-        if (rule.when) {
-          const bound = safety.redact({ ...example, [resources.key]: type, [field]: url }, "GET", "/") as Record<
+        const plain = safety.redact({ ...guestFields, [resources.key]: type, [field]: url }, "GET", "/") as Record<
+          string,
+          unknown
+        >;
+        if (plain[field] !== url) problems.resourceLeaks.push(`${type} verbatim ${field}: altered for a guest`);
+        for (const [binding, fields] of bound) {
+          const out = safety.redact({ ...fields, [resources.key]: type, [field]: url }, "GET", "/") as Record<
             string,
             unknown
           >;
-          if (bound[field] === url) problems.resourceLeaks.push(`${type} verbatim ${field}: kept while withheld`);
+          if (out[field] === url) problems.resourceLeaks.push(`${type} verbatim ${field}: kept while ${binding} binds`);
         }
       }
     }

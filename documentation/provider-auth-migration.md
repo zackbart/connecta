@@ -265,11 +265,12 @@ one; read or rotate withheld secrets in the vendor's dashboard.
   request header values, and Issuing card numbers and CVCs; webhook, file
   link, and pre-signed import URLs keep only their scheme and host, and the
   rules follow each object into expansions, lists, and events (an expanded
-  File's links, an event's `previous_attributes`). A guest Checkout Session's
-  URL and Identity verification URLs are unchanged; a Checkout Session bound
-  to a customer (`customer`, `customer_creation: "always"`, or saved payment
-  method options) returns only its scheme and host, because its page can
-  show, reuse, or remove the customer's saved payment methods. v2 account
+  File's links, an event's `previous_attributes`). Identity verification
+  URLs are unchanged. A Checkout Session's URL is returned whole only for a
+  guest payment session (`mode: "payment"`, no `customer` or
+  `customer_account`, no customer creation, no saved payment method options);
+  any other session returns only its scheme and host, because its page can
+  show, reuse, or remove a customer's saved payment methods. v2 account
   links and Terminal onboarding links are refused too. Issuing `number` and
   `cvc` expansions are refused on every Issuing path, not only cards.
   Failures of credential-bearing operations keep Stripe's type, code, and

@@ -773,7 +773,12 @@ describe("value-safety candidate detection", () => {
         document: unknown,
         table: object,
         options?: object,
-      ): { operations: Record<string, string[]>; resources: Record<string, string[]>; unresolved: string[] };
+      ): {
+        operations: Record<string, string[]>;
+        resources: Record<string, string[]>;
+        bindings: Record<string, string[]>;
+        unresolved: string[];
+      };
     };
 
   it("INV-5: flags what either former detector flagged: suffixes on value-carrying fields, containment on any", async () => {
@@ -892,7 +897,40 @@ describe("value-safety candidate detection", () => {
         "GET /v1/wrapped": ["secret"],
       },
       resources: { hook: ["secret"], ghost: [] },
+      bindings: {},
       unresolved: ["GET /v1/hooks/{id}: url.missing", "resource hook: nope", "resource ghost: no schema declares it"],
+    });
+    // A guest condition is held to the schema's binding fields: identity-named fields and Customer or Account references.
+    const sessionDocument = {
+      openapi: "3.0.0",
+      components: {
+        schemas: {
+          customer: { type: "object", properties: { object: { type: "string", enum: ["customer"] } } },
+          session: {
+            type: "object",
+            properties: {
+              object: { type: "string", enum: ["session"] },
+              customer: { anyOf: [{ type: "string" }, { $ref: "#/components/schemas/customer" }] },
+              payer: { anyOf: [{ type: "string" }, { $ref: "#/components/schemas/customer" }] },
+              customer_account: { type: "string" },
+              saved_payment_method_options: { type: "object" },
+              mode: { type: "string" },
+              url: { type: "string" },
+            },
+          },
+        },
+      },
+      paths: {},
+    };
+    const guarded = {
+      operations: {},
+      resources: {
+        key: "object",
+        rules: { session: { reason: "r", verbatim: ["url"], guest: { bindings: { customer: [] }, unbound: {} } } },
+      },
+    };
+    expect(reviewedPaths(sessionDocument, guarded).bindings).toEqual({
+      session: ["customer", "customer_account", "payer", "saved_payment_method_options"],
     });
     // Without the envelope's data root, the wrapped keep names nothing.
     expect(reviewedPaths(document, table).unresolved).toContain("GET /v1/wrapped: secret");

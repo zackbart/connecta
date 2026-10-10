@@ -6560,7 +6560,18 @@
       "setup_intent": ["client_secret"],
       "source": ["client_secret"],
       "invoice": ["confirmation_secret"],
-      "checkout.session": ["client_secret", "origin:url", "url"],
+      "checkout.session": [
+        "client_secret",
+        "customer",
+        "customer_account",
+        "customer_creation",
+        "customer_details",
+        "customer_email",
+        "mode",
+        "origin:url",
+        "saved_payment_method_options",
+        "url"
+      ],
       "identity.verification_session": ["client_secret", "url"],
       "terminal.configuration": [
         "wifi.enterprise_eap_peap.password",
@@ -6573,6 +6584,16 @@
         "origin:status_details.succeeded_with_errors.error_file.download_url.url"
       ],
       "v2.billing.meter_event_session": ["authentication_token"]
+    },
+    "bindings": {
+      "checkout.session": [
+        "customer",
+        "customer_account",
+        "customer_creation",
+        "customer_details",
+        "customer_email",
+        "saved_payment_method_options"
+      ]
     }
   }
 }

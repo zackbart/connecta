@@ -796,9 +796,12 @@ every vendor ships one reviewed table through one mechanism
    keyed on the object's type discriminator (Stripe's `object`) that apply to
    every such object wherever a response embeds it (an expansion, a list, an
    event's `data.object` and its `previous_attributes`). A resource rule can
-   withhold more when a condition holds (a Checkout Session bound to a
-   customer) and otherwise return a reviewed payer-facing URL verbatim (a
-   guest Checkout page). Argument-dependent refusals (Stripe expansions,
+   return a reviewed payer-facing URL verbatim only while a declarative guest
+   condition holds (deny by default: a Checkout page only when every field
+   that can bind the session to a Customer, an Account, or saved payment
+   methods is empty and the session only takes a payment) and withhold it
+   otherwise. `providers:spec` derives the binding fields from the pinned
+   schema, and the harness fails until the condition lists each one. Argument-dependent refusals (Stripe expansions,
    Vercel `decrypt`) stay in the vendor's `refuse` hook.
 3. **Redaction on every success body**, in `callRest` after `result` and
    before cursors and `select`, so named tools, HEAD data, and uploads pass

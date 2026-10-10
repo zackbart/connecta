@@ -61,6 +61,29 @@ function review(hook: string[], pins: string[]): ValueSafetyReview {
 }
 
 describe("value-safety harness mutations", () => {
+  const stripeReview = (table: ValueSafetyTable, candidates: Candidates = stripeCandidates): ValueSafetyReview => ({
+    table,
+    index: new OperationIndex(stripeOpenapi, { vendor: "stripe", title: "Stripe" }),
+    source: stripeSource,
+    candidates,
+  });
+
+  it("INV-5: fails Stripe's guest Checkout condition when the pinned schema gains a binding field", () => {
+    expect(Object.values(reviewProblems(stripeReview(STRIPE_VALUE_SAFETY))).flat()).toEqual([]);
+    const bindings = stripeCandidates.reviewed.bindings["checkout.session"];
+    expect(bindings).toEqual(expect.arrayContaining(["customer", "customer_account"]));
+    const grown: Candidates = {
+      ...stripeCandidates,
+      reviewed: {
+        ...stripeCandidates.reviewed,
+        bindings: { "checkout.session": [...bindings, "customer_profile"] },
+      },
+    };
+    expect(reviewProblems(stripeReview(STRIPE_VALUE_SAFETY, grown)).unresolved).toContain(
+      "resource checkout.session: binding field customer_profile is not reviewed",
+    );
+  });
+
   it("INV-5: passes a table whose paths resolve, cover, and reach their fields", () => {
     expect(Object.values(reviewProblems(review(["secret", "origin:url"], ["data.*.pin"]))).flat()).toEqual([]);
   });
@@ -114,7 +137,6 @@ describe("value-safety harness mutations", () => {
       index: new OperationIndex(stripeOpenapi, { vendor: "stripe", title: "Stripe" }),
       source: stripeSource,
       candidates: stripeCandidates,
-      resourceExamples: { "checkout.session": { customer: "cus_1" } },
     });
     expect(problems.unresolved).toContainEqual(expect.stringContaining(`${key}: url.missing`));
   });

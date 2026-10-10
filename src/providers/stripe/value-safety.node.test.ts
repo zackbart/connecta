@@ -15,8 +15,6 @@ describeValueSafety("Stripe", {
   index: new OperationIndex(openapi, { vendor: "stripe", title: "Stripe" }),
   source,
   candidates,
-  // A Checkout Session bound to a customer withholds its page.
-  resourceExamples: { "checkout.session": { customer: "cus_1" } },
   counts: { refuse: 13, redact: 106, safe: 228 },
   connector: () => stripe("billing", { purpose: "Billing", auth: { type: "apiKey" }, mode: "sandbox" }),
   ctx: () => ({ ...connectorContext(), credential: { get: async () => KEY, getAll: async () => ({ value: KEY }) } }),

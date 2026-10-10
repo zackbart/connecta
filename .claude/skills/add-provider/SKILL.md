@@ -115,6 +115,9 @@ vendors"). The steps:
    each with a reason, `fields` for names reviewed once across the API, and,
    when objects carry a type discriminator and can be expanded into other
    responses, `resources` rules that follow each object wherever it appears.
+   A rule returns a URL verbatim only under a `guest` condition (deny by
+   default) that lists every binding field `providers:spec` derives from the
+   schema.
    Prefer refusing whole secret families (minting, rotation, decrypted
    values, login and onboarding links) and route legitimate needs to
    value-safe named tools. Every flagged response field needs a redact path,

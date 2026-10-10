@@ -425,6 +425,42 @@ function responseRoots(document, operation, dataRoot) {
   return roots;
 }
 
+/** Object types that are an identity a session can be bound to. */
+const IDENTITY_OBJECTS = ["customer", "deleted_customer", "account", "v2.core.account"];
+
+/** Whether a schema (or its list items, or any branch an expansion takes) is an identity object. */
+function referencesIdentity(document, schema, key) {
+  return alternatives(document, schema).some((option) => {
+    if (option.items && referencesIdentity(document, option.items, key)) return true;
+    const discriminator = resolved(document, option.properties?.[key]);
+    return Array.isArray(discriminator?.enum) && discriminator.enum.some((value) => IDENTITY_OBJECTS.includes(value));
+  });
+}
+
+/**
+ * The fields of a resource that can bind it to an identity or its saved
+ * payment methods, read from the pinned schema: identity-named fields
+ * (customer, account, saved payment method) and fields that reference a
+ * Customer or Account. A resource rule's guest condition must list every one,
+ * so a new binding field in a new pin fails review until it is.
+ */
+export function bindingFields(document, roots, key) {
+  const found = new Set();
+  for (const root of roots) {
+    for (const option of alternatives(document, root)) {
+      for (const [name, child] of Object.entries(option.properties ?? {})) {
+        if (
+          /customer|account|savedpaymentmethod/.test(normalizedName(name)) ||
+          referencesIdentity(document, child, key)
+        ) {
+          found.add(name);
+        }
+      }
+    }
+  }
+  return [...found].sort();
+}
+
 /**
  * Validate a reviewed table's paths against the pinned document: every
  * `redact` path and `keep` of an operation verdict must name something the
@@ -447,6 +483,7 @@ export function reviewedPaths(document, table, options = {}) {
     for (const raw of paths) if (!operations[key].includes(raw)) unresolved.push(`${key}: ${raw}`);
   }
   const resources = {};
+  const bindings = {};
   const rules = table.resources;
   if (rules) {
     for (const [type, rule] of Object.entries(rules.rules)) {
@@ -456,13 +493,23 @@ export function reviewedPaths(document, table, options = {}) {
           return Array.isArray(discriminator?.enum) && discriminator.enum.includes(type);
         }),
       );
-      const paths = [...new Set([...(rule.paths ?? []), ...(rule.withheld ?? []), ...(rule.verbatim ?? [])])].sort();
+      const guest = rule.guest
+        ? [
+            ...Object.keys(rule.guest.bindings ?? {}),
+            ...Object.keys(rule.guest.unbound ?? {}),
+            ...Object.keys(rule.guest.requires ?? {}),
+          ]
+        : [];
+      const paths = [
+        ...new Set([...(rule.paths ?? []), ...(rule.withheld ?? []), ...(rule.verbatim ?? []), ...guest]),
+      ].sort();
       if (roots.length === 0) unresolved.push(`resource ${type}: no schema declares it`);
+      if (rule.guest) bindings[type] = bindingFields(document, roots, rules.key);
       resources[type] = paths.filter((raw) => pathResolves(document, roots, raw));
       for (const raw of paths) if (!resources[type].includes(raw)) unresolved.push(`resource ${type}: ${raw}`);
     }
   }
-  return { operations, resources, unresolved };
+  return { operations, resources, bindings, unresolved };
 }
 
 /**
@@ -501,7 +548,7 @@ export function renderValueSafety(document, source, reviewed) {
   let stamp;
   if (reviewed) {
     const checked = reviewedPaths(document, reviewed.table, options);
-    stamp = { operations: checked.operations, resources: checked.resources };
+    stamp = { operations: checked.operations, resources: checked.resources, bindings: checked.bindings };
     const acknowledged = new Set([
       ...Object.entries(reviewed.absent.operations ?? {}).flatMap(([key, paths]) =>
         paths.map((path) => `${key}: ${path}`),

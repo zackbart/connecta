@@ -159,9 +159,9 @@ describe("value-safety engine", () => {
           session: {
             reason: "A payer page; bound to a customer it is a capability.",
             paths: ["client_secret"],
-            when: (session) => session["customer"] != null,
-            withheld: ["origin:url"],
             verbatim: ["url"],
+            guest: { bindings: { customer: [] }, unbound: {} },
+            withheld: ["origin:url"],
           },
         },
       },

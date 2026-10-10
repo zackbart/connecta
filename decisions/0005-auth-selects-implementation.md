@@ -245,8 +245,11 @@ tracked, and applied the bar to Stripe and Notion:
   operation. Tables may now state resource rules keyed on a type
   discriminator (Stripe's `object`) that apply wherever an object appears,
   events' `previous_attributes` included. Checkout URLs are returned whole
-  only for guest sessions; a session bound to a customer is a capability on
-  that customer's saved payment methods.
+  only for provably guest payment sessions, deny by default: a session bound
+  to a Customer or an Account (`customer_account` is Stripe's Accounts v2
+  equivalent of `customer`) is a capability on saved payment methods, and the
+  binding fields are derived from the pinned schema so a new one forces
+  review.
 - Every reviewed path is checked against the pinned response schema by
   `providers:spec`, which stamps the paths that resolve; misses are
   acknowledged one by one in `value-safety.absent.json` (shared verdicts and

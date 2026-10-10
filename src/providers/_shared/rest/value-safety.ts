@@ -195,19 +195,53 @@ interface FieldReview {
  * review what an operation returns by shape; resource rules are the backstop
  * for what expansions can put anywhere.
  */
+/**
+ * When an object is provably unbound (a guest Checkout Session), stated as
+ * data so `providers:spec` can hold it to the pinned schema: every binding
+ * field the schema has must be listed, in `bindings` or, with a reason, in
+ * `unbound`.
+ */
+interface GuestCondition {
+  /**
+   * Fields that bind the object to an identity or its saved methods. Each
+   * must be absent, null, empty, or one of the listed values that bind
+   * nothing (`customer_creation: "if_required"`).
+   */
+  readonly bindings: Readonly<Record<string, readonly string[]>>;
+  /** Identity-named fields that bind nothing (guest prefill or collected details), with the reason. */
+  readonly unbound: Readonly<Record<string, string>>;
+  /** Fields whose value must be one of these (a Checkout Session's `mode: "payment"`). */
+  readonly requires?: Readonly<Record<string, readonly string[]>>;
+}
+
 interface ResourceRule {
   readonly reason: string;
   /** Reviewed paths relative to the object, in the operation path language. */
   readonly paths?: readonly string[];
-  /** When this holds for the object, its `withheld` paths go too (a Checkout Session bound to a customer). */
-  readonly when?: (resource: Readonly<Record<string, unknown>>) => boolean;
-  readonly withheld?: readonly string[];
   /**
    * Fields whose string is a payer-facing URL the resource exists to hand out
-   * (a guest Checkout page), returned without URL sanitizing when `when` does
-   * not hold: its fragment is opaque state the page needs.
+   * (a guest Checkout page), returned without URL sanitizing: its fragment is
+   * opaque state the page needs. With `guest`, only while the object is
+   * provably a guest's; otherwise its `withheld` paths go.
    */
   readonly verbatim?: readonly string[];
+  readonly guest?: GuestCondition;
+  readonly withheld?: readonly string[];
+}
+
+/** Deny by default: an object is a guest's only when no binding field holds anything but a reviewed guest value. */
+function guestOnly(resource: Readonly<Record<string, unknown>>, guest: GuestCondition): boolean {
+  for (const [field, allowed] of Object.entries(guest.bindings)) {
+    const value = resource[field];
+    if (value === undefined || value === null || value === "") continue;
+    if (typeof value === "string" && allowed.includes(value)) continue;
+    return false;
+  }
+  for (const [field, allowed] of Object.entries(guest.requires ?? {})) {
+    const value = resource[field];
+    if (typeof value !== "string" || !allowed.includes(value)) return false;
+  }
+  return true;
 }
 
 interface ResourceRules {
@@ -551,7 +585,7 @@ function resourcePass(
   const rule = ruleFor(out[resources.key]);
   if (!rule) return out;
   for (const path of rule.paths ?? []) out = applyPath(out, path) as JsonRecord;
-  if (rule.when?.(out)) {
+  if (rule.guest && !guestOnly(out, rule.guest)) {
     for (const path of rule.withheld ?? []) out = applyPath(out, path) as JsonRecord;
   } else if (rule.verbatim?.length) {
     verbatim.set(out, new Set(rule.verbatim));

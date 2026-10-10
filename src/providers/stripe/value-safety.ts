@@ -37,11 +37,12 @@
 //   search results, and events' `data.object` and `previous_attributes`. They
 //   are the backstop for expansions: an expanded File carries its public file
 //   links, an expanded PaymentIntent its client secret.
-// - Hosted Checkout URLs come back verbatim only for a guest session (no
-//   customer, no customer creation, no saved payment method options): such a
-//   page only takes a payment. A session bound to a customer can display,
-//   reuse, or remove the customer's saved payment methods, so its URL keeps
-//   only its origin. Identity verification URLs come back verbatim: the page
+// - Hosted Checkout URLs are withheld by default and come back verbatim only
+//   for a provably guest payment session (`GUEST_CHECKOUT`: no Customer, no
+//   Account, no Customer creation, no saved payment method options,
+//   `mode: "payment"`): such a page only takes a payment. A bound session can
+//   display, reuse, or remove saved payment methods, so its URL keeps only its
+//   origin. Identity verification URLs come back verbatim: the page
 //   collects documents from the person being verified and shows no stored
 //   data. Payment link URLs are public by design and bound to no customer.
 // - Issuing card numbers and CVCs come back only as expansions, which the
@@ -702,20 +703,34 @@ const FIELDS: ValueSafetyTable["fields"] = {
 };
 
 /**
- * A Checkout Session bound to a customer (an existing customer, one it will
- * create, or saved-payment-method options) can display, reuse, or remove that
- * customer's saved payment methods, so its URL is a capability on the
- * customer, not only a payment page.
+ * When a Checkout Session's hosted page is only a payment page. Deny by
+ * default: the URL comes back whole only when every field of the pinned
+ * checkout.session schema that can bind the session to an identity or its
+ * saved payment methods is empty, and the session only takes a payment. A
+ * bound page (an existing Customer or Account, a Customer it will create, or
+ * saved-payment-method options) can display, reuse, or remove that
+ * identity's saved payment methods, so it is a capability on the customer.
+ * `providers:spec` derives the binding fields from the schema (identity-named
+ * fields and fields referencing a Customer or Account) and the harness fails
+ * until a new one is listed here.
  */
-function customerBound(session: Readonly<Record<string, unknown>>): boolean {
-  const customer = session["customer"];
-  const saved = session["saved_payment_method_options"];
-  return (
-    (customer !== null && customer !== undefined && customer !== "") ||
-    session["customer_creation"] === "always" ||
-    (typeof saved === "object" && saved !== null)
-  );
-}
+const GUEST_CHECKOUT = {
+  bindings: {
+    customer: [],
+    customer_account: [],
+    // Creates a Customer only when the session needs one (never in payment mode without saving).
+    customer_creation: ["if_required"],
+    saved_payment_method_options: [],
+  },
+  unbound: {
+    customer_email:
+      "Prefills the email a guest types; it names no Customer and grants nothing on the page beyond the payment.",
+    customer_details:
+      "What the payer entered (name, email, address, tax ids), collected during or after the payment; it binds nothing.",
+  },
+  // Setup and subscription sessions save a payment method to a Customer.
+  requires: { mode: ["payment"] },
+};
 
 const SENSITIVE_HEADERS = ["request_details.headers.value", "response_details.headers.value"];
 const WIFI_PASSWORDS = [
@@ -769,11 +784,11 @@ const RESOURCES: ValueSafetyTable["resources"] = {
     invoice: { reason: "Carries the invoice PaymentIntent's client secret.", paths: ["confirmation_secret"] },
     "checkout.session": {
       reason:
-        "A client secret; and a hosted page that, bound to a customer, can display, reuse, or remove saved payment methods. A guest session's page only takes a payment and comes back verbatim.",
+        "A client secret; and a hosted page that, bound to a Customer or Account, can display, reuse, or remove saved payment methods. Only a provably guest payment session's page comes back verbatim.",
       paths: ["client_secret"],
-      when: customerBound,
-      withheld: ["origin:url"],
       verbatim: ["url"],
+      guest: GUEST_CHECKOUT,
+      withheld: ["origin:url"],
     },
     "identity.verification_session": {
       reason:

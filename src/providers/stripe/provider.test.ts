@@ -732,18 +732,22 @@ describe("stripe() over an API key", () => {
     });
     expect(hook).toEqual({ id: "we_1", secret: "[redacted]", url: "https://hooks.example.com/[redacted]" });
     const checkoutUrl = "https://checkout.stripe.com/c/pay/cs_test_1#fidkdWxOYHwnPyd1blpxYHZxWjA0token";
-    // A guest session's page comes back whole; its fragment is state the page needs.
+    // A guest payment session's page comes back whole; its fragment is state the page needs.
     const session = await read("/v1/checkout/sessions/cs_1", {
       object: "checkout.session",
       id: "cs_1",
+      mode: "payment",
       customer: null,
+      customer_email: "payer@example.com",
       url: checkoutUrl,
       client_secret: "cs_1_secret_FOUR",
     });
     expect(session).toEqual({
       object: "checkout.session",
       id: "cs_1",
+      mode: "payment",
       customer: null,
+      customer_email: "payer@example.com",
       url: checkoutUrl,
       client_secret: "[redacted]",
     });
@@ -807,18 +811,25 @@ describe("stripe() over an API key", () => {
     expect(await call("/v1/files/file_1", file)).toContain("https://files.stripe.com/v1/files/file_1/contents");
   });
 
-  it("INV-5: withholds the hosted page of a Checkout Session bound to a customer, wherever it appears (review 807-2)", async () => {
+  it("INV-5: returns a Checkout page whole only for a provably guest payment session, wherever it appears (review 807-2, 807-r2)", async () => {
     const connector = stripe("billing", SANDBOX);
     const page = "https://checkout.stripe.com/c/pay/cs_test_1#fidkdWxOYHwnPydjdXN0b21lcg";
+    const origin = "https://checkout.stripe.com/[redacted]";
+    const guest = { object: "checkout.session", id: "cs_1", mode: "payment", customer: null, url: page };
+    // Deny by default: any binding field, or a mode that saves a payment method, withholds the page.
     const bound: Array<Record<string, unknown>> = [
       { customer: "cus_1" },
       { customer: { object: "customer", id: "cus_1" } },
-      { customer: null, customer_creation: "always" },
-      { customer: null, saved_payment_method_options: { payment_method_remove: "enabled" } },
+      { customer_account: "acct_existing" },
+      { mode: "subscription", customer_account: "acct_existing" },
+      { customer_creation: "always" },
+      { saved_payment_method_options: { payment_method_remove: "enabled" } },
+      { mode: "setup" },
+      { mode: "subscription" },
     ];
-    for (const fields of bound) {
-      respond = () => Response.json({ object: "checkout.session", id: "cs_1", url: page, ...fields });
-      const created = (await connector.callTool(
+    const create = async (session: Record<string, unknown>) => {
+      respond = () => Response.json(session);
+      return (await connector.callTool(
         "stripe_api_write",
         {
           method: "POST",
@@ -831,35 +842,45 @@ describe("stripe() over an API key", () => {
         },
         keyed(),
       )) as any;
-      expect(created.data.url, JSON.stringify(fields)).toBe("https://checkout.stripe.com/[redacted]");
+    };
+    for (const fields of bound) {
+      expect((await create({ ...guest, ...fields })).data.url, JSON.stringify(fields)).toBe(origin);
     }
-    // A list, a search, and an expansion read the same rule.
-    respond = () =>
-      Response.json({
-        object: "list",
-        has_more: false,
-        data: [
-          { object: "checkout.session", id: "cs_1", customer: "cus_1", url: page },
-          { object: "checkout.session", id: "cs_2", customer: null, url: page },
-        ],
-      });
-    const list = (await connector.callTool("stripe_api_read", { path: "/v1/checkout/sessions" }, keyed())) as any;
-    expect(list.data.data.map((session: { url: string }) => session.url)).toEqual([
-      "https://checkout.stripe.com/[redacted]",
-      page,
-    ]);
-    respond = () =>
-      Response.json({
-        object: "payment_intent",
-        id: "pi_1",
-        client_secret: "pi_1_secret_X",
-        checkout: { object: "checkout.session", id: "cs_1", customer: "cus_1", url: page },
-      });
-    const expanded = JSON.stringify(
-      await connector.callTool("stripe_api_read", { path: "/v1/payment_intents/pi_1" }, keyed()),
+    expect((await create(guest)).data.url).toBe(page);
+    // customer_account in every placement: retrieve with select, a list, an expansion, and an event.
+    const account = { ...guest, customer_account: "acct_existing" };
+    const read = async (path: string, body: unknown, args: Record<string, unknown> = {}) => {
+      respond = () => Response.json(body);
+      return JSON.stringify(await connector.callTool("stripe_api_read", { path, ...args }, keyed()));
+    };
+    const placements: Array<[string, unknown, Record<string, unknown>]> = [
+      ["/v1/checkout/sessions/cs_1", account, { select: ["url"] }],
+      ["/v1/checkout/sessions", { object: "list", has_more: false, data: [account] }, {}],
+      [
+        "/v1/payment_intents/pi_1",
+        { object: "payment_intent", id: "pi_1", client_secret: "pi_1_secret_X", checkout: account },
+        {},
+      ],
+      [
+        "/v1/events/evt_1",
+        {
+          object: "event",
+          type: "checkout.session.completed",
+          data: { object: account, previous_attributes: { url: page } },
+        },
+        {},
+      ],
+    ];
+    for (const [path, body, args] of placements) {
+      const text = await read(path, body, args);
+      expect(text, path).not.toContain("#fid");
+      expect(text, path).not.toContain("pi_1_secret_X");
+    }
+    // A list keeps a guest session's page beside a bound one's.
+    const list = JSON.parse(
+      await read("/v1/checkout/sessions", { object: "list", has_more: false, data: [account, guest] }),
     );
-    expect(expanded).not.toContain("pi_1_secret_X");
-    expect(expanded).not.toContain("#fid");
+    expect(list.data.data.map((session: { url: string }) => session.url)).toEqual([origin, page]);
     // A payment link is public by design and bound to no customer.
     respond = () => Response.json({ object: "payment_link", id: "plink_1", url: "https://buy.stripe.com/test_abc" });
     expect(
