@@ -382,7 +382,11 @@ export function buildOperationIndex(document, source) {
   // `responseSecrets: true` records, per operation, the success-response
   // fields whose names are credential vocabulary, so a provider test can
   // require a reviewed value-safety verdict for every one of them.
-  const responseSecrets = source.options?.responseSecrets === true;
+  // A number versions the detection rules, so tightening them restales the
+  // generated header: 2 adds plurals, headers, environment variables,
+  // credential descriptions, and \`x-sensitive\`.
+  const responseSecrets =
+    source.options?.responseSecrets === true || typeof source.options?.responseSecrets === "number";
   const secrets = [];
   const defaultServer = serverOf(document.servers);
   const servers = defaultServer ? [defaultServer] : [];
@@ -435,7 +439,16 @@ export function buildOperationIndex(document, source) {
 
 /** Field names that carry or grant credentials, compared lowercase without `_` or `-`. */
 const SECRET_VOCABULARY =
-  /(token|secret|password|passphrase|privatekey|apikey|authorization|cookie|jwt|credentials?|psk|streamkey|uploadurl|signedurl|jwk|verifier|devicecode|bypass)$/;
+  /(tokens?|secrets?|passwords?|passphrases?|privatekeys?|apikeys?|keys|authorization|cookies?|jwts?|credentials?|psks?|streamkeys?|uploadurl|signedurl|jwks?|verifier|devicecode|bypass|headers?|envvars|environmentvariables|bindings)$/;
+/**
+ * Field names that are metadata about a credential (its id, name, times,
+ * status, scopes), not the credential, even when the description mentions one.
+ */
+const METADATA_NAME =
+  /(id|ids|uid|name|names|at|on|created|modified|time|status|type|types|scope|scopes|comment|count|email|preview|prefix|hint|version|enabled|expires|expiration|url|urls|domain|domains|location|mode|via|provisionertype|lastfour|last4)$/;
+/** Field descriptions that say a value is, or carries, a credential. */
+const SECRET_DESCRIPTION =
+  /\b(secrets?|passwords?|passphrase|private keys?|api keys?|api tokens?|access keys?|bearer|client secrets?|credentials?|signing keys?|auth(entication|orization) (tokens?|headers?)|environment variables?)\b/i;
 
 /**
  * Dot paths (`[]` marks a list) of an operation's 2xx response fields whose
@@ -463,7 +476,13 @@ function secretFields(document, operation) {
       const at = path ? `${path}.${name}` : name;
       const resolved = resolveRef(document, child);
       const scalar = ["boolean", "integer", "number"].includes(resolved.type);
-      if (SECRET_VOCABULARY.test(name.toLowerCase().replace(/[_-]/g, "")) && resolved.writeOnly !== true && !scalar) {
+      const named = SECRET_VOCABULARY.test(name.toLowerCase().replace(/[_-]/g, ""));
+      const described =
+        typeof resolved.description === "string" &&
+        SECRET_DESCRIPTION.test(resolved.description) &&
+        !METADATA_NAME.test(name.toLowerCase().replace(/[_-]/g, ""));
+      const sensitive = resolved["x-sensitive"] === true || child?.["x-sensitive"] === true;
+      if ((named || described || sensitive) && resolved.writeOnly !== true && !scalar) {
         found.add(at);
       }
       walk(child, at, depth + 1, seen);

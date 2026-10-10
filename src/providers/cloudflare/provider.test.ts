@@ -621,7 +621,8 @@ describe("cloudflare() over a key", () => {
       );
     const rejected = await cloudflare("cf", TOKEN).testCredential!("bad", connectorContext());
     expect(rejected.ok).toBe(false);
-    expect(rejected.message).toContain("Invalid API Token");
+    // Token verification handles credentials, so the vendor text is withheld; the code remains.
+    expect(rejected.message).toContain("Cloudflare error code 1000.");
   });
 
   it("refuses credential GETs, side-effect GETs, and token writes, and redacts embedded secrets", async () => {
@@ -1057,8 +1058,9 @@ describe("cloudflare() over a key", () => {
     const candidates = openapi.ops.flatMap(([method, path, , summary], row) =>
       VOCABULARY.test(`${path} ${summary}`) || flagged.has(row) ? [{ key: `${method} ${path}`, row }] : [],
     );
-    /** A spec response path as the tool's data path: no envelope, no list markers. */
-    const dataPath = (path: string) => path.replace(/^result(\[\])?\./, "").replace(/\[\]/g, "");
+    /** A spec response path as the tool's data path: no envelope, no list markers; "" is the whole result. */
+    const dataPath = (path: string) =>
+      path === "result" ? "" : path.replace(/^result(\[\])?\./, "").replace(/\[\]/g, "");
 
     it("reviews every candidate operation in the pinned index with refuse, redact, or safe", () => {
       expect(candidates.length).toBeGreaterThan(250);
@@ -1074,7 +1076,7 @@ describe("cloudflare() over a key", () => {
       for (const verdict of Object.values(VALUE_SAFETY)) {
         counts["refuse" in verdict ? "refuse" : "redact" in verdict ? "redact" : "safe"] += 1;
       }
-      expect(counts).toEqual({ refuse: 52, redact: 113, safe: 164 });
+      expect(counts).toEqual({ refuse: 54, redact: 212, safe: 265 });
     });
 
     it("accounts for every credential-named response field the spec declares", () => {
@@ -1088,11 +1090,15 @@ describe("cloudflare() over a key", () => {
         ];
         for (const field of flagged.get(row) ?? []) {
           const path = dataPath(field);
+          // A reviewed verdict covers the whole result, a field, anything
+          // inside it, or a reviewed part of it.
           const inside = (cover: string) => {
-            const pattern = new RegExp(`^${cover.replace(/\./g, "\\.").replace(/\*/g, "[^.]+")}(\\.|$)`);
-            return pattern.test(path);
+            const parts = cover.split(".");
+            const at = path.split(".");
+            const length = Math.min(parts.length, at.length);
+            return parts.slice(0, length).every((part, index) => part === "*" || part === at[index]);
           };
-          if (/^(result_info|messages|errors)\b/.test(path)) continue;
+          if (path === "" || /^(result_info|messages|errors)\b/.test(path)) continue;
           if (!covered.some(inside)) uncovered.push(`${key}: ${path}`);
         }
       }
@@ -1401,5 +1407,186 @@ describe("cloudflare() over a key", () => {
     expect(error.message).toContain("more than 3 zones");
     expect(sent.filter((request) => request.url.pathname.startsWith("/client/v4/zones/"))).toHaveLength(3);
     expect(sent.some((request) => request.url.pathname.endsWith("/graphql"))).toBe(false);
+  });
+
+  describe("round 2 regressions", () => {
+    it("INV-4: checks every scoped GraphQL field's resolved filter on its own (finding 1)", async () => {
+      const connector = cloudflare("cf", { ...TOKEN, pin: { accountIds: [ACCOUNT], zoneIds: [ZONE] } });
+      respond = () => Response.json({ data: { viewer: {} } });
+      const bypasses: Array<[string, Record<string, unknown>]> = [
+        [
+          `query Q($zoneTag: ZoneFilter_InputObject) { viewer { ok: zones(filter: {zoneTag: "${ZONE}"}) { zoneTag } escaped: zones(filter: $zoneTag) { zoneTag } } }`,
+          { zoneTag: { zoneTag: OTHER_ZONE } },
+        ],
+        [
+          `query Q($f: ZoneFilter_InputObject) { viewer { zones(filter: $f) { x } } }`,
+          { f: { zoneTag_in: [ZONE, OTHER_ZONE] } },
+        ],
+        [`query Q($z: String) { viewer { zones(filter: {zoneTag: $z}) { x } } }`, {}],
+        [`query Q($t: [String!]) { viewer { zones(filter: {zoneTag_in: $t}) { x } } }`, { t: [OTHER_ZONE] }],
+        [
+          `query Q($f: ZoneFilter_InputObject) { viewer { zones(filter: $f) { x } } }`,
+          { f: { zoneTag: ZONE, datetime_gt: "x" } },
+        ],
+        [
+          `{ viewer { accounts(filter: {accountTag: "${OTHER_ACCOUNT}"}) { x } zones(filter: {zoneTag: "${ZONE}"}) { x } } }`,
+          {},
+        ],
+        [`{ viewer { zones: accounts(filter: {accountTag: "${OTHER_ACCOUNT}"}) { x } } }`, {}],
+      ];
+      for (const [query, variables] of bypasses) {
+        await refusal(connector.callTool("graphql_query", { query, variables }, token()));
+      }
+      expect(sent.filter((request) => request.url.pathname.endsWith("/graphql"))).toEqual([]);
+      sent = [];
+      await connector.callTool(
+        "graphql_query",
+        {
+          query: `query Q($f: ZoneFilter_InputObject, $a: AccountFilter_InputObject) { viewer { one: zones(filter: $f) { x } two: zones(filter: {zoneTag_in: ["${ZONE}"]}) { x } accounts(filter: $a) { x } } }`,
+          variables: { f: { zoneTag: ZONE }, a: { accountTag: ACCOUNT } },
+        },
+        token(),
+      );
+      expect(sent.filter((request) => request.url.pathname.endsWith("/graphql"))).toHaveLength(1);
+    });
+
+    it("refuses the bulk subscription payment secret and redacts custom-provider headers in either shape (finding 2)", async () => {
+      const connector = cloudflare("cf", TOKEN);
+      const payment = await refusal(
+        connector.callTool(
+          "cloudflare_api_write",
+          { method: "POST", path: `/accounts/${ACCOUNT}/bulk/subscriptions`, body: { subscriptions: [] } },
+          token(),
+        ),
+      );
+      expect(payment.message).toContain("client secret");
+      expect(sent).toEqual([]);
+      for (const headers of [
+        JSON.stringify({ Authorization: "Bearer THIRD-PARTY" }),
+        { Authorization: "Bearer THIRD-PARTY" },
+      ]) {
+        respond = () => envelope({ id: "p1", name: "mine", headers });
+        const result = (await connector.callTool(
+          "cloudflare_api_read",
+          { path: `/accounts/${ACCOUNT}/ai-gateway/custom-providers/p1` },
+          token(),
+        )) as any;
+        expect(result.data).toEqual({ id: "p1", name: "mine", headers: "[redacted]" });
+      }
+    });
+
+    it("redacts environment and binding values across Pages, Containers, Builds, and Workers, keeping names and types (finding 3)", async () => {
+      const connector = cloudflare("cf", TOKEN);
+      const cases: Array<[string, unknown, (data: any) => void]> = [
+        [
+          `/accounts/${ACCOUNT}/pages/projects/site`,
+          {
+            name: "site",
+            deployment_configs: {
+              production: { env_vars: { PAYMENTS: { type: "plain_text", value: "sk_live_THIRD-PARTY" } } },
+              preview: { env_vars: { DEBUG: { type: "plain_text", value: "1" } } },
+            },
+            latest_deployment: { env_vars: { PAYMENTS: { type: "plain_text", value: "sk_live_THIRD-PARTY" } } },
+          },
+          (data) => {
+            expect(data.deployment_configs.production.env_vars.PAYMENTS).toEqual({
+              type: "plain_text",
+              value: "[redacted]",
+            });
+            expect(data.latest_deployment.env_vars.PAYMENTS.value).toBe("[redacted]");
+          },
+        ],
+        [
+          `/accounts/${ACCOUNT}/containers/applications/app1`,
+          { id: "app1", configuration: { environment_variables: [{ name: "DB_URL", value: "postgres://u:p@db" }] } },
+          (data) => expect(data.configuration.environment_variables).toEqual([{ name: "DB_URL", value: "[redacted]" }]),
+        ],
+        [
+          `/accounts/${ACCOUNT}/workers/scripts/s1/settings`,
+          {
+            bindings: [
+              { name: "API", type: "plain_text", text: "THIRD-PARTY" },
+              { name: "KV", type: "kv_namespace", namespace_id: "n1" },
+            ],
+          },
+          (data) => {
+            expect(data.bindings[0]).toEqual({ name: "API", type: "plain_text", text: "[redacted]" });
+            expect(data.bindings[1].namespace_id).toBe("n1");
+          },
+        ],
+        [
+          `/accounts/${ACCOUNT}/builds/triggers/t1/environment_variables`,
+          { API_KEY: { is_secret: false, value: "THIRD-PARTY" } },
+          (data) => expect(data.API_KEY).toEqual({ is_secret: false, value: "[redacted]" }),
+        ],
+      ];
+      for (const [path, result, check] of cases) {
+        respond = () => envelope(result);
+        const response = (await connector.callTool("cloudflare_api_read", { path }, token())) as any;
+        check(response.data);
+        expect(JSON.stringify(response)).not.toContain("THIRD-PARTY");
+      }
+    });
+
+    it("withholds vendor error text on every failure route for operations that take or return credentials (finding 4)", async () => {
+      const connector = cloudflare("cf", TOKEN);
+      const echo = (status: number) => () =>
+        Response.json(
+          { success: false, errors: [{ code: 10001, message: "Rejected credential ECHOED-SECRET" }] },
+          { status },
+        );
+      const routes: Array<[number, string, Record<string, unknown>]> = [
+        [200, "cloudflare_api_read", { path: `/accounts/${ACCOUNT}/secondary_dns/tsigs/t1` }],
+        [
+          400,
+          "cloudflare_api_write",
+          {
+            method: "POST",
+            path: `/accounts/${ACCOUNT}/secrets_store/stores/st1/secrets`,
+            body: [{ name: "k", value: "ECHOED-SECRET", scopes: ["workers"] }],
+          },
+        ],
+        [
+          400,
+          "cloudflare_api_write",
+          {
+            method: "POST",
+            path: `/accounts/${ACCOUNT}/hyperdrive/configs`,
+            body: {
+              name: "db",
+              origin: {
+                host: "db.example",
+                database: "d",
+                user: "u",
+                password: "ECHOED-SECRET",
+                scheme: "postgres",
+                port: 5432,
+              },
+            },
+          },
+        ],
+      ];
+      for (const [status, tool, args] of routes) {
+        respond = echo(status);
+        const error = await refusal(connector.callTool(tool, args, token()));
+        expect(error.message, String(args["path"])).toContain("Cloudflare error code 10001.");
+        expect(error.message).not.toContain("ECHOED-SECRET");
+      }
+      respond = echo(400);
+      expect(
+        (await refusal(connector.callTool("cloudflare_api_read", { path: `/zones/${ZONE}` }, token()))).message,
+      ).toContain("Rejected credential");
+    });
+
+    it("INV-4: places a pinned zone only by body.account.id, not a look-alike field", async () => {
+      const connector = cloudflare("cf", { ...TOKEN, pin: { accountIds: [ACCOUNT] } });
+      for (const body of [
+        { name: "example.org", account: {}, account_id: ACCOUNT },
+        { name: "example.org", account: { id: OTHER_ACCOUNT }, account_id: ACCOUNT },
+      ]) {
+        await refusal(connector.callTool("cloudflare_api_write", { method: "POST", path: "/zones", body }, token()));
+      }
+      expect(sent).toEqual([]);
+    });
   });
 });

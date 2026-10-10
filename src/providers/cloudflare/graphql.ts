@@ -11,7 +11,6 @@ interface Token {
   readonly value: string;
 }
 
-const TAG = /^(account|zone)Tag(_[A-Za-z]+)?$/;
 const SCOPED_FIELDS = new Set(["accounts", "zones"]);
 
 function refuse(message: string): never {
@@ -126,9 +125,9 @@ function tokenize(source: string): Token[] {
 export interface GraphqlScope {
   readonly accountTags: readonly string[];
   readonly zoneTags: readonly string[];
-  /** Tag arguments other than equality or `_in`, such as `zoneTag_neq`, which select outside a set. */
+  /** Filter keys other than tag equality or `_in` (such as `zoneTag_neq`), which select outside a set. */
   readonly openTags: readonly string[];
-  /** `accounts` or `zones` fields with no tag argument. */
+  /** `accounts` or `zones` fields whose filter is missing, unresolvable, or names no tag. */
   readonly unscopedFields: readonly string[];
 }
 
@@ -198,98 +197,128 @@ export function inspectGraphqlQuery(source: string, variables: Readonly<Record<s
   const zoneTags: string[] = [];
   const openTags: string[] = [];
   const unscopedFields: string[] = [];
-  const collect = (name: string, value: unknown): void => {
-    const match = TAG.exec(name);
-    if (!match) return;
-    if (match[2] !== undefined && match[2] !== "_in") {
-      openTags.push(name);
-      return;
-    }
-    const target = match[1] === "account" ? accountTags : zoneTags;
-    for (const item of Array.isArray(value) ? value : [value]) {
-      if (typeof item === "string") target.push(item);
-      else openTags.push(name);
-    }
-  };
+  const UNRESOLVED = Symbol("unresolved");
+
   // Variable declarations (`$zoneTag: String! = "…"`) are not filters; record
   // their defaults so a variable resolves as the server would resolve it.
   const defaults = new Map<string, unknown>();
-  const declarations = new Set<number>();
+  const declared = new Set<number>();
+  const resolveVariable = (name: string): unknown =>
+    Object.hasOwn(variables, name) ? variables[name] : defaults.has(name) ? defaults.get(name) : UNRESOLVED;
+
+  /** Parse one GraphQL input value at `at`, resolving variables; returns the value and the index after it. */
+  const parseValue = (at: number): { value: unknown; end: number } => {
+    const token = tokens[at];
+    if (token === undefined) return { value: UNRESOLVED, end: at };
+    if (token.kind === "string") return { value: token.value, end: at + 1 };
+    if (token.kind === "number") return { value: Number(token.value), end: at + 1 };
+    if (token.kind === "name") {
+      const literal: Record<string, unknown> = { true: true, false: false, null: null };
+      return { value: Object.hasOwn(literal, token.value) ? literal[token.value] : { enum: token.value }, end: at + 1 };
+    }
+    if (token.value === "$" && tokens[at + 1]?.kind === "name") {
+      return { value: resolveVariable(tokens[at + 1]!.value), end: at + 2 };
+    }
+    if (token.value === "[") {
+      const items: unknown[] = [];
+      let next = at + 1;
+      while (next < tokens.length && tokens[next]!.value !== "]") {
+        const item = parseValue(next);
+        if (item.end === next) return { value: UNRESOLVED, end: skipGroup(at) };
+        items.push(item.value);
+        next = item.end;
+      }
+      return { value: items, end: next + 1 };
+    }
+    if (token.value === "{") {
+      const object: Record<string, unknown> = {};
+      let next = at + 1;
+      while (next < tokens.length && tokens[next]!.value !== "}") {
+        const key = tokens[next];
+        if (key?.kind !== "name" || tokens[next + 1]?.value !== ":") return { value: UNRESOLVED, end: skipGroup(at) };
+        const item = parseValue(next + 2);
+        if (item.end === next + 2) return { value: UNRESOLVED, end: skipGroup(at) };
+        object[key.value] = item.value;
+        next = item.end;
+      }
+      return { value: object, end: next + 1 };
+    }
+    return { value: UNRESOLVED, end: at };
+  };
+
   for (let at = 0; at + 2 < tokens.length; at += 1) {
     const [dollar, name, colon] = [tokens[at]!, tokens[at + 1]!, tokens[at + 2]!];
     if (dollar.value !== "$" || name.kind !== "name" || colon.value !== ":") continue;
-    declarations.add(at + 1);
+    declared.add(at + 1);
     for (let scan = at + 3; scan < tokens.length; scan += 1) {
       const token = tokens[scan]!;
       if (token.kind === "punct" && (token.value === "$" || token.value === ")")) break;
       if (token.kind === "punct" && token.value === "=") {
-        const value = tokens[scan + 1];
-        if (value?.kind === "string") defaults.set(name.value, value.value);
-        else if (value?.kind === "punct" && value.value === "[") {
-          const items: string[] = [];
-          for (let item = scan + 2; item < tokens.length && tokens[item]!.value !== "]"; item += 1) {
-            if (tokens[item]!.kind === "string") items.push(tokens[item]!.value);
-          }
-          defaults.set(name.value, items);
-        }
+        const parsed = parseValue(scan + 1);
+        if (parsed.value !== UNRESOLVED) defaults.set(name.value, parsed.value);
         break;
       }
     }
   }
-  const resolveVariable = (name: string): unknown =>
-    Object.hasOwn(variables, name) ? variables[name] : defaults.get(name);
-  const scanValue = (value: unknown, depth = 0): boolean => {
-    // True when a variable's value carries a tag key anywhere inside it.
-    if (depth > 8 || typeof value !== "object" || value === null) return false;
-    let found = false;
-    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-      if (TAG.test(key)) {
-        collect(key, item);
-        found = true;
-      } else if (scanValue(item, depth + 1)) found = true;
+
+  /**
+   * Validate one `zones` or `accounts` field's resolved `filter`: an object
+   * whose only keys are the tag equality or `_in`, with string values. Each
+   * field is checked on its own, so a valid alias cannot carry an unpinned one.
+   */
+  const checkField = (field: string, filter: unknown): void => {
+    const prefix = field === "zones" ? "zone" : "account";
+    if (filter === UNRESOLVED || typeof filter !== "object" || filter === null || Array.isArray(filter)) {
+      unscopedFields.push(field);
+      return;
     }
-    return found;
+    const target = prefix === "zone" ? zoneTags : accountTags;
+    let tagged = false;
+    for (const [key, value] of Object.entries(filter)) {
+      if (key === `${prefix}Tag` && typeof value === "string") {
+        target.push(value);
+        tagged = true;
+      } else if (
+        key === `${prefix}Tag_in` &&
+        Array.isArray(value) &&
+        value.length > 0 &&
+        value.every((item) => typeof item === "string")
+      ) {
+        target.push(...(value as string[]));
+        tagged = true;
+      } else {
+        openTags.push(`${field}.${key}`);
+      }
+    }
+    if (!tagged) unscopedFields.push(field);
   };
+
   for (let at = 0; at < tokens.length; at += 1) {
     const token = tokens[at]!;
-    if (token.kind !== "name") continue;
+    if (token.kind !== "name" || !SCOPED_FIELDS.has(token.value) || declared.has(at)) continue;
+    const previous = tokens[at - 1]?.value;
     const next = tokens[at + 1];
-    if (declarations.has(at)) continue;
-    if (TAG.test(token.value) && next?.kind === "punct" && next.value === ":") {
-      const value = tokens[at + 2];
-      if (value?.kind === "string") collect(token.value, value.value);
-      else if (value?.kind === "punct" && value.value === "$" && tokens[at + 3]?.kind === "name") {
-        collect(token.value, resolveVariable(tokens[at + 3]!.value));
-      } else if (value?.kind === "punct" && value.value === "[") {
-        const end = skipGroup(at + 2);
-        const items = tokens.slice(at + 3, end - 1);
-        if (items.every((item) => item.kind === "string"))
-          collect(
-            token.value,
-            items.map((item) => item.value),
-          );
-        else openTags.push(token.value);
-      } else openTags.push(token.value);
+    if (previous === "$" || previous === "on" || previous === "...") continue;
+    // `zones: accounts(…)` aliases, and object keys inside arguments.
+    if (next?.kind === "punct" && next.value === ":") continue;
+    if (next?.kind !== "punct" || next.value !== "(") {
+      unscopedFields.push(token.value);
       continue;
     }
-    if (SCOPED_FIELDS.has(token.value) && tokens[at - 1]?.value !== "$" && tokens[at - 1]?.value !== "on") {
-      if (next?.kind !== "punct" || next.value !== "(") {
-        unscopedFields.push(token.value);
-        continue;
+    let filter: unknown = UNRESOLVED;
+    let cursor = at + 2;
+    while (cursor < tokens.length && tokens[cursor]!.value !== ")") {
+      const key = tokens[cursor];
+      if (key?.kind !== "name" || tokens[cursor + 1]?.value !== ":") {
+        filter = UNRESOLVED;
+        break;
       }
-      const end = skipGroup(at + 1);
-      const args = tokens.slice(at + 2, end - 1);
-      const tagged =
-        args.some((arg) => arg.kind === "name" && TAG.test(arg.value)) ||
-        args.some(
-          (arg, position) =>
-            arg.kind === "punct" &&
-            arg.value === "$" &&
-            args[position + 1]?.kind === "name" &&
-            scanValue(resolveVariable(args[position + 1]!.value)),
-        );
-      if (!tagged) unscopedFields.push(token.value);
+      const parsed = parseValue(cursor + 2);
+      if (parsed.end === cursor + 2) break;
+      if (key.value === "filter") filter = parsed.value;
+      cursor = parsed.end;
     }
+    checkField(token.value, filter);
   }
   return { accountTags, zoneTags, openTags, unscopedFields };
 }

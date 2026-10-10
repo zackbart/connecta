@@ -352,9 +352,9 @@ export const cloudflare = defineProvider<CloudflareOptions>({
   kind: "dual",
   readme: "Cloudflare",
   bundle: {
-    baselineGzip: 328188,
-    maxGzip: 388188,
-    note: "./providers/cloudflare remeasures at 328,188 B gzip (#801), from 151,186 B on main: auth now selects the implementation, so the entry carries the hosted MCP client and Connecta's REST connector (api(), the schema validator, the shared REST module, about 22 KB gzip as in ./providers/stripe) plus the pinned Cloudflare operation index: 3,336 non-deprecated operations from a 27 MB document. The index was shrunk before the cap moved, from 157 KB to 125 KB gzip as source: request details to depth 2 without descriptions or enums over 50 values, no operation ids (they restate summaries), no plain-string path parameters (the template names them), and a 6,000-character per-operation budget that lowers one sprawling operation's depth. Depth 1 would save about 18 KB more at the cost of nested validation such as DNS record alternatives. Removing 23 hand-written reads offsets part of the growth; the reviewed value-safety table and the spec-derived record of credential-named response fields add about 7 KB. The cap uses the existing baseline + 60,000 B policy.",
+    baselineGzip: 333322,
+    maxGzip: 393322,
+    note: "./providers/cloudflare remeasures at 333,322 B gzip (#801), from 151,186 B on main: auth now selects the implementation, so the entry carries the hosted MCP client and Connecta's REST connector (api(), the schema validator, the shared REST module, about 22 KB gzip as in ./providers/stripe) plus the pinned Cloudflare operation index: 3,336 non-deprecated operations from a 27 MB document. The index was shrunk before the cap moved, from 157 KB to 125 KB gzip as source: request details to depth 2 without descriptions or enums over 50 values, no operation ids (they restate summaries), no plain-string path parameters (the template names them), and a 6,000-character per-operation budget that lowers one sprawling operation's depth. Depth 1 would save about 18 KB more at the cost of nested validation such as DNS record alternatives. Removing 23 hand-written reads offsets part of the growth; the reviewed value-safety table and the spec-derived record of credential-named response fields add about 12 KB. The cap uses the existing baseline + 60,000 B policy.",
   },
   skill,
   options: CLOUDFLARE_OPTIONS,

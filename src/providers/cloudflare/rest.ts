@@ -19,7 +19,7 @@ import {
   type RestVendor,
 } from "../_shared/rest/tools.js";
 import { inspectGraphqlQuery } from "./graphql.js";
-import { VALUE_SAFETY, redactValues, type ValueSafetyVerdict } from "./value-safety.js";
+import { VALUE_SAFETY, isCredentialInput, redactValues, type ValueSafetyVerdict } from "./value-safety.js";
 import { openapi } from "./openapi.generated.js";
 
 /** Cloudflare's v4 REST base. Override only for a proxy or a test double. */
@@ -296,6 +296,39 @@ function errorCodes(errors: EnvelopeError[]): Set<number> {
  */
 const AUTH_ERROR_CODES = new Set([1001, 6003, 6111, 9103, 9106, 9107]);
 
+const credentialHandling = new Map<number, boolean>();
+
+/**
+ * Whether an operation handles credentials, for error text: any reviewed
+ * value-safety candidate (whatever its success verdict), or any operation
+ * whose request accepts a credential, header, or environment value, since a
+ * vendor error may echo what was submitted.
+ */
+function handlesCredentials(op: Operation): boolean {
+  if (verdictOf(op) !== undefined) return true;
+  if (op.row < 0) return false;
+  let known = credentialHandling.get(op.row);
+  if (known === undefined) {
+    const contract = cloudflareIndex().contract(op);
+    const names = (schema: unknown, depth: number): boolean => {
+      if (depth > 4 || typeof schema !== "object" || schema === null) return false;
+      const node = schema as { properties?: Record<string, unknown>; items?: unknown; anyOf?: unknown[] };
+      return (
+        Object.entries(node.properties ?? {}).some(
+          ([name, child]) => isCredentialInput(name) || names(child, depth + 1),
+        ) ||
+        names(node.items, depth + 1) ||
+        (node.anyOf ?? []).some((branch) => names(branch, depth + 1))
+      );
+    };
+    known =
+      contract.parameters.some((parameter) => parameter.in === "query" && isCredentialInput(parameter.name)) ||
+      (contract.body !== undefined && (typeof contract.body.schema !== "object" || names(contract.body.schema, 0)));
+    credentialHandling.set(op.row, known);
+  }
+  return known;
+}
+
 /** The reviewed value-safety verdict for an operation, if it has one. */
 function verdictOf(op: { method: string; path: string }): ValueSafetyVerdict | undefined {
   return VALUE_SAFETY[`${op.method} ${op.path}`];
@@ -310,7 +343,7 @@ function failureFor(status: number, headers: Headers, body: unknown, call?: Rest
   const errors = errorsOf(body);
   const ray = headers.get("cf-ray");
   const codes = errorCodes(errors);
-  const withheld = call !== undefined && verdictOf(call.op) !== undefined && !("safe" in verdictOf(call.op)!);
+  const withheld = call !== undefined && handlesCredentials(call.op);
   const described = withheld
     ? `${codes.size ? `Cloudflare error code ${[...codes].join(", ")}.` : "Cloudflare reported an error."} Its text is withheld because this operation handles credentials.`
     : describeErrors(errors);
@@ -592,8 +625,11 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
           { retryable: false },
         );
       }
-      if (key === "POST /zones" && accounts.length === 0) {
-        invalid("A pinned connector creates a zone only in a pinned account: set body.account.id.");
+      if (key === "POST /zones") {
+        // Cloudflare places the zone by body.account.id alone; other spellings are ignored.
+        const account = text(record(record(call.body)["account"])["id"]);
+        if (!account) invalid("A pinned connector creates a zone only in a pinned account: set body.account.id.");
+        assertAccount(account);
       }
     }
     for (const account of accounts) assertAccount(account);
@@ -741,7 +777,7 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
   const result = (body: unknown, call: RestCall, response: { status: number; headers: Headers }): unknown => {
     if (!isEnvelope(body)) return redactValues(body, verdictOf(call.op));
     if (body["success"] === false)
-      throw failureFor(response.status === 200 ? 400 : response.status, response.headers, body);
+      throw failureFor(response.status === 200 ? 400 : response.status, response.headers, body, call);
     return redactValues(filterListed(call.op, body["result"]), verdictOf(call.op));
   };
 

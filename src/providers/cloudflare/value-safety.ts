@@ -41,12 +41,15 @@ const refuse = (reason: string) => ({ refuse: reason }) as const;
 const redact = (...paths: string[]) => ({ redact: paths }) as const;
 const safe = (reason: string, ...keep: string[]) => ({ safe: reason, ...(keep.length ? { keep } : {}) }) as const;
 
-const ACCESS_APP = redact(
-  "saas_app.client_secret",
-  "scim_config.authentication.client_secret",
-  "scim_config.authentication.password",
-  "scim_config.authentication.token",
-);
+const ACCESS_APP = {
+  redact: [
+    "saas_app.client_secret",
+    "scim_config.authentication.client_secret",
+    "scim_config.authentication.password",
+    "scim_config.authentication.token",
+  ],
+  keep: ["cors_headers", "read_service_tokens_from_header"],
+} as const;
 const ACCESS_RULES = safe(
   "Access rules name service tokens by id; no token value.",
   "exclude.any_valid_service_token",
@@ -62,25 +65,87 @@ const ACCESS_RULES = safe(
   "is_default.linked_app_token",
   "is_default.service_token",
 );
-const IDENTITY_PROVIDER = redact("config.client_secret", "scim_config.secret");
-const PAGES_PROJECT = safe(
-  "The Web Analytics token is a public beacon id embedded in every page.",
-  "build_config.web_analytics_token",
-  "canonical_deployment.build_config.web_analytics_token",
-  "latest_deployment.build_config.web_analytics_token",
-);
-const LIVE_INPUT = redact(
-  "rtmps.streamKey",
-  "rtmpsPlayback.streamKey",
-  "srt.passphrase",
-  "srtPlayback.passphrase",
-  "webRTC.url#url",
-);
+const IDENTITY_PROVIDER = { redact: ["config.client_secret", "scim_config.secret"], keep: ["config.prompt"] } as const;
+/**
+ * Environment variable values are redacted wherever they appear, names and
+ * types kept. Cloudflare returns plain-text variables in the clear, and
+ * operators routinely put API keys in them (a Stripe key in a Pages
+ * variable); the value stays readable in the dashboard.
+ */
+const PAGES_PROJECT = {
+  redact: [
+    "env_vars.*.value",
+    "canonical_deployment.env_vars.*.value",
+    "latest_deployment.env_vars.*.value",
+    "deployment_configs.preview.env_vars.*.value",
+    "deployment_configs.production.env_vars.*.value",
+  ],
+  keep: [
+    "build_config.web_analytics_token",
+    "canonical_deployment.build_config.web_analytics_token",
+    "latest_deployment.build_config.web_analytics_token",
+    "deployment_configs.preview.ai_bindings",
+    "deployment_configs.preview.hyperdrive_bindings",
+    "deployment_configs.preview.vectorize_bindings",
+    "deployment_configs.production.ai_bindings",
+    "deployment_configs.production.hyperdrive_bindings",
+    "deployment_configs.production.vectorize_bindings",
+  ],
+} as const;
+const LIVE_INPUT = {
+  redact: ["rtmps.streamKey", "rtmpsPlayback.streamKey", "srt.passphrase", "srtPlayback.passphrase", "webRTC.url#url"],
+  keep: ["rtmps.url", "rtmpsPlayback.url", "srt.url", "srtPlayback.url", "webRTCPlayback.url"],
+} as const;
 const WORKER_SECRET = redact("text", "key_base64", "key_jwk");
-const WORKER_VERSION = redact("assets.jwt");
-const ZARAZ = redact("variables.*.value", "debugKey", "*.variables.*.value", "*.debugKey");
+/**
+ * Worker bindings: plain-text and JSON binding values are redacted (the same
+ * judgment as environment variables: they are often credentials in
+ * practice); names, types, and resource ids are kept.
+ */
+const WORKER_BINDINGS = redact("bindings.text", "bindings.json");
+const WORKER_VERSION = redact("assets.jwt", "bindings.text", "bindings.json");
+const ZARAZ = redact(
+  "variables.*.value",
+  "debugKey",
+  "*.variables.*.value",
+  "*.debugKey",
+  "*.config.variables.*.value",
+  "*.config.debugKey",
+);
 const TSIG = redact("secret");
 const LIVESTREAM = redact("data.stream_key", "data.livestream.stream_key", "data.livestreams.stream_key");
+
+/** Container environment values redacted, names kept; authorized keys are public SSH keys. */
+const CONTAINER_APP = {
+  redact: [
+    "configuration.environment_variables.value",
+    "current_configuration.environment_variables.value",
+    "target_configuration.environment_variables.value",
+  ],
+  keep: [
+    "next_page_token",
+    "page_token",
+    "configuration.authorized_keys",
+    "current_configuration.authorized_keys",
+    "target_configuration.authorized_keys",
+  ],
+} as const;
+/** Workers Builds environment values redacted, names kept. */
+const BUILD_ENV = redact(
+  "*.value",
+  "build_trigger_metadata.environment_variables.*.value",
+  "builds.*.build_trigger_metadata.environment_variables.*.value",
+  "previews_base_config.environment_variables.*.value",
+  "production_settings.environment_variables.*.value",
+  "settings.environment_variables.*.value",
+);
+/** A BGP session's MD5 key authenticates the session. */
+const BGP = (...paths: string[]) => redact(...paths.map((path) => `${path}.bgp.md5_key`));
+const ROOT_BGP = redact("bgp.md5_key");
+/** Probe and health-check headers often carry authorization. */
+const HEALTH_HEADERS = redact("http_config.header");
+const DESCRIBED_ONLY =
+  "The spec mentions credentials in this field's description; the value is metadata, names, or counts.";
 
 const A = "/accounts/{account_id}";
 const Z = "/zones/{zone_id}";
@@ -163,11 +228,25 @@ export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
   ),
   // AI Gateway, AI Search
   [`POST ${A}/ai-gateway/billing/topup`]: refuse(PAYMENT),
-  [`GET ${A}/ai-gateway/gateways`]: redact("otel.authorization", "stripe.authorization"),
-  [`POST ${A}/ai-gateway/gateways`]: redact("otel.authorization", "stripe.authorization"),
-  [`GET ${A}/ai-gateway/gateways/{id}`]: redact("otel.authorization", "stripe.authorization"),
-  [`PUT ${A}/ai-gateway/gateways/{id}`]: redact("otel.authorization", "stripe.authorization"),
-  [`DELETE ${A}/ai-gateway/gateways/{id}`]: redact("otel.authorization", "stripe.authorization"),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/ai-gateway/gateways`,
+      `POST ${A}/ai-gateway/gateways`,
+      `GET ${A}/ai-gateway/gateways/{id}`,
+      `PUT ${A}/ai-gateway/gateways/{id}`,
+      `DELETE ${A}/ai-gateway/gateways/{id}`,
+    ].map((key) => [key, redact("otel.authorization", "otel.headers", "stripe.authorization")]),
+  ),
+  // Custom providers carry auth headers as a JSON-encoded string or an object.
+  ...Object.fromEntries(
+    [
+      `GET ${A}/ai-gateway/custom-providers`,
+      `POST ${A}/ai-gateway/custom-providers`,
+      `GET ${A}/ai-gateway/custom-providers/{id}`,
+      `PATCH ${A}/ai-gateway/custom-providers/{id}`,
+      `DELETE ${A}/ai-gateway/custom-providers/{id}`,
+    ].map((key) => [key, redact("headers")]),
+  ),
   [`PUT ${A}/ai-gateway/gateways/{gateway_id}/provider_configs/{id}`]: safe(
     "The caller supplies the provider key; the response returns a masked preview.",
   ),
@@ -245,7 +324,7 @@ export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
   ),
   [`GET ${A}/cloudforce-one/v2/requests/{project_type}/quota`]: safe("A request quota, not a token."),
   // Containers
-  [`GET ${A}/containers/applications`]: safe("A pagination cursor.", "next_page_token", "page_token"),
+  [`GET ${A}/containers/applications`]: CONTAINER_APP,
   [`GET ${A}/containers/applications/{application_id}/instances-v2`]: safe(
     "A pagination cursor.",
     "next_page_token",
@@ -315,7 +394,7 @@ export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
     ].map((key) => [key, redact("destination_conf#url")]),
   ),
   // Magic WAN
-  [`POST ${A}/magic/ipsec_tunnels/psk`]: redact("successfully_applied_psks.*.psk"),
+  [`POST ${A}/magic/ipsec_tunnels/psk`]: { redact: ["successfully_applied_psks.*.psk"], keep: ["unapplied_psks"] },
   [`POST ${A}/magic/ipsec_tunnels/{ipsec_tunnel_id}/psk_generate`]: refuse(MINT),
   [`POST ${A}/mnm/vpc-flows/token`]: refuse(MINT),
   [`POST ${A}/managed-defense/vulnerability-discovery/repos`]: redact("upload.token"),
@@ -375,7 +454,6 @@ export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
   // Secrets Store: values are write-only.
   ...Object.fromEntries(
     [
-      `GET ${A}/secrets_store/quota`,
       `GET ${A}/secrets_store/stores`,
       `POST ${A}/secrets_store/stores`,
       `GET ${A}/secrets_store/stores/{store_id}`,
@@ -386,6 +464,7 @@ export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
       `POST ${A}/secrets_store/stores/{store_id}/secrets/{secret_id}/duplicate`,
     ].map((key) => [key, safe(CALLER_SUPPLIED)]),
   ),
+  [`GET ${A}/secrets_store/quota`]: safe("A usage count of secrets.", "secrets"),
   [`DELETE ${A}/secrets_store/stores/{store_id}`]: safe(REVOKES),
   [`DELETE ${A}/secrets_store/stores/{store_id}/secrets`]: safe(REVOKES),
   [`DELETE ${A}/secrets_store/stores/{store_id}/secrets/{secret_id}`]: safe(REVOKES),
@@ -499,7 +578,10 @@ export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
       `GET ${Z}/pagerules/{pagerule_id}`,
       `PUT ${Z}/pagerules/{pagerule_id}`,
       `PATCH ${Z}/pagerules/{pagerule_id}`,
-    ].map((key) => [key, safe("cookie lists cache-key cookie names.", "actions.value.cookie")]),
+    ].map((key) => [
+      key,
+      safe("cookie and header list cache-key names.", "actions.value.cookie", "actions.value.header"),
+    ]),
   ),
   ...Object.fromEntries(
     [`GET ${Z}/settings/zaraz/config`, `PUT ${Z}/settings/zaraz/config`, `GET ${Z}/settings/zaraz/default`].map(
@@ -513,8 +595,8 @@ export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
   [`GET ${Z}/token_validation/config/{config_id}`]: safe("credentials are public JWKS keys.", "credentials"),
   [`PATCH ${Z}/token_validation/config/{config_id}`]: safe(METADATA),
   [`DELETE ${Z}/token_validation/config/{config_id}`]: safe(REVOKES),
-  [`PUT ${Z}/token_validation/config/{config_id}/credentials`]: safe("Public JWKS keys."),
-  [`PATCH ${Z}/token_validation/config/{config_id}/credentials`]: safe("Public JWKS keys."),
+  [`PUT ${Z}/token_validation/config/{config_id}/credentials`]: safe("Public JWKS keys.", "keys"),
+  [`PATCH ${Z}/token_validation/config/{config_id}/credentials`]: safe("Public JWKS keys.", "keys"),
   [`GET ${Z}/token_validation/rules`]: safe(METADATA),
   [`POST ${Z}/token_validation/rules`]: safe(METADATA),
   [`POST ${Z}/token_validation/rules/bulk`]: safe(METADATA),
@@ -523,11 +605,333 @@ export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
   [`GET ${Z}/token_validation/rules/{rule_id}`]: safe(METADATA),
   [`PATCH ${Z}/token_validation/rules/{rule_id}`]: safe(METADATA),
   [`DELETE ${Z}/token_validation/rules/{rule_id}`]: safe(REVOKES),
+  // Round 2: candidates surfaced by plurals, headers, environment variables,
+  // credential descriptions, and x-sensitive.
+  [`POST ${A}/bulk/subscriptions`]: refuse(PAYMENT),
+  [`POST ${A}/devices/override_codes`]: refuse(MINT),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/builds/builds`,
+      `GET ${A}/builds/builds/latest`,
+      `GET ${A}/builds/builds/{build_uuid}`,
+      `POST ${A}/builds/triggers/{trigger_uuid}/builds`,
+      `GET ${A}/builds/triggers/{trigger_uuid}/environment_variables`,
+      `PATCH ${A}/builds/triggers/{trigger_uuid}/environment_variables`,
+      `POST ${A}/builds/workers`,
+      `GET ${A}/builds/workers/{external_script_id}/builds`,
+      `GET ${A}/builds/workers/{script_tag}`,
+      `PATCH ${A}/builds/workers/{script_tag}`,
+      `POST ${A}/builds/workers/{script_tag}/migrate_to_previews`,
+      `GET ${A}/builds/workers/{script_tag}/previews/{preview_id}`,
+      `PATCH ${A}/builds/workers/{script_tag}/previews/{preview_id}`,
+      `GET ${A}/builds/workers/{script_tag}/previews/{preview_id}/builds`,
+      `POST ${A}/builds/workers/{script_tag}/previews/{preview_id}/builds`,
+    ].map((key) => [key, BUILD_ENV]),
+  ),
+  ...Object.fromEntries(
+    [
+      `POST ${A}/containers/applications`,
+      `GET ${A}/containers/applications/{application_id}`,
+      `PATCH ${A}/containers/applications/{application_id}`,
+      `POST ${A}/containers/applications/{application_id}/rollouts`,
+      `GET ${A}/containers/applications/{application_id}/versions`,
+    ].map((key) => [key, CONTAINER_APP]),
+  ),
+  [`GET ${A}/containers/registries`]: safe("A registry's public key.", "public_key"),
+  [`POST ${A}/containers/registries`]: safe("A registry's public key.", "public_key"),
+  ...Object.fromEntries(
+    [`GET ${A}/cni/cnis`, `POST ${A}/cni/cnis`, `GET ${A}/cni/cnis/{cni}`, `PUT ${A}/cni/cnis/{cni}`].map((key) => [
+      key,
+      redact("bgp.md5_key", "items.bgp.md5_key"),
+    ]),
+  ),
+  [`GET ${A}/magic/cf_interconnects`]: BGP("interconnects"),
+  [`PUT ${A}/magic/cf_interconnects`]: BGP("modified_interconnects"),
+  [`GET ${A}/magic/cf_interconnects/{cf_interconnect_id}`]: BGP("interconnect"),
+  [`PUT ${A}/magic/cf_interconnects/{cf_interconnect_id}`]: BGP("modified_interconnect"),
+  [`GET ${A}/magic/gre_tunnels`]: BGP("gre_tunnels"),
+  [`POST ${A}/magic/gre_tunnels`]: ROOT_BGP,
+  [`PUT ${A}/magic/gre_tunnels`]: BGP("modified_gre_tunnels"),
+  [`GET ${A}/magic/gre_tunnels/{gre_tunnel_id}`]: BGP("gre_tunnel"),
+  [`PUT ${A}/magic/gre_tunnels/{gre_tunnel_id}`]: BGP("modified_gre_tunnel"),
+  [`DELETE ${A}/magic/gre_tunnels/{gre_tunnel_id}`]: BGP("deleted_gre_tunnel"),
+  [`GET ${A}/magic/ipsec_tunnels`]: BGP("ipsec_tunnels"),
+  [`POST ${A}/magic/ipsec_tunnels`]: ROOT_BGP,
+  [`PUT ${A}/magic/ipsec_tunnels`]: BGP("modified_ipsec_tunnels"),
+  [`GET ${A}/magic/ipsec_tunnels/{ipsec_tunnel_id}`]: BGP("ipsec_tunnel"),
+  [`PUT ${A}/magic/ipsec_tunnels/{ipsec_tunnel_id}`]: BGP("modified_ipsec_tunnel"),
+  [`DELETE ${A}/magic/ipsec_tunnels/{ipsec_tunnel_id}`]: BGP("deleted_ipsec_tunnel"),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/data-security/posture/webhooks`,
+      `POST ${A}/data-security/posture/webhooks`,
+      `GET ${A}/data-security/posture/webhooks/{webhook_id}`,
+      `PUT ${A}/data-security/posture/webhooks/{webhook_id}`,
+    ].map((key) => [key, redact("headers")]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/gateway/rules`,
+      `POST ${A}/gateway/rules`,
+      `PATCH ${A}/gateway/rules`,
+      `GET ${A}/gateway/rules/tenant`,
+      `GET ${A}/gateway/rules/{rule_id}`,
+      `PUT ${A}/gateway/rules/{rule_id}`,
+      `PATCH ${A}/gateway/rules/{rule_id}`,
+      `POST ${A}/gateway/rules/{rule_id}/reset_expiration`,
+    ].map((key) => [
+      key,
+      { redact: ["rule_settings.add_headers", "rule_settings.set_headers"], keep: ["rule_settings.delete_headers"] },
+    ]),
+  ),
+  [`GET ${A}/logpush/datasets/{dataset_id}/jobs`]: redact("destination_conf#url"),
+  [`GET ${Z}/logpush/datasets/{dataset_id}/jobs`]: redact("destination_conf#url"),
+  [`GET ${A}/workers/observability/destinations`]: redact("configuration.headers"),
+  [`GET ${A}/workers/observability/issues/{issueId}/occurrences`]: redact("request.headers"),
+  [`GET ${A}/workers/scripts/{script_name}/settings`]: WORKER_BINDINGS,
+  [`PATCH ${A}/workers/scripts/{script_name}/settings`]: WORKER_BINDINGS,
+  [`GET ${A}/workers/dispatch/namespaces/{dispatch_namespace}/scripts/{script_name}/settings`]: WORKER_BINDINGS,
+  [`PATCH ${A}/workers/dispatch/namespaces/{dispatch_namespace}/scripts/{script_name}/settings`]: WORKER_BINDINGS,
+  [`POST ${A}/workers/scripts/{script_name}/versions`]: redact("resources.bindings.text", "resources.bindings.json"),
+  [`GET ${A}/workers/scripts/{script_name}/versions/{version_id}`]: redact(
+    "resources.bindings.text",
+    "resources.bindings.json",
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${Z}/custom_hostnames`,
+      `POST ${Z}/custom_hostnames`,
+      `GET ${Z}/custom_hostnames/{custom_hostname_id}`,
+      `PATCH ${Z}/custom_hostnames/{custom_hostname_id}`,
+      `PUT ${Z}/custom_hostnames/{custom_hostname_id}/certificate_pack/{certificate_pack_id}/certificates/{certificate_id}`,
+    ].map((key) => [key, redact("ssl.custom_key")]),
+  ),
+  [`GET ${Z}/dnssec/zsk`]: { redact: ["SigningKey.privkey", "SigningKey.kek"], keep: ["SigningKey.pubkey"] },
+  ...Object.fromEntries(
+    [
+      `GET ${Z}/healthchecks`,
+      `POST ${Z}/healthchecks`,
+      `POST ${Z}/healthchecks/preview`,
+      `GET ${Z}/healthchecks/preview/{healthcheck_id}`,
+      `GET ${Z}/healthchecks/{healthcheck_id}`,
+      `PUT ${Z}/healthchecks/{healthcheck_id}`,
+      `PATCH ${Z}/healthchecks/{healthcheck_id}`,
+      `GET ${Z}/smart_shield/healthchecks`,
+      `POST ${Z}/smart_shield/healthchecks`,
+      `GET ${Z}/smart_shield/healthchecks/{healthcheck_id}`,
+      `PUT ${Z}/smart_shield/healthchecks/{healthcheck_id}`,
+      `PATCH ${Z}/smart_shield/healthchecks/{healthcheck_id}`,
+    ].map((key) => [key, HEALTH_HEADERS]),
+  ),
+  [`PUT ${Z}/settings/zaraz/history`]: ZARAZ,
+  // A scan's custom request headers are the caller's own and may authenticate.
+  [`GET ${A}/urlscanner/v2/result/{scan_id}`]: {
+    redact: ["task.options.customHeaders"],
+    keep: ["data", "meta"],
+  },
+  // Reviewed safe: the flagged field is metadata, a header name list, a count, or third-party data the operation exists to return.
+  ...Object.fromEntries(
+    (
+      [
+        [`GET ${A}/access/ai-controls/mcp/portals`, "servers.auth_config_summary"],
+        [`POST ${A}/access/ai-controls/mcp/portals`, "servers.auth_config_summary"],
+        [`GET ${A}/access/ai-controls/mcp/portals/{id}`, "servers.auth_config_summary"],
+        [`PUT ${A}/access/ai-controls/mcp/portals/{id}`, "servers.auth_config_summary"],
+        [`GET ${A}/access/ai-controls/mcp/servers`, "auth_config_summary"],
+        [`POST ${A}/access/ai-controls/mcp/servers`, "auth_config_summary"],
+        [`GET ${A}/access/ai-controls/mcp/servers/{id}`, "auth_config_summary"],
+        [`PUT ${A}/access/ai-controls/mcp/servers/{id}`, "auth_config_summary"],
+        [`DELETE ${A}/access/ai-controls/mcp/servers/{id}`, "auth_config_summary"],
+        [`GET ${A}/access/users/{user_id}/last_seen_identity`, "passkeys"],
+        [`GET ${A}/ai-search/namespaces/{name}/instances`, "source_params.web_crawler.parse_options.include_headers"],
+        [`POST ${A}/ai-search/namespaces/{name}/instances`, "source_params.web_crawler.parse_options.include_headers"],
+        [
+          `GET ${A}/ai-search/namespaces/{name}/instances/{id}`,
+          "source_params.web_crawler.parse_options.include_headers",
+        ],
+        [
+          `PUT ${A}/ai-search/namespaces/{name}/instances/{id}`,
+          "source_params.web_crawler.parse_options.include_headers",
+        ],
+        [
+          `DELETE ${A}/ai-search/namespaces/{name}/instances/{id}`,
+          "source_params.web_crawler.parse_options.include_headers",
+        ],
+        [`POST ${A}/ai/tomarkdown`, "tokens"],
+        [`GET ${A}/basin-catalog/{bucket_name}/maintenance-configs`, ""],
+        [`GET ${A}/billable/usage/billable-metrics`, "DimensionKeys"],
+        [`POST ${A}/browser-rendering/accessibilityTree`, "meta.headers", "meta.redirectChain.headers"],
+        [`POST ${A}/browser-rendering/content`, "meta.headers", "meta.redirectChain.headers"],
+        [`POST ${A}/browser-rendering/json`, "meta.headers", "meta.redirectChain.headers"],
+        [`POST ${A}/browser-rendering/links`, "meta.headers", "meta.redirectChain.headers"],
+        [`POST ${A}/browser-rendering/markdown`, "meta.headers", "meta.redirectChain.headers"],
+        [`POST ${A}/browser-rendering/scrape`, "meta.headers", "meta.redirectChain.headers"],
+        [`POST ${A}/browser-rendering/snapshot`, "meta.headers", "meta.redirectChain.headers"],
+        [
+          `GET ${A}/cfd_tunnel/{tunnel_id}/configurations`,
+          "config.originRequest.httpHostHeader",
+          "config.ingress.originRequest.httpHostHeader",
+        ],
+        [
+          `PUT ${A}/cfd_tunnel/{tunnel_id}/configurations`,
+          "config.originRequest.httpHostHeader",
+          "config.ingress.originRequest.httpHostHeader",
+        ],
+        [`GET ${A}/cloudforce-one/rules/structured/schema`, "headers"],
+        [`GET ${A}/custom_pages`, "required_tokens"],
+        [`GET ${A}/custom_pages/{identifier}`, "required_tokens"],
+        [`PUT ${A}/custom_pages/{identifier}`, "required_tokens"],
+        [`GET ${Z}/custom_pages`, "required_tokens"],
+        [`GET ${Z}/custom_pages/{identifier}`, "required_tokens"],
+        [`PUT ${Z}/custom_pages/{identifier}`, "required_tokens"],
+        [`GET ${A}/data-security/posture/content`, "integration.credentials_expiry", "integration.last_hydrated"],
+        [`GET ${A}/data-security/posture/findings`, "integration.credentials_expiry", "integration.last_hydrated"],
+        [
+          `POST ${A}/data-security/posture/findings/ignore`,
+          "integration.credentials_expiry",
+          "integration.last_hydrated",
+        ],
+        [
+          `POST ${A}/data-security/posture/findings/unignore`,
+          "integration.credentials_expiry",
+          "integration.last_hydrated",
+        ],
+        [
+          `GET ${A}/data-security/posture/findings/{finding_id}`,
+          "integration.credentials_expiry",
+          "integration.last_hydrated",
+        ],
+        [
+          `POST ${A}/data-security/posture/findings/{finding_id}/reset_finding_severity`,
+          "integration.credentials_expiry",
+          "integration.last_hydrated",
+        ],
+        [
+          `POST ${A}/data-security/posture/findings/{finding_id}/tune_finding_severity`,
+          "integration.credentials_expiry",
+          "integration.last_hydrated",
+        ],
+        [`GET ${A}/data-security/posture/remediations/jobs`, "triggered_by_user"],
+        [`POST ${A}/data-security/posture/remediations/jobs`, "created.triggered_by_user"],
+        [`GET ${A}/email-security/investigate/{investigate_id}/detections`, "headers"],
+        [`GET ${A}/images/v2/metadata/keys`, "keys"],
+        [`GET ${A}/logs/audit`, "actor.context"],
+        [`GET ${A}/logs/audit/{id}/history`, "actor.context"],
+        [`GET ${A}/logs/list`, "keys"],
+        [
+          `GET ${A}/one/applications/{application_id}/auth-methods`,
+          "instructions",
+          "payload_example",
+          "payload_schema",
+        ],
+        [`POST ${A}/one/integrations`, "credentials_expiry"],
+        [`GET ${A}/one/integrations/{id}`, "credentials_expiry"],
+        [`PATCH ${A}/one/integrations/{id}`, "credentials_expiry"],
+        [`POST ${A}/one/integrations/{id}/pause`, "credentials_expiry"],
+        [`POST ${A}/one/integrations/{id}/resume`, "credentials_expiry"],
+        [`GET ${A}/r2/buckets/{bucket_name}/cors`, "rules"],
+        [`POST ${A}/realtime/kit/{app_id}/presets`, "data.ui.design_tokens"],
+        [`GET ${A}/realtime/kit/{app_id}/presets/{preset_id}`, "data.ui.design_tokens"],
+        [`PUT ${A}/realtime/kit/{app_id}/presets/{preset_id}`, "data.ui.design_tokens"],
+        [`PATCH ${A}/realtime/kit/{app_id}/presets/{preset_id}`, "data.ui.design_tokens"],
+        [`DELETE ${A}/realtime/kit/{app_id}/presets/{preset_id}`, "data.ui.design_tokens"],
+        [`GET ${A}/slurper/jobs`, "source.keys"],
+        [`GET ${A}/slurper/jobs/{job_id}`, "source.keys"],
+        [`PUT ${A}/storage/kv/namespaces/{namespace_id}/bulk`, "unsuccessful_keys"],
+        [`POST ${A}/storage/kv/namespaces/{namespace_id}/bulk/delete`, "unsuccessful_keys"],
+        [`GET ${A}/urlscanner/v2/har/{scan_id}`, "log"],
+        [`GET /organizations/{organization_id}/logs/audit`, "actor.context"],
+        [`GET /organizations/{organization_id}/logs/audit/{id}/history`, "actor.context"],
+        [`POST /subscriptions/{subscription_id}/consume`, "records.headers"],
+        [`GET ${Z}/managed_headers`, "managed_request_headers", "managed_response_headers"],
+        [`PATCH ${Z}/managed_headers`, "managed_request_headers", "managed_response_headers"],
+      ] as const
+    ).map(([key, ...paths]) => [key, safe(DESCRIBED_ONLY, ...paths.filter(Boolean))]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/load_balancers/pools`,
+      `POST ${A}/load_balancers/pools`,
+      `PATCH ${A}/load_balancers/pools`,
+      `GET ${A}/load_balancers/pools/{pool_id}`,
+      `PUT ${A}/load_balancers/pools/{pool_id}`,
+      `PATCH ${A}/load_balancers/pools/{pool_id}`,
+      `GET /user/load_balancers/pools`,
+      `POST /user/load_balancers/pools`,
+      `PATCH /user/load_balancers/pools`,
+      `GET /user/load_balancers/pools/{pool_id}`,
+      `PUT /user/load_balancers/pools/{pool_id}`,
+      `PATCH /user/load_balancers/pools/{pool_id}`,
+    ].map((key) => [key, safe("An origin's header map is limited to Host.", "origins.header")]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/load_balancers`,
+      `POST ${A}/load_balancers`,
+      `GET ${A}/load_balancers/{load_balancer_id}`,
+      `PUT ${A}/load_balancers/{load_balancer_id}`,
+      `PATCH ${A}/load_balancers/{load_balancer_id}`,
+      `GET ${Z}/load_balancers`,
+      `POST ${Z}/load_balancers`,
+      `GET ${Z}/load_balancers/{load_balancer_id}`,
+      `PUT ${Z}/load_balancers/{load_balancer_id}`,
+      `PATCH ${Z}/load_balancers/{load_balancer_id}`,
+    ].map((key) => [
+      key,
+      safe(
+        "Session affinity names the headers to hash, not their values.",
+        "session_affinity_attributes.headers",
+        "rules.overrides.session_affinity_attributes.headers",
+      ),
+    ]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/rulesets/phases/{ruleset_phase}/entrypoint`,
+      `GET ${A}/rulesets/phases/{ruleset_phase}/entrypoint/versions/{ruleset_version}`,
+      `GET ${A}/rulesets/{ruleset_id}`,
+      `GET ${A}/rulesets/{ruleset_id}/versions/{ruleset_version}`,
+      `GET ${A}/rulesets/{ruleset_id}/versions/{ruleset_version}/by_tag/{rule_tag}`,
+      `GET ${Z}/rulesets/phases/{ruleset_phase}/entrypoint`,
+      `GET ${Z}/rulesets/phases/{ruleset_phase}/entrypoint/versions/{ruleset_version}`,
+      `GET ${Z}/rulesets/{ruleset_id}`,
+      `GET ${Z}/rulesets/{ruleset_id}/versions/{ruleset_version}`,
+      `GET ${Z}/rulesets/{ruleset_id}/versions/{ruleset_version}/by_tag/{rule_tag}`,
+    ].map((key) => [
+      key,
+      safe("Expressions locating credential fields, not credentials.", "rules.exposed_credential_check"),
+    ]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${Z}/custom_certificates`,
+      `POST ${Z}/custom_certificates`,
+      `PUT ${Z}/custom_certificates/prioritize`,
+      `GET ${Z}/custom_certificates/{custom_certificate_id}`,
+      `PATCH ${Z}/custom_certificates/{custom_certificate_id}`,
+      `GET ${Z}/ssl/certificate_packs`,
+      `POST ${Z}/ssl/certificate_packs/order`,
+      `GET ${Z}/ssl/certificate_packs/{certificate_pack_id}`,
+      `PATCH ${Z}/ssl/certificate_packs/{certificate_pack_id}`,
+    ].map((key) => [
+      key,
+      safe(DESCRIBED_ONLY, "geo_restrictions", "policy_restrictions", "certificates.geo_restrictions"),
+    ]),
+  ),
 };
 
 /** Normalized key names the heuristic treats as credentials (compared lowercase, without `_` or `-`). */
 const CREDENTIAL_KEY =
   /(token|secret|password|passphrase|privatekey|apikey|authkey|authorization|cookie|signature|jwt|credentials?|psk|streamkey|uploadurl|signedurl|jwk|verifier|devicecode|bypass)$/;
+/** Request fields that carry a secret into Cloudflare: credentials, headers, and environment values. */
+const CREDENTIAL_INPUT = /(envvars|environmentvariables|bindings|headers?)$/;
+
+/** Whether a request field name submits a credential or a stored secret. */
+export function isCredentialInput(name: string): boolean {
+  const key = normalized(name);
+  return CREDENTIAL_KEY.test(key) || CREDENTIAL_INPUT.test(key);
+}
+
 /** Pagination cursors share the vocabulary but grant nothing; redacting them would break paging. */
 const CURSORS = new Set(["pagetoken", "nextpagetoken", "continuationtoken", "nextcontinuationtoken"]);
 /** Query parameters that carry credentials inside a URL. */
