@@ -16,6 +16,9 @@ vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
 }));
 
 import { CLOUDFLARE_API_BASE, CLOUDFLARE_MCP_ENDPOINT, cloudflare } from "./index.js";
+import { PIN_REFUSED_UNSCOPED, PIN_SAFE_UNSCOPED } from "./rest.js";
+import { VALUE_SAFETY } from "./value-safety.js";
+import { openapi } from "./openapi.generated.js";
 import { connectorGuideSummary } from "../../skills.js";
 
 const ACCOUNT = "0123456789abcdef0123456789abcdef";
@@ -472,7 +475,10 @@ describe("cloudflare() over a key", () => {
         token(),
       ),
     );
-    expect(failure.code).toBe("unavailable");
+    // No idempotency header: a 5xx after dispatch is an unknown outcome, never retryable.
+    expect(failure.code).toBe("connector_call_failed");
+    expect(failure.retryable).toBe(false);
+    expect(failure.message).toContain("check the target before repeating it");
     expect(sent).toHaveLength(2);
   });
 
@@ -628,7 +634,7 @@ describe("cloudflare() over a key", () => {
         {
           path: `/accounts/${ACCOUNT}/workflows/w/instances/i/subscribe/token`,
         },
-        "does not mint",
+        "does not create, rotate, or return credentials",
       ],
       [
         "cloudflare_api_read",
@@ -974,5 +980,426 @@ describe("cloudflare() over a key", () => {
     );
     expect(error.code).toBe("invalid_args");
     expect(sent).toEqual([]);
+  });
+
+  describe("default-deny pins (round 1, finding 1)", () => {
+    const legacy = () => cloudflare("legacy", GLOBAL);
+
+    it("INV-4: refuses unscoped operations a pin cannot verify, and admits only the reviewed few", async () => {
+      const connector = legacy();
+      const refused: Array<[string, Record<string, unknown>]> = [
+        ["cloudflare_api_write", { method: "DELETE", path: "/certificates/c1" }],
+        ["cloudflare_api_read", { path: "/certificates", query: { zone_id: ZONE } }],
+        ["cloudflare_api_read", { path: "/memberships/m1" }],
+        ["cloudflare_api_read", { path: "/user/tokens" }],
+        ["cloudflare_api_read", { path: "/user/load_balancers/monitors" }],
+        ["cloudflare_api_read", { path: "/tenants/t1/accounts" }],
+      ];
+      for (const [tool, args] of refused) {
+        const error = await refusal(connector.callTool(tool, args, globalKey()));
+        expect(error.code, JSON.stringify(args)).toBe("provider_permission_denied");
+        expect(error.message).toContain("so a pinned connector refuses it");
+      }
+      const zone = await refusal(
+        connector.callTool(
+          "cloudflare_api_write",
+          { method: "POST", path: "/zones", body: { name: "x.example" } },
+          globalKey(),
+        ),
+      );
+      expect(zone.code).toBe("invalid_args");
+      expect(sent).toEqual([]);
+      respond = () => envelope([]);
+      await connector.callTool("cloudflare_api_read", { path: "/ips" }, globalKey());
+      await connector.callTool("cloudflare_api_read", { path: "/radar/ct/authorities" }, globalKey());
+      await connector.callTool("cloudflare_api_read", { path: "/user" }, globalKey());
+      expect(sent.map((request) => request.url.pathname)).toEqual([
+        "/client/v4/ips",
+        "/client/v4/radar/ct/authorities",
+        "/client/v4/user",
+      ]);
+    });
+
+    it("classifies every unscoped operation in the pinned index, so a new family fails review", () => {
+      const scoped = (path: string) => {
+        const parts = path.split("/");
+        return parts.some(
+          (part, index) => part.startsWith("{") && (parts[index - 1] === "accounts" || parts[index - 1] === "zones"),
+        );
+      };
+      const unclassified = openapi.ops
+        .filter(([, path]) => !scoped(path))
+        .filter(([method, path]) => {
+          const family = path.split("/")[1] ?? "";
+          if (PIN_SAFE_UNSCOPED.has(`${method} ${path}`)) return false;
+          if (method === "GET" && family === "radar") return false;
+          return !Object.hasOwn(PIN_REFUSED_UNSCOPED, family);
+        })
+        .map(([method, path]) => `${method} ${path}`);
+      expect(unclassified).toEqual([]);
+      for (const key of PIN_SAFE_UNSCOPED) {
+        if (key === "POST /graphql") continue;
+        const [method, path] = key.split(" ");
+        expect(
+          openapi.ops.some(([m, p]) => m === method && p === path),
+          key,
+        ).toBe(true);
+      }
+    });
+  });
+
+  describe("value safety (round 1, findings 2–4)", () => {
+    // Every operation whose path or summary names a credential, or whose
+    // success response has a credential-named field in the pinned spec.
+    const VOCABULARY =
+      /token|secret|credential|password|passphrase|private[-_ ]?key|\bpsk\b|psk_|jwt|signing[-_ ]keys?|signed[-_ ]?url|upload[-_ ]?url|direct[-_ ]upload|api[-_ ]?keys?\b|client[-_ ]secret|tsig|turn[-_ ]keys?|presign|deploy[-_ ]hook|bypass|kubeconfig|rotate/i;
+    const flagged = new Map<number, readonly string[]>((openapi.secrets ?? []).map(([row, ...paths]) => [row, paths]));
+    const candidates = openapi.ops.flatMap(([method, path, , summary], row) =>
+      VOCABULARY.test(`${path} ${summary}`) || flagged.has(row) ? [{ key: `${method} ${path}`, row }] : [],
+    );
+    /** A spec response path as the tool's data path: no envelope, no list markers. */
+    const dataPath = (path: string) => path.replace(/^result(\[\])?\./, "").replace(/\[\]/g, "");
+
+    it("reviews every candidate operation in the pinned index with refuse, redact, or safe", () => {
+      expect(candidates.length).toBeGreaterThan(250);
+      expect(candidates.filter(({ key }) => !Object.hasOwn(VALUE_SAFETY, key)).map(({ key }) => key)).toEqual([]);
+      for (const key of Object.keys(VALUE_SAFETY)) {
+        const [method, path] = key.split(" ");
+        expect(
+          openapi.ops.some(([m, p]) => m === method && p === path),
+          key,
+        ).toBe(true);
+      }
+      const counts = { refuse: 0, redact: 0, safe: 0 };
+      for (const verdict of Object.values(VALUE_SAFETY)) {
+        counts["refuse" in verdict ? "refuse" : "redact" in verdict ? "redact" : "safe"] += 1;
+      }
+      expect(counts).toEqual({ refuse: 52, redact: 113, safe: 164 });
+    });
+
+    it("accounts for every credential-named response field the spec declares", () => {
+      const uncovered: string[] = [];
+      for (const { key, row } of candidates) {
+        const verdict = VALUE_SAFETY[key]!;
+        if ("refuse" in verdict) continue;
+        const covered = [
+          ...("redact" in verdict ? verdict.redact.map((path) => path.split("#")[0]!) : []),
+          ...(verdict.keep ?? []),
+        ];
+        for (const field of flagged.get(row) ?? []) {
+          const path = dataPath(field);
+          const inside = (cover: string) => {
+            const pattern = new RegExp(`^${cover.replace(/\./g, "\\.").replace(/\*/g, "[^.]+")}(\\.|$)`);
+            return pattern.test(path);
+          };
+          if (/^(result_info|messages|errors)\b/.test(path)) continue;
+          if (!covered.some(inside)) uncovered.push(`${key}: ${path}`);
+        }
+      }
+      expect(uncovered).toEqual([]);
+    });
+
+    it("refuses credential producers before sending, in the generic and upload tools", async () => {
+      const connector = cloudflare("cf", TOKEN);
+      const producers: Array<[string, Record<string, unknown>]> = [
+        [
+          "cloudflare_api_write",
+          { method: "POST", path: `/accounts/${ACCOUNT}/access/service_tokens`, body: { name: "x" } },
+        ],
+        ["cloudflare_api_write", { method: "POST", path: `/zones/${ZONE}/access/service_tokens`, body: { name: "x" } }],
+        ["cloudflare_api_write", { method: "POST", path: `/accounts/${ACCOUNT}/r2/temp-access-credentials`, body: {} }],
+        ["cloudflare_api_write", { method: "POST", path: `/accounts/${ACCOUNT}/stream/keys` }],
+        [
+          "cloudflare_api_write",
+          { method: "POST", path: `/accounts/${ACCOUNT}/containers/registries/registry.example/credentials`, body: {} },
+        ],
+        ["cloudflare_api_write", { method: "POST", path: `/accounts/${ACCOUNT}/images/v2/direct_upload` }],
+        [
+          "cloudflare_api_upload",
+          { method: "POST", path: `/accounts/${ACCOUNT}/images/v2/direct_upload`, parts: [{ name: "a", text: "b" }] },
+        ],
+        ["cloudflare_api_write", { method: "POST", path: `/accounts/${ACCOUNT}/stream/s1/token`, body: {} }],
+        ["cloudflare_api_write", { method: "POST", path: `/accounts/${ACCOUNT}/oauth_clients/o1/rotate_secret` }],
+        ["cloudflare_api_write", { method: "POST", path: `/accounts/${ACCOUNT}/pay-invoice`, body: {} }],
+      ];
+      for (const [tool, args] of producers) {
+        const error = await refusal(connector.callTool(tool, args, token()));
+        expect(error.code, String(args["path"])).toBe("invalid_args");
+        expect(error.message).toMatch(/Connecta does not|grants access|client secret/);
+      }
+      expect(sent).toEqual([]);
+    });
+
+    it("redacts reviewed fields on every method, bare bodies, lists, and uploads", async () => {
+      const connector = cloudflare("cf", TOKEN);
+      const cases: Array<[string, Record<string, unknown>, unknown, (data: any) => void]> = [
+        [
+          "cloudflare_api_write",
+          {
+            method: "PUT",
+            path: `/accounts/${ACCOUNT}/challenges/widgets/0x4AAA`,
+            body: { domains: ["a.example"], mode: "managed", name: "w" },
+          },
+          { success: true, errors: [], result: { sitekey: "0x4AAA", secret: "0x4AAA-live-secret" } },
+          (data) => expect(data.secret).toBe("[redacted]"),
+        ],
+        [
+          "cloudflare_api_read",
+          { path: `/zones/${ZONE}/access/identity_providers/idp1` },
+          {
+            success: true,
+            errors: [],
+            result: { id: "idp1", scim_config: { secret: "scim-secret" }, config: { client_id: "c" } },
+          },
+          (data) => {
+            expect(data.scim_config.secret).toBe("[redacted]");
+            expect(data.config.client_id).toBe("c");
+          },
+        ],
+        [
+          "cloudflare_api_read",
+          { path: `/accounts/${ACCOUNT}/stream/live_inputs/li1` },
+          {
+            success: true,
+            errors: [],
+            result: {
+              uid: "li1",
+              rtmps: { url: "rtmps://live.cloudflare.com:443/live/", streamKey: "rtmps-key" },
+              srt: { url: "srt://live.cloudflare.com:778", streamId: "s", passphrase: "srt-pass" },
+              webRTC: { url: "https://customer.cloudflarestream.com/SECRETKEY/webRTC/publish" },
+            },
+          },
+          (data) => {
+            expect(data.rtmps.streamKey).toBe("[redacted]");
+            expect(data.srt.passphrase).toBe("[redacted]");
+            expect(data.webRTC.url).toBe("https://customer.cloudflarestream.com/[redacted]");
+            expect(JSON.stringify(data)).not.toContain("SECRETKEY");
+          },
+        ],
+        [
+          "cloudflare_api_read",
+          { path: `/accounts/${ACCOUNT}/logpush/jobs` },
+          {
+            success: true,
+            errors: [],
+            result: [
+              {
+                id: 1,
+                destination_conf: "s3://bucket/logs?region=us-east-1&access-key-id=AKIA1&secret-access-key=SECRET1",
+              },
+              { id: 2, destination_conf: "https://logs.example/ingest?header_Authorization=Basic%20SECRET2" },
+            ],
+          },
+          (data) => {
+            expect(data[0].destination_conf).toBe("s3://bucket/[redacted]");
+            expect(JSON.stringify(data)).not.toMatch(/SECRET1|SECRET2/);
+          },
+        ],
+        [
+          "cloudflare_api_read",
+          { path: `/accounts/${ACCOUNT}/load_balancers/monitors` },
+          {
+            success: true,
+            errors: [],
+            result: [
+              { id: "m1", header: { Host: ["origin.example"], Authorization: ["Bearer MONITOR"] }, path: "/health" },
+            ],
+          },
+          (data) => {
+            expect(data[0].header).toBe("[redacted]");
+            expect(data[0].path).toBe("/health");
+          },
+        ],
+        [
+          "cloudflare_api_read",
+          { path: `/zones/${ZONE}/settings/zaraz/export` },
+          // A bare (non-envelope) body.
+          {
+            variables: { ga: { name: "ga", type: "secret", value: "GA-SECRET" }, site: { type: "string", value: "x" } },
+            debugKey: "DBG",
+          },
+          (data) => {
+            expect(data.variables.ga.value).toBe("[redacted]");
+            expect(data.debugKey).toBe("[redacted]");
+          },
+        ],
+        [
+          "cloudflare_api_read",
+          { path: `/accounts/${ACCOUNT}/addressing/prefixes` },
+          { success: true, errors: [], result: [{ id: "p1", ownership_validation_token: "published-token" }] },
+          (data) => expect(data[0].ownership_validation_token).toBe("published-token"),
+        ],
+        [
+          // No verdict: the key-name heuristic, typed secrets, and URL sanitization still apply.
+          "cloudflare_api_read",
+          { path: `/accounts/${ACCOUNT}/workers/scripts` },
+          {
+            success: true,
+            errors: [],
+            result: [
+              {
+                id: "s1",
+                api_token: "T1",
+                bindings: [{ name: "K", type: "secret_text", value: "BIND" }],
+                callback: "https://user:PASS@hooks.example/x?sig=SIG&page=2",
+                nested: { clientSecret: "CS", next_page_token: "cursor-1", privateKey: { pem: "PEM" } },
+              },
+            ],
+          },
+          (data) => {
+            const text = JSON.stringify(data);
+            for (const secret of ["T1", "BIND", "PASS", "SIG", "CS", "PEM"]) expect(text, secret).not.toContain(secret);
+            expect(data[0].nested.next_page_token).toBe("cursor-1");
+            expect(data[0].callback).toContain("page=2");
+          },
+        ],
+      ];
+      for (const [tool, args, body, check] of cases) {
+        respond = () => Response.json(body);
+        const result = (await connector.callTool(tool, args, token())) as any;
+        check(result.data);
+      }
+      // An upload's result passes the same redaction.
+      respond = () => envelope({ id: "s1", api_token: "UPLOAD-SECRET" });
+      const upload = (await connector.callTool(
+        "cloudflare_api_upload",
+        { method: "PUT", path: `/accounts/${ACCOUNT}/workers/scripts/s1`, parts: [{ name: "metadata", text: "{}" }] },
+        token(),
+      )) as any;
+      expect(JSON.stringify(upload)).not.toContain("UPLOAD-SECRET");
+      // A select projection reads the redacted data, never the original.
+      respond = () => envelope({ sitekey: "0x4AAA", secret: "PROJECTED" });
+      expect(
+        await connector.callTool(
+          "cloudflare_api_read",
+          { path: `/accounts/${ACCOUNT}/challenges/widgets/0x4AAA`, select: ["secret"] },
+          token(),
+        ),
+      ).toEqual({ status: 200, data: { secret: "[redacted]" } });
+    });
+
+    it("withholds vendor error text for secret families and keeps it elsewhere", async () => {
+      const connector = cloudflare("cf", TOKEN);
+      respond = () =>
+        Response.json(
+          { success: false, errors: [{ code: 10001, message: "secret 0xECHOED rejected" }] },
+          { status: 400 },
+        );
+      const secretFamily = await refusal(
+        connector.callTool(
+          "cloudflare_api_write",
+          {
+            method: "PUT",
+            path: `/accounts/${ACCOUNT}/challenges/widgets/0x4AAA`,
+            body: { domains: ["a"], mode: "managed", name: "w" },
+          },
+          token(),
+        ),
+      );
+      expect(secretFamily.code).toBe("invalid_args");
+      expect(secretFamily.message).toContain("Cloudflare error code 10001.");
+      expect(secretFamily.message).not.toContain("0xECHOED");
+      const ordinary = await refusal(connector.callTool("cloudflare_api_read", { path: `/zones/${ZONE}` }, token()));
+      expect(ordinary.message).toContain("secret 0xECHOED rejected");
+    });
+  });
+
+  it("keeps billed, activating, and outbound POSTs out of the read tool (round 1, finding 5)", async () => {
+    const connector = cloudflare("cf", TOKEN);
+    for (const path of [
+      `/accounts/${ACCOUNT}/ai-search/namespaces/ns/instances/i1/search`,
+      `/accounts/${ACCOUNT}/ai-search/namespaces/ns/search`,
+      `/accounts/${ACCOUNT}/autorag/rags/r1/search`,
+      `/zones/${ZONE}/monetization`,
+      `/accounts/${ACCOUNT}/monetization`,
+      `/accounts/${ACCOUNT}/flagship/apps/a1/evaluate`,
+      `/zones/${ZONE}/ai-audit/robots/bulk`,
+      `/accounts/${ACCOUNT}/cloudforce-one/v2/brand-protection/logo/search`,
+    ]) {
+      const error = await refusal(
+        connector.callTool("cloudflare_api_read", { method: "POST", path, body: {} }, token()),
+      );
+      expect(error.message, path).toContain("is not a reviewed read");
+    }
+    expect(sent).toEqual([]);
+  });
+
+  it("reads standard GraphQL variable declarations and defaults as declarations, not filters (finding 6)", async () => {
+    const connector = cloudflare("cf", { ...TOKEN, pin: { zoneIds: [ZONE] } });
+    respond = () => Response.json({ data: { viewer: { zones: [] } } });
+    const query = (header: string) =>
+      `query Daily(${header}) { viewer { zones(filter: { zoneTag: $zoneTag }) { httpRequests1dGroups(limit: 1) { sum { requests } } } } }`;
+    await connector.callTool(
+      "graphql_query",
+      { query: query("$zoneTag: String!"), variables: { zoneTag: ZONE } },
+      token(),
+    );
+    await connector.callTool("graphql_query", { query: query(`$zoneTag: String = "${ZONE}"`) }, token());
+    expect(sent).toHaveLength(2);
+    await refusal(connector.callTool("graphql_query", { query: query(`$zoneTag: String = "${OTHER_ZONE}"`) }, token()));
+    await refusal(
+      connector.callTool(
+        "graphql_query",
+        { query: query(`$zoneTag: String = "${ZONE}"`), variables: { zoneTag: OTHER_ZONE } },
+        token(),
+      ),
+    );
+    const accounts = cloudflare("cf", { ...TOKEN, pin: { accountIds: [ACCOUNT] } });
+    await accounts.callTool(
+      "graphql_query",
+      {
+        query: "query ($accountTag: String!) { viewer { accounts(filter: { accountTag: $accountTag }) { x } } }",
+        variables: { accountTag: ACCOUNT },
+      },
+      token(),
+    );
+    expect(sent).toHaveLength(3);
+  });
+
+  it("frames a Vectorize record list as NDJSON before validating it (finding 7)", async () => {
+    const connector = cloudflare("cf", TOKEN);
+    respond = () => envelope({ mutationId: "m1" });
+    await connector.callTool(
+      "cloudflare_api_write",
+      {
+        method: "POST",
+        path: `/accounts/${ACCOUNT}/vectorize/v2/indexes/idx/insert`,
+        body: [
+          { id: "a", values: [0.1, 0.2] },
+          { id: "b", values: [0.3, 0.4] },
+        ],
+      },
+      token(),
+    );
+    expect(sent[0]!.headers.get("content-type")).toBe("application/x-ndjson");
+    expect(
+      String(sent[0]!.body)
+        .split("\n")
+        .map((line) => JSON.parse(line).id),
+    ).toEqual(["a", "b"]);
+    const bad = await refusal(
+      connector.callTool(
+        "cloudflare_api_write",
+        { method: "POST", path: `/accounts/${ACCOUNT}/vectorize/v2/indexes/idx/insert`, body: [1, 2] },
+        token(),
+      ),
+    );
+    expect(bad.message).toContain("list of objects");
+  });
+
+  it("bounds zone-ownership reads per call (finding 8)", async () => {
+    const connector = cloudflare("cf", { ...TOKEN, pin: { accountIds: [ACCOUNT] } });
+    respond = (request) => envelope({ id: request.url.pathname.split("/").pop(), account: { id: ACCOUNT } });
+    const zones = ["z1", "z2", "z3", "z4"].map((zone) => `"${zone}"`).join(", ");
+    const error = await refusal(
+      connector.callTool(
+        "graphql_query",
+        { query: `{ viewer { zones(filter: { zoneTag_in: [${zones}] }) { x } } }` },
+        token(),
+      ),
+    );
+    expect(error.message).toContain("more than 3 zones");
+    expect(sent.filter((request) => request.url.pathname.startsWith("/client/v4/zones/"))).toHaveLength(3);
+    expect(sent.some((request) => request.url.pathname.endsWith("/graphql"))).toBe(false);
   });
 });

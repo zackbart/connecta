@@ -157,12 +157,18 @@ The Stripe conversion (#801, PR #803) settled facts the plan above left open:
 
 The Cloudflare conversion (#801) settled these:
 
-- A pin with `accountIds` covers every zone in those accounts. A zone id not
-  named in `zoneIds` is admitted after one `GET /zones/{id}` ownership read,
-  cached per connector; GraphQL `zoneTag`/`accountTag` filters, query and body
-  ids, and `/zones`, `/accounts` and `/memberships` list results are held to
-  the same pin, and `/organizations`, `/tenants` and the unscoped SQL API are
-  refused on a pinned connector.
+- Pins are default deny. A pin with `accountIds` covers every zone in those
+  accounts; a zone id not named in `zoneIds` is admitted after one
+  `GET /zones/{id}` ownership read (at most three per call, cached per
+  connector). GraphQL tags, query and body ids, and the `/zones`, `/accounts`
+  and `/memberships` lists are held to the same pin. An operation naming no
+  account or zone is refused unless a reviewed list admits it, and a test
+  requires every such family in the index to be classified.
+- Value safety is a reviewed table derived from the pinned spec: every
+  operation whose path, summary, or response fields carry credential
+  vocabulary has a `refuse`, `redact`, or `safe` verdict, and a test fails on
+  any unreviewed candidate. Redaction runs on every method's result, before
+  projection, with a key-name, typed-secret, and URL heuristic behind it.
 - Cloudflare's index is 3,336 operations from a 27 MB document. Generator
   options drop restated operation ids and plain path parameters and cap one
   operation's details, taking the index from 157 KB to 125 KB gzip before the

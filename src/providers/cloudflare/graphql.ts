@@ -211,7 +211,33 @@ export function inspectGraphqlQuery(source: string, variables: Readonly<Record<s
       else openTags.push(name);
     }
   };
-  const resolveVariable = (name: string): unknown => variables[name];
+  // Variable declarations (`$zoneTag: String! = "…"`) are not filters; record
+  // their defaults so a variable resolves as the server would resolve it.
+  const defaults = new Map<string, unknown>();
+  const declarations = new Set<number>();
+  for (let at = 0; at + 2 < tokens.length; at += 1) {
+    const [dollar, name, colon] = [tokens[at]!, tokens[at + 1]!, tokens[at + 2]!];
+    if (dollar.value !== "$" || name.kind !== "name" || colon.value !== ":") continue;
+    declarations.add(at + 1);
+    for (let scan = at + 3; scan < tokens.length; scan += 1) {
+      const token = tokens[scan]!;
+      if (token.kind === "punct" && (token.value === "$" || token.value === ")")) break;
+      if (token.kind === "punct" && token.value === "=") {
+        const value = tokens[scan + 1];
+        if (value?.kind === "string") defaults.set(name.value, value.value);
+        else if (value?.kind === "punct" && value.value === "[") {
+          const items: string[] = [];
+          for (let item = scan + 2; item < tokens.length && tokens[item]!.value !== "]"; item += 1) {
+            if (tokens[item]!.kind === "string") items.push(tokens[item]!.value);
+          }
+          defaults.set(name.value, items);
+        }
+        break;
+      }
+    }
+  }
+  const resolveVariable = (name: string): unknown =>
+    Object.hasOwn(variables, name) ? variables[name] : defaults.get(name);
   const scanValue = (value: unknown, depth = 0): boolean => {
     // True when a variable's value carries a tag key anywhere inside it.
     if (depth > 8 || typeof value !== "object" || value === null) return false;
@@ -228,6 +254,7 @@ export function inspectGraphqlQuery(source: string, variables: Readonly<Record<s
     const token = tokens[at]!;
     if (token.kind !== "name") continue;
     const next = tokens[at + 1];
+    if (declarations.has(at)) continue;
     if (TAG.test(token.value) && next?.kind === "punct" && next.value === ":") {
       const value = tokens[at + 2];
       if (value?.kind === "string") collect(token.value, value.value);

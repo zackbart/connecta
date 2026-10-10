@@ -19,6 +19,7 @@ import {
   type RestVendor,
 } from "../_shared/rest/tools.js";
 import { inspectGraphqlQuery } from "./graphql.js";
+import { VALUE_SAFETY, redactValues, type ValueSafetyVerdict } from "./value-safety.js";
 import { openapi } from "./openapi.generated.js";
 
 /** Cloudflare's v4 REST base. Override only for a proxy or a test double. */
@@ -42,16 +43,25 @@ export interface CloudflareRestOptions {
 }
 
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+/** Zone-ownership reads a pin check may spend: per tool call, and per five minutes per connector. */
+const MAX_LOOKUPS_PER_CALL = 3;
+const MAX_LOOKUPS_PER_WINDOW = 60;
+const LOOKUP_WINDOW_MS = 300_000;
 const READ_CAP_MS = 60_000;
 
 /**
  * POSTs that only read, admitted by `cloudflare_api_read`, each reviewed
- * against the pinned spec. Requests that look like reads but are not stay
- * writes: D1 `…/query` and `…/raw` and Durable Object `…/query/v2` run SQL
- * that can write; Workers AI `…/ai/run`, AI Search chat completions, the
- * browser-rendering family, and web search spend money per call; tests,
- * previews, scans, exports and ownership challenges create state or send
- * traffic; and every "token" or "credentials" POST mints a credential.
+ * against the pinned spec for four disqualifiers: it persists state, it is
+ * billed per call or runs a model, it sends traffic outside Cloudflare, or it
+ * activates something. Requests that look like reads but are not stay writes:
+ * D1 `…/query` and `…/raw` and Durable Object `…/query/v2` run SQL that can
+ * write; Workers AI `…/ai/run`, AI Search and AutoRAG search (query rewriting
+ * and reranking run billed models), browser rendering, web search and brand
+ * logo search run models or fetch the web; monetization "checks" activate an
+ * entitlement; flag evaluation is metered; robots.txt bulk reads fetch
+ * origins; previews, tests, scans, exports and ownership challenges create
+ * state or send traffic; and token or credential POSTs are refused outright
+ * (`VALUE_SAFETY`).
  */
 const READ_POSTS: readonly RestReadPost[] = [
   ["POST", "/accounts/{account_id}/analytics/query/{dataset}/summary", "Analytics query; aggregates only."],
@@ -81,15 +91,8 @@ const READ_POSTS: readonly RestReadPost[] = [
   ["POST", "/analytics/sql", "SQL API over analytics datasets; read-only by contract."],
   ["POST", "/accounts/{account_id}/logs/explorer/query/sql", "Log Explorer SQL query; reads stored logs."],
   ["POST", "/zones/{zone_id}/logs/explorer/query/sql", "Log Explorer SQL query; reads stored logs."],
-  ["POST", "/accounts/{account_id}/ai-search/namespaces/{name}/search", "Retrieval only; no generation."],
-  [
-    "POST",
-    "/accounts/{account_id}/ai-search/namespaces/{name}/instances/{id}/search",
-    "Retrieval only; no generation.",
-  ],
-  ["POST", "/accounts/{account_id}/autorag/rags/{id}/search", "Retrieval only; no generation."],
   ["POST", "/accounts/{account_id}/storage/kv/namespaces/{namespace_id}/bulk/get", "Reads several KV values at once."],
-  ["POST", "/accounts/{account_id}/vectorize/v2/indexes/{index_name}/query", "Nearest-vector query."],
+  ["POST", "/accounts/{account_id}/vectorize/v2/indexes/{index_name}/query", "Nearest-vector query; no model runs."],
   ["POST", "/accounts/{account_id}/vectorize/v2/indexes/{index_name}/get_by_ids", "Reads vectors by id."],
   ["POST", "/accounts/{account_id}/workers/observability/telemetry/query", "Runs a telemetry query; saves nothing."],
   ["POST", "/accounts/{account_id}/workers/observability/telemetry/keys", "Lists telemetry keys."],
@@ -115,11 +118,6 @@ const READ_POSTS: readonly RestReadPost[] = [
     "/accounts/{account_id}/cloudforce-one/v2/brand-protection/takedown-notices/lookup",
     "Looks up takedown notices.",
   ],
-  [
-    "POST",
-    "/accounts/{account_id}/cloudforce-one/v2/brand-protection/logo/search",
-    "Similarity search; creates no match records.",
-  ],
   ["POST", "/accounts/{account_id}/cloudforce-one/v2/collections/{collection_id}/search", "Searches collection items."],
   ["POST", "/accounts/{account_id}/cloudforce-one/v2/priority-intelligence/quota", "Reads the PIR quota."],
   ["POST", "/accounts/{account_id}/cloudforce-one/rules/validate", "Validates a rule; stores nothing."],
@@ -133,70 +131,14 @@ const READ_POSTS: readonly RestReadPost[] = [
   ["POST", "/accounts/{account_id}/registrar/domain-check", "Domain availability check."],
   ["POST", "/accounts/{account_id}/registrar/domain-transfer-check", "Transfer eligibility check."],
   ["POST", "/accounts/{account_id}/registrar-sandbox/domain-check", "Domain availability check."],
-  ["POST", "/accounts/{account_id}/monetization", "Eligibility check."],
-  ["POST", "/zones/{zone_id}/monetization", "Eligibility check."],
   ["POST", "/accounts/{account_id}/pay-per-crawl/zones_can_be_enabled/query", "Reads a zone setting."],
-  ["POST", "/accounts/{account_id}/ai-gateway/billing/topup/eligibility", "Eligibility check."],
+  ["POST", "/accounts/{account_id}/ai-gateway/billing/topup/eligibility", "Eligibility check; starts nothing."],
   ["POST", "/accounts/{account_id}/ai-gateway/billing/topup/status", "Reads a payment status."],
-  ["POST", "/accounts/{account_id}/flagship/apps/{app_id}/evaluate", "Evaluates a flag against a context."],
   ["POST", "/accounts/{account_id}/request-tracer/trace", "Simulated trace; sends no traffic."],
   ["POST", "/accounts/{account_id}/magic/cloud/resources/policy-preview", "Evaluates a policy against the catalog."],
   ["POST", "/accounts/{account_id}/magic/cloud/onramps/{onramp_id}/export", "Renders Terraform; changes nothing."],
-  ["POST", "/zones/{zone_id}/ai-audit/robots/bulk", "Reads robots.txt rules for the zone's hosts."],
   ["POST", "/zones/{zone_id}/email/sending/subdomains/preview", "Previews DNS records; stores nothing."],
   ["POST", "/zones/{zone_id}/token_validation/rules/preview", "Previews a rule; stores nothing."],
-  ["POST", "/radar/datasets/download", "Returns a dataset download URL."],
-  ["POST", "/billing/address-validation", "Validates an address; stores nothing."],
-];
-
-/** GETs refused by `cloudflare_api_read`: each returns a credential or changes state. */
-const REFUSED_READS: ReadonlyArray<readonly [template: string, reason: string]> = [
-  [
-    "/accounts/{account_id}/cfd_tunnel/{tunnel_id}/token",
-    "A tunnel token lets anyone run this tunnel; Connecta does not return it. Read the tunnel itself instead.",
-  ],
-  [
-    "/accounts/{account_id}/warp_connector/{tunnel_id}/token",
-    "A Mesh node token lets anyone run this connector; Connecta does not return it.",
-  ],
-  [
-    "/accounts/{account_id}/pages/projects/{project_name}/upload-token",
-    "A Pages upload token is a credential; Connecta does not return it. Deploy with cloudflare_api_upload.",
-  ],
-  [
-    "/accounts/{account_id}/workflows/{workflow_name}/instances/{instance_id}/subscribe/token",
-    "This GET mints an event subscription token; Connecta does not mint credentials.",
-  ],
-  [
-    "/accounts/{account_id}/alerting/v3/policies/{policy_id}/email/unsubscribe",
-    "This GET belongs to an email unsubscribe flow and returns its token; it is not a read.",
-  ],
-  [
-    "/accounts/{account_id}/alerting/v3/destinations/pagerduty/connect/{token_id}",
-    "This GET completes a PagerDuty connection; it is not a read.",
-  ],
-];
-
-/**
- * Secret fields removed from otherwise useful reads, by path template. The
- * field is replaced with `"[redacted]"` so a caller knows it exists.
- */
-const REDACTED: ReadonlyArray<readonly [template: string, fields: readonly string[], reason: string]> = [
-  ["/accounts/{account_id}/challenges/widgets/{sitekey}", ["secret"], "Turnstile secret key."],
-  ["/accounts/{account_id}/secondary_dns/tsigs", ["secret"], "TSIG shared secret."],
-  ["/accounts/{account_id}/secondary_dns/tsigs/{tsig_id}", ["secret"], "TSIG shared secret."],
-  ["/accounts/{account_id}/stream/webhook", ["secret"], "Webhook signing secret."],
-  ["/accounts/{account_id}/images/v1/keys", ["keys.value"], "Image signing keys."],
-  [
-    "/accounts/{account_id}/access/identity_providers",
-    ["config.client_secret", "scim_config.secret"],
-    "Identity provider secrets.",
-  ],
-  [
-    "/accounts/{account_id}/access/identity_providers/{identity_provider_id}",
-    ["config.client_secret", "scim_config.secret"],
-    "Identity provider secrets.",
-  ],
 ];
 
 /**
@@ -218,12 +160,53 @@ const UPLOADS: ReadonlyArray<readonly [method: string, template: string]> = [
   ["PUT", "/accounts/{account_id}/r2/buckets/{bucket_name}/objects/{object_key}"],
   ["POST", "/accounts/{account_id}/pages/projects/{project_name}/deployments"],
   ["POST", "/accounts/{account_id}/images/v1"],
-  ["POST", "/accounts/{account_id}/images/v2/direct_upload"],
   ["POST", "/accounts/{account_id}/stream"],
   ["PUT", "/accounts/{account_id}/stream/{identifier}/captions/{language}"],
   ["POST", "/zones/{zone_id}/dns_records/import"],
   ["PUT", "/zones/{zone_id}/snippets/{snippet_name}"],
 ];
+
+/**
+ * Operations with no account or zone in their path that a pinned connector
+ * still admits, each holding to the pin some other way: the identity reads
+ * name only the credential's own user, the three lists are filtered to the
+ * pin, zone creation must name a pinned account, and the rest is public data.
+ * Every other unscoped operation is refused under a pin (default deny).
+ */
+export const PIN_SAFE_UNSCOPED: ReadonlySet<string> = new Set([
+  "GET /user",
+  "GET /user/tokens/verify",
+  "GET /accounts",
+  "GET /zones",
+  "POST /zones",
+  "GET /memberships",
+  "GET /ips",
+  "POST /graphql",
+]);
+
+/** Why each family of unscoped operations is refused under a pin; `test` checks every one is covered. */
+export const PIN_REFUSED_UNSCOPED: Readonly<Record<string, string>> = {
+  accounts: "creates or moves accounts outside the pin",
+  analytics: "queries datasets across every account; use POST /accounts/{account_tag}/analytics/sql",
+  api: "is an internal health route",
+  billing: "is user-level billing",
+  certificates: "manages Origin CA certificates across every zone the user holds",
+  internal: "is an internal route",
+  live: "is an internal health route",
+  memberships: "changes or reads one of the user's memberships, which may be another account's",
+  oauth: "lists user-level OAuth scopes",
+  organizations: "spans several accounts",
+  pages: "uses a Pages upload token, not this connector's credential",
+  produce: "writes to a pipeline the path does not scope",
+  radar: "is not a GET",
+  ready: "is an internal health route",
+  "signed-url": "is an internal test route",
+  subscriptions: "reads or acknowledges a stream the path does not scope",
+  tenants: "spans several accounts",
+  user: "acts on user-level settings shared by every account",
+  workers: "triggers a deploy hook the path does not scope",
+  zones: "is not a list or a create",
+};
 
 /** Request headers the generic tools accept; both are R2's. */
 const HEADERS: Readonly<Record<string, string>> = {
@@ -313,12 +296,25 @@ function errorCodes(errors: EnvelopeError[]): Set<number> {
  */
 const AUTH_ERROR_CODES = new Set([1001, 6003, 6111, 9103, 9106, 9107]);
 
-/** Map a failed Cloudflare response by the caller's next move (H11). */
-function failureFor(status: number, headers: Headers, body: unknown): ConnectorCallError {
+/** The reviewed value-safety verdict for an operation, if it has one. */
+function verdictOf(op: { method: string; path: string }): ValueSafetyVerdict | undefined {
+  return VALUE_SAFETY[`${op.method} ${op.path}`];
+}
+
+/**
+ * Map a failed Cloudflare response by the caller's next move (H11). For an
+ * operation in a reviewed secret family the vendor's error text is withheld
+ * (it may echo a submitted secret); the status and numeric codes still route.
+ */
+function failureFor(status: number, headers: Headers, body: unknown, call?: RestCall): ConnectorCallError {
   const errors = errorsOf(body);
   const ray = headers.get("cf-ray");
-  const detail = `${describeErrors(errors)}${ray ? ` Ray ${ray}.` : ""}`;
   const codes = errorCodes(errors);
+  const withheld = call !== undefined && verdictOf(call.op) !== undefined && !("safe" in verdictOf(call.op)!);
+  const described = withheld
+    ? `${codes.size ? `Cloudflare error code ${[...codes].join(", ")}.` : "Cloudflare reported an error."} Its text is withheld because this operation handles credentials.`
+    : describeErrors(errors);
+  const detail = `${described}${ray ? ` Ray ${ray}.` : ""}`;
   // 429 before the authentication codes: Cloudflare reuses 10000 on throttled
   // responses, and reading a rate limit as an auth failure would tell an
   // agent to stop when it should wait.
@@ -365,20 +361,6 @@ function failureFor(status: number, headers: Headers, body: unknown): ConnectorC
 function isEnvelope(body: unknown): body is JsonRecord {
   const value = record(body);
   return typeof value["success"] === "boolean" && ("result" in value || "errors" in value);
-}
-
-/** Replace the named dot paths with "[redacted]", through lists. */
-function redact(value: unknown, paths: readonly string[]): unknown {
-  const at = (current: unknown, parts: readonly string[]): unknown => {
-    if (Array.isArray(current)) return current.map((item) => at(item, parts));
-    if (typeof current !== "object" || current === null) return current;
-    const [head, ...rest] = parts;
-    const out = { ...(current as JsonRecord) };
-    if (!head || !Object.hasOwn(out, head)) return out;
-    out[head] = rest.length === 0 ? (out[head] === null ? null : "[redacted]") : at(out[head], rest);
-    return out;
-  };
-  return paths.reduce((current, path) => at(current, path.split(".")), value);
 }
 
 // --- Pins --------------------------------------------------------------------
@@ -526,9 +508,12 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
     },
   });
 
-  // --- Pin enforcement -----------------------------------------------------
-  /** Zone id → owning account id, learned from a GET /zones/{id} read. */
+  // --- Pin enforcement (default deny) ---------------------------------------
+  /** Zone id → owning account id, learned from a GET /zones/{id} read or a zone list. */
   const owners = new Map<string, string>();
+  /** Times of internal ownership reads, bounded per rolling window. */
+  const lookups: number[] = [];
+  const lookupsPerCall = new WeakMap<ConnectorContext, number>();
   const pinRefusal = (what: string): never => {
     throw new ConnectorCallError(
       "provider_permission_denied",
@@ -544,11 +529,37 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
   const assertAccount = (account: string): void => {
     if (!pinnedAccounts?.has(account)) pinRefusal(`Account ${account}`);
   };
+  /**
+   * Charge one internal ownership read: at most `MAX_LOOKUPS_PER_CALL` per
+   * tool call and `MAX_LOOKUPS_PER_WINDOW` per five minutes per connector, so
+   * one call cannot spend the user's shared request limit on pin checks.
+   */
+  const chargeLookup = (ctx: ConnectorContext): void => {
+    const used = lookupsPerCall.get(ctx) ?? 0;
+    if (used >= MAX_LOOKUPS_PER_CALL) {
+      throw new ConnectorCallError(
+        "invalid_args",
+        `This call names more than ${MAX_LOOKUPS_PER_CALL} zones whose account the pin must check. Name fewer zones per call, or list them in pin.zoneIds.`,
+      );
+    }
+    const now = Date.now();
+    while (lookups.length > 0 && lookups[0]! <= now - LOOKUP_WINDOW_MS) lookups.shift();
+    if (lookups.length >= MAX_LOOKUPS_PER_WINDOW) {
+      throw new ConnectorCallError(
+        "rate_limited",
+        "This connector's zone-ownership checks reached their per-window budget.",
+        { retryAfterMs: Math.max(1_000, lookups[0]! + LOOKUP_WINDOW_MS - now) },
+      );
+    }
+    lookups.push(now);
+    lookupsPerCall.set(ctx, used + 1);
+  };
   const assertZone = async (zone: string, ctx: ConnectorContext): Promise<void> => {
     if (pinnedZones?.has(zone)) return;
     if (!pinnedAccounts) pinRefusal(`Zone ${zone}`);
     let owner = owners.get(zone);
     if (owner === undefined) {
+      chargeLookup(ctx);
       owner = await send({ method: "GET", path: `/zones/${encodeURIComponent(zone)}` }, ctx, async (response) => {
         const body = await response.jsonResult().catch(() => ({ value: undefined }));
         const value = "value" in body ? body.value : undefined;
@@ -559,14 +570,31 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
     }
     if (!owner || !pinnedAccounts?.has(owner)) pinRefusal(`Zone ${zone}`);
   };
+  /**
+   * Under a pin, an operation is admitted only if every account and zone it
+   * names is pinned (zones by verified ownership), and an operation that names
+   * neither is admitted only from the reviewed `PIN_SAFE_UNSCOPED` set.
+   */
   const admit = async (call: RestCall, ctx: ConnectorContext): Promise<void> => {
     if (!pin) return;
     const { accounts, zones, template } = scopeIds(call);
-    if (template[0] === "organizations" || template[0] === "tenants") {
-      pinRefusal(`/${template[0]} spans several accounts and`);
-    }
-    if (call.op.path === "/analytics/sql") {
-      invalid("A pinned connector queries the SQL API through POST /accounts/{account_tag}/analytics/sql.");
+    const scoped = template.some(
+      (part, index) => part.startsWith("{") && (template[index - 1] === "accounts" || template[index - 1] === "zones"),
+    );
+    if (!scoped) {
+      const key = `${call.op.method} ${call.op.path}`;
+      const radar = call.op.method === "GET" && template[0] === "radar";
+      if (!PIN_SAFE_UNSCOPED.has(key) && !radar) {
+        const reason = PIN_REFUSED_UNSCOPED[template[0] ?? ""] ?? "names no account or zone this pin can verify";
+        throw new ConnectorCallError(
+          "provider_permission_denied",
+          `${key} ${reason}, so a pinned connector refuses it.`,
+          { retryable: false },
+        );
+      }
+      if (key === "POST /zones" && accounts.length === 0) {
+        invalid("A pinned connector creates a zone only in a pinned account: set body.account.id.");
+      }
     }
     for (const account of accounts) assertAccount(account);
     for (const zone of zones) await assertZone(zone, ctx);
@@ -649,6 +677,15 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
   };
 
   const scope = (call: RestCall): RestCall => {
+    // NDJSON operations take a list of records; frame it before validation,
+    // so the index checks the string the vendor receives.
+    const type = (operations.bodyType(call.op) ?? "").toLowerCase();
+    if (/ndjson|jsonl/.test(type) && Array.isArray(call.body)) {
+      if (!call.body.every((item) => typeof item === "object" && item !== null && !Array.isArray(item))) {
+        invalid(`${call.op.method} ${call.op.path} takes newline-delimited JSON: send a list of objects.`);
+      }
+      call = { ...call, body: call.body.map((item) => JSON.stringify(item)).join("\n") };
+    }
     for (const [name, value] of Object.entries(call.headers ?? {})) {
       if (!/^\/accounts\/\{[^/]+\}\/r2\//.test(call.op.path)) {
         invalid(`${name} applies only to R2 operations under /accounts/{account_id}/r2/.`);
@@ -662,14 +699,9 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
 
   const refuse = (call: RestCall): string | undefined => {
     const { method, op } = call;
-    if (method === "GET") {
-      const refused = REFUSED_READS.find(([template]) => template === op.path);
-      if (refused) return refused[1];
-      return undefined;
-    }
-    if (/^\/(?:user\/tokens|accounts\/\{[^/]+\}\/tokens)(?:\/|$)/.test(op.path)) {
-      return "Connecta does not create, roll, edit, or delete API tokens; an operator manages tokens in the Cloudflare dashboard.";
-    }
+    const verdict = verdictOf(op);
+    if (verdict && "refuse" in verdict) return verdict.refuse;
+    if (method === "GET") return undefined;
     if (auth === "globalApiKey" && /^\/(?:user|memberships)(?:\/|$)/.test(op.path)) {
       return "A Global API Key connector never writes user-level settings or memberships: the key is the user's own identity. Make that change in the Cloudflare dashboard.";
     }
@@ -704,14 +736,13 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
     return { hasMore, ...(hasMore ? { next: String(current + 1), param: "page" } : {}) };
   };
 
+  // Every successful body, on every method and tool: reviewed field paths,
+  // then the key-name heuristic, typed secrets, and URL sanitization.
   const result = (body: unknown, call: RestCall, response: { status: number; headers: Headers }): unknown => {
-    if (!isEnvelope(body)) return body;
+    if (!isEnvelope(body)) return redactValues(body, verdictOf(call.op));
     if (body["success"] === false)
       throw failureFor(response.status === 200 ? 400 : response.status, response.headers, body);
-    let data = filterListed(call.op, body["result"]);
-    const redacted = call.method === "GET" ? REDACTED.find(([template]) => template === call.op.path) : undefined;
-    if (redacted) data = redact(data, redacted[1]);
-    return data;
+    return redactValues(filterListed(call.op, body["result"]), verdictOf(call.op));
   };
 
   const vendor: RestVendor = {
@@ -1061,13 +1092,13 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
             ? { headers: record(args["headers"]) as Record<string, string> }
             : {}),
         });
+        const refusal = refuse(prepared);
+        if (refusal) invalid(refusal);
         if (!UPLOADS.some(([verb, template]) => verb === prepared.op.method && template === prepared.op.path)) {
           invalid(
             `${prepared.op.method} ${prepared.op.path} is not a reviewed upload operation; JSON writes go through cloudflare_api_write.`,
           );
         }
-        const refusal = refuse(prepared);
-        if (refusal) invalid(refusal);
         const accepted = operations.contract(prepared.op).parameters.filter((parameter) => parameter.in === "query");
         for (const name of Object.keys(prepared.query)) {
           if (!accepted.some((parameter) => parameter.name === name)) {

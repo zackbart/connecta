@@ -53,6 +53,11 @@ export interface OpenApiData {
   readonly ops: readonly OperationRow[];
   /** JSON: `{ d: SchemaNode[], o: (0 | [params, body])[] }`, aligned with `ops`. */
   readonly details: string;
+  /**
+   * With the `responseSecrets` option: `[op row, ...response field paths]`
+   * whose names are credential vocabulary, for value-safety review.
+   */
+  readonly secrets?: readonly (readonly [number, ...string[]])[];
 }
 
 type ParamRow = readonly [

@@ -506,6 +506,49 @@ describe("OpenAPI operation index generation", () => {
     expect(contract.parameters).toEqual([{ name: "thing", in: "path", required: true, schema: { type: "string" } }]);
   });
 
+  it("records credential-named success-response fields for value-safety review", async () => {
+    const { buildOperationIndex } = await generator();
+    const secretive = {
+      openapi: "3.0.0",
+      info: { version: "1" },
+      paths: {
+        "/v1/keys": {
+          post: {
+            summary: "Create a key",
+            responses: {
+              "200": {
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: {
+                        result: {
+                          type: "object",
+                          properties: {
+                            id: { type: "string" },
+                            client_secret: { type: "string" },
+                            password: { type: "string", writeOnly: true },
+                            has_token: { type: "boolean" },
+                            items: { type: "array", items: { properties: { apiKey: { type: "string" } } } },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              "400": { content: { "application/json": { schema: { properties: { token: { type: "string" } } } } } },
+            },
+          },
+        },
+        "/v1/plain": { get: { summary: "Plain", responses: { "200": { description: "ok" } } } },
+      },
+    };
+    const data = buildOperationIndex(secretive, { ...source, options: { responseSecrets: true } });
+    expect(data.secrets).toEqual([[0, "result.client_secret", "result.items[].apiKey"]]);
+    expect(buildOperationIndex(secretive, source).secrets).toBeUndefined();
+  });
+
   it("round-trips through the runtime index: resolve, search, contract, and validation", async () => {
     const { buildOperationIndex } = await generator();
     const { OperationIndex } = await import("../src/providers/_shared/rest/operation-index.js");

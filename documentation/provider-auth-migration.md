@@ -160,6 +160,13 @@ their names (upload now takes `parts` for multipart); `verify_api_token` and
 `cloudflare_api_mutate` become `cloudflare_api_read` and `cloudflare_api_write`.
 `graphql_query` is new.
 
+Credentials stay in the dashboard. The key connector refuses every operation
+that mints, rotates, or returns a credential (API tokens, Access service
+tokens, R2 temporary credentials, signing keys, direct-upload URLs, deploy
+hooks) and redacts stored secrets on every result. A pinned connector refuses
+operations that name no account or zone unless they are reviewed safe, such
+as `/certificates` and `/memberships/{id}`.
+
 Read-only pools: hosted `execute` is always a write, even for a program that
 only reads, so a read-only pool on an OAuth connector reaches only `search`.
 Use an API-token connector for read-only API access.

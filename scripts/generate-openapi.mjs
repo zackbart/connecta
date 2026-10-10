@@ -379,6 +379,11 @@ export function buildOperationIndex(document, source) {
   const keepIds = source.options?.operationIds !== false;
   const typedPathParams = source.options?.pathParams === "typed";
   const opBudget = source.options?.opBudget;
+  // `responseSecrets: true` records, per operation, the success-response
+  // fields whose names are credential vocabulary, so a provider test can
+  // require a reviewed value-safety verdict for every one of them.
+  const responseSecrets = source.options?.responseSecrets === true;
+  const secrets = [];
   const defaultServer = serverOf(document.servers);
   const servers = defaultServer ? [defaultServer] : [];
   const tags = [];
@@ -405,6 +410,10 @@ export function buildOperationIndex(document, source) {
       }
       ops.push(row);
       details.push(operationDetails(document, item, operation, verb, shape, typedPathParams, opBudget));
+      if (responseSecrets) {
+        const fields = secretFields(document, operation);
+        if (fields.length > 0) secrets.push([ops.length - 1, ...fields]);
+      }
     }
   }
   return {
@@ -420,7 +429,53 @@ export function buildOperationIndex(document, source) {
     tags,
     ops,
     details: JSON.stringify(share(details)),
+    ...(responseSecrets ? { secrets } : {}),
   };
+}
+
+/** Field names that carry or grant credentials, compared lowercase without `_` or `-`. */
+const SECRET_VOCABULARY =
+  /(token|secret|password|passphrase|privatekey|apikey|authorization|cookie|jwt|credentials?|psk|streamkey|uploadurl|signedurl|jwk|verifier|devicecode|bypass)$/;
+
+/**
+ * Dot paths (`[]` marks a list) of an operation's 2xx response fields whose
+ * names match the credential vocabulary, to a fixed depth. Write-only and
+ * numeric or boolean fields carry no value back and are skipped.
+ */
+function secretFields(document, operation) {
+  const found = new Set();
+  const walk = (raw, path, depth, seen) => {
+    if (depth > 8 || !raw || typeof raw !== "object") return;
+    let node = raw;
+    if (typeof node.$ref === "string") {
+      if (seen.has(node.$ref)) return;
+      seen = new Set(seen).add(node.$ref);
+      node = resolveRef(document, node);
+    }
+    for (const key of ["allOf", "anyOf", "oneOf"]) {
+      for (const branch of Array.isArray(node[key]) ? node[key] : []) walk(branch, path, depth + 1, seen);
+    }
+    if (node.items) walk(node.items, `${path}[]`, depth + 1, seen);
+    if (node.additionalProperties && typeof node.additionalProperties === "object") {
+      walk(node.additionalProperties, `${path}.*`, depth + 1, seen);
+    }
+    for (const [name, child] of Object.entries(node.properties ?? {})) {
+      const at = path ? `${path}.${name}` : name;
+      const resolved = resolveRef(document, child);
+      const scalar = ["boolean", "integer", "number"].includes(resolved.type);
+      if (SECRET_VOCABULARY.test(name.toLowerCase().replace(/[_-]/g, "")) && resolved.writeOnly !== true && !scalar) {
+        found.add(at);
+      }
+      walk(child, at, depth + 1, seen);
+    }
+  };
+  for (const [code, response] of Object.entries(operation.responses ?? {})) {
+    if (!code.startsWith("2")) continue;
+    for (const media of Object.values(resolveRef(document, response).content ?? {})) {
+      walk(media?.schema, "", 0, new Set());
+    }
+  }
+  return [...found].sort();
 }
 
 /**
@@ -507,7 +562,9 @@ export const openapi: OpenApiData = {
   ops: [
 ${rows}
   ],
-  details: ${JSON.stringify(data.details)},
+  details: ${JSON.stringify(data.details)},${
+    data.secrets ? `\n  secrets: [\n${data.secrets.map((row) => `    ${JSON.stringify(row)},`).join("\n")}\n  ],` : ""
+  }
 };
 `;
 }

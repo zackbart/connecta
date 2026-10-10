@@ -9,6 +9,7 @@
     "maxEnum": 50,
     "operationIds": false,
     "pathParams": "typed",
-    "opBudget": 6000
+    "opBudget": 6000,
+    "responseSecrets": true
   }
 }
