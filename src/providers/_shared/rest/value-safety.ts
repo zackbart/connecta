@@ -16,7 +16,9 @@
 //    transport.
 // 2. Reviewed field paths for `redact` verdicts, on every success body the
 //    vendor returns (generic tools, HEAD data, named tools, uploads, logs),
-//    after any envelope unwrap and before cursors or `select` read it.
+//    after any envelope unwrap and before cursors or `select` read it; then
+//    resource rules on every object whose type discriminator they name,
+//    wherever an expansion, list, or event embeds it.
 // 3. A key-name heuristic, defense in depth only, over every body: any
 //    subtree under a credential-named key, labelled or typed secret records,
 //    environment containers, header rules, and URLs with userinfo or
@@ -162,8 +164,6 @@ export type ValueSafetyVerdict =
       readonly paths: readonly string[];
       /** Reviewed metadata paths the key-name heuristic leaves (children are still checked). */
       readonly keep?: readonly string[];
-      /** Reviewed payer-facing URLs returned verbatim; see the `safe` verdict. */
-      readonly urls?: readonly string[];
       /** See the `safe` verdict. */
       readonly errors?: "vendor";
     }
@@ -172,13 +172,6 @@ export type ValueSafetyVerdict =
       readonly reason: string;
       /** Reviewed metadata paths the key-name heuristic leaves (children are still checked). */
       readonly keep?: readonly string[];
-      /**
-       * Reviewed paths whose string is a URL the operation exists to hand out
-       * to a payer (a hosted checkout page), returned without URL sanitizing:
-       * its fragment is opaque state the page needs, which the URL rule could
-       * otherwise strip.
-       */
-      readonly urls?: readonly string[];
       /**
        * The error policy. By default a reviewed operation's failures carry the
        * vendor's codes and statuses but never its text, which may echo a
@@ -193,6 +186,36 @@ export type ValueSafetyVerdict =
 interface FieldReview {
   readonly verdict: "redact" | "keep";
   readonly reason: string;
+}
+
+/**
+ * A reviewed rule for one resource type, applied to every object whose
+ * discriminator names it wherever a response embeds it: the top level, a list,
+ * a search result, an expansion, an event's `data.object`. Operation verdicts
+ * review what an operation returns by shape; resource rules are the backstop
+ * for what expansions can put anywhere.
+ */
+interface ResourceRule {
+  readonly reason: string;
+  /** Reviewed paths relative to the object, in the operation path language. */
+  readonly paths?: readonly string[];
+  /** When this holds for the object, its `withheld` paths go too (a Checkout Session bound to a customer). */
+  readonly when?: (resource: Readonly<Record<string, unknown>>) => boolean;
+  readonly withheld?: readonly string[];
+  /**
+   * Fields whose string is a payer-facing URL the resource exists to hand out
+   * (a guest Checkout page), returned without URL sanitizing when `when` does
+   * not hold: its fragment is opaque state the page needs.
+   */
+  readonly verbatim?: readonly string[];
+}
+
+interface ResourceRules {
+  /** The field that names an object's type (Stripe's `object`). */
+  readonly key: string;
+  /** Sibling fields holding a partial copy of a discriminated object (an event's `previous_attributes`). */
+  readonly partials?: readonly string[];
+  readonly rules: Readonly<Record<string, ResourceRule>>;
 }
 
 export interface ValueSafetyTable {
@@ -210,30 +233,21 @@ export interface ValueSafetyTable {
   readonly envBodies?: RegExp;
   /** Keys whose string-list values are permission scopes (action names under a resource), never secrets. */
   readonly scopeMaps?: readonly string[];
+  /** Rules for resource types wherever they appear, for vendors whose objects carry a type discriminator. */
+  readonly resources?: ResourceRules;
 }
 
 export const refuse = (reason: string): ValueSafetyVerdict => ({ verdict: "refuse", reason });
-export const redact = (
-  reason: string,
-  paths: readonly string[],
-  keep: readonly string[] = [],
-  urls: readonly string[] = [],
-): ValueSafetyVerdict => ({
+export const redact = (reason: string, paths: readonly string[], keep: readonly string[] = []): ValueSafetyVerdict => ({
   verdict: "redact",
   reason,
   paths,
   ...(keep.length ? { keep } : {}),
-  ...(urls.length ? { urls } : {}),
 });
-export const safe = (
-  reason: string,
-  keep: readonly string[] = [],
-  urls: readonly string[] = [],
-): ValueSafetyVerdict => ({
+export const safe = (reason: string, keep: readonly string[] = []): ValueSafetyVerdict => ({
   verdict: "safe",
   reason,
   ...(keep.length ? { keep } : {}),
-  ...(urls.length ? { urls } : {}),
 });
 
 /** A verdict whose failures keep the vendor's text: reviewed, for operations whose errors echo no stored secret. */
@@ -504,9 +518,50 @@ function scrubValues(value: unknown, depth: number): unknown {
   return out;
 }
 
+/**
+ * Apply resource rules to every discriminated object in a body, innermost
+ * first, and to the partial copies events carry beside one. Records the
+ * reviewed payer-facing URL fields of objects that keep them.
+ */
+function resourcePass(
+  value: unknown,
+  resources: ResourceRules,
+  verbatim: WeakMap<object, Set<string>>,
+  depth: number,
+): unknown {
+  if (depth > MAX_DEPTH) return value;
+  if (Array.isArray(value)) return value.map((item) => resourcePass(item, resources, verbatim, depth + 1));
+  if (!isRecord(value)) return value;
+  let out: JsonRecord = Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [key, resourcePass(item, resources, verbatim, depth + 1)]),
+  );
+  const ruleFor = (type: unknown): ResourceRule | undefined =>
+    typeof type === "string" && Object.hasOwn(resources.rules, type) ? resources.rules[type] : undefined;
+  // An event's `previous_attributes` is a partial copy of `data.object`: every reviewed path applies to it.
+  const inner = out[resources.key];
+  const innerRule = isRecord(inner) ? ruleFor(inner[resources.key]) : undefined;
+  if (innerRule) {
+    for (const partial of resources.partials ?? []) {
+      let copy = out[partial];
+      if (!isRecord(copy)) continue;
+      for (const path of [...(innerRule.paths ?? []), ...(innerRule.withheld ?? [])]) copy = applyPath(copy, path);
+      out = { ...out, [partial]: copy };
+    }
+  }
+  const rule = ruleFor(out[resources.key]);
+  if (!rule) return out;
+  for (const path of rule.paths ?? []) out = applyPath(out, path) as JsonRecord;
+  if (rule.when?.(out)) {
+    for (const path of rule.withheld ?? []) out = applyPath(out, path) as JsonRecord;
+  } else if (rule.verbatim?.length) {
+    verbatim.set(out, new Set(rule.verbatim));
+  }
+  return out;
+}
+
 interface Exemptions {
   keep: string[][];
-  urls: string[][];
+  verbatim: WeakMap<object, Set<string>>;
   fields: Readonly<Record<string, FieldReview>>;
   scopeMaps: readonly string[];
 }
@@ -517,21 +572,19 @@ interface Exemptions {
  * URLs, destination headers, header/cookie/query rule values, route headers,
  * external route destinations reduced to their origin, and other URLs
  * sanitized. Reviewed `keep` paths and fields are exempt from the name rule
- * only; reviewed `urls` come back verbatim.
+ * only; a resource rule's reviewed payer-facing URLs come back verbatim.
  */
 function heuristic(value: unknown, exempt: Exemptions): unknown {
   const walk = (current: unknown, trail: string[], parent: string, depth: number): unknown => {
     if (depth > MAX_DEPTH) return REDACTED;
-    if (typeof current === "string") {
-      if (matches(exempt.urls, trail)) return current;
-      return URL_SHAPE.test(current) ? sanitizeUrl(current) : current;
-    }
+    if (typeof current === "string") return URL_SHAPE.test(current) ? sanitizeUrl(current) : current;
     if (Array.isArray(current)) return current.map((item) => walk(item, trail, parent, depth + 1));
     if (!isRecord(current)) return current;
     const labelled =
       credentialLabelled(current) || (typeof current["type"] === "string" && /secret/i.test(current["type"]));
     const destination = parent === "delivery" || "endpoint" in current || "deliveryFormat" in current;
     const out: JsonRecord = {};
+    const verbatim = exempt.verbatim.get(current);
     for (const [key, item] of Object.entries(current)) {
       const path = [...trail, key];
       const normalized = normalizedName(key);
@@ -568,6 +621,8 @@ function heuristic(value: unknown, exempt: Exemptions): unknown {
       } else if (DESTINATION_KEYS.includes(key) && typeof item === "string" && URL_SHAPE.test(item)) {
         // An external destination can carry its secret in the path; relative paths stay.
         out[key] = originOnly(item);
+      } else if (typeof item === "string" && verbatim?.has(key)) {
+        out[key] = item;
       } else {
         out[key] = walk(item, path, normalized, depth + 1);
       }
@@ -602,7 +657,7 @@ export interface ValueSafety {
   verdict(method: string, template: string): ValueSafetyVerdict | undefined;
   /** The refusal for a `refuse` verdict, before anything is sent. */
   refusal(method: string, template: string): string | undefined;
-  /** One success body made value-safe: reviewed paths, environment bodies, then the heuristic. */
+  /** One success body made value-safe: reviewed paths, environment bodies, resource rules, then the heuristic. */
   redact(data: unknown, method: string, template: string): unknown;
   /**
    * Whether a failure's vendor text is withheld: any reviewed operation
@@ -634,9 +689,10 @@ export function valueSafety(table: ValueSafetyTable, index: () => OperationIndex
       let out = data;
       if (reviewed?.verdict === "redact") for (const path of reviewed.paths) out = applyPath(out, path);
       if (table.envBodies?.test(template)) out = scrubValues(out, 0);
+      const verbatim = new WeakMap<object, Set<string>>();
+      if (table.resources) out = resourcePass(out, table.resources, verbatim, 0);
       const keep = reviewed && reviewed.verdict !== "refuse" ? (reviewed.keep ?? []) : [];
-      const urls = reviewed && reviewed.verdict !== "refuse" ? (reviewed.urls ?? []) : [];
-      return heuristic(out, { keep: keep.map(trailOf), urls: urls.map(trailOf), fields, scopeMaps });
+      return heuristic(out, { keep: keep.map(trailOf), verbatim, fields, scopeMaps });
     },
     withholdsErrors(op) {
       const reviewed = verdict(op.method, op.path);

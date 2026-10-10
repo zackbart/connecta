@@ -167,14 +167,12 @@ const HYPERDRIVE = reviewed(
   ["origin.password", "origin.access_client_secret"],
 );
 /** RealtimeKit recording storage: third-party storage credentials (write-only; redacted if ever returned). */
-const KIT_STORAGE = reviewed(
-  "Recording storage configurations carry third-party storage access keys, secrets, SFTP passwords, and private keys.",
-  [
-    "data.recording_config.storage_config",
-    "data.storage_config",
-    "data.meeting.recording_config.storage_config",
-  ].flatMap((prefix) => ["access_key", "secret", "password", "private_key"].map((name) => `${prefix}.${name}`)),
-);
+const KIT_STORAGE_REASON =
+  "Recording storage configurations carry third-party storage access keys, secrets, SFTP passwords, and private keys.";
+const storageCredentials = (...prefixes: string[]) =>
+  prefixes.flatMap((prefix) => ["access_key", "secret", "password", "private_key"].map((name) => `${prefix}.${name}`));
+const KIT_MEETING_STORAGE = reviewed(KIT_STORAGE_REASON, storageCredentials("data.recording_config.storage_config"));
+const KIT_RECORDING_STORAGE = reviewed(KIT_STORAGE_REASON, storageCredentials("data.storage_config"));
 const BINDING_VALUES = reviewed(
   "Worker bindings: plain-text, JSON, and key-material values are often credentials; names, types, and resource ids stay.",
   ["text", "json", "key_base64", "key_jwk"],
@@ -1104,15 +1102,20 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
       `GET ${A}/cloudforce-one/requests/priority/quota`,
       `GET ${A}/cloudforce-one/requests/priority/{priority_id}`,
       `PUT ${A}/cloudforce-one/requests/priority/{priority_id}`,
-      `GET ${A}/cloudforce-one/requests/quota`,
       `GET ${A}/cloudforce-one/requests/{request_id}`,
       `PUT ${A}/cloudforce-one/requests/{request_id}`,
       `POST ${A}/cloudforce-one/v2/requests/{project_type}`,
-      `GET ${A}/cloudforce-one/v2/requests/{project_type}/constants`,
-      `GET ${A}/cloudforce-one/v2/requests/{project_type}/types`,
       `GET ${A}/cloudforce-one/v2/requests/{project_type}/{request_id}`,
       `PUT ${A}/cloudforce-one/v2/requests/{project_type}/{request_id}`,
-    ].map((key) => [key, safe(COUNTS, "tokens", "request.tokens")]),
+    ].map((key) => [key, safe(COUNTS, "tokens")]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/cloudforce-one/requests/priority/quota`,
+      `GET ${A}/cloudforce-one/requests/quota`,
+      `GET ${A}/cloudforce-one/v2/requests/{project_type}/constants`,
+      `GET ${A}/cloudforce-one/v2/requests/{project_type}/types`,
+    ].map((key) => [key, safe(COUNTS)]),
   ),
   ...Object.fromEntries(
     (
@@ -1289,11 +1292,18 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
       `GET ${A}/realtime/kit/{app_id}/meetings/{meeting_id}`,
       `PUT ${A}/realtime/kit/{app_id}/meetings/{meeting_id}`,
       `PATCH ${A}/realtime/kit/{app_id}/meetings/{meeting_id}`,
-      `GET ${A}/realtime/kit/{app_id}/recordings`,
+    ].map((key) => [key, KIT_MEETING_STORAGE]),
+  ),
+  ...Object.fromEntries(
+    [
       `POST ${A}/realtime/kit/{app_id}/recordings`,
       `GET ${A}/realtime/kit/{app_id}/recordings/{recording_id}`,
       `PUT ${A}/realtime/kit/{app_id}/recordings/{recording_id}`,
-    ].map((key) => [key, KIT_STORAGE]),
+    ].map((key) => [key, KIT_RECORDING_STORAGE]),
+  ),
+  [`GET ${A}/realtime/kit/{app_id}/recordings`]: reviewed(
+    KIT_STORAGE_REASON,
+    storageCredentials("data.storage_config", "data.meeting.recording_config.storage_config"),
   ),
   ...Object.fromEntries(
     [

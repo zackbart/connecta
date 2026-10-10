@@ -20,14 +20,19 @@
 // the pinned digest and this format, so a moved pin or a tightened rule
 // forces a fresh review.
 
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+
 const VERBS = ["get", "post", "put", "patch", "delete", "head"];
 /**
  * Bump when the detection changes, so committed candidate files read as
- * stale. 4: one detector for every vendor (the union of Cloudflare's
+ * stale. 5: the reviewed table's paths are stamped as resolved against the
+ * pinned response schemas. 4: one detector for every vendor (the union of Cloudflare's
  * suffix vocabulary and Vercel's containment vocabulary, both description
  * rules, `x-sensitive`, and both operation vocabularies).
  */
-export const VALUE_SAFETY_FORMAT = 4;
+export const VALUE_SAFETY_FORMAT = 5;
 
 /** Credential vocabulary over normalized names (lowercase, separators removed), matched anywhere in the name. */
 export const CREDENTIAL_WORDS = [
@@ -335,17 +340,192 @@ export function valueSafetyCandidates(document, options = {}) {
   return out;
 }
 
-/** The committed candidates file: the pin it was derived from, and the flagged operations. */
-export function renderValueSafety(document, source) {
+/** A reviewed path's segments, as the runtime engine reads them (`src/providers/_shared/rest/value-safety.ts`). */
+function pathSegments(raw) {
+  const path = raw.replace(/^(?:url|origin):/, "").replace(/#url$/, "");
+  return path.split(".").flatMap((part) => {
+    if (part === "") return [];
+    const match = /^([^[{@]*)((?:\[\??[a-z]*\]|\{\}|@keys)*)$/.exec(part);
+    if (!match) return [part];
+    const out = [];
+    if (match[1]) out.push(match[1] === "*" ? "{}" : match[1]);
+    for (const token of match[2].match(/\[\??[a-z]*\]|\{\}|@keys/g) ?? []) out.push(token);
+    return out;
+  });
+}
+
+/** A schema node and every branch it can take (`allOf`, `anyOf`, `oneOf`, expansions included). */
+function alternatives(document, raw, seen = new Set(), depth = 0) {
+  if (depth > 24) return [];
+  let node = raw;
+  while (node && typeof node === "object" && typeof node.$ref === "string") {
+    if (seen.has(node.$ref)) return [];
+    seen = new Set([...seen, node.$ref]);
+    node = pointer(document, node.$ref);
+  }
+  if (!node || typeof node !== "object") return [];
+  const out = [node];
+  for (const key of ["allOf", "anyOf", "oneOf"]) {
+    for (const branch of Array.isArray(node[key]) ? node[key] : [])
+      out.push(...alternatives(document, branch, seen, depth + 1));
+  }
+  return out;
+}
+
+/**
+ * Whether a reviewed path names something the schema can return, read the
+ * way the engine applies it: a named segment reaches a property (through a
+ * list, item by item), `[]` and `[?…]` a list's items, `{}`/`*` a map's
+ * values or any property, `@keys` a map.
+ */
+function pathResolves(document, roots, raw) {
+  let nodes = roots;
+  for (const segment of pathSegments(raw)) {
+    const next = [];
+    const visit = (node, depth) => {
+      for (const option of alternatives(document, node)) {
+        if (segment === "@keys") {
+          if (option.properties || option.additionalProperties || option.type === "object") next.push(option);
+        } else if (segment.startsWith("[")) {
+          if (option.items) next.push(option.items);
+        } else if (segment === "{}") {
+          if (option.additionalProperties && typeof option.additionalProperties === "object") {
+            next.push(option.additionalProperties);
+          }
+          next.push(...Object.values(option.properties ?? {}));
+          if (option.items && depth < 4) visit(option.items, depth + 1);
+        } else {
+          if (option.properties && Object.hasOwn(option.properties, segment)) next.push(option.properties[segment]);
+          if (option.items && depth < 4) visit(option.items, depth + 1);
+        }
+      }
+    };
+    for (const node of nodes) visit(node, 0);
+    if (next.length === 0) return false;
+    nodes = next;
+  }
+  return true;
+}
+
+/** The 2xx response schemas of an operation, and their data root when the vendor wraps data in an envelope. */
+function responseRoots(document, operation, dataRoot) {
+  const roots = [];
+  for (const [status, response] of Object.entries(operation?.responses ?? {})) {
+    if (!status.startsWith("2")) continue;
+    for (const media of Object.values(resolved(document, response)?.content ?? {})) {
+      if (!media?.schema) continue;
+      roots.push(media.schema);
+      if (dataRoot) {
+        for (const option of alternatives(document, media.schema)) {
+          if (option.properties?.[dataRoot]) roots.push(option.properties[dataRoot]);
+        }
+      }
+    }
+  }
+  return roots;
+}
+
+/**
+ * Validate a reviewed table's paths against the pinned document: every
+ * `redact` path and `keep` of an operation verdict must name something the
+ * operation's response schema can return, and every resource rule path
+ * something the resource's schema (found by its discriminator) can return.
+ * Answers the paths that resolved, keyed like the table, and those that did
+ * not.
+ */
+export function reviewedPaths(document, table, options = {}) {
+  const operations = {};
+  const unresolved = [];
+  for (const [key, verdict] of Object.entries(table.operations ?? {})) {
+    if (verdict.verdict === "refuse") continue;
+    const [method, path] = key.split(" ");
+    const operation = resolved(document, document.paths?.[path])?.[method.toLowerCase()];
+    const roots = responseRoots(document, operation, options.dataRoot);
+    const paths = [...new Set([...(verdict.paths ?? []), ...(verdict.keep ?? [])])].sort();
+    if (paths.length === 0) continue;
+    operations[key] = paths.filter((raw) => pathResolves(document, roots, raw));
+    for (const raw of paths) if (!operations[key].includes(raw)) unresolved.push(`${key}: ${raw}`);
+  }
+  const resources = {};
+  const rules = table.resources;
+  if (rules) {
+    for (const [type, rule] of Object.entries(rules.rules)) {
+      const roots = Object.values(document.components?.schemas ?? {}).filter((schema) =>
+        alternatives(document, schema).some((option) => {
+          const discriminator = resolved(document, option.properties?.[rules.key]);
+          return Array.isArray(discriminator?.enum) && discriminator.enum.includes(type);
+        }),
+      );
+      const paths = [...new Set([...(rule.paths ?? []), ...(rule.withheld ?? []), ...(rule.verbatim ?? [])])].sort();
+      if (roots.length === 0) unresolved.push(`resource ${type}: no schema declares it`);
+      resources[type] = paths.filter((raw) => pathResolves(document, roots, raw));
+      for (const raw of paths) if (!resources[type].includes(raw)) unresolved.push(`resource ${type}: ${raw}`);
+    }
+  }
+  return { operations, resources, unresolved };
+}
+
+/**
+ * A provider's reviewed table (the `value-safety.ts` export with
+ * `operations`) and its acknowledged absent paths (`value-safety.absent.json`),
+ * for `providers:spec`, which runs under tsx so it can read TypeScript.
+ */
+export async function reviewedTable(directory) {
+  let module;
+  try {
+    module = await import(pathToFileURL(join(directory, "value-safety.ts")).href);
+  } catch (error) {
+    if (error?.code === "ERR_MODULE_NOT_FOUND") return undefined;
+    throw error;
+  }
+  const table = Object.values(module).find((value) => value && typeof value === "object" && "operations" in value);
+  let absent = { operations: {}, resources: {} };
+  try {
+    absent = { ...absent, ...JSON.parse(await readFile(join(directory, "value-safety.absent.json"), "utf8")) };
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  return table ? { table, absent } : undefined;
+}
+
+/**
+ * The committed candidates file: the pin it was derived from, the flagged
+ * operations, and, when the provider's reviewed table is given, the table
+ * paths that resolved against the pinned response schemas (`reviewed`).
+ * `problems` lists paths that neither resolve nor are acknowledged absent,
+ * and acknowledged absences that do resolve or that the table lacks.
+ */
+export function renderValueSafety(document, source, reviewed) {
   const options = typeof source.options?.valueSafety === "object" ? source.options.valueSafety : {};
-  return `${JSON.stringify(
+  const problems = [];
+  let stamp;
+  if (reviewed) {
+    const checked = reviewedPaths(document, reviewed.table, options);
+    stamp = { operations: checked.operations, resources: checked.resources };
+    const acknowledged = new Set([
+      ...Object.entries(reviewed.absent.operations ?? {}).flatMap(([key, paths]) =>
+        paths.map((path) => `${key}: ${path}`),
+      ),
+      ...Object.entries(reviewed.absent.resources ?? {}).flatMap(([type, paths]) =>
+        paths.map((path) => `resource ${type}: ${path}`),
+      ),
+    ]);
+    const missing = new Set(checked.unresolved);
+    for (const line of checked.unresolved)
+      if (!acknowledged.has(line)) problems.push(`${line} (not in the response schema)`);
+    for (const line of acknowledged)
+      if (!missing.has(line)) problems.push(`${line} (acknowledged absent, but it resolves or the table lacks it)`);
+  }
+  const text = `${JSON.stringify(
     {
       format: VALUE_SAFETY_FORMAT,
       digest: source.digest,
       options,
       candidates: valueSafetyCandidates(document, options),
+      ...(stamp ? { reviewed: stamp } : {}),
     },
     null,
     2,
   )}\n`;
+  return { text, problems };
 }

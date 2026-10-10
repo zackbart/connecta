@@ -147,13 +147,58 @@ describe("value-safety engine", () => {
     expect(out["url"]).toBe("https://example.com/a?signature=%5Bredacted%5D&X-Amz-Credential=%5Bredacted%5D&ok=1");
   });
 
-  it("INV-5: keeps a reviewed payer-facing URL verbatim and sanitizes it everywhere else", () => {
+  it("INV-5: applies resource rules wherever the object sits, and keeps a reviewed URL only while its condition does not hold", () => {
     const checkout = "https://checkout.example.com/c/pay/cs_1#fidkey";
-    const safety = engine({ operations: { "POST /v1/things": safe("Checkout.", [], ["url"]) } });
-    expect(safety.redact({ url: checkout }, "POST", "/v1/things")).toEqual({ url: checkout });
-    expect(safety.redact({ url: checkout }, "GET", "/v1/things")).toEqual({
-      url: "https://checkout.example.com/c/pay/cs_1",
+    const safety = engine({
+      operations: {},
+      resources: {
+        key: "object",
+        partials: ["previous_attributes"],
+        rules: {
+          file_link: { reason: "A bearer download.", paths: ["origin:url"] },
+          session: {
+            reason: "A payer page; bound to a customer it is a capability.",
+            paths: ["client_secret"],
+            when: (session) => session["customer"] != null,
+            withheld: ["origin:url"],
+            verbatim: ["url"],
+          },
+        },
+      },
     });
+    const link = { object: "file_link", url: "https://files.example.com/links/BEARER" };
+    expect(
+      JSON.stringify(
+        safety.redact(
+          {
+            object: "file",
+            links: { object: "list", data: [link] },
+            dispute: { evidence: { receipt: { object: "file", links: { data: [link] } } } },
+          },
+          "GET",
+          "/v1/files/f1",
+        ),
+      ),
+    ).not.toContain("BEARER");
+    const event = safety.redact(
+      { object: "event", data: { object: link, previous_attributes: { url: "https://files.example.com/links/OLD" } } },
+      "GET",
+      "/v1/events/evt_1",
+    );
+    expect(JSON.stringify(event)).not.toMatch(/BEARER|OLD/);
+    // A guest session keeps its page whole (a fragment the URL rule would otherwise strip); a bound one does not.
+    expect(safety.redact({ object: "session", url: checkout, client_secret: "S" }, "GET", "/")).toEqual({
+      object: "session",
+      url: checkout,
+      client_secret: REDACTED,
+    });
+    expect(safety.redact({ object: "session", customer: "cus_1", url: checkout }, "GET", "/")).toEqual({
+      object: "session",
+      customer: "cus_1",
+      url: `https://checkout.example.com/${REDACTED}`,
+    });
+    // Anywhere else, the same URL is sanitized.
+    expect(safety.redact({ url: checkout }, "GET", "/")).toEqual({ url: "https://checkout.example.com/c/pay/cs_1" });
   });
 
   it("INV-5: withholds error text for reviewed operations and credential inputs unless the review says vendor", () => {

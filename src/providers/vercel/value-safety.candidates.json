@@ -1,5 +1,5 @@
 {
-  "format": 4,
+  "format": 5,
   "digest": "sha256:32399b3ed273548c8b14dd4715ff26c7c295399fa0f08bf5c81aee89460cfb90",
   "options": {
     "operationWords": "global-config"
@@ -1343,5 +1343,333 @@
       "fields": ["[].legacyValue", "[].value", "[].visibility", "legacyValue", "value", "visibility"],
       "named": true
     }
+  },
+  "reviewed": {
+    "operations": {
+      "POST /v1/connect/connectors": ["appTokens", "userTokens"],
+      "GET /v1/connect/connectors/{connector}": ["appTokens", "userTokens"],
+      "POST /v1/connect/connectors/{connector}/managed/eject": ["appTokens", "userTokens"],
+      "PATCH /v1/connect/connectors/{connector}/trigger-destinations": ["appTokens", "userTokens"],
+      "GET /v2/connect/connectors": ["connectors[].appTokens", "connectors[].userTokens"],
+      "PATCH /v2/connect/connectors/{connector}": ["connector.appTokens", "connector.userTokens"],
+      "GET /v1/drains": [
+        "drains[].delivery.headers{}",
+        "drains[].delivery.secret",
+        "origin:drains[].delivery.endpoint",
+        "origin:drains[].delivery.endpoint.traces"
+      ],
+      "POST /v1/drains": [
+        "delivery.headers{}",
+        "delivery.secret",
+        "origin:delivery.endpoint",
+        "origin:delivery.endpoint.traces"
+      ],
+      "POST /v1/drains/test": [],
+      "GET /v1/drains/{id}": [
+        "delivery.headers{}",
+        "delivery.secret",
+        "origin:delivery.endpoint",
+        "origin:delivery.endpoint.traces"
+      ],
+      "PATCH /v1/drains/{id}": [
+        "delivery.headers{}",
+        "delivery.secret",
+        "origin:delivery.endpoint",
+        "origin:delivery.endpoint.traces"
+      ],
+      "GET /v1/log-drains": [
+        "drains[].delivery.headers{}",
+        "drains[].delivery.secret",
+        "origin:drains[].delivery.endpoint",
+        "origin:drains[].delivery.endpoint.traces"
+      ],
+      "POST /v1/log-drains": [],
+      "GET /v1/log-drains/{id}": [],
+      "GET /v2/integrations/log-drains": ["[].headers{}", "origin:[].url"],
+      "POST /v2/integrations/log-drains": ["headers{}", "origin:url"],
+      "GET /v1/webhooks": ["origin:[].url"],
+      "POST /v1/webhooks": ["origin:url", "secret"],
+      "GET /v1/webhooks/{id}": ["origin:url"],
+      "GET /v1/env": ["data[].value"],
+      "POST /v1/env": ["created[].value", "failed[].error.value"],
+      "PATCH /v1/env": ["failed[].error.value", "updated[].value"],
+      "DELETE /v1/env": ["failed[].error.value"],
+      "PATCH /v1/env/{id}/unlink/{projectId}": [],
+      "PUT /v1/installations/{integrationConfigurationId}/resources/{resourceId}/experimentation/global-config": [
+        "items"
+      ],
+      "GET /v1/microfrontends/groups/{groupId}/projects": [
+        "projects[].dismissedToasts[].value",
+        "projects[].env[].legacyValue",
+        "projects[].env[].value",
+        "projects[].env[].vsmValue",
+        "projects[].internalRoutes[].has[?header].value",
+        "projects[].link.deployHooks[].url",
+        "projects[].oidcTokenConfig",
+        "projects[].protectionBypass",
+        "projects[].protectionBypass@keys",
+        "projects[].security.firewallBypassIps",
+        "projects[].usageStatus.bypassThrottleUntil"
+      ],
+      "POST /v1/projects/{idOrName}/avatar": [
+        "dismissedToasts[].value",
+        "env[].legacyValue",
+        "env[].value",
+        "env[].vsmValue",
+        "internalRoutes[].has[?header].value",
+        "link.deployHooks[].url",
+        "oidcTokenConfig",
+        "protectionBypass",
+        "protectionBypass@keys",
+        "security.firewallBypassIps",
+        "usageStatus.bypassThrottleUntil"
+      ],
+      "DELETE /v1/projects/{idOrName}/avatar": [
+        "dismissedToasts[].value",
+        "env[].legacyValue",
+        "env[].value",
+        "env[].vsmValue",
+        "internalRoutes[].has[?header].value",
+        "link.deployHooks[].url",
+        "oidcTokenConfig",
+        "protectionBypass",
+        "protectionBypass@keys",
+        "security.firewallBypassIps",
+        "usageStatus.bypassThrottleUntil"
+      ],
+      "DELETE /v1/projects/{idOrName}/env": [],
+      "PATCH /v1/projects/{projectId}/microfrontends": [
+        "dismissedToasts[].value",
+        "env[].legacyValue",
+        "env[].value",
+        "env[].vsmValue",
+        "internalRoutes[].has[?header].value",
+        "link.deployHooks[].url",
+        "oidcTokenConfig",
+        "protectionBypass",
+        "protectionBypass@keys",
+        "security.firewallBypassIps",
+        "usageStatus.bypassThrottleUntil"
+      ],
+      "GET /v1/projects/{projectId}/routes": [
+        "routes[].route.has[?header].value",
+        "routes[].route.headers{}",
+        "routes[].route.locale.cookie",
+        "routes[].route.missing[?header].value",
+        "routes[].route.transforms[].args"
+      ],
+      "POST /v1/projects/{projectId}/routes": [
+        "route.route.has[?header].value",
+        "route.route.headers{}",
+        "route.route.locale.cookie",
+        "route.route.missing[?header].value",
+        "route.route.transforms[].args"
+      ],
+      "POST /v1/projects/{projectId}/routes/generate": [
+        "route.actions[].headers[].value",
+        "route.conditions[?header].value"
+      ],
+      "PATCH /v1/projects/{projectId}/routes/{routeId}": [
+        "route.route.has[?header].value",
+        "route.route.headers{}",
+        "route.route.locale.cookie",
+        "route.route.missing[?header].value",
+        "route.route.transforms[].args"
+      ],
+      "GET /v1/security/firewall/config": [
+        "active.conditions[].conditionGroup[].conditions[?header].value",
+        "active.rules[].conditionGroup[].conditions[?header].value",
+        "active.rulesets[].conditionGroup[].conditions[?header].value",
+        "draft.conditions[].conditionGroup[].conditions[?header].value",
+        "draft.rules[].conditionGroup[].conditions[?header].value",
+        "draft.rulesets[].conditionGroup[].conditions[?header].value",
+        "versions[].conditions[].conditionGroup[].conditions[?header].value",
+        "versions[].rules[].conditionGroup[].conditions[?header].value",
+        "versions[].rulesets[].conditionGroup[].conditions[?header].value"
+      ],
+      "PUT /v1/security/firewall/config": [
+        "active.conditions[].conditionGroup[].conditions[?header].value",
+        "active.rules[].conditionGroup[].conditions[?header].value",
+        "active.rulesets[].conditionGroup[].conditions[?header].value"
+      ],
+      "POST /v1/security/firewall/config/generate-rule": ["rule.conditionGroup[].conditions[?header].value"],
+      "GET /v1/security/firewall/config/{configVersion}": [
+        "conditions[].conditionGroup[].conditions[?header].value",
+        "rules[].conditionGroup[].conditions[?header].value",
+        "rulesets[].conditionGroup[].conditions[?header].value"
+      ],
+      "POST /v1/security/firewall/config/{configVersion}/activate": [
+        "conditions[].conditionGroup[].conditions[?header].value",
+        "rules[].conditionGroup[].conditions[?header].value",
+        "rulesets[].conditionGroup[].conditions[?header].value"
+      ],
+      "POST /v1/storage/stores/integration/direct": [
+        "store.secretRotationRequestedBy",
+        "store.secretRotationRequestedReason",
+        "store.secrets"
+      ],
+      "GET /v1/vcr/repository/{idOrName}/images/{imageIdOrDigest}": ["image.layers[].env"],
+      "GET /v10/projects": [
+        "[].env[].legacyValue",
+        "[].env[].value",
+        "[].env[].vsmValue",
+        "[].internalRoutes[].has[?header].value",
+        "[].link.deployHooks[].url",
+        "[].oidcTokenConfig",
+        "[].security.firewallBypassIps",
+        "[].security.firewallRoutes[].has[?header].value",
+        "[].security.firewallRoutes[].missing[?header].value",
+        "projects[].dismissedToasts[].value",
+        "projects[].env[].legacyValue",
+        "projects[].env[].value",
+        "projects[].env[].vsmValue",
+        "projects[].internalRoutes[].has[?header].value",
+        "projects[].link.deployHooks[].url",
+        "projects[].oidcTokenConfig",
+        "projects[].protectionBypass",
+        "projects[].protectionBypass@keys",
+        "projects[].security.firewallBypassIps",
+        "projects[].security.firewallRoutes[].has[?header].value",
+        "projects[].security.firewallRoutes[].missing[?header].value",
+        "projects[].usageStatus.bypassThrottleUntil"
+      ],
+      "POST /v10/projects/{idOrName}/env": [
+        "created.legacyValue",
+        "created.value",
+        "created.vsmValue",
+        "created[].legacyValue",
+        "created[].value",
+        "created[].vsmValue",
+        "failed[].error.value"
+      ],
+      "POST /v11/projects": [
+        "dismissedToasts[].value",
+        "env[].legacyValue",
+        "env[].value",
+        "env[].vsmValue",
+        "internalRoutes[].has[?header].value",
+        "link.deployHooks[].url",
+        "oidcTokenConfig",
+        "protectionBypass",
+        "protectionBypass@keys",
+        "security.firewallBypassIps",
+        "usageStatus.bypassThrottleUntil"
+      ],
+      "PATCH /v12/deployments/{id}/cancel": [
+        "routes[].has[?header].value",
+        "routes[].headers{}",
+        "routes[].locale.cookie",
+        "routes[].missing[?header].value",
+        "routes[].transforms[].args",
+        "services[].headers[].has[?header].value",
+        "services[].headers[].headers[].value",
+        "services[].headers[].missing[?header].value",
+        "services[].redirects[].has[?header].value",
+        "services[].redirects[].missing[?header].value",
+        "services[].rewrites[].has[?header].value",
+        "services[].rewrites[].missing[?header].value",
+        "services[].rewrites[].transforms[].args",
+        "services[].routes[].has[?header].value",
+        "services[].routes[].headers{}",
+        "services[].routes[].locale.cookie",
+        "services[].routes[].missing[?header].value",
+        "services[].routes[].transforms[].args"
+      ],
+      "POST /v13/deployments": [
+        "routes[].has[?header].value",
+        "routes[].headers{}",
+        "routes[].locale.cookie",
+        "routes[].missing[?header].value",
+        "routes[].transforms[].args",
+        "services[].headers[].has[?header].value",
+        "services[].headers[].headers[].value",
+        "services[].headers[].missing[?header].value",
+        "services[].redirects[].has[?header].value",
+        "services[].redirects[].missing[?header].value",
+        "services[].rewrites[].has[?header].value",
+        "services[].rewrites[].missing[?header].value",
+        "services[].rewrites[].transforms[].args",
+        "services[].routes[].has[?header].value",
+        "services[].routes[].headers{}",
+        "services[].routes[].locale.cookie",
+        "services[].routes[].missing[?header].value",
+        "services[].routes[].transforms[].args"
+      ],
+      "GET /v13/deployments/{idOrUrl}": [
+        "routes[].has[?header].value",
+        "routes[].headers{}",
+        "routes[].locale.cookie",
+        "routes[].missing[?header].value",
+        "routes[].transforms[].args",
+        "services[].headers[].has[?header].value",
+        "services[].headers[].headers[].value",
+        "services[].headers[].missing[?header].value",
+        "services[].redirects[].has[?header].value",
+        "services[].redirects[].missing[?header].value",
+        "services[].rewrites[].has[?header].value",
+        "services[].rewrites[].missing[?header].value",
+        "services[].rewrites[].transforms[].args",
+        "services[].routes[].has[?header].value",
+        "services[].routes[].headers{}",
+        "services[].routes[].locale.cookie",
+        "services[].routes[].missing[?header].value",
+        "services[].routes[].transforms[].args"
+      ],
+      "GET /v2/deployments/{id}/aliases": ["aliases[].protectionBypass", "aliases[].protectionBypass@keys"],
+      "GET /v2/user": ["user.resourceConfig.security.ipBypass"],
+      "PATCH /v3/domains/{domain}": ["token"],
+      "GET /v3/events": [
+        "events[?env].payload.value",
+        "events[].payload.apiKey",
+        "events[].payload.credential",
+        "events[].payload.gitCredentialSource",
+        "events[].payload.inviteCode",
+        "events[].payload.newEnvVar.value",
+        "events[].payload.oldEnvVar.value"
+      ],
+      "GET /v4/aliases": ["aliases[].protectionBypass", "aliases[].protectionBypass@keys"],
+      "GET /v4/aliases/{idOrAlias}": ["protectionBypass", "protectionBypass@keys"],
+      "GET /v5/user/tokens/{tokenId}": ["token"],
+      "GET /v6/user/tokens": ["tokens"],
+      "GET /v9/projects/{idOrName}": [
+        "dismissedToasts[].value",
+        "env[].legacyValue",
+        "env[].value",
+        "env[].vsmValue",
+        "internalRoutes[].has[?header].value",
+        "link.deployHooks[].url",
+        "oidcTokenConfig",
+        "protectionBypass",
+        "protectionBypass@keys",
+        "security.firewallBypassIps",
+        "usageStatus.bypassThrottleUntil"
+      ],
+      "PATCH /v9/projects/{idOrName}": [
+        "dismissedToasts[].value",
+        "env[].legacyValue",
+        "env[].value",
+        "env[].vsmValue",
+        "internalRoutes[].has[?header].value",
+        "link.deployHooks[].url",
+        "oidcTokenConfig",
+        "protectionBypass",
+        "protectionBypass@keys",
+        "security.firewallBypassIps",
+        "usageStatus.bypassThrottleUntil"
+      ],
+      "PATCH /v9/projects/{idOrName}/env/{id}": ["legacyValue", "value"],
+      "DELETE /v9/projects/{idOrName}/env/{id}": ["[].legacyValue", "[].value", "legacyValue", "value"],
+      "GET /v1/integrations/configuration/{id}/products": [
+        "origin:products[].protocols.logDrain.endpoint",
+        "origin:products[].protocols.traceDrain.endpoint",
+        "products[].protocols.logDrain.headers{}",
+        "products[].protocols.traceDrain.headers{}"
+      ],
+      "GET /v2/teams": ["teams[].inviteCode"],
+      "GET /v2/teams/{teamId}": ["inviteCode"],
+      "PATCH /v2/teams/{teamId}": ["inviteCode"],
+      "GET /v3/teams/{teamId}/members": ["emailInviteCodes"]
+    },
+    "resources": {}
   }
 }

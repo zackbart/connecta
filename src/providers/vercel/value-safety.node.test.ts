@@ -1,5 +1,6 @@
 // Node-only: the shared value-safety harness reads the maintainer detection script in scripts/.
 import candidates from "./value-safety.candidates.json";
+import absent from "./value-safety.absent.json";
 import source from "./openapi.source.json";
 import { openapi } from "./openapi.generated.js";
 import { VERCEL_VALUE_SAFETY } from "./value-safety.js";
@@ -13,6 +14,7 @@ describeValueSafety("Vercel", {
   index: new OperationIndex(openapi, { vendor: "vercel", title: "Vercel" }),
   source,
   candidates,
+  absent,
   counts: { refuse: 25, redact: 53, safe: 63 },
   connector: () => vercel("hosting", { purpose: "Apps", auth: { type: "token" } }),
   ctx: () => ({

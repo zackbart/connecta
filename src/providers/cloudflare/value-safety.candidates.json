@@ -1,7 +1,9 @@
 {
-  "format": 4,
+  "format": 5,
   "digest": "sha256:4f142b047af2c8469e4572092bf42ffab31954fef0cc2c8b7bbb79b11df577ef",
-  "options": {},
+  "options": {
+    "dataRoot": "result"
+  },
   "candidates": {
     "GET /accounts/{account_id}/abuse-reports/submitted/{report_id}": {
       "fields": ["result.reg_who_request.reg_who_authorization_statement"],
@@ -4833,5 +4835,1590 @@
       "fields": ["result.cookie_attributes"],
       "named": false
     }
+  },
+  "reviewed": {
+    "operations": {
+      "GET /accounts/{account_id}/access/apps": [
+        "cors_headers.allowed_headers",
+        "policies.exclude.any_valid_service_token",
+        "policies.exclude.linked_app_token",
+        "policies.exclude.service_token",
+        "policies.include.any_valid_service_token",
+        "policies.include.linked_app_token",
+        "policies.include.service_token",
+        "policies.require.any_valid_service_token",
+        "policies.require.linked_app_token",
+        "policies.require.service_token",
+        "read_service_tokens_from_header",
+        "saas_app.client_secret",
+        "saas_app.custom_claims",
+        "scim_config.authentication.client_secret",
+        "scim_config.authentication.password",
+        "scim_config.authentication.token"
+      ],
+      "POST /accounts/{account_id}/access/apps": [
+        "cors_headers.allowed_headers",
+        "policies.exclude.any_valid_service_token",
+        "policies.exclude.linked_app_token",
+        "policies.exclude.service_token",
+        "policies.include.any_valid_service_token",
+        "policies.include.linked_app_token",
+        "policies.include.service_token",
+        "policies.require.any_valid_service_token",
+        "policies.require.linked_app_token",
+        "policies.require.service_token",
+        "read_service_tokens_from_header",
+        "saas_app.client_secret",
+        "saas_app.custom_claims",
+        "scim_config.authentication.client_secret",
+        "scim_config.authentication.password",
+        "scim_config.authentication.token"
+      ],
+      "GET /accounts/{account_id}/access/apps/{app_id}": [
+        "cors_headers.allowed_headers",
+        "policies.exclude.any_valid_service_token",
+        "policies.exclude.linked_app_token",
+        "policies.exclude.service_token",
+        "policies.include.any_valid_service_token",
+        "policies.include.linked_app_token",
+        "policies.include.service_token",
+        "policies.require.any_valid_service_token",
+        "policies.require.linked_app_token",
+        "policies.require.service_token",
+        "read_service_tokens_from_header",
+        "saas_app.client_secret",
+        "saas_app.custom_claims",
+        "scim_config.authentication.client_secret",
+        "scim_config.authentication.password",
+        "scim_config.authentication.token"
+      ],
+      "PUT /accounts/{account_id}/access/apps/{app_id}": [
+        "cors_headers.allowed_headers",
+        "policies.exclude.any_valid_service_token",
+        "policies.exclude.linked_app_token",
+        "policies.exclude.service_token",
+        "policies.include.any_valid_service_token",
+        "policies.include.linked_app_token",
+        "policies.include.service_token",
+        "policies.require.any_valid_service_token",
+        "policies.require.linked_app_token",
+        "policies.require.service_token",
+        "read_service_tokens_from_header",
+        "saas_app.client_secret",
+        "saas_app.custom_claims",
+        "scim_config.authentication.client_secret",
+        "scim_config.authentication.password",
+        "scim_config.authentication.token"
+      ],
+      "GET /zones/{zone_id}/access/apps": [
+        "cors_headers.allowed_headers",
+        "saas_app.client_secret",
+        "saas_app.custom_claims",
+        "scim_config.authentication.client_secret",
+        "scim_config.authentication.password",
+        "scim_config.authentication.token"
+      ],
+      "POST /zones/{zone_id}/access/apps": [
+        "cors_headers.allowed_headers",
+        "saas_app.client_secret",
+        "saas_app.custom_claims",
+        "scim_config.authentication.client_secret",
+        "scim_config.authentication.password",
+        "scim_config.authentication.token"
+      ],
+      "GET /zones/{zone_id}/access/apps/{app_id}": [
+        "cors_headers.allowed_headers",
+        "saas_app.client_secret",
+        "saas_app.custom_claims",
+        "scim_config.authentication.client_secret",
+        "scim_config.authentication.password",
+        "scim_config.authentication.token"
+      ],
+      "PUT /zones/{zone_id}/access/apps/{app_id}": [
+        "cors_headers.allowed_headers",
+        "saas_app.client_secret",
+        "saas_app.custom_claims",
+        "scim_config.authentication.client_secret",
+        "scim_config.authentication.password",
+        "scim_config.authentication.token"
+      ],
+      "GET /accounts/{account_id}/access/apps/{app_id}/policies": [
+        "exclude.any_valid_service_token",
+        "exclude.linked_app_token",
+        "exclude.service_token",
+        "include.any_valid_service_token",
+        "include.linked_app_token",
+        "include.service_token",
+        "require.any_valid_service_token",
+        "require.linked_app_token",
+        "require.service_token"
+      ],
+      "POST /accounts/{account_id}/access/apps/{app_id}/policies": [
+        "exclude.any_valid_service_token",
+        "exclude.linked_app_token",
+        "exclude.service_token",
+        "include.any_valid_service_token",
+        "include.linked_app_token",
+        "include.service_token",
+        "require.any_valid_service_token",
+        "require.linked_app_token",
+        "require.service_token"
+      ],
+      "GET /accounts/{account_id}/access/apps/{app_id}/policies/{policy_id}": [
+        "exclude.any_valid_service_token",
+        "exclude.linked_app_token",
+        "exclude.service_token",
+        "include.any_valid_service_token",
+        "include.linked_app_token",
+        "include.service_token",
+        "require.any_valid_service_token",
+        "require.linked_app_token",
+        "require.service_token"
+      ],
+      "PUT /accounts/{account_id}/access/apps/{app_id}/policies/{policy_id}": [
+        "exclude.any_valid_service_token",
+        "exclude.linked_app_token",
+        "exclude.service_token",
+        "include.any_valid_service_token",
+        "include.linked_app_token",
+        "include.service_token",
+        "require.any_valid_service_token",
+        "require.linked_app_token",
+        "require.service_token"
+      ],
+      "PUT /accounts/{account_id}/access/apps/{app_id}/policies/{policy_id}/make_reusable": [
+        "exclude.any_valid_service_token",
+        "exclude.linked_app_token",
+        "exclude.service_token",
+        "include.any_valid_service_token",
+        "include.linked_app_token",
+        "include.service_token",
+        "require.any_valid_service_token",
+        "require.linked_app_token",
+        "require.service_token"
+      ],
+      "GET /accounts/{account_id}/access/groups": [
+        "exclude.any_valid_service_token",
+        "exclude.linked_app_token",
+        "exclude.service_token",
+        "include.any_valid_service_token",
+        "include.linked_app_token",
+        "include.service_token",
+        "is_default.any_valid_service_token",
+        "is_default.linked_app_token",
+        "is_default.service_token",
+        "require.any_valid_service_token",
+        "require.linked_app_token",
+        "require.service_token"
+      ],
+      "POST /accounts/{account_id}/access/groups": [
+        "exclude.any_valid_service_token",
+        "exclude.linked_app_token",
+        "exclude.service_token",
+        "include.any_valid_service_token",
+        "include.linked_app_token",
+        "include.service_token",
+        "is_default.any_valid_service_token",
+        "is_default.linked_app_token",
+        "is_default.service_token",
+        "require.any_valid_service_token",
+        "require.linked_app_token",
+        "require.service_token"
+      ],
+      "GET /accounts/{account_id}/access/groups/{group_id}": [
+        "exclude.any_valid_service_token",
+        "exclude.linked_app_token",
+        "exclude.service_token",
+        "include.any_valid_service_token",
+        "include.linked_app_token",
+        "include.service_token",
+        "is_default.any_valid_service_token",
+        "is_default.linked_app_token",
+        "is_default.service_token",
+        "require.any_valid_service_token",
+        "require.linked_app_token",
+        "require.service_token"
+      ],
+      "PUT /accounts/{account_id}/access/groups/{group_id}": [
+        "exclude.any_valid_service_token",
+        "exclude.linked_app_token",
+        "exclude.service_token",
+        "include.any_valid_service_token",
+        "include.linked_app_token",
+        "include.service_token",
+        "is_default.any_valid_service_token",
+        "is_default.linked_app_token",
+        "is_default.service_token",
+        "require.any_valid_service_token",
+        "require.linked_app_token",
+        "require.service_token"
+      ],
+      "GET /accounts/{account_id}/access/policies": [
+        "exclude.any_valid_service_token",
+        "exclude.linked_app_token",
+        "exclude.service_token",
+        "include.any_valid_service_token",
+        "include.linked_app_token",
+        "include.service_token",
+        "require.any_valid_service_token",
+        "require.linked_app_token",
+        "require.service_token"
+      ],
+      "POST /accounts/{account_id}/access/policies": [
+        "exclude.any_valid_service_token",
+        "exclude.linked_app_token",
+        "exclude.service_token",
+        "include.any_valid_service_token",
+        "include.linked_app_token",
+        "include.service_token",
+        "require.any_valid_service_token",
+        "require.linked_app_token",
+        "require.service_token"
+      ],
+      "GET /accounts/{account_id}/access/policies/{policy_id}": [
+        "exclude.any_valid_service_token",
+        "exclude.linked_app_token",
+        "exclude.service_token",
+        "include.any_valid_service_token",
+        "include.linked_app_token",
+        "include.service_token",
+        "require.any_valid_service_token",
+        "require.linked_app_token",
+        "require.service_token"
+      ],
+      "PUT /accounts/{account_id}/access/policies/{policy_id}": [
+        "exclude.any_valid_service_token",
+        "exclude.linked_app_token",
+        "exclude.service_token",
+        "include.any_valid_service_token",
+        "include.linked_app_token",
+        "include.service_token",
+        "require.any_valid_service_token",
+        "require.linked_app_token",
+        "require.service_token"
+      ],
+      "GET /zones/{zone_id}/access/apps/{app_id}/policies": [
+        "exclude.any_valid_service_token",
+        "exclude.linked_app_token",
+        "exclude.service_token",
+        "include.any_valid_service_token",
+        "include.linked_app_token",
+        "include.service_token",
+        "require.any_valid_service_token",
+        "require.linked_app_token",
+        "require.service_token"
+      ],
+      "POST /zones/{zone_id}/access/apps/{app_id}/policies": [
+        "exclude.any_valid_service_token",
+        "exclude.linked_app_token",
+        "exclude.service_token",
+        "include.any_valid_service_token",
+        "include.linked_app_token",
+        "include.service_token",
+        "require.any_valid_service_token",
+        "require.linked_app_token",
+        "require.service_token"
+      ],
+      "GET /zones/{zone_id}/access/apps/{app_id}/policies/{policy_id}": [
+        "exclude.any_valid_service_token",
+        "exclude.linked_app_token",
+        "exclude.service_token",
+        "include.any_valid_service_token",
+        "include.linked_app_token",
+        "include.service_token",
+        "require.any_valid_service_token",
+        "require.linked_app_token",
+        "require.service_token"
+      ],
+      "PUT /zones/{zone_id}/access/apps/{app_id}/policies/{policy_id}": [
+        "exclude.any_valid_service_token",
+        "exclude.linked_app_token",
+        "exclude.service_token",
+        "include.any_valid_service_token",
+        "include.linked_app_token",
+        "include.service_token",
+        "require.any_valid_service_token",
+        "require.linked_app_token",
+        "require.service_token"
+      ],
+      "GET /zones/{zone_id}/access/groups": [
+        "exclude.any_valid_service_token",
+        "exclude.linked_app_token",
+        "exclude.service_token",
+        "include.any_valid_service_token",
+        "include.linked_app_token",
+        "include.service_token",
+        "require.any_valid_service_token",
+        "require.linked_app_token",
+        "require.service_token"
+      ],
+      "POST /zones/{zone_id}/access/groups": [
+        "exclude.any_valid_service_token",
+        "exclude.linked_app_token",
+        "exclude.service_token",
+        "include.any_valid_service_token",
+        "include.linked_app_token",
+        "include.service_token",
+        "require.any_valid_service_token",
+        "require.linked_app_token",
+        "require.service_token"
+      ],
+      "GET /zones/{zone_id}/access/groups/{group_id}": [
+        "exclude.any_valid_service_token",
+        "exclude.linked_app_token",
+        "exclude.service_token",
+        "include.any_valid_service_token",
+        "include.linked_app_token",
+        "include.service_token",
+        "require.any_valid_service_token",
+        "require.linked_app_token",
+        "require.service_token"
+      ],
+      "PUT /zones/{zone_id}/access/groups/{group_id}": [
+        "exclude.any_valid_service_token",
+        "exclude.linked_app_token",
+        "exclude.service_token",
+        "include.any_valid_service_token",
+        "include.linked_app_token",
+        "include.service_token",
+        "require.any_valid_service_token",
+        "require.linked_app_token",
+        "require.service_token"
+      ],
+      "GET /accounts/{account_id}/access/identity_providers": [
+        "config.attributes",
+        "config.claims",
+        "config.client_secret",
+        "config.prompt",
+        "scim_config.secret"
+      ],
+      "POST /accounts/{account_id}/access/identity_providers": [
+        "config.attributes",
+        "config.claims",
+        "config.client_secret",
+        "config.prompt",
+        "scim_config.secret"
+      ],
+      "GET /accounts/{account_id}/access/identity_providers/{identity_provider_id}": [
+        "config.attributes",
+        "config.claims",
+        "config.client_secret",
+        "config.prompt",
+        "scim_config.secret"
+      ],
+      "PUT /accounts/{account_id}/access/identity_providers/{identity_provider_id}": [
+        "config.attributes",
+        "config.claims",
+        "config.client_secret",
+        "config.prompt",
+        "scim_config.secret"
+      ],
+      "GET /zones/{zone_id}/access/identity_providers": [
+        "config.attributes",
+        "config.claims",
+        "config.client_secret",
+        "config.prompt",
+        "scim_config.secret"
+      ],
+      "POST /zones/{zone_id}/access/identity_providers": [
+        "config.attributes",
+        "config.claims",
+        "config.client_secret",
+        "config.prompt",
+        "scim_config.secret"
+      ],
+      "GET /zones/{zone_id}/access/identity_providers/{identity_provider_id}": [
+        "config.attributes",
+        "config.claims",
+        "config.client_secret",
+        "config.prompt",
+        "scim_config.secret"
+      ],
+      "PUT /zones/{zone_id}/access/identity_providers/{identity_provider_id}": [
+        "config.attributes",
+        "config.claims",
+        "config.client_secret",
+        "config.prompt",
+        "scim_config.secret"
+      ],
+      "GET /accounts/{account_id}/addressing/prefixes": ["ownership_validation_token"],
+      "POST /accounts/{account_id}/addressing/prefixes": ["ownership_validation_token"],
+      "GET /accounts/{account_id}/addressing/prefixes/{prefix_id}": ["ownership_validation_token"],
+      "PATCH /accounts/{account_id}/addressing/prefixes/{prefix_id}": ["ownership_validation_token"],
+      "POST /accounts/{account_id}/addressing/prefixes/{prefix_id}/validate": ["ownership_validation_token"],
+      "GET /accounts/{account_id}/ai-gateway/gateways": ["otel.authorization", "otel.headers", "stripe.authorization"],
+      "POST /accounts/{account_id}/ai-gateway/gateways": ["otel.authorization", "otel.headers", "stripe.authorization"],
+      "GET /accounts/{account_id}/ai-gateway/gateways/{id}": [
+        "otel.authorization",
+        "otel.headers",
+        "stripe.authorization"
+      ],
+      "PUT /accounts/{account_id}/ai-gateway/gateways/{id}": [
+        "otel.authorization",
+        "otel.headers",
+        "stripe.authorization"
+      ],
+      "DELETE /accounts/{account_id}/ai-gateway/gateways/{id}": [
+        "otel.authorization",
+        "otel.headers",
+        "stripe.authorization"
+      ],
+      "GET /accounts/{account_id}/ai-gateway/custom-providers": ["headers"],
+      "POST /accounts/{account_id}/ai-gateway/custom-providers": ["headers"],
+      "GET /accounts/{account_id}/ai-gateway/custom-providers/{id}": ["headers"],
+      "PATCH /accounts/{account_id}/ai-gateway/custom-providers/{id}": ["headers"],
+      "DELETE /accounts/{account_id}/ai-gateway/custom-providers/{id}": ["headers"],
+      "POST /accounts/{account_id}/artifacts/namespaces/{namespace}/repos": ["token"],
+      "POST /accounts/{account_id}/artifacts/namespaces/{namespace}/repos/{name}/fork": ["token"],
+      "POST /accounts/{account_id}/artifacts/namespaces/{namespace}/repos/{name}/import": ["token"],
+      "GET /accounts/{account_id}/basin-catalog/{bucket_name}/namespaces": ["next_page_token"],
+      "GET /accounts/{account_id}/basin-catalog/{bucket_name}/namespaces/{namespace}/tables": ["next_page_token"],
+      "GET /accounts/{account_id}/basin-catalog/{bucket_name}/namespaces/{namespace}/tables/{table_name}/maintenance-runs": [
+        "next_page_token"
+      ],
+      "GET /accounts/{account_id}/builds/workers/{script_name}/deploy_hooks": ["deploy_hook_uuid"],
+      "GET /accounts/{account_id}/builds/workers/{script_name}/deploy_hooks/{deploy_hook_uuid}": ["deploy_hook_uuid"],
+      "PUT /accounts/{account_id}/builds/workers/{script_name}/deploy_hooks/{deploy_hook_uuid}": ["deploy_hook_uuid"],
+      "POST /accounts/{account_id}/calls/apps": ["secret"],
+      "POST /accounts/{account_id}/challenges/widgets": ["secret"],
+      "GET /accounts/{account_id}/challenges/widgets/{sitekey}": ["secret"],
+      "PUT /accounts/{account_id}/challenges/widgets/{sitekey}": ["secret"],
+      "DELETE /accounts/{account_id}/challenges/widgets/{sitekey}": ["secret"],
+      "GET /accounts/{account_id}/containers/applications": [
+        "configuration.authorized_keys",
+        "configuration.environment_variables.value"
+      ],
+      "GET /accounts/{account_id}/containers/applications/{application_id}/instances-v2": [],
+      "POST /accounts/{account_id}/d1/database/{database_id}/export": ["result.signed_url#url"],
+      "POST /accounts/{account_id}/d1/database/{database_id}/import": ["upload_url#url"],
+      "POST /accounts/{account_id}/dlp/datasets": ["dataset.secret", "secret"],
+      "POST /accounts/{account_id}/dlp/datasets/{dataset_id}/upload": ["secret"],
+      "GET /accounts/{account_id}/dlp/email/account_mapping": ["addin_identifier_token"],
+      "POST /accounts/{account_id}/dlp/email/account_mapping": ["addin_identifier_token"],
+      "GET /accounts/{account_id}/email-security/settings/domains": ["authorization"],
+      "POST /accounts/{account_id}/email-security/settings/domains": ["authorization"],
+      "GET /accounts/{account_id}/email-security/settings/domains/{domain_id}": ["authorization"],
+      "PUT /accounts/{account_id}/email-security/settings/domains/{domain_id}": ["authorization"],
+      "PATCH /accounts/{account_id}/email-security/settings/domains/{domain_id}": ["authorization"],
+      "POST /accounts/{account_id}/email-security/settings/domains/batch": [
+        "patches.authorization",
+        "posts.authorization",
+        "puts.authorization"
+      ],
+      "GET /accounts/{account_id}/images/v1/keys": ["keys.value"],
+      "DELETE /accounts/{account_id}/images/v1/keys/{signing_key_name}": ["keys.value"],
+      "GET /accounts/{account_id}/images/v2": ["continuation_token"],
+      "GET /accounts/{account_id}/load_balancers/monitors": ["header"],
+      "POST /accounts/{account_id}/load_balancers/monitors": ["header"],
+      "GET /accounts/{account_id}/load_balancers/monitors/{monitor_id}": ["header"],
+      "PUT /accounts/{account_id}/load_balancers/monitors/{monitor_id}": ["header"],
+      "PATCH /accounts/{account_id}/load_balancers/monitors/{monitor_id}": ["header"],
+      "GET /user/load_balancers/monitors": ["header"],
+      "POST /user/load_balancers/monitors": ["header"],
+      "GET /user/load_balancers/monitors/{monitor_id}": ["header"],
+      "PUT /user/load_balancers/monitors/{monitor_id}": ["header"],
+      "PATCH /user/load_balancers/monitors/{monitor_id}": ["header"],
+      "GET /accounts/{account_id}/logpush/jobs": ["destination_conf#url"],
+      "POST /accounts/{account_id}/logpush/jobs": ["destination_conf#url"],
+      "GET /accounts/{account_id}/logpush/jobs/{job_id}": ["destination_conf#url"],
+      "PUT /accounts/{account_id}/logpush/jobs/{job_id}": ["destination_conf#url"],
+      "GET /zones/{zone_id}/logpush/jobs": ["destination_conf#url"],
+      "POST /zones/{zone_id}/logpush/jobs": ["destination_conf#url"],
+      "GET /zones/{zone_id}/logpush/jobs/{job_id}": ["destination_conf#url"],
+      "PUT /zones/{zone_id}/logpush/jobs/{job_id}": ["destination_conf#url"],
+      "POST /accounts/{account_id}/magic/ipsec_tunnels/psk": ["successfully_applied_psks.*.psk", "unapplied_psks"],
+      "POST /accounts/{account_id}/managed-defense/vulnerability-discovery/repos": ["upload.token"],
+      "POST /accounts/{account_id}/moq/relays": [
+        "issuers.cloudflare_tokens.jti",
+        "issuers.cloudflare_tokens.operations",
+        "issuers.cloudflare_tokens.secret"
+      ],
+      "GET /accounts/{account_id}/moq/relays/{relay_id}/tokens": [
+        "issuers.cloudflare_tokens.jti",
+        "issuers.cloudflare_tokens.operations",
+        "issuers.cloudflare_tokens.secret"
+      ],
+      "GET /accounts/{account_id}/pages/projects": [
+        "build_config.web_analytics_token",
+        "canonical_deployment.build_config.web_analytics_token",
+        "canonical_deployment.env_vars.*.value",
+        "deployment_configs.preview.ai_bindings",
+        "deployment_configs.preview.env_vars.*.value",
+        "deployment_configs.preview.hyperdrive_bindings",
+        "deployment_configs.preview.vectorize_bindings",
+        "deployment_configs.production.ai_bindings",
+        "deployment_configs.production.env_vars.*.value",
+        "deployment_configs.production.hyperdrive_bindings",
+        "deployment_configs.production.vectorize_bindings",
+        "latest_deployment.build_config.web_analytics_token",
+        "latest_deployment.env_vars.*.value"
+      ],
+      "POST /accounts/{account_id}/pages/projects": [
+        "build_config.web_analytics_token",
+        "canonical_deployment.build_config.web_analytics_token",
+        "canonical_deployment.env_vars.*.value",
+        "deployment_configs.preview.ai_bindings",
+        "deployment_configs.preview.env_vars.*.value",
+        "deployment_configs.preview.hyperdrive_bindings",
+        "deployment_configs.preview.vectorize_bindings",
+        "deployment_configs.production.ai_bindings",
+        "deployment_configs.production.env_vars.*.value",
+        "deployment_configs.production.hyperdrive_bindings",
+        "deployment_configs.production.vectorize_bindings",
+        "latest_deployment.build_config.web_analytics_token",
+        "latest_deployment.env_vars.*.value"
+      ],
+      "GET /accounts/{account_id}/pages/projects/{project_name}": [
+        "build_config.web_analytics_token",
+        "canonical_deployment.build_config.web_analytics_token",
+        "canonical_deployment.env_vars.*.value",
+        "deployment_configs.preview.ai_bindings",
+        "deployment_configs.preview.env_vars.*.value",
+        "deployment_configs.preview.hyperdrive_bindings",
+        "deployment_configs.preview.vectorize_bindings",
+        "deployment_configs.production.ai_bindings",
+        "deployment_configs.production.env_vars.*.value",
+        "deployment_configs.production.hyperdrive_bindings",
+        "deployment_configs.production.vectorize_bindings",
+        "latest_deployment.build_config.web_analytics_token",
+        "latest_deployment.env_vars.*.value"
+      ],
+      "PATCH /accounts/{account_id}/pages/projects/{project_name}": [
+        "build_config.web_analytics_token",
+        "canonical_deployment.build_config.web_analytics_token",
+        "canonical_deployment.env_vars.*.value",
+        "deployment_configs.preview.ai_bindings",
+        "deployment_configs.preview.env_vars.*.value",
+        "deployment_configs.preview.hyperdrive_bindings",
+        "deployment_configs.preview.vectorize_bindings",
+        "deployment_configs.production.ai_bindings",
+        "deployment_configs.production.env_vars.*.value",
+        "deployment_configs.production.hyperdrive_bindings",
+        "deployment_configs.production.vectorize_bindings",
+        "latest_deployment.build_config.web_analytics_token",
+        "latest_deployment.env_vars.*.value"
+      ],
+      "GET /accounts/{account_id}/pages/projects/{project_name}/deployments": [
+        "build_config.web_analytics_token",
+        "env_vars.*.value"
+      ],
+      "POST /accounts/{account_id}/pages/projects/{project_name}/deployments": [
+        "build_config.web_analytics_token",
+        "env_vars.*.value"
+      ],
+      "GET /accounts/{account_id}/pages/projects/{project_name}/deployments/{deployment_id}": [
+        "build_config.web_analytics_token",
+        "env_vars.*.value"
+      ],
+      "POST /accounts/{account_id}/pages/projects/{project_name}/deployments/{deployment_id}/retry": [
+        "build_config.web_analytics_token",
+        "env_vars.*.value"
+      ],
+      "POST /accounts/{account_id}/pages/projects/{project_name}/deployments/{deployment_id}/rollback": [
+        "build_config.web_analytics_token",
+        "env_vars.*.value"
+      ],
+      "POST /accounts/{account_id}/pages/projects/{project_name}/source": [
+        "build_config.web_analytics_token",
+        "canonical_deployment.build_config.web_analytics_token",
+        "canonical_deployment.env_vars.*.value",
+        "deployment_configs.preview.ai_bindings",
+        "deployment_configs.preview.env_vars.*.value",
+        "deployment_configs.preview.hyperdrive_bindings",
+        "deployment_configs.preview.vectorize_bindings",
+        "deployment_configs.production.ai_bindings",
+        "deployment_configs.production.env_vars.*.value",
+        "deployment_configs.production.hyperdrive_bindings",
+        "deployment_configs.production.vectorize_bindings",
+        "latest_deployment.build_config.web_analytics_token",
+        "latest_deployment.env_vars.*.value"
+      ],
+      "DELETE /accounts/{account_id}/pages/projects/{project_name}/source": [
+        "build_config.web_analytics_token",
+        "canonical_deployment.build_config.web_analytics_token",
+        "canonical_deployment.env_vars.*.value",
+        "deployment_configs.preview.ai_bindings",
+        "deployment_configs.preview.env_vars.*.value",
+        "deployment_configs.preview.hyperdrive_bindings",
+        "deployment_configs.preview.vectorize_bindings",
+        "deployment_configs.production.ai_bindings",
+        "deployment_configs.production.env_vars.*.value",
+        "deployment_configs.production.hyperdrive_bindings",
+        "deployment_configs.production.vectorize_bindings",
+        "latest_deployment.build_config.web_analytics_token",
+        "latest_deployment.env_vars.*.value"
+      ],
+      "POST /accounts/{account_id}/pipelines/v1/sinks": ["config.credentials", "config.token"],
+      "GET /accounts/{account_id}/r2/buckets/{bucket_name}/jobs": ["nextContinuationToken"],
+      "GET /accounts/{account_id}/realtime/kit/{app_id}/livestreams": ["data.stream_key"],
+      "GET /accounts/{account_id}/realtime/kit/{app_id}/livestreams/{livestream_id}": ["data.livestream.stream_key"],
+      "GET /accounts/{account_id}/realtime/kit/{app_id}/livestreams/{livestream_id}/active-livestream-session": [
+        "data.livestream.stream_key"
+      ],
+      "GET /accounts/{account_id}/realtime/kit/{app_id}/meetings/{meeting_id}/active-livestream": ["data.stream_key"],
+      "GET /accounts/{account_id}/realtime/kit/{app_id}/meetings/{meeting_id}/livestream": [
+        "data.livestreams.stream_key"
+      ],
+      "POST /accounts/{account_id}/realtime/kit/{app_id}/meetings/{meeting_id}/livestreams": ["data.stream_key"],
+      "PUT /accounts/{account_id}/realtime/kit/{app_id}/meetings/{meeting_id}/participants/{participant_id}": [
+        "data.token"
+      ],
+      "PATCH /accounts/{account_id}/realtime/kit/{app_id}/meetings/{meeting_id}/participants/{participant_id}": [
+        "data.token"
+      ],
+      "POST /accounts/{account_id}/rum/site_info": ["site_token"],
+      "GET /accounts/{account_id}/rum/site_info/list": ["site_token"],
+      "GET /accounts/{account_id}/rum/site_info/{site_id}": ["site_token"],
+      "PUT /accounts/{account_id}/rum/site_info/{site_id}": ["site_token"],
+      "GET /accounts/{account_id}/scim/v2/ServiceProviderConfig": ["changePassword"],
+      "GET /accounts/{account_id}/secondary_dns/tsigs": ["secret"],
+      "POST /accounts/{account_id}/secondary_dns/tsigs": ["secret"],
+      "GET /accounts/{account_id}/secondary_dns/tsigs/{tsig_id}": ["secret"],
+      "PUT /accounts/{account_id}/secondary_dns/tsigs/{tsig_id}": ["secret"],
+      "GET /accounts/{account_id}/secrets_store/quota": ["secrets"],
+      "GET /accounts/{account_id}/stream/live_inputs": [],
+      "POST /accounts/{account_id}/stream/live_inputs": [
+        "rtmps.streamKey",
+        "rtmps.url",
+        "rtmpsPlayback.streamKey",
+        "rtmpsPlayback.url",
+        "srt.passphrase",
+        "srt.url",
+        "srtPlayback.passphrase",
+        "srtPlayback.url",
+        "webRTC.url#url",
+        "webRTCPlayback.url"
+      ],
+      "GET /accounts/{account_id}/stream/live_inputs/{live_input_identifier}": [
+        "rtmps.streamKey",
+        "rtmps.url",
+        "rtmpsPlayback.streamKey",
+        "rtmpsPlayback.url",
+        "srt.passphrase",
+        "srt.url",
+        "srtPlayback.passphrase",
+        "srtPlayback.url",
+        "webRTC.url#url",
+        "webRTCPlayback.url"
+      ],
+      "PUT /accounts/{account_id}/stream/live_inputs/{live_input_identifier}": [
+        "rtmps.streamKey",
+        "rtmps.url",
+        "rtmpsPlayback.streamKey",
+        "rtmpsPlayback.url",
+        "srt.passphrase",
+        "srt.url",
+        "srtPlayback.passphrase",
+        "srtPlayback.url",
+        "webRTC.url#url",
+        "webRTCPlayback.url"
+      ],
+      "POST /accounts/{account_id}/stream/live_inputs/{live_input_identifier}/disable": [
+        "rtmps.streamKey",
+        "rtmps.url",
+        "rtmpsPlayback.streamKey",
+        "rtmpsPlayback.url",
+        "srt.passphrase",
+        "srt.url",
+        "srtPlayback.passphrase",
+        "srtPlayback.url",
+        "webRTC.url#url",
+        "webRTCPlayback.url"
+      ],
+      "POST /accounts/{account_id}/stream/live_inputs/{live_input_identifier}/enable": [
+        "rtmps.streamKey",
+        "rtmps.url",
+        "rtmpsPlayback.streamKey",
+        "rtmpsPlayback.url",
+        "srt.passphrase",
+        "srt.url",
+        "srtPlayback.passphrase",
+        "srtPlayback.url",
+        "webRTC.url#url",
+        "webRTCPlayback.url"
+      ],
+      "GET /accounts/{account_id}/stream/live_inputs/{live_input_identifier}/outputs": ["streamKey", "url#url"],
+      "POST /accounts/{account_id}/stream/live_inputs/{live_input_identifier}/outputs": ["streamKey", "url#url"],
+      "PUT /accounts/{account_id}/stream/live_inputs/{live_input_identifier}/outputs/{output_identifier}": [
+        "streamKey",
+        "url#url"
+      ],
+      "GET /accounts/{account_id}/stream/webhook": ["secret"],
+      "PUT /accounts/{account_id}/stream/webhook": ["secret"],
+      "GET /accounts/{account_id}/workers/scripts/{script_name}/secrets": [
+        "*.key_base64",
+        "*.key_jwk",
+        "*.text",
+        "key_base64",
+        "key_jwk",
+        "text"
+      ],
+      "PUT /accounts/{account_id}/workers/scripts/{script_name}/secrets": [
+        "*.key_base64",
+        "*.key_jwk",
+        "*.text",
+        "key_base64",
+        "key_jwk",
+        "text"
+      ],
+      "PATCH /accounts/{account_id}/workers/scripts/{script_name}/secrets-bulk": [
+        "*.key_base64",
+        "*.key_jwk",
+        "*.text"
+      ],
+      "GET /accounts/{account_id}/workers/scripts/{script_name}/secrets/{secret_name}": [
+        "*.key_base64",
+        "*.key_jwk",
+        "*.text",
+        "key_base64",
+        "key_jwk",
+        "text"
+      ],
+      "GET /accounts/{account_id}/workers/dispatch/namespaces/{dispatch_namespace}/scripts/{script_name}/secrets": [
+        "*.key_base64",
+        "*.key_jwk",
+        "*.text",
+        "key_base64",
+        "key_jwk",
+        "text"
+      ],
+      "PUT /accounts/{account_id}/workers/dispatch/namespaces/{dispatch_namespace}/scripts/{script_name}/secrets": [
+        "*.key_base64",
+        "*.key_jwk",
+        "*.text",
+        "key_base64",
+        "key_jwk",
+        "text"
+      ],
+      "PATCH /accounts/{account_id}/workers/dispatch/namespaces/{dispatch_namespace}/scripts/{script_name}/secrets-bulk": [
+        "*.key_base64",
+        "*.key_jwk",
+        "*.text"
+      ],
+      "GET /accounts/{account_id}/workers/dispatch/namespaces/{dispatch_namespace}/scripts/{script_name}/secrets/{secret_name}": [
+        "*.key_base64",
+        "*.key_jwk",
+        "*.text",
+        "key_base64",
+        "key_jwk",
+        "text"
+      ],
+      "GET /accounts/{account_id}/workers/workers/{worker_id}/previews/{preview_id}/deployments": [
+        "assets.jwt",
+        "bindings.json",
+        "bindings.text"
+      ],
+      "POST /accounts/{account_id}/workers/workers/{worker_id}/previews/{preview_id}/deployments": [
+        "assets.jwt",
+        "bindings.json",
+        "bindings.text"
+      ],
+      "PATCH /accounts/{account_id}/workers/workers/{worker_id}/previews/{preview_id}/deployments/latest": [
+        "assets.jwt",
+        "bindings.json",
+        "bindings.text"
+      ],
+      "GET /accounts/{account_id}/workers/workers/{worker_id}/previews/{preview_id}/deployments/{deployment_id}": [
+        "assets.jwt",
+        "bindings.json",
+        "bindings.text"
+      ],
+      "GET /accounts/{account_id}/workers/workers/{worker_id}/versions": [
+        "assets.jwt",
+        "bindings.json",
+        "bindings.text"
+      ],
+      "POST /accounts/{account_id}/workers/workers/{worker_id}/versions": [
+        "assets.jwt",
+        "bindings.json",
+        "bindings.text"
+      ],
+      "GET /accounts/{account_id}/workers/workers/{worker_id}/versions/latest": [
+        "assets.jwt",
+        "bindings.json",
+        "bindings.text"
+      ],
+      "PATCH /accounts/{account_id}/workers/workers/{worker_id}/versions/latest": [
+        "assets.jwt",
+        "bindings.json",
+        "bindings.text"
+      ],
+      "GET /accounts/{account_id}/workers/workers/{worker_id}/versions/{version_id}": [
+        "assets.jwt",
+        "bindings.json",
+        "bindings.text"
+      ],
+      "GET /organizations": [],
+      "GET /organizations/{organization_id}/accounts": [],
+      "GET /organizations/{organization_id}/members": [],
+      "GET /zones/{zone_id}/leaked-credential-checks": ["enabled"],
+      "POST /zones/{zone_id}/leaked-credential-checks": ["enabled"],
+      "GET /zones/{zone_id}/leaked-credential-checks/detections": ["password"],
+      "POST /zones/{zone_id}/leaked-credential-checks/detections": ["password"],
+      "GET /zones/{zone_id}/leaked-credential-checks/detections/{detection_id}": ["password"],
+      "PUT /zones/{zone_id}/leaked-credential-checks/detections/{detection_id}": ["password"],
+      "GET /zones/{zone_id}/origin_tls_client_auth": ["private_key"],
+      "POST /zones/{zone_id}/origin_tls_client_auth": ["private_key"],
+      "PUT /zones/{zone_id}/origin_tls_client_auth/hostnames": ["private_key"],
+      "GET /zones/{zone_id}/origin_tls_client_auth/{certificate_id}": ["private_key"],
+      "DELETE /zones/{zone_id}/origin_tls_client_auth/{certificate_id}": ["private_key"],
+      "GET /zones/{zone_id}/pagerules": ["actions.value.cookie", "actions.value.header"],
+      "POST /zones/{zone_id}/pagerules": ["actions.value.cookie", "actions.value.header"],
+      "GET /zones/{zone_id}/pagerules/{pagerule_id}": ["actions.value.cookie", "actions.value.header"],
+      "PUT /zones/{zone_id}/pagerules/{pagerule_id}": ["actions.value.cookie", "actions.value.header"],
+      "PATCH /zones/{zone_id}/pagerules/{pagerule_id}": ["actions.value.cookie", "actions.value.header"],
+      "GET /zones/{zone_id}/settings/zaraz/config": [
+        "*.debugKey",
+        "*.variables.*.value",
+        "debugKey",
+        "variables.*.value"
+      ],
+      "PUT /zones/{zone_id}/settings/zaraz/config": [
+        "*.debugKey",
+        "*.variables.*.value",
+        "debugKey",
+        "variables.*.value"
+      ],
+      "GET /zones/{zone_id}/settings/zaraz/default": [
+        "*.debugKey",
+        "*.variables.*.value",
+        "debugKey",
+        "variables.*.value"
+      ],
+      "GET /zones/{zone_id}/settings/zaraz/export": ["debugKey", "variables.*.value"],
+      "GET /zones/{zone_id}/settings/zaraz/history/configs": ["*.config.debugKey", "*.config.variables.*.value"],
+      "GET /zones/{zone_id}/token_validation/config": ["credentials"],
+      "POST /zones/{zone_id}/token_validation/config": ["credentials"],
+      "GET /zones/{zone_id}/token_validation/config/{config_id}": ["credentials"],
+      "PUT /zones/{zone_id}/token_validation/config/{config_id}/credentials": ["keys"],
+      "PATCH /zones/{zone_id}/token_validation/config/{config_id}/credentials": ["keys"],
+      "GET /accounts/{account_id}/builds/builds": [],
+      "GET /accounts/{account_id}/builds/builds/latest": [],
+      "GET /accounts/{account_id}/builds/builds/{build_uuid}": [],
+      "POST /accounts/{account_id}/builds/triggers/{trigger_uuid}/builds": [],
+      "GET /accounts/{account_id}/builds/triggers/{trigger_uuid}/environment_variables": ["*.value"],
+      "PATCH /accounts/{account_id}/builds/triggers/{trigger_uuid}/environment_variables": ["*.value"],
+      "POST /accounts/{account_id}/builds/workers": [
+        "previews_base_config.environment_variables.*.value",
+        "production_settings.environment_variables.*.value"
+      ],
+      "GET /accounts/{account_id}/builds/workers/{external_script_id}/builds": [],
+      "GET /accounts/{account_id}/builds/workers/{script_tag}": [
+        "previews_base_config.environment_variables.*.value",
+        "production_settings.environment_variables.*.value"
+      ],
+      "PATCH /accounts/{account_id}/builds/workers/{script_tag}": [
+        "previews_base_config.environment_variables.*.value",
+        "production_settings.environment_variables.*.value"
+      ],
+      "POST /accounts/{account_id}/builds/workers/{script_tag}/migrate_to_previews": [
+        "previews_base_config.environment_variables.*.value",
+        "production_settings.environment_variables.*.value"
+      ],
+      "GET /accounts/{account_id}/builds/workers/{script_tag}/previews/{preview_id}": [
+        "settings.environment_variables.*.value"
+      ],
+      "PATCH /accounts/{account_id}/builds/workers/{script_tag}/previews/{preview_id}": [
+        "settings.environment_variables.*.value"
+      ],
+      "GET /accounts/{account_id}/builds/workers/{script_tag}/previews/{preview_id}/builds": [],
+      "POST /accounts/{account_id}/builds/workers/{script_tag}/previews/{preview_id}/builds": [],
+      "POST /accounts/{account_id}/containers/applications": [
+        "configuration.authorized_keys",
+        "configuration.environment_variables.value"
+      ],
+      "GET /accounts/{account_id}/containers/applications/{application_id}": [
+        "configuration.authorized_keys",
+        "configuration.environment_variables.value"
+      ],
+      "PATCH /accounts/{account_id}/containers/applications/{application_id}": [
+        "configuration.authorized_keys",
+        "configuration.environment_variables.value"
+      ],
+      "POST /accounts/{account_id}/containers/applications/{application_id}/rollouts": [
+        "current_configuration.authorized_keys",
+        "current_configuration.environment_variables.value",
+        "target_configuration.authorized_keys",
+        "target_configuration.environment_variables.value"
+      ],
+      "GET /accounts/{account_id}/containers/applications/{application_id}/versions": [
+        "configuration.authorized_keys",
+        "configuration.environment_variables.value"
+      ],
+      "GET /accounts/{account_id}/containers/registries": ["public_key"],
+      "POST /accounts/{account_id}/containers/registries": ["public_key"],
+      "GET /accounts/{account_id}/cni/cnis": ["items.bgp.md5_key"],
+      "POST /accounts/{account_id}/cni/cnis": ["bgp.md5_key"],
+      "GET /accounts/{account_id}/cni/cnis/{cni}": ["bgp.md5_key"],
+      "PUT /accounts/{account_id}/cni/cnis/{cni}": ["bgp.md5_key"],
+      "GET /accounts/{account_id}/magic/cf_interconnects": ["interconnects.bgp.md5_key"],
+      "PUT /accounts/{account_id}/magic/cf_interconnects": ["modified_interconnects.bgp.md5_key"],
+      "GET /accounts/{account_id}/magic/cf_interconnects/{cf_interconnect_id}": ["interconnect.bgp.md5_key"],
+      "PUT /accounts/{account_id}/magic/cf_interconnects/{cf_interconnect_id}": ["modified_interconnect.bgp.md5_key"],
+      "GET /accounts/{account_id}/magic/gre_tunnels": ["gre_tunnels.bgp.md5_key"],
+      "POST /accounts/{account_id}/magic/gre_tunnels": ["bgp.md5_key"],
+      "PUT /accounts/{account_id}/magic/gre_tunnels": ["modified_gre_tunnels.bgp.md5_key"],
+      "GET /accounts/{account_id}/magic/gre_tunnels/{gre_tunnel_id}": ["gre_tunnel.bgp.md5_key"],
+      "PUT /accounts/{account_id}/magic/gre_tunnels/{gre_tunnel_id}": ["modified_gre_tunnel.bgp.md5_key"],
+      "DELETE /accounts/{account_id}/magic/gre_tunnels/{gre_tunnel_id}": ["deleted_gre_tunnel.bgp.md5_key"],
+      "GET /accounts/{account_id}/magic/ipsec_tunnels": ["ipsec_tunnels.bgp.md5_key"],
+      "POST /accounts/{account_id}/magic/ipsec_tunnels": ["bgp.md5_key"],
+      "PUT /accounts/{account_id}/magic/ipsec_tunnels": ["modified_ipsec_tunnels.bgp.md5_key"],
+      "GET /accounts/{account_id}/magic/ipsec_tunnels/{ipsec_tunnel_id}": ["ipsec_tunnel.bgp.md5_key"],
+      "PUT /accounts/{account_id}/magic/ipsec_tunnels/{ipsec_tunnel_id}": ["modified_ipsec_tunnel.bgp.md5_key"],
+      "DELETE /accounts/{account_id}/magic/ipsec_tunnels/{ipsec_tunnel_id}": ["deleted_ipsec_tunnel.bgp.md5_key"],
+      "GET /accounts/{account_id}/data-security/posture/webhooks": ["headers", "origin:destination_url"],
+      "POST /accounts/{account_id}/data-security/posture/webhooks": ["headers", "origin:destination_url"],
+      "GET /accounts/{account_id}/data-security/posture/webhooks/{webhook_id}": ["headers", "origin:destination_url"],
+      "PUT /accounts/{account_id}/data-security/posture/webhooks/{webhook_id}": ["headers", "origin:destination_url"],
+      "GET /accounts/{account_id}/gateway/rules": [
+        "rule_settings.add_headers",
+        "rule_settings.delete_headers",
+        "rule_settings.set_headers"
+      ],
+      "POST /accounts/{account_id}/gateway/rules": [
+        "rule_settings.add_headers",
+        "rule_settings.delete_headers",
+        "rule_settings.set_headers"
+      ],
+      "PATCH /accounts/{account_id}/gateway/rules": [
+        "rule_settings.add_headers",
+        "rule_settings.delete_headers",
+        "rule_settings.set_headers"
+      ],
+      "GET /accounts/{account_id}/gateway/rules/tenant": [
+        "rule_settings.add_headers",
+        "rule_settings.delete_headers",
+        "rule_settings.set_headers"
+      ],
+      "GET /accounts/{account_id}/gateway/rules/{rule_id}": [
+        "rule_settings.add_headers",
+        "rule_settings.delete_headers",
+        "rule_settings.set_headers"
+      ],
+      "PUT /accounts/{account_id}/gateway/rules/{rule_id}": [
+        "rule_settings.add_headers",
+        "rule_settings.delete_headers",
+        "rule_settings.set_headers"
+      ],
+      "PATCH /accounts/{account_id}/gateway/rules/{rule_id}": [
+        "rule_settings.add_headers",
+        "rule_settings.delete_headers",
+        "rule_settings.set_headers"
+      ],
+      "POST /accounts/{account_id}/gateway/rules/{rule_id}/reset_expiration": [
+        "rule_settings.add_headers",
+        "rule_settings.delete_headers",
+        "rule_settings.set_headers"
+      ],
+      "GET /accounts/{account_id}/logpush/datasets/{dataset_id}/jobs": ["destination_conf#url"],
+      "GET /zones/{zone_id}/logpush/datasets/{dataset_id}/jobs": ["destination_conf#url"],
+      "GET /accounts/{account_id}/workers/observability/destinations": [
+        "configuration.destination_conf#url",
+        "configuration.headers"
+      ],
+      "GET /accounts/{account_id}/workers/observability/issues/{issueId}/occurrences": ["request.headers"],
+      "GET /accounts/{account_id}/workers/scripts/{script_name}/settings": ["bindings.json", "bindings.text"],
+      "PATCH /accounts/{account_id}/workers/scripts/{script_name}/settings": ["bindings.json", "bindings.text"],
+      "GET /accounts/{account_id}/workers/dispatch/namespaces/{dispatch_namespace}/scripts/{script_name}/settings": [
+        "bindings.json",
+        "bindings.text"
+      ],
+      "PATCH /accounts/{account_id}/workers/dispatch/namespaces/{dispatch_namespace}/scripts/{script_name}/settings": [
+        "bindings.json",
+        "bindings.text"
+      ],
+      "POST /accounts/{account_id}/workers/scripts/{script_name}/versions": [
+        "resources.bindings.json",
+        "resources.bindings.text"
+      ],
+      "GET /accounts/{account_id}/workers/scripts/{script_name}/versions/{version_id}": [
+        "resources.bindings.json",
+        "resources.bindings.text"
+      ],
+      "GET /zones/{zone_id}/custom_hostnames": ["ssl.custom_key"],
+      "POST /zones/{zone_id}/custom_hostnames": ["ssl.custom_key"],
+      "GET /zones/{zone_id}/custom_hostnames/{custom_hostname_id}": ["ssl.custom_key"],
+      "PATCH /zones/{zone_id}/custom_hostnames/{custom_hostname_id}": ["ssl.custom_key"],
+      "PUT /zones/{zone_id}/custom_hostnames/{custom_hostname_id}/certificate_pack/{certificate_pack_id}/certificates/{certificate_id}": [
+        "ssl.custom_key"
+      ],
+      "GET /zones/{zone_id}/dnssec/zsk": ["SigningKey.kek", "SigningKey.privkey", "SigningKey.pubkey"],
+      "GET /zones/{zone_id}/healthchecks": ["http_config.header"],
+      "POST /zones/{zone_id}/healthchecks": ["http_config.header"],
+      "POST /zones/{zone_id}/healthchecks/preview": ["http_config.header"],
+      "GET /zones/{zone_id}/healthchecks/preview/{healthcheck_id}": ["http_config.header"],
+      "GET /zones/{zone_id}/healthchecks/{healthcheck_id}": ["http_config.header"],
+      "PUT /zones/{zone_id}/healthchecks/{healthcheck_id}": ["http_config.header"],
+      "PATCH /zones/{zone_id}/healthchecks/{healthcheck_id}": ["http_config.header"],
+      "GET /zones/{zone_id}/smart_shield/healthchecks": ["http_config.header"],
+      "POST /zones/{zone_id}/smart_shield/healthchecks": ["http_config.header"],
+      "GET /zones/{zone_id}/smart_shield/healthchecks/{healthcheck_id}": ["http_config.header"],
+      "PUT /zones/{zone_id}/smart_shield/healthchecks/{healthcheck_id}": ["http_config.header"],
+      "PATCH /zones/{zone_id}/smart_shield/healthchecks/{healthcheck_id}": ["http_config.header"],
+      "PUT /zones/{zone_id}/settings/zaraz/history": [
+        "*.debugKey",
+        "*.variables.*.value",
+        "debugKey",
+        "variables.*.value"
+      ],
+      "GET /accounts/{account_id}/access/ai-controls/mcp/portals": ["servers.auth_config_summary"],
+      "POST /accounts/{account_id}/access/ai-controls/mcp/portals": ["servers.auth_config_summary"],
+      "GET /accounts/{account_id}/access/ai-controls/mcp/portals/{id}": ["servers.auth_config_summary"],
+      "PUT /accounts/{account_id}/access/ai-controls/mcp/portals/{id}": ["servers.auth_config_summary"],
+      "GET /accounts/{account_id}/access/ai-controls/mcp/servers": ["auth_config_summary"],
+      "POST /accounts/{account_id}/access/ai-controls/mcp/servers": ["auth_config_summary"],
+      "GET /accounts/{account_id}/access/ai-controls/mcp/servers/{id}": ["auth_config_summary"],
+      "PUT /accounts/{account_id}/access/ai-controls/mcp/servers/{id}": ["auth_config_summary"],
+      "DELETE /accounts/{account_id}/access/ai-controls/mcp/servers/{id}": ["auth_config_summary"],
+      "GET /accounts/{account_id}/access/users/{user_id}/last_seen_identity": ["passkeys"],
+      "GET /accounts/{account_id}/ai-search/namespaces/{name}/instances": [
+        "source_params.web_crawler.parse_options.include_headers"
+      ],
+      "POST /accounts/{account_id}/ai-search/namespaces/{name}/instances": [
+        "source_params.web_crawler.parse_options.include_headers"
+      ],
+      "GET /accounts/{account_id}/ai-search/namespaces/{name}/instances/{id}": [
+        "source_params.web_crawler.parse_options.include_headers"
+      ],
+      "PUT /accounts/{account_id}/ai-search/namespaces/{name}/instances/{id}": [
+        "source_params.web_crawler.parse_options.include_headers"
+      ],
+      "DELETE /accounts/{account_id}/ai-search/namespaces/{name}/instances/{id}": [
+        "source_params.web_crawler.parse_options.include_headers"
+      ],
+      "POST /accounts/{account_id}/ai/tomarkdown": ["tokens"],
+      "GET /accounts/{account_id}/billable/usage/billable-metrics": ["DimensionKeys"],
+      "POST /accounts/{account_id}/browser-rendering/accessibilityTree": ["meta.headers", "meta.redirectChain.headers"],
+      "POST /accounts/{account_id}/browser-rendering/content": ["meta.headers", "meta.redirectChain.headers"],
+      "POST /accounts/{account_id}/browser-rendering/json": ["meta.headers", "meta.redirectChain.headers"],
+      "POST /accounts/{account_id}/browser-rendering/links": ["meta.headers", "meta.redirectChain.headers"],
+      "POST /accounts/{account_id}/browser-rendering/markdown": ["meta.headers", "meta.redirectChain.headers"],
+      "POST /accounts/{account_id}/browser-rendering/scrape": ["meta.headers", "meta.redirectChain.headers"],
+      "POST /accounts/{account_id}/browser-rendering/snapshot": ["meta.headers", "meta.redirectChain.headers"],
+      "GET /accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations": [
+        "config.ingress.originRequest.httpHostHeader",
+        "config.originRequest.httpHostHeader"
+      ],
+      "PUT /accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations": [
+        "config.ingress.originRequest.httpHostHeader",
+        "config.originRequest.httpHostHeader"
+      ],
+      "GET /accounts/{account_id}/cloudforce-one/rules/structured/schema": ["headers"],
+      "GET /accounts/{account_id}/custom_pages": ["required_tokens"],
+      "GET /accounts/{account_id}/custom_pages/{identifier}": ["required_tokens"],
+      "PUT /accounts/{account_id}/custom_pages/{identifier}": ["required_tokens"],
+      "GET /zones/{zone_id}/custom_pages": ["required_tokens"],
+      "GET /zones/{zone_id}/custom_pages/{identifier}": ["required_tokens"],
+      "PUT /zones/{zone_id}/custom_pages/{identifier}": ["required_tokens"],
+      "GET /accounts/{account_id}/data-security/posture/content": [
+        "integration.credentials_expiry",
+        "integration.last_hydrated"
+      ],
+      "GET /accounts/{account_id}/data-security/posture/findings": [
+        "integration.credentials_expiry",
+        "integration.last_hydrated"
+      ],
+      "POST /accounts/{account_id}/data-security/posture/findings/ignore": [
+        "integration.credentials_expiry",
+        "integration.last_hydrated"
+      ],
+      "POST /accounts/{account_id}/data-security/posture/findings/unignore": [
+        "integration.credentials_expiry",
+        "integration.last_hydrated"
+      ],
+      "GET /accounts/{account_id}/data-security/posture/findings/{finding_id}": [
+        "integration.credentials_expiry",
+        "integration.last_hydrated"
+      ],
+      "POST /accounts/{account_id}/data-security/posture/findings/{finding_id}/reset_finding_severity": [
+        "integration.credentials_expiry",
+        "integration.last_hydrated"
+      ],
+      "POST /accounts/{account_id}/data-security/posture/findings/{finding_id}/tune_finding_severity": [
+        "integration.credentials_expiry",
+        "integration.last_hydrated"
+      ],
+      "GET /accounts/{account_id}/data-security/posture/remediations/jobs": ["triggered_by_user"],
+      "POST /accounts/{account_id}/data-security/posture/remediations/jobs": ["created.triggered_by_user"],
+      "GET /accounts/{account_id}/email-security/investigate/{investigate_id}/detections": ["headers"],
+      "GET /accounts/{account_id}/images/v2/metadata/keys": ["keys"],
+      "GET /accounts/{account_id}/logs/audit": ["actor.context"],
+      "GET /accounts/{account_id}/logs/audit/{id}/history": ["actor.context"],
+      "GET /accounts/{account_id}/logs/list": ["keys"],
+      "GET /accounts/{account_id}/one/applications/{application_id}/auth-methods": [
+        "instructions",
+        "payload_example",
+        "payload_schema"
+      ],
+      "POST /accounts/{account_id}/one/integrations": ["authorization_link", "credentials_expiry"],
+      "GET /accounts/{account_id}/one/integrations/{id}": ["authorization_link", "credentials_expiry"],
+      "PATCH /accounts/{account_id}/one/integrations/{id}": ["authorization_link", "credentials_expiry"],
+      "POST /accounts/{account_id}/one/integrations/{id}/pause": ["authorization_link", "credentials_expiry"],
+      "POST /accounts/{account_id}/one/integrations/{id}/resume": ["authorization_link", "credentials_expiry"],
+      "GET /accounts/{account_id}/r2/buckets/{bucket_name}/cors": ["rules.allowed.headers", "rules.exposeHeaders"],
+      "POST /accounts/{account_id}/realtime/kit/{app_id}/presets": ["data.ui.design_tokens"],
+      "GET /accounts/{account_id}/realtime/kit/{app_id}/presets/{preset_id}": ["data.ui.design_tokens"],
+      "PUT /accounts/{account_id}/realtime/kit/{app_id}/presets/{preset_id}": ["data.ui.design_tokens"],
+      "PATCH /accounts/{account_id}/realtime/kit/{app_id}/presets/{preset_id}": ["data.ui.design_tokens"],
+      "DELETE /accounts/{account_id}/realtime/kit/{app_id}/presets/{preset_id}": ["data.ui.design_tokens"],
+      "GET /accounts/{account_id}/slurper/jobs": ["source.keys"],
+      "GET /accounts/{account_id}/slurper/jobs/{job_id}": ["source.keys"],
+      "PUT /accounts/{account_id}/storage/kv/namespaces/{namespace_id}/bulk": ["unsuccessful_keys"],
+      "POST /accounts/{account_id}/storage/kv/namespaces/{namespace_id}/bulk/delete": ["unsuccessful_keys"],
+      "GET /organizations/{organization_id}/logs/audit": ["actor.context"],
+      "GET /organizations/{organization_id}/logs/audit/{id}/history": ["actor.context"],
+      "POST /subscriptions/{subscription_id}/consume": ["records.headers"],
+      "GET /zones/{zone_id}/managed_headers": ["managed_request_headers", "managed_response_headers"],
+      "PATCH /zones/{zone_id}/managed_headers": ["managed_request_headers", "managed_response_headers"],
+      "GET /accounts/{account_id}/load_balancers/pools": ["origins.header"],
+      "POST /accounts/{account_id}/load_balancers/pools": ["origins.header"],
+      "PATCH /accounts/{account_id}/load_balancers/pools": ["origins.header"],
+      "GET /accounts/{account_id}/load_balancers/pools/{pool_id}": ["origins.header"],
+      "PUT /accounts/{account_id}/load_balancers/pools/{pool_id}": ["origins.header"],
+      "PATCH /accounts/{account_id}/load_balancers/pools/{pool_id}": ["origins.header"],
+      "GET /user/load_balancers/pools": ["origins.header"],
+      "POST /user/load_balancers/pools": ["origins.header"],
+      "PATCH /user/load_balancers/pools": ["origins.header"],
+      "GET /user/load_balancers/pools/{pool_id}": ["origins.header"],
+      "PUT /user/load_balancers/pools/{pool_id}": ["origins.header"],
+      "PATCH /user/load_balancers/pools/{pool_id}": ["origins.header"],
+      "GET /accounts/{account_id}/load_balancers": [
+        "rules.overrides.session_affinity_attributes.headers",
+        "session_affinity_attributes.headers"
+      ],
+      "POST /accounts/{account_id}/load_balancers": [
+        "rules.overrides.session_affinity_attributes.headers",
+        "session_affinity_attributes.headers"
+      ],
+      "GET /accounts/{account_id}/load_balancers/{load_balancer_id}": [
+        "rules.overrides.session_affinity_attributes.headers",
+        "session_affinity_attributes.headers"
+      ],
+      "PUT /accounts/{account_id}/load_balancers/{load_balancer_id}": [
+        "rules.overrides.session_affinity_attributes.headers",
+        "session_affinity_attributes.headers"
+      ],
+      "PATCH /accounts/{account_id}/load_balancers/{load_balancer_id}": [
+        "rules.overrides.session_affinity_attributes.headers",
+        "session_affinity_attributes.headers"
+      ],
+      "GET /zones/{zone_id}/load_balancers": [
+        "rules.overrides.session_affinity_attributes.headers",
+        "session_affinity_attributes.headers"
+      ],
+      "POST /zones/{zone_id}/load_balancers": [
+        "rules.overrides.session_affinity_attributes.headers",
+        "session_affinity_attributes.headers"
+      ],
+      "GET /zones/{zone_id}/load_balancers/{load_balancer_id}": [
+        "rules.overrides.session_affinity_attributes.headers",
+        "session_affinity_attributes.headers"
+      ],
+      "PUT /zones/{zone_id}/load_balancers/{load_balancer_id}": [
+        "rules.overrides.session_affinity_attributes.headers",
+        "session_affinity_attributes.headers"
+      ],
+      "PATCH /zones/{zone_id}/load_balancers/{load_balancer_id}": [
+        "rules.overrides.session_affinity_attributes.headers",
+        "session_affinity_attributes.headers"
+      ],
+      "GET /accounts/{account_id}/rulesets/phases/{ruleset_phase}/entrypoint": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "GET /accounts/{account_id}/rulesets/phases/{ruleset_phase}/entrypoint/versions/{ruleset_version}": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "GET /accounts/{account_id}/rulesets/{ruleset_id}": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "GET /accounts/{account_id}/rulesets/{ruleset_id}/versions/{ruleset_version}": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "GET /accounts/{account_id}/rulesets/{ruleset_id}/versions/{ruleset_version}/by_tag/{rule_tag}": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "GET /zones/{zone_id}/rulesets/phases/{ruleset_phase}/entrypoint": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "GET /zones/{zone_id}/rulesets/phases/{ruleset_phase}/entrypoint/versions/{ruleset_version}": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "GET /zones/{zone_id}/rulesets/{ruleset_id}": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "GET /zones/{zone_id}/rulesets/{ruleset_id}/versions/{ruleset_version}": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "GET /zones/{zone_id}/rulesets/{ruleset_id}/versions/{ruleset_version}/by_tag/{rule_tag}": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "POST /accounts/{account_id}/rulesets": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "PUT /accounts/{account_id}/rulesets/phases/{ruleset_phase}/entrypoint": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "PUT /accounts/{account_id}/rulesets/{ruleset_id}": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "POST /accounts/{account_id}/rulesets/{ruleset_id}/rules": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "PATCH /accounts/{account_id}/rulesets/{ruleset_id}/rules/{rule_id}": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "DELETE /accounts/{account_id}/rulesets/{ruleset_id}/rules/{rule_id}": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "POST /zones/{zone_id}/rulesets": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "PUT /zones/{zone_id}/rulesets/phases/{ruleset_phase}/entrypoint": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "PUT /zones/{zone_id}/rulesets/{ruleset_id}": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "POST /zones/{zone_id}/rulesets/{ruleset_id}/rules": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "PATCH /zones/{zone_id}/rulesets/{ruleset_id}/rules/{rule_id}": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "DELETE /zones/{zone_id}/rulesets/{ruleset_id}/rules/{rule_id}": [
+        "rules.action_parameters.cache_key.custom_key.cookie",
+        "rules.action_parameters.cache_key.custom_key.header",
+        "rules.action_parameters.cookie_fields",
+        "rules.action_parameters.headers.*.value",
+        "rules.action_parameters.vary.headers",
+        "rules.exposed_credential_check"
+      ],
+      "GET /zones/{zone_id}/custom_certificates": ["geo_restrictions", "policy_restrictions"],
+      "POST /zones/{zone_id}/custom_certificates": ["geo_restrictions", "policy_restrictions"],
+      "PUT /zones/{zone_id}/custom_certificates/prioritize": ["geo_restrictions", "policy_restrictions"],
+      "GET /zones/{zone_id}/custom_certificates/{custom_certificate_id}": ["geo_restrictions", "policy_restrictions"],
+      "PATCH /zones/{zone_id}/custom_certificates/{custom_certificate_id}": ["geo_restrictions", "policy_restrictions"],
+      "GET /zones/{zone_id}/ssl/certificate_packs": ["certificates.geo_restrictions"],
+      "POST /zones/{zone_id}/ssl/certificate_packs/order": ["certificates.geo_restrictions"],
+      "GET /zones/{zone_id}/ssl/certificate_packs/{certificate_pack_id}": ["certificates.geo_restrictions"],
+      "PATCH /zones/{zone_id}/ssl/certificate_packs/{certificate_pack_id}": ["certificates.geo_restrictions"],
+      "GET /accounts/{account_id}/ai-gateway/gateways/{gateway_id}/datasets": ["filters.value"],
+      "POST /accounts/{account_id}/ai-gateway/gateways/{gateway_id}/datasets": ["filters.value"],
+      "GET /accounts/{account_id}/ai-gateway/gateways/{gateway_id}/datasets/{id}": ["filters.value"],
+      "PUT /accounts/{account_id}/ai-gateway/gateways/{gateway_id}/datasets/{id}": ["filters.value"],
+      "DELETE /accounts/{account_id}/ai-gateway/gateways/{gateway_id}/datasets/{id}": ["filters.value"],
+      "GET /accounts/{account_id}/ai-gateway/gateways/{gateway_id}/evaluations": ["datasets.filters.value"],
+      "POST /accounts/{account_id}/ai-gateway/gateways/{gateway_id}/evaluations": ["datasets.filters.value"],
+      "GET /accounts/{account_id}/ai-gateway/gateways/{gateway_id}/evaluations/{id}": ["datasets.filters.value"],
+      "DELETE /accounts/{account_id}/ai-gateway/gateways/{gateway_id}/evaluations/{id}": ["datasets.filters.value"],
+      "GET /accounts/{account_id}/alerting/v3/destinations/webhooks": ["origin:url", "secret"],
+      "GET /accounts/{account_id}/alerting/v3/destinations/webhooks/{webhook_id}": ["origin:url", "secret"],
+      "POST /accounts/{account_id}/cloudforce-one/requests": ["tokens"],
+      "POST /accounts/{account_id}/cloudforce-one/requests/new": ["tokens"],
+      "GET /accounts/{account_id}/cloudforce-one/requests/priority/{priority_id}": ["tokens"],
+      "PUT /accounts/{account_id}/cloudforce-one/requests/priority/{priority_id}": ["tokens"],
+      "GET /accounts/{account_id}/cloudforce-one/requests/{request_id}": ["tokens"],
+      "PUT /accounts/{account_id}/cloudforce-one/requests/{request_id}": ["tokens"],
+      "POST /accounts/{account_id}/cloudforce-one/v2/requests/{project_type}": ["tokens"],
+      "GET /accounts/{account_id}/cloudforce-one/v2/requests/{project_type}/{request_id}": ["tokens"],
+      "PUT /accounts/{account_id}/cloudforce-one/v2/requests/{project_type}/{request_id}": ["tokens"],
+      "GET /accounts/{account_id}/cloudforce-one/rules": ["rules.meta.value"],
+      "POST /accounts/{account_id}/cloudforce-one/rules": ["meta.value"],
+      "GET /accounts/{account_id}/cloudforce-one/rules/approvals/{id}": ["approval.current_rule.meta.value"],
+      "GET /accounts/{account_id}/cloudforce-one/rules/search": ["results.meta.value"],
+      "GET /accounts/{account_id}/cloudforce-one/rules/structured": ["rules.meta.value"],
+      "POST /accounts/{account_id}/cloudforce-one/rules/structured": ["meta.value"],
+      "PUT /accounts/{account_id}/cloudforce-one/rules/structured/approvals/{id}": ["approval.current_rule.meta.value"],
+      "GET /accounts/{account_id}/cloudforce-one/rules/structured/{id}": ["meta.value"],
+      "PUT /accounts/{account_id}/cloudforce-one/rules/structured/{id}": ["meta.value"],
+      "GET /accounts/{account_id}/cloudforce-one/rules/{id}": ["meta.value"],
+      "PUT /accounts/{account_id}/cloudforce-one/rules/{id}": ["meta.value"],
+      "GET /accounts/{account_id}/dlp/datasets": ["secret"],
+      "GET /accounts/{account_id}/dlp/datasets/{dataset_id}": ["secret"],
+      "PUT /accounts/{account_id}/dlp/datasets/{dataset_id}": ["secret"],
+      "POST /accounts/{account_id}/dlp/datasets/{dataset_id}/upload/{version}": ["secret"],
+      "GET /accounts/{account_id}/dlp/entries": ["secret"],
+      "GET /accounts/{account_id}/dlp/entries/{entry_id}": ["secret"],
+      "PUT /accounts/{account_id}/dlp/entries/{entry_id}": ["secret"],
+      "GET /accounts/{account_id}/dlp/profiles": ["entries.secret", "shared_entries.secret"],
+      "GET /accounts/{account_id}/dlp/profiles/custom": ["entries.secret", "shared_entries.secret"],
+      "POST /accounts/{account_id}/dlp/profiles/custom": ["entries.secret", "shared_entries.secret"],
+      "GET /accounts/{account_id}/dlp/profiles/custom/{profile_id}": ["entries.secret", "shared_entries.secret"],
+      "PUT /accounts/{account_id}/dlp/profiles/custom/{profile_id}": ["entries.secret", "shared_entries.secret"],
+      "POST /accounts/{account_id}/dlp/profiles/predefined": ["entries.secret", "shared_entries.secret"],
+      "GET /accounts/{account_id}/dlp/profiles/predefined/{profile_id}": ["entries.secret", "shared_entries.secret"],
+      "PUT /accounts/{account_id}/dlp/profiles/predefined/{profile_id}": ["entries.secret", "shared_entries.secret"],
+      "GET /accounts/{account_id}/dlp/profiles/predefined/{profile_id}/config": ["entries.secret"],
+      "POST /accounts/{account_id}/dlp/profiles/predefined/{profile_id}/config": ["entries.secret"],
+      "PUT /accounts/{account_id}/dlp/profiles/predefined/{profile_id}/config": ["entries.secret"],
+      "GET /accounts/{account_id}/dlp/profiles/{profile_id}": ["entries.secret", "shared_entries.secret"],
+      "GET /accounts/{account_id}/hyperdrive/configs": ["origin.access_client_secret", "origin.password"],
+      "POST /accounts/{account_id}/hyperdrive/configs": ["origin.access_client_secret", "origin.password"],
+      "GET /accounts/{account_id}/hyperdrive/configs/{hyperdrive_id}": [
+        "origin.access_client_secret",
+        "origin.password"
+      ],
+      "PUT /accounts/{account_id}/hyperdrive/configs/{hyperdrive_id}": [
+        "origin.access_client_secret",
+        "origin.password"
+      ],
+      "PATCH /accounts/{account_id}/hyperdrive/configs/{hyperdrive_id}": [
+        "origin.access_client_secret",
+        "origin.password"
+      ],
+      "POST /accounts/{account_id}/hyperdrive/configs/{hyperdrive_id}/restart": [
+        "origin.access_client_secret",
+        "origin.password"
+      ],
+      "GET /accounts/{account_id}/iam/resource_groups": ["meta.value"],
+      "POST /accounts/{account_id}/iam/resource_groups": ["meta.value"],
+      "GET /accounts/{account_id}/iam/resource_groups/{resource_group_id}": ["meta.value"],
+      "PUT /accounts/{account_id}/iam/resource_groups/{resource_group_id}": ["meta.value"],
+      "GET /accounts/{account_id}/iam/user_groups": ["policies.resource_groups.meta.value"],
+      "POST /accounts/{account_id}/iam/user_groups": ["policies.resource_groups.meta.value"],
+      "GET /accounts/{account_id}/iam/user_groups/{user_group_id}": ["policies.resource_groups.meta.value"],
+      "PUT /accounts/{account_id}/iam/user_groups/{user_group_id}": ["policies.resource_groups.meta.value"],
+      "GET /accounts/{account_id}/members": ["policies.resource_groups.meta.value"],
+      "POST /accounts/{account_id}/members": ["policies.resource_groups.meta.value"],
+      "GET /accounts/{account_id}/members/{member_id}": ["policies.resource_groups.meta.value"],
+      "PUT /accounts/{account_id}/members/{member_id}": ["policies.resource_groups.meta.value"],
+      "GET /memberships": ["policies.resource_groups.meta.value"],
+      "GET /memberships/{membership_id}": ["policies.resource_groups.meta.value"],
+      "PUT /memberships/{membership_id}": ["policies.resource_groups.meta.value"],
+      "GET /user/memberships/{membership_id}": ["policies.resource_groups.meta.value"],
+      "GET /accounts/{account_id}/k2/streams": ["http.authentication"],
+      "POST /accounts/{account_id}/k2/streams": ["http.authentication"],
+      "GET /accounts/{account_id}/k2/streams/{stream_id}": ["http.authentication"],
+      "PATCH /accounts/{account_id}/k2/streams/{stream_id}": ["http.authentication"],
+      "GET /accounts/{account_id}/one/applications/{application_id}/setup-flows": [
+        "steps.form_fields.name",
+        "steps.form_fields.type"
+      ],
+      "GET /accounts/{account_id}/realtime/kit/{app_id}/meetings": [
+        "data.recording_config.storage_config.access_key",
+        "data.recording_config.storage_config.password",
+        "data.recording_config.storage_config.private_key",
+        "data.recording_config.storage_config.secret"
+      ],
+      "POST /accounts/{account_id}/realtime/kit/{app_id}/meetings": [
+        "data.recording_config.storage_config.access_key",
+        "data.recording_config.storage_config.password",
+        "data.recording_config.storage_config.private_key",
+        "data.recording_config.storage_config.secret"
+      ],
+      "GET /accounts/{account_id}/realtime/kit/{app_id}/meetings/{meeting_id}": [
+        "data.recording_config.storage_config.access_key",
+        "data.recording_config.storage_config.password",
+        "data.recording_config.storage_config.private_key",
+        "data.recording_config.storage_config.secret"
+      ],
+      "PUT /accounts/{account_id}/realtime/kit/{app_id}/meetings/{meeting_id}": [
+        "data.recording_config.storage_config.access_key",
+        "data.recording_config.storage_config.password",
+        "data.recording_config.storage_config.private_key",
+        "data.recording_config.storage_config.secret"
+      ],
+      "PATCH /accounts/{account_id}/realtime/kit/{app_id}/meetings/{meeting_id}": [
+        "data.recording_config.storage_config.access_key",
+        "data.recording_config.storage_config.password",
+        "data.recording_config.storage_config.private_key",
+        "data.recording_config.storage_config.secret"
+      ],
+      "POST /accounts/{account_id}/realtime/kit/{app_id}/recordings": [
+        "data.storage_config.access_key",
+        "data.storage_config.password",
+        "data.storage_config.private_key",
+        "data.storage_config.secret"
+      ],
+      "GET /accounts/{account_id}/realtime/kit/{app_id}/recordings/{recording_id}": [
+        "data.storage_config.access_key",
+        "data.storage_config.password",
+        "data.storage_config.private_key",
+        "data.storage_config.secret"
+      ],
+      "PUT /accounts/{account_id}/realtime/kit/{app_id}/recordings/{recording_id}": [
+        "data.storage_config.access_key",
+        "data.storage_config.password",
+        "data.storage_config.private_key",
+        "data.storage_config.secret"
+      ],
+      "GET /accounts/{account_id}/realtime/kit/{app_id}/recordings": [
+        "data.meeting.recording_config.storage_config.access_key",
+        "data.meeting.recording_config.storage_config.password",
+        "data.meeting.recording_config.storage_config.private_key",
+        "data.meeting.recording_config.storage_config.secret",
+        "data.storage_config.access_key",
+        "data.storage_config.password",
+        "data.storage_config.private_key",
+        "data.storage_config.secret"
+      ],
+      "GET /accounts/{account_id}/realtime/kit/{app_id}/webhooks": ["origin:data.url"],
+      "POST /accounts/{account_id}/realtime/kit/{app_id}/webhooks": ["origin:data.url"],
+      "GET /accounts/{account_id}/realtime/kit/{app_id}/webhooks/{webhook_id}": ["origin:data.url"],
+      "PUT /accounts/{account_id}/realtime/kit/{app_id}/webhooks/{webhook_id}": ["origin:data.url"],
+      "PATCH /accounts/{account_id}/realtime/kit/{app_id}/webhooks/{webhook_id}": ["origin:data.url"],
+      "DELETE /accounts/{account_id}/realtime/kit/{app_id}/webhooks/{webhook_id}": ["origin:data.url"],
+      "POST /accounts/{account_id}/vuln_scanner/scans": ["report.report.tests.steps.request.credential_set"],
+      "GET /accounts/{account_id}/vuln_scanner/scans/{scan_id}": ["report.report.tests.steps.request.credential_set"],
+      "GET /accounts/{account_id}/workers/dispatch/namespaces/{dispatch_namespace}/scripts/{script_name}/bindings": [
+        "json",
+        "key_base64",
+        "key_jwk",
+        "text"
+      ],
+      "GET /accounts/{account_id}/workers/workers": [],
+      "POST /accounts/{account_id}/workers/workers": [],
+      "GET /accounts/{account_id}/workers/workers/{worker_id}": [],
+      "PUT /accounts/{account_id}/workers/workers/{worker_id}": [],
+      "PATCH /accounts/{account_id}/workers/workers/{worker_id}": [],
+      "GET /accounts/{account_id}/workers/observability/queries": [
+        "parameters.filters.value",
+        "parameters.havings.value"
+      ],
+      "POST /accounts/{account_id}/workers/observability/queries": [
+        "parameters.filters.value",
+        "parameters.havings.value"
+      ],
+      "GET /accounts/{account_id}/workers/observability/queries/{queryId}": [
+        "parameters.filters.value",
+        "parameters.havings.value"
+      ],
+      "PATCH /accounts/{account_id}/workers/observability/queries/{queryId}": [
+        "parameters.filters.value",
+        "parameters.havings.value"
+      ],
+      "DELETE /accounts/{account_id}/workers/observability/queries/{queryId}": [
+        "parameters.filters.value",
+        "parameters.havings.value"
+      ],
+      "POST /accounts/{account_id}/workers/observability/telemetry/values": ["value"],
+      "GET /accounts/{account_id}/workers/observability/shared/query/{id}": [
+        "calculations.aggregates.groups.value",
+        "calculations.series.data.groups.value",
+        "compare.aggregates.groups.value",
+        "compare.series.data.groups.value",
+        "run.query.parameters.filters.value",
+        "run.query.parameters.havings.value"
+      ],
+      "POST /accounts/{account_id}/workers/observability/telemetry/query": [
+        "calculations.aggregates.groups.value",
+        "calculations.series.data.groups.value",
+        "compare.aggregates.groups.value",
+        "compare.series.data.groups.value",
+        "run.query.parameters.filters.value",
+        "run.query.parameters.havings.value"
+      ],
+      "GET /zones/{zone_id}/api_gateway/configuration": ["auth_id_characteristics.name"],
+      "PUT /zones/{zone_id}/api_gateway/configuration": ["auth_id_characteristics.name"],
+      "GET /zones/{zone_id}/images/v1/flows": ["flows.transformations.value", "flows.trigger.params.value"],
+      "PUT /zones/{zone_id}/images/v1/flows": ["flows.transformations.value", "flows.trigger.params.value"]
+    },
+    "resources": {}
   }
 }

@@ -1,5 +1,5 @@
 {
-  "format": 4,
+  "format": 5,
   "digest": "sha256:9119e72c7ff8ad142e94f7efa9cf49d8e6eec69df3592e17e8fba15099726ed7",
   "options": {
     "expansions": false
@@ -6322,6 +6322,257 @@
     "POST /v2/core/event_destinations/{id}/enable": {
       "fields": ["webhook_endpoint.signing_secret"],
       "named": false
+    }
+  },
+  "reviewed": {
+    "operations": {
+      "GET /v1/apps/secrets": ["data.payload"],
+      "POST /v1/apps/secrets": ["payload"],
+      "POST /v1/apps/secrets/delete": ["payload"],
+      "GET /v1/apps/secrets/find": ["payload"],
+      "POST /v1/apps/installs": ["auth_code"],
+      "GET /v1/apps/installs/{id}": ["auth_code"],
+      "POST /v1/apps/installs/{id}": ["auth_code"],
+      "POST /v1/apps/installs/{id}/uninstall": ["auth_code"],
+      "GET /v1/apps/installs": ["data.auth_code"],
+      "POST /v1/customers/{customer}/bank_accounts": ["client_secret"],
+      "POST /v1/customers/{customer}/bank_accounts/{id}": ["client_secret"],
+      "DELETE /v1/customers/{customer}/bank_accounts/{id}": ["client_secret"],
+      "POST /v1/customers/{customer}/cards": ["client_secret"],
+      "POST /v1/customers/{customer}/cards/{id}": ["client_secret"],
+      "DELETE /v1/customers/{customer}/cards/{id}": ["client_secret"],
+      "POST /v1/customers/{customer}/sources": ["client_secret"],
+      "GET /v1/customers/{customer}/sources/{id}": ["client_secret"],
+      "POST /v1/customers/{customer}/sources/{id}": ["client_secret"],
+      "DELETE /v1/customers/{customer}/sources/{id}": ["client_secret"],
+      "POST /v1/invoices": ["confirmation_secret"],
+      "POST /v1/invoices/create_preview": ["confirmation_secret"],
+      "GET /v1/invoices/{invoice}": ["confirmation_secret"],
+      "POST /v1/invoices/{invoice}": ["confirmation_secret"],
+      "POST /v1/invoices/{invoice}/add_lines": ["confirmation_secret"],
+      "POST /v1/invoices/{invoice}/attach_payment": ["confirmation_secret"],
+      "POST /v1/invoices/{invoice}/finalize": ["confirmation_secret"],
+      "POST /v1/invoices/{invoice}/mark_uncollectible": ["confirmation_secret"],
+      "POST /v1/invoices/{invoice}/pay": ["confirmation_secret"],
+      "POST /v1/invoices/{invoice}/remove_lines": ["confirmation_secret"],
+      "POST /v1/invoices/{invoice}/send": ["confirmation_secret"],
+      "POST /v1/invoices/{invoice}/update_lines": ["confirmation_secret"],
+      "POST /v1/invoices/{invoice}/void": ["confirmation_secret"],
+      "GET /v1/customers/{customer}/sources": ["data.client_secret"],
+      "GET /v1/invoices": ["data.confirmation_secret"],
+      "GET /v1/invoices/search": ["data.confirmation_secret"],
+      "POST /v1/checkout/sessions": ["client_secret"],
+      "GET /v1/checkout/sessions/{session}": ["client_secret"],
+      "POST /v1/checkout/sessions/{session}": ["client_secret"],
+      "POST /v1/checkout/sessions/{session}/expire": ["client_secret"],
+      "GET /v1/checkout/sessions": ["data.client_secret"],
+      "DELETE /v1/ephemeral_keys/{key}": ["secret"],
+      "GET /v2/core/event_destinations": ["data.webhook_endpoint.signing_secret", "origin:data.webhook_endpoint.url"],
+      "POST /v2/core/event_destinations": ["origin:webhook_endpoint.url", "webhook_endpoint.signing_secret"],
+      "GET /v2/core/event_destinations/{id}": ["origin:webhook_endpoint.url", "webhook_endpoint.signing_secret"],
+      "POST /v2/core/event_destinations/{id}": ["origin:webhook_endpoint.url", "webhook_endpoint.signing_secret"],
+      "POST /v2/core/event_destinations/{id}/disable": [
+        "origin:webhook_endpoint.url",
+        "webhook_endpoint.signing_secret"
+      ],
+      "POST /v2/core/event_destinations/{id}/enable": [
+        "origin:webhook_endpoint.url",
+        "webhook_endpoint.signing_secret"
+      ],
+      "GET /v1/financial_connections/sessions/{session}": ["client_secret"],
+      "GET /v1/link_account_sessions/{session}": ["client_secret"],
+      "GET /v1/files": ["data.url", "origin:data.links.data.url", "url"],
+      "POST /v1/files": ["origin:links.data.url", "url"],
+      "GET /v1/files/{file}": ["origin:links.data.url", "url"],
+      "GET /v1/file_links/{link}": ["origin:url"],
+      "POST /v1/file_links/{link}": ["origin:url"],
+      "GET /v1/file_links": ["origin:data.url", "origin:url"],
+      "GET /v1/forwarding/requests": ["data.request_details.headers.value", "data.response_details.headers.value"],
+      "POST /v1/forwarding/requests": ["request_details.headers.value", "response_details.headers.value"],
+      "GET /v1/forwarding/requests/{id}": ["request_details.headers.value", "response_details.headers.value"],
+      "POST /v1/identity/verification_sessions": ["client_secret"],
+      "GET /v1/identity/verification_sessions/{session}": ["client_secret"],
+      "POST /v1/identity/verification_sessions/{session}": ["client_secret"],
+      "POST /v1/identity/verification_sessions/{session}/cancel": ["client_secret"],
+      "POST /v1/identity/verification_sessions/{session}/redact": ["client_secret"],
+      "GET /v1/identity/verification_sessions": ["data.client_secret"],
+      "GET /v1/issuing/transactions": ["data.authorization", "data.token"],
+      "GET /v1/issuing/authorizations": ["data.token", "data.transactions.authorization", "data.transactions.token"],
+      "GET /v1/issuing/transactions/{transaction}": ["authorization", "token"],
+      "POST /v1/issuing/transactions/{transaction}": ["authorization", "token"],
+      "POST /v1/test_helpers/issuing/transactions/create_force_capture": ["authorization", "token"],
+      "POST /v1/test_helpers/issuing/transactions/create_unlinked_refund": ["authorization", "token"],
+      "POST /v1/test_helpers/issuing/transactions/{transaction}/refund": ["authorization", "token"],
+      "GET /v1/issuing/authorizations/{authorization}": ["token", "transactions.authorization", "transactions.token"],
+      "POST /v1/issuing/authorizations/{authorization}": ["token", "transactions.authorization", "transactions.token"],
+      "POST /v1/test_helpers/issuing/authorizations": ["token", "transactions.authorization", "transactions.token"],
+      "POST /v1/test_helpers/issuing/authorizations/{authorization}/capture": [
+        "token",
+        "transactions.authorization",
+        "transactions.token"
+      ],
+      "POST /v1/test_helpers/issuing/authorizations/{authorization}/expire": [
+        "token",
+        "transactions.authorization",
+        "transactions.token"
+      ],
+      "POST /v1/test_helpers/issuing/authorizations/{authorization}/finalize_amount": [
+        "token",
+        "transactions.authorization",
+        "transactions.token"
+      ],
+      "POST /v1/test_helpers/issuing/authorizations/{authorization}/fraud_challenges/respond": [
+        "token",
+        "transactions.authorization",
+        "transactions.token"
+      ],
+      "POST /v1/test_helpers/issuing/authorizations/{authorization}/increment": [
+        "token",
+        "transactions.authorization",
+        "transactions.token"
+      ],
+      "POST /v1/test_helpers/issuing/authorizations/{authorization}/reverse": [
+        "token",
+        "transactions.authorization",
+        "transactions.token"
+      ],
+      "GET /v1/issuing/cards": ["data.cvc", "data.number"],
+      "POST /v1/issuing/cards": ["cvc", "number"],
+      "GET /v1/issuing/cards/{card}": ["cvc", "number"],
+      "POST /v1/issuing/cards/{card}": ["cvc", "number"],
+      "POST /v1/test_helpers/issuing/cards/{card}/shipping/deliver": ["cvc", "number"],
+      "POST /v1/test_helpers/issuing/cards/{card}/shipping/fail": ["cvc", "number"],
+      "POST /v1/test_helpers/issuing/cards/{card}/shipping/return": ["cvc", "number"],
+      "POST /v1/test_helpers/issuing/cards/{card}/shipping/ship": ["cvc", "number"],
+      "POST /v1/test_helpers/issuing/cards/{card}/shipping/submit": ["cvc", "number"],
+      "POST /v1/payment_intents": ["client_secret"],
+      "GET /v1/payment_intents/{intent}": ["client_secret"],
+      "POST /v1/payment_intents/{intent}": ["client_secret"],
+      "POST /v1/payment_intents/{intent}/apply_customer_balance": ["client_secret"],
+      "POST /v1/payment_intents/{intent}/cancel": ["client_secret"],
+      "POST /v1/payment_intents/{intent}/capture": ["client_secret"],
+      "POST /v1/payment_intents/{intent}/confirm": ["client_secret"],
+      "POST /v1/payment_intents/{intent}/increment_authorization": ["client_secret"],
+      "POST /v1/payment_intents/{intent}/verify_microdeposits": ["client_secret"],
+      "POST /v1/setup_intents": ["client_secret"],
+      "GET /v1/setup_intents/{intent}": ["client_secret"],
+      "POST /v1/setup_intents/{intent}": ["client_secret"],
+      "POST /v1/setup_intents/{intent}/cancel": ["client_secret"],
+      "POST /v1/setup_intents/{intent}/confirm": ["client_secret"],
+      "POST /v1/setup_intents/{intent}/verify_microdeposits": ["client_secret"],
+      "POST /v1/sources": ["client_secret"],
+      "GET /v1/sources/{source}": ["client_secret"],
+      "POST /v1/sources/{source}": ["client_secret"],
+      "POST /v1/sources/{source}/verify": ["client_secret"],
+      "GET /v1/payment_intents": ["data.client_secret"],
+      "GET /v1/payment_intents/search": ["data.client_secret"],
+      "GET /v1/setup_intents": ["data.client_secret"],
+      "GET /v2/commerce/product_catalog/imports": [
+        "origin:data.status_details.awaiting_upload.upload_url.url",
+        "origin:data.status_details.succeeded_with_errors.error_file.download_url.url"
+      ],
+      "POST /v2/commerce/product_catalog/imports": [
+        "origin:status_details.awaiting_upload.upload_url.url",
+        "origin:status_details.succeeded_with_errors.error_file.download_url.url"
+      ],
+      "GET /v2/commerce/product_catalog/imports/{id}": [
+        "origin:status_details.awaiting_upload.upload_url.url",
+        "origin:status_details.succeeded_with_errors.error_file.download_url.url"
+      ],
+      "GET /v1/sigma/scheduled_query_runs": ["data.file.url"],
+      "GET /v1/reporting/report_runs": ["data.result.url"],
+      "GET /v1/sigma/scheduled_query_runs/{scheduled_query_run}": ["file.url"],
+      "POST /v1/reporting/report_runs": ["result.url"],
+      "GET /v1/reporting/report_runs/{report_run}": ["result.url"],
+      "POST /v1/terminal/readers": ["action.collect_inputs.inputs.signature"],
+      "GET /v1/terminal/readers/{reader}": ["action.collect_inputs.inputs.signature"],
+      "POST /v1/terminal/readers/{reader}": ["action.collect_inputs.inputs.signature"],
+      "POST /v1/terminal/readers/{reader}/cancel_action": ["action.collect_inputs.inputs.signature"],
+      "POST /v1/terminal/readers/{reader}/collect_inputs": ["action.collect_inputs.inputs.signature"],
+      "POST /v1/terminal/readers/{reader}/collect_payment_method": ["action.collect_inputs.inputs.signature"],
+      "POST /v1/terminal/readers/{reader}/confirm_payment_intent": ["action.collect_inputs.inputs.signature"],
+      "POST /v1/terminal/readers/{reader}/process_payment_intent": ["action.collect_inputs.inputs.signature"],
+      "POST /v1/terminal/readers/{reader}/process_setup_intent": ["action.collect_inputs.inputs.signature"],
+      "POST /v1/terminal/readers/{reader}/refund_payment": ["action.collect_inputs.inputs.signature"],
+      "POST /v1/terminal/readers/{reader}/set_reader_display": ["action.collect_inputs.inputs.signature"],
+      "POST /v1/test_helpers/terminal/readers/{reader}/present_payment_method": [
+        "action.collect_inputs.inputs.signature"
+      ],
+      "POST /v1/test_helpers/terminal/readers/{reader}/succeed_input_collection": [
+        "action.collect_inputs.inputs.signature"
+      ],
+      "POST /v1/test_helpers/terminal/readers/{reader}/timeout_input_collection": [
+        "action.collect_inputs.inputs.signature"
+      ],
+      "GET /v1/terminal/readers": ["data.action.collect_inputs.inputs.signature"],
+      "GET /v1/terminal/configurations": [
+        "data.wifi.enterprise_eap_peap.password",
+        "data.wifi.enterprise_eap_tls.private_key_file",
+        "data.wifi.enterprise_eap_tls.private_key_file_password",
+        "data.wifi.personal_psk",
+        "data.wifi.personal_psk.password"
+      ],
+      "POST /v1/terminal/configurations": [
+        "wifi.enterprise_eap_peap.password",
+        "wifi.enterprise_eap_tls.private_key_file",
+        "wifi.enterprise_eap_tls.private_key_file_password",
+        "wifi.personal_psk",
+        "wifi.personal_psk.password"
+      ],
+      "GET /v1/terminal/configurations/{configuration}": [
+        "wifi.enterprise_eap_peap.password",
+        "wifi.enterprise_eap_tls.private_key_file",
+        "wifi.enterprise_eap_tls.private_key_file_password",
+        "wifi.personal_psk",
+        "wifi.personal_psk.password"
+      ],
+      "POST /v1/terminal/configurations/{configuration}": [
+        "wifi.enterprise_eap_peap.password",
+        "wifi.enterprise_eap_tls.private_key_file",
+        "wifi.enterprise_eap_tls.private_key_file_password",
+        "wifi.personal_psk",
+        "wifi.personal_psk.password"
+      ],
+      "GET /v1/webhook_endpoints": ["data.secret", "origin:data.url", "origin:url"],
+      "POST /v1/webhook_endpoints": ["origin:url", "secret"],
+      "GET /v1/webhook_endpoints/{webhook_endpoint}": ["origin:url", "secret"],
+      "POST /v1/webhook_endpoints/{webhook_endpoint}": ["origin:url", "secret"]
+    },
+    "resources": {
+      "file_link": ["origin:url"],
+      "file": ["origin:links.data.url"],
+      "ephemeral_key": ["secret"],
+      "terminal.connection_token": ["secret"],
+      "terminal.onboarding_link": ["redirect_url"],
+      "account_link": ["url"],
+      "v2.core.account_link": ["url"],
+      "login_link": ["url"],
+      "account_session": ["client_secret"],
+      "customer_session": ["client_secret"],
+      "billing_portal.session": ["url"],
+      "financial_connections.session": ["client_secret"],
+      "webhook_endpoint": ["origin:url", "secret"],
+      "v2.core.event_destination": ["origin:webhook_endpoint.url", "webhook_endpoint.signing_secret"],
+      "issuing.card": ["cvc", "number"],
+      "apps.secret": ["payload"],
+      "apps.install": ["auth_code"],
+      "payment_intent": ["client_secret"],
+      "setup_intent": ["client_secret"],
+      "source": ["client_secret"],
+      "invoice": ["confirmation_secret"],
+      "checkout.session": ["client_secret", "origin:url", "url"],
+      "identity.verification_session": ["client_secret", "url"],
+      "terminal.configuration": [
+        "wifi.enterprise_eap_peap.password",
+        "wifi.enterprise_eap_tls.private_key_file_password",
+        "wifi.personal_psk.password"
+      ],
+      "forwarding.request": ["request_details.headers.value", "response_details.headers.value"],
+      "v2.commerce.product_catalog_import": [
+        "origin:status_details.awaiting_upload.upload_url.url",
+        "origin:status_details.succeeded_with_errors.error_file.download_url.url"
+      ],
+      "v2.billing.meter_event_session": ["authentication_token"]
     }
   }
 }

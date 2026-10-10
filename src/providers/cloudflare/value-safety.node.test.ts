@@ -1,5 +1,6 @@
 // Node-only: the shared value-safety harness reads the maintainer detection script in scripts/.
 import candidates from "./value-safety.candidates.json";
+import absent from "./value-safety.absent.json";
 import source from "./openapi.source.json";
 import { openapi } from "./openapi.generated.js";
 import { CLOUDFLARE_VALUE_SAFETY } from "./value-safety.js";
@@ -16,6 +17,7 @@ describeValueSafety("Cloudflare", {
   index: new OperationIndex(openapi, { vendor: "cloudflare", title: "Cloudflare" }),
   source,
   candidates,
+  absent,
   counts: { refuse: 58, redact: 262, safe: 472 },
   // The tools return the v4 envelope's `result`; its paging and messages are not data.
   dataPath: (field) => {

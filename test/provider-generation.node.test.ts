@@ -768,7 +768,12 @@ describe("value-safety candidate detection", () => {
     (await import(new URL("../scripts/value-safety.mjs", import.meta.url).href)) as {
       VALUE_SAFETY_FORMAT: number;
       valueSafetyCandidates(document: unknown, options?: object): Record<string, { fields: string[]; named: boolean }>;
-      renderValueSafety(document: unknown, source: object): string;
+      renderValueSafety(document: unknown, source: object, reviewed?: object): { text: string; problems: string[] };
+      reviewedPaths(
+        document: unknown,
+        table: object,
+        options?: object,
+      ): { operations: Record<string, string[]>; resources: Record<string, string[]>; unresolved: string[] };
     };
 
   it("INV-5: flags what either former detector flagged: suffixes on value-carrying fields, containment on any", async () => {
@@ -841,7 +846,7 @@ describe("value-safety candidate detection", () => {
       renderValueSafety(
         { openapi: "3.0.0", paths: {} },
         { digest: "sha256:x", options: { valueSafety: { expansions: false } } },
-      ),
+      ).text,
     );
     expect(rendered).toEqual({
       format: VALUE_SAFETY_FORMAT,
@@ -849,6 +854,61 @@ describe("value-safety candidate detection", () => {
       options: { expansions: false },
       candidates: {},
     });
+  });
+
+  it("INV-5: checks every reviewed path against the pinned response schema, and refuses unacknowledged misses", async () => {
+    const { reviewedPaths, renderValueSafety } = await detection();
+    const hook = {
+      type: "object",
+      properties: { object: { type: "string", enum: ["hook"] }, secret: { type: "string" }, url: { type: "string" } },
+    };
+    const document = {
+      openapi: "3.0.0",
+      components: { schemas: { Hook: hook } },
+      paths: {
+        "/v1/hooks/{id}": { get: ok({ $ref: "#/components/schemas/Hook" }) },
+        "/v1/hooks": {
+          get: ok({
+            type: "object",
+            properties: { data: { type: "array", items: { $ref: "#/components/schemas/Hook" } } },
+          }),
+        },
+        "/v1/wrapped": { get: ok({ type: "object", properties: { result: { $ref: "#/components/schemas/Hook" } } }) },
+      },
+    };
+    const table = {
+      operations: {
+        "GET /v1/hooks/{id}": { verdict: "redact", reason: "r", paths: ["secret", "origin:url", "url.missing"] },
+        // A named segment reaches through a list, as the engine applies it.
+        "GET /v1/hooks": { verdict: "redact", reason: "r", paths: ["data.secret", "data[].url#url"] },
+        "GET /v1/wrapped": { verdict: "safe", reason: "r", keep: ["secret"] },
+      },
+      resources: { key: "object", rules: { hook: { reason: "r", paths: ["secret", "nope"] }, ghost: { reason: "r" } } },
+    };
+    expect(reviewedPaths(document, table, { dataRoot: "result" })).toEqual({
+      operations: {
+        "GET /v1/hooks/{id}": ["origin:url", "secret"],
+        "GET /v1/hooks": ["data.secret", "data[].url#url"],
+        "GET /v1/wrapped": ["secret"],
+      },
+      resources: { hook: ["secret"], ghost: [] },
+      unresolved: ["GET /v1/hooks/{id}: url.missing", "resource hook: nope", "resource ghost: no schema declares it"],
+    });
+    // Without the envelope's data root, the wrapped keep names nothing.
+    expect(reviewedPaths(document, table).unresolved).toContain("GET /v1/wrapped: secret");
+    // An acknowledged absence passes; one that resolves, or a miss nobody acknowledged, is a problem.
+    const { problems } = renderValueSafety(
+      document,
+      { digest: "sha256:x", options: { valueSafety: { dataRoot: "result" } } },
+      {
+        table,
+        absent: { operations: { "GET /v1/hooks/{id}": ["url.missing", "secret"] }, resources: { hook: ["nope"] } },
+      },
+    );
+    expect(problems).toEqual([
+      "resource ghost: no schema declares it (not in the response schema)",
+      "GET /v1/hooks/{id}: secret (acknowledged absent, but it resolves or the table lacks it)",
+    ]);
   });
   const ok = (schema: object) => ({ responses: { "200": { content: { "application/json": { schema } } } } });
 

@@ -1,0 +1,491 @@
+{
+  "reason": "Paths a shared verdict carries (Access rules, Pages projects, Workers Builds, containers, RealtimeKit, Zaraz, certificates) that this operation's pinned response schema does not declare, or fields the schema leaves undeclared (binding payloads under a Worker's env map). They stay applied at runtime, so an undeclared field the vendor returns is still removed; listing them here keeps every other path checked against the schema.",
+  "operations": {
+    "DELETE /accounts/{account_id}/pages/projects/{project_name}/source": ["env_vars.*.value"],
+    "GET /accounts/{account_id}/access/apps/{app_id}/policies": [
+      "is_default.any_valid_service_token",
+      "is_default.linked_app_token",
+      "is_default.service_token"
+    ],
+    "GET /accounts/{account_id}/access/apps/{app_id}/policies/{policy_id}": [
+      "is_default.any_valid_service_token",
+      "is_default.linked_app_token",
+      "is_default.service_token"
+    ],
+    "GET /accounts/{account_id}/access/policies": [
+      "is_default.any_valid_service_token",
+      "is_default.linked_app_token",
+      "is_default.service_token"
+    ],
+    "GET /accounts/{account_id}/access/policies/{policy_id}": [
+      "is_default.any_valid_service_token",
+      "is_default.linked_app_token",
+      "is_default.service_token"
+    ],
+    "GET /accounts/{account_id}/builds/builds": [
+      "*.value",
+      "build_trigger_metadata.environment_variables.*.value",
+      "builds.*.build_trigger_metadata.environment_variables.*.value",
+      "previews_base_config.environment_variables.*.value",
+      "production_settings.environment_variables.*.value",
+      "settings.environment_variables.*.value"
+    ],
+    "GET /accounts/{account_id}/builds/builds/latest": [
+      "*.value",
+      "build_trigger_metadata.environment_variables.*.value",
+      "builds.*.build_trigger_metadata.environment_variables.*.value",
+      "previews_base_config.environment_variables.*.value",
+      "production_settings.environment_variables.*.value",
+      "settings.environment_variables.*.value"
+    ],
+    "GET /accounts/{account_id}/builds/builds/{build_uuid}": [
+      "*.value",
+      "build_trigger_metadata.environment_variables.*.value",
+      "builds.*.build_trigger_metadata.environment_variables.*.value",
+      "previews_base_config.environment_variables.*.value",
+      "production_settings.environment_variables.*.value",
+      "settings.environment_variables.*.value"
+    ],
+    "GET /accounts/{account_id}/builds/triggers/{trigger_uuid}/environment_variables": [
+      "build_trigger_metadata.environment_variables.*.value",
+      "builds.*.build_trigger_metadata.environment_variables.*.value",
+      "previews_base_config.environment_variables.*.value",
+      "production_settings.environment_variables.*.value",
+      "settings.environment_variables.*.value"
+    ],
+    "GET /accounts/{account_id}/builds/workers/{external_script_id}/builds": [
+      "*.value",
+      "build_trigger_metadata.environment_variables.*.value",
+      "builds.*.build_trigger_metadata.environment_variables.*.value",
+      "previews_base_config.environment_variables.*.value",
+      "production_settings.environment_variables.*.value",
+      "settings.environment_variables.*.value"
+    ],
+    "GET /accounts/{account_id}/builds/workers/{script_tag}": [
+      "*.value",
+      "build_trigger_metadata.environment_variables.*.value",
+      "builds.*.build_trigger_metadata.environment_variables.*.value",
+      "settings.environment_variables.*.value"
+    ],
+    "GET /accounts/{account_id}/builds/workers/{script_tag}/previews/{preview_id}": [
+      "*.value",
+      "build_trigger_metadata.environment_variables.*.value",
+      "builds.*.build_trigger_metadata.environment_variables.*.value",
+      "previews_base_config.environment_variables.*.value",
+      "production_settings.environment_variables.*.value"
+    ],
+    "GET /accounts/{account_id}/builds/workers/{script_tag}/previews/{preview_id}/builds": [
+      "*.value",
+      "build_trigger_metadata.environment_variables.*.value",
+      "builds.*.build_trigger_metadata.environment_variables.*.value",
+      "previews_base_config.environment_variables.*.value",
+      "production_settings.environment_variables.*.value",
+      "settings.environment_variables.*.value"
+    ],
+    "GET /accounts/{account_id}/cni/cnis": ["bgp.md5_key"],
+    "GET /accounts/{account_id}/cni/cnis/{cni}": ["items.bgp.md5_key"],
+    "GET /accounts/{account_id}/containers/applications": [
+      "current_configuration.authorized_keys",
+      "current_configuration.environment_variables.value",
+      "next_page_token",
+      "page_token",
+      "target_configuration.authorized_keys",
+      "target_configuration.environment_variables.value"
+    ],
+    "GET /accounts/{account_id}/containers/applications/{application_id}": [
+      "current_configuration.authorized_keys",
+      "current_configuration.environment_variables.value",
+      "next_page_token",
+      "page_token",
+      "target_configuration.authorized_keys",
+      "target_configuration.environment_variables.value"
+    ],
+    "GET /accounts/{account_id}/containers/applications/{application_id}/instances-v2": [
+      "next_page_token",
+      "page_token"
+    ],
+    "GET /accounts/{account_id}/containers/applications/{application_id}/versions": [
+      "current_configuration.authorized_keys",
+      "current_configuration.environment_variables.value",
+      "next_page_token",
+      "page_token",
+      "target_configuration.authorized_keys",
+      "target_configuration.environment_variables.value"
+    ],
+    "GET /accounts/{account_id}/dlp/profiles/predefined/{profile_id}/config": ["shared_entries.secret"],
+    "GET /accounts/{account_id}/pages/projects": ["env_vars.*.value"],
+    "GET /accounts/{account_id}/pages/projects/{project_name}": ["env_vars.*.value"],
+    "GET /accounts/{account_id}/pages/projects/{project_name}/deployments": [
+      "canonical_deployment.build_config.web_analytics_token",
+      "canonical_deployment.env_vars.*.value",
+      "deployment_configs.preview.ai_bindings",
+      "deployment_configs.preview.env_vars.*.value",
+      "deployment_configs.preview.hyperdrive_bindings",
+      "deployment_configs.preview.vectorize_bindings",
+      "deployment_configs.production.ai_bindings",
+      "deployment_configs.production.env_vars.*.value",
+      "deployment_configs.production.hyperdrive_bindings",
+      "deployment_configs.production.vectorize_bindings",
+      "latest_deployment.build_config.web_analytics_token",
+      "latest_deployment.env_vars.*.value"
+    ],
+    "GET /accounts/{account_id}/pages/projects/{project_name}/deployments/{deployment_id}": [
+      "canonical_deployment.build_config.web_analytics_token",
+      "canonical_deployment.env_vars.*.value",
+      "deployment_configs.preview.ai_bindings",
+      "deployment_configs.preview.env_vars.*.value",
+      "deployment_configs.preview.hyperdrive_bindings",
+      "deployment_configs.preview.vectorize_bindings",
+      "deployment_configs.production.ai_bindings",
+      "deployment_configs.production.env_vars.*.value",
+      "deployment_configs.production.hyperdrive_bindings",
+      "deployment_configs.production.vectorize_bindings",
+      "latest_deployment.build_config.web_analytics_token",
+      "latest_deployment.env_vars.*.value"
+    ],
+    "GET /accounts/{account_id}/realtime/kit/{app_id}/livestreams": [
+      "data.livestream.stream_key",
+      "data.livestreams.stream_key"
+    ],
+    "GET /accounts/{account_id}/realtime/kit/{app_id}/livestreams/{livestream_id}": [
+      "data.livestreams.stream_key",
+      "data.stream_key"
+    ],
+    "GET /accounts/{account_id}/realtime/kit/{app_id}/livestreams/{livestream_id}/active-livestream-session": [
+      "data.livestreams.stream_key",
+      "data.stream_key"
+    ],
+    "GET /accounts/{account_id}/realtime/kit/{app_id}/meetings/{meeting_id}/active-livestream": [
+      "data.livestream.stream_key",
+      "data.livestreams.stream_key"
+    ],
+    "GET /accounts/{account_id}/realtime/kit/{app_id}/meetings/{meeting_id}/livestream": [
+      "data.livestream.stream_key",
+      "data.stream_key"
+    ],
+    "GET /accounts/{account_id}/stream/live_inputs": [
+      "rtmps.streamKey",
+      "rtmps.url",
+      "rtmpsPlayback.streamKey",
+      "rtmpsPlayback.url",
+      "srt.passphrase",
+      "srt.url",
+      "srtPlayback.passphrase",
+      "srtPlayback.url",
+      "webRTC.url#url",
+      "webRTCPlayback.url"
+    ],
+    "GET /accounts/{account_id}/workers/workers": [
+      "previews_base_config.env.*.json",
+      "previews_base_config.env.*.text"
+    ],
+    "GET /accounts/{account_id}/workers/workers/{worker_id}": [
+      "previews_base_config.env.*.json",
+      "previews_base_config.env.*.text"
+    ],
+    "GET /accounts/{account_id}/workers/workers/{worker_id}/previews/{preview_id}/deployments": [
+      "env.*.json",
+      "env.*.text"
+    ],
+    "GET /accounts/{account_id}/workers/workers/{worker_id}/previews/{preview_id}/deployments/{deployment_id}": [
+      "env.*.json",
+      "env.*.text"
+    ],
+    "GET /accounts/{account_id}/workers/workers/{worker_id}/versions": ["env.*.json", "env.*.text"],
+    "GET /accounts/{account_id}/workers/workers/{worker_id}/versions/latest": ["env.*.json", "env.*.text"],
+    "GET /accounts/{account_id}/workers/workers/{worker_id}/versions/{version_id}": ["env.*.json", "env.*.text"],
+    "GET /organizations": ["next_page_token"],
+    "GET /organizations/{organization_id}/accounts": ["next_page_token"],
+    "GET /organizations/{organization_id}/members": ["next_page_token"],
+    "GET /zones/{zone_id}/access/apps": [
+      "policies.exclude.any_valid_service_token",
+      "policies.exclude.linked_app_token",
+      "policies.exclude.service_token",
+      "policies.include.any_valid_service_token",
+      "policies.include.linked_app_token",
+      "policies.include.service_token",
+      "policies.require.any_valid_service_token",
+      "policies.require.linked_app_token",
+      "policies.require.service_token",
+      "read_service_tokens_from_header"
+    ],
+    "GET /zones/{zone_id}/access/apps/{app_id}": [
+      "policies.exclude.any_valid_service_token",
+      "policies.exclude.linked_app_token",
+      "policies.exclude.service_token",
+      "policies.include.any_valid_service_token",
+      "policies.include.linked_app_token",
+      "policies.include.service_token",
+      "policies.require.any_valid_service_token",
+      "policies.require.linked_app_token",
+      "policies.require.service_token",
+      "read_service_tokens_from_header"
+    ],
+    "GET /zones/{zone_id}/access/apps/{app_id}/policies": [
+      "is_default.any_valid_service_token",
+      "is_default.linked_app_token",
+      "is_default.service_token"
+    ],
+    "GET /zones/{zone_id}/access/apps/{app_id}/policies/{policy_id}": [
+      "is_default.any_valid_service_token",
+      "is_default.linked_app_token",
+      "is_default.service_token"
+    ],
+    "GET /zones/{zone_id}/access/groups": [
+      "is_default.any_valid_service_token",
+      "is_default.linked_app_token",
+      "is_default.service_token"
+    ],
+    "GET /zones/{zone_id}/access/groups/{group_id}": [
+      "is_default.any_valid_service_token",
+      "is_default.linked_app_token",
+      "is_default.service_token"
+    ],
+    "GET /zones/{zone_id}/custom_certificates": ["certificates.geo_restrictions"],
+    "GET /zones/{zone_id}/custom_certificates/{custom_certificate_id}": ["certificates.geo_restrictions"],
+    "GET /zones/{zone_id}/settings/zaraz/config": ["*.config.debugKey", "*.config.variables.*.value"],
+    "GET /zones/{zone_id}/settings/zaraz/default": ["*.config.debugKey", "*.config.variables.*.value"],
+    "GET /zones/{zone_id}/settings/zaraz/export": [
+      "*.config.debugKey",
+      "*.config.variables.*.value",
+      "*.debugKey",
+      "*.variables.*.value"
+    ],
+    "GET /zones/{zone_id}/settings/zaraz/history/configs": [
+      "*.debugKey",
+      "*.variables.*.value",
+      "debugKey",
+      "variables.*.value"
+    ],
+    "GET /zones/{zone_id}/ssl/certificate_packs": ["geo_restrictions", "policy_restrictions"],
+    "GET /zones/{zone_id}/ssl/certificate_packs/{certificate_pack_id}": ["geo_restrictions", "policy_restrictions"],
+    "PATCH /accounts/{account_id}/builds/triggers/{trigger_uuid}/environment_variables": [
+      "build_trigger_metadata.environment_variables.*.value",
+      "builds.*.build_trigger_metadata.environment_variables.*.value",
+      "previews_base_config.environment_variables.*.value",
+      "production_settings.environment_variables.*.value",
+      "settings.environment_variables.*.value"
+    ],
+    "PATCH /accounts/{account_id}/builds/workers/{script_tag}": [
+      "*.value",
+      "build_trigger_metadata.environment_variables.*.value",
+      "builds.*.build_trigger_metadata.environment_variables.*.value",
+      "settings.environment_variables.*.value"
+    ],
+    "PATCH /accounts/{account_id}/builds/workers/{script_tag}/previews/{preview_id}": [
+      "*.value",
+      "build_trigger_metadata.environment_variables.*.value",
+      "builds.*.build_trigger_metadata.environment_variables.*.value",
+      "previews_base_config.environment_variables.*.value",
+      "production_settings.environment_variables.*.value"
+    ],
+    "PATCH /accounts/{account_id}/containers/applications/{application_id}": [
+      "current_configuration.authorized_keys",
+      "current_configuration.environment_variables.value",
+      "next_page_token",
+      "page_token",
+      "target_configuration.authorized_keys",
+      "target_configuration.environment_variables.value"
+    ],
+    "PATCH /accounts/{account_id}/pages/projects/{project_name}": ["env_vars.*.value"],
+    "PATCH /accounts/{account_id}/workers/dispatch/namespaces/{dispatch_namespace}/scripts/{script_name}/secrets-bulk": [
+      "key_base64",
+      "key_jwk",
+      "text"
+    ],
+    "PATCH /accounts/{account_id}/workers/scripts/{script_name}/secrets-bulk": ["key_base64", "key_jwk", "text"],
+    "PATCH /accounts/{account_id}/workers/workers/{worker_id}": [
+      "previews_base_config.env.*.json",
+      "previews_base_config.env.*.text"
+    ],
+    "PATCH /accounts/{account_id}/workers/workers/{worker_id}/previews/{preview_id}/deployments/latest": [
+      "env.*.json",
+      "env.*.text"
+    ],
+    "PATCH /accounts/{account_id}/workers/workers/{worker_id}/versions/latest": ["env.*.json", "env.*.text"],
+    "PATCH /zones/{zone_id}/custom_certificates/{custom_certificate_id}": ["certificates.geo_restrictions"],
+    "PATCH /zones/{zone_id}/ssl/certificate_packs/{certificate_pack_id}": ["geo_restrictions", "policy_restrictions"],
+    "POST /accounts/{account_id}/access/apps/{app_id}/policies": [
+      "is_default.any_valid_service_token",
+      "is_default.linked_app_token",
+      "is_default.service_token"
+    ],
+    "POST /accounts/{account_id}/access/policies": [
+      "is_default.any_valid_service_token",
+      "is_default.linked_app_token",
+      "is_default.service_token"
+    ],
+    "POST /accounts/{account_id}/builds/triggers/{trigger_uuid}/builds": [
+      "*.value",
+      "build_trigger_metadata.environment_variables.*.value",
+      "builds.*.build_trigger_metadata.environment_variables.*.value",
+      "previews_base_config.environment_variables.*.value",
+      "production_settings.environment_variables.*.value",
+      "settings.environment_variables.*.value"
+    ],
+    "POST /accounts/{account_id}/builds/workers": [
+      "*.value",
+      "build_trigger_metadata.environment_variables.*.value",
+      "builds.*.build_trigger_metadata.environment_variables.*.value",
+      "settings.environment_variables.*.value"
+    ],
+    "POST /accounts/{account_id}/builds/workers/{script_tag}/migrate_to_previews": [
+      "*.value",
+      "build_trigger_metadata.environment_variables.*.value",
+      "builds.*.build_trigger_metadata.environment_variables.*.value",
+      "settings.environment_variables.*.value"
+    ],
+    "POST /accounts/{account_id}/builds/workers/{script_tag}/previews/{preview_id}/builds": [
+      "*.value",
+      "build_trigger_metadata.environment_variables.*.value",
+      "builds.*.build_trigger_metadata.environment_variables.*.value",
+      "previews_base_config.environment_variables.*.value",
+      "production_settings.environment_variables.*.value",
+      "settings.environment_variables.*.value"
+    ],
+    "POST /accounts/{account_id}/cni/cnis": ["items.bgp.md5_key"],
+    "POST /accounts/{account_id}/containers/applications": [
+      "current_configuration.authorized_keys",
+      "current_configuration.environment_variables.value",
+      "next_page_token",
+      "page_token",
+      "target_configuration.authorized_keys",
+      "target_configuration.environment_variables.value"
+    ],
+    "POST /accounts/{account_id}/containers/applications/{application_id}/rollouts": [
+      "configuration.authorized_keys",
+      "configuration.environment_variables.value",
+      "next_page_token",
+      "page_token"
+    ],
+    "POST /accounts/{account_id}/d1/database/{database_id}/export": ["signed_url#url"],
+    "POST /accounts/{account_id}/dlp/profiles/predefined/{profile_id}/config": ["shared_entries.secret"],
+    "POST /accounts/{account_id}/pages/projects": ["env_vars.*.value"],
+    "POST /accounts/{account_id}/pages/projects/{project_name}/deployments": [
+      "canonical_deployment.build_config.web_analytics_token",
+      "canonical_deployment.env_vars.*.value",
+      "deployment_configs.preview.ai_bindings",
+      "deployment_configs.preview.env_vars.*.value",
+      "deployment_configs.preview.hyperdrive_bindings",
+      "deployment_configs.preview.vectorize_bindings",
+      "deployment_configs.production.ai_bindings",
+      "deployment_configs.production.env_vars.*.value",
+      "deployment_configs.production.hyperdrive_bindings",
+      "deployment_configs.production.vectorize_bindings",
+      "latest_deployment.build_config.web_analytics_token",
+      "latest_deployment.env_vars.*.value"
+    ],
+    "POST /accounts/{account_id}/pages/projects/{project_name}/deployments/{deployment_id}/retry": [
+      "canonical_deployment.build_config.web_analytics_token",
+      "canonical_deployment.env_vars.*.value",
+      "deployment_configs.preview.ai_bindings",
+      "deployment_configs.preview.env_vars.*.value",
+      "deployment_configs.preview.hyperdrive_bindings",
+      "deployment_configs.preview.vectorize_bindings",
+      "deployment_configs.production.ai_bindings",
+      "deployment_configs.production.env_vars.*.value",
+      "deployment_configs.production.hyperdrive_bindings",
+      "deployment_configs.production.vectorize_bindings",
+      "latest_deployment.build_config.web_analytics_token",
+      "latest_deployment.env_vars.*.value"
+    ],
+    "POST /accounts/{account_id}/pages/projects/{project_name}/deployments/{deployment_id}/rollback": [
+      "canonical_deployment.build_config.web_analytics_token",
+      "canonical_deployment.env_vars.*.value",
+      "deployment_configs.preview.ai_bindings",
+      "deployment_configs.preview.env_vars.*.value",
+      "deployment_configs.preview.hyperdrive_bindings",
+      "deployment_configs.preview.vectorize_bindings",
+      "deployment_configs.production.ai_bindings",
+      "deployment_configs.production.env_vars.*.value",
+      "deployment_configs.production.hyperdrive_bindings",
+      "deployment_configs.production.vectorize_bindings",
+      "latest_deployment.build_config.web_analytics_token",
+      "latest_deployment.env_vars.*.value"
+    ],
+    "POST /accounts/{account_id}/pages/projects/{project_name}/source": ["env_vars.*.value"],
+    "POST /accounts/{account_id}/realtime/kit/{app_id}/meetings/{meeting_id}/livestreams": [
+      "data.livestream.stream_key",
+      "data.livestreams.stream_key"
+    ],
+    "POST /accounts/{account_id}/workers/workers": [
+      "previews_base_config.env.*.json",
+      "previews_base_config.env.*.text"
+    ],
+    "POST /accounts/{account_id}/workers/workers/{worker_id}/previews/{preview_id}/deployments": [
+      "env.*.json",
+      "env.*.text"
+    ],
+    "POST /accounts/{account_id}/workers/workers/{worker_id}/versions": ["env.*.json", "env.*.text"],
+    "POST /zones/{zone_id}/access/apps": [
+      "policies.exclude.any_valid_service_token",
+      "policies.exclude.linked_app_token",
+      "policies.exclude.service_token",
+      "policies.include.any_valid_service_token",
+      "policies.include.linked_app_token",
+      "policies.include.service_token",
+      "policies.require.any_valid_service_token",
+      "policies.require.linked_app_token",
+      "policies.require.service_token",
+      "read_service_tokens_from_header"
+    ],
+    "POST /zones/{zone_id}/access/apps/{app_id}/policies": [
+      "is_default.any_valid_service_token",
+      "is_default.linked_app_token",
+      "is_default.service_token"
+    ],
+    "POST /zones/{zone_id}/access/groups": [
+      "is_default.any_valid_service_token",
+      "is_default.linked_app_token",
+      "is_default.service_token"
+    ],
+    "POST /zones/{zone_id}/custom_certificates": ["certificates.geo_restrictions"],
+    "POST /zones/{zone_id}/ssl/certificate_packs/order": ["geo_restrictions", "policy_restrictions"],
+    "PUT /accounts/{account_id}/access/apps/{app_id}/policies/{policy_id}": [
+      "is_default.any_valid_service_token",
+      "is_default.linked_app_token",
+      "is_default.service_token"
+    ],
+    "PUT /accounts/{account_id}/access/apps/{app_id}/policies/{policy_id}/make_reusable": [
+      "is_default.any_valid_service_token",
+      "is_default.linked_app_token",
+      "is_default.service_token"
+    ],
+    "PUT /accounts/{account_id}/access/policies/{policy_id}": [
+      "is_default.any_valid_service_token",
+      "is_default.linked_app_token",
+      "is_default.service_token"
+    ],
+    "PUT /accounts/{account_id}/cni/cnis/{cni}": ["items.bgp.md5_key"],
+    "PUT /accounts/{account_id}/dlp/profiles/predefined/{profile_id}/config": ["shared_entries.secret"],
+    "PUT /accounts/{account_id}/workers/workers/{worker_id}": [
+      "previews_base_config.env.*.json",
+      "previews_base_config.env.*.text"
+    ],
+    "PUT /zones/{zone_id}/access/apps/{app_id}": [
+      "policies.exclude.any_valid_service_token",
+      "policies.exclude.linked_app_token",
+      "policies.exclude.service_token",
+      "policies.include.any_valid_service_token",
+      "policies.include.linked_app_token",
+      "policies.include.service_token",
+      "policies.require.any_valid_service_token",
+      "policies.require.linked_app_token",
+      "policies.require.service_token",
+      "read_service_tokens_from_header"
+    ],
+    "PUT /zones/{zone_id}/access/apps/{app_id}/policies/{policy_id}": [
+      "is_default.any_valid_service_token",
+      "is_default.linked_app_token",
+      "is_default.service_token"
+    ],
+    "PUT /zones/{zone_id}/access/groups/{group_id}": [
+      "is_default.any_valid_service_token",
+      "is_default.linked_app_token",
+      "is_default.service_token"
+    ],
+    "PUT /zones/{zone_id}/custom_certificates/prioritize": ["certificates.geo_restrictions"],
+    "PUT /zones/{zone_id}/settings/zaraz/config": ["*.config.debugKey", "*.config.variables.*.value"],
+    "PUT /zones/{zone_id}/settings/zaraz/history": ["*.config.debugKey", "*.config.variables.*.value"]
+  }
+}

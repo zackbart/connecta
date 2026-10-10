@@ -1,5 +1,5 @@
 {
-  "format": 4,
+  "format": 5,
   "digest": "sha256:4544d132b1d9d4799a7a0752f0f8007b86411fea6d6a493098e3756c0bc4f040",
   "options": {},
   "candidates": {
@@ -47,5 +47,17 @@
       "fields": [],
       "named": true
     }
+  },
+  "reviewed": {
+    "operations": {
+      "GET /v1/file_uploads": ["results.upload_url"],
+      "POST /v1/file_uploads": ["upload_url"],
+      "GET /v1/file_uploads/{file_upload_id}": ["upload_url"],
+      "POST /v1/file_uploads/{file_upload_id}/complete": ["upload_url"],
+      "POST /v1/file_uploads/{file_upload_id}/send": ["upload_url"],
+      "POST /v1/agents/query": ["results.connections.account.server_host"],
+      "GET /v1/agents/{agent_id}": ["connections.account.server_host"]
+    },
+    "resources": {}
   }
 }

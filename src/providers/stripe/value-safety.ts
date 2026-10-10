@@ -13,8 +13,9 @@
 // The decisions against the bar (decision 0005, "Value safety"):
 //
 // - Refused: operations whose purpose is to hand out a credential. Ephemeral
-//   keys and Terminal connection tokens are API credentials; account links,
-//   login links, account sessions, customer sessions, and billing portal
+//   keys and Terminal connection tokens are API credentials; account links
+//   (v1 and v2), Terminal onboarding links, login links, account sessions,
+//   customer sessions, and billing portal
 //   sessions sign their holder into a Stripe-hosted surface as a connected
 //   account or a customer; a file link makes a private file (dispute
 //   evidence, identity documents) public; Financial Connections sessions and
@@ -31,10 +32,18 @@
 //   secret payloads, app-install OAuth codes, Terminal Wi-Fi passwords,
 //   forwarded request header values, pre-signed upload URLs, and file link
 //   URLs go the same way.
-// - Kept verbatim: hosted Checkout and Identity verification URLs. They are
-//   payer-facing pages whose purpose is to be sent to the customer; they
-//   grant no access to the account, only the ability to pay or verify, and
-//   their fragment is opaque state the page needs.
+// - Resource rules (`resources`, keyed on Stripe's `object` discriminator)
+//   apply to every object wherever a response embeds it: expansions, lists,
+//   search results, and events' `data.object` and `previous_attributes`. They
+//   are the backstop for expansions: an expanded File carries its public file
+//   links, an expanded PaymentIntent its client secret.
+// - Hosted Checkout URLs come back verbatim only for a guest session (no
+//   customer, no customer creation, no saved payment method options): such a
+//   page only takes a payment. A session bound to a customer can display,
+//   reuse, or remove the customer's saved payment methods, so its URL keeps
+//   only its origin. Identity verification URLs come back verbatim: the page
+//   collects documents from the person being verified and shows no stored
+//   data. Payment link URLs are public by design and bound to no customer.
 // - Issuing card numbers and CVCs come back only as expansions, which the
 //   connector refuses on every Issuing path (`rest.ts`); the card operations
 //   also redact both fields.
@@ -56,6 +65,8 @@ const LOGIN_LINK = "It creates a single-use link that signs its holder into a co
 const ACCOUNT_SESSION = "It returns a client secret that grants embedded-component access to a connected account.";
 const CUSTOMER_SESSION =
   "It returns a client secret that grants client-side access to a customer's saved payment methods.";
+const ONBOARDING_LINK =
+  "It creates a link that accepts Tap to Pay terms on the merchant's behalf; open it from the Dashboard or your own onboarding flow.";
 const PORTAL_SESSION =
   "It creates a customer portal session whose URL signs its holder in as the customer (payment methods, subscriptions, invoices).";
 const FILE_LINK =
@@ -82,9 +93,9 @@ const FILE =
   "A file's own URL needs the account's secret key; its file links are public bearer URLs, reduced to their origin.";
 const FILE_LINK_READ = "A file link's URL lets anyone download the file; only its origin comes back.";
 const CHECKOUT =
-  "Checkout Sessions carry a client secret (redacted); the hosted page URL is payer-facing and comes back verbatim.";
+  "Checkout Sessions carry a client secret (redacted). The hosted page URL follows the checkout.session resource rule: verbatim for a guest session, origin only for one bound to a customer.";
 const IDENTITY_SESSION =
-  "Identity verification sessions carry a client secret (redacted); the hosted verification URL is meant for the person being verified and comes back verbatim.";
+  "Identity verification sessions carry a client secret (redacted); the hosted verification URL follows the identity.verification_session resource rule.";
 const FC_SESSION_READ = "A Financial Connections session's client secret is redacted; its linked accounts stay.";
 const REPORT_FILE = "Report and query results are Files whose URL needs the account's secret key to download.";
 const DELETED = "Answers a deletion; no secret.";
@@ -106,269 +117,21 @@ const MONEY =
 const VERIFICATION = "Verification and Financial Connections records; flow and refresh tokens are object ids.";
 const QUERY = "A saved Sigma query; flagged for its name, no credential.";
 
-/**
- * Issuing authorizations and transactions reference each other and the
- * network token used by id (or an expanded object of metadata); the names
- * are credential vocabulary, so they are kept here by path.
- */
-const ISSUING_REFERENCES = ["", "data.", "transactions.", "data.transactions."].flatMap((prefix) => [
-  `${prefix}token`,
-  `${prefix}authorization`,
-]);
-/** A Terminal reader's collected signature input is a File id. */
-const TERMINAL_SIGNATURE = ["action.collect_inputs.inputs.signature", "data.action.collect_inputs.inputs.signature"];
-
 /** The reviewed verdict for every flagged operation, and for the credential families the detector does not flag. */
 const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
   "POST /v1/account_links": refuse(ACCOUNT_LINK),
   "POST /v1/account_sessions": refuse(ACCOUNT_SESSION),
   "POST /v1/accounts/{account}/login_links": refuse(LOGIN_LINK),
-  "GET /v1/apps/installs": redact(APP_INSTALL, ["auth_code", "data.auth_code"]),
-  "POST /v1/apps/installs": redact(APP_INSTALL, ["auth_code", "data.auth_code"]),
-  "GET /v1/apps/installs/{id}": redact(APP_INSTALL, ["auth_code", "data.auth_code"]),
-  "POST /v1/apps/installs/{id}": redact(APP_INSTALL, ["auth_code", "data.auth_code"]),
-  "POST /v1/apps/installs/{id}/uninstall": redact(APP_INSTALL, ["auth_code", "data.auth_code"]),
-  "GET /v1/apps/secrets": redact(APPS_SECRET, ["payload", "data.payload"]),
-  "POST /v1/apps/secrets": redact(APPS_SECRET, ["payload", "data.payload"]),
-  "POST /v1/apps/secrets/delete": redact(APPS_SECRET, ["payload", "data.payload"]),
-  "GET /v1/apps/secrets/find": redact(APPS_SECRET, ["payload", "data.payload"]),
   "POST /v1/billing_portal/sessions": refuse(PORTAL_SESSION),
-  "GET /v1/checkout/sessions": vendorErrors(
-    redact(CHECKOUT, ["client_secret", "data.client_secret"], [], ["url", "data.url"]),
-  ),
-  "POST /v1/checkout/sessions": vendorErrors(
-    redact(CHECKOUT, ["client_secret", "data.client_secret"], [], ["url", "data.url"]),
-  ),
-  "GET /v1/checkout/sessions/{session}": vendorErrors(
-    redact(CHECKOUT, ["client_secret", "data.client_secret"], [], ["url", "data.url"]),
-  ),
-  "POST /v1/checkout/sessions/{session}": vendorErrors(
-    redact(CHECKOUT, ["client_secret", "data.client_secret"], [], ["url", "data.url"]),
-  ),
-  "POST /v1/checkout/sessions/{session}/expire": vendorErrors(
-    redact(CHECKOUT, ["client_secret", "data.client_secret"], [], ["url", "data.url"]),
-  ),
   "POST /v1/customer_sessions": refuse(CUSTOMER_SESSION),
   "POST /v1/ephemeral_keys": refuse(EPHEMERAL_KEY),
-  "DELETE /v1/ephemeral_keys/{key}": redact(EPHEMERAL_REVOKE, ["secret"]),
-  "GET /v1/file_links": redact(FILE_LINK_READ, ["origin:url", "origin:data.url"]),
   "POST /v1/file_links": refuse(FILE_LINK),
-  "GET /v1/file_links/{link}": redact(FILE_LINK_READ, ["origin:url", "origin:data.url"]),
-  "POST /v1/file_links/{link}": redact(FILE_LINK_READ, ["origin:url", "origin:data.url"]),
-  "GET /v1/files": vendorErrors(
-    redact(FILE, ["origin:links.data.url", "origin:data.links.data.url"], ["url", "data.url"]),
-  ),
-  "POST /v1/files": vendorErrors(
-    redact(FILE, ["origin:links.data.url", "origin:data.links.data.url"], ["url", "data.url"]),
-  ),
-  "GET /v1/files/{file}": vendorErrors(
-    redact(FILE, ["origin:links.data.url", "origin:data.links.data.url"], ["url", "data.url"]),
-  ),
   "POST /v1/financial_connections/sessions": refuse(FC_SESSION),
-  "GET /v1/financial_connections/sessions/{session}": vendorErrors(redact(FC_SESSION_READ, ["client_secret"])),
-  "GET /v1/forwarding/requests": redact(FORWARDING, [
-    "request_details.headers.value",
-    "response_details.headers.value",
-    "data.request_details.headers.value",
-    "data.response_details.headers.value",
-  ]),
-  "POST /v1/forwarding/requests": redact(FORWARDING, [
-    "request_details.headers.value",
-    "response_details.headers.value",
-    "data.request_details.headers.value",
-    "data.response_details.headers.value",
-  ]),
-  "GET /v1/forwarding/requests/{id}": redact(FORWARDING, [
-    "request_details.headers.value",
-    "response_details.headers.value",
-    "data.request_details.headers.value",
-    "data.response_details.headers.value",
-  ]),
-  "GET /v1/identity/verification_sessions": vendorErrors(
-    redact(IDENTITY_SESSION, ["client_secret", "data.client_secret"], [], ["url", "data.url"]),
-  ),
-  "POST /v1/identity/verification_sessions": vendorErrors(
-    redact(IDENTITY_SESSION, ["client_secret", "data.client_secret"], [], ["url", "data.url"]),
-  ),
-  "GET /v1/identity/verification_sessions/{session}": vendorErrors(
-    redact(IDENTITY_SESSION, ["client_secret", "data.client_secret"], [], ["url", "data.url"]),
-  ),
-  "POST /v1/identity/verification_sessions/{session}": vendorErrors(
-    redact(IDENTITY_SESSION, ["client_secret", "data.client_secret"], [], ["url", "data.url"]),
-  ),
-  "POST /v1/identity/verification_sessions/{session}/cancel": vendorErrors(
-    redact(IDENTITY_SESSION, ["client_secret", "data.client_secret"], [], ["url", "data.url"]),
-  ),
-  "POST /v1/identity/verification_sessions/{session}/redact": vendorErrors(
-    redact(IDENTITY_SESSION, ["client_secret", "data.client_secret"], [], ["url", "data.url"]),
-  ),
-  "GET /v1/issuing/cards": vendorErrors(redact(ISSUING_CARD, ["number", "cvc", "data.number", "data.cvc"])),
-  "POST /v1/issuing/cards": vendorErrors(redact(ISSUING_CARD, ["number", "cvc", "data.number", "data.cvc"])),
-  "GET /v1/issuing/cards/{card}": vendorErrors(redact(ISSUING_CARD, ["number", "cvc", "data.number", "data.cvc"])),
-  "POST /v1/issuing/cards/{card}": vendorErrors(redact(ISSUING_CARD, ["number", "cvc", "data.number", "data.cvc"])),
   "POST /v1/link_account_sessions": refuse(FC_SESSION),
-  "GET /v1/link_account_sessions/{session}": vendorErrors(redact(FC_SESSION_READ, ["client_secret"])),
-  "GET /v1/reporting/report_runs": vendorErrors(safe(REPORT_FILE, ["result.url", "data.result.url"])),
-  "POST /v1/reporting/report_runs": vendorErrors(safe(REPORT_FILE, ["result.url", "data.result.url"])),
-  "GET /v1/reporting/report_runs/{report_run}": vendorErrors(safe(REPORT_FILE, ["result.url", "data.result.url"])),
-  "GET /v1/sigma/scheduled_query_runs": vendorErrors(safe(REPORT_FILE, ["file.url", "data.file.url"])),
-  "GET /v1/sigma/scheduled_query_runs/{scheduled_query_run}": vendorErrors(
-    safe(REPORT_FILE, ["file.url", "data.file.url"]),
-  ),
-  "GET /v1/terminal/configurations": redact(
-    TERMINAL_CONFIG,
-    [
-      "wifi.enterprise_eap_peap.password",
-      "wifi.personal_psk.password",
-      "wifi.enterprise_eap_tls.private_key_file_password",
-      "data.wifi.enterprise_eap_peap.password",
-      "data.wifi.personal_psk.password",
-      "data.wifi.enterprise_eap_tls.private_key_file_password",
-    ],
-    [
-      "wifi.enterprise_eap_tls.private_key_file",
-      "data.wifi.enterprise_eap_tls.private_key_file",
-      "wifi.personal_psk",
-      "data.wifi.personal_psk",
-    ],
-  ),
-  "POST /v1/terminal/configurations": redact(
-    TERMINAL_CONFIG,
-    [
-      "wifi.enterprise_eap_peap.password",
-      "wifi.personal_psk.password",
-      "wifi.enterprise_eap_tls.private_key_file_password",
-      "data.wifi.enterprise_eap_peap.password",
-      "data.wifi.personal_psk.password",
-      "data.wifi.enterprise_eap_tls.private_key_file_password",
-    ],
-    [
-      "wifi.enterprise_eap_tls.private_key_file",
-      "data.wifi.enterprise_eap_tls.private_key_file",
-      "wifi.personal_psk",
-      "data.wifi.personal_psk",
-    ],
-  ),
-  "GET /v1/terminal/configurations/{configuration}": redact(
-    TERMINAL_CONFIG,
-    [
-      "wifi.enterprise_eap_peap.password",
-      "wifi.personal_psk.password",
-      "wifi.enterprise_eap_tls.private_key_file_password",
-      "data.wifi.enterprise_eap_peap.password",
-      "data.wifi.personal_psk.password",
-      "data.wifi.enterprise_eap_tls.private_key_file_password",
-    ],
-    [
-      "wifi.enterprise_eap_tls.private_key_file",
-      "data.wifi.enterprise_eap_tls.private_key_file",
-      "wifi.personal_psk",
-      "data.wifi.personal_psk",
-    ],
-  ),
-  "POST /v1/terminal/configurations/{configuration}": redact(
-    TERMINAL_CONFIG,
-    [
-      "wifi.enterprise_eap_peap.password",
-      "wifi.personal_psk.password",
-      "wifi.enterprise_eap_tls.private_key_file_password",
-      "data.wifi.enterprise_eap_peap.password",
-      "data.wifi.personal_psk.password",
-      "data.wifi.enterprise_eap_tls.private_key_file_password",
-    ],
-    [
-      "wifi.enterprise_eap_tls.private_key_file",
-      "data.wifi.enterprise_eap_tls.private_key_file",
-      "wifi.personal_psk",
-      "data.wifi.personal_psk",
-    ],
-  ),
   "POST /v1/terminal/connection_tokens": refuse(CONNECTION_TOKEN),
-  "POST /v1/test_helpers/issuing/cards/{card}/shipping/deliver": vendorErrors(
-    redact(ISSUING_CARD, ["number", "cvc", "data.number", "data.cvc"]),
-  ),
-  "POST /v1/test_helpers/issuing/cards/{card}/shipping/fail": vendorErrors(
-    redact(ISSUING_CARD, ["number", "cvc", "data.number", "data.cvc"]),
-  ),
-  "POST /v1/test_helpers/issuing/cards/{card}/shipping/return": vendorErrors(
-    redact(ISSUING_CARD, ["number", "cvc", "data.number", "data.cvc"]),
-  ),
-  "POST /v1/test_helpers/issuing/cards/{card}/shipping/ship": vendorErrors(
-    redact(ISSUING_CARD, ["number", "cvc", "data.number", "data.cvc"]),
-  ),
-  "POST /v1/test_helpers/issuing/cards/{card}/shipping/submit": vendorErrors(
-    redact(ISSUING_CARD, ["number", "cvc", "data.number", "data.cvc"]),
-  ),
-  "GET /v1/webhook_endpoints": redact(WEBHOOK, ["secret", "data.secret", "origin:url", "origin:data.url"]),
-  "POST /v1/webhook_endpoints": redact(WEBHOOK, ["secret", "data.secret", "origin:url", "origin:data.url"]),
-  "GET /v1/webhook_endpoints/{webhook_endpoint}": redact(WEBHOOK, [
-    "secret",
-    "data.secret",
-    "origin:url",
-    "origin:data.url",
-  ]),
-  "POST /v1/webhook_endpoints/{webhook_endpoint}": redact(WEBHOOK, [
-    "secret",
-    "data.secret",
-    "origin:url",
-    "origin:data.url",
-  ]),
-  "DELETE /v1/webhook_endpoints/{webhook_endpoint}": vendorErrors(safe(DELETED)),
+  "POST /v1/terminal/onboarding_links": refuse(ONBOARDING_LINK),
   "POST /v2/billing/meter_event_session": refuse(METER_SESSION),
-  "GET /v2/commerce/product_catalog/imports": redact(PRESIGNED, [
-    "origin:status_details.awaiting_upload.upload_url.url",
-    "origin:status_details.succeeded_with_errors.error_file.download_url.url",
-    "origin:data.status_details.awaiting_upload.upload_url.url",
-    "origin:data.status_details.succeeded_with_errors.error_file.download_url.url",
-  ]),
-  "POST /v2/commerce/product_catalog/imports": redact(PRESIGNED, [
-    "origin:status_details.awaiting_upload.upload_url.url",
-    "origin:status_details.succeeded_with_errors.error_file.download_url.url",
-    "origin:data.status_details.awaiting_upload.upload_url.url",
-    "origin:data.status_details.succeeded_with_errors.error_file.download_url.url",
-  ]),
-  "GET /v2/commerce/product_catalog/imports/{id}": redact(PRESIGNED, [
-    "origin:status_details.awaiting_upload.upload_url.url",
-    "origin:status_details.succeeded_with_errors.error_file.download_url.url",
-    "origin:data.status_details.awaiting_upload.upload_url.url",
-    "origin:data.status_details.succeeded_with_errors.error_file.download_url.url",
-  ]),
-  "GET /v2/core/event_destinations": redact(EVENT_DESTINATION, [
-    "webhook_endpoint.signing_secret",
-    "data.webhook_endpoint.signing_secret",
-    "origin:webhook_endpoint.url",
-    "origin:data.webhook_endpoint.url",
-  ]),
-  "POST /v2/core/event_destinations": redact(EVENT_DESTINATION, [
-    "webhook_endpoint.signing_secret",
-    "data.webhook_endpoint.signing_secret",
-    "origin:webhook_endpoint.url",
-    "origin:data.webhook_endpoint.url",
-  ]),
-  "GET /v2/core/event_destinations/{id}": redact(EVENT_DESTINATION, [
-    "webhook_endpoint.signing_secret",
-    "data.webhook_endpoint.signing_secret",
-    "origin:webhook_endpoint.url",
-    "origin:data.webhook_endpoint.url",
-  ]),
-  "POST /v2/core/event_destinations/{id}": redact(EVENT_DESTINATION, [
-    "webhook_endpoint.signing_secret",
-    "data.webhook_endpoint.signing_secret",
-    "origin:webhook_endpoint.url",
-    "origin:data.webhook_endpoint.url",
-  ]),
-  "POST /v2/core/event_destinations/{id}/disable": redact(EVENT_DESTINATION, [
-    "webhook_endpoint.signing_secret",
-    "data.webhook_endpoint.signing_secret",
-    "origin:webhook_endpoint.url",
-    "origin:data.webhook_endpoint.url",
-  ]),
-  "POST /v2/core/event_destinations/{id}/enable": redact(EVENT_DESTINATION, [
-    "webhook_endpoint.signing_secret",
-    "data.webhook_endpoint.signing_secret",
-    "origin:webhook_endpoint.url",
-    "origin:data.webhook_endpoint.url",
-  ]),
+  "POST /v2/core/account_links": refuse(ACCOUNT_LINK),
   ...Object.fromEntries(
     [
       "GET /v1/account",
@@ -400,6 +163,22 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
       "POST /v2/core/accounts/{id}/close",
     ].map((key) => [key, vendorErrors(safe(ACCOUNTS))]),
   ),
+  "GET /v1/apps/secrets": redact(APPS_SECRET, ["data.payload"]),
+  ...Object.fromEntries(
+    ["POST /v1/apps/secrets", "POST /v1/apps/secrets/delete", "GET /v1/apps/secrets/find"].map((key) => [
+      key,
+      redact(APPS_SECRET, ["payload"]),
+    ]),
+  ),
+  ...Object.fromEntries(
+    [
+      "POST /v1/apps/installs",
+      "GET /v1/apps/installs/{id}",
+      "POST /v1/apps/installs/{id}",
+      "POST /v1/apps/installs/{id}/uninstall",
+    ].map((key) => [key, redact(APP_INSTALL, ["auth_code"])]),
+  ),
+  "GET /v1/apps/installs": redact(APP_INSTALL, ["data.auth_code"]),
   ...Object.fromEntries(
     [
       "GET /v1/checkout/sessions/{session}/line_items",
@@ -459,19 +238,16 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
       "POST /v1/customers/{customer}/cards",
       "POST /v1/customers/{customer}/cards/{id}",
       "DELETE /v1/customers/{customer}/cards/{id}",
-      "GET /v1/customers/{customer}/sources",
       "POST /v1/customers/{customer}/sources",
       "GET /v1/customers/{customer}/sources/{id}",
       "POST /v1/customers/{customer}/sources/{id}",
       "DELETE /v1/customers/{customer}/sources/{id}",
-    ].map((key) => [key, vendorErrors(redact(BILLING_SECRET, ["client_secret", "data.client_secret"]))]),
+    ].map((key) => [key, vendorErrors(redact(BILLING_SECRET, ["client_secret"]))]),
   ),
   ...Object.fromEntries(
     [
-      "GET /v1/invoices",
       "POST /v1/invoices",
       "POST /v1/invoices/create_preview",
-      "GET /v1/invoices/search",
       "GET /v1/invoices/{invoice}",
       "POST /v1/invoices/{invoice}",
       "POST /v1/invoices/{invoice}/add_lines",
@@ -483,13 +259,84 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
       "POST /v1/invoices/{invoice}/send",
       "POST /v1/invoices/{invoice}/update_lines",
       "POST /v1/invoices/{invoice}/void",
-    ].map((key) => [key, vendorErrors(redact(BILLING_SECRET, ["confirmation_secret", "data.confirmation_secret"]))]),
+    ].map((key) => [key, vendorErrors(redact(BILLING_SECRET, ["confirmation_secret"]))]),
+  ),
+  "GET /v1/customers/{customer}/sources": vendorErrors(redact(BILLING_SECRET, ["data.client_secret"])),
+  ...Object.fromEntries(
+    ["GET /v1/invoices", "GET /v1/invoices/search"].map((key) => [
+      key,
+      vendorErrors(redact(BILLING_SECRET, ["data.confirmation_secret"])),
+    ]),
   ),
   ...Object.fromEntries(
     [
-      "GET /v1/issuing/authorizations",
-      "GET /v1/issuing/authorizations/{authorization}",
-      "POST /v1/issuing/authorizations/{authorization}",
+      "POST /v1/checkout/sessions",
+      "GET /v1/checkout/sessions/{session}",
+      "POST /v1/checkout/sessions/{session}",
+      "POST /v1/checkout/sessions/{session}/expire",
+    ].map((key) => [key, vendorErrors(redact(CHECKOUT, ["client_secret"]))]),
+  ),
+  "GET /v1/checkout/sessions": vendorErrors(redact(CHECKOUT, ["data.client_secret"])),
+  "DELETE /v1/webhook_endpoints/{webhook_endpoint}": vendorErrors(safe(DELETED)),
+  "DELETE /v1/ephemeral_keys/{key}": redact(EPHEMERAL_REVOKE, ["secret"]),
+  "GET /v2/core/event_destinations": redact(EVENT_DESTINATION, [
+    "data.webhook_endpoint.signing_secret",
+    "origin:data.webhook_endpoint.url",
+  ]),
+  ...Object.fromEntries(
+    [
+      "POST /v2/core/event_destinations",
+      "GET /v2/core/event_destinations/{id}",
+      "POST /v2/core/event_destinations/{id}",
+      "POST /v2/core/event_destinations/{id}/disable",
+      "POST /v2/core/event_destinations/{id}/enable",
+    ].map((key) => [
+      key,
+      redact(EVENT_DESTINATION, ["webhook_endpoint.signing_secret", "origin:webhook_endpoint.url"]),
+    ]),
+  ),
+  ...Object.fromEntries(
+    ["GET /v1/financial_connections/sessions/{session}", "GET /v1/link_account_sessions/{session}"].map((key) => [
+      key,
+      vendorErrors(redact(FC_SESSION_READ, ["client_secret"])),
+    ]),
+  ),
+  "GET /v1/files": vendorErrors(redact(FILE, ["origin:data.links.data.url"], ["url", "data.url"])),
+  ...Object.fromEntries(
+    ["POST /v1/files", "GET /v1/files/{file}"].map((key) => [
+      key,
+      vendorErrors(redact(FILE, ["origin:links.data.url"], ["url"])),
+    ]),
+  ),
+  ...Object.fromEntries(
+    ["GET /v1/file_links/{link}", "POST /v1/file_links/{link}"].map((key) => [
+      key,
+      redact(FILE_LINK_READ, ["origin:url"]),
+    ]),
+  ),
+  "GET /v1/file_links": redact(FILE_LINK_READ, ["origin:url", "origin:data.url"]),
+  "GET /v1/forwarding/requests": redact(FORWARDING, [
+    "data.request_details.headers.value",
+    "data.response_details.headers.value",
+  ]),
+  ...Object.fromEntries(
+    ["POST /v1/forwarding/requests", "GET /v1/forwarding/requests/{id}"].map((key) => [
+      key,
+      redact(FORWARDING, ["request_details.headers.value", "response_details.headers.value"]),
+    ]),
+  ),
+  ...Object.fromEntries(
+    [
+      "POST /v1/identity/verification_sessions",
+      "GET /v1/identity/verification_sessions/{session}",
+      "POST /v1/identity/verification_sessions/{session}",
+      "POST /v1/identity/verification_sessions/{session}/cancel",
+      "POST /v1/identity/verification_sessions/{session}/redact",
+    ].map((key) => [key, vendorErrors(redact(IDENTITY_SESSION, ["client_secret"]))]),
+  ),
+  "GET /v1/identity/verification_sessions": vendorErrors(redact(IDENTITY_SESSION, ["data.client_secret"])),
+  ...Object.fromEntries(
+    [
       "GET /v1/issuing/cardholders",
       "POST /v1/issuing/cardholders",
       "GET /v1/issuing/cardholders/{cardholder}",
@@ -505,9 +352,28 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
       "GET /v1/issuing/tokens",
       "GET /v1/issuing/tokens/{token}",
       "POST /v1/issuing/tokens/{token}",
-      "GET /v1/issuing/transactions",
+      "POST /v1/test_helpers/issuing/personalization_designs/{personalization_design}/activate",
+      "POST /v1/test_helpers/issuing/personalization_designs/{personalization_design}/deactivate",
+      "POST /v1/test_helpers/issuing/personalization_designs/{personalization_design}/reject",
+    ].map((key) => [key, vendorErrors(safe(ISSUING))]),
+  ),
+  "GET /v1/issuing/transactions": vendorErrors(safe(ISSUING, ["data.token", "data.authorization"])),
+  "GET /v1/issuing/authorizations": vendorErrors(
+    safe(ISSUING, ["data.token", "data.transactions.token", "data.transactions.authorization"]),
+  ),
+  ...Object.fromEntries(
+    [
       "GET /v1/issuing/transactions/{transaction}",
       "POST /v1/issuing/transactions/{transaction}",
+      "POST /v1/test_helpers/issuing/transactions/create_force_capture",
+      "POST /v1/test_helpers/issuing/transactions/create_unlinked_refund",
+      "POST /v1/test_helpers/issuing/transactions/{transaction}/refund",
+    ].map((key) => [key, vendorErrors(safe(ISSUING, ["token", "authorization"]))]),
+  ),
+  ...Object.fromEntries(
+    [
+      "GET /v1/issuing/authorizations/{authorization}",
+      "POST /v1/issuing/authorizations/{authorization}",
       "POST /v1/test_helpers/issuing/authorizations",
       "POST /v1/test_helpers/issuing/authorizations/{authorization}/capture",
       "POST /v1/test_helpers/issuing/authorizations/{authorization}/expire",
@@ -515,13 +381,20 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
       "POST /v1/test_helpers/issuing/authorizations/{authorization}/fraud_challenges/respond",
       "POST /v1/test_helpers/issuing/authorizations/{authorization}/increment",
       "POST /v1/test_helpers/issuing/authorizations/{authorization}/reverse",
-      "POST /v1/test_helpers/issuing/personalization_designs/{personalization_design}/activate",
-      "POST /v1/test_helpers/issuing/personalization_designs/{personalization_design}/deactivate",
-      "POST /v1/test_helpers/issuing/personalization_designs/{personalization_design}/reject",
-      "POST /v1/test_helpers/issuing/transactions/create_force_capture",
-      "POST /v1/test_helpers/issuing/transactions/create_unlinked_refund",
-      "POST /v1/test_helpers/issuing/transactions/{transaction}/refund",
-    ].map((key) => [key, vendorErrors(safe(ISSUING, ISSUING_REFERENCES))]),
+    ].map((key) => [key, vendorErrors(safe(ISSUING, ["token", "transactions.token", "transactions.authorization"]))]),
+  ),
+  "GET /v1/issuing/cards": vendorErrors(redact(ISSUING_CARD, ["data.number", "data.cvc"])),
+  ...Object.fromEntries(
+    [
+      "POST /v1/issuing/cards",
+      "GET /v1/issuing/cards/{card}",
+      "POST /v1/issuing/cards/{card}",
+      "POST /v1/test_helpers/issuing/cards/{card}/shipping/deliver",
+      "POST /v1/test_helpers/issuing/cards/{card}/shipping/fail",
+      "POST /v1/test_helpers/issuing/cards/{card}/shipping/return",
+      "POST /v1/test_helpers/issuing/cards/{card}/shipping/ship",
+      "POST /v1/test_helpers/issuing/cards/{card}/shipping/submit",
+    ].map((key) => [key, vendorErrors(redact(ISSUING_CARD, ["number", "cvc"]))]),
   ),
   ...Object.fromEntries(
     [
@@ -627,9 +500,7 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
   ),
   ...Object.fromEntries(
     [
-      "GET /v1/payment_intents",
       "POST /v1/payment_intents",
-      "GET /v1/payment_intents/search",
       "GET /v1/payment_intents/{intent}",
       "POST /v1/payment_intents/{intent}",
       "POST /v1/payment_intents/{intent}/apply_customer_balance",
@@ -638,7 +509,6 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
       "POST /v1/payment_intents/{intent}/confirm",
       "POST /v1/payment_intents/{intent}/increment_authorization",
       "POST /v1/payment_intents/{intent}/verify_microdeposits",
-      "GET /v1/setup_intents",
       "POST /v1/setup_intents",
       "GET /v1/setup_intents/{intent}",
       "POST /v1/setup_intents/{intent}",
@@ -649,12 +519,39 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
       "GET /v1/sources/{source}",
       "POST /v1/sources/{source}",
       "POST /v1/sources/{source}/verify",
-    ].map((key) => [key, vendorErrors(redact(PAYMENTS_SECRET, ["client_secret", "data.client_secret"]))]),
+    ].map((key) => [key, vendorErrors(redact(PAYMENTS_SECRET, ["client_secret"]))]),
   ),
-  ...Object.fromEntries(["POST /v1/sigma/saved_queries/{id}"].map((key) => [key, vendorErrors(safe(QUERY))])),
+  ...Object.fromEntries(
+    ["GET /v1/payment_intents", "GET /v1/payment_intents/search", "GET /v1/setup_intents"].map((key) => [
+      key,
+      vendorErrors(redact(PAYMENTS_SECRET, ["data.client_secret"])),
+    ]),
+  ),
+  "GET /v2/commerce/product_catalog/imports": redact(PRESIGNED, [
+    "origin:data.status_details.awaiting_upload.upload_url.url",
+    "origin:data.status_details.succeeded_with_errors.error_file.download_url.url",
+  ]),
+  ...Object.fromEntries(
+    ["POST /v2/commerce/product_catalog/imports", "GET /v2/commerce/product_catalog/imports/{id}"].map((key) => [
+      key,
+      redact(PRESIGNED, [
+        "origin:status_details.awaiting_upload.upload_url.url",
+        "origin:status_details.succeeded_with_errors.error_file.download_url.url",
+      ]),
+    ]),
+  ),
+  "POST /v1/sigma/saved_queries/{id}": vendorErrors(safe(QUERY)),
+  "GET /v1/sigma/scheduled_query_runs": vendorErrors(safe(REPORT_FILE, ["data.file.url"])),
+  "GET /v1/reporting/report_runs": vendorErrors(safe(REPORT_FILE, ["data.result.url"])),
+  "GET /v1/sigma/scheduled_query_runs/{scheduled_query_run}": vendorErrors(safe(REPORT_FILE, ["file.url"])),
+  ...Object.fromEntries(
+    ["POST /v1/reporting/report_runs", "GET /v1/reporting/report_runs/{report_run}"].map((key) => [
+      key,
+      vendorErrors(safe(REPORT_FILE, ["result.url"])),
+    ]),
+  ),
   ...Object.fromEntries(
     [
-      "GET /v1/terminal/readers",
       "POST /v1/terminal/readers",
       "GET /v1/terminal/readers/{reader}",
       "POST /v1/terminal/readers/{reader}",
@@ -669,7 +566,35 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
       "POST /v1/test_helpers/terminal/readers/{reader}/present_payment_method",
       "POST /v1/test_helpers/terminal/readers/{reader}/succeed_input_collection",
       "POST /v1/test_helpers/terminal/readers/{reader}/timeout_input_collection",
-    ].map((key) => [key, vendorErrors(safe(TERMINAL, TERMINAL_SIGNATURE))]),
+    ].map((key) => [key, vendorErrors(safe(TERMINAL, ["action.collect_inputs.inputs.signature"]))]),
+  ),
+  "GET /v1/terminal/readers": vendorErrors(safe(TERMINAL, ["data.action.collect_inputs.inputs.signature"])),
+  "GET /v1/terminal/configurations": redact(
+    TERMINAL_CONFIG,
+    [
+      "data.wifi.enterprise_eap_peap.password",
+      "data.wifi.personal_psk.password",
+      "data.wifi.enterprise_eap_tls.private_key_file_password",
+    ],
+    ["data.wifi.enterprise_eap_tls.private_key_file", "data.wifi.personal_psk"],
+  ),
+  ...Object.fromEntries(
+    [
+      "POST /v1/terminal/configurations",
+      "GET /v1/terminal/configurations/{configuration}",
+      "POST /v1/terminal/configurations/{configuration}",
+    ].map((key) => [
+      key,
+      redact(
+        TERMINAL_CONFIG,
+        [
+          "wifi.enterprise_eap_peap.password",
+          "wifi.personal_psk.password",
+          "wifi.enterprise_eap_tls.private_key_file_password",
+        ],
+        ["wifi.enterprise_eap_tls.private_key_file", "wifi.personal_psk"],
+      ),
+    ]),
   ),
   ...Object.fromEntries(
     [
@@ -678,6 +603,14 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
       "GET /v1/identity/verification_reports",
       "GET /v1/identity/verification_reports/{report}",
     ].map((key) => [key, vendorErrors(safe(VERIFICATION))]),
+  ),
+  "GET /v1/webhook_endpoints": redact(WEBHOOK, ["data.secret", "origin:url", "origin:data.url"]),
+  ...Object.fromEntries(
+    [
+      "POST /v1/webhook_endpoints",
+      "GET /v1/webhook_endpoints/{webhook_endpoint}",
+      "POST /v1/webhook_endpoints/{webhook_endpoint}",
+    ].map((key) => [key, redact(WEBHOOK, ["secret", "origin:url"])]),
   ),
 };
 
@@ -768,4 +701,102 @@ const FIELDS: ValueSafetyTable["fields"] = {
   ),
 };
 
-export const STRIPE_VALUE_SAFETY: ValueSafetyTable = { title: "Stripe", operations: OPERATIONS, fields: FIELDS };
+/**
+ * A Checkout Session bound to a customer (an existing customer, one it will
+ * create, or saved-payment-method options) can display, reuse, or remove that
+ * customer's saved payment methods, so its URL is a capability on the
+ * customer, not only a payment page.
+ */
+function customerBound(session: Readonly<Record<string, unknown>>): boolean {
+  const customer = session["customer"];
+  const saved = session["saved_payment_method_options"];
+  return (
+    (customer !== null && customer !== undefined && customer !== "") ||
+    session["customer_creation"] === "always" ||
+    (typeof saved === "object" && saved !== null)
+  );
+}
+
+const SENSITIVE_HEADERS = ["request_details.headers.value", "response_details.headers.value"];
+const WIFI_PASSWORDS = [
+  "wifi.enterprise_eap_peap.password",
+  "wifi.personal_psk.password",
+  "wifi.enterprise_eap_tls.private_key_file_password",
+];
+
+/**
+ * Rules for Stripe objects wherever a response embeds them, keyed on the
+ * `object` discriminator: expansions, lists, search results, and events'
+ * `data.object` and `previous_attributes`. Operation verdicts review what an
+ * operation returns by its own shape; these are the backstop for expansions.
+ */
+const RESOURCES: ValueSafetyTable["resources"] = {
+  key: "object",
+  partials: ["previous_attributes"],
+  rules: {
+    file_link: { reason: "A file link's URL downloads the file without authentication.", paths: ["origin:url"] },
+    file: { reason: "A File embeds its public file links.", paths: ["origin:links.data.url"] },
+    ephemeral_key: { reason: "An ephemeral key's secret is an API credential.", paths: ["secret"] },
+    "terminal.connection_token": { reason: "A connection token's secret connects a reader.", paths: ["secret"] },
+    "terminal.onboarding_link": {
+      reason: "Accepts Tap to Pay terms on the merchant's behalf.",
+      paths: ["redirect_url"],
+    },
+    account_link: { reason: "Signs its holder into a connected account's onboarding.", paths: ["url"] },
+    "v2.core.account_link": { reason: "Signs its holder into a connected account's onboarding.", paths: ["url"] },
+    login_link: { reason: "Signs its holder into a connected account's Express Dashboard.", paths: ["url"] },
+    account_session: { reason: "Grants embedded-component access to a connected account.", paths: ["client_secret"] },
+    customer_session: {
+      reason: "Grants client-side access to a customer's payment methods.",
+      paths: ["client_secret"],
+    },
+    "billing_portal.session": { reason: "Signs its holder in as the customer.", paths: ["url"] },
+    "financial_connections.session": { reason: CLIENT_SECRET, paths: ["client_secret"] },
+    webhook_endpoint: {
+      reason: "A signing secret, and a destination whose path or query can be a bearer secret.",
+      paths: ["secret", "origin:url"],
+    },
+    "v2.core.event_destination": {
+      reason: "A signing secret, and a destination whose path or query can be a bearer secret.",
+      paths: ["webhook_endpoint.signing_secret", "origin:webhook_endpoint.url"],
+    },
+    "issuing.card": { reason: "A full card number and CVC.", paths: ["number", "cvc"] },
+    "apps.secret": { reason: "A stored secret value.", paths: ["payload"] },
+    "apps.install": { reason: "An OAuth authorization code.", paths: ["auth_code"] },
+    payment_intent: { reason: CLIENT_SECRET, paths: ["client_secret"] },
+    setup_intent: { reason: CLIENT_SECRET, paths: ["client_secret"] },
+    source: { reason: CLIENT_SECRET, paths: ["client_secret"] },
+    invoice: { reason: "Carries the invoice PaymentIntent's client secret.", paths: ["confirmation_secret"] },
+    "checkout.session": {
+      reason:
+        "A client secret; and a hosted page that, bound to a customer, can display, reuse, or remove saved payment methods. A guest session's page only takes a payment and comes back verbatim.",
+      paths: ["client_secret"],
+      when: customerBound,
+      withheld: ["origin:url"],
+      verbatim: ["url"],
+    },
+    "identity.verification_session": {
+      reason:
+        "A client secret; the hosted page collects documents from the person being verified and shows no stored data, so it comes back verbatim.",
+      paths: ["client_secret"],
+      verbatim: ["url"],
+    },
+    "terminal.configuration": { reason: "Wi-Fi passwords.", paths: WIFI_PASSWORDS },
+    "forwarding.request": { reason: "Header values sent to and returned by a third party.", paths: SENSITIVE_HEADERS },
+    "v2.commerce.product_catalog_import": {
+      reason: "Pre-signed upload and error-file URLs.",
+      paths: [
+        "origin:status_details.awaiting_upload.upload_url.url",
+        "origin:status_details.succeeded_with_errors.error_file.download_url.url",
+      ],
+    },
+    "v2.billing.meter_event_session": { reason: "A meter event stream token.", paths: ["authentication_token"] },
+  },
+};
+
+export const STRIPE_VALUE_SAFETY: ValueSafetyTable = {
+  title: "Stripe",
+  operations: OPERATIONS,
+  fields: FIELDS,
+  resources: RESOURCES,
+};

@@ -35,7 +35,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { discoverProviders, repositoryRoot } from "./providers.mjs";
-import { renderValueSafety } from "./value-safety.mjs";
+import { renderValueSafety, reviewedTable } from "./value-safety.mjs";
 
 /** Bump when the generated shape changes, so every output reads as stale. */
 export const OPENAPI_FORMAT = 4;
@@ -618,9 +618,20 @@ async function main() {
     // The operations whose responses may carry credentials or secret values,
     // for the provider's reviewed value-safety table (value-safety.mjs and
     // src/providers/_shared/rest/value-safety.ts). Every REST vendor opts in.
+    // The reviewed table's paths are checked against the pinned response
+    // schemas too: a path that names nothing the operation returns fails here
+    // unless `value-safety.absent.json` acknowledges it.
     if (source.options?.valueSafety) {
       const document = JSON.parse(new TextDecoder().decode(bytes));
-      await writeFile(join(provider.directory, "value-safety.candidates.json"), renderValueSafety(document, source));
+      const reviewed = await reviewedTable(provider.directory);
+      const { text, problems } = renderValueSafety(document, source, reviewed);
+      await writeFile(join(provider.directory, "value-safety.candidates.json"), text);
+      if (problems.length > 0) {
+        console.error(
+          `providers/${provider.name}: reviewed value-safety paths that do not resolve:\n  ${problems.join("\n  ")}`,
+        );
+        process.exitCode = 1;
+      }
     }
     const rows = JSON.parse(data.details).o;
     const largest = rows.reduce(

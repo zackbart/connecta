@@ -1,0 +1,183 @@
+{
+  "reason": "Paths a shared verdict carries (drains, webhooks, projects, deployments, firewall configurations, environment variables) that this operation's pinned response schema does not declare, including list-root and create-only variants. They stay applied at runtime, so an undeclared field the vendor returns is still removed; listing them here keeps every other path checked against the schema.",
+  "operations": {
+    "DELETE /v1/env": ["created[].value", "data[].value", "updated[].value"],
+    "DELETE /v1/projects/{idOrName}/avatar": [
+      "internalRoutes[].missing[?header].value",
+      "security.firewallRoutes[].has[?header].value",
+      "security.firewallRoutes[].missing[?header].value"
+    ],
+    "DELETE /v1/projects/{idOrName}/env": ["[].legacyValue", "[].value", "legacyValue", "value", "vsmValue"],
+    "DELETE /v9/projects/{idOrName}/env/{id}": ["vsmValue"],
+    "GET /v1/drains": ["drains[].headers{}", "drains[].secret", "origin:drains[].url"],
+    "GET /v1/drains/{id}": ["headers{}", "origin:url", "secret"],
+    "GET /v1/env": ["created[].value", "failed[].error.value", "updated[].value"],
+    "GET /v1/log-drains": [
+      "[].delivery.headers{}",
+      "[].delivery.secret",
+      "[].headers{}",
+      "[].secret",
+      "drains[].headers{}",
+      "drains[].secret",
+      "origin:[].delivery.endpoint",
+      "origin:[].delivery.endpoint.traces",
+      "origin:[].url",
+      "origin:drains[].url"
+    ],
+    "GET /v1/log-drains/{id}": [
+      "delivery.headers{}",
+      "delivery.secret",
+      "headers{}",
+      "origin:delivery.endpoint",
+      "origin:delivery.endpoint.traces",
+      "origin:url",
+      "secret"
+    ],
+    "GET /v1/microfrontends/groups/{groupId}/projects": [
+      "projects[].internalRoutes[].missing[?header].value",
+      "projects[].security.firewallRoutes[].has[?header].value",
+      "projects[].security.firewallRoutes[].missing[?header].value"
+    ],
+    "GET /v1/security/firewall/config": [
+      "active.conditions[].conditionGroup[].conditions[?header].values",
+      "active.rules[].conditionGroup[].conditions[?header].values",
+      "active.rulesets[].conditionGroup[].conditions[?header].values",
+      "draft.conditions[].conditionGroup[].conditions[?header].values",
+      "draft.rules[].conditionGroup[].conditions[?header].values",
+      "draft.rulesets[].conditionGroup[].conditions[?header].values",
+      "versions[].conditions[].conditionGroup[].conditions[?header].values",
+      "versions[].rules[].conditionGroup[].conditions[?header].values",
+      "versions[].rulesets[].conditionGroup[].conditions[?header].values"
+    ],
+    "GET /v1/security/firewall/config/{configVersion}": [
+      "conditions[].conditionGroup[].conditions[?header].values",
+      "rules[].conditionGroup[].conditions[?header].values",
+      "rulesets[].conditionGroup[].conditions[?header].values"
+    ],
+    "GET /v1/webhooks": ["[].secret", "origin:webhooks[].url", "webhooks[].secret"],
+    "GET /v1/webhooks/{id}": ["secret"],
+    "GET /v10/projects": [
+      "[].dismissedToasts[].value",
+      "[].internalRoutes[].missing[?header].value",
+      "[].protectionBypass",
+      "[].protectionBypass@keys",
+      "[].usageStatus.bypassThrottleUntil",
+      "projects[].internalRoutes[].missing[?header].value"
+    ],
+    "GET /v13/deployments/{idOrUrl}": [
+      "services[].redirects[].headers{}",
+      "services[].redirects[].locale.cookie",
+      "services[].redirects[].transforms[].args",
+      "services[].rewrites[].headers{}",
+      "services[].rewrites[].locale.cookie"
+    ],
+    "GET /v2/integrations/log-drains": [
+      "[].delivery.headers{}",
+      "[].delivery.secret",
+      "[].secret",
+      "origin:[].delivery.endpoint",
+      "origin:[].delivery.endpoint.traces"
+    ],
+    "GET /v3/events": ["events[?env].payload.vsmValue"],
+    "GET /v9/projects/{idOrName}": [
+      "internalRoutes[].missing[?header].value",
+      "security.firewallRoutes[].has[?header].value",
+      "security.firewallRoutes[].missing[?header].value"
+    ],
+    "PATCH /v1/drains/{id}": ["headers{}", "origin:url", "secret"],
+    "PATCH /v1/env": ["created[].value", "data[].value"],
+    "PATCH /v1/env/{id}/unlink/{projectId}": ["value"],
+    "PATCH /v1/projects/{projectId}/microfrontends": [
+      "internalRoutes[].missing[?header].value",
+      "security.firewallRoutes[].has[?header].value",
+      "security.firewallRoutes[].missing[?header].value"
+    ],
+    "PATCH /v12/deployments/{id}/cancel": [
+      "services[].redirects[].headers{}",
+      "services[].redirects[].locale.cookie",
+      "services[].redirects[].transforms[].args",
+      "services[].rewrites[].headers{}",
+      "services[].rewrites[].locale.cookie"
+    ],
+    "PATCH /v9/projects/{idOrName}": [
+      "internalRoutes[].missing[?header].value",
+      "security.firewallRoutes[].has[?header].value",
+      "security.firewallRoutes[].missing[?header].value"
+    ],
+    "PATCH /v9/projects/{idOrName}/env/{id}": ["[].legacyValue", "[].value", "vsmValue"],
+    "POST /v1/drains": ["headers{}", "origin:url", "secret"],
+    "POST /v1/drains/test": [
+      "delivery.headers{}",
+      "delivery.secret",
+      "headers{}",
+      "origin:delivery.endpoint",
+      "origin:delivery.endpoint.traces",
+      "origin:url",
+      "secret"
+    ],
+    "POST /v1/env": ["data[].value", "updated[].value"],
+    "POST /v1/log-drains": [
+      "delivery.headers{}",
+      "delivery.secret",
+      "headers{}",
+      "origin:delivery.endpoint",
+      "origin:delivery.endpoint.traces",
+      "origin:url",
+      "secret"
+    ],
+    "POST /v1/projects/{idOrName}/avatar": [
+      "internalRoutes[].missing[?header].value",
+      "security.firewallRoutes[].has[?header].value",
+      "security.firewallRoutes[].missing[?header].value"
+    ],
+    "POST /v1/projects/{projectId}/routes/generate": [
+      "route.has[?header].value",
+      "route.headers{}",
+      "route.locale.cookie",
+      "route.missing[?header].value",
+      "route.transforms[].args"
+    ],
+    "POST /v1/security/firewall/config/generate-rule": ["rule.conditionGroup[].conditions[?header].values"],
+    "POST /v1/security/firewall/config/{configVersion}/activate": [
+      "conditions[].conditionGroup[].conditions[?header].values",
+      "rules[].conditionGroup[].conditions[?header].values",
+      "rulesets[].conditionGroup[].conditions[?header].values"
+    ],
+    "POST /v11/projects": [
+      "internalRoutes[].missing[?header].value",
+      "security.firewallRoutes[].has[?header].value",
+      "security.firewallRoutes[].missing[?header].value"
+    ],
+    "POST /v13/deployments": [
+      "services[].redirects[].headers{}",
+      "services[].redirects[].locale.cookie",
+      "services[].redirects[].transforms[].args",
+      "services[].rewrites[].headers{}",
+      "services[].rewrites[].locale.cookie"
+    ],
+    "POST /v2/integrations/log-drains": [
+      "delivery.headers{}",
+      "delivery.secret",
+      "origin:delivery.endpoint",
+      "origin:delivery.endpoint.traces",
+      "secret"
+    ],
+    "PUT /v1/security/firewall/config": [
+      "active.conditions[].conditionGroup[].conditions[?header].values",
+      "active.rules[].conditionGroup[].conditions[?header].values",
+      "active.rulesets[].conditionGroup[].conditions[?header].values",
+      "draft.conditions[].conditionGroup[].conditions[?header].value",
+      "draft.conditions[].conditionGroup[].conditions[?header].values",
+      "draft.rules[].conditionGroup[].conditions[?header].value",
+      "draft.rules[].conditionGroup[].conditions[?header].values",
+      "draft.rulesets[].conditionGroup[].conditions[?header].value",
+      "draft.rulesets[].conditionGroup[].conditions[?header].values",
+      "versions[].conditions[].conditionGroup[].conditions[?header].value",
+      "versions[].conditions[].conditionGroup[].conditions[?header].values",
+      "versions[].rules[].conditionGroup[].conditions[?header].value",
+      "versions[].rules[].conditionGroup[].conditions[?header].values",
+      "versions[].rulesets[].conditionGroup[].conditions[?header].value",
+      "versions[].rulesets[].conditionGroup[].conditions[?header].values"
+    ]
+  }
+}

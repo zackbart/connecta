@@ -240,8 +240,21 @@ tracked, and applied the bar to Stripe and Notion:
   credential or a sign-in link (ephemeral keys, connection tokens, account
   and login links, account, customer, and portal sessions, file links) are
   refused. Payment families keep Stripe's error text (`vendorErrors`).
+- Review of the PR showed shape-based review alone cannot follow expansions:
+  an expanded File carried public file link URLs past a reviewed file link
+  operation. Tables may now state resource rules keyed on a type
+  discriminator (Stripe's `object`) that apply wherever an object appears,
+  events' `previous_attributes` included. Checkout URLs are returned whole
+  only for guest sessions; a session bound to a customer is a capability on
+  that customer's saved payment methods.
+- Every reviewed path is checked against the pinned response schema by
+  `providers:spec`, which stamps the paths that resolve; misses are
+  acknowledged one by one in `value-safety.absent.json` (shared verdicts and
+  undeclared fields, still applied at runtime).
 - The shared harness (`test/fixtures/value-safety.ts`) gives every vendor the
-  same checks: unreviewed candidates, stale pins, verdicts for missing
-  operations, uncovered flagged fields, keeps that exempt a subtree or a
-  credential name, redact paths that leave values, refusals that reach
-  transport, and echoed error text.
+  same checks: unreviewed candidates, stale pins and stamps, verdicts for
+  missing operations, uncovered flagged fields, flagged fields that survive
+  redaction in their schema shape, keeps that exempt a subtree or a
+  credential name, redact paths and resource rules that leave values,
+  refusals that reach transport, and echoed error text; a mutation test
+  proves a wrong path fails it.

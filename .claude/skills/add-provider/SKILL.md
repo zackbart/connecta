@@ -101,12 +101,20 @@ vendors"). The steps:
 
 1. Set `options.valueSafety` in `openapi.source.json` (`true`, or
    `{ "operationWords": "<regex>" }` for a vendor's own secret families,
-   `{ "expansions": false }` for an API that answers ids unless expanded) so
-   `providers:spec` writes `value-safety.candidates.json` from
-   `scripts/value-safety.mjs`. Never edit the candidates file by hand.
+   `{ "expansions": false }` for an API that answers ids unless expanded,
+   `{ "dataRoot": "result" }` for an envelope) so `providers:spec` writes
+   `value-safety.candidates.json` from `scripts/value-safety.mjs`. Never edit
+   the candidates file by hand. Rerun `providers:spec` (with `--file` for an
+   offline copy of the pinned document) after every table edit: it checks
+   each reviewed path against the pinned response schema and stamps the ones
+   that resolve. A path the schema lacks fails it; fix the path, or, for a
+   shared verdict or a field the schema leaves undeclared, acknowledge it in
+   `value-safety.absent.json`.
 2. Write `value-safety.ts` with the shared `refuse`, `redact`, and `safe`
    helpers from `../_shared/rest/value-safety.ts`: one verdict per candidate,
-   each with a reason, and `fields` for names reviewed once across the API.
+   each with a reason, `fields` for names reviewed once across the API, and,
+   when objects carry a type discriminator and can be expanded into other
+   responses, `resources` rules that follow each object wherever it appears.
    Prefer refusing whole secret families (minting, rotation, decrypted
    values, login and onboarding links) and route legitimate needs to
    value-safe named tools. Every flagged response field needs a redact path,
@@ -118,9 +126,10 @@ vendors"). The steps:
    mapper to replace the vendor's text with codes and status. Named tools
    that bypass `callRest` call its `redact` themselves.
 4. Add `value-safety.node.test.ts` that runs `describeValueSafety` from
-   `test/fixtures/value-safety.ts` with the verdict counts, a connector, and a
-   vendor-shaped error body, plus regressions in `provider.test.ts` for each
-   secret family the review found.
+   `test/fixtures/value-safety.ts` with the verdict counts, a connector, a
+   vendor-shaped error body, `absent`, and examples for conditional resource
+   rules, plus regressions in `provider.test.ts` for each secret family the
+   review found, expansions and events included.
 
 ## Derived lists
 

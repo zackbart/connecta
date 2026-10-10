@@ -790,11 +790,16 @@ every vendor ships one reviewed table through one mechanism
    `@keys` replaces secret map keys, `[?env]`, `[?credential]`, and
    `[?header]` filter list items, `url:` sanitizes a URL, and `origin:` (or a
    `#url` suffix) keeps only scheme and host. `keep` names reviewed metadata
-   the heuristic leaves (children are still checked); `urls` names payer-facing
-   URLs returned verbatim (hosted Checkout). A vendor whose objects repeat
-   across operations (Stripe) reviews a field once in `fields`, `redact` or
-   `keep`, wherever it appears. Argument-dependent refusals (Stripe
-   expansions, Vercel `decrypt`) stay in the vendor's `refuse` hook.
+   the heuristic leaves (children are still checked). A vendor whose objects
+   repeat across operations (Stripe) reviews a field once in `fields`,
+   `redact` or `keep`, wherever it appears, and states `resources`: rules
+   keyed on the object's type discriminator (Stripe's `object`) that apply to
+   every such object wherever a response embeds it (an expansion, a list, an
+   event's `data.object` and its `previous_attributes`). A resource rule can
+   withhold more when a condition holds (a Checkout Session bound to a
+   customer) and otherwise return a reviewed payer-facing URL verbatim (a
+   guest Checkout page). Argument-dependent refusals (Stripe expansions,
+   Vercel `decrypt`) stay in the vendor's `refuse` hook.
 3. **Redaction on every success body**, in `callRest` after `result` and
    before cursors and `select`, so named tools, HEAD data, and uploads pass
    through it too: the operation's reviewed paths, then the key-name
@@ -813,13 +818,29 @@ every vendor ships one reviewed table through one mechanism
    secret. Credentials Connecta sent are always removed by the sent-secrets
    matcher.
 
+`providers:spec` (run under tsx) also checks the table against the pinned
+spec: every `redact` path and `keep` must name something the operation's
+response schema can return (through `options.valueSafety.dataRoot` for an
+envelope such as Cloudflare's `result`), and every resource rule path
+something the resource's schema can return. It stamps the paths that resolve
+into the candidates file and fails on the rest, unless
+`value-safety.absent.json` acknowledges them (shared verdicts applied to
+operations whose schema lacks a path, or fields a schema leaves undeclared;
+such paths still apply at runtime).
+
 `test/fixtures/value-safety.ts` is the shared harness each vendor's
-`value-safety.node.test.ts` runs. It fails on candidates from another pin,
-format, or option set; an unreviewed candidate; a verdict for an operation the
-index lacks; a flagged field no path, keep, URL, or field review covers; a keep
-that exempts anything below it or a vendor-wide keep of a credential name; a
-redact path that leaves its value; a refusal that reaches transport; a
-reviewed operation that echoes vendor error text; and a moved verdict count.
+`value-safety.node.test.ts` runs; `reviewProblems` is pure, and
+`test/value-safety-harness.node.test.ts` proves wrong paths fail it. It fails
+on candidates from another pin, format, or option set; an unreviewed
+candidate; a verdict for an operation the index lacks; a table path the stamp
+lacks (unresolved, or edited since `providers:spec`); a flagged field no path,
+keep, field review, or scope map covers; a flagged field, built in the shape
+the pinned schema gives it, that survives redaction or that no redact path
+reaches; a keep that exempts anything below it or a vendor-wide keep of a
+credential name; a redact path or resource rule that leaves its value at the
+top level, in a list, an expansion, or an event; a refusal that reaches
+transport; a reviewed operation that echoes vendor error text; and a moved
+verdict count.
 `RestVendor.valueSafety` is required, so a new REST vendor cannot ship without
 a table.
 
