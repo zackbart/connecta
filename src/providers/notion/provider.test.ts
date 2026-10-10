@@ -651,7 +651,9 @@ describe("notion() generic REST tools", () => {
     calls.length = 0;
     queue({ status: 502, body: { object: "error", code: "internal_server_error", message: "boom" } });
     const failed = await refusal(call(connector, "notion_api_write", { method: "DELETE", path: "/v1/blocks/b-1" }));
-    expect(failed.code).toBe("unavailable");
+    // A keyless write that may have reached Notion is never advertised as
+    // retryable: repeating it could apply the change twice.
+    expect(failed).toMatchObject({ code: "connector_call_failed", retryable: false });
     expect(calls).toHaveLength(1);
   });
 });

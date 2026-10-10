@@ -146,7 +146,7 @@ The Stripe conversion (#801, PR #803) settled facts the plan above left open:
   body, which the shared envelope states as `page.in: "body"`. A view query
   is stored until deleted, so `POST /v1/views/{view_id}/queries` stays a
   write. Notion's OAuth token endpoints are refused.
-- Notion did not fit its cap either: the entry measures 211,735 B gzip with
+- Notion did not fit its cap either: the entry measures 211,946 B gzip with
   a 14 KB index (depth 4), so the cap moved to baseline + 60,000 B.
 - The token connector keeps the named tools that project or author Notion's
   shapes and drops the one-operation wrappers the generic set replaces.

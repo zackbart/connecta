@@ -312,10 +312,10 @@ export const notion = defineProvider<NotionOptions>({
   kind: "dual",
   readme: "Notion",
   bundle: {
-    "baselineGzip": 211735,
-    "maxGzip": 271735,
+    "baselineGzip": 211946,
+    "maxGzip": 271946,
     "note":
-      "./providers/notion remeasures at 211,735 B gzip (#801), against a 145,300 B baseline: auth now selects the implementation, so the entry carries the hosted MCP client and Connecta's REST connector (api(), the schema validator, guarded transport, the shared REST module) plus the pinned Notion operation index (64 operations; request details to depth 4, so block payload keys validate, with 160-character top-level descriptions; 14,240 B gzip as source). The index is already small, and removing eight one-operation named tools offset part of the shared module, so shrinking details further could not bring the entry under the old cap. The cap uses the existing baseline + 60,000 B policy.",
+      "./providers/notion remeasures at 211,946 B gzip (#801), against a 145,300 B baseline: auth now selects the implementation, so the entry carries the hosted MCP client and Connecta's REST connector (api(), the schema validator, guarded transport, the shared REST module) plus the pinned Notion operation index (64 operations; request details to depth 4, so block payload keys validate, with 160-character top-level descriptions; 14,240 B gzip as source). The index is already small, and removing eight one-operation named tools offset part of the shared module, so shrinking details further could not bring the entry under the old cap. The cap uses the existing baseline + 60,000 B policy.",
   },
   skill,
   options: NOTION_OPTIONS,

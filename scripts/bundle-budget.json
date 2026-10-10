@@ -18,7 +18,7 @@
     "./providers/github initial measured baseline includes the hosted MCP SDK plus portable GitHub App signing, exact routing and REST complements; cap retains the existing 60,000-byte provider headroom policy.",
     "./providers/gmail starts at 27,085 B gzip (#678): a hand-written api() surface over the guarded transport plus the shared Google Workspace delegation layer — Web Crypto RS256 signing, an in-memory token cache, result-size budgeting, bound cursors, and request-outcome tracking, with no OAuth client and no MCP SDK. The other Workspace products share that layer and should land in the same class. The cap uses the existing baseline + 60,000 B policy.",
     "./providers/infisical starts at 27,673 B gzip (#677): guarded transport, Universal Auth request-local flights and eight named tools, with no MCP client or Effect runtime. The cap uses the measured baseline plus the existing 60,000 B headroom policy.",
-    "./providers/notion remeasures at 211,735 B gzip (#801), against a 145,300 B baseline: auth now selects the implementation, so the entry carries the hosted MCP client and Connecta's REST connector (api(), the schema validator, guarded transport, the shared REST module) plus the pinned Notion operation index (64 operations; request details to depth 4, so block payload keys validate, with 160-character top-level descriptions; 14,240 B gzip as source). The index is already small, and removing eight one-operation named tools offset part of the shared module, so shrinking details further could not bring the entry under the old cap. The cap uses the existing baseline + 60,000 B policy.",
+    "./providers/notion remeasures at 211,946 B gzip (#801), against a 145,300 B baseline: auth now selects the implementation, so the entry carries the hosted MCP client and Connecta's REST connector (api(), the schema validator, guarded transport, the shared REST module) plus the pinned Notion operation index (64 operations; request details to depth 4, so block payload keys validate, with 160-character top-level descriptions; 14,240 B gzip as source). The index is already small, and removing eight one-operation named tools offset part of the shared module, so shrinking details further could not bring the entry under the old cap. The cap uses the existing baseline + 60,000 B policy.",
     "./providers/overflow starts at 20,410 B gzip: a hand-written api() surface over the guarded transport with no hosted-MCP interface, so it pulls in neither remoteMcp nor the Effect core the other providers carry. The cap uses the existing baseline + 60,000 B policy.",
     "./providers/planning-center starts at 26,970 B gzip. It is api() over the guarded transport with no hosted-MCP surface, so neither the MCP client nor the Effect core is in its graph; the cap uses the existing baseline + 60,000 B policy.",
     "./providers/sheets starts at 26,026 B gzip (#682): the same class as ./providers/gmail — a hand-written api() surface over the shared Workspace delegation layer, with no OAuth client and no MCP SDK. The cap uses the existing baseline + 60,000 B policy.",
@@ -91,8 +91,8 @@
       "maxGzip": 191378
     },
     "./providers/notion": {
-      "baselineGzip": 211735,
-      "maxGzip": 271735
+      "baselineGzip": 211946,
+      "maxGzip": 271946
     },
     "./providers/overflow": {
       "baselineGzip": 20410,
