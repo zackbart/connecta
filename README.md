@@ -68,8 +68,10 @@ operations each caller can reach.
 Connecta includes maintained connections for <!-- providers:start -->Basecamp, Breeze ChMS, Church Community Builder, Cloudflare, GitHub, Gmail, Google Docs, Google Drive, Google Forms, Google Sheets, Google Slides, Infisical, Linear, Mixpanel, Notion, Overflow, Planning Center, RevenueCat, Stripe, Tithe.ly, and Vercel<!-- providers:end -->.
 Each connection has its own setup guide.
 Notion, Vercel, and Cloudflare offer hosted MCP connections and selected HTTP
-API capabilities. You can also connect other remote MCP servers or define the
-operations you need from an HTTP API.
+API capabilities. Stripe uses its hosted MCP server when you sign in with OAuth
+and Connecta's own Stripe API connection when you use an API key. You can also
+connect other remote MCP servers or define the operations you need from an
+HTTP API.
 
 Google Workspace connections use the account your deployment assigns to each
 signed-in person. A Workspace administrator authorizes them for your domain.

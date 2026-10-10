@@ -139,6 +139,11 @@ describe("built-in factory options", () => {
       'stripe("billing").auth.scope',
     ],
     [
+      "a provider's other auth case",
+      () => stripe("billing", loose({ purpose: "Revenue", auth: { type: "oauth" }, mode: "sandbox" })),
+      'stripe("billing").mode',
+    ],
+    [
       "a Workspace service account",
       () =>
         docs(
@@ -251,7 +256,7 @@ describe("discriminated factory options", () => {
   const url = "https://mcp.example/mcp";
   const headers = { "X-Key": SECRET };
   const MCP_AUTH = '"request", "headers", "credential", "oauth"';
-  const STRIPE_AUTH = '"oauth", "headers", "credential"';
+  const STRIPE_AUTH = '"oauth", "apiKey"';
   const SURFACE = '"api", "mcp"';
 
   // A misspelled or missing discriminant used to select no case, so the walk
@@ -320,6 +325,12 @@ describe("discriminated factory options", () => {
     [
       "a provider's narrowed auth without a type",
       () => stripe("billing", loose({ purpose: "Revenue", auth: {} })),
+      `stripe("billing") requires auth.type is required: one of ${STRIPE_AUTH}.`,
+    ],
+    [
+      // 0.28 defaulted some providers to REST; a silent OAuth default would be a trap.
+      "a provider's required auth when omitted",
+      () => stripe("billing", loose({ purpose: "Revenue" })),
       `stripe("billing") requires auth.type is required: one of ${STRIPE_AUTH}.`,
     ],
     [
@@ -707,19 +718,6 @@ describe("factory string maps read as plain data", () => {
         ),
       'remoteMcp("docs").auth.headers.prompt',
     ],
-    [
-      "stripe() headers",
-      (map: object) =>
-        stripe(
-          "billing",
-          loose({
-            purpose: "Revenue",
-            mode: "sandbox",
-            auth: { type: "headers", headers: map },
-          }),
-        ),
-      'stripe("billing") requires auth.headers.prompt',
-    ],
   ] as const)("INV-11: refuses an accessor or a non-string in %s by path, unrun and unechoed", (_, build, path) => {
     const counter = { reads: 0 };
     let error: unknown;
@@ -728,7 +726,7 @@ describe("factory string maps read as plain data", () => {
     } catch (caught) {
       error = caught;
     }
-    const relation = path.startsWith("stripe(") ? " to be " : " must be ";
+    const relation = " must be ";
     expect(String(error)).toContain(`${path}${relation}a plain value, not a getter or setter.`);
     expect(String(error)).not.toContain(SECRET);
     expect(counter.reads).toBe(0);

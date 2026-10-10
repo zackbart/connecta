@@ -8,6 +8,7 @@ import {
 } from "../src/ui.js";
 import {
   activitySummary,
+  connectorSourceLabel,
   credentialUnavailableCopy,
   driftCounts,
   driftSummary,
@@ -237,6 +238,13 @@ describe("operator app state", () => {
     expect(activitySummary([event("calc.add"), event("calc.add"), event("notes.list")])).toBe(
       "3 loaded calls · 2 tools",
     );
+  });
+
+  it("labels a provider connector with the implementation its auth selected", () => {
+    expect(connectorSourceLabel({ kind: "api", provider: "stripe" })).toBe("stripe · REST");
+    expect(connectorSourceLabel({ kind: "remote-mcp", provider: "stripe" })).toBe("stripe · hosted MCP");
+    expect(connectorSourceLabel({ kind: "remote-mcp" })).toBe("remote-mcp");
+    expect(connectorSourceLabel({ kind: "custom", provider: "acme" })).toBe("acme · custom");
   });
 
   it("lets only http(s) values become an href", () => {

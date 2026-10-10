@@ -227,7 +227,8 @@
     "eval:regrade": "tsx eval/regrade.ts",
     "eval:compare": "tsx eval/compare.ts",
     "format": "oxfmt --write .",
-    "format:check": "oxfmt --check ."
+    "format:check": "oxfmt --check .",
+    "providers:spec": "node scripts/generate-openapi.mjs"
   },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",

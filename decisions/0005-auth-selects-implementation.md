@@ -108,3 +108,29 @@ or if pinned indexes drift faster than review can keep up.
 - **Keep per-surface ownership.** It leaves key-only deployments unable to
   write, forces two connectors and two credentials for ordinary changes, and
   needs a reviewed ownership map that drifts with every hosted tool release.
+
+### Amendment: what the Stripe PR established
+
+The Stripe conversion (#801, PR #803) settled facts the plan above left open:
+
+- Stripe did not fit its cap. The dual entry carries both transports, and
+  `api()` with the schema validator and the shared REST module adds about
+  22 KB gzip alone. Details were shrunk first (depth 2, no descriptions, enums
+  over 50 values dropped: 81 KB to 38 KB gzip), then the cap moved to
+  baseline + 60,000 B with a stated note in `scripts/bundle-budget.json`.
+- `Stripe-Version` is pinned to the index's `info.version` on v1 requests as
+  well as v2, so responses and accepted parameters match the contract
+  `stripe_api_details` serves rather than the account's default version.
+- A connected account is sent as `Stripe-Account` on v1 and `Stripe-Context`
+  on v2.
+- `_api_read` admits GET, HEAD, and the reviewed `readPosts`; Stripe's spec
+  has no HEAD operations. `POST /v1/tax/calculations` stays a write: it
+  persists a Calculation and Stripe bills each call.
+- A generated idempotency key reaches the caller on every ambiguous route: in
+  the result, in a failure's message, and, when the invocation deadline
+  interrupts the call, as `uncertainCall.recovery.idempotencyKey`. Reusing it
+  is safe only with the exact original arguments and within the vendor's key
+  retention (Stripe may prune v1 keys after 24 hours).
+- A write sent without an idempotency key is never advertised as retryable
+  once it may have reached the vendor (a reset after connecting, a 5xx, a
+  lost body); only failures proven to precede any connection stay retryable.

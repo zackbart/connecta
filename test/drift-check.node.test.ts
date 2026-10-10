@@ -639,7 +639,7 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
 
   it.each([
     ["--specs", "linear", "--docs"],
-    ["--specs", "stripe", "--docs"],
+    ["--specs", "revenuecat", "--docs"],
   ])("refuses %s narrowed to %s, which %s checks", async (half, provider, other) => {
     const result = spawnSync(process.execPath, [checker, half, "--provider", provider], { encoding: "utf8" });
     // Silently checking nothing and exiting 0 is the wrong failure mode for a
@@ -650,6 +650,49 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
     expect(output).toContain(other);
     expect(output).toContain("which this run did not select");
   });
+
+  it(
+    "reports a pinned OpenAPI index whose live document changed, and stays quiet while it matches",
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), "connecta-openapi-index-"));
+      temporary.push(directory);
+      const document = JSON.stringify({ openapi: "3.0.0", info: { version: "2026-01-01" }, paths: {} });
+      const { createHash } = await import("node:crypto");
+      const digest = `sha256:${createHash("sha256").update(document).digest("hex")}`;
+      await mkdir(join(directory, "acme"));
+      await writeFile(
+        join(directory, "acme", "drift.json"),
+        JSON.stringify({
+          version: 1,
+          provider: "acme",
+          checks: [{ type: "openapi-index", source: "openapi.source.json" }],
+        }),
+      );
+      await writeFile(
+        join(directory, "acme", "openapi.source.json"),
+        JSON.stringify({ url: "https://vendor.example/v1/openapi.json", revision: "v1", digest }),
+      );
+      const spec = join(directory, "live.json");
+      const run = () =>
+        spawnSync(
+          process.execPath,
+          [checker, "--specs", "--provider-dir", directory, "--provider", "acme", "--spec", `acme=${spec}`, "--json"],
+          { encoding: "utf8" },
+        );
+      await writeFile(spec, document);
+      const clean = run();
+      expect(clean.status).toBe(0);
+      expect(JSON.parse(clean.stdout).specs[0]).toMatchObject({ provider: "acme", revision: "v1", findings: [] });
+      await writeFile(spec, document.replace("2026-01-01", "2026-02-01"));
+      const drifted = run();
+      expect(drifted.status).toBe(0);
+      const [finding] = JSON.parse(drifted.stdout).specs[0].findings;
+      expect(finding.kind).toBe("spec-drift");
+      expect(finding.detail).toContain("info.version 2026-02-01");
+      expect(finding.detail).toContain("providers:spec -- --provider acme --record");
+    },
+    CASE_TIMEOUT_MS,
+  );
 
   it("checks Vercel's public MCP inventory while naming live schema ownership", async () => {
     const { toolReference, setupReference } = await documentedVercelWorkspace();
@@ -1225,9 +1268,21 @@ describe("discovered provider drift evidence", { timeout: CASE_TIMEOUT_MS }, () 
       expect(record).toMatchObject({ version: 1, provider });
       expect(record.checks.length).toBeGreaterThan(0);
       for (const check of record.checks) {
-        expect(["endpoints", "versioned-endpoints", "mcp-docs", "oauth-discovery", "mcp-catalog", "manual"]).toContain(
-          check.type,
-        );
+        expect([
+          "endpoints",
+          "versioned-endpoints",
+          "mcp-docs",
+          "oauth-discovery",
+          "mcp-catalog",
+          "manual",
+          "openapi-index",
+        ]).toContain(check.type);
+        if (check.type === "openapi-index") {
+          const source = JSON.parse(await readFile(join(providerDirectory, provider, check.source), "utf8"));
+          expect(source.url).toMatch(/^https:\/\//);
+          expect(source.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+          expect(existsSync(join(providerDirectory, provider, "openapi.generated.ts"))).toBe(true);
+        }
         if (check.type === "mcp-docs" || check.type === "oauth-discovery") {
           expect(check.setup).toMatch(/^https:\/\//);
           expect(check.endpoints.length).toBeGreaterThan(0);

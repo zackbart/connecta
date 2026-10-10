@@ -107,7 +107,7 @@ export interface PlannedTask {
   status: "planned";
   id: string;
   title: string;
-  introducedIn: "P2" | "P3" | "P5";
+  introducedIn: "P2" | "P3" | "P5" | "#801";
   measures: string;
   prompt: string;
   sketch: {

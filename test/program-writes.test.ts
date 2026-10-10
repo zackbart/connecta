@@ -16,6 +16,8 @@ import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { makeRegistry, required, silentLogger } from "./helpers.js";
 import { privateArgumentCases, PRIVATE_MARKER } from "./fixtures/private-arguments.js";
 import type { JsonSchema } from "../src/types.js";
+import { CredentialVault } from "../src/credentials.js";
+import { stripe } from "../src/providers/stripe/index.js";
 
 const BASE = "https://connecta.program-writes";
 
@@ -135,6 +137,110 @@ const closeOne: Program = async (connecta) => {
   await connecta.call!("tracker.close_issue", { id: 1 });
   return "closed";
 };
+
+describe("a trusted program's Stripe refund whose reply is lost", () => {
+  it("INV-9: reports write_outcome_unknown with the generated Idempotency-Key, sent once", async () => {
+    const storage = memoryStorage();
+    const credentialVault = new CredentialVault(storage, btoa("k".repeat(32)));
+    await credentialVault.set("billing", "rk_test_51abc", "test");
+    const registry = makeRegistry(
+      [stripe("billing", { purpose: "Refunds", auth: { type: "apiKey" }, mode: "sandbox" })],
+      {
+        storage,
+        credentialVault,
+      },
+    );
+    const sent: Headers[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      sent.push(new Headers(init?.headers));
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
+          },
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+    try {
+      const programs = new Map<string, Program>();
+      const code = "async () => refund";
+      programs.set(code, async (connecta) => {
+        try {
+          await connecta.call!("billing.stripe_api_write", {
+            method: "POST",
+            path: "/v1/refunds",
+            body: { charge: "ch_1", amount: 1250 },
+          });
+        } catch {
+          /* A guest cannot erase an unknown outcome. */
+        }
+        return "done";
+      });
+      const execute = createExecuteTool(registry, BASE, scriptedExecutor(programs), silentLogger, undefined, {
+        trust: "trusted",
+      });
+      const error = value(await execute({ code })).error;
+      expect(sent).toHaveLength(1);
+      const key = sent[0]!.get("idempotency-key");
+      expect(key).toMatch(/^[0-9a-f-]{36}$/);
+      expect(error).toMatchObject({
+        code: "write_outcome_unknown",
+        writes: { succeeded: 0, failed: 0, unknown: 1 },
+        uncertainCall: { address: "billing.stripe_api_write", recovery: { idempotencyKey: key } },
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});
+
+describe("a trusted program's Stripe refund that meets an object lock", () => {
+  it("INV-9: counts a lock_timeout as a failed write, not an unknown outcome", async () => {
+    const storage = memoryStorage();
+    const credentialVault = new CredentialVault(storage, btoa("k".repeat(32)));
+    await credentialVault.set("billing", "rk_test_51abc", "test");
+    const registry = makeRegistry(
+      [stripe("billing", { purpose: "Refunds", auth: { type: "apiKey" }, mode: "sandbox" })],
+      {
+        storage,
+        credentialVault,
+      },
+    );
+    let sent = 0;
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      sent += 1;
+      return Response.json({ error: { type: "invalid_request_error", code: "lock_timeout" } }, { status: 429 });
+    }) as typeof fetch;
+    try {
+      const programs = new Map<string, Program>();
+      const code = "async () => lockedRefund";
+      programs.set(code, async (connecta) => {
+        try {
+          await connecta.call!("billing.stripe_api_write", {
+            method: "POST",
+            path: "/v1/refunds",
+            body: { charge: "ch_1" },
+          });
+        } catch (error) {
+          return { caught: (error as { code?: string }).code };
+        }
+        return "sent";
+      });
+      const execute = createExecuteTool(registry, BASE, scriptedExecutor(programs), silentLogger, undefined, {
+        trust: "trusted",
+      });
+      const result = await execute({ code });
+      expect(sent).toBe(1);
+      expect(JSON.stringify(result)).not.toContain("write_outcome_unknown");
+      expect(JSON.stringify(result)).toContain("conflict");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});
 
 describe("a program's write", () => {
   for (const { name, schema, args, echo } of privateArgumentCases)

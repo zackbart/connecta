@@ -22,6 +22,17 @@ export function registrationPathLabel(path: NonNullable<UiConnector["registratio
   return REGISTRATION_LABELS[path];
 }
 
+/**
+ * A connector's source column: the maintained provider with the
+ * implementation it uses, since a dual provider's `auth` selects either the
+ * vendor's hosted MCP server or Connecta's REST connector.
+ */
+export function connectorSourceLabel(source: { kind: string; provider?: string }): string {
+  if (!source.provider) return source.kind;
+  const implementation = source.kind === "remote-mcp" ? "hosted MCP" : source.kind === "api" ? "REST" : source.kind;
+  return `${source.provider} · ${implementation}`;
+}
+
 export type OperatorPage =
   | "overview"
   | "tools"

@@ -256,15 +256,16 @@ var fixture18 = {
 
 // src/providers/stripe/fixtures.ts
 import { stripe } from "@zackbart/connecta/providers/stripe";
-var options19 = { "purpose": "Audit fixture" };
+var options19 = { "purpose": "Audit fixture", "auth": { "type": "apiKey" }, "mode": "sandbox" };
 var fixture19 = {
   name: "stripe",
   options: options19,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "production", "options": { "mode": "production", "auth": { "type": "headers", "headers": { "Authorization": "Bearer rk_live_fixture" } } } }, { "label": "sandbox", "options": { "mode": "sandbox", "auth": { "type": "headers", "headers": { "Authorization": "Bearer rk_test_fixture" } } } }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "production", "options": { "mode": "production" } }, { "label": "connect", "options": { "mode": "production", "connectedAccount": "acct_fixture" } }, { "label": "oauth", "options": { "auth": { "type": "oauth" } } }],
   create(id = "fixture", overrides = {}) {
-    return stripe(id, { ...options19, ...overrides });
+    const base = overrides.auth?.type === "oauth" ? { purpose: options19.purpose } : options19;
+    return stripe(id, { ...base, ...overrides });
   },
-  conventions: void 0
+  conventions: { "verbs": ["get", "stripe"], "nestedDescriptionExceptions": [], "auth": "credential" }
 };
 
 // src/providers/tithely/fixtures.ts

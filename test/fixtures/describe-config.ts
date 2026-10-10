@@ -47,7 +47,6 @@ export const SECRETS = {
   oauthTokenHeader: "SENTINEL-token-request-header",
   oauthEndpointQuery: "SENTINEL-endpoint-query",
   providerClientSecret: "SENTINEL-provider-client-secret",
-  providerHeader: "SENTINEL-provider-header",
   providerKey: "SENTINEL-provider-api-key",
   storedCredential: "SENTINEL-stored-credential",
   storedAccessToken: "cta_SENTINEL-access-token",
@@ -197,11 +196,7 @@ export function secretBearingDeployment() {
           clientId: "church-client",
           clientSecret: SECRETS.providerClientSecret,
         }),
-        stripe("billing", {
-          purpose: "Revenue questions",
-          mode: "sandbox",
-          auth: { type: "headers", headers: { Authorization: `Bearer ${SECRETS.providerHeader}` } },
-        }),
+        stripe("billing", { purpose: "Revenue questions", auth: { type: "apiKey" }, mode: "sandbox" }),
         linear("tracker", {
           purpose: "Roadmap questions",
           access: "read-only",

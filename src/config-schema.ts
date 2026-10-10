@@ -42,9 +42,13 @@ type AnyField = Field<any, any, boolean>;
 
 export type Shape = { readonly [key: string]: AnyField };
 
-/** A discriminated union of closed objects: `cases[value[key]]`, else `cases[otherwise]`. */
+/**
+ * A discriminated union of closed objects: `cases[value[key[0]][key[1]]…]`,
+ * else `cases[otherwise]`. Each case is the whole object's shape, including
+ * the nested objects on the key path.
+ */
 interface Variants {
-  readonly key: string;
+  readonly key: readonly string[];
   readonly cases: Readonly<Record<string, Shape>>;
   readonly otherwise?: string;
 }
@@ -281,20 +285,25 @@ export function instance<F extends AnyField>(field: F): F & { readonly instance:
 
 /**
  * A closed object whose allowed keys depend on a discriminant, such as
- * `remoteMcp({ auth: { type: "headers", headers } })`. An omitted
+ * `remoteMcp({ auth: { type: "headers", headers } })`. The discriminant may
+ * be nested: `variants(["auth", "type"], cases)` selects the whole options
+ * shape from `options.auth.type`, so `{ auth: { type: "apiKey" }, mode }` and
+ * `{ auth: { type: "oauth" } }` accept different top-level keys. An omitted
  * discriminant selects `otherwise` when given; an omitted one without it, an
- * unrecognized one, or a value that is not an object throws with its path and
- * the valid values, so no union falls through to "no case". Only the walk
- * reads variants; the factory validates the remaining values itself.
+ * unrecognized one, or a value on the path that is not an object throws with
+ * its path and the valid values, so no union falls through to "no case". Only
+ * the walk reads variants; the factory validates the remaining values itself.
  */
 export function variants(
-  key: string,
+  key: string | readonly string[],
   cases: Readonly<Record<string, Shape>>,
   otherwise?: string,
 ): Field<unknown, unknown, true> {
+  const path = typeof key === "string" ? [key] : [...key];
+  if (path.length === 0) throw new Error("variants() requires a discriminant key.");
   return {
     ...opaque(),
-    variants: { key, cases, ...(otherwise !== undefined ? { otherwise } : {}) },
+    variants: { key: path, cases, ...(otherwise !== undefined ? { otherwise } : {}) },
   };
 }
 
@@ -438,13 +447,25 @@ function inspectRecord(value: object, path: string, field: AnyField): Inspected 
  * is never echoed.
  */
 function selectShape(inspected: Inspected, path: string, variants: Variants): Shape {
-  const at = `${path}.${variants.key}`;
+  const at = `${path}.${variants.key.join(".")}`;
   const valid = Object.keys(variants.cases)
     .map((name) => JSON.stringify(name))
     .join(", ");
-  const descriptor = inspected.own.find(([key]) => key === variants.key)?.[1];
-  if (descriptor && isAccessor(descriptor)) fail(`${at} must be a plain value, not a getter or setter.`);
-  const discriminant: unknown = descriptor?.value;
+  // Walk the key path one plain object at a time, reading descriptors only.
+  let holder = inspected;
+  let discriminant: unknown;
+  for (const [depth, key] of variants.key.entries()) {
+    const step = `${path}.${variants.key.slice(0, depth + 1).join(".")}`;
+    const descriptor = holder.own.find(([own]) => own === key)?.[1];
+    if (descriptor && isAccessor(descriptor)) fail(`${step} must be a plain value, not a getter or setter.`);
+    discriminant = descriptor?.value;
+    if (depth === variants.key.length - 1 || discriminant === undefined) break;
+    if (typeof discriminant !== "object" || discriminant === null || isArrayAt(discriminant, step)) {
+      fail(`${step} must be an object.`);
+    }
+    holder = inspectRecord(discriminant, step, OPAQUE);
+    discriminant = undefined;
+  }
   if (discriminant === undefined) {
     if (variants.otherwise !== undefined) return variants.cases[variants.otherwise]!;
     return fail(`${at} is required: one of ${valid}.`);

@@ -85,20 +85,24 @@ const providers: ProviderCase[] = [
     descriptionMarks: ["live money and real customers", "test data, no real money"],
     admissionIds: ["stripe_live", "stripe_sandbox"],
     meteredId: "stripe_live",
-    staticCatalog: false,
+    staticCatalog: true,
     factory: (storage: KVStorage) =>
-      deployment(storage, [
-        stripe("stripe_live", {
-          mode: "production",
-          purpose: "Revenue, disputes, and refunds for the real business",
-          auth: { type: "headers", headers: { Authorization: "Bearer rk_live_example" } },
-        }),
-        stripe("stripe_sandbox", {
-          mode: "sandbox",
-          purpose: "Rehearsing billing changes before they touch production",
-          auth: { type: "headers", headers: { Authorization: "Bearer rk_test_example" } },
-        }),
-      ]),
+      deployment(
+        storage,
+        [
+          stripe("stripe_live", {
+            mode: "production",
+            purpose: "Revenue, disputes, and refunds for the real business",
+            auth: { type: "apiKey" },
+          }),
+          stripe("stripe_sandbox", {
+            mode: "sandbox",
+            purpose: "Rehearsing billing changes before they touch production",
+            auth: { type: "apiKey" },
+          }),
+        ],
+        true,
+      ),
   },
   {
     name: "linear",
@@ -466,7 +470,7 @@ describe.each(providers)(
 describe("provider-specific registry behavior", () => {
   it("boots one Stripe OAuth connector for mixed live and sandbox accounts", () => {
     const connecta = deployment(memoryStorage(), [
-      stripe("stripe", { purpose: "Live and sandbox organization billing" }),
+      stripe("stripe", { purpose: "Live and sandbox organization billing", auth: { type: "oauth" } }),
     ]);
     const connector = connecta.registry.getConnector("stripe");
     expect(connector?.description).toContain("live and sandbox accounts");

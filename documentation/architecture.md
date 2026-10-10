@@ -712,7 +712,7 @@ call. The [provider guide](https://github.com/zackbart/connecta/blob/main/src/pr
 value-read conventions.
 
 A maintained provider is one `defineProvider()` call (`src/provider.ts`): a
-name, title, kind (`"mcp"`, `"api"`, or `"composed"`), a maintained skill, an
+name, title, kind (`"mcp"`, `"api"`, `"composed"`, or `"dual"`), a maintained skill, an
 optional reviewed classification, a closed `options` shape declared with
 `optionsOf<O>()`, and a synchronous `create`. The root exports the option-shape
 combinators and `PROVIDER_COMMON` so provider authors use the same validation
@@ -728,6 +728,23 @@ live in their own folders. The eight hosted implementations, including the
 MCP branches of Notion, Vercel, and Cloudflare, use reviewed presets over
 `remoteMcp({ classify })`. The eleven API-only factories retain an internal
 adapter to the same definition and description-stamping path. GitHub composes hosted tools with a scope-enforced REST complement.
+A `"dual"` provider lets `auth` select the implementation
+([decision 0005](https://github.com/zackbart/connecta/blob/main/decisions/0005-auth-selects-implementation.md)):
+`variants(["auth", "type"], …)` closes each case's options, and
+`byAuth()` in `src/providers/_shared/rest/dispatch.ts` sends OAuth to
+`hostedOAuth()` (`remoteMcp()`, OAuth only, the reviewed classification) and a
+key to Connecta's REST connector. Stripe is dual; `auth` is required.
+The REST connector (`src/providers/_shared/rest/`) serves
+`<vendor>_api_search`, `_api_details`, `_api_read`, and `_api_write` over an
+`OperationIndex` that `npm run providers:spec` compiles offline from the
+provider's pinned `openapi.source.json` into `openapi.generated.ts`.
+Each call is matched to an operation and checked against its parameters before
+transport; `_api_read` admits GET and the vendor's reviewed read-only POSTs in
+its handler, since classification is per tool name. Vendors configure only a
+transport, failure mapper, scope, framing, cursor extraction, refusal table,
+and idempotency header (`test/rest-connector.test.ts`).
+`check:providers-generated` checks each index header against its source record
+offline; `providers:check` reports a pin that differs from the live document.
 Notion, Vercel and Cloudflare default to hosted MCP and select explicit REST
 complements with `surface: "api"`. Configure both under distinct connector ids
 with independent credentials when both are needed. Notion preserves its

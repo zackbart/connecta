@@ -17,10 +17,12 @@ import type {
 
 /**
  * How a provider reaches its vendor: the vendor's hosted MCP server, an
- * `api()` connector over the vendor's HTTP API, or one connector composing
- * both with an explicit operation ownership map.
+ * `api()` connector over the vendor's HTTP API, one connector composing both
+ * with an explicit operation ownership map, or `"dual"`: the configured
+ * `auth.type` selects the implementation, OAuth reaching the hosted MCP server
+ * and a key reaching Connecta's REST connector.
  */
-export type ProviderKind = "mcp" | "api" | "composed";
+export type ProviderKind = "mcp" | "api" | "composed" | "dual";
 
 /** Options every provider accepts, validated before `create` runs. */
 export interface ProviderOptions {
@@ -119,8 +121,8 @@ export interface ProviderDefinition<O extends ProviderOptions> {
   /** Closed factory options, declared with `optionsOf<O>()` for key parity. */
   options: Field<unknown, unknown>;
   /**
-   * Reviewed classification of the vendor's hosted MCP catalog. Hosted and
-   * composed providers pass it to `remoteMcp({ classify })` through
+   * Reviewed classification of the vendor's hosted MCP catalog. Hosted,
+   * composed, and dual providers pass it to `remoteMcp({ classify })` through
    * `ProviderContext.classify`, so the verdicts that classify live tools and
    * the record a drift check reads cannot disagree. `api()` providers annotate
    * each tool they author and must omit it.
@@ -141,7 +143,7 @@ export interface ProviderFactory<O extends ProviderOptions> {
 }
 
 const PROVIDER_NAME = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
-const KINDS: ReadonlySet<string> = new Set(["mcp", "api", "composed"]);
+const KINDS: ReadonlySet<string> = new Set(["mcp", "api", "composed", "dual"]);
 
 function nonEmpty(value: unknown): value is string {
   return typeof value === "string" && value.trim() !== "";
@@ -163,7 +165,7 @@ export function defineProvider<O extends ProviderOptions>(definition: ProviderDe
     throw new Error(`${label} requires a non-empty title.`);
   }
   if (!KINDS.has(definition.kind)) {
-    throw new Error(`${label} kind must be "mcp", "api", or "composed".`);
+    throw new Error(`${label} kind must be "mcp", "api", "composed", or "dual".`);
   }
   if (!nonEmpty(definition.skill?.content) || !nonEmpty(definition.skill.instructionsHeading)) {
     throw new Error(`${label} skill requires non-empty content and instructionsHeading.`);
@@ -322,8 +324,7 @@ function providerConstructionError(provider: string, id: string, error: unknown)
     .replace(/^requires\s+/, "")
     .replace(/^must be /, "")
     .replace(/^(.+) must be /, "$1 to be ")
-    .replace(/^declares /, "a consistent declaration of ")
-    .replace(/^with headers or credential auth requires /, "headers or credential auth to declare ");
+    .replace(/^declares /, "a consistent declaration of ");
   error.message = `${at} requires ${detail}`;
   return error;
 }

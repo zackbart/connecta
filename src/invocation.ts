@@ -28,6 +28,8 @@ import { splitAddress, type RegistryView } from "./registry.js";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { validateCatalogToolInput } from "./validate.js";
 import { sentSecretsFor, sentSecretsForRequest, trackCredentialReads, type SentSecrets } from "./sent-secrets.js";
+import { recoveryFor } from "./call-recovery.js";
+import { classifyWriteOutcome } from "./write-outcome.js";
 import {
   classificationDigest,
   recordAuthFailure,
@@ -326,6 +328,9 @@ export class InvocationService {
       let attempts = 0;
       let resultBytes: number | undefined;
       let dispatchedToConnector = false;
+      // The context a dispatched call ran with, read for recovery facts the
+      // connector recorded before an interrupting deadline (call-recovery.ts).
+      let dispatchContext: object | undefined;
       let preInvocationAuthFailure = false;
       let answered = false;
       const sentSecrets = sentSecretsForRequest(this.catalog.requestScope);
@@ -378,6 +383,10 @@ export class InvocationService {
       };
       const enrich = (error: CallErrorDetails, target: typeof activityTarget): CallErrorDetails => {
         if (!target) return error;
+        const recovery = recoveryFor(dispatchContext);
+        const recoveryRetry = recovery?.["idempotencyKey"]
+          ? " A deliberate retry with uncertainCall.recovery.idempotencyKey and the exact original arguments cannot repeat the write while the vendor retains that key (Stripe keeps v1 keys at least 24 hours); after that, look the object up before retrying."
+          : "";
         if (isTimeoutFailure(error) && dispatchedToConnector && resolved?.definition.classification === "write") {
           const echoed = argumentEcho;
           return {
@@ -391,14 +400,39 @@ export class InvocationService {
               address: `${target.connector.id}.${target.toolName}`,
               ...echoed,
               ...("args" in echoed ? {} : { argsOmitted: true as const }),
+              ...(recovery ? { recovery } : {}),
             },
             retry:
               "Do not retry automatically. Check whether the write took effect first." +
+              recoveryRetry +
               (echoed.argsRedacted
                 ? " Sensitive fields are omitted; use the original arguments if reconciliation requires another call."
                 : "args" in echoed
                   ? ""
                   : " The arguments could not be echoed safely; use the exact arguments you sent."),
+          };
+        }
+        // Any other dispatched write whose outcome is unknown (a lost response
+        // body, a 5xx, an unreadable reply) keeps the facts its connector
+        // recorded before dispatch, here and through program write accounting.
+        if (
+          recovery &&
+          !error.uncertainCall &&
+          dispatchedToConnector &&
+          resolved?.definition.classification === "write" &&
+          classifyWriteOutcome({ ok: false, dispatched: true, answered, error }) === "unknown"
+        ) {
+          const echoed = argumentEcho;
+          error = {
+            ...error,
+            uncertainCall: {
+              address: `${target.connector.id}.${target.toolName}`,
+              ...echoed,
+              ...("args" in echoed ? {} : { argsOmitted: true as const }),
+              recovery,
+            },
+            retry:
+              error.retry ?? `Do not retry automatically. Check whether the write took effect first.${recoveryRetry}`,
           };
         }
         if (error.code === "auth_required" && target.connector.startAuth) {
@@ -662,6 +696,7 @@ export class InvocationService {
             );
             trackCredentialReads(connectorContext);
             sentSecrets.include(sentSecretsFor(connectorContext));
+            dispatchContext = connectorContext;
             try {
               if (target.connector.credential) {
                 if (!connectorContext.credential) {
