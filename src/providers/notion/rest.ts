@@ -18,7 +18,9 @@ import {
   type RestReadPost,
   type RestVendor,
 } from "../_shared/rest/tools.js";
+import { valueSafety } from "../_shared/rest/value-safety.js";
 import { openapi } from "./openapi.generated.js";
+import { NOTION_VALUE_SAFETY } from "./value-safety.js";
 
 /** Notion's REST origin. Every request this connector sends goes to exactly this host. */
 export const NOTION_API_BASE_URL = "https://api.notion.com";
@@ -88,19 +90,6 @@ function invalid(message: string): never {
 }
 
 /**
- * Reviewed refusals. Notion's OAuth endpoints exchange, introspect, and
- * revoke tokens with a public integration's client id and secret: a
- * connector holding one internal integration token has no business minting
- * or revoking credentials, and Notion would reject its bearer token anyway.
- */
-function refuse(call: RestCall): string | undefined {
-  if (call.op.path.startsWith("/v1/oauth/")) {
-    return "Notion's OAuth token endpoints are not reachable through Connecta: they mint and revoke credentials with a public integration's client secret, which this connector never holds.";
-  }
-  return undefined;
-}
-
-/**
  * Map to what the caller should do next, not to what Notion's `code` says
  * happened. The two that are easy to mistranslate:
  *
@@ -112,11 +101,14 @@ function refuse(call: RestCall): string | undefined {
  *   will not say which — so not `not_found`, which exists to assert absence
  *   (H11). The message names both possibilities.
  */
-function notionFailure(status: number, headers: Headers, payload: unknown): ConnectorCallError {
+function notionFailure(status: number, headers: Headers, payload: unknown, withheld = false): ConnectorCallError {
   const body = isRecord(payload) ? payload : undefined;
   const code = typeof body?.["code"] === "string" ? body["code"] : undefined;
-  const detail =
-    typeof body?.["message"] === "string" && body["message"].trim()
+  // For an operation the value-safety review withholds, Notion's message is
+  // replaced; its code still routes.
+  const detail = withheld
+    ? `Notion answered HTTP ${status}; its message is withheld because this operation handles credentials.`
+    : typeof body?.["message"] === "string" && body["message"].trim()
       ? body["message"].trim()
       : `Notion returned HTTP ${status}.`;
   const retryAfter = retryAfterMs(headers);
@@ -224,6 +216,9 @@ function notionIndex(): OperationIndex {
   return index;
 }
 
+/** The reviewed value-safety table over the pinned index. */
+const SAFETY = valueSafety(NOTION_VALUE_SAFETY, () => notionIndex());
+
 function notionTransport(): GuardedTransport {
   transport ??= restTransport({
     provider: "Notion",
@@ -256,9 +251,10 @@ const VENDOR: RestVendor = {
       ? notionTransport()
       : `This operation is served from ${server}, which this connector does not reach.`;
   },
-  failure: notionFailure,
+  failure: (status, headers, payload, call) =>
+    notionFailure(status, headers, payload, call ? SAFETY.withholdsErrors(call.op) : false),
   readPosts: READ_POSTS,
-  refuse,
+  valueSafety: SAFETY,
   page,
   upload:
     'Create the upload with POST /v1/file_uploads and mode "external_url" instead; this connector sends no multipart bodies.',

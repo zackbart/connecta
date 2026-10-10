@@ -10,6 +10,8 @@
     "operationIds": false,
     "pathParams": "typed",
     "opBudget": 6000,
-    "responseSecrets": 2
+    "valueSafety": {
+      "dataRoot": "result"
+    }
   }
 }

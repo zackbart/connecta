@@ -672,6 +672,17 @@ describe("stripe() over an API key", () => {
         { method: "POST", path: "/v1/issuing/cards/ic_1", body: { expand: ["number"] } },
         "Issuing card numbers and CVCs",
       ],
+      // An authorization or transaction embeds its card, so the same expansion is refused there.
+      [
+        "stripe_api_read",
+        { path: "/v1/issuing/authorizations/iauth_1", query: { expand: ["card.number"] } },
+        "Issuing card numbers and CVCs",
+      ],
+      [
+        "stripe_api_read",
+        { path: "/v1/issuing/transactions", query: { expand: ["data.card.cvc"] } },
+        "Issuing card numbers and CVCs",
+      ],
     ];
     for (const [tool, args, message] of cases) {
       const error = await refusal(connector.callTool(tool, args, keyed()));
@@ -685,6 +696,227 @@ describe("stripe() over an API key", () => {
       keyed(),
     );
     expect(sent).toHaveLength(1);
+  });
+
+  it("INV-5: redacts client and signing secrets, Apps payloads, and Wi-Fi passwords; keeps hosted Checkout URLs whole", async () => {
+    const connector = stripe("billing", SANDBOX);
+    const read = async (path: string, body: unknown, query?: Record<string, unknown>) => {
+      respond = () => Response.json(body);
+      return ((await connector.callTool("stripe_api_read", { path, ...(query ? { query } : {}) }, keyed())) as any)
+        .data;
+    };
+    const intent = await read("/v1/payment_intents/pi_1", {
+      id: "pi_1",
+      object: "payment_intent",
+      client_secret: "pi_1_secret_ONE",
+      latest_charge: {
+        payment_method_details: { card: { authorization_code: "123456", network_token: { used: false } } },
+      },
+    });
+    expect(intent.client_secret).toBe("[redacted]");
+    expect(intent.latest_charge.payment_method_details.card).toEqual({
+      authorization_code: "123456",
+      network_token: { used: false },
+    });
+    // An expansion is answered under the operation that expanded it; the field review still applies.
+    const invoice = await read("/v1/invoices/in_1", {
+      id: "in_1",
+      confirmation_secret: { client_secret: "pi_2_secret_TWO", type: "payment_intent" },
+      payment_intent: { id: "pi_2", client_secret: "pi_2_secret_TWO" },
+    });
+    expect(JSON.stringify(invoice)).not.toContain("TWO");
+    const hook = await read("/v1/webhook_endpoints/we_1", {
+      id: "we_1",
+      secret: "whsec_THREE",
+      url: "https://hooks.example.com/stripe/THREE-path",
+    });
+    expect(hook).toEqual({ id: "we_1", secret: "[redacted]", url: "https://hooks.example.com/[redacted]" });
+    const checkoutUrl = "https://checkout.stripe.com/c/pay/cs_test_1#fidkdWxOYHwnPyd1blpxYHZxWjA0token";
+    // A guest payment session's page comes back whole; its fragment is state the page needs.
+    const session = await read("/v1/checkout/sessions/cs_1", {
+      object: "checkout.session",
+      id: "cs_1",
+      mode: "payment",
+      customer: null,
+      customer_email: "payer@example.com",
+      url: checkoutUrl,
+      client_secret: "cs_1_secret_FOUR",
+    });
+    expect(session).toEqual({
+      object: "checkout.session",
+      id: "cs_1",
+      mode: "payment",
+      customer: null,
+      customer_email: "payer@example.com",
+      url: checkoutUrl,
+      client_secret: "[redacted]",
+    });
+    const secret = await read(
+      "/v1/apps/secrets/find",
+      { id: "appsecret_1", name: "k", payload: "FIVE", scope: { type: "account" } },
+      { name: "k", scope: { type: "account" } },
+    );
+    expect(secret).toEqual({ id: "appsecret_1", name: "k", payload: "[redacted]", scope: { type: "account" } });
+    const config = await read("/v1/terminal/configurations/tmc_1", {
+      id: "tmc_1",
+      wifi: { type: "personal_psk", personal_psk: { ssid: "store", password: "SIX" } },
+    });
+    expect(config.wifi.personal_psk).toEqual({ ssid: "store", password: "[redacted]" });
+    const forwarded = await read("/v1/forwarding/requests/fwdreq_1", {
+      id: "fwdreq_1",
+      request_details: { headers: [{ name: "X-Partner-Auth", value: "SEVEN" }] },
+    });
+    expect(forwarded.request_details.headers).toEqual([{ name: "X-Partner-Auth", value: "[redacted]" }]);
+  });
+
+  it("INV-5: withholds public file links wherever a File is expanded, in events, and through select (review 807-1)", async () => {
+    const connector = stripe("billing", SANDBOX);
+    const bearer = "https://files.stripe.com/links/STORED-BEARER-807";
+    const link = { object: "file_link", id: "link_1", file: "file_1", url: bearer };
+    const file = {
+      object: "file",
+      id: "file_1",
+      purpose: "dispute_evidence",
+      url: "https://files.stripe.com/v1/files/file_1/contents",
+      links: { object: "list", url: "/v1/file_links", has_more: false, data: [link] },
+    };
+    const call = async (path: string, body: unknown, args: Record<string, unknown> = {}) => {
+      respond = () => Response.json(body);
+      return JSON.stringify(await connector.callTool("stripe_api_read", { path, ...args }, keyed()));
+    };
+    const cases: Array<[string, unknown, Record<string, unknown>]> = [
+      ["/v1/file_links/link_1", { ...link, file }, { query: { expand: ["file.links"] } }],
+      [
+        "/v1/file_links/link_1",
+        { ...link, file },
+        { query: { expand: ["file.links"] }, select: ["file.links.data.url"] },
+      ],
+      ["/v1/disputes/dp_1", { object: "dispute", id: "dp_1", evidence: { customer_signature: file } }, {}],
+      ["/v1/files", { object: "list", data: [file], has_more: false }, {}],
+      [
+        "/v1/events/evt_1",
+        {
+          object: "event",
+          type: "file_link.updated",
+          data: { object: link, previous_attributes: { url: "https://files.stripe.com/links/STORED-BEARER-807-old" } },
+        },
+        {},
+      ],
+    ];
+    for (const [path, body, args] of cases) {
+      const text = await call(path, body, args);
+      expect(text, path).not.toContain("STORED-BEARER-807");
+    }
+    // The File's own URL needs the secret key, so it stays.
+    expect(await call("/v1/files/file_1", file)).toContain("https://files.stripe.com/v1/files/file_1/contents");
+  });
+
+  it("INV-5: returns a Checkout page whole only for a provably guest payment session, wherever it appears (review 807-2, 807-r2)", async () => {
+    const connector = stripe("billing", SANDBOX);
+    const page = "https://checkout.stripe.com/c/pay/cs_test_1#fidkdWxOYHwnPydjdXN0b21lcg";
+    const origin = "https://checkout.stripe.com/[redacted]";
+    const guest = { object: "checkout.session", id: "cs_1", mode: "payment", customer: null, url: page };
+    // Deny by default: any binding field, or a mode that saves a payment method, withholds the page.
+    const bound: Array<Record<string, unknown>> = [
+      { customer: "cus_1" },
+      { customer: { object: "customer", id: "cus_1" } },
+      { customer_account: "acct_existing" },
+      { mode: "subscription", customer_account: "acct_existing" },
+      { customer_creation: "always" },
+      { saved_payment_method_options: { payment_method_remove: "enabled" } },
+      { mode: "setup" },
+      { mode: "subscription" },
+    ];
+    const create = async (session: Record<string, unknown>) => {
+      respond = () => Response.json(session);
+      return (await connector.callTool(
+        "stripe_api_write",
+        {
+          method: "POST",
+          path: "/v1/checkout/sessions",
+          body: {
+            mode: "payment",
+            line_items: [{ price: "price_1", quantity: 1 }],
+            success_url: "https://example.com/ok",
+          },
+        },
+        keyed(),
+      )) as any;
+    };
+    for (const fields of bound) {
+      expect((await create({ ...guest, ...fields })).data.url, JSON.stringify(fields)).toBe(origin);
+    }
+    expect((await create(guest)).data.url).toBe(page);
+    // customer_account in every placement: retrieve with select, a list, an expansion, and an event.
+    const account = { ...guest, customer_account: "acct_existing" };
+    const read = async (path: string, body: unknown, args: Record<string, unknown> = {}) => {
+      respond = () => Response.json(body);
+      return JSON.stringify(await connector.callTool("stripe_api_read", { path, ...args }, keyed()));
+    };
+    const placements: Array<[string, unknown, Record<string, unknown>]> = [
+      ["/v1/checkout/sessions/cs_1", account, { select: ["url"] }],
+      ["/v1/checkout/sessions", { object: "list", has_more: false, data: [account] }, {}],
+      [
+        "/v1/payment_intents/pi_1",
+        { object: "payment_intent", id: "pi_1", client_secret: "pi_1_secret_X", checkout: account },
+        {},
+      ],
+      [
+        "/v1/events/evt_1",
+        {
+          object: "event",
+          type: "checkout.session.completed",
+          data: { object: account, previous_attributes: { url: page } },
+        },
+        {},
+      ],
+    ];
+    for (const [path, body, args] of placements) {
+      const text = await read(path, body, args);
+      expect(text, path).not.toContain("#fid");
+      expect(text, path).not.toContain("pi_1_secret_X");
+    }
+    // A list keeps a guest session's page beside a bound one's.
+    const list = JSON.parse(
+      await read("/v1/checkout/sessions", { object: "list", has_more: false, data: [account, guest] }),
+    );
+    expect(list.data.data.map((session: { url: string }) => session.url)).toEqual([origin, page]);
+    // A payment link is public by design and bound to no customer.
+    respond = () => Response.json({ object: "payment_link", id: "plink_1", url: "https://buy.stripe.com/test_abc" });
+    expect(
+      ((await connector.callTool("stripe_api_read", { path: "/v1/payment_links/plink_1" }, keyed())) as any).data.url,
+    ).toBe("https://buy.stripe.com/test_abc");
+  });
+
+  it("INV-3: refuses v2 account links and Terminal onboarding links before sending", async () => {
+    const connector = stripe("billing", SANDBOX);
+    for (const path of ["/v2/core/account_links", "/v1/terminal/onboarding_links"]) {
+      const error = await refusal(connector.callTool("stripe_api_write", { method: "POST", path, body: {} }, keyed()));
+      expect(error.message).toContain(`Connecta refuses POST ${path}.`);
+    }
+    expect(sent).toEqual([]);
+  });
+
+  it("INV-5: withholds Stripe's message for credential families and keeps it for payment objects", async () => {
+    const connector = stripe("billing", SANDBOX);
+    respond = () =>
+      Response.json(
+        { error: { type: "invalid_request_error", code: "resource_missing", message: "No such webhook: whsec_ECHO" } },
+        { status: 404 },
+      );
+    const hook = await refusal(connector.callTool("stripe_api_read", { path: "/v1/webhook_endpoints/we_1" }, keyed()));
+    expect(hook.code).toBe("not_found");
+    expect(hook.message).toContain("invalid_request_error resource_missing");
+    expect(hook.message).not.toContain("whsec_ECHO");
+    respond = () =>
+      Response.json(
+        { error: { type: "card_error", code: "card_declined", message: "Your card was declined." } },
+        { status: 402 },
+      );
+    const declined = await refusal(
+      connector.callTool("stripe_api_read", { path: "/v1/payment_intents/pi_1" }, keyed()),
+    );
+    expect(declined.message).toContain("Your card was declined.");
   });
 
   it("reads quote PDFs from files.stripe.com and refuses multipart uploads and the meter event stream", async () => {

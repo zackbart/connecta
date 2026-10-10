@@ -1,6 +1,9 @@
 {
-  "format": 3,
+  "format": 5,
   "digest": "sha256:32399b3ed273548c8b14dd4715ff26c7c295399fa0f08bf5c81aee89460cfb90",
+  "options": {
+    "operationWords": "global-config"
+  },
   "candidates": {
     "GET /ai-gateway/virtual-model-configs": {
       "fields": [
@@ -43,7 +46,9 @@
         "apiKey.leakedUrl",
         "apiKey.metadata",
         "apiKey.name",
+        "apiKey.partialKey",
         "apiKey.purpose",
+        "apiKey.quota",
         "apiKeyString"
       ],
       "named": true
@@ -57,7 +62,11 @@
       "named": true
     },
     "POST /storage/stores/blob": {
-      "fields": ["store.kind"],
+      "fields": ["store.kind", "store.projectsMetadata[].environmentVariables"],
+      "named": false
+    },
+    "GET /storage/stores/{id}": {
+      "fields": ["store.projectsMetadata[].environmentVariables"],
       "named": false
     },
     "GET /v1/ai-gateway/routers": {
@@ -141,11 +150,16 @@
       "named": true
     },
     "GET /v1/drains": {
-      "fields": ["drains[].delivery.endpoint", "drains[].delivery.secret", "drains[].sampling[].env"],
+      "fields": [
+        "drains[].delivery.endpoint",
+        "drains[].delivery.headers",
+        "drains[].delivery.secret",
+        "drains[].sampling[].env"
+      ],
       "named": true
     },
     "POST /v1/drains": {
-      "fields": ["delivery.endpoint", "delivery.secret", "sampling[].env"],
+      "fields": ["delivery.endpoint", "delivery.headers", "delivery.secret", "sampling[].env"],
       "named": true
     },
     "POST /v1/drains/test": {
@@ -153,11 +167,11 @@
       "named": true
     },
     "GET /v1/drains/{id}": {
-      "fields": ["delivery.endpoint", "delivery.secret", "sampling[].env"],
+      "fields": ["delivery.endpoint", "delivery.headers", "delivery.secret", "sampling[].env"],
       "named": true
     },
     "PATCH /v1/drains/{id}": {
-      "fields": ["delivery.endpoint", "delivery.secret", "sampling[].env"],
+      "fields": ["delivery.endpoint", "delivery.headers", "delivery.secret", "sampling[].env"],
       "named": true
     },
     "DELETE /v1/drains/{id}": {
@@ -289,7 +303,11 @@
       "named": true
     },
     "GET /v1/integrations/configuration/{id}/products": {
-      "fields": ["products[].protocols.authentication.appUrlRegistrationSupport"],
+      "fields": [
+        "products[].protocols.authentication.appUrlRegistrationSupport",
+        "products[].protocols.logDrain.headers",
+        "products[].protocols.traceDrain.headers"
+      ],
       "named": false
     },
     "DELETE /v1/integrations/log-drains/{id}": {
@@ -301,19 +319,19 @@
       "named": true
     },
     "GET /v1/kms/issuers": {
-      "fields": ["issuers[].policies[].environments"],
+      "fields": ["issuers[].policies[].environments", "issuers[].signingKeys"],
       "named": false
     },
     "POST /v1/kms/issuers": {
-      "fields": ["policies[].environments"],
+      "fields": ["policies[].environments", "signingKeys"],
       "named": false
     },
     "GET /v1/kms/issuers/{issuerId}": {
-      "fields": ["policies[].environments"],
+      "fields": ["policies[].environments", "signingKeys"],
       "named": false
     },
     "PATCH /v1/kms/issuers/{issuerId}": {
-      "fields": ["policies[].environments"],
+      "fields": ["policies[].environments", "signingKeys"],
       "named": false
     },
     "POST /v1/kms/issuers/{issuerId}/keys": {
@@ -325,7 +343,7 @@
       "named": true
     },
     "POST /v1/kms/issuers/{issuerId}/keys/{keyId}/revoke": {
-      "fields": ["policies[].environments"],
+      "fields": ["policies[].environments", "signingKeys"],
       "named": true
     },
     "POST /v1/kms/issuers/{issuerId}/policies": {
@@ -345,7 +363,12 @@
       "named": true
     },
     "GET /v1/log-drains": {
-      "fields": ["drains[].delivery.endpoint", "drains[].delivery.secret", "drains[].sampling[].env"],
+      "fields": [
+        "drains[].delivery.endpoint",
+        "drains[].delivery.headers",
+        "drains[].delivery.secret",
+        "drains[].sampling[].env"
+      ],
       "named": true
     },
     "POST /v1/log-drains": {
@@ -391,6 +414,7 @@
         "projects[].permissions.passwordProtectionInvoiceItem",
         "projects[].permissions.postgresStoreTokenSet",
         "projects[].permissions.productionAliasProtectionBypass",
+        "projects[].permissions.projectEnvVars",
         "projects[].permissions.projectOIDCToken",
         "projects[].permissions.projectProtectionBypass",
         "projects[].permissions.redisStoreTokenSet",
@@ -402,6 +426,9 @@
         "projects[].permissions.token",
         "projects[].protectionBypass",
         "projects[].security.firewallBypassIps",
+        "projects[].security.log_headers",
+        "projects[].security.rulesets{}.logHeaders",
+        "projects[].security.rulesets{}.rateLimit.keys",
         "projects[].tracing.samplingRules[].env",
         "projects[].usageStatus.bypassThrottleUntil"
       ],
@@ -442,6 +469,7 @@
         "permissions.passwordProtectionInvoiceItem",
         "permissions.postgresStoreTokenSet",
         "permissions.productionAliasProtectionBypass",
+        "permissions.projectEnvVars",
         "permissions.projectOIDCToken",
         "permissions.projectProtectionBypass",
         "permissions.redisStoreTokenSet",
@@ -453,6 +481,9 @@
         "permissions.token",
         "protectionBypass",
         "security.firewallBypassIps",
+        "security.log_headers",
+        "security.rulesets{}.logHeaders",
+        "security.rulesets{}.rateLimit.keys",
         "tracing.samplingRules[].env",
         "usageStatus.bypassThrottleUntil"
       ],
@@ -489,6 +520,7 @@
         "permissions.passwordProtectionInvoiceItem",
         "permissions.postgresStoreTokenSet",
         "permissions.productionAliasProtectionBypass",
+        "permissions.projectEnvVars",
         "permissions.projectOIDCToken",
         "permissions.projectProtectionBypass",
         "permissions.redisStoreTokenSet",
@@ -500,6 +532,9 @@
         "permissions.token",
         "protectionBypass",
         "security.firewallBypassIps",
+        "security.log_headers",
+        "security.rulesets{}.logHeaders",
+        "security.rulesets{}.rateLimit.keys",
         "tracing.samplingRules[].env",
         "usageStatus.bypassThrottleUntil"
       ],
@@ -522,11 +557,11 @@
       "named": true
     },
     "GET /v1/projects/{projectIdOrName}/feature-flags/sdk-keys": {
-      "fields": [],
+      "fields": ["data[].partialKeyValue"],
       "named": true
     },
     "PUT /v1/projects/{projectIdOrName}/feature-flags/sdk-keys": {
-      "fields": ["keyValue", "tokenValue"],
+      "fields": ["keyValue", "partialKeyValue", "tokenValue"],
       "named": true
     },
     "DELETE /v1/projects/{projectIdOrName}/feature-flags/sdk-keys/{hashKey}": {
@@ -564,6 +599,7 @@
         "permissions.passwordProtectionInvoiceItem",
         "permissions.postgresStoreTokenSet",
         "permissions.productionAliasProtectionBypass",
+        "permissions.projectEnvVars",
         "permissions.projectOIDCToken",
         "permissions.projectProtectionBypass",
         "permissions.redisStoreTokenSet",
@@ -575,6 +611,9 @@
         "permissions.token",
         "protectionBypass",
         "security.firewallBypassIps",
+        "security.log_headers",
+        "security.rulesets{}.logHeaders",
+        "security.rulesets{}.rateLimit.keys",
         "tracing.samplingRules[].env",
         "usageStatus.bypassThrottleUntil"
       ],
@@ -584,6 +623,7 @@
       "fields": [
         "routes[].route.env",
         "routes[].route.has[].value",
+        "routes[].route.headers",
         "routes[].route.locale.cookie",
         "routes[].route.missing[].value",
         "routes[].route.transforms[].env"
@@ -594,6 +634,7 @@
       "fields": [
         "route.route.env",
         "route.route.has[].value",
+        "route.route.headers",
         "route.route.locale.cookie",
         "route.route.missing[].value",
         "route.route.transforms[].env"
@@ -601,13 +642,14 @@
       "named": false
     },
     "POST /v1/projects/{projectId}/routes/generate": {
-      "fields": ["route.actions[].headers[].value", "route.conditions[].value"],
+      "fields": ["route.actions[].headers", "route.actions[].headers[].value", "route.conditions[].value"],
       "named": false
     },
     "PATCH /v1/projects/{projectId}/routes/{routeId}": {
       "fields": [
         "route.route.env",
         "route.route.has[].value",
+        "route.route.headers",
         "route.route.locale.cookie",
         "route.route.missing[].value",
         "route.route.transforms[].env"
@@ -641,47 +683,94 @@
     "GET /v1/security/firewall/config": {
       "fields": [
         "active.conditions[].conditionGroup[].conditions[].value",
+        "active.logHeaders",
+        "active.rules[].action.mitigate.logHeaders",
+        "active.rules[].action.mitigate.rateLimit.keys",
         "active.rules[].conditionGroup[].conditions[].value",
+        "active.rulesets[].action.mitigate.logHeaders",
+        "active.rulesets[].action.mitigate.rateLimit.keys",
         "active.rulesets[].conditionGroup[].conditions[].value",
+        "active.rulesets{}.logHeaders",
+        "active.rulesets{}.rateLimit.keys",
         "draft.conditions[].conditionGroup[].conditions[].value",
+        "draft.logHeaders",
+        "draft.rules[].action.mitigate.logHeaders",
+        "draft.rules[].action.mitigate.rateLimit.keys",
         "draft.rules[].conditionGroup[].conditions[].value",
+        "draft.rulesets[].action.mitigate.logHeaders",
+        "draft.rulesets[].action.mitigate.rateLimit.keys",
         "draft.rulesets[].conditionGroup[].conditions[].value",
+        "draft.rulesets{}.logHeaders",
+        "draft.rulesets{}.rateLimit.keys",
         "versions[].conditions[].conditionGroup[].conditions[].value",
+        "versions[].logHeaders",
+        "versions[].rules[].action.mitigate.logHeaders",
+        "versions[].rules[].action.mitigate.rateLimit.keys",
         "versions[].rules[].conditionGroup[].conditions[].value",
-        "versions[].rulesets[].conditionGroup[].conditions[].value"
+        "versions[].rulesets[].action.mitigate.logHeaders",
+        "versions[].rulesets[].action.mitigate.rateLimit.keys",
+        "versions[].rulesets[].conditionGroup[].conditions[].value",
+        "versions[].rulesets{}.logHeaders",
+        "versions[].rulesets{}.rateLimit.keys"
       ],
       "named": false
     },
     "PUT /v1/security/firewall/config": {
       "fields": [
         "active.conditions[].conditionGroup[].conditions[].value",
+        "active.logHeaders",
+        "active.rules[].action.mitigate.logHeaders",
+        "active.rules[].action.mitigate.rateLimit.keys",
         "active.rules[].conditionGroup[].conditions[].value",
-        "active.rulesets[].conditionGroup[].conditions[].value"
+        "active.rulesets[].action.mitigate.logHeaders",
+        "active.rulesets[].action.mitigate.rateLimit.keys",
+        "active.rulesets[].conditionGroup[].conditions[].value",
+        "active.rulesets{}.logHeaders",
+        "active.rulesets{}.rateLimit.keys"
       ],
       "named": false
     },
     "POST /v1/security/firewall/config/generate-rule": {
-      "fields": ["rule.conditionGroup[].conditions[].value"],
+      "fields": ["rule.action.mitigate.rateLimit.keys", "rule.conditionGroup[].conditions[].value"],
       "named": false
     },
     "GET /v1/security/firewall/config/{configVersion}": {
       "fields": [
         "conditions[].conditionGroup[].conditions[].value",
+        "logHeaders",
+        "rules[].action.mitigate.logHeaders",
+        "rules[].action.mitigate.rateLimit.keys",
         "rules[].conditionGroup[].conditions[].value",
-        "rulesets[].conditionGroup[].conditions[].value"
+        "rulesets[].action.mitigate.logHeaders",
+        "rulesets[].action.mitigate.rateLimit.keys",
+        "rulesets[].conditionGroup[].conditions[].value",
+        "rulesets{}.logHeaders",
+        "rulesets{}.rateLimit.keys"
       ],
       "named": false
     },
     "POST /v1/security/firewall/config/{configVersion}/activate": {
       "fields": [
         "conditions[].conditionGroup[].conditions[].value",
+        "logHeaders",
+        "rules[].action.mitigate.logHeaders",
+        "rules[].action.mitigate.rateLimit.keys",
         "rules[].conditionGroup[].conditions[].value",
-        "rulesets[].conditionGroup[].conditions[].value"
+        "rulesets[].action.mitigate.logHeaders",
+        "rulesets[].action.mitigate.rateLimit.keys",
+        "rulesets[].conditionGroup[].conditions[].value",
+        "rulesets{}.logHeaders",
+        "rulesets{}.rateLimit.keys"
       ],
       "named": false
     },
     "POST /v1/storage/stores/integration/direct": {
-      "fields": ["store.secretRotationRequestedBy", "store.secretRotationRequestedReason", "store.secrets"],
+      "fields": [
+        "store.projectsMetadata[].environmentVariables",
+        "store.secretRotationRequestedBy",
+        "store.secretRotationRequestedReason",
+        "store.secrets"
+      ],
       "named": false
     },
     "DELETE /v1/teams/{teamId}/invites/{inviteId}": {
@@ -722,6 +811,11 @@
         "[].security.firewallBypassIps",
         "[].security.firewallRoutes[].has[].value",
         "[].security.firewallRoutes[].missing[].value",
+        "[].security.firewallRoutes[].mitigate.erl.keys",
+        "[].security.firewallRoutes[].mitigate.log_headers",
+        "[].security.log_headers",
+        "[].security.rulesets{}.logHeaders",
+        "[].security.rulesets{}.rateLimit.keys",
         "pagination.next",
         "projects[].dismissedToasts[].value",
         "projects[].env",
@@ -752,6 +846,7 @@
         "projects[].permissions.passwordProtectionInvoiceItem",
         "projects[].permissions.postgresStoreTokenSet",
         "projects[].permissions.productionAliasProtectionBypass",
+        "projects[].permissions.projectEnvVars",
         "projects[].permissions.projectOIDCToken",
         "projects[].permissions.projectProtectionBypass",
         "projects[].permissions.redisStoreTokenSet",
@@ -765,6 +860,11 @@
         "projects[].security.firewallBypassIps",
         "projects[].security.firewallRoutes[].has[].value",
         "projects[].security.firewallRoutes[].missing[].value",
+        "projects[].security.firewallRoutes[].mitigate.erl.keys",
+        "projects[].security.firewallRoutes[].mitigate.log_headers",
+        "projects[].security.log_headers",
+        "projects[].security.rulesets{}.logHeaders",
+        "projects[].security.rulesets{}.rateLimit.keys",
         "projects[].tracing.samplingRules[].env",
         "projects[].usageStatus.bypassThrottleUntil"
       ],
@@ -819,6 +919,7 @@
         "permissions.passwordProtectionInvoiceItem",
         "permissions.postgresStoreTokenSet",
         "permissions.productionAliasProtectionBypass",
+        "permissions.projectEnvVars",
         "permissions.projectOIDCToken",
         "permissions.projectProtectionBypass",
         "permissions.redisStoreTokenSet",
@@ -830,6 +931,9 @@
         "permissions.token",
         "protectionBypass",
         "security.firewallBypassIps",
+        "security.log_headers",
+        "security.rulesets{}.logHeaders",
+        "security.rulesets{}.rateLimit.keys",
         "tracing.samplingRules[].env",
         "usageStatus.bypassThrottleUntil"
       ],
@@ -841,12 +945,17 @@
         "env",
         "routes[].env",
         "routes[].has[].value",
+        "routes[].headers",
         "routes[].locale.cookie",
         "routes[].missing[].value",
         "routes[].transforms[].env",
+        "services",
+        "services[].bindings",
         "services[].bindings[].env",
         "services[].env",
+        "services[].headers",
         "services[].headers[].has[].value",
+        "services[].headers[].headers",
         "services[].headers[].headers[].value",
         "services[].headers[].missing[].value",
         "services[].redirects[].env",
@@ -858,6 +967,7 @@
         "services[].rewrites[].transforms[].env",
         "services[].routes[].env",
         "services[].routes[].has[].value",
+        "services[].routes[].headers",
         "services[].routes[].locale.cookie",
         "services[].routes[].missing[].value",
         "services[].routes[].transforms[].env"
@@ -870,12 +980,17 @@
         "env",
         "routes[].env",
         "routes[].has[].value",
+        "routes[].headers",
         "routes[].locale.cookie",
         "routes[].missing[].value",
         "routes[].transforms[].env",
+        "services",
+        "services[].bindings",
         "services[].bindings[].env",
         "services[].env",
+        "services[].headers",
         "services[].headers[].has[].value",
+        "services[].headers[].headers",
         "services[].headers[].headers[].value",
         "services[].headers[].missing[].value",
         "services[].redirects[].env",
@@ -887,6 +1002,7 @@
         "services[].rewrites[].transforms[].env",
         "services[].routes[].env",
         "services[].routes[].has[].value",
+        "services[].routes[].headers",
         "services[].routes[].locale.cookie",
         "services[].routes[].missing[].value",
         "services[].routes[].transforms[].env"
@@ -899,12 +1015,17 @@
         "env",
         "routes[].env",
         "routes[].has[].value",
+        "routes[].headers",
         "routes[].locale.cookie",
         "routes[].missing[].value",
         "routes[].transforms[].env",
+        "services",
+        "services[].bindings",
         "services[].bindings[].env",
         "services[].env",
+        "services[].headers",
         "services[].headers[].has[].value",
+        "services[].headers[].headers",
         "services[].headers[].headers[].value",
         "services[].headers[].missing[].value",
         "services[].redirects[].env",
@@ -916,6 +1037,7 @@
         "services[].rewrites[].transforms[].env",
         "services[].routes[].env",
         "services[].routes[].has[].value",
+        "services[].routes[].headers",
         "services[].routes[].locale.cookie",
         "services[].routes[].missing[].value",
         "services[].routes[].transforms[].env"
@@ -965,23 +1087,42 @@
       "named": true
     },
     "GET /v2/integrations/log-drains": {
-      "fields": [],
+      "fields": ["[].headers"],
       "named": true
     },
     "POST /v2/integrations/log-drains": {
-      "fields": [],
+      "fields": ["headers"],
       "named": true
     },
     "GET /v2/teams": {
-      "fields": ["teams[].inviteCode", "teams[].limited", "teams[].saml.enforced"],
+      "fields": [
+        "teams[].disjunctiveProductionSecretPolicy",
+        "teams[].inviteCode",
+        "teams[].limited",
+        "teams[].saml.enforced",
+        "teams[].sensitiveEnvironmentVariablePolicy",
+        "teams[].strictPasswordProtectionSettings"
+      ],
       "named": false
     },
     "GET /v2/teams/{teamId}": {
-      "fields": ["inviteCode", "saml.enforced"],
+      "fields": [
+        "disjunctiveProductionSecretPolicy",
+        "inviteCode",
+        "saml.enforced",
+        "sensitiveEnvironmentVariablePolicy",
+        "strictPasswordProtectionSettings"
+      ],
       "named": false
     },
     "PATCH /v2/teams/{teamId}": {
-      "fields": ["inviteCode", "saml.enforced"],
+      "fields": [
+        "disjunctiveProductionSecretPolicy",
+        "inviteCode",
+        "saml.enforced",
+        "sensitiveEnvironmentVariablePolicy",
+        "strictPasswordProtectionSettings"
+      ],
       "named": false
     },
     "POST /v2/teams/{teamId}/members": {
@@ -1008,6 +1149,7 @@
         "events[].payload.inviteCode",
         "events[].payload.issuedBefore",
         "events[].payload.issuerUrl",
+        "events[].payload.keys",
         "events[].payload.newEnvVar",
         "events[].payload.newEnvVar.type",
         "events[].payload.newEnvVar.value",
@@ -1122,6 +1264,7 @@
         "permissions.passwordProtectionInvoiceItem",
         "permissions.postgresStoreTokenSet",
         "permissions.productionAliasProtectionBypass",
+        "permissions.projectEnvVars",
         "permissions.projectOIDCToken",
         "permissions.projectProtectionBypass",
         "permissions.redisStoreTokenSet",
@@ -1133,6 +1276,9 @@
         "permissions.token",
         "protectionBypass",
         "security.firewallBypassIps",
+        "security.log_headers",
+        "security.rulesets{}.logHeaders",
+        "security.rulesets{}.rateLimit.keys",
         "tracing.samplingRules[].env",
         "usageStatus.bypassThrottleUntil"
       ],
@@ -1169,6 +1315,7 @@
         "permissions.passwordProtectionInvoiceItem",
         "permissions.postgresStoreTokenSet",
         "permissions.productionAliasProtectionBypass",
+        "permissions.projectEnvVars",
         "permissions.projectOIDCToken",
         "permissions.projectProtectionBypass",
         "permissions.redisStoreTokenSet",
@@ -1180,6 +1327,9 @@
         "permissions.token",
         "protectionBypass",
         "security.firewallBypassIps",
+        "security.log_headers",
+        "security.rulesets{}.logHeaders",
+        "security.rulesets{}.rateLimit.keys",
         "tracing.samplingRules[].env",
         "usageStatus.bypassThrottleUntil"
       ],
@@ -1193,5 +1343,334 @@
       "fields": ["[].legacyValue", "[].value", "[].visibility", "legacyValue", "value", "visibility"],
       "named": true
     }
+  },
+  "reviewed": {
+    "operations": {
+      "POST /v1/connect/connectors": ["appTokens", "userTokens"],
+      "GET /v1/connect/connectors/{connector}": ["appTokens", "userTokens"],
+      "POST /v1/connect/connectors/{connector}/managed/eject": ["appTokens", "userTokens"],
+      "PATCH /v1/connect/connectors/{connector}/trigger-destinations": ["appTokens", "userTokens"],
+      "GET /v2/connect/connectors": ["connectors[].appTokens", "connectors[].userTokens"],
+      "PATCH /v2/connect/connectors/{connector}": ["connector.appTokens", "connector.userTokens"],
+      "GET /v1/drains": [
+        "drains[].delivery.headers{}",
+        "drains[].delivery.secret",
+        "origin:drains[].delivery.endpoint",
+        "origin:drains[].delivery.endpoint.traces"
+      ],
+      "POST /v1/drains": [
+        "delivery.headers{}",
+        "delivery.secret",
+        "origin:delivery.endpoint",
+        "origin:delivery.endpoint.traces"
+      ],
+      "POST /v1/drains/test": [],
+      "GET /v1/drains/{id}": [
+        "delivery.headers{}",
+        "delivery.secret",
+        "origin:delivery.endpoint",
+        "origin:delivery.endpoint.traces"
+      ],
+      "PATCH /v1/drains/{id}": [
+        "delivery.headers{}",
+        "delivery.secret",
+        "origin:delivery.endpoint",
+        "origin:delivery.endpoint.traces"
+      ],
+      "GET /v1/log-drains": [
+        "drains[].delivery.headers{}",
+        "drains[].delivery.secret",
+        "origin:drains[].delivery.endpoint",
+        "origin:drains[].delivery.endpoint.traces"
+      ],
+      "POST /v1/log-drains": [],
+      "GET /v1/log-drains/{id}": [],
+      "GET /v2/integrations/log-drains": ["[].headers{}", "origin:[].url"],
+      "POST /v2/integrations/log-drains": ["headers{}", "origin:url"],
+      "GET /v1/webhooks": ["origin:[].url"],
+      "POST /v1/webhooks": ["origin:url", "secret"],
+      "GET /v1/webhooks/{id}": ["origin:url"],
+      "GET /v1/env": ["data[].value"],
+      "POST /v1/env": ["created[].value", "failed[].error.value"],
+      "PATCH /v1/env": ["failed[].error.value", "updated[].value"],
+      "DELETE /v1/env": ["failed[].error.value"],
+      "PATCH /v1/env/{id}/unlink/{projectId}": [],
+      "PUT /v1/installations/{integrationConfigurationId}/resources/{resourceId}/experimentation/global-config": [
+        "items"
+      ],
+      "GET /v1/microfrontends/groups/{groupId}/projects": [
+        "projects[].dismissedToasts[].value",
+        "projects[].env[].legacyValue",
+        "projects[].env[].value",
+        "projects[].env[].vsmValue",
+        "projects[].internalRoutes[].has[?header].value",
+        "projects[].link.deployHooks[].url",
+        "projects[].oidcTokenConfig",
+        "projects[].protectionBypass",
+        "projects[].protectionBypass@keys",
+        "projects[].security.firewallBypassIps",
+        "projects[].usageStatus.bypassThrottleUntil"
+      ],
+      "POST /v1/projects/{idOrName}/avatar": [
+        "dismissedToasts[].value",
+        "env[].legacyValue",
+        "env[].value",
+        "env[].vsmValue",
+        "internalRoutes[].has[?header].value",
+        "link.deployHooks[].url",
+        "oidcTokenConfig",
+        "protectionBypass",
+        "protectionBypass@keys",
+        "security.firewallBypassIps",
+        "usageStatus.bypassThrottleUntil"
+      ],
+      "DELETE /v1/projects/{idOrName}/avatar": [
+        "dismissedToasts[].value",
+        "env[].legacyValue",
+        "env[].value",
+        "env[].vsmValue",
+        "internalRoutes[].has[?header].value",
+        "link.deployHooks[].url",
+        "oidcTokenConfig",
+        "protectionBypass",
+        "protectionBypass@keys",
+        "security.firewallBypassIps",
+        "usageStatus.bypassThrottleUntil"
+      ],
+      "DELETE /v1/projects/{idOrName}/env": [],
+      "PATCH /v1/projects/{projectId}/microfrontends": [
+        "dismissedToasts[].value",
+        "env[].legacyValue",
+        "env[].value",
+        "env[].vsmValue",
+        "internalRoutes[].has[?header].value",
+        "link.deployHooks[].url",
+        "oidcTokenConfig",
+        "protectionBypass",
+        "protectionBypass@keys",
+        "security.firewallBypassIps",
+        "usageStatus.bypassThrottleUntil"
+      ],
+      "GET /v1/projects/{projectId}/routes": [
+        "routes[].route.has[?header].value",
+        "routes[].route.headers{}",
+        "routes[].route.locale.cookie",
+        "routes[].route.missing[?header].value",
+        "routes[].route.transforms[].args"
+      ],
+      "POST /v1/projects/{projectId}/routes": [
+        "route.route.has[?header].value",
+        "route.route.headers{}",
+        "route.route.locale.cookie",
+        "route.route.missing[?header].value",
+        "route.route.transforms[].args"
+      ],
+      "POST /v1/projects/{projectId}/routes/generate": [
+        "route.actions[].headers[].value",
+        "route.conditions[?header].value"
+      ],
+      "PATCH /v1/projects/{projectId}/routes/{routeId}": [
+        "route.route.has[?header].value",
+        "route.route.headers{}",
+        "route.route.locale.cookie",
+        "route.route.missing[?header].value",
+        "route.route.transforms[].args"
+      ],
+      "GET /v1/security/firewall/config": [
+        "active.conditions[].conditionGroup[].conditions[?header].value",
+        "active.rules[].conditionGroup[].conditions[?header].value",
+        "active.rulesets[].conditionGroup[].conditions[?header].value",
+        "draft.conditions[].conditionGroup[].conditions[?header].value",
+        "draft.rules[].conditionGroup[].conditions[?header].value",
+        "draft.rulesets[].conditionGroup[].conditions[?header].value",
+        "versions[].conditions[].conditionGroup[].conditions[?header].value",
+        "versions[].rules[].conditionGroup[].conditions[?header].value",
+        "versions[].rulesets[].conditionGroup[].conditions[?header].value"
+      ],
+      "PUT /v1/security/firewall/config": [
+        "active.conditions[].conditionGroup[].conditions[?header].value",
+        "active.rules[].conditionGroup[].conditions[?header].value",
+        "active.rulesets[].conditionGroup[].conditions[?header].value"
+      ],
+      "POST /v1/security/firewall/config/generate-rule": ["rule.conditionGroup[].conditions[?header].value"],
+      "GET /v1/security/firewall/config/{configVersion}": [
+        "conditions[].conditionGroup[].conditions[?header].value",
+        "rules[].conditionGroup[].conditions[?header].value",
+        "rulesets[].conditionGroup[].conditions[?header].value"
+      ],
+      "POST /v1/security/firewall/config/{configVersion}/activate": [
+        "conditions[].conditionGroup[].conditions[?header].value",
+        "rules[].conditionGroup[].conditions[?header].value",
+        "rulesets[].conditionGroup[].conditions[?header].value"
+      ],
+      "POST /v1/storage/stores/integration/direct": [
+        "store.secretRotationRequestedBy",
+        "store.secretRotationRequestedReason",
+        "store.secrets"
+      ],
+      "GET /v1/vcr/repository/{idOrName}/images/{imageIdOrDigest}": ["image.layers[].env"],
+      "GET /v10/projects": [
+        "[].env[].legacyValue",
+        "[].env[].value",
+        "[].env[].vsmValue",
+        "[].internalRoutes[].has[?header].value",
+        "[].link.deployHooks[].url",
+        "[].oidcTokenConfig",
+        "[].security.firewallBypassIps",
+        "[].security.firewallRoutes[].has[?header].value",
+        "[].security.firewallRoutes[].missing[?header].value",
+        "projects[].dismissedToasts[].value",
+        "projects[].env[].legacyValue",
+        "projects[].env[].value",
+        "projects[].env[].vsmValue",
+        "projects[].internalRoutes[].has[?header].value",
+        "projects[].link.deployHooks[].url",
+        "projects[].oidcTokenConfig",
+        "projects[].protectionBypass",
+        "projects[].protectionBypass@keys",
+        "projects[].security.firewallBypassIps",
+        "projects[].security.firewallRoutes[].has[?header].value",
+        "projects[].security.firewallRoutes[].missing[?header].value",
+        "projects[].usageStatus.bypassThrottleUntil"
+      ],
+      "POST /v10/projects/{idOrName}/env": [
+        "created.legacyValue",
+        "created.value",
+        "created.vsmValue",
+        "created[].legacyValue",
+        "created[].value",
+        "created[].vsmValue",
+        "failed[].error.value"
+      ],
+      "POST /v11/projects": [
+        "dismissedToasts[].value",
+        "env[].legacyValue",
+        "env[].value",
+        "env[].vsmValue",
+        "internalRoutes[].has[?header].value",
+        "link.deployHooks[].url",
+        "oidcTokenConfig",
+        "protectionBypass",
+        "protectionBypass@keys",
+        "security.firewallBypassIps",
+        "usageStatus.bypassThrottleUntil"
+      ],
+      "PATCH /v12/deployments/{id}/cancel": [
+        "routes[].has[?header].value",
+        "routes[].headers{}",
+        "routes[].locale.cookie",
+        "routes[].missing[?header].value",
+        "routes[].transforms[].args",
+        "services[].headers[].has[?header].value",
+        "services[].headers[].headers[].value",
+        "services[].headers[].missing[?header].value",
+        "services[].redirects[].has[?header].value",
+        "services[].redirects[].missing[?header].value",
+        "services[].rewrites[].has[?header].value",
+        "services[].rewrites[].missing[?header].value",
+        "services[].rewrites[].transforms[].args",
+        "services[].routes[].has[?header].value",
+        "services[].routes[].headers{}",
+        "services[].routes[].locale.cookie",
+        "services[].routes[].missing[?header].value",
+        "services[].routes[].transforms[].args"
+      ],
+      "POST /v13/deployments": [
+        "routes[].has[?header].value",
+        "routes[].headers{}",
+        "routes[].locale.cookie",
+        "routes[].missing[?header].value",
+        "routes[].transforms[].args",
+        "services[].headers[].has[?header].value",
+        "services[].headers[].headers[].value",
+        "services[].headers[].missing[?header].value",
+        "services[].redirects[].has[?header].value",
+        "services[].redirects[].missing[?header].value",
+        "services[].rewrites[].has[?header].value",
+        "services[].rewrites[].missing[?header].value",
+        "services[].rewrites[].transforms[].args",
+        "services[].routes[].has[?header].value",
+        "services[].routes[].headers{}",
+        "services[].routes[].locale.cookie",
+        "services[].routes[].missing[?header].value",
+        "services[].routes[].transforms[].args"
+      ],
+      "GET /v13/deployments/{idOrUrl}": [
+        "routes[].has[?header].value",
+        "routes[].headers{}",
+        "routes[].locale.cookie",
+        "routes[].missing[?header].value",
+        "routes[].transforms[].args",
+        "services[].headers[].has[?header].value",
+        "services[].headers[].headers[].value",
+        "services[].headers[].missing[?header].value",
+        "services[].redirects[].has[?header].value",
+        "services[].redirects[].missing[?header].value",
+        "services[].rewrites[].has[?header].value",
+        "services[].rewrites[].missing[?header].value",
+        "services[].rewrites[].transforms[].args",
+        "services[].routes[].has[?header].value",
+        "services[].routes[].headers{}",
+        "services[].routes[].locale.cookie",
+        "services[].routes[].missing[?header].value",
+        "services[].routes[].transforms[].args"
+      ],
+      "GET /v2/deployments/{id}/aliases": ["aliases[].protectionBypass", "aliases[].protectionBypass@keys"],
+      "GET /v2/user": ["user.resourceConfig.security.ipBypass"],
+      "PATCH /v3/domains/{domain}": ["token"],
+      "GET /v3/events": [
+        "events[?env].payload.value",
+        "events[].payload.apiKey",
+        "events[].payload.credential",
+        "events[].payload.gitCredentialSource",
+        "events[].payload.inviteCode",
+        "events[].payload.newEnvVar.value",
+        "events[].payload.oldEnvVar.value"
+      ],
+      "GET /v4/aliases": ["aliases[].protectionBypass", "aliases[].protectionBypass@keys"],
+      "GET /v4/aliases/{idOrAlias}": ["protectionBypass", "protectionBypass@keys"],
+      "GET /v5/user/tokens/{tokenId}": ["token"],
+      "GET /v6/user/tokens": ["tokens"],
+      "GET /v9/projects/{idOrName}": [
+        "dismissedToasts[].value",
+        "env[].legacyValue",
+        "env[].value",
+        "env[].vsmValue",
+        "internalRoutes[].has[?header].value",
+        "link.deployHooks[].url",
+        "oidcTokenConfig",
+        "protectionBypass",
+        "protectionBypass@keys",
+        "security.firewallBypassIps",
+        "usageStatus.bypassThrottleUntil"
+      ],
+      "PATCH /v9/projects/{idOrName}": [
+        "dismissedToasts[].value",
+        "env[].legacyValue",
+        "env[].value",
+        "env[].vsmValue",
+        "internalRoutes[].has[?header].value",
+        "link.deployHooks[].url",
+        "oidcTokenConfig",
+        "protectionBypass",
+        "protectionBypass@keys",
+        "security.firewallBypassIps",
+        "usageStatus.bypassThrottleUntil"
+      ],
+      "PATCH /v9/projects/{idOrName}/env/{id}": ["legacyValue", "value"],
+      "DELETE /v9/projects/{idOrName}/env/{id}": ["[].legacyValue", "[].value", "legacyValue", "value"],
+      "GET /v1/integrations/configuration/{id}/products": [
+        "origin:products[].protocols.logDrain.endpoint",
+        "origin:products[].protocols.traceDrain.endpoint",
+        "products[].protocols.logDrain.headers{}",
+        "products[].protocols.traceDrain.headers{}"
+      ],
+      "GET /v2/teams": ["teams[].inviteCode"],
+      "GET /v2/teams/{teamId}": ["inviteCode"],
+      "PATCH /v2/teams/{teamId}": ["inviteCode"],
+      "GET /v3/teams/{teamId}/members": ["emailInviteCodes"]
+    },
+    "resources": {},
+    "bindings": {}
   }
 }

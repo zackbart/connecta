@@ -7,6 +7,7 @@ import { apiConnector } from "../src/connectors/api-connector.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { OperationIndex, type OpenApiData, type SchemaNode } from "../src/providers/_shared/rest/operation-index.js";
 import { restTools, restTransport, type RestVendor } from "../src/providers/_shared/rest/tools.js";
+import { redact, valueSafety } from "../src/providers/_shared/rest/value-safety.js";
 import { byAuth, hostedOAuth } from "../src/providers/_shared/rest/dispatch.js";
 import { recordRecovery, recoveryFor } from "../src/call-recovery.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
@@ -107,6 +108,7 @@ function vendor(overrides: Partial<RestVendor> = {}, timeoutMs = 30_000): RestVe
     failure: (status, _headers, body) =>
       new ConnectorCallError(status === 404 ? "not_found" : "invalid_args", `Acme ${status}: ${JSON.stringify(body)}`),
     readPosts: [["POST", "/v1/widgets/query", "Filters widgets without changing them."]],
+    valueSafety: valueSafety({ title: "Acme", operations: {} }, () => index),
     upload: "Use acme_api_upload.",
     ...overrides,
   };
@@ -248,7 +250,7 @@ describe("restTools()", () => {
   });
 
   it("frames JSON by default, answers in one envelope, and projects select paths through lists", async () => {
-    respond = () => Response.json({ items: [{ id: "w_1", name: "a", secret: 1 }, { id: "w_2" }], total: 2 });
+    respond = () => Response.json({ items: [{ id: "w_1", name: "a", rank: 1 }, { id: "w_2" }], total: 2 });
     const result = await connector().callTool(
       "acme_api_read",
       { path: "/v1/widgets", query: { limit: 2, tags: ["a", "b"] }, select: ["items.id", "total"] },
@@ -263,15 +265,20 @@ describe("restTools()", () => {
       ["items.id", "items"],
     ]) {
       const whole = (await connector().callTool("acme_api_read", { path: "/v1/widgets", select }, ctx())) as any;
-      expect(whole.data).toEqual({ items: [{ id: "w_1", name: "a", secret: 1 }, { id: "w_2" }] });
+      expect(whole.data).toEqual({ items: [{ id: "w_1", name: "a", rank: 1 }, { id: "w_2" }] });
     }
   });
 
-  it("redacts a success body before cursors and select read it, when the vendor declares redact", async () => {
-    respond = () => Response.json({ items: [{ id: "w_1", secret: "s1" }], next: "w_1", secret: "top" });
+  it("INV-5: redacts a success body by the reviewed table and the heuristic before cursors and select read it", async () => {
+    respond = () => Response.json({ items: [{ id: "w_1", secret: "s1", hook: "h1" }], next: "w_1", secret: "top" });
     const seen: unknown[] = [];
+    const index = new OperationIndex(DATA, { vendor: "acme", title: "Acme" });
+    const table = {
+      title: "Acme",
+      operations: { "GET /v1/widgets": redact("Widgets carry hook secrets.", ["items.hook"]) },
+    };
     const result = await connector({
-      redact: (data) => JSON.parse(JSON.stringify(data, (key, value) => (key === "secret" ? undefined : value))),
+      valueSafety: valueSafety(table, () => index),
       page: (data) => {
         seen.push(data);
         return { hasMore: true, next: String((data as { next: string }).next), param: "after" };
@@ -279,10 +286,12 @@ describe("restTools()", () => {
     }).callTool("acme_api_read", { path: "/v1/widgets", select: ["items", "secret"] }, ctx());
     expect(result).toEqual({
       status: 200,
-      data: { items: [{ id: "w_1" }] },
+      data: { items: [{ id: "w_1", secret: "[redacted]", hook: "[redacted]" }], secret: "[redacted]" },
       page: { hasMore: true, next: "w_1", param: "after" },
     });
-    expect(seen).toEqual([{ items: [{ id: "w_1" }], next: "w_1" }]);
+    expect(seen).toEqual([
+      { items: [{ id: "w_1", secret: "[redacted]", hook: "[redacted]" }], next: "w_1", secret: "[redacted]" },
+    ]);
   });
 
   it("reads text, NDJSON, and binary success bodies into data", async () => {

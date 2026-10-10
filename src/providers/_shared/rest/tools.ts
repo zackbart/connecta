@@ -19,12 +19,14 @@
 //
 // A vendor adopts this module with configuration only: its transport, its
 // failure mapper, and optional `scope` (defaults and pins), `encode` (body
-// and query framing), `page` (cursor extraction), `refuse` (safety tables),
-// `readPosts`, and an idempotency header. Optional hooks cover the rest:
-// `path` (fill default ids before matching), `admit` (an awaited check in
-// `callRest`, which every tool passes, such as an account pin), `result`
-// (unwrap a vendor envelope), `redact` (secrets embedded in successful
-// bodies, after `result` and before cursors and `select`), a reviewed
+// and query framing), `page` (cursor extraction), `refuse` (argument-dependent refusals),
+// `readPosts`, and an idempotency header. Every vendor ships a reviewed
+// value-safety table (`valueSafety`, `value-safety.ts` here): its refusals run
+// in the generic tools before any request, and its redaction runs on every
+// successful body in `callRest`, after `result` and before cursors and
+// `select`. Optional hooks cover the rest: `path` (fill default ids before
+// matching), `admit` (an awaited check in `callRest`, which every tool passes,
+// such as an account pin), `result` (unwrap a vendor envelope), a reviewed
 // `headers` allowlist, and `textBodies`. Named tools reuse `restCall` and
 // `callRest` to share the same validation-free request path.
 import type { ApiTool } from "../../../connectors/api-connector.js";
@@ -38,6 +40,7 @@ import { recordRecovery } from "../../../call-recovery.js";
 import { ConnectorCallError, unavailableCallError } from "../../../errors.js";
 import type { ConnectorContext, JsonSchema } from "../../../types.js";
 import type { Operation, OperationIndex, RestMethod } from "./operation-index.js";
+import type { ValueSafety } from "./value-safety.js";
 
 /** One call matched to its operation, after the vendor's defaults and pins. */
 export interface RestCall {
@@ -102,7 +105,14 @@ export interface RestVendor {
   failure(status: number, headers: Headers, body: unknown, call?: RestCall): ConnectorCallError;
   /** Reviewed POSTs that only read; `_api_read` admits exactly these. */
   readonly readPosts?: readonly RestReadPost[];
-  /** Reviewed safety refusals: return the reason to refuse, before any request. */
+  /**
+   * The vendor's reviewed value-safety table: `refuse` verdicts are refused
+   * by the generic tools before any request, and every successful body is
+   * redacted (decision 0005, "Value safety"). Failure mappers ask it which
+   * operations withhold vendor error text.
+   */
+  readonly valueSafety: ValueSafety;
+  /** Reviewed refusals that depend on arguments: return the reason to refuse, before any request. */
   refuse?(call: RestCall): string | undefined;
   /** Rewrite a caller's path before it is matched, such as filling configured default ids. */
   path?(path: string): string;
@@ -130,13 +140,6 @@ export interface RestVendor {
   encode?(call: RestCall): RestFraming;
   /** Read the next-page cursor from a successful body. */
   page?(data: unknown, call: RestCall): RestPage | undefined;
-  /**
-   * Remove secrets a successful body embeds, on every success (HEAD header
-   * data and named tools included), after `result` unwraps the envelope and
-   * before cursors or `select` read it: Vercel nests environment values in
-   * project and event objects that are otherwise ordinary reads.
-   */
-  redact?(data: unknown, call: RestCall): unknown;
   /** A header write tools fill with a caller key or a generated one, and return. */
   readonly idempotencyHeader?: string;
   /** Where multipart or binary uploads go instead of `_api_write`. */
@@ -358,11 +361,12 @@ export async function callRest(
       if (!response.ok) throw vendor.failure(response.status, response.headers, await failureBody(response), call);
       // HEAD answers with headers alone; they are its data.
       const body = call.method === "HEAD" ? headerData(response.headers) : await successBody(vendor, response, ctx);
-      // Order: unwrap the vendor's envelope, then redact, then cursors (and,
-      // in the tools, `select`). Cursors read the envelope when the vendor
-      // unwraps one, and the redacted body otherwise.
+      // Order: unwrap the vendor's envelope, then redact (every success, HEAD
+      // header data and named tools included), then cursors (and, in the
+      // tools, `select`). Cursors read the envelope when the vendor unwraps
+      // one, and the redacted body otherwise.
       const unwrapped = vendor.result && call.method !== "HEAD" ? vendor.result(body, call, response) : body;
-      const data = vendor.redact ? vendor.redact(unwrapped, call) : unwrapped;
+      const data = vendor.valueSafety.redact(unwrapped, call.method, call.op.path);
       const page = vendor.page?.(vendor.result ? body : data, call);
       return { status: response.status, data, ...(page ? { page } : {}) };
     });
@@ -518,7 +522,7 @@ export function restTools(vendor: RestVendor): ApiTool[] {
   const guard = (call: RestCall): void => {
     const send = vendor.transport(call.op.server);
     if (typeof send === "string") invalid(send);
-    const refusal = vendor.refuse?.(call);
+    const refusal = vendor.valueSafety.refusal(call.method, call.op.path) ?? vendor.refuse?.(call);
     if (refusal) invalid(refusal);
   };
 

@@ -17,7 +17,6 @@ vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
 
 import { CLOUDFLARE_API_BASE, CLOUDFLARE_MCP_ENDPOINT, cloudflare } from "./index.js";
 import { PIN_REFUSED_UNSCOPED, PIN_SAFE_UNSCOPED } from "./rest.js";
-import { VALUE_SAFETY } from "./value-safety.js";
 import { openapi } from "./openapi.generated.js";
 import { connectorGuideSummary } from "../../skills.js";
 
@@ -1050,61 +1049,8 @@ describe("cloudflare() over a key", () => {
   });
 
   describe("value safety (round 1, findings 2–4)", () => {
-    // Every operation whose path or summary names a credential, or whose
-    // success response has a credential-named field in the pinned spec.
-    const VOCABULARY =
-      /token|secret|credential|password|passphrase|private[-_ ]?key|\bpsk\b|psk_|jwt|signing[-_ ]keys?|signed[-_ ]?url|upload[-_ ]?url|direct[-_ ]upload|api[-_ ]?keys?\b|client[-_ ]secret|tsig|turn[-_ ]keys?|presign|deploy[-_ ]hook|bypass|kubeconfig|rotate/i;
-    const flagged = new Map<number, readonly string[]>((openapi.secrets ?? []).map(([row, ...paths]) => [row, paths]));
-    const candidates = openapi.ops.flatMap(([method, path, , summary], row) =>
-      VOCABULARY.test(`${path} ${summary}`) || flagged.has(row) ? [{ key: `${method} ${path}`, row }] : [],
-    );
-    /** A spec response path as the tool's data path: no envelope, no list markers; "" is the whole result. */
-    const dataPath = (path: string) =>
-      path === "result" ? "" : path.replace(/^result(\[\])?\./, "").replace(/\[\]/g, "");
-
-    it("reviews every candidate operation in the pinned index with refuse, redact, or safe", () => {
-      expect(candidates.length).toBeGreaterThan(250);
-      expect(candidates.filter(({ key }) => !Object.hasOwn(VALUE_SAFETY, key)).map(({ key }) => key)).toEqual([]);
-      for (const key of Object.keys(VALUE_SAFETY)) {
-        const [method, path] = key.split(" ");
-        expect(
-          openapi.ops.some(([m, p]) => m === method && p === path),
-          key,
-        ).toBe(true);
-      }
-      const counts = { refuse: 0, redact: 0, safe: 0 };
-      for (const verdict of Object.values(VALUE_SAFETY)) {
-        counts["refuse" in verdict ? "refuse" : "redact" in verdict ? "redact" : "safe"] += 1;
-      }
-      expect(counts).toEqual({ refuse: 58, redact: 211, safe: 264 });
-    });
-
-    it("accounts for every credential-named response field the spec declares", () => {
-      const uncovered: string[] = [];
-      for (const { key, row } of candidates) {
-        const verdict = VALUE_SAFETY[key]!;
-        if ("refuse" in verdict) continue;
-        const covered = [
-          ...("redact" in verdict ? verdict.redact.map((path) => path.split("#")[0]!) : []),
-          ...(verdict.keep ?? []),
-        ];
-        for (const field of flagged.get(row) ?? []) {
-          const path = dataPath(field);
-          // A reviewed verdict covers the whole result, a field, anything
-          // inside it, or a reviewed part of it.
-          const inside = (cover: string) => {
-            const parts = cover.split(".");
-            const at = path.split(".");
-            const length = Math.min(parts.length, at.length);
-            return parts.slice(0, length).every((part, index) => part === "*" || part === at[index]);
-          };
-          if (path === "" || /^(result_info|messages|errors)\b/.test(path)) continue;
-          if (!covered.some(inside)) uncovered.push(`${key}: ${path}`);
-        }
-      }
-      expect(uncovered).toEqual([]);
-    });
-
+    // The table's completeness, coverage, keeps, and refusal sweep run in the
+    // shared harness (value-safety.node.test.ts); these are the regressions.
     it("refuses credential producers before sending, in the generic and upload tools", async () => {
       const connector = cloudflare("cf", TOKEN);
       const producers: Array<[string, Record<string, unknown>]> = [
@@ -1517,7 +1463,8 @@ describe("cloudflare() over a key", () => {
         [
           `/accounts/${ACCOUNT}/builds/triggers/t1/environment_variables`,
           { API_KEY: { is_secret: false, value: "THIRD-PARTY" } },
-          (data) => expect(data.API_KEY).toEqual({ is_secret: false, value: "[redacted]" }),
+          // A variable named API_KEY goes whole: the shared heuristic's containment rule (Vercel's) is the stricter.
+          (data) => expect(data.API_KEY).toBe("[redacted]"),
         ],
       ];
       for (const [path, result, check] of cases) {
@@ -1702,16 +1649,80 @@ describe("cloudflare() over a key", () => {
         expect(text, secret).not.toContain(secret);
       expect(result.data[0].headers[1]).toEqual({ name: "Accept", value: "text/html" });
       expect(result.data[0].header_map.Host).toBe("example.com");
-      expect(result.data[0].cookies[0].domain).toBe("[redacted]");
+      // A credential-named subtree goes whole (the stricter of the two former engines).
+      expect(result.data[0].cookies).toBe("[redacted]");
     });
+  });
 
-    it("keeps no reviewed field exempt from the heuristic below it", () => {
-      const broad = Object.entries(VALUE_SAFETY).flatMap(([key, verdict]) =>
-        ("keep" in verdict ? (verdict.keep ?? []) : [])
-          .filter((path) => ["data", "meta", "log", "result", "rules"].includes(path))
-          .map((path) => `${key}: ${path}`),
-      );
-      expect(broad).toEqual([]);
+  describe("round 3 regressions (#801 consolidated detector)", () => {
+    it("INV-5: redacts webhook destinations, database and storage credentials, and transform header values", async () => {
+      const connector = cloudflare("cf", TOKEN);
+      const read = async (path: string, result: unknown) => {
+        respond = () => envelope(result);
+        return ((await connector.callTool("cloudflare_api_read", { path }, token())) as any).data;
+      };
+      expect(
+        await read(`/accounts/${ACCOUNT}/alerting/v3/destinations/webhooks/w1`, {
+          id: "w1",
+          url: "https://hooks.slack.com/services/T0/B0/SLACK-SECRET",
+          type: "slack",
+        }),
+      ).toEqual({ id: "w1", url: "https://hooks.slack.com/[redacted]", type: "slack" });
+      const hyperdrive = await read(`/accounts/${ACCOUNT}/hyperdrive/configs/h1`, {
+        id: "h1",
+        origin: { host: "db.example.com", user: "app", password: "DB-PASSWORD", access_client_secret: "ACCESS-SECRET" },
+      });
+      expect(hyperdrive.origin).toEqual({
+        host: "db.example.com",
+        user: "app",
+        password: "[redacted]",
+        access_client_secret: "[redacted]",
+      });
+      const ruleset = await read(`/zones/${ZONE}/rulesets/r1`, {
+        id: "r1",
+        rules: [
+          {
+            action: "rewrite",
+            action_parameters: {
+              headers: {
+                Authorization: { operation: "set", value: "Bearer ORIGIN-TOKEN" },
+                "X-Upstream": { operation: "set", value: "UPSTREAM-SECRET" },
+                "X-Request-Id": { operation: "set", expression: "cf.ray_id" },
+              },
+              cache_key: { custom_key: { cookie: { include: ["session_id"] } } },
+            },
+          },
+        ],
+      });
+      // A header the review cannot name still loses its value; a credential-named one goes whole.
+      expect(ruleset.rules[0].action_parameters.headers).toEqual({
+        Authorization: "[redacted]",
+        "X-Upstream": { operation: "set", value: "[redacted]" },
+        "X-Request-Id": { operation: "set", expression: "cf.ray_id" },
+      });
+      expect(ruleset.rules[0].action_parameters.cache_key.custom_key.cookie).toEqual({ include: ["session_id"] });
+      // RealtimeKit answers bare `data` bodies, not the v4 envelope.
+      respond = () =>
+        Response.json({
+          success: true,
+          data: { id: "m1", recording_config: { storage_config: { type: "aws", bucket: "b", secret: "AWS-SECRET" } } },
+        });
+      const meeting = (await connector.callTool(
+        "cloudflare_api_read",
+        { path: `/accounts/${ACCOUNT}/realtime/kit/app1/meetings/m1` },
+        token(),
+      )) as any;
+      expect(JSON.stringify(meeting)).not.toContain("AWS-SECRET");
+      const posture = await read(`/accounts/${ACCOUNT}/data-security/posture/webhooks/p1`, {
+        id: "p1",
+        destination_url: "https://hooks.example.com/p/POSTURE-SECRET",
+        headers: [{ key: "X-Token" }],
+      });
+      expect(posture.destination_url).toBe("https://hooks.example.com/[redacted]");
+      // Workers KV is application data, not a secret store: a value read comes back.
+      expect(await read(`/accounts/${ACCOUNT}/storage/kv/namespaces/n1/keys`, [{ name: "feature-flags" }])).toEqual([
+        { name: "feature-flags" },
+      ]);
     });
   });
 });

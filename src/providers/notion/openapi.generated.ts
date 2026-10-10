@@ -2,7 +2,7 @@
 // source: https://developers.notion.com/openapi.json
 // revision: 2026-10-09
 // digest: sha256:4544d132b1d9d4799a7a0752f0f8007b86411fea6d6a493098e3756c0bc4f040
-// options: {"depth":4,"descriptions":160,"maxEnum":50,"versionHeader":"Notion-Version"}
+// options: {"depth":4,"descriptions":160,"maxEnum":50,"versionHeader":"Notion-Version","valueSafety":true}
 // format: 4
 import type { OpenApiData } from "../_shared/rest/operation-index.js";
 

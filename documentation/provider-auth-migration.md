@@ -244,3 +244,52 @@ replaces it and `providers:check` reports when it falls behind. A Global API
 Key cannot reach R2, which accepts API tokens only. The
 [Cloudflare skill](https://github.com/zackbart/connecta/blob/main/src/providers/cloudflare/SKILL.md)
 owns the conventions for both.
+
+## Value safety on every key connector
+
+All four key connectors now share one value-safety mechanism: a reviewed
+table per vendor over every operation the detector flags in the pinned spec,
+one redaction pass on every result, and one error policy
+([architecture](./architecture.md#value-safety-for-rest-vendors)). Results
+lose fields they returned before. A `"[redacted]"` value is never the real
+one; read or rotate withheld secrets in the vendor's dashboard.
+
+- **Stripe** refuses operations that hand out a credential: ephemeral keys,
+  Terminal connection tokens, account links, Express login links, account and
+  customer sessions, billing portal sessions, file link creation, Financial
+  Connections session creation, and the meter event session. Results redact
+  client secrets (PaymentIntents, SetupIntents, Checkout and Identity
+  sessions, Sources, Financial Connections, invoice confirmation secrets),
+  webhook and event destination signing secrets, Apps secret payloads,
+  app-install authorization codes, Terminal Wi-Fi passwords, forwarded
+  request header values, and Issuing card numbers and CVCs; webhook, file
+  link, and pre-signed import URLs keep only their scheme and host, and the
+  rules follow each object into expansions, lists, and events (an expanded
+  File's links, an event's `previous_attributes`). Identity verification
+  URLs are unchanged. A Checkout Session's URL is returned whole only for a
+  guest payment session (`mode: "payment"`, no `customer` or
+  `customer_account`, no customer creation, no saved payment method options);
+  any other session returns only its scheme and host, because its page can
+  show, reuse, or remove a customer's saved payment methods. v2 account
+  links and Terminal onboarding links are refused too. Issuing `number` and
+  `cvc` expansions are refused on every Issuing path, not only cards.
+  Failures of credential-bearing operations keep Stripe's type, code, and
+  param but not its message. Create client-side sessions and links from your
+  own server code.
+- **Notion** results withhold the signature, credential, and security-token
+  parameters of pre-signed file URLs, so a returned file URL no longer
+  downloads; credential-named fields, including database properties named
+  like credentials, read as `"[redacted]"`. Failures of the OAuth, file
+  upload, bot user, and agent operations keep Notion's code but not its
+  message.
+- **Vercel** replaces environment values with `"[redacted]"` instead of
+  dropping the field, and withholds Vercel's error text for every reviewed
+  operation and every operation whose request takes a credential-named
+  field, not only secret families. Audit event invite codes, integration
+  drain headers, and route header values are redacted too.
+- **Cloudflare** redacts Hyperdrive database passwords, RealtimeKit storage
+  credentials, transform-rule header values, and dispatch binding values,
+  and reduces notification, RealtimeKit, and data security webhook
+  destinations to their scheme and host. A credential-named field now loses
+  its whole value, not only its strings (a `cookies` list, a variable named
+  `API_KEY`).

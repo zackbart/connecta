@@ -207,3 +207,57 @@ The Vercel conversion (#801) settled these facts:
   reviewed as writes and the pool trust policy gates them.
 - With Vercel converted, no maintained provider selects an implementation
   with `surface`, and `test/fixtures/provider-reconciliation.ts` is deleted.
+
+### Amendment: one value-safety mechanism for every REST vendor
+
+The value-safety PR (#801) closed the consolidation the Vercel amendment
+tracked, and applied the bar to Stripe and Notion:
+
+- One detector (`scripts/value-safety.mjs`, format 4) is the union of
+  Cloudflare's generator `responseSecrets` and Vercel's candidates file. Every
+  REST vendor's `openapi.source.json` sets `valueSafety`; `providers:spec`
+  writes `value-safety.candidates.json` stamped with the digest, format, and
+  options. Cloudflare's index no longer ships the candidate fields
+  (`OpenApiData.secrets` is gone), so the candidates stay out of the bundle.
+- One table format (`refuse`, `redact` with reviewed paths, `safe`, each with
+  a reason; `keep`, payer-facing `urls`, vendor-wide `fields`, and a per-op
+  error policy) and one engine in `src/providers/_shared/rest/value-safety.ts`.
+  `RestVendor.valueSafety` is required. The path language is Vercel's with
+  Cloudflare's implicit list traversal, `*` maps, and `#url`.
+- Where the two former rules differed, the stricter holds: a value either
+  heuristic removed is removed (a credential word removes the value whole, a
+  credential suffix its strings), Vercel's URL rule (userinfo, credential
+  parameters, fragments, unparseable URLs) applies everywhere, and
+  Cloudflare's error policy (any reviewed operation, or a request that takes a
+  credential-named field) applies to every vendor. Exemptions stay per
+  vendor: Cloudflare's pagination cursors, Vercel's permission scope maps and
+  environment bodies.
+- Stripe repeats one object graph across hundreds of operations, so its
+  table reviews most fields once (`fields`) and its detector skips
+  id-or-object expansions. Client secrets are redacted rather than refused:
+  they are publishable-side secrets the server-side agent never needs, and
+  the objects around them are the API. Operations whose purpose is a
+  credential or a sign-in link (ephemeral keys, connection tokens, account
+  and login links, account, customer, and portal sessions, file links) are
+  refused. Payment families keep Stripe's error text (`vendorErrors`).
+- Review of the PR showed shape-based review alone cannot follow expansions:
+  an expanded File carried public file link URLs past a reviewed file link
+  operation. Tables may now state resource rules keyed on a type
+  discriminator (Stripe's `object`) that apply wherever an object appears,
+  events' `previous_attributes` included. Checkout URLs are returned whole
+  only for provably guest payment sessions, deny by default: a session bound
+  to a Customer or an Account (`customer_account` is Stripe's Accounts v2
+  equivalent of `customer`) is a capability on saved payment methods, and the
+  binding fields are derived from the pinned schema so a new one forces
+  review.
+- Every reviewed path is checked against the pinned response schema by
+  `providers:spec`, which stamps the paths that resolve; misses are
+  acknowledged one by one in `value-safety.absent.json` (shared verdicts and
+  undeclared fields, still applied at runtime).
+- The shared harness (`test/fixtures/value-safety.ts`) gives every vendor the
+  same checks: unreviewed candidates, stale pins and stamps, verdicts for
+  missing operations, uncovered flagged fields, flagged fields that survive
+  redaction in their schema shape, keeps that exempt a subtree or a
+  credential name, redact paths and resource rules that leave values,
+  refusals that reach transport, and echoed error text; a mutation test
+  proves a wrong path fails it.
