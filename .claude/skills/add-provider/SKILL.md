@@ -76,14 +76,19 @@ each case refuses the other's keys, and `create: byAuth({ … })`. OAuth uses
 `hostedOAuth()` only; a key uses `restTools()` from `src/providers/_shared/rest/`
 with an operator-managed credential and a `testCredential`. Supply vendor
 configuration only: transport, failure mapper, `scope`, `encode`, `page`,
-`refuse`, `readPosts` (each with a reason), and an idempotency header.
+`refuse`, `readPosts` (each with a reason), and an idempotency header. Optional
+hooks: `path` (default ids), `admit` (awaited pins every tool passes),
+`result` (envelope unwrapping), a reviewed `headers` allowlist, `textBodies`,
+and `OperationIndex` `slashParams` for keys that carry `/`.
 
 The REST connector reads `openapi.generated.ts`. Pin the vendor's document in
 `openapi.source.json` (`url`, `revision`, `digest`, optional `latest` and
 generation `options`), run `npm run providers:spec -- --provider <name>
 --record` to accept a pin, and add `{ "type": "openapi-index", "source":
 "openapi.source.json" }` to `drift.json`. Shrink details (depth, descriptions,
-long enums) before raising a bundle cap. Give the SKILL.md separate fragments
+long enums; for very large documents `operationIds: false`, `pathParams:
+"typed"`, and an `opBudget`) before raising a bundle cap; `providers:spec`
+prints the largest operation. Give the SKILL.md separate fragments
 per implementation plus a shared one, and name the published fragment with
 frontmatter `"content"`.
 

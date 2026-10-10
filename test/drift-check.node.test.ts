@@ -229,24 +229,24 @@ afterEach(async () => {
 
 describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
   it("records the touched endpoints and then reports no drift against them", async () => {
-    const { directory } = await workspace(["cloudflare", "notion"]);
-    const recorded = run(directory, ["cloudflare", "notion"], ["--record"]);
+    const { directory } = await workspace(["infisical", "notion"]);
+    const recorded = run(directory, ["infisical", "notion"], ["--record"]);
     expect(recorded.status).toBe(0);
 
-    const manifest: Manifest = JSON.parse(await readManifestFile(join(directory, "cloudflare", "drift.json")));
+    const manifest: Manifest = JSON.parse(await readManifestFile(join(directory, "infisical", "drift.json")));
     expect(manifest.endpoints.length).toBeGreaterThan(0);
     for (const endpoint of manifest.endpoints) {
       expect(endpoint.specRevision).toBe("test-1");
       expect(endpoint.contract).toMatch(/^sha256:[0-9a-f]{64}$/);
     }
 
-    const again = run(directory, ["cloudflare", "notion"], ["--json"]);
+    const again = run(directory, ["infisical", "notion"], ["--json"]);
     expect(again.status).toBe(0);
-    expect(findings(again.output, "cloudflare")).toEqual([]);
+    expect(findings(again.output, "infisical")).toEqual([]);
     expect(findings(again.output, "notion")).toEqual([]);
   });
 
-  it.each(["cloudflare", "notion", "overflow", "tithely"])(
+  it.each(["infisical", "notion", "overflow", "tithely"])(
     "reports %s changes only for touched endpoints",
     async (provider) => {
       const { directory, manifests, specifications } = await workspace([provider]);
@@ -940,17 +940,6 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
       }
     }
   });
-
-  it("stops touching Cloudflare's deprecated bulk zone-settings read", async () => {
-    // #361: the tool that called it is gone, so the row goes with it. A
-    // manifest row is a claim that this connection calls the endpoint, and
-    // leaving a deprecated one behind would make `--specs` argue with a
-    // surface that stopped calling it.
-    const rows = (await committed("cloudflare")).endpoints.map((endpoint) => `${endpoint.method} ${endpoint.path}`);
-    expect(rows).not.toContain("GET /zones/{zone_id}/settings");
-    expect(rows).toContain("GET /zones/{zone_id}/settings/{setting_id}");
-    expect(rows).toContain("PATCH /zones/{zone_id}/settings/{setting_id}");
-  });
 });
 
 interface VersionedManifest {
@@ -1384,14 +1373,14 @@ describe("discovered provider drift evidence", { timeout: CASE_TIMEOUT_MS }, () 
   });
 
   it("reports malformed specification JSON without recording it or stopping the next provider", async () => {
-    const { directory } = await workspace(["cloudflare", "notion"]);
-    const path = join(directory, "cloudflare", "drift.json");
+    const { directory } = await workspace(["infisical", "notion"]);
+    const path = join(directory, "infisical", "drift.json");
     const before = await readFile(path, "utf8");
-    await writeFile(join(directory, "cloudflare-spec.json"), "{bad json");
-    const result = run(directory, ["cloudflare", "notion"], ["--record", "--json"]);
+    await writeFile(join(directory, "infisical-spec.json"), "{bad json");
+    const result = run(directory, ["infisical", "notion"], ["--record", "--json"]);
     expect(result.status).toBe(0);
     expect(JSON.parse(result.output).specs).toMatchObject([
-      { provider: "cloudflare", findings: [{ kind: "parser-error" }] },
+      { provider: "infisical", findings: [{ kind: "parser-error" }] },
       { provider: "notion", findings: [] },
     ]);
     expect(await readFile(path, "utf8")).toBe(before);
@@ -1399,28 +1388,28 @@ describe("discovered provider drift evidence", { timeout: CASE_TIMEOUT_MS }, () 
   });
 
   it("refuses implicit recording and writes only explicitly selected endpoint evidence", async () => {
-    const { directory, specifications } = await workspace(["cloudflare", "notion"]);
+    const { directory, specifications } = await workspace(["infisical", "notion"]);
     expect(reportFor(directory, ["--record"]).status).toBe(2);
-    const path = join(directory, "cloudflare", "drift.json");
-    const record = await driftRecord("cloudflare", directory);
+    const path = join(directory, "infisical", "drift.json");
+    const record = await driftRecord("infisical", directory);
     record.checks[0].endpoints[0].evidence = { source: "https://vendor.example/review" };
     record.checks.push(cloudflareEvidence, manualCheck);
     await writeFile(path, JSON.stringify(record));
     const untouchedPath = join(directory, "notion", "drift.json");
     const untouched = await readFile(untouchedPath, "utf8");
     const before = await readFile(path, "utf8");
-    expect(run(directory, ["cloudflare"], ["--json"]).status).toBe(0);
+    expect(run(directory, ["infisical"], ["--json"]).status).toBe(0);
     expect(await readFile(path, "utf8")).toBe(before);
-    const result = run(directory, ["cloudflare"], ["--record", "--json"]);
+    const result = run(directory, ["infisical"], ["--record", "--json"]);
     expect(result.status).toBe(0);
-    const after = await driftRecord("cloudflare", directory);
+    const after = await driftRecord("infisical", directory);
     expect(after.checks[0].specification).toEqual(record.checks[0].specification);
     expect(after.checks[0].endpoints[0].evidence).toEqual(record.checks[0].endpoints[0].evidence);
     expect(after.checks.slice(1)).toEqual(record.checks.slice(1));
-    expect(after.checks[0].endpoints[0].specRevision).toBe(specifications.cloudflare!.info.version);
+    expect(after.checks[0].endpoints[0].specRevision).toBe(specifications.infisical!.info.version);
     expect(await readFile(untouchedPath, "utf8")).toBe(untouched);
     expect(
-      run(directory, ["cloudflare"], ["--spec", `notion=${join(directory, "notion-spec.json")}`, "--record"]).status,
+      run(directory, ["infisical"], ["--spec", `notion=${join(directory, "notion-spec.json")}`, "--record"]).status,
     ).toBe(2);
   });
 

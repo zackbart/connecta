@@ -487,6 +487,68 @@ describe("OpenAPI operation index generation", () => {
     );
   });
 
+  it("shrinks a large document on request: no restated ids, implied path parameters, and a per-operation budget", async () => {
+    const { buildOperationIndex } = await generator();
+    const options = { depth: 2, descriptions: 0, operationIds: false, pathParams: "typed", opBudget: 60 };
+    const data = buildOperationIndex(document, { ...source, options });
+    expect(data.ops.map((row: unknown[]) => row[2])).toEqual(["", "", "", ""]);
+    const details = JSON.parse(data.details);
+    // The plain-string path parameter is dropped; the template still names it.
+    expect(details.o[2]).toEqual(0);
+    // Past the budget, the create body falls back to a shallower depth.
+    expect(JSON.stringify(details.o[1]).length).toBeLessThan(
+      JSON.stringify(JSON.parse(buildOperationIndex(document, { ...source, options: { depth: 2 } }).details).o[1])
+        .length,
+    );
+    const { OperationIndex } = await import("../src/providers/_shared/rest/operation-index.js");
+    const index = new OperationIndex(data, { vendor: "acme", title: "Acme" });
+    const contract = index.contract(index.resolve("DELETE", "/v1/things/t_1").op);
+    expect(contract.parameters).toEqual([{ name: "thing", in: "path", required: true, schema: { type: "string" } }]);
+  });
+
+  it("records credential-named success-response fields for value-safety review", async () => {
+    const { buildOperationIndex } = await generator();
+    const secretive = {
+      openapi: "3.0.0",
+      info: { version: "1" },
+      paths: {
+        "/v1/keys": {
+          post: {
+            summary: "Create a key",
+            responses: {
+              "200": {
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: {
+                        result: {
+                          type: "object",
+                          properties: {
+                            id: { type: "string" },
+                            client_secret: { type: "string" },
+                            password: { type: "string", writeOnly: true },
+                            has_token: { type: "boolean" },
+                            items: { type: "array", items: { properties: { apiKey: { type: "string" } } } },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              "400": { content: { "application/json": { schema: { properties: { token: { type: "string" } } } } } },
+            },
+          },
+        },
+        "/v1/plain": { get: { summary: "Plain", responses: { "200": { description: "ok" } } } },
+      },
+    };
+    const data = buildOperationIndex(secretive, { ...source, options: { responseSecrets: true } });
+    expect(data.secrets).toEqual([[0, "result.client_secret", "result.items[].apiKey"]]);
+    expect(buildOperationIndex(secretive, source).secrets).toBeUndefined();
+  });
+
   it("round-trips through the runtime index: resolve, search, contract, and validation", async () => {
     const { buildOperationIndex } = await generator();
     const { OperationIndex } = await import("../src/providers/_shared/rest/operation-index.js");

@@ -371,6 +371,23 @@ export function buildOperationIndex(document, source) {
     describe: source.options?.descriptions ?? DEFAULT_DESCRIPTION,
     maxEnum: source.options?.maxEnum ?? DEFAULT_MAX_ENUM,
   };
+  // Opt-in shrinking for very large documents (Cloudflare's is 27 MB):
+  // `operationIds: false` drops ids that only restate the summary,
+  // `pathParams: "typed"` drops path parameters that are plain strings (the
+  // template names them; `OperationIndex.contract` lists them again), and
+  // `opBudget` caps one operation's serialized details by lowering its depth.
+  const keepIds = source.options?.operationIds !== false;
+  const typedPathParams = source.options?.pathParams === "typed";
+  const opBudget = source.options?.opBudget;
+  // `responseSecrets: true` records, per operation, the success-response
+  // fields whose names are credential vocabulary, so a provider test can
+  // require a reviewed value-safety verdict for every one of them.
+  // A number versions the detection rules, so tightening them restales the
+  // generated header: 2 adds plurals, headers, environment variables,
+  // credential descriptions, and \`x-sensitive\`.
+  const responseSecrets =
+    source.options?.responseSecrets === true || typeof source.options?.responseSecrets === "number";
+  const secrets = [];
   const defaultServer = serverOf(document.servers);
   const servers = defaultServer ? [defaultServer] : [];
   const tags = [];
@@ -386,7 +403,7 @@ export function buildOperationIndex(document, source) {
       const row = [
         verb.toUpperCase(),
         path,
-        typeof operation.operationId === "string" ? operation.operationId : `${verb}${path}`,
+        !keepIds ? "" : typeof operation.operationId === "string" ? operation.operationId : `${verb}${path}`,
         plainText(operation.summary ?? operation.description, 120) ?? "",
         tags.indexOf(tag),
       ];
@@ -396,44 +413,11 @@ export function buildOperationIndex(document, source) {
         row.push(servers.indexOf(server));
       }
       ops.push(row);
-      const params = [];
-      const seen = new Set();
-      for (const raw of [...(operation.parameters ?? []), ...(item.parameters ?? [])]) {
-        const parameter = resolveRef(document, raw);
-        if (!["path", "query"].includes(parameter.in) || typeof parameter.name !== "string") continue;
-        const key = `${parameter.in}:${parameter.name}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        // A parameter is a top-level property; its own description is the one kept.
-        const { d: _, ...schema } = compactSchema(document, parameter.schema ?? {}, shape, 1);
-        const entry = [parameter.name, parameter.in, parameter.required === true ? 1 : 0, schema];
-        const description = plainText(parameter.description, shape.describe);
-        if (description) entry.push(description);
-        params.push(entry);
+      details.push(operationDetails(document, item, operation, verb, shape, typedPathParams, opBudget));
+      if (responseSecrets) {
+        const fields = secretFields(document, operation);
+        if (fields.length > 0) secrets.push([ops.length - 1, ...fields]);
       }
-      let body = 0;
-      const requestBody = resolveRef(document, operation.requestBody);
-      const content = requestBody.content;
-      if (verb !== "get" && verb !== "head" && content && typeof content === "object") {
-        const [contentType, media] = Object.entries(content)[0] ?? [];
-        const schema = compactSchema(document, media?.schema ?? {}, shape, 0);
-        // Stripe frames nearly every operation with an optional form body that
-        // declares no fields. Only that is no body; an array, a binary or
-        // unrestricted body, and any required body keep their contract.
-        const empty =
-          requestBody.required !== true &&
-          /^application\/x-www-form-urlencoded\b/.test(contentType ?? "") &&
-          schema.t === "object" &&
-          schema.p !== undefined &&
-          Object.keys(schema.p).length === 0 &&
-          !schema.a &&
-          !schema.m &&
-          !schema.x &&
-          !schema.r;
-        if (contentType && !empty)
-          body = requestBody.required === true ? [contentType, schema, 1] : [contentType, schema];
-      }
-      details.push(params.length || body ? [params, body] : 0);
     }
   }
   return {
@@ -449,7 +433,124 @@ export function buildOperationIndex(document, source) {
     tags,
     ops,
     details: JSON.stringify(share(details)),
+    ...(responseSecrets ? { secrets } : {}),
   };
+}
+
+/** Field names that carry or grant credentials, compared lowercase without `_` or `-`. */
+const SECRET_VOCABULARY =
+  /(tokens?|secrets?|passwords?|passphrases?|privatekeys?|apikeys?|keys|authorization|cookies?|jwts?|credentials?|psks?|streamkeys?|uploadurl|signedurl|jwks?|verifier|devicecode|bypass|headers?|envvars|environmentvariables|bindings)$/;
+/**
+ * Field names that are metadata about a credential (its id, name, times,
+ * status, scopes), not the credential, even when the description mentions one.
+ */
+const METADATA_NAME =
+  /(id|ids|uid|name|names|at|on|created|modified|time|status|type|types|scope|scopes|comment|count|email|preview|prefix|hint|version|enabled|expires|expiration|url|urls|domain|domains|location|mode|via|provisionertype|lastfour|last4)$/;
+/** Field descriptions that say a value is, or carries, a credential. */
+const SECRET_DESCRIPTION =
+  /\b(secrets?|passwords?|passphrase|private keys?|api keys?|api tokens?|access keys?|bearer|client secrets?|credentials?|signing keys?|auth(entication|orization) (tokens?|headers?)|environment variables?)\b/i;
+
+/**
+ * Dot paths (`[]` marks a list) of an operation's 2xx response fields whose
+ * names match the credential vocabulary, to a fixed depth. Write-only and
+ * numeric or boolean fields carry no value back and are skipped.
+ */
+function secretFields(document, operation) {
+  const found = new Set();
+  const walk = (raw, path, depth, seen) => {
+    if (depth > 8 || !raw || typeof raw !== "object") return;
+    let node = raw;
+    if (typeof node.$ref === "string") {
+      if (seen.has(node.$ref)) return;
+      seen = new Set(seen).add(node.$ref);
+      node = resolveRef(document, node);
+    }
+    for (const key of ["allOf", "anyOf", "oneOf"]) {
+      for (const branch of Array.isArray(node[key]) ? node[key] : []) walk(branch, path, depth + 1, seen);
+    }
+    if (node.items) walk(node.items, `${path}[]`, depth + 1, seen);
+    if (node.additionalProperties && typeof node.additionalProperties === "object") {
+      walk(node.additionalProperties, `${path}.*`, depth + 1, seen);
+    }
+    for (const [name, child] of Object.entries(node.properties ?? {})) {
+      const at = path ? `${path}.${name}` : name;
+      const resolved = resolveRef(document, child);
+      const scalar = ["boolean", "integer", "number"].includes(resolved.type);
+      const named = SECRET_VOCABULARY.test(name.toLowerCase().replace(/[_-]/g, ""));
+      const described =
+        typeof resolved.description === "string" &&
+        SECRET_DESCRIPTION.test(resolved.description) &&
+        !METADATA_NAME.test(name.toLowerCase().replace(/[_-]/g, ""));
+      const sensitive = resolved["x-sensitive"] === true || child?.["x-sensitive"] === true;
+      if ((named || described || sensitive) && resolved.writeOnly !== true && !scalar) {
+        found.add(at);
+      }
+      walk(child, at, depth + 1, seen);
+    }
+  };
+  for (const [code, response] of Object.entries(operation.responses ?? {})) {
+    if (!code.startsWith("2")) continue;
+    for (const media of Object.values(resolveRef(document, response).content ?? {})) {
+      walk(media?.schema, "", 0, new Set());
+    }
+  }
+  return [...found].sort();
+}
+
+/**
+ * One operation's details row. Past `opBudget` serialized characters the
+ * operation is rebuilt one level shallower, down to depth 0, so one sprawling
+ * schema cannot dominate the shipped index.
+ */
+function operationDetails(document, item, operation, verb, shape, typedPathParams, opBudget) {
+  let row = detailsAt(document, item, operation, verb, shape, typedPathParams);
+  for (let depth = shape.depth - 1; opBudget && depth >= 0 && JSON.stringify(row).length > opBudget; depth -= 1) {
+    row = detailsAt(document, item, operation, verb, { ...shape, depth }, typedPathParams);
+  }
+  return row;
+}
+
+function detailsAt(document, item, operation, verb, shape, typedPathParams) {
+  const params = [];
+  const seen = new Set();
+  for (const raw of [...(operation.parameters ?? []), ...(item.parameters ?? [])]) {
+    const parameter = resolveRef(document, raw);
+    if (!["path", "query"].includes(parameter.in) || typeof parameter.name !== "string") continue;
+    const key = `${parameter.in}:${parameter.name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    // A parameter is a top-level property; its own description is the one kept.
+    const { d: _, ...schema } = compactSchema(document, parameter.schema ?? {}, shape, 1);
+    const entry = [parameter.name, parameter.in, parameter.required === true ? 1 : 0, schema];
+    const description = plainText(parameter.description, shape.describe);
+    if (description) entry.push(description);
+    if (typedPathParams && parameter.in === "path" && !description && JSON.stringify(schema) === '{"t":"string"}') {
+      continue;
+    }
+    params.push(entry);
+  }
+  let body = 0;
+  const requestBody = resolveRef(document, operation.requestBody);
+  const content = requestBody.content;
+  if (verb !== "get" && verb !== "head" && content && typeof content === "object") {
+    const [contentType, media] = Object.entries(content)[0] ?? [];
+    const schema = compactSchema(document, media?.schema ?? {}, shape, 0);
+    // Stripe frames nearly every operation with an optional form body that
+    // declares no fields. Only that is no body; an array, a binary or
+    // unrestricted body, and any required body keep their contract.
+    const empty =
+      requestBody.required !== true &&
+      /^application\/x-www-form-urlencoded\b/.test(contentType ?? "") &&
+      schema.t === "object" &&
+      schema.p !== undefined &&
+      Object.keys(schema.p).length === 0 &&
+      !schema.a &&
+      !schema.m &&
+      !schema.x &&
+      !schema.r;
+    if (contentType && !empty) body = requestBody.required === true ? [contentType, schema, 1] : [contentType, schema];
+  }
+  return params.length || body ? [params, body] : 0;
 }
 
 /** The source record's generation options, as the header states them. */
@@ -480,7 +581,9 @@ export const openapi: OpenApiData = {
   ops: [
 ${rows}
   ],
-  details: ${JSON.stringify(data.details)},
+  details: ${JSON.stringify(data.details)},${
+    data.secrets ? `\n  secrets: [\n${data.secrets.map((row) => `    ${JSON.stringify(row)},`).join("\n")}\n  ],` : ""
+  }
 };
 `;
 }
@@ -579,8 +682,18 @@ async function main() {
     }
     const data = buildOperationIndex(JSON.parse(new TextDecoder().decode(bytes)), source);
     await writeFile(join(provider.directory, OUTPUT), renderOpenApiModule(data, source));
+    const rows = JSON.parse(data.details).o;
+    const largest = rows.reduce(
+      (best, row, at) => {
+        const size = JSON.stringify(row).length;
+        return size > best.size ? { size, at } : best;
+      },
+      { size: 0, at: -1 },
+    );
+    const op = data.ops[largest.at];
     console.log(
-      `providers/${provider.name}: ${data.ops.length} operations at ${source.revision} (API ${data.version || "unversioned"})`,
+      `providers/${provider.name}: ${data.ops.length} operations at ${source.revision} (API ${data.version || "unversioned"}); ` +
+        `largest details ${op ? `${op[0]} ${op[1]}` : "none"} at ${largest.size} characters after sharing`,
     );
   }
 }

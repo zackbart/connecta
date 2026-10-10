@@ -464,492 +464,12 @@
     }
   },
   "cloudflare": {
-    "padded-purpose": {
+    "oauth-padded-purpose": {
       "options": {
         "purpose": "  Audit fixture  ",
-        "instructions": "Deployment fixture instructions.",
-        "surface": "api"
-      },
-      "metadata": {
-        "title": "Cloudflare",
-        "description": "Cloudflare control-plane access for zones, DNS, Workers, KV, R2, Pages, media, email, and other v4 APIs — Audit fixture",
-        "kind": "api",
-        "authScope": null,
-        "maxResultBytes": null,
-        "callAdmission": {
-          "rules": [
-            {
-              "maxConcurrency": 6,
-              "budget": {
-                "kind": "rolling-window",
-                "maxCalls": 1200,
-                "windowMs": 300000
-              }
-            }
-          ]
+        "auth": {
+          "type": "oauth"
         },
-        "credential": {
-          "label": "Cloudflare API token",
-          "description": "A scoped API token (My Profile → API Tokens → Create Token), not a Global API Key. Grant only the permissions the deployment needs: zone-scoped \"Zone Read\", \"Zone Settings Write\", \"DNS Write\", \"Cache Purge\", and the phase-specific Rules product Read permissions as needed; account-scoped \"Workers Scripts Read/Write\", \"Workers KV Storage Read/Write\", \"Workers R2 Storage Read/Write\", or \"Cloudflare Pages Read/Write\" for the platform tools.",
-          "placeholder": "Paste API token"
-        },
-        "usageGuide": {
-          "content": "# Cloudflare usage\n\nAccount purpose: Audit fixture\n\n- This connector declares no default zone. Start with `list_zones` (filter by `name`) and carry the returned `id` into every zone-scoped call.\n- It declares no default account. `list_accounts` supplies the `accountId` the Workers, KV, R2, and Pages tools need.- This is the explicit `surface: \"api\"` complement. Hosted MCP is the default; configure each under a separate connector id with independent authorization and recovery. Never fall back to another credential after an error or repeat a write to recover its response.\n- Named tools are canonical for reads in read-only programs. `cloudflare_api_get` covers other GET endpoints, including text and byte-preserving `responseType: \"base64\"` downloads. Hosted `search` discovers API contracts; hosted `execute` owns ordinary JSON mutations. Execute remains a write even for a GET-only program.\n- `cloudflare_api_mutate` retains only a demonstrated auth/header gap: Global API Key identity, or R2 bucket endpoints (including bucket creation at the collection) requiring `cf-r2-jurisdiction`, or bucket storage-class edits with `PATCH /accounts/{accountId}/r2/buckets/{bucketName}` and `cf-r2-storage-class: Standard` or `InfrequentAccess`. The vendor request helper cannot send either header. Storage-class edits do not require a jurisdiction header for ordinary buckets. Ordinary headers such as `Accept` do not qualify. Other API-token JSON mutations are refused locally and must use hosted `execute`.\n- `cloudflare_api_upload` retains byte-safe upload bodies, explicit endpoint headers and multipart field/file encoding for Worker scripts, KV values, R2 objects, Images, Stream and Pages uploads. PUT owns Worker scripts, KV values and R2 objects; POST owns Worker versions, Images, Stream collection uploads and Pages uploads. Stream metadata edits, copy-from-URL and direct-upload URL creation use hosted `execute`. Other method/path pairs are refused, regardless of claimed content type. The vendor supports raw/multipart bodies, but its helper returns non-JSON bodies as text and exposes only content type on the request. Use API uploads when those compatibility requirements matter. Raw tools take a path below `/client/v4`; absolute URLs, traversal and embedded query strings are refused. `Authorization`, `Cookie`, `Host`, `Content-Length`, `Content-Type`, and `Transfer-Encoding` are connector-owned headers and cannot be overridden.\n- Useful paths include `/accounts/{accountId}/images/v1`, `/accounts/{accountId}/stream`, `/accounts/{accountId}/d1/database`, `/accounts/{accountId}/queues`, `/accounts/{accountId}/r2/buckets/{bucketName}/cors`, and `/accounts/{accountId}/r2/metrics`. Change CORS with hosted `execute`, except for the explicit legacy-identity/header gaps above.\n- Lists use `page`/`perPage` and return `page.hasMore`; rulesets, R2 buckets/objects and KV keys instead use opaque cursors. `list_worker_scripts` is unpaginated. Use `get_zone_setting` for one setting; Cloudflare deprecated the bulk `/zones/{zoneId}/settings` read. Reads project resource identity and state; `raw: true` returns dropped vendor fields.\n- The API token is operator-managed and scoped by permission. An `auth_required` failure means the token is missing or invalid. A `provider_permission_denied` failure asks an administrator to grant resource permission and token scope. Call `verify_api_token` first.- Honor vendor rate-limit waits. The documented 1,200 calls per five minutes are cumulative across a user and its tokens.\n- Read state before replacement, rollback or purge. Prefer targeted cache purges in hosted `execute`. Mutations/uploads stay write-classified; approval belongs to the host and program access to the configured pool.\n\n## Account instructions\n\nDeployment fixture instructions.\n",
-          "summary": "Zone and account scoping, named-vs-raw routing, two pagination shapes, and lean-vs-raw results."
-        },
-        "describeSha256": "3c24ea24b4ad0e92c6e59b8eaaa211debf128f728c27a999ce57a0b2aa57fa5d"
-      },
-      "tools": [
-        {
-          "name": "verify_api_token",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "cloudflare_api_get",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "cloudflare_api_mutate",
-          "annotations": {
-            "readOnlyHint": false,
-            "destructiveHint": true
-          }
-        },
-        {
-          "name": "cloudflare_api_upload",
-          "annotations": {
-            "readOnlyHint": false,
-            "destructiveHint": true
-          }
-        },
-        {
-          "name": "list_accounts",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_zones",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_zone",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_zone_setting",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_zone_rulesets",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_zone_ruleset",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_dns_records",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_dns_record",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_worker_scripts",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_worker_settings",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_worker_deployments",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_worker_deployment",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_kv_namespaces",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_kv_namespace",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_kv_keys",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "bulk_get_kv_values",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_r2_buckets",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_r2_bucket",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_r2_objects",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_r2_cors",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_pages_projects",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_pages_project",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_pages_deployments",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_pages_deployment",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_pages_domains",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        }
-      ]
-    },
-    "default": {
-      "options": {
-        "purpose": "Audit fixture",
-        "instructions": "Deployment fixture instructions.",
-        "surface": "api"
-      },
-      "metadata": {
-        "title": "Cloudflare",
-        "description": "Cloudflare control-plane access for zones, DNS, Workers, KV, R2, Pages, media, email, and other v4 APIs — Audit fixture",
-        "kind": "api",
-        "authScope": null,
-        "maxResultBytes": null,
-        "callAdmission": {
-          "rules": [
-            {
-              "maxConcurrency": 6,
-              "budget": {
-                "kind": "rolling-window",
-                "maxCalls": 1200,
-                "windowMs": 300000
-              }
-            }
-          ]
-        },
-        "credential": {
-          "label": "Cloudflare API token",
-          "description": "A scoped API token (My Profile → API Tokens → Create Token), not a Global API Key. Grant only the permissions the deployment needs: zone-scoped \"Zone Read\", \"Zone Settings Write\", \"DNS Write\", \"Cache Purge\", and the phase-specific Rules product Read permissions as needed; account-scoped \"Workers Scripts Read/Write\", \"Workers KV Storage Read/Write\", \"Workers R2 Storage Read/Write\", or \"Cloudflare Pages Read/Write\" for the platform tools.",
-          "placeholder": "Paste API token"
-        },
-        "usageGuide": {
-          "content": "# Cloudflare usage\n\nAccount purpose: Audit fixture\n\n- This connector declares no default zone. Start with `list_zones` (filter by `name`) and carry the returned `id` into every zone-scoped call.\n- It declares no default account. `list_accounts` supplies the `accountId` the Workers, KV, R2, and Pages tools need.- This is the explicit `surface: \"api\"` complement. Hosted MCP is the default; configure each under a separate connector id with independent authorization and recovery. Never fall back to another credential after an error or repeat a write to recover its response.\n- Named tools are canonical for reads in read-only programs. `cloudflare_api_get` covers other GET endpoints, including text and byte-preserving `responseType: \"base64\"` downloads. Hosted `search` discovers API contracts; hosted `execute` owns ordinary JSON mutations. Execute remains a write even for a GET-only program.\n- `cloudflare_api_mutate` retains only a demonstrated auth/header gap: Global API Key identity, or R2 bucket endpoints (including bucket creation at the collection) requiring `cf-r2-jurisdiction`, or bucket storage-class edits with `PATCH /accounts/{accountId}/r2/buckets/{bucketName}` and `cf-r2-storage-class: Standard` or `InfrequentAccess`. The vendor request helper cannot send either header. Storage-class edits do not require a jurisdiction header for ordinary buckets. Ordinary headers such as `Accept` do not qualify. Other API-token JSON mutations are refused locally and must use hosted `execute`.\n- `cloudflare_api_upload` retains byte-safe upload bodies, explicit endpoint headers and multipart field/file encoding for Worker scripts, KV values, R2 objects, Images, Stream and Pages uploads. PUT owns Worker scripts, KV values and R2 objects; POST owns Worker versions, Images, Stream collection uploads and Pages uploads. Stream metadata edits, copy-from-URL and direct-upload URL creation use hosted `execute`. Other method/path pairs are refused, regardless of claimed content type. The vendor supports raw/multipart bodies, but its helper returns non-JSON bodies as text and exposes only content type on the request. Use API uploads when those compatibility requirements matter. Raw tools take a path below `/client/v4`; absolute URLs, traversal and embedded query strings are refused. `Authorization`, `Cookie`, `Host`, `Content-Length`, `Content-Type`, and `Transfer-Encoding` are connector-owned headers and cannot be overridden.\n- Useful paths include `/accounts/{accountId}/images/v1`, `/accounts/{accountId}/stream`, `/accounts/{accountId}/d1/database`, `/accounts/{accountId}/queues`, `/accounts/{accountId}/r2/buckets/{bucketName}/cors`, and `/accounts/{accountId}/r2/metrics`. Change CORS with hosted `execute`, except for the explicit legacy-identity/header gaps above.\n- Lists use `page`/`perPage` and return `page.hasMore`; rulesets, R2 buckets/objects and KV keys instead use opaque cursors. `list_worker_scripts` is unpaginated. Use `get_zone_setting` for one setting; Cloudflare deprecated the bulk `/zones/{zoneId}/settings` read. Reads project resource identity and state; `raw: true` returns dropped vendor fields.\n- The API token is operator-managed and scoped by permission. An `auth_required` failure means the token is missing or invalid. A `provider_permission_denied` failure asks an administrator to grant resource permission and token scope. Call `verify_api_token` first.- Honor vendor rate-limit waits. The documented 1,200 calls per five minutes are cumulative across a user and its tokens.\n- Read state before replacement, rollback or purge. Prefer targeted cache purges in hosted `execute`. Mutations/uploads stay write-classified; approval belongs to the host and program access to the configured pool.\n\n## Account instructions\n\nDeployment fixture instructions.\n",
-          "summary": "Zone and account scoping, named-vs-raw routing, two pagination shapes, and lean-vs-raw results."
-        },
-        "describeSha256": "3c24ea24b4ad0e92c6e59b8eaaa211debf128f728c27a999ce57a0b2aa57fa5d"
-      },
-      "tools": [
-        {
-          "name": "verify_api_token",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "cloudflare_api_get",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "cloudflare_api_mutate",
-          "annotations": {
-            "readOnlyHint": false,
-            "destructiveHint": true
-          }
-        },
-        {
-          "name": "cloudflare_api_upload",
-          "annotations": {
-            "readOnlyHint": false,
-            "destructiveHint": true
-          }
-        },
-        {
-          "name": "list_accounts",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_zones",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_zone",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_zone_setting",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_zone_rulesets",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_zone_ruleset",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_dns_records",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_dns_record",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_worker_scripts",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_worker_settings",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_worker_deployments",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_worker_deployment",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_kv_namespaces",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_kv_namespace",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_kv_keys",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "bulk_get_kv_values",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_r2_buckets",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_r2_bucket",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_r2_objects",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_r2_cors",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_pages_projects",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_pages_project",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_pages_deployments",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "get_pages_deployment",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        },
-        {
-          "name": "list_pages_domains",
-          "annotations": {
-            "readOnlyHint": true,
-            "destructiveHint": false
-          }
-        }
-      ]
-    },
-    "mcp": {
-      "options": {
-        "purpose": "Audit fixture",
-        "surface": "mcp",
         "instructions": "Deployment fixture instructions."
       },
       "metadata": {
@@ -961,12 +481,351 @@
         "callAdmission": null,
         "credential": null,
         "usageGuide": {
-          "content": "# Cloudflare MCP usage\n\nOfficial whole-API MCP interface: Audit fixture\n\n- Hosted `execute` owns ordinary mutations. The separate `surface: \"api\"`\n  complement owns read-only-program reads, binary/header-compatible uploads\n  and legacy Global API Key or R2 jurisdiction/storage-class mutations. Configure distinct\n  connector ids and authorize each explicitly; there is no credential fallback.\n- Resolve account and zone ids independently. Defaults do not constrain token permissions. Distinguish missing or revoked credentials from missing product permissions, and honor supplied rate-limit waits.\n- The catalog contains `search` and `execute`. Search runs code against\n  Cloudflare's OpenAPI document. Execute runs code that may call any authorized\n  Cloudflare API endpoint.\n- Use `search` to find the exact method, path, and fields before writing an\n  execute program. Do not guess an endpoint from product naming.\n- Connecta classifies `execute` as a write because it can mix GET, POST,\n  PUT, PATCH, and DELETE requests inside one program. Read-only pools route\n  it through `call_destructive_tool`; trusted pools permit it in programs.\n  The host controls approval. The MCP schema cannot establish that arbitrary\n  code is read-only.\n- Keep returned values small. Filter and project inside the Cloudflare MCP\n  program, then reduce again inside Connecta's `execute_code` when several\n  calls must be joined.\n- OAuth and API-token permissions remain the provider-side boundary. An\n  `auth_required` failure needs authorization or a token with the required\n  Cloudflare permission.\n\n## Account instructions\n\nDeployment fixture instructions.\n",
-          "summary": "Official whole-API MCP. Search the OpenAPI document; execute programs always classify as writes.",
+          "content": "# Cloudflare usage\n\nHosted MCP over OAuth: `search` and `execute`. Connector purpose: Audit fixture\n\n- The catalog is Cloudflare's own `search` and `execute`. `search` runs code against Cloudflare's OpenAPI document; `execute` runs code that may call any Cloudflare API endpoint the OAuth grant allows.\n- Connecta classifies `execute` as a write, even for a program that only reads, because one program can mix GET, POST, PUT, PATCH, and DELETE and no schema proves otherwise. A read-only pool therefore gets only `search` here. Deployments that need API reads from a read-only pool configure an API-token connector, whose `cloudflare_api_read` and named reads are reads.\n- Use `search` to find the exact method, path, and fields before writing an execute program. Do not guess an endpoint from product naming.\n- Keep returned values small. Filter and project inside the Cloudflare program, then reduce again inside Connecta's `execute_code` when several calls must be joined.\n- This connection has none of the REST connector's tools: no `cloudflare_api_*` validation against a pinned index, no `graphql_query`, no `cloudflare_api_upload`, and no account or zone pin. OAuth permissions are the boundary.\n- Resolve account and zone ids before acting; never guess one. Ids are 32-character hex strings, and a zone is found by its domain name. Defaults and pins route a connector; Cloudflare's permissions still decide what the credential may do.\n- Read state before replacing, rolling back, or purging. For DNS, PATCH changes the fields you send and PUT replaces the whole record, so read the record first and send its type, name, and content with the change. Prefer a targeted cache purge (files, tags, hosts, or prefixes) over purging everything.\n- Cloudflare reports failures in `errors` with numeric codes and returns `success: false`; read the message instead of retrying the same call.\n- Honor rate-limit waits. Cloudflare documents 1,200 requests per five minutes per user, counted across the dashboard and every token; Connecta's per-runtime window approximates it, and a limited user is blocked for the rest of the window.\n- Treat every create, update, delete, purge, deploy, and upload as a write. For guest calls, classification, and routing, fetch `skills({ name: \"usage\" })`.\n- An `auth_required` failure means this connector's Cloudflare authorization is missing or expired: run `authorize_connector` for this connector id, then retry the same call unchanged.\n\n## Account instructions\n\nDeployment fixture instructions.\n",
+          "summary": "Hosted MCP over OAuth. Search the OpenAPI document; execute programs always classify as writes.",
           "required": true
         },
-        "describeSha256": "d1726cf65ec7a5abc6b69d5ae9a355391b0d4faa1809320fe4dfe1234a878229"
+        "describeSha256": "5ac118db1d7028f73b3772fcf2f91dd12f97906646af46b59b9f55205bfe65a3"
       }
+    },
+    "oauth": {
+      "options": {
+        "purpose": "Audit fixture",
+        "auth": {
+          "type": "oauth"
+        },
+        "instructions": "Deployment fixture instructions."
+      },
+      "metadata": {
+        "title": "Cloudflare (MCP)",
+        "description": "Cloudflare's official whole-API MCP interface: Audit fixture",
+        "kind": "mcp",
+        "authScope": null,
+        "maxResultBytes": null,
+        "callAdmission": null,
+        "credential": null,
+        "usageGuide": {
+          "content": "# Cloudflare usage\n\nHosted MCP over OAuth: `search` and `execute`. Connector purpose: Audit fixture\n\n- The catalog is Cloudflare's own `search` and `execute`. `search` runs code against Cloudflare's OpenAPI document; `execute` runs code that may call any Cloudflare API endpoint the OAuth grant allows.\n- Connecta classifies `execute` as a write, even for a program that only reads, because one program can mix GET, POST, PUT, PATCH, and DELETE and no schema proves otherwise. A read-only pool therefore gets only `search` here. Deployments that need API reads from a read-only pool configure an API-token connector, whose `cloudflare_api_read` and named reads are reads.\n- Use `search` to find the exact method, path, and fields before writing an execute program. Do not guess an endpoint from product naming.\n- Keep returned values small. Filter and project inside the Cloudflare program, then reduce again inside Connecta's `execute_code` when several calls must be joined.\n- This connection has none of the REST connector's tools: no `cloudflare_api_*` validation against a pinned index, no `graphql_query`, no `cloudflare_api_upload`, and no account or zone pin. OAuth permissions are the boundary.\n- Resolve account and zone ids before acting; never guess one. Ids are 32-character hex strings, and a zone is found by its domain name. Defaults and pins route a connector; Cloudflare's permissions still decide what the credential may do.\n- Read state before replacing, rolling back, or purging. For DNS, PATCH changes the fields you send and PUT replaces the whole record, so read the record first and send its type, name, and content with the change. Prefer a targeted cache purge (files, tags, hosts, or prefixes) over purging everything.\n- Cloudflare reports failures in `errors` with numeric codes and returns `success: false`; read the message instead of retrying the same call.\n- Honor rate-limit waits. Cloudflare documents 1,200 requests per five minutes per user, counted across the dashboard and every token; Connecta's per-runtime window approximates it, and a limited user is blocked for the rest of the window.\n- Treat every create, update, delete, purge, deploy, and upload as a write. For guest calls, classification, and routing, fetch `skills({ name: \"usage\" })`.\n- An `auth_required` failure means this connector's Cloudflare authorization is missing or expired: run `authorize_connector` for this connector id, then retry the same call unchanged.\n\n## Account instructions\n\nDeployment fixture instructions.\n",
+          "summary": "Hosted MCP over OAuth. Search the OpenAPI document; execute programs always classify as writes.",
+          "required": true
+        },
+        "describeSha256": "5ac118db1d7028f73b3772fcf2f91dd12f97906646af46b59b9f55205bfe65a3"
+      }
+    },
+    "token": {
+      "options": {
+        "purpose": "Audit fixture",
+        "auth": {
+          "type": "apiToken"
+        },
+        "instructions": "Deployment fixture instructions."
+      },
+      "metadata": {
+        "title": "Cloudflare",
+        "description": "Cloudflare v4 API over REST (API token) — Audit fixture",
+        "kind": "api",
+        "authScope": null,
+        "maxResultBytes": null,
+        "callAdmission": {
+          "rules": [
+            {
+              "maxConcurrency": 6,
+              "budget": {
+                "kind": "rolling-window",
+                "maxCalls": 1200,
+                "windowMs": 300000
+              }
+            }
+          ]
+        },
+        "credential": {
+          "label": "Cloudflare API token",
+          "description": "A scoped API token (user or account token), not a Global API Key. Grant only the permissions this connector needs, on only the accounts and zones it serves. It is sent only to api.cloudflare.com, stored encrypted, and never displayed.",
+          "placeholder": "Paste API token"
+        },
+        "usageGuide": {
+          "content": "# Cloudflare usage\n\nREST with a scoped API token. Connector purpose: Audit fixture\n\n- This is Connecta's REST connector to the Cloudflare v4 API, holding one operator-managed credential. `cloudflare_api_search` finds API operations in a pinned index (not records) and names the tool that calls each; `cloudflare_api_details` returns one operation's parameters and body with types, enums, and required names. Neither sends a request.\n- `cloudflare_api_read` calls GET operations plus reviewed read-only POSTs: analytics queries, Analytics Engine and SQL API queries, Log Explorer SQL, Vectorize queries, KV bulk get, telemetry queries, and validation checks. `cloudflare_api_write` calls every other POST, PUT, PATCH, and DELETE with `method` and `path` stated. D1 `…/query` and `…/raw`, Durable Object queries, Workers AI `…/ai/run`, AI Search and AutoRAG search (query rewriting runs billed models), monetization checks, and flag evaluation are writes: they can change data, cost money, or activate something.\n- Paths are concrete: substitute ids into the template search returned (`/zones/<zone id>/dns_records/<record id>`). Pass `query` and `body` as JSON named as details lists them; text operations (Analytics Engine SQL, Log Explorer SQL, Worker scripts) take a string body, and Vectorize inserts a list of objects sent as NDJSON. R2 calls accept `headers` with `cf-r2-jurisdiction` or `cf-r2-storage-class`. Encode a `/` inside an R2 object key or KV key name as `%2F`.\n- Every call is checked against the pinned index before it is sent. An unknown path returns the nearest operations; an unknown or missing parameter returns `validation.issues` with the accepted names. Nothing reached Cloudflare, so fix the call from that answer.\n- Results arrive as `{ status, data, page? }` with Cloudflare's envelope unwrapped: `data` is the `result`. On a list, pass `page.next` as the `page.param` query argument (`page` for numbered lists, `cursor` for KV, R2, and other cursor lists). Lists belong inside `execute_code`; pass `select` (dot paths such as `id` and `name`) to keep only the fields the question needs.\n- `list_zones` and `list_accounts` resolve names to ids; `verify_credential` separates a bad credential from a missing permission. `graphql_query` runs read-only GraphQL Analytics queries (mutations are refused before sending); filter every `zones` or `accounts` field by `zoneTag` or `accountTag`. A pinned connector sends one query per document, with every fragment it defines used.\n- Multipart, binary, and file bodies go through `cloudflare_api_upload`: Worker scripts and versions, KV values, R2 objects, Pages deployments, Images, Stream, DNS zone-file import, and Snippets. It takes `textBody`, `base64Body`, or multipart `parts`, never a local file.\n- Refused by design: every operation that mints, rotates, or hands back a credential (API tokens, Access service tokens, R2 temporary credentials, tunnel and Mesh node tokens, signing keys, registry credentials, direct-upload URLs, deploy hooks, preview and participant tokens), payment client secrets, URL Scanner captures (results, HAR, DOM, raw responses: they hold the scanned session's cookies and headers; use the scan search for verdicts), and GETs that act (an email unsubscribe, a PagerDuty connect). Stored and embedded secrets (Turnstile, TSIG, webhook and identity-provider secrets, Stream keys, Logpush destination credentials, probe and custom-provider headers, BGP keys, Zaraz variables) and every environment or plain-text binding value (Pages, Containers, Workers, Builds; names and types stay) come back as `\"[redacted]\"` on every method. Operations that take or return credentials report Cloudflare's error codes without its error text. Worker script content is readable: it is code, and secret bindings are not part of it.\n- An `auth_required` failure means the credential is missing, revoked, or malformed: an operator must replace it in this connection in the operator UI, and `authorize_connector` returns that handoff. `provider_permission_denied` means the credential works but lacks this permission or resource, or the call is outside the pin; ask rather than retry.\n- Resolve account and zone ids before acting; never guess one. Ids are 32-character hex strings, and a zone is found by its domain name. Defaults and pins route a connector; Cloudflare's permissions still decide what the credential may do.\n- Read state before replacing, rolling back, or purging. For DNS, PATCH changes the fields you send and PUT replaces the whole record, so read the record first and send its type, name, and content with the change. Prefer a targeted cache purge (files, tags, hosts, or prefixes) over purging everything.\n- Cloudflare reports failures in `errors` with numeric codes and returns `success: false`; read the message instead of retrying the same call.\n- Honor rate-limit waits. Cloudflare documents 1,200 requests per five minutes per user, counted across the dashboard and every token; Connecta's per-runtime window approximates it, and a limited user is blocked for the rest of the window.\n- Treat every create, update, delete, purge, deploy, and upload as a write. For guest calls, classification, and routing, fetch `skills({ name: \"usage\" })`.\n- Cloudflare answers a rate limit with HTTP 429; the failure carries `retryAfterMs`. Failed authentication is limited separately (code 10502), so diagnose a credential once with `verify_credential` rather than retrying calls.\n\n## Account instructions\n\nDeployment fixture instructions.\n",
+          "summary": "Scoped API token over REST. Search operations, read details, then read or write; uploads and GraphQL are named tools."
+        },
+        "describeSha256": "7f6d768bcac4cb660e54a0705e86bc7b3a6978e59d3ac6d5cb01557019233176"
+      },
+      "tools": [
+        {
+          "name": "cloudflare_api_search",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "cloudflare_api_details",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "cloudflare_api_read",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "cloudflare_api_write",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true
+          }
+        },
+        {
+          "name": "verify_credential",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "list_accounts",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "list_zones",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "graphql_query",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "cloudflare_api_upload",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true
+          }
+        }
+      ]
+    },
+    "token-pinned": {
+      "options": {
+        "purpose": "Audit fixture",
+        "auth": {
+          "type": "apiToken"
+        },
+        "accountId": "acct-fixture",
+        "zoneId": "zone-fixture",
+        "pin": {
+          "accountIds": [
+            "acct-fixture"
+          ]
+        },
+        "instructions": "Deployment fixture instructions."
+      },
+      "metadata": {
+        "title": "Cloudflare",
+        "description": "Cloudflare v4 API over REST (API token, pinned) — Audit fixture",
+        "kind": "api",
+        "authScope": null,
+        "maxResultBytes": null,
+        "callAdmission": {
+          "rules": [
+            {
+              "maxConcurrency": 6,
+              "budget": {
+                "kind": "rolling-window",
+                "maxCalls": 1200,
+                "windowMs": 300000
+              }
+            }
+          ]
+        },
+        "credential": {
+          "label": "Cloudflare API token",
+          "description": "A scoped API token (user or account token), not a Global API Key. Grant only the permissions this connector needs, on only the accounts and zones it serves. It is sent only to api.cloudflare.com, stored encrypted, and never displayed.",
+          "placeholder": "Paste API token"
+        },
+        "usageGuide": {
+          "content": "# Cloudflare usage\n\nREST with a scoped API token. Connector purpose: Audit fixture\n\nPinned to accounts `acct-fixture` and every zone in them. Calls naming any other account or zone are refused before they are sent, and so is every operation that names neither, except the credential's own user, the filtered account, zone, and membership lists, zone creation in a pinned account, and public data.\n\nDefaults: `{account_id}` in a path fills with `acct-fixture`; `{zone_id}` fills with `zone-fixture`. Pass another id in the path when the request names a different one.\n\n- This is Connecta's REST connector to the Cloudflare v4 API, holding one operator-managed credential. `cloudflare_api_search` finds API operations in a pinned index (not records) and names the tool that calls each; `cloudflare_api_details` returns one operation's parameters and body with types, enums, and required names. Neither sends a request.\n- `cloudflare_api_read` calls GET operations plus reviewed read-only POSTs: analytics queries, Analytics Engine and SQL API queries, Log Explorer SQL, Vectorize queries, KV bulk get, telemetry queries, and validation checks. `cloudflare_api_write` calls every other POST, PUT, PATCH, and DELETE with `method` and `path` stated. D1 `…/query` and `…/raw`, Durable Object queries, Workers AI `…/ai/run`, AI Search and AutoRAG search (query rewriting runs billed models), monetization checks, and flag evaluation are writes: they can change data, cost money, or activate something.\n- Paths are concrete: substitute ids into the template search returned (`/zones/<zone id>/dns_records/<record id>`). Pass `query` and `body` as JSON named as details lists them; text operations (Analytics Engine SQL, Log Explorer SQL, Worker scripts) take a string body, and Vectorize inserts a list of objects sent as NDJSON. R2 calls accept `headers` with `cf-r2-jurisdiction` or `cf-r2-storage-class`. Encode a `/` inside an R2 object key or KV key name as `%2F`.\n- Every call is checked against the pinned index before it is sent. An unknown path returns the nearest operations; an unknown or missing parameter returns `validation.issues` with the accepted names. Nothing reached Cloudflare, so fix the call from that answer.\n- Results arrive as `{ status, data, page? }` with Cloudflare's envelope unwrapped: `data` is the `result`. On a list, pass `page.next` as the `page.param` query argument (`page` for numbered lists, `cursor` for KV, R2, and other cursor lists). Lists belong inside `execute_code`; pass `select` (dot paths such as `id` and `name`) to keep only the fields the question needs.\n- `list_zones` and `list_accounts` resolve names to ids; `verify_credential` separates a bad credential from a missing permission. `graphql_query` runs read-only GraphQL Analytics queries (mutations are refused before sending); filter every `zones` or `accounts` field by `zoneTag` or `accountTag`. A pinned connector sends one query per document, with every fragment it defines used.\n- Multipart, binary, and file bodies go through `cloudflare_api_upload`: Worker scripts and versions, KV values, R2 objects, Pages deployments, Images, Stream, DNS zone-file import, and Snippets. It takes `textBody`, `base64Body`, or multipart `parts`, never a local file.\n- Refused by design: every operation that mints, rotates, or hands back a credential (API tokens, Access service tokens, R2 temporary credentials, tunnel and Mesh node tokens, signing keys, registry credentials, direct-upload URLs, deploy hooks, preview and participant tokens), payment client secrets, URL Scanner captures (results, HAR, DOM, raw responses: they hold the scanned session's cookies and headers; use the scan search for verdicts), and GETs that act (an email unsubscribe, a PagerDuty connect). Stored and embedded secrets (Turnstile, TSIG, webhook and identity-provider secrets, Stream keys, Logpush destination credentials, probe and custom-provider headers, BGP keys, Zaraz variables) and every environment or plain-text binding value (Pages, Containers, Workers, Builds; names and types stay) come back as `\"[redacted]\"` on every method. Operations that take or return credentials report Cloudflare's error codes without its error text. Worker script content is readable: it is code, and secret bindings are not part of it.\n- An `auth_required` failure means the credential is missing, revoked, or malformed: an operator must replace it in this connection in the operator UI, and `authorize_connector` returns that handoff. `provider_permission_denied` means the credential works but lacks this permission or resource, or the call is outside the pin; ask rather than retry.\n- Resolve account and zone ids before acting; never guess one. Ids are 32-character hex strings, and a zone is found by its domain name. Defaults and pins route a connector; Cloudflare's permissions still decide what the credential may do.\n- Read state before replacing, rolling back, or purging. For DNS, PATCH changes the fields you send and PUT replaces the whole record, so read the record first and send its type, name, and content with the change. Prefer a targeted cache purge (files, tags, hosts, or prefixes) over purging everything.\n- Cloudflare reports failures in `errors` with numeric codes and returns `success: false`; read the message instead of retrying the same call.\n- Honor rate-limit waits. Cloudflare documents 1,200 requests per five minutes per user, counted across the dashboard and every token; Connecta's per-runtime window approximates it, and a limited user is blocked for the rest of the window.\n- Treat every create, update, delete, purge, deploy, and upload as a write. For guest calls, classification, and routing, fetch `skills({ name: \"usage\" })`.\n- Cloudflare answers a rate limit with HTTP 429; the failure carries `retryAfterMs`. Failed authentication is limited separately (code 10502), so diagnose a credential once with `verify_credential` rather than retrying calls.\n\n## Account instructions\n\nDeployment fixture instructions.\n",
+          "summary": "Scoped API token over REST. Search operations, read details, then read or write; uploads and GraphQL are named tools."
+        },
+        "describeSha256": "7f6d768bcac4cb660e54a0705e86bc7b3a6978e59d3ac6d5cb01557019233176"
+      },
+      "tools": [
+        {
+          "name": "cloudflare_api_search",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "cloudflare_api_details",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "cloudflare_api_read",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "cloudflare_api_write",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true
+          }
+        },
+        {
+          "name": "verify_credential",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "list_accounts",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "list_zones",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "graphql_query",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "cloudflare_api_upload",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true
+          }
+        }
+      ]
+    },
+    "global-key": {
+      "options": {
+        "purpose": "Audit fixture",
+        "auth": {
+          "type": "globalApiKey"
+        },
+        "pin": {
+          "zoneIds": [
+            "zone-fixture"
+          ]
+        },
+        "instructions": "Deployment fixture instructions."
+      },
+      "metadata": {
+        "title": "Cloudflare (Global API Key)",
+        "description": "Cloudflare v4 API over REST (Global API Key, pinned) — Audit fixture",
+        "kind": "api",
+        "authScope": null,
+        "maxResultBytes": null,
+        "callAdmission": {
+          "rules": [
+            {
+              "maxConcurrency": 6,
+              "budget": {
+                "kind": "rolling-window",
+                "maxCalls": 1200,
+                "windowMs": 300000
+              }
+            }
+          ]
+        },
+        "credential": {
+          "label": "Cloudflare Global API Key",
+          "description": "Legacy user-scoped authentication with the same access as its Cloudflare user across every account and zone that user can reach. Prefer a scoped API token.",
+          "fields": [
+            {
+              "name": "email",
+              "label": "Account email",
+              "description": "The verified email address for the Cloudflare user that owns the Global API Key.",
+              "placeholder": "you@example.com",
+              "inputType": "email"
+            },
+            {
+              "name": "apiKey",
+              "label": "Global API Key",
+              "description": "The legacy Global API Key from My Profile → API Tokens.",
+              "placeholder": "Paste Global API Key",
+              "inputType": "password"
+            }
+          ]
+        },
+        "usageGuide": {
+          "content": "# Cloudflare usage\n\nREST with a Global API Key. Connector purpose: Audit fixture\n\nThis connector holds a Global API Key. It acts as its Cloudflare user with every permission that user has, in every account and zone the user belongs to, and nothing on Cloudflare's side narrows it. A mistaken write can reach production domains, billing, and members across all of them. Prefer reads, state the account and zone of every write, and stop when a request is ambiguous. Writes under `/user` and `/memberships` are refused. R2 accepts API tokens only, so R2 operations fail with this key.\n\nPinned to zones `zone-fixture`. Calls naming any other account or zone are refused before they are sent, and so is every operation that names neither, except the credential's own user, the filtered account, zone, and membership lists, zone creation in a pinned account, and public data.\n\n- This is Connecta's REST connector to the Cloudflare v4 API, holding one operator-managed credential. `cloudflare_api_search` finds API operations in a pinned index (not records) and names the tool that calls each; `cloudflare_api_details` returns one operation's parameters and body with types, enums, and required names. Neither sends a request.\n- `cloudflare_api_read` calls GET operations plus reviewed read-only POSTs: analytics queries, Analytics Engine and SQL API queries, Log Explorer SQL, Vectorize queries, KV bulk get, telemetry queries, and validation checks. `cloudflare_api_write` calls every other POST, PUT, PATCH, and DELETE with `method` and `path` stated. D1 `…/query` and `…/raw`, Durable Object queries, Workers AI `…/ai/run`, AI Search and AutoRAG search (query rewriting runs billed models), monetization checks, and flag evaluation are writes: they can change data, cost money, or activate something.\n- Paths are concrete: substitute ids into the template search returned (`/zones/<zone id>/dns_records/<record id>`). Pass `query` and `body` as JSON named as details lists them; text operations (Analytics Engine SQL, Log Explorer SQL, Worker scripts) take a string body, and Vectorize inserts a list of objects sent as NDJSON. R2 calls accept `headers` with `cf-r2-jurisdiction` or `cf-r2-storage-class`. Encode a `/` inside an R2 object key or KV key name as `%2F`.\n- Every call is checked against the pinned index before it is sent. An unknown path returns the nearest operations; an unknown or missing parameter returns `validation.issues` with the accepted names. Nothing reached Cloudflare, so fix the call from that answer.\n- Results arrive as `{ status, data, page? }` with Cloudflare's envelope unwrapped: `data` is the `result`. On a list, pass `page.next` as the `page.param` query argument (`page` for numbered lists, `cursor` for KV, R2, and other cursor lists). Lists belong inside `execute_code`; pass `select` (dot paths such as `id` and `name`) to keep only the fields the question needs.\n- `list_zones` and `list_accounts` resolve names to ids; `verify_credential` separates a bad credential from a missing permission. `graphql_query` runs read-only GraphQL Analytics queries (mutations are refused before sending); filter every `zones` or `accounts` field by `zoneTag` or `accountTag`. A pinned connector sends one query per document, with every fragment it defines used.\n- Multipart, binary, and file bodies go through `cloudflare_api_upload`: Worker scripts and versions, KV values, R2 objects, Pages deployments, Images, Stream, DNS zone-file import, and Snippets. It takes `textBody`, `base64Body`, or multipart `parts`, never a local file.\n- Refused by design: every operation that mints, rotates, or hands back a credential (API tokens, Access service tokens, R2 temporary credentials, tunnel and Mesh node tokens, signing keys, registry credentials, direct-upload URLs, deploy hooks, preview and participant tokens), payment client secrets, URL Scanner captures (results, HAR, DOM, raw responses: they hold the scanned session's cookies and headers; use the scan search for verdicts), and GETs that act (an email unsubscribe, a PagerDuty connect). Stored and embedded secrets (Turnstile, TSIG, webhook and identity-provider secrets, Stream keys, Logpush destination credentials, probe and custom-provider headers, BGP keys, Zaraz variables) and every environment or plain-text binding value (Pages, Containers, Workers, Builds; names and types stay) come back as `\"[redacted]\"` on every method. Operations that take or return credentials report Cloudflare's error codes without its error text. Worker script content is readable: it is code, and secret bindings are not part of it.\n- An `auth_required` failure means the credential is missing, revoked, or malformed: an operator must replace it in this connection in the operator UI, and `authorize_connector` returns that handoff. `provider_permission_denied` means the credential works but lacks this permission or resource, or the call is outside the pin; ask rather than retry.\n- Resolve account and zone ids before acting; never guess one. Ids are 32-character hex strings, and a zone is found by its domain name. Defaults and pins route a connector; Cloudflare's permissions still decide what the credential may do.\n- Read state before replacing, rolling back, or purging. For DNS, PATCH changes the fields you send and PUT replaces the whole record, so read the record first and send its type, name, and content with the change. Prefer a targeted cache purge (files, tags, hosts, or prefixes) over purging everything.\n- Cloudflare reports failures in `errors` with numeric codes and returns `success: false`; read the message instead of retrying the same call.\n- Honor rate-limit waits. Cloudflare documents 1,200 requests per five minutes per user, counted across the dashboard and every token; Connecta's per-runtime window approximates it, and a limited user is blocked for the rest of the window.\n- Treat every create, update, delete, purge, deploy, and upload as a write. For guest calls, classification, and routing, fetch `skills({ name: \"usage\" })`.\n- Cloudflare answers a rate limit with HTTP 429; the failure carries `retryAfterMs`. Failed authentication is limited separately (code 10502), so diagnose a credential once with `verify_credential` rather than retrying calls.\n\n## Account instructions\n\nDeployment fixture instructions.\n",
+          "summary": "GLOBAL API KEY: the user's whole estate, limited by pin. Search operations, read details, then read or write."
+        },
+        "describeSha256": "7f6d768bcac4cb660e54a0705e86bc7b3a6978e59d3ac6d5cb01557019233176"
+      },
+      "tools": [
+        {
+          "name": "cloudflare_api_search",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "cloudflare_api_details",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "cloudflare_api_read",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "cloudflare_api_write",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true
+          }
+        },
+        {
+          "name": "verify_credential",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "list_accounts",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "list_zones",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "graphql_query",
+          "annotations": {
+            "readOnlyHint": true
+          }
+        },
+        {
+          "name": "cloudflare_api_upload",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true
+          }
+        }
+      ]
     }
   },
   "stripe": {

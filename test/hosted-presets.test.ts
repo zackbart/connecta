@@ -48,8 +48,8 @@ function expectedGuide(name: Name, content: string): string {
 
 /** The fixture override that selects each provider's hosted MCP implementation. */
 function hostedCase(name: Name): never {
-  if (name === "stripe" || name === "notion") return { auth: { type: "oauth" } } as never;
-  return (["vercel", "cloudflare"].includes(name) ? { surface: "mcp" } : {}) as never;
+  if (["stripe", "notion", "cloudflare"].includes(name)) return { auth: { type: "oauth" } } as never;
+  return (name === "vercel" ? { surface: "mcp" } : {}) as never;
 }
 
 const registryFor = (connector: Connector) =>

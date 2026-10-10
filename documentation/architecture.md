@@ -733,7 +733,7 @@ A `"dual"` provider lets `auth` select the implementation
 `variants(["auth", "type"], …)` closes each case's options, and
 `byAuth()` in `src/providers/_shared/rest/dispatch.ts` sends OAuth to
 `hostedOAuth()` (`remoteMcp()`, OAuth only, the reviewed classification) and a
-key to Connecta's REST connector. Stripe and Notion are dual; `auth` is required.
+key to Connecta's REST connector. Stripe, Notion, and Cloudflare are dual; `auth` is required.
 The REST connector (`src/providers/_shared/rest/`) serves
 `<vendor>_api_search`, `_api_details`, `_api_read`, and `_api_write` over an
 `OperationIndex` that `npm run providers:spec` compiles offline from the
@@ -742,13 +742,19 @@ Each call is matched to an operation and checked against its parameters before
 transport; `_api_read` admits GET and the vendor's reviewed read-only POSTs in
 its handler, since classification is per tool name. Vendors configure only a
 transport, failure mapper, scope, framing, cursor extraction, refusal table,
-and idempotency header (`test/rest-connector.test.ts`).
+and idempotency header, plus optional hooks: `path` (fill default ids before
+matching), `admit` (an awaited check in `callRest` every tool passes, such as
+Cloudflare's account and zone pin), `result` (unwrap a vendor envelope), a
+reviewed request-header allowlist, text bodies, and index `slashParams` that
+admit an encoded `/` in a final key segment (`test/rest-connector.test.ts`).
+Large documents opt into generator options that drop restated operation ids
+and plain path parameters and cap one operation's details (`opBudget`).
 `check:providers-generated` checks each index header against its source record
 offline; `providers:check` reports a pin that differs from the live document.
-Vercel and Cloudflare default to hosted MCP and select explicit REST
-complements with `surface: "api"`. Configure both under distinct connector ids
-with independent credentials when both are needed. Vercel and Cloudflare
-retain documented REST gaps rather than duplicate hosted operations. See the
+Vercel defaults to hosted MCP and selects an explicit REST complement with
+`surface: "api"`. Configure both under distinct connector ids with independent
+credentials when both are needed. Vercel retains documented REST gaps rather
+than duplicate hosted operations. See the
 [provider migration guide](./provider-migration-0.29.md). Notion's token
 connector keeps its `integration_*` projections and authoring helpers beside
 the generic REST tools.

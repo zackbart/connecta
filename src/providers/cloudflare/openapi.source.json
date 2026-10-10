@@ -1,0 +1,15 @@
+{
+  "url": "https://raw.githubusercontent.com/cloudflare/api-schemas/3fad73eb27c381031c09ccdfa28ef9352029cd5a/openapi.json",
+  "revision": "3fad73eb27c381031c09ccdfa28ef9352029cd5a",
+  "digest": "sha256:4f142b047af2c8469e4572092bf42ffab31954fef0cc2c8b7bbb79b11df577ef",
+  "latest": "https://raw.githubusercontent.com/cloudflare/api-schemas/main/openapi.json",
+  "options": {
+    "depth": 2,
+    "descriptions": 0,
+    "maxEnum": 50,
+    "operationIds": false,
+    "pathParams": "typed",
+    "opBudget": 6000,
+    "responseSecrets": 2
+  }
+}

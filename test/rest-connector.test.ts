@@ -359,6 +359,60 @@ describe("restTools()", () => {
     expect(sent).toEqual([]);
   });
 
+  it("INV-4: runs the optional path, admit, result, header, and text-body hooks on every call", async () => {
+    const admitted: string[] = [];
+    const acme = connector({
+      path: (path) => path.replace("{widget}", "w_default"),
+      admit: async (call) => {
+        admitted.push(call.path);
+        if (call.params["widget"] === "w_other") {
+          throw new ConnectorCallError("provider_permission_denied", "Outside the pin.");
+        }
+      },
+      result: (body) => (body as { result?: unknown }).result ?? body,
+      headers: { "x-region": "Region to read." },
+      textBodies: true,
+      encode: (call) => ({
+        ...(call.headers ? { headers: { ...call.headers } } : {}),
+        ...(typeof call.body === "string"
+          ? { rawBody: call.body }
+          : call.body !== undefined
+            ? { body: call.body }
+            : {}),
+      }),
+    });
+    respond = () => Response.json({ result: { id: "w_default" } });
+    expect(
+      await acme.callTool("acme_api_read", { path: "/v1/widgets/{widget}", headers: { "x-region": "eu" } }, ctx()),
+    ).toEqual({ status: 200, data: { id: "w_default" } });
+    expect(sent[0]!.url.pathname).toBe("/v1/widgets/w_default");
+    expect(sent[0]!.headers.get("x-region")).toBe("eu");
+    const pinned = await refusal(acme.callTool("acme_api_read", { path: "/v1/widgets/w_other" }, ctx()));
+    expect(pinned.code).toBe("provider_permission_denied");
+    const header = await refusal(
+      acme.callTool("acme_api_read", { path: "/v1/widgets/w_1", headers: { authorization: "x" } }, ctx()),
+    );
+    expect(header.code).toBe("invalid_args");
+    await acme.callTool("acme_api_read", { method: "POST", path: "/v1/widgets/query", body: { filter: "a" } }, ctx());
+    expect(admitted).toEqual(["/v1/widgets/w_default", "/v1/widgets/w_other", "/v1/widgets/query"]);
+    expect(sent).toHaveLength(2);
+  });
+
+  it("admits an encoded slash only in a reviewed final key parameter", async () => {
+    const keyed = new OperationIndex(DATA, { vendor: "acme", title: "Acme", slashParams: ["widget"] });
+    const acme = connector({ index: keyed });
+    await acme.callTool("acme_api_read", { path: "/v1/widgets/a%2Fb%2Fc.txt" }, ctx());
+    expect(sent[0]!.url.pathname).toBe("/v1/widgets/a%2Fb%2Fc.txt");
+    for (const path of ["/v1/widgets/a%2F..%2Fb", "/v1/widgets/a%2F%2Fb", "/v1%2Fwidgets/x", "/v1/widgets/a%5Cb"]) {
+      expect((await refusal(acme.callTool("acme_api_read", { path }, ctx()))).code, path).toBe("invalid_args");
+    }
+    // Without the reviewed parameter, an encoded slash is refused everywhere.
+    expect((await refusal(connector().callTool("acme_api_read", { path: "/v1/widgets/a%2Fb" }, ctx()))).code).toBe(
+      "invalid_args",
+    );
+    expect(sent).toHaveLength(1);
+  });
+
   it("INV-9: dispatches a write once and maps its failure through the vendor", async () => {
     respond = () => Response.json({ message: "boom" }, { status: 500 });
     const error = await refusal(

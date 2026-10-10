@@ -124,9 +124,19 @@ describe("built-in factory options", () => {
       'planningCenter("pco").pageSize',
     ],
     [
-      "a provider's other surface",
-      () => cloudflare("cf", loose({ purpose: "Ops", surface: "mcp", accountId: "a" })),
+      "a provider's REST option under OAuth",
+      () => cloudflare("cf", loose({ purpose: "Ops", auth: { type: "oauth" }, accountId: "a" })),
       'cloudflare("cf").accountId',
+    ],
+    [
+      "a Global API Key option under an API token",
+      () => cloudflare("cf", loose({ purpose: "Ops", auth: { type: "apiToken" }, unpinned: true })),
+      'cloudflare("cf").unpinned',
+    ],
+    [
+      "a misspelled pin key",
+      () => cloudflare("cf", loose({ purpose: "Ops", auth: { type: "apiToken" }, pin: { zones: ["z"] } })),
+      'cloudflare("cf").pin.zones',
     ],
     [
       "a provider's other auth case's option",
@@ -239,7 +249,9 @@ describe("built-in factory options", () => {
         requireHttps: true,
       }),
     ).not.toThrow();
-    expect(() => cloudflare("cf", { purpose: "Ops", surface: "mcp", callAdmission: { rules: [] } })).not.toThrow();
+    expect(() =>
+      cloudflare("cf", { purpose: "Ops", auth: { type: "oauth" }, callAdmission: { rules: [] } }),
+    ).not.toThrow();
     expect(() =>
       operatorUi({
         branding: {
@@ -258,6 +270,7 @@ describe("discriminated factory options", () => {
   const MCP_AUTH = '"request", "headers", "credential", "oauth"';
   const STRIPE_AUTH = '"oauth", "apiKey"';
   const NOTION_AUTH = '"oauth", "token"';
+  const CLOUDFLARE_AUTH = '"oauth", "apiToken", "globalApiKey"';
   const SURFACE = '"api", "mcp"';
 
   // A misspelled or missing discriminant used to select no case, so the walk
@@ -314,9 +327,9 @@ describe("discriminated factory options", () => {
       'remoteMcp("docs").auth must be an object.',
     ],
     [
-      "a provider's remote MCP auth",
-      () => cloudflare("cf", loose({ purpose: "Ops", surface: "mcp", auth: { headers } })),
-      `cloudflare("cf") requires auth.type is required: one of ${MCP_AUTH}.`,
+      "a provider's auth without a type",
+      () => cloudflare("cf", loose({ purpose: "Ops", auth: { headers } })),
+      `cloudflare("cf") requires auth.type is required: one of ${CLOUDFLARE_AUTH}.`,
     ],
     [
       "a provider's narrowed auth",
@@ -350,9 +363,14 @@ describe("discriminated factory options", () => {
       `vercel("deploys") requires surface to be one of ${SURFACE}.`,
     ],
     [
-      "cloudflare() surface",
-      () => cloudflare("cf", loose({ purpose: "Ops", surface: null })),
-      `cloudflare("cf") requires surface to be one of ${SURFACE}.`,
+      "cloudflare() required auth when omitted",
+      () => cloudflare("cf", loose({ purpose: "Ops", surface: "api" })),
+      `cloudflare("cf") requires auth.type is required: one of ${CLOUDFLARE_AUTH}.`,
+    ],
+    [
+      "cloudflare() bearer-token MCP auth",
+      () => cloudflare("cf", loose({ purpose: "Ops", auth: { type: "credential" } })),
+      `cloudflare("cf") requires auth.type to be one of ${CLOUDFLARE_AUTH}.`,
     ],
   ] as const)("INV-11: refuses %s with its path and valid values", (_, build, message) => {
     let error: unknown;

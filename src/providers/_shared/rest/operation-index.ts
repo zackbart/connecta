@@ -53,6 +53,11 @@ export interface OpenApiData {
   readonly ops: readonly OperationRow[];
   /** JSON: `{ d: SchemaNode[], o: (0 | [params, body])[] }`, aligned with `ops`. */
   readonly details: string;
+  /**
+   * With the `responseSecrets` option: `[op row, ...response field paths]`
+   * whose names are credential vocabulary, for value-safety review.
+   */
+  readonly secrets?: readonly (readonly [number, ...string[]])[];
 }
 
 type ParamRow = readonly [
@@ -159,13 +164,13 @@ function valueType(value: unknown): string {
  * spelling (the URL parser treats `%2e%2e` as `..`), encoded separators,
  * empty segments, control characters, and unfilled `{placeholders}`.
  */
-function segmentsOf(path: string, title: string, search: string): string[] {
+function segmentsOf(path: string, title: string, search: string, slashes?: Set<number>): string[] {
   if (typeof path !== "string" || !path.startsWith("/")) {
     invalid(`A ${title} path begins with "/" and names one API operation, such as one ${search} returned.`);
   }
   if (/[?#]/.test(path)) invalid(`A ${title} path carries no query or fragment; put query parameters in query.`);
   const segments = path.slice(1).split("/");
-  for (const segment of segments) {
+  for (const [index, segment] of segments.entries()) {
     if (segment === "") invalid(`A ${title} path has no empty segments or trailing slash.`);
     if (/[{}]/.test(segment)) {
       invalid(`The ${title} path still contains a {placeholder}; substitute the real id from an earlier result.`);
@@ -177,7 +182,21 @@ function segmentsOf(path: string, title: string, search: string): string[] {
       return invalid(`A ${title} path segment is not valid percent-encoding.`);
     }
     const control = [...decoded].some((character) => character.charCodeAt(0) < 0x20 || character === "\u007f");
-    if (decoded === "." || decoded === ".." || /[/\\]/.test(decoded) || control) {
+    // An encoded "/" is held for the match to decide (see `resolve`): only a
+    // last segment filling a reviewed slash parameter may carry one, and none
+    // of its pieces may be empty or a dot segment.
+    const slashed =
+      slashes !== undefined &&
+      decoded.includes("/") &&
+      decoded.split("/").every((piece) => piece !== "" && piece !== "." && piece !== "..");
+    if (slashed) slashes.add(index);
+    if (
+      decoded === "." ||
+      decoded === ".." ||
+      decoded.includes("\\") ||
+      (decoded.includes("/") && !slashed) ||
+      control
+    ) {
       invalid(`A ${title} path segment may not be a dot segment, an encoded separator, or a control character.`);
     }
   }
@@ -195,12 +214,18 @@ export class OperationIndex {
   readonly #title: string;
   readonly #vendor: string;
   readonly #segments: readonly (readonly string[])[];
+  readonly #slashParams: ReadonlySet<string>;
   #details: { d: readonly SchemaNode[]; o: readonly (0 | DetailsRow)[] } | undefined;
   #words: readonly { path: Set<string>; summary: Set<string>; id: Set<string> }[] | undefined;
 
-  /** `vendor` is the tool-name prefix; `title` the display name in refusals. */
-  constructor(data: OpenApiData, names: { vendor: string; title: string }) {
+  /**
+   * `vendor` is the tool-name prefix; `title` the display name in refusals.
+   * `slashParams` names path parameters whose values may carry an encoded
+   * "/" (`%2F`), such as an object key, and only as the path's last segment.
+   */
+  constructor(data: OpenApiData, names: { vendor: string; title: string; slashParams?: readonly string[] }) {
     const { title } = names;
+    this.#slashParams = new Set(names.slashParams ?? []);
     this.#data = data;
     this.#title = title;
     this.#vendor = names.vendor;
@@ -236,7 +261,8 @@ export class OperationIndex {
    * looser template.
    */
   resolve(method: string, path: string): OperationMatch {
-    const segments = segmentsOf(path, this.#title, this.#vendorTool("search"));
+    const slashes = this.#slashParams.size > 0 ? new Set<number>() : undefined;
+    const segments = segmentsOf(path, this.#title, this.#vendorTool("search"), slashes);
     let best: { score: number; rows: number[] } = { score: -1, rows: [] };
     this.#segments.forEach((template, row) => {
       if (template.length !== segments.length) return;
@@ -262,6 +288,14 @@ export class OperationIndex {
       invalid(`${this.#title} ${[...templates].join(" or ")} accepts ${allowed}, not ${method}.`);
     }
     const template = this.#segments[op.row]!;
+    for (const index of slashes ?? []) {
+      const part = template[index]!;
+      if (index !== template.length - 1 || !part.startsWith("{") || !this.#slashParams.has(part.slice(1, -1))) {
+        invalid(
+          `A ${this.#title} path segment may not be a dot segment, an encoded separator, or a control character.`,
+        );
+      }
+    }
     const params: Record<string, string> = {};
     template.forEach((part, index) => {
       if (part.startsWith("{")) params[part.slice(1, -1)] = segments[index]!;
@@ -367,7 +401,15 @@ export class OperationIndex {
   /** The operation's request contract as JSON Schema, optionally one parameter only. */
   contract(op: Operation, only?: string): OperationContract {
     const row = this.#row(op);
-    const parameters = (row ? row[0] : [])
+    const declared = row ? row[0] : [];
+    // A generator may omit plain-string path parameters (`pathParams:
+    // "typed"`); the template still names them, so the contract does too.
+    const implied: ParamRow[] = this.#segments
+      [op.row]!.filter(
+        (part) => part.startsWith("{") && !declared.some(([name, at]) => at === "path" && name === part.slice(1, -1)),
+      )
+      .map((part) => [part.slice(1, -1), "path", 1, { t: "string" }]);
+    const parameters = [...implied, ...declared]
       .filter(([name]) => only === undefined || name === only)
       .map(([name, at, required, schema, description]) => ({
         name,
