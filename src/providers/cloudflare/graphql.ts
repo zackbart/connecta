@@ -137,7 +137,11 @@ const OPENERS: Record<string, string> = { "(": ")", "[": "]", "{": "}" };
  * Refuse anything but queries and fragments, and report the account and zone
  * tags the document names. `variables` resolves `$name` tag values.
  */
-export function inspectGraphqlQuery(source: string, variables: Readonly<Record<string, unknown>>): GraphqlScope {
+export function inspectGraphqlQuery(
+  source: string,
+  variables: Readonly<Record<string, unknown>>,
+  options: { strict?: boolean; operationName?: string } = {},
+): GraphqlScope {
   const tokens = tokenize(source);
   if (tokens.length === 0) refuse("The GraphQL document is empty.");
   let index = 0;
@@ -170,20 +174,32 @@ export function inspectGraphqlQuery(source: string, variables: Readonly<Record<s
     }
     return refuse("A GraphQL definition has no selection set.");
   };
+  // Each top-level definition's token range, for the strict checks below.
+  const definitions: { kind: "query" | "fragment"; name: string | undefined; start: number; end: number }[] = [];
+  const nameAfter = (at: number): string | undefined => {
+    const token = tokens[at];
+    return token?.kind === "name" ? token.value : undefined;
+  };
   while (index < tokens.length) {
     const token = tokens[index]!;
     if (token.kind === "punct" && token.value === "{") {
       operations += 1;
-      index = skipGroup(index);
+      const end = skipGroup(index);
+      definitions.push({ kind: "query", name: undefined, start: index, end });
+      index = end;
       continue;
     }
     if (token.kind === "name" && token.value === "query") {
       operations += 1;
-      index = skipDefinition(index + 1);
+      const end = skipDefinition(index + 1);
+      definitions.push({ kind: "query", name: nameAfter(index + 1), start: index, end });
+      index = end;
       continue;
     }
     if (token.kind === "name" && token.value === "fragment") {
-      index = skipDefinition(index + 1);
+      const end = skipDefinition(index + 1);
+      definitions.push({ kind: "fragment", name: nameAfter(index + 1), start: index, end });
+      index = end;
       continue;
     }
     if (token.kind === "name" && (token.value === "mutation" || token.value === "subscription")) {
@@ -192,6 +208,46 @@ export function inspectGraphqlQuery(source: string, variables: Readonly<Record<s
     refuse("graphql_query accepts only query operations and fragments.");
   }
   if (operations === 0) refuse("The GraphQL document has no query operation.");
+  if (options.strict) {
+    // One operation, so every variable default belongs to the query that
+    // runs; and every fragment reachable from it, defined, used, and acyclic,
+    // so the fields checked below are exactly the fields that execute.
+    if (operations !== 1) refuse("A pinned connector sends one query operation per GraphQL document.");
+    const operation = definitions.find((definition) => definition.kind === "query")!;
+    if (options.operationName !== undefined && options.operationName !== operation.name) {
+      refuse(`operationName ${options.operationName} names no query in this document.`);
+    }
+    const fragments = new Map<string, { start: number; end: number }>();
+    for (const definition of definitions) {
+      if (definition.kind !== "fragment") continue;
+      if (!definition.name || definition.name === "on" || fragments.has(definition.name)) {
+        refuse("A GraphQL fragment must have one unique name.");
+      }
+      fragments.set(definition.name, definition);
+    }
+    const spreads = (range: { start: number; end: number }): string[] => {
+      const names: string[] = [];
+      for (let at = range.start; at < range.end; at += 1) {
+        if (tokens[at]!.value === "..." && tokens[at + 1]?.kind === "name" && tokens[at + 1]!.value !== "on") {
+          names.push(tokens[at + 1]!.value);
+        }
+      }
+      return names;
+    };
+    const used = new Set<string>();
+    const visit = (range: { start: number; end: number }, path: readonly string[]): void => {
+      for (const name of spreads(range)) {
+        const fragment = fragments.get(name);
+        if (!fragment) refuse(`The GraphQL document spreads an undefined fragment ${name}.`);
+        if (path.includes(name)) refuse(`The GraphQL fragment ${name} spreads itself.`);
+        used.add(name);
+        visit(fragment, [...path, name]);
+      }
+    };
+    visit(operation, []);
+    const unused = [...fragments.keys()].filter((name) => !used.has(name));
+    if (unused.length > 0) refuse(`The GraphQL document defines unused fragments: ${unused.join(", ")}.`);
+  }
 
   const accountTags: string[] = [];
   const zoneTags: string[] = [];

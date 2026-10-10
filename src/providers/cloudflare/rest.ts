@@ -1013,7 +1013,10 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
       handler: async (args: JsonRecord, ctx: ConnectorContext) => {
         const source = String(args["query"]);
         const variables = record(args["variables"]);
-        const scoped = inspectGraphqlQuery(source, variables);
+        const scoped = inspectGraphqlQuery(source, variables, {
+          strict: pin !== undefined,
+          ...(typeof args["operationName"] === "string" ? { operationName: args["operationName"] } : {}),
+        });
         if (pin) {
           if (scoped.openTags.length > 0) {
             invalid(

@@ -32,6 +32,8 @@ const BEARER =
   "This returns a URL or upload token that grants access without Cloudflare authentication; Connecta does not hand those out. Upload through cloudflare_api_upload.";
 const ACTS = "This GET acts rather than reads (it completes a connection or an unsubscribe), so it is not a read.";
 const INTERNAL = "An internal Cloudflare test route; it is not part of the supported API.";
+const CAPTURE =
+  "A URL scan's captured session (cookies, request and response headers, response bodies, DOM) can carry credentials, so Connecta does not return it. Read scan verdicts with GET /accounts/{account_id}/urlscanner/v2/search.";
 
 const METADATA = "Returns names, ids, status, and timestamps; no credential value.";
 const REVOKES = "Revokes or deletes; returns no credential value.";
@@ -48,7 +50,7 @@ const ACCESS_APP = {
     "scim_config.authentication.password",
     "scim_config.authentication.token",
   ],
-  keep: ["cors_headers", "read_service_tokens_from_header"],
+  keep: ["cors_headers.allowed_headers", "read_service_tokens_from_header"],
 } as const;
 const ACCESS_RULES = safe(
   "Access rules name service tokens by id; no token value.",
@@ -724,11 +726,14 @@ export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
     ].map((key) => [key, HEALTH_HEADERS]),
   ),
   [`PUT ${Z}/settings/zaraz/history`]: ZARAZ,
-  // A scan's custom request headers are the caller's own and may authenticate.
-  [`GET ${A}/urlscanner/v2/result/{scan_id}`]: {
-    redact: ["task.options.customHeaders"],
-    keep: ["data", "meta"],
-  },
+  // URL Scanner captures the scanned session: cookies, request and response
+  // headers (Authorization among them), raw response bodies, and the DOM.
+  // No reviewed projection exists, so these are refused; scan verdicts are in
+  // the search results and the screenshot is an image.
+  [`GET ${A}/urlscanner/v2/result/{scan_id}`]: refuse(CAPTURE),
+  [`GET ${A}/urlscanner/v2/har/{scan_id}`]: refuse(CAPTURE),
+  [`GET ${A}/urlscanner/v2/dom/{scan_id}`]: refuse(CAPTURE),
+  [`GET ${A}/urlscanner/v2/responses/{response_id}`]: refuse(CAPTURE),
   // Reviewed safe: the flagged field is metadata, a header name list, a count, or third-party data the operation exists to return.
   ...Object.fromEntries(
     (
@@ -829,7 +834,7 @@ export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
         [`PATCH ${A}/one/integrations/{id}`, "credentials_expiry"],
         [`POST ${A}/one/integrations/{id}/pause`, "credentials_expiry"],
         [`POST ${A}/one/integrations/{id}/resume`, "credentials_expiry"],
-        [`GET ${A}/r2/buckets/{bucket_name}/cors`, "rules"],
+        [`GET ${A}/r2/buckets/{bucket_name}/cors`, "rules.allowed.headers", "rules.exposeHeaders"],
         [`POST ${A}/realtime/kit/{app_id}/presets`, "data.ui.design_tokens"],
         [`GET ${A}/realtime/kit/{app_id}/presets/{preset_id}`, "data.ui.design_tokens"],
         [`PUT ${A}/realtime/kit/{app_id}/presets/{preset_id}`, "data.ui.design_tokens"],
@@ -839,7 +844,6 @@ export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
         [`GET ${A}/slurper/jobs/{job_id}`, "source.keys"],
         [`PUT ${A}/storage/kv/namespaces/{namespace_id}/bulk`, "unsuccessful_keys"],
         [`POST ${A}/storage/kv/namespaces/{namespace_id}/bulk/delete`, "unsuccessful_keys"],
-        [`GET ${A}/urlscanner/v2/har/{scan_id}`, "log"],
         [`GET /organizations/{organization_id}/logs/audit`, "actor.context"],
         [`GET /organizations/{organization_id}/logs/audit/{id}/history`, "actor.context"],
         [`POST /subscriptions/{subscription_id}/consume`, "records.headers"],
@@ -922,7 +926,7 @@ export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
 
 /** Normalized key names the heuristic treats as credentials (compared lowercase, without `_` or `-`). */
 const CREDENTIAL_KEY =
-  /(token|secret|password|passphrase|privatekey|apikey|authkey|authorization|cookie|signature|jwt|credentials?|psk|streamkey|uploadurl|signedurl|jwk|verifier|devicecode|bypass)$/;
+  /(tokens?|secrets?|passwords?|passphrases?|privatekeys?|apikeys?|authkey|authorization|cookies?|signature|jwts?|credentials?|psks?|streamkeys?|uploadurl|signedurl|jwks?|verifier|devicecode|bypass)$/;
 /** Request fields that carry a secret into Cloudflare: credentials, headers, and environment values. */
 const CREDENTIAL_INPUT = /(envvars|environmentvariables|bindings|headers?)$/;
 
@@ -1034,13 +1038,18 @@ export function redactValues(data: unknown, verdict: ValueSafetyVerdict | undefi
     if (typeof value !== "object" || value === null) return value;
     const record = value as Record<string, unknown>;
     const typedSecret = typeof record["type"] === "string" && /secret/i.test(record["type"]);
+    // `{ name: "Authorization", value }` header and cookie entries: the
+    // name is the credential's, so the value goes.
+    const namedSecret = typeof record["name"] === "string" && CREDENTIAL_KEY.test(normalized(record["name"]));
     const result: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(record)) {
       const at = path ? `${path}.${key}` : key;
       const name = normalized(key);
-      if (keep.has(at) || CURSORS.has(name)) result[key] = item;
+      if (CURSORS.has(name) && typeof item === "string") result[key] = item;
+      else if (keep.has(at)) result[key] = walk(item, at);
       else if (CREDENTIAL_KEY.test(name)) result[key] = scrub(item);
-      else if (typedSecret && (key === "value" || key === "text") && typeof item === "string") result[key] = REDACTED;
+      else if ((typedSecret || namedSecret) && (key === "value" || key === "text") && typeof item === "string")
+        result[key] = REDACTED;
       else result[key] = walk(item, at);
     }
     return result;

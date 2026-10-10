@@ -1076,7 +1076,7 @@ describe("cloudflare() over a key", () => {
       for (const verdict of Object.values(VALUE_SAFETY)) {
         counts["refuse" in verdict ? "refuse" : "redact" in verdict ? "redact" : "safe"] += 1;
       }
-      expect(counts).toEqual({ refuse: 54, redact: 212, safe: 265 });
+      expect(counts).toEqual({ refuse: 58, redact: 211, safe: 264 });
     });
 
     it("accounts for every credential-named response field the spec declares", () => {
@@ -1587,6 +1587,131 @@ describe("cloudflare() over a key", () => {
         await refusal(connector.callTool("cloudflare_api_write", { method: "POST", path: "/zones", body }, token()));
       }
       expect(sent).toEqual([]);
+    });
+  });
+
+  describe("round 3 regressions", () => {
+    it("INV-4: runs one GraphQL operation per document under a pin, with its own defaults and every fragment it reaches", async () => {
+      const connector = cloudflare("cf", { ...TOKEN, pin: { accountIds: [ACCOUNT], zoneIds: [ZONE] } });
+      respond = () => Response.json({ data: { viewer: { zones: [] } } });
+      const zoneQuery = (name: string, zone: string) =>
+        `query ${name}($z: String = "${zone}") { viewer { zones(filter: {zoneTag: $z}) { zoneTag } } }`;
+      const refused: Array<[string, string | undefined, string]> = [
+        // The reviewer's document: Escape runs, but Decoy's default once satisfied the check.
+        [`${zoneQuery("Escape", OTHER_ZONE)}\n${zoneQuery("Decoy", ZONE)}`, "Escape", "one query operation"],
+        [`${zoneQuery("Decoy", ZONE)}\n${zoneQuery("Escape", OTHER_ZONE)}`, undefined, "one query operation"],
+        [zoneQuery("Decoy", ZONE), "Escape", "names no query"],
+        [
+          `query Q { viewer { ...Z } } fragment Z on Viewer { zones(filter: {zoneTag: "${OTHER_ZONE}"}) { x } }`,
+          undefined,
+          "outside",
+        ],
+        [`query Q { viewer { ...Missing } }`, undefined, "undefined fragment"],
+        [
+          `query Q { viewer { zones(filter: {zoneTag: "${ZONE}"}) { x } } } fragment U on Viewer { x }`,
+          undefined,
+          "unused fragments",
+        ],
+        [
+          `query Q { viewer { ...A } } fragment A on Viewer { ...B } fragment B on Viewer { ...A }`,
+          undefined,
+          "spreads itself",
+        ],
+      ];
+      for (const [query, operationName, message] of refused) {
+        const error = await refusal(
+          connector.callTool("graphql_query", { query, ...(operationName ? { operationName } : {}) }, token()),
+        );
+        expect(error.message, query).toContain(message);
+      }
+      expect(sent.filter((request) => request.url.pathname.endsWith("/graphql"))).toEqual([]);
+      await connector.callTool(
+        "graphql_query",
+        {
+          query: `query Daily { viewer { ...Mine } } fragment Mine on Viewer { zones(filter: {zoneTag: "${ZONE}"}) { x } }`,
+          operationName: "Daily",
+        },
+        token(),
+      );
+      await connector.callTool("graphql_query", { query: zoneQuery("Daily", ZONE), operationName: "Daily" }, token());
+      expect(sent.filter((request) => request.url.pathname.endsWith("/graphql"))).toHaveLength(2);
+    });
+
+    it("refuses URL Scanner captures and redacts cookie values, header maps, and header arrays inside kept fields", async () => {
+      const connector = cloudflare("cf", TOKEN);
+      for (const path of [
+        `/accounts/${ACCOUNT}/urlscanner/v2/har/scan1`,
+        `/accounts/${ACCOUNT}/urlscanner/v2/result/scan1`,
+        `/accounts/${ACCOUNT}/urlscanner/v2/dom/scan1`,
+        `/accounts/${ACCOUNT}/urlscanner/v2/responses/r1`,
+      ]) {
+        const error = await refusal(connector.callTool("cloudflare_api_read", { path }, token()));
+        expect(error.message, path).toContain("captured session");
+      }
+      expect(sent).toEqual([]);
+      // browser-rendering keeps meta.headers as reviewed metadata; the heuristic still walks inside it.
+      respond = () =>
+        Response.json({
+          success: true,
+          errors: [],
+          result: "<html></html>",
+          meta: {
+            headers: {
+              "content-type": "text/html",
+              "set-cookie": "session=SESSION-VALUE",
+              Authorization: "Bearer HEADER-MAP",
+            },
+            redirectChain: [
+              {
+                headers: [
+                  { name: "Authorization", value: "Bearer HEADER-ARRAY" },
+                  { name: "Server", value: "nginx" },
+                ],
+              },
+            ],
+          },
+        });
+      await connector.callTool(
+        "cloudflare_api_write",
+        {
+          method: "POST",
+          path: `/accounts/${ACCOUNT}/browser-rendering/content`,
+          body: { url: "https://example.com" },
+        },
+        token(),
+      );
+      respond = () =>
+        envelope([
+          {
+            id: "s1",
+            cookies: [{ name: "session", value: "COOKIE-VALUE", domain: "example.com" }],
+            headers: [
+              { name: "Authorization", value: "Bearer ARRAY-VALUE" },
+              { name: "Accept", value: "text/html" },
+            ],
+            header_map: { Cookie: "c=COOKIE-HEADER", "X-Api-Key": "API-KEY", Host: "example.com" },
+          },
+        ]);
+      const result = (await connector.callTool(
+        "cloudflare_api_read",
+        { path: `/accounts/${ACCOUNT}/workers/scripts` },
+        token(),
+      )) as any;
+      const text = JSON.stringify(result);
+      for (const secret of ["COOKIE-VALUE", "ARRAY-VALUE", "COOKIE-HEADER", "API-KEY"])
+        expect(text, secret).not.toContain(secret);
+      expect(result.data[0].headers[1]).toEqual({ name: "Accept", value: "text/html" });
+      expect(result.data[0].header_map.Host).toBe("example.com");
+      expect(result.data[0].cookies[0].domain).toBe("[redacted]");
+    });
+
+    it("keeps no reviewed field exempt from the heuristic below it", () => {
+      const broad = Object.entries(VALUE_SAFETY).flatMap(([key, verdict]) =>
+        ("keep" in verdict ? (verdict.keep ?? []) : [])
+          .filter((path) => ["data", "meta", "log", "result", "rules"].includes(path))
+          .map((path) => `${key}: ${path}`),
+      );
+      expect(broad).toEqual([]);
     });
   });
 });
