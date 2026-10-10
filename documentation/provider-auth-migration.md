@@ -1,7 +1,9 @@
 # Provider auth migration
 
-Use this upgrade guide when a maintained provider moves to auth-selected
-implementations ([#801](https://github.com/zackbart/connecta/issues/801)).
+Use this upgrade guide when moving a Stripe, Notion, Vercel, or Cloudflare
+deployment from 0.30 to 0.31, where `auth` selects each provider's
+implementation ([#801](https://github.com/zackbart/connecta/issues/801)).
+The [0.31.0 release notes](../release-notes/0.31.0.md) summarize the change.
 [Deployment upgrades](./deploying.md#upgrade-an-existing-deployment) cover other
 version changes; [integrating services](./integrating.md) covers new connectors.
 
@@ -110,6 +112,7 @@ conversion. An OAuth connector acts as the user, and has none of the generic
 REST tools or the `integration_*` projections and authoring helpers. Configure
 both ids when a deployment needs both; a failed call is never retried on the
 other. The [Notion skill](https://github.com/zackbart/connecta/blob/main/src/providers/notion/SKILL.md)
+owns the conventions for both.
 
 ## Vercel
 
@@ -159,8 +162,9 @@ safe with a reason. Detection reads field names, field descriptions, and
 operation descriptions, so a project transfer request (whose code lets another
 team claim the project) is refused too. A test fails when
 a newly flagged operation has no verdict. A key-name heuristic covers every
-other body as defense in depth, and secret-family failures carry fixed messages
-instead of Vercel's text. Read or rotate withheld secrets in the Vercel
+other body as defense in depth. Secret-family failures carry fixed messages
+instead of Vercel's text, and every other reviewed operation also withholds that
+text ([value safety](#value-safety-on-every-key-connector)). Read or rotate withheld secrets in the Vercel
 dashboard. A domain move-out is refused because its answer is a transfer token.
 
 Lost on the token path: documentation search, runtime error clusters, toolbar
