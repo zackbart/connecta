@@ -58,6 +58,7 @@
       "POST /v1/agents/query": ["results.connections.account.server_host"],
       "GET /v1/agents/{agent_id}": ["connections.account.server_host"]
     },
-    "resources": {}
+    "resources": {},
+    "bindings": {}
   }
 }

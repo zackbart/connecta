@@ -1670,6 +1670,7 @@
       "PATCH /v2/teams/{teamId}": ["inviteCode"],
       "GET /v3/teams/{teamId}/members": ["emailInviteCodes"]
     },
-    "resources": {}
+    "resources": {},
+    "bindings": {}
   }
 }

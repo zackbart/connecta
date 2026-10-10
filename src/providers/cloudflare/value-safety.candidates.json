@@ -6419,6 +6419,7 @@
       "GET /zones/{zone_id}/images/v1/flows": ["flows.transformations.value", "flows.trigger.params.value"],
       "PUT /zones/{zone_id}/images/v1/flows": ["flows.transformations.value", "flows.trigger.params.value"]
     },
-    "resources": {}
+    "resources": {},
+    "bindings": {}
   }
 }

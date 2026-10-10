@@ -718,7 +718,9 @@ const GUEST_CHECKOUT = {
   bindings: {
     customer: [],
     customer_account: [],
-    // Creates a Customer only when the session needs one (never in payment mode without saving).
+    // The one value treated as unbound: `if_required` creates a Customer only when the session needs one, and a
+    // guest payment session (no customer, account, or saved-method options) does not. `always`, or any other
+    // value, withholds the page.
     customer_creation: ["if_required"],
     saved_payment_method_options: [],
   },
