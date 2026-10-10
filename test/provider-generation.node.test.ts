@@ -506,47 +506,10 @@ describe("OpenAPI operation index generation", () => {
     expect(contract.parameters).toEqual([{ name: "thing", in: "path", required: true, schema: { type: "string" } }]);
   });
 
-  it("records credential-named success-response fields for value-safety review", async () => {
+  it("ships no value-safety candidates in the index; they live in the reviewed candidates file", async () => {
     const { buildOperationIndex } = await generator();
-    const secretive = {
-      openapi: "3.0.0",
-      info: { version: "1" },
-      paths: {
-        "/v1/keys": {
-          post: {
-            summary: "Create a key",
-            responses: {
-              "200": {
-                content: {
-                  "application/json": {
-                    schema: {
-                      type: "object",
-                      properties: {
-                        result: {
-                          type: "object",
-                          properties: {
-                            id: { type: "string" },
-                            client_secret: { type: "string" },
-                            password: { type: "string", writeOnly: true },
-                            has_token: { type: "boolean" },
-                            items: { type: "array", items: { properties: { apiKey: { type: "string" } } } },
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-              "400": { content: { "application/json": { schema: { properties: { token: { type: "string" } } } } } },
-            },
-          },
-        },
-        "/v1/plain": { get: { summary: "Plain", responses: { "200": { description: "ok" } } } },
-      },
-    };
-    const data = buildOperationIndex(secretive, { ...source, options: { responseSecrets: true } });
-    expect(data.secrets).toEqual([[0, "result.client_secret", "result.items[].apiKey"]]);
-    expect(buildOperationIndex(secretive, source).secrets).toBeUndefined();
+    const data = buildOperationIndex(document, { ...source, options: { valueSafety: true } });
+    expect(Object.keys(data)).toEqual(["source", "revision", "digest", "version", "servers", "tags", "ops", "details"]);
   });
 
   it("round-trips through the runtime index: resolve, search, contract, and validation", async () => {
@@ -803,8 +766,90 @@ describe("OpenAPI operation index generation", () => {
 describe("value-safety candidate detection", () => {
   const detection = async () =>
     (await import(new URL("../scripts/value-safety.mjs", import.meta.url).href)) as {
+      VALUE_SAFETY_FORMAT: number;
       valueSafetyCandidates(document: unknown, options?: object): Record<string, { fields: string[]; named: boolean }>;
+      renderValueSafety(document: unknown, source: object): string;
     };
+
+  it("INV-5: flags what either former detector flagged: suffixes on value-carrying fields, containment on any", async () => {
+    const { valueSafetyCandidates } = await detection();
+    const document = {
+      openapi: "3.0.0",
+      components: { schemas: { Intent: { type: "object", properties: { client_secret: { type: "string" } } } } },
+      paths: {
+        "/v1/keys": {
+          post: {
+            summary: "Create a thing",
+            responses: {
+              "200": {
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: {
+                        result: {
+                          type: "object",
+                          properties: {
+                            id: { type: "string" },
+                            client_secret: { type: "string" },
+                            // Containment (Vercel's former rule) reads every field.
+                            password: { type: "string", writeOnly: true },
+                            has_token: { type: "boolean" },
+                            // Suffixes (Cloudflare's) read only fields that carry a value back.
+                            headers: { type: "object" },
+                            header_count: { type: "integer", description: "Counts api keys." },
+                            stream_keys: { type: "integer" },
+                            items: { type: "array", items: { properties: { apiKey: { type: "string" } } } },
+                            marked: { type: "string", "x-sensitive": true },
+                            note: { type: "string", description: "The bearer value." },
+                            intent: { anyOf: [{ type: "string" }, { $ref: "#/components/schemas/Intent" }] },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              "400": { content: { "application/json": { schema: { properties: { token: { type: "string" } } } } } },
+            },
+          },
+        },
+        "/v1/plain": { get: { summary: "Plain", responses: { "200": { description: "ok" } } } },
+        "/zones/{id}/presign": { get: { summary: "Rotate", responses: { "200": { description: "ok" } } } },
+      },
+    };
+    const fields = [
+      "result.client_secret",
+      "result.has_token",
+      "result.headers",
+      "result.items[].apiKey",
+      "result.marked",
+      "result.note",
+      "result.password",
+    ];
+    expect(valueSafetyCandidates(document)).toEqual({
+      "POST /v1/keys": { fields: [...fields, "result.intent.client_secret"].sort(), named: true },
+      "GET /zones/{id}/presign": { fields: [], named: true },
+    });
+    // Stripe: an id-or-object expansion is its own operation's candidate.
+    expect(valueSafetyCandidates(document, { expansions: false })["POST /v1/keys"]?.fields).toEqual(fields);
+  });
+
+  it("stamps the candidates file with the detector format, the pinned digest, and the detector options", async () => {
+    const { renderValueSafety, VALUE_SAFETY_FORMAT } = await detection();
+    const rendered = JSON.parse(
+      renderValueSafety(
+        { openapi: "3.0.0", paths: {} },
+        { digest: "sha256:x", options: { valueSafety: { expansions: false } } },
+      ),
+    );
+    expect(rendered).toEqual({
+      format: VALUE_SAFETY_FORMAT,
+      digest: "sha256:x",
+      options: { expansions: false },
+      candidates: {},
+    });
+  });
   const ok = (schema: object) => ({ responses: { "200": { content: { "application/json": { schema } } } } });
 
   it("INV-5: flags credential fields by name or description, keyed values, env containers, and secret-family names or descriptions, not metadata", async () => {

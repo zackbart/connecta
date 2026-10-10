@@ -7,6 +7,7 @@
     "depth": 4,
     "descriptions": 160,
     "maxEnum": 50,
-    "versionHeader": "Notion-Version"
+    "versionHeader": "Notion-Version",
+    "valueSafety": true
   }
 }

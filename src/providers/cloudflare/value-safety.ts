@@ -1,8 +1,7 @@
-// Cloudflare's reviewed value-safety table (#801): every operation whose path,
-// summary, or success-response fields carry credential vocabulary has one
-// verdict here. `provider.test.ts` derives the candidates from the pinned
-// index (`openapi.secrets` records the spec's credential-named response
-// fields) and fails on any candidate without a verdict.
+// Cloudflare's reviewed value-safety table (#801), on the shared mechanism in
+// `../_shared/rest/value-safety.ts`: every operation the detector flags in
+// the pinned spec (`value-safety.candidates.json`) has one verdict here, and
+// `value-safety.node.test.ts` runs the shared harness over it.
 //
 // - `refuse`: the operation exists to mint, rotate, or hand back a credential
 //   (or move money through a payment secret); nothing is sent.
@@ -16,11 +15,13 @@
 // Paths are dot paths into the data a tool returns (Cloudflare's `result`,
 // or the whole body when it is not an envelope); lists are traversed
 // implicitly and `*` matches every key of an object.
-
-export type ValueSafetyVerdict =
-  | { readonly refuse: string }
-  | { readonly redact: readonly string[]; readonly keep?: readonly string[] }
-  | { readonly safe: string; readonly keep?: readonly string[] };
+import {
+  redact as reviewed,
+  refuse,
+  safe as reviewedSafe,
+  type ValueSafetyTable,
+  type ValueSafetyVerdict,
+} from "../_shared/rest/value-safety.js";
 
 const MINT =
   "Connecta does not create, rotate, or return credentials; an operator manages this credential in the Cloudflare dashboard.";
@@ -39,19 +40,29 @@ const METADATA = "Returns names, ids, status, and timestamps; no credential valu
 const REVOKES = "Revokes or deletes; returns no credential value.";
 const CALLER_SUPPLIED = "The caller supplies the secret; the response returns only its name and metadata.";
 
-const refuse = (reason: string) => ({ refuse: reason }) as const;
-const redact = (...paths: string[]) => ({ redact: paths }) as const;
-const safe = (reason: string, ...keep: string[]) => ({ safe: reason, ...(keep.length ? { keep } : {}) }) as const;
+/** The reason a bare `redact(...)` verdict states: the reviewed paths are the finding. */
+const CARRIES = "These fields carry a credential or a stored secret value; they are redacted, the rest returned.";
 
-const ACCESS_APP = {
-  redact: [
+const redact = (...paths: string[]) => reviewed(CARRIES, paths);
+const safe = (reason: string, ...keep: string[]) => reviewedSafe(reason, keep);
+
+const ACCESS_APP = reviewed(
+  "Access applications carry SaaS and SCIM client secrets, passwords, and bearer tokens.",
+  [
     "saas_app.client_secret",
     "scim_config.authentication.client_secret",
     "scim_config.authentication.password",
     "scim_config.authentication.token",
   ],
-  keep: ["cors_headers.allowed_headers", "read_service_tokens_from_header"],
-} as const;
+  [
+    "cors_headers.allowed_headers",
+    "read_service_tokens_from_header",
+    "saas_app.custom_claims",
+    ...["exclude", "include", "require"].flatMap((rule) =>
+      ["any_valid_service_token", "linked_app_token", "service_token"].map((name) => `policies.${rule}.${name}`),
+    ),
+  ],
+);
 const ACCESS_RULES = safe(
   "Access rules name service tokens by id; no token value.",
   "exclude.any_valid_service_token",
@@ -67,22 +78,27 @@ const ACCESS_RULES = safe(
   "is_default.linked_app_token",
   "is_default.service_token",
 );
-const IDENTITY_PROVIDER = { redact: ["config.client_secret", "scim_config.secret"], keep: ["config.prompt"] } as const;
+const IDENTITY_PROVIDER = reviewed(
+  "Identity providers carry OAuth client secrets and SCIM secrets.",
+  ["config.client_secret", "scim_config.secret"],
+  ["config.prompt", "config.attributes", "config.claims"],
+);
 /**
  * Environment variable values are redacted wherever they appear, names and
  * types kept. Cloudflare returns plain-text variables in the clear, and
  * operators routinely put API keys in them (a Stripe key in a Pages
  * variable); the value stays readable in the dashboard.
  */
-const PAGES_PROJECT = {
-  redact: [
+const PAGES_PROJECT = reviewed(
+  "Pages projects and deployments embed environment variable values.",
+  [
     "env_vars.*.value",
     "canonical_deployment.env_vars.*.value",
     "latest_deployment.env_vars.*.value",
     "deployment_configs.preview.env_vars.*.value",
     "deployment_configs.production.env_vars.*.value",
   ],
-  keep: [
+  [
     "build_config.web_analytics_token",
     "canonical_deployment.build_config.web_analytics_token",
     "latest_deployment.build_config.web_analytics_token",
@@ -93,19 +109,20 @@ const PAGES_PROJECT = {
     "deployment_configs.production.hyperdrive_bindings",
     "deployment_configs.production.vectorize_bindings",
   ],
-} as const;
-const LIVE_INPUT = {
-  redact: ["rtmps.streamKey", "rtmpsPlayback.streamKey", "srt.passphrase", "srtPlayback.passphrase", "webRTC.url#url"],
-  keep: ["rtmps.url", "rtmpsPlayback.url", "srt.url", "srtPlayback.url", "webRTCPlayback.url"],
-} as const;
-const WORKER_SECRET = redact("text", "key_base64", "key_jwk");
+);
+const LIVE_INPUT = reviewed(
+  "Live inputs carry RTMPS stream keys, SRT passphrases, and a WebRTC URL that is itself the credential.",
+  ["rtmps.streamKey", "rtmpsPlayback.streamKey", "srt.passphrase", "srtPlayback.passphrase", "webRTC.url#url"],
+  ["rtmps.url", "rtmpsPlayback.url", "srt.url", "srtPlayback.url", "webRTCPlayback.url"],
+);
+const WORKER_SECRET = redact("text", "key_base64", "key_jwk", "*.text", "*.key_base64", "*.key_jwk");
 /**
  * Worker bindings: plain-text and JSON binding values are redacted (the same
  * judgment as environment variables: they are often credentials in
  * practice); names, types, and resource ids are kept.
  */
 const WORKER_BINDINGS = redact("bindings.text", "bindings.json");
-const WORKER_VERSION = redact("assets.jwt", "bindings.text", "bindings.json");
+const WORKER_VERSION = redact("assets.jwt", "bindings.text", "bindings.json", "env.*.text", "env.*.json");
 const ZARAZ = redact(
   "variables.*.value",
   "debugKey",
@@ -115,23 +132,92 @@ const ZARAZ = redact(
   "*.config.debugKey",
 );
 const TSIG = redact("secret");
+/**
+ * Rulesets: a transform rule's static header value is sent to the origin or
+ * the visitor and can be a credential (`Authorization: Bearer …`); its name,
+ * operation, and expression stay. Cache-key cookie and header lists, logged
+ * cookie fields, and exposed-credential expressions name fields, not values.
+ */
+const RULESET = reviewed(
+  "Transform rules set header values, which can be credentials sent to an origin; the rest is rule configuration.",
+  ["rules.action_parameters.headers.*.value"],
+  [
+    "rules.exposed_credential_check",
+    "rules.action_parameters.cache_key.custom_key.cookie",
+    "rules.action_parameters.cache_key.custom_key.header",
+    "rules.action_parameters.cookie_fields",
+    "rules.action_parameters.vary.headers",
+  ],
+);
+/** A webhook destination URL can carry a bearer secret in its path (a Slack or Discord hook); only its origin comes back. */
+const WEBHOOK_DESTINATION = reviewed(
+  "Notification webhook destinations: a URL path can be the bearer secret (a Slack or Discord hook), and the signing secret is write-only.",
+  ["secret", "origin:url"],
+);
+const KIT_WEBHOOK = reviewed(
+  "RealtimeKit webhook destinations: a URL path can be the bearer secret, so only the origin comes back.",
+  ["origin:data.url"],
+);
+const POSTURE_WEBHOOK = reviewed(
+  "Data security webhooks: header values and a destination URL whose path can be a bearer secret.",
+  ["headers", "origin:destination_url"],
+);
+const HYPERDRIVE = reviewed(
+  "Hyperdrive origins carry the database password and an Access client secret (write-only; redacted if ever returned).",
+  ["origin.password", "origin.access_client_secret"],
+);
+/** RealtimeKit recording storage: third-party storage credentials (write-only; redacted if ever returned). */
+const KIT_STORAGE = reviewed(
+  "Recording storage configurations carry third-party storage access keys, secrets, SFTP passwords, and private keys.",
+  [
+    "data.recording_config.storage_config",
+    "data.storage_config",
+    "data.meeting.recording_config.storage_config",
+  ].flatMap((prefix) => ["access_key", "secret", "password", "private_key"].map((name) => `${prefix}.${name}`)),
+);
+const BINDING_VALUES = reviewed(
+  "Worker bindings: plain-text, JSON, and key-material values are often credentials; names, types, and resource ids stay.",
+  ["text", "json", "key_base64", "key_jwk"],
+);
+const WORKER = reviewed(
+  "Workers carry the bindings new previews get, keyed by name; plain-text and JSON values are often credentials.",
+  ["previews_base_config.env.*.text", "previews_base_config.env.*.json"],
+);
+const MOQ_TOKENS = reviewed(
+  "MoQ relay token issuers carry signing secrets; token ids and allowed operations are metadata.",
+  ["issuers.cloudflare_tokens.secret"],
+  ["issuers.cloudflare_tokens.jti", "issuers.cloudflare_tokens.operations"],
+);
+const KV_DATA =
+  "Workers KV is application data storage, not a secret store (Workers Secrets and the Secrets Store hold secrets, and their values are write-only); returning what the caller stored is the operation's purpose.";
+const DLP_FLAG = "`secret` is a boolean marking a DLP dataset or entry as sensitive, not a secret.";
+const CERTIFICATE =
+  "Certificates and their metadata; `signature` names the signature algorithm and is withheld by the field review.";
+const OBSERVABILITY =
+  "Saved query filters and telemetry values from the caller's own Workers; no Cloudflare credential (a secret an application logged is out of scope).";
+const COUNTS = "Request token counts, quotas, and costs; no credential.";
+const CURSOR = "A pagination cursor.";
+const ANSWERS_ID = "Answers the destination's id; no secret.";
+const TRACE = "Worker settings; trace propagation names a policy, not a token.";
+const TRACE_POLICY = (paths: string[] = []) => safe(TRACE, ...paths);
 const LIVESTREAM = redact("data.stream_key", "data.livestream.stream_key", "data.livestreams.stream_key");
 
 /** Container environment values redacted, names kept; authorized keys are public SSH keys. */
-const CONTAINER_APP = {
-  redact: [
+const CONTAINER_APP = reviewed(
+  "Container applications embed environment variable values.",
+  [
     "configuration.environment_variables.value",
     "current_configuration.environment_variables.value",
     "target_configuration.environment_variables.value",
   ],
-  keep: [
+  [
     "next_page_token",
     "page_token",
     "configuration.authorized_keys",
     "current_configuration.authorized_keys",
     "target_configuration.authorized_keys",
   ],
-} as const;
+);
 /** Workers Builds environment values redacted, names kept. */
 const BUILD_ENV = redact(
   "*.value",
@@ -152,7 +238,7 @@ const DESCRIBED_ONLY =
 const A = "/accounts/{account_id}";
 const Z = "/zones/{zone_id}";
 
-export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
+const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
   // Access
   [`GET ${A}/access/apps`]: ACCESS_APP,
   [`POST ${A}/access/apps`]: ACCESS_APP,
@@ -339,7 +425,7 @@ export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
   // D1, DLP, Email Security
   [`POST ${A}/d1/database/{database_id}/export`]: redact("result.signed_url#url", "signed_url#url"),
   [`POST ${A}/d1/database/{database_id}/import`]: redact("upload_url#url"),
-  [`POST ${A}/dlp/datasets`]: redact("secret"),
+  [`POST ${A}/dlp/datasets`]: reviewed(CARRIES, ["secret"], ["dataset.secret"]),
   [`POST ${A}/dlp/datasets/{dataset_id}/upload`]: redact("secret"),
   [`GET ${A}/dlp/email/account_mapping`]: redact("addin_identifier_token"),
   [`POST ${A}/dlp/email/account_mapping`]: redact("addin_identifier_token"),
@@ -396,13 +482,17 @@ export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
     ].map((key) => [key, redact("destination_conf#url")]),
   ),
   // Magic WAN
-  [`POST ${A}/magic/ipsec_tunnels/psk`]: { redact: ["successfully_applied_psks.*.psk"], keep: ["unapplied_psks"] },
+  [`POST ${A}/magic/ipsec_tunnels/psk`]: reviewed(
+    "Applied pre-shared keys authenticate IPsec tunnels.",
+    ["successfully_applied_psks.*.psk"],
+    ["unapplied_psks"],
+  ),
   [`POST ${A}/magic/ipsec_tunnels/{ipsec_tunnel_id}/psk_generate`]: refuse(MINT),
   [`POST ${A}/mnm/vpc-flows/token`]: refuse(MINT),
   [`POST ${A}/managed-defense/vulnerability-discovery/repos`]: redact("upload.token"),
   // MoQ
-  [`POST ${A}/moq/relays`]: redact("issuers.cloudflare_tokens.secret"),
-  [`GET ${A}/moq/relays/{relay_id}/tokens`]: redact("issuers.cloudflare_tokens.secret"),
+  [`POST ${A}/moq/relays`]: MOQ_TOKENS,
+  [`GET ${A}/moq/relays/{relay_id}/tokens`]: MOQ_TOKENS,
   [`POST ${A}/moq/relays/{relay_id}/tokens`]: refuse(MINT),
   [`DELETE ${A}/moq/relays/{relay_id}/tokens/{jti}`]: safe(REVOKES),
   // OAuth clients
@@ -557,8 +647,8 @@ export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
   [`GET /radar/leaked_credential_checks/timeseries_groups/{dimension}`]: safe("Aggregate internet statistics."),
   [`GET /signed-url`]: refuse(INTERNAL),
   // Zones
-  [`GET ${Z}/leaked-credential-checks`]: safe(METADATA),
-  [`POST ${Z}/leaked-credential-checks`]: safe(METADATA),
+  [`GET ${Z}/leaked-credential-checks`]: safe(METADATA, "enabled"),
+  [`POST ${Z}/leaked-credential-checks`]: safe(METADATA, "enabled"),
   ...Object.fromEntries(
     [
       `GET ${Z}/leaked-credential-checks/detections`,
@@ -669,7 +759,7 @@ export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
       `POST ${A}/data-security/posture/webhooks`,
       `GET ${A}/data-security/posture/webhooks/{webhook_id}`,
       `PUT ${A}/data-security/posture/webhooks/{webhook_id}`,
-    ].map((key) => [key, redact("headers")]),
+    ].map((key) => [key, POSTURE_WEBHOOK]),
   ),
   ...Object.fromEntries(
     [
@@ -683,12 +773,19 @@ export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
       `POST ${A}/gateway/rules/{rule_id}/reset_expiration`,
     ].map((key) => [
       key,
-      { redact: ["rule_settings.add_headers", "rule_settings.set_headers"], keep: ["rule_settings.delete_headers"] },
+      reviewed(
+        "Gateway rules that add or set headers can carry credential header values.",
+        ["rule_settings.add_headers", "rule_settings.set_headers"],
+        ["rule_settings.delete_headers"],
+      ),
     ]),
   ),
   [`GET ${A}/logpush/datasets/{dataset_id}/jobs`]: redact("destination_conf#url"),
   [`GET ${Z}/logpush/datasets/{dataset_id}/jobs`]: redact("destination_conf#url"),
-  [`GET ${A}/workers/observability/destinations`]: redact("configuration.headers"),
+  [`GET ${A}/workers/observability/destinations`]: redact(
+    "configuration.headers",
+    "configuration.destination_conf#url",
+  ),
   [`GET ${A}/workers/observability/issues/{issueId}/occurrences`]: redact("request.headers"),
   [`GET ${A}/workers/scripts/{script_name}/settings`]: WORKER_BINDINGS,
   [`PATCH ${A}/workers/scripts/{script_name}/settings`]: WORKER_BINDINGS,
@@ -708,7 +805,11 @@ export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
       `PUT ${Z}/custom_hostnames/{custom_hostname_id}/certificate_pack/{certificate_pack_id}/certificates/{certificate_id}`,
     ].map((key) => [key, redact("ssl.custom_key")]),
   ),
-  [`GET ${Z}/dnssec/zsk`]: { redact: ["SigningKey.privkey", "SigningKey.kek"], keep: ["SigningKey.pubkey"] },
+  [`GET ${Z}/dnssec/zsk`]: reviewed(
+    "The zone signing key's private key and key-encryption key sign the zone.",
+    ["SigningKey.privkey", "SigningKey.kek"],
+    ["SigningKey.pubkey"],
+  ),
   ...Object.fromEntries(
     [
       `GET ${Z}/healthchecks`,
@@ -829,11 +930,11 @@ export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
           "payload_example",
           "payload_schema",
         ],
-        [`POST ${A}/one/integrations`, "credentials_expiry"],
-        [`GET ${A}/one/integrations/{id}`, "credentials_expiry"],
-        [`PATCH ${A}/one/integrations/{id}`, "credentials_expiry"],
-        [`POST ${A}/one/integrations/{id}/pause`, "credentials_expiry"],
-        [`POST ${A}/one/integrations/{id}/resume`, "credentials_expiry"],
+        [`POST ${A}/one/integrations`, "credentials_expiry", "authorization_link"],
+        [`GET ${A}/one/integrations/{id}`, "credentials_expiry", "authorization_link"],
+        [`PATCH ${A}/one/integrations/{id}`, "credentials_expiry", "authorization_link"],
+        [`POST ${A}/one/integrations/{id}/pause`, "credentials_expiry", "authorization_link"],
+        [`POST ${A}/one/integrations/{id}/resume`, "credentials_expiry", "authorization_link"],
         [`GET ${A}/r2/buckets/{bucket_name}/cors`, "rules.allowed.headers", "rules.exposeHeaders"],
         [`POST ${A}/realtime/kit/{app_id}/presets`, "data.ui.design_tokens"],
         [`GET ${A}/realtime/kit/{app_id}/presets/{preset_id}`, "data.ui.design_tokens"],
@@ -901,10 +1002,19 @@ export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
       `GET ${Z}/rulesets/{ruleset_id}`,
       `GET ${Z}/rulesets/{ruleset_id}/versions/{ruleset_version}`,
       `GET ${Z}/rulesets/{ruleset_id}/versions/{ruleset_version}/by_tag/{rule_tag}`,
-    ].map((key) => [
-      key,
-      safe("Expressions locating credential fields, not credentials.", "rules.exposed_credential_check"),
-    ]),
+      `POST ${A}/rulesets`,
+      `PUT ${A}/rulesets/phases/{ruleset_phase}/entrypoint`,
+      `PUT ${A}/rulesets/{ruleset_id}`,
+      `POST ${A}/rulesets/{ruleset_id}/rules`,
+      `PATCH ${A}/rulesets/{ruleset_id}/rules/{rule_id}`,
+      `DELETE ${A}/rulesets/{ruleset_id}/rules/{rule_id}`,
+      `POST ${Z}/rulesets`,
+      `PUT ${Z}/rulesets/phases/{ruleset_phase}/entrypoint`,
+      `PUT ${Z}/rulesets/{ruleset_id}`,
+      `POST ${Z}/rulesets/{ruleset_id}/rules`,
+      `PATCH ${Z}/rulesets/{ruleset_id}/rules/{rule_id}`,
+      `DELETE ${Z}/rulesets/{ruleset_id}/rules/{rule_id}`,
+    ].map((key) => [key, RULESET]),
   ),
   ...Object.fromEntries(
     [
@@ -922,137 +1032,523 @@ export const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
       safe(DESCRIBED_ONLY, "geo_restrictions", "policy_restrictions", "certificates.geo_restrictions"),
     ]),
   ),
+  // Round 3 (#801): candidates the consolidated detector surfaced (the union
+  // of the two former detectors, with transfer, claim, invite, key, signing,
+  // and webhook families).
+  [`GET ${A}/abuse-reports/submitted/{report_id}`]: safe(
+    "An abuse report; the authorization statement is the reporter's text.",
+  ),
+  [`GET ${A}/access/keys`]: safe("Signing key rotation settings; no key."),
+  [`PUT ${A}/access/keys`]: safe("Signing key rotation settings; no key."),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/access/organizations`,
+      `POST ${A}/access/organizations`,
+      `PUT ${A}/access/organizations`,
+      `GET ${A}/access/organizations/doh`,
+      `PUT ${A}/access/organizations/doh`,
+      `GET ${Z}/access/organizations`,
+      `POST ${Z}/access/organizations`,
+      `PUT ${Z}/access/organizations`,
+    ].map((key) => [key, safe("Organization session and service-token policies; durations and flags, no token.")]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/ai-gateway/custom-providers/costs`,
+      `POST ${A}/ai-gateway/custom-providers/costs`,
+      `GET ${A}/ai-gateway/custom-providers/costs/{id}`,
+      `PATCH ${A}/ai-gateway/custom-providers/costs/{id}`,
+      `DELETE ${A}/ai-gateway/custom-providers/costs/{id}`,
+    ].map((key) => [key, safe("Per-token model pricing; no credential.")]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/ai-gateway/gateways/{gateway_id}/datasets`,
+      `POST ${A}/ai-gateway/gateways/{gateway_id}/datasets`,
+      `GET ${A}/ai-gateway/gateways/{gateway_id}/datasets/{id}`,
+      `PUT ${A}/ai-gateway/gateways/{gateway_id}/datasets/{id}`,
+      `DELETE ${A}/ai-gateway/gateways/{gateway_id}/datasets/{id}`,
+    ].map((key) => [key, safe("Dataset filters match log fields (model, cost, tokens).", "filters.value")]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/ai-gateway/gateways/{gateway_id}/evaluations`,
+      `POST ${A}/ai-gateway/gateways/{gateway_id}/evaluations`,
+      `GET ${A}/ai-gateway/gateways/{gateway_id}/evaluations/{id}`,
+      `DELETE ${A}/ai-gateway/gateways/{gateway_id}/evaluations/{id}`,
+    ].map((key) => [key, safe("Evaluation datasets filter log fields.", "datasets.filters.value")]),
+  ),
+  [`GET ${A}/ai-gateway/gateways/{gateway_id}/logs`]: safe("Gateway logs with token counts; no credential."),
+  [`GET ${A}/ai-gateway/gateways/{gateway_id}/logs/{id}`]: safe("A gateway log with token counts; no credential."),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/ai-gateway/gateways/{gateway_id}/provider_configs`,
+      `POST ${A}/ai-gateway/gateways/{gateway_id}/provider_configs`,
+      `GET ${A}/ai-gateway/gateways/{gateway_id}/provider_configs/{id}`,
+      `DELETE ${A}/ai-gateway/gateways/{gateway_id}/provider_configs/{id}`,
+    ].map((key) => [key, safe("The caller supplies the provider key; the response returns a masked preview.")]),
+  ),
+  [`POST ${A}/ai/run/{model_name}`]: safe("Model output and token usage counts; no credential."),
+  [`GET ${A}/alerting/v3/destinations/webhooks`]: WEBHOOK_DESTINATION,
+  [`POST ${A}/alerting/v3/destinations/webhooks`]: safe(ANSWERS_ID),
+  [`GET ${A}/alerting/v3/destinations/webhooks/{webhook_id}`]: WEBHOOK_DESTINATION,
+  [`PUT ${A}/alerting/v3/destinations/webhooks/{webhook_id}`]: safe(ANSWERS_ID),
+  [`DELETE ${A}/alerting/v3/destinations/webhooks/{webhook_id}`]: safe(REVOKES),
+  [`GET ${A}/billable/usage`]: safe(COUNTS),
+  [`POST ${A}/billable/usage`]: safe(COUNTS),
+  [`GET /organizations/{organization_id}/billable/usage`]: safe(COUNTS),
+  ...Object.fromEntries(
+    [
+      `POST ${A}/cloudforce-one/requests`,
+      `POST ${A}/cloudforce-one/requests/new`,
+      `GET ${A}/cloudforce-one/requests/priority/quota`,
+      `GET ${A}/cloudforce-one/requests/priority/{priority_id}`,
+      `PUT ${A}/cloudforce-one/requests/priority/{priority_id}`,
+      `GET ${A}/cloudforce-one/requests/quota`,
+      `GET ${A}/cloudforce-one/requests/{request_id}`,
+      `PUT ${A}/cloudforce-one/requests/{request_id}`,
+      `POST ${A}/cloudforce-one/v2/requests/{project_type}`,
+      `GET ${A}/cloudforce-one/v2/requests/{project_type}/constants`,
+      `GET ${A}/cloudforce-one/v2/requests/{project_type}/types`,
+      `GET ${A}/cloudforce-one/v2/requests/{project_type}/{request_id}`,
+      `PUT ${A}/cloudforce-one/v2/requests/{project_type}/{request_id}`,
+    ].map((key) => [key, safe(COUNTS, "tokens", "request.tokens")]),
+  ),
+  ...Object.fromEntries(
+    (
+      [
+        [`GET ${A}/cloudforce-one/rules`, "rules.meta.value"],
+        [`POST ${A}/cloudforce-one/rules`, "meta.value"],
+        [`GET ${A}/cloudforce-one/rules/approvals/{id}`, "approval.current_rule.meta.value"],
+        [`GET ${A}/cloudforce-one/rules/search`, "results.meta.value"],
+        [`GET ${A}/cloudforce-one/rules/structured`, "rules.meta.value"],
+        [`POST ${A}/cloudforce-one/rules/structured`, "meta.value"],
+        [`PUT ${A}/cloudforce-one/rules/structured/approvals/{id}`, "approval.current_rule.meta.value"],
+        [`GET ${A}/cloudforce-one/rules/structured/{id}`, "meta.value"],
+        [`PUT ${A}/cloudforce-one/rules/structured/{id}`, "meta.value"],
+        [`GET ${A}/cloudforce-one/rules/{id}`, "meta.value"],
+        [`PUT ${A}/cloudforce-one/rules/{id}`, "meta.value"],
+      ] as const
+    ).map(([key, path]) => [key, safe("Detection rule metadata (key, type, value); no credential.", path)]),
+  ),
+  [`GET ${A}/cloudforce-one/v2/threat-signals/search`]: safe("Searches threat intelligence articles; no credential."),
+  [`GET ${A}/cni/interconnects/{icon}/loa`]: safe("A Letter of Authorization for a cross-connect; no credential."),
+  [`POST ${A}/data-security/posture/webhooks/evaluate`]: safe("Answers a delivery test's status and message."),
+  [`POST ${A}/data-security/posture/webhooks/jobs`]: safe("Answers created and failed job ids."),
+  [`DELETE ${A}/data-security/posture/webhooks/{webhook_id}`]: safe(REVOKES),
+  [`POST ${A}/data-security/posture/webhooks/{webhook_id}/evaluate`]: safe(
+    "Answers a delivery test's status and message.",
+  ),
+  [`GET ${A}/devices/physical-devices`]: safe(CURSOR),
+  [`GET ${A}/devices/registrations`]: safe(CURSOR),
+  [`DELETE ${A}/devices/registrations`]: safe(CURSOR),
+  [`GET ${A}/r2/buckets`]: safe(CURSOR),
+  [`GET ${A}/registrar-sandbox/extensions`]: safe(CURSOR),
+  [`GET ${A}/registrar/extensions`]: safe(CURSOR),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/devices/posture`,
+      `POST ${A}/devices/posture`,
+      `GET ${A}/devices/posture/{rule_id}`,
+      `PUT ${A}/devices/posture/{rule_id}`,
+    ].map((key) => [key, safe("Device posture rules; check_private_key is a boolean.")]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/dlp/datasets`,
+      `GET ${A}/dlp/datasets/{dataset_id}`,
+      `PUT ${A}/dlp/datasets/{dataset_id}`,
+      `POST ${A}/dlp/datasets/{dataset_id}/upload/{version}`,
+      `GET ${A}/dlp/entries`,
+      `GET ${A}/dlp/entries/{entry_id}`,
+      `PUT ${A}/dlp/entries/{entry_id}`,
+    ].map((key) => [key, safe(DLP_FLAG, "secret")]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/dlp/profiles`,
+      `GET ${A}/dlp/profiles/custom`,
+      `POST ${A}/dlp/profiles/custom`,
+      `GET ${A}/dlp/profiles/custom/{profile_id}`,
+      `PUT ${A}/dlp/profiles/custom/{profile_id}`,
+      `POST ${A}/dlp/profiles/predefined`,
+      `GET ${A}/dlp/profiles/predefined/{profile_id}`,
+      `PUT ${A}/dlp/profiles/predefined/{profile_id}`,
+      `GET ${A}/dlp/profiles/predefined/{profile_id}/config`,
+      `POST ${A}/dlp/profiles/predefined/{profile_id}/config`,
+      `PUT ${A}/dlp/profiles/predefined/{profile_id}/config`,
+      `GET ${A}/dlp/profiles/{profile_id}`,
+    ].map((key) => [key, safe(DLP_FLAG, "entries.secret", "shared_entries.secret")]),
+  ),
+  [`GET ${A}/email-security/settings/domains/{domain_id}/verification`]: safe(
+    "The TXT record value is published in DNS to prove ownership.",
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/gateway/locations`,
+      `POST ${A}/gateway/locations`,
+      `GET ${A}/gateway/locations/{location_id}`,
+      `PUT ${A}/gateway/locations/{location_id}`,
+    ].map((key) => [key, safe("Gateway locations; require_token is a boolean.")]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/hyperdrive/configs`,
+      `POST ${A}/hyperdrive/configs`,
+      `GET ${A}/hyperdrive/configs/{hyperdrive_id}`,
+      `PUT ${A}/hyperdrive/configs/{hyperdrive_id}`,
+      `PATCH ${A}/hyperdrive/configs/{hyperdrive_id}`,
+      `POST ${A}/hyperdrive/configs/{hyperdrive_id}/restart`,
+    ].map((key) => [key, HYPERDRIVE]),
+  ),
+  ...Object.fromEntries(
+    (
+      [
+        [`GET ${A}/iam/resource_groups`, "meta.value"],
+        [`POST ${A}/iam/resource_groups`, "meta.value"],
+        [`GET ${A}/iam/resource_groups/{resource_group_id}`, "meta.value"],
+        [`PUT ${A}/iam/resource_groups/{resource_group_id}`, "meta.value"],
+        [`GET ${A}/iam/user_groups`, "policies.resource_groups.meta.value"],
+        [`POST ${A}/iam/user_groups`, "policies.resource_groups.meta.value"],
+        [`GET ${A}/iam/user_groups/{user_group_id}`, "policies.resource_groups.meta.value"],
+        [`PUT ${A}/iam/user_groups/{user_group_id}`, "policies.resource_groups.meta.value"],
+        [`GET ${A}/members`, "policies.resource_groups.meta.value"],
+        [`POST ${A}/members`, "policies.resource_groups.meta.value"],
+        [`GET ${A}/members/{member_id}`, "policies.resource_groups.meta.value"],
+        [`PUT ${A}/members/{member_id}`, "policies.resource_groups.meta.value"],
+        [`GET /memberships`, "policies.resource_groups.meta.value"],
+        [`GET /memberships/{membership_id}`, "policies.resource_groups.meta.value"],
+        [`PUT /memberships/{membership_id}`, "policies.resource_groups.meta.value"],
+        [`GET /user/memberships/{membership_id}`, "policies.resource_groups.meta.value"],
+      ] as const
+    ).map(([key, path]) => [key, safe("Resource group attributes scope a policy; no credential.", path)]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/k2/streams`,
+      `POST ${A}/k2/streams`,
+      `GET ${A}/k2/streams/{stream_id}`,
+      `PATCH ${A}/k2/streams/{stream_id}`,
+    ].map((key) => [
+      key,
+      safe("http.authentication is a boolean: whether producers need a token.", "http.authentication"),
+    ]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/magic/cloud/providers`,
+      `POST ${A}/magic/cloud/providers`,
+      `GET ${A}/magic/cloud/providers/{provider_id}`,
+      `PUT ${A}/magic/cloud/providers/{provider_id}`,
+      `PATCH ${A}/magic/cloud/providers/{provider_id}`,
+    ].map((key) => [key, safe("Cloud provider integrations report credential health timestamps, not credentials.")]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/mtls_certificates`,
+      `POST ${A}/mtls_certificates`,
+      `GET ${A}/mtls_certificates/{mtls_certificate_id}`,
+      `DELETE ${A}/mtls_certificates/{mtls_certificate_id}`,
+      `GET ${Z}/acm/custom_trust_store`,
+      `POST ${Z}/acm/custom_trust_store`,
+      `GET ${Z}/acm/custom_trust_store/{custom_origin_trust_store_id}`,
+      `GET ${Z}/client_certificates`,
+      `POST ${Z}/client_certificates`,
+      `GET ${Z}/client_certificates/{client_certificate_id}`,
+      `PATCH ${Z}/client_certificates/{client_certificate_id}`,
+      `DELETE ${Z}/client_certificates/{client_certificate_id}`,
+      `GET ${Z}/origin_tls_client_auth/hostnames/certificates`,
+      `POST ${Z}/origin_tls_client_auth/hostnames/certificates`,
+      `GET ${Z}/origin_tls_client_auth/hostnames/certificates/{certificate_id}`,
+      `DELETE ${Z}/origin_tls_client_auth/hostnames/certificates/{certificate_id}`,
+      `GET ${Z}/origin_tls_client_auth/hostnames/{hostname}`,
+      `GET ${Z}/ssl/verification`,
+    ].map((key) => [key, safe(CERTIFICATE)]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/oauth_clients`,
+      `GET ${A}/oauth_clients/{oauth_client_id}`,
+      `PATCH ${A}/oauth_clients/{oauth_client_id}`,
+    ].map((key) => [
+      key,
+      safe(
+        "OAuth client registrations: ids, URIs, and whether a secret was rotated; the secret itself is refused at creation.",
+      ),
+    ]),
+  ),
+  [`GET ${A}/one/applications/{application_id}/setup-flows`]: safe(
+    "Setup flows describe the OAuth authorization URL and form fields to fill, not credentials.",
+    "steps.form_fields.name",
+    "steps.form_fields.type",
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/realtime/kit/{app_id}/meetings`,
+      `POST ${A}/realtime/kit/{app_id}/meetings`,
+      `GET ${A}/realtime/kit/{app_id}/meetings/{meeting_id}`,
+      `PUT ${A}/realtime/kit/{app_id}/meetings/{meeting_id}`,
+      `PATCH ${A}/realtime/kit/{app_id}/meetings/{meeting_id}`,
+      `GET ${A}/realtime/kit/{app_id}/recordings`,
+      `POST ${A}/realtime/kit/{app_id}/recordings`,
+      `GET ${A}/realtime/kit/{app_id}/recordings/{recording_id}`,
+      `PUT ${A}/realtime/kit/{app_id}/recordings/{recording_id}`,
+    ].map((key) => [key, KIT_STORAGE]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/realtime/kit/{app_id}/webhooks`,
+      `POST ${A}/realtime/kit/{app_id}/webhooks`,
+      `GET ${A}/realtime/kit/{app_id}/webhooks/{webhook_id}`,
+      `PUT ${A}/realtime/kit/{app_id}/webhooks/{webhook_id}`,
+      `PATCH ${A}/realtime/kit/{app_id}/webhooks/{webhook_id}`,
+      `DELETE ${A}/realtime/kit/{app_id}/webhooks/{webhook_id}`,
+    ].map((key) => [key, KIT_WEBHOOK]),
+  ),
+  [`GET ${A}/realtime/kit/{app_id}/webhooks/all`]: safe("Lists event names a webhook can subscribe to."),
+  [`POST ${A}/registrar/domain-transfer-check`]: safe("Answers transfer eligibility; no auth code."),
+  [`POST ${A}/registrar/registrations/{domain_name}/transfer-in`]: safe(
+    "Answers a workflow status; the auth code is request input only.",
+  ),
+  [`GET ${A}/registrar/registrations/{domain_name}/transfer-in-status`]: safe("Answers a transfer status."),
+  [`POST ${A}/storage/kv/namespaces/{namespace_id}/bulk/get`]: safe(KV_DATA),
+  [`GET ${A}/storage/kv/namespaces/{namespace_id}/keys`]: safe("Lists key names and metadata in a namespace."),
+  [`GET ${A}/storage/kv/namespaces/{namespace_id}/metadata/{key_name}`]: safe(KV_DATA),
+  [`GET ${A}/storage/kv/namespaces/{namespace_id}/values/{key_name}`]: safe(KV_DATA),
+  [`PUT ${A}/storage/kv/namespaces/{namespace_id}/values/{key_name}`]: safe(
+    "Answers a status; the value is request input.",
+  ),
+  [`DELETE ${A}/storage/kv/namespaces/{namespace_id}/values/{key_name}`]: safe(REVOKES),
+  [`DELETE ${A}/stream/webhook`]: safe(REVOKES),
+  [`GET ${A}/tags/keys`]: safe("Lists resource tag keys; no credential."),
+  [`GET ${A}/tags/summary`]: safe("Summarizes resource tags; no credential."),
+  ...Object.fromEntries(
+    [`POST ${A}/vuln_scanner/scans`, `GET ${A}/vuln_scanner/scans/{scan_id}`].map((key) => [
+      key,
+      safe(
+        "Scan reports name the credential set a step used; credential values stay write-only.",
+        "report.report.tests.steps.request.credential_set",
+      ),
+    ]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/waiting_rooms`,
+      `GET ${Z}/waiting_rooms`,
+      `POST ${Z}/waiting_rooms`,
+      `GET ${Z}/waiting_rooms/{waiting_room_id}`,
+      `PUT ${Z}/waiting_rooms/{waiting_room_id}`,
+      `PATCH ${Z}/waiting_rooms/{waiting_room_id}`,
+      `GET ${Z}/waiting_rooms/settings`,
+      `PUT ${Z}/waiting_rooms/settings`,
+      `PATCH ${Z}/waiting_rooms/settings`,
+    ].map((key) => [key, safe("Waiting room settings; cookie attributes and the crawler bypass are flags.")]),
+  ),
+  [`GET ${A}/workers/dispatch/namespaces/{dispatch_namespace}/scripts/{script_name}/bindings`]: BINDING_VALUES,
+  ...Object.fromEntries(
+    [
+      `GET ${A}/workers/dispatch/namespaces/{dispatch_namespace}/scripts`,
+      `GET ${A}/workers/dispatch/namespaces/{dispatch_namespace}/scripts/{script_name}`,
+      `PUT ${A}/workers/dispatch/namespaces/{dispatch_namespace}/scripts/{script_name}`,
+      `PUT ${A}/workers/dispatch/namespaces/{dispatch_namespace}/scripts/{script_name}/content`,
+      `GET ${A}/workers/scripts`,
+      `PUT ${A}/workers/scripts/{script_name}`,
+      `PUT ${A}/workers/scripts/{script_name}/content`,
+      `GET ${A}/workers/scripts/{script_name}/script-settings`,
+      `PATCH ${A}/workers/scripts/{script_name}/script-settings`,
+      `PUT ${A}/workers/services/{service_name}/environments/{environment_name}/content`,
+      `GET ${A}/workers/services/{service_name}/environments/{environment_name}/settings`,
+      `PATCH ${A}/workers/services/{service_name}/environments/{environment_name}/settings`,
+    ].map((key) => [key, TRACE_POLICY()]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/workers/workers`,
+      `POST ${A}/workers/workers`,
+      `GET ${A}/workers/workers/{worker_id}`,
+      `PUT ${A}/workers/workers/{worker_id}`,
+      `PATCH ${A}/workers/workers/{worker_id}`,
+    ].map((key) => [key, WORKER]),
+  ),
+  ...Object.fromEntries(
+    (
+      [
+        [`GET ${A}/workers/observability/queries`, "parameters.filters.value", "parameters.havings.value"],
+        [`POST ${A}/workers/observability/queries`, "parameters.filters.value", "parameters.havings.value"],
+        [`GET ${A}/workers/observability/queries/{queryId}`, "parameters.filters.value", "parameters.havings.value"],
+        [`PATCH ${A}/workers/observability/queries/{queryId}`, "parameters.filters.value", "parameters.havings.value"],
+        [`DELETE ${A}/workers/observability/queries/{queryId}`, "parameters.filters.value", "parameters.havings.value"],
+        [`POST ${A}/workers/observability/telemetry/keys`],
+        [`POST ${A}/workers/observability/telemetry/values`, "value"],
+        ...[`GET ${A}/workers/observability/shared/query/{id}`, `POST ${A}/workers/observability/telemetry/query`].map(
+          (key) =>
+            [
+              key,
+              "calculations.aggregates.groups.value",
+              "calculations.series.data.groups.value",
+              "compare.aggregates.groups.value",
+              "compare.series.data.groups.value",
+              "run.query.parameters.filters.value",
+              "run.query.parameters.havings.value",
+            ] as const,
+        ),
+      ] as const
+    ).map(([key, ...paths]) => [key, safe(OBSERVABILITY, ...paths)]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${A}/workflows/concurrency`,
+      `POST ${A}/workflows/concurrency`,
+      `GET ${A}/workflows/concurrency/{key_id}`,
+      `PATCH ${A}/workflows/concurrency/{key_id}`,
+      `DELETE ${A}/workflows/concurrency/{key_id}`,
+    ].map((key) => [key, safe("Workflow concurrency keys: names and limits, not credentials.")]),
+  ),
+  [`GET /billing/rate_plans/{public_key}`]: safe("A public rate plan catalog entry."),
+  [`PUT /organizations/{organization_id}/invites/{member_code}`]: safe(
+    "Accepts an invitation with a code the caller holds; answers the membership.",
+  ),
+  [`GET /radar/bots/{bot_slug}`]: safe("A verified bot's public profile."),
+  [`GET /user/invites`]: safe("Invitation metadata (organization, roles, status); no invite code."),
+  [`GET /user/invites/{invite_id}`]: safe("Invitation metadata (organization, roles, status); no invite code."),
+  [`PATCH /user/invites/{invite_id}`]: safe("Answers the invitation's status; no invite code."),
+  ...Object.fromEntries(
+    [`GET ${Z}/api_gateway/configuration`, `PUT ${Z}/api_gateway/configuration`].map((key) => [
+      key,
+      safe(
+        "auth_id_characteristics name the header or cookie that identifies a session, not its value.",
+        "auth_id_characteristics.name",
+      ),
+    ]),
+  ),
+  ...Object.fromEntries(
+    [
+      `GET ${Z}/api_gateway/operations`,
+      `POST ${Z}/api_gateway/operations`,
+      `POST ${Z}/api_gateway/operations/item`,
+      `GET ${Z}/api_gateway/operations/{operation_id}`,
+      `GET ${Z}/schema_validation/schemas/{schema_id}/operations`,
+    ].map((key) => [key, safe("API operations with session-count thresholds; no credential.")]),
+  ),
+  [`DELETE ${Z}/custom_hostnames/{custom_hostname_id}/certificate_pack/{certificate_pack_id}/certificates/{certificate_id}`]:
+    safe(REVOKES),
+  ...Object.fromEntries(
+    [`GET ${Z}/images/v1/flows`, `PUT ${Z}/images/v1/flows`].map((key) => [
+      key,
+      safe(
+        "Image flow transformation and trigger parameters.",
+        "flows.transformations.value",
+        "flows.trigger.params.value",
+      ),
+    ]),
+  ),
+  [`POST ${Z}/secondary_dns/outgoing/disable`]: safe("Answers outgoing zone transfer status; no TSIG secret."),
+  [`POST ${Z}/secondary_dns/outgoing/enable`]: safe("Answers outgoing zone transfer status; no TSIG secret."),
+  [`GET ${Z}/secondary_dns/outgoing/status`]: safe("Answers outgoing zone transfer status; no TSIG secret."),
 };
 
-/** Normalized key names the heuristic treats as credentials (compared lowercase, without `_` or `-`). */
-const CREDENTIAL_KEY =
-  /(tokens?|secrets?|passwords?|passphrases?|privatekeys?|apikeys?|authkey|authorization|cookies?|signature|jwts?|credentials?|psks?|streamkeys?|uploadurl|signedurl|jwks?|verifier|devicecode|bypass)$/;
-/** Request fields that carry a secret into Cloudflare: credentials, headers, and environment values. */
-const CREDENTIAL_INPUT = /(envvars|environmentvariables|bindings|headers?)$/;
-
-/** Whether a request field name submits a credential or a stored secret. */
-export function isCredentialInput(name: string): boolean {
-  const key = normalized(name);
-  return CREDENTIAL_KEY.test(key) || CREDENTIAL_INPUT.test(key);
-}
-
-/** Pagination cursors share the vocabulary but grant nothing; redacting them would break paging. */
-const CURSORS = new Set(["pagetoken", "nextpagetoken", "continuationtoken", "nextcontinuationtoken"]);
-/** Query parameters that carry credentials inside a URL. */
-const CREDENTIAL_PARAM = /(token|secret|password|passphrase|key|signature|sig|credential|auth|authorization|jwt)$/;
-const REDACTED = "[redacted]";
-
-function normalized(key: string): string {
-  return key.toLowerCase().replace(/[_-]/g, "");
-}
-
-/** A URL with its userinfo password and credential-named query values replaced. */
-function sanitizeUrl(value: string): string {
-  if (!/^[a-z][a-z0-9+.-]*:\/\/\S+$/i.test(value)) return value;
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return value;
-  }
-  let changed = false;
-  if (url.password) {
-    url.password = REDACTED;
-    changed = true;
-  }
-  for (const name of new Set(url.searchParams.keys())) {
-    if (CREDENTIAL_PARAM.test(normalized(name))) {
-      url.searchParams.set(name, REDACTED);
-      changed = true;
-    }
-  }
-  return changed ? url.toString() : value;
-}
-
-/** Only a URL's scheme and host: its path or query may itself be the credential. */
-function urlHost(value: unknown): unknown {
-  if (typeof value !== "string") return value === null || value === undefined ? value : REDACTED;
-  try {
-    const url = new URL(value);
-    return `${url.protocol}//${url.host}${url.pathname.length > 1 || url.search ? "/[redacted]" : ""}`;
-  } catch {
-    return REDACTED;
-  }
-}
-
-function eachAt(
-  value: unknown,
-  parts: readonly string[],
-  apply: (holder: Record<string, unknown>, key: string) => void,
-) {
-  if (Array.isArray(value)) {
-    for (const item of value) eachAt(item, parts, apply);
-    return;
-  }
-  if (typeof value !== "object" || value === null) return;
-  const holder = value as Record<string, unknown>;
-  const [head, ...rest] = parts;
-  if (head === undefined) return;
-  const keys = head === "*" ? Object.keys(holder) : Object.hasOwn(holder, head) ? [head] : [];
-  for (const key of keys) {
-    if (rest.length === 0) apply(holder, key);
-    else eachAt(holder[key], rest, apply);
-  }
-}
-
-function clone(value: unknown): unknown {
-  return value === undefined ? undefined : (JSON.parse(JSON.stringify(value)) as unknown);
-}
-
-/** Replace every string under a credential-bearing node, keeping its shape. */
-function scrub(value: unknown): unknown {
-  if (typeof value === "string") return REDACTED;
-  if (Array.isArray(value)) return value.map(scrub);
-  if (typeof value === "object" && value !== null) {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, scrub(item)]));
-  }
-  return value;
-}
-
 /**
- * Apply an operation's reviewed redactions, then the key-name heuristic, the
- * typed-secret rule (`{ type: "secret…", value }`), and URL sanitization
- * across the whole value. Runs on every method's successful data.
+ * Cloudflare's reviewed table. Pagination cursors share the credential
+ * vocabulary but grant nothing; redacting them would break paging, so they
+ * are reviewed metadata wherever they appear.
  */
-export function redactValues(data: unknown, verdict: ValueSafetyVerdict | undefined): unknown {
-  if (typeof data !== "object" || data === null) return typeof data === "string" ? sanitizeUrl(data) : data;
-  const out = clone(data);
-  if (verdict && "redact" in verdict) {
-    for (const path of verdict.redact) {
-      const [field, mode] = path.split("#");
-      eachAt(out, field!.split("."), (holder, key) => {
-        if (holder[key] === null || holder[key] === undefined) return;
-        holder[key] = mode === "url" ? urlHost(holder[key]) : REDACTED;
-      });
-    }
-  }
-  const keep = new Set(verdict && "keep" in verdict ? verdict.keep : []);
-  const walk = (value: unknown, path: string): unknown => {
-    if (typeof value === "string") return sanitizeUrl(value);
-    if (Array.isArray(value)) return value.map((item) => walk(item, path));
-    if (typeof value !== "object" || value === null) return value;
-    const record = value as Record<string, unknown>;
-    const typedSecret = typeof record["type"] === "string" && /secret/i.test(record["type"]);
-    // `{ name: "Authorization", value }` header and cookie entries: the
-    // name is the credential's, so the value goes.
-    const namedSecret = typeof record["name"] === "string" && CREDENTIAL_KEY.test(normalized(record["name"]));
-    const result: Record<string, unknown> = {};
-    for (const [key, item] of Object.entries(record)) {
-      const at = path ? `${path}.${key}` : key;
-      const name = normalized(key);
-      if (CURSORS.has(name) && typeof item === "string") result[key] = item;
-      else if (keep.has(at)) result[key] = walk(item, at);
-      else if (CREDENTIAL_KEY.test(name)) result[key] = scrub(item);
-      else if ((typedSecret || namedSecret) && (key === "value" || key === "text") && typeof item === "string")
-        result[key] = REDACTED;
-      else result[key] = walk(item, at);
-    }
-    return result;
-  };
-  return walk(out, "");
-}
+export const CLOUDFLARE_VALUE_SAFETY: ValueSafetyTable = {
+  title: "Cloudflare",
+  operations: OPERATIONS,
+  fields: {
+    ...Object.fromEntries(
+      [
+        "page_token",
+        "pageToken",
+        "next_page_token",
+        "nextPageToken",
+        "continuation_token",
+        "continuationToken",
+        "next_continuation_token",
+        "nextContinuationToken",
+      ].map((name) => [name, { verdict: "keep" as const, reason: "A pagination cursor; it grants nothing." }]),
+    ),
+    signature: {
+      verdict: "redact",
+      reason: "Certificates name their signature algorithm here; withheld as credential vocabulary, as before.",
+    },
+    ...Object.fromEntries(
+      (
+        [
+          ["claim_value", "An OIDC claim value an Access rule matches."],
+          ["scopes", "OAuth scope names, not tokens."],
+          ["token_url", "An IdP or SCIM token endpoint URL; public configuration."],
+          ["authorization_url", "An OAuth authorization endpoint URL; public configuration."],
+          ["certs_url", "A JWKS URL; public configuration."],
+          ["redirect_uris", "OAuth redirect URIs; public configuration."],
+          ["access_token_lifetime", "A token lifetime setting."],
+          ["refresh_token_options", "Refresh token lifetime settings."],
+          ["lifetime", "A lifetime setting."],
+          ["group_filter_regex", "A group name filter."],
+          ["name_by_idp", "Claim names per identity provider."],
+          ["options_preflight_bypass", "A CORS preflight flag."],
+          ["allow_pkce_without_client_secret", "An OAuth flow flag."],
+          ["return_access_token_from_authorization_endpoint", "An OAuth flow flag."],
+          ["return_id_token_from_authorization_endpoint", "An OAuth flow flag."],
+          ["allow_credentials", "A CORS flag."],
+          ["strict_service_token_auth", "A service token policy flag."],
+          ["service_token_inactivity", "A service token inactivity policy."],
+          ["amr_matching_session_duration", "A session duration."],
+          ["doh_jwt_duration", "A token lifetime setting."],
+          ["token_endpoint_auth_method", "An OAuth client authentication method name."],
+          ["has_rotated_secret", "Whether a client secret was rotated; a flag."],
+          ["secret_preview", "A masked preview of a caller-supplied key."],
+          ["token_pricing", "Per-token model pricing."],
+          ["tokens_in", "A token count."],
+          ["tokens_out", "A token count."],
+          ["message_tokens", "A token count."],
+          ["request_tokens", "A token count."],
+          ["response_tokens", "A token count."],
+          ["prompt_tokens", "A token count."],
+          ["completion_tokens", "A token count."],
+          ["priority_token_surcharge", "A request cost."],
+          ["auth_id_tokens", "A count of session identifiers seen."],
+          ["keyword_tokenizer", "A search tokenizer name."],
+          ["require_token", "Whether a DoH endpoint requires a token; a flag."],
+          ["check_private_key", "A posture check flag."],
+          ["search_engine_crawler_bypass", "A waiting room flag."],
+          ["allow_child_bypass", "A gateway rule flag."],
+          ["bypass_parent_rule", "A gateway rule flag."],
+          ["cookie_attributes", "Cookie attribute settings (SameSite, Secure)."],
+          ["strip_set_cookie", "A cache rule flag."],
+          ["cookie_fields", "Cookie names a rule logs."],
+          ["cookieDomain", "The domain Zaraz writes cookies for."],
+          ["enable_binding_cookie", "An Access flag."],
+          ["http_only_cookie_attribute", "An Access cookie flag."],
+          ["same_site_cookie_attribute", "An Access cookie setting."],
+          ["path_cookie_attribute", "An Access cookie flag."],
+          ["eager_redirect_cookie_setting", "An Access cookie setting."],
+          ["host_header", "A hostname a rule sets."],
+          ["propagation_policy", "A trace context propagation policy name."],
+          ["credentials_good_since", "A credential health timestamp."],
+          ["credentials_missing_since", "A credential health timestamp."],
+          ["credentials_rejected_since", "A credential health timestamp."],
+          ["is_secret", "Whether a variable is hidden; a flag."],
+          ["is_selectable", "Whether a permission group is selectable; a flag."],
+          ["case_sensitive", "A DLP matching flag."],
+          ["byok_only", "Whether a gateway requires caller-supplied keys; a flag."],
+          ["sign_request", "Whether SAML requests are signed; a flag."],
+          ["signatureAgentUrl", "A verified bot's public key directory URL."],
+          ["reg_who_authorization_statement", "An abuse reporter's statement."],
+          ["password_expression", "An expression locating a password field, not a password."],
+          ["username_expression", "An expression locating a username field."],
+          ["token_sources", "Header or cookie names a token is read from."],
+          ["http_body", "A domain control validation token, published on the origin."],
+          ["http_url", "Where a domain control validation token is published."],
+          ["txt_record_value", "A TXT record value published in DNS."],
+          ["author_email", "A deployment author's email."],
+          ["BilledCost", "A billed amount."],
+          ["EffectiveCost", "A billed amount."],
+          ["quota", "A request quota."],
+          ["remaining", "A remaining request count."],
+          ["id", "An identifier."],
+        ] as const
+      ).map(([name, reason]) => [name, { verdict: "keep" as const, reason }]),
+    ),
+  },
+};

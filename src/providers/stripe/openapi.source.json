@@ -6,6 +6,9 @@
   "options": {
     "depth": 2,
     "descriptions": 0,
-    "maxEnum": 50
+    "maxEnum": 50,
+    "valueSafety": {
+      "expansions": false
+    }
   }
 }

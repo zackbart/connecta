@@ -16,7 +16,9 @@ import {
   type RestReadPost,
   type RestVendor,
 } from "../_shared/rest/tools.js";
+import { valueSafety } from "../_shared/rest/value-safety.js";
 import { openapi } from "./openapi.generated.js";
+import { STRIPE_VALUE_SAFETY } from "./value-safety.js";
 
 /** Which Stripe environment a key reaches. */
 export type StripeMode = "production" | "sandbox";
@@ -135,9 +137,11 @@ function expansions(call: RestCall): string[] {
 }
 
 /**
- * Reviewed refusals. Each expansion returns a secret the caller could not
- * otherwise read through Connecta: a Stripe Apps secret's value, or a full
- * Issuing card number or CVC.
+ * Reviewed refusals that depend on arguments; the value-safety table
+ * (`value-safety.ts`) refuses whole operations. Each expansion returns a
+ * secret the caller could not otherwise read through Connecta: a Stripe Apps
+ * secret's value, or a full Issuing card number or CVC, which an Issuing
+ * authorization, transaction, or token can embed as well as the card itself.
  */
 function refuse(call: RestCall): string | undefined {
   const expanded = expansions(call);
@@ -145,7 +149,7 @@ function refuse(call: RestCall): string | undefined {
     return "Stripe Apps secret values are not returned through Connecta. Read the secret's metadata without expanding payload.";
   }
   if (
-    /^\/v1\/(?:test_helpers\/)?issuing\/cards(?:\/|$)/.test(call.path) &&
+    /^\/v1\/(?:test_helpers\/)?issuing\//.test(call.path) &&
     expanded.some((path) => /(?:^|\.)(?:number|cvc)$/.test(path))
   ) {
     return "Issuing card numbers and CVCs are not expanded through Connecta. Use the card id and last4, or the Stripe Dashboard.";
@@ -153,16 +157,23 @@ function refuse(call: RestCall): string | undefined {
   return undefined;
 }
 
-/** Map a Stripe failure by the caller's next move (H11). */
-function stripeFailure(status: number, headers: Headers, body: unknown): ConnectorCallError {
+/**
+ * Map a Stripe failure by the caller's next move (H11). For an operation the
+ * value-safety review withholds (`withheld`), Stripe's message is replaced:
+ * the type, code, decline code, and param still route.
+ */
+function stripeFailure(status: number, headers: Headers, body: unknown, withheld = false): ConnectorCallError {
   const error = record(record(body)["error"]);
   const code = text(error["code"]);
   const kind = [text(error["type"]), code, text(error["decline_code"])].filter(Boolean).join(" ");
   const param = text(error["param"]);
   const requestId = headers.get("request-id");
+  const message = withheld
+    ? "Stripe's message is withheld because this operation handles credentials."
+    : (text(error["message"]) ?? `Stripe returned HTTP ${status}.`);
   const detail =
     `Stripe ${kind || `HTTP ${status}`}${param ? ` (param ${param})` : ""}: ` +
-    `${text(error["message"]) ?? `Stripe returned HTTP ${status}.`}${requestId ? ` Request ${requestId}.` : ""}`;
+    `${message}${requestId ? ` Request ${requestId}.` : ""}`;
   if (status === 429) {
     if (code === "lock_timeout") {
       // Stripe did not process the request (docs.stripe.com/rate-limits#object-lock-timeouts):
@@ -240,6 +251,9 @@ function stripeIndex(): OperationIndex {
   return index;
 }
 
+/** The reviewed value-safety table over the pinned index. */
+const SAFETY = valueSafety(STRIPE_VALUE_SAFETY, () => stripeIndex());
+
 export interface StripeRest {
   vendor: RestVendor;
   tools: ApiTool[];
@@ -306,8 +320,10 @@ export function stripeRest(mode: StripeMode, connectedAccount: string | undefine
       }
       return `This operation is served from ${server}, which this connector does not reach.`;
     },
-    failure: stripeFailure,
+    failure: (status, headers, body, call) =>
+      stripeFailure(status, headers, body, call ? SAFETY.withholdsErrors(call.op) : false),
     readPosts: READ_POSTS,
+    valueSafety: SAFETY,
     refuse,
     encode,
     page,

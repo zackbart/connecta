@@ -446,6 +446,32 @@ describe("notion() request construction", () => {
   });
 });
 
+describe("notion() value safety", () => {
+  it("INV-5: withholds a pre-signed file URL's signature and keeps the upload endpoint", async () => {
+    const signed =
+      "https://prod-files-secure.s3.us-west-2.amazonaws.com/ws/file/report.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256" +
+      "&X-Amz-Credential=ASIAEXAMPLE%2F20261009%2Fus-west-2%2Fs3%2Faws4_request&X-Amz-Date=20261009T000000Z" +
+      "&X-Amz-Expires=3600&X-Amz-Security-Token=SESSION-TOKEN&X-Amz-Signature=SIGNATURE-HEX&X-Amz-SignedHeaders=host";
+    queued = [
+      {
+        body: {
+          object: "block",
+          id: "b1",
+          type: "file",
+          file: { type: "file", file: { url: signed, expiry_time: "2026-10-09T01:00:00.000Z" }, caption: [] },
+        },
+      },
+      { body: { object: "file_upload", id: "fu_1", upload_url: "https://api.notion.com/v1/file_uploads/fu_1/send" } },
+    ];
+    const block = await call(build(), "notion_api_read", { path: "/v1/blocks/b1" });
+    const url = new URL(block.data.file.file.url);
+    expect(url.pathname).toBe("/ws/file/report.pdf");
+    for (const leaked of ["ASIAEXAMPLE", "SESSION-TOKEN", "SIGNATURE-HEX"]) expect(url.href).not.toContain(leaked);
+    const upload = await call(build(), "notion_api_read", { path: "/v1/file_uploads/fu_1" });
+    expect(upload.data.upload_url).toBe("https://api.notion.com/v1/file_uploads/fu_1/send");
+  });
+});
+
 describe("notion() generic REST tools", () => {
   it("INV-10: finds operations and their contracts in the pinned index without a request", async () => {
     const connector = build();

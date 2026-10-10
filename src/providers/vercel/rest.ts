@@ -19,7 +19,8 @@ import {
   type RestVendor,
 } from "../_shared/rest/tools.js";
 import { openapi } from "./openapi.generated.js";
-import { redactResponse, secretFamily, verdictFor } from "./value-safety.js";
+import { valueSafety } from "../_shared/rest/value-safety.js";
+import { VERCEL_VALUE_SAFETY } from "./value-safety.js";
 
 /** Vercel's public REST origin. Override only for a proxy or test double. */
 export const VERCEL_API_BASE_URL = "https://api.vercel.com";
@@ -168,6 +169,9 @@ function vercelIndex(): OperationIndex {
   index ??= new OperationIndex(openapi, { vendor: "vercel", title: "Vercel" });
   return index;
 }
+
+/** The reviewed value-safety table over the pinned index. */
+const SAFETY = valueSafety(VERCEL_VALUE_SAFETY, () => vercelIndex());
 
 /** Query parameter names each operation declares, by index row. */
 const queryNames = new Map<number, ReadonlySet<string>>();
@@ -485,8 +489,6 @@ export function vercelRest(options: { baseUrl: string; teamId: string | undefine
     authenticate,
   });
   const refuse = (call: RestCall): string | undefined => {
-    const verdict = verdictFor(call.method, call.op.path);
-    if (verdict?.verdict === "refuse") return `Connecta refuses ${call.method} ${call.op.path}: it ${verdict.reason}`;
     if (
       call.method === "PATCH" &&
       call.op.path === "/v3/domains/{domain}" &&
@@ -515,8 +517,9 @@ export function vercelRest(options: { baseUrl: string; teamId: string | undefine
         : `This operation is served from ${server}, which this connector does not reach.`;
     },
     failure: (status, headers, body, call) =>
-      vercelFailure(status, headers, body, call ? secretFamily(call.method, call.op.path) : false),
+      vercelFailure(status, headers, body, call ? SAFETY.withholdsErrors(call.op) : false),
     readPosts: READ_POSTS,
+    valueSafety: SAFETY,
     refuse,
     scope(call) {
       const query: JsonRecord = { ...call.query };
@@ -531,11 +534,10 @@ export function vercelRest(options: { baseUrl: string; teamId: string | undefine
       return { ...call, query };
     },
     page: (data, call) => vercelPage(operations, data, call),
-    redact: (data, call) => redactResponse(data, call.method, call.op.path),
     upload: "Send raw bytes with vercel_api_upload.",
   };
 
-  const family = (call: RestCall) => secretFamily(call.method, call.op.path);
+  const family = (call: RestCall) => SAFETY.withholdsErrors(call.op);
   const send = (method: RestMethod, path: string, ctx: ConnectorContext, input: Parameters<typeof restCall>[3] = {}) =>
     callRest(vendor, restCall(vendor, method, path, input), ctx);
 
@@ -582,7 +584,7 @@ export function vercelRest(options: { baseUrl: string; teamId: string | undefine
       }
       const { bytes, truncated } = await response.prefix(MAX_LOG_BYTES);
       const rows = completeRows(new TextDecoder().decode(bytes)).map((row) =>
-        redactResponse(row, call.method, call.op.path),
+        SAFETY.redact(row, call.method, call.op.path),
       );
       return { rows, stopped: truncated ? "bytes" : (stopped ?? "end") };
     });
@@ -1074,7 +1076,7 @@ export function vercelRest(options: { baseUrl: string; teamId: string | undefine
               let data: unknown = null;
               if (body !== "") {
                 try {
-                  data = redactResponse(JSON.parse(body), call.method, call.op.path);
+                  data = SAFETY.redact(JSON.parse(body), call.method, call.op.path);
                 } catch {
                   data = {
                     contentType: response.headers.get("content-type") ?? "",

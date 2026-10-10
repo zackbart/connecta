@@ -19,7 +19,8 @@ import {
   type RestVendor,
 } from "../_shared/rest/tools.js";
 import { inspectGraphqlQuery } from "./graphql.js";
-import { VALUE_SAFETY, isCredentialInput, redactValues, type ValueSafetyVerdict } from "./value-safety.js";
+import { valueSafety } from "../_shared/rest/value-safety.js";
+import { CLOUDFLARE_VALUE_SAFETY } from "./value-safety.js";
 import { openapi } from "./openapi.generated.js";
 
 /** Cloudflare's v4 REST base. Override only for a proxy or a test double. */
@@ -61,7 +62,7 @@ const READ_CAP_MS = 60_000;
  * entitlement; flag evaluation is metered; robots.txt bulk reads fetch
  * origins; previews, tests, scans, exports and ownership challenges create
  * state or send traffic; and token or credential POSTs are refused outright
- * (`VALUE_SAFETY`).
+ * (`CLOUDFLARE_VALUE_SAFETY`).
  */
 const READ_POSTS: readonly RestReadPost[] = [
   ["POST", "/accounts/{account_id}/analytics/query/{dataset}/summary", "Analytics query; aggregates only."],
@@ -296,43 +297,13 @@ function errorCodes(errors: EnvelopeError[]): Set<number> {
  */
 const AUTH_ERROR_CODES = new Set([1001, 6003, 6111, 9103, 9106, 9107]);
 
-const credentialHandling = new Map<number, boolean>();
-
 /**
- * Whether an operation handles credentials, for error text: any reviewed
- * value-safety candidate (whatever its success verdict), or any operation
- * whose request accepts a credential, header, or environment value, since a
- * vendor error may echo what was submitted.
+ * The reviewed value-safety table over the pinned index: refusals, redaction
+ * of every successful body, and which operations withhold error text (any
+ * reviewed operation, or one whose request accepts a credential, header, or
+ * environment value, since a vendor error may echo what was submitted).
  */
-function handlesCredentials(op: Operation): boolean {
-  if (verdictOf(op) !== undefined) return true;
-  if (op.row < 0) return false;
-  let known = credentialHandling.get(op.row);
-  if (known === undefined) {
-    const contract = cloudflareIndex().contract(op);
-    const names = (schema: unknown, depth: number): boolean => {
-      if (depth > 4 || typeof schema !== "object" || schema === null) return false;
-      const node = schema as { properties?: Record<string, unknown>; items?: unknown; anyOf?: unknown[] };
-      return (
-        Object.entries(node.properties ?? {}).some(
-          ([name, child]) => isCredentialInput(name) || names(child, depth + 1),
-        ) ||
-        names(node.items, depth + 1) ||
-        (node.anyOf ?? []).some((branch) => names(branch, depth + 1))
-      );
-    };
-    known =
-      contract.parameters.some((parameter) => parameter.in === "query" && isCredentialInput(parameter.name)) ||
-      (contract.body !== undefined && (typeof contract.body.schema !== "object" || names(contract.body.schema, 0)));
-    credentialHandling.set(op.row, known);
-  }
-  return known;
-}
-
-/** The reviewed value-safety verdict for an operation, if it has one. */
-function verdictOf(op: { method: string; path: string }): ValueSafetyVerdict | undefined {
-  return VALUE_SAFETY[`${op.method} ${op.path}`];
-}
+const SAFETY = valueSafety(CLOUDFLARE_VALUE_SAFETY, () => cloudflareIndex());
 
 /**
  * Map a failed Cloudflare response by the caller's next move (H11). For an
@@ -343,7 +314,7 @@ function failureFor(status: number, headers: Headers, body: unknown, call?: Rest
   const errors = errorsOf(body);
   const ray = headers.get("cf-ray");
   const codes = errorCodes(errors);
-  const withheld = call !== undefined && handlesCredentials(call.op);
+  const withheld = call !== undefined && SAFETY.withholdsErrors(call.op);
   const described = withheld
     ? `${codes.size ? `Cloudflare error code ${[...codes].join(", ")}.` : "Cloudflare reported an error."} Its text is withheld because this operation handles credentials.`
     : describeErrors(errors);
@@ -733,10 +704,9 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
     return call;
   };
 
+  /** Argument- and auth-dependent refusals; the table's own run in the generic tools. */
   const refuse = (call: RestCall): string | undefined => {
     const { method, op } = call;
-    const verdict = verdictOf(op);
-    if (verdict && "refuse" in verdict) return verdict.refuse;
     if (method === "GET") return undefined;
     if (auth === "globalApiKey" && /^\/(?:user|memberships)(?:\/|$)/.test(op.path)) {
       return "A Global API Key connector never writes user-level settings or memberships: the key is the user's own identity. Make that change in the Cloudflare dashboard.";
@@ -772,13 +742,13 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
     return { hasMore, ...(hasMore ? { next: String(current + 1), param: "page" } : {}) };
   };
 
-  // Every successful body, on every method and tool: reviewed field paths,
-  // then the key-name heuristic, typed secrets, and URL sanitization.
+  // Unwrap the v4 envelope; the shared value-safety pass then redacts the
+  // result on every method and tool.
   const result = (body: unknown, call: RestCall, response: { status: number; headers: Headers }): unknown => {
-    if (!isEnvelope(body)) return redactValues(body, verdictOf(call.op));
+    if (!isEnvelope(body)) return body;
     if (body["success"] === false)
       throw failureFor(response.status === 200 ? 400 : response.status, response.headers, body, call);
-    return redactValues(filterListed(call.op, body["result"]), verdictOf(call.op));
+    return filterListed(call.op, body["result"]);
   };
 
   const vendor: RestVendor = {
@@ -791,6 +761,7 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
     },
     failure: failureFor,
     readPosts: READ_POSTS,
+    valueSafety: SAFETY,
     refuse,
     path: fillDefaults,
     scope,
@@ -1131,7 +1102,7 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
             ? { headers: record(args["headers"]) as Record<string, string> }
             : {}),
         });
-        const refusal = refuse(prepared);
+        const refusal = SAFETY.refusal(prepared.method, prepared.op.path) ?? refuse(prepared);
         if (refusal) invalid(refusal);
         if (!UPLOADS.some(([verb, template]) => verb === prepared.op.method && template === prepared.op.path)) {
           invalid(

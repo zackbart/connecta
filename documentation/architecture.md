@@ -741,13 +741,14 @@ provider's pinned `openapi.source.json` into `openapi.generated.ts`.
 Each call is matched to an operation and checked against its parameters before
 transport; `_api_read` admits GET and the vendor's reviewed read-only POSTs in
 its handler, since classification is per tool name. Vendors configure only a
-transport, failure mapper, scope, framing, cursor extraction, refusal table,
-response redaction, and idempotency header, plus optional hooks: `path` (fill
-default ids before matching), `admit` (an awaited check in `callRest` every
-tool passes, such as Cloudflare's account and zone pin), `result` (unwrap a
-vendor envelope; `redact` runs after it and before cursors and `select`), a
-reviewed request-header allowlist, text bodies, and index `slashParams` that
-admit an encoded `/` in a final key segment (`test/rest-connector.test.ts`).
+transport, failure mapper, scope, framing, cursor extraction, a reviewed
+value-safety table (required; see below), argument-dependent refusals, and an
+idempotency header, plus optional hooks: `path` (fill default ids before
+matching), `admit` (an awaited check in `callRest` every tool passes, such as
+Cloudflare's account and zone pin), `result` (unwrap a vendor envelope;
+redaction runs after it and before cursors and `select`), a reviewed
+request-header allowlist, text bodies, and index `slashParams` that admit an
+encoded `/` in a final key segment (`test/rest-connector.test.ts`).
 Large documents opt into generator options that drop restated operation ids
 and plain path parameters and cap one operation's details (`opBudget`).
 `check:providers-generated` checks each index header against its source record
@@ -757,6 +758,70 @@ the
 [provider auth migration](./provider-auth-migration.md). Notion's token
 connector keeps its `integration_*` projections and authoring helpers beside
 the generic REST tools.
+
+#### Value safety for REST vendors
+
+The bar ([decision 0005](https://github.com/zackbart/connecta/blob/main/decisions/0005-auth-selects-implementation.md)):
+no REST tool response, success or error, returns a credential that grants
+access to the vendor or a third party, or a stored secret value, unless a
+reviewed named tool exists to return it. The threat model is Infisical's
+above: an honest server, with secrets people type into free text out of
+scope. Field-by-field redaction over a whole vendor API does not converge, so
+every vendor ships one reviewed table through one mechanism
+(`src/providers/_shared/rest/value-safety.ts`):
+
+1. **Candidates from the pinned spec.** `scripts/value-safety.mjs` flags every
+   operation whose success response names or describes a credential, keyed
+   value, header, environment, or binding container, or whose path, id,
+   summary, or description names a secret family (tokens, secrets, keys,
+   signing, webhooks, drains, transfer, claim, and invite codes). It is the
+   union of the detectors Cloudflare and Vercel shipped first, and
+   deliberately over-inclusive. `providers:spec` writes
+   `value-safety.candidates.json` beside the index when the source record sets
+   `options.valueSafety` (vendor `operationWords`; Stripe's `expansions: false`
+   skips id-or-object expansions, which are their own operations' candidates),
+   stamped with the pinned digest, the detector format, and its options. The
+   file is test evidence and never ships.
+2. **One reviewed verdict per candidate**, in the vendor's `value-safety.ts`:
+   `refuse` (the generic tools refuse it before transport, naming the
+   operation and the reason), `redact` (reviewed field paths), or `safe`, each
+   with a reason. Paths are dot paths into the data a tool returns: a list on
+   the way is traversed, `[]` and `{}`/`*` address list items and map values,
+   `@keys` replaces secret map keys, `[?env]`, `[?credential]`, and
+   `[?header]` filter list items, `url:` sanitizes a URL, and `origin:` (or a
+   `#url` suffix) keeps only scheme and host. `keep` names reviewed metadata
+   the heuristic leaves (children are still checked); `urls` names payer-facing
+   URLs returned verbatim (hosted Checkout). A vendor whose objects repeat
+   across operations (Stripe) reviews a field once in `fields`, `redact` or
+   `keep`, wherever it appears. Argument-dependent refusals (Stripe
+   expansions, Vercel `decrypt`) stay in the vendor's `refuse` hook.
+3. **Redaction on every success body**, in `callRest` after `result` and
+   before cursors and `select`, so named tools, HEAD data, and uploads pass
+   through it too: the operation's reviewed paths, then the key-name
+   heuristic as defense in depth. The heuristic is the union of the former
+   vendor engines: a credential word anywhere in a non-metadata name removes
+   the value whole, a credential suffix removes the strings below it,
+   labelled or typed secret records lose their value, environment containers
+   lose their values, header, cookie, and query rules lose theirs, external
+   destinations keep their origin, and every URL loses userinfo and
+   credential-named query parameters or fragments. Exemptions are never
+   shared; each vendor states its own.
+4. **Errors.** A reviewed operation, or an unreviewed one whose request
+   accepts a credential-named field, answers failures with the vendor's codes
+   and status but not its text, unless its verdict is wrapped in
+   `vendorErrors()` because a review found its errors cannot echo a stored
+   secret. Credentials Connecta sent are always removed by the sent-secrets
+   matcher.
+
+`test/fixtures/value-safety.ts` is the shared harness each vendor's
+`value-safety.node.test.ts` runs. It fails on candidates from another pin,
+format, or option set; an unreviewed candidate; a verdict for an operation the
+index lacks; a flagged field no path, keep, URL, or field review covers; a keep
+that exempts anything below it or a vendor-wide keep of a credential name; a
+redact path that leaves its value; a refusal that reaches transport; a
+reviewed operation that echoes vendor error text; and a moved verdict count.
+`RestVendor.valueSafety` is required, so a new REST vendor cannot ship without
+a table.
 
 `remoteMcp({ classify })` is the public way to declare what a downstream's
 tools do: `{ tools: { name: "read" | "write" | "destructive" | { verdict,

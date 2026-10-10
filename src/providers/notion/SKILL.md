@@ -75,6 +75,12 @@ Hosted Notion MCP is a separate OAuth connector.
 - Refused by design: Notion's OAuth token endpoints (`/v1/oauth/*`) and
   multipart file sends. Import a file with `POST /v1/file_uploads` and
   `mode: "external_url"` instead.
+- Notion-hosted file URLs in pages and blocks are pre-signed: Connecta
+  withholds their signature, credential, and security-token parameters, so a
+  returned URL names the file but does not download it. Credential-named
+  fields read as `"[redacted]"`, a database property named like a credential
+  (`API token`) included. Failures of the OAuth, file upload, bot user, and
+  agent operations carry Notion's code, not its message.
 - Not here: the hosted MCP's user identity, its search across connected
   apps, page duplication, team and skill search, attachment downloads, and
   page-to-skill conversion. Those need an OAuth connector.

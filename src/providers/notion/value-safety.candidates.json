@@ -1,0 +1,51 @@
+{
+  "format": 4,
+  "digest": "sha256:4544d132b1d9d4799a7a0752f0f8007b86411fea6d6a493098e3756c0bc4f040",
+  "options": {},
+  "candidates": {
+    "POST /v1/agents/query": {
+      "fields": ["results[].connections[].account.server_host"],
+      "named": false
+    },
+    "GET /v1/agents/{agent_id}": {
+      "fields": ["connections[].account.server_host"],
+      "named": false
+    },
+    "GET /v1/file_uploads": {
+      "fields": ["results[].upload_url"],
+      "named": false
+    },
+    "POST /v1/file_uploads": {
+      "fields": ["upload_url"],
+      "named": false
+    },
+    "GET /v1/file_uploads/{file_upload_id}": {
+      "fields": ["upload_url"],
+      "named": false
+    },
+    "POST /v1/file_uploads/{file_upload_id}/complete": {
+      "fields": ["upload_url"],
+      "named": false
+    },
+    "POST /v1/file_uploads/{file_upload_id}/send": {
+      "fields": ["upload_url"],
+      "named": false
+    },
+    "POST /v1/oauth/introspect": {
+      "fields": [],
+      "named": true
+    },
+    "POST /v1/oauth/revoke": {
+      "fields": [],
+      "named": true
+    },
+    "POST /v1/oauth/token": {
+      "fields": ["access_token", "refresh_token"],
+      "named": true
+    },
+    "GET /v1/users/me": {
+      "fields": [],
+      "named": true
+    }
+  }
+}

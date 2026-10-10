@@ -17,10 +17,18 @@ vi.mock("../../connectors/remote-mcp.js", async (importOriginal) => ({
 
 import { VERCEL_API_BASE_URL, VERCEL_MCP_ENDPOINT, VERCEL_MCP_VETTED_CATALOG, vercel } from "./index.js";
 import { completeRows } from "./rest.js";
-import { REDACTED, redactResponse } from "./value-safety.js";
+import { VERCEL_VALUE_SAFETY } from "./value-safety.js";
+import { OperationIndex } from "../_shared/rest/operation-index.js";
+import { REDACTED, valueSafety } from "../_shared/rest/value-safety.js";
+import { openapi } from "./openapi.generated.js";
 import { connectorGuideSummary } from "../../skills.js";
 
 const TOKEN = { purpose: "Production web applications", auth: { type: "token" }, teamId: "team_default" } as const;
+const SAFETY = valueSafety(
+  VERCEL_VALUE_SAFETY,
+  () => new OperationIndex(openapi, { vendor: "vercel", title: "Vercel" }),
+);
+const redactResponse = (body: unknown, method: string, path: string) => SAFETY.redact(body, method, path);
 const OAUTH = { purpose: "Production deployment diagnosis", auth: { type: "oauth" } } as const;
 
 describe("vercel() over OAuth", () => {
@@ -366,10 +374,11 @@ describe("vercel() over an access token", () => {
         routes: [{ has: [{ type: "header", key: "x-a", value: "kept" }] }],
       });
     const result = await call(connector, "vercel_api_read", { path: "/v9/projects/web" });
+    // Values are replaced in place, so a caller sees that one exists without reading it.
     expect(result.data.env).toEqual([
-      { id: "env_1", key: "DATABASE_URL", type: "encrypted", decrypted: true },
-      { id: "env_2", key: "PUBLIC_FLAG", type: "plain" },
-      { id: "env_3", key: "LEGACY" },
+      { id: "env_1", key: "DATABASE_URL", type: "encrypted", value: REDACTED, decrypted: true },
+      { id: "env_2", key: "PUBLIC_FLAG", type: "plain", value: REDACTED, vsmValue: REDACTED },
+      { id: "env_3", key: "LEGACY", value: REDACTED },
     ]);
     // A header condition's value is withheld like any header value (it can be a credential).
     expect(result.data.routes[0].has[0]).toEqual({ type: "header", key: "x-a", value: REDACTED });
@@ -418,8 +427,8 @@ describe("vercel() over an access token", () => {
       select: ["events.payload"],
     });
     expect(result.data.events).toEqual([
-      { payload: { newEnvVar: { key: "K" } } },
-      { payload: { oldEnvVar: { key: "K", type: "" } } },
+      { payload: { newEnvVar: { key: "K", value: REDACTED } } },
+      { payload: { oldEnvVar: { key: "K", type: "", value: REDACTED } } },
       { payload: { id: "env_9", key: "S", value: REDACTED } },
       { payload: { name: "www", type: "CNAME", value: "cname.vercel-dns.com" } },
     ]);
@@ -666,7 +675,7 @@ describe("vercel() over an access token", () => {
     expect(
       (await call(connector, "vercel_api_read", { path: "/v3/events", select: ["events.payload"] })).data.events,
     ).toEqual([
-      { payload: { newEnvVar: {} } },
+      { payload: { newEnvVar: { value: REDACTED } } },
       { payload: { env: { API_URL: REDACTED, DB: REDACTED } } },
       { payload: { name: "www", type: "A", value: "76.76.21.21" } },
     ]);
@@ -845,6 +854,54 @@ describe("vercel() over an access token", () => {
     expect(deployment.services[0].redirects[0].destination).toBe("https://example.com");
     expect(deployment.services[0].headers[0].headers).toEqual([{ key: "Authorization", value: REDACTED }]);
     expect(JSON.stringify(deployment)).not.toMatch(/deploy-secret|rewrite-secret|header-secret/);
+  });
+
+  it("INV-5: redacts invite codes in audit events, integration drain headers, and route header values (#801 detector)", async () => {
+    const connector = vercel("hosting", TOKEN);
+    respond = () =>
+      Response.json({
+        events: [{ id: "ev_1", type: "team-invite", payload: { inviteCode: "JOIN-CODE", role: "MEMBER" } }],
+      });
+    expect((await call(connector, "vercel_api_read", { path: "/v3/events" })).data.events[0].payload).toEqual({
+      inviteCode: REDACTED,
+      role: "MEMBER",
+    });
+    respond = () =>
+      Response.json({
+        products: [
+          {
+            protocols: {
+              logDrain: {
+                status: "enabled",
+                endpoint: "https://logs.partner.example/ingest/PATH-SECRET",
+                headers: { "X-Partner": "PARTNER-SECRET" },
+              },
+            },
+          },
+        ],
+      });
+    const products = (
+      await call(connector, "vercel_api_read", { path: "/v1/integrations/configuration/icfg_1/products" })
+    ).data;
+    expect(products.products[0].protocols.logDrain).toEqual({
+      status: "enabled",
+      endpoint: `https://logs.partner.example/${REDACTED}`,
+      headers: { "X-Partner": REDACTED },
+    });
+    respond = () =>
+      Response.json({ routes: [{ id: "r1", route: { src: "/api", headers: { "X-Upstream": "UPSTREAM-SECRET" } } }] });
+    expect(
+      (await call(connector, "vercel_api_read", { path: "/v1/projects/prj_1/routes" })).data.routes[0].route,
+    ).toEqual({
+      src: "/api",
+      headers: { "X-Upstream": REDACTED },
+    });
+    // An environment container's own fields are still walked: a credential-named key inside it goes too.
+    respond = () =>
+      Response.json({ id: "prj_1", env: [{ key: "DB", value: "postgres://x", meta: { token: "NESTED" } }] });
+    expect((await call(connector, "vercel_api_read", { path: "/v9/projects/prj_1" })).data.env).toEqual([
+      { key: "DB", value: REDACTED, meta: { token: REDACTED } },
+    ]);
   });
 
   it("redacts a team's invite code on list, get, and update", async () => {

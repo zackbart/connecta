@@ -93,15 +93,34 @@ prints the largest operation. Give the SKILL.md separate fragments
 per implementation plus a shared one, and name the published fragment with
 frontmatter `"content"`.
 
-Value safety: no response may return a credential or a stored secret value
-unless a reviewed named tool exists to return it. Set `options.valueSafety`
-(optionally `{ "operationWords": "<regex>" }` for vendor secret families) so
-`providers:spec` writes `value-safety.candidates.json` from
-`scripts/value-safety.mjs`, then give every flagged operation a `refuse`,
-`redact` (reviewed field paths), or `safe` verdict with a reason, and test that
-none is unreviewed. Prefer refusing whole secret families; keep the key-name
-heuristic as defense in depth, and give secret-family failures fixed messages
-(Vercel's `value-safety.ts` is the model).
+Value safety is required: a REST provider does not ship without a reviewed
+table, and `RestVendor.valueSafety` will not typecheck without one. No
+response may return a credential or a stored secret value unless a reviewed
+named tool exists to return it (architecture, "Value safety for REST
+vendors"). The steps:
+
+1. Set `options.valueSafety` in `openapi.source.json` (`true`, or
+   `{ "operationWords": "<regex>" }` for a vendor's own secret families,
+   `{ "expansions": false }` for an API that answers ids unless expanded) so
+   `providers:spec` writes `value-safety.candidates.json` from
+   `scripts/value-safety.mjs`. Never edit the candidates file by hand.
+2. Write `value-safety.ts` with the shared `refuse`, `redact`, and `safe`
+   helpers from `../_shared/rest/value-safety.ts`: one verdict per candidate,
+   each with a reason, and `fields` for names reviewed once across the API.
+   Prefer refusing whole secret families (minting, rotation, decrypted
+   values, login and onboarding links) and route legitimate needs to
+   value-safe named tools. Every flagged response field needs a redact path,
+   a `keep`, a reviewed `urls` entry, or a field review. Wrap a verdict in
+   `vendorErrors()` only when a review shows its errors cannot echo a stored
+   secret.
+3. Build the engine with `valueSafety(TABLE, () => index)`, pass it as the
+   vendor's `valueSafety`, and use `withholdsErrors(call.op)` in the failure
+   mapper to replace the vendor's text with codes and status. Named tools
+   that bypass `callRest` call its `redact` themselves.
+4. Add `value-safety.node.test.ts` that runs `describeValueSafety` from
+   `test/fixtures/value-safety.ts` with the verdict counts, a connector, and a
+   vendor-shaped error body, plus regressions in `provider.test.ts` for each
+   secret family the review found.
 
 ## Derived lists
 

@@ -672,6 +672,17 @@ describe("stripe() over an API key", () => {
         { method: "POST", path: "/v1/issuing/cards/ic_1", body: { expand: ["number"] } },
         "Issuing card numbers and CVCs",
       ],
+      // An authorization or transaction embeds its card, so the same expansion is refused there.
+      [
+        "stripe_api_read",
+        { path: "/v1/issuing/authorizations/iauth_1", query: { expand: ["card.number"] } },
+        "Issuing card numbers and CVCs",
+      ],
+      [
+        "stripe_api_read",
+        { path: "/v1/issuing/transactions", query: { expand: ["data.card.cvc"] } },
+        "Issuing card numbers and CVCs",
+      ],
     ];
     for (const [tool, args, message] of cases) {
       const error = await refusal(connector.callTool(tool, args, keyed()));
@@ -685,6 +696,86 @@ describe("stripe() over an API key", () => {
       keyed(),
     );
     expect(sent).toHaveLength(1);
+  });
+
+  it("INV-5: redacts client and signing secrets, Apps payloads, and Wi-Fi passwords; keeps hosted Checkout URLs whole", async () => {
+    const connector = stripe("billing", SANDBOX);
+    const read = async (path: string, body: unknown, query?: Record<string, unknown>) => {
+      respond = () => Response.json(body);
+      return ((await connector.callTool("stripe_api_read", { path, ...(query ? { query } : {}) }, keyed())) as any)
+        .data;
+    };
+    const intent = await read("/v1/payment_intents/pi_1", {
+      id: "pi_1",
+      object: "payment_intent",
+      client_secret: "pi_1_secret_ONE",
+      latest_charge: {
+        payment_method_details: { card: { authorization_code: "123456", network_token: { used: false } } },
+      },
+    });
+    expect(intent.client_secret).toBe("[redacted]");
+    expect(intent.latest_charge.payment_method_details.card).toEqual({
+      authorization_code: "123456",
+      network_token: { used: false },
+    });
+    // An expansion is answered under the operation that expanded it; the field review still applies.
+    const invoice = await read("/v1/invoices/in_1", {
+      id: "in_1",
+      confirmation_secret: { client_secret: "pi_2_secret_TWO", type: "payment_intent" },
+      payment_intent: { id: "pi_2", client_secret: "pi_2_secret_TWO" },
+    });
+    expect(JSON.stringify(invoice)).not.toContain("TWO");
+    const hook = await read("/v1/webhook_endpoints/we_1", {
+      id: "we_1",
+      secret: "whsec_THREE",
+      url: "https://hooks.example.com/stripe/THREE-path",
+    });
+    expect(hook).toEqual({ id: "we_1", secret: "[redacted]", url: "https://hooks.example.com/[redacted]" });
+    const checkoutUrl = "https://checkout.stripe.com/c/pay/cs_test_1#fidkdWxOYHwnPyd1blpxYHZxWjA0token";
+    const session = await read("/v1/checkout/sessions/cs_1", {
+      id: "cs_1",
+      url: checkoutUrl,
+      client_secret: "cs_1_secret_FOUR",
+    });
+    expect(session).toEqual({ id: "cs_1", url: checkoutUrl, client_secret: "[redacted]" });
+    const secret = await read(
+      "/v1/apps/secrets/find",
+      { id: "appsecret_1", name: "k", payload: "FIVE", scope: { type: "account" } },
+      { name: "k", scope: { type: "account" } },
+    );
+    expect(secret).toEqual({ id: "appsecret_1", name: "k", payload: "[redacted]", scope: { type: "account" } });
+    const config = await read("/v1/terminal/configurations/tmc_1", {
+      id: "tmc_1",
+      wifi: { type: "personal_psk", personal_psk: { ssid: "store", password: "SIX" } },
+    });
+    expect(config.wifi.personal_psk).toEqual({ ssid: "store", password: "[redacted]" });
+    const forwarded = await read("/v1/forwarding/requests/fwdreq_1", {
+      id: "fwdreq_1",
+      request_details: { headers: [{ name: "X-Partner-Auth", value: "SEVEN" }] },
+    });
+    expect(forwarded.request_details.headers).toEqual([{ name: "X-Partner-Auth", value: "[redacted]" }]);
+  });
+
+  it("INV-5: withholds Stripe's message for credential families and keeps it for payment objects", async () => {
+    const connector = stripe("billing", SANDBOX);
+    respond = () =>
+      Response.json(
+        { error: { type: "invalid_request_error", code: "resource_missing", message: "No such webhook: whsec_ECHO" } },
+        { status: 404 },
+      );
+    const hook = await refusal(connector.callTool("stripe_api_read", { path: "/v1/webhook_endpoints/we_1" }, keyed()));
+    expect(hook.code).toBe("not_found");
+    expect(hook.message).toContain("invalid_request_error resource_missing");
+    expect(hook.message).not.toContain("whsec_ECHO");
+    respond = () =>
+      Response.json(
+        { error: { type: "card_error", code: "card_declined", message: "Your card was declined." } },
+        { status: 402 },
+      );
+    const declined = await refusal(
+      connector.callTool("stripe_api_read", { path: "/v1/payment_intents/pi_1" }, keyed()),
+    );
+    expect(declined.message).toContain("Your card was declined.");
   });
 
   it("reads quote PDFs from files.stripe.com and refuses multipart uploads and the meter event stream", async () => {
