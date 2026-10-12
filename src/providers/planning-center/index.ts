@@ -68,6 +68,13 @@ export const PLANNING_CENTER_APPS = [
 export type PlanningCenterApp = (typeof PLANNING_CENTER_APPS)[number];
 
 /**
+ * A product a deployment may remove from this connection. People is the one
+ * it may not: every product joins through its person ids, and the credential
+ * test reads `/people/v2/me`.
+ */
+export type PlanningCenterExcludableApp = Exclude<PlanningCenterApp, "people">;
+
+/**
  * One reviewed `X-PCO-API-Version` per product, sent on every request.
  *
  * The header is optional, and omitting it is the trap: Planning Center then
@@ -158,6 +165,27 @@ export interface PlanningCenterOptions {
   userAgent?: string;
   /** Default `per_page` for list tools. Defaults to 25; Planning Center's maximum is 100. */
   defaultPageSize?: number;
+  /**
+   * Products this connection never reaches, e.g. `["giving"]` for a
+   * deployment that keeps agents away from donor and financial data. Their
+   * named tools leave the catalog, the guide and description stop naming
+   * them, and the hatches refuse their paths before any request is sent.
+   * While any product is excluded, hatch paths must be literal, People lists
+   * are unreachable, and existing webhook subscriptions and their payloads
+   * are refused, because each could carry an excluded product's data.
+   * Defaults to none.
+   *
+   * Exclusion guarantees agents reach no excluded-product endpoint, no live
+   * cross-product query (People lists), and no webhook payload or
+   * subscription toggle. It does not hide records the church's automations
+   * or staff have copied into a reachable product: a Giving automation that
+   * adds first-time donors to a People workflow leaves readable workflow
+   * cards, as do notes, custom fields, and form answers. For a hard
+   * boundary, use a personal access token from a user with No Access in
+   * the excluded product; Planning Center sets permissions per product, per
+   * user, and a token carries its user's. Exclusion is defense in depth.
+   */
+  excludeApps?: readonly PlanningCenterExcludableApp[];
   /**
    * Replaces the default per-runtime budget (100 calls per 20 seconds, five at
    * a time). Split it when two connections share one token's user, because
@@ -367,7 +395,7 @@ function isApp(value: string): value is PlanningCenterApp {
  * normalization the guarded transport applies — so `..` cannot carry a request
  * from `/people/v2` to `/oauth` or anywhere else outside a product.
  */
-function appForPath(path: string): PlanningCenterApp {
+function appForPath(path: string, apps: readonly PlanningCenterApp[]): PlanningCenterApp {
   let normalized: string | undefined;
   if (path.startsWith("/") && !path.startsWith("//")) {
     try {
@@ -380,10 +408,171 @@ function appForPath(path: string): PlanningCenterApp {
   if (!app || !isApp(app)) {
     throw new ConnectorCallError(
       "invalid_args",
-      `A Planning Center path begins with /<app>/v2, where app is one of ${PLANNING_CENTER_APPS.join(", ")} — for example /people/v2/people. No host, query string, or traversal.`,
+      `A Planning Center path begins with /<app>/v2, where app is one of ${apps.join(", ")} — for example /people/v2/people. No host, query string, or traversal.`,
     );
   }
   return app;
+}
+
+/** Display names, in guide order. The guide never lists `api` as a product. */
+const APP_TITLES: Readonly<Record<PlanningCenterApp, string>> = {
+  people: "People",
+  services: "Services",
+  groups: "Groups",
+  "check-ins": "Check-Ins",
+  calendar: "Calendar",
+  registrations: "Registrations",
+  giving: "Giving",
+  publishing: "Publishing",
+  webhooks: "Webhooks",
+  api: "API",
+};
+
+/**
+ * A path's segments, each percent-decoded once, or a refusal when the path is
+ * not literal. While a product is excluded no path may lean on normalization:
+ * a dot segment, an empty segment, a backslash, whitespace, or an encoded
+ * `/`, `\`, `?`, `#`, or `%` could each mean one thing here and another to a
+ * server that decodes or resolves it, so none is admitted at all rather than
+ * reasoned about.
+ */
+function literalSegments(path: string): string[] {
+  const ambiguous = () =>
+    new ConnectorCallError(
+      "invalid_args",
+      "While this deployment excludes a Planning Center product, a path must be literal: no . or .. segments, empty segments, backslashes, whitespace, or percent-encoded /, \\, ?, #, or %.",
+    );
+  if (!path.startsWith("/")) throw ambiguous();
+  const raw = path.slice(1).split("/");
+  return raw.map((segment, index) => {
+    if (segment === "" && index !== raw.length - 1) throw ambiguous();
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      throw ambiguous();
+    }
+    const control = [...decoded].some((char) => char <= " " || char === "\x7f");
+    if (decoded === "." || decoded === ".." || control || /[/\\?#%]/.test(decoded)) throw ambiguous();
+    return decoded;
+  });
+}
+
+/**
+ * People resources a list is built from or answers with. A list's conditions
+ * can draw on any product — a Giving condition makes a donor list — and one
+ * list can be a condition of another, so while any product is excluded none
+ * of them is read, by path or by `include`.
+ */
+const LIST_RESOURCES: ReadonlySet<string> = new Set(["lists", "list_results", "rules", "conditions"]);
+
+/** The People tools that read or refresh a list, removed with any exclusion. */
+const LIST_TOOLS: ReadonlySet<string> = new Set(["list_lists", "list_list_people", "run_list"]);
+
+/** The webhook subscription collections, current and 2018-08-01. */
+const SUBSCRIPTION_COLLECTIONS: ReadonlySet<string> = new Set(["webhook_subscriptions", "subscriptions"]);
+
+/**
+ * Refuse, before anything is sent, a request that would reach an excluded
+ * product. It reads literal segments, so it runs twice: on the path as given,
+ * and on the exact URL the transport is about to fetch (`admit`), which is the
+ * one that counts. Five doors lead to an excluded product:
+ *
+ * - its own paths, in any case or percent-encoding of a literal segment;
+ * - People lists, rules, conditions, and results, whose criteria can come from
+ *   the excluded product, by path or by `include`;
+ * - a new webhook subscription to its events, which delivers its records to
+ *   any URL — so a new subscription must name a reachable product's event;
+ * - an existing subscription, changed by id: a path names a subscription by
+ *   id, not by product, so no subscription is enabled, disabled, deleted, or
+ *   re-keyed while any product is excluded; and
+ * - webhook event and delivery payloads, which carry the record that fired
+ *   them, refused for every subscription for the same reason.
+ *
+ * People documents no other `include` or attribute that reaches another
+ * product's records.
+ */
+function refuseExcluded(
+  segments: readonly string[],
+  query: Iterable<[string, string]>,
+  request: Pick<PlanningCenterRequest, "method" | "body">,
+  excluded: ReadonlySet<PlanningCenterApp>,
+): void {
+  const disabled = (app: PlanningCenterApp, detail: string) =>
+    new ConnectorCallError(
+      "provider_permission_denied",
+      `Planning Center ${APP_TITLES[app]} (/${app}/v2) is disabled in this deployment, so this connection ${detail}. Retrying will not help; only an operator can remove "${app}" from excludeApps.`,
+      { retryable: false },
+    );
+  const because = (detail: string) =>
+    new ConnectorCallError(
+      "provider_permission_denied",
+      `This deployment disables Planning Center ${series([...excluded].map((name) => APP_TITLES[name]))}, and ${detail} Retrying will not help.`,
+      { retryable: false },
+    );
+  const lower = segments.map((segment) => segment.toLowerCase());
+  const app = lower[0] ?? "";
+  if (isApp(app) && excluded.has(app)) throw disabled(app, "does not reach its endpoints");
+  // Lists are refused and workflows are not. A list is a live query: reading
+  // it evaluates its conditions, Giving ones included, at read time, so it
+  // is the excluded product's API by another path. A workflow card is a
+  // stored People record. A Giving automation can create one, but so can
+  // staff, and once created it is People data, like a note or custom field
+  // value typed from a donor's details. Exclusion guards products' APIs,
+  // not provenance; refusing workflows would cost every exclusion a core
+  // People feature and argue equally for notes, fields, forms, and groups.
+  // The hard boundary is the token user's own per-product permissions.
+  const lists =
+    "a People list's conditions can draw on a disabled product, so this connection reads no list, list result, rule, or condition.";
+  if (app === "people" && lower.some((segment) => LIST_RESOURCES.has(segment))) throw because(lists);
+  for (const [key, value] of query) {
+    if (
+      /include/i.test(key) &&
+      value
+        .toLowerCase()
+        .split(/[\s,.]+/)
+        .some((part) => LIST_RESOURCES.has(part))
+    ) {
+      throw because(lists);
+    }
+  }
+  if (app !== "webhooks") return;
+  if (lower.some((segment) => /^(?:events|deliveries)\b/.test(segment))) {
+    throw because(
+      "a webhook event or delivery payload may carry any product's records, so this connection does not read them. Subscriptions themselves stay readable.",
+    );
+  }
+  if (request.method === "GET" || request.method === "HEAD") return;
+  const resource = lower.slice(2).filter((segment) => segment !== "");
+  if (request.method !== "POST" || resource.length !== 1 || !SUBSCRIPTION_COLLECTIONS.has(resource[0]!)) {
+    throw because(
+      "a webhook subscription's id does not name its product, so this connection does not enable, disable, delete, or re-key an existing subscription.",
+    );
+  }
+  const data = asRecord(request.body)["data"];
+  const name = Array.isArray(data) ? undefined : asRecord(asRecord(data)["attributes"])["name"];
+  const event = typeof name === "string" ? /^([a-z-]+)\.v2\.events\./.exec(name.trim().toLowerCase())?.[1] : undefined;
+  if (event === undefined || !isApp(event)) {
+    throw because(
+      "a new webhook subscription must name one product's event, such as people.v2.events.person.created, in data.attributes.name.",
+    );
+  }
+  if (excluded.has(event)) throw disabled(event, "cannot subscribe to its webhook events");
+}
+
+/**
+ * The exclusion, enforced on the exact URL about to be fetched: after the
+ * transport has resolved and encoded it, so what is checked is what Planning
+ * Center routes. The origin and base path are asserted again here, not taken
+ * on trust from the confinement before it.
+ */
+function admit(baseUrl: string, url: URL, request: GuardedRequest, excluded: ReadonlySet<PlanningCenterApp>): void {
+  const base = new URL(baseUrl);
+  const basePath = base.pathname.replace(/\/+$/, "");
+  if (url.origin !== base.origin || !url.pathname.startsWith(`${basePath}/`) || url.hash) {
+    throw new ConnectorCallError("invalid_args", "A Planning Center request left the Planning Center API origin.");
+  }
+  refuseExcluded(literalSegments(url.pathname.slice(basePath.length)), url.searchParams, request, excluded);
 }
 
 function errorDetail(payload: unknown, status: number): string {
@@ -464,9 +653,15 @@ function planningCenterFailure(status: number, headers: Headers, payload: unknow
 
 type Call = (request: PlanningCenterRequest, ctx: ConnectorContext) => Promise<any>;
 
-function planningCenterCall(send: GuardedTransport, versions: Readonly<Record<PlanningCenterApp, string>>): Call {
+function planningCenterCall(
+  send: GuardedTransport,
+  versions: Readonly<Record<PlanningCenterApp, string>>,
+  excluded: ReadonlySet<PlanningCenterApp>,
+): Call {
+  const apps = PLANNING_CENTER_APPS.filter((app) => !excluded.has(app));
   return async (request, ctx) => {
-    const app = appForPath(request.path);
+    if (excluded.size > 0) refuseExcluded(literalSegments(request.path), [], request, excluded);
+    const app = appForPath(request.path, apps);
     return await send(
       compact({
         method: request.method,
@@ -1036,11 +1231,17 @@ function personAttributes(args: JsonRecord): JsonRecord {
 
 const WORKFLOW_CARD_ACTIONS = ["promote", "go_back", "skip_step", "snooze", "unsnooze", "remove", "restore"] as const;
 
-function tools(call: Call, defaultPageSize: number): ApiTool[] {
+/** The hatches, and each product's named tools: what `excludeApps` removes. */
+interface Tools {
+  hatches: ApiTool[];
+  apps: Record<PlanningCenterApp, ApiTool[]>;
+}
+
+function tools(call: Call, defaultPageSize: number, excluded: ReadonlySet<PlanningCenterApp>): Tools {
   const perPage = (args: JsonRecord) => args["perPage"] ?? defaultPageSize;
   const list = (spec: ListToolSpec) => listTool(call, defaultPageSize, spec);
-  return [
-    // --- Hatches ------------------------------------------------------------
+  // --- Hatches --------------------------------------------------------------
+  const hatches: ApiTool[] = [
     {
       name: "pco_api_get",
       description:
@@ -1067,8 +1268,9 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
     },
     {
       name: "pco_api_mutate",
-      description:
-        "Call any Planning Center POST, PATCH, or DELETE endpoint with a JSON:API body. The approval-gated hatch for writes, actions, and money movement no named tool covers.",
+      description: `Call any Planning Center POST, PATCH, or DELETE endpoint with a JSON:API body. The approval-gated hatch for ${
+        excluded.has("giving") ? "writes and actions" : "writes, actions, and money movement"
+      } no named tool covers.`,
       annotations: DESTRUCTIVE,
       inputSchema: input(
         {
@@ -1107,8 +1309,10 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
           )) ?? null,
       }),
     },
+  ];
 
-    // --- People -------------------------------------------------------------
+  // --- People ---------------------------------------------------------------
+  const people: ApiTool[] = [
     {
       name: "get_me",
       description:
@@ -1665,8 +1869,10 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
         };
       },
     }),
+  ];
 
-    // --- Services -----------------------------------------------------------
+  // --- Services -------------------------------------------------------------
+  const services: ApiTool[] = [
     list({
       name: "list_service_types",
       description:
@@ -2013,8 +2219,10 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
         keys: relatedMany(row, "keys", index).map((key) => pick(key, ["name", "starting_key", "ending_key"])),
       }),
     }),
+  ];
 
-    // --- Groups -------------------------------------------------------------
+  // --- Groups ---------------------------------------------------------------
+  const groups: ApiTool[] = [
     list({
       name: "list_groups",
       description:
@@ -2143,8 +2351,10 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
         group_id: relId(row, "group") ?? null,
       }),
     }),
+  ];
 
-    // --- Check-Ins (read-only product) ---------------------------------------
+  // --- Check-Ins (read-only product) -----------------------------------------
+  const checkIns: ApiTool[] = [
     list({
       name: "list_check_in_events",
       description:
@@ -2243,8 +2453,10 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
         event_period_id: relId(row, "event_period") ?? null,
       }),
     }),
+  ];
 
-    // --- Calendar (events read-only) ----------------------------------------
+  // --- Calendar (events read-only) ------------------------------------------
+  const calendar: ApiTool[] = [
     list({
       name: "list_calendar_event_instances",
       description:
@@ -2287,8 +2499,10 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
         event_id: relId(row, "event") ?? null,
       }),
     }),
+  ];
 
-    // --- Registrations (read-only product) ----------------------------------
+  // --- Registrations (read-only product) ------------------------------------
+  const registrations: ApiTool[] = [
     list({
       name: "list_signups",
       description:
@@ -2360,8 +2574,10 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
         person_id: relId(row, "person") ?? null,
       }),
     }),
+  ];
 
-    // --- Giving (reads; money moves only through pco_api_mutate) -------------
+  // --- Giving (reads; money moves only through pco_api_mutate) ---------------
+  const giving: ApiTool[] = [
     list({
       name: "list_donations",
       description:
@@ -2524,8 +2740,10 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
         designations: designations(row, index),
       }),
     }),
+  ];
 
-    // --- Webhooks -----------------------------------------------------------
+  // --- Webhooks -------------------------------------------------------------
+  const webhooks: ApiTool[] = [
     {
       name: "list_webhook_subscriptions",
       description:
@@ -2565,23 +2783,134 @@ function tools(call: Call, defaultPageSize: number): ApiTool[] {
       },
     },
   ];
+  return {
+    hatches,
+    apps: {
+      people,
+      services,
+      groups,
+      "check-ins": checkIns,
+      calendar,
+      registrations,
+      giving,
+      publishing: [],
+      webhooks,
+      api: [],
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
 // Guide and construction
 // ---------------------------------------------------------------------------
 
-function usageGuide(purpose: string, instructions: string | undefined): string {
+/** `a, b, and c`, the way the guide and description list products. */
+function series(items: readonly string[]): string {
+  return items.length < 3 ? items.join(" and ") : `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
+}
+
+/** The products the description names: those with named tools for staff work. */
+const DESCRIBED_APPS = [
+  "people",
+  "services",
+  "groups",
+  "check-ins",
+  "calendar",
+  "registrations",
+  "giving",
+] as const satisfies readonly PlanningCenterApp[];
+
+/** What a person id joins in each other product, for the guide's identity rule. */
+const PERSON_JOINS = [
+  ["services", "Services schedules"],
+  ["groups", "Groups memberships"],
+  ["giving", "Giving donations"],
+  ["check-ins", "Check-Ins"],
+] as const satisfies readonly (readonly [PlanningCenterApp, string])[];
+
+/**
+ * The maintained guide for the products this connection reaches. Every
+ * product-specific line is its own fragment, so an excluded product is
+ * neither described, pinned, nor named by a tool the guide points to, and an
+ * exclusion adds the line stating what the hatches refuse. With nothing
+ * excluded, the text is the whole guide as before; the `published` fragment
+ * is that same text without a purpose.
+ */
+function usageGuide(
+  purpose: string,
+  instructions: string | undefined,
+  excluded: ReadonlySet<PlanningCenterApp>,
+): string {
+  const fragments = skill.fragments;
+  const has = (app: PlanningCenterApp) => !excluded.has(app);
+  const pair = (a: PlanningCenterApp, b: PlanningCenterApp, both: string, onlyA: string, onlyB: string) =>
+    has(a) && has(b) ? both : has(a) ? onlyA : has(b) ? onlyB : "";
+  const apps = PLANNING_CENTER_APPS.filter(has);
+  const joins = PERSON_JOINS.filter(([app]) => has(app)).map(([, label]) => label);
   const organizationInstructions = instructions?.trim();
-  return `${skill.fragments.guide_0}${purpose}${skill.fragments.guide_1}${PLANNING_CENTER_APPS.map((app) => `${app} ${PLANNING_CENTER_API_VERSIONS[app]}`).join(", ")}${skill.fragments.guide_2}${
-    organizationInstructions ? `\n## ${skill.instructionsHeading}\n\n${organizationInstructions}\n` : ""
-  }`;
+  return [
+    fragments.heading,
+    apps
+      .filter((app) => app !== "api")
+      .map((app) => APP_TITLES[app])
+      .join(", "),
+    fragments.purpose,
+    purpose,
+    fragments.identity,
+    joins.length > 0 ? series(joins) : "every People record",
+    fragments.conventions,
+    has("services") ? fragments.plans : "",
+    fragments.writes,
+    excluded.size === 0 ? fragments.people : fragments.people_without_lists,
+    has("services") ? fragments.services : "",
+    has("groups") ? fragments.groups : "",
+    pair("check-ins", "registrations", fragments.check_ins_registrations, fragments.check_ins, fragments.registrations),
+    has("calendar") ? fragments.calendar : "",
+    has("giving") ? fragments.giving : "",
+    pair("publishing", "api", fragments.publishing_api, fragments.publishing, fragments.api),
+    fragments.hatches,
+    apps.map((app) => `${app} ${PLANNING_CENTER_API_VERSIONS[app]}`).join(", "),
+    fragments.pins,
+    excluded.size === 0 ? "" : fragments.disabled,
+    fragments.limits,
+    organizationInstructions ? `\n## ${skill.instructionsHeading}\n\n${organizationInstructions}\n` : "",
+  ].join("");
+}
+
+/**
+ * `excludeApps` as a set, refusing at construction what cannot be meant
+ * (INV-11): a product Planning Center does not have, a misspelling, or People.
+ */
+function excludedApps(value: unknown): ReadonlySet<PlanningCenterApp> {
+  const excluded = new Set<PlanningCenterApp>();
+  if (value === undefined) return excluded;
+  const excludable = PLANNING_CENTER_APPS.filter((app) => app !== "people").join(", ");
+  if (!Array.isArray(value)) {
+    throw new Error(`planningCenter() excludeApps must be an array of app names from: ${excludable}.`);
+  }
+  for (const entry of value) {
+    if (entry === "people") {
+      throw new Error(
+        'planningCenter() excludeApps cannot exclude "people": every product joins through People person ids, and the credential test reads /people/v2/me.',
+      );
+    }
+    if (typeof entry !== "string" || !isApp(entry)) {
+      const lower = typeof entry === "string" ? entry.trim().toLowerCase() : "";
+      throw new Error(
+        `planningCenter() excludeApps has unknown app ${JSON.stringify(entry)}; expected any of ${excludable}.${
+          isApp(lower) && lower !== "people" ? ` App names are lowercase path segments: "${lower}".` : ""
+        }`,
+      );
+    }
+    excluded.add(entry);
+  }
+  return excluded;
 }
 
 /** The closed options planningCenter() accepts; see `assertKnownOptions`. */
 const PLANNING_CENTER_OPTIONS = optionsOf<PlanningCenterOptions>()({
   ...PROVIDER_COMMON,
-  ...keys("userAgent", "defaultPageSize", "baseUrl"),
+  ...keys("userAgent", "defaultPageSize", "excludeApps", "baseUrl"),
 });
 
 /** A maintained Planning Center Online connection over the REST API. */
@@ -2614,20 +2943,28 @@ function planningCenterConnector(id: string, options: PlanningCenterOptions): Co
   if (!userAgent || /[\r\n]/.test(userAgent)) {
     throw new Error("planningCenter() userAgent must be a non-empty single line.");
   }
+  const excluded = excludedApps(options.excludeApps);
   const auth = PERSONAL_ACCESS_TOKEN;
+  const baseUrl = options.baseUrl?.trim() || PLANNING_CENTER_API_BASE_URL;
   const send = guardedFetch({
     provider: "Planning Center",
-    baseUrl: options.baseUrl?.trim() || PLANNING_CENTER_API_BASE_URL,
+    baseUrl,
     headers: { Accept: "application/json", "User-Agent": userAgent },
     maxResponseBytes: PLANNING_CENTER_MAX_RESPONSE_BYTES,
     authenticate: (ctx) => auth.headers(ctx),
+    ...(excluded.size > 0
+      ? { admit: (url: URL, request: GuardedRequest) => admit(baseUrl, url, request, excluded) }
+      : {}),
   });
-  const call = planningCenterCall(send, PLANNING_CENTER_API_VERSIONS);
+  const call = planningCenterCall(send, PLANNING_CENTER_API_VERSIONS, excluded);
+  const surface = tools(call, defaultPageSize, excluded);
 
   return api(id, {
     ...(options.authScope ? { authScope: options.authScope } : {}),
     title: options.title ?? "Planning Center",
-    description: `Planning Center church management — People, Services, Groups, Check-Ins, Calendar, Registrations, and Giving: ${purpose}`,
+    description: `Planning Center church management — ${series(
+      DESCRIBED_APPS.filter((app) => !excluded.has(app)).map((app) => APP_TITLES[app]),
+    )}: ${purpose}`,
     credential: auth.credential,
     async testCredentials(values: ConnectorCredentialValues, ctx: ConnectorContext): Promise<CredentialTestResult> {
       try {
@@ -2660,7 +2997,7 @@ function planningCenterConnector(id: string, options: PlanningCenterOptions): Co
     },
     callAdmission: options.callAdmission ?? PLANNING_CENTER_ADMISSION,
     usageGuide: {
-      content: usageGuide(purpose, options.instructions),
+      content: usageGuide(purpose, options.instructions, excluded),
       summary:
         "Person ids join every product, offset paging, per-product write limits, JSON:API hatches, pinned versions.",
       // Deliberately not `required`. Every named tool's schema is complete
@@ -2669,6 +3006,11 @@ function planningCenterConnector(id: string, options: PlanningCenterOptions): Co
       // it leaves the named surface or hits one of them.
     },
     ...(options.maxResultBytes !== undefined ? { maxResultBytes: options.maxResultBytes } : {}),
-    tools: tools(call, defaultPageSize),
+    tools: [
+      ...surface.hatches,
+      ...PLANNING_CENTER_APPS.flatMap((app) => (excluded.has(app) ? [] : surface.apps[app])).filter(
+        (tool) => excluded.size === 0 || !LIST_TOOLS.has(tool.name),
+      ),
+    ],
   });
 }

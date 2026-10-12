@@ -289,6 +289,21 @@
         "decision": "keep-api",
         "decisionRecord": "decisions/0002-hosted-workspace-planning-center.md"
       }
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages#MessagePart",
+      "rationale": "Review attachment part identity and body encoding alongside the pinned messages.get and messages.attachments.get endpoints. Google documents partId as immutable, attachmentId as an external retrieval id without an immutability guarantee, size as decoded bytes, and data as base64url. Resolve immutable partId against a fresh message, use its current attachmentId, and read inline data when no attachmentId is present. Rotation is a caller-reported Gmail behavior covered by fixtures, not a documented stability promise.",
+      "evidence": {
+        "reviewedAt": "2026-10-12",
+        "bodySource": "https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages.attachments#MessagePartBody",
+        "discoverySource": "https://gmail.googleapis.com/$discovery/rest?version=v1",
+        "tool": "get_attachment",
+        "identity": "messageId + immutable partId",
+        "downloadCapBytes": 1048576,
+        "defaultResultBytes": 196608,
+        "maxResultBytes": 4194304
+      }
     }
   ]
 }

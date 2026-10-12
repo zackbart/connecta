@@ -240,6 +240,28 @@ describe("guardedFetch() confinement", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("lets admit refuse the exact URL it would fetch, before authentication", async () => {
+    stubFetch(() => json({}));
+    const seen: string[] = [];
+    const authenticate = vi.fn(() => ({ Authorization: "Bearer secret" }));
+    const send = transport({
+      authenticate,
+      admit: (url) => {
+        seen.push(url.href);
+        if (url.pathname.startsWith("/v2/private")) {
+          throw new ConnectorCallError("provider_permission_denied", "private", { retryable: false });
+        }
+      },
+    });
+    await expect(
+      send({ method: "GET", path: "/public/%2e%2e/private/1", query: { a: "b" } }, context(), asJson),
+    ).rejects.toMatchObject({ code: "provider_permission_denied" });
+    await send({ method: "GET", path: "/public/1" }, context(), asJson);
+    expect(seen).toEqual(["https://api.example.com/v2/private/1?a=b", "https://api.example.com/v2/public/1"]);
+    expect(calls.map((entry) => entry.url)).toEqual(["https://api.example.com/v2/public/1"]);
+    expect(authenticate).toHaveBeenCalledTimes(1);
+  });
+
   it("refuses a redirect rather than re-sending the credential elsewhere", async () => {
     stubFetch(
       () =>

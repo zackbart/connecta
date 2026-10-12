@@ -4,6 +4,7 @@
 // Delegation, subjects, and tokens are test/google-workspace-delegation.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GMAIL_API_BASE_URL, GMAIL_SCOPES, gmail } from "./index.js";
+import { attachmentFixtures } from "./fixtures.js";
 import { RESULT_BUDGET_BYTES } from "../_shared/google/result-size.js";
 import { memoryStorage } from "../../storage/memory.js";
 import { classifyTool } from "../../tool-safety.js";
@@ -202,6 +203,7 @@ describe("gmail() identity and surface (H1, H14)", () => {
     const tools = await connection().listTools(context());
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "create_draft",
+      "get_attachment",
       "get_draft",
       "get_message",
       "get_thread",
@@ -213,7 +215,7 @@ describe("gmail() identity and surface (H1, H14)", () => {
     expect(tools.some((tool) => /send|delete|trash|label_|modify|gmail_api/.test(tool.name))).toBe(false);
   });
 
-  it("classifies reads as read-only and drafts as writes", async () => {
+  it("INV-1: classifies reads as read-only and drafts as writes", async () => {
     const connector = connection();
     const tools = await connector.listTools(context());
     const writes = tools.filter((tool) => !isRead(tool)).map((tool) => tool.name);
@@ -1325,5 +1327,399 @@ describe("round-6: measured budgets, said omissions, declared keys", () => {
       if (tool === "get_draft") expect(result.omittedIds).toEqual(["messageId"]);
       if (tool === "get_message") expect(result.omittedIds).toEqual(["id"]);
     }
+  });
+});
+
+describe("reading carried attachments", () => {
+  const size = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+  function serve(part: Record<string, unknown>, data?: string) {
+    route = (request) =>
+      request.url.pathname.includes("/attachments/")
+        ? { body: { data } }
+        : { body: { id: "m1", payload: { mimeType: "multipart/mixed", parts: [part] } } };
+  }
+  const read = (args: Record<string, unknown> = {}) =>
+    call(connection(), "get_attachment", { messageId: "m1", ...args });
+
+  it.each([
+    ["CSV", attachmentFixtures.csv, "name,email\nAnn,a\n"],
+    ["calendar", attachmentFixtures.calendar, "BEGIN:VCALENDAR\nVERSION:2.0\nEND:VCALENDAR\n"],
+    ["forwarded email", attachmentFixtures.forwarded, "From: ann@example.com\r\n\r\nHi"],
+    ["JSON", { ...attachmentFixtures.csv, mimeType: "application/json" }, '{"name":"Ann"}'],
+    ["XML", { ...attachmentFixtures.csv, mimeType: "application/xml" }, "<name>Ann</name>"],
+  ])("INV-10: reads %s as text with only GET requests", async (_name, part, content) => {
+    serve({ ...part, body: { ...part.body, size: new TextEncoder().encode(content).length } }, b64url(content));
+    const result = await read({ partId: part.partId });
+    expect(result).toMatchObject({
+      messageId: "m1",
+      filename: part.filename,
+      mimeType: part.mimeType,
+      format: "text",
+      content,
+      contentTruncated: false,
+    });
+    expect(calls.every((entry) => entry.method === "GET")).toBe(true);
+    expect(calls[0]!.url.searchParams.get("format")).toBe("full");
+    expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
+  });
+
+  it.each([{ size: 0, data: "" }, { size: 0 }])(
+    "renders parsed forwarded headers and its own plain body with container %j",
+    async (body) => {
+      serve({ ...attachmentFixtures.parsedForwarded, body });
+      const result = await read({ partId: "7" });
+      expect(result).toMatchObject({
+        format: "text",
+        contentTruncated: false,
+        content:
+          "From: ann@example.com\nTo: bob@example.com\nDate: Mon, 12 Oct 2026 10:00:00 +0000\nSubject: Forwarded café\n\nHi",
+      });
+      expect(calls).toHaveLength(1);
+    },
+  );
+
+  it("reads a parsed forwarded stored-apart HTML body and applies maxChars", async () => {
+    serve(
+      {
+        ...attachmentFixtures.parsedForwarded,
+        parts: [
+          {
+            mimeType: "text/html",
+            headers: [{ name: "Content-Type", value: 'text/html; charset = "iso-8859-1"' }],
+            body: { size: 11, attachmentId: "forward-body" },
+          },
+        ],
+      },
+      b64url("<p>Café</p>", "latin1"),
+    );
+    expect(await read({ partId: "7", maxChars: 3 })).toMatchObject({
+      format: "text",
+      content: expect.stringMatching(/^Caf\n\[… 1 more characters truncated/),
+      contentTruncated: true,
+    });
+    expect(path(1)).toBe("/messages/m1/attachments/forward-body");
+  });
+
+  it("checks the sum of forwarded descendants before any stored-body download", async () => {
+    serve({
+      ...attachmentFixtures.parsedForwarded,
+      parts: [
+        { mimeType: "text/plain", body: { size: 600_000, attachmentId: "body" } },
+        { mimeType: "image/png", body: { size: 600_000, attachmentId: "image" } },
+      ],
+    });
+    expect(await read({ partId: "7" })).toMatchObject({
+      format: "unavailable",
+      note: expect.stringContaining("1048576-byte"),
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("reports a forwarded subtree with no readable body explicitly", async () => {
+    serve({
+      ...attachmentFixtures.parsedForwarded,
+      parts: [{ mimeType: "image/png", body: { size: 2, data: "__4" } }],
+    });
+    expect(await read({ partId: "7" })).toMatchObject({
+      format: "unavailable",
+      note: expect.stringContaining("no readable"),
+    });
+  });
+
+  it.each(["inline", "stored"])("prefers %s raw forwarded content over nested parts", async (storage) => {
+    const content = "From: raw@example.com\r\n\r\nRaw body";
+    const body =
+      storage === "inline"
+        ? { size: content.length, data: b64url(content) }
+        : { size: content.length, attachmentId: "raw-mail" };
+    serve({ ...attachmentFixtures.parsedForwarded, body }, b64url(content));
+    expect(await read({ partId: "7" })).toMatchObject({ format: "text", content });
+    expect(calls).toHaveLength(storage === "inline" ? 1 : 2);
+  });
+
+  it("refuses unknown descendant sizes before a forwarded-body download", async () => {
+    serve({
+      ...attachmentFixtures.parsedForwarded,
+      parts: [
+        { mimeType: "text/plain", body: { size: 2, attachmentId: "body" } },
+        { mimeType: "image/png", body: { attachmentId: "image" } },
+      ],
+    });
+    expect(await read({ partId: "7" })).toMatchObject({
+      format: "unavailable",
+      note: expect.stringContaining("valid attachment size"),
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("refuses inconsistent stored forwarded-body sizes", async () => {
+    serve(
+      {
+        ...attachmentFixtures.parsedForwarded,
+        parts: [{ mimeType: "text/plain", body: { size: 3, attachmentId: "body" } }],
+      },
+      b64url("Hi"),
+    );
+    await expect(read({ partId: "7" })).rejects.toMatchObject({ code: "connector_call_failed", retryable: false });
+  });
+
+  it("keeps parsed forwarded headers and body within the whole-result budget", async () => {
+    const content = '\u0001界😀"\\'.repeat(30_000);
+    serve(
+      {
+        ...attachmentFixtures.parsedForwarded,
+        headers: [{ name: "Subject", value: content }],
+        parts: [
+          { mimeType: "text/plain", body: { size: new TextEncoder().encode(content).length, attachmentId: "body" } },
+        ],
+      },
+      b64url(content),
+    );
+    const result = await read({ partId: "7", maxChars: 100_000, maxBytes: 64 * 1024 });
+    expect(result).toMatchObject({ format: "text", contentTruncated: true });
+    expect(result.content.match(/more characters truncated/g)).toHaveLength(1);
+    expect(size(result)).toBeLessThanOrEqual(64 * 1024);
+  });
+
+  it.each([
+    'text/csv; charset = "iso-8859-1"',
+    'text/csv; CHARSET = ISO-8859-1; name="cafe.csv"',
+    'text/csv; name="cafe; charset=utf-8.csv"; ChArSeT \t=\t "ISO-8859-1"',
+    'text/csv; charset=iso-8859-1; name="cafe.csv"',
+  ])("parses MIME charset parameter %s for attachments and all body callers", async (contentType) => {
+    const part = { ...attachmentFixtures.latin1, headers: [{ name: "Content-Type", value: contentType }] };
+    serve(part, b64url("Café", "latin1"));
+    expect(await read({ partId: "3" })).toMatchObject({ format: "text", content: "Café" });
+    const message = { id: "m1", payload: { ...part, filename: "", body: { size: 4, data: b64url("Café", "latin1") } } };
+    route = (request) => ({
+      body: request.url.pathname.includes("/threads/")
+        ? { id: "t1", messages: [message] }
+        : request.url.pathname.includes("/drafts/")
+          ? { id: "d1", message }
+          : message,
+    });
+    expect((await call(connection(), "get_message", { messageId: "m1" })).body).toBe("Café");
+    expect((await call(connection(), "get_thread", { threadId: "t1" })).messages[0].body).toBe("Café");
+    expect((await call(connection(), "get_draft", { draftId: "d1" })).body).toBe("Café");
+  });
+
+  it("reports unsupported charsets for attachments and message bodies", async () => {
+    const part = {
+      ...attachmentFixtures.latin1,
+      headers: [{ name: "Content-Type", value: "text/plain; charset=x-unknown" }],
+    };
+    serve(part, b64url("Café", "latin1"));
+    expect(await read({ partId: "3" })).toMatchObject({
+      format: "text",
+      note: expect.stringMatching(/x-unknown.*decoded as UTF-8/),
+    });
+    route = () => ({
+      body: { id: "m1", payload: { ...part, filename: "", body: { data: b64url("Café", "latin1") } } },
+    });
+    expect((await call(connection(), "get_message", { messageId: "m1" })).body).toMatch(/x-unknown.*decoded as UTF-8/);
+  });
+
+  it.each([
+    [3, 3, ""],
+    [10, 3, "abc"],
+    [3, 10, "abc"],
+    [3, 0, "abc"],
+  ])("refuses inconsistent attachment sizes: part %s, response %s, data %j", async (declared, fetched, data) => {
+    route = (request) => ({
+      body: request.url.pathname.includes("/attachments/")
+        ? { size: fetched, data: b64url(data) }
+        : { id: "m1", payload: { ...attachmentFixtures.pdf, body: { size: declared, attachmentId: "pdf" } } },
+    });
+    await expect(read({ partId: "5" })).rejects.toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+      message: expect.stringContaining("size"),
+    });
+  });
+
+  it.each(["inline", "stored"])("keeps genuine zero-byte %s binary attachments supported", async (storage) => {
+    const body = storage === "inline" ? { size: 0, data: "" } : { size: 0, attachmentId: "empty" };
+    route = (request) => ({
+      body: request.url.pathname.includes("/attachments/")
+        ? { size: 0, data: "" }
+        : { id: "m1", payload: { ...attachmentFixtures.pdf, body } },
+    });
+    expect(await read({ partId: "5" })).toMatchObject({
+      format: "base64",
+      size: 0,
+      content: "",
+      contentTruncated: false,
+    });
+  });
+
+  it("refuses inconsistent inline attachment sizes", async () => {
+    serve({ ...attachmentFixtures.inline, body: { size: 10, data: b64url("abc") } });
+    await expect(read({ partId: "4" })).rejects.toMatchObject({ code: "connector_call_failed", retryable: false });
+  });
+
+  it("decodes the attachment's declared non-UTF-8 charset", async () => {
+    serve(attachmentFixtures.latin1, b64url("Café", "latin1"));
+    expect(await read({ partId: "3" })).toMatchObject({ format: "text", content: "Café" });
+  });
+
+  it("lists and reads inline data without an attachmentId or download request", async () => {
+    serve(attachmentFixtures.inline);
+    const listing = await call(connection(), "get_message", { messageId: "m1" });
+    expect(listing.attachments).toEqual([{ filename: "small.csv", mimeType: "text/csv", size: 4, partId: "4" }]);
+    expect(await read({ partId: listing.attachments[0].partId })).toMatchObject({ content: "a,b\n", format: "text" });
+    expect(calls).toHaveLength(2);
+  });
+
+  it("preserves an empty root partId for an inline attachment", async () => {
+    route = () => ({ body: { id: "m1", payload: { ...attachmentFixtures.inline, partId: "" } } });
+    const listing = await call(connection(), "get_message", { messageId: "m1" });
+    expect(listing.attachments[0].partId).toBe("");
+    expect(await read({ partId: "" })).toMatchObject({ partId: "", content: "a,b\n" });
+  });
+
+  it("returns standard base64 that round-trips PDF bytes exactly", async () => {
+    const binary = "%PDF-1.7\n" + String.fromCharCode(0, 255, 254, 253, 252, 251);
+    const encoded = btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    serve(attachmentFixtures.pdf, encoded);
+    const result = await read({ attachmentId: "pdf-current" });
+    expect(result).toMatchObject({ format: "base64", contentTruncated: false });
+    expect(result.content).toBe(btoa(binary));
+    expect(atob(result.content)).toBe(binary);
+    expect(size(result)).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
+  });
+
+  it.each(["text/csv", "application/pdf"])("refuses oversized %s before any attachment request", async (mimeType) => {
+    serve({ ...attachmentFixtures.pdf, mimeType, body: { attachmentId: "large", size: 1024 * 1024 + 1 } });
+    const result = await read({ partId: "5", maxBytes: 4 * 1024 * 1024 });
+    expect(result).toMatchObject({ format: "unavailable", note: expect.stringContaining("1048576-byte") });
+    expect(result.content).toBeUndefined();
+    expect(calls).toHaveLength(1);
+  });
+
+  it("refuses binary maxBytes overflow before downloading and explains direct calls", async () => {
+    serve({ ...attachmentFixtures.pdf, body: { attachmentId: "large", size: 150_000 } }, b64url("x".repeat(150_000)));
+    const refused = await read({ partId: "5" });
+    expect(refused).toMatchObject({ format: "unavailable", note: expect.stringContaining("Raise maxBytes") });
+    expect(refused.note).toContain("direct call_tool only");
+    expect(refused.content).toBeUndefined();
+    expect(calls).toHaveLength(1);
+    const raised = await read({ partId: "5", maxBytes: 256 * 1024 });
+    expect(raised.format).toBe("base64");
+    expect(atob(raised.content)).toHaveLength(150_000);
+    expect(size(raised)).toBeGreaterThan(RESULT_BUDGET_BYTES);
+    expect(size(raised)).toBeLessThanOrEqual(256 * 1024);
+  });
+
+  it("accounts for metadata and base64 padding at the exact maxBytes boundary", async () => {
+    const maxBytes = 64 * 1024;
+    const part = { ...attachmentFixtures.pdf, body: { attachmentId: "fit", size: 0 } };
+    serve(part, "");
+    const empty = await read({ partId: "5", maxBytes });
+    const fitting = Math.floor((maxBytes - size(empty) - 5) / 4) * 3;
+    serve({ ...part, body: { attachmentId: "fit", size: fitting } }, b64url("x".repeat(fitting)));
+    const fit = await read({ partId: "5", maxBytes });
+    expect(fit.format).toBe("base64");
+    expect(size(fit)).toBeLessThanOrEqual(maxBytes);
+    calls.length = 0;
+    serve({ ...part, body: { attachmentId: "fit", size: fitting + 1 } });
+    expect(await read({ partId: "5", maxBytes })).toMatchObject({ format: "unavailable" });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("checks actual bytes too when declared size understates the binary", async () => {
+    serve(attachmentFixtures.pdf, b64url("x".repeat(150_000)));
+    await expect(read({ partId: "5" })).rejects.toMatchObject({ code: "connector_call_failed", retryable: false });
+  });
+
+  it.each([{ attachmentId: "unknown" }, { partId: "unknown" }])(
+    "refuses an unknown identifier %j without downloading",
+    async (args) => {
+      serve(attachmentFixtures.pdf);
+      await expect(read(args)).rejects.toMatchObject({ code: "not_found" });
+      expect(calls).toHaveLength(1);
+    },
+  );
+
+  it("refuses a body part and missing identifiers without a blind fetch", async () => {
+    serve({ partId: "body", mimeType: "text/plain", body: { size: 2, attachmentId: "body-current" } });
+    await expect(read({ attachmentId: "body-current" })).rejects.toMatchObject({ code: "not_found" });
+    calls.length = 0;
+    await expect(read()).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("resolves rotated attachmentIds through immutable partId using the fresh id", async () => {
+    const connector = connection();
+    serve({ ...attachmentFixtures.csv, body: { ...attachmentFixtures.csv.body, attachmentId: "old" } });
+    const listed = await call(connector, "get_message", { messageId: "m1" });
+    serve({ ...attachmentFixtures.csv, body: { ...attachmentFixtures.csv.body, size: 4 } }, b64url("a,b\n"));
+    expect(
+      await call(connector, "get_attachment", {
+        messageId: "m1",
+        partId: listed.attachments[0].partId,
+        attachmentId: listed.attachments[0].attachmentId,
+      }),
+    ).toMatchObject({ content: "a,b\n" });
+    expect(path(2)).toBe("/messages/m1/attachments/csv-current");
+  });
+
+  it("caps text by code points with a truncation marker", async () => {
+    serve({ ...attachmentFixtures.csv, body: { ...attachmentFixtures.csv.body, size: 9 } }, b64url("😀a界b"));
+    expect(await read({ partId: "1", maxChars: 2 })).toMatchObject({
+      content: expect.stringMatching(/^😀a\n\[… 2 more characters truncated/),
+      contentTruncated: true,
+    });
+  });
+
+  it("keeps JSON-escaped text and long metadata inside the whole result budget", async () => {
+    const content = '\u0001界😀"\\'.repeat(30_000);
+    serve(
+      {
+        ...attachmentFixtures.csv,
+        filename: content,
+        body: { size: new TextEncoder().encode(content).length, attachmentId: "text" },
+      },
+      b64url(content),
+    );
+    const result = await read({ partId: "1", maxChars: 100_000, maxBytes: 64 * 1024 });
+    expect(result.format).toBe("text");
+    expect(result.contentTruncated).toBe(true);
+    expect(result.content).toContain("truncated");
+    expect(result.content.match(/more characters truncated/g)).toHaveLength(1);
+    expect(size(result)).toBeLessThanOrEqual(64 * 1024);
+  });
+
+  it("returns a full 1 MiB binary at the inline cap when maxBytes permits it", async () => {
+    const content = "x".repeat(1024 * 1024);
+    serve({ ...attachmentFixtures.pdf, body: { attachmentId: "full", size: content.length } }, b64url(content));
+    const result = await read({ partId: "5", maxBytes: 4 * 1024 * 1024 });
+    expect(result.format).toBe("base64");
+    expect(atob(result.content)).toBe(content);
+    expect(size(result)).toBeLessThanOrEqual(4 * 1024 * 1024);
+  });
+
+  it("reads a binary stored inline without a separate request", async () => {
+    serve({ ...attachmentFixtures.pdf, body: { size: 2, data: "__4" } });
+    const result = await read({ partId: "5" });
+    expect(result).toMatchObject({ format: "base64", content: "//4=" });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("does not turn malformed base64url into silently empty text", async () => {
+    serve(attachmentFixtures.csv, "!");
+    await expect(read({ partId: "1" })).rejects.toMatchObject({ code: "connector_call_failed", retryable: false });
+  });
+
+  it("refuses missing sizes and missing data explicitly", async () => {
+    serve({ ...attachmentFixtures.inline, body: { data: "YSxiCg" } });
+    expect(await read({ partId: "4" })).toMatchObject({
+      format: "unavailable",
+      note: expect.stringContaining("valid attachment size"),
+    });
+    serve({ ...attachmentFixtures.inline, body: { size: 4 } });
+    expect(await read({ partId: "4" })).toMatchObject({
+      format: "unavailable",
+      note: expect.stringContaining("no attachment data"),
+    });
   });
 });

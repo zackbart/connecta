@@ -4,6 +4,7 @@ import before from "./fixtures/providers-before-5b.json";
 import trustChanges from "./fixtures/providers-p2-item1-contract-changes.json";
 import errorChanges from "./fixtures/providers-p2-item4-contract-changes.json";
 import usageChanges from "./fixtures/providers-p2-item5-contract-changes.json";
+import attachmentChanges from "./fixtures/providers-gmail-attachment-contract-changes.json";
 import guestChanges from "./fixtures/providers-p2-item2-contract-changes.json";
 import { providerContract, type ContractFixture } from "./fixtures/provider-contract.js";
 import { providerFixtures } from "./providers.generated.js";
@@ -17,6 +18,7 @@ import { providerFixtures } from "./providers.generated.js";
 // Item 5 replaces repeated guest guidance with usage-skill pointers.
 // Item 4 updates the permission recovery guides through a separate overlay.
 // Converted hosted providers have their subsequent baseline in hosted-presets.test.ts.
+// Issue #809 adds Gmail attachment reads and immutable part identifiers.
 // Providers added after the migration are covered by their own contract tests.
 describe.each(
   providerFixtures.filter(
@@ -43,12 +45,14 @@ describe.each(
     const repairs = errorChanges as Record<string, Record<string, Record<string, string>>>;
     const usage = usageChanges as Record<string, Record<string, Record<string, string>>>;
     const guest = guestChanges as Record<string, Record<string, Record<string, string>>>;
+    const attachments = attachmentChanges as Record<string, Record<string, Record<string, string>>>;
     const expected = before[fixture.name as keyof typeof before].map((row) => ({
       ...row,
       ...changes[fixture.name]?.[row.label],
       ...repairs[fixture.name]?.[row.label],
       ...guest[fixture.name]?.[row.label],
       ...usage[fixture.name]?.[row.label],
+      ...attachments[fixture.name]?.[row.label],
     }));
     expect(snapshot).toEqual(expected);
   });
