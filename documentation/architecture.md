@@ -815,8 +815,10 @@ every vendor ships one reviewed table through one mechanism
    credential-named query parameters or fragments. Exemptions are never
    shared; each vendor states its own. The URL rule sees a string that is
    itself a URL; a vendor whose text embeds pre-signed links applies
-   `sanitizeEmbeddedUrls` to that text in its `result` hook, as Notion does
-   for a page read as Markdown.
+   `sanitizeEmbeddedUrlsIn` to every response in its `result` hook, as Notion
+   does for page Markdown wherever it appears. That scan is linear, decodes
+   Markdown escapes and HTML and percent escapes before it inspects a link,
+   and withholds a flagged link's whole query.
 4. **Errors.** A reviewed operation, or an unreviewed one whose request
    accepts a credential-named field, answers failures with the vendor's codes
    and status but not its text, unless its verdict is wrapped in

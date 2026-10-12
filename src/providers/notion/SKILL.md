@@ -77,7 +77,9 @@ Hosted Notion MCP is a separate OAuth connector.
   `mode: "external_url"` instead.
 - Notion-hosted file URLs in pages, blocks, and page Markdown are pre-signed:
   Connecta withholds their signature, credential, and security-token
-  parameters, so a returned URL names the file but does not download it. Credential-named
+  parameters, so a returned URL names the file but does not download it. A
+  link inside text (page Markdown, an async task's result) loses its whole
+  query instead, as `?[redacted]`. Credential-named
   fields read as `"[redacted]"`, a database property named like a credential
   (`API token`) included. Failures of the OAuth, file upload, bot user, and
   agent operations carry Notion's code, not its message.
@@ -189,8 +191,10 @@ Markdown for a new page's body.
   Notion rejects a database id in its place.
 - Property names in filters, sorts, and writes must match the schema exactly,
   including case. Read the schema before composing one.
-- `select` and `status` writes must use an existing option name; inventing
-  one fails. The schema lists the valid options.
+- A `status` write must use an existing option name; inventing one fails.
+  A new `select` or `multi_select` name does not fail: when the connection
+  can write to the data source, Notion adds it to the schema as a new
+  option. Use the options the schema lists unless a schema change is meant.
 - Writes **replace** a property. Sending one item to a `multi_select` or
   `relation` drops the others, so send the complete intended value.
 - `rollup`, `formula`, `unique_id`, and the created and edited fields are

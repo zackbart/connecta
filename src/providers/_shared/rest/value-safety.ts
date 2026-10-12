@@ -345,7 +345,7 @@ function sanitizeUrl(value: string): string {
   }
   // A snapshot of the names: setting a parameter while iterating the live list is unsafe.
   for (const name of Array.from(url.searchParams.keys())) {
-    if (URL_PARAM_CONTAINS.test(name) || URL_PARAM_SUFFIX.test(name.toLowerCase().replace(/[_-]/g, ""))) {
+    if (credentialParam(name)) {
       url.searchParams.set(name, REDACTED);
       changed = true;
     }
@@ -358,23 +358,182 @@ function sanitizeUrl(value: string): string {
   return changed ? url.toString() : value;
 }
 
-/** An absolute URL inside free text, ended by whitespace, a quote, a bracket, or a backtick. */
-const EMBEDDED_URL = /[a-z][a-z0-9+.-]*:\/\/[^\s"'<>()[\]`]+/gi;
+/** Whether a query or fragment parameter's name carries a credential: either URL rule. */
+function credentialParam(name: string): boolean {
+  return URL_PARAM_CONTAINS.test(name) || URL_PARAM_SUFFIX.test(name.toLowerCase().replace(/[_-]/g, ""));
+}
+
+/** HTML character references that can spell a URL separator or a parameter name. */
+const ENTITY = /&(?:#(\d{1,7})|#x([0-9a-f]{1,6})|(amp|quot|apos|lt|gt|quest|num|semi|equals|lpar|rpar));?/gi;
+const NAMED: Readonly<Record<string, string>> = {
+  amp: "&",
+  quot: '"',
+  apos: "'",
+  lt: "<",
+  gt: ">",
+  quest: "?",
+  num: "#",
+  semi: ";",
+  equals: "=",
+  lpar: "(",
+  rpar: ")",
+};
+const PERCENT = /%([0-9a-f]{2})/gi;
+
+/** Code points past Unicode's range decode to nothing rather than throw. */
+function codePoint(value: number): string {
+  return value <= 0x10ffff ? String.fromCodePoint(value) : "";
+}
 
 /**
- * Every absolute URL inside free text (a Markdown body) sanitized as a
- * whole-string URL is. The heuristic only sees a string that is itself a URL,
- * so a vendor whose text embeds pre-signed links applies this to that text.
- * An HTML attribute's `&amp;` separators survive the round trip.
+ * Text as a URL parser would read it: Markdown backslash escapes dropped,
+ * HTML character references and percent escapes decoded, until stable (a
+ * doubly encoded name decodes too). Only ever inspected, never returned.
  */
-export function sanitizeEmbeddedUrls(text: string): string {
-  return text.replace(EMBEDDED_URL, (match) => {
-    const escaped = match.includes("&amp;");
-    const url = escaped ? match.replaceAll("&amp;", "&") : match;
-    const clean = sanitizeUrl(url);
-    if (clean === url) return match;
-    return escaped ? clean.replaceAll("&", "&amp;") : clean;
+function decodedForInspection(text: string): string {
+  let current = text;
+  for (let round = 0; round < 3; round++) {
+    const next = current
+      .replaceAll("\\", "")
+      .replace(ENTITY, (_, decimal?: string, hex?: string, name?: string) =>
+        decimal !== undefined
+          ? codePoint(Number(decimal))
+          : hex !== undefined
+            ? codePoint(Number.parseInt(hex, 16))
+            : (NAMED[name!.toLowerCase()] ?? ""),
+      )
+      .replace(PERCENT, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
+    if (next === current) break;
+    current = next;
+  }
+  return current;
+}
+
+/** Whether decoded URL text names a credential parameter anywhere, or its fragment reads like one. */
+function credentialIn(decoded: string): boolean {
+  for (const piece of decoded.split(/[?&;#/]/)) {
+    const equals = piece.indexOf("=");
+    if (equals > 0 && credentialParam(piece.slice(0, equals).trim())) return true;
+  }
+  const fragment = decoded.indexOf("#");
+  return fragment >= 0 && /token|secret|key|code|auth|signature|credential/i.test(decoded.slice(fragment));
+}
+
+/** Characters no embedded URL runs through: whitespace, quotes, angle brackets, a backtick. */
+function endsUrl(code: number, char: string): boolean {
+  if (code <= 0x20) return true;
+  if (code === 0x22 || code === 0x27 || code === 0x3c || code === 0x3e || code === 0x60) return true;
+  return code > 0x7f && /\s/.test(char);
+}
+
+/**
+ * Every URL inside free text (a Markdown body, an HTML attribute) with its
+ * credentials withheld; the heuristic only sees a string that is itself a
+ * URL, so a vendor whose text embeds pre-signed links applies this to that
+ * text. One linear scan: each `//` starts a URL that runs to whitespace, a
+ * quote, an angle bracket, or a backtick, or to a `)` or `]` its own
+ * brackets do not balance (a Markdown destination's close), with Markdown
+ * backslash escapes honoured. Fail-closed: when its decoded query or
+ * fragment names a credential parameter, or its host is one of
+ * `signedHosts` (a suffix match), everything after the `?` or `#` is
+ * withheld whole, and a credential parameter in the decoded path withholds
+ * the path too. Userinfo is withheld. Everything else, including the
+ * surrounding Markdown or HTML, comes back byte for byte.
+ */
+export function sanitizeEmbeddedUrls(text: string, signedHosts: readonly string[] = []): string {
+  let out = "";
+  let copied = 0;
+  let from = 0;
+  for (;;) {
+    const slashes = text.indexOf("//", from);
+    if (slashes < 0) break;
+    const authorityStart = slashes + 2;
+    let i = authorityStart;
+    for (; i < text.length; i++) {
+      const code = text.charCodeAt(i);
+      // `/ ? # \ ( ) [ ]` end the host; so does the URL's own end.
+      if (code === 0x2f || code === 0x3f || code === 0x23 || code === 0x5c) break;
+      if (code === 0x28 || code === 0x29 || code === 0x5b || code === 0x5d) break;
+      if (endsUrl(code, text[i]!)) break;
+    }
+    const authorityEnd = i;
+    let parens = 0;
+    let brackets = 0;
+    // The first `?`, or a `#` that does not open a character reference (`&#38;`).
+    let tail = -1;
+    while (i < text.length) {
+      let code = text.charCodeAt(i);
+      if (endsUrl(code, text[i]!)) break;
+      let escaped = false;
+      if (code === 0x5c && i + 1 < text.length) {
+        code = text.charCodeAt(i + 1);
+        if (endsUrl(code, text[i + 1]!)) break;
+        i++;
+        escaped = true;
+      }
+      if (tail < 0 && (code === 0x3f || (code === 0x23 && text.charCodeAt(i - 1) !== 0x26))) tail = i;
+      if (!escaped) {
+        if (code === 0x28) parens++;
+        else if (code === 0x5b) brackets++;
+        else if (code === 0x29) {
+          if (parens === 0) break;
+          parens--;
+        } else if (code === 0x5d) {
+          if (brackets === 0) break;
+          brackets--;
+        }
+      }
+      i++;
+    }
+    const end = i;
+    from = end;
+
+    const authority = text.slice(authorityStart, authorityEnd);
+    const at = authority.lastIndexOf("@");
+    const host = (at >= 0 ? authority.slice(at + 1) : authority).replace(/:\d*$/, "").toLowerCase();
+    const pathEnd = tail >= 0 ? tail : end;
+    let cut = -1;
+    if (credentialIn(decodedForInspection(text.slice(authorityEnd, pathEnd)))) cut = authorityEnd;
+    else if (
+      tail >= 0 &&
+      tail + 1 < end &&
+      (signedHosts.some((signed) => host === signed || host.endsWith(`.${signed}`)) ||
+        credentialIn(decodedForInspection(text.slice(tail, end))))
+    ) {
+      cut = tail + 1;
+    }
+    if (cut < 0 && at < 0) continue;
+    out += text.slice(copied, authorityStart);
+    out += at >= 0 ? `redacted@${authority.slice(at + 1)}` : authority;
+    if (cut < 0) out += text.slice(authorityEnd, end);
+    else out += cut === authorityEnd ? `/${REDACTED}` : `${text.slice(authorityEnd, cut)}${REDACTED}`;
+    copied = end;
+  }
+  return copied === 0 ? text : out + text.slice(copied);
+}
+
+/** Every string inside a JSON value through `sanitizeEmbeddedUrls`; unchanged values keep their identity. */
+export function sanitizeEmbeddedUrlsIn(value: unknown, signedHosts: readonly string[] = [], depth = 0): unknown {
+  if (typeof value === "string") return value.includes("//") ? sanitizeEmbeddedUrls(value, signedHosts) : value;
+  if (typeof value !== "object" || value === null) return value;
+  // Deeper than any vendor's shape: withheld, as the heuristic does.
+  if (depth > MAX_DEPTH) return REDACTED;
+  if (Array.isArray(value)) {
+    let changed = false;
+    const items = value.map((item) => {
+      const clean = sanitizeEmbeddedUrlsIn(item, signedHosts, depth + 1);
+      if (clean !== item) changed = true;
+      return clean;
+    });
+    return changed ? items : value;
+  }
+  let changed = false;
+  const entries = Object.entries(value).map(([key, item]) => {
+    const clean = sanitizeEmbeddedUrlsIn(item, signedHosts, depth + 1);
+    if (clean !== item) changed = true;
+    return [key, clean] as const;
   });
+  return changed ? Object.fromEntries(entries) : value;
 }
 
 /**

@@ -20,7 +20,7 @@ import {
 } from "../_shared/rest/tools.js";
 import { valueSafety } from "../_shared/rest/value-safety.js";
 import { openapi } from "./openapi.generated.js";
-import { NOTION_VALUE_SAFETY, sanitizeMarkdown } from "./value-safety.js";
+import { NOTION_VALUE_SAFETY, sanitizeLinks } from "./value-safety.js";
 
 /** Notion's REST origin. Every request this connector sends goes to exactly this host. */
 export const NOTION_API_BASE_URL = "https://api.notion.com";
@@ -118,6 +118,19 @@ function committedIds(additional: unknown): string {
 }
 
 /**
+ * Notion's own next step for a failed write, `additional_data.retry_guidance`.
+ * An update to an existing object that was saved anyway names no committed
+ * id, only this, so it is relayed as Notion wrote it.
+ */
+function retryGuidance(additional: unknown): string {
+  const guidance = isRecord(additional) ? additional["retry_guidance"] : undefined;
+  const lines = (Array.isArray(guidance) ? guidance : [guidance]).filter(
+    (line): line is string => typeof line === "string" && line.trim() !== "",
+  );
+  return lines.map((line) => line.trim()).join(" ");
+}
+
+/**
  * Map to what the caller should do next, not to what Notion's `code` says
  * happened. The two that are easy to mistranslate:
  *
@@ -131,8 +144,9 @@ function committedIds(additional: unknown): string {
  *   (H11). The message names both possibilities.
  *
  * A 503 on a write may still have been saved. When Notion names what it
- * committed, the failure says so and stops being retryable; otherwise the
- * shared path reports a write's outcome as unknown (INV-9).
+ * committed, or gives its own retry guidance, the failure says so and stops
+ * being retryable; otherwise the shared path reports a write's outcome as
+ * unknown (INV-9).
  */
 function notionFailure(status: number, headers: Headers, payload: unknown, withheld = false): ConnectorCallError {
   const body = isRecord(payload) ? payload : undefined;
@@ -212,6 +226,12 @@ function notionFailure(status: number, headers: Headers, payload: unknown, withh
     const committed = committedIds(additional);
     if (committed) {
       return new ConnectorCallError("connector_call_failed", `${labelled}${committed}`, { retryable: false });
+    }
+    const guidance = retryGuidance(additional);
+    if (guidance) {
+      return new ConnectorCallError("connector_call_failed", `${labelled} Notion's guidance: ${guidance}`, {
+        retryable: false,
+      });
     }
     return new ConnectorCallError(
       "unavailable",
@@ -311,9 +331,10 @@ const VENDOR: RestVendor = {
     notionFailure(status, headers, payload, call ? SAFETY.withholdsErrors(call.op) : false),
   readPosts: READ_POSTS,
   valueSafety: SAFETY,
-  // Not an envelope to unwrap: a page read as Markdown carries pre-signed
-  // file links inside its text, where redaction's URL rule cannot reach.
-  result: sanitizeMarkdown,
+  // Not an envelope to unwrap: page Markdown carries pre-signed file links
+  // inside its text, where redaction's URL rule cannot reach. Every success
+  // response passes here, named tools and paging included.
+  result: sanitizeLinks,
   page,
   upload:
     'Create the upload with POST /v1/file_uploads and mode "external_url" instead; this connector sends no multipart bodies.',

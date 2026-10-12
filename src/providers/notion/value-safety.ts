@@ -12,11 +12,12 @@
 // credential, and security-token query parameters on every response, so a
 // returned URL names the file without granting access to it. A page read as
 // Markdown embeds those same URLs inside one string the URL rule never sees
-// whole, so `sanitizeMarkdown` applies it to every link in the text.
+// whole, and an async task's `result` can carry that Markdown under any key,
+// so `sanitizeLinks` scans every string of every response for embedded links.
 import {
   refuse,
   safe,
-  sanitizeEmbeddedUrls,
+  sanitizeEmbeddedUrlsIn,
   type ValueSafetyTable,
   type ValueSafetyVerdict,
 } from "../_shared/rest/value-safety.js";
@@ -44,14 +45,20 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
 export const NOTION_VALUE_SAFETY: ValueSafetyTable = { title: "Notion", operations: OPERATIONS };
 
 /**
- * A `page_markdown` body (`GET` and `PATCH /v1/pages/{page_id}/markdown`)
- * with every embedded link sanitized: images render as `![caption](url)` and
- * files, PDFs, audio, and video as `<file src="url">`, so a Notion-hosted
- * file's pre-signed URL arrives inside the Markdown rather than as a field.
+ * Hosts that serve Notion's files: S3 (`prod-files-secure.s3.…amazonaws.com`)
+ * and Notion's own file hosts. Any query on them is a signature.
  */
-export function sanitizeMarkdown(body: unknown): unknown {
-  if (typeof body !== "object" || body === null || Array.isArray(body)) return body;
-  const record = body as Record<string, unknown>;
-  if (record["object"] !== "page_markdown" || typeof record["markdown"] !== "string") return body;
-  return { ...record, markdown: sanitizeEmbeddedUrls(record["markdown"]) };
+const SIGNED_FILE_HOSTS = ["amazonaws.com", "file.notion.so", "notion-static.com", "notionusercontent.com"];
+
+/**
+ * Every response with each link embedded in its strings sanitized. Images in
+ * page Markdown render as `![caption](url)` and files, PDFs, audio, and video
+ * as `<file src="url">`, so a Notion-hosted file's pre-signed URL arrives
+ * inside text rather than as a field: in `GET` and `PATCH
+ * /v1/pages/{page_id}/markdown`, and in a completed async task's `result`,
+ * which is free-form. Every response is scanned rather than those paths, so
+ * no route to page Markdown can skip it.
+ */
+export function sanitizeLinks(body: unknown): unknown {
+  return sanitizeEmbeddedUrlsIn(body, SIGNED_FILE_HOSTS);
 }
