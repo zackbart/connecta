@@ -76,8 +76,8 @@ is excluded a hatch path must be literal: dot segments, empty segments,
 backslashes, whitespace, and percent-encoded `/`, `\`, `?`, `#`, or `%` are
 refused rather than normalized.
 
-Exclusion also closes the routes through which another product's data reaches
-the excluded one's. While any product is excluded the connection removes
+Exclusion also closes the routes through which the excluded product's data is
+reachable through another product. While any product is excluded the connection removes
 `list_lists`, `list_list_people`, and `run_list` and refuses every People list,
 list result, rule, and condition, by path or `include`, because a list's
 conditions can draw on any product, such as a donor list built from Giving
@@ -91,7 +91,7 @@ excluded.
 
 What exclusion guarantees is that agents reach none of the excluded product's
 endpoints, no live cross-product query such as a People list, and no webhook
-payload or subscription change. It does not hide records that the church's own
+payload or change to an existing subscription. It does not hide records that the church's own
 automations or staff have copied into a reachable product. A
 [Giving automation](https://help.planningcenter.com/en/144355-automations-in-giving.html)
 can add first-time donors to a People workflow, and those workflow cards stay
