@@ -76,8 +76,9 @@ HTTP API.
 
 Google Workspace connections use the account your deployment assigns to each
 signed-in person. A Workspace administrator authorizes them for your domain.
-Gmail reads mail and writes drafts, but does not send mail. Google Drive can
-read, write, and share files, but does not permanently delete them. Available
+Gmail reads mail and attachments and writes drafts, but does not send mail.
+Google Drive can read, write, and share files, but does not permanently delete
+them. Available
 operations and account access depend on the integration and your deployment.
 
 Large results need not fill the conversation. The agent can filter and

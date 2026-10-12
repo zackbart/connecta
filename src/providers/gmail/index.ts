@@ -78,6 +78,11 @@ const SUMMARY_CONCURRENCY = 5;
 /** A full thread without attachment bodies; Gmail's message cap is 25 MB. */
 const GMAIL_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const MAX_RECIPIENTS = 100;
+/** Gmail cannot range-read attachment JSON, so text and binary downloads are bounded. */
+const MAX_ATTACHMENT_BYTES = 1024 * 1024;
+/** Same direct-call ceiling and minimum result budget as Drive content reads. */
+const MAX_ATTACHMENT_RESULT_BYTES = 4 * 1024 * 1024;
+const MIN_ATTACHMENT_RESULT_BYTES = 64 * 1024;
 
 type JsonRecord = Record<string, any>;
 
@@ -169,6 +174,10 @@ function decodeIn(part: JsonRecord, data: string): string {
   } catch {
     return "";
   }
+  return decodeBytes(part, bytes);
+}
+
+function decodeBytes(part: JsonRecord, bytes: Uint8Array): string {
   try {
     return new TextDecoder(charsetOf(part)).decode(bytes);
   } catch {
@@ -310,7 +319,7 @@ function ids(fields: Record<string, [value: unknown, maxBytes?: number]>): JsonR
   const kept: JsonRecord = {};
   const omitted: string[] = [];
   for (const [name, [value, maxBytes]] of Object.entries(fields)) {
-    const id = idOf(value, maxBytes);
+    const id = name === "partId" ? partIdOf(value) : idOf(value, maxBytes);
     if (id !== undefined) kept[name] = id;
     else if (text(value) !== undefined) omitted.push(name);
   }
@@ -339,11 +348,133 @@ function attachmentsOf(payload: JsonRecord): { listed: JsonRecord[]; omitted: nu
         filename: clipped(text(part["filename"]) ?? "", FIELD_BYTES),
         mimeType: clipped(text(part["mimeType"]), FIELD_BYTES),
         size: typeof asRecord(part["body"])["size"] === "number" ? asRecord(part["body"])["size"] : undefined,
-        ...ids({ attachmentId: [asRecord(part["body"])["attachmentId"], ATTACHMENT_ID_BYTES] }),
+        ...ids({
+          attachmentId: [asRecord(part["body"])["attachmentId"], ATTACHMENT_ID_BYTES],
+          partId: [part["partId"]],
+        }),
       }),
     ),
     omitted: Math.max(0, all.length - MAX_LISTED_ATTACHMENTS),
   };
+}
+
+/** Unlike opaque ids, Gmail's root part id may be empty. */
+function partIdOf(value: unknown): string | undefined {
+  return typeof value === "string" && jsonBytes(value) <= ID_BYTES ? value : undefined;
+}
+
+/** Read only a carried part of a fresh message, never an arbitrary download id. */
+async function readAttachment(
+  client: GoogleWorkspaceClient,
+  ctx: ConnectorContext,
+  args: JsonRecord,
+): Promise<JsonRecord> {
+  const messageId = String(args["messageId"]);
+  const partId = args["partId"];
+  const attachmentId = text(args["attachmentId"]);
+  if (partId === undefined && attachmentId === undefined) {
+    throw new ConnectorCallError("invalid_args", "Supply partId from the attachment listing, or attachmentId.");
+  }
+  const message = asRecord(
+    await client.json(
+      { method: "GET", path: `/messages/${encodeURIComponent(messageId)}`, query: { format: "full" } },
+      ctx,
+    ),
+  );
+  const attachments = walk(asRecord(message["payload"])).attachments;
+  // partId is immutable and authoritative when supplied. An attachmentId
+  // from the previous listing may have rotated since that messages.get.
+  const part = attachments.find((entry) =>
+    partId !== undefined ? entry["partId"] === partId : asRecord(entry["body"])["attachmentId"] === attachmentId,
+  );
+  if (!part) {
+    throw new ConnectorCallError(
+      "not_found",
+      "This attachment is not among the message's carried parts. Read get_message again and use its immutable partId.",
+    );
+  }
+  const stored = asRecord(part["body"]);
+  const declared = stored["size"];
+  const size = typeof declared === "number" && Number.isSafeInteger(declared) && declared >= 0 ? declared : undefined;
+  const maxBytes = typeof args["maxBytes"] === "number" ? args["maxBytes"] : RESULT_BUDGET_BYTES;
+  const maxChars = typeof args["maxChars"] === "number" ? args["maxChars"] : DEFAULT_MESSAGE_BODY_CHARS;
+  const base = compact({
+    messageId,
+    ...ids({ partId: [part["partId"]] }),
+    filename: clipped(text(part["filename"]) ?? "", FIELD_BYTES),
+    mimeType: clipped(text(part["mimeType"]) ?? "application/octet-stream", FIELD_BYTES),
+    size,
+  });
+  const unavailable = (note: string) => ({ ...base, format: "unavailable", contentTruncated: false, note });
+  const mime = mimeOf(part).split(";")[0]!.trim();
+  const isText =
+    mime.startsWith("text/") ||
+    ["application/json", "application/xml", "message/rfc822"].includes(mime) ||
+    mime.endsWith("+json") ||
+    mime.endsWith("+xml");
+  const envelope = { ...base, format: isText ? "text" : "base64", content: "", contentTruncated: false };
+  const fitting = Math.floor(Math.max(0, maxBytes - jsonBytes(envelope)) / 4) * 3;
+  const limit = isText ? MAX_ATTACHMENT_BYTES : Math.min(MAX_ATTACHMENT_BYTES, fitting);
+  const tooLarge = () =>
+    unavailable(
+      limit < MAX_ATTACHMENT_BYTES
+        ? `This binary attachment does not fit maxBytes (${maxBytes}), which holds ${limit} attachment bytes. Raise maxBytes, up to ${MAX_ATTACHMENT_RESULT_BYTES} for a direct call_tool only, to read up to ${MAX_ATTACHMENT_BYTES} bytes. No content is returned.`
+        : `This attachment exceeds the ${MAX_ATTACHMENT_BYTES}-byte download and inline cap. No content is returned; open it in Gmail.`,
+    );
+  // Declared size is checked before downloading, but actual bytes are checked
+  // too: inconsistent metadata must never bypass the cap or whole-result budget.
+  if (size === undefined)
+    return unavailable("Gmail did not declare a valid attachment size; no content is downloaded. Open it in Gmail.");
+  if (size > limit) return tooLarge();
+  let data = stored["data"];
+  const freshId = text(stored["attachmentId"]);
+  if (freshId) {
+    const fetched = asRecord(
+      await client.json(
+        {
+          method: "GET",
+          path: `/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(freshId)}`,
+        },
+        ctx,
+      ),
+    );
+    data = fetched["data"];
+  }
+  if (typeof data !== "string") return unavailable("Gmail returned no attachment data; open it in Gmail.");
+  let bytes: Uint8Array;
+  try {
+    bytes = base64UrlBytes(data);
+  } catch {
+    throw new ConnectorCallError("connector_call_failed", "Gmail returned invalid base64url attachment data.", {
+      retryable: false,
+    });
+  }
+  if (bytes.length > limit) return tooLarge();
+  if (!isText) {
+    let binary = "";
+    for (let index = 0; index < bytes.length; index += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+    }
+    return { ...envelope, content: btoa(binary) };
+  }
+  const decoded = decodeBytes(part, bytes);
+  const characters = Array.from(decoded);
+  const marker = (dropped: number) =>
+    `\n[… ${dropped} more characters truncated; raise maxChars or maxBytes for a direct call_tool, or open it in Gmail]`;
+  const byChars =
+    characters.length > maxChars
+      ? characters.slice(0, maxChars).join("") + marker(characters.length - maxChars)
+      : decoded;
+  if (jsonBytes({ ...envelope, content: byChars }) <= maxBytes) {
+    return { ...envelope, content: byChars, contentTruncated: characters.length > maxChars };
+  }
+  // Reserve the longest marker, then clamp only the original prefix. A text
+  // cut by both limits still has one marker, counted in the result's budget.
+  const prefix = characters.slice(0, maxChars).join("");
+  const contentBudget = maxBytes - jsonBytes(envelope) + jsonBytes("");
+  const kept = clampText(prefix, contentBudget - jsonBytes(marker(characters.length)) + 2, () => "");
+  const content = kept + marker(characters.length - Array.from(kept).length);
+  return { ...envelope, content, contentTruncated: true };
 }
 
 /**
@@ -553,12 +684,12 @@ function resultLimitMarker(dropped: number): string {
  * all, against the budget. The bounds above make a refusal here a
  * should-not-happen; it exists so nothing oversized is ever handed on.
  */
-function deliverable(tool: string, result: unknown): unknown {
+function deliverable(tool: string, result: unknown, budget = RESULT_BUDGET_BYTES): unknown {
   const size = jsonBytes(result);
-  if (size > RESULT_BUDGET_BYTES) {
+  if (size > budget) {
     throw new ConnectorCallError(
       "connector_call_failed",
-      `Gmail's answer to ${tool} is ${size} bytes even after cutting, past connecta's ${RESULT_BUDGET_BYTES / 1024} KiB result limit. Open it in Gmail.`,
+      `Gmail's answer to ${tool} is ${size} bytes even after cutting, past connecta's ${budget / 1024} KiB result limit. Open it in Gmail.`,
       { retryable: false },
     );
   }
@@ -1070,6 +1201,7 @@ const ATTACHMENT_SCHEMA: JsonSchema = {
     mimeType: { type: "string" },
     size: { type: "integer" },
     attachmentId: { type: "string" },
+    partId: { type: "string" },
     omittedIds: OMITTED_IDS_SCHEMA,
   },
 };
@@ -1251,7 +1383,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
     {
       name: "get_thread",
       description:
-        "Get a Gmail thread's messages, oldest first, with headers, plain-text bodies capped by maxBodyChars, and attachment names. A long thread pages by cursor.",
+        "Get a Gmail thread's messages, oldest first, with headers, plain-text bodies capped by maxBodyChars, and attachment metadata. Read attachments with get_attachment using partId. A long thread pages by cursor.",
       annotations: readOnly,
       inputSchema: input(
         {
@@ -1320,7 +1452,7 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
     {
       name: "get_message",
       description:
-        "Get one Gmail message with headers, its plain-text body (HTML converted only when no text part exists), and attachment metadata. Never downloads attachments.",
+        "Get one Gmail message with headers, its plain-text body (HTML converted only when no text part exists), and attachment metadata. Read attachments with get_attachment using partId.",
       annotations: readOnly,
       inputSchema: input(
         {
@@ -1358,6 +1490,64 @@ function tools(client: GoogleWorkspaceClient): ApiTool[] {
         }
         return message;
       },
+    },
+    {
+      name: "get_attachment",
+      description:
+        "Read a Gmail attachment by immutable partId: text with its charset, or small binaries as standard base64 for Drive create_file. Refuses oversized downloads; text is capped by maxChars and the whole result by maxBytes.",
+      annotations: readOnly,
+      inputSchema: {
+        ...input(
+          {
+            messageId: idProperty("Message id from get_message, get_thread, or get_draft."),
+            partId: {
+              type: "string",
+              maxLength: ID_BYTES,
+              description:
+                "Immutable partId from the attachment listing, including an empty root id. Preferred; authoritative when attachmentId is also supplied.",
+            },
+            attachmentId: {
+              type: "string",
+              minLength: 1,
+              maxLength: ATTACHMENT_ID_BYTES,
+              pattern: ID_PATTERN,
+              description:
+                "Alternative attachmentId from the listing. Gmail can rotate it between reads; prefer partId.",
+            },
+            maxChars: {
+              type: "integer",
+              minimum: 1,
+              maximum: MAX_BODY_CHARS,
+              description: `Text code points kept; defaults to ${DEFAULT_MESSAGE_BODY_CHARS}. Longer text ends with a truncation marker. Ignored for binaries.`,
+            },
+            maxBytes: {
+              type: "integer",
+              minimum: MIN_ATTACHMENT_RESULT_BYTES,
+              maximum: MAX_ATTACHMENT_RESULT_BYTES,
+              description: `Whole-result UTF-8 JSON byte budget; defaults to ${RESULT_BUDGET_BYTES}. Raise it only for a direct call_tool; execute_code cannot receive large results.`,
+            },
+          },
+          ["messageId"],
+        ),
+        anyOf: [{ required: ["partId"] }, { required: ["attachmentId"] }],
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          messageId: { type: "string" },
+          partId: { type: "string" },
+          omittedIds: OMITTED_IDS_SCHEMA,
+          filename: { type: "string" },
+          mimeType: { type: "string" },
+          size: { type: "integer" },
+          format: { type: "string", enum: ["text", "base64", "unavailable"] },
+          content: { type: "string" },
+          contentTruncated: { type: "boolean" },
+          note: { type: "string" },
+        },
+        required: ["messageId", "filename", "mimeType", "format", "contentTruncated"],
+      },
+      handler: async (args, ctx) => await readAttachment(client, ctx, args),
     },
     {
       name: "list_labels",
@@ -1739,7 +1929,14 @@ function gmailConnector(id: string, options: GmailOptions): Connector {
     // Every tool's result passes the whole-size postcondition on its way out.
     tools: tools(client).map((tool) => ({
       ...tool,
-      handler: async (args, ctx) => deliverable(tool.name, await tool.handler(args, ctx)),
+      handler: async (args, ctx) =>
+        deliverable(
+          tool.name,
+          await tool.handler(args, ctx),
+          tool.name === "get_attachment" && typeof args["maxBytes"] === "number"
+            ? args["maxBytes"]
+            : RESULT_BUDGET_BYTES,
+        ),
     })),
   });
 }

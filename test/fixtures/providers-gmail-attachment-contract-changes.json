@@ -1,0 +1,29 @@
+{
+  "gmail": {
+    "padded-purpose": {
+      "tools": "0e4aa997f17cc4938f6c6f113c4d3c8d07758db0a94c8fdf0c271b56bcb92484",
+      "describe": "90164052ae58302393af7cf313aab056cfde45ccb5530c30a73a15632819a3b6",
+      "guide": "db9be1168733c98a6be484ca735b7279384db82740cbc83629cb01489f095134"
+    },
+    "empty-title": {
+      "tools": "0e4aa997f17cc4938f6c6f113c4d3c8d07758db0a94c8fdf0c271b56bcb92484",
+      "describe": "90164052ae58302393af7cf313aab056cfde45ccb5530c30a73a15632819a3b6",
+      "guide": "db9be1168733c98a6be484ca735b7279384db82740cbc83629cb01489f095134"
+    },
+    "blank-title": {
+      "tools": "0e4aa997f17cc4938f6c6f113c4d3c8d07758db0a94c8fdf0c271b56bcb92484",
+      "describe": "90164052ae58302393af7cf313aab056cfde45ccb5530c30a73a15632819a3b6",
+      "guide": "db9be1168733c98a6be484ca735b7279384db82740cbc83629cb01489f095134"
+    },
+    "default": {
+      "tools": "0e4aa997f17cc4938f6c6f113c4d3c8d07758db0a94c8fdf0c271b56bcb92484",
+      "describe": "90164052ae58302393af7cf313aab056cfde45ccb5530c30a73a15632819a3b6",
+      "guide": "db9be1168733c98a6be484ca735b7279384db82740cbc83629cb01489f095134"
+    },
+    "instructions": {
+      "tools": "0e4aa997f17cc4938f6c6f113c4d3c8d07758db0a94c8fdf0c271b56bcb92484",
+      "describe": "90164052ae58302393af7cf313aab056cfde45ccb5530c30a73a15632819a3b6",
+      "guide": "731787229d3f0c40e95de7be365d5036a0733e299dcda05bacde529f99a56e0f"
+    }
+  }
+}
