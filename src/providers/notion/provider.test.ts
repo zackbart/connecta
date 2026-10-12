@@ -286,8 +286,12 @@ describe("notion() over OAuth", () => {
     for (const { verdict } of NOTION_MCP_VETTED_CATALOG.tools.values()) {
       counts[verdict] += 1;
     }
-    expect(NOTION_MCP_VETTED_CATALOG.tools.size).toBe(34);
-    expect(counts).toEqual({ "read-only": 18, additive: 10, destructive: 6 });
+    expect(NOTION_MCP_VETTED_CATALOG.tools.size).toBe(38);
+    expect(counts).toEqual({ "read-only": 22, additive: 10, destructive: 6 });
+    // Documented since the release review, and reads by Notion's own description.
+    for (const name of ["notion-ai-search", "notion-get-self", "notion-get-tool-access", "notion-download-skill"]) {
+      expect(NOTION_MCP_VETTED_CATALOG.tools.get(name)?.verdict).toBe("read-only");
+    }
   });
 
   itClassifiesLikeARelease(mcp, mcpMocks, {
@@ -369,6 +373,9 @@ describe("notion() over an integration token", () => {
       "notion_api_search",
       "`page.in` is `body`",
       "GET /v1/pages/{page_id}/properties/{property_id}",
+      "GET /v1/pages/{page_id}/markdown",
+      "PATCH /v1/pages/{page_id}/markdown",
+      '"type":"insert_content"',
       "/v1/oauth/*",
       "Those need an OAuth connector.",
       "## Workspace instructions",
@@ -469,6 +476,30 @@ describe("notion() value safety", () => {
     for (const leaked of ["ASIAEXAMPLE", "SESSION-TOKEN", "SIGNATURE-HEX"]) expect(url.href).not.toContain(leaked);
     const upload = await call(build(), "notion_api_read", { path: "/v1/file_uploads/fu_1" });
     expect(upload.data.upload_url).toBe("https://api.notion.com/v1/file_uploads/fu_1/send");
+  });
+
+  it("INV-5: withholds the signature of every pre-signed link a page's Markdown embeds", async () => {
+    const signed = (name: string) =>
+      `https://prod-files-secure.s3.us-west-2.amazonaws.com/ws/${name}?X-Amz-Algorithm=AWS4-HMAC-SHA256` +
+      "&X-Amz-Credential=ASIAEXAMPLE%2F20261009&X-Amz-Security-Token=SESSION-TOKEN&X-Amz-Signature=SIGNATURE-HEX";
+    const markdown = [
+      "# Report",
+      `![Chart](${signed("chart.png")})`,
+      `<file src="${signed("report.pdf").replaceAll("&", "&amp;")}">Report</file>`,
+      "See [the docs](https://developers.notion.com/reference?topic=markdown) for more.",
+    ].join("\n");
+    queue({ body: { object: "page_markdown", id: "page-1", markdown, truncated: false, unknown_block_ids: [] } });
+    const read = await call(build(), "notion_api_read", { path: "/v1/pages/page-1/markdown" });
+    const text: string = read.data.markdown;
+    for (const leaked of ["ASIAEXAMPLE", "SESSION-TOKEN", "SIGNATURE-HEX"]) expect(text).not.toContain(leaked);
+    // The links still name their files, and the attribute keeps its escaping.
+    expect(text).toContain("![Chart](https://prod-files-secure.s3.us-west-2.amazonaws.com/ws/chart.png?");
+    expect(text).toContain(
+      '<file src="https://prod-files-secure.s3.us-west-2.amazonaws.com/ws/report.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256&amp;',
+    );
+    // An ordinary link and the surrounding Markdown come back byte for byte.
+    expect(text).toContain("# Report\n");
+    expect(text).toContain("See [the docs](https://developers.notion.com/reference?topic=markdown) for more.");
   });
 });
 
@@ -723,6 +754,31 @@ describe("notion() lean projections", () => {
     expect(serialized).not.toContain("plain_text");
     expect(serialized).not.toContain("annotations");
     expect(serialized).not.toContain("multi_select");
+  });
+
+  it("names native and custom icons, and reads an uncomputable value as null", async () => {
+    const page = (icon: unknown) => ({
+      ...PAGE_FIXTURE,
+      icon,
+      properties: {
+        Name: PAGE_FIXTURE.properties.Name,
+        Score: { id: "fx", type: "formula", formula: { type: "unsupported", unsupported: {} } },
+        Count: {
+          id: "rl",
+          type: "rollup",
+          rollup: { type: "unsupported", unsupported: {}, function: "show_original" },
+        },
+      },
+    });
+    queue(
+      { body: page({ type: "icon", icon: { name: "pizza", color: "blue" } }) },
+      { body: page({ type: "custom_emoji", custom_emoji: { id: "e1", name: "shipit", url: "https://x/e.png" } }) },
+    );
+    const native: any = await call(build(), "integration_get_page", { page_id: "page-1" });
+    expect(native.icon).toBe("pizza");
+    expect(native.properties).toEqual({ Name: "Quarterly review", Score: null, Count: null });
+    const custom: any = await call(build(), "integration_get_page", { page_id: "page-1" });
+    expect(custom.icon).toBe(":shipit:");
   });
 
   it("narrows to the requested properties", async () => {
@@ -996,6 +1052,31 @@ describe("notion() named-tool pagination", () => {
     expect(url.searchParams.get("page_size")).toBe("50");
   });
 
+  it("reports a query Notion stopped at its result cap as incomplete, not finished", async () => {
+    const capped = {
+      object: "list",
+      results: [PAGE_FIXTURE],
+      has_more: false,
+      next_cursor: null,
+      request_status: { type: "incomplete", incomplete_reason: "query_result_limit_reached" },
+    };
+    queue({ body: capped }, { body: capped }, { body: { ...capped, request_status: { type: "complete" } } });
+    const rows: any = await call(build(), "integration_query_data_source", { data_source_id: "ds-1" });
+    expect(rows).toMatchObject({ has_more: false, next_cursor: null, incomplete: true });
+
+    const generic = await call(build(), "notion_api_read", {
+      method: "POST",
+      path: "/v1/data_sources/ds-1/query",
+      body: {},
+      select: ["results.id"],
+    });
+    // A cut-off with no cursor, like a meeting-note query past its limit.
+    expect(generic.page).toEqual({ hasMore: true });
+
+    const finished: any = await call(build(), "integration_query_data_source", { data_source_id: "ds-1" });
+    expect(finished.incomplete).toBeUndefined();
+  });
+
   it("rejects a page size Notion would reject, before the request", async () => {
     const error = await refusal(
       call(build(), "integration_query_data_source", { data_source_id: "ds-1", page_size: 5_000 }),
@@ -1074,6 +1155,7 @@ describe("notion() error mapping", () => {
     expect(error.code).toBe("provider_permission_denied");
     expect(error.retryable).toBe(false);
     expect(error.message).toContain("capability");
+    expect(error.message).toContain("block limit");
     expect(error.message).toContain("Re-authorizing will not help");
   });
 
@@ -1116,6 +1198,32 @@ describe("notion() error mapping", () => {
     expect(error.message).toContain("public_api_request_rate_limit");
   });
 
+  caseOf("reads Notion's body retry_after when a proxy drops the header", async () => {
+    const error = await failWith(429, {
+      code: "rate_limited",
+      message: "slow",
+      additional_data: { rate_limit_reason: "public_api_space_request_rate_limit", retry_after: "90" },
+    });
+    expect(error.code).toBe("rate_limited");
+    expect(error.retryAfterMs).toBe(90_000);
+    expect(error.message).toContain("shared budget across all its connections");
+  });
+
+  caseOf("does not offer a retry when Notion has blocked the integration's API access", async () => {
+    const error = await failWith(
+      429,
+      {
+        code: "rate_limited",
+        message: "Blocked.",
+        additional_data: { rate_limit_reason: "public_api_request_blocked" },
+      },
+      { "Retry-After": "5" },
+    );
+    expect(error.code).toBe("connector_call_failed");
+    expect(error.retryable).toBe(false);
+    expect(error.message).toContain("contact Notion support");
+  });
+
   caseOf("falls back to a default window when Retry-After is absent", async () => {
     const error = await failWith(429, { code: "rate_limited", message: "slow" });
     expect(error.retryAfterMs).toBe(1_000);
@@ -1134,6 +1242,38 @@ describe("notion() error mapping", () => {
     const upstream = await failWith(503, { code: "service_unavailable", message: "unavailable" });
     expect(upstream.code).toBe("unavailable");
     expect(upstream.retryable).toBe(true);
+  });
+
+  caseOf("INV-9: names what a failed write committed, so the caller reads it instead of repeating", async () => {
+    queue({
+      status: 503,
+      body: {
+        code: "service_unavailable",
+        message: "Timed out.",
+        additional_data: { committed_resource_id: "page-new" },
+      },
+    });
+    const created = await call(build(), "integration_create_page", { parent_page_id: "p", title: "x" }).catch(
+      (thrown: any) => thrown,
+    );
+    expect(created).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(created.message).toContain("page-new");
+    expect(created.message).toContain("instead of repeating the write");
+
+    queue({
+      status: 503,
+      body: {
+        code: "service_unavailable",
+        message: "Timed out.",
+        additional_data: { committed_resource_id: "page-1", committed_child_ids: ["b-1", "b-2"] },
+      },
+    });
+    const appended = await call(build(), "integration_append_blocks", { block_id: "page-1", text: ["a", "b"] }).catch(
+      (thrown: any) => thrown,
+    );
+    expect(appended).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(appended.message).toContain("b-1, b-2");
+    expect(calls).toHaveLength(2);
   });
 
   caseOf("survives an error body that is not JSON", async () => {
@@ -1315,6 +1455,28 @@ describe("notion() authoring helpers", () => {
     );
     expect(missingAnchor.code).toBe("invalid_args");
     expect(missingAnchor.message).toContain("after_block_id");
+  });
+
+  it("splits text past Notion's 2,000-character run limit, and refuses what no request could carry", async () => {
+    queue({ body: PAGE_FIXTURE }, { body: { results: [] } });
+    // An astral character straddles the cut: it must not be split in half.
+    const title = `${"t".repeat(1_999)}😀${"u".repeat(2_500)}`;
+    await call(build(), "integration_create_page", { parent_page_id: "p", title });
+    const runs = calls[0]?.body.properties.title.title.map((run: any) => run.text.content);
+    expect(runs.map((run: string) => run.length)).toEqual([1_999, 2_000, 502]);
+    expect(runs.join("")).toBe(title);
+    expect(runs[1].startsWith("😀")).toBe(true);
+
+    await call(build(), "integration_append_blocks", { block_id: "page-1", checklist: ["x".repeat(4_001)] });
+    expect(calls[1]?.body.children[0].to_do.rich_text).toHaveLength(3);
+
+    calls.length = 0;
+    const tooLong = await refusal(
+      call(build(), "integration_append_blocks", { block_id: "page-1", text: ["ok", "y".repeat(200_001)] }),
+    );
+    expect(tooLong.code).toBe("invalid_args");
+    expect(tooLong.message).toContain("text[1]");
+    expect(calls).toHaveLength(0);
   });
 
   it("turns checklist items into unchecked to-do blocks, and takes one body form only", async () => {

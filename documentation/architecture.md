@@ -813,7 +813,10 @@ every vendor ships one reviewed table through one mechanism
    lose their values, header, cookie, and query rules lose theirs, external
    destinations keep their origin, and every URL loses userinfo and
    credential-named query parameters or fragments. Exemptions are never
-   shared; each vendor states its own.
+   shared; each vendor states its own. The URL rule sees a string that is
+   itself a URL; a vendor whose text embeds pre-signed links applies
+   `sanitizeEmbeddedUrls` to that text in its `result` hook, as Notion does
+   for a page read as Markdown.
 4. **Errors.** A reviewed operation, or an unreviewed one whose request
    accepts a credential-named field, answers failures with the vendor's codes
    and status but not its text, unless its verdict is wrapped in

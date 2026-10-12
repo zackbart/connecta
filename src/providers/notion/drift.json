@@ -69,6 +69,10 @@
       "endpoints": ["https://mcp.notion.com/mcp"],
       "reviewed": [
         "notion-search",
+        "notion-ai-search",
+        "notion-get-self",
+        "notion-get-tool-access",
+        "notion-download-skill",
         "notion-search-skills",
         "notion-fetch",
         "notion-download-attachment",

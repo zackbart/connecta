@@ -114,6 +114,22 @@ function oauthUsageGuide(purpose: string, instructions: string | undefined): str
 const NOTION_MCP_CLASSIFICATION: ToolClassification = {
   tools: {
     "notion-search": { "verdict": "read", "reason": "Retrieves Notion  information without changing vendor state." },
+    "notion-ai-search": {
+      "verdict": "read",
+      "reason": "Legacy AI search, still callable by name; retrieves matching content without changing vendor state.",
+    },
+    "notion-get-self": {
+      "verdict": "read",
+      "reason": "Returns the connected workspace and user without changing vendor state.",
+    },
+    "notion-get-tool-access": {
+      "verdict": "read",
+      "reason": "Reads which tools the workspace plan allows; it grants nothing and changes nothing.",
+    },
+    "notion-download-skill": {
+      "verdict": "read",
+      "reason": "Returns an existing Skill as a signed, expiring archive URL; it changes no workspace state.",
+    },
     "notion-search-skills": {
       "verdict": "read",
       "reason": "Retrieves Notion skills information without changing vendor state.",

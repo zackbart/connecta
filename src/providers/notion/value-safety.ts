@@ -10,8 +10,16 @@
 // integration token, so it is kept. Notion-hosted file URLs in pages and
 // blocks are pre-signed: the shared URL rule withholds their signature,
 // credential, and security-token query parameters on every response, so a
-// returned URL names the file without granting access to it.
-import { refuse, safe, type ValueSafetyTable, type ValueSafetyVerdict } from "../_shared/rest/value-safety.js";
+// returned URL names the file without granting access to it. A page read as
+// Markdown embeds those same URLs inside one string the URL rule never sees
+// whole, so `sanitizeMarkdown` applies it to every link in the text.
+import {
+  refuse,
+  safe,
+  sanitizeEmbeddedUrls,
+  type ValueSafetyTable,
+  type ValueSafetyVerdict,
+} from "../_shared/rest/value-safety.js";
 
 const OAUTH =
   "Notion's OAuth token endpoints are not reachable through Connecta: they mint and revoke credentials with a public integration's client secret, which this connector never holds.";
@@ -34,3 +42,16 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
 };
 
 export const NOTION_VALUE_SAFETY: ValueSafetyTable = { title: "Notion", operations: OPERATIONS };
+
+/**
+ * A `page_markdown` body (`GET` and `PATCH /v1/pages/{page_id}/markdown`)
+ * with every embedded link sanitized: images render as `![caption](url)` and
+ * files, PDFs, audio, and video as `<file src="url">`, so a Notion-hosted
+ * file's pre-signed URL arrives inside the Markdown rather than as a field.
+ */
+export function sanitizeMarkdown(body: unknown): unknown {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return body;
+  const record = body as Record<string, unknown>;
+  if (record["object"] !== "page_markdown" || typeof record["markdown"] !== "string") return body;
+  return { ...record, markdown: sanitizeEmbeddedUrls(record["markdown"]) };
+}

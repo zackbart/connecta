@@ -358,6 +358,25 @@ function sanitizeUrl(value: string): string {
   return changed ? url.toString() : value;
 }
 
+/** An absolute URL inside free text, ended by whitespace, a quote, a bracket, or a backtick. */
+const EMBEDDED_URL = /[a-z][a-z0-9+.-]*:\/\/[^\s"'<>()[\]`]+/gi;
+
+/**
+ * Every absolute URL inside free text (a Markdown body) sanitized as a
+ * whole-string URL is. The heuristic only sees a string that is itself a URL,
+ * so a vendor whose text embeds pre-signed links applies this to that text.
+ * An HTML attribute's `&amp;` separators survive the round trip.
+ */
+export function sanitizeEmbeddedUrls(text: string): string {
+  return text.replace(EMBEDDED_URL, (match) => {
+    const escaped = match.includes("&amp;");
+    const url = escaped ? match.replaceAll("&amp;", "&") : match;
+    const clean = sanitizeUrl(url);
+    if (clean === url) return match;
+    return escaped ? clean.replaceAll("&", "&amp;") : clean;
+  });
+}
+
 /**
  * A destination URL reduced to its origin: webhook, drain, and bearer URLs
  * can carry a secret in the path itself (`hooks.slack.com/services/…`), so
