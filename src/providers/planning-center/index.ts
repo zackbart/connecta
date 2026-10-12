@@ -170,6 +170,9 @@ export interface PlanningCenterOptions {
    * deployment that keeps agents away from donor and financial data. Their
    * named tools leave the catalog, the guide and description stop naming
    * them, and the hatches refuse their paths before any request is sent.
+   * While any product is excluded, hatch paths must be literal, People lists
+   * are unreachable, and existing webhook subscriptions and their payloads
+   * are refused, because each could carry an excluded product's data.
    * Defaults to none.
    */
   excludeApps?: readonly PlanningCenterExcludableApp[];
@@ -416,87 +419,141 @@ const APP_TITLES: Readonly<Record<PlanningCenterApp, string>> = {
 };
 
 /**
- * What a path could mean to any server between here and Planning Center's
- * router: percent-decoded until stable, backslashes read as separators,
- * lowercased, repeated slashes collapsed, and dot segments resolved. Only the
- * exclusion check reads it, so no encoding carries a request into an
- * excluded product; the request still sends the path as given. `undefined`
- * is a path with no single reading.
+ * A path's segments, each percent-decoded once, or a refusal when the path is
+ * not literal. While a product is excluded no path may lean on normalization:
+ * a dot segment, an empty segment, a backslash, whitespace, or an encoded
+ * `/`, `\`, `?`, `#`, or `%` could each mean one thing here and another to a
+ * server that decodes or resolves it, so none is admitted at all rather than
+ * reasoned about.
  */
-function canonicalPath(path: string): string | undefined {
-  let decoded = path;
-  for (let round = 0; ; round++) {
-    let next: string;
+function literalSegments(path: string): string[] {
+  const ambiguous = () =>
+    new ConnectorCallError(
+      "invalid_args",
+      "While this deployment excludes a Planning Center product, a path must be literal: no . or .. segments, empty segments, backslashes, whitespace, or percent-encoded /, \\, ?, #, or %.",
+    );
+  if (!path.startsWith("/")) throw ambiguous();
+  const raw = path.slice(1).split("/");
+  return raw.map((segment, index) => {
+    if (segment === "" && index !== raw.length - 1) throw ambiguous();
+    let decoded: string;
     try {
-      next = decodeURIComponent(decoded);
+      decoded = decodeURIComponent(segment);
     } catch {
-      return undefined;
+      throw ambiguous();
     }
-    if (next === decoded) break;
-    if (round === 4) return undefined;
-    decoded = next;
-  }
-  const collapsed = `/${decoded.replace(/\\/g, "/").toLowerCase()}`.replace(/\/{2,}/g, "/");
-  try {
-    return new URL(`https://planning-center.invalid${collapsed}`).pathname;
-  } catch {
-    return undefined;
-  }
-}
-
-function stringsIn(value: unknown, out: string[] = []): string[] {
-  if (typeof value === "string") out.push(value);
-  else if (Array.isArray(value)) for (const item of value) stringsIn(item, out);
-  else if (value && typeof value === "object") for (const item of Object.values(value)) stringsIn(item, out);
-  return out;
+    const control = [...decoded].some((char) => char <= " " || char === "\x7f");
+    if (decoded === "." || decoded === ".." || control || /[/\\?#%]/.test(decoded)) throw ambiguous();
+    return decoded;
+  });
 }
 
 /**
- * Refuse, before anything is sent, a request that would reach an excluded
- * product. Three doors lead there:
- *
- * - the path, read canonically, so `//giving`, `/%67iving`, `/GIVING`, and
- *   `/people/v2/..%2F..%2Fgiving` all count;
- * - a webhook subscription to the product's events, created through
- *   `/webhooks/v2`, which would deliver its records to any URL; and
- * - webhook event and delivery payloads, which carry the record that fired
- *   them. A path names the subscription by id, not by product, so while any
- *   product is excluded these payloads are refused for every product.
- *
- * Planning Center documents no `include` that crosses products, and no other
- * product's API names a Giving resource, so a query string cannot reach one.
+ * People resources a list is built from or answers with. A list's conditions
+ * can draw on any product — a Giving condition makes a donor list — and one
+ * list can be a condition of another, so while any product is excluded none
+ * of them is read, by path or by `include`.
  */
-function refuseExcluded(request: PlanningCenterRequest, excluded: ReadonlySet<PlanningCenterApp>): void {
-  if (excluded.size === 0) return;
-  const disabled = (app: PlanningCenterApp, detail: string): never => {
-    throw new ConnectorCallError(
+const LIST_RESOURCES: ReadonlySet<string> = new Set(["lists", "list_results", "rules", "conditions"]);
+
+/** The People tools that read or refresh a list, removed with any exclusion. */
+const LIST_TOOLS: ReadonlySet<string> = new Set(["list_lists", "list_list_people", "run_list"]);
+
+/** The webhook subscription collections, current and 2018-08-01. */
+const SUBSCRIPTION_COLLECTIONS: ReadonlySet<string> = new Set(["webhook_subscriptions", "subscriptions"]);
+
+/**
+ * Refuse, before anything is sent, a request that would reach an excluded
+ * product. It reads literal segments, so it runs twice: on the path as given,
+ * and on the exact URL the transport is about to fetch (`admit`), which is the
+ * one that counts. Five doors lead to an excluded product:
+ *
+ * - its own paths, in any case or percent-encoding of a literal segment;
+ * - People lists, rules, conditions, and results, whose criteria can come from
+ *   the excluded product, by path or by `include`;
+ * - a new webhook subscription to its events, which delivers its records to
+ *   any URL — so a new subscription must name a reachable product's event;
+ * - an existing subscription, changed by id: a path names a subscription by
+ *   id, not by product, so no subscription is enabled, disabled, deleted, or
+ *   re-keyed while any product is excluded; and
+ * - webhook event and delivery payloads, which carry the record that fired
+ *   them, refused for every subscription for the same reason.
+ *
+ * People documents no other `include` or attribute that reaches another
+ * product's records.
+ */
+function refuseExcluded(
+  segments: readonly string[],
+  query: Iterable<[string, string]>,
+  request: Pick<PlanningCenterRequest, "method" | "body">,
+  excluded: ReadonlySet<PlanningCenterApp>,
+): void {
+  const disabled = (app: PlanningCenterApp, detail: string) =>
+    new ConnectorCallError(
       "provider_permission_denied",
       `Planning Center ${APP_TITLES[app]} (/${app}/v2) is disabled in this deployment, so this connection ${detail}. Retrying will not help; only an operator can remove "${app}" from excludeApps.`,
       { retryable: false },
     );
-  };
-  const canonical = canonicalPath(request.path);
-  if (canonical === undefined) {
-    throw new ConnectorCallError(
-      "invalid_args",
-      "A Planning Center path must decode to one unambiguous /<app>/v2 path.",
-    );
-  }
-  const segments = canonical.split("/").slice(1);
-  const app = segments[0] ?? "";
-  if (isApp(app) && excluded.has(app)) disabled(app, "does not reach its endpoints");
-  if (app !== "webhooks") return;
-  for (const text of stringsIn(request.body)) {
-    const event = text.trim().toLowerCase().split(".")[0] ?? "";
-    if (isApp(event) && excluded.has(event)) disabled(event, "cannot subscribe to its webhook events");
-  }
-  if (segments.some((segment) => /^(?:events|deliveries)\b/.test(segment))) {
-    throw new ConnectorCallError(
+  const because = (detail: string) =>
+    new ConnectorCallError(
       "provider_permission_denied",
-      `This deployment disables Planning Center ${series([...excluded].map((name) => APP_TITLES[name]))}, and a webhook event or delivery payload may carry any product's records, so this connection does not read them. Subscriptions themselves stay readable. Retrying will not help.`,
+      `This deployment disables Planning Center ${series([...excluded].map((name) => APP_TITLES[name]))}, and ${detail} Retrying will not help.`,
       { retryable: false },
     );
+  const lower = segments.map((segment) => segment.toLowerCase());
+  const app = lower[0] ?? "";
+  if (isApp(app) && excluded.has(app)) throw disabled(app, "does not reach its endpoints");
+  const lists =
+    "a People list's conditions can draw on a disabled product, so this connection reads no list, list result, rule, or condition.";
+  if (app === "people" && lower.some((segment) => LIST_RESOURCES.has(segment))) throw because(lists);
+  for (const [key, value] of query) {
+    if (
+      /include/i.test(key) &&
+      value
+        .toLowerCase()
+        .split(/[\s,.]+/)
+        .some((part) => LIST_RESOURCES.has(part))
+    ) {
+      throw because(lists);
+    }
   }
+  if (app !== "webhooks") return;
+  if (lower.some((segment) => /^(?:events|deliveries)\b/.test(segment))) {
+    throw because(
+      "a webhook event or delivery payload may carry any product's records, so this connection does not read them. Subscriptions themselves stay readable.",
+    );
+  }
+  if (request.method === "GET" || request.method === "HEAD") return;
+  const resource = lower.slice(2).filter((segment) => segment !== "");
+  if (request.method !== "POST" || resource.length !== 1 || !SUBSCRIPTION_COLLECTIONS.has(resource[0]!)) {
+    throw because(
+      "a webhook subscription's id does not name its product, so this connection does not enable, disable, delete, or re-key an existing subscription.",
+    );
+  }
+  const data = asRecord(request.body)["data"];
+  const name = Array.isArray(data) ? undefined : asRecord(asRecord(data)["attributes"])["name"];
+  const event = typeof name === "string" ? /^([a-z-]+)\.v2\.events\./.exec(name.trim().toLowerCase())?.[1] : undefined;
+  if (event === undefined || !isApp(event)) {
+    throw because(
+      "a new webhook subscription must name one product's event, such as people.v2.events.person.created, in data.attributes.name.",
+    );
+  }
+  if (excluded.has(event)) throw disabled(event, "cannot subscribe to its webhook events");
+}
+
+/**
+ * The exclusion, enforced on the exact URL about to be fetched: after the
+ * transport has resolved and encoded it, so what is checked is what Planning
+ * Center routes. The origin and base path are asserted again here, not taken
+ * on trust from the confinement before it.
+ */
+function admit(baseUrl: string, url: URL, request: GuardedRequest, excluded: ReadonlySet<PlanningCenterApp>): void {
+  const base = new URL(baseUrl);
+  const basePath = base.pathname.replace(/\/+$/, "");
+  if (url.origin !== base.origin || !url.pathname.startsWith(`${basePath}/`) || url.hash) {
+    throw new ConnectorCallError("invalid_args", "A Planning Center request left the Planning Center API origin.");
+  }
+  refuseExcluded(literalSegments(url.pathname.slice(basePath.length)), url.searchParams, request, excluded);
 }
 
 function errorDetail(payload: unknown, status: number): string {
@@ -584,7 +641,7 @@ function planningCenterCall(
 ): Call {
   const apps = PLANNING_CENTER_APPS.filter((app) => !excluded.has(app));
   return async (request, ctx) => {
-    refuseExcluded(request, excluded);
+    if (excluded.size > 0) refuseExcluded(literalSegments(request.path), [], request, excluded);
     const app = appForPath(request.path, apps);
     return await send(
       compact({
@@ -2755,8 +2812,10 @@ const PERSON_JOINS = [
 /**
  * The maintained guide for the products this connection reaches. Every
  * product-specific line is its own fragment, so an excluded product is
- * neither described nor pinned; with nothing excluded, the text is the whole
- * guide as before.
+ * neither described, pinned, nor named by a tool the guide points to, and an
+ * exclusion adds the line stating what the hatches refuse. With nothing
+ * excluded, the text is the whole guide as before; the `published` fragment
+ * is that same text without a purpose.
  */
 function usageGuide(
   purpose: string,
@@ -2781,6 +2840,9 @@ function usageGuide(
     fragments.identity,
     joins.length > 0 ? series(joins) : "every People record",
     fragments.conventions,
+    has("services") ? fragments.plans : "",
+    fragments.writes,
+    excluded.size === 0 ? fragments.people : fragments.people_without_lists,
     has("services") ? fragments.services : "",
     has("groups") ? fragments.groups : "",
     pair("check-ins", "registrations", fragments.check_ins_registrations, fragments.check_ins, fragments.registrations),
@@ -2790,6 +2852,8 @@ function usageGuide(
     fragments.hatches,
     apps.map((app) => `${app} ${PLANNING_CENTER_API_VERSIONS[app]}`).join(", "),
     fragments.pins,
+    excluded.size === 0 ? "" : fragments.disabled,
+    fragments.limits,
     organizationInstructions ? `\n## ${skill.instructionsHeading}\n\n${organizationInstructions}\n` : "",
   ].join("");
 }
@@ -2862,12 +2926,16 @@ function planningCenterConnector(id: string, options: PlanningCenterOptions): Co
   }
   const excluded = excludedApps(options.excludeApps);
   const auth = PERSONAL_ACCESS_TOKEN;
+  const baseUrl = options.baseUrl?.trim() || PLANNING_CENTER_API_BASE_URL;
   const send = guardedFetch({
     provider: "Planning Center",
-    baseUrl: options.baseUrl?.trim() || PLANNING_CENTER_API_BASE_URL,
+    baseUrl,
     headers: { Accept: "application/json", "User-Agent": userAgent },
     maxResponseBytes: PLANNING_CENTER_MAX_RESPONSE_BYTES,
     authenticate: (ctx) => auth.headers(ctx),
+    ...(excluded.size > 0
+      ? { admit: (url: URL, request: GuardedRequest) => admit(baseUrl, url, request, excluded) }
+      : {}),
   });
   const call = planningCenterCall(send, PLANNING_CENTER_API_VERSIONS, excluded);
   const surface = tools(call, defaultPageSize, excluded);
@@ -2919,6 +2987,11 @@ function planningCenterConnector(id: string, options: PlanningCenterOptions): Co
       // it leaves the named surface or hits one of them.
     },
     ...(options.maxResultBytes !== undefined ? { maxResultBytes: options.maxResultBytes } : {}),
-    tools: [...surface.hatches, ...PLANNING_CENTER_APPS.flatMap((app) => (excluded.has(app) ? [] : surface.apps[app]))],
+    tools: [
+      ...surface.hatches,
+      ...PLANNING_CENTER_APPS.flatMap((app) => (excluded.has(app) ? [] : surface.apps[app])).filter(
+        (tool) => excluded.size === 0 || !LIST_TOOLS.has(tool.name),
+      ),
+    ],
   });
 }

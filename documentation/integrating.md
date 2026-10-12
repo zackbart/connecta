@@ -70,10 +70,23 @@ Planning Center's `excludeApps` removes whole products from a connection, for
 example `planningCenter("pco", { purpose, excludeApps: ["giving"] })` for a
 deployment that keeps agents away from donor and financial data. Excluded
 products lose their named tools, guide text, and version pins, and the
-`pco_api_get` and `pco_api_mutate` hatches refuse their paths before sending,
-however the path is encoded. While any product is excluded, the hatches also
-refuse webhook subscriptions to its events and every webhook event or delivery
-payload, since a payload can carry any product's records. People cannot be
+`pco_api_get` and `pco_api_mutate` hatches refuse their paths before sending.
+The check reads the exact URL the transport would fetch, and while any product
+is excluded a hatch path must be literal: dot segments, empty segments,
+backslashes, whitespace, and percent-encoded `/`, `\`, `?`, `#`, or `%` are
+refused rather than normalized.
+
+Exclusion also closes the routes through which another product's data reaches
+the excluded one's. While any product is excluded the connection removes
+`list_lists`, `list_list_people`, and `run_list` and refuses every People list,
+list result, rule, and condition, by path or `include`, because a list's
+conditions can draw on any product, such as a donor list built from Giving
+donations, and lists can depend on other lists. Planning Center publishes a
+list's conditions, but a reliable check would have to follow every nested list,
+so the connection does not attempt one. It refuses webhook event and delivery
+payloads, since a payload can carry any product's records, and every change to
+an existing webhook subscription by id, since the id does not name its product.
+A new subscription must name a reachable product's event. People cannot be
 excluded. The token's Planning Center user permissions still apply; exclusion
 narrows what Connecta exposes, not what the token can do elsewhere.
 
