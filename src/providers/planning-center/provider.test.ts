@@ -984,6 +984,242 @@ describe("Planning Center hatches", () => {
   });
 });
 
+describe("Planning Center excludeApps", () => {
+  const GIVING_TOOLS = [
+    "list_donations",
+    "list_funds",
+    "list_batches",
+    "list_pledge_campaigns",
+    "list_pledges",
+    "list_recurring_donations",
+  ];
+  const withoutGiving = () => connection({ excludeApps: ["giving"] });
+  const names = async (connector: Connector) => (await connector.listTools(context())).map((tool) => tool.name);
+
+  it("INV-11: refuses an unknown, miscased, or non-list app and People at construction", () => {
+    expect(() => connection({ excludeApps: ["tithing"] })).toThrow(
+      /excludeApps has unknown app "tithing"; expected any of services, groups, check-ins, calendar, registrations, giving, publishing, webhooks, api\./,
+    );
+    expect(() => connection({ excludeApps: ["Giving"] })).toThrow('App names are lowercase path segments: "giving".');
+    expect(() => connection({ excludeApps: [7] })).toThrow("unknown app 7");
+    expect(() => connection({ excludeApps: "giving" })).toThrow("excludeApps to be an array of app names");
+    expect(() => connection({ excludeApps: ["giving", "people"] })).toThrow('cannot exclude "people"');
+    expect(() => connection({ excludeApps: ["giving", "giving"] })).not.toThrow();
+  });
+
+  it("changes nothing by default: an empty list is the default surface, with every Giving tool and pin", async () => {
+    const byDefault = connection();
+    const empty = connection({ excludeApps: [] });
+    expect(await empty.listTools(context())).toEqual(await byDefault.listTools(context()));
+    expect(empty.describe?.()).toEqual(byDefault.describe?.());
+    expect(empty.description).toBe(byDefault.description);
+    expect(guide(empty)).toEqual(guide(byDefault));
+    expect(await names(byDefault)).toEqual(expect.arrayContaining(GIVING_TOOLS));
+    expect(byDefault.description).toBe(
+      "Planning Center church management — People, Services, Groups, Check-Ins, Calendar, Registrations, and Giving: Downtown campus staff operations",
+    );
+    const content = guide(byDefault).content;
+    expect(content).toContain(
+      "management — People, Services, Groups, Check-Ins, Calendar, Registrations, Giving, Publishing, Webhooks — for:",
+    );
+    expect(content).toContain("Services schedules, Groups memberships, Giving donations, and Check-Ins.");
+    expect(content).toContain("- Giving: the named tools only read");
+    expect(content).toContain("- Publishing and the `api` product");
+    expect(content).toContain(`giving ${PLANNING_CENTER_API_VERSIONS.giving}`);
+    const mutate = (await byDefault.listTools(context())).find((tool) => tool.name === "pco_api_mutate")!;
+    expect(mutate.description).toContain("money movement");
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("removes every Giving tool and every mention of Giving an agent or operator sees", async () => {
+    const connector = withoutGiving();
+    const tools = await connector.listTools(context());
+    const remaining = tools.map((tool) => tool.name);
+    expect(remaining).toEqual((await names(connection())).filter((name) => !GIVING_TOOLS.includes(name)));
+    expect(connector.describe?.().tools?.map((tool) => tool.name)).toEqual(remaining);
+    expect(connector.description).toBe(
+      "Planning Center church management — People, Services, Groups, Check-Ins, Calendar, and Registrations: Downtown campus staff operations",
+    );
+    const content = guide(connector).content;
+    expect(content).toContain("Services schedules, Groups memberships, and Check-Ins.");
+    expect(content).toContain(`registrations ${PLANNING_CENTER_API_VERSIONS.registrations}, publishing`);
+    const visible = JSON.stringify({ tools, describe: connector.describe?.(), connector, guide: guide(connector) });
+    expect(visible).not.toMatch(/giving|donat|pledge|money/i);
+  });
+
+  it.each([
+    "/giving/v2/donations",
+    "/giving/v2",
+    "/giving",
+    "//giving/v2/donations",
+    "/giving//v2/funds",
+    "/GIVING/v2/donations",
+    "/Giving/v2/funds",
+    "/%67iving/v2/donations",
+    "/%2567iving/v2/donations",
+    "/gi%76ing/v2/batches",
+    "/%47IVING/v2/batches",
+    "/\\giving/v2/donations",
+    "/giving/v2/./donations",
+    "/giving/v2/donations/../../v2/funds",
+    "/people/v2/../../giving/v2/donations",
+    "/people/v2/%2e%2e/%2e%2e/giving/v2/donations",
+    "/people/v2/..%2F..%2Fgiving/v2/donations",
+    "/people/v2/..%252F..%252Fgiving/v2/donations",
+    "/people/v2/..\\..\\giving/v2/donations",
+    "/giving/v2/donations?where[person_id]=1",
+    "/giving/v2/people/1/donations.json",
+  ])("INV-4: refuses %s through both hatches before any request", async (path) => {
+    const connector = withoutGiving();
+    for (const [tool, args] of [
+      ["pco_api_get", { path }],
+      ["pco_api_mutate", { method: "POST", path, body: { data: { type: "Batch", attributes: {} } } }],
+    ] as const) {
+      const error = (await call(tool, args, connector).catch((caught) => caught)) as ConnectorCallError;
+      expect(error, `${tool} ${path}`).toBeInstanceOf(ConnectorCallError);
+      expect(error).toMatchObject({ code: "provider_permission_denied", retryable: false });
+      expect(error.message).toContain("Planning Center Giving (/giving/v2) is disabled in this deployment");
+      expect(error.message).toContain("excludeApps");
+    }
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a path with no single decoding while an app is excluded", async () => {
+    for (const path of ["/giving/v2/%E0%A4%A", "/%25252525252567iving/v2/funds"]) {
+      await expect(call("pco_api_get", { path }, withoutGiving()), path).rejects.toMatchObject({
+        code: "invalid_args",
+      });
+    }
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("INV-4: refuses a webhook subscription to Giving events and every webhook payload, before any request", async () => {
+    const connector = withoutGiving();
+    for (const name of ["giving.v2.events.donation.created", "  Giving.V2.events.batch.committed"]) {
+      await expect(
+        call(
+          "pco_api_mutate",
+          {
+            method: "POST",
+            path: "/webhooks/v2/webhook_subscriptions",
+            body: { data: { type: "WebhookSubscription", attributes: { name, url: "https://evil.example/hook" } } },
+          },
+          connector,
+        ),
+        name,
+      ).rejects.toMatchObject({
+        code: "provider_permission_denied",
+        message: expect.stringContaining("cannot subscribe to its webhook events"),
+      });
+    }
+    for (const path of [
+      "/webhooks/v2/webhook_subscriptions/1/events",
+      "/webhooks/v2/webhook_subscriptions/1/events/2",
+      "/webhooks/v2/webhook_subscriptions/1/events.json",
+      "/webhooks/v2/webhook_subscriptions/1/events/2/deliveries/3",
+      "/webhooks/v2/subscriptions/1/events",
+      "/webhooks/v2/webhook_subscriptions/1/%65vents",
+    ]) {
+      await expect(call("pco_api_get", { path }, connector), path).rejects.toMatchObject({
+        code: "provider_permission_denied",
+        message: expect.stringContaining("webhook event or delivery payload"),
+      });
+    }
+    await expect(
+      call(
+        "pco_api_mutate",
+        { method: "POST", path: "/webhooks/v2/webhook_subscriptions/1/events/2/redeliver" },
+        connector,
+      ),
+    ).rejects.toMatchObject({ code: "provider_permission_denied" });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+
+    // Subscriptions to other products, and subscription metadata, still reach Planning Center.
+    queue({ status: 201, body: { data: { type: "WebhookSubscription", id: "9" } } }, { body: {} }, { body: {} });
+    await call(
+      "pco_api_mutate",
+      {
+        method: "POST",
+        path: "/webhooks/v2/webhook_subscriptions",
+        body: { data: { type: "WebhookSubscription", attributes: { name: "people.v2.events.person.created" } } },
+      },
+      connector,
+    );
+    await call("pco_api_get", { path: "/webhooks/v2/available_events" }, connector);
+    await call("list_webhook_subscriptions", {}, connector);
+    expect(calls.map((entry) => entry.url.pathname)).toEqual([
+      "/webhooks/v2/webhook_subscriptions",
+      "/webhooks/v2/available_events",
+      "/webhooks/v2/webhook_subscriptions",
+    ]);
+  });
+
+  it("leaves every other product reachable and pinned, and names only reachable apps in a path refusal", async () => {
+    const connector = withoutGiving();
+    queue({ body: { data: [] } }, { body: {} }, { body: {} });
+    await call("search_people", {}, connector);
+    await call("pco_api_get", { path: "/services/v2/service_types" }, connector);
+    await call("pco_api_get", { path: "/people/v2/../../calendar/v2/events" }, connector);
+    expect(calls.map((entry) => [entry.url.pathname, entry.headers["x-pco-api-version"]])).toEqual([
+      ["/people/v2/people", PLANNING_CENTER_API_VERSIONS.people],
+      ["/services/v2/service_types", PLANNING_CENTER_API_VERSIONS.services],
+      ["/calendar/v2/events", PLANNING_CENTER_API_VERSIONS.calendar],
+    ]);
+    const error = (await call("pco_api_get", { path: "/accounting/v2/ledgers" }, connector).catch(
+      (caught) => caught,
+    )) as ConnectorCallError;
+    expect(error).toMatchObject({ code: "invalid_args" });
+    expect(error.message).toContain("registrations, publishing, webhooks, api");
+    expect(error.message).not.toContain("giving");
+  });
+
+  it("excludes any other product the same way, and renders the guide for what remains", async () => {
+    const connector = connection({ excludeApps: ["registrations", "webhooks", "api"] });
+    const remaining = await names(connector);
+    expect(remaining).not.toEqual(expect.arrayContaining(["list_signups"]));
+    for (const name of ["list_signups", "list_signup_attendees", "list_webhook_subscriptions"]) {
+      expect(remaining).not.toContain(name);
+    }
+    expect(remaining).toEqual(expect.arrayContaining(GIVING_TOOLS));
+    const content = guide(connector).content;
+    expect(content).toContain("- Check-Ins: read-only. Nobody can be checked in through the API.\n");
+    expect(content).toContain("- Publishing has no named tools; use the hatches.\n");
+    expect(content).not.toMatch(/Registrations|Webhooks|`api` product|registrations \d|webhooks \d|api \d/);
+    expect(connector.description).toContain("Calendar, and Giving:");
+    for (const path of [
+      "/registrations/v2/signups",
+      "/api/v2/personal_access_tokens",
+      "/webhooks/v2/available_events",
+    ]) {
+      await expect(call("pco_api_get", { path }, connector), path).rejects.toMatchObject({
+        code: "provider_permission_denied",
+      });
+    }
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+
+    const peopleOnly = connection({
+      excludeApps: ["services", "groups", "check-ins", "calendar", "giving", "publishing", "webhooks", "api"],
+    });
+    expect(peopleOnly.description).toBe(
+      "Planning Center church management — People and Registrations: Downtown campus staff operations",
+    );
+    expect(guide(peopleOnly).content).toContain("is the `personId` for every People record.");
+    expect(guide(peopleOnly).content).toContain(
+      "- Registrations: read-only. Nobody can be registered through the API.\n",
+    );
+  });
+
+  it("keeps the credential test working with Giving excluded", async () => {
+    queue({ body: { data: person("42", { name: "Ada Lovelace" }), included: [] } });
+    const result = await withoutGiving().testCredentials!(
+      { applicationId: "candidate", secret: "s3cret" },
+      context(null),
+    );
+    expect(calls[0]!.url.pathname).toBe("/people/v2/me");
+    expect(result).toEqual({ ok: true, message: "Authenticated as Ada Lovelace (person 42)." });
+  });
+});
+
 describe("Planning Center credential test", () => {
   it("reports the person and organization the token acts as", async () => {
     queue({

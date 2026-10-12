@@ -66,6 +66,17 @@ MCP clients to its hosted server, an operational gate outside Connecta. See the
 To use both implementations of one provider, configure two connector ids with
 independent credentials.
 
+Planning Center's `excludeApps` removes whole products from a connection, for
+example `planningCenter("pco", { purpose, excludeApps: ["giving"] })` for a
+deployment that keeps agents away from donor and financial data. Excluded
+products lose their named tools, guide text, and version pins, and the
+`pco_api_get` and `pco_api_mutate` hatches refuse their paths before sending,
+however the path is encoded. While any product is excluded, the hatches also
+refuse webhook subscriptions to its events and every webhook event or delivery
+payload, since a payload can carry any product's records. People cannot be
+excluded. The token's Planning Center user permissions still apply; exclusion
+narrows what Connecta exposes, not what the token can do elsewhere.
+
 ## Another remote MCP server
 
 Declare its endpoint and intended auth mode. This fragment uses a server-stored

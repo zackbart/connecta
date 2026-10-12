@@ -5,17 +5,23 @@
 }
 ---
 
-<!-- fragment: guide_0 -->
+<!-- fragment: heading -->
 # Planning Center usage
 
-Planning Center Online church management — People, Services, Groups, Check-Ins, Calendar, Registrations, Giving, Publishing, Webhooks — for: <!-- endfragment -->
+Planning Center Online church management — <!-- endfragment -->
 
-<!-- fragment: guide_1 -->
+<!-- fragment: purpose -->
+ — for: <!-- endfragment -->
+
+<!-- fragment: identity -->
 
 
 ## Identity first
 
-- A person id is the join key across every product: the id `search_people` returns is the `personId` for Services schedules, Groups memberships, Giving donations, and Check-Ins. Resolve ids with list tools; never guess one.
+- A person id is the join key across every product: the id `search_people` returns is the `personId` for <!-- endfragment -->
+
+<!-- fragment: conventions -->
+. Resolve ids with list tools; never guess one.
 - A person id that used to resolve and now answers `not_found` was most likely merged. Read `/people/v2/person_mergers` with `where[person_to_remove_id]` and follow `person_to_keep_id`.
 - `get_me` names the user this token acts as. Every read and write runs with that user's permissions, product by product; a `provider_permission_denied` means an administrator must grant that user access to the product or record.
 
@@ -29,12 +35,49 @@ Planning Center Online church management — People, Services, Groups, Check-Ins
 ## What each product lets the API write
 
 - People: full read/write. `update_person` with `status: inactive` archives reversibly; a DELETE is permanent and only reachable through `pco_api_mutate`. `run_list` can fire list automations.
+<!-- endfragment -->
+
+<!-- fragment: services -->
 - Services: full read/write. A plan's dates come from its plan times. Scheduling needs a team.
+<!-- endfragment -->
+
+<!-- fragment: groups -->
 - Groups: memberships and group settings are writable; groups cannot be created, and events and attendance are read-only.
+<!-- endfragment -->
+
+<!-- fragment: check_ins_registrations -->
 - Check-Ins and Registrations: read-only. Nobody can be checked in or registered through the API.
+<!-- endfragment -->
+
+<!-- fragment: check_ins -->
+- Check-Ins: read-only. Nobody can be checked in through the API.
+<!-- endfragment -->
+
+<!-- fragment: registrations -->
+- Registrations: read-only. Nobody can be registered through the API.
+<!-- endfragment -->
+
+<!-- fragment: calendar -->
 - Calendar: events, instances, and times are read-only; tags, resources, rooms, and folders are writable through `pco_api_mutate`.
+<!-- endfragment -->
+
+<!-- fragment: giving -->
 - Giving: the named tools only read, amounts in integer cents. Creating or editing donations, refunds, and committing a batch move money and go through `pco_api_mutate`.
+<!-- endfragment -->
+
+<!-- fragment: publishing_api -->
 - Publishing and the `api` product (organization, OAuth applications, personal access tokens) have no named tools; use the hatches.
+<!-- endfragment -->
+
+<!-- fragment: publishing -->
+- Publishing has no named tools; use the hatches.
+<!-- endfragment -->
+
+<!-- fragment: api -->
+- The `api` product (organization, OAuth applications, personal access tokens) has no named tools; use the hatches.
+<!-- endfragment -->
+
+<!-- fragment: hatches -->
 
 ## The hatches
 
@@ -42,7 +85,7 @@ Planning Center Online church management — People, Services, Groups, Check-Ins
 - Bodies are JSON:API documents: `{"data":{"type":"Email","attributes":{...}}}`. `null` clears an attribute; an omitted key is left alone.
 - Each product is pinned to a reviewed API version: <!-- endfragment -->
 
-<!-- fragment: guide_2 -->
+<!-- fragment: pins -->
 . Pass `version` only for an endpoint those versions lack.
 - Query parameters are name/value pairs with literal brackets: `where[status]`, `include`, `order`, `filter`, `fields[Person]`. Every list response's `meta` names the `can_query_by`, `can_order_by`, and `can_include` values for that endpoint; an unknown `where` key is ignored rather than refused.
 - File uploads go to a separate host (upload.planningcenteronline.com), which this connection does not reach.
