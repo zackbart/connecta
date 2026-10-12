@@ -87,8 +87,26 @@ so the connection does not attempt one. It refuses webhook event and delivery
 payloads, since a payload can carry any product's records, and every change to
 an existing webhook subscription by id, since the id does not name its product.
 A new subscription must name a reachable product's event. People cannot be
-excluded. The token's Planning Center user permissions still apply; exclusion
-narrows what Connecta exposes, not what the token can do elsewhere.
+excluded.
+
+What exclusion guarantees is that agents reach none of the excluded product's
+endpoints, no live cross-product query such as a People list, and no webhook
+payload or subscription change. It does not hide records that the church's own
+automations or staff have copied into a reachable product. A
+[Giving automation](https://help.planningcenter.com/en/144355-automations-in-giving.html)
+can add first-time donors to a People workflow, and those workflow cards stay
+readable, as do donor details recorded in notes, custom fields, or form
+answers. Those are People data once written, so the connection does not refuse
+them by guessing at their origin.
+
+For a hard boundary, give the connection a personal access token belonging to a
+Planning Center user with No Access in the excluded product. Planning Center
+sets permissions per product for each user, does not grant Giving to
+organization administrators automatically, and lets People workflows be shared
+per workflow; a token carries its user's permissions, so Planning Center itself
+refuses what that user cannot see. `excludeApps` is defense in depth on top of
+that boundary: it narrows what Connecta exposes, not what the token can do
+elsewhere.
 
 ## Another remote MCP server
 

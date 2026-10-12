@@ -174,6 +174,16 @@ export interface PlanningCenterOptions {
    * are unreachable, and existing webhook subscriptions and their payloads
    * are refused, because each could carry an excluded product's data.
    * Defaults to none.
+   *
+   * Exclusion guarantees agents reach no excluded-product endpoint, no live
+   * cross-product query (People lists), and no webhook payload or
+   * subscription toggle. It does not hide records the church's automations
+   * or staff have copied into a reachable product: a Giving automation that
+   * adds first-time donors to a People workflow leaves readable workflow
+   * cards, as do notes, custom fields, and form answers. For a hard
+   * boundary, use a personal access token from a user with No Access in
+   * the excluded product; Planning Center sets permissions per product, per
+   * user, and a token carries its user's. Exclusion is defense in depth.
    */
   excludeApps?: readonly PlanningCenterExcludableApp[];
   /**
@@ -503,6 +513,15 @@ function refuseExcluded(
   const lower = segments.map((segment) => segment.toLowerCase());
   const app = lower[0] ?? "";
   if (isApp(app) && excluded.has(app)) throw disabled(app, "does not reach its endpoints");
+  // Lists are refused and workflows are not. A list is a live query: reading
+  // it evaluates its conditions, Giving ones included, at read time, so it
+  // is the excluded product's API by another path. A workflow card is a
+  // stored People record. A Giving automation can create one, but so can
+  // staff, and once created it is People data, like a note or custom field
+  // value typed from a donor's details. Exclusion guards products' APIs,
+  // not provenance; refusing workflows would cost every exclusion a core
+  // People feature and argue equally for notes, fields, forms, and groups.
+  // The hard boundary is the token user's own per-product permissions.
   const lists =
     "a People list's conditions can draw on a disabled product, so this connection reads no list, list result, rule, or condition.";
   if (app === "people" && lower.some((segment) => LIST_RESOURCES.has(segment))) throw because(lists);
