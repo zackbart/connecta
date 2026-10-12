@@ -163,25 +163,37 @@ function base64UrlBytes(data: string): Uint8Array {
 
 function charsetOf(part: JsonRecord): string {
   const type = header(part, "Content-Type") ?? "";
-  return /charset="?([^";\s]+)"?/i.exec(type)?.[1] ?? "utf-8";
+  // Consume complete parameters so a semicolon inside another quoted value
+  // cannot masquerade as a charset. MIME allows whitespace between tokens.
+  const parameters = /;\s*([^=;\s]+)\s*=\s*(?:"((?:\\.|[^"\\])*)"|([^;\s]*))/g;
+  for (const match of type.matchAll(parameters)) {
+    if (match[1]!.toLowerCase() === "charset") {
+      return (match[2]?.replace(/\\(.)/g, "$1") ?? match[3] ?? "").trim();
+    }
+  }
+  return "utf-8";
 }
 
-/** Bytes as text, in the part's declared charset where the runtime knows it. */
-function decodeIn(part: JsonRecord, data: string): string {
+/** Bytes as text, with an explicit notice when the declared charset is unsupported. */
+function decodeIn(part: JsonRecord, data: string): { text: string; note?: string } {
   let bytes: Uint8Array;
   try {
     bytes = base64UrlBytes(data);
   } catch {
-    return "";
+    return { text: "" };
   }
   return decodeBytes(part, bytes);
 }
 
-function decodeBytes(part: JsonRecord, bytes: Uint8Array): string {
+function decodeBytes(part: JsonRecord, bytes: Uint8Array): { text: string; note?: string } {
+  const charset = charsetOf(part);
   try {
-    return new TextDecoder(charsetOf(part)).decode(bytes);
+    return { text: new TextDecoder(charset).decode(bytes) };
   } catch {
-    return new TextDecoder().decode(bytes);
+    return {
+      text: new TextDecoder().decode(bytes),
+      note: `Gmail declared unsupported charset "${clipped(charset, FIELD_BYTES)}"; decoded as UTF-8.`,
+    };
   }
 }
 
@@ -216,13 +228,13 @@ const MAX_PART_DEPTH = 20;
 
 /**
  * Walk a payload keeping ancestry: the message's own parts, in order, and the
- * attachment roots, whose subtrees are never entered.
+ * attachment roots, whose subtrees are entered only for a resolved forwarded root.
  */
-function walk(root: JsonRecord): { own: JsonRecord[]; attachments: JsonRecord[] } {
+function walk(root: JsonRecord, enterAttachmentRoot = false): { own: JsonRecord[]; attachments: JsonRecord[] } {
   const own: JsonRecord[] = [];
   const attachments: JsonRecord[] = [];
   const visit = (part: JsonRecord, depth: number) => {
-    if (isAttachment(part)) {
+    if (isAttachment(part) && !(enterAttachmentRoot && depth === 0)) {
       attachments.push(part);
       return;
     }
@@ -232,6 +244,16 @@ function walk(root: JsonRecord): { own: JsonRecord[]; attachments: JsonRecord[] 
   };
   visit(root, 0);
   return { own, attachments };
+}
+
+/** The same plain-first selection for messages and parsed forwarded attachments. */
+function ownBody(own: JsonRecord[]): JsonRecord | undefined {
+  return own.find((part) => mimeOf(part) === "text/plain") ?? own.find((part) => mimeOf(part) === "text/html");
+}
+
+function bodyText(part: JsonRecord, decoded: { text: string; note?: string }): string {
+  const body = mimeOf(part) === "text/html" ? htmlToText(decoded.text) : decoded.text;
+  return decoded.note ? `${body}\n[${decoded.note}]` : body;
 }
 
 /** Gmail stores a large body apart from the message, behind an attachment id. */
@@ -259,10 +281,9 @@ async function readBody(
   max: number,
 ): Promise<MessageBody | { text: string; bodyFormat: "text" | "html" }> {
   const own = walk(payload).own;
-  const plain = own.find((part) => mimeOf(part) === "text/plain");
-  const chosen = plain ?? own.find((part) => mimeOf(part) === "text/html");
+  const chosen = ownBody(own);
   if (!chosen) return { body: "", bodyTruncated: false, bodyFormat: "none" };
-  const format: BodyFormat = plain ? "text" : "html";
+  const format: BodyFormat = mimeOf(chosen) === "text/plain" ? "text" : "html";
   const stored = asRecord(chosen["body"]);
   let data = text(stored["data"]);
   const attachmentId = text(stored["attachmentId"]);
@@ -289,9 +310,9 @@ async function readBody(
     );
     data = text(fetched["data"]);
   }
-  const decoded = data ? decodeIn(chosen, data) : "";
+  const decoded = data ? decodeIn(chosen, data) : { text: "" };
   // Uncut: the caller caps it, by characters and by the result's bytes.
-  return { text: format === "html" ? htmlToText(decoded) : decoded, bodyFormat: format };
+  return { text: bodyText(chosen, decoded), bodyFormat: format };
 }
 
 /**
@@ -363,6 +384,74 @@ function partIdOf(value: unknown): string | undefined {
   return typeof value === "string" && jsonBytes(value) <= ID_BYTES ? value : undefined;
 }
 
+function declaredSize(body: JsonRecord): number | undefined {
+  const size = body["size"];
+  return typeof size === "number" && Number.isSafeInteger(size) && size >= 0 ? size : undefined;
+}
+
+/** Include every descendant, even carried files that body selection will skip. */
+function forwardedSize(part: JsonRecord, depth = 0): number | undefined {
+  if (depth > MAX_PART_DEPTH) return undefined;
+  const body = asRecord(part["body"]);
+  const children = asArray(part["parts"]);
+  let total = declaredSize(body);
+  if (total === undefined) {
+    if (children.length === 0 || body["size"] !== undefined || body["attachmentId"] || body["data"]) return undefined;
+    total = 0;
+  }
+  for (const child of children) {
+    const size = forwardedSize(asRecord(child), depth + 1);
+    if (size === undefined) return undefined;
+    total += size;
+    if (!Number.isSafeInteger(total)) return undefined;
+  }
+  return total;
+}
+
+/** Validate both Gmail byte counts before content can be returned as complete. */
+async function attachmentBytes(
+  client: GoogleWorkspaceClient,
+  ctx: ConnectorContext,
+  messageId: string,
+  part: JsonRecord,
+): Promise<Uint8Array | undefined> {
+  const stored = asRecord(part["body"]);
+  let source = stored;
+  const freshId = text(stored["attachmentId"]);
+  if (freshId) {
+    source = asRecord(
+      await client.json(
+        {
+          method: "GET",
+          path: `/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(freshId)}`,
+        },
+        ctx,
+      ),
+    );
+  }
+  const data = source["data"];
+  if (typeof data !== "string") return undefined;
+  let bytes: Uint8Array;
+  try {
+    bytes = base64UrlBytes(data);
+  } catch {
+    throw new ConnectorCallError("connector_call_failed", "Gmail returned invalid base64url attachment data.", {
+      retryable: false,
+    });
+  }
+  if (
+    bytes.length !== declaredSize(stored) ||
+    (source["size"] !== undefined && bytes.length !== declaredSize(source))
+  ) {
+    throw new ConnectorCallError(
+      "connector_call_failed",
+      "Gmail attachment data does not match its declared byte size.",
+      { retryable: false },
+    );
+  }
+  return bytes;
+}
+
 /** Read only a carried part of a fresh message, never an arbitrary download id. */
 async function readAttachment(
   client: GoogleWorkspaceClient,
@@ -394,8 +483,13 @@ async function readAttachment(
     );
   }
   const stored = asRecord(part["body"]);
-  const declared = stored["size"];
-  const size = typeof declared === "number" && Number.isSafeInteger(declared) && declared >= 0 ? declared : undefined;
+  const mime = mimeOf(part).split(";")[0]!.trim();
+  const parsedForward =
+    mime === "message/rfc822" &&
+    !text(stored["attachmentId"]) &&
+    !text(stored["data"]) &&
+    asArray(part["parts"]).length > 0;
+  const size = parsedForward ? forwardedSize(part) : declaredSize(stored);
   const maxBytes = typeof args["maxBytes"] === "number" ? args["maxBytes"] : RESULT_BUDGET_BYTES;
   const maxChars = typeof args["maxChars"] === "number" ? args["maxChars"] : DEFAULT_MESSAGE_BODY_CHARS;
   const base = compact({
@@ -406,13 +500,12 @@ async function readAttachment(
     size,
   });
   const unavailable = (note: string) => ({ ...base, format: "unavailable", contentTruncated: false, note });
-  const mime = mimeOf(part).split(";")[0]!.trim();
   const isText =
     mime.startsWith("text/") ||
     ["application/json", "application/xml", "message/rfc822"].includes(mime) ||
     mime.endsWith("+json") ||
     mime.endsWith("+xml");
-  const envelope = { ...base, format: isText ? "text" : "base64", content: "", contentTruncated: false };
+  let envelope = { ...base, format: isText ? "text" : "base64", content: "", contentTruncated: false };
   const fitting = Math.floor(Math.max(0, maxBytes - jsonBytes(envelope)) / 4) * 3;
   const limit = isText ? MAX_ATTACHMENT_BYTES : Math.min(MAX_ATTACHMENT_BYTES, fitting);
   const tooLarge = () =>
@@ -426,38 +519,42 @@ async function readAttachment(
   if (size === undefined)
     return unavailable("Gmail did not declare a valid attachment size; no content is downloaded. Open it in Gmail.");
   if (size > limit) return tooLarge();
-  let data = stored["data"];
-  const freshId = text(stored["attachmentId"]);
-  if (freshId) {
-    const fetched = asRecord(
-      await client.json(
-        {
-          method: "GET",
-          path: `/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(freshId)}`,
-        },
-        ctx,
-      ),
-    );
-    data = fetched["data"];
-  }
-  if (typeof data !== "string") return unavailable("Gmail returned no attachment data; open it in Gmail.");
-  let bytes: Uint8Array;
-  try {
-    bytes = base64UrlBytes(data);
-  } catch {
-    throw new ConnectorCallError("connector_call_failed", "Gmail returned invalid base64url attachment data.", {
-      retryable: false,
+  let decoded: string;
+  if (parsedForward) {
+    const own = walk(part, true).own;
+    const chosen = ownBody(own);
+    if (!chosen) return unavailable("This forwarded message has no readable text body; open it in Gmail.");
+    const bytes = await attachmentBytes(client, ctx, messageId, chosen);
+    if (!bytes) return unavailable("Gmail returned no readable forwarded message body data; open it in Gmail.");
+    const rendered = decodeBytes(chosen, bytes);
+    if (!rendered.text.trim())
+      return unavailable("This forwarded message has no readable text body; open it in Gmail.");
+    const headers = ["From", "To", "Date", "Subject"].flatMap((name) => {
+      const value = own.map((entry) => header(entry, name)).find((entry) => entry !== undefined);
+      return value === undefined ? [] : [`${name}: ${value}`];
     });
-  }
-  if (bytes.length > limit) return tooLarge();
-  if (!isText) {
-    let binary = "";
-    for (let index = 0; index < bytes.length; index += 0x8000) {
-      binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+    const body = mimeOf(chosen) === "text/html" ? htmlToText(rendered.text) : rendered.text;
+    if (!body.trim()) return unavailable("This forwarded message has no readable text body; open it in Gmail.");
+    decoded = headers.length > 0 ? `${headers.join("\n")}\n\n${body}` : body;
+    envelope = { ...envelope, ...compact({ note: rendered.note }) };
+  } else {
+    const bytes = await attachmentBytes(client, ctx, messageId, part);
+    if (!bytes) return unavailable("Gmail returned no attachment data; open it in Gmail.");
+    if (bytes.length > limit) return tooLarge();
+    if (!isText) {
+      let binary = "";
+      for (let index = 0; index < bytes.length; index += 0x8000) {
+        binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+      }
+      return { ...envelope, content: btoa(binary) };
     }
-    return { ...envelope, content: btoa(binary) };
+    const rendered = decodeBytes(part, bytes);
+    decoded = rendered.text;
+    if (mime === "message/rfc822" && !decoded.trim()) {
+      return unavailable("This forwarded message has no readable text body; open it in Gmail.");
+    }
+    envelope = { ...envelope, ...compact({ note: rendered.note }) };
   }
-  const decoded = decodeBytes(part, bytes);
   const characters = Array.from(decoded);
   const marker = (dropped: number) =>
     `\n[… ${dropped} more characters truncated; raise maxChars or maxBytes for a direct call_tool, or open it in Gmail]`;

@@ -50,7 +50,13 @@ to. No argument names a mailbox. A call with none mapped fails
   partId too. Only carried attachment parts can be read, never arbitrary
   message body parts or blind download ids.
 - Text, JSON, XML, calendar invites, CSV, and `message/rfc822` return
-  `format: "text"` and `content` decoded in the declared charset.
+  `format: "text"` and `content` decoded in the declared charset. An unsupported
+  charset produces an explicit note that decoding used UTF-8. Message bodies
+  include the same notice in their text.
+  Parsed forwarded emails render From, To, Date, Subject, and their own
+  plain body, else HTML converted to text. Raw forwarded data is preferred
+  when present. A forwarded email without readable text returns an
+  `unavailable` note.
   `maxChars` defaults to 12,000 code points, at most 100,000. A character
   or byte cut ends with a truncation marker and `contentTruncated: true`.
   Reduce attachment text inside `execute_code` before returning it.
@@ -59,7 +65,11 @@ to. No argument names a mailbox. A call with none mapped fails
   with `name: filename` and `mimeType`. File creation is a write: use
   `call_destructive_tool` or a trusted program for that step.
 - Downloads, text and binary, are limited to 1 MiB. Declared size is
-  checked before a separate download. Binary content must also fit the
+  checked before a separate download. Parsed forwarded emails check the sum
+  of descendant sizes before downloading any stored body, and return that
+  sum as `size`. Attachment data must match both the message part's declared
+  size and the download response's size when supplied; inconsistent payloads
+  fail rather than return incomplete files. Binary content must also fit the
   whole-result `maxBytes`, which defaults to 192 KiB. `format: "unavailable"`
   returns a note and no content when it cannot fit. Raising `maxChars`
   or `maxBytes` cannot bypass the download cap.
