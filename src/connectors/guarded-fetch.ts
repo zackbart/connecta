@@ -158,6 +158,13 @@ export interface GuardedFetchOptions {
    * absurd response is a fact about the API, not about HTTP.
    */
   maxResponseBytes: number;
+  /**
+   * Inspect the exact URL about to be fetched — confined, normalized, with its
+   * query encoded — and throw to refuse it. A policy that reads this URL reads
+   * what the downstream server will route, not a spelling of it. Runs before
+   * authentication, so a refused request never resolves a credential.
+   */
+  admit?: (url: URL, request: GuardedRequest) => void;
 }
 
 /** Sends one already-guarded request on behalf of one call's context. */
@@ -463,6 +470,7 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
       throw new Error(`A ${provider} request cannot carry both a JSON body and a raw body.`);
     }
     const url = confinedUrl(provider, base, basePath, request);
+    options.admit?.(url, request);
 
     const headers: Record<string, string> = { ...constantHeaders };
     for (const [name, value] of Object.entries(request.headers ?? {})) {
