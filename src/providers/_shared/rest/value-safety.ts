@@ -345,7 +345,7 @@ function sanitizeUrl(value: string): string {
   }
   // A snapshot of the names: setting a parameter while iterating the live list is unsafe.
   for (const name of Array.from(url.searchParams.keys())) {
-    if (credentialParam(name)) {
+    if (URL_PARAM_CONTAINS.test(name) || URL_PARAM_SUFFIX.test(name.toLowerCase().replace(/[_-]/g, ""))) {
       url.searchParams.set(name, REDACTED);
       changed = true;
     }
@@ -358,13 +358,38 @@ function sanitizeUrl(value: string): string {
   return changed ? url.toString() : value;
 }
 
-/** Whether a query or fragment parameter's name carries a credential: either URL rule. */
-function credentialParam(name: string): boolean {
-  return URL_PARAM_CONTAINS.test(name) || URL_PARAM_SUFFIX.test(name.toLowerCase().replace(/[_-]/g, ""));
-}
+// Pre-signed links inside free text. The key-name heuristic sees a URL only
+// when a whole string is one; a vendor whose text embeds the links it signs
+// (Notion's page Markdown) scans its strings with these instead. The secret
+// in scope is a link the vendor minted. A link a person wrote (a rich-text
+// href, an external file, a URL property) is their content and comes back as
+// written unless it names a signing parameter. Not in scope, so withheld
+// only incidentally: a signed URL a person pasted into text, and one split
+// across separate strings (rich-text runs), each scanned alone. Two passes,
+// each one linear scan:
+//
+// 1. Host-anchored. Each occurrence of one of the vendor's file hosts, found
+//    by the host name itself however the scheme and slashes before it are
+//    spelled (`https://`, `https:\/\/`, `https:&#47;&#47;`, `%2F%2F`, none),
+//    loses everything from its query or fragment opener (literal, or
+//    percent-, entity-, or `\u`-encoded) to the next whitespace, quote, or
+//    angle bracket. A `)` or `]` is not read as the link's end: a filename
+//    may hold one. Trailing punctuation comes back, since it can carry no
+//    secret, so `![a](…?[redacted])` keeps its close.
+// 2. Signing parameters. AWS Signature Version 4 and Google Cloud Storage V4
+//    names are a credential in any URL, whatever its host: their values go
+//    wherever they appear. Generic names (`code`, `token`, `sig`) are not
+//    withheld in text: there they are as likely a person's own link.
 
-/** HTML character references that can spell a URL separator or a parameter name. */
-const ENTITY = /&(?:#(\d{1,7})|#x([0-9a-f]{1,6})|(amp|quot|apos|lt|gt|quest|num|semi|equals|lpar|rpar));?/gi;
+/** Signing parameters that are a credential in any URL, with their `=` plain or encoded. */
+const SIGNING_PARAM =
+  /x-(?:amz|goog)-(?:signature|credential|security-token)(?:=|%(?:25)*3d|&#0*61;?|&#x0*3d;?|&equals;?|\\u003d)/gi;
+/**
+ * One encoded character at the start of link text: a percent escape, an HTML
+ * character reference, a `\u` or `\x` escape, or a Markdown backslash escape.
+ */
+const LEADING_ESCAPE =
+  /^(?:%([0-9a-f]{2})|&(?:#(\d{1,7})|#x([0-9a-f]{1,6})|(amp|quot|apos|lt|gt|quest|num|semi|equals|sol|percnt|bsol));?|\\u([0-9a-f]{4})|\\x([0-9a-f]{2})|\\)/i;
 const NAMED: Readonly<Record<string, string>> = {
   amp: "&",
   quot: '"',
@@ -375,10 +400,14 @@ const NAMED: Readonly<Record<string, string>> = {
   num: "#",
   semi: ";",
   equals: "=",
-  lpar: "(",
-  rpar: ")",
+  sol: "/",
+  percnt: "%",
+  bsol: "\\",
 };
-const PERCENT = /%([0-9a-f]{2})/gi;
+/** A character that continues a host name: `file.notion.so.example.com` is another host. */
+const HOST_CHAR = /[a-z0-9-]/i;
+/** Punctuation that may close the syntax around a link; it carries no secret, so it comes back. */
+const TRAILING = /[)\]}.,;:!*_~`\\]/;
 
 /** Code points past Unicode's range decode to nothing rather than throw. */
 function codePoint(value: number): string {
@@ -386,142 +415,144 @@ function codePoint(value: number): string {
 }
 
 /**
- * Text as a URL parser would read it: Markdown backslash escapes dropped,
- * HTML character references and percent escapes decoded, until stable (a
- * doubly encoded name decodes too). Only ever inspected, never returned.
+ * Whether link text opens its query or fragment here once decoded as a
+ * browser, a Markdown renderer, or a JSON parser would: `%3F`, `%253F`,
+ * `&#63;`, `&amp;#35;`, `\u003f`. Only the leading character matters, so
+ * each round decodes one escape there: constant work.
  */
-function decodedForInspection(text: string): string {
-  let current = text;
-  for (let round = 0; round < 3; round++) {
-    const next = current
-      .replaceAll("\\", "")
-      .replace(ENTITY, (_, decimal?: string, hex?: string, name?: string) =>
-        decimal !== undefined
+function opener(text: string, at: number): "?" | "#" | undefined {
+  let current = text.slice(at, at + 32);
+  for (let round = 0; round < 4; round++) {
+    if (current[0] === "?" || current[0] === "#") return current[0];
+    const escape = LEADING_ESCAPE.exec(current);
+    if (!escape) return undefined;
+    const [token, percent, decimal, hex, name, unicode, byte] = escape;
+    const char =
+      percent !== undefined
+        ? String.fromCharCode(Number.parseInt(percent, 16))
+        : decimal !== undefined
           ? codePoint(Number(decimal))
           : hex !== undefined
             ? codePoint(Number.parseInt(hex, 16))
-            : (NAMED[name!.toLowerCase()] ?? ""),
-      )
-      .replace(PERCENT, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
-    if (next === current) break;
-    current = next;
+            : name !== undefined
+              ? NAMED[name.toLowerCase()]!
+              : unicode !== undefined || byte !== undefined
+                ? String.fromCharCode(Number.parseInt((unicode ?? byte)!, 16))
+                : "";
+    current = char + current.slice(token.length);
   }
-  return current;
+  return current[0] === "?" || current[0] === "#" ? current[0] : undefined;
 }
 
-/** Whether decoded URL text names a credential parameter anywhere, or its fragment reads like one. */
-function credentialIn(decoded: string): boolean {
-  for (const piece of decoded.split(/[?&;#/]/)) {
-    const equals = piece.indexOf("=");
-    if (equals > 0 && credentialParam(piece.slice(0, equals).trim())) return true;
-  }
-  const fragment = decoded.indexOf("#");
-  return fragment >= 0 && /token|secret|key|code|auth|signature|credential/i.test(decoded.slice(fragment));
+/** Whether the `#` at `at` belongs to a numeric character reference (`&#38;`) rather than opening a fragment. */
+function reference(text: string, at: number): boolean {
+  return text.charCodeAt(at - 1) === 0x26 && /[0-9x]/i.test(text[at + 1] ?? "");
 }
 
-/** Characters no embedded URL runs through: whitespace, quotes, angle brackets, a backtick. */
-function endsUrl(code: number, char: string): boolean {
-  if (code <= 0x20) return true;
-  if (code === 0x22 || code === 0x27 || code === 0x3c || code === 0x3e || code === 0x60) return true;
+/** Whitespace, a quote, or an angle bracket: where a link in text ends, read fail-closed. */
+function endsLink(code: number, char: string): boolean {
+  if (code <= 0x20 || code === 0x22 || code === 0x27 || code === 0x3c || code === 0x3e) return true;
   return code > 0x7f && /\s/.test(char);
 }
 
-/**
- * Every URL inside free text (a Markdown body, an HTML attribute) with its
- * credentials withheld; the heuristic only sees a string that is itself a
- * URL, so a vendor whose text embeds pre-signed links applies this to that
- * text. One linear scan: each `//` starts a URL that runs to whitespace, a
- * quote, an angle bracket, or a backtick, or to a `)` or `]` its own
- * brackets do not balance (a Markdown destination's close), with Markdown
- * backslash escapes honoured. Fail-closed: when its decoded query or
- * fragment names a credential parameter, or its host is one of
- * `signedHosts` (a suffix match), everything after the `?` or `#` is
- * withheld whole, and a credential parameter in the decoded path withholds
- * the path too. Userinfo is withheld. Everything else, including the
- * surrounding Markdown or HTML, comes back byte for byte.
- */
-export function sanitizeEmbeddedUrls(text: string, signedHosts: readonly string[] = []): string {
-  let out = "";
-  let copied = 0;
-  let from = 0;
-  for (;;) {
-    const slashes = text.indexOf("//", from);
-    if (slashes < 0) break;
-    const authorityStart = slashes + 2;
-    let i = authorityStart;
-    for (; i < text.length; i++) {
-      const code = text.charCodeAt(i);
-      // `/ ? # \ ( ) [ ]` end the host; so does the URL's own end.
-      if (code === 0x2f || code === 0x3f || code === 0x23 || code === 0x5c) break;
-      if (code === 0x28 || code === 0x29 || code === 0x5b || code === 0x5d) break;
-      if (endsUrl(code, text[i]!)) break;
-    }
-    const authorityEnd = i;
-    let parens = 0;
-    let brackets = 0;
-    // The first `?`, or a `#` that does not open a character reference (`&#38;`).
-    let tail = -1;
-    while (i < text.length) {
-      let code = text.charCodeAt(i);
-      if (endsUrl(code, text[i]!)) break;
-      let escaped = false;
-      if (code === 0x5c && i + 1 < text.length) {
-        code = text.charCodeAt(i + 1);
-        if (endsUrl(code, text[i + 1]!)) break;
-        i++;
-        escaped = true;
-      }
-      if (tail < 0 && (code === 0x3f || (code === 0x23 && text.charCodeAt(i - 1) !== 0x26))) tail = i;
-      if (!escaped) {
-        if (code === 0x28) parens++;
-        else if (code === 0x5b) brackets++;
-        else if (code === 0x29) {
-          if (parens === 0) break;
-          parens--;
-        } else if (code === 0x5d) {
-          if (brackets === 0) break;
-          brackets--;
-        }
-      }
-      i++;
-    }
-    const end = i;
-    from = end;
-
-    const authority = text.slice(authorityStart, authorityEnd);
-    const at = authority.lastIndexOf("@");
-    const host = (at >= 0 ? authority.slice(at + 1) : authority).replace(/:\d*$/, "").toLowerCase();
-    const pathEnd = tail >= 0 ? tail : end;
-    let cut = -1;
-    if (credentialIn(decodedForInspection(text.slice(authorityEnd, pathEnd)))) cut = authorityEnd;
-    else if (
-      tail >= 0 &&
-      tail + 1 < end &&
-      (signedHosts.some((signed) => host === signed || host.endsWith(`.${signed}`)) ||
-        credentialIn(decodedForInspection(text.slice(tail, end))))
-    ) {
-      cut = tail + 1;
-    }
-    if (cut < 0 && at < 0) continue;
-    out += text.slice(copied, authorityStart);
-    out += at >= 0 ? `redacted@${authority.slice(at + 1)}` : authority;
-    if (cut < 0) out += text.slice(authorityEnd, end);
-    else out += cut === authorityEnd ? `/${REDACTED}` : `${text.slice(authorityEnd, cut)}${REDACTED}`;
-    copied = end;
-  }
-  return copied === 0 ? text : out + text.slice(copied);
+/** Where a signing parameter's value ends: its link's end, or the next parameter or closing bracket. */
+function endsValue(text: string, at: number): boolean {
+  const code = text.charCodeAt(at);
+  if (endsLink(code, text[at]!)) return true;
+  if (code === 0x26 || code === 0x23 || code === 0x29 || code === 0x5d || code === 0x60) return true;
+  // `\/` is a JSON-escaped slash inside the value; any other backslash escapes what follows it.
+  return code === 0x5c && text.charCodeAt(at + 1) !== 0x2f;
 }
 
-/** Every string inside a JSON value through `sanitizeEmbeddedUrls`; unchanged values keep their identity. */
-export function sanitizeEmbeddedUrlsIn(value: unknown, signedHosts: readonly string[] = [], depth = 0): unknown {
-  if (typeof value === "string") return value.includes("//") ? sanitizeEmbeddedUrls(value, signedHosts) : value;
+const HOST_PATTERNS = new WeakMap<readonly string[], RegExp>();
+
+function hostPattern(hosts: readonly string[]): RegExp {
+  let pattern = HOST_PATTERNS.get(hosts);
+  if (!pattern) {
+    pattern = new RegExp(hosts.map((host) => host.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&")).join("|"), "gi");
+    HOST_PATTERNS.set(hosts, pattern);
+  }
+  return pattern;
+}
+
+/**
+ * Each link at one of `hosts`: where its query or fragment opens (`cut`,
+ * `-1` for none; `open` is the decoded opener) and where it ends. Later occurrences inside
+ * one link share its end and are skipped, so the scan stays linear.
+ */
+function* hostLinks(text: string, hosts: readonly string[]): Generator<{ cut: number; open: string; end: number }> {
+  const pattern = hostPattern(hosts);
+  pattern.lastIndex = 0;
+  for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+    const hostEnd = match.index + match[0].length;
+    if (HOST_CHAR.test(text[hostEnd] ?? "")) continue;
+    let cut = -1;
+    let open = "?";
+    let end = hostEnd;
+    for (; end < text.length; end++) {
+      const code = text.charCodeAt(end);
+      if (endsLink(code, text[end]!)) break;
+      if (cut >= 0) continue;
+      if (code === 0x3f || (code === 0x23 && !reference(text, end))) {
+        cut = end;
+        open = text[end]!;
+      } else if (code === 0x25 || code === 0x26 || code === 0x5c) {
+        const opens = opener(text, end);
+        if (opens) {
+          cut = end;
+          open = opens;
+        }
+      }
+    }
+    pattern.lastIndex = end;
+    yield { cut, open, end };
+  }
+}
+
+/**
+ * `text` with every pre-signed link withheld: at one of `hosts` (Notion's
+ * file storage, say), its whole query and fragment; anywhere, a signing
+ * parameter's value. Everything else comes back byte for byte.
+ */
+export function withholdSignedLinks(text: string, hosts: readonly string[]): string {
+  let out = "";
+  let copied = 0;
+  for (const { cut, open, end } of hostLinks(text, hosts)) {
+    if (cut < 0) continue;
+    let keep = end;
+    while (keep > cut + 1 && TRAILING.test(text[keep - 1]!)) keep--;
+    // A query with nothing in it.
+    if (keep <= cut + 1) continue;
+    out += `${text.slice(copied, cut)}${open}${REDACTED}`;
+    copied = keep;
+  }
+  const anchored = copied === 0 ? text : out + text.slice(copied);
+
+  out = "";
+  copied = 0;
+  SIGNING_PARAM.lastIndex = 0;
+  for (let match = SIGNING_PARAM.exec(anchored); match; match = SIGNING_PARAM.exec(anchored)) {
+    const start = match.index + match[0].length;
+    let end = start;
+    while (end < anchored.length && !endsValue(anchored, end)) end++;
+    SIGNING_PARAM.lastIndex = end;
+    if (end === start || anchored.startsWith(REDACTED, start)) continue;
+    out += `${anchored.slice(copied, start)}${REDACTED}`;
+    copied = end;
+  }
+  return copied === 0 ? anchored : out + anchored.slice(copied);
+}
+
+/** Every string inside a JSON value through `withholdSignedLinks`; unchanged values keep their identity. */
+export function withholdSignedLinksIn(value: unknown, hosts: readonly string[], depth = 0): unknown {
+  if (typeof value === "string") return withholdSignedLinks(value, hosts);
   if (typeof value !== "object" || value === null) return value;
   // Deeper than any vendor's shape: withheld, as the heuristic does.
   if (depth > MAX_DEPTH) return REDACTED;
   if (Array.isArray(value)) {
     let changed = false;
     const items = value.map((item) => {
-      const clean = sanitizeEmbeddedUrlsIn(item, signedHosts, depth + 1);
+      const clean = withholdSignedLinksIn(item, hosts, depth + 1);
       if (clean !== item) changed = true;
       return clean;
     });
@@ -529,11 +560,27 @@ export function sanitizeEmbeddedUrlsIn(value: unknown, signedHosts: readonly str
   }
   let changed = false;
   const entries = Object.entries(value).map(([key, item]) => {
-    const clean = sanitizeEmbeddedUrlsIn(item, signedHosts, depth + 1);
+    const clean = withholdSignedLinksIn(item, hosts, depth + 1);
     if (clean !== item) changed = true;
     return [key, clean] as const;
   });
   return changed ? Object.fromEntries(entries) : value;
+}
+
+/**
+ * Whether a request value carries a link at one of `hosts` whose signature
+ * was withheld (`[redacted]`, plain or encoded): a read copied into a write,
+ * which would store the placeholder.
+ */
+export function carriesWithheldLink(value: unknown, hosts: readonly string[], depth = 0): boolean {
+  if (typeof value === "string") {
+    for (const { cut, end } of hostLinks(value, hosts)) {
+      if (cut >= 0 && /redacted/i.test(value.slice(cut, end))) return true;
+    }
+    return false;
+  }
+  if (typeof value !== "object" || value === null || depth > MAX_DEPTH) return false;
+  return Object.values(value).some((item) => carriesWithheldLink(item, hosts, depth + 1));
 }
 
 /**

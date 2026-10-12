@@ -8,11 +8,12 @@ import {
   redact,
   refuse,
   safe,
-  sanitizeEmbeddedUrls,
-  sanitizeEmbeddedUrlsIn,
   validPath,
   valueSafety,
   vendorErrors,
+  withholdSignedLinks,
+  withholdSignedLinksIn,
+  carriesWithheldLink,
   type ValueSafetyTable,
 } from "../src/providers/_shared/rest/value-safety.js";
 
@@ -219,11 +220,13 @@ describe("value-safety engine", () => {
   });
 });
 
-describe("embedded URLs in free text", () => {
-  const S3 = "https://prod-files-secure.s3.us-west-2.amazonaws.com";
-  const SIGNED = ["amazonaws.com", "file.notion.so"];
+describe("pre-signed links in free text", () => {
+  const HOSTS = ["prod-files-secure", "secure.notion-static.com", "file.notion.so", "notionusercontent.com"];
+  const HOST = "prod-files-secure.s3.us-west-2.amazonaws.com";
+  const S3 = `https://${HOST}`;
   const query = "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAEXAMPLE&X-Amz-Signature=FAKE_SIGNATURE";
   const leaks = (text: string) => ["ASIAEXAMPLE", "FAKE_SIGNATURE"].filter((secret) => text.includes(secret));
+  const withheld = (text: string) => withholdSignedLinks(text, HOSTS);
 
   it.each([
     ["a filename with parentheses", `![a](${S3}/ws/file(1).png?${query})`, `![a](${S3}/ws/file(1).png?${REDACTED})`],
@@ -237,78 +240,153 @@ describe("embedded URLs in free text", () => {
       `<file src="${S3}/ws/file(1).pdf?${query}">Report</file>`,
       `<file src="${S3}/ws/file(1).pdf?${REDACTED}">Report</file>`,
     ],
+    // Review round 2, finding 1: an unmatched `)` or `]` does not end the link.
     [
-      "a decimal character reference",
-      `<file src="https://cdn.example/a.pdf?X-Amz-Algorithm=A&#38;X-Amz-Credential=ASIAEXAMPLE&#38;X-Amz-Signature=FAKE_SIGNATURE"></file>`,
-      `<file src="https://cdn.example/a.pdf?${REDACTED}"></file>`,
+      "a quoted attribute with an unmatched parenthesis",
+      `<file src="${S3}/ws/file).pdf?X-Amz-Signature=FAKE_SIGNATURE">f</file>`,
+      `<file src="${S3}/ws/file).pdf?${REDACTED}">f</file>`,
     ],
     [
-      "a hex character reference",
-      `<file src='https://cdn.example/a.pdf?a=1&#x26;X-Amz-Signature=FAKE_SIGNATURE&#X26;c=ASIAEXAMPLE'>`,
-      `<file src='https://cdn.example/a.pdf?${REDACTED}'>`,
+      "a bracket-bearing query value",
+      `<file src="${S3}/ws/file.pdf?name=a)b&X-Amz-Signature=FAKE_SIGNATURE">f</file>`,
+      `<file src="${S3}/ws/file.pdf?${REDACTED}">f</file>`,
     ],
     [
-      "a percent-encoded parameter name",
-      "see https://cdn.example/a.pdf?X%2DAmz%2DSignature=FAKE_SIGNATURE&c=ASIAEXAMPLE now",
-      `see https://cdn.example/a.pdf?${REDACTED} now`,
+      "an angle autolink with an unmatched parenthesis",
+      `<${S3}/ws/file).pdf?${query}>`,
+      `<${S3}/ws/file).pdf?${REDACTED}>`,
     ],
-    ["an autolink", `<${S3}/ws/a.png?${query}>`, `<${S3}/ws/a.png?${REDACTED}>`],
-    ["a Markdown title", `[a](${S3}/a.png?${query} "Title")`, `[a](${S3}/a.png?${REDACTED} "Title")`],
     [
-      "a signed host with innocuous names",
+      "a quoted filename with a bracket",
+      `<file src='${S3}/ws/a]b.pdf?${query}'>f</file>`,
+      `<file src='${S3}/ws/a]b.pdf?${REDACTED}'>f</file>`,
+    ],
+    // Review round 2, finding 2: the host anchors, however the slashes are spelled.
+    [
+      "numeric slash references",
+      `<file src="https:&#47;&#47;${HOST}/ws/file.png?${query}">`,
+      `<file src="https:&#47;&#47;${HOST}/ws/file.png?${REDACTED}">`,
+    ],
+    [
+      "Markdown slash escapes",
+      `[a](https:\\/\\/${HOST}/ws/file.png?${query})`,
+      `[a](https:\\/\\/${HOST}/ws/file.png?${REDACTED})`,
+    ],
+    [
+      "JSON text inside a string",
+      JSON.stringify({ url: `${S3}/ws/a.png?${query}` }).replaceAll("/", "\\/"),
+      `{"url":"https:\\/\\/${HOST}\\/ws\\/a.png?${REDACTED}"}`,
+    ],
+    [
+      "a percent-encoded whole link",
+      `see ${encodeURIComponent(`${S3}/ws/a.png?${query}`)} now`,
+      `see https%3A%2F%2F${HOST}%2Fws%2Fa.png?${REDACTED} now`,
+    ],
+    ["no scheme", `${HOST}/ws/a.png?${query}`, `${HOST}/ws/a.png?${REDACTED}`],
+    [
+      "an uppercase host",
+      `HTTPS://${HOST.toUpperCase()}/A.PNG?${query}`,
+      `HTTPS://${HOST.toUpperCase()}/A.PNG?${REDACTED}`,
+    ],
+    [
+      "an entity-encoded query opener",
+      `<file src="${S3}/ws/a.png&#63;${query}">`,
+      `<file src="${S3}/ws/a.png?${REDACTED}">`,
+    ],
+    ["a \\u-escaped query opener", `${S3}/ws/a.png\\u003f${query}`, `${S3}/ws/a.png?${REDACTED}`],
+    [
+      "a path-style Notion bucket",
+      `![a](https://s3.us-west-2.amazonaws.com/secure.notion-static.com/u/a.png?${query})`,
+      `![a](https://s3.us-west-2.amazonaws.com/secure.notion-static.com/u/a.png?${REDACTED})`,
+    ],
+    [
+      "Notion's own file host with innocuous names",
       "![a](https://file.notion.so/f/f/ws/a.png?table=block&id=ASIAEXAMPLE&expirationTimestamp=1)",
       `![a](https://file.notion.so/f/f/ws/a.png?${REDACTED})`,
     ],
     [
+      "a fragment on a file host",
+      "https://img.notionusercontent.com/s/a.png#sig=FAKE_SIGNATURE",
+      `https://img.notionusercontent.com/s/a.png#${REDACTED}`,
+    ],
+    [
       "a signed link inside another link's query",
       `[go](https://example.com/r?to=${encodeURIComponent(`${S3}/a.png?${query}`)})`,
-      `[go](https://example.com/r?${REDACTED})`,
+      `[go](https://example.com/r?to=https%3A%2F%2F${HOST}%2Fa.png?${REDACTED})`,
     ],
-    ["a credential in the path", "https://cdn.example/api_key=FAKE_SIGNATURE/a.png", `https://cdn.example/${REDACTED}`],
     [
-      "a token in a fragment",
-      "https://app.example/cb#access_token=FAKE_SIGNATURE",
-      `https://app.example/cb#${REDACTED}`,
+      "a link followed by prose punctuation",
+      `See ${S3}/a.png?${query}, then stop.`,
+      `See ${S3}/a.png?${REDACTED}, then stop.`,
     ],
-    ["userinfo", "https://ASIAEXAMPLE:pw@host.example/a", "https://redacted@host.example/a"],
+    [
+      "a signing parameter on any host, behind a character reference",
+      `<file src="https://cdn.example/a.pdf?a=1&#38;X-Amz-Signature=FAKE_SIGNATURE&#x26;X-Amz-Credential=ASIAEXAMPLE">`,
+      `<file src="https://cdn.example/a.pdf?a=1&#38;X-Amz-Signature=${REDACTED}&#x26;X-Amz-Credential=${REDACTED}">`,
+    ],
+    [
+      "a signing parameter with an encoded equals sign",
+      "https://storage.example/o?X-Goog-Signature%3DFAKE_SIGNATURE&x=1",
+      `https://storage.example/o?X-Goog-Signature%3D${REDACTED}&x=1`,
+    ],
   ])("INV-5: withholds a signed link in %s and keeps the syntax around it", (_, text, expected) => {
-    const clean = sanitizeEmbeddedUrls(text, SIGNED);
+    const clean = withheld(text);
     expect(leaks(clean)).toEqual([]);
     expect(clean).toBe(expected);
   });
 
-  it("INV-5: returns ordinary links and their surroundings byte for byte", () => {
+  it("INV-5: returns a person's own links byte for byte, generic parameter names and AWS hosts included", () => {
     const text = [
       "# Notes (draft)",
       "See [the docs](https://developers.notion.com/reference?topic=markdown) and <https://example.com/a(b)>.",
       "![a](https://example.com/file(1).png?width=200&amp;height=100) [Page](https://www.notion.so/Page-abc?pvs=4)",
-      "a // comment, a://b, and a bare // pair",
+      "[login](https://app.example/cb?code=abc&token=def&name=x#access_token=t) https://ASIAEXAMPLE:pw@host.example/a",
+      "https://api-id.execute-api.us-east-1.amazonaws.com/prod/report?reportId=42",
+      "https://bucket.s3.us-east-1.amazonaws.com/public.png?versionId=3 and the prod-files-secure bucket? Yes.",
+      "a // comment, a://b, file.notion.solutions/?q=1, and a bare // pair",
     ].join("\n");
-    expect(sanitizeEmbeddedUrls(text, SIGNED)).toBe(text);
+    expect(withheld(text)).toBe(text);
   });
 
   it("INV-5: scans every string of a JSON value and keeps unchanged values' identity", () => {
     const untouched = { title: "plain", links: ["https://example.com/?q=1"] };
     const value = { untouched, nested: [{ result: { markdown: `![a](${S3}/a.png?${query})` } }] };
-    const clean = sanitizeEmbeddedUrlsIn(value, SIGNED) as typeof value;
+    const clean = withholdSignedLinksIn(value, HOSTS) as typeof value;
     expect(clean.untouched).toBe(untouched);
     expect(clean.nested[0]!.result.markdown).toBe(`![a](${S3}/a.png?${REDACTED})`);
-    expect(sanitizeEmbeddedUrlsIn(untouched, SIGNED)).toBe(untouched);
+    expect(withholdSignedLinksIn(untouched, HOSTS)).toBe(untouched);
+  });
+
+  it("INV-5: finds a withheld file link in a request, plain or encoded, and nothing else", () => {
+    for (const text of [
+      `![a](${S3}/a.png?${REDACTED})`,
+      `<file src="${S3}/a.png?X-Amz-Signature=%5Bredacted%5D">`,
+      `https:&#47;&#47;${HOST}/a.png&#63;&#91;redacted&#93;`,
+    ]) {
+      expect(carriesWithheldLink({ body: [{ text }] }, HOSTS)).toBe(true);
+    }
+    for (const text of [`![a](${S3}/a.png)`, `https://example.com/?q=${REDACTED}`, `${REDACTED} ${S3}/a.png`]) {
+      expect(carriesWithheldLink({ text }, HOSTS)).toBe(false);
+    }
   });
 
   // workerd freezes its clocks during synchronous work, so the bound is
   // measured on Node; in workerd the scan must still finish within the test's
-  // timeout. The former regex took about a second for 40,000 letters.
+  // timeout.
   it.each([
     ["5 MiB of text without a URL", "a".repeat(5 * 1024 * 1024)],
     ["near-URL letters", "abc:/".repeat(400_000)],
     ["empty authorities", "// ".repeat(400_000)],
-    ["one long link of separators", `https://h/?${"&#38;(%25[".repeat(200_000)}`],
-    ["many short links", "https://h/a?sig=1 ".repeat(100_000)],
+    ["one long link of separators", `https://${HOST}/${"&#38;(%25[\\".repeat(200_000)}`],
+    ["host names in one unbroken link", `https://${"file.notion.so/".repeat(200_000)}`],
+    ["host names behind one query", `https://${HOST}/?${"file.notion.so&#35;%3f".repeat(100_000)}`],
+    ["many short links", `${S3}/a?sig=1 `.repeat(50_000)],
+    ["signing names without values", "X-Amz-Signature=&".repeat(200_000)],
   ])("INV-5: scans %s in linear time", (_, text) => {
     const started = performance.now();
-    const clean = sanitizeEmbeddedUrls(text, SIGNED);
+    const clean = withheld(text);
     expect(performance.now() - started).toBeLessThan(2_000);
     expect(clean.length).toBeGreaterThan(0);
+    expect(carriesWithheldLink(text, HOSTS)).toBeTypeOf("boolean");
   });
 });

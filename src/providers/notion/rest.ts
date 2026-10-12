@@ -18,9 +18,9 @@ import {
   type RestReadPost,
   type RestVendor,
 } from "../_shared/rest/tools.js";
-import { valueSafety } from "../_shared/rest/value-safety.js";
+import { carriesWithheldLink, valueSafety } from "../_shared/rest/value-safety.js";
 import { openapi } from "./openapi.generated.js";
-import { NOTION_VALUE_SAFETY, sanitizeLinks } from "./value-safety.js";
+import { NOTION_FILE_HOSTS, NOTION_VALUE_SAFETY, sanitizeLinks } from "./value-safety.js";
 
 /** Notion's REST origin. Every request this connector sends goes to exactly this host. */
 export const NOTION_API_BASE_URL = "https://api.notion.com";
@@ -104,14 +104,25 @@ function bodyRetryAfterMs(additional: unknown): number | undefined {
   return Number.isFinite(seconds) && seconds >= 0 ? Math.trunc(seconds * 1000) : undefined;
 }
 
-/** The ids a 503 reports as already committed, so a caller reads them instead of repeating the write. */
-function committedIds(additional: unknown): string {
+/** A Notion object id, dashed or not: the only committed-id shape shown when error text is withheld. */
+const NOTION_ID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
+
+/**
+ * The ids a 503 reports as already committed, so a caller reads them instead
+ * of repeating the write. For an operation whose error text is withheld, only
+ * ids shaped as Notion ids are named, since anything else could echo what the
+ * request sent; the write is still reported as committed.
+ */
+function committedIds(additional: unknown, withheld: boolean): string {
   if (!isRecord(additional)) return "";
   const resource = additional["committed_resource_id"];
   const children = Array.isArray(additional["committed_child_ids"])
     ? additional["committed_child_ids"].filter((child): child is string => typeof child === "string")
     : [];
   if (typeof resource !== "string" || resource === "") return "";
+  if (withheld && ![resource, ...children].every((committed) => NOTION_ID.test(committed))) {
+    return " Notion committed the write before failing; what it committed is withheld because this operation handles credentials. Read the object instead of repeating the write.";
+  }
   return children.length
     ? ` Notion committed the write before failing: it appended ${children.length} block(s) (${children.join(", ")}) under ${resource}. Read that block instead of repeating the write.`
     : ` Notion committed the write before failing: the object it created or changed is ${resource}. Read it instead of repeating the write.`;
@@ -147,6 +158,12 @@ function retryGuidance(additional: unknown): string {
  * committed, or gives its own retry guidance, the failure says so and stops
  * being retryable; otherwise the shared path reports a write's outcome as
  * unknown (INV-9).
+ *
+ * `withheld` replaces every free-text field (message, retry guidance,
+ * committed ids) for an operation whose error text the review withholds.
+ * Text that does pass has had its pre-signed file links withheld first
+ * (`sanitizeLinks`, as on success), since a message can echo the Markdown it
+ * rejected.
  */
 function notionFailure(status: number, headers: Headers, payload: unknown, withheld = false): ConnectorCallError {
   const body = isRecord(payload) ? payload : undefined;
@@ -223,15 +240,19 @@ function notionFailure(status: number, headers: Headers, payload: unknown, withh
     );
   }
   if (status >= 500) {
-    const committed = committedIds(additional);
+    const committed = committedIds(additional, withheld);
     if (committed) {
       return new ConnectorCallError("connector_call_failed", `${labelled}${committed}`, { retryable: false });
     }
     const guidance = retryGuidance(additional);
     if (guidance) {
-      return new ConnectorCallError("connector_call_failed", `${labelled} Notion's guidance: ${guidance}`, {
-        retryable: false,
-      });
+      return new ConnectorCallError(
+        "connector_call_failed",
+        withheld
+          ? `${labelled} Notion sent retry guidance, withheld because this operation handles credentials. Read the object before repeating the write.`
+          : `${labelled} Notion's guidance: ${guidance}`,
+        { retryable: false },
+      );
     }
     return new ConnectorCallError(
       "unavailable",
@@ -283,6 +304,20 @@ function incomplete(data: JsonRecord): boolean {
   return isRecord(status) && status["type"] === "incomplete";
 }
 
+/**
+ * A read copied into a write: a file link whose signature this connector
+ * withheld would be stored as the placeholder, or fail an exact `old_str`
+ * match. Refused before dispatch, named tools and generic writes alike.
+ */
+function refuseWithheldLinks(call: RestCall): void {
+  if (call.method === "GET" || call.method === "HEAD") return;
+  if (READ_POSTS.some(([method, path]) => method === call.method && path === call.op.path)) return;
+  if (!carriesWithheldLink(call.body, NOTION_FILE_HOSTS)) return;
+  invalid(
+    "This write carries a Notion file link whose signature Connecta withheld ([redacted]), so Notion would store the placeholder. A redacted file URL cannot be copied into a write: re-upload the file (POST /v1/file_uploads), reference the existing block instead, and match Markdown edits on the text around the media rather than its URL.",
+  );
+}
+
 /** The pinned index, shared by every Notion REST connector in the deployment. */
 let index: OperationIndex | undefined;
 let transport: GuardedTransport | undefined;
@@ -328,13 +363,14 @@ const VENDOR: RestVendor = {
       : `This operation is served from ${server}, which this connector does not reach.`;
   },
   failure: (status, headers, payload, call) =>
-    notionFailure(status, headers, payload, call ? SAFETY.withholdsErrors(call.op) : false),
+    notionFailure(status, headers, sanitizeLinks(payload), call ? SAFETY.withholdsErrors(call.op) : false),
   readPosts: READ_POSTS,
   valueSafety: SAFETY,
   // Not an envelope to unwrap: page Markdown carries pre-signed file links
   // inside its text, where redaction's URL rule cannot reach. Every success
   // response passes here, named tools and paging included.
   result: sanitizeLinks,
+  admit: refuseWithheldLinks,
   page,
   upload:
     'Create the upload with POST /v1/file_uploads and mode "external_url" instead; this connector sends no multipart bodies.',

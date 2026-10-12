@@ -13,11 +13,12 @@
 // returned URL names the file without granting access to it. A page read as
 // Markdown embeds those same URLs inside one string the URL rule never sees
 // whole, and an async task's `result` can carry that Markdown under any key,
-// so `sanitizeLinks` scans every string of every response for embedded links.
+// so `sanitizeLinks` scans every string of every response for links at
+// Notion's file hosts.
 import {
   refuse,
   safe,
-  sanitizeEmbeddedUrlsIn,
+  withholdSignedLinksIn,
   type ValueSafetyTable,
   type ValueSafetyVerdict,
 } from "../_shared/rest/value-safety.js";
@@ -45,20 +46,29 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
 export const NOTION_VALUE_SAFETY: ValueSafetyTable = { title: "Notion", operations: OPERATIONS };
 
 /**
- * Hosts that serve Notion's files: S3 (`prod-files-secure.s3.…amazonaws.com`)
- * and Notion's own file hosts. Any query on them is a signature.
+ * Where Notion stores the files it signs, matched as names in text. Its S3
+ * buckets, in the host (`prod-files-secure.s3.us-west-2.amazonaws.com`) or
+ * first path segment (`s3.us-west-2.amazonaws.com/secure.notion-static.com/…`,
+ * Notion's file object reference), and its own file and image-proxy hosts
+ * (`file.notion.so`, `img.notionusercontent.com`). Never all of
+ * `amazonaws.com`: a person's public AWS link is their content.
  */
-const SIGNED_FILE_HOSTS = ["amazonaws.com", "file.notion.so", "notion-static.com", "notionusercontent.com"];
+export const NOTION_FILE_HOSTS: readonly string[] = [
+  "prod-files-secure",
+  "secure.notion-static.com",
+  "file.notion.so",
+  "notionusercontent.com",
+];
 
 /**
- * Every response with each link embedded in its strings sanitized. Images in
- * page Markdown render as `![caption](url)` and files, PDFs, audio, and video
- * as `<file src="url">`, so a Notion-hosted file's pre-signed URL arrives
- * inside text rather than as a field: in `GET` and `PATCH
- * /v1/pages/{page_id}/markdown`, and in a completed async task's `result`,
- * which is free-form. Every response is scanned rather than those paths, so
- * no route to page Markdown can skip it.
+ * Every response with each pre-signed file link embedded in its strings
+ * withheld. Images in page Markdown render as `![caption](url)` and files,
+ * PDFs, audio, and video as `<file src="url">`, so a Notion-hosted file's
+ * pre-signed URL arrives inside text rather than as a field: in `GET` and
+ * `PATCH /v1/pages/{page_id}/markdown`, and in a completed async task's
+ * `result`, which is free-form. Every response and error body is scanned
+ * rather than those paths, so no route to page Markdown can skip it.
  */
 export function sanitizeLinks(body: unknown): unknown {
-  return sanitizeEmbeddedUrlsIn(body, SIGNED_FILE_HOSTS);
+  return withholdSignedLinksIn(body, NOTION_FILE_HOSTS);
 }
