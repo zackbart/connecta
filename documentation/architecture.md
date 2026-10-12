@@ -817,12 +817,16 @@ every vendor ships one reviewed table through one mechanism
    itself a URL; a vendor whose text embeds the links it signs applies
    `withholdSignedLinksIn` with its reviewed file hosts to every response
    (its `result` hook) and error body, as Notion does for page Markdown
-   wherever it appears. That scan is linear and anchors on the host name
-   however the scheme before it is spelled: each link at a listed host loses
-   its whole query and fragment (opener literal or encoded) through the next
-   whitespace, quote, or angle bracket. AWS SigV4 and Google V4 signing
-   parameters lose their values at any host. A person's own links come back
-   as written.
+   wherever it appears. That scan is linear and anchors on a file host
+   however the scheme before it is spelled: a reviewed domain or its
+   subdomain, or a reviewed S3 bucket, virtual-hosted or as the first path
+   segment on an S3 endpoint. A host or path that merely contains one of
+   those names is not one. Each link at a file host loses its whole query and
+   fragment (opener literal or encoded) through the next whitespace, quote,
+   or angle bracket. AWS SigV4 and Google V4 signing parameters lose their
+   values at any host. A person's own links come back as written. A write
+   whose file-host link carries the exact `[redacted]` placeholder in its
+   query or fragment, plain or encoded, is refused before dispatch.
 4. **Errors.** A reviewed operation, or an unreviewed one whose request
    accepts a credential-named field, answers failures with the vendor's codes
    and status but not its text, unless its verdict is wrapped in

@@ -221,7 +221,10 @@ describe("value-safety engine", () => {
 });
 
 describe("pre-signed links in free text", () => {
-  const HOSTS = ["prod-files-secure", "secure.notion-static.com", "file.notion.so", "notionusercontent.com"];
+  const HOSTS = {
+    domains: ["file.notion.so", "secure.notion-static.com", "notionusercontent.com"],
+    buckets: ["prod-files-secure", "secure.notion-static.com"],
+  };
   const HOST = "prod-files-secure.s3.us-west-2.amazonaws.com";
   const S3 = `https://${HOST}`;
   const query = "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAEXAMPLE&X-Amz-Signature=FAKE_SIGNATURE";
@@ -348,6 +351,68 @@ describe("pre-signed links in free text", () => {
     expect(withheld(text)).toBe(text);
   });
 
+  // Review round 3, finding 2: only a reviewed host, its subdomain, or a
+  // reviewed bucket on an S3 endpoint anchors; a name inside another host or
+  // an arbitrary path does not.
+  it.each([
+    "https://file.notion.so.example.com/report?reportId=42",
+    "https://my-prod-files-secure.example.com/report?reportId=42",
+    "https://example.com/prod-files-secure?reportId=42",
+    "https://myfile.notion.so/report?reportId=42",
+    "https://img.notionusercontent.com.example.com/a.png?width=2",
+    "https://prod-files-secure.example.com/report?reportId=42",
+    "https://example.com/file.notion.so/report?reportId=42",
+    "https://example.com/s3.us-west-2.amazonaws.com/prod-files-secure/a.png?v=1",
+    "https://other.s3.us-west-2.amazonaws.com/prod-files-secure/a.png?v=1",
+    "https://s3.us-west-2.amazonaws.com/my-bucket/prod-files-secure/a.png?v=1",
+    "https://s3.us-west-2.amazonaws.com/prod-files-secure-archive/a.png?v=1",
+    "https://s3.us-west-2.amazonaws.com.example.com/prod-files-secure/a.png?v=1",
+    "https://prod-files-secure.s3.us-west-2.amazonaws.com.example.com/a.png?v=1",
+    `![a](https:&#47;example.com&#47;prod-files-secure?reportId=42)`,
+    `{"url":"https:\\/\\/example.com\\/file.notion.so?reportId=42"}`,
+  ])("INV-5: returns a link at a host or path that only contains a reviewed name byte for byte: %s", (link) => {
+    for (const text of [link, `[r](${link})`, `<file src="${link}">f</file>`]) {
+      expect(withheld(text)).toBe(text);
+      expect(carriesWithheldLink(`${text.replace("?", `?${REDACTED}&`)}`, HOSTS)).toBe(false);
+    }
+  });
+
+  it.each([
+    [
+      "a subdomain of a file host",
+      "https://x.file.notion.so/a.png?sig=1",
+      `https://x.file.notion.so/a.png?${REDACTED}`,
+    ],
+    [
+      "a dash-region path-style bucket",
+      `https://s3-us-west-2.amazonaws.com/prod-files-secure/a.png?v=1`,
+      `https://s3-us-west-2.amazonaws.com/prod-files-secure/a.png?${REDACTED}`,
+    ],
+    [
+      "a global virtual-hosted bucket",
+      "https://prod-files-secure.s3.amazonaws.com/a.png?v=1",
+      `https://prod-files-secure.s3.amazonaws.com/a.png?${REDACTED}`,
+    ],
+    [
+      "a dual-stack path-style bucket",
+      "https://s3.dualstack.us-west-2.amazonaws.com/secure.notion-static.com/a.png?v=1",
+      `https://s3.dualstack.us-west-2.amazonaws.com/secure.notion-static.com/a.png?${REDACTED}`,
+    ],
+    [
+      "a JSON-escaped path-style bucket",
+      "https:\\/\\/s3.us-west-2.amazonaws.com\\/prod-files-secure\\/a.png?v=1",
+      `https:\\/\\/s3.us-west-2.amazonaws.com\\/prod-files-secure\\/a.png?${REDACTED}`,
+    ],
+    [
+      "a file host at a sentence's end",
+      "Open https://file.notion.so./a.png?v=1",
+      `Open https://file.notion.so./a.png?${REDACTED}`,
+    ],
+    ["a file host behind userinfo", "https://u@file.notion.so/a.png?v=1", `https://u@file.notion.so/a.png?${REDACTED}`],
+  ])("INV-5: withholds a link at %s", (_, text, expected) => {
+    expect(withheld(text)).toBe(expected);
+  });
+
   it("INV-5: scans every string of a JSON value and keeps unchanged values' identity", () => {
     const untouched = { title: "plain", links: ["https://example.com/?q=1"] };
     const value = { untouched, nested: [{ result: { markdown: `![a](${S3}/a.png?${query})` } }] };
@@ -370,6 +435,32 @@ describe("pre-signed links in free text", () => {
     }
   });
 
+  // Review round 3, finding 3: the exact placeholder, decoded, and never the word.
+  it.each([
+    "https://file.notion.so/f/f/a.png?%5B%72%65%64%61%63%74%65%64%5D",
+    "https://file.notion.so/f/f/a.png?&#91;redac&#116;ed&#93;",
+    "https://file.notion.so/f/f/a.png?&#x5b;redacted&#x5D;",
+    "https://file.notion.so/f/f/a.png?&lbrack;redacted&rbrack;",
+    "https://file.notion.so/f/f/a.png?%255Bredacted%255D",
+    "https://file.notion.so/f/f/a.png?&amp;#91;redacted&amp;#93;",
+    "https://file.notion.so/f/f/a.png?\\u005bredacted\\u005d",
+    "https://file.notion.so/f/f/a.png?id=1#%5Bredacted%5D",
+  ])("INV-5: finds the placeholder however it is encoded in %s", (text) => {
+    expect(carriesWithheldLink({ text }, HOSTS)).toBe(true);
+  });
+
+  it.each([
+    "https://file.notion.so/f/f/a.png?label=unredacted",
+    "https://file.notion.so/f/f/redacted-report.png?table=block",
+    "https://file.notion.so/f/f/a.png?name=redacted-report",
+    "https://file.notion.so/f/f/a.png?name=%5Bredacted",
+    "https://file.notion.so/f/f/a.png?name=REDACTED",
+    "[redacted] is how a withheld value reads; see https://file.notion.so/f/f/a.png",
+    `${REDACTED} https://file.notion.so/f/f/a.png?v=1`,
+  ])("INV-5: admits %s", (text) => {
+    expect(carriesWithheldLink({ text }, HOSTS)).toBe(false);
+  });
+
   // workerd freezes its clocks during synchronous work, so the bound is
   // measured on Node; in workerd the scan must still finish within the test's
   // timeout.
@@ -382,6 +473,10 @@ describe("pre-signed links in free text", () => {
     ["host names behind one query", `https://${HOST}/?${"file.notion.so&#35;%3f".repeat(100_000)}`],
     ["many short links", `${S3}/a?sig=1 `.repeat(50_000)],
     ["signing names without values", "X-Amz-Signature=&".repeat(200_000)],
+    ["look-alike hosts", "my-file.notion.so.x/".repeat(200_000)],
+    ["S3 endpoints without a reviewed bucket", "//s3.us-west-2.amazonaws.com/prod-files-secure-x".repeat(100_000)],
+    ["encoded slashes before names", "%252F%252Fx.prod-files-secure".repeat(100_000)],
+    ["one link of encoded placeholders", `https://file.notion.so/?${"%255B&amp;#91;\\u005d".repeat(200_000)}`],
   ])("INV-5: scans %s in linear time", (_, text) => {
     const started = performance.now();
     const clean = withheld(text);

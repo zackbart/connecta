@@ -586,19 +586,51 @@ describe("notion() value safety: a person's links and read-modify-write", () => 
   const HOST = "prod-files-secure.s3.us-west-2.amazonaws.com";
   const AWS_LINK = "https://api-id.execute-api.us-east-1.amazonaws.com/prod/report?reportId=42";
 
-  it("INV-5: returns a person's public AWS links unchanged in a URL property and an external cover", async () => {
-    const page = {
-      object: "page",
-      id: "page-1",
-      cover: { type: "external", external: { url: AWS_LINK } },
-      properties: { Report: { id: "r", type: "url", url: AWS_LINK } },
-    };
-    queue({ body: page }, { body: page });
-    const read = await call(build(), "notion_api_read", { path: "/v1/pages/page-1" });
-    expect(read.data.cover.external.url).toBe(AWS_LINK);
-    expect(read.data.properties.Report.url).toBe(AWS_LINK);
-    const projected = await call(build(), "integration_get_page", { page_id: "page-1" });
-    expect(projected.properties.Report).toBe(AWS_LINK);
+  // Review round 3, finding 2: a host or path that merely contains a
+  // reviewed name is someone else's.
+  const LOOKALIKES = [
+    "https://file.notion.so.example.com/report?reportId=42",
+    "https://my-prod-files-secure.example.com/report?reportId=42",
+    "https://example.com/prod-files-secure?reportId=42",
+  ];
+
+  it.each([AWS_LINK, ...LOOKALIKES])(
+    "INV-5: returns a person's link %s unchanged in a URL property and an external cover",
+    async (link) => {
+      const page = {
+        object: "page",
+        id: "page-1",
+        cover: { type: "external", external: { url: link } },
+        properties: { Report: { id: "r", type: "url", url: link } },
+      };
+      queue({ body: page }, { body: page });
+      const read = await call(build(), "notion_api_read", { path: "/v1/pages/page-1" });
+      expect(read.data.cover.external.url).toBe(link);
+      expect(read.data.properties.Report.url).toBe(link);
+      const projected = await call(build(), "integration_get_page", { page_id: "page-1" });
+      expect(projected.properties.Report).toBe(link);
+    },
+  );
+
+  it("INV-5: returns links at look-alike hosts byte for byte in Markdown and admits writes carrying them", async () => {
+    const markdown = LOOKALIKES.map((link, i) => `[r${i}](${link}) <file src="${link}">f</file> ${link}`).join("\n");
+    queue({ body: { object: "page_markdown", id: "page-1", markdown, truncated: false } });
+    const read = await call(build(), "notion_api_read", { path: "/v1/pages/page-1/markdown" });
+    expect(read.data.markdown).toBe(markdown);
+
+    queue({ body: { object: "page", id: "page-1" } }, { body: { object: "page_markdown", id: "page-1", markdown } });
+    await call(build(), "notion_api_write", {
+      method: "PATCH",
+      path: "/v1/pages/page-1",
+      body: { cover: { type: "external", external: { url: LOOKALIKES[0] } } },
+    });
+    await call(build(), "notion_api_write", {
+      method: "PATCH",
+      path: "/v1/pages/page-1/markdown",
+      body: { type: "insert_content", insert_content: { content: markdown } },
+    });
+    // The read, then both writes.
+    expect(calls).toHaveLength(3);
   });
 
   it("INV-5: returns a person's links in page Markdown and rich text byte for byte", async () => {
@@ -672,6 +704,36 @@ describe("notion() value safety: a person's links and read-modify-write", () => 
       path: "/v1/pages/page-1",
       body: { properties: { Note: { rich_text: [{ text: { content: "[redacted] https://example.com/a?b=1" } }] } } },
     });
+    expect(calls).toHaveLength(1);
+  });
+
+  // Review round 3, finding 3: the placeholder itself, however encoded, and
+  // never the word inside another value.
+  const insert = (content: string) => ({
+    method: "PATCH",
+    path: "/v1/pages/page-1/markdown",
+    body: { type: "insert_content", insert_content: { content } },
+  });
+
+  it.each([
+    ["percent-encoded", "![a](https://file.notion.so/f/f/a.png?%5B%72%65%64%61%63%74%65%64%5D)"],
+    ["entity-encoded", '<file src="https://file.notion.so/f/f/a.pdf?&#91;redac&#116;ed&#93;">f</file>'],
+    ["double percent-encoded", `![a](https://${HOST}/ws/a.png?X-Amz-Signature=%255Bredacted%255D)`],
+  ])("INV-5: refuses a write carrying the placeholder %s on a Notion file link", async (_, content) => {
+    const error = await refusal(call(build(), "notion_api_write", insert(content)));
+    expect(error.code).toBe("invalid_args");
+    expect(error.message).toContain("cannot be copied into a write");
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each([
+    ["a value containing the word", "[a](https://file.notion.so/f/f/a.png?label=unredacted)"],
+    ["a filename containing the word", "![a](https://file.notion.so/f/f/redacted-report.png?table=block)"],
+    ["a query value starting with the word", "![a](https://file.notion.so/f/f/a.png?name=redacted-report)"],
+    ["the placeholder as text beside a file link", "[redacted] ![a](https://file.notion.so/f/f/a.png)"],
+  ])("INV-5: admits a write with %s", async (_, content) => {
+    queue({ body: { object: "page_markdown", id: "page-1", markdown: content } });
+    await call(build(), "notion_api_write", insert(content));
     expect(calls).toHaveLength(1);
   });
 });

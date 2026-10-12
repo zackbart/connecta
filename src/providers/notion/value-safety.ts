@@ -19,6 +19,7 @@ import {
   refuse,
   safe,
   withholdSignedLinksIn,
+  type FileHosts,
   type ValueSafetyTable,
   type ValueSafetyVerdict,
 } from "../_shared/rest/value-safety.js";
@@ -46,19 +47,18 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
 export const NOTION_VALUE_SAFETY: ValueSafetyTable = { title: "Notion", operations: OPERATIONS };
 
 /**
- * Where Notion stores the files it signs, matched as names in text. Its S3
- * buckets, in the host (`prod-files-secure.s3.us-west-2.amazonaws.com`) or
- * first path segment (`s3.us-west-2.amazonaws.com/secure.notion-static.com/…`,
- * Notion's file object reference), and its own file and image-proxy hosts
- * (`file.notion.so`, `img.notionusercontent.com`). Never all of
- * `amazonaws.com`: a person's public AWS link is their content.
+ * Where Notion stores the files it signs. Its S3 buckets, virtual-hosted
+ * (`prod-files-secure.s3.us-west-2.amazonaws.com`) or as the first path
+ * segment on an S3 endpoint (`s3.us-west-2.amazonaws.com/secure.notion-static.com/…`,
+ * Notion's file object reference), and its own file, static, and image-proxy
+ * hosts and their subdomains (`file.notion.so`, `img.notionusercontent.com`).
+ * Never all of `amazonaws.com`, and never a host or path that merely
+ * contains one of these names: a person's link is their content.
  */
-export const NOTION_FILE_HOSTS: readonly string[] = [
-  "prod-files-secure",
-  "secure.notion-static.com",
-  "file.notion.so",
-  "notionusercontent.com",
-];
+export const NOTION_FILE_HOSTS: FileHosts = {
+  domains: ["file.notion.so", "secure.notion-static.com", "notionusercontent.com"],
+  buckets: ["prod-files-secure", "secure.notion-static.com"],
+};
 
 /**
  * Every response with each pre-signed file link embedded in its strings

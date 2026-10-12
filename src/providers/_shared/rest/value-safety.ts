@@ -365,21 +365,38 @@ function sanitizeUrl(value: string): string {
 // href, an external file, a URL property) is their content and comes back as
 // written unless it names a signing parameter. Not in scope, so withheld
 // only incidentally: a signed URL a person pasted into text, and one split
-// across separate strings (rich-text runs), each scanned alone. Two passes,
+// across separate strings (rich-text runs), each scanned alone. Nor is an
+// escape inside a host or signing parameter's name (`file&#46;notion.so`,
+// `X%2DAmz%2DSignature`): a vendor writes the hosts and names it signs with
+// literally, so only a person's own text spells them that way. Two passes,
 // each one linear scan:
 //
-// 1. Host-anchored. Each occurrence of one of the vendor's file hosts, found
-//    by the host name itself however the scheme and slashes before it are
-//    spelled (`https://`, `https:\/\/`, `https:&#47;&#47;`, `%2F%2F`, none),
-//    loses everything from its query or fragment opener (literal, or
-//    percent-, entity-, or `\u`-encoded) to the next whitespace, quote, or
-//    angle bracket. A `)` or `]` is not read as the link's end: a filename
-//    may hold one. Trailing punctuation comes back, since it can carry no
-//    secret, so `![a](…?[redacted])` keeps its close.
+// 1. Host-anchored. Each link at one of the vendor's file hosts loses
+//    everything from its query or fragment opener (literal, or percent-,
+//    entity-, or `\u`-encoded) to the next whitespace, quote, or angle
+//    bracket. A file host is one of its reviewed domains, whole or as a
+//    subdomain, or an S3 endpoint naming a reviewed bucket: virtual-hosted
+//    (`bucket.s3.us-west-2.amazonaws.com`) or as the first path segment
+//    (`s3.us-west-2.amazonaws.com/bucket/`). The host must open an authority,
+//    however the scheme and slashes before it are spelled (`https://`,
+//    `https:\/\/`, `https:&#47;&#47;`, `%2F%2F`, none), and end where a host
+//    does: `file.notion.so.example.com`, `my-bucket.example.com`, and
+//    `example.com/bucket` are other people's hosts and paths. A `)` or `]` is
+//    not read as the link's end: a filename may hold one. Trailing
+//    punctuation comes back, since it can carry no secret, so
+//    `![a](…?[redacted])` keeps its close.
 // 2. Signing parameters. AWS Signature Version 4 and Google Cloud Storage V4
 //    names are a credential in any URL, whatever its host: their values go
 //    wherever they appear. Generic names (`code`, `token`, `sig`) are not
 //    withheld in text: there they are as likely a person's own link.
+
+/** Where a vendor stores the files it signs. */
+export interface FileHosts {
+  /** Hosts matched whole or as a parent domain: `file.notion.so` covers `img.file.notion.so`. */
+  readonly domains: readonly string[];
+  /** S3 buckets, virtual-hosted or as the first path segment on an S3 endpoint. Never all of S3. */
+  readonly buckets: readonly string[];
+}
 
 /** Signing parameters that are a credential in any URL, with their `=` plain or encoded. */
 const SIGNING_PARAM =
@@ -390,6 +407,16 @@ const SIGNING_PARAM =
  */
 const LEADING_ESCAPE =
   /^(?:%([0-9a-f]{2})|&(?:#(\d{1,7})|#x([0-9a-f]{1,6})|(amp|quot|apos|lt|gt|quest|num|semi|equals|sol|percnt|bsol));?|\\u([0-9a-f]{4})|\\x([0-9a-f]{2})|\\)/i;
+/** One encoded character just before a host: the same escapes, read backwards over a few characters. */
+const TRAILING_ESCAPE =
+  /(?:%(?:25){0,4}([0-9a-f]{2})|&(?:#0{0,6}(\d{1,7})|#x0{0,6}([0-9a-f]{1,6})|([a-z]{2,6}));?|\\u([0-9a-f]{4})|\\x([0-9a-f]{2})|\\)$/i;
+/** Every escape in link text, decoded together; an unknown entity name stays as written. */
+const ESCAPES =
+  /%([0-9a-f]{2})|&(?:#(\d{1,7})|#x([0-9a-f]{1,6})|([a-z]{2,8}));?|\\u([0-9a-f]{4})|\\x([0-9a-f]{2})|\\(?=[^a-z0-9])/gi;
+/** One slash however it is spelled, read forwards. */
+const SLASH = /\/|\\\/|%(?:25){0,4}2f|&#0{0,6}47;?|&#x0{0,6}2f;?|&sol;?|\\u002f|\\x2f/iy;
+/** An S3 endpoint host: global, regional, dual-stack, or accelerated. */
+const S3_ENDPOINT = String.raw`s3(?:[.-](?:dualstack|accelerate|external-1|[a-z]{2}(?:-[a-z]{1,12}){1,3}-\d{1,2})){0,2}\.amazonaws\.com`;
 const NAMED: Readonly<Record<string, string>> = {
   amp: "&",
   quot: '"',
@@ -403,9 +430,14 @@ const NAMED: Readonly<Record<string, string>> = {
   sol: "/",
   percnt: "%",
   bsol: "\\",
+  lbrack: "[",
+  rbrack: "]",
+  lsqb: "[",
+  rsqb: "]",
+  period: ".",
 };
-/** A character that continues a host name: `file.notion.so.example.com` is another host. */
-const HOST_CHAR = /[a-z0-9-]/i;
+/** A character that continues a host name or path segment: `my-bucket` is not `bucket`. */
+const HOST_CHAR = /[a-z0-9_~-]/i;
 /** Punctuation that may close the syntax around a link; it carries no secret, so it comes back. */
 const TRAILING = /[)\]}.,;:!*_~`\\]/;
 
@@ -414,10 +446,21 @@ function codePoint(value: number): string {
   return value <= 0x10ffff ? String.fromCodePoint(value) : "";
 }
 
+/** The character an escape's groups spell: percent, decimal, hex, name, `\u`, `\x`; a bare backslash spells nothing. */
+function unescaped(groups: ReadonlyArray<string | undefined>): string | undefined {
+  const [percent, decimal, hex, name, unicode, byte] = groups;
+  if (percent !== undefined) return String.fromCharCode(Number.parseInt(percent, 16));
+  if (decimal !== undefined) return codePoint(Number(decimal));
+  if (hex !== undefined) return codePoint(Number.parseInt(hex, 16));
+  if (name !== undefined) return NAMED[name.toLowerCase()];
+  if (unicode !== undefined || byte !== undefined) return String.fromCharCode(Number.parseInt((unicode ?? byte)!, 16));
+  return "";
+}
+
 /**
  * Whether link text opens its query or fragment here once decoded as a
  * browser, a Markdown renderer, or a JSON parser would: `%3F`, `%253F`,
- * `&#63;`, `&amp;#35;`, `\u003f`. Only the leading character matters, so
+ * `&#63;`, `&amp;#35;`, `?`. Only the leading character matters, so
  * each round decodes one escape there: constant work.
  */
 function opener(text: string, at: number): "?" | "#" | undefined {
@@ -426,22 +469,39 @@ function opener(text: string, at: number): "?" | "#" | undefined {
     if (current[0] === "?" || current[0] === "#") return current[0];
     const escape = LEADING_ESCAPE.exec(current);
     if (!escape) return undefined;
-    const [token, percent, decimal, hex, name, unicode, byte] = escape;
-    const char =
-      percent !== undefined
-        ? String.fromCharCode(Number.parseInt(percent, 16))
-        : decimal !== undefined
-          ? codePoint(Number(decimal))
-          : hex !== undefined
-            ? codePoint(Number.parseInt(hex, 16))
-            : name !== undefined
-              ? NAMED[name.toLowerCase()]!
-              : unicode !== undefined || byte !== undefined
-                ? String.fromCharCode(Number.parseInt((unicode ?? byte)!, 16))
-                : "";
-    current = char + current.slice(token.length);
+    current = (unescaped(escape.slice(1)) ?? "") + current.slice(escape[0].length);
   }
   return current[0] === "?" || current[0] === "#" ? current[0] : undefined;
+}
+
+/** The character ending just before `at`, decoded if it is escaped, and how many characters spell it. */
+function charBefore(text: string, at: number): { char: string; length: number } {
+  const escape = TRAILING_ESCAPE.exec(text.slice(Math.max(0, at - 16), at));
+  const char = escape ? unescaped(escape.slice(1)) : undefined;
+  if (escape && char) return { char, length: escape[0].length };
+  // A JSON-escaped slash, `\/`, is one slash.
+  if (text[at - 1] === "/" && text[at - 2] === "\\") return { char: "/", length: 2 };
+  return { char: text[at - 1]!, length: 1 };
+}
+
+/**
+ * What precedes a host name at `at`: the start of an authority (text's
+ * start, `//` however spelled, or any delimiter), a subdomain's dot, or
+ * neither (a longer name, or one slash, which opens a path segment).
+ */
+function preceding(text: string, at: number): "authority" | "subdomain" | "none" {
+  if (at === 0) return "authority";
+  const { char, length } = charBefore(text, at);
+  if (char === ".") return "subdomain";
+  if (HOST_CHAR.test(char)) return "none";
+  if (char !== "/") return "authority";
+  return at > length && charBefore(text, at - length).char === "/" ? "authority" : "none";
+}
+
+/** Whether a host name or path segment ends at `at`: `.so.example.com` continues it, a sentence's `.` does not. */
+function nameEnds(text: string, at: number): boolean {
+  const char = text[at] ?? "";
+  return char === "." ? !HOST_CHAR.test(text[at + 1] ?? "") : !HOST_CHAR.test(char);
 }
 
 /** Whether the `#` at `at` belongs to a numeric character reference (`&#38;`) rather than opening a fragment. */
@@ -464,15 +524,61 @@ function endsValue(text: string, at: number): boolean {
   return code === 0x5c && text.charCodeAt(at + 1) !== 0x2f;
 }
 
-const HOST_PATTERNS = new WeakMap<readonly string[], RegExp>();
+interface HostMatcher {
+  /** Every reviewed name and every S3 endpoint, longest name first; each is a candidate checked in context. */
+  readonly candidates: RegExp;
+  /** The S3 endpoint that makes a bucket name a virtual-hosted host. */
+  readonly virtual: RegExp;
+  readonly domains: ReadonlySet<string>;
+  readonly buckets: readonly string[];
+}
 
-function hostPattern(hosts: readonly string[]): RegExp {
-  let pattern = HOST_PATTERNS.get(hosts);
-  if (!pattern) {
-    pattern = new RegExp(hosts.map((host) => host.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&")).join("|"), "gi");
-    HOST_PATTERNS.set(hosts, pattern);
+const HOST_MATCHERS = new WeakMap<FileHosts, HostMatcher>();
+
+function hostMatcher(hosts: FileHosts): HostMatcher {
+  let matcher = HOST_MATCHERS.get(hosts);
+  if (!matcher) {
+    const domains = hosts.domains.map((host) => host.toLowerCase());
+    const buckets = hosts.buckets.map((bucket) => bucket.toLowerCase());
+    const names = [...new Set([...domains, ...buckets])].sort((a, b) => b.length - a.length);
+    const literal = (name: string) => name.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&");
+    matcher = {
+      candidates: new RegExp([...names.map(literal), S3_ENDPOINT].join("|"), "gi"),
+      virtual: new RegExp(`\\.${S3_ENDPOINT}`, "iy"),
+      domains: new Set(domains),
+      buckets,
+    };
+    HOST_MATCHERS.set(hosts, matcher);
   }
-  return pattern;
+  return matcher;
+}
+
+/**
+ * Where the file host a candidate at `start`–`end` names ends, or `-1` when
+ * the candidate is not one: a reviewed domain or its subdomain, a reviewed
+ * bucket's virtual host, or an S3 endpoint whose first path segment is a
+ * reviewed bucket. Constant work per candidate.
+ */
+function fileHostEnd(text: string, start: number, end: number, matcher: HostMatcher): number {
+  const name = text.slice(start, end).toLowerCase();
+  const before = preceding(text, start);
+  if (before === "none") return -1;
+  if (matcher.domains.has(name) && nameEnds(text, end)) return end;
+  if (before !== "authority") return -1;
+  if (matcher.buckets.includes(name)) {
+    matcher.virtual.lastIndex = end;
+    if (!matcher.virtual.test(text)) return -1;
+    return nameEnds(text, matcher.virtual.lastIndex) ? matcher.virtual.lastIndex : -1;
+  }
+  if (matcher.domains.has(name)) return -1;
+  SLASH.lastIndex = end;
+  if (!SLASH.test(text)) return -1;
+  const segment = SLASH.lastIndex;
+  for (const bucket of matcher.buckets) {
+    const after = segment + bucket.length;
+    if (text.slice(segment, after).toLowerCase() === bucket && nameEnds(text, after)) return after;
+  }
+  return -1;
 }
 
 /**
@@ -480,12 +586,13 @@ function hostPattern(hosts: readonly string[]): RegExp {
  * `-1` for none; `open` is the decoded opener) and where it ends. Later occurrences inside
  * one link share its end and are skipped, so the scan stays linear.
  */
-function* hostLinks(text: string, hosts: readonly string[]): Generator<{ cut: number; open: string; end: number }> {
-  const pattern = hostPattern(hosts);
+function* hostLinks(text: string, hosts: FileHosts): Generator<{ cut: number; open: string; end: number }> {
+  const matcher = hostMatcher(hosts);
+  const pattern = matcher.candidates;
   pattern.lastIndex = 0;
   for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
-    const hostEnd = match.index + match[0].length;
-    if (HOST_CHAR.test(text[hostEnd] ?? "")) continue;
+    const hostEnd = fileHostEnd(text, match.index, match.index + match[0].length, matcher);
+    if (hostEnd < 0) continue;
     let cut = -1;
     let open = "?";
     let end = hostEnd;
@@ -514,7 +621,7 @@ function* hostLinks(text: string, hosts: readonly string[]): Generator<{ cut: nu
  * file storage, say), its whole query and fragment; anywhere, a signing
  * parameter's value. Everything else comes back byte for byte.
  */
-export function withholdSignedLinks(text: string, hosts: readonly string[]): string {
+export function withholdSignedLinks(text: string, hosts: FileHosts): string {
   let out = "";
   let copied = 0;
   for (const { cut, open, end } of hostLinks(text, hosts)) {
@@ -544,7 +651,7 @@ export function withholdSignedLinks(text: string, hosts: readonly string[]): str
 }
 
 /** Every string inside a JSON value through `withholdSignedLinks`; unchanged values keep their identity. */
-export function withholdSignedLinksIn(value: unknown, hosts: readonly string[], depth = 0): unknown {
+export function withholdSignedLinksIn(value: unknown, hosts: FileHosts, depth = 0): unknown {
   if (typeof value === "string") return withholdSignedLinks(value, hosts);
   if (typeof value !== "object" || value === null) return value;
   // Deeper than any vendor's shape: withheld, as the heuristic does.
@@ -568,14 +675,32 @@ export function withholdSignedLinksIn(value: unknown, hosts: readonly string[], 
 }
 
 /**
- * Whether a request value carries a link at one of `hosts` whose signature
- * was withheld (`[redacted]`, plain or encoded): a read copied into a write,
- * which would store the placeholder.
+ * Link text decoded as a browser, a Markdown renderer, or a JSON parser
+ * would, through up to four layers of escaping (`%255B`, `&amp;#91;`). Each
+ * round is one linear pass.
  */
-export function carriesWithheldLink(value: unknown, hosts: readonly string[], depth = 0): boolean {
+function decodeLinkText(text: string): string {
+  for (let round = 0; round < 4; round++) {
+    const next = text.replace(ESCAPES, (token, ...groups: Array<string | undefined>) =>
+      token === "\\" ? "" : (unescaped(groups.slice(0, 6)) ?? token),
+    );
+    if (next === text) break;
+    text = next;
+  }
+  return text;
+}
+
+/**
+ * Whether a request value carries a link at one of `hosts` whose query or
+ * fragment holds the exact `[redacted]` placeholder, plain or encoded: a
+ * withheld read copied into a write, which would store the placeholder.
+ * The word alone (`unredacted`) or the placeholder away from a file link is
+ * a person's text.
+ */
+export function carriesWithheldLink(value: unknown, hosts: FileHosts, depth = 0): boolean {
   if (typeof value === "string") {
     for (const { cut, end } of hostLinks(value, hosts)) {
-      if (cut >= 0 && /redacted/i.test(value.slice(cut, end))) return true;
+      if (cut >= 0 && decodeLinkText(value.slice(cut, end)).includes(REDACTED)) return true;
     }
     return false;
   }
