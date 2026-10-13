@@ -49,6 +49,15 @@ mapping from admitted identity to the downstream account; a request must not
 choose its own account. Gmail never sends mail, and Drive never permanently
 deletes files.
 
+Wispr Flow uses OAuth only through `wisprFlow()` from
+`@zackbart/connecta/providers/wispr-flow`. It reaches the authorized account's
+Notetaker content, with personal and work accounts holding separate data.
+Its [provider guide](https://github.com/zackbart/connecta/blob/main/src/providers/wispr-flow/SKILL.md)
+owns account access, search limits, transcript permissions and paging. The
+reviewed classification includes task writes listed in Claude's directory even
+though Wispr's public help describes read-only access; discover the account's
+actual tools before assuming those writes exist.
+
 Stripe requires `auth`: `{ type: "oauth" }` reaches Stripe's hosted MCP
 server, and `{ type: "apiKey" }` with `mode` reaches Connecta's REST connector
 with an operator-managed key. Notion requires `auth` the same way:

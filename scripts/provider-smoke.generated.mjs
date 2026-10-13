@@ -296,8 +296,27 @@ var fixture21 = {
   conventions: { "verbs": ["list", "get", "upsert", "update", "delete", "vercel"], "nestedDescriptionExceptions": [], "auth": "credential" }
 };
 
+// src/providers/wispr-flow/fixtures.ts
+import { wisprFlow } from "@zackbart/connecta/providers/wispr-flow";
+var options22 = { purpose: "Audit fixture" };
+var fixture22 = {
+  name: "wispr-flow",
+  options: options22,
+  cases: [
+    { label: "padded-purpose", options: { purpose: "  Audit fixture  " } },
+    { label: "default", options: {} },
+    { label: "personal", options: { authScope: "personal" } },
+    { label: "oauth", options: { auth: { type: "oauth" } } }
+  ],
+  create(id = "fixture", overrides = {}) {
+    return wisprFlow(id, { ...options22, ...overrides });
+  },
+  // Vendor-hosted tools own their schemas; API naming conventions do not apply.
+  conventions: void 0
+};
+
 // provider-smoke.ts
-var fixtures = [fixture, fixture2, fixture3, fixture4, fixture5, fixture6, fixture7, fixture8, fixture9, fixture10, fixture11, fixture12, fixture13, fixture14, fixture15, fixture16, fixture17, fixture18, fixture19, fixture20, fixture21];
+var fixtures = [fixture, fixture2, fixture3, fixture4, fixture5, fixture6, fixture7, fixture8, fixture9, fixture10, fixture11, fixture12, fixture13, fixture14, fixture15, fixture16, fixture17, fixture18, fixture19, fixture20, fixture21, fixture22];
 export {
   fixtures
 };

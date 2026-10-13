@@ -20,5 +20,6 @@ import { fixture as fixture17 } from "../src/providers/slides/fixtures.js";
 import { fixture as fixture18 } from "../src/providers/stripe/fixtures.js";
 import { fixture as fixture19 } from "../src/providers/tithely/fixtures.js";
 import { fixture as fixture20 } from "../src/providers/vercel/fixtures.js";
+import { fixture as fixture21 } from "../src/providers/wispr-flow/fixtures.js";
 
-export const providerFixtures = [fixture0, fixture1, fixture2, fixture3, fixture4, fixture5, fixture6, fixture7, fixture8, fixture9, fixture10, fixture11, fixture12, fixture13, fixture14, fixture15, fixture16, fixture17, fixture18, fixture19, fixture20];
+export const providerFixtures = [fixture0, fixture1, fixture2, fixture3, fixture4, fixture5, fixture6, fixture7, fixture8, fixture9, fixture10, fixture11, fixture12, fixture13, fixture14, fixture15, fixture16, fixture17, fixture18, fixture19, fixture20, fixture21];
