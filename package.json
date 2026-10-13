@@ -157,6 +157,10 @@
       "types": "./dist/providers/vercel/index.d.ts",
       "import": "./dist/providers/vercel/index.js"
     },
+    "./providers/wispr-flow": {
+      "types": "./dist/providers/wispr-flow/index.d.ts",
+      "import": "./dist/providers/wispr-flow/index.js"
+    },
     "./ui": {
       "types": "./dist/ui.d.ts",
       "import": "./dist/ui.js"

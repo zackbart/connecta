@@ -723,10 +723,10 @@ connection context `create` supplies, the maintained text, then deployment
 instructions, which append and never replace. `src/provider.ts` imports neither
 transport, so an `api()` provider gains no MCP client or Effect graph from it
 (`test/purity.node.test.ts`). The factory carries its `definition`, which build and
-check tools read instead of keeping provider lists. All twenty providers
-live in their own folders. The eight hosted implementations, including the
+check tools read instead of keeping provider lists. Providers
+live in their own folders. Hosted implementations, including the
 MCP branches of Notion, Vercel, and Cloudflare, use reviewed presets over
-`remoteMcp({ classify })`. The eleven API-only factories retain an internal
+`remoteMcp({ classify })`. The migrated API-only factories retain an internal
 adapter to the same definition and description-stamping path. GitHub composes hosted tools with a scope-enforced REST complement.
 A `"dual"` provider lets `auth` select the implementation
 ([decision 0005](https://github.com/zackbart/connecta/blob/main/decisions/0005-auth-selects-implementation.md)):

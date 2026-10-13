@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "provider": "wispr-flow",
+  "checks": [
+    {
+      "type": "oauth-discovery",
+      "setup": "https://api.wisprflow.ai/.well-known/oauth-protected-resource",
+      "endpoints": ["https://api.wisprflow.ai/connect/mcp"],
+      "reviewed": [
+        "get_account_info",
+        "get_calendar_event",
+        "get_meeting",
+        "get_meeting_by_calendar_id",
+        "get_meeting_participants_enriched",
+        "get_scratchpad_note",
+        "get_upcoming_meeting",
+        "list_meeting_series",
+        "list_upcoming_meetings",
+        "resolve_calendar_link",
+        "resolve_share_link",
+        "search_calendar_events",
+        "search_meetings",
+        "search_scratchpad_notes",
+        "get_task",
+        "search_tasks",
+        "add_task",
+        "update_task"
+      ]
+    },
+    {
+      "type": "manual",
+      "source": "https://docs.wisprflow.ai/articles/9551372685-connect-an-mcp-client-to-wispr-flow-remote-mcp-server",
+      "rationale": "tools/list requires OAuth and the vendor publishes no public machine-readable inventory. Review the union of Scalekit's 14 read-only tools and Claude's directory task tools. The official help describes read-only access while the directory lists add_task and update_task; retain write and destructive verdicts if those tools appear. No credentials, authenticated catalog or operational tool calls were used.",
+      "evidence": {
+        "reviewedAt": "2026-10-13",
+        "readInventory": "https://docs.scalekit.com/agentkit/connectors/wisprflowmcp/",
+        "taskInventory": "https://claude.com/connectors/wispr-flow",
+        "authorizationServerMetadata": "https://mcp-auth.wisprflow.com/.well-known/oauth-authorization-server",
+        "notes": "Credential-free curl verified a 401 Bearer resource_metadata challenge with openid offline_access, the exact protected resource, header-only bearer support, dynamic registration, CIMD and PKCE S256. Public setup now permits email/password sign-in when the login page returns to authorization; sign-in alone does not complete setup. Classification is a reviewed superset, not a claim that every account exposes all 18 names. No schema digests are asserted without reviewed schemas."
+      }
+    }
+  ]
+}
