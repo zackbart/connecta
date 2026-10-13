@@ -117,7 +117,7 @@ describe("meta-tool input schemas", () => {
 
 describe("meta-tool output schemas", () => {
   it("INV-3: structured-only meta-tools advertise schemas and direct-call tools permit native content", async () => {
-    const app = makeDeployment({ executor: stubExecutor, trust: "trusted" });
+    const app = makeDeployment({ executor: stubExecutor, readOnly: false });
     try {
       const list = await readJsonRpc(await mcpRpc(app, "tools/list", {}, { token: TOKEN }));
       const cases: Record<string, object> = {

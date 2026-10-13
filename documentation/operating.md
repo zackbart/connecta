@@ -15,14 +15,17 @@ instructions and `skills` usage guide for deployment-specific context.
 | ------------------------------------------------------------------ | --------------------------------------------------------- |
 | One known read, with usable arguments and a small result           | `call_tool`                                               |
 | Discover a tool, chain calls, combine services, or reduce a result | `execute_code`                                            |
-| One write on a read-only endpoint                                  | `call_destructive_tool`                                   |
+| One known write on a writable endpoint                             | `call_destructive_tool`                                   |
 | Obtain connector instructions                                      | `skills` with the returned guide name                     |
 | Start a required authentication handoff                            | `authorize_connector`, using the returned recovery action |
 
-The endpoint's trust is part of its tool descriptions. On a `trusted` endpoint,
-programs may write within the caller's grants, and `execute_code` is annotated
-as a write. On `read-only`, every write is a separate top-level call. The host
-controls approval. Never change pool, identity, or trust to work around a refusal.
+Whether the endpoint is read-only or writable is part of its tool
+descriptions. On a writable endpoint, programs and `call_destructive_tool` may
+write within the caller's grants, and `execute_code` is annotated as a write;
+the client controls approval. On a read-only endpoint, write tools are hidden
+and every write is refused with `read_only_endpoint`; tell the user rather than
+looking for another route. Never change pool, identity, or `readOnly` to work
+around a refusal.
 [Routing between the call surfaces](./meta-tools.md#routing-between-the-call-surfaces)
 owns the full decision rules.
 
@@ -35,9 +38,9 @@ failed catalog or a service outside the caller's grants.
 
 For normal reads, keep discovery, calls, and reduction in one program when the
 schemas suffice; return the answer rather than catalog matches. Use top-level
-`search_tools` for catalog inspection or to discover a write on a read-only
-endpoint, then dispatch each write with `call_destructive_tool`. An unfamiliar
-read result may return a bounded sample for inspection before the next program.
+`search_tools` for catalog inspection or to find one known write on a writable
+endpoint, then dispatch it with `call_destructive_tool`. An unfamiliar read
+result may return a bounded sample for inspection before the next program.
 
 Use the exact returned `address`, including punctuation. A TypeScript signature
 is guidance for writing JavaScript; do not paste types into executable code.

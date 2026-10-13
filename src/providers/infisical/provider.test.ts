@@ -922,7 +922,7 @@ describe("maintained Infisical contract", () => {
 });
 
 describe("Infisical through the registry", () => {
-  it("admits reads to direct and program calls and routes every write through the destructive surface (INV-1, INV-2)", async () => {
+  it("admits reads to direct and program calls, refuses every write on a read-only endpoint, and sends one through the destructive surface otherwise (INV-1, INV-2)", async () => {
     const storage = memoryStorage();
     const vault = new CredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
     await vault.setAll(
@@ -962,10 +962,10 @@ describe("Infisical through the registry", () => {
       const read = /^(list|get)_/.test(name);
       for (const source of ["call_tool", "execute_code"] as const) {
         const before = fetch.mock.calls.length;
-        const outcome = await service.invoke(`infisical.${name}`, args, { source, trust: "read-only" });
+        const outcome = await service.invoke(`infisical.${name}`, args, { source, readOnly: true });
         expect(outcome.ok, `${name} through ${source}`).toBe(read);
         if (!read) {
-          expect(outcome).toMatchObject({ error: { code: "destructive_tool_requires_approval" } });
+          expect(outcome).toMatchObject({ error: { code: "read_only_endpoint" } });
           expect(fetch).toHaveBeenCalledTimes(before);
         }
       }

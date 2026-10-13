@@ -1705,7 +1705,7 @@ describe("audit regressions", () => {
       const mt = createMetaTools(
         makeRegistry([connector], { storage, maxResultBytes: 1_000, logger: { ...silentLogger, warn } }),
         BASE,
-        { trust: "trusted", activity: target.activity },
+        { readOnly: false, activity: target.activity },
       );
       for (const resultMode of ["mcp", "value"] as const) {
         const result = await mt[method]({ address: "large.read", resultMode });
@@ -2356,7 +2356,7 @@ describe("truncated results lead with their connecta.result handle", () => {
   }
 
   it.each(["api-text", "api-value", "mcp-text", "mcp-value", "mcp-blocks"] as const)(
-    "INV-2 INV-9: a read-only pool returns an inline %s write truncation without an unreachable stash",
+    "INV-2 INV-9: a read-only endpoint refuses a %s write before dispatch, leaving nothing to page",
     async (mode) => {
       const store = memoryStorage();
       const stashKeys: string[] = [];
@@ -2383,31 +2383,20 @@ describe("truncated results lead with their connecta.result handle", () => {
         },
       });
       const mt = createMetaTools(makeRegistry([connector], { storage, maxResultBytes: 1000 }), BASE, {
-        trust: "read-only",
+        readOnly: true,
         activity,
       });
       const result = await mt.callDestructiveTool({
         address: "down.run",
         resultMode: mode.endsWith("value") ? "value" : "mcp",
       });
-      expect(result.isError).toBeFalsy();
-      const notice = mode.endsWith("value")
-        ? (textOf(result) as { data: Record<string, unknown> }).data
-        : JSON.parse(required(result.content[0]).text.split("\n")[0]!);
-      expect(notice).toMatchObject({ truncated: true, totalBytes: expect.any(Number) });
-      expect(notice.hint).toContain("This write already ran");
-      expect(notice.hint).toContain("Paging is unavailable for write results on read-only pools");
-      for (const key of ["resultId", "nextAction", "nextOffset"]) expect(notice).not.toHaveProperty(key);
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({ error: { code: "read_only_endpoint", retryable: false } });
       expect(JSON.stringify(result)).not.toContain("connecta.result");
+      expect(JSON.stringify(result)).not.toContain("call_destructive_tool");
       expect(stashKeys).toEqual([]);
-      expect(calls).toBe(1);
-      expect(events).toMatchObject([{ outcome: "success", friction: "result_too_large" }]);
-      if (mode === "api-text" || mode === "mcp-text")
-        expect(lead(result).preview).toBe(
-          (mode === "api-text" ? JSON.stringify(JSON_LINES) : JSON_LINES).slice(0, 1000),
-        );
-      if (mode.endsWith("value")) expect(notice.preview).toBeTypeOf("string");
-      expect(new TextEncoder().encode(required(result.content[0]).text).length).toBeLessThan(1400);
+      expect(calls).toBe(0);
+      expect(events).toMatchObject([{ outcome: "error", errorCode: "read_only_endpoint" }]);
     },
   );
 
@@ -2437,7 +2426,7 @@ describe("truncated results lead with their connecta.result handle", () => {
     const mt = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: JSON_LINES }], readOnly)], { maxResultBytes: 10_000 }),
       BASE,
-      { trust: "trusted" },
+      { readOnly: false },
     );
     const result = await mt[method]({ address: "down.run" });
     const { notice } = lead(result);
@@ -2451,7 +2440,7 @@ describe("truncated results lead with their connecta.result handle", () => {
     const mt = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: JSON_LINES }], false)], { maxResultBytes: 1_000 }),
       BASE,
-      { trust: "trusted" },
+      { readOnly: false },
     );
     const { notice } = lead(await mt.callDestructiveTool({ address: "down.run", reason: "export" }));
     expect(notice.hint).toMatch(/already ran/i);
@@ -2465,7 +2454,7 @@ describe("truncated results lead with their connecta.result handle", () => {
     const read = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: JSON_LINES }], true)], { maxResultBytes: 1_000 }),
       BASE,
-      { trust: "trusted" },
+      { readOnly: false },
     );
     const { notice: readNotice } = lead(await read.callTool({ address: "down.run" }));
     expect(readNotice.hint).not.toMatch(/already ran/i);
@@ -2478,7 +2467,7 @@ describe("truncated results lead with their connecta.result handle", () => {
     const read = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: JSON_LINES }], true)], { maxResultBytes: 1_000 }),
       BASE,
-      { trust: "trusted" },
+      { readOnly: false },
     );
     for (const result of [
       await read.callTool({ address: "down.run" }),
@@ -2502,7 +2491,7 @@ describe("truncated results lead with their connecta.result handle", () => {
     const write = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: JSON_LINES }], false)], { maxResultBytes: 1_000 }),
       BASE,
-      { trust: "trusted" },
+      { readOnly: false },
     );
     const { notice: writeNotice } = lead(await write.callDestructiveTool({ address: "down.run", reason: "export" }));
     expect(writeNotice.hint).toBe(
@@ -2515,7 +2504,7 @@ describe("truncated results lead with their connecta.result handle", () => {
     const mt = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: JSON_LINES }], true)], { maxResultBytes: 1_000 }),
       BASE,
-      { trust: "trusted" },
+      { readOnly: false },
     );
     const { notice, preview } = lead(await mt.callTool({ address: "down.run" }));
     expect(preview.startsWith('[{"type"')).toBe(false);
@@ -2566,7 +2555,7 @@ describe("truncated results lead with their connecta.result handle", () => {
     const inline = createMetaTools(
       makeRegistry([downstream([{ type: "text", text: "x".repeat(24_000) }], readOnly)]),
       BASE,
-      { trust: "trusted" },
+      { readOnly: false },
     );
     expect((await inline[method]({ address: "down.run" })).content).toEqual([
       { type: "text", text: "x".repeat(24_000) },

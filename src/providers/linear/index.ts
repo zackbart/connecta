@@ -350,7 +350,7 @@ export const linear = defineProvider<LinearOptions>({
     const accessNote =
       access === "read-only"
         ? "Read-only connection: bound to Linear's read-only endpoint, whose token is scope-limited downstream, so every write fails at Linear regardless of arguments. Route writes to a connector configured for read-write access."
-        : "Read-write connection: treat every `save_`, `create_`, `delete_`, `resolve_`, `submit_`, and `merge_` operation as a write. Connecta classifies the maintained writes explicitly and enforces the configured pool trust policy. Unknown tools without an explicit, uncontradicted read annotation fail closed.";
+        : "Read-write connection: treat every `save_`, `create_`, `delete_`, `resolve_`, `submit_`, and `merge_` operation as a write. Connecta classifies the maintained writes explicitly, and a read-only endpoint hides and refuses them. Unknown tools without an explicit, uncontradicted read annotation fail closed.";
     return remoteMcp(id, {
       url: LINEAR_MCP_ENDPOINTS[access],
       ...provider.connectorOptions,

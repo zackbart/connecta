@@ -421,7 +421,7 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
       undefined,
       {
         maxHostCalls: 3,
-        trust: "trusted",
+        readOnly: false,
       },
     )({
       code: `async () => {

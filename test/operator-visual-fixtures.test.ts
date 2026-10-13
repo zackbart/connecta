@@ -38,7 +38,7 @@ describe("operator visual fixture contract", () => {
       }
     }
     for (const pool of contract.you.pools) {
-      expect(contract.config.pools.find((p) => p.name === pool.name)?.trust).toBe(pool.trust);
+      expect(contract.config.pools.find((p) => p.name === pool.name)?.readOnly).toBe(pool.readOnly);
       for (const grant of pool.grants) expect(ids).toContain(grant.connectorId);
     }
     if (state === "restricted") {

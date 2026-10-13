@@ -35,7 +35,7 @@ const tracker = linear("tracker", {
 ```
 
 Linear defaults to OAuth; its read-only endpoint requests only the downstream
-read scope. That is separate from Connecta pool trust. Read the
+read scope. That is separate from a Connecta `readOnly` endpoint. Read the
 [Linear skill](https://github.com/zackbart/connecta/blob/main/src/providers/linear/SKILL.md)
 and [factory options](https://github.com/zackbart/connecta/blob/main/src/providers/linear/index.ts)
 for API-key framing, workspace instructions, and admission choices.
@@ -179,9 +179,10 @@ which binds the grant to configured API origins and manages authentication.
 [Downstream OAuth on api()](./auth.md#downstream-oauth-on-api) owns a concrete
 HTTP example and the client setup contract.
 
-Mark every side-effecting tool `readOnlyHint: false`. On read-only endpoints
-writes use `call_destructive_tool`; trusted programs may write within their
-grants. Host approval is independent of tool definition. Use declared output
+Mark every side-effecting tool `readOnlyHint: false`. On a writable endpoint
+writes use `call_destructive_tool` or a program, within the caller's grants; a
+`readOnly` endpoint hides and refuses them. Client approval is independent of
+tool definition. Use declared output
 schemas when known; runtime observations cannot replace them.
 
 ## Separate ownership from visibility

@@ -125,8 +125,9 @@ stored machine token to inspect Connections. Sign in with Clerk for human
 connection management. Omit that option and import for an API-only
 server. OAuth callbacks remain in core even with no UI.
 
-The page labels each tool as a read or write. Trusted programs may write;
-read-only pools use `call_destructive_tool`, with approval controlled by the host. For
+The page labels each tool as a read or write and each endpoint as writable or
+read-only; a read-only endpoint hides and refuses every write, and the host
+controls approval on a writable one. For
 classified connection failures it offers a fixed repair prompt, and its
 endpoint section has client setup commands for `/mcp` and any pool available
 to the signed-in identity. Those commands contain no bearer token.

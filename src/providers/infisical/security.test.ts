@@ -91,7 +91,7 @@ describe("Infisical security boundaries", () => {
               : json({});
           }),
         );
-        const outcome = await invocation(registry).invoke(`infisical.${tool}`, args, { source, trust: "trusted" });
+        const outcome = await invocation(registry).invoke(`infisical.${tool}`, args, { source, readOnly: false });
         expect(outcome).toMatchObject({
           ok: false,
           dispatched: true,
@@ -102,7 +102,7 @@ describe("Infisical security boundaries", () => {
         expect(dispatched[0]!.method).toBe(method);
         expect(logins).toBe(2);
         expect(JSON.stringify(outcome)).not.toContain("private-upstream-body");
-        const explicit = await invocation(registry).invoke(`infisical.${tool}`, args, { source, trust: "trusted" });
+        const explicit = await invocation(registry).invoke(`infisical.${tool}`, args, { source, readOnly: false });
         expect(explicit).toMatchObject({ ok: true, dispatched: true, attempts: 1 });
         expect(dispatched).toHaveLength(2);
         expect(new Headers(dispatched[1]!.headers).get("authorization")).toBe("Bearer auth-token-2");
@@ -242,8 +242,16 @@ describe("Infisical security boundaries", () => {
           });
         });
         vi.stubGlobal("fetch", fetch);
-        for (const source of ["call_tool", "execute_code"] as const) {
-          const refusal = await invocation(registry).invoke(`infisical.${tool}`, args, { source, trust: "read-only" });
+        const readOnly = await invocation(registry).invoke(`infisical.${tool}`, args, {
+          source: "execute_code",
+          readOnly: true,
+        });
+        expect(readOnly).toMatchObject({ ok: false, dispatched: false, error: { code: "read_only_endpoint" } });
+        if (readOnly.ok) throw new Error("Expected refusal");
+        expect(readOnly.error).not.toHaveProperty("nextAction");
+        if (secretValue.length >= 8) expect(JSON.stringify(readOnly)).not.toContain(secretValue);
+        for (const source of ["call_tool"] as const) {
+          const refusal = await invocation(registry).invoke(`infisical.${tool}`, args, { source, readOnly: false });
           expect(refusal).toMatchObject({
             ok: false,
             dispatched: false,
@@ -263,7 +271,7 @@ describe("Infisical security boundaries", () => {
         for (const source of ["call_destructive_tool", "execute_code"] as const) {
           const outcome = await invocation(registry).invoke(`infisical.${tool}`, args, {
             source,
-            trust: "trusted",
+            readOnly: false,
             timeoutMs: 100,
           });
           expect(outcome).toMatchObject({

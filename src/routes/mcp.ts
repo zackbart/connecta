@@ -367,7 +367,7 @@ function serveMcp(
   canManageAuth: (connectorId: string) => boolean,
   principalKey: string | undefined,
   runtimeContext?: RuntimeExecutionContext,
-  trust: import("../tool-safety.js").PoolTrust = "read-only",
+  readOnly = false,
   pool?: string,
   principalActor?: ActivityActor,
 ): Effect.Effect<Response, never, Scope.Scope> {
@@ -445,7 +445,7 @@ function serveMcp(
       client,
       baseUrl,
       requestScope,
-      trust,
+      readOnly,
       canManageAuth,
       oauthConnectUrl: (id, force) => oauthConnectUrl(opts, baseUrl, id, principalKey, force),
       oauthConnectUnavailable: oauthConnectUnavailable(opts),
@@ -469,7 +469,7 @@ function serveMcp(
       requestSignal,
       ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
       ...executeLimits(opts.config),
-      trust,
+      readOnly,
     });
     servers.push(server);
     return server;
@@ -752,7 +752,7 @@ export function createMcpRoute(opts: ServerOptions): {
           // one identical 404 so a credential never enumerates the other pools;
           // the operator log is where the reason lives.
           let access: ConnectorAccess = authz;
-          let trust = opts.config.trust;
+          let readOnly = opts.config.readOnly;
           if (poolName !== undefined) {
             const pool = opts.pools?.get(poolName);
             const denialReason = !pool
@@ -773,7 +773,7 @@ export function createMcpRoute(opts: ServerOptions): {
               return cors(mcpRefusal(sentSecrets, 404, -33004, "MCP endpoint not found."));
             }
             access = intersectAccess(authz, pool.access);
-            trust = pool.trust;
+            readOnly = pool.readOnly;
           }
           let scopedRegistry: RegistryView;
           try {
@@ -803,19 +803,19 @@ export function createMcpRoute(opts: ServerOptions): {
                   return false;
                 validateAuthPermissions(current, opts.registry);
                 let currentAccess: ConnectorAccess = current;
-                let currentTrust = opts.config.trust;
+                let currentReadOnly = opts.config.readOnly;
                 if (poolName !== undefined) {
                   const pool = opts.pools.get(poolName);
                   if (!pool || (await pool.grant(current.identity)) !== true) return false;
                   currentAccess = intersectAccess(current, pool.access);
-                  currentTrust = pool.trust;
+                  currentReadOnly = pool.readOnly;
                 }
                 const view = opts.registry.scoped({
                   ...currentAccess,
                   ...(current.subjectKey ? { subjectKey: current.subjectKey } : {}),
                   ...(current.principalKey ? { principalKey: current.principalKey } : {}),
                 });
-                if (classification === "write" && currentTrust !== "trusted") return false;
+                if (classification === "write" && currentReadOnly) return false;
                 if (address === undefined) return true;
                 // Skill and resource content requires a whole grant; catalog metadata requires visibility.
                 if (!address.includes("."))
@@ -834,7 +834,7 @@ export function createMcpRoute(opts: ServerOptions): {
                     tool &&
                     (access === "catalog" ||
                       (classification === "read" && tool.classification === "read") ||
-                      currentTrust === "trusted"),
+                      !currentReadOnly),
                   );
                 } finally {
                   await closeConnectorScope(
@@ -873,7 +873,7 @@ export function createMcpRoute(opts: ServerOptions): {
               },
               authz.principalKey,
               runtimeContext,
-              trust,
+              readOnly,
               poolName,
               authz.identity.principal
                 ? {

@@ -37,6 +37,10 @@ This repository is deployment configuration, not a copy of Connecta itself.
   Import it from `@zackbart/connecta/worker`; direct upstream
   `new DynamicWorkerExecutor()` construction throws at boot. Keep the
   `@cloudflare/codemode` optional peer installed.
+- The root endpoint is writable unless the config sets `readOnly: true`, and
+  each named pool inherits that unless it sets its own `readOnly`. A read-only
+  endpoint hides and refuses every write; approval belongs to the MCP host. Do
+  not configure the removed `trust`.
 - Keep credentials in Worker secrets. Never commit credential values, Access
   service-token secrets, or `CREDENTIAL_ENCRYPTION_KEY`.
 - All state lives in the one D1 database bound as `CONNECTA_DB`, through

@@ -93,7 +93,7 @@ export interface ToolDef {
    * Standard MCP tool behavior hints plus provider-specific extensions.
    * The registry classifies these after deployment overrides and provider
    * review. Only a stored read verdict may use call_tool; program writes
-   * require a trusted pool. Approval belongs to the host.
+   * require a writable endpoint. Approval belongs to the host.
    */
   annotations?: ToolAnnotations;
 }

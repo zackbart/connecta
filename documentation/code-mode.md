@@ -283,7 +283,9 @@ signature is byte-identical to the one `search_tools` returns.
 integration is ambiguous. `safety: "readOnly"` selects stored read verdicts;
 `"approvalRequired"` selects stored write verdicts; omitted or `"all"` selects
 both. Search and describe rows carry `classification`. These filters grant no
-authority and change no pool trust or call admission decision.
+authority and change no call admission decision. On a read-only endpoint,
+search and describe omit write tools entirely (`W12`): a write is absent from
+every filter, and describing one is `unknown_tool`.
 
 **S2.** A requested object schema carries `inputKeys`, `requiredInputKeys`
 (declared properties only), and `outputKeys`: the names the rendered schema
@@ -394,10 +396,10 @@ and a 32 KiB bridge ceiling. `page` is zero-based and mutually exclusive with
 are at least four bytes wide and align both edges to UTF-8 boundaries.
 Follow `nextOffset`, reassemble inside the program, and return a reduced value.
 Before returning a page, the host rechecks current authentication, connector/tool
-grants, pool membership, and endpoint trust against both the original and current
-tool classification. A read-only endpoint cannot page a write result, so a
-direct write there returns an inline truncation notice without stashing the
-result or advertising a paging action. Binding
+grants, pool membership, and whether the endpoint is read-only against both the
+original and current tool classification. A read-only endpoint cannot page a
+write result; it never runs a write, so any write result it is asked for came
+from a writable endpoint. Binding
 mismatches, revoked access, and old entries without bindings are `not_found`, as
 are unknown or expired ids; a storage failure is `unavailable`. IDs are random UUIDs.
 The `get_result` meta-tool is removed.
@@ -477,7 +479,7 @@ Connecta passes an admitted decoded URI as an opaque MCP `resources/read`
 argument to the configured endpoint. It never fetches that
 URI or creates a connector from it.
 
-Resources are protocol reads in both `read-only` and `trusted` pools. A read
+Resources are protocol reads on read-only and writable endpoints alike. A read
 requires a grant to the whole connector through the endpoint/pool and identity
 intersection. Exact-tool grants, including guarded grants, authorize no
 resources. An absent, hidden, tool-restricted or resource-incapable connector
@@ -553,27 +555,27 @@ URL-elicitation hosts retain their existing flow.
 may do. A provider maps each downstream failure to the code that tells the
 caller what to do next, and never invents a cause it was not told.
 
-| Code                                 | Raised when                                                                                                                                                                                           | `retryable`   |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
-| `unknown_address`                    | no visible connector owns the tool address or grants the resource reader                                                                                                                              | false         |
-| `unknown_tool`                       | the connector has no such tool                                                                                                                                                                        | false         |
-| `destructive_tool_requires_approval` | a program in a read-only pool attempted a write (`E4`)                                                                                                                                                | false         |
-| `auth_required`                      | the credential is missing, expired, or rejected                                                                                                                                                       | false         |
-| `invalid_args`                       | arguments or discovery bounds were rejected                                                                                                                                                           | false         |
-| `not_found`                          | the downstream answered and the resource is not there — the one code that says skip this id rather than stop, raised only where the provider tells absence from a permission gap                      | false         |
-| `conflict`                           | the write named a base version someone else already moved past; nothing changed. `details.current` says where things stand (at most 20 whole-number entries) — re-read, reapply, retry with that base | false         |
-| `input_required_unsupported`         | a downstream asked for input; use `nextAction` for the equivalent direct call                                                                                                                         | false         |
-| `rate_limited`                       | the downstream reported a rate limit                                                                                                                                                                  | true          |
-| `unavailable`                        | the downstream is down or unreachable; optional sanitized `details.host` and `details.code` describe the transport failure without paths, queries, credentials, or provider prose                     | true          |
-| `timeout`                            | a call or sandbox deadline expired; details name operation, stage, elapsedMs, and deadlineMs                                                                                                          | per operation |
-| `program_error`                      | guest JavaScript failed; `details.name`, `line`, and a fixed repair hint describe it                                                                                                                  | false         |
-| `cancelled`                          | the run ended while this call was in flight (`E5`)                                                                                                                                                    | false         |
-| `connector_call_failed`              | anything else the connector threw                                                                                                                                                                     | per message   |
-| `catalog_lookup_failed`              | the connector's catalog could not be loaded                                                                                                                                                           | per cause     |
-| `result_processing_failed`           | the result could not be prepared                                                                                                                                                                      | per message   |
-| `result_too_large`                   | a discovery response exceeded its byte bound                                                                                                                                                          | false         |
-| `budget_exceeded`                    | the run exhausted a host-call, write, or emitted-output budget                                                                                                                                        | false         |
-| `write_outcome_unknown`              | a trusted-pool write was sent and no answer came back; it is never sent again (`W9`)                                                                                                                  | false         |
+| Code                         | Raised when                                                                                                                                                                                           | `retryable`   |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| `unknown_address`            | no visible connector owns the tool address or grants the resource reader                                                                                                                              | false         |
+| `unknown_tool`               | the connector has no such tool                                                                                                                                                                        | false         |
+| `read_only_endpoint`         | a program on a read-only endpoint attempted a write (`E4`)                                                                                                                                            | false         |
+| `auth_required`              | the credential is missing, expired, or rejected                                                                                                                                                       | false         |
+| `invalid_args`               | arguments or discovery bounds were rejected                                                                                                                                                           | false         |
+| `not_found`                  | the downstream answered and the resource is not there — the one code that says skip this id rather than stop, raised only where the provider tells absence from a permission gap                      | false         |
+| `conflict`                   | the write named a base version someone else already moved past; nothing changed. `details.current` says where things stand (at most 20 whole-number entries) — re-read, reapply, retry with that base | false         |
+| `input_required_unsupported` | a downstream asked for input; use `nextAction` for the equivalent direct call                                                                                                                         | false         |
+| `rate_limited`               | the downstream reported a rate limit                                                                                                                                                                  | true          |
+| `unavailable`                | the downstream is down or unreachable; optional sanitized `details.host` and `details.code` describe the transport failure without paths, queries, credentials, or provider prose                     | true          |
+| `timeout`                    | a call or sandbox deadline expired; details name operation, stage, elapsedMs, and deadlineMs                                                                                                          | per operation |
+| `program_error`              | guest JavaScript failed; `details.name`, `line`, and a fixed repair hint describe it                                                                                                                  | false         |
+| `cancelled`                  | the run ended while this call was in flight (`E5`)                                                                                                                                                    | false         |
+| `connector_call_failed`      | anything else the connector threw                                                                                                                                                                     | per message   |
+| `catalog_lookup_failed`      | the connector's catalog could not be loaded                                                                                                                                                           | per cause     |
+| `result_processing_failed`   | the result could not be prepared                                                                                                                                                                      | per message   |
+| `result_too_large`           | a discovery response exceeded its byte bound                                                                                                                                                          | false         |
+| `budget_exceeded`            | the run exhausted a host-call, write, or emitted-output budget                                                                                                                                        | false         |
+| `write_outcome_unknown`      | a program write was sent and no answer came back; it is never sent again (`W9`)                                                                                                                       | false         |
 
 **E3.** `auth_required` carries the same recovery envelope as `call_tool`:
 `connector`, `operation`, `recovery` (`oauth`, `operator_config`, or
@@ -581,16 +583,13 @@ caller what to do next, and never invents a cause it was not told.
 sentence. A program cannot recover credentials — only an operator can — so stop
 and let the failure reach the model.
 
-**E4.** A tool classified as a write never runs in a
-program unless the pool is trusted (`W12`). It is refused with
-`destructive_tool_requires_approval` before validation and before anything is
-sent, `nextAction` carrying its canonical address to `call_destructive_tool`
-and a schema-filtered snapshot within the 512-byte echo budget. `argsRedacted`
-marks partial or withheld arguments; use the original arguments if this flag is
-set or `args` is absent. Snapshots are never clipped. The host's prompt on that
-call is the approval, and the only one: generated code can neither mint the
-capability nor approve its own write, and the model's short `reason` grants no
-authority and never goes downstream.
+**E4.** A tool classified as a write never runs on a read-only endpoint
+(`W12`). A program's call is refused with `read_only_endpoint` before
+validation and before anything is sent. The refusal carries no `nextAction` and
+echoes no arguments: no route on that endpoint writes, so the program reports
+it rather than retrying. Generated code can neither mint the capability nor
+change the endpoint; on a writable endpoint, approval of the program as a write
+belongs to the client.
 
 **E5.** Failures of the _execution_, not of a call, never appear inside the
 guest: admission rejection (`executor_overloaded`, retryable, with
@@ -631,7 +630,7 @@ Program diagnostic fields are bounded before transport, including escaped text;
 a large custom error name cannot turn a failure into a truncated success.
 
 **E7.** `retryable` for `unknown_address`, `unknown_tool`, and
-`destructive_tool_requires_approval` is pinned false, never inferred from an
+`read_only_endpoint` is pinned false, never inferred from an
 address containing `503`, `429`, or `temporar`. The first two carry
 `nextAction: { function: "connecta.search", arguments: { query, connector?, includeSchemas: "compact" } }`
 — scoped discovery keyed to the surface the caller has, since a program cannot
@@ -686,7 +685,7 @@ Caught call failures retain that connector visibility when catalog loading or
 tool resolution fails. Recovery messages listing configured connectors or
 local guides retain visibility of those contributors too.
 Each page rechecks current auth,
-grants, pool membership, and trust. Reading a stash inside a program carries
+grants, pool membership, and the endpoint's `readOnly`. Reading a stash inside a program carries
 its dependencies forward to any new return stash. The page cap is the smallest
 of the deployment cap and contributing connectors' effective `maxResultBytes`.
 Read-only endpoints cannot page write results. A UUID is a handle, never a grant.
@@ -882,17 +881,17 @@ deadline past the ceiling means raising the ceiling too.
 **L4.** Per-execution bounds that are contract, identical in both executors
 because connecta enforces them above the sandbox:
 
-| Bound                                                                         | Value                                                                                                        |
-| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Host calls per execution, shared by `search`, `describe`, `call`, and `read`  | 20 by default, `execute.maxHostCalls`                                                                        |
-| Trusted-pool writes per run, on top of the host calls they also spend (`W10`) | 10 by default, `execute.maxWrites`                                                                           |
-| Deadline per host call                                                        | 15 s, `execute.hostCallTimeoutMs`; one deadline covers catalog resolution, admission, and the connector call |
-| Discovery page                                                                | ≤ 100 tools, ≤ 256,000 serialized bytes                                                                      |
-| `describe` addresses                                                          | ≤ 100                                                                                                        |
-| `describe` nearby suggestions                                                 | ≤ 3 canonical addresses per failed entry                                                                     |
-| Caller text echoed by `describe` recovery                                     | ≤ 512 UTF-8 bytes per field, plus `…`                                                                        |
-| Result                                                                        | 24,000 serialized characters                                                                                 |
-| Logs presented to the model                                                   | 4,000 characters                                                                                             |
+| Bound                                                                                   | Value                                                                                                        |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Host calls per execution, shared by `search`, `describe`, `call`, and `read`            | 20 by default, `execute.maxHostCalls`                                                                        |
+| Writes per run on a writable endpoint, on top of the host calls they also spend (`W10`) | 10 by default, `execute.maxWrites`                                                                           |
+| Deadline per host call                                                                  | 15 s, `execute.hostCallTimeoutMs`; one deadline covers catalog resolution, admission, and the connector call |
+| Discovery page                                                                          | ≤ 100 tools, ≤ 256,000 serialized bytes                                                                      |
+| `describe` addresses                                                                    | ≤ 100                                                                                                        |
+| `describe` nearby suggestions                                                           | ≤ 3 canonical addresses per failed entry                                                                     |
+| Caller text echoed by `describe` recovery                                               | ≤ 512 UTF-8 bytes per field, plus `…`                                                                        |
+| Result                                                                                  | 24,000 serialized characters                                                                                 |
+| Logs presented to the model                                                             | 4,000 characters                                                                                             |
 
 Every `call`, `read`, `search`, and `describe` spends one host call on entry, before
 resolution, validation, or dispatch. Catching a local refusal refunds nothing.
@@ -901,7 +900,7 @@ The first call beyond the budget ends the host run with one non-retryable
 `try/catch` cannot swallow it. Later host access, including `emit`, stops; pending
 replies are withheld. The refusal reaches no connector, returns no partial result,
 and discards accepted emits (`M4`). Calls still resolving or awaiting admission
-are cancelled, including trusted-pool writes past their gate. Dispatched trusted-pool writes
+are cancelled, including writes past their gate. Dispatched writes
 drain under `W9`; unknown outcomes retain precedence. The lease then releases:
 QuickJS terminates its child, and the Worker adapter disposes RPC and loader
 handles independently of the guest deadline. Workers guest computation may
@@ -1003,22 +1002,22 @@ payload-free _by construction_ means the event has nowhere to put a payload.
 distinctive output is the program source — exactly what a payload-free history
 must never keep.
 
-**V5.** A trusted-pool write a program issues after it has already returned is not
+**V5.** A write a program issues after it has already returned is not
 sent and records nothing: it was never an attempt (`W9`).
 
 ## Writes
 
-Pool trust belongs to deployment code. The default `/mcp` endpoint uses
-`trust: "read-only"`; each named pool has its own `trust`, also defaulting to
-`"read-only"`. A trusted default endpoint does not make named pools trusted.
-The default preserves refusal of ordinary program writes. A deployment must opt into program writes explicitly.
+Whether an endpoint writes belongs to deployment code. The default `/mcp`
+endpoint is writable: `readOnly` defaults to `false`. Each named pool inherits
+the deployment's `readOnly` unless it sets its own, in either direction. The
+client owns approval; Connecta answers one question per endpoint: can it write.
 
 ```ts
 createConnecta({
   connectors, executor,
-  trust: "read-only",
+  readOnly: false, // the default
   pools: {
-    automation: { tools: ["posthog"], trust: "trusted", grant },
+    reporting: { tools: ["posthog"], readOnly: true, grant },
   },
   classification: {
     posthog: { exec: "read" }, // only for a deployment with a read-only exec contract
@@ -1026,6 +1025,9 @@ createConnecta({
   },
 });
 ```
+
+The removed `trust` option, on the deployment or a pool, fails construction
+with a message naming `readOnly` (`INV-11`).
 
 The registry computes one `classifyTool` verdict on each request-scoped
 published catalog entry. It caches and persists only raw downstream facts.
@@ -1044,7 +1046,7 @@ fail construction; unknown remote tool keys fail publication of the whole
 catalog. Overrides are exact tool names, including names containing dots.
 They are never inferred from descriptions or arguments.
 
-**W9.** Programs in trusted pools may write. A dispatched write is awaited even
+**W9.** Programs on a writable endpoint may write. A dispatched write is awaited even
 if the program does not await it, bounded by its host-call deadline. A write
 that reaches accounting after the program settles is not sent. An unanswered
 write makes the run fail `write_outcome_unknown` with
@@ -1054,7 +1056,7 @@ write is automatically retried, including an ambiguous timeout. A downstream
 refusal or a tool's `isError` can establish failure; a timeout or an unanswered
 transport failure leaves the outcome unknown.
 
-**W10.** `execute.maxWrites`, default 10, bounds writes in trusted programs in
+**W10.** `execute.maxWrites`, default 10, bounds a program's writes in
 addition to the host-call budget. It is checked after argument validation and
 before admission, so an over-budget write spends no permit.
 
@@ -1067,14 +1069,19 @@ reconciliation. Any new call must use the original arguments when its echo is
 partial or absent. A returned `writes` count cannot make a run safe to repeat.
 See [argument echo rules](./meta-tools.md#echo-budgets) for supported schema shapes.
 
-**W12.** `trusted` endpoints annotate `execute_code` as a write and permit
-program writes. `read-only` endpoints annotate it as read-only and refuse
-program writes before validation, with `call_destructive_tool` as the recovery.
-`call_tool` accepts only reads in either tier; `call_destructive_tool` may send
-writes in either tier. Approval belongs to the host. Trust grants no tool or
-connector access and cannot be set by guest code, request arguments, or a
-downstream catalog. `execute.approval`, `Connector.approval`, and per-tool
-approval exemptions are removed. `W1`–`W8` and `W11` remain retired.
+**W12.** Writable endpoints annotate `execute_code` as a write
+(`readOnlyHint: false, destructiveHint: true`) and permit program writes and
+`call_destructive_tool`; `call_tool` still accepts only reads and refuses a write
+with `destructive_tool_requires_approval`. Read-only endpoints annotate
+`execute_code` as read-only (`readOnlyHint: true, destructiveHint: false`),
+omit write tools from `search_tools`, `connecta.search`, and
+`connecta.describe`, and refuse `call_tool`, `call_destructive_tool`, and
+program writes with `read_only_endpoint` before validation or dispatch.
+`tools/list` is the same six tools on both. Approval belongs to the client.
+`readOnly` grants no tool or connector access and cannot be set by guest code,
+request arguments, or a downstream catalog. `execute.approval`,
+`Connector.approval`, per-tool approval exemptions, and pool `trust` are
+removed. `W1`–`W8` and `W11` remain retired.
 
 ## Executor exceptions
 
@@ -1225,8 +1232,8 @@ rejection, and branded adapter acceptance across module copies.
 | `L5`, `L7`, `X2`       | `test/quickjs-executor.node.test.ts` (CPU, heap), `test/execute.test.ts` and `test/executor-admission.test.ts` (bounded admission and queue)                                                                                                                                                                                                                                                                                                                                                                                    |
 | `L6`, `X10`            | `test/guest-api-contract-quickjs.node.test.ts` and `test/guest-api-contract.test.ts` (whole oversized reads and one-write pageable handles), `test/sqlite-storage.node.test.ts` and `test/d1-storage.node.test.ts` (shared stash transfers), `test/quickjs-executor.node.test.ts` (bridge and IPC bounds for arguments and result; the address in the over-bound message), `test/quickjs-child-stderr.node.test.ts` (outer reply serialization failure settles the call)                                                        |
 | `V1`–`V4`              | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, the friction each derives, no event for the execution itself), `test/activity.test.ts` (the shared code → friction table, the identity clamp, the one-attempt floor), `test/operator-view.test.ts`, `test/sql-storage-contract.ts`, run by `test/d1-storage.node.test.ts` and `test/sqlite-storage.node.test.ts` (historical pause and approval rows still render and round-trip)                              |
-| `V5`, `W9`             | `test/program-writes.test.ts` (an unawaited trusted-pool write finished and recorded, its unknown outcome reported, counts on a failed program, the classification table), `test/invocation-pipeline.test.ts` (the gate after validation, an unrecorded refusal)                                                                                                                                                                                                                                                                |
-| `W10`, `W12`           | `test/program-writes.test.ts` (a trusted-pool write runs and every other write keeps `E4`, the write budget, pool trust and override precedence, `call_tool` still refusing, search and describe verdicts, construction refusals), `test/operator-ui-model.test.ts`, `test/browser/operator-ui.spec.ts` (the badge)                                                                                                                                                                                                             |
+| `V5`, `W9`             | `test/program-writes.test.ts` (an unawaited program write finished and recorded, its unknown outcome reported, counts on a failed program, the classification table), `test/invocation-pipeline.test.ts` (the gate after validation, an unrecorded refusal)                                                                                                                                                                                                                                                                     |
+| `W10`, `W12`           | `test/program-writes.test.ts` (a writable endpoint's program write runs, a read-only endpoint hides and refuses every write on every path, the write budget, `readOnly` inheritance and overrides, `call_tool` still refusing, search and describe verdicts, construction refusals including retired `trust`), `test/operator-ui-model.test.ts`, `test/browser/operator-ui.spec.ts` (the badge)                                                                                                                                 |
 | `M1`                   | `test/guest-api-contract.test.ts` (invalid emits throw catchably, accept nothing), `test/execute-emit.test.ts` (rejected shapes, bounded native snapshots, paging before metadata traversal, and cyclic presentation refusal)                                                                                                                                                                                                                                                                                                   |
 | `M2`, `M3`             | `test/guest-api-contract.test.ts` (delivery order, truncated return plus delivered blocks), `test/execute-emit.test.ts` (envelope, `structuredContent`, byte-for-byte no-emit path)                                                                                                                                                                                                                                                                                                                                             |
 | `M4`                   | `test/guest-api-contract.test.ts` (discard is visible), `test/execute-emit.test.ts` (structured and plain paths), `test/quickjs-executor.node.test.ts` (mid-run shutdown)                                                                                                                                                                                                                                                                                                                                                       |

@@ -37,7 +37,6 @@ import { agentOutputOperations, sentSecretsForRequest, type SentSecrets } from "
 import { captureDownstreamInput } from "./downstream-input.js";
 import type { ResolvedCatalogTool } from "./catalog-service.js";
 import type { Logger } from "./types.js";
-import type { PoolTrust } from "./tool-safety.js";
 import { PROGRAM_RESULT_WIRE_BYTES, type ProgramResultHandle } from "./program-result.js";
 
 export { MAX_DESCRIBE_ADDRESSES, MAX_DISCOVERY_RESULT_BYTES, MAX_SEARCH_LIMIT };
@@ -229,8 +228,6 @@ function base64Of(bytes: Uint8Array): string {
  */
 interface ResultStash {
   secrets?: SentSecrets;
-  /** Write stashes require the same endpoint to admit trusted programs. */
-  pageable: boolean;
   set: RegistryView["stashResult"];
   binding: ResultBinding;
   warn: () => void;
@@ -322,12 +319,6 @@ async function stashResult(bytes: Uint8Array, results: ResultStash, preview: Pre
       totalBytes,
       hint: `${results.write ? WRITE_ALREADY_RAN + " " : ""}Paging is unavailable: text contains unpaired surrogates and can't be paged as text; request the value as JSON (value mode or a JSON-returning call) to recover it.`,
     };
-  if (!results.pageable)
-    return {
-      truncated: true,
-      totalBytes,
-      hint: `${WRITE_ALREADY_RAN} Paging is unavailable for write results on read-only pools.`,
-    };
   const id = crypto.randomUUID();
   try {
     // Base64 permits byte-range decoding, and splitting the envelope across
@@ -386,7 +377,6 @@ export async function pageProgramResult(
   value: unknown,
   format: "json" | "text",
   secrets: SentSecrets,
-  trust: PoolTrust | undefined,
   requestScope: object,
   wireBytes = PROGRAM_RESULT_WIRE_BYTES,
 ): Promise<{ data: unknown; format: "json" | "text" } | ProgramResultHandle> {
@@ -399,7 +389,6 @@ export async function pageProgramResult(
   const notice = await stashResult(
     bytes,
     {
-      pageable: !write || trust === "trusted",
       binding: {
         identity: registry.resultIdentity(),
         baseUrl,
@@ -439,7 +428,6 @@ export async function guardProgramReturn(
   baseUrl: string,
   dependencies: ProgramResultDependency[],
   secrets: SentSecrets,
-  trust: PoolTrust | undefined,
   logger: Logger,
   maxChars: number,
   completedWrite: boolean,
@@ -457,7 +445,6 @@ export async function guardProgramReturn(
   );
   const results: ResultStash = {
     secrets,
-    pageable: !write || trust === "trusted",
     binding: {
       identity: registry.resultIdentity(),
       baseUrl,
@@ -726,8 +713,8 @@ function metaToolsForRequest(
   opts: {
     /** Deadline applied when a call passes no `timeoutMs`. Off when unset. */
     defaultToolTimeoutMs?: number | undefined;
-    /** Current endpoint trust for result stashing and paging. */
-    trust?: import("./tool-safety.js").PoolTrust | undefined;
+    /** The endpoint refuses every write: hides writes from discovery and refuses their calls and pages. */
+    readOnly?: boolean | undefined;
     /** Per-connector deadline for the search/describe probe fan-out. Default 30_000. */
     probeTimeoutMs?: number | undefined;
     /** Maximum simultaneous connector discovery operations. Default 4. */
@@ -772,6 +759,8 @@ function metaToolsForRequest(
   });
   const catalog = new CatalogService(registry, baseUrl, {
     requestScope,
+    // search_tools never shows a read-only endpoint's writes.
+    readOnly: opts.readOnly,
     probeTimeoutMs,
     concurrency: discoveryConcurrency,
     defer: opts.defer,
@@ -807,6 +796,7 @@ function metaToolsForRequest(
     const outcome = await invocation.invoke<ProcessedCallResult>(call.address, call.args ?? {}, {
       source,
       sentSecrets,
+      readOnly: opts.readOnly,
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       ...(opts.requestSignal !== undefined ? { requestSignal: opts.requestSignal } : {}),
       unwrapResult: call.resultMode === "value",
@@ -834,7 +824,6 @@ function metaToolsForRequest(
         const cap = resolveMaxResultBytes(resolved.connector.maxResultBytes, globalCap);
         const results: ResultStash = {
           secrets,
-          pageable: resolved.definition.classification === "read" || opts.trust === "trusted",
           binding: {
             identity: registry.resultIdentity(),
             baseUrl,
@@ -1100,7 +1089,7 @@ function metaToolsForRequest(
             !(await registry.recheckResultAccess(undefined, binding.classification, options.signal))
           )
             return false;
-          if (binding.classification === "write" && opts.trust !== "trusted") return false;
+          if (binding.classification === "write" && opts.readOnly === true) return false;
           const dependencies = binding.program ?? [binding as ProgramResultDependency];
           for (const dependency of dependencies) {
             const address =
@@ -1136,7 +1125,7 @@ function metaToolsForRequest(
               !(
                 dependency.access === "catalog" ||
                 (dependency.classification === "read" && tool.classification === "read") ||
-                opts.trust === "trusted"
+                opts.readOnly !== true
               )
             )
               return false;
@@ -1243,11 +1232,15 @@ function metaToolsForRequest(
   };
 }
 
-const SEARCH_DESC = `Use top-level search for catalog inspection or approval-required work before call_destructive_tool. Unknown-address read-only work belongs in one execute_code program that searches, calls, and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" finds tools that run unasked; "approvalRequired" finds the fail-closed complement. These filters grant no authority. Empty query browses. Returns { catalogErrors, tools, total, offset, limit, hasMore }; read catalogErrors and absence before selecting a tool. Compact schemas have schemaFormat="text".`;
-const CALL_DESC =
-  "Call one known-address tool explicitly annotated readOnlyHint: true. Use execute_code for unknown-address, multiple, dependent, or reduced read-only work. Unannotated or write-capable tools fail closed to call_destructive_tool. A truncated result carries a connecta.result action.";
+const SEARCH_DESC = (readOnly: boolean) =>
+  `${readOnly ? "Use top-level search for catalog inspection; this read-only endpoint lists no writes." : "Use top-level search for catalog inspection or approval-required work before call_destructive_tool."} Unknown-address read-only work belongs in one execute_code program that searches, calls, and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" finds tools that run unasked; "approvalRequired" finds the fail-closed complement. These filters grant no authority. Empty query browses. Returns { catalogErrors, tools, total, offset, limit, hasMore }; read catalogErrors and absence before selecting a tool. Compact schemas have schemaFormat="text".`;
+const CALL_DESC = (readOnly: boolean) =>
+  `Call one known-address tool explicitly annotated readOnlyHint: true. Use execute_code for unknown-address, multiple, dependent, or reduced read-only work. ${readOnly ? "This endpoint is read-only and refuses every write." : "Unannotated or write-capable tools fail closed to call_destructive_tool."} A truncated result carries a connecta.result action.`;
 const CALL_DESTRUCTIVE_DESC =
   "Call any tool not explicitly annotated readOnlyHint: true. Include a short reason for the human reviewer after checking the schema and consequences. The reason grants no authority and is not sent downstream.";
+/** A read-only endpoint keeps the six-tool surface, so this tool says why it never writes here. */
+const CALL_DESTRUCTIVE_READ_ONLY_DESC =
+  "This endpoint is read-only: write tools are hidden from discovery and every call here is refused. Use call_tool or execute_code for reads.";
 const AUTHORIZE_DESC =
   "Use after auth_required. Returns an OAuth or operator-credential handoff, or reports required deployment configuration. force=true requests an OAuth restart when the verified user opens the /connect URL; this tool never accepts credentials.";
 const SKILLS_DESC =
@@ -1352,7 +1345,7 @@ export function registerMetaTools(
   ctx: {
     authElicitation?: AuthElicitation | undefined;
     baseUrl: string;
-    trust?: import("./tool-safety.js").PoolTrust | undefined;
+    readOnly?: boolean | undefined;
     defaultToolTimeoutMs?: number | undefined;
     probeTimeoutMs?: number | undefined;
     discoveryConcurrency?: number | undefined;
@@ -1370,7 +1363,7 @@ export function registerMetaTools(
   const mt = createMetaTools(registry, ctx.baseUrl, {
     downstreamInput: Boolean(ctx.authElicitation),
     requestScope: ctx.requestScope,
-    trust: ctx.trust,
+    readOnly: ctx.readOnly,
     defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,
     probeTimeoutMs: ctx.probeTimeoutMs,
     discoveryConcurrency: ctx.discoveryConcurrency,
@@ -1405,7 +1398,7 @@ export function registerMetaTools(
   server.registerTool(
     "search_tools",
     {
-      description: describedFor(registry, SEARCH_DESC, "search"),
+      description: describedFor(registry, SEARCH_DESC(ctx.readOnly === true), "search"),
       inputSchema: SEARCH_INPUT,
       outputSchema: SEARCH_OUTPUT,
       annotations: READ_ONLY_REMOTE,
@@ -1419,7 +1412,7 @@ export function registerMetaTools(
   server.registerTool(
     "call_tool",
     {
-      description: CALL_DESC,
+      description: CALL_DESC(ctx.readOnly === true),
       inputSchema: CALL_INPUT,
       // Default mode returns native content, so no structured result is promised.
       // call_tool admits only tools that are themselves explicitly read-only;
@@ -1437,7 +1430,10 @@ export function registerMetaTools(
   server.registerTool(
     "call_destructive_tool",
     {
-      description: describedFor(registry, CALL_DESTRUCTIVE_DESC, "destructive"),
+      description:
+        ctx.readOnly === true
+          ? CALL_DESTRUCTIVE_READ_ONLY_DESC
+          : describedFor(registry, CALL_DESTRUCTIVE_DESC, "destructive"),
       inputSchema: CALL_DESTRUCTIVE_INPUT,
       annotations: {
         destructiveHint: true,

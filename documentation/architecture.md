@@ -131,12 +131,16 @@ An admitted non-preflight `/mcp` request then takes five steps in
 3. **Narrow to the pool.** On `/mcp/<pool>`, look the name up, run its grant
    against the identity, then `intersectAccess` the pool with the identity's own
    access. A pool can never widen a view; anything else is a 404 naming no pool.
+   The endpoint's `readOnly` is the pool's own value, else the deployment's;
+   plain `/mcp` uses the deployment's. It travels to the meta-tools and the
+   program as one boolean that hides writes from `CatalogService` discovery and
+   makes `writeRefusal` (`src/tool-safety.ts`) refuse every write.
 4. **Derive the registry view.** One `registry.scoped(...)` call with those
    connector ids, exact `connector.tool` addresses when the identity declares a
    narrower slice, and the subject and principal keys. Personal connectors use
    the principal partition and result paging the subject partition with principal,
    endpoint/pool, origin, connector, and tool bindings. Paging rechecks current
-   grants, pool membership, and trust; no caller parameter selects a partition (`test/identity-scope.test.ts`).
+   grants, pool membership, and the endpoint's `readOnly`; no caller parameter selects a partition (`test/identity-scope.test.ts`).
 5. **Serve.** Refuse `?toolkit=` with a 404 — the toolkits are gone
    ([#178](https://github.com/zackbart/connecta/issues/178)) but their URLs were
    handed out, and retiring a scoping boundary into fail-open is worse than any
@@ -217,13 +221,15 @@ or hands out, and a change usually belongs in exactly one of them:
 | `src/invocation.ts`      | One tool call: argument validation, call admission, one-attempt timeout, provider retry hints, result unwrapping, size capping, and the activity record.                                                                         |
 | `src/catalog.ts`         | Ranking, description summarizing, and the compact and TypeScript schema renderers discovery shows.                                                                                                                               |
 | `src/result-shapes.ts`   | Bounded runtime-only inference and merging for output shapes learned from successful read-only calls whose providers declared none.                                                                                              |
-| `src/program-writes.ts`  | Trusted-pool write accounting: write budgets, dispatch draining, and known or unknown outcomes.                                                                                                                                  |
+| `src/program-writes.ts`  | Program write accounting on writable endpoints: write budgets, dispatch draining, and known or unknown outcomes.                                                                                                                 |
 
 `src/meta-tools.ts` and `src/execute.ts` are two front doors onto the same two
 services, `CatalogService` and `InvocationService`. That is the point: a
 program's `connecta.call` and a top-level `call_tool` reach
 `InvocationService.invoke` by different routes and get the same admission, the
-same credential resolution, and the same fail-closed read-only check.
+same credential resolution, and the same fail-closed read-only check: one
+`writeRefusal` decision per call, from the stored classification, the calling
+surface, and the endpoint's `readOnly`.
 `test/execute.test.ts` asserts the parity directly, because a sandbox path that
 quietly diverges is how generated code would mint a capability.
 

@@ -87,8 +87,8 @@ The code arm is an eval-only adapter in [deploy/code-surface.ts](deploy/code-sur
 It wraps the fake Node deployment's real MCP responses to change the tool list,
 server instructions, execute description, usage skill and recovery hints. The
 observed QuickJS bridge translates errors and skill text before programs see
-them, including errors a program catches. A refused read-only write returns
-terminal `pool_read_only`, `retryable: false`, with no `nextAction`. Search
+them, including errors a program catches. A write on a read-only endpoint
+returns terminal `read_only_endpoint`, `retryable: false`, with no `nextAction`. Search
 recovery uses a program. Authentication still uses the real boundary and its
 handoffs. No product source, public option or normal configuration enables this
 arm. Usage is resolved by request identity, including `usage`,
@@ -96,8 +96,8 @@ arm. Usage is resolved by request identity, including `usage`,
 supplies tool text, structured content, resource reads and guest skill results.
 Six-arm replies never pass through the adapter.
 
-The code arm runs tasks that need business writes on a trusted root. The named
-read-only refusal pool stays read-only. Route-specific paging instructions ask
+The code arm runs tasks that need business writes on the default writable root.
+The named read-only refusal pool stays read-only. Route-specific paging instructions ask
 for a full-log reduction in the code arm; the destination, final answer,
 one-fetch and export-once requirements stay the same. Known reads use programs,
 and rich output reaches the host through `connecta.emit`. This experiment does
@@ -231,7 +231,7 @@ real Mixpanel, RevenueCat, Supabase, GitHub or other third-party account.
 The existing five retained tasks keep their state/outcome checks and now require source
 calls and final-answer facts. Fourteen new active tasks cover:
 
-- a program write in a named trusted pool and refusal in a named read-only pool;
+- a program write in a named writable pool and refusal in a named read-only pool;
 - `connecta.result` paging beyond a direct-call preview, with one log fetch;
 - direct MCP text/image content and program image/text emission;
 - OAuth recovery through `/connect` with capable and incapable hosts;

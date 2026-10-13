@@ -1132,7 +1132,7 @@ function toolDefinitions(client: GoogleWorkspaceClient): ApiTool[] {
       description:
         "Create a new Google Doc in the user's My Drive root with a title and optional plain-text body. Cannot choose a folder, apply a template, or copy a document.",
       // Additive: a new document changes nothing that existed. Not read-only,
-      // so program calls require a trusted pool; other writes use
+      // so program calls require a writable endpoint; other writes use
       // call_destructive_tool. The host controls approval.
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: input(
@@ -1440,7 +1440,7 @@ function usageGuide(purpose: string, instructions: string | undefined): string {
  *
  * Reads run in programs. `create_document`, `append_text`, and `insert_text`
  * are additive writes the host approves through call_destructive_tool or a
- * trusted program; `replace_all_text` and `batch_update_document` are
+ * program on a writable endpoint; `replace_all_text` and `batch_update_document` are
  * destructive.
  */
 export const docs = asProviderFactory<DocsOptions>({

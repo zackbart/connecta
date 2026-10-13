@@ -1,7 +1,7 @@
 import type { OperatorConnectorOverlay, OperatorTool, OperatorUiContract, OperatorViewer } from "./contract.js";
 import type { CatalogAccessObservation, CatalogDriftReport, ResourceTemplateRefusalCode } from "../types.js";
 
-/** Tool verdicts, independent of the selected pool's trust. */
+/** Tool verdicts, independent of whether the selected pool is read-only. */
 export type UiToolSafety = "runs_in_programs" | "needs_approval";
 
 export interface UiTool extends Pick<OperatorTool, "name" | "address" | "description"> {

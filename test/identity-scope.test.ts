@@ -543,7 +543,7 @@ describe("guarded read-only identity grants", () => {
       connectors: [notes],
       auth: users(),
       identity: { connectorAccess: () => [guarded("notes.read"), guarded("notes.write"), guarded("notes.conflict")] },
-      trust: "trusted",
+      readOnly: false,
       executor: {
         async execute(_code, providers) {
           const fns = providers.find((provider) => provider.name === "connecta")!.fns;

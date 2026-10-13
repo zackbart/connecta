@@ -4,6 +4,8 @@ import { ContractState, EndpointLine } from "./overview.js";
 import { mcpUrl } from "./config.js";
 import { TokensPage } from "./tokens.js";
 
+const endpointMode = (readOnly: boolean): string => (readOnly ? "read-only" : "writable");
+
 export function AccessPage({ state }: { state: OperatorState }) {
   if (!state.contract)
     return (
@@ -37,13 +39,13 @@ export function AccessPage({ state }: { state: OperatorState }) {
       <section className="section" aria-labelledby="rootEndpointHeading">
         <div className="section-head">
           <h2 id="rootEndpointHeading">Root endpoint</h2>
-          <Badge>{you.trust}</Badge>
+          <Badge>{endpointMode(you.readOnly)}</Badge>
         </div>
         <EndpointLine url={mcpUrl} />
         <p className="meta">
-          {you.trust === "trusted"
-            ? "Programs may call reads and writes. Host approval controls execution."
-            : "Programs may call reads. Writes use call_destructive_tool and host approval."}
+          {you.readOnly
+            ? "Nothing on this endpoint writes. Write tools are hidden and every write is refused."
+            : "Direct calls and programs may read and write. The MCP client approves writes."}
         </p>
       </section>
       <section className="section" aria-labelledby="poolsHeading">
@@ -61,7 +63,7 @@ export function AccessPage({ state }: { state: OperatorState }) {
               <section className="pool-panel" key={pool.name}>
                 <div className="section-head">
                   <h3>{pool.name}</h3>
-                  <Badge>{pool.trust}</Badge>
+                  <Badge>{endpointMode(pool.readOnly)}</Badge>
                 </div>
                 <EndpointLine url={new URL(pool.path, mcpUrl).href} label={pool.name} />
                 <h4>Visible members</h4>

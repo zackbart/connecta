@@ -63,7 +63,7 @@ to. No argument names a mailbox. A call with none mapped fails
 - Binary attachments return `format: "base64"` and standard base64 in
   `content`. Pass it unchanged to Drive `create_file` as `contentBase64`,
   with `name: filename` and `mimeType`. File creation is a write: use
-  `call_destructive_tool` or a trusted program for that step.
+  `call_destructive_tool` or a program on a writable endpoint for that step.
 - Downloads, text and binary, are limited to 1 MiB. Declared size is
   checked before a separate download. Parsed forwarded emails check the sum
   of descendant sizes before downloading any stored body, and return that

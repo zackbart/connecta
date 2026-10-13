@@ -6,6 +6,7 @@
 import type { Transport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import guideChanges from "./fixtures/hosted-5c-guide-changes.json";
+import readOnlyGuideChanges from "./fixtures/hosted-readonly-820-guide-changes.json";
 import before from "./fixtures/linear-0.28-snapshot.json";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { servedTools } from "./fixtures/hosted-provider.js";
@@ -74,7 +75,7 @@ describe("linear() before and after defineProvider", () => {
     for (const [key, options] of Object.entries(before.configs)) {
       const connector = linear("tracker", options as LinearOptions);
       const expected = structuredClone(before.connectors[key as keyof typeof before.connectors]);
-      for (const [from, to] of guideChanges.linear) {
+      for (const [from, to] of [...guideChanges.linear, ...readOnlyGuideChanges.linear]) {
         expected.usageGuide.content = expected.usageGuide.content.replaceAll(from!, to!);
       }
       expect(

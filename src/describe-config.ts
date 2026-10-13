@@ -92,8 +92,8 @@ export interface ConnectaConfigDescription {
     execute: Record<keyof typeof CONFIG_DEFAULTS.execute, DescribedLimit>;
     requests: Record<keyof typeof CONFIG_DEFAULTS.admission.requests, DescribedLimit>;
   };
-  /** Trust and exact classification overrides from deployment code. */
-  trust: "trusted" | "read-only";
+  /** Whether the default /mcp endpoint refuses every write, and exact classification overrides from deployment code. */
+  readOnly: boolean;
   classification: Record<string, Record<string, "read" | "write">>;
   /** Inbound auth providers in the order they are tried. */
   auth: Array<{ kind: string; interactive: boolean; ui?: string }>;
@@ -101,7 +101,8 @@ export interface ConnectaConfigDescription {
     "connectorAccess" | "activityAccess" | "credentialAdministration" | "accessTokenManagement" | "personalConnection",
     "default" | "custom"
   >;
-  pools: Array<{ name: string; path: string; tools: string[]; hasGrant: boolean; trust: "trusted" | "read-only" }>;
+  /** `readOnly` is resolved: the pool's own value, else the deployment's. */
+  pools: Array<{ name: string; path: string; tools: string[]; hasGrant: boolean; readOnly: boolean }>;
   modules: {
     ui: { enabled: boolean };
     vault: { enabled: boolean; sealsOAuth?: boolean };
@@ -413,7 +414,7 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
         Object.keys(D.admission.requests) as Array<keyof typeof D.admission.requests>,
       ) as ConnectaConfigDescription["limits"]["requests"],
     },
-    trust: config.trust,
+    readOnly: config.readOnly,
     classification: structuredClone(config.classification ?? {}),
     auth: config.auth.map((provider) => ({
       kind: String(provider.kind),
@@ -424,7 +425,7 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
       IDENTITY_KEYS.map((key) => [key, typeof config.identity[key] === "function" ? "custom" : "default"]),
     ) as ConnectaConfigDescription["identity"],
     pools: Object.entries(config.pools ?? {}).map(([name, pool]) => ({
-      trust: pool.trust,
+      readOnly: pool.readOnly ?? config.readOnly,
       name,
       path: `/mcp/${name}`,
       tools: pool.tools.map(String),

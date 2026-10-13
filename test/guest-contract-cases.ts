@@ -175,7 +175,7 @@ export async function checkStashAuthority(executor: Executor, programReturn = fa
       return true;
     },
   };
-  const build = (trust: "trusted" | "read-only") =>
+  const build = (readOnly: boolean) =>
     createConnecta({
       connectors: [docs, control],
       storage,
@@ -201,12 +201,12 @@ export async function checkStashAuthority(executor: Executor, programReturn = fa
           zero ? [] : toolOnly ? ["docs.read", "control"] : granted ? ["docs", "control"] : ["control"],
       },
       pools: {
-        admin: { tools: ["docs", "control"], trust, grant: () => member },
-        empty: { tools: ["control"], trust: "trusted", grant: () => true },
+        admin: { tools: ["docs", "control"], readOnly, grant: () => member },
+        empty: { tools: ["control"], readOnly: false, grant: () => true },
       },
     });
-  const app = build("trusted");
-  const readonly = build("read-only");
+  const app = build(false);
+  const readonly = build(true);
   const rpc = async (
     name: string,
     args: unknown,
@@ -228,16 +228,11 @@ export async function checkStashAuthority(executor: Executor, programReturn = fa
     return (await readJsonRpc(response)).result as ToolResult;
   };
   try {
-    const inline = await rpc("call_destructive_tool", { address: "docs.write" }, { app: readonly });
-    expect(inline.isError).toBeFalsy();
-    expect(inline.structuredContent).toBeUndefined();
-    const inlineNotice = JSON.parse(required(inline.content[0]).text.split("\n")[0]!);
-    expect(inlineNotice).toMatchObject({
-      truncated: true,
-      hint: expect.stringContaining("Paging is unavailable for write results on read-only pools"),
-    });
-    expect(inlineNotice).not.toHaveProperty("resultId");
-    expect(inlineNotice).not.toHaveProperty("nextAction");
+    // A read-only endpoint never runs a write, so it never has a write result to page.
+    const refused = await rpc("call_destructive_tool", { address: "docs.write" }, { app: readonly });
+    expect(refused.isError).toBe(true);
+    expect(refused.structuredContent).toMatchObject({ error: { code: "read_only_endpoint", retryable: false } });
+    expect(JSON.stringify(refused)).not.toContain("stash-disclosure-sentinel");
     const direct = programReturn
       ? await rpc("execute_code", { code: 'async () => (await connecta.call("docs.write")).data' })
       : await rpc("call_destructive_tool", { address: "docs.write" });
@@ -356,7 +351,8 @@ export async function checkProgramReadDependencies(executor: Executor): Promise<
       authorize: () => ({ ok: true, subjectId: "alice" }),
     },
     identity: { connectorAccess: () => access },
-    pools: { reader: { tools: ["remote", "control"], trust: "read-only", grant: () => true } },
+    // Writable, so discovery still lists remote.write; no program here writes.
+    pools: { reader: { tools: ["remote", "control"], readOnly: false, grant: () => true } },
   });
   const run = async (code: string) => {
     const response = await app.fetch(
@@ -429,7 +425,7 @@ export async function checkProgramReadDependencies(executor: Executor): Promise<
           expect(narrowed.structuredContent).toMatchObject({ error: { code: "not_found" } });
           expect(JSON.stringify(narrowed)).not.toContain(sentinel);
         } else if (read!.includes("connecta.describe") || read!.includes('connecta.skill("connector:remote")')) {
-          // Describing a visible write is still a read on a read-only pool.
+          // Describing a visible write is still a read.
           expect(narrowed.isError).toBeFalsy();
           expect(JSON.stringify(narrowed)).toContain(sentinel);
         } else {
@@ -492,8 +488,8 @@ export async function checkProgramVisibilityDependencies(executor: Executor): Pr
     },
     identity: { connectorAccess: () => access },
     pools: {
-      reader: { tools: ["remote", "control"], trust: "read-only", grant: () => true },
-      narrow: { tools: ["remote.read", "control"], trust: "read-only", grant: () => true },
+      reader: { tools: ["remote", "control"], readOnly: true, grant: () => true },
+      narrow: { tools: ["remote.read", "control"], readOnly: true, grant: () => true },
     },
   });
   const run = async (code: string, pool: string) => {
@@ -691,7 +687,7 @@ export async function checkWriteDeadlineDiagnostics(executor: Executor): Promise
   check(direct.structuredContent?.error);
   for (const caught of [false, true]) {
     const result = await createExecuteTool(registry, CONTRACT_BASE, executor, logger, activity, {
-      trust: "trusted",
+      readOnly: false,
       defaultToolTimeoutMs: 25,
     })({
       code: caught
@@ -710,7 +706,7 @@ export async function checkWriteDeadlineDiagnostics(executor: Executor): Promise
     });
   }
   const multiple = await createExecuteTool(registry, CONTRACT_BASE, executor, logger, activity, {
-    trust: "trusted",
+    readOnly: false,
     defaultToolTimeoutMs: 25,
   })({
     code: `async () => await Promise.allSettled([
@@ -793,7 +789,7 @@ export async function checkQueuedWriteAtExhaustion(executor: Executor): Promise<
   try {
     const outcome = await createExecuteTool(registry, CONTRACT_BASE, executor, silentLogger, undefined, {
       maxHostCalls: 3,
-      trust: "trusted",
+      readOnly: false,
     })({
       code: `async () => {
       void connecta.call("limited.read", {}).then(({ data }) => data).catch(() => {});
@@ -855,6 +851,8 @@ export interface ContractCase {
   maxEmittedBytes?: number;
   /** Bounded stash capacity for native result transfer cases. */
   maxStashEntries?: number;
+  /** Run on a read-only endpoint, where every write is refused. */
+  readOnly?: true;
   check(outcome: ContractOutcome, state: ContractState, follow?: ContractOutcome): void;
 }
 
@@ -1255,11 +1253,15 @@ function contractConnectors(state: ContractState): Connector[] {
 
 interface CaseConfig {
   maxEmittedBytes?: number;
+  readOnly?: boolean;
 }
 
 /** The execute_code configuration a case asks for, the same on every arm. */
 export function caseConfig(contractCase: ContractCase): CaseConfig {
-  return contractCase.maxEmittedBytes !== undefined ? { maxEmittedBytes: contractCase.maxEmittedBytes } : {};
+  return {
+    ...(contractCase.maxEmittedBytes !== undefined ? { maxEmittedBytes: contractCase.maxEmittedBytes } : {}),
+    ...(contractCase.readOnly ? { readOnly: true } : {}),
+  };
 }
 
 /** One fresh registry, activity sink, and call counter per case. */
@@ -2375,7 +2377,8 @@ return fs;
   },
   {
     clauses: "E4, S6",
-    name: "tools that are not explicitly read-only are refused either way",
+    name: "INV-2: tools that are not explicitly read-only are refused either way on a read-only endpoint",
+    readOnly: true,
     code: `async () => {
       const out = {};
       try { await connecta.call("reader.wipe", {}).then(({ data }) => data); } catch (err) { out.shortcut = err.message; }
@@ -2386,7 +2389,8 @@ return fs;
       const result = record(outcome);
       for (const message of [result.shortcut, result.canonical]) {
         expect(String(message)).toContain("is a write");
-        expect(String(message)).toContain("call_destructive_tool");
+        expect(String(message)).toContain("this endpoint is read-only");
+        expect(String(message)).not.toContain("call_destructive_tool");
       }
       expect(state.calls["reader.wipe"]).toBeUndefined();
       expect(state.calls["reader.unannotated"]).toBeUndefined();
@@ -2525,6 +2529,7 @@ return fs;
   {
     clauses: "E1, E2, E3, E8, S7, S8, Y2, Y3",
     name: "parallel calls carry typed, distinguishable failures",
+    readOnly: true,
     code: `async () => {
       const calls = [
         { address: "reader.read", args: { value: "ok" } },
@@ -2572,9 +2577,10 @@ return fs;
       });
       expect(required(outcomes[1])).toMatchObject({
         ok: false,
-        code: "destructive_tool_requires_approval",
+        code: "read_only_endpoint",
         retryable: false,
       });
+      expect(required(outcomes[1]).nextAction).toBeUndefined();
       expect(required(outcomes[2])).toMatchObject({
         ok: false,
         code: "unavailable",
@@ -3028,6 +3034,7 @@ return fs;
   {
     clauses: "V1, V2, V3, V4",
     name: "every resolved call is one payload-free event, and nothing else is",
+    readOnly: true,
     code: `async () => {
       await connecta.call("reader.read", { value: "1" }).then(({ data }) => data);
       await connecta.call("reader.read", { value: "2" }).then(({ data }) => data);
@@ -3053,7 +3060,7 @@ return fs;
         expect(Object.keys(event)).not.toContain("code");
       }
       expect(required(state.events[2]).errorCode).toBe("unknown_address");
-      expect(required(state.events[3]).errorCode).toBe("destructive_tool_requires_approval");
+      expect(required(state.events[3]).errorCode).toBe("read_only_endpoint");
     },
   },
   {
@@ -3078,6 +3085,7 @@ return fs;
   {
     clauses: "E2, E7",
     name: "a policy refusal stays non-retryable however the address reads",
+    readOnly: true,
     code: `async () => {
       const calls = [
         { address: "temporary-503-service.nope", args: {} },
@@ -3097,7 +3105,7 @@ return fs;
       expect(outcome.isError, outcome.text).toBe(false);
       expect(outcome.result).toEqual([
         { code: "unknown_tool", retryable: false },
-        { code: "destructive_tool_requires_approval", retryable: false },
+        { code: "read_only_endpoint", retryable: false },
         { code: "unknown_address", retryable: false },
       ]);
     },

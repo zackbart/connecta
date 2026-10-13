@@ -210,18 +210,26 @@ async function persistedTools(storage: KVStorage): Promise<ToolDef[]> {
   const roots = (await storage.list("response-cache:v1:things:")).filter(
     (key) => !key.includes(":chunk:") && !key.endsWith(":generation") && !key.includes(":refresh-digest:"),
   );
-  expect(roots).toHaveLength(1);
-  const root = roots[0]!;
-  const manifest = JSON.parse((await storage.get(root))!) as { revision: string; chunkCount: number };
-  const chunks = await Promise.all(
-    Array.from({ length: manifest.chunkCount }, (_, i) => storage.get(`${root}:chunk:${manifest.revision}:${i}`)),
+  // The root endpoint and the read-only pool may each hold a cache entry;
+  // both store the same downstream facts.
+  expect(roots.length).toBeGreaterThanOrEqual(1);
+  const stored = await Promise.all(
+    roots.map(async (root) => {
+      const manifest = JSON.parse((await storage.get(root))!) as { revision: string; chunkCount: number };
+      const chunks = await Promise.all(
+        Array.from({ length: manifest.chunkCount }, (_, i) => storage.get(`${root}:chunk:${manifest.revision}:${i}`)),
+      );
+      return JSON.parse(chunks.join("")).tools as ToolDef[];
+    }),
   );
-  return JSON.parse(chunks.join("")).tools as ToolDef[];
+  for (const tools of stored) expect(tools).toEqual(stored[0]);
+  return stored[0]!;
 }
 
 /**
  * Every public path agrees: discovery at the top level and inside a program,
- * `call_tool`, and a program's call. Nothing refused reaches the downstream;
+ * `call_tool`, and a program's call on a read-only pool, where writes are
+ * absent from discovery and refused. Nothing refused reaches the downstream;
  * with `calls`, every read dispatches through `call_tool`.
  */
 async function expectServed(
@@ -244,8 +252,9 @@ async function expectServed(
     }
     expect(calls.slice(before)).toEqual(reads);
   }
+  expect(await app.searched("approvalRequired", "readonly")).toEqual([]);
   const result = await app.run(async (connecta) => {
-    const page = await connecta.search!({ connector: "things", query: "", safety: "readOnly" });
+    const page = await connecta.search!({ connector: "things", query: "", safety: "all" });
     const refused: string[] = [];
     for (const name of writes) {
       try {
@@ -255,15 +264,15 @@ async function expectServed(
       }
     }
     return {
-      readOnly: page.tools.map((tool: { address: string }) => tool.address).sort(),
+      visible: page.tools.map((tool: { address: string }) => tool.address).sort(),
       refused,
     };
-  });
-  const ran = result.structuredContent?.result as { readOnly: string[]; refused: string[] };
-  expect(ran.readOnly).toEqual(reads.map(address));
+  }, "readonly");
+  const ran = result.structuredContent?.result as { visible: string[]; refused: string[] };
+  expect(ran.visible).toEqual(reads.map(address));
   expect(ran.refused).toHaveLength(writes.length);
   for (const message of ran.refused) {
-    expect(message).toContain("destructive_tool_requires_approval");
+    expect(message).toContain("read_only_endpoint");
   }
   if (calls) expect(calls.slice(before)).toEqual(reads);
 }
@@ -301,14 +310,13 @@ describe.each(Object.keys(WRAPPERS) as Array<keyof typeof WRAPPERS>)(
   (wrapper) => {
     const wrap = WRAPPERS[wrapper];
 
-    it("INV-1 INV-2: a retained call definition cannot turn the next trusted-pool write into a read or bypass its budget", async () => {
+    it("INV-1 INV-2: a retained call definition cannot turn the next writable-endpoint program write into a read or bypass its budget", async () => {
       const calls: string[] = [];
       const { decorate } = retainingDecorator();
       const app = thingsDeployment(
         decorate(wrap({ list_things: "read", make_thing: "write" }, calls)),
         memoryStorage(),
         { maxWrites: 1 },
-        "trusted",
       );
       try {
         const result = await app.run(async (connecta) => {
@@ -402,19 +410,14 @@ describe.each(Object.keys(WRAPPERS) as Array<keyof typeof WRAPPERS>)(
           read.inputSchema.properties.id.type = "number";
           await connecta.call!("things.list_things", { id: "still a string" });
           const again = await connecta.search!({ connector: "things", safety: "readOnly", includeSchemas: "json" });
-          let write: string | undefined;
-          try {
-            await connecta.call!("things.make_thing", {});
-          } catch (error) {
-            write = (error as { code: string }).code;
-          }
-          return { tools: again.tools, write };
+          const writes = await connecta.search!({ connector: "things", safety: "approvalRequired" });
+          return { tools: again.tools, writes: writes.tools.map((tool: { address: string }) => tool.address).sort() };
         });
         expect(result.isError).toBeFalsy();
         expect(calls).toEqual(["list_things"]);
         expect(result.structuredContent?.result).toMatchObject({
           tools: [{ address: "things.list_things", inputSchema: { properties: { id: { type: "string" } } } }],
-          write: "destructive_tool_requires_approval",
+          writes: ["things.drop_thing", "things.make_thing"],
         });
       } finally {
         await app.connecta.close();

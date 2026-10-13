@@ -391,7 +391,7 @@ const truncatedReadPaging: ActiveTask = {
 const truncatedWriteExport: ActiveTask = {
   status: "active",
   id: "truncated-write-export",
-  deployment: { trust: "trusted" },
+  deployment: { readOnly: false },
   title: "Truncated write result, recovered with connecta.result, never re-sent",
   introducedIn: "baseline",
   measures:

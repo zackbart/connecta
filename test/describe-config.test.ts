@@ -187,7 +187,7 @@ describe("describeConfig", () => {
       calls: { defaultTimeoutMs: 9_000 },
       execute: { maxHostCalls: 7 },
       classification: { static_api: { read: "write" } },
-      trust: "trusted",
+      readOnly: false,
       admission: { requests: { concurrency: 4 } },
     });
     try {
@@ -203,7 +203,7 @@ describe("describeConfig", () => {
         },
         urls: { publicUrl: { origin: BASE, path: "/" }, mcpPath: "/mcp", allowedOrigins: "default" },
         executor: { admission: { concurrency: { value: 2, source: "default" } } },
-        trust: "trusted",
+        readOnly: false,
         classification: { static_api: { read: "write" } },
         auth: [
           { kind: "access_token", interactive: false },

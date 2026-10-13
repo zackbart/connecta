@@ -1,5 +1,6 @@
 import { guestError, guestErrorText, guestFailureFacts, guestSource } from "./fixtures/misc.js";
-// Trust-tier program writes, with one attempt and bounded outcome accounting.
+// Program writes on writable and read-only endpoints, with one attempt and
+// bounded outcome accounting.
 import { describe, expect, it } from "vitest";
 import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
 import { recordToolActivity } from "../src/activity.js";
@@ -9,7 +10,7 @@ import { classifyWriteOutcome } from "../src/program-writes.js";
 import { api } from "../src/connectors/api.js";
 import { customExecutor, createConnecta } from "../src/index.js";
 import { createMetaTools } from "../src/meta-tools.js";
-import { classifyTool, type PoolTrust } from "../src/tool-safety.js";
+import { classifyTool } from "../src/tool-safety.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, Executor, ExecutorProvider, ToolDef } from "../src/types.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
@@ -56,7 +57,7 @@ function scriptedExecutor(programs: Map<string, Program>): Executor {
 
 interface WorldOptions {
   inputSchema?: JsonSchema;
-  trust?: PoolTrust;
+  readOnly?: boolean;
   maxWrites?: number;
   write?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
   read?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
@@ -112,7 +113,7 @@ function world(options: WorldOptions = {}) {
   };
   const programs = new Map<string, Program>();
   const execute = createExecuteTool(registry, BASE, scriptedExecutor(programs), silentLogger, activity, {
-    trust: options.trust,
+    readOnly: options.readOnly,
     ...(options.maxWrites !== undefined ? { maxWrites: options.maxWrites } : {}),
   });
   let next = 0;
@@ -138,7 +139,7 @@ const closeOne: Program = async (connecta) => {
   return "closed";
 };
 
-describe("a trusted program's Stripe refund whose reply is lost", () => {
+describe("a writable endpoint's program Stripe refund whose reply is lost", () => {
   it("INV-9: reports write_outcome_unknown with the generated Idempotency-Key, sent once", async () => {
     const storage = memoryStorage();
     const credentialVault = new CredentialVault(storage, btoa("k".repeat(32)));
@@ -179,7 +180,7 @@ describe("a trusted program's Stripe refund whose reply is lost", () => {
         return "done";
       });
       const execute = createExecuteTool(registry, BASE, scriptedExecutor(programs), silentLogger, undefined, {
-        trust: "trusted",
+        readOnly: false,
       });
       const error = value(await execute({ code })).error;
       expect(sent).toHaveLength(1);
@@ -196,7 +197,7 @@ describe("a trusted program's Stripe refund whose reply is lost", () => {
   });
 });
 
-describe("a trusted program's Stripe refund that meets an object lock", () => {
+describe("a writable endpoint's program Stripe refund that meets an object lock", () => {
   it("INV-9: counts a lock_timeout as a failed write, not an unknown outcome", async () => {
     const storage = memoryStorage();
     const credentialVault = new CredentialVault(storage, btoa("k".repeat(32)));
@@ -230,7 +231,7 @@ describe("a trusted program's Stripe refund that meets an object lock", () => {
         return "sent";
       });
       const execute = createExecuteTool(registry, BASE, scriptedExecutor(programs), silentLogger, undefined, {
-        trust: "trusted",
+        readOnly: false,
       });
       const result = await execute({ code });
       expect(sent).toBe(1);
@@ -246,7 +247,7 @@ describe("a program's write", () => {
   for (const { name, schema, args, echo } of privateArgumentCases)
     it(`INV-5 INV-6 INV-9: caught writes retain safe ${name} echoes and original-argument guidance`, async () => {
       const w = world({
-        trust: "trusted",
+        readOnly: false,
         inputSchema: schema,
         write: () => {
           throw new ConnectorCallError("timeout", "Synthetic write deadline.");
@@ -283,27 +284,21 @@ describe("a program's write", () => {
       expect(w.events.map((event) => event.attempts)).toEqual([1, 1]);
       expect(JSON.stringify(w.events)).not.toContain(PRIVATE_MARKER);
     });
-  it("INV-2: is refused before it is sent, pointing at call_destructive_tool", async () => {
-    const w = world();
+  it("INV-2: is refused on a read-only endpoint before it is sent, offering no write route", async () => {
+    const w = world({ readOnly: true });
     const result = await w.run(closeOne);
     expect(result.isError).toBe(true);
-    expect(value(result).error).toMatchObject({
-      code: "destructive_tool_requires_approval",
-      retryable: false,
-      nextAction: {
-        tool: "call_destructive_tool",
-        arguments: { address: "tracker.close_issue", args: { id: 1 } },
-      },
-    });
+    expect(value(result).error).toMatchObject({ code: "read_only_endpoint", retryable: false });
+    expect(value(result).error).not.toHaveProperty("nextAction");
     expect(w.writes()).toEqual([]);
-    // An ordinary refused attempt, recorded payload-free with its friction.
+    // An ordinary refused attempt, recorded payload-free.
     expect(w.events.map((event) => [event.address, event.outcome, event.errorCode, event.friction])).toEqual([
-      ["tracker.close_issue", "error", "destructive_tool_requires_approval", "destructive_reroute"],
+      ["tracker.close_issue", "error", "read_only_endpoint", undefined],
     ]);
   });
 
-  it("is refused for an unannotated tool too, and a caught refusal lets the program go on", async () => {
-    const w = world();
+  it("INV-2: is refused on a read-only endpoint for an unannotated tool too, and a caught refusal lets the program go on", async () => {
+    const w = world({ readOnly: true });
     const result = await w.run(async (connecta) => {
       const issue = await connecta.call!("reader.get", { id: 7 });
       try {
@@ -313,14 +308,20 @@ describe("a program's write", () => {
         return (error as { code: string }).code;
       }
     });
-    expect(value(result).result).toBe("destructive_tool_requires_approval");
+    expect(value(result).result).toBe("read_only_endpoint");
     expect(w.writes()).toEqual([]);
+  });
+
+  it("INV-2: runs by default, since an endpoint is writable unless it is read-only", async () => {
+    const w = world();
+    expect(value(await w.run(closeOne)).result).toBe("closed");
+    expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }]);
   });
 });
 
-describe("trusted-pool programs (#706)", () => {
-  it("INV-2: runs a write in a trusted pool, recorded as an ordinary call", async () => {
-    const w = world({ trust: "trusted" });
+describe("writable-endpoint programs (#706, #820)", () => {
+  it("INV-2: runs a program write on a writable endpoint, recorded as an ordinary call", async () => {
+    const w = world({ readOnly: false });
     expect(value(await w.run(closeOne)).result).toBe("closed");
     expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }]);
     expect(w.events.map((event) => [event.address, event.outcome, event.source])).toEqual([
@@ -328,8 +329,8 @@ describe("trusted-pool programs (#706)", () => {
     ]);
   });
 
-  it("INV-2: permits every write in a trusted pool", async () => {
-    const w = world({ trust: "trusted" });
+  it("INV-2: permits every write on a writable endpoint", async () => {
+    const w = world({ readOnly: false });
     const done = await w.run(async (connecta) => {
       await connecta.call!("tracker.close_issue", { id: 1 });
       try {
@@ -347,7 +348,7 @@ describe("trusted-pool programs (#706)", () => {
   });
 
   it("spends the write budget", async () => {
-    const w = world({ maxWrites: 1, trust: "trusted" });
+    const w = world({ maxWrites: 1, readOnly: false });
     const done = await w.run(async (connecta) => {
       const outcomes = [];
       for (const id of [1, 2]) {
@@ -368,7 +369,7 @@ describe("trusted-pool programs (#706)", () => {
     "INV-9: program failures retain %s write accounting after caught host failures",
     async (state) => {
       const w = world({
-        trust: "trusted",
+        readOnly: false,
         read: () => {
           throw new ConnectorCallError("not_found", "Read refused");
         },
@@ -410,13 +411,13 @@ describe("trusted-pool programs (#706)", () => {
     },
   );
 
-  it("INV-9: lets an unawaited trusted-pool write finish, and says how it went", async () => {
+  it("INV-9: lets an unawaited program write finish, and says how it went", async () => {
     let writeStarted!: () => void;
     let dispatched = new Promise<void>((resolve) => {
       writeStarted = resolve;
     });
     const w = world({
-      trust: "trusted",
+      readOnly: false,
       read: async () => {
         await dispatched;
         return { id: 9, title: "An issue" };
@@ -466,7 +467,7 @@ describe("trusted-pool programs (#706)", () => {
         writeStarted = resolve;
       });
       const w = world({
-        trust: "trusted",
+        readOnly: false,
         read: async () => {
           await dispatched;
           return { id: 9 };
@@ -508,7 +509,7 @@ describe("trusted-pool programs (#706)", () => {
   );
 
   it("puts write counts on the error of a program that fails after writing", async () => {
-    const w = world({ trust: "trusted" });
+    const w = world({ readOnly: false });
     const failed = await w.run(async (connecta) => {
       await connecta.call!("tracker.close_issue", { id: 1 });
       throw new Error("the program gave up");
@@ -519,8 +520,8 @@ describe("trusted-pool programs (#706)", () => {
     });
   });
 
-  it("INV-2: keeps writes out of call_tool even in trusted deployments", async () => {
-    const w = world({ trust: "trusted" });
+  it("INV-2: keeps writes out of call_tool even on writable endpoints", async () => {
+    const w = world({ readOnly: false });
     const tools = createMetaTools(w.registry, BASE);
     const refused = await tools.callTool({ address: "tracker.close_issue", args: { id: 1 } });
     expect(refused.isError).toBe(true);
@@ -541,11 +542,37 @@ describe("trusted-pool programs (#706)", () => {
     expect(() => construct({ classification: { nope: { read: "read" } } })).toThrow('unknown connector "nope"');
     expect(() => construct({ classification: { notes: { missing: "read" } } })).toThrow('has no tool "missing"');
     expect(() => construct({ classification: { notes: { read: "never" } } })).toThrow('must be "read" or "write"');
-    expect(() => construct({ trust: "ask" })).toThrow('must be "trusted" or "read-only"');
-    expect(() => construct({ pools: { named: { tools: ["notes"], trust: "ask" } } })).toThrow(
-      "ConnectaConfig.pools.named.trust",
+    expect(() => construct({ readOnly: "yes" })).toThrow("ConnectaConfig.readOnly must be true or false");
+    expect(() => construct({ pools: { named: { tools: ["notes"], readOnly: 1 } } })).toThrow(
+      "ConnectaConfig.pools.named.readOnly must be true or false",
     );
     expect(() => construct({ connectors: [{ ...notes, approval: "never" }] })).toThrow("approval was removed");
+  });
+
+  it.each([
+    ["the deployment", (trust: unknown) => ({ trust }), "ConnectaConfig.trust"],
+    [
+      "a pool",
+      (trust: unknown) => ({ pools: { named: { tools: ["notes"], grant: () => true, trust } } }),
+      "ConnectaConfig.pools.named.trust",
+    ],
+  ])("INV-11: refuses the retired trust option on %s, pointing at readOnly", (_where, config, path) => {
+    const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
+    const notes = api("notes", {
+      tools: [{ name: "read", description: "Read", annotations: { readOnlyHint: true }, handler: () => [] }],
+    });
+    for (const trust of ["trusted", "read-only", undefined]) {
+      const construct = () =>
+        (createConnecta as (config: unknown) => unknown)({
+          connectors: [notes],
+          executor,
+          logger: "silent",
+          ...config(trust),
+        });
+      expect(construct).toThrow(path);
+      expect(construct).toThrow('trust: "read-only" becomes readOnly: true');
+      expect(construct).toThrow('trust: "trusted" becomes readOnly: false');
+    }
   });
 });
 
@@ -606,7 +633,8 @@ describe("retired pause configuration (#672)", () => {
       result: { tools: Array<{ name: string; annotations?: Record<string, unknown> }> };
     };
     expect(listed.result.tools.map((tool) => tool.name)).not.toContain("resume_execution");
-    expect(listed.result.tools.find((tool) => tool.name === "execute_code")?.annotations?.readOnlyHint).toBe(true);
+    // A default endpoint is writable, so execute_code is annotated as a write.
+    expect(listed.result.tools.find((tool) => tool.name === "execute_code")?.annotations?.readOnlyHint).toBe(false);
     const health = await (await connecta.fetch(new Request("http://localhost/health"))).json();
     expect(health).not.toHaveProperty("resumableWrites");
     await connecta.close();
@@ -701,24 +729,43 @@ describe("classification and pool endpoints (#706)", () => {
     await expect(registry.getTools("remote", BASE, {})).rejects.toThrow('has no tool "missing"');
     await expect(registry.getTools("remote", BASE, {})).rejects.toThrow('has no tool "missing"');
   });
+});
 
-  it("INV-2 INV-4 INV-9: endpoint trust controls writes and execute_code annotations", async () => {
+describe("read-only and writable endpoints (#820)", () => {
+  const PROGRAMS = new Map<string, Program>([
+    [
+      "async () => write",
+      async (connecta) => {
+        await connecta.call!("notes.write", { text: "x" });
+        return "written";
+      },
+    ],
+    [
+      "async () => discover",
+      async (connecta) => {
+        const page = await connecta.search!({ connector: "notes", query: "", safety: "all" });
+        const described = await connecta.describe!({ addresses: ["notes.write", "notes.read"] });
+        return {
+          visible: page.tools.map((tool: { address: string }) => tool.address).sort(),
+          described: described.tools.map((tool: { address: string; errorDetails?: { code: string } }) =>
+            tool.errorDetails ? tool.errorDetails.code : tool.address,
+          ),
+        };
+      },
+    ],
+  ]);
+
+  function deployment(config: { readOnly?: boolean; pools: Record<string, { readOnly?: boolean }> }) {
     let writes = 0;
-    const programs = new Map<string, Program>([
-      [
-        "async () => write",
-        async (connecta) => {
-          await connecta.call!("notes.write", {});
-          return "written";
-        },
-      ],
-    ]);
     const notes = api("notes", {
       tools: [
+        { name: "read", description: "Read", annotations: { readOnlyHint: true }, handler: () => "read" },
         {
           name: "write",
           description: "Write",
           annotations: { readOnlyHint: false },
+          // Required input: a refusal ahead of validation never reports invalid_args.
+          inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
           handler: () => {
             writes++;
             return "written";
@@ -729,11 +776,11 @@ describe("classification and pool endpoints (#706)", () => {
     const app = createConnecta({
       connectors: [notes],
       logger: "silent",
-      executor: customExecutor(scriptedExecutor(programs), { lifecycle: "self-managed" }),
-      pools: {
-        trusted: { tools: ["notes"], trust: "trusted", grant: () => true },
-        readonly: { tools: ["notes"], grant: () => true },
-      },
+      executor: customExecutor(scriptedExecutor(PROGRAMS), { lifecycle: "self-managed" }),
+      ...(config.readOnly !== undefined ? { readOnly: config.readOnly } : {}),
+      pools: Object.fromEntries(
+        Object.entries(config.pools).map(([name, pool]) => [name, { tools: ["notes"], grant: () => true, ...pool }]),
+      ),
     });
     const rpc = async (path: string, method: string, params: unknown) =>
       readJsonRpc(
@@ -745,41 +792,125 @@ describe("classification and pool endpoints (#706)", () => {
           }),
         ),
       ) as Promise<any>;
+    return { app, rpc, writes: () => writes };
+  }
+
+  /** Every discovery path hides the write, and every write path refuses it before validation or dispatch. */
+  async function expectReadOnly(target: ReturnType<typeof deployment>, path: string) {
+    const before = target.writes();
+    const listing = await target.rpc(path, "tools/list", {});
+    expect(listing.result.tools).toHaveLength(6);
+    const execute = listing.result.tools.find((tool: { name: string }) => tool.name === "execute_code");
+    expect(execute.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+    expect(execute.description).toContain("Read-only endpoint");
+    const search = await target.rpc(path, "tools/call", {
+      name: "search_tools",
+      arguments: { connector: "notes", query: "", safety: "all" },
+    });
+    expect(search.result.structuredContent.tools.map((tool: { address: string }) => tool.address)).toEqual([
+      "notes.read",
+    ]);
+    const discovered = await target.rpc(path, "tools/call", {
+      name: "execute_code",
+      arguments: { code: "async () => discover" },
+    });
+    expect(discovered.result.structuredContent.result).toEqual({
+      visible: ["notes.read"],
+      described: ["unknown_tool", "notes.read"],
+    });
+    for (const name of ["call_tool", "call_destructive_tool"]) {
+      const refused = await target.rpc(path, "tools/call", { name, arguments: { address: "notes.write", args: {} } });
+      expect(refused.result.isError).toBe(true);
+      expect(refused.result.structuredContent.error).toMatchObject({ code: "read_only_endpoint", retryable: false });
+      expect(refused.result.structuredContent.error).not.toHaveProperty("nextAction");
+    }
+    const program = await target.rpc(path, "tools/call", {
+      name: "execute_code",
+      arguments: { code: "async () => write" },
+    });
+    expect(program.result.isError).toBe(true);
+    expect(program.result.structuredContent.error).toMatchObject({ code: "read_only_endpoint", retryable: false });
+    expect(program.result.structuredContent.error).not.toHaveProperty("nextAction");
+    expect(target.writes()).toBe(before);
+    // Reads are unchanged.
+    const read = await target.rpc(path, "tools/call", { name: "call_tool", arguments: { address: "notes.read" } });
+    expect(read.result.isError).toBeFalsy();
+  }
+
+  /** Writes behave as a trusted pool's did: programs and call_destructive_tool send them, call_tool never. */
+  async function expectWritable(target: ReturnType<typeof deployment>, path: string) {
+    const before = target.writes();
+    const listing = await target.rpc(path, "tools/list", {});
+    expect(listing.result.tools).toHaveLength(6);
+    const execute = listing.result.tools.find((tool: { name: string }) => tool.name === "execute_code");
+    expect(execute.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    expect(execute.description).toContain("Writable endpoint");
+    const search = await target.rpc(path, "tools/call", {
+      name: "search_tools",
+      arguments: { connector: "notes", query: "", safety: "all" },
+    });
+    expect(search.result.structuredContent.tools.map((tool: { address: string }) => tool.address).sort()).toEqual([
+      "notes.read",
+      "notes.write",
+    ]);
+    const direct = await target.rpc(path, "tools/call", {
+      name: "call_tool",
+      arguments: { address: "notes.write", args: { text: "x" } },
+    });
+    expect(direct.result.structuredContent.error).toMatchObject({ code: "destructive_tool_requires_approval" });
+    const approved = await target.rpc(path, "tools/call", {
+      name: "call_destructive_tool",
+      arguments: { address: "notes.write", args: { text: "x" } },
+    });
+    expect(approved.result.isError).toBeFalsy();
+    const program = await target.rpc(path, "tools/call", {
+      name: "execute_code",
+      arguments: { code: "async () => write" },
+    });
+    expect(program.result.structuredContent.result).toBe("written");
+    expect(target.writes()).toBe(before + 2);
+  }
+
+  it("INV-2 INV-4 INV-9: the default endpoint is writable and a pool inherits it unless it sets readOnly", async () => {
+    const target = deployment({ pools: { inherits: {}, locked: { readOnly: true } } });
     try {
-      for (const path of ["/mcp", "/mcp/readonly", "/mcp/trusted"]) {
-        const trusted = path === "/mcp/trusted";
-        const listing = await rpc(path, "tools/list", {});
-        expect(
-          listing.result.tools.find((tool: { name: string }) => tool.name === "execute_code").annotations,
-        ).toMatchObject({ readOnlyHint: !trusted, destructiveHint: trusted });
-        const run = await rpc(path, "tools/call", { name: "execute_code", arguments: { code: "async () => write" } });
-        expect(run.result.isError === true).toBe(!trusted);
-        const direct = await rpc(path, "tools/call", { name: "call_tool", arguments: { address: "notes.write" } });
-        expect(direct.result.isError).toBe(true);
-      }
-      expect(writes).toBe(1);
-      const direct = await rpc("/mcp/readonly", "tools/call", {
-        name: "call_destructive_tool",
-        arguments: { address: "notes.write" },
-      });
-      expect(direct.result.isError).toBeFalsy();
-      expect(writes).toBe(2);
-      expect(app.describeConfig()).toMatchObject({
-        trust: "read-only",
+      await expectWritable(target, "/mcp");
+      await expectWritable(target, "/mcp/inherits");
+      await expectReadOnly(target, "/mcp/locked");
+      expect(target.app.describeConfig()).toMatchObject({
+        readOnly: false,
         pools: [
-          { name: "trusted", trust: "trusted" },
-          { name: "readonly", trust: "read-only" },
+          { name: "inherits", readOnly: false },
+          { name: "locked", readOnly: true },
         ],
       });
     } finally {
-      await app.close();
+      await target.app.close();
+    }
+  });
+
+  it("INV-2 INV-4 INV-9: a read-only deployment hides and refuses writes, and a pool can reopen them", async () => {
+    const target = deployment({ readOnly: true, pools: { inherits: {}, open: { readOnly: false } } });
+    try {
+      await expectReadOnly(target, "/mcp");
+      await expectReadOnly(target, "/mcp/inherits");
+      await expectWritable(target, "/mcp/open");
+      expect(target.app.describeConfig()).toMatchObject({
+        readOnly: true,
+        pools: [
+          { name: "inherits", readOnly: true },
+          { name: "open", readOnly: false },
+        ],
+      });
+    } finally {
+      await target.app.close();
     }
   });
 });
 
 it("INV-6 INV-9: caught write timeouts retain uncertain arguments in host-owned write accounting", async () => {
   const w = world({
-    trust: "trusted",
+    readOnly: false,
     write: async () => {
       throw new ConnectorCallError("timeout", "deadline");
     },

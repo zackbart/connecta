@@ -14,11 +14,11 @@ const RECOVERY =
   'When an auth error includes a handoff, give it to the user or operator. Use authorize_connector for a fresh link. Page resultId notices and format:"paged" handles with connecta.result(handleOrId, { page? }). Fetch skills({ name: "usage" }) only for missing guidance or program repair.';
 
 /**
- * The always-loaded MCP `instructions` string. A program runs reads and the
- * writes in trusted pools; a read-only pool routes every write to top-level
- * call_destructive_tool, where the host's permission prompt is the approval.
+ * The always-loaded MCP `instructions` string. An endpoint is writable or
+ * read-only: a writable one lets programs and call_destructive_tool write,
+ * and the client owns approval; a read-only one hides and refuses every write.
  */
-export const CONNECTA_INSTRUCTIONS = `${ROUTE} Programs call reads in read-only pools and may also write in trusted pools. The execute_code description names this endpoint's trust. In a read-only pool, discover writes with search_tools then use call_destructive_tool. Never repeat a write to recover its output. ${RECOVERY}`;
+export const CONNECTA_INSTRUCTIONS = `${ROUTE} On a writable endpoint, programs and call_destructive_tool may write. On a read-only endpoint, write tools are hidden and every write is refused. The execute_code description says which this endpoint is. Never repeat a write to recover its output. ${RECOVERY}`;
 
 export { USAGE_SKILL } from "./usage-guide.js";
 

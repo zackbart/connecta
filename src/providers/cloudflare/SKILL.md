@@ -10,7 +10,7 @@
 
 
 - The catalog is Cloudflare's own `search` and `execute`. `search` runs code against Cloudflare's OpenAPI document; `execute` runs code that may call any Cloudflare API endpoint the OAuth grant allows.
-- Connecta classifies `execute` as a write, even for a program that only reads, because one program can mix GET, POST, PUT, PATCH, and DELETE and no schema proves otherwise. A read-only pool therefore gets only `search` here. Deployments that need API reads from a read-only pool configure an API-token connector, whose `cloudflare_api_read` and named reads are reads.
+- Connecta classifies `execute` as a write, even for a program that only reads, because one program can mix GET, POST, PUT, PATCH, and DELETE and no schema proves otherwise. A read-only endpoint therefore gets only `search` here. Deployments that need API reads from a read-only endpoint configure an API-token connector, whose `cloudflare_api_read` and named reads are reads.
 - Use `search` to find the exact method, path, and fields before writing an execute program. Do not guess an endpoint from product naming.
 - Keep returned values small. Filter and project inside the Cloudflare program, then reduce again inside Connecta's `execute_code` when several calls must be joined.
 - This connection has none of the REST connector's tools: no `cloudflare_api_*` validation against a pinned index, no `graphql_query`, no `cloudflare_api_upload`, and no account or zone pin. OAuth permissions are the boundary.

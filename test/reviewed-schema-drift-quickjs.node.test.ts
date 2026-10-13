@@ -9,7 +9,7 @@ import { trackedQuickJs } from "./fixtures/node.js";
 import { STALE_SCHEMA_PATHS, currentDigest } from "./fixtures/stale-schema.js";
 
 const PROGRAM = `async () => {
-  const found = await connecta.search({ connector: "things", query: "", safety: "readOnly" });
+  const found = await connecta.search({ connector: "things", query: "", safety: "all" });
   const listed = await connecta.call("things.list_things", {});
   const refused = [];
   for (const address of ["things.peek_things", "things.scan_things"]) {
@@ -19,18 +19,19 @@ const PROGRAM = `async () => {
       refused.push(error.code);
     }
   }
-  return { readOnly: found.tools.map((tool) => tool.address), listed: listed !== undefined, refused };
+  return { visible: found.tools.map((tool) => tool.address), listed: listed !== undefined, refused };
 }`;
 
 describe.each(Object.keys(STALE_SCHEMA_PATHS) as Array<keyof typeof STALE_SCHEMA_PATHS>)(
   "a stale reviewed read in a QuickJS program (%s)",
   (path) => {
-    it("INV-1: is hidden from read-only discovery and refused before it is sent", async () => {
+    it("INV-1 INV-2: is hidden from a read-only endpoint's discovery and refused before it is sent", async () => {
       const calls: string[] = [];
       const connecta = createConnecta({
         connectors: [STALE_SCHEMA_PATHS[path](await currentDigest(), calls)],
         storage: memoryStorage(),
         logger: "silent",
+        readOnly: true,
         executor: trackedQuickJs(),
       });
       try {
@@ -38,9 +39,9 @@ describe.each(Object.keys(STALE_SCHEMA_PATHS) as Array<keyof typeof STALE_SCHEMA
           await mcpRpc(connecta, "tools/call", { name: "execute_code", arguments: { code: PROGRAM } }),
         );
         expect(body.result.structuredContent.result).toEqual({
-          readOnly: ["things.list_things"],
+          visible: ["things.list_things"],
           listed: true,
-          refused: ["destructive_tool_requires_approval", "destructive_tool_requires_approval"],
+          refused: ["read_only_endpoint", "read_only_endpoint"],
         });
         expect(calls).toEqual(["list_things"]);
       } finally {

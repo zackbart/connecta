@@ -34,12 +34,12 @@ export async function fixtureContract(data: UiData): Promise<OperatorUiContract>
     },
     you: {
       interactive: true,
-      trust: "read-only",
+      readOnly: true,
       grants: data.connectors.map((c) => ({ connectorId: c.id, tools: "all" })),
       pools: (data.pools ?? []).map((name) => ({
         name,
         path: `/mcp/${name}`,
-        trust: "read-only",
+        readOnly: true,
         grants: data.connectors.map((c) => ({ connectorId: c.id, tools: "all" })),
       })),
       permissions: {

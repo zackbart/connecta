@@ -64,7 +64,7 @@ describe.each(Object.keys(PATHS) as Array<keyof typeof PATHS>)(
       }
     });
 
-    it("INV-1: is refused inside execute_code before it is sent", async () => {
+    it("INV-1 INV-2: is refused inside execute_code on a read-only endpoint before it is sent", async () => {
       const calls: string[] = [];
       const app = deployment(PATHS[path](await currentDigest(), calls));
       try {
@@ -79,11 +79,11 @@ describe.each(Object.keys(PATHS) as Array<keyof typeof PATHS>)(
             }
           }
           return refused;
-        });
+        }, "readonly");
         const refused = result.structuredContent?.result as string[];
         expect(refused).toHaveLength(2);
         for (const message of refused) {
-          expect(message).toContain("destructive_tool_requires_approval");
+          expect(message).toContain("read_only_endpoint");
         }
         expect(calls).toEqual(["list_things"]);
       } finally {

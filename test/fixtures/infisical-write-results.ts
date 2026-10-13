@@ -140,13 +140,13 @@ for (const tool of ["get_secret", "list_secrets"]) infisicalResultCases.push({
 });
 
 let clientCounter = 0;
-async function setup(executor?: Executor, extraConnectors: ReturnType<typeof api>[] = [], trust: "trusted" | "read-only" = "trusted", hostCallTimeoutMs?: number) {
+async function setup(executor?: Executor, extraConnectors: ReturnType<typeof api>[] = [], readOnly = false, hostCallTimeoutMs?: number) {
   const storage = memoryStorage();
   const vault = new CredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
   await vault.setAll("infisical", { clientId: `result-client-${++clientCounter}`, clientSecret: "synthetic-client-secret-12345" }, "operator");
   const connector = infisical("infisical", { purpose: "result security tests" });
   const deployment = createTestConnecta({
-    storage, vault, connectors: [connector, ...extraConnectors], logger: silentLogger, trust,
+    storage, vault, connectors: [connector, ...extraConnectors], logger: silentLogger, readOnly,
     ...(hostCallTimeoutMs ? { execute: { hostCallTimeoutMs } } : {}),
     ...(executor ? { executor: { execute: executor.execute.bind(executor) } } : {}),
   });
@@ -227,7 +227,9 @@ export async function checkInfisicalRecovery(testCase: typeof infisicalRecoveryC
       annotations: { readOnlyHint: true },
       handler: async (args: { error: unknown }) => { witnessed.push(args.error); return true; },
     }] });
-    const { deployment } = await setup(executor, [witness], failure === "refusal" ? "read-only" : "trusted", 100);
+    // A program's write is refused only on a read-only endpoint; call_tool refuses one anywhere.
+    const programRefusal = failure === "refusal" && executor !== undefined;
+    const { deployment } = await setup(executor, [witness], programRefusal, 100);
     const dispatched: RequestInit[] = [];
     vi.stubGlobal("fetch", vi.fn<typeof globalThis.fetch>(async (input, init) => {
       if (String(input).endsWith("/login")) return Response.json({ accessToken: "synthetic-access-token-12345", expiresIn: 3600 });
@@ -238,8 +240,15 @@ export async function checkInfisicalRecovery(testCase: typeof infisicalRecoveryC
         else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
       });
     }));
-    const code = failure === "refusal" ? "destructive_tool_requires_approval" : "write_outcome_unknown";
+    const code = programRefusal ? "read_only_endpoint" : failure === "refusal" ? "destructive_tool_requires_approval" : "write_outcome_unknown";
     const check = (error: unknown) => {
+      if (programRefusal) {
+        // No write route exists, so nothing echoes the arguments back.
+        expect(error).toMatchObject({ code, retryable: false });
+        expect(error).not.toHaveProperty("nextAction");
+        expect(JSON.stringify(error)).not.toContain(recoveryMarker);
+        return;
+      }
       expect(error).toMatchObject({ code, ...(failure === "refusal"
         ? { nextAction: { arguments: { address: `infisical.${testCase.tool}`, args: testCase.publicArgs, argsRedacted: true } } }
         : { uncertainCall: { address: `infisical.${testCase.tool}`, args: testCase.publicArgs, argsRedacted: true }, retryable: false }) });

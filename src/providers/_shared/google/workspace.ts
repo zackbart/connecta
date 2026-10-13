@@ -655,7 +655,7 @@ export function googleWorkspaceClient(options: GoogleWorkspaceClientOptions): Go
    * write Google accepted, or one that left with no answer, may have landed:
    * telling the agent to retry it invites a duplicate, so it is reported as
    * an uncertain outcome that is not retried — the same verdict core reaches
-   * for a trusted-pool program write (`write_outcome_unknown`). A read is safe to
+   * for a program write (`write_outcome_unknown`). A read is safe to
    * repeat and keeps its retryable classification.
    */
   /**

@@ -183,8 +183,8 @@ connector beside the token connector.
 
 The hosted connection now lists `filter_project_envs`, `get_project_env`,
 `create_project_env`, and `edit_project_env`, which 0.29 hid. The two reads can
-return decrypted values, so they are reviewed as writes and the pool trust
-policy gates them. Vercel admits only reviewed and approved MCP clients to its
+return decrypted values, so they are reviewed as writes, and a `readOnly`
+endpoint hides and refuses them. Vercel admits only reviewed and approved MCP clients to its
 hosted server; if authorization is refused for that reason, the deployment
 needs Vercel's approval or a token connector. The
 [Vercel skill](https://github.com/zackbart/connecta/blob/main/src/providers/vercel/SKILL.md)
@@ -245,8 +245,9 @@ hooks) and redacts stored secrets on every result. A pinned connector refuses
 operations that name no account or zone unless they are reviewed safe, such
 as `/certificates` and `/memberships/{id}`.
 
-Read-only pools: hosted `execute` is always a write, even for a program that
-only reads, so a read-only pool on an OAuth connector reaches only `search`.
+Read-only endpoints: hosted `execute` is always a write, even for a program
+that only reads, so a `readOnly` endpoint on an OAuth connector reaches only
+`search`.
 Use an API-token connector for read-only API access.
 
 Lost on each path. OAuth has no index validation, named tools, GraphQL tool,

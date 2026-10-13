@@ -122,9 +122,11 @@ describe("server /mcp end-to-end", () => {
     const body = await readJsonRpc(res);
     expect(body.result.serverInfo.name).toBe("connecta");
     expect(body.result.instructions).toContain("Unknown-address read-only work starts with execute_code");
+    expect(body.result.instructions).toContain("On a writable endpoint, programs and call_destructive_tool may write");
     expect(body.result.instructions).toContain(
-      "Programs call reads in read-only pools and may also write in trusted pools",
+      "On a read-only endpoint, write tools are hidden and every write is refused",
     );
+    expect(body.result.instructions).not.toContain("trust");
     expect(body.result.instructions).toContain("call_destructive_tool");
     expect(body.result.instructions).not.toContain("resume_execution");
     expect(body.result.instructions).toContain('skills({ name: "usage" })');
@@ -538,7 +540,8 @@ describe("server /mcp end-to-end", () => {
     expect(skill).toContain("## Choose the route");
     expect(skill).toContain("## The global and the envelopes");
     expect(skill).toContain("## Keep partial successes");
-    expect(skill).toContain("Programs may\nwrite only in trusted pools");
+    expect(skill).toContain("writes\nare hidden and fail read_only_endpoint");
+    expect(skill).not.toContain("trust");
     expect(skill).toContain("No imports, require, filesystem, fetch, or timers");
     expect(skill).toContain("## Large results and recovery");
     expect(skill).toContain("Follow\nnextOffset in UTF-8 bytes");
@@ -1690,7 +1693,7 @@ describe("execute_code registration (code mode)", () => {
       );
     }
     const description = await executeDescription();
-    expect(description).toContain("Read-only pool: programs read; writes use call_destructive_tool.");
+    expect(description).toContain("Writable endpoint: programs may read and write; the client approves.");
     expect(description).not.toContain("resume_execution");
   });
 

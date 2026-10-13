@@ -5,7 +5,7 @@ import type { ConnectaConfigDescription } from "../describe-config.js";
 import type { ConnectorStatus, ConnectorToolDescription } from "../types.js";
 import type { UiProblem } from "./model.js";
 
-/** The registry's final verdict, independent of the viewer's pool trust. */
+/** The registry's final verdict, independent of whether the viewer's endpoint is read-only. */
 export interface OperatorTool extends ConnectorToolDescription {
   address: string;
   classification: "read" | "write";
@@ -38,7 +38,8 @@ export interface OperatorGrant {
 export interface OperatorPool {
   name: string;
   path: string;
-  trust: "trusted" | "read-only";
+  /** Whether this pool's endpoint refuses every write. */
+  readOnly: boolean;
   /** Pool access intersected with the caller's grants. */
   grants: OperatorGrant[];
 }
@@ -46,8 +47,8 @@ export interface OperatorPool {
 export interface OperatorViewer {
   interactive: boolean;
   grants: OperatorGrant[];
-  /** Trust of the root /mcp endpoint. */
-  trust: "trusted" | "read-only";
+  /** Whether the root /mcp endpoint refuses every write. */
+  readOnly: boolean;
   pools: OperatorPool[];
   permissions: {
     activity: boolean;

@@ -38,11 +38,16 @@ function closureExecutor(programs: Map<string, Program>): Executor {
   };
 }
 
+/**
+ * The root `/mcp` endpoint is writable unless `readOnly`; the `readonly` pool
+ * at `/mcp/readonly` always refuses writes. Pass `"readonly"` as `pool` to
+ * call or run there.
+ */
 export function thingsDeployment(
   connector: Connector,
   storage: KVStorage = memoryStorage(),
   execute?: ConnectaConfig["execute"],
-  trust: "trusted" | "read-only" = "read-only",
+  readOnly = false,
 ) {
   const programs = new Map<string, Program>();
   const connecta = createConnecta({
@@ -50,11 +55,13 @@ export function thingsDeployment(
     storage,
     logger: "silent",
     ...(execute ? { execute } : {}),
-    trust,
+    readOnly,
+    pools: { readonly: { tools: [connector.id], readOnly: true, grant: () => true } },
     executor: customExecutor(closureExecutor(programs), { lifecycle: "self-managed" }),
   });
-  const call = async (name: string, args: Record<string, unknown>) =>
-    (await readJsonRpc(await mcpRpc(connecta, "tools/call", { name, arguments: args }))).result as {
+  const call = async (name: string, args: Record<string, unknown>, pool?: "readonly") =>
+    (await readJsonRpc(await mcpRpc(connecta, "tools/call", { name, arguments: args }, pool ? { pool } : {})))
+      .result as {
       isError?: boolean;
       structuredContent?: Record<string, any>;
       content?: Array<{ text?: string }>;
@@ -63,16 +70,16 @@ export function thingsDeployment(
   return {
     connecta,
     call,
-    async searched(safety: "readOnly" | "approvalRequired"): Promise<string[]> {
-      const result = await call("search_tools", { connector: "things", query: "", safety });
+    async searched(safety: "readOnly" | "approvalRequired", pool?: "readonly"): Promise<string[]> {
+      const result = await call("search_tools", { connector: "things", query: "", safety }, pool);
       return (result.structuredContent?.tools ?? []).map(
         (tool: { address: string }) => tool.address,
       ).sort();
     },
-    run(program: Program) {
+    run(program: Program, pool?: "readonly") {
       const code = `async () => program${next++}`;
       programs.set(code, program);
-      return call("execute_code", { code });
+      return call("execute_code", { code }, pool);
     },
   };
 }

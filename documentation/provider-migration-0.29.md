@@ -58,7 +58,7 @@ complement. Replace `update_r2_bucket` with `cloudflare_api_mutate` using
 `cf-r2-storage-class` set to `Standard` or `InfrequentAccess`. Omit the body;
 include `cf-r2-jurisdiction` only when the bucket needs it. This remains a write.
 `execute` remains a write even when its program only calls GET.
-Trusted pools may execute writes; read-only pools use direct host-approved writes.
+Writable endpoints may run `execute`; `readOnly` endpoints hide and refuse it.
 
 Vercel's `surface` and ownership rules were later replaced: `auth` now selects
 the implementation. See the [provider auth migration](./provider-auth-migration.md#vercel).

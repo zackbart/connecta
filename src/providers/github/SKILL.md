@@ -48,7 +48,7 @@ are minted. Cross-owner
 PR heads, cross-repository issue parents, opaque comment/review-thread IDs and
 symlink writes are refused. The first release acts as the App; personal OAuth
 attribution is planned separately. Classification describes behavior; scope
-checks authorize targets regardless of the pool's trust.
+checks authorize targets whether or not the endpoint is read-only.
 
 ## Tools and paging
 

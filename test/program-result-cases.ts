@@ -36,7 +36,7 @@ export async function checkProgramResultSurrogates(executor: Executor): Promise<
     const sink = activitySink();
     if (route === "program") {
       const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, sink.activity, {
-        trust: "trusted",
+        readOnly: false,
         maxHostCalls: 2,
       })({
         code: `async () => {
@@ -59,7 +59,7 @@ export async function checkProgramResultSurrogates(executor: Executor): Promise<
       expect(notice.hint).toContain("request the value as JSON");
       expect(notice.hint).toContain("This write already ran");
     } else {
-      const direct = createMetaTools(registry, BASE, { trust: "trusted", activity: sink.activity });
+      const direct = createMetaTools(registry, BASE, { readOnly: false, activity: sink.activity });
       const call = await direct.callDestructiveTool({ address: "surrogates.write" });
       expect(call.isError).toBeUndefined();
       const [line, preview] = call.content[0]!.text.split("\n");
@@ -130,7 +130,7 @@ export async function checkProgramResultBom(executor: Executor): Promise<void> {
   );
   const sink = activitySink();
   const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, sink.activity, {
-    trust: "trusted",
+    readOnly: false,
     maxHostCalls: 2,
   })({
     code: `async () => {
@@ -229,7 +229,7 @@ export async function checkLargeProgramWrite(executor: Executor, storage: KVStor
   };
   const registry = new Registry([connector], { storage, logger: silentLogger });
   const sink = activitySink();
-  const execute = createExecuteTool(registry, BASE, executor, silentLogger, sink.activity, { trust: "trusted" });
+  const execute = createExecuteTool(registry, BASE, executor, silentLogger, sink.activity, { readOnly: false });
   const outcome = await execute({
     code: `async () => {
       const handle = await connecta.call("large.write");
@@ -256,7 +256,7 @@ export async function checkLargeProgramWrite(executor: Executor, storage: KVStor
   expect(sink.events[0]).toMatchObject({ outcome: "success", attempts: 1 });
   expect(outcome.structuredContent!.hostCalls).toEqual({ attempted: 3, admitted: 3, succeeded: 3, failed: 0 });
   // The direct-call reader understands the same id and original connector page cap.
-  const direct = await createMetaTools(registry, BASE, { trust: "trusted" }).readResult({ id: result.handle.resultId });
+  const direct = await createMetaTools(registry, BASE, { readOnly: false }).readResult({ id: result.handle.resultId });
   const directText = direct.structuredContent!.text as string;
   expect(directText).toBe(result.text.slice(0, directText.length));
   expect(direct.structuredContent?.bytes).toBeLessThanOrEqual(1001);
@@ -300,7 +300,7 @@ export async function checkProgramPagingFailure(executor: Executor): Promise<voi
     );
     const sink = activitySink();
     const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, sink.activity, {
-      trust: "trusted",
+      readOnly: false,
       maxHostCalls: 1,
     })({
       code: `async () => {
@@ -351,7 +351,7 @@ export async function checkProgramReturnPaging(executor: Executor): Promise<void
   );
   const sink = activitySink();
   const execute = createExecuteTool(registry, BASE, executor, silentLogger, sink.activity, {
-    trust: "trusted",
+    readOnly: false,
     maxHostCalls: 512,
   });
   const outcome = await execute({
@@ -401,7 +401,7 @@ export async function checkProgramReturnPaging(executor: Executor): Promise<void
     totalBytes: notice.totalBytes,
   });
   // The same reader obeys the original connector cap and reconstructs all bytes.
-  const meta = createMetaTools(registry, BASE, { trust: "trusted" });
+  const meta = createMetaTools(registry, BASE, { readOnly: false });
   let text = "",
     offset = 0;
   let hasMore = true;
@@ -442,7 +442,7 @@ export async function checkProgramReturnFallback(executor: Executor): Promise<vo
     );
     const sink = activitySink();
     const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, sink.activity, {
-      trust: write ? "trusted" : "read-only",
+      readOnly: !write,
     })({
       code: 'async () => (await connecta.call("exporter.run")).data',
     });
@@ -485,7 +485,7 @@ export async function checkProgramReturnWriteWarning(executor: Executor): Promis
       ],
       { storage: memoryStorage(), logger: silentLogger, ...(exhausted ? { results: { maxStashEntries: 1 } } : {}) },
     );
-    const execute = createExecuteTool(registry, BASE, executor, silentLogger, undefined, { trust: "trusted" });
+    const execute = createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false });
     const original = await execute({ code: 'async () => (await connecta.call("exporter.write")).data' });
     expect(original.isError).toBeUndefined();
     const first = original.structuredContent!.result as { resultId: string; hint: string };
@@ -509,9 +509,9 @@ export async function checkProgramReturnWriteWarning(executor: Executor): Promis
       expect(notice.hint).toContain("Paging is unavailable");
     } else {
       expect(notice.resultId).toMatch(/^[a-f0-9-]{36}$/);
-      const trusted = await createMetaTools(registry, BASE, { trust: "trusted" }).readResult({ id: notice.resultId! });
+      const trusted = await createMetaTools(registry, BASE, { readOnly: false }).readResult({ id: notice.resultId! });
       expect(trusted.isError).toBeUndefined();
-      const readonly = await createMetaTools(registry, BASE, { trust: "read-only" }).readResult({
+      const readonly = await createMetaTools(registry, BASE, { readOnly: true }).readResult({
         id: notice.resultId!,
       });
       expect(readonly.isError).toBe(true);

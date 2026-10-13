@@ -79,14 +79,14 @@ describe("operator config contract", () => {
       ui: operatorUi(),
       logger: "silent",
       classification: { shared: { read: "read", write: "write" }, hidden: { read: "read" } },
-      trust: "read-only",
+      readOnly: true,
       identity: {
         connectorAccess: (identity) => (identity.actor.id === "alice" ? ["shared.read", "personal"] : ["hidden"]),
         credentialAdministration: () => "all",
         personalConnection: () => ["personal"],
       },
       pools: {
-        support: { tools: ["shared", "hidden"], trust: "trusted", grant: (identity) => identity.actor.id === "alice" },
+        support: { tools: ["shared", "hidden"], readOnly: false, grant: (identity) => identity.actor.id === "alice" },
         denied: { tools: ["hidden"], grant: () => false },
         throws: {
           tools: ["hidden"],
@@ -101,17 +101,17 @@ describe("operator config contract", () => {
     expect(alice.config.connectors[0]?.tools?.map((t) => t.name)).toEqual(["read"]);
     expect(alice.config.classification).toEqual({ shared: { read: "read" } });
     expect(alice.config.pools).toEqual([
-      { name: "support", path: "/mcp/support", trust: "trusted", hasGrant: true, tools: ["shared.read"] },
+      { name: "support", path: "/mcp/support", readOnly: false, hasGrant: true, tools: ["shared.read"] },
     ]);
     expect(alice.live.connectors[0]?.tools.map((t) => [t.address, t.classification])).toEqual([
       ["shared.read", "read"],
     ]);
     expect(alice.you).toMatchObject({
-      trust: "read-only",
+      readOnly: true,
       pools: [
         {
           name: "support",
-          trust: "trusted",
+          readOnly: false,
           grants: [{ connectorId: "shared", tools: [{ name: "read", requireReadOnly: false }] }],
         },
       ],
