@@ -24,6 +24,7 @@ Workspace purpose: <!-- endfragment -->
   switch to it to recover a failed call here.
 - Discover the live catalog before assuming a tool exists. Notion can gate
   tools by workspace, account, client, and rollout independently of Connecta.
+  `notion-get-tool-access` reports what the workspace's plan allows.
 - Start broad discovery with `notion-search`, then use `notion-fetch` on
   the exact page, database, data source, or object before changing it.
 - Use the live input schema as the contract. Notion owns these MCP schemas;
@@ -33,6 +34,9 @@ Workspace purpose: <!-- endfragment -->
   events before sending another message, waiting, or stopping a session.
 - File uploads and attachment tools create durable workspace state. Keep
   downloads inside the requested task and do not expose signed attachment URLs.
+  `notion-download-skill` returns a signed, expiring archive URL by design;
+  the token connector's REST redaction does not apply to hosted tools, so
+  use that URL for the download and do not repeat it in replies.
 - Connecta's generic REST tools (`notion_api_*`) and the `integration_*`
   helpers exist only on a token connector.
 - An `auth_required` failure means this connector's OAuth grant is missing or
@@ -68,16 +72,17 @@ Hosted Notion MCP is a separate OAuth connector.
   reached Notion, so fix the call from that answer.
 - The generic set replaces the old one-operation tools. Read a database
   container with `GET /v1/databases/{database_id}`, users with `GET /v1/users`
-  or `GET /v1/users/me`, comments with `GET /v1/comments`, and a page as
-  Markdown with `GET /v1/pages/{page_id}/markdown`. Update properties, trash or
-  restore (`in_trash`) with `PATCH /v1/pages/{page_id}`, and comment with
-  `POST /v1/comments`.
+  or `GET /v1/users/me`, and comments with `GET /v1/comments`. Update
+  properties, trash or restore (`in_trash`) with `PATCH /v1/pages/{page_id}`,
+  and comment with `POST /v1/comments` (`rich_text` or `markdown`).
 - Refused by design: Notion's OAuth token endpoints (`/v1/oauth/*`) and
   multipart file sends. Import a file with `POST /v1/file_uploads` and
   `mode: "external_url"` instead.
 - Notion-hosted file URLs in pages and blocks are pre-signed: Connecta
   withholds their signature, credential, and security-token parameters, so a
-  returned URL names the file but does not download it. Credential-named
+  returned URL names the file but does not download it. File links inside
+  page Markdown come back as Notion sent them: use one only for its download
+  and do not repeat it in replies. Credential-named
   fields read as `"[redacted]"`, a database property named like a credential
   (`API token`) included. Failures of the OAuth, file upload, bot user, and
   agent operations carry Notion's code, not its message.
@@ -100,11 +105,17 @@ So the sequence for "find rows in this database" is the database read, then
 
 ## Reading
 
-- `integration_get_page` returns properties. `integration_get_page_content`
-  returns the body as flat blocks. Nested blocks (toggles, list children,
-  table rows) need `depth`, and each level multiplies requests. A deep read
-  stops at an internal ceiling and reports `truncated: true` rather than
-  spending the whole rate-limit budget.
+- `integration_get_page` returns properties. To read or summarize a whole
+  body, prefer `notion_api_read` `GET /v1/pages/{page_id}/markdown`: one
+  request returns every nested level as Markdown (headings, lists, to-dos,
+  toggles, tables, code, links, mentions, equations). A huge page comes back
+  with `truncated: true` and the unread blocks in `unknown_block_ids`; read
+  each id as a `page_id` on the same path.
+- `integration_get_page_content` returns the body as flat blocks with ids,
+  for quoting a block or appending after one. Nested blocks (toggles, list
+  children, table rows) need `depth`, and each level multiplies requests. A
+  deep read stops at an internal ceiling and reports `truncated: true` rather
+  than spending the whole rate-limit budget.
 - Notion truncates `title`, `rich_text`, `relation`, and `people` at 25
   entries. `integration_get_page` reports each in `truncated_properties` as
   `{ name, id }`; read the complete value with `notion_api_read`
@@ -116,12 +127,26 @@ So the sequence for "find rows in this database" is the database read, then
   when the goal is fewer fields. `integration_get_page_content` with
   `raw: true` returns one level and ignores `depth`.
 
-## Appending is append-only
+## Writing content
 
 `integration_append_blocks` adds children and nothing else. It cannot move,
 reorder, or replace an existing block, and a block appended through the API can
 never be relocated by it afterwards. Get the position right the first time with
-`position` and `after_block_id`. Notion caps one call at 100 blocks.
+`position` and `after_block_id`. Notion caps one call at 100 blocks. Text
+longer than Notion's 2,000-character run limit is split into runs for you.
+
+For formatted content, write Markdown to a page with `notion_api_write`
+`PATCH /v1/pages/{page_id}/markdown`. Append with
+`{"type":"insert_content","insert_content":{"content":"## Notes\n- one","position":{"type":"end"}}}`
+(`start` prepends). Edit text in place with `update_content`, whose
+`content_updates` are `{ old_str, new_str }` pairs copied exactly from the
+page's Markdown, and `replace_content` swaps the whole page for `new_str`.
+Notion refuses an edit that would delete a child page or database with a
+`validation_error` naming them. Removing ordinary text needs no flag; to delete
+those children, set `allow_deleting_content: true` inside the command body
+(`{"type":"update_content","update_content":{"content_updates":[…],"allow_deleting_content":true}}`),
+and leave it out unless the task is to delete them. `integration_create_page`
+takes the same Markdown for a new page's body.
 
 ## Pagination
 
@@ -139,6 +164,9 @@ never be relocated by it afterwards. Get the position right the first time with
 - Meeting-note queries have no cursor. `limit` caps at 50, and
   `page.hasMore` without `page.next` means more notes exist: narrow the
   filter (for example by `created_time`) rather than paging.
+- A data source query stops at 10,000 rows. `integration_query_data_source`
+  then returns `incomplete: true`, and a generic query `page.hasMore` without
+  `page.next`: narrow the filter rather than trusting the count.
 - Cursors are opaque: never parse or construct one. Follow pages inside
   `execute_code` and reduce there.
 
@@ -148,11 +176,17 @@ never be relocated by it afterwards. Get the position right the first time with
   Notion will not say which. Never conclude a page was deleted from it; check
   that the page is shared with the integration in Notion.
 - **403** is not an expired token. The integration is missing a capability
-  (comment capabilities are off by default) or the object was never shared.
+  (comment capabilities are off by default), the object was never shared, or
+  the workspace is past its plan's block limit; Notion's message says which.
   Re-authorizing cannot fix it; an operator must change it in Notion.
-- **429** carries a retry window. Notion allows an average of three requests
-  per second per integration; Connecta admits 180 calls a minute, three at a
-  time, per runtime. Wait out the window rather than retrying immediately.
+- **429** carries a retry window. Notion allows each integration 180 requests
+  a minute (600 on Business and Enterprise) plus a budget shared by the whole
+  workspace; Connecta admits 180 calls a minute, three at a time, per runtime.
+  Wait out the window rather than retrying immediately. A 429 that says the
+  integration's API access is blocked is not retryable.
+- **5xx on a write** may still have been saved. When Notion names the
+  object it committed, the failure says so: read that object instead of
+  repeating the write. Otherwise check the target before trying again.
 <!-- endfragment -->
 
 <!-- fragment: shared -->
@@ -164,8 +198,10 @@ never be relocated by it afterwards. Get the position right the first time with
   Notion rejects a database id in its place.
 - Property names in filters, sorts, and writes must match the schema exactly,
   including case. Read the schema before composing one.
-- `select` and `status` writes must use an existing option name; inventing
-  one fails. The schema lists the valid options.
+- A `status` write must use an existing option name; inventing one fails.
+  A new `select` or `multi_select` name does not fail: when the connection
+  can write to the data source, Notion adds it to the schema as a new
+  option. Use the options the schema lists unless a schema change is meant.
 - Writes **replace** a property. Sending one item to a `multi_select` or
   `relation` drops the others, so send the complete intended value.
 - `rollup`, `formula`, `unique_id`, and the created and edited fields are

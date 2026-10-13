@@ -44,6 +44,10 @@ export const MAX_PAGE_SIZE = 100;
 /** Notion's cap on `children` per append, and on blocks per page create. */
 const MAX_CHILDREN_PER_REQUEST = 100;
 
+/** Notion's cap on one rich-text run's `text.content`, and on runs in one rich-text array. */
+const MAX_TEXT_CONTENT = 2_000;
+const MAX_RICH_TEXT_RUNS = 100;
+
 /**
  * Ceiling on the fetches one `integration_get_page_content` walk may spend. Call admission
  * meters tool calls, not the requests inside them, so a deep `depth` would
@@ -90,20 +94,78 @@ function invalid(message: string): never {
 }
 
 /**
+ * Notion repeats `Retry-After` in the body as `additional_data.retry_after`,
+ * a string of whole seconds, so a proxy that drops the header still leaves a
+ * window to wait out.
+ */
+function bodyRetryAfterMs(additional: unknown): number | undefined {
+  const raw = isRecord(additional) ? additional["retry_after"] : undefined;
+  const seconds = typeof raw === "string" || typeof raw === "number" ? Number(raw) : Number.NaN;
+  return Number.isFinite(seconds) && seconds >= 0 ? Math.trunc(seconds * 1000) : undefined;
+}
+
+/** A Notion object id, dashed or not: the only committed-id shape shown when error text is withheld. */
+const NOTION_ID = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
+
+/**
+ * The ids a 503 reports as already committed, so a caller reads them instead
+ * of repeating the write. For an operation whose error text is withheld, only
+ * ids shaped as Notion ids are named, since anything else could echo what the
+ * request sent; the write is still reported as committed.
+ */
+function committedIds(additional: unknown, withheld: boolean): string {
+  if (!isRecord(additional)) return "";
+  const resource = additional["committed_resource_id"];
+  const children = Array.isArray(additional["committed_child_ids"])
+    ? additional["committed_child_ids"].filter((child): child is string => typeof child === "string")
+    : [];
+  if (typeof resource !== "string" || resource === "") return "";
+  if (withheld && ![resource, ...children].every((committed) => NOTION_ID.test(committed))) {
+    return " Notion committed the write before failing; what it committed is withheld because this operation handles credentials. Read the object instead of repeating the write.";
+  }
+  return children.length
+    ? ` Notion committed the write before failing: it appended ${children.length} block(s) (${children.join(", ")}) under ${resource}. Read that block instead of repeating the write.`
+    : ` Notion committed the write before failing: the object it created or changed is ${resource}. Read it instead of repeating the write.`;
+}
+
+/**
+ * Notion's own next step for a failed write, `additional_data.retry_guidance`.
+ * An update to an existing object that was saved anyway names no committed
+ * id, only this, so it is relayed as Notion wrote it.
+ */
+function retryGuidance(additional: unknown): string {
+  const guidance = isRecord(additional) ? additional["retry_guidance"] : undefined;
+  const lines = (Array.isArray(guidance) ? guidance : [guidance]).filter(
+    (line): line is string => typeof line === "string" && line.trim() !== "",
+  );
+  return lines.map((line) => line.trim()).join(" ");
+}
+
+/**
  * Map to what the caller should do next, not to what Notion's `code` says
  * happened. The two that are easy to mistranslate:
  *
  * - **403 is not an authentication failure.** The token is fine; the integration
- *   lacks a capability or was never shared the object, and neither
- *   `authorize_connector` nor a new token can fix it. Non-retryable call failure.
+ *   lacks a capability, was never shared the object, or the workspace is past
+ *   its block limit, and neither `authorize_connector` nor a new token can fix
+ *   it. Notion's message says which. Non-retryable call failure.
  * - **404 does not prove absence.** Notion returns `object_not_found` both for an
  *   object that does not exist and for one never shared with the integration, and
  *   will not say which — so not `not_found`, which exists to assert absence
  *   (H11). The message names both possibilities.
+ *
+ * A 503 on a write may still have been saved. When Notion names what it
+ * committed, or gives its own retry guidance, the failure says so and stops
+ * being retryable; otherwise the shared path reports a write's outcome as
+ * unknown (INV-9).
+ *
+ * `withheld` replaces every free-text field (message, retry guidance,
+ * committed ids) for an operation whose error text the review withholds.
  */
 function notionFailure(status: number, headers: Headers, payload: unknown, withheld = false): ConnectorCallError {
   const body = isRecord(payload) ? payload : undefined;
   const code = typeof body?.["code"] === "string" ? body["code"] : undefined;
+  const additional = body?.["additional_data"];
   // For an operation the value-safety review withholds, Notion's message is
   // replaced; its code still routes.
   const detail = withheld
@@ -111,17 +173,25 @@ function notionFailure(status: number, headers: Headers, payload: unknown, withh
     : typeof body?.["message"] === "string" && body["message"].trim()
       ? body["message"].trim()
       : `Notion returned HTTP ${status}.`;
-  const retryAfter = retryAfterMs(headers);
+  const retryAfter = retryAfterMs(headers) ?? bodyRetryAfterMs(additional);
   const labelled = code ? `Notion ${code}: ${detail}` : detail;
 
   if (status === 429) {
-    const additional = body?.["additional_data"];
     const reason = isRecord(additional) ? additional["rate_limit_reason"] : undefined;
+    if (reason === "public_api_request_blocked") {
+      return new ConnectorCallError(
+        "connector_call_failed",
+        `${labelled} (limit: ${reason}) Notion has restricted this integration's API access. Retrying will not help; an operator must contact Notion support.`,
+        { retryable: false },
+      );
+    }
+    const scope =
+      reason === "public_api_space_request_rate_limit"
+        ? " The workspace's shared budget across all its connections is spent, and its window can exceed a minute."
+        : " Notion allows each integration 180 requests a minute (600 on Business and Enterprise), and a separate budget shared by the whole workspace.";
     return new ConnectorCallError(
       "rate_limited",
-      `${labelled}${
-        typeof reason === "string" ? ` (limit: ${reason})` : ""
-      } Notion allows roughly three requests per second per integration.`,
+      `${labelled}${typeof reason === "string" ? ` (limit: ${reason})` : ""}${scope} Wait out the retry window.`,
       { retryAfterMs: retryAfter ?? 1_000 },
     );
   }
@@ -140,7 +210,7 @@ function notionFailure(status: number, headers: Headers, payload: unknown, withh
   if (status === 403) {
     return new ConnectorCallError(
       "provider_permission_denied",
-      `${labelled} The token is valid but this integration is not allowed to perform this operation. An operator must enable the matching capability on the Notion integration (comment capabilities are off by default) or share the object with it. Re-authorizing will not help.`,
+      `${labelled} The token is valid but Notion refused this operation, and Notion's message says why. Usually an operator must enable the matching capability on the Notion integration (comment capabilities are off by default) or share the object with it; a workspace past its plan's block limit also answers 403. Re-authorizing will not help.`,
       { retryable: false },
     );
   }
@@ -167,6 +237,20 @@ function notionFailure(status: number, headers: Headers, payload: unknown, withh
     );
   }
   if (status >= 500) {
+    const committed = committedIds(additional, withheld);
+    if (committed) {
+      return new ConnectorCallError("connector_call_failed", `${labelled}${committed}`, { retryable: false });
+    }
+    const guidance = retryGuidance(additional);
+    if (guidance) {
+      return new ConnectorCallError(
+        "connector_call_failed",
+        withheld
+          ? `${labelled} Notion sent retry guidance, withheld because this operation handles credentials. Read the object before repeating the write.`
+          : `${labelled} Notion's guidance: ${guidance}`,
+        { retryable: false },
+      );
+    }
     return new ConnectorCallError(
       "unavailable",
       `${labelled} Notion is failing upstream.`,
@@ -186,12 +270,16 @@ function notionFailure(status: number, headers: Headers, payload: unknown, withh
  *   (until `expires_at`), so the page names that path.
  * - `POST /v1/blocks/meeting_notes/query` has no cursor at all: `has_more`
  *   past its `limit` (50 at most) can only be answered by a narrower filter.
+ * - A data source or view query stops at 10,000 results with `has_more: false`
+ *   and `request_status.type: "incomplete"`. That is a cut-off with no cursor,
+ *   reported like the meeting-note one: `hasMore` without `next`.
  *
  * Every shape keeps `hasMore`, so a `select` that drops the body's own
  * completeness fields cannot hide that a list was cut short.
  */
 function page(data: unknown, call: RestCall): RestPage | undefined {
   if (!isRecord(data) || typeof data["has_more"] !== "boolean" || !Array.isArray(data["results"])) return undefined;
+  if (!data["has_more"] && incomplete(data)) return { hasMore: true };
   const hasMore = data["has_more"];
   const next = typeof data["next_cursor"] === "string" && data["next_cursor"] !== "" ? data["next_cursor"] : undefined;
   if (!hasMore || !next) return { hasMore };
@@ -205,6 +293,12 @@ function page(data: unknown, call: RestCall): RestPage | undefined {
     };
   }
   return { hasMore, next, param: "start_cursor", ...(call.method === "GET" ? {} : { in: "body" as const }) };
+}
+
+/** Whether a query stopped at Notion's per-query result cap rather than at its last row. */
+function incomplete(data: JsonRecord): boolean {
+  const status = data["request_status"];
+  return isRecord(status) && status["type"] === "incomplete";
 }
 
 /** The pinned index, shared by every Notion REST connector in the deployment. */
@@ -302,9 +396,28 @@ function plainText(value: unknown): string {
   return value.map((run: any) => (typeof run?.plain_text === "string" ? run.plain_text : "")).join("");
 }
 
-/** Wrap a plain string as the single-run rich-text array Notion expects. */
-function richText(value: string): Array<Record<string, unknown>> {
-  return [{ type: "text", text: { content: value } }];
+/**
+ * Wrap a plain string as the rich-text array Notion expects. Notion rejects a
+ * run over 2,000 characters, so a longer string becomes consecutive runs, cut
+ * between UTF-16 surrogate pairs, never inside one. Past 100 runs Notion
+ * rejects the array itself, so that refuses here with the way forward.
+ */
+function richText(value: string, field: string): Array<Record<string, unknown>> {
+  const runs: string[] = [];
+  let rest = value;
+  while (rest.length > MAX_TEXT_CONTENT) {
+    const high = rest.charCodeAt(MAX_TEXT_CONTENT - 1);
+    const cut = high >= 0xd800 && high <= 0xdbff ? MAX_TEXT_CONTENT - 1 : MAX_TEXT_CONTENT;
+    runs.push(rest.slice(0, cut));
+    rest = rest.slice(cut);
+  }
+  runs.push(rest);
+  if (runs.length > MAX_RICH_TEXT_RUNS) {
+    invalid(
+      `${field} is ${value.length} characters; Notion accepts at most ${MAX_RICH_TEXT_RUNS} runs of ${MAX_TEXT_CONTENT} characters in one rich-text value. Split it across several blocks.`,
+    );
+  }
+  return runs.map((content) => ({ type: "text", text: { content } }));
 }
 
 function userRef(value: any): Record<string, unknown> | null {
@@ -367,10 +480,11 @@ function projectPropertyValue(value: any): unknown {
         .map((related: any) => related?.id ?? null)
         .filter((related: unknown) => typeof related === "string");
     case "formula":
-      return value.formula?.[value.formula?.type] ?? null;
+      // Notion answers `unsupported` for a value it cannot compute through the API.
+      return value.formula?.type === "unsupported" ? null : (value.formula?.[value.formula?.type] ?? null);
     case "rollup": {
       const rollup = value.rollup;
-      if (!rollup) return null;
+      if (!rollup || rollup.type === "unsupported") return null;
       if (rollup.type === "array") {
         return (rollup.array ?? []).map(projectPropertyValue);
       }
@@ -434,9 +548,17 @@ function parentRef(parent: any): Record<string, unknown> | null {
   return { type, id: typeof parent[type] === "string" ? parent[type] : null };
 }
 
+/**
+ * An icon as one string: the emoji itself, a native Notion icon's name, a
+ * workspace custom emoji as `:name:`, or an image URL.
+ */
 function iconRef(icon: any): string | null {
   if (!icon || typeof icon !== "object") return null;
   if (typeof icon.emoji === "string") return icon.emoji;
+  if (icon.type === "icon" && typeof icon.icon?.name === "string") return icon.icon.name;
+  if (icon.type === "custom_emoji" && typeof icon.custom_emoji?.name === "string") {
+    return `:${icon.custom_emoji.name}:`;
+  }
   return icon.external?.url ?? icon.file?.url ?? null;
 }
 
@@ -630,7 +752,7 @@ const PAGE_OUTPUT_SCHEMA: JsonSchema = {
       properties: { type: { type: "string" }, id: { type: ["string", "null"] } },
       required: ["type", "id"],
     },
-    icon: { type: ["string", "null"], description: "Emoji or icon URL." },
+    icon: { type: ["string", "null"], description: "Emoji, native icon name, :custom_emoji:, or icon URL." },
     created_time: { type: ["string", "null"] },
     last_edited_time: { type: ["string", "null"] },
     created_by: { type: ["object", "null"] },
@@ -979,14 +1101,25 @@ function namedTools(defaultPageSize: number): ApiTool[] {
         required: ["data_source_id"],
         additionalProperties: false,
       },
-      outputSchema: listOutputSchema(PAGE_OUTPUT_SCHEMA),
+      outputSchema: {
+        ...listOutputSchema(PAGE_OUTPUT_SCHEMA),
+        properties: {
+          ...(listOutputSchema(PAGE_OUTPUT_SCHEMA)["properties"] as Record<string, JsonSchema>),
+          incomplete: {
+            type: "boolean",
+            description:
+              "Present when Notion stopped this query at its 10,000-result cap: has_more is false but rows are missing. Narrow the filter.",
+          },
+        },
+      },
       handler: async (args, ctx) => {
         const body: Record<string, unknown> = pagination(args, defaultPageSize);
         if (args.filter) body["filter"] = args.filter;
         if (args.sorts) body["sorts"] = args.sorts;
         const payload = await notion(ctx, "POST", `/v1/data_sources/${id(args.data_source_id)}/query`, { body });
         if (args.raw) return payload;
-        return mappedListEnvelope(payload, (row: any) => projectPage(row, args.properties));
+        const rows = mappedListEnvelope(payload, (row: any) => projectPage(row, args.properties));
+        return incomplete(payload) ? { ...rows, incomplete: true } : rows;
       },
     },
     {
@@ -1051,7 +1184,8 @@ function namedTools(defaultPageSize: number): ApiTool[] {
           invalid("Provide either markdown or children for the page body, not both.");
         }
         const properties: Record<string, unknown> = { ...args.properties };
-        if (args.title !== undefined) properties[args.title_property ?? "title"] = { title: richText(args.title) };
+        if (args.title !== undefined)
+          properties[args.title_property ?? "title"] = { title: richText(args.title, "title") };
         const body: Record<string, unknown> = {
           parent:
             parentKey === "parent_page_id"
@@ -1124,16 +1258,16 @@ function namedTools(defaultPageSize: number): ApiTool[] {
         );
         const children =
           kind === "text"
-            ? (value as string[]).map((line) => ({
+            ? (value as string[]).map((line, at) => ({
                 object: "block",
                 type: "paragraph",
-                paragraph: { rich_text: richText(line) },
+                paragraph: { rich_text: richText(line, `text[${at}]`) },
               }))
             : kind === "checklist"
-              ? (value as string[]).map((line) => ({
+              ? (value as string[]).map((line, at) => ({
                   object: "block",
                   type: "to_do",
-                  to_do: { rich_text: richText(line), checked: false },
+                  to_do: { rich_text: richText(line, `checklist[${at}]`), checked: false },
                 }))
               : (value as unknown[]);
         if (children.length === 0) invalid("Nothing to append: provide at least one block.");
