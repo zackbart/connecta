@@ -271,7 +271,10 @@ export interface ValueSafetyTable {
   readonly resources?: ResourceRules;
 }
 
-export const refuse = (reason: string): ValueSafetyVerdict => ({ verdict: "refuse", reason });
+export const refuse = (reason: string): ValueSafetyVerdict => ({
+  verdict: "refuse",
+  reason,
+});
 export const redact = (reason: string, paths: readonly string[], keep: readonly string[] = []): ValueSafetyVerdict => ({
   verdict: "redact",
   reason,
@@ -377,13 +380,17 @@ function sanitizeUrl(value: string): string {
 //    bracket. A file host is one of its reviewed domains, whole or as a
 //    subdomain, or an S3 endpoint naming a reviewed bucket: virtual-hosted
 //    (`bucket.s3.us-west-2.amazonaws.com`) or as the first path segment
-//    (`s3.us-west-2.amazonaws.com/bucket/`). The host must open an authority,
-//    however the scheme and slashes before it are spelled (`https://`,
-//    `https:\/\/`, `https:&#47;&#47;`, `%2F%2F`, none), and end where a host
-//    does: `file.notion.so.example.com`, `my-bucket.example.com`, and
-//    `example.com/bucket` are other people's hosts and paths. A `)` or `]` is
-//    not read as the link's end: a filename may hold one. Trailing
-//    punctuation comes back, since it can carry no secret, so
+//    (`s3.us-west-2.amazonaws.com/bucket/`, the segment exactly). The name
+//    must be the authority's host: after `//` however spelled (`https://`,
+//    `https:\/\/`, `https:&#47;&#47;`, `%2F%2F`, scheme-less `//`) and only
+//    subdomain labels, and before a port, path, query, fragment, or the
+//    link's end. So `file.notion.so.example.com`, `my-bucket.example.com`,
+//    `example.com/x.file.notion.so`, `example.com/bucket`, and
+//    `file.notion.so@evil.com` are other people's hosts and paths. Notion
+//    writes its links with a scheme, so a bare `file.notion.so/…` in prose,
+//    and a link with userinfo, are a person's and come back as written. A
+//    `)` or `]` is not read as the link's end: a filename may hold one.
+//    Trailing punctuation comes back, since it can carry no secret, so
 //    `![a](…?[redacted])` keeps its close.
 // 2. Signing parameters. AWS Signature Version 4 and Google Cloud Storage V4
 //    names are a credential in any URL, whatever its host: their values go
@@ -436,8 +443,19 @@ const NAMED: Readonly<Record<string, string>> = {
   rsqb: "]",
   period: ".",
 };
-/** A character that continues a host name or path segment: `my-bucket` is not `bucket`. */
-const HOST_CHAR = /[a-z0-9_~-]/i;
+/** A host name's label character: the subdomain labels before a reviewed name are these alone. */
+const LABEL = /[a-z0-9.-]/i;
+/** The longest host name DNS allows: how far back the labels before a reviewed name are read. */
+const MAX_HOST = 253;
+/** The most label characters an escaped slash ends in (`%2525252F` ends in `2525252F`, `/` in `u002f`). */
+const ESCAPE_TAIL = 10;
+/** The longest scheme read back from its `:`. */
+const MAX_SCHEME = 32;
+const SCHEME_CHAR = /[a-z0-9+.-]/i;
+/** What may open a scheme-less `//host`: whitespace or punctuation that opens a link, value, or attribute. */
+const OPENS_LINK = /[\s"'`(<[{=,;|]/;
+/** Punctuation that may close a host or path segment along with the syntax around it. */
+const CLOSES = /[)\]}>,;!*|`]/;
 /** Punctuation that may close the syntax around a link; it carries no secret, so it comes back. */
 const TRAILING = /[)\]}.,;:!*_~`\\]/;
 
@@ -485,23 +503,50 @@ function charBefore(text: string, at: number): { char: string; length: number } 
 }
 
 /**
- * What precedes a host name at `at`: the start of an authority (text's
- * start, `//` however spelled, or any delimiter), a subdomain's dot, or
- * neither (a longer name, or one slash, which opens a path segment).
+ * Where the link whose authority opens at `at` starts, or `-1` when no
+ * authority opens there: `//` however spelled, after a scheme's `:`
+ * (`https:`, `https%3A`), the text's start, or what opens a scheme-less
+ * link (`src=//`, ` //`). A `//` after anything else (`example.com//`) is
+ * part of a path.
  */
-function preceding(text: string, at: number): "authority" | "subdomain" | "none" {
-  if (at === 0) return "authority";
-  const { char, length } = charBefore(text, at);
-  if (char === ".") return "subdomain";
-  if (HOST_CHAR.test(char)) return "none";
-  if (char !== "/") return "authority";
-  return at > length && charBefore(text, at - length).char === "/" ? "authority" : "none";
+function authorityAt(text: string, at: number): number {
+  if (at === 0) return -1;
+  const second = charBefore(text, at);
+  const between = at - second.length;
+  if (second.char !== "/" || between <= 0) return -1;
+  const first = charBefore(text, between);
+  const slashes = between - first.length;
+  if (first.char !== "/" || slashes < 0) return -1;
+  if (slashes === 0) return 0;
+  const before = charBefore(text, slashes);
+  if (before.char !== ":") return OPENS_LINK.test(before.char) ? slashes : -1;
+  const colon = slashes - before.length;
+  let start = colon;
+  while (start > 0 && colon - start < MAX_SCHEME && SCHEME_CHAR.test(text[start - 1]!)) start--;
+  return start < colon ? start : -1;
 }
 
-/** Whether a host name or path segment ends at `at`: `.so.example.com` continues it, a sentence's `.` does not. */
-function nameEnds(text: string, at: number): boolean {
-  const char = text[at] ?? "";
-  return char === "." ? !HOST_CHAR.test(text[at + 1] ?? "") : !HOST_CHAR.test(char);
+/** Where a host's optional trailing dot and port end after `at`, or `-1` when a `:` holds no port (userinfo's password). */
+function afterPort(text: string, at: number): number {
+  if (text[at] === ".") at++;
+  if (text[at] !== ":") return at;
+  let digits = at + 1;
+  while (digits - at <= 5 && /\d/.test(text[digits] ?? "")) digits++;
+  return digits > at + 1 ? digits : -1;
+}
+
+/**
+ * Whether a host or path segment ends at `at`: a slash, query, or fragment
+ * however spelled, the link's end, or closing punctuation. Never another
+ * name character or an `@`: `file.notion.so@evil.com` names userinfo, and
+ * `prod-files-secure@other` and `prod-files-securex` are other segments.
+ */
+function boundary(text: string, at: number): boolean {
+  if (at < 0) return false;
+  if (at >= text.length) return true;
+  if (endsLink(text.charCodeAt(at), text[at]!) || CLOSES.test(text[at]!)) return true;
+  SLASH.lastIndex = at;
+  return SLASH.test(text) || opener(text, at) !== undefined;
 }
 
 /** Whether the `#` at `at` belongs to a numeric character reference (`&#38;`) rather than opening a fragment. */
@@ -554,51 +599,90 @@ function hostMatcher(hosts: FileHosts): HostMatcher {
 }
 
 /**
- * Where the file host a candidate at `start`–`end` names ends, or `-1` when
- * the candidate is not one: a reviewed domain or its subdomain, a reviewed
- * bucket's virtual host, or an S3 endpoint whose first path segment is a
- * reviewed bucket. Constant work per candidate.
+ * The file host a candidate at `start`–`end` names, or `undefined` when it
+ * is not one: `url` is where its link starts and `end` where the host does.
+ * The candidate must be the authority's host: a reviewed domain, after only
+ * subdomain labels (`//img.file.notion.so`); a reviewed bucket's virtual
+ * host; or an S3 endpoint whose first path segment is exactly a reviewed
+ * bucket. A name in a path (`example.com/x.file.notion.so`), after
+ * userinfo, or before an `@` is someone else's. `labels` is where the run
+ * of label characters holding the candidate starts. Constant work per
+ * candidate.
  */
-function fileHostEnd(text: string, start: number, end: number, matcher: HostMatcher): number {
+function fileHost(
+  text: string,
+  labels: number,
+  start: number,
+  end: number,
+  matcher: HostMatcher,
+): { url: number; end: number } | undefined {
+  if (start - labels > MAX_HOST) return undefined;
+  // The `//` may be escaped in characters that are also label characters (`%2F%2Fimg.`).
+  let host = labels - 1;
+  let url = -1;
+  while (url < 0 && host < Math.min(labels + ESCAPE_TAIL, start)) url = authorityAt(text, ++host);
+  const subdomain = host < start;
+  if (url < 0 || (subdomain && text[start - 1] !== ".")) return undefined;
   const name = text.slice(start, end).toLowerCase();
-  const before = preceding(text, start);
-  if (before === "none") return -1;
-  if (matcher.domains.has(name) && nameEnds(text, end)) return end;
-  if (before !== "authority") return -1;
+  if (matcher.domains.has(name) && boundary(text, afterPort(text, end))) return { url, end };
+  if (subdomain) return undefined;
   if (matcher.buckets.includes(name)) {
     matcher.virtual.lastIndex = end;
-    if (!matcher.virtual.test(text)) return -1;
-    return nameEnds(text, matcher.virtual.lastIndex) ? matcher.virtual.lastIndex : -1;
+    if (!matcher.virtual.test(text)) return undefined;
+    const virtualEnd = matcher.virtual.lastIndex;
+    return boundary(text, afterPort(text, virtualEnd)) ? { url, end: virtualEnd } : undefined;
   }
-  if (matcher.domains.has(name)) return -1;
-  SLASH.lastIndex = end;
-  if (!SLASH.test(text)) return -1;
+  if (matcher.domains.has(name)) return undefined;
+  const port = afterPort(text, end);
+  if (port < 0) return undefined;
+  SLASH.lastIndex = port;
+  if (!SLASH.test(text)) return undefined;
   const segment = SLASH.lastIndex;
   for (const bucket of matcher.buckets) {
     const after = segment + bucket.length;
-    if (text.slice(segment, after).toLowerCase() === bucket && nameEnds(text, after)) return after;
+    if (text.slice(segment, after).toLowerCase() === bucket && boundary(text, after)) return { url, end: after };
   }
-  return -1;
+  return undefined;
 }
 
 /**
  * Each link at one of `hosts`: where its query or fragment opens (`cut`,
- * `-1` for none; `open` is the decoded opener) and where it ends. Later occurrences inside
- * one link share its end and are skipped, so the scan stays linear.
+ * `-1` for none; `open` is the decoded opener), where it ends read
+ * fail-closed (`end`), and where its destination ends (`stop`): at a
+ * Markdown inline link's closing `)`, counted as CommonMark counts
+ * balanced and escaped parentheses, otherwise at `end`. Later occurrences
+ * inside one link share its end and are skipped, so the scan stays linear.
  */
-function* hostLinks(text: string, hosts: FileHosts): Generator<{ cut: number; open: string; end: number }> {
+function* hostLinks(
+  text: string,
+  hosts: FileHosts,
+): Generator<{ cut: number; open: string; end: number; stop: number }> {
   const matcher = hostMatcher(hosts);
   const pattern = matcher.candidates;
   pattern.lastIndex = 0;
+  // Where the run of label characters reaching `scanned` starts, read forwards once.
+  let scanned = 0;
+  let labels = 0;
   for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
-    const hostEnd = fileHostEnd(text, match.index, match.index + match[0].length, matcher);
-    if (hostEnd < 0) continue;
+    for (; scanned < match.index; scanned++) if (!LABEL.test(text[scanned]!)) labels = scanned + 1;
+    const host = fileHost(text, labels, match.index, match.index + match[0].length, matcher);
+    if (!host) continue;
+    const markdown = text[host.url - 1] === "(" && text[host.url - 2] === "]";
+    let depth = 0;
+    let escaped = false;
+    let stop = -1;
     let cut = -1;
     let open = "?";
-    let end = hostEnd;
+    let end = host.end;
     for (; end < text.length; end++) {
       const code = text.charCodeAt(end);
       if (endsLink(code, text[end]!)) break;
+      if (markdown && stop < 0) {
+        if (escaped) escaped = false;
+        else if (code === 0x5c) escaped = true;
+        else if (code === 0x28) depth++;
+        else if (code === 0x29 && depth-- === 0) stop = end;
+      }
       if (cut >= 0) continue;
       if (code === 0x3f || (code === 0x23 && !reference(text, end))) {
         cut = end;
@@ -612,7 +696,7 @@ function* hostLinks(text: string, hosts: FileHosts): Generator<{ cut: number; op
       }
     }
     pattern.lastIndex = end;
-    yield { cut, open, end };
+    yield { cut, open, end, stop: stop < 0 ? end : stop };
   }
 }
 
@@ -694,13 +778,15 @@ function decodeLinkText(text: string): string {
  * Whether a request value carries a link at one of `hosts` whose query or
  * fragment holds the exact `[redacted]` placeholder, plain or encoded: a
  * withheld read copied into a write, which would store the placeholder.
+ * Only the link's own destination is read: a Markdown link ends at its
+ * closing `)`, so `[f](…?a=1)[redacted]` is ordinary text after it.
  * The word alone (`unredacted`) or the placeholder away from a file link is
  * a person's text.
  */
 export function carriesWithheldLink(value: unknown, hosts: FileHosts, depth = 0): boolean {
   if (typeof value === "string") {
-    for (const { cut, end } of hostLinks(value, hosts)) {
-      if (cut >= 0 && decodeLinkText(value.slice(cut, end)).includes(REDACTED)) return true;
+    for (const { cut, stop } of hostLinks(value, hosts)) {
+      if (cut >= 0 && cut < stop && decodeLinkText(value.slice(cut, stop)).includes(REDACTED)) return true;
     }
     return false;
   }
@@ -778,7 +864,10 @@ function scrubStrings(value: unknown): unknown {
 }
 
 /** One reviewed path, split into segments; `#url` is the same as an `origin:` prefix. */
-function parsePath(raw: string): { mode: "redact" | "url" | "origin"; segments: string[] } {
+function parsePath(raw: string): {
+  mode: "redact" | "url" | "origin";
+  segments: string[];
+} {
   let path = raw;
   let mode: "redact" | "url" | "origin" = "redact";
   if (path.startsWith("url:")) {
@@ -1024,7 +1113,11 @@ function credentialInput(name: string): boolean {
 /** Whether a request-side schema names a credential input, to a fixed depth. */
 function acceptsCredential(schema: JsonSchema | undefined, depth: number): boolean {
   if (depth > 4 || typeof schema !== "object" || schema === null) return false;
-  const node = schema as { properties?: Record<string, JsonSchema>; items?: JsonSchema; anyOf?: JsonSchema[] };
+  const node = schema as {
+    properties?: Record<string, JsonSchema>;
+    items?: JsonSchema;
+    anyOf?: JsonSchema[];
+  };
   return (
     Object.entries(node.properties ?? {}).some(
       ([name, child]) => credentialInput(name) || acceptsCredential(child, depth + 1),
@@ -1076,7 +1169,12 @@ export function valueSafety(table: ValueSafetyTable, index: () => OperationIndex
       const verbatim = new WeakMap<object, Set<string>>();
       if (table.resources) out = resourcePass(out, table.resources, verbatim, 0);
       const keep = reviewed && reviewed.verdict !== "refuse" ? (reviewed.keep ?? []) : [];
-      return heuristic(out, { keep: keep.map(trailOf), verbatim, fields, scopeMaps });
+      return heuristic(out, {
+        keep: keep.map(trailOf),
+        verbatim,
+        fields,
+        scopeMaps,
+      });
     },
     withholdsErrors(op) {
       const reviewed = verdict(op.method, op.path);

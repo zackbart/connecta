@@ -144,9 +144,13 @@ For formatted content, write Markdown to a page with `notion_api_write`
 `{"type":"insert_content","insert_content":{"content":"## Notes\n- one","position":{"type":"end"}}}`
 (`start` prepends). Edit text in place with `update_content`, whose
 `content_updates` are `{ old_str, new_str }` pairs copied exactly from the
-page's Markdown. Deleting content takes `allow_deleting_content: true`; leave
-it out unless the task is to delete. `integration_create_page` takes the same
-Markdown for a new page's body.
+page's Markdown, and `replace_content` swaps the whole page for `new_str`.
+Notion refuses an edit that would delete a child page or database with a
+`validation_error` naming them. Removing ordinary text needs no flag; to delete
+those children, set `allow_deleting_content: true` inside the command body
+(`{"type":"update_content","update_content":{"content_updates":[…],"allow_deleting_content":true}}`),
+and leave it out unless the task is to delete them. `integration_create_page`
+takes the same Markdown for a new page's body.
 
 ## Pagination
 

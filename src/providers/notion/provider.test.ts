@@ -102,7 +102,10 @@ function context(token: string | null = "secret_token"): ConnectorContext {
   };
 }
 
-const TOKEN = { auth: { type: "token" }, purpose: "Team knowledge base" } as const;
+const TOKEN = {
+  auth: { type: "token" },
+  purpose: "Team knowledge base",
+} as const;
 
 function build(overrides: Record<string, unknown> = {}): Connector {
   return notion("workspace", { ...TOKEN, ...overrides } as any);
@@ -175,7 +178,11 @@ const PAGE_FIXTURE = {
       relation: [{ id: "page-2" }, { id: "page-3" }],
       has_more: true,
     },
-    Score: { id: "fx", type: "formula", formula: { type: "number", number: 7 } },
+    Score: {
+      id: "fx",
+      type: "formula",
+      formula: { type: "number", number: 7 },
+    },
     Count: {
       id: "rl",
       type: "rollup",
@@ -189,7 +196,13 @@ const PAGE_FIXTURE = {
     Spec: {
       id: "fl",
       type: "files",
-      files: [{ name: "spec.pdf", type: "external", external: { url: "https://x/1" } }],
+      files: [
+        {
+          name: "spec.pdf",
+          type: "external",
+          external: { url: "https://x/1" },
+        },
+      ],
     },
     Missing: { id: "mt", type: "select", select: null },
     Invented: { id: "new", type: "brand_new_type", brand_new_type: "kept" },
@@ -216,20 +229,32 @@ describe("notion() auth selects the implementation", () => {
         'notion("wiki") requires auth.type to be one of "oauth", "token".',
       );
     }
-    expect(() => notion("wiki", { purpose: "Docs", auth: { type: "token" }, surface: "api" } as never)).toThrow(
-      'Unknown option: notion("wiki").surface.',
-    );
+    expect(() =>
+      notion("wiki", {
+        purpose: "Docs",
+        auth: { type: "token" },
+        surface: "api",
+      } as never),
+    ).toThrow('Unknown option: notion("wiki").surface.');
     expect(mcpMocks.remoteMcp).not.toHaveBeenCalled();
   });
 
   it("INV-11: refuses token-only options under OAuth by name, and OAuth-only options under a token", () => {
     expect(() =>
       // @ts-expect-error The hosted server holds no operator credential.
-      notion("wiki", { purpose: "Docs", auth: { type: "oauth" }, credentialLabel: "Docs token" }),
+      notion("wiki", {
+        purpose: "Docs",
+        auth: { type: "oauth" },
+        credentialLabel: "Docs token",
+      }),
     ).toThrow('Unknown option: notion("wiki").credentialLabel.');
     expect(() =>
       // @ts-expect-error Hosted tools own their own paging.
-      notion("wiki", { purpose: "Docs", auth: { type: "oauth" }, defaultPageSize: 10 }),
+      notion("wiki", {
+        purpose: "Docs",
+        auth: { type: "oauth" },
+        defaultPageSize: 10,
+      }),
     ).toThrow('Unknown option: notion("wiki").defaultPageSize.');
     expect(() => build({ callAdmission: { rules: [{ maxConcurrency: 1 }] } })).toThrow(
       'Unknown option: notion("workspace").callAdmission.',
@@ -243,7 +268,10 @@ describe("notion() auth selects the implementation", () => {
 
 describe("notion() over OAuth", () => {
   function mcp(): Connector {
-    return notion("workspace_mcp", { auth: { type: "oauth" }, purpose: "Team knowledge base" });
+    return notion("workspace_mcp", {
+      auth: { type: "oauth" },
+      purpose: "Team knowledge base",
+    });
   }
 
   it("binds Notion's hosted endpoint over OAuth only, with no network access at construction", () => {
@@ -359,8 +387,14 @@ describe("notion() over an integration token", () => {
   });
 
   it("carries a required guide covering what schemas cannot", () => {
-    const connector = build({ instructions: "Use the Engineering wiki unless the request names another." });
-    const guide = connector.usageGuide as { content: string; summary: string; required: boolean };
+    const connector = build({
+      instructions: "Use the Engineering wiki unless the request names another.",
+    });
+    const guide = connector.usageGuide as {
+      content: string;
+      summary: string;
+      required: boolean;
+    };
     expect(guide.required).toBe(true);
     expect(new TextEncoder().encode(connectorGuideSummary(connector) ?? "").length).toBeLessThanOrEqual(120);
     for (const text of [
@@ -402,13 +436,28 @@ describe("notion() over an integration token", () => {
   });
 
   it("INV-5: tests a pasted token with the cheapest identifying read, and never echoes it", async () => {
-    queue({ body: { object: "user", id: "bot-1", type: "bot", name: "Docs bot", bot: { workspace_name: "Acme" } } });
+    queue({
+      body: {
+        object: "user",
+        id: "bot-1",
+        type: "bot",
+        name: "Docs bot",
+        bot: { workspace_name: "Acme" },
+      },
+    });
     const ok = await build().testCredential!("secret_pasted", context(null));
     expect(ok).toEqual({ ok: true, message: "Authenticated as Acme." });
     expect(calls[0]?.url).toBe(`${NOTION_API_BASE_URL}/v1/users/me`);
     expect(calls[0]?.headers["Authorization"]).toBe("Bearer secret_pasted");
 
-    queue({ status: 401, body: { object: "error", code: "unauthorized", message: "API token is invalid." } });
+    queue({
+      status: 401,
+      body: {
+        object: "error",
+        code: "unauthorized",
+        message: "API token is invalid.",
+      },
+    });
     const bad = await build().testCredential!("secret_wrong", context(null));
     expect(bad.ok).toBe(false);
     expect(bad.message).toContain("unauthorized");
@@ -465,16 +514,30 @@ describe("notion() value safety", () => {
           object: "block",
           id: "b1",
           type: "file",
-          file: { type: "file", file: { url: signed, expiry_time: "2026-10-09T01:00:00.000Z" }, caption: [] },
+          file: {
+            type: "file",
+            file: { url: signed, expiry_time: "2026-10-09T01:00:00.000Z" },
+            caption: [],
+          },
         },
       },
-      { body: { object: "file_upload", id: "fu_1", upload_url: "https://api.notion.com/v1/file_uploads/fu_1/send" } },
+      {
+        body: {
+          object: "file_upload",
+          id: "fu_1",
+          upload_url: "https://api.notion.com/v1/file_uploads/fu_1/send",
+        },
+      },
     ];
-    const block = await call(build(), "notion_api_read", { path: "/v1/blocks/b1" });
+    const block = await call(build(), "notion_api_read", {
+      path: "/v1/blocks/b1",
+    });
     const url = new URL(block.data.file.file.url);
     expect(url.pathname).toBe("/ws/file/report.pdf");
     for (const leaked of ["ASIAEXAMPLE", "SESSION-TOKEN", "SIGNATURE-HEX"]) expect(url.href).not.toContain(leaked);
-    const upload = await call(build(), "notion_api_read", { path: "/v1/file_uploads/fu_1" });
+    const upload = await call(build(), "notion_api_read", {
+      path: "/v1/file_uploads/fu_1",
+    });
     expect(upload.data.upload_url).toBe("https://api.notion.com/v1/file_uploads/fu_1/send");
   });
 
@@ -488,8 +551,18 @@ describe("notion() value safety", () => {
       `<file src="${signed("report.pdf").replaceAll("&", "&amp;")}">Report</file>`,
       "See [the docs](https://developers.notion.com/reference?topic=markdown) for more.",
     ].join("\n");
-    queue({ body: { object: "page_markdown", id: "page-1", markdown, truncated: false, unknown_block_ids: [] } });
-    const read = await call(build(), "notion_api_read", { path: "/v1/pages/page-1/markdown" });
+    queue({
+      body: {
+        object: "page_markdown",
+        id: "page-1",
+        markdown,
+        truncated: false,
+        unknown_block_ids: [],
+      },
+    });
+    const read = await call(build(), "notion_api_read", {
+      path: "/v1/pages/page-1/markdown",
+    });
     const text: string = read.data.markdown;
     for (const leaked of ["ASIAEXAMPLE", "SESSION-TOKEN", "SIGNATURE-HEX"]) expect(text).not.toContain(leaked);
     // The links still name their files, and the attribute keeps its escaping.
@@ -521,11 +594,18 @@ describe("notion() value safety", () => {
     `[a](https:\\/\\/${HOST}/ws/file.png?X-Amz-Signature=FAKE_SIGNATURE)`,
     `<file src="${S3}/a.png?table=block&amp;id=ASIAEXAMPLE">f</file>`,
   ].join("\n");
-  const PAGE_MARKDOWN = { object: "page_markdown", id: "page-1", markdown: WRAPPED, truncated: false };
+  const PAGE_MARKDOWN = {
+    object: "page_markdown",
+    id: "page-1",
+    markdown: WRAPPED,
+    truncated: false,
+  };
 
   it("INV-5: withholds signed links behind parentheses and character references on a Markdown read", async () => {
     queue({ body: PAGE_MARKDOWN });
-    const read = await call(build(), "notion_api_read", { path: "/v1/pages/page-1/markdown" });
+    const read = await call(build(), "notion_api_read", {
+      path: "/v1/pages/page-1/markdown",
+    });
     expect(read.data.markdown).not.toContain("FAKE_SIGNATURE");
     expect(read.data.markdown).not.toContain("ASIAEXAMPLE");
     expect(read.data.markdown).toContain(`![a](${S3}/file(1).png?[redacted])`);
@@ -568,7 +648,9 @@ describe("notion() value safety", () => {
       result: PAGE_MARKDOWN,
     };
     queue({ body: task });
-    const polled = await call(build(), "notion_api_read", { path: "/v1/async_tasks/task-1" });
+    const polled = await call(build(), "notion_api_read", {
+      path: "/v1/async_tasks/task-1",
+    });
     expect(JSON.stringify(polled)).not.toContain("FAKE_SIGNATURE");
     expect(polled.data.result.markdown).toContain(`![a](${S3}/file(1).png?[redacted])`);
     expect(polled.data.status_url).toBe("https://api.notion.com/v1/async_tasks/task-1");
@@ -592,7 +674,15 @@ describe("notion() value safety: a person's links and read-modify-write", () => 
     "https://file.notion.so.example.com/report?reportId=42",
     "https://my-prod-files-secure.example.com/report?reportId=42",
     "https://example.com/prod-files-secure?reportId=42",
+    // Review round 4, finding 1: a name in a path or before userinfo is not the host.
+    "https://example.com/x.file.notion.so/report?reportId=42",
+    "https://example.com//file.notion.so/report?reportId=42",
+    "https://192.0.2.1/x.notionusercontent.com/report?reportId=42",
+    "https://[2001:db8::1]/x.secure.notion-static.com/report?reportId=42",
+    "https://s3.us-west-2.amazonaws.com/prod-files-secure@other/a.png?v=1",
   ];
+  // In text; as a whole URL field the URL rule withholds its userinfo instead.
+  const USERINFO = "https://file.notion.so@evil.com/report?reportId=42";
 
   it.each([AWS_LINK, ...LOOKALIKES])(
     "INV-5: returns a person's link %s unchanged in a URL property and an external cover",
@@ -604,21 +694,40 @@ describe("notion() value safety: a person's links and read-modify-write", () => 
         properties: { Report: { id: "r", type: "url", url: link } },
       };
       queue({ body: page }, { body: page });
-      const read = await call(build(), "notion_api_read", { path: "/v1/pages/page-1" });
+      const read = await call(build(), "notion_api_read", {
+        path: "/v1/pages/page-1",
+      });
       expect(read.data.cover.external.url).toBe(link);
       expect(read.data.properties.Report.url).toBe(link);
-      const projected = await call(build(), "integration_get_page", { page_id: "page-1" });
+      const projected = await call(build(), "integration_get_page", {
+        page_id: "page-1",
+      });
       expect(projected.properties.Report).toBe(link);
     },
   );
 
   it("INV-5: returns links at look-alike hosts byte for byte in Markdown and admits writes carrying them", async () => {
-    const markdown = LOOKALIKES.map((link, i) => `[r${i}](${link}) <file src="${link}">f</file> ${link}`).join("\n");
-    queue({ body: { object: "page_markdown", id: "page-1", markdown, truncated: false } });
-    const read = await call(build(), "notion_api_read", { path: "/v1/pages/page-1/markdown" });
+    const markdown = [...LOOKALIKES, USERINFO]
+      .map((link, i) => `[r${i}](${link}) <file src="${link}">f</file> ${link}`)
+      .join("\n");
+    queue({
+      body: {
+        object: "page_markdown",
+        id: "page-1",
+        markdown,
+        truncated: false,
+      },
+    });
+    const read = await call(build(), "notion_api_read", {
+      path: "/v1/pages/page-1/markdown",
+    });
     expect(read.data.markdown).toBe(markdown);
 
-    queue({ body: { object: "page", id: "page-1" } }, { body: { object: "page_markdown", id: "page-1", markdown } });
+    queue(
+      { body: { object: "page", id: "page-1" } },
+      { body: { object: "page_markdown", id: "page-1", markdown } },
+      { body: { object: "page_markdown", id: "page-1", markdown } },
+    );
     await call(build(), "notion_api_write", {
       method: "PATCH",
       path: "/v1/pages/page-1",
@@ -629,8 +738,17 @@ describe("notion() value safety: a person's links and read-modify-write", () => 
       path: "/v1/pages/page-1/markdown",
       body: { type: "insert_content", insert_content: { content: markdown } },
     });
-    // The read, then both writes.
-    expect(calls).toHaveLength(3);
+    // A placeholder in their own queries is theirs too.
+    await call(build(), "notion_api_write", {
+      method: "PATCH",
+      path: "/v1/pages/page-1/markdown",
+      body: {
+        type: "insert_content",
+        insert_content: { content: markdown.replaceAll("?", "?[redacted]&") },
+      },
+    });
+    // The read, then all three writes.
+    expect(calls).toHaveLength(4);
   });
 
   it("INV-5: returns a person's links in page Markdown and rich text byte for byte", async () => {
@@ -638,18 +756,39 @@ describe("notion() value safety: a person's links and read-modify-write", () => 
       `[report](${AWS_LINK}) and [login](https://app.example/cb?code=abc&name=x).`,
       "![chart](https://cdn.example/chart(1).png?width=200)",
     ].join("\n");
-    queue({ body: { object: "page_markdown", id: "page-1", markdown, truncated: false } });
-    const read = await call(build(), "notion_api_read", { path: "/v1/pages/page-1/markdown" });
+    queue({
+      body: {
+        object: "page_markdown",
+        id: "page-1",
+        markdown,
+        truncated: false,
+      },
+    });
+    const read = await call(build(), "notion_api_read", {
+      path: "/v1/pages/page-1/markdown",
+    });
     expect(read.data.markdown).toBe(markdown);
 
     const run = {
       type: "text",
-      text: { content: "login", link: { url: "https://app.example/cb?state=s" } },
+      text: {
+        content: "login",
+        link: { url: "https://app.example/cb?state=s" },
+      },
       plain_text: "login",
       href: "https://app.example/cb?state=s",
     };
-    queue({ body: { object: "block", id: "b1", type: "paragraph", paragraph: { rich_text: [run] } } });
-    const block = await call(build(), "notion_api_read", { path: "/v1/blocks/b1" });
+    queue({
+      body: {
+        object: "block",
+        id: "b1",
+        type: "paragraph",
+        paragraph: { rich_text: [run] },
+      },
+    });
+    const block = await call(build(), "notion_api_read", {
+      path: "/v1/blocks/b1",
+    });
     expect(block.data.paragraph.rich_text[0]).toEqual(run);
   });
 
@@ -660,7 +799,12 @@ describe("notion() value safety: a person's links and read-modify-write", () => 
         {
           method: "PATCH",
           path: "/v1/pages/page-1",
-          body: { cover: { type: "external", external: { url: `https://${HOST}/ws/c.png?[redacted]` } } },
+          body: {
+            cover: {
+              type: "external",
+              external: { url: `https://${HOST}/ws/c.png?[redacted]` },
+            },
+          },
         },
       ],
       [
@@ -684,7 +828,12 @@ describe("notion() value safety: a person's links and read-modify-write", () => 
             {
               object: "block",
               type: "image",
-              image: { type: "external", external: { url: "https://file.notion.so/f/f/a.png?[redacted]" } },
+              image: {
+                type: "external",
+                external: {
+                  url: "https://file.notion.so/f/f/a.png?[redacted]",
+                },
+              },
             },
           ],
         },
@@ -702,7 +851,13 @@ describe("notion() value safety: a person's links and read-modify-write", () => 
     await call(build(), "notion_api_write", {
       method: "PATCH",
       path: "/v1/pages/page-1",
-      body: { properties: { Note: { rich_text: [{ text: { content: "[redacted] https://example.com/a?b=1" } }] } } },
+      body: {
+        properties: {
+          Note: {
+            rich_text: [{ text: { content: "[redacted] https://example.com/a?b=1" } }],
+          },
+        },
+      },
     });
     expect(calls).toHaveLength(1);
   });
@@ -731,8 +886,15 @@ describe("notion() value safety: a person's links and read-modify-write", () => 
     ["a filename containing the word", "![a](https://file.notion.so/f/f/redacted-report.png?table=block)"],
     ["a query value starting with the word", "![a](https://file.notion.so/f/f/a.png?name=redacted-report)"],
     ["the placeholder as text beside a file link", "[redacted] ![a](https://file.notion.so/f/f/a.png)"],
+    // Review round 4, finding 2: text after the link's closing parenthesis is not its query.
+    [
+      "the placeholder as text after a closed link",
+      "[file](https://file.notion.so/f/f/a.png?label=unredacted)[redacted]",
+    ],
   ])("INV-5: admits a write with %s", async (_, content) => {
-    queue({ body: { object: "page_markdown", id: "page-1", markdown: content } });
+    queue({
+      body: { object: "page_markdown", id: "page-1", markdown: content },
+    });
     await call(build(), "notion_api_write", insert(content));
     expect(calls).toHaveLength(1);
   });
@@ -741,7 +903,9 @@ describe("notion() value safety: a person's links and read-modify-write", () => 
 describe("notion() generic REST tools", () => {
   it("INV-10: finds operations and their contracts in the pinned index without a request", async () => {
     const connector = build();
-    const found = await call(connector, "notion_api_search", { query: "query data source" });
+    const found = await call(connector, "notion_api_search", {
+      query: "query data source",
+    });
     expect(found.operations).toContainEqual(
       expect.objectContaining({
         method: "POST",
@@ -749,8 +913,14 @@ describe("notion() generic REST tools", () => {
         tool: "notion_api_read",
       }),
     );
-    const details = await call(connector, "notion_api_details", { method: "PATCH", path: "/v1/pages/page-1" });
-    expect(details).toMatchObject({ path: "/v1/pages/{page_id}", tool: "notion_api_write" });
+    const details = await call(connector, "notion_api_details", {
+      method: "PATCH",
+      path: "/v1/pages/page-1",
+    });
+    expect(details).toMatchObject({
+      path: "/v1/pages/{page_id}",
+      tool: "notion_api_write",
+    });
     expect(Object.keys(details.body.schema.properties)).toContain("in_trash");
     expect(calls).toHaveLength(0);
   });
@@ -765,8 +935,19 @@ describe("notion() generic REST tools", () => {
       "/v1/sessions/query",
       "/v1/sessions/s-1/events/query",
     ]) {
-      queue({ body: { object: "list", results: [], has_more: false, next_cursor: null } });
-      await call(connector, "notion_api_read", { method: "POST", path, body: {} });
+      queue({
+        body: {
+          object: "list",
+          results: [],
+          has_more: false,
+          next_cursor: null,
+        },
+      });
+      await call(connector, "notion_api_read", {
+        method: "POST",
+        path,
+        body: {},
+      });
     }
     expect(calls.map((request) => [request.method, new URL(request.url).pathname])).toEqual([
       ["POST", "/v1/search"],
@@ -791,25 +972,47 @@ describe("notion() generic REST tools", () => {
     const path = await refusal(call(connector, "notion_api_read", { path: "/v1/page/page-1" }));
     expect(path.message).toContain("Nearest: GET /v1/pages/{page_id}");
     const param = await refusal(
-      call(connector, "notion_api_read", { method: "POST", path: "/v1/search", body: { cursor: "c1" } }),
+      call(connector, "notion_api_read", {
+        method: "POST",
+        path: "/v1/search",
+        body: { cursor: "c1" },
+      }),
     );
     expect(param.message).toContain("Not sent:");
-    expect(param.validation?.issues[0]).toMatchObject({ path: "/body/cursor", code: "additionalProperties" });
+    expect(param.validation?.issues[0]).toMatchObject({
+      path: "/body/cursor",
+      code: "additionalProperties",
+    });
     const missing = await refusal(
-      call(connector, "notion_api_write", { method: "PATCH", path: "/v1/blocks/b-1/children", body: {} }),
+      call(connector, "notion_api_write", {
+        method: "PATCH",
+        path: "/v1/blocks/b-1/children",
+        body: {},
+      }),
     );
-    expect(missing.validation?.issues[0]).toMatchObject({ path: "/body/children", code: "required" });
+    expect(missing.validation?.issues[0]).toMatchObject({
+      path: "/body/children",
+      code: "required",
+    });
     expect(calls).toHaveLength(0);
   });
 
   it("refuses Notion's OAuth token endpoints and multipart sends with the route to take instead", async () => {
     const connector = build();
     const minting = await refusal(
-      call(connector, "notion_api_write", { method: "POST", path: "/v1/oauth/token", body: {} }),
+      call(connector, "notion_api_write", {
+        method: "POST",
+        path: "/v1/oauth/token",
+        body: {},
+      }),
     );
     expect(minting.message).toContain("mint and revoke credentials");
     const upload = await refusal(
-      call(connector, "notion_api_write", { method: "POST", path: "/v1/file_uploads/fu-1/send", body: {} }),
+      call(connector, "notion_api_write", {
+        method: "POST",
+        path: "/v1/file_uploads/fu-1/send",
+        body: {},
+      }),
     );
     expect(upload.message).toContain("multipart/form-data");
     expect(upload.message).toContain('mode "external_url"');
@@ -818,43 +1021,84 @@ describe("notion() generic REST tools", () => {
 
   it("returns one envelope whose cursor names where it goes: query on GET, body on POST queries", async () => {
     const connector = build();
-    queue({ body: { object: "list", results: [{ id: "u1" }], has_more: true, next_cursor: "c-get" } });
-    const users = await call(connector, "notion_api_read", { path: "/v1/users", query: { page_size: 1 } });
+    queue({
+      body: {
+        object: "list",
+        results: [{ id: "u1" }],
+        has_more: true,
+        next_cursor: "c-get",
+      },
+    });
+    const users = await call(connector, "notion_api_read", {
+      path: "/v1/users",
+      query: { page_size: 1 },
+    });
     expect(new URL(calls[0]!.url).searchParams.get("page_size")).toBe("1");
     expect(users).toEqual({
       status: 200,
-      data: { object: "list", results: [{ id: "u1" }], has_more: true, next_cursor: "c-get" },
+      data: {
+        object: "list",
+        results: [{ id: "u1" }],
+        has_more: true,
+        next_cursor: "c-get",
+      },
       page: { hasMore: true, next: "c-get", param: "start_cursor" },
     });
 
-    queue({ body: { object: "list", results: [{ id: "p1", url: "u" }], has_more: true, next_cursor: "c-post" } });
+    queue({
+      body: {
+        object: "list",
+        results: [{ id: "p1", url: "u" }],
+        has_more: true,
+        next_cursor: "c-post",
+      },
+    });
     const found = await call(connector, "notion_api_read", {
       method: "POST",
       path: "/v1/search",
       body: { query: "roadmap", start_cursor: "c-prev" },
       select: ["results.id"],
     });
-    expect(calls[1]?.body).toEqual({ query: "roadmap", start_cursor: "c-prev" });
+    expect(calls[1]?.body).toEqual({
+      query: "roadmap",
+      start_cursor: "c-prev",
+    });
     expect(found).toEqual({
       status: 200,
       data: { results: [{ id: "p1" }] },
-      page: { hasMore: true, next: "c-post", param: "start_cursor", in: "body" },
+      page: {
+        hasMore: true,
+        next: "c-post",
+        param: "start_cursor",
+        in: "body",
+      },
     });
 
-    queue({ body: { object: "list", results: [], has_more: false, next_cursor: null } });
-    const last = await call(connector, "notion_api_read", { path: "/v1/users" });
+    queue({
+      body: { object: "list", results: [], has_more: false, next_cursor: null },
+    });
+    const last = await call(connector, "notion_api_read", {
+      path: "/v1/users",
+    });
     expect(last.page).toEqual({ hasMore: false });
   });
 
   it("refuses a block whose type, payload key, or payload fields disagree with the index, before dispatch", async () => {
     const connector = build();
     const append = (children: unknown[]) =>
-      call(connector, "notion_api_write", { method: "PATCH", path: "/v1/blocks/b-1/children", body: { children } });
+      call(connector, "notion_api_write", {
+        method: "PATCH",
+        path: "/v1/blocks/b-1/children",
+        body: { children },
+      });
     // The `type` discriminator is a const in Notion's document: it must name
     // the payload key the block carries.
     const mismatched = await refusal(append([{ type: "to_do", paragraph: { rich_text: [] } }]));
     expect(mismatched.message).toContain("Not sent:");
-    expect(mismatched.validation?.issues[0]).toMatchObject({ path: "/body/children/0/type", code: "enum" });
+    expect(mismatched.validation?.issues[0]).toMatchObject({
+      path: "/body/children/0/type",
+      code: "enum",
+    });
     const invented = await refusal(append([{ object: "block", type: "wizard", wizard: {} }]));
     expect(invented.validation?.issues.map((issue) => issue.path)).toContain("/body/children/0/wizard");
     const typo = await refusal(append([{ type: "to_do", to_do: { rich_txt: [] } }]));
@@ -865,9 +1109,20 @@ describe("notion() generic REST tools", () => {
     expect(typo.validation?.issues[0]?.expected).toMatch(/^rich_text\? /);
     expect(calls).toHaveLength(0);
 
-    queue({ body: { object: "list", results: [{ id: "new-1", type: "to_do" }], has_more: false, next_cursor: null } });
+    queue({
+      body: {
+        object: "list",
+        results: [{ id: "new-1", type: "to_do" }],
+        has_more: false,
+        next_cursor: null,
+      },
+    });
     const children = [
-      { object: "block", type: "to_do", to_do: { rich_text: [{ type: "text", text: { content: "Ship" } }] } },
+      {
+        object: "block",
+        type: "to_do",
+        to_do: { rich_text: [{ type: "text", text: { content: "Ship" } }] },
+      },
     ];
     await append(children);
     expect(calls[0]).toMatchObject({ method: "PATCH", body: { children } });
@@ -898,11 +1153,24 @@ describe("notion() generic REST tools", () => {
     expect(created).toEqual({
       status: 200,
       data: { results: [{ id: "p1" }] },
-      page: { hasMore: true, next: "c-view", param: "start_cursor", in: "query", path: "/v1/views/v-1/queries/q-1" },
+      page: {
+        hasMore: true,
+        next: "c-view",
+        param: "start_cursor",
+        in: "query",
+        path: "/v1/views/v-1/queries/q-1",
+      },
     });
 
     queue({
-      body: { object: "list", results: [{ id: "p2" }], has_more: false, next_cursor: null, type: "page", page: {} },
+      body: {
+        object: "list",
+        results: [{ id: "p2" }],
+        has_more: false,
+        next_cursor: null,
+        type: "page",
+        page: {},
+      },
     });
     const next = await call(connector, "notion_api_read", {
       path: created.page.path,
@@ -912,18 +1180,28 @@ describe("notion() generic REST tools", () => {
     expect(calls[1]?.method).toBe("GET");
     expect(new URL(calls[1]!.url).pathname).toBe("/v1/views/v-1/queries/q-1");
     expect(new URL(calls[1]!.url).searchParams.get("start_cursor")).toBe("c-view");
-    expect(next).toEqual({ status: 200, data: { results: [{ id: "p2" }] }, page: { hasMore: false } });
+    expect(next).toEqual({
+      status: 200,
+      data: { results: [{ id: "p2" }] },
+      page: { hasMore: false },
+    });
 
     // Meeting notes have no cursor: hasMore without next says the list was
     // cut at its limit, even when select drops the body's own has_more.
-    queue({ body: { results: [{ id: "m1", type: "meeting_notes" }], has_more: true } });
+    queue({
+      body: { results: [{ id: "m1", type: "meeting_notes" }], has_more: true },
+    });
     const notes = await call(connector, "notion_api_read", {
       method: "POST",
       path: "/v1/blocks/meeting_notes/query",
       body: { limit: 1 },
       select: ["results.id"],
     });
-    expect(notes).toEqual({ status: 200, data: { results: [{ id: "m1" }] }, page: { hasMore: true } });
+    expect(notes).toEqual({
+      status: 200,
+      data: { results: [{ id: "m1" }] },
+      page: { hasMore: true },
+    });
   });
 
   it("INV-9: sends a write once with method and path stated, and never replays it after a failure", async () => {
@@ -935,17 +1213,31 @@ describe("notion() generic REST tools", () => {
       body: { in_trash: true },
     });
     expect(trashed).toMatchObject({ status: 200, data: { in_trash: true } });
-    expect(calls[0]).toMatchObject({ method: "PATCH", body: { in_trash: true } });
+    expect(calls[0]).toMatchObject({
+      method: "PATCH",
+      body: { in_trash: true },
+    });
     expect(calls[0]?.headers["Notion-Version"]).toBe(NOTION_API_VERSION);
     // Notion has no idempotency key, so none is invented.
     expect(trashed).not.toHaveProperty("idempotencyKey");
 
     calls.length = 0;
-    queue({ status: 502, body: { object: "error", code: "internal_server_error", message: "boom" } });
-    const failed = await refusal(call(connector, "notion_api_write", { method: "DELETE", path: "/v1/blocks/b-1" }));
+    queue({
+      status: 502,
+      body: { object: "error", code: "internal_server_error", message: "boom" },
+    });
+    const failed = await refusal(
+      call(connector, "notion_api_write", {
+        method: "DELETE",
+        path: "/v1/blocks/b-1",
+      }),
+    );
     // A keyless write that may have reached Notion is never advertised as
     // retryable: repeating it could apply the change twice.
-    expect(failed).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(failed).toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+    });
     expect(calls).toHaveLength(1);
   });
 });
@@ -953,7 +1245,9 @@ describe("notion() generic REST tools", () => {
 describe("notion() lean projections", () => {
   it("flattens every property shape and reports truncation", async () => {
     queue({ body: PAGE_FIXTURE });
-    const page: any = await call(build(), "integration_get_page", { page_id: "page-1" });
+    const page: any = await call(build(), "integration_get_page", {
+      page_id: "page-1",
+    });
 
     expect(page.id).toBe("page-1");
     expect(page.title).toBe("Quarterly review");
@@ -997,22 +1291,43 @@ describe("notion() lean projections", () => {
       icon,
       properties: {
         Name: PAGE_FIXTURE.properties.Name,
-        Score: { id: "fx", type: "formula", formula: { type: "unsupported", unsupported: {} } },
+        Score: {
+          id: "fx",
+          type: "formula",
+          formula: { type: "unsupported", unsupported: {} },
+        },
         Count: {
           id: "rl",
           type: "rollup",
-          rollup: { type: "unsupported", unsupported: {}, function: "show_original" },
+          rollup: {
+            type: "unsupported",
+            unsupported: {},
+            function: "show_original",
+          },
         },
       },
     });
     queue(
       { body: page({ type: "icon", icon: { name: "pizza", color: "blue" } }) },
-      { body: page({ type: "custom_emoji", custom_emoji: { id: "e1", name: "shipit", url: "https://x/e.png" } }) },
+      {
+        body: page({
+          type: "custom_emoji",
+          custom_emoji: { id: "e1", name: "shipit", url: "https://x/e.png" },
+        }),
+      },
     );
-    const native: any = await call(build(), "integration_get_page", { page_id: "page-1" });
+    const native: any = await call(build(), "integration_get_page", {
+      page_id: "page-1",
+    });
     expect(native.icon).toBe("pizza");
-    expect(native.properties).toEqual({ Name: "Quarterly review", Score: null, Count: null });
-    const custom: any = await call(build(), "integration_get_page", { page_id: "page-1" });
+    expect(native.properties).toEqual({
+      Name: "Quarterly review",
+      Score: null,
+      Count: null,
+    });
+    const custom: any = await call(build(), "integration_get_page", {
+      page_id: "page-1",
+    });
     expect(custom.icon).toBe(":shipit:");
   });
 
@@ -1028,7 +1343,10 @@ describe("notion() lean projections", () => {
 
   it("returns Notion's untouched payload through the raw escape hatch", async () => {
     queue({ body: PAGE_FIXTURE });
-    const page = await call(build(), "integration_get_page", { page_id: "page-1", raw: true });
+    const page = await call(build(), "integration_get_page", {
+      page_id: "page-1",
+      raw: true,
+    });
     expect(page).toEqual(PAGE_FIXTURE);
   });
 
@@ -1050,7 +1368,9 @@ describe("notion() lean projections", () => {
         next_cursor: "cursor-2",
       },
     });
-    const found: any = await call(build(), "integration_search", { query: "review" });
+    const found: any = await call(build(), "integration_search", {
+      query: "review",
+    });
 
     expect(found.results[0]).toEqual({
       id: "page-1",
@@ -1076,7 +1396,12 @@ describe("notion() lean projections", () => {
   it("flattens blocks to text and follows nesting only when asked", async () => {
     const parent = {
       results: [
-        { id: "b1", type: "heading_2", has_children: false, heading_2: { rich_text: [{ plain_text: "Goals" }] } },
+        {
+          id: "b1",
+          type: "heading_2",
+          has_children: false,
+          heading_2: { rich_text: [{ plain_text: "Goals" }] },
+        },
         {
           id: "b2",
           type: "to_do",
@@ -1087,9 +1412,17 @@ describe("notion() lean projections", () => {
           id: "b3",
           type: "code",
           has_children: false,
-          code: { rich_text: [{ plain_text: "const x = 1" }], language: "typescript" },
+          code: {
+            rich_text: [{ plain_text: "const x = 1" }],
+            language: "typescript",
+          },
         },
-        { id: "b4", type: "child_page", has_children: true, child_page: { title: "Appendix" } },
+        {
+          id: "b4",
+          type: "child_page",
+          has_children: true,
+          child_page: { title: "Appendix" },
+        },
         // Notion adds block types to every API version at once. An unmodelled
         // type must not collapse to an empty string and lose its payload.
         {
@@ -1105,22 +1438,55 @@ describe("notion() lean projections", () => {
         // A divider's payload is empty and a table of contents carries only
         // colour, so neither earns a raw field.
         { id: "b6", type: "divider", has_children: false, divider: {} },
-        { id: "b7", type: "table_of_contents", has_children: false, table_of_contents: { color: "default" } },
+        {
+          id: "b7",
+          type: "table_of_contents",
+          has_children: false,
+          table_of_contents: { color: "default" },
+        },
       ],
       has_more: false,
       next_cursor: null,
     };
 
     queue({ body: parent });
-    const shallow: any = await call(build(), "integration_get_page_content", { block_id: "page-1" });
+    const shallow: any = await call(build(), "integration_get_page_content", {
+      block_id: "page-1",
+    });
     expect(calls).toHaveLength(1);
     expect(new URL(calls[0]!.url).searchParams.get("page_size")).toBe("25");
     expect(shallow.truncated).toBe(false);
     expect(shallow.results).toEqual([
-      { id: "b1", type: "heading_2", depth: 0, text: "Goals", has_children: false },
-      { id: "b2", type: "to_do", depth: 0, text: "Ship it", has_children: true, checked: true },
-      { id: "b3", type: "code", depth: 0, text: "const x = 1", has_children: false, language: "typescript" },
-      { id: "b4", type: "child_page", depth: 0, text: "Appendix", has_children: true },
+      {
+        id: "b1",
+        type: "heading_2",
+        depth: 0,
+        text: "Goals",
+        has_children: false,
+      },
+      {
+        id: "b2",
+        type: "to_do",
+        depth: 0,
+        text: "Ship it",
+        has_children: true,
+        checked: true,
+      },
+      {
+        id: "b3",
+        type: "code",
+        depth: 0,
+        text: "const x = 1",
+        has_children: false,
+        language: "typescript",
+      },
+      {
+        id: "b4",
+        type: "child_page",
+        depth: 0,
+        text: "Appendix",
+        has_children: true,
+      },
       {
         id: "b5",
         type: "meeting_notes",
@@ -1134,7 +1500,13 @@ describe("notion() lean projections", () => {
         },
       },
       { id: "b6", type: "divider", depth: 0, text: "", has_children: false },
-      { id: "b7", type: "table_of_contents", depth: 0, text: "", has_children: false },
+      {
+        id: "b7",
+        type: "table_of_contents",
+        depth: 0,
+        text: "",
+        has_children: false,
+      },
     ]);
 
     calls.length = 0;
@@ -1143,14 +1515,22 @@ describe("notion() lean projections", () => {
       {
         body: {
           results: [
-            { id: "b2a", type: "paragraph", has_children: false, paragraph: { rich_text: [{ plain_text: "sub" }] } },
+            {
+              id: "b2a",
+              type: "paragraph",
+              has_children: false,
+              paragraph: { rich_text: [{ plain_text: "sub" }] },
+            },
           ],
           has_more: false,
         },
       },
       { body: { results: [], has_more: false } },
     );
-    const deep: any = await call(build(), "integration_get_page_content", { block_id: "page-1", depth: 1 });
+    const deep: any = await call(build(), "integration_get_page_content", {
+      block_id: "page-1",
+      depth: 1,
+    });
     expect(calls).toHaveLength(3);
     expect(deep.results.map((block: any) => [block.id, block.depth])).toEqual([
       ["b1", 0],
@@ -1188,7 +1568,10 @@ describe("notion() lean projections", () => {
       });
     }
 
-    const walked: any = await call(build(), "integration_get_page_content", { block_id: "page-1", depth: 1 });
+    const walked: any = await call(build(), "integration_get_page_content", {
+      block_id: "page-1",
+      depth: 1,
+    });
     // One request for the top level plus nineteen children: twenty in total.
     expect(calls).toHaveLength(20);
     expect(walked.truncated).toBe(true);
@@ -1200,7 +1583,14 @@ describe("notion() lean projections", () => {
     queue(
       {
         body: {
-          results: [{ id: "b1", type: "toggle", has_children: true, toggle: { rich_text: [{ plain_text: "Deep" }] } }],
+          results: [
+            {
+              id: "b1",
+              type: "toggle",
+              has_children: true,
+              toggle: { rich_text: [{ plain_text: "Deep" }] },
+            },
+          ],
           has_more: false,
           next_cursor: null,
         },
@@ -1220,7 +1610,10 @@ describe("notion() lean projections", () => {
         },
       },
     );
-    const walked: any = await call(build(), "integration_get_page_content", { block_id: "page-1", depth: 1 });
+    const walked: any = await call(build(), "integration_get_page_content", {
+      block_id: "page-1",
+      depth: 1,
+    });
     expect(calls).toHaveLength(2);
     expect(walked.truncated).toBe(true);
     // The nested cursor belongs to b1; re-reading it directly is the route.
@@ -1229,12 +1622,23 @@ describe("notion() lean projections", () => {
 
   it("does not walk children when raw asks for Notion's own response", async () => {
     const body = {
-      results: [{ id: "b1", type: "toggle", has_children: true, toggle: { rich_text: [{ plain_text: "Deep" }] } }],
+      results: [
+        {
+          id: "b1",
+          type: "toggle",
+          has_children: true,
+          toggle: { rich_text: [{ plain_text: "Deep" }] },
+        },
+      ],
       has_more: false,
       next_cursor: null,
     };
     queue({ body });
-    const raw = await call(build(), "integration_get_page_content", { block_id: "page-1", depth: 2, raw: true });
+    const raw = await call(build(), "integration_get_page_content", {
+      block_id: "page-1",
+      depth: 2,
+      raw: true,
+    });
     expect(calls).toHaveLength(1);
     expect(raw).toEqual(body);
   });
@@ -1250,9 +1654,16 @@ describe("notion() lean projections", () => {
           Status: {
             id: "sta",
             type: "status",
-            status: { options: [{ name: "Todo" }, { name: "Done" }], groups: [{ name: "To-do" }] },
+            status: {
+              options: [{ name: "Todo" }, { name: "Done" }],
+              groups: [{ name: "To-do" }],
+            },
           },
-          Project: { id: "rel", type: "relation", relation: { database_id: "db-2", data_source_id: "ds-2" } },
+          Project: {
+            id: "rel",
+            type: "relation",
+            relation: { database_id: "db-2", data_source_id: "ds-2" },
+          },
         },
       },
     });
@@ -1266,14 +1677,20 @@ describe("notion() lean projections", () => {
       options: ["Todo", "Done"],
       groups: ["To-do"],
     });
-    expect(schema.properties["Project"]).toEqual({ id: "rel", type: "relation", relation_data_source_id: "ds-2" });
+    expect(schema.properties["Project"]).toEqual({
+      id: "rel",
+      type: "relation",
+      relation_data_source_id: "ds-2",
+    });
   });
 });
 
 describe("notion() named-tool pagination", () => {
   it("defaults to a lean page size and passes cursors back verbatim", async () => {
     queue({ body: { results: [], has_more: false, next_cursor: null } });
-    await call(build(), "integration_query_data_source", { data_source_id: "ds-1" });
+    await call(build(), "integration_query_data_source", {
+      data_source_id: "ds-1",
+    });
     expect(calls[0]?.body).toEqual({ page_size: 25 });
 
     calls.length = 0;
@@ -1293,11 +1710,20 @@ describe("notion() named-tool pagination", () => {
       results: [PAGE_FIXTURE],
       has_more: false,
       next_cursor: null,
-      request_status: { type: "incomplete", incomplete_reason: "query_result_limit_reached" },
+      request_status: {
+        type: "incomplete",
+        incomplete_reason: "query_result_limit_reached",
+      },
     };
     queue({ body: capped }, { body: capped }, { body: { ...capped, request_status: { type: "complete" } } });
-    const rows: any = await call(build(), "integration_query_data_source", { data_source_id: "ds-1" });
-    expect(rows).toMatchObject({ has_more: false, next_cursor: null, incomplete: true });
+    const rows: any = await call(build(), "integration_query_data_source", {
+      data_source_id: "ds-1",
+    });
+    expect(rows).toMatchObject({
+      has_more: false,
+      next_cursor: null,
+      incomplete: true,
+    });
 
     const generic = await call(build(), "notion_api_read", {
       method: "POST",
@@ -1308,13 +1734,18 @@ describe("notion() named-tool pagination", () => {
     // A cut-off with no cursor, like a meeting-note query past its limit.
     expect(generic.page).toEqual({ hasMore: true });
 
-    const finished: any = await call(build(), "integration_query_data_source", { data_source_id: "ds-1" });
+    const finished: any = await call(build(), "integration_query_data_source", {
+      data_source_id: "ds-1",
+    });
     expect(finished.incomplete).toBeUndefined();
   });
 
   it("rejects a page size Notion would reject, before the request", async () => {
     const error = await refusal(
-      call(build(), "integration_query_data_source", { data_source_id: "ds-1", page_size: 5_000 }),
+      call(build(), "integration_query_data_source", {
+        data_source_id: "ds-1",
+        page_size: 5_000,
+      }),
     );
     expect(error.code).toBe("invalid_args");
     expect(error.message).toContain("page_size");
@@ -1386,7 +1817,11 @@ describe("notion() error mapping", () => {
   });
 
   caseOf("does not send a capability failure to re-authorization", async () => {
-    const error = await failWith(403, { object: "error", code: "restricted_resource", message: "Insufficient." });
+    const error = await failWith(403, {
+      object: "error",
+      code: "restricted_resource",
+      message: "Insufficient.",
+    });
     expect(error.code).toBe("provider_permission_denied");
     expect(error.retryable).toBe(false);
     expect(error.message).toContain("capability");
@@ -1395,7 +1830,11 @@ describe("notion() error mapping", () => {
   });
 
   caseOf("says a 404 may mean unshared rather than absent", async () => {
-    const error = await failWith(404, { object: "error", code: "object_not_found", message: "Could not find page." });
+    const error = await failWith(404, {
+      object: "error",
+      code: "object_not_found",
+      message: "Could not find page.",
+    });
     // Deliberately not not_found: Notion's 404 does not know whether the
     // object is missing or merely unshared (H11).
     expect(error.code).not.toBe("not_found");
@@ -1437,7 +1876,10 @@ describe("notion() error mapping", () => {
     const error = await failWith(429, {
       code: "rate_limited",
       message: "slow",
-      additional_data: { rate_limit_reason: "public_api_space_request_rate_limit", retry_after: "90" },
+      additional_data: {
+        rate_limit_reason: "public_api_space_request_rate_limit",
+        retry_after: "90",
+      },
     });
     expect(error.code).toBe("rate_limited");
     expect(error.retryAfterMs).toBe(90_000);
@@ -1460,7 +1902,10 @@ describe("notion() error mapping", () => {
   });
 
   caseOf("falls back to a default window when Retry-After is absent", async () => {
-    const error = await failWith(429, { code: "rate_limited", message: "slow" });
+    const error = await failWith(429, {
+      code: "rate_limited",
+      message: "slow",
+    });
     expect(error.retryAfterMs).toBe(1_000);
   });
 
@@ -1470,11 +1915,17 @@ describe("notion() error mapping", () => {
     expect(overloaded.retryable).toBe(true);
     expect(overloaded.retryAfterMs).toBe(2_000);
 
-    const conflict = await failWith(409, { code: "conflict_error", message: "Conflict occurred." });
+    const conflict = await failWith(409, {
+      code: "conflict_error",
+      message: "Conflict occurred.",
+    });
     expect(conflict.code).toBe("unavailable");
     expect(conflict.retryable).toBe(true);
 
-    const upstream = await failWith(503, { code: "service_unavailable", message: "unavailable" });
+    const upstream = await failWith(503, {
+      code: "service_unavailable",
+      message: "unavailable",
+    });
     expect(upstream.code).toBe("unavailable");
     expect(upstream.retryable).toBe(true);
   });
@@ -1486,13 +1937,19 @@ describe("notion() error mapping", () => {
         code: "service_unavailable",
         message: "Timed out.",
         // POST /v1/pages withholds Notion's error text; an id-shaped commit still shows.
-        additional_data: { committed_resource_id: "5c6a2821-6bb1-4a7e-b6e1-c50111515c3d" },
+        additional_data: {
+          committed_resource_id: "5c6a2821-6bb1-4a7e-b6e1-c50111515c3d",
+        },
       },
     });
-    const created = await call(build(), "integration_create_page", { parent_page_id: "p", title: "x" }).catch(
-      (thrown: any) => thrown,
-    );
-    expect(created).toMatchObject({ code: "connector_call_failed", retryable: false });
+    const created = await call(build(), "integration_create_page", {
+      parent_page_id: "p",
+      title: "x",
+    }).catch((thrown: any) => thrown);
+    expect(created).toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+    });
     expect(created.message).toContain("5c6a2821-6bb1-4a7e-b6e1-c50111515c3d");
     expect(created.message).toContain("instead of repeating the write");
 
@@ -1507,10 +1964,14 @@ describe("notion() error mapping", () => {
         },
       },
     });
-    const appended = await call(build(), "integration_append_blocks", { block_id: "page-1", text: ["a", "b"] }).catch(
-      (thrown: any) => thrown,
-    );
-    expect(appended).toMatchObject({ code: "connector_call_failed", retryable: false });
+    const appended = await call(build(), "integration_append_blocks", {
+      block_id: "page-1",
+      text: ["a", "b"],
+    }).catch((thrown: any) => thrown);
+    expect(appended).toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+    });
     expect(appended.message).toContain("0b6f0c8e-1d1e-4c55-9a0e-6f1b2a3c4d01, 0b6f0c8e-1d1e-4c55-9a0e-6f1b2a3c4d02");
     expect(calls).toHaveLength(2);
   });
@@ -1531,7 +1992,10 @@ describe("notion() error mapping", () => {
       path: "/v1/pages/page-1",
       body: { properties: { Done: { checkbox: true } } },
     }).catch((thrown: any) => thrown);
-    expect(updated).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(updated).toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+    });
     expect(updated.message).toContain(
       "Notion's guidance: Read the object again to confirm the saved change. Do not repeat the write.",
     );
@@ -1549,7 +2013,9 @@ describe("notion() error mapping", () => {
         additional_data: { retry_guidance: `Fetch ${signed}` },
       },
     });
-    const read = await call(build(), "notion_api_read", { path: "/v1/users/me" }).catch((thrown: any) => thrown);
+    const read = await call(build(), "notion_api_read", {
+      path: "/v1/users/me",
+    }).catch((thrown: any) => thrown);
     expect(read).toBeInstanceOf(ConnectorCallError);
     expect(read.message).toContain("withheld because this operation handles credentials");
     expect(read.message).not.toContain("FAKE_SIGNATURE");
@@ -1560,15 +2026,25 @@ describe("notion() error mapping", () => {
       body: {
         code: "service_unavailable",
         message: "Timed out.",
-        additional_data: { committed_resource_id: "SECRET-ECHO", retry_guidance: "SECRET-GUIDANCE" },
+        additional_data: {
+          committed_resource_id: "SECRET-ECHO",
+          retry_guidance: "SECRET-GUIDANCE",
+        },
       },
     });
     const created = await call(build(), "notion_api_write", {
       method: "POST",
       path: "/v1/file_uploads",
-      body: { mode: "external_url", external_url: "https://example.com/a.png", filename: "a.png" },
+      body: {
+        mode: "external_url",
+        external_url: "https://example.com/a.png",
+        filename: "a.png",
+      },
     }).catch((thrown: any) => thrown);
-    expect(created).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(created).toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+    });
     expect(created.message).toContain("committed the write");
     expect(created.message).not.toContain("SECRET-");
     expect(calls).toHaveLength(2);
@@ -1578,12 +2054,18 @@ describe("notion() error mapping", () => {
     const signed = "https://prod-files-secure.s3.us-west-2.amazonaws.com/ws/a.png?X-Amz-Signature=FAKE_SIGNATURE";
     queue({
       status: 400,
-      body: { code: "validation_error", message: `old_str not found near ![a](${signed})` },
+      body: {
+        code: "validation_error",
+        message: `old_str not found near ![a](${signed})`,
+      },
     });
     const error = await call(build(), "notion_api_write", {
       method: "PATCH",
       path: "/v1/pages/page-1/markdown",
-      body: { type: "update_content", update_content: { content_updates: [{ old_str: "x", new_str: "y" }] } },
+      body: {
+        type: "update_content",
+        update_content: { content_updates: [{ old_str: "x", new_str: "y" }] },
+      },
     }).catch((thrown: any) => thrown);
     expect(error.code).toBe("invalid_args");
     expect(error.message).toContain("prod-files-secure.s3.us-west-2.amazonaws.com/ws/a.png?[redacted])");
@@ -1602,7 +2084,10 @@ describe("notion() error mapping", () => {
       path: "/v1/pages/page-1",
       body: { properties: { Done: { checkbox: true } } },
     }).catch((thrown: any) => thrown);
-    expect(updated).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(updated).toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+    });
     expect(updated.message).toContain("Notion's guidance: Read");
     expect(updated.message).not.toContain("FAKE_SIGNATURE");
   });
@@ -1611,7 +2096,9 @@ describe("notion() error mapping", () => {
     globalThis.fetch = vi.fn(
       async () => new Response("<html>gateway</html>", { status: 502 }),
     ) as unknown as typeof fetch;
-    const error = await call(build(), "notion_api_read", { path: "/v1/users/me" }).catch((thrown: any) => thrown);
+    const error = await call(build(), "notion_api_read", {
+      path: "/v1/users/me",
+    }).catch((thrown: any) => thrown);
     expect(error.code).toBe("unavailable");
     expect(error.message).toContain("HTTP 502");
   });
@@ -1623,7 +2110,9 @@ describe("notion() error mapping", () => {
           headers: { "content-type": "application/json" },
         }),
     ) as unknown as typeof fetch;
-    const error = await call(build(), "notion_api_read", { path: "/v1/users/me" }).catch((thrown: any) => thrown);
+    const error = await call(build(), "notion_api_read", {
+      path: "/v1/users/me",
+    }).catch((thrown: any) => thrown);
     expect(error).toBeInstanceOf(ConnectorCallError);
     expect(error.code).toBe("connector_call_failed");
     expect(error.retryable).toBe(false);
@@ -1644,7 +2133,11 @@ describe("notion() successful response integrity", () => {
     globalThis.fetch = vi.fn(
       async () => new Response(body, { headers: { "content-type": type } }),
     ) as unknown as typeof fetch;
-    await expect(call(build(), "integration_get_page_content", { block_id: "synthetic" })).rejects.toMatchObject({
+    await expect(
+      call(build(), "integration_get_page_content", {
+        block_id: "synthetic",
+      }),
+    ).rejects.toMatchObject({
       code: "connector_call_failed",
       retryable: false,
     });
@@ -1683,7 +2176,10 @@ describe("notion() successful response integrity", () => {
     if (outcome.ok) throw new Error("Expected failed write response");
     // Notion has no idempotency key, so a lost reply on a sent write is not
     // retryable: repeating it could create the content twice.
-    expect(outcome.error).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(outcome.error).toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+    });
     expect(outcome.error.message).toContain("check the target before repeating it");
     expect(outcome.error.message).not.toContain("synthetic body detail");
     expect(outcome.dispatched).toBe(true);
@@ -1717,7 +2213,11 @@ describe("notion() authoring helpers", () => {
 
   it("requires exactly one parent and one body form", async () => {
     const both = await refusal(
-      call(build(), "integration_create_page", { parent_page_id: "page-1", parent_data_source_id: "ds-1", title: "x" }),
+      call(build(), "integration_create_page", {
+        parent_page_id: "page-1",
+        parent_data_source_id: "ds-1",
+        title: "x",
+      }),
     );
     expect(both.code).toBe("invalid_args");
     expect(both.message).toContain("exactly one");
@@ -1751,7 +2251,12 @@ describe("notion() authoring helpers", () => {
     queue({
       body: {
         results: [
-          { id: "new-1", type: "paragraph", has_children: false, paragraph: { rich_text: [{ plain_text: "first" }] } },
+          {
+            id: "new-1",
+            type: "paragraph",
+            has_children: false,
+            paragraph: { rich_text: [{ plain_text: "first" }] },
+          },
         ],
       },
     });
@@ -1768,12 +2273,16 @@ describe("notion() authoring helpers", () => {
         {
           object: "block",
           type: "paragraph",
-          paragraph: { rich_text: [{ type: "text", text: { content: "first" } }] },
+          paragraph: {
+            rich_text: [{ type: "text", text: { content: "first" } }],
+          },
         },
         {
           object: "block",
           type: "paragraph",
-          paragraph: { rich_text: [{ type: "text", text: { content: "second" } }] },
+          paragraph: {
+            rich_text: [{ type: "text", text: { content: "second" } }],
+          },
         },
       ],
       // The 2026-03-11 shape; the old `after` string is deprecated.
@@ -1782,7 +2291,11 @@ describe("notion() authoring helpers", () => {
     expect(appended.appended).toBe(1);
 
     const missingAnchor = await refusal(
-      call(build(), "integration_append_blocks", { block_id: "page-1", text: ["x"], position: "after_block" }),
+      call(build(), "integration_append_blocks", {
+        block_id: "page-1",
+        text: ["x"],
+        position: "after_block",
+      }),
     );
     expect(missingAnchor.code).toBe("invalid_args");
     expect(missingAnchor.message).toContain("after_block_id");
@@ -1792,18 +2305,27 @@ describe("notion() authoring helpers", () => {
     queue({ body: PAGE_FIXTURE }, { body: { results: [] } });
     // An astral character straddles the cut: it must not be split in half.
     const title = `${"t".repeat(1_999)}😀${"u".repeat(2_500)}`;
-    await call(build(), "integration_create_page", { parent_page_id: "p", title });
+    await call(build(), "integration_create_page", {
+      parent_page_id: "p",
+      title,
+    });
     const runs = calls[0]?.body.properties.title.title.map((run: any) => run.text.content);
     expect(runs.map((run: string) => run.length)).toEqual([1_999, 2_000, 502]);
     expect(runs.join("")).toBe(title);
     expect(runs[1].startsWith("😀")).toBe(true);
 
-    await call(build(), "integration_append_blocks", { block_id: "page-1", checklist: ["x".repeat(4_001)] });
+    await call(build(), "integration_append_blocks", {
+      block_id: "page-1",
+      checklist: ["x".repeat(4_001)],
+    });
     expect(calls[1]?.body.children[0].to_do.rich_text).toHaveLength(3);
 
     calls.length = 0;
     const tooLong = await refusal(
-      call(build(), "integration_append_blocks", { block_id: "page-1", text: ["ok", "y".repeat(200_001)] }),
+      call(build(), "integration_append_blocks", {
+        block_id: "page-1",
+        text: ["ok", "y".repeat(200_001)],
+      }),
     );
     expect(tooLong.code).toBe("invalid_args");
     expect(tooLong.message).toContain("text[1]");
@@ -1818,7 +2340,10 @@ describe("notion() authoring helpers", () => {
             id: "todo-1",
             type: "to_do",
             has_children: false,
-            to_do: { rich_text: [{ plain_text: "Book venue" }], checked: false },
+            to_do: {
+              rich_text: [{ plain_text: "Book venue" }],
+              checked: false,
+            },
           },
         ],
       },
@@ -1832,20 +2357,34 @@ describe("notion() authoring helpers", () => {
         {
           object: "block",
           type: "to_do",
-          to_do: { rich_text: [{ type: "text", text: { content: "Book venue" } }], checked: false },
+          to_do: {
+            rich_text: [{ type: "text", text: { content: "Book venue" } }],
+            checked: false,
+          },
         },
         {
           object: "block",
           type: "to_do",
-          to_do: { rich_text: [{ type: "text", text: { content: "Send invites" } }], checked: false },
+          to_do: {
+            rich_text: [{ type: "text", text: { content: "Send invites" } }],
+            checked: false,
+          },
         },
       ],
     });
-    expect(appended.results[0]).toMatchObject({ type: "to_do", text: "Book venue", checked: false });
+    expect(appended.results[0]).toMatchObject({
+      type: "to_do",
+      text: "Book venue",
+      checked: false,
+    });
 
     calls.length = 0;
     const ambiguous = await refusal(
-      call(build(), "integration_append_blocks", { block_id: "page-1", text: ["a"], checklist: ["b"] }),
+      call(build(), "integration_append_blocks", {
+        block_id: "page-1",
+        text: ["a"],
+        checklist: ["b"],
+      }),
     );
     expect(ambiguous.message).toContain("exactly one of text, checklist, children");
     expect(calls).toHaveLength(0);
