@@ -86,6 +86,14 @@ const OPTIONS = optionsOf<WisprFlowOptions>()({
   }),
 });
 
+function accountSummary(purpose: string): string {
+  const summary = `Account-wide Notetaker access: ${purpose}`;
+  const bytes = new TextEncoder().encode(summary);
+  if (bytes.byteLength <= 120) return summary;
+  // Streaming decode drops an incomplete final code point; reserve three bytes for the ellipsis.
+  return `${new TextDecoder().decode(bytes.subarray(0, 117), { stream: true }).trimEnd()}…`;
+}
+
 /** A maintained Wispr Flow Notetaker hosted-MCP connection. */
 export const wisprFlow = defineProvider<WisprFlowOptions>({
   name: "wispr-flow",
@@ -115,11 +123,9 @@ export const wisprFlow = defineProvider<WisprFlowOptions>({
       classify: provider.classify,
       usageGuide: provider.usageGuide({
         context: [
-          `Account-wide Notetaker access. Personal and work accounts hold separate content. ${ownership} Confirm the identity with get_account_info. Dictation history and Notetaker chat history are unavailable.`,
-          `Account purpose: ${options.purpose}`,
+          `Account-wide Notetaker access: ${options.purpose}. Personal and work accounts hold separate content. ${ownership} Confirm the identity with get_account_info. Dictation history and Notetaker chat history are unavailable.`,
         ],
-        summary:
-          "Account-wide Notetaker access. Resolve ids, page notes and transcripts; task creates and updates are writes.",
+        summary: accountSummary(options.purpose),
       }),
     });
   },

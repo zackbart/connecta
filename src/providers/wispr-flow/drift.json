@@ -30,13 +30,16 @@
     {
       "type": "manual",
       "source": "https://docs.wisprflow.ai/articles/9551372685-connect-an-mcp-client-to-wispr-flow-remote-mcp-server",
-      "rationale": "tools/list requires OAuth and the vendor publishes no public machine-readable inventory. Review the union of Scalekit's 14 read-only tools and Claude's directory task tools. The official help describes read-only access while the directory lists add_task and update_task; retain write and destructive verdicts if those tools appear. No credentials, authenticated catalog or operational tool calls were used.",
+      "rationale": "tools/list requires OAuth and the vendor publishes no public machine-readable inventory. Review the union of Scalekit's 14 read-only tools and Claude's 16 directory tools. Both official help articles describe read-only access while Wispr's Claude listing advertises task creation and updates; retain write and destructive verdicts for add_task and update_task if they appear. No credentials, authenticated catalog or operational tool calls were used.",
       "evidence": {
         "reviewedAt": "2026-10-13",
+        "additionalOfficialSource": "https://docs.wisprflow.ai/articles/5166327995-switching-to-wispr-flow-keep-all-your-notetakers-in-one-place-mcp",
         "readInventory": "https://docs.scalekit.com/agentkit/connectors/wisprflowmcp/",
         "taskInventory": "https://claude.com/connectors/wispr-flow",
+        "plugin": "https://github.com/Wispr-AI/wispr-flow-plugin",
+        "cursorListing": "https://cursor.com/marketplace/wispr-flow",
         "authorizationServerMetadata": "https://mcp-auth.wisprflow.com/.well-known/oauth-authorization-server",
-        "notes": "Credential-free curl verified a 401 Bearer resource_metadata challenge with openid offline_access, the exact protected resource, header-only bearer support, dynamic registration, CIMD and PKCE S256. Public setup now permits email/password sign-in when the login page returns to authorization; sign-in alone does not complete setup. Classification is a reviewed superset, not a claim that every account exposes all 18 names. No schema digests are asserted without reviewed schemas."
+        "notes": "Credential-free curl verified a 401 Bearer resource_metadata challenge with openid offline_access, the exact protected resource, header-only bearer support, dynamic registration, CIMD and PKCE S256. Prefer Google, Apple, Microsoft or enterprise SSO; email-and-password sign-in may not complete authorization because Wispr's help pages disagree. Claude's listing names 16 tools, omitting get_meeting_participants_enriched and resolve_share_link that Scalekit lists. Exposure varies by client/version; the 18 reviewed names are their union, not a claim that every account exposes all names. The plugin at commit 894bbf0e1fa36fc982bf40cf0a0d0bdb7ee3bd62, dated 2026-09-24, provides .mcp.json, README.md, marketplace metadata and assets, with no tool list; Cursor's listing points to the plugin without a tool list. No schema digests are asserted without reviewed schemas."
       }
     }
   ]

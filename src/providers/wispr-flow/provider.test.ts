@@ -168,18 +168,44 @@ describe("wisprFlow()", () => {
   it("INV-11: metadata and guide route account-wide access with a summary bounded to 120 UTF-8 bytes", () => {
     const connector = connection({ instructions: "  Prefer client meeting summaries.  " });
     const guide = guideOf(connector);
-    expect(guide.split("\n")[2]).toContain("Account-wide Notetaker access.");
+    expect(
+      guide.split("\n")[2]?.startsWith("Account-wide Notetaker access: The studio's recorded client meetings."),
+    ).toBe(true);
     expect(guide).toContain("One shared authorization selects the account");
-    expect(guide).toContain("Account purpose: The studio's recorded client meetings");
     expect(guide).toContain("Dictation history and Notetaker chat history are unavailable");
     expect(guide).toContain("## Account instructions\n\nPrefer client meeting summaries.");
     expect(guideOf(connection({ authScope: "personal" }))).toContain("Each person authorizes separately");
     expect(guideOf(connection())).not.toContain("## Account instructions");
     const summary = connectorGuideSummary(connector)!;
-    expect(summary).toBe(
-      "Account-wide Notetaker access. Resolve ids, page notes and transcripts; task creates and updates are writes.",
-    );
+    expect(summary).toBe("Account-wide Notetaker access: The studio's recorded client meetings");
     expect(new TextEncoder().encode(summary).byteLength).toBeLessThanOrEqual(120);
-    expect(connectorGuideSummary(connection({ purpose: "会議".repeat(100) }))).toBe(summary);
+  });
+
+  it("INV-11: discovery summaries and opening context distinguish account purposes", () => {
+    const personal = connection({ purpose: "  Personal meetings  " });
+    const client = connection({ purpose: "Client meetings" });
+    expect(connectorGuideSummary(personal)).toBe("Account-wide Notetaker access: Personal meetings");
+    expect(connectorGuideSummary(client)).toBe("Account-wide Notetaker access: Client meetings");
+    expect(connectorGuideSummary(personal)).not.toBe(connectorGuideSummary(client));
+    expect(guideOf(personal).split("\n")[2]).toContain("access: Personal meetings.");
+    expect(guideOf(client).split("\n")[2]).toContain("access: Client meetings.");
+  });
+
+  it.each(["a", "é", "会", "😀"])(
+    "INV-11: long %s account purposes keep summaries within 120 UTF-8 bytes without splitting code points",
+    (character) => {
+      const connector = connection({ purpose: character.repeat(100) });
+      const summary = connectorGuideSummary(connector)!;
+      expect(summary).toMatch(new RegExp(`^Account-wide Notetaker access: ${character}+…$`, "u"));
+      expect(new TextEncoder().encode(summary).byteLength).toBeLessThanOrEqual(120);
+      expect(connector.usageGuide).toMatchObject({ summary });
+    },
+  );
+
+  it("INV-11: an account summary at the 120-byte boundary needs no ellipsis", () => {
+    const purpose = "a".repeat(120 - new TextEncoder().encode("Account-wide Notetaker access: ").byteLength);
+    const summary = connectorGuideSummary(connection({ purpose }))!;
+    expect(summary).toBe(`Account-wide Notetaker access: ${purpose}`);
+    expect(new TextEncoder().encode(summary).byteLength).toBe(120);
   });
 });
