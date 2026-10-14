@@ -114,6 +114,9 @@ function dates(input: Record<string, unknown>): void {
   if (String(input.from_date) > String(input.to_date)) invalid("from_date must be on or before to_date.");
 }
 function retention(query: Record<string, unknown>): void {
+  if ((query.unit === undefined || query.unit === "day") && typeof query.interval === "number" && query.interval > 90) {
+    invalid("Day retention intervals must not exceed 90; unit defaults to day.");
+  }
   if (
     (query.retention_type === undefined || query.retention_type === "birth") &&
     (typeof query.born_event !== "string" || query.born_event.trim() === "")
@@ -563,7 +566,6 @@ export function mixpanelRest(
         interval: {
           type: "integer",
           minimum: 1,
-          maximum: 90,
           description: "Bucket interval; Mixpanel caps day intervals at 90.",
         },
         interval_count: {

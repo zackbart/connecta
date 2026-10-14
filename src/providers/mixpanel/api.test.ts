@@ -258,6 +258,29 @@ describe("Mixpanel service-account REST", () => {
     expect(calls).toHaveLength(1);
   });
 
+  it.each(["query_retention", "mixpanel_api_read"])(
+    "%s caps retention intervals only for explicit or default day units",
+    async (name) => {
+      reply = () => Response.json(responses.retention);
+      const args = (unit: string | undefined, interval: number) => {
+        const query = { ...range, born_event: "Signup", interval, ...(unit === undefined ? {} : { unit }) };
+        return name === "query_retention" ? query : { path: "/api/query/retention", query };
+      };
+      for (const unit of [undefined, "day"]) {
+        await call(name, args(unit, 90));
+        const dispatched = calls.length;
+        await expect(call(name, args(unit, 91))).rejects.toMatchObject({ code: "invalid_args" });
+        expect(calls).toHaveLength(dispatched);
+      }
+      for (const unit of ["week", "month"]) {
+        await call(name, args(unit, 91));
+        expect(calls.at(-1)?.url.searchParams.get("unit")).toBe(unit);
+        expect(calls.at(-1)?.url.searchParams.get("interval")).toBe("91");
+      }
+      expect(calls).toHaveLength(4);
+    },
+  );
+
   it("INV-7: cancels a failed export body before the connector call returns", async () => {
     const cancelled = vi.fn();
     reply = () =>
