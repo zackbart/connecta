@@ -1,7 +1,8 @@
 ---
 {
   "name": "mixpanel",
-  "instructionsHeading": "Account instructions"
+  "instructionsHeading": "Account instructions",
+  "content": "api"
 }
 ---
 
@@ -28,4 +29,23 @@
 - Mixpanel meters MCP traffic per user per hour, shared with everything else that credential does. Reuse discovery results within a run and avoid speculative fan-out.
 - An `auth_required` failure means this connector's Mixpanel authorization is missing or expired: run `authorize_connector` for this connector id, then retry the same call unchanged. A rejected argument or a plan restriction comes back in Mixpanel's own words instead — read it rather than re-authorizing.
 - Treat every create, update, edit, merge, dismiss, duplicate, or delete operation as a write. For guest calls, classification, and routing, fetch `skills({ name: "usage" })`.
+<!-- endfragment -->
+
+
+<!-- fragment: api -->
+
+
+- This connection uses Connecta's REST tools with a service account. Hosted MCP is the default `mixpanel()` mode; `via: "api"` explicitly selects REST. Declare two connection ids when both are useful. The operator pastes `username:secret` into the API connection, which sends ordinary HTTP Basic, unlike hosted MCP's `Bearer Basic` scheme. OAuth and static headers are refused in API mode.
+- One connection stays in one residency region, across all projects the account can reach. US uses `mixpanel.com` for query/app, `data.mixpanel.com` for export and `api.mixpanel.com` for ingestion. EU uses `eu.mixpanel.com`, `data-eu.mixpanel.com` and `api-eu.mixpanel.com`. India uses `in.mixpanel.com`, `data-in.mixpanel.com` and `api-in.mixpanel.com`. Wrong residency can look like missing data; do not interpret an empty response without checking the project region.
+- Start with `list_projects`, which returns redacted account metadata from `/api/app/me`. Its public reference does not specify the response schema. Resolve ids from that metadata or project settings, never guess one. Every project-scoped tool accepts `project_id`; an omitted id uses `defaultProjectId` when configured. An explicit id overrides that default and still requires service-account membership. Projects with Data Views may also require `workspace_id`.
+- Use REST for raw event export, profile queries and individual event sequences. Use hosted MCP for schema discovery, business context, aggregate analytics and dashboard work. Discover exact event and property names there before filtering raw data.
+- Export has no documented cursor. Begin with a short date range and an event or `where` filter. Every export returns `truncated` and a notice. A true flag means events may be missing at the byte or event cap; narrow ranges or filters, rather than inferring "no later event B" from a sample. Dates are inclusive. Mixpanel documents UTC for newer projects and the project timezone for older projects; check project settings around the January 2023 transition. Event timestamps default to seconds, or milliseconds with `time_in_ms`.
+- `get_profile_activity` sorts a user's returned events by timestamp, but `/stream/query` is in maintenance mode and has no documented pagination/completeness guarantee. For absence or sequence claims use complete, filtered raw export and sort/reduce inside `execute_code`.
+- `query_profiles` is a read-only POST to the Query API's `/engage`, distinct from ingestion `/engage` profile mutations. Pagination is vendor-owned: there is no documented caller `page_size`. Keep the same selector and output properties, pass the returned `session_id`, and increment `page` while `page.hasMore` is true. Do not treat `total` as the page length. `raw: true` preserves the redacted vendor envelope when needed.
+- Saved Insights uses `bookmark_id` from a report URL. Saved Funnels uses `funnel_id`, discoverable with `mixpanel_api_read` on `/api/query/funnels/list`. The documented Retention endpoint takes events and date parameters, not a saved-report id; default/birth retention also requires `born_event`. Use `query_retention` or hosted MCP for an existing saved Retention report. Reduce nested report results before returning them.
+- `mixpanel_api_search` and `mixpanel_api_details` inspect the reviewed operation subset locally. `mixpanel_api_read` permits GET only on those operations, with fixed residency hosts and no caller URL or headers. It cannot reach service-account administration, arbitrary app APIs, profile mutation, JQL or ingestion. Generic export retains the named export's byte/event bounds. Use named tools for Engage and import.
+- `import_events` is an additive write and requires an Owner or Admin service account on the target project. Connecta enforces 2000 events, 10MB per batch, less than 1MB per event and Mixpanel's documented property limits. Supply stable `$insert_id` values and use strict validation. A 400 can still ingest the valid events; never retry a whole batch automatically. Inspect the target and failed records through a trusted operator workflow before deciding what to send again.
+- Profile writes are deferred. The official ingestion `/engage` contract requires `$token` in each update; service-account Basic alone does not satisfy it, and the service-account reference documents no project-token retrieval operation. Profile delete and other irreversible mutations are absent.
+- Query permits 60 queries per hour and 5 concurrent queries per project. Export permits 60 per hour, 3 per second and 100 concurrent queries. Ingestion permits 2GB uncompressed JSON per minute or about 30000 events per second. The API connection conservatively shares a 60-call/hour, 5-concurrent default across all tools and projects; it is a per-runtime approximation, not a distributed quota or a per-second export limiter. Operators may override `callAdmission`, especially for import-heavy deployments or multiple runtimes sharing an account. A vendor 429 still wins; respect `Retry-After`.
+- Successful responses recursively redact credential-named properties and bearer URLs. Arbitrary analytics properties remain user data; do not put secrets into free-text event names or property values. HTTP failures expose status and recovery guidance rather than vendor text that could echo a credential.
 <!-- endfragment -->

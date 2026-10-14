@@ -1,0 +1,18 @@
+{
+  "format": 5,
+  "digest": "sha256:d9bbbbfa67f0a31f900b325932462b9cd541d287e55357d28e201df69a35e677",
+  "options": {},
+  "candidates": {
+    "GET /api/query/insights": {
+      "fields": ["headers"],
+      "named": false
+    }
+  },
+  "reviewed": {
+    "operations": {
+      "GET /api/query/insights": ["headers"]
+    },
+    "resources": {},
+    "bindings": {}
+  }
+}

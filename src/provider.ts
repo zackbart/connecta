@@ -18,9 +18,8 @@ import type {
 /**
  * How a provider reaches its vendor: the vendor's hosted MCP server, an
  * `api()` connector over the vendor's HTTP API, one connector composing both
- * with an explicit operation ownership map, or `"dual"`: the configured
- * `auth.type` selects the implementation, OAuth reaching the hosted MCP server
- * and a key reaching Connecta's REST connector.
+ * with an explicit operation ownership map, or `"dual"`: configuration selects the implementation, usually by `auth.type`. Mixpanel
+ * uses explicit `via` because service accounts reach both implementations.
  */
 export type ProviderKind = "mcp" | "api" | "composed" | "dual";
 
