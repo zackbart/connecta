@@ -341,6 +341,8 @@ function hash(text: string): number {
   return value;
 }
 
+type MatcherWork = { units: number; transitions: number; checks: number; builds: number };
+
 /** Aho-Corasick over registered forms: amortized constant work per scanned code unit, however
  * many forms are registered, reporting the longest form ending at each unit. Only a bounded
  * prefix of each form is indexed. A longer form is confirmed where its prefix matches by the
@@ -364,7 +366,11 @@ class Matcher {
   private readonly starts: Int32Array;
   private readonly hashes: Int32Array;
 
-  constructor(forms: Iterable<readonly [string, number]>) {
+  constructor(
+    forms: Iterable<readonly [string, number]>,
+    private readonly work?: MatcherWork,
+  ) {
+    if (work) work.builds++;
     // Credentials are indexed first; sorting is stable, so registration order is otherwise kept.
     const indexed: (readonly [string, number])[] = [];
     let units = 0;
@@ -434,6 +440,7 @@ class Matcher {
 
   /** The child reached by one code unit, or 0. A first child is stored with its unit. */
   private next(state: number, code: number): number {
+    if (this.work) this.work.transitions++;
     if (!state) return this.root[code]!;
     const child = this.child[state]!;
     return child && this.unit[child] === code ? child : (this.branches.get(state * 65_536 + code) ?? 0);
@@ -459,6 +466,7 @@ class Matcher {
     const base = found.spans.length;
     const mask = this.starts.length - 1;
     for (let code = units.next(); code >= 0; code = units.next()) {
+      if (this.work) this.work.units++;
       if (code === 0x25) percent = 2;
       else if (percent) {
         percent--;
@@ -480,6 +488,7 @@ class Matcher {
         runs ??= new Runs();
         tails ??= new Map();
         for (const group of groups) {
+          if (this.work) this.work.checks++;
           const tail = tails.get(group);
           if (tail?.count && this.extend(tail, count, start)) continue;
           if (runs.items.length >= MAX_PENDING_RUNS) return false;
@@ -491,6 +500,7 @@ class Matcher {
       }
       while (runs?.items.length && runs.items[0]!.due === count) {
         const run = runs.items[0]!;
+        if (this.work) this.work.checks++;
         if (run.group.hashes.has((rolling - Math.imul(run.before, run.group.power)) | 0))
           push(found.spans, base, run.start, units.end, marks);
         run.count--;
@@ -527,6 +537,9 @@ class Matcher {
 }
 
 export class SentSecrets {
+  /** Test-only counters for actual matcher work; absent from the published constructor. */
+  private work?: MatcherWork;
+
   /** Normalized form to its strongest kind. */
   private readonly forms = new Map<string, number>();
   private readonly recipients = new Set<SentSecrets>();
@@ -618,6 +631,7 @@ export class SentSecrets {
     const lower = () =>
       new Matcher(
         [...this.forms].flatMap(([form, kind]) => wireForms(form.toLowerCase()).map((low) => [low, kind] as const)),
+        this.work,
       );
     const matcher = ignoreCase ? (this.views.lower ??= lower()) : this.matcher();
     if (value.length >= matcher.unindexed) return true;
@@ -711,13 +725,14 @@ export class SentSecrets {
   }
 
   private matcher(): Matcher {
-    return (this.views.matcher ??= new Matcher(this.forms));
+    return (this.views.matcher ??= new Matcher(this.forms, this.work));
   }
 
   private credentials(): SentSecrets {
     if (!this.privateChars && this.unmatched === Infinity) return this;
     if (!this.views.credentials) {
       const view = new SentSecrets();
+      if (this.work) view.work = this.work;
       for (const [form, kind] of this.forms) if (kind === CREDENTIAL) view.store(form, kind);
       this.views.credentials = view;
     }

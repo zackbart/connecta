@@ -78,29 +78,37 @@ it("INV-5: long credentials bound the matcher, so ordinary output survives a 128
 it("INV-5: self-similar text shares long-form checks, so it cannot exhaust a 128 MiB heap and stays exact", () => {
   const outcome = lowHeap(`
     const { SentSecrets } = await import("./src/sent-secrets.ts");
-    const timed = (secrets, text) => {
-      const started = performance.now();
+    const measured = (forms, text) => {
+      const work = { units: 0, transitions: 0, checks: 0, builds: 0 };
+      const secrets = new SentSecrets();
+      secrets.work = work;
+      for (const form of forms) secrets.add(form);
       const value = secrets.text(text);
-      return { value: value.length > 64 ? value.length : value, slow: performance.now() - started > 1_000 };
+      // One scan and amortized failure transitions, plus at most two checks per
+      // code unit for each shared long-form group in this input.
+      const operations = work.units + work.transitions + work.checks;
+      return { exact: value === text, value: value.length > 64 ? value.length : value,
+        bounded: operations <= 8 * text.length + 32_768, operations };
     };
-    const huge = new SentSecrets();
-    for (let i = 0; i < 20; i++) huge.add("s".repeat(100_000) + "-end-" + i);
-    const many = new SentSecrets();
-    for (let i = 0; i < 20; i++) many.add("s".repeat(4_096) + "-end-" + i);
-    const one = new SentSecrets();
-    one.add("s".repeat(4_096) + "-end-0");
-    const text = "s".repeat(4_000_000);
+    const huge = Array.from({ length: 20 }, (_, i) => "s".repeat(100_000) + "-end-" + i);
+    const many = Array.from({ length: 20 }, (_, i) => "s".repeat(4_096) + "-end-" + i);
+    const one = ["s".repeat(4_096) + "-end-0"];
+    const small = measured(many, "s".repeat(2_000_000));
+    const large = measured(many, "s".repeat(4_000_000));
+    const summarize = ({ operations, ...result }) => result;
     console.log(JSON.stringify({
-      huge: timed(huge, text),
-      many: timed(many, text),
-      echo: timed(one, "before " + "s".repeat(4_096) + "-end-0 after"),
-      clean: timed(one, "s".repeat(1_000_000)),
+      huge: summarize(measured(huge, "s".repeat(4_000_000))),
+      many: summarize(large),
+      linear: large.operations <= 2 * small.operations + 32_768,
+      echo: summarize(measured(one, "before " + one[0] + " after")),
+      clean: summarize(measured(one, "s".repeat(1_000_000))),
     }));
   `);
   expect(outcome).toEqual({
-    huge: { value: 4_000_000, slow: false },
-    many: { value: 4_000_000, slow: false },
-    echo: { value: "before [redacted] after", slow: false },
-    clean: { value: 1_000_000, slow: false },
+    huge: { exact: true, value: 4_000_000, bounded: true },
+    many: { exact: true, value: 4_000_000, bounded: true },
+    linear: true,
+    echo: { exact: false, value: "before [redacted] after", bounded: true },
+    clean: { exact: true, value: 1_000_000, bounded: true },
   });
 });
