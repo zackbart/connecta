@@ -166,15 +166,21 @@ var fixture11 = {
 
 // src/providers/mixpanel/fixtures.ts
 import { mixpanel } from "@zackbart/connecta/providers/mixpanel";
-var options12 = { "purpose": "Audit fixture" };
+var options12 = { purpose: "Audit fixture", via: "api", auth: { type: "credential" } };
 var fixture12 = {
   name: "mixpanel",
   options: options12,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "eu", "options": { "region": "eu" } }, { "label": "in", "options": { "region": "in" } }],
+  cases: [
+    { label: "padded-purpose", options: { purpose: "  Audit fixture  " } },
+    { label: "default", options: {} },
+    { label: "mcp", options: { via: "mcp", auth: { type: "oauth" } } },
+    { label: "eu", options: { region: "eu" } },
+    { label: "in", options: { region: "in" } }
+  ],
   create(id = "fixture", overrides = {}) {
     return mixpanel(id, { ...options12, ...overrides });
   },
-  conventions: void 0
+  conventions: { verbs: ["mixpanel", "list", "export", "get", "query", "import"], nestedDescriptionExceptions: [], auth: "credential" }
 };
 
 // src/providers/notion/fixtures.ts

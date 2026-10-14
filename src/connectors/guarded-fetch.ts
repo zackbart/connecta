@@ -82,6 +82,8 @@ interface GuardedResponse {
   readonly status: number;
   readonly ok: boolean;
   readonly headers: Headers;
+  /** Cancel an unread body without waiting for the vendor to emit a chunk. */
+  cancel(): Promise<void>;
   /** The body as bytes. */
   bytes(): Promise<Uint8Array>;
   /** The body decoded as UTF-8. */
@@ -344,6 +346,9 @@ function boundedResponse(provider: string, response: Response, limit: number): G
       status: response.status,
       ok: response.ok,
       headers: response.headers,
+      cancel: async () => {
+        await response.body?.cancel();
+      },
       bytes: async () => new Uint8Array(),
       text: async () => "",
       json: emptyJson,
@@ -390,6 +395,9 @@ function boundedResponse(provider: string, response: Response, limit: number): G
     status: response.status,
     ok: response.ok,
     headers: response.headers,
+    cancel: async () => {
+      await response.body?.cancel();
+    },
     bytes,
     text,
     json,

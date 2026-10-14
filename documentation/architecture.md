@@ -735,13 +735,21 @@ live in their own folders. Hosted implementations, including the
 MCP branches of Notion, Vercel, and Cloudflare, use reviewed presets over
 `remoteMcp({ classify })`. The migrated API-only factories retain an internal
 adapter to the same definition and description-stamping path. GitHub composes hosted tools with a scope-enforced REST complement.
-A `"dual"` provider lets `auth` select the implementation
+A `"dual"` provider selects one implementation at construction, usually through `auth`
 ([decision 0005](https://github.com/zackbart/connecta/blob/main/decisions/0005-auth-selects-implementation.md)):
 `variants(["auth", "type"], …)` closes each case's options, and
 `byAuth()` in `src/providers/_shared/rest/dispatch.ts` sends OAuth to
 `hostedOAuth()` (`remoteMcp()`, OAuth only, the reviewed classification) and a
-key to Connecta's REST connector. Stripe, Notion, Cloudflare, and Vercel are dual; `auth` is required.
-The REST connector (`src/providers/_shared/rest/`) serves
+key to Connecta's REST connector. Stripe, Notion, Cloudflare, and Vercel require `auth`. Mixpanel is also dual,
+with explicit `via: "mcp" | "api"` and MCP as the unchanged default: service accounts
+reach both implementations, so auth cannot distinguish them. API mode requires
+operator-managed service-account credentials and never falls back to MCP.
+Mixpanel uses the same REST transport, operation matching and value-safety engine
+for a narrow reviewed subset. Its official contracts are YAML and app identity
+has no published response schema, so its guide and drift record carry explicit
+manual review evidence instead of claiming a machine-checkable JSON pin.
+
+The generic REST connector (`src/providers/_shared/rest/`) serves
 `<vendor>_api_search`, `_api_details`, `_api_read`, and `_api_write` over an
 `OperationIndex` that `npm run providers:spec` compiles offline from the
 provider's pinned `openapi.source.json` into `openapi.generated.ts`.

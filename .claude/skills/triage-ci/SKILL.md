@@ -7,23 +7,34 @@ description: Diagnose a red or skipped connecta CI run - read the aggregate chec
 
 ## Read the gate
 
-[ci.yml](../../../.github/workflows/ci.yml) has five jobs. `check` is the one
-to merge on: it runs `if: always()` and on failure prints
-`Core=… changes=… browser=… required=… security=… required=…` on failure.
+[ci.yml](../../../.github/workflows/ci.yml) has eight jobs. `check` is the one
+to merge on: it runs `if: always()` and reports each job result and each optional
+job's required flag on failure. Superseded PR runs are cancelled by concurrency;
+inspect the newest head's run. Pushes to main always run everything.
 
 - `changes` decides `browser` ([scripts/ci-browser-paths.sh](../../../scripts/ci-browser-paths.sh))
-  and `security` ([scripts/ci-security-paths.sh](../../../scripts/ci-security-paths.sh)).
-- `core`: `npm run check:core`, then `npm run check:package` (package smoke,
-  including the generated Node deployment's Docker build).
+  and `security` ([scripts/ci-security-paths.sh](../../../scripts/ci-security-paths.sh)) for PRs.
+- `static`: formatting, generated providers, docs, changes, UI/Clerk freshness,
+  lint, Knip, and typecheck.
+- `node`: `npm run test -- --config vitest.config.node.ts`. The complete Node
+  project uses the normal coverage reporter without a CLI project filter,
+  retaining invariant/spec enforcement and collection completeness checks.
+- `workers`: `npm run test:workers`, the complete Workers project.
+- `build`: build, declarations, bundle, examples, and `check:package`, including
+  the generated Node deployment's Docker build. Package smoke reuses `dist/`
+  and packs with `--ignore-scripts`; bundle checking skips its duplicate UI prehook.
 - `browser`: Playwright Chromium. Skipped on a PR only when every changed path
   is in the safe set. Every push to `main` runs it.
 - `security`: `npm run check:security`, when a root or nested `package.json`,
-  `package-lock.json`, `npm-shrinkwrap.json`, or `.npmrc` changes (PR diff, or
-  the push range on `main`). This includes templates installed by package and
-  Docker smoke, published examples, and any future workspaces.
-- `check` passes when core and changes succeed, and browser and security each
-  succeed or were skipped _because they were not required_. A cancelled or
-  unexpectedly skipped job fails it.
+  `package-lock.json`, `npm-shrinkwrap.json`, or `.npmrc` changes in the PR diff.
+  This includes templates installed by package and Docker smoke, published
+  examples, and future workspaces. Every push to `main` also audits.
+- `check` passes when static, Node, Workers, build, and changes succeed, and
+  browser/security each succeed or were skipped because they were not required.
+  A cancelled or unexpectedly skipped job fails it.
+
+The four mandatory check jobs run in parallel on separate runners, using the
+same lockfile-keyed npm download cache. Each runner still needs its own `npm ci`.
 
 Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
 
@@ -38,15 +49,17 @@ Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
   Request-admission deadlines, QuickJS executor tests, `drift-check`, and
   some provider budget tests hit 5 s timeouts on a busy runner or a shared
   machine. Rerun the file in isolation before believing it:
-  `VITEST_MAX_WORKERS=2 npx vitest run --project node test/<file>.test.ts -t "<title>"`.
+  `npx vitest run --project node test/<file>.test.ts -t "<title>" --maxWorkers=1`.
   Report the flake with the isolated pass; never raise a timeout to hide it.
 - **npm audit.** A new upstream advisory fails the nightly
-  [Security workflow](../../../.github/workflows/security.yml), not unrelated
-  PRs. Fix it in its own PR that moves the dependency; publishing stays
+  [Security workflow](../../../.github/workflows/security.yml) and main's
+  security job. PRs audit only dependency changes. Fix it in its own PR that
+  moves the dependency; publishing stays
   blocked until audit passes.
 - **Coverage reporter.** `Test-backed coverage failed` comes from the full,
-  unfiltered Node run: an `INV-n` lost its passing test, a `spec/coverage.json`
-  title no longer matches a passing test exactly, or a collected suite did not
+  unfiltered Node run, including CI's Node-only config: an `INV-n` lost its
+  passing test, a `spec/coverage.json` title no longer matches a passing test
+  exactly, or a collected suite did not
   run. Reproduce it with unfiltered `npm run test`, the test step in `check`.
   Project filters (including `npm run test:node`), file filters, and focused
   reruns skip invariant and spec enforcement by design and cannot reproduce
@@ -56,6 +69,6 @@ Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
 
 ## Locally
 
-`npm run check:fast` is the partial inner loop; `npm run check` reproduces
-`core` plus browser. Other agents share this machine; check `uptime` before
-blaming a timeout on your change.
+`npm run check:fast` is the partial inner loop. `npm run check` runs the same
+mandatory checks except package smoke, plus browser, serially. Other agents
+share this machine; check `uptime` before blaming a timeout on your change.

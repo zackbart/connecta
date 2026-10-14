@@ -72,9 +72,8 @@ gh run download RUN_ID --name operator-linux-snapshots \
 
 The workflow uploads all generated baselines and never commits them. Review the
 images and changed files, commit the intentional changes, and push again. The
-normal CI browser job must compare and pass against that commit. Opening the
-initial PR also runs the update workflow, so the first baselines can be generated
-before the workflow reaches main. Later updates use `workflow_dispatch`.
+normal CI browser job must compare and pass against that commit. Snapshot
+updates run only through `workflow_dispatch`.
 
 On a matching Linux runner, `npm ci`, install Chromium with the command above,
 then run `npm run test:browser:snapshots`. The normal command is

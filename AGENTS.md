@@ -40,13 +40,20 @@ typecheck, both vitest projects, build, declarations, bundle, examples), then
 `release:check` adds `check:security` (`npm audit`) and `check:package` (the
 package smoke); use it when touching packaging, dependencies, or exports.
 
-CI's `core` job runs `check:core` and `check:package`. `browser` skips a PR
-whose every path is in the safe set in `scripts/ci-browser-paths.sh`;
-`security` runs when root or nested `package.json`, `package-lock.json`,
-`npm-shrinkwrap.json`, or `.npmrc` changes, including the template installed
-by package/Docker smoke and published examples. The nightly Security workflow
-and publishing also audit dependencies. The `check` gate requires each job
-to pass or be intentionally skipped.
+CI runs `static` (formatting, generated providers, docs, changes, UI/Clerk
+freshness, lint, Knip, typecheck), `node` (the complete Node suite with invariant
+and spec enforcement through `vitest.config.node.ts`), `workers` (the complete
+Workers suite), and `build` (build, declarations, bundle, examples, package and
+Docker smoke) in parallel with a shared npm download cache. The build job packs
+its existing `dist/` without rebuilding. Superseded PR runs are cancelled;
+every push to main runs every check. `browser` skips a PR whose every path is
+in the safe set in `scripts/ci-browser-paths.sh`; `security` runs on PRs when
+root or nested `package.json`, `package-lock.json`, `npm-shrinkwrap.json`, or
+`.npmrc` changes, including the template installed by package/Docker smoke and
+published examples. The nightly Security workflow and publishing also audit
+dependencies. The single required `check` gate requires static, Node, Workers,
+build, and changes to succeed, and browser/security to pass or be intentionally
+skipped. Local `npm run check` remains the full core and browser gate.
 
 ## Source map
 
