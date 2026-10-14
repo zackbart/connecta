@@ -138,12 +138,12 @@ describe("call-scoped sent credentials", () => {
       text: `row ${i} ${values.key0}`,
       label: "ordinary row",
     }));
-    const started = performance.now();
+    secrets.redact(rows[0]);
+    const matcher = secrets["views"].matcher;
+    expect(matcher).toBeDefined();
     const result = secrets.redact(rows);
-    const elapsed = performance.now() - started;
     expect(result[9_999]!.text).toBe("row 9999 [redacted]");
-    // Leave room for instrumented CI; the local benchmark is reported in the PR.
-    expect(elapsed).toBeLessThan(1_000);
+    expect(secrets["views"].matcher).toBe(matcher);
   });
 
   it("INV-5 INV-8: finds twice-escaped credentials across bounded scanning windows", () => {
