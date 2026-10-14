@@ -82,6 +82,92 @@
         "Update-Feature-Flag",
         "Fill-Event-Metadata"
       ]
+    },
+    {
+      "type": "manual",
+      "source": "https://docs.mixpanel.com/openapi/query.openapi.yaml",
+      "rationale": "Mixpanel publishes YAML; the current OpenAPI index and drift tooling read JSON only. Review the selected operation contracts and residency variables against operations.ts, rest.ts and value-safety.ts rather than inventing a live JSON pin.",
+      "evidence": {
+        "reviewedAt": "2026-10-14",
+        "digest": "sha256:87a73df5e89eafefe3291c0c9609410ff970ba76e6583f375d471cc03a613e33",
+        "revision": "1.0.0",
+        "operations": [
+          "GET /stream/query",
+          "POST /engage",
+          "GET /insights",
+          "GET /funnels",
+          "GET /funnels/list",
+          "GET /retention"
+        ]
+      }
+    },
+    {
+      "type": "manual",
+      "source": "https://docs.mixpanel.com/openapi/export.openapi.yaml",
+      "rationale": "Mixpanel publishes YAML; the current OpenAPI index and drift tooling read JSON only. Review the selected operation contracts and residency variables against operations.ts, rest.ts and value-safety.ts rather than inventing a live JSON pin.",
+      "evidence": {
+        "reviewedAt": "2026-10-14",
+        "digest": "sha256:eba1d63f3904d259bcb8d187ff2436628d02286882f51b6b3327fb44a61fac14",
+        "revision": "1.0.0",
+        "operations": ["GET /export"]
+      }
+    },
+    {
+      "type": "manual",
+      "source": "https://docs.mixpanel.com/openapi/ingestion.openapi.yaml",
+      "rationale": "Mixpanel publishes YAML; the current OpenAPI index and drift tooling read JSON only. Review the selected operation contracts and residency variables against operations.ts, rest.ts and value-safety.ts rather than inventing a live JSON pin.",
+      "evidence": {
+        "reviewedAt": "2026-10-14",
+        "digest": "sha256:0d1193e7fa0b1af4b5e70af8cacaf555ebbf3edd4051088d8db0f67aa5c0a95c",
+        "revision": "1.0.0",
+        "operations": ["POST /import"]
+      }
+    },
+    {
+      "type": "manual",
+      "source": "https://docs.mixpanel.com/reference/service-accounts",
+      "rationale": "HTTP Basic and GET /api/app/me. The guide has no response schema; list_projects returns redacted account metadata without asserting project-field shapes.",
+      "evidence": {
+        "reviewedAt": "2026-10-14",
+        "digest": "sha256:e5ec2de12177fe13f5c001e14cb3e14c644464ec992b832ec50f103f54ad4b23"
+      }
+    },
+    {
+      "type": "manual",
+      "source": "https://docs.mixpanel.com/reference/rate-limits",
+      "rationale": "Project-scoped Query/Export quotas and ingestion throughput; defaults are a conservative per-runtime approximation.",
+      "evidence": {
+        "reviewedAt": "2026-10-14",
+        "digest": "sha256:d93d6092ecbd5ca232876e4aa54e7ba52e035d2be9d001b9adc3da4353c02c0f"
+      }
+    },
+    {
+      "type": "manual",
+      "source": "https://docs.mixpanel.com/reference/import-events",
+      "rationale": "Batch/event bytes, counts, nested-property limits, strict partial ingestion and Owner/Admin requirement.",
+      "evidence": {
+        "reviewedAt": "2026-10-14",
+        "digest": "sha256:01c86b9237b32ed87443e41dc10431c5597869d14eaacc2dbc7f29b590e8719b"
+      }
+    },
+    {
+      "type": "manual",
+      "source": "https://docs.mixpanel.com/reference/profile-set",
+      "rationale": "Profile ingestion requires a per-project $token; no documented service-account token retrieval workflow. Profile mutations and delete stay out.",
+      "evidence": {
+        "reviewedAt": "2026-10-14",
+        "digest": "sha256:68c2213631077af348d01ae8d394ab0bc1aa1714ead31e829ba40751ce843eb2"
+      }
+    },
+    {
+      "type": "manual",
+      "source": "https://docs.mixpanel.com/openapi/service-accounts.openapi.yaml",
+      "rationale": "The application API server variables document the US/EU/India app origins used for GET /api/app/me. No service-account administration operation is admitted.",
+      "evidence": {
+        "reviewedAt": "2026-10-14",
+        "digest": "sha256:9a813c9ccf486c92a754749e44c637a842fbe9f8bcf6aa606bd9896859479735",
+        "revision": "1.0.0"
+      }
     }
   ]
 }
