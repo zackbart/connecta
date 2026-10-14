@@ -325,18 +325,22 @@ the callback's error text. Invalid config values throw at construction.
 Named pools use only their own grants, so a caller refused at `/mcp` may
 still use a pool that grants it.
 
-A configured default grant also gates both protected-resource metadata aliases,
+Protected-resource metadata stays public at both default aliases,
 `/.well-known/oauth-protected-resource` and
-`/.well-known/oauth-protected-resource/mcp`, after authentication for `/mcp`.
-Clients must supply their endpoint credential to fetch that metadata when a
-grant is configured. Without a grant, metadata discovery remains public.
-Named-pool metadata discovery is unchanged. Result/page handles remain bound
+`/.well-known/oauth-protected-resource/mcp`, just as at named-pool aliases.
+Discovery does not authenticate callers or evaluate endpoint grants, so fresh
+OAuth clients can discover how to authenticate. The grant applies after auth
+to MCP requests and result/page handles. Handles remain bound
 to their originating endpoint; paging rechecks the current endpoint grant,
 identity, and connector access. A granting pool cannot read a `/mcp` handle,
 and `/mcp` cannot read that pool's handle.
 
 `describeConfig().hasGrant` and the operator UI report whether plain `/mcp`
-has a configured grant, without evaluating it or exposing callback source.
+has a configured grant without exposing callback source. `describeConfig()`
+does not evaluate it. Operator catalog, config, activity, and connector auth
+routes require the same default endpoint grant after their own authentication.
+A refused caller gets a private JSON 404; the UI provides no per-pool view.
+The public HTML shell carries no catalog data.
 
 Each endpoint is writable or read-only. The deployment's `readOnly` sets the
 plain `/mcp` endpoint and is required: a deployment that omits it fails at

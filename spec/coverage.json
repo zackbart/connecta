@@ -163,7 +163,7 @@
       "id": "authorization",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization",
-      "notes": "Clerk binds JWT and opaque OAuth tokens to the canonical MCP resource and owns its protected-resource challenge with scopes. Cloudflare Access is supported for humans on direct Worker invocations through edge-validated application AUD and ctx.access; Node uses Clerk. Machines use stored cta_ tokens; static bearer is removed. Downstream auth and auth elicitation follow-ups remain in #707. An optional deployment grant gates plain /mcp and its protected-resource metadata after auth, independently of named-pool grants.",
+      "notes": "Clerk binds JWT and opaque OAuth tokens to the canonical MCP resource and owns its protected-resource challenge with scopes. Cloudflare Access is supported for humans on direct Worker invocations through edge-validated application AUD and ctx.access; Node uses Clerk. Machines use stored cta_ tokens; static bearer is removed. Downstream auth and auth elicitation follow-ups remain in #707. An optional deployment grant gates plain /mcp and operator catalog reads after auth, independently of named-pool grants. Protected-resource metadata stays public for credential-free OAuth discovery.",
       "tests": [
         {
           "file": "test/server.test.ts",
@@ -188,6 +188,14 @@
         {
           "file": "test/default-grant.test.ts",
           "title": "INV-4 INV-6: refuses /mcp byte-identically to pools after auth and still admits a granting pool"
+        },
+        {
+          "file": "test/default-grant.test.ts",
+          "title": "INV-4 INV-10: credential-free Clerk discovery with a default grant completes through the MCP SDK"
+        },
+        {
+          "file": "test/default-grant.test.ts",
+          "title": "INV-4: refuses default-denied machine tokens on every operator catalog route and admits humans"
         }
       ],
       "issue": "https://github.com/zackbart/connecta/issues/707"

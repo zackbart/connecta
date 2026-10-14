@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
+import { discoverOAuthProtectedResourceMetadata, discoverOAuthServerInfo } from "@modelcontextprotocol/client";
+import { clerkAuth } from "../src/auth/clerk.js";
+import { accessTokens, AccessTokenManager } from "../src/access-tokens.js";
+import { activityHistory } from "../src/activity.js";
 import { api } from "../src/connectors/api.js";
 import type { ConnectaConfig } from "../src/index.js";
 import type { AuthenticatedIdentity, InboundAuth } from "../src/types.js";
 import { describeConfigSources } from "../src/config-value-sources.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
-import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import { fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import { credentialConnector } from "./fixtures/ui.js";
+import { oauthVault } from "./fixtures/oauth.js";
 import { scriptedExecutor } from "./fixtures/misc.js";
 
 const BASE = "https://connecta.test";
@@ -106,11 +112,6 @@ describe("default endpoint grant", () => {
       const app = deployment({ grant: (async () => value) as ConnectaConfig["grant"] });
       try {
         expect(await wire(await rpc(app))).toEqual(await wire(await rpc(app, "refused")));
-        expect(
-          await wire(
-            await app.fetch(new Request(`${BASE}${METADATA}`, { headers: { Authorization: "Bearer human" } })),
-          ),
-        ).toEqual(await wire(await rpc(app, "refused")));
       } finally {
         await app.close();
       }
@@ -127,11 +128,6 @@ describe("default endpoint grant", () => {
       const app = deployment({ grant: asyncThrow ? async () => fail() : fail, logger: { ...silentLogger, warn } });
       try {
         expect(await wire(await rpc(app))).toEqual(await wire(await rpc(app, "refused")));
-        expect(
-          await wire(
-            await app.fetch(new Request(`${BASE}${METADATA}`, { headers: { Authorization: "Bearer human" } })),
-          ),
-        ).toEqual(await wire(await rpc(app, "refused")));
         expect(warn.mock.calls.flat()).toContainEqual(expect.objectContaining({ reason: "default_grant_threw" }));
         expect(JSON.stringify(warn.mock.calls)).not.toContain("private-grant-error");
       } finally {
@@ -147,60 +143,190 @@ describe("default endpoint grant", () => {
     },
   );
 
-  it.each([METADATA, `${METADATA}/mcp`])(
-    "INV-4: applies the grant to default protected-resource metadata: %s",
-    async (path) => {
-      const grant = vi.fn((identity: Readonly<AuthenticatedIdentity>) => identity.subject?.id === "human");
+  it.each([
+    undefined,
+    () => true,
+    () => false,
+    () => {
+      throw new Error("private-grant-error");
+    },
+  ])(
+    "INV-4 INV-10: keeps protected-resource metadata public without evaluating the default grant: %s",
+    async (configured) => {
+      const grant = configured ? vi.fn(configured) : undefined;
       const app = deployment({ grant });
-      const metadata = (token?: string) =>
-        app.fetch(new Request(`${BASE}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }));
       try {
-        expect(await wire(await metadata("agent"))).toEqual(await wire(await rpc(app, "refused", "agent")));
-        expect(await (await metadata("human")).json()).toEqual({ resource: `${BASE}/mcp` });
-        grant.mockClear();
-        const anonymous = await metadata();
-        expect(anonymous.status).toBe(401);
-        await anonymous.arrayBuffer();
-        expect(grant).not.toHaveBeenCalled();
-        const pool = await app.fetch(new Request(`${BASE}${METADATA}/mcp/allowed`));
-        expect(pool.status).toBe(200);
-        await pool.arrayBuffer();
-        expect(grant).not.toHaveBeenCalled();
+        for (const path of [METADATA, `${METADATA}/mcp`, `${METADATA}/mcp/refused`, `${METADATA}/mcp/missing`]) {
+          for (const token of [undefined, "agent", "invalid"]) {
+            const response = await app.fetch(
+              new Request(`${BASE}${path}`, {
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+              }),
+            );
+            expect(response.status).toBe(200);
+            expect(await response.json()).toEqual({ resource: `${BASE}${path.slice(METADATA.length) || "/mcp"}` });
+          }
+        }
+        if (grant) expect(grant).not.toHaveBeenCalled();
       } finally {
         await app.close();
       }
     },
   );
 
-  it.each(["GET", "HEAD"])(
-    "INV-4: authenticates protected-resource metadata against the MCP endpoint audience: %s",
-    async (method) => {
-      const authorize = vi.fn((request: Request) => {
-        expect(new URL(request.url).pathname).toBe("/mcp");
-        expect(request.method).toBe(method);
-        expect(request.headers.get("Authorization")).toBe("Bearer human");
-        return { ok: true as const, subjectId: "human" };
-      });
-      const app = deployment({
-        grant: () => true,
-        auth: { kind: "audience-check", authorize, handleMetadata: () => Response.json({ resource: `${BASE}/mcp` }) },
-      });
-      try {
-        const response = await app.fetch(
-          new Request(`${BASE}${METADATA}/mcp`, { method, headers: { Authorization: "Bearer human" } }),
-        );
-        expect(await response.json()).toEqual({ resource: `${BASE}/mcp` });
-        expect(authorize).toHaveBeenCalledOnce();
-      } finally {
-        await app.close();
-      }
-    },
-  );
-
-  it("INV-4: keeps metadata public when no default grant is configured", async () => {
-    const app = deployment();
+  it("INV-4 INV-10: credential-free Clerk discovery with a default grant completes through the MCP SDK", async () => {
+    const grant = vi.fn(() => true);
+    const issuer = "https://clerk.example.com";
+    const app = deployment({
+      grant,
+      auth: clerkAuth({
+        publishableKey: `pk_test_${btoa("clerk.example.com$")}`,
+        secretKey: "sk_test_fake",
+        publicUrl: BASE,
+      }),
+    });
+    const authorizationMetadata = {
+      issuer,
+      authorization_endpoint: `${issuer}/oauth/authorize`,
+      token_endpoint: `${issuer}/oauth/token`,
+      response_types_supported: ["code"],
+      code_challenge_methods_supported: ["S256"],
+    };
+    const fetchDiscovery: typeof fetch = async (input, init) => {
+      const request = new Request(input, init);
+      expect(request.headers.has("Authorization")).toBe(false);
+      return new URL(request.url).origin === BASE ? app.fetch(request) : Response.json(authorizationMetadata);
+    };
     try {
-      expect(await (await app.fetch(new Request(`${BASE}${METADATA}`))).json()).toEqual({ resource: `${BASE}/mcp` });
+      for (const path of [METADATA, `${METADATA}/mcp`]) {
+        const response = await app.fetch(new Request(`${BASE}${path}`));
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ resource: `${BASE}/mcp`, authorization_servers: [issuer] });
+        const metadata = await discoverOAuthProtectedResourceMetadata(
+          `${BASE}/mcp`,
+          { resourceMetadataUrl: `${BASE}${path}` },
+          fetchDiscovery,
+        );
+        expect(metadata.resource).toBe(`${BASE}/mcp`);
+      }
+      const discovery = await discoverOAuthServerInfo(`${BASE}/mcp`, { fetchFn: fetchDiscovery });
+      expect(discovery.resourceMetadata?.resource).toBe(`${BASE}/mcp`);
+      expect(discovery.authorizationServerUrl).toBe(issuer);
+      expect(discovery.authorizationServerMetadata).toEqual(authorizationMetadata);
+      expect(grant).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("INV-4: refuses default-denied machine tokens on every operator catalog route and admits humans", async () => {
+    const storage = memoryStorage();
+    const tokens = accessTokens(storage);
+    const token = await new AccessTokenManager(storage).create("Simon", "test-operator");
+    const grant = vi.fn((identity: Readonly<AuthenticatedIdentity>) => identity.interactive);
+    const app = deployment({
+      storage,
+      accessTokens: tokens,
+      auth: fakeClerkAuth(),
+      grant,
+      activity: activityHistory({ store: { record: async () => {}, list: async () => ({ events: [] }) } }),
+      identity: { activityAccess: () => true, accessTokenManagement: () => true },
+    });
+    try {
+      expect((await wire(await rpc(app, undefined, token.token))).status).toBe(404);
+      expect((await wire(await rpc(app, "allowed", token.token))).status).toBe(200);
+      for (const path of ["/ui/api/config", "/ui/data", "/ui/connectors/docs", "/ui/activity", "/ui/api/activity"]) {
+        const denied = await app.fetch(
+          new Request(`${BASE}${path}`, { headers: { Authorization: `Bearer ${token.token}` } }),
+        );
+        expect(denied.status, path).toBe(404);
+        expect(await denied.json()).toEqual({ error: "not found" });
+        const admitted = await app.fetch(
+          new Request(`${BASE}${path}`, { headers: { Authorization: "Bearer clerk-operator" } }),
+        );
+        expect(admitted.status, path).toBe(200);
+        await admitted.arrayBuffer();
+      }
+      const tokensResponse = await app.fetch(
+        new Request(`${BASE}/ui/access-tokens`, { headers: { Authorization: "Bearer clerk-operator" } }),
+      );
+      expect(tokensResponse.status).toBe(200);
+      await tokensResponse.arrayBuffer();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("INV-4: operator auth routes retain their own gates and require default admission", async () => {
+    const storage = memoryStorage();
+    let allowed = true;
+    const disconnectAuth = vi.fn(async () => {});
+    const app = deployment({
+      storage,
+      pools: {},
+      vault: oauthVault(storage),
+      auth: fakeClerkAuth(),
+      grant: () => allowed,
+      connectors: [
+        credentialConnector(),
+        {
+          id: "service",
+          listTools: async () => [],
+          callTool: async () => null,
+          startAuth: async () => ({ state: "auth_required", authorizationUrl: "https://consent.example/authorize" }),
+          disconnectAuth,
+        },
+      ],
+    });
+    const request = (path: string, method: string, token = "clerk-operator", body?: object) =>
+      app.fetch(
+        new Request(`${BASE}${path}`, {
+          method,
+          headers: { Authorization: `Bearer ${token}`, Origin: BASE, "Content-Type": "application/json" },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        }),
+      );
+    try {
+      const operations = [
+        ["/ui/credentials/vaulted", "PUT", { value: "valid-secret-9876" }],
+        ["/ui/credentials/vaulted/test", "POST", undefined],
+        ["/ui/oauth/service", "POST", undefined],
+      ] as const;
+      for (const [path, method, body] of operations) {
+        const admitted = await request(path, method, "clerk-operator", body);
+        expect(admitted.status, path).toBe(200);
+        await admitted.arrayBuffer();
+        allowed = false;
+        const refused = await request(path, method, "clerk-operator", body);
+        expect(refused.status, path).toBe(404);
+        expect(await refused.json()).toEqual({ error: "not found" });
+        allowed = true;
+        const unauthenticated = await request(path, method, "invalid", body);
+        expect(unauthenticated.status, path).toBe(401);
+        await unauthenticated.arrayBuffer();
+      }
+      const disconnected = await request("/ui/oauth/service", "DELETE");
+      expect(disconnected.status).toBe(204);
+      expect(disconnectAuth).toHaveBeenCalledOnce();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it.each([
+    () => undefined,
+    () => "true",
+    () => {
+      throw new Error("private-grant-error");
+    },
+  ])("INV-4 INV-6: operator catalog admission denies non-true or throwing grants: %s", async (grant) => {
+    const app = deployment({ grant: grant as unknown as ConnectaConfig["grant"] });
+    try {
+      for (const path of ["/ui/api/config", "/ui/data", "/ui/connectors/docs"]) {
+        const response = await app.fetch(new Request(`${BASE}${path}`, { headers: { Authorization: "Bearer human" } }));
+        expect(response.status).toBe(404);
+        expect(await response.json()).toEqual({ error: "not found" });
+      }
     } finally {
       await app.close();
     }
@@ -246,7 +372,7 @@ describe("default endpoint grant", () => {
     }
   });
 
-  it.each([undefined, () => false])(
+  it.each([undefined, () => true])(
     "INV-4 INV-10: describes grant presence without evaluating it: %s",
     async (configured) => {
       const grant = configured ? vi.fn(configured) : undefined;
@@ -255,11 +381,12 @@ describe("default endpoint grant", () => {
         expect(app.describeConfig().hasGrant).toBe(Boolean(grant));
         const raw = { readOnly: false, connectors: [], executor: {} as ConnectaConfig["executor"], grant };
         expect(describeConfigSources(app.describeConfig(), raw)["config.hasGrant"]).toBe(grant ? "config" : "default");
+        if (grant) expect(grant).not.toHaveBeenCalled();
         const ui = await app.fetch(
           new Request(`${BASE}/ui/api/config`, { headers: { Authorization: "Bearer human" } }),
         );
         expect((await ui.json()) as object).toHaveProperty("config.hasGrant", Boolean(grant));
-        if (grant) expect(grant).not.toHaveBeenCalled();
+        if (grant) expect(grant).toHaveBeenCalledOnce();
       } finally {
         await app.close();
       }

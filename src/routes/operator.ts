@@ -93,13 +93,24 @@ export function scopeFor(
  * included, rather than quietly granting what remains.
  */
 export function visibleRegistry({ opts }: RouteContext, authz: Authorized): Effect.Effect<RegistryView, Answer> {
-  return Effect.try({
-    try: () => {
-      validateAuthPermissions(authz, opts.registry);
-      return opts.registry.scoped(scopeFor(authz));
-    },
-    catch: (error) => new Answer(privateJson({ error: msg(error) }, { status: 403 })),
-  });
+  // Operator catalogs describe the default endpoint's view, never a pool view.
+  // Authentication alone cannot admit a caller that deployment code refuses.
+  const admission = opts.config.grant
+    ? Effect.tryPromise(async () => (await opts.config.grant!(authz.identity)) === true).pipe(
+        Effect.orElseSucceed(() => false),
+      )
+    : Effect.succeed(true);
+  return Effect.flatMap(admission, (allowed) =>
+    allowed
+      ? Effect.try({
+          try: () => {
+            validateAuthPermissions(authz, opts.registry);
+            return opts.registry.scoped(scopeFor(authz));
+          },
+          catch: (error) => new Answer(privateJson({ error: msg(error) }, { status: 403 })),
+        })
+      : refuse("not found", 404),
+  );
 }
 
 /**

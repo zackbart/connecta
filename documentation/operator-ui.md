@@ -54,6 +54,10 @@ ids and pool names and are filtered after disclosure; hidden values leave no
 provenance keys. It contains no source code or credential material.
 Every response is private, `no-store` JSON. Only GET is allowed, with the
 same auth gate and identity partition as `/ui/data` and `/ui/connectors/:id`.
+These catalog reads, activity reads, and connector auth routes also require
+admission through the default `/mcp` grant. Refusals return private JSON 404s;
+there is no per-pool UI view. Public HTML shells and static assets carry no
+catalog data. Access-token management retains its interactive permission gate.
 
 `live.connectors` carries status and problem codes, complete registry tools
 with their final read/write classification, catalog age in milliseconds, and
