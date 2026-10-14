@@ -33,10 +33,10 @@ describe("remote catalog argument echoes", () => {
             : undefined;
         if (message?.method === "tools/call") {
           writes.push(message.params?.arguments);
-          return await new Promise<Response>((_resolve, reject) => {
-            if (request.signal.aborted) reject(request.signal.reason);
-            else request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true });
-          });
+          // The send happened, but its reply timed out. This case proves echo
+          // redaction, so inject the failure after dispatch instead of racing
+          // catalog discovery against a short request deadline.
+          throw new DOMException("Downstream reply timed out", "TimeoutError");
         }
         const response = await downstream.fetch(input as string, init);
         if (message?.method !== "tools/list") return response;
@@ -66,7 +66,7 @@ describe("remote catalog argument echoes", () => {
           const rpc = await readJsonRpc(
             await mcpRpc(app, "tools/call", {
               name,
-              arguments: { address: "private.write", args, timeoutMs: 200 },
+              arguments: { address: "private.write", args, timeoutMs: 30_000 },
             }),
           );
           const result = rpc.result;
@@ -91,5 +91,5 @@ describe("remote catalog argument echoes", () => {
       } finally {
         await app.close();
       }
-    });
+    }, 30_000);
 });

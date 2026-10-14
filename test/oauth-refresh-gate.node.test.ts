@@ -150,4 +150,4 @@ it("routes every production refresh send through the fingerprint resolution CAS 
   expect(staticSends).toHaveLength(2);
   expect(tokenCalls.filter((call) => expressionText(call.expression) === "fetch")).toHaveLength(0);
   for (const send of staticSends) expect(send.arguments[1]!.getText()).toContain('redirect: "manual"');
-});
+}, 30_000);

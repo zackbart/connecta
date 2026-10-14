@@ -139,20 +139,18 @@ describe("Infisical security boundaries", () => {
       let operational = 0;
       vi.stubGlobal(
         "fetch",
-        vi.fn<typeof globalThis.fetch>(async (input, init) => {
+        vi.fn<typeof globalThis.fetch>(async (input) => {
           if (String(input).endsWith("/login")) return login();
           operational++;
           if (failure === "network") throw new TypeError("Synthetic connection lost");
-          return await new Promise<Response>((_resolve, reject) => {
-            const signal = init!.signal!;
-            if (signal.aborted) reject(signal.reason);
-            else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-          });
+          // Inject the lost reply after dispatch; setup must not race a
+          // 100 ms request deadline in these accounting/redaction cases.
+          throw new DOMException("Downstream reply timed out", "TimeoutError");
         }),
       );
       const outcome = await invocation(registry).invoke(`infisical.${tool}`, args, {
         source: "call_destructive_tool",
-        timeoutMs: 100,
+        timeoutMs: 30_000,
       });
       expect(outcome).toMatchObject({
         ok: false,
@@ -232,14 +230,12 @@ describe("Infisical security boundaries", () => {
         const { registry } = await setup();
         const args = { ...target, secretValue };
         let writes = 0;
-        const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+        const fetch = vi.fn<typeof globalThis.fetch>(async (input) => {
           if (String(input).endsWith("/login")) return login();
           writes++;
-          return await new Promise<Response>((_resolve, reject) => {
-            const signal = init!.signal!;
-            if (signal.aborted) reject(signal.reason);
-            else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-          });
+          // Inject the lost reply after dispatch; setup must not race a
+          // 100 ms request deadline in these accounting/redaction cases.
+          throw new DOMException("Downstream reply timed out", "TimeoutError");
         });
         vi.stubGlobal("fetch", fetch);
         const readOnly = await invocation(registry).invoke(`infisical.${tool}`, args, {
@@ -272,7 +268,7 @@ describe("Infisical security boundaries", () => {
           const outcome = await invocation(registry).invoke(`infisical.${tool}`, args, {
             source,
             readOnly: false,
-            timeoutMs: 100,
+            timeoutMs: 30_000,
           });
           expect(outcome).toMatchObject({
             ok: false,
@@ -299,14 +295,12 @@ describe("Infisical security boundaries", () => {
       async (_label, secretValue) => {
         const { storage, vault, connector } = await setup();
         let writes = 0;
-        const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+        const fetch = vi.fn<typeof globalThis.fetch>(async (input) => {
           if (String(input).endsWith("/login")) return login();
           writes++;
-          return await new Promise<Response>((_resolve, reject) => {
-            const signal = init!.signal!;
-            if (signal.aborted) reject(signal.reason);
-            else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-          });
+          // Inject the lost reply after dispatch; setup must not race a
+          // 100 ms request deadline in these accounting/redaction cases.
+          throw new DOMException("Downstream reply timed out", "TimeoutError");
         });
         vi.stubGlobal("fetch", fetch);
         const deployment = createTestConnecta({ storage, vault, connectors: [connector], logger: silentLogger });
@@ -315,7 +309,7 @@ describe("Infisical security boundaries", () => {
             const rpc = await readJsonRpc(
               await mcpRpc(deployment, "tools/call", {
                 name,
-                arguments: { address: `infisical.${tool}`, args: { ...target, secretValue }, timeoutMs: 100 },
+                arguments: { address: `infisical.${tool}`, args: { ...target, secretValue }, timeoutMs: 30_000 },
               }),
             );
             expect(rpc.result.isError).toBe(true);

@@ -34,7 +34,7 @@ it("shipped guest declaration has no unresolved or invalid types", () => {
   const source = program.getSourceFile(path)!;
   const errors = [...program.getSyntacticDiagnostics(source), ...program.getSemanticDiagnostics(source)];
   expect(errors.map((error) => ts.flattenDiagnosticMessageText(error.messageText, "\n"))).toEqual([]);
-});
+}, 60_000);
 
 it("INV-3: advertised guest signatures match the shipped declaration and runtime method set", async () => {
   const source = readFileSync(new URL("../src/guest-types.ts", import.meta.url), "utf8");

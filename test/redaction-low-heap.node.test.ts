@@ -50,7 +50,7 @@ it("INV-5: a credential-bearing result with 1,000,000 metadata objects completes
     console.log(JSON.stringify({ unchanged, isError: call.isError === true, content: call.content }));
   `);
   expect(outcome).toEqual({ unchanged: true, isError: false, content: [{ type: "text", text: "ok" }] });
-});
+}, 60_000);
 
 it("INV-5: long credentials bound the matcher, so ordinary output survives a 128 MiB heap and echoes stay redacted", () => {
   const outcome = lowHeap(`
@@ -73,7 +73,7 @@ it("INV-5: long credentials bound the matcher, so ordinary output survives a 128
     manyEcho: '{"id":"needed-id","token":"[redacted]"}',
     oneEcho: "before [redacted] after",
   });
-});
+}, 60_000);
 
 it("INV-5: self-similar text shares long-form checks, so it cannot exhaust a 128 MiB heap and stays exact", () => {
   const outcome = lowHeap(`

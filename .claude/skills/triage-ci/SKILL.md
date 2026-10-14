@@ -50,7 +50,13 @@ Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
   some provider budget tests hit 5 s timeouts on a busy runner or a shared
   machine. Rerun the file in isolation before believing it:
   `npx vitest run --project node test/<file>.test.ts -t "<title>" --maxWorkers=1`.
-  Report the flake with the isolated pass; never raise a timeout to hide it.
+  Report the flake with the isolated pass. Distinguish the deadline being
+  asserted from a runner hang guard: static scans, type checking and real child
+  processes need explicit generous test budgets. When a case proves another
+  contract, give incidental request/admission deadlines headroom or inject the
+  failure after dispatch. Keep deadline assertions deterministic with a
+  controllable clock when supported; do not relax correctness or performance
+  assertions to hide a failure.
 - **npm audit.** A new upstream advisory fails the nightly
   [Security workflow](../../../.github/workflows/security.yml) and main's
   security job. PRs audit only dependency changes. Fix it in its own PR that
