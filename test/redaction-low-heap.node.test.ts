@@ -78,29 +78,52 @@ it("INV-5: long credentials bound the matcher, so ordinary output survives a 128
 it("INV-5: self-similar text shares long-form checks, so it cannot exhaust a 128 MiB heap and stays exact", () => {
   const outcome = lowHeap(`
     const { SentSecrets } = await import("./src/sent-secrets.ts");
-    const timed = (secrets, text) => {
-      const started = performance.now();
-      const value = secrets.text(text);
-      return { value: value.length > 64 ? value.length : value, slow: performance.now() - started > 1_000 };
+    const make = (length, count) => {
+      const secrets = new SentSecrets();
+      for (let i = 0; i < count; i++) secrets.add("s".repeat(length) + "-end-" + String(i).padStart(2, "0"));
+      return secrets;
     };
-    const huge = new SentSecrets();
-    for (let i = 0; i < 20; i++) huge.add("s".repeat(100_000) + "-end-" + i);
-    const many = new SentSecrets();
-    for (let i = 0; i < 20; i++) many.add("s".repeat(4_096) + "-end-" + i);
-    const one = new SentSecrets();
-    one.add("s".repeat(4_096) + "-end-0");
+    const measured = (size, count) => {
+      const secrets = make(4_096, count);
+      const text = "s".repeat(size);
+      // Build and warm the cached matcher before measuring scanning. Increasing
+      // both text and equal-length forms exposes quadratic work if group sharing
+      // regresses. Shared groups keep the number of checks per unit constant.
+      if (secrets.text(text) !== text) throw new Error("Warmup changed clean text");
+      const samples = [];
+      for (let repeat = 0; repeat < 5; repeat++) {
+        const started = process.cpuUsage();
+        const value = secrets.text(text);
+        const used = process.cpuUsage(started);
+        if (value !== text) throw new Error("Scanning changed clean text");
+        samples.push(used.user + used.system);
+      }
+      // CPU time excludes scheduler waits; minimums reduce GC and JIT noise.
+      return Math.min(...samples);
+    };
+    const times = [measured(1_000_000, 5), measured(2_000_000, 10), measured(4_000_000, 20)];
+    const huge = make(100_000, 20);
+    const one = make(4_096, 1);
     const text = "s".repeat(4_000_000);
     console.log(JSON.stringify({
-      huge: timed(huge, text),
-      many: timed(many, text),
-      echo: timed(one, "before " + "s".repeat(4_096) + "-end-0 after"),
-      clean: timed(one, "s".repeat(1_000_000)),
+      times,
+      hugeExact: huge.text(text) === text,
+      echo: one.text("before " + "s".repeat(4_096) + "-end-00 after"),
+      cleanExact: one.text("s".repeat(1_000_000)) === "s".repeat(1_000_000),
     }));
-  `);
-  expect(outcome).toEqual({
-    huge: { value: 4_000_000, slow: false },
-    many: { value: 4_000_000, slow: false },
-    echo: { value: "before [redacted] after", slow: false },
-    clean: { value: 1_000_000, slow: false },
+  `) as { times: number[]; hugeExact: boolean; echo: string; cleanExact: boolean };
+  expect(outcome).toMatchObject({
+    hugeExact: true,
+    echo: "before [redacted] after",
+    cleanExact: true,
   });
-});
+  const [small, medium, large] = outcome.times;
+  expect(small).toBeGreaterThan(0);
+  expect(medium).toBeGreaterThan(0);
+  expect(large).toBeGreaterThan(0);
+  const ratio = large! / small!;
+  console.log("Self-similar redaction CPU scaling", { times: outcome.times, ratio });
+  // Linear scanning approaches 4x; independently checking each registered form
+  // approaches 16x. Leave room for loaded CI without admitting quadratic growth.
+  expect(ratio).toBeLessThan(9);
+}, 60_000);
