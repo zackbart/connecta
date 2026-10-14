@@ -402,21 +402,21 @@ it("INV-5: structured numeric private echoes become valid placeholder strings in
 });
 
 it("INV-5: one cumulative work budget bounds a 2,000-value private set over a 2 MB result and withholds only what exceeds it", () => {
-  const work = { units: 0, transitions: 0, checks: 0, builds: 0 };
   const secrets = new SentSecrets();
-  secrets["work"] = work;
   const values = Array.from({ length: 2_000 }, (_, index) => `private-value-${index}-793`);
   secrets.arguments({ values }, { type: "object", properties: { values: { writeOnly: true } } });
   const wire = JSON.stringify({ id: "needed-id", data: Array(1_000_000).fill(0) });
   expect(secrets.text(wire)).toBe(wire);
   expect(secrets.text(`${wire.slice(0, -2)},"${values[1_999]}"]}`)).toBe(`${wire.slice(0, -2)},"${REDACTED}"]}`);
-  expect(work.units + work.transitions + work.checks).toBeLessThan(16 * wire.length);
-  // Work that does not fit the remaining budget withholds its field without spending it.
-  expect(secrets.redact({ big: "\\\\".repeat(6_000_000), id: "needed-id" })).toEqual({
-    big: REDACTED,
-    id: "needed-id",
-  });
-  expect(work.units + work.transitions + work.checks).toBeLessThan(64 * 1_048_576);
+  // Two shallow, escape-free fields each fit the 64 Mi-unit budget alone,
+  // but their combined scans do not. No decode, walk or pending-run limit can
+  // withhold the second field, so disabling spend's guard must fail this check.
+  const clean = "x".repeat(18_000_000);
+  const result = secrets.redact({ first: clean, big: clean, id: "needed-id" });
+  expect(result.first === clean).toBe(true);
+  expect(result.big === REDACTED).toBe(true);
+  // Refusing a scan does not spend the remainder needed for a smaller field.
+  expect(result.id).toBe("needed-id");
 });
 
 it("INV-5: long-form checks spend the cumulative work budget, so self-similar text against many long private values is withheld", () => {

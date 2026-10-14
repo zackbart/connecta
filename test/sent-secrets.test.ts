@@ -132,19 +132,18 @@ describe("call-scoped sent credentials", () => {
     ctx.credential = { get: async (field) => values[field ?? "key0"] ?? null, getAll: () => vault.getAll("bench") };
     trackCredentialReads(ctx);
     await ctx.credential.getAll();
-    const work = { units: 0, transitions: 0, checks: 0, builds: 0 };
-    const secrets = new SentSecrets();
-    secrets["work"] = work;
-    secrets.include(sentSecretsFor(ctx));
+    const secrets = sentSecretsFor(ctx);
     const rows = Array.from({ length: 10_000 }, (_, i) => ({
       id: i,
       text: `row ${i} ${values.key0}`,
       label: "ordinary row",
     }));
+    secrets.redact(rows[0]);
+    const matcher = secrets["views"].matcher;
+    expect(matcher).toBeDefined();
     const result = secrets.redact(rows);
     expect(result[9_999]!.text).toBe("row 9999 [redacted]");
-    expect(work.builds).toBe(1);
-    expect(work.units + work.transitions + work.checks).toBeLessThan(4_000_000);
+    expect(secrets["views"].matcher).toBe(matcher);
   });
 
   it("INV-5 INV-8: finds twice-escaped credentials across bounded scanning windows", () => {

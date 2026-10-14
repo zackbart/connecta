@@ -2,4 +2,4 @@
 type: fixed
 ---
 
-Make redaction regression tests deterministic under machine load while preserving bounded-work and low-heap checks.
+Make redaction regression tests robust under machine load with CPU scaling, exact output and low-heap checks, without adding production instrumentation.

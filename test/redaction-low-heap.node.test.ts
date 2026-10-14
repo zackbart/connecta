@@ -78,37 +78,52 @@ it("INV-5: long credentials bound the matcher, so ordinary output survives a 128
 it("INV-5: self-similar text shares long-form checks, so it cannot exhaust a 128 MiB heap and stays exact", () => {
   const outcome = lowHeap(`
     const { SentSecrets } = await import("./src/sent-secrets.ts");
-    const measured = (forms, text) => {
-      const work = { units: 0, transitions: 0, checks: 0, builds: 0 };
+    const make = (length, count) => {
       const secrets = new SentSecrets();
-      secrets.work = work;
-      for (const form of forms) secrets.add(form);
-      const value = secrets.text(text);
-      // One scan and amortized failure transitions, plus at most two checks per
-      // code unit for each shared long-form group in this input.
-      const operations = work.units + work.transitions + work.checks;
-      return { exact: value === text, value: value.length > 64 ? value.length : value,
-        bounded: operations <= 8 * text.length + 32_768, operations };
+      for (let i = 0; i < count; i++) secrets.add("s".repeat(length) + "-end-" + String(i).padStart(2, "0"));
+      return secrets;
     };
-    const huge = Array.from({ length: 20 }, (_, i) => "s".repeat(100_000) + "-end-" + i);
-    const many = Array.from({ length: 20 }, (_, i) => "s".repeat(4_096) + "-end-" + i);
-    const one = ["s".repeat(4_096) + "-end-0"];
-    const small = measured(many, "s".repeat(2_000_000));
-    const large = measured(many, "s".repeat(4_000_000));
-    const summarize = ({ operations, ...result }) => result;
+    const measured = (size, count) => {
+      const secrets = make(4_096, count);
+      const text = "s".repeat(size);
+      // Build and warm the cached matcher before measuring scanning. Increasing
+      // both text and equal-length forms exposes quadratic work if group sharing
+      // regresses. Shared groups keep the number of checks per unit constant.
+      if (secrets.text(text) !== text) throw new Error("Warmup changed clean text");
+      const samples = [];
+      for (let repeat = 0; repeat < 5; repeat++) {
+        const started = process.cpuUsage();
+        const value = secrets.text(text);
+        const used = process.cpuUsage(started);
+        if (value !== text) throw new Error("Scanning changed clean text");
+        samples.push(used.user + used.system);
+      }
+      // CPU time excludes scheduler waits; minimums reduce GC and JIT noise.
+      return Math.min(...samples);
+    };
+    const times = [measured(1_000_000, 5), measured(2_000_000, 10), measured(4_000_000, 20)];
+    const huge = make(100_000, 20);
+    const one = make(4_096, 1);
+    const text = "s".repeat(4_000_000);
     console.log(JSON.stringify({
-      huge: summarize(measured(huge, "s".repeat(4_000_000))),
-      many: summarize(large),
-      linear: large.operations <= 2 * small.operations + 32_768,
-      echo: summarize(measured(one, "before " + one[0] + " after")),
-      clean: summarize(measured(one, "s".repeat(1_000_000))),
+      times,
+      hugeExact: huge.text(text) === text,
+      echo: one.text("before " + "s".repeat(4_096) + "-end-00 after"),
+      cleanExact: one.text("s".repeat(1_000_000)) === "s".repeat(1_000_000),
     }));
-  `);
-  expect(outcome).toEqual({
-    huge: { exact: true, value: 4_000_000, bounded: true },
-    many: { exact: true, value: 4_000_000, bounded: true },
-    linear: true,
-    echo: { exact: false, value: "before [redacted] after", bounded: true },
-    clean: { exact: true, value: 1_000_000, bounded: true },
+  `) as { times: number[]; hugeExact: boolean; echo: string; cleanExact: boolean };
+  expect(outcome).toMatchObject({
+    hugeExact: true,
+    echo: "before [redacted] after",
+    cleanExact: true,
   });
-});
+  const [small, medium, large] = outcome.times;
+  expect(small).toBeGreaterThan(0);
+  expect(medium).toBeGreaterThan(0);
+  expect(large).toBeGreaterThan(0);
+  const ratio = large! / small!;
+  console.log("Self-similar redaction CPU scaling", { times: outcome.times, ratio });
+  // Linear scanning approaches 4x; independently checking each registered form
+  // approaches 16x. Leave room for loaded CI without admitting quadratic growth.
+  expect(ratio).toBeLessThan(9);
+}, 60_000);
