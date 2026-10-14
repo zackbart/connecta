@@ -59,6 +59,7 @@ export async function startNodeDeployment(
   const quiet = { debug() {}, info() {}, warn() {}, error() {} };
   const observed = observedExecutor(surface);
   const connecta = createConnecta({
+    readOnly: false,
     storage,
     accessTokens: accessTokens(storage),
     ...(oauth ? { auth: oauth.inbound() } : {}),

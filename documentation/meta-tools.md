@@ -2,7 +2,7 @@
 
 Connecta keeps one small tool surface in model context and resolves downstream
 tools behind it. `search_tools` finds addresses, the call tools enforce the
-stored classification, `execute_code` runs programs under pool trust, and `connecta.result` inside programs
+stored classification, `execute_code` runs programs on a writable or read-only endpoint, and `connecta.result` inside programs
 pages bounded results.
 
 This guide is the contract an MCP client sees. The in-program `connecta.*` API
@@ -31,10 +31,13 @@ configuration adds a seventh or removes one, so a client's cached tool list
 never depends on the storage behind the deployment. There was an eighth,
 `resume_execution`, while programs paused at writes; it left with pausing
 ([#672](https://github.com/zackbart/connecta/issues/672)). `execute_code`
-is annotated `readOnlyHint: true, destructiveHint: false` on a `read-only`
-endpoint, and `readOnlyHint: false, destructiveHint: true` on a `trusted`
-endpoint. Approval belongs to the host. Pool trust never changes connector
-visibility or tool grants. The four tools with structured-only success results
+is annotated `readOnlyHint: true, destructiveHint: false` on a read-only
+endpoint, and `readOnlyHint: false, destructiveHint: true` on a writable one.
+Approval belongs to the client. A read-only endpoint keeps all six tools, omits
+write tools from `search_tools` results and describe, and refuses every write
+call; `readOnly` never changes connector visibility or read grants. Guides
+(`queryAnalysis.guideSummary`, `skills`, `connecta.skill`, skill
+`resources/read`) are documentation and may name tools the endpoint refuses. The four tools with structured-only success results
 advertise `outputSchema`. The two direct-call tools omit it because their default
 mode returns native `content`. Default-mode successes declare
 `_meta["dev.connecta/format"]: "json" | "text"`; value mode places the value in
@@ -70,9 +73,11 @@ credentials, logs, or raw error text.
 
 Connecta's discovery tools carry read-only hints. `authorize_connector`
 requests interactive authentication changes; `call_destructive_tool` sends
-writes and is annotated destructive. `execute_code` reports the selected pool's
-trust in its description and annotations. Its host may approve the whole
-program on a trusted endpoint. `call_destructive_tool.reason` is dropped before
+writes and is annotated destructive. `execute_code` states whether the endpoint
+is read-only or writable in its description and annotations. On a writable
+endpoint the client may approve the whole program as a write. On a read-only
+endpoint, the `call_tool`, `call_destructive_tool`, and `search_tools`
+descriptions say so too; `call_destructive_tool` still runs reads there. `call_destructive_tool.reason` is dropped before
 anything runs.
 
 ## Routing between the call surfaces
@@ -93,12 +98,16 @@ page the completed direct-call result or oversized program return with
 `connecta.result` after the write runs once. Sampling or slicing a write's output
 inside the program can still discard the answer.
 
-A `trusted` pool lets the same program discover and dispatch writes.
-A `read-only` pool refuses writes before validation or dispatch with
-`destructive_tool_requires_approval` and a `nextAction` naming
-`call_destructive_tool` and the canonical address. Each write then uses its
-own top-level call. Connecta never pauses, replays, or approves a program.
-Top-level discovery remains available for catalog inspection and write routing.
+On a writable endpoint the same program discovers and dispatches writes, capped
+by `execute.maxWrites`, and `call_destructive_tool` sends one known write. On a
+read-only endpoint nothing writes: `search_tools`, `connecta.search`, and
+`connecta.describe` omit write tools as if the connector lacked them, and
+every write call through `call_tool`, `call_destructive_tool`, or a program is
+refused before validation or dispatch with `read_only_endpoint`,
+`retryable: false`, and no `nextAction`. Connector guides are not filtered and
+may still name such a write. No route on that endpoint writes; the agent
+reports it. Connecta
+never pauses, replays, or approves a program.
 
 Both search routes return the flat page specified under
 [lexical discovery](#lexical-discovery), using the catalog's shared output schema.
@@ -129,14 +138,14 @@ Read-only lookup belongs in `connecta.search` inside the program; top-level
 `search_tools` stays for explicit catalog inspection and approval-required
 discovery. Both take the same arguments.
 
-| Argument           | What it does                                                                                                                                                                                                                                                            |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `query`            | two to four action/object terms; empty or whitespace-only browses                                                                                                                                                                                                       |
-| `connector`        | scopes to one id, loading that catalog alone instead of fanning out across every configured connector. Set it when the integration is obvious, omit it when the right one is genuinely ambiguous                                                                        |
-| `safety`           | `"readOnly"` selects stored `read` verdicts; `"approvalRequired"` selects stored `write` verdicts; omitted or `"all"` selects both. Each row carries `classification: "read" \| "write"`. These legacy filter names do not describe host approval policy or pool trust. |
-| `limit` / `offset` | page the ranked results; omit `limit` initially so the default eight-result page stays small                                                                                                                                                                            |
-| `includeSchemas`   | `"compact"` for the rendered routing view, `"json"` for the exact schema, `"typescript"` for a function signature ([below](#typescript-signatures))                                                                                                                     |
-| `fullDescriptions` | unabridged tool purposes, at the obvious cost                                                                                                                                                                                                                           |
+| Argument           | What it does                                                                                                                                                                                                                                                                                        |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `query`            | two to four action/object terms; empty or whitespace-only browses                                                                                                                                                                                                                                   |
+| `connector`        | scopes to one id, loading that catalog alone instead of fanning out across every configured connector. Set it when the integration is obvious, omit it when the right one is genuinely ambiguous                                                                                                    |
+| `safety`           | `"readOnly"` selects stored `read` verdicts; `"approvalRequired"` selects stored `write` verdicts; omitted or `"all"` selects both. Each row carries `classification: "read" \| "write"`. These legacy filter names do not describe client approval policy; a read-only endpoint has no write rows. |
+| `limit` / `offset` | page the ranked results; omit `limit` initially so the default eight-result page stays small                                                                                                                                                                                                        |
+| `includeSchemas`   | `"compact"` for the rendered routing view, `"json"` for the exact schema, `"typescript"` for a function signature ([below](#typescript-signatures))                                                                                                                                                 |
+| `fullDescriptions` | unabridged tool purposes, at the obvious cost                                                                                                                                                                                                                                                       |
 
 Neither `connector` nor `safety` grants authority or changes invocation
 admission; they select what discovery shows and nothing else.
@@ -381,7 +390,7 @@ caught catalog-load errors, unknown-tool failures, and recovery messages that
 list visible connectors or local guides. Returns with no downstream calls still
 require matching identity, origin and endpoint, current auth, and pool membership. A page must
 match those bindings and pass current auth, connector/tool grants, pool membership,
-and trust checks. Old entries lacking bindings fail closed. A random UUID is a
+and read-only checks. Old entries lacking bindings fail closed. A random UUID is a
 handle, never an access grant.
 
 New entries store UTF-8 bytes in a base64 envelope split across storage keys,
@@ -512,13 +521,10 @@ format: "text", text }`. The page size is clamped to the original call's inline
 cap and a 32 KiB program bridge ceiling, with UTF-8 alignment and forward progress. Reassemble inside the sandbox;
 returning pages unchanged can hit the program result cap. The admitted subject
 and principal, endpoint/pool, request origin, connector, and tool bindings must
-match. The host rechecks current access and trust before returning each page; a
-read-only endpoint cannot read a write stash. Caller arguments select no partition.
-
-A write on a read-only endpoint returns an inline truncation notice and any
-usable bounded preview. It says paging is unavailable and the write already
-ran; it carries no result handle or recovery action and stores no unreachable
-stash. Write paging remains available on trusted endpoints.
+match. The host rechecks current access and whether the endpoint is read-only
+before returning each page; a read-only endpoint cannot read a write stash.
+Caller arguments select no partition. A read-only endpoint never runs a write,
+so every write result it could page came from a writable endpoint.
 
 A refused stash write cannot undo a downstream success. Direct calls and program returns produce
 a paging-unavailable notice, without a handle or recovery action. A write's
@@ -820,10 +826,11 @@ attempted tool name; an unknown tool scopes the same query to the connector that
 answered. The suggested route follows the route the caller took:
 `tool: "search_tools"` for a top-level call, `function: "connecta.search"` with
 the same arguments when the miss happened inside `execute_code`, which has no
-way to call a tool. `call_tool` reaching an unannotated, write-capable, or
-destructive tool returns `nextAction` for `call_destructive_tool` with the
-canonical address, and so does the same call inside a program, unless config
-marks that pool trusted. Nothing is executed by these records.
+way to call a tool. On a writable endpoint, `call_tool` reaching an unannotated,
+write-capable, or destructive tool returns `destructive_tool_requires_approval`
+with `nextAction` for `call_destructive_tool` and the canonical address. On a
+read-only endpoint every write path returns `read_only_endpoint` with no
+`nextAction`. Nothing is executed by these records.
 
 `connecta.describe` keeps its failures inline instead, so one miss cannot
 discard the other schemas; each failed entry carries a human `error`, typed
@@ -932,12 +939,12 @@ original arguments cannot repeat the write while the vendor retains the key
 (Stripe may prune v1 keys after 24 hours). After that, look the object up before
 retrying. When a connector recorded such facts, any other dispatched write whose
 outcome is unknown (a lost response body, a 5xx) also carries `uncertainCall`
-with them under its own code, and trusted-program write accounting keeps it. `args` may be partial reconciliation context
+with them under its own code, and program write accounting keeps it. `args` may be partial reconciliation context
 with `argsRedacted: true`. A withheld echo or arguments over the 512-byte budget
 carry `argsOmitted: true`; sensitive or unresolved schemas also carry
 `argsRedacted: true`. When `args` is absent or redacted, use the original
-arguments if reconciliation requires another call. A timeout before dispatch remains `timeout`. Trusted
-program write accounting keeps this detail even if the guest catches the
+arguments if reconciliation requires another call. A timeout before dispatch remains `timeout`.
+Program write accounting keeps this detail even if the guest catches the
 failure or returns early. Multiple uncertain writes use `uncertainCalls`,
 bounded to ten calls with `uncertainCallsTruncated` when more exist.
 

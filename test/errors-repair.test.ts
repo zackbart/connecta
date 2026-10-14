@@ -25,7 +25,7 @@ describe("repairing error envelopes", () => {
     const outcome = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
       "private.submit",
       { password: "private-catalog-marker-12345" },
-      { source: "execute_code", trust: "trusted" },
+      { source: "execute_code", readOnly: false },
     );
     expect(outcome).toMatchObject({
       ok: false,
@@ -69,7 +69,7 @@ describe("repairing error envelopes", () => {
       const result = await new InvocationService(registry, new CatalogService(registry, BASE)).invoke(
         "private.submit",
         { target: "p1", password: "z" },
-        { source: "execute_code", trust: "trusted" },
+        { source: "execute_code", readOnly: false },
       );
       expect(result).toMatchObject({
         ok: false,

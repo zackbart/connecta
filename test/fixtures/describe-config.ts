@@ -133,6 +133,7 @@ export function secretBearingDeployment() {
         connectorAccess: fn("all") as never,
         credentialAdministration: fn("all") as never,
       },
+      readOnly: false,
       pools: { support: { tools: ["static_api"], grant: fn(true) as never } },
       serverInfo: {
         websiteUrl: `https://about.example/connecta?k=${SECRETS.websiteQuery}`,

@@ -43,6 +43,7 @@ type ProviderCase = {
 
 function deployment(storage: KVStorage, connectors: Connector[], credentials = false) {
   return createConnecta({
+    readOnly: false,
     executor,
     storage,
     logger: silentLogger,

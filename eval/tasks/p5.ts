@@ -8,9 +8,10 @@ import { BADGE_PNG, LEGACY_BADGE_PNG } from "../fakes/prerequisites.js";
 import type { AgentTrace } from "../agent/trace.js";
 
 const base = { status: "active" as const, introducedIn: "P5" as const };
+// The root is read-only; the programs pool overrides it, and reads inherits it.
 const pools = {
-  programs: { tools: ["tracker", "chat"], grant: () => true, trust: "trusted" },
-  reads: { tools: ["tracker", "chat"], grant: () => true, trust: "read-only" },
+  programs: { tools: ["tracker", "chat"], grant: () => true, readOnly: false },
+  reads: { tools: ["tracker", "chat"], grant: () => true },
 };
 const WRITE_CODE = `async () => (await connecta.call("tracker.close_issue", { id: "WEB-105" })).data`;
 
@@ -20,9 +21,7 @@ function refusedTarget(world: World, trace?: AgentTrace): boolean {
   const attempts = world.programs.flatMap((p) =>
     p.calls.filter(
       (c) =>
-        c.name === "connecta.call" &&
-        (["destructive_tool_requires_approval", "pool_read_only"].includes(c.errorCode ?? "") ||
-          c.args[0] === "tracker.close_issue"),
+        c.name === "connecta.call" && (c.errorCode === "read_only_endpoint" || c.args[0] === "tracker.close_issue"),
     ),
   );
   const directAttempts = trace?.toolUses.filter((u) => u.tool === "call_destructive_tool") ?? [];
@@ -31,8 +30,11 @@ function refusedTarget(world: World, trace?: AgentTrace): boolean {
       attempts.length === 0 &&
       directAttempts.length === 1 &&
       directAttempts[0]?.isError === true &&
-      Boolean(trace?.permissionDenials.length) &&
-      /user rejected MCP tool call|permission[^.]*denied|host[^.]*refus/i.test(directAttempts[0]?.resultText ?? "") &&
+      (/read_only_endpoint/.test(directAttempts[0]?.resultText ?? "") ||
+        (Boolean(trace?.permissionDenials.length) &&
+          /user rejected MCP tool call|permission[^.]*denied|host[^.]*refus/i.test(
+            directAttempts[0]?.resultText ?? "",
+          ))) &&
       directAttempts[0].input.address === "tracker.close_issue" &&
       (directAttempts[0].input.args as Record<string, unknown>)?.id === "WEB-105"
     );
@@ -40,7 +42,7 @@ function refusedTarget(world: World, trace?: AgentTrace): boolean {
     attempts.length === 1 &&
     attempts[0]?.args[0] === "tracker.close_issue" &&
     (attempts[0]?.args[1] as Record<string, unknown>)?.id === "WEB-105" &&
-    ["destructive_tool_requires_approval", "pool_read_only"].includes(attempts[0]?.errorCode ?? "")
+    attempts[0]?.errorCode === "read_only_endpoint"
   );
 }
 
@@ -163,10 +165,10 @@ const trusted = withCorrectness(
   {
     ...base,
     id: "p5-trusted-program-write",
-    title: "Trusted pool program write",
-    measures: "A named trusted pool dispatches a program write while the root remains read-only.",
-    deployment: { pools, pool: "programs" },
-    prompt: "In this trusted pool, close tracker issue WEB-105 using a program and confirm its resulting status.",
+    title: "Writable pool program write",
+    measures: "A named pool that sets readOnly: false dispatches a program write while the root remains read-only.",
+    deployment: { readOnly: true, pools, pool: "programs" },
+    prompt: "In this writable pool, close tracker issue WEB-105 using a program and confirm its resulting status.",
     grade: ({ world, trace }) => [
       check(
         "program-write",
@@ -197,7 +199,7 @@ const refused = withCorrectness(
     id: "p5-read-only-program-refusal",
     title: "Read-only pool refuses program writes",
     measures: "The read-only pool rejects the same program before downstream dispatch.",
-    deployment: { pools, pool: "reads" },
+    deployment: { readOnly: true, pools, pool: "reads" },
     approvals: { deny: ["call_destructive_tool"] },
     prompt:
       'Test whether a program can close tracker WEB-105 in this read-only pool. Attempt it once, report the refusal, and leave the issue unchanged. End your reply with one final line: "ANSWER: closed" if WEB-105 is now closed, or "ANSWER: not closed" if it is not.',

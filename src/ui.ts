@@ -55,7 +55,7 @@ export function operatorPageTitle(page: OperatorPage, configuredTitle: string): 
   return `${OPERATOR_PAGE_LABELS[page]} — ${configuredTitle}`;
 }
 
-/** Report the verdict the registry stored, independent of pool trust. */
+/** Report the verdict the registry stored, independent of whether an endpoint is read-only. */
 export function uiToolSafety(definition: ToolDef): UiToolSafety {
   if (definition.classification === "read") return "runs_in_programs";
   return "needs_approval";

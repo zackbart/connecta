@@ -63,7 +63,7 @@ export default {
           };
         },
       };
-      app = createConnecta({
+      app = createConnecta({ readOnly: false,
         publicUrl: "http://localhost",
         logger: "silent",
         executor: customExecutor(executor, { lifecycle: "self-managed" }),

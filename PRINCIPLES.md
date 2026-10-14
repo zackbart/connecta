@@ -13,8 +13,8 @@ records the work still needed; a goal is not a claim that it has shipped.
    extensions. [Coverage](./spec/coverage.json) records what exists and what
    does not. Older-protocol shims live only while a supported host needs them.
 3. **Classify, don't approve.** Connecta knows which tools read and which
-   write, and tells the host truthfully. Approval belongs to the host. Trust
-   belongs to a pool: `trusted` programs may write; `read-only` programs read.
+   write, and tells the host truthfully. Approval belongs to the host. Each
+   endpoint answers one question, set in deployment code: can it write.
 4. **Configuration is code.** Deployment source defines connectors,
    identities, pools, and grants. The operator UI shows configuration and
    manages auth material, never capability.
@@ -41,10 +41,11 @@ The full Node run checks the executed test tree, including runtime skips.
 - **INV-1: Fail-closed classification.** Missing, false, or contradictory
   read annotations classify as writes unless deployment config or a current
   provider review supplies a verdict. Stale reviewed schemas fail closed.
-- **INV-2: Writes respect trust.** A write leaves a program only in a
-  `trusted` pool; otherwise it is its own top-level `call_destructive_tool`
-  call. `execute_code` is annotated as a write on trusted endpoints. Approval
-  belongs to the host.
+- **INV-2: Writes respect the endpoint.** A `readOnly` endpoint omits write
+  tools from search and describe and refuses every write call on every path
+  before validation or dispatch; guides may still name them. A writable endpoint sends writes only through
+  `call_destructive_tool` and programs, and annotates `execute_code` as a
+  write. Approval belongs to the host.
 - **INV-3: Generated code mints nothing.** No connectors, grants, downstream
   subject choice, client-dereferenceable URIs, or credentials. Enforcement
   lives below the sandbox.

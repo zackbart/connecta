@@ -40,15 +40,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it.each(["read-only", "trusted"] as const)(
+it.each([
+  ["read-only", true],
+  ["writable", false],
+] as const)(
   "INV-2, INV-3: reads connector-qualified resources in a %s program without loading tools or fetching the resource URL",
-  async (trust) => {
+  async (_endpoint, readOnly) => {
     const { connector, readResource, listTools } = fixture();
     const registry = makeRegistry([connector]);
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
     const uri = "https://arbitrary.example/account?subject=other#part";
-    const output = await read(registry, qualified("docs", uri), { trust, maxWrites: 1 });
+    const output = await read(registry, qualified("docs", uri), { readOnly, maxWrites: 1 });
     expect(output.isError).toBeUndefined();
     expect(output.structuredContent).toMatchObject({ result: { contents: [{ uri, text: "manual" }] } });
     expect(readResource).toHaveBeenCalledOnce();
@@ -68,8 +71,8 @@ it("INV-3, INV-4: hidden connectors and exact-tool grants cannot grant resource 
     registry.scoped({ connectorIds: ["docs"], toolAccess: new Map([["docs", new Set<string>()]]) }),
   ];
   for (const view of views) {
-    for (const trust of ["read-only", "trusted"] as const) {
-      const output = await read(view, qualified("docs"), { trust });
+    for (const readOnly of [true, false]) {
+      const output = await read(view, qualified("docs"), { readOnly });
       expect(output.structuredContent).toMatchObject({ error: { code: "unknown_address", retryable: false } });
     }
   }
@@ -104,7 +107,7 @@ it.each([
   expect(registry.listConnectors()).toEqual([connector]);
 });
 
-it("INV-2, INV-4: endpoint pools intersect whole-connector resource grants even when trusted", async () => {
+it("INV-2, INV-4: endpoint pools intersect whole-connector resource grants even when writable", async () => {
   const { connector, readResource } = fixture();
   const app = createTestConnecta({
     connectors: [connector, fixture({ id: "other" }).connector],
@@ -112,9 +115,9 @@ it("INV-2, INV-4: endpoint pools intersect whole-connector resource grants even 
     executor: scriptedExecutor((fns) => required(fns.read)(qualified("docs"))),
     identity: { connectorAccess: () => ["docs"] },
     pools: {
-      whole: { tools: ["docs"], trust: "read-only", grant: () => true },
-      tool: { tools: ["docs.read"], trust: "trusted", grant: () => true },
-      hidden: { tools: ["other"], trust: "trusted", grant: () => true },
+      whole: { tools: ["docs"], readOnly: true, grant: () => true },
+      tool: { tools: ["docs.read"], readOnly: false, grant: () => true },
+      hidden: { tools: ["other"], readOnly: false, grant: () => true },
     },
   });
   try {

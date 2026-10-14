@@ -79,6 +79,7 @@ describe("describeConfig", () => {
       await app.close();
     }
     const relative = createConnecta({
+      readOnly: false,
       connectors: [],
       executor,
       logger: "silent",
@@ -164,6 +165,7 @@ describe("describeConfig", () => {
 
   it("describes a connector without describe() as custom", async () => {
     const app = createConnecta({
+      readOnly: false,
       connectors: [{ id: "bare", listTools: async () => [], callTool: async () => null }],
       executor,
       logger: "silent",
@@ -187,7 +189,7 @@ describe("describeConfig", () => {
       calls: { defaultTimeoutMs: 9_000 },
       execute: { maxHostCalls: 7 },
       classification: { static_api: { read: "write" } },
-      trust: "trusted",
+      readOnly: false,
       admission: { requests: { concurrency: 4 } },
     });
     try {
@@ -203,7 +205,7 @@ describe("describeConfig", () => {
         },
         urls: { publicUrl: { origin: BASE, path: "/" }, mcpPath: "/mcp", allowedOrigins: "default" },
         executor: { admission: { concurrency: { value: 2, source: "default" } } },
-        trust: "trusted",
+        readOnly: false,
         classification: { static_api: { read: "write" } },
         auth: [
           { kind: "access_token", interactive: false },
@@ -250,6 +252,7 @@ describe("describeConfig", () => {
     // answers nothing stands in for D1.
     const db = { prepare: () => ({ bind: () => ({}) }), batch: async () => [] } as never;
     const shipped = createConnecta({
+      readOnly: false,
       connectors: [],
       executor,
       logger: "silent",
@@ -260,7 +263,7 @@ describe("describeConfig", () => {
     expect(shipped.describeConfig().modules.activity.store).toEqual({ kind: "d1", retentionDays: 30 });
     await shipped.close();
     const smuggling = { ...memoryStorage(), describe: () => ({ kind: SECRETS.storeDescribe }) };
-    const custom = createConnecta({ connectors: [], executor, logger: "silent", storage: smuggling });
+    const custom = createConnecta({ readOnly: false, connectors: [], executor, logger: "silent", storage: smuggling });
     expect(custom.describeConfig().storage).toEqual({ configured: true, kind: "custom" });
     expect(JSON.stringify(custom.describeConfig())).not.toContain("SENTINEL");
     await custom.close();
@@ -274,7 +277,7 @@ describe("describeConfig", () => {
       } as never,
       { lifecycle: "self-managed" },
     );
-    const app = createConnecta({ connectors: [], executor: admitting, logger: "silent" });
+    const app = createConnecta({ readOnly: false, connectors: [], executor: admitting, logger: "silent" });
     const snapshot = app.describeConfig();
     expect(snapshot.limits.calls.defaultTimeoutMs).toEqual({ value: null, source: "default" });
     expect(snapshot.executor.admission).toBe("executor");
@@ -317,7 +320,7 @@ describe("non-web URL schemes", () => {
   it.each(URLS)("INV-11: serverInfo.websiteUrl refuses %s without echoing it", (_, url) => {
     let error: unknown;
     try {
-      createConnecta({ connectors: [], executor, logger: "silent", serverInfo: { websiteUrl: url } });
+      createConnecta({ readOnly: false, connectors: [], executor, logger: "silent", serverInfo: { websiteUrl: url } });
     } catch (caught) {
       error = caught;
     }
@@ -360,6 +363,7 @@ describe("non-web URL schemes", () => {
     ]);
     const [, blob] = URLS[0];
     const app = createConnecta({
+      readOnly: false,
       connectors,
       executor,
       logger: "silent",

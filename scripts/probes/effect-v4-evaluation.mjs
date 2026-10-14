@@ -87,7 +87,7 @@ async function inspect(label, fetcher, req) {
   results.mcp.push(result);
   return result;
 }
-const deployment = createConnecta({ connectors: [], executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }), logger: 'silent' });
+const deployment = createConnecta({ readOnly: false, connectors: [], executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }), logger: 'silent' });
 const originalList = await inspect('connecta legacy fresh tools/list', req => deployment.fetch(req), request('tools/list'));
 const original = JSON.parse(originalList.body).result.tools;
 const first = makeServer();

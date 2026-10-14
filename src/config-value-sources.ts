@@ -65,13 +65,15 @@ export function describeConfigSources(
       source = provided(raw.serverInfo?.[key as keyof NonNullable<ConnectaConfig["serverInfo"]>]);
     else if (group === "urls")
       source = key === "mcpPath" ? "default" : provided(raw[key as "publicUrl" | "allowedOrigins"]);
-    else if (group === "trust") source = provided(raw.trust);
+    else if (group === "readOnly") source = provided(raw.readOnly);
     else if (group === "identity")
       source = provided(raw.identity?.[key as keyof NonNullable<ConnectaConfig["identity"]>]);
     else if (group === "storage") source = provided(raw.storage);
     else if (group === "deploymentInfo") source = provided(raw.deploymentInfo);
     else if (group === "classification") source = provided(raw.classification);
-    else if (group === "pools") source = field === "trust" ? provided(raw.pools?.[key!]?.trust) : provided(raw.pools);
+    else if (group === "pools")
+      // An inherited value comes from wherever the deployment's came from.
+      source = field === "readOnly" ? provided(raw.pools?.[key!]?.readOnly ?? raw.readOnly) : provided(raw.pools);
     else if (group === "modules") {
       const module =
         key === "ui" ? raw.ui : key === "vault" ? raw.vault : key === "activity" ? raw.activity : raw.accessTokens;

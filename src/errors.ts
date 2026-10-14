@@ -63,6 +63,7 @@ export type ClassificationCode =
   | "catalog_lookup_failed"
   | "result_too_large"
   | "destructive_tool_requires_approval"
+  | "read_only_endpoint"
   | "auth_replay_refused"
   | "write_outcome_unknown"
   | "result_processing_failed"
@@ -97,6 +98,7 @@ const CLASSIFICATION_CODE_TABLE = {
   catalog_lookup_failed: true,
   result_too_large: true,
   destructive_tool_requires_approval: true,
+  read_only_endpoint: true,
   auth_replay_refused: true,
   write_outcome_unknown: true,
   result_processing_failed: true,

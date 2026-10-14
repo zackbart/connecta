@@ -645,7 +645,7 @@ if (failures) {
           {
             name: "execute_code",
             description:
-              "One known read: call_tool. Everything else: execute_code. Read-only pool: programs read; writes use call_destructive_tool.",
+              "One known read: call_tool. Everything else: execute_code. Read-only endpoint: search and describe omit write tools, and every write call is refused.",
           },
         ],
       },
@@ -686,7 +686,7 @@ if (failures) {
       if (
         fixture.method === "tools/list" &&
         result.tools[0].description !==
-          "Every operation uses execute_code. Read-only pool: programs cannot write; a write is terminally refused."
+          "Every operation uses execute_code. Read-only endpoint: search and describe omit write tools, and every write call is refused."
       )
         throw new Error("Code tool guidance differs by HTTP encoding");
       if (
@@ -706,7 +706,7 @@ if (failures) {
 {
   const world = new World({ prerequisites: true });
   await world.start();
-  const deployment = await startNodeDeployment(world.connectorSpecs(), {}, undefined, "code");
+  const deployment = await startNodeDeployment(world.connectorSpecs(), { readOnly: true }, undefined, "code");
   const session = await connectMcp(deployment.mcpUrl, { Authorization: `Bearer ${deployment.token}` });
   try {
     const hidden = /\b(call_tool|call_destructive_tool|search_tools)\b/;
@@ -762,7 +762,7 @@ if (failures) {
     const caughtError = (caught.structured as { result: Record<string, unknown> }).result;
     for (const error of [uncaughtError, caughtError])
       if (
-        error.code !== "pool_read_only" ||
+        error.code !== "read_only_endpoint" ||
         error.retryable !== false ||
         error.nextAction ||
         hidden.test(JSON.stringify(error))
@@ -781,11 +781,11 @@ if (failures) {
   }
 }
 
-// Raw batches must not bypass the eval adapter, including trusted endpoints.
+// Raw batches must not bypass the eval adapter, including writable endpoints.
 {
   const world = new World();
   await world.start();
-  const deployment = await startNodeDeployment(world.connectorSpecs(), { trust: "trusted" }, undefined, "code");
+  const deployment = await startNodeDeployment(world.connectorSpecs(), { readOnly: false }, undefined, "code");
   try {
     for (const name of ["call_tool", "call_destructive_tool", "search_tools"]) {
       const response = await fetch(deployment.mcpUrl, {
@@ -811,7 +811,7 @@ if (failures) {
     }
     if (world.ledger.calls.length || world.tracker.issues.find((i) => i.id === "WEB-105")?.status !== "open")
       throw new Error("A hidden batch call dispatched or wrote state");
-    console.log("ok   code boundary: batches refused before dispatch even in a trusted pool");
+    console.log("ok   code boundary: batches refused before dispatch even on a writable endpoint");
   } finally {
     await deployment.close();
     await world.stop();

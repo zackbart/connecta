@@ -1,0 +1,38 @@
+{
+  "linear": [
+    [
+      "Connecta classifies the maintained writes explicitly and enforces the configured pool trust policy.",
+      "Connecta classifies the maintained writes explicitly, and a read-only endpoint refuses them."
+    ]
+  ],
+  "stripe": [
+    [
+      "Connecta therefore classifies both as writes and enforces the configured pool trust policy;",
+      "Connecta therefore classifies both as writes, which a read-only endpoint refuses;"
+    ],
+    [
+      "State the method and path explicitly; execution follows the configured pool trust policy.",
+      "State the method and path explicitly; a read-only endpoint refuses it."
+    ],
+    [
+      "with `method` and `path` stated; execution follows the configured pool trust policy.",
+      "with `method` and `path` stated; a read-only endpoint refuses it."
+    ]
+  ],
+  "vercel": [
+    [
+      "so Connecta reviews them as writes and the pool's trust policy gates them.",
+      "so Connecta reviews them as writes, and a read-only endpoint refuses them."
+    ],
+    [
+      "with `method` and `path` stated; execution follows the configured pool trust policy.",
+      "with `method` and `path` stated; a read-only endpoint refuses it."
+    ]
+  ],
+  "cloudflare": [
+    [
+      "A read-only pool therefore gets only `search` here. Deployments that need API reads from a read-only pool configure",
+      "A read-only endpoint therefore gets only `search` here. Deployments that need API reads from a read-only endpoint configure"
+    ]
+  ]
+}

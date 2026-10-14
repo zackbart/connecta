@@ -1,4 +1,4 @@
-// Budget and outcome accounting for writes dispatched by trusted programs.
+// Budget and outcome accounting for writes dispatched by programs on writable endpoints.
 // Await each dispatched write once; never conceal an unknown outcome.
 
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
@@ -61,7 +61,7 @@ export function writeStateOf(outcome: InvocationOutcome<unknown>): WriteCompleti
 type WriteCounts = { succeeded: number; failed: number; unknown: number };
 
 /**
- * The trusted-pool writes one program sends. The play closes this when the
+ * The writes one program sends. The play closes this when the
  * program settles — a write that reaches the gate after is not sent — and
  * drains what is on the wire before the run's scope aborts it, so the write
  * finishes and its activity says how it did. The result never hides a write

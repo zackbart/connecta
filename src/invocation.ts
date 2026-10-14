@@ -1,6 +1,6 @@
 import { withAuthorizationHandoff } from "./authorization-handoff.js";
 import { hasControlCharacters } from "./tool-name.js";
-import { surfaceAllowsTool, type PoolTrust } from "./tool-safety.js";
+import { writeRefusal } from "./tool-safety.js";
 import { Cause, Effect, Exit, type Scope } from "effect";
 import { type ActivityCallSource, type ActivityRequestContext, type AgentFriction } from "./activity.js";
 import { isCallAdmissionError, type CallAdmissionPermit } from "./call-admission.js";
@@ -231,7 +231,8 @@ export interface InvocationContext<T> {
   source: ActivityCallSource;
   /** The owning program retains these credentials only until its run ends. */
   sentSecrets?: SentSecrets;
-  trust?: PoolTrust | undefined;
+  /** The endpoint refuses every write. Resolved by the host route; default writable. */
+  readOnly?: boolean | undefined;
   timeoutMs?: number;
   requestSignal?: AbortSignal;
   /** Run ended: cancel resolution/admission, but spare a dispatched write. */
@@ -561,7 +562,7 @@ export class InvocationService {
         // Activity rows and this log line are both payload-free by
         // construction: the line is the failure's typed record, never its
         // message, which may be the downstream's own words (INV-6).
-        if (target && details.code !== "destructive_tool_requires_approval") {
+        if (target && details.code !== "destructive_tool_requires_approval" && details.code !== "read_only_endpoint") {
           logFailure(
             this.registry.contextFor(target.connector.id, this.catalog.baseUrl, this.catalog.requestScope).logger,
             "call failed",
@@ -651,8 +652,14 @@ export class InvocationService {
               reconciliationRequired: true as const,
             };
           }
-          if (!surfaceAllowsTool(target.definition.classification, context.source, context.trust)) {
-            const canonicalAddress = `${target.connector.id}.${target.toolName}`;
+          const refusal = writeRefusal(target.definition.classification, context.source, context.readOnly);
+          if (refusal === "read_only_endpoint") {
+            return framingError(
+              "read_only_endpoint",
+              `Tool "${canonicalAddress}" is a write, and this endpoint is read-only. Nothing here can send it.`,
+            );
+          }
+          if (refusal === "destructive_tool_requires_approval") {
             return framingError(
               "destructive_tool_requires_approval",
               `Tool "${canonicalAddress}" is a write. Invoke it through call_destructive_tool so the MCP host can request approval.`,

@@ -205,13 +205,13 @@ describe("what a write's outcome can know", () => {
       serverInfo: { name: "t", version: "0" },
       logger: silentLogger,
     });
-    const invalid = await service.invoke("w.send", {}, { source: "execute_code", trust: "trusted", beforeWrite: gate });
+    const invalid = await service.invoke("w.send", {}, { source: "execute_code", readOnly: false, beforeWrite: gate });
     expect(invalid).toMatchObject({ ok: false, error: { code: "invalid_args" } });
     expect(gate).not.toHaveBeenCalled();
     const refusedCall = await service.invoke(
       "w.send",
       { to: "a" },
-      { source: "execute_code", trust: "trusted", beforeWrite: gate },
+      { source: "execute_code", readOnly: false, beforeWrite: gate },
     );
     expect(refusedCall).toMatchObject({
       ok: false,

@@ -822,6 +822,7 @@ const REASON_LABELS: Readonly<Record<string, string>> = {
   invalid_args: "arguments didn't match the schema",
   destructive_reroute: "needed host approval",
   destructive_tool_requires_approval: "needed host approval",
+  read_only_endpoint: "endpoint is read-only",
   approval_required: "needed approval",
   auth_required: "needed authorization",
   result_too_large: "result too large to return inline",

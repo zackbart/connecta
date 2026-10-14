@@ -293,7 +293,7 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
     } as unknown as WorkerLoader;
     class LegacySubclass extends DynamicWorkerExecutor {}
     for (const executor of [new DynamicWorkerExecutor({ loader }), new LegacySubclass({ loader })]) {
-      const construct = () => createConnecta({ connectors: [], executor, logger: "silent" });
+      const construct = () => createConnecta({ readOnly: false, connectors: [], executor, logger: "silent" });
       for (const fragment of [
         "DynamicWorkerExecutor",
         "request-owned",
@@ -302,7 +302,12 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
       ])
         expect(construct).toThrow(fragment);
     }
-    const app = createConnecta({ connectors: [], executor: required(await loadWorkerExecutor()), logger: "silent" });
+    const app = createConnecta({
+      readOnly: false,
+      connectors: [],
+      executor: required(await loadWorkerExecutor()),
+      logger: "silent",
+    });
     await app.close();
   });
 
@@ -421,7 +426,7 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
       undefined,
       {
         maxHostCalls: 3,
-        trust: "trusted",
+        readOnly: false,
       },
     )({
       code: `async () => {

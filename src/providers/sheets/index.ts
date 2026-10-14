@@ -639,8 +639,8 @@ const SPREADSHEET_FIELDS = [
 
 function tools(client: GoogleWorkspaceClient): ApiTool[] {
   const readOnly = { readOnlyHint: true } as const;
-  // Additive: nothing that existed is lost. Program writes require a trusted
-  // pool; other writes use call_destructive_tool. The host controls approval.
+  // Additive: nothing that existed is lost. Writes require a writable
+  // endpoint: call_destructive_tool or a program. The host controls approval.
   const additive = { readOnlyHint: false, destructiveHint: false } as const;
   const destructive = { readOnlyHint: false, destructiveHint: true } as const;
   const spreadsheetPath = (args: JsonRecord) => `/spreadsheets/${encodeURIComponent(String(args["spreadsheetId"]))}`;
@@ -1381,7 +1381,7 @@ function usageGuide(purpose: string, instructions: string | undefined): string {
  *
  * Reads are read-only. `create_spreadsheet`, `add_sheet`, and `append_values`
  * are additive writes the host approves through call_destructive_tool or a
- * trusted program; the value writes, `clear_values`, and the raw
+ * program on a writable endpoint; the value writes, `clear_values`, and the raw
  * `batch_update_spreadsheet` are destructive.
  */
 export const sheets = asProviderFactory<SheetsOptions>({

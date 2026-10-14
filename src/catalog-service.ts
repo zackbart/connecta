@@ -632,6 +632,7 @@ export class CatalogService {
   private readonly concurrency: number;
   private readonly searchRoute: SearchRoute;
   private readonly requestSignal: AbortSignal | undefined;
+  private readonly readOnly: boolean;
   // The request-scoped catalog cache: one shared read per connector asked
   // about, started by the first asker and joined by every later one. A
   // success stays for the rest of the request, so a search and the call after
@@ -661,6 +662,11 @@ export class CatalogService {
       defer?: DeferredWork | undefined;
       /** The request's cancellation; discovery probes end with it. */
       requestSignal?: AbortSignal | undefined;
+      /**
+       * A read-only endpoint: search and describe show only reads. Resolution
+       * still finds a write, so the call that names one is refused by code.
+       */
+      readOnly?: boolean | undefined;
     } = {},
   ) {
     this.requestScope = options.requestScope ?? {};
@@ -669,6 +675,7 @@ export class CatalogService {
     this.searchRoute = options.searchRoute ?? "search_tools";
     this.requestSignal = options.requestSignal;
     this.defer = options.defer;
+    this.readOnly = options.readOnly === true;
   }
 
   /**
@@ -739,7 +746,8 @@ export class CatalogService {
   // each settling in its input slot: an unavailable catalog is a Failure
   // there, not a failed discovery. `route` names the surface in a timeout.
   // A probe also ends with its request, so no listing outlives the caller
-  // that asked for it.
+  // that asked for it. On a read-only endpoint a write is absent from search
+  // and describe, as if the connector never had it. Guides are not filtered.
   private discoveryCatalogs(
     ids: readonly string[],
     route: SearchRoute | "connecta.describe",
@@ -748,14 +756,22 @@ export class CatalogService {
       ids,
       (id) =>
         Effect.result(
-          withDeadlineEffect((signal) => this.catalog(id, { signal }), {
-            ...(this.requestSignal ? { signal: this.requestSignal } : {}),
-            timeoutMs: this.probeTimeoutMs,
-            timeoutError: new ConnectorCallError(
-              "timeout",
-              `${route} probe of "${id}" timed out after ${this.probeTimeoutMs}ms`,
-            ),
-          }),
+          withDeadlineEffect(
+            (signal) =>
+              this.readOnly
+                ? Effect.map(this.catalog(id, { signal }), (tools) =>
+                    tools.filter((tool) => tool.classification === "read"),
+                  )
+                : this.catalog(id, { signal }),
+            {
+              ...(this.requestSignal ? { signal: this.requestSignal } : {}),
+              timeoutMs: this.probeTimeoutMs,
+              timeoutError: new ConnectorCallError(
+                "timeout",
+                `${route} probe of "${id}" timed out after ${this.probeTimeoutMs}ms`,
+              ),
+            },
+          ),
         ),
       { concurrency: this.concurrency },
     );

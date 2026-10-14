@@ -163,7 +163,7 @@ export function stashChargeContract(open: StashFixtureFactory): void {
     const config: Parameters<typeof createConnecta>[0] = { connectors: [], executor, storage: legacy };
     expect(() => createConnecta(config)).toThrow("storage must declare capabilities.absoluteExpiry: true");
     expect(await inner.list("")).toEqual([]);
-    const app = createConnecta({ connectors: [], executor, storage: inner, logger: "silent" });
+    const app = createConnecta({ readOnly: false, connectors: [], executor, storage: inner, logger: "silent" });
     expect(await app.registry.stashResult("supported", ["x"], 900)).toBe(true);
     await app.close();
   });

@@ -2,12 +2,6 @@
 import type { Surface } from "../agent/surface.js";
 import type { ActiveTask, ReferenceContext } from "./types.js";
 
-const TRUSTED = new Set([
-  "cross-connector-join",
-  "stale-close-and-summarize",
-  "auth-required-recovery",
-  "truncated-read-paging",
-]);
 export function taskForSurface(task: ActiveTask, surface: Surface): ActiveTask {
   if (surface === "six") return task;
   let prompt = task.prompt;
@@ -18,7 +12,6 @@ export function taskForSurface(task: ActiveTask, surface: Surface): ActiveTask {
   return {
     ...task,
     prompt,
-    deployment: { ...task.deployment, ...(TRUSTED.has(task.id) ? { trust: "trusted" } : {}) },
     ...(task.id === "p5-read-only-program-refusal" ? { approvals: {} } : {}),
     reference: async (ctx) => {
       const programCall: ReferenceContext["call"] = (tool, args) => {

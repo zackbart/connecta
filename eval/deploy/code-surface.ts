@@ -3,7 +3,7 @@ import type { Connecta } from "@zackbart/connecta";
 import { CODE_TOOLS } from "../agent/surface.js";
 
 export const CODE_INSTRUCTIONS =
-  'Use execute_code for every operation: known reads, discovery, reductions and writes. Pass async () => { ... } with the connecta global and no arguments. Discover with connecta.search, inspect schemas with connecta.describe, call with connecta.call, page retained results with connecta.result, and deliver text/images/audio with connecta.emit. Keep discovery and calls together when schemas suffice. Programs may write only in trusted pools. Read-only pools cannot write from programs; pool_read_only is a terminal refusal with no retry. Never repeat a write for its output. After auth_required or downstream_oauth_required use authorize_connector, give its handoff to the operator, and wait before retrying. host_auth_required needs host connection repair. Fetch skills({ name: "usage" }) when instructions are insufficient or a program needs repair.';
+  'Use execute_code for every operation: known reads, discovery, reductions and writes. Pass async () => { ... } with the connecta global and no arguments. Discover with connecta.search, inspect schemas with connecta.describe, call with connecta.call, page retained results with connecta.result, and deliver text/images/audio with connecta.emit. Keep discovery and calls together when schemas suffice. Programs write only on a writable endpoint. On a read-only endpoint search omits write tools, guides may still name them, and read_only_endpoint is a terminal refusal with no retry. Never repeat a write for its output. After auth_required or downstream_oauth_required use authorize_connector, give its handoff to the operator, and wait before retrying. host_auth_required needs host connection repair. Fetch skills({ name: "usage" }) when instructions are insufficient or a program needs repair.';
 
 const CODE_USAGE_FRONTMATTER = {
   name: "usage",
@@ -53,13 +53,7 @@ export function codeValue(value: unknown): unknown {
   if (!value || typeof value !== "object") return value;
   const object = value as Record<string, unknown>;
   const result = Object.fromEntries(Object.entries(object).map(([key, item]) => [key, codeValue(item)]));
-  if (object.code === "destructive_tool_requires_approval") {
-    result.code = "pool_read_only";
-    result.message = "This read-only pool cannot write from programs. The operator can expose a trusted pool.";
-    result.retryable = false;
-    delete result.nextAction;
-    delete result.retry;
-  } else if (object.nextAction && typeof object.nextAction === "object") {
+  if (object.nextAction && typeof object.nextAction === "object") {
     const action = object.nextAction as Record<string, unknown>;
     if (action.tool === "search_tools") {
       result.nextAction = {
@@ -222,15 +216,10 @@ function withCodeSurface(connecta: Connecta): Connecta {
           );
           for (const tool of reply.result.tools) {
             if (tool.name === "execute_code")
-              tool.description = tool.description
-                .replace(
-                  /^One known read:[\s\S]*?Everything else: execute_code\. /,
-                  "Every operation uses execute_code. ",
-                )
-                .replace(
-                  "Read-only pool: programs read; writes use call_destructive_tool.",
-                  "Read-only pool: programs cannot write; a write is terminally refused.",
-                );
+              tool.description = tool.description.replace(
+                /^One known read:[\s\S]*?Everything else: execute_code\. /,
+                "Every operation uses execute_code. ",
+              );
           }
         }
         // Resolve the skill identity from the request, before rewriting either

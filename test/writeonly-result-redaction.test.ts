@@ -125,7 +125,7 @@ it.each(["mcp", "api"] as const)(
     const registry = makeRegistry([source.connector], {
       logger: { debug: record, info: record, warn: record, error: record },
     });
-    const meta = createMetaTools(registry, BASE, { trust: "trusted", activity: activity.activity });
+    const meta = createMetaTools(registry, BASE, { readOnly: false, activity: activity.activity });
     for (const value of [SECRET, "q"]) {
       const args = { config: { password: value } };
       for (const failed of [false, true]) {
@@ -180,7 +180,7 @@ it.each(["mcp", "api"] as const)(
             },
             silentLogger,
             activity.activity,
-            { trust: "trusted" },
+            { readOnly: false },
           );
           const result = await run({ code: "async () => {}" });
           expect(result.isError === true).toBe(failed);
@@ -389,7 +389,7 @@ it("INV-5 INV-6: private object names and encodings stay redacted through direct
     );
     const storage = memoryStorage();
     const registry = makeRegistry([source.connector], { storage, maxResultBytes: 1_024 });
-    const meta = createMetaTools(registry, BASE, { trust: "trusted" });
+    const meta = createMetaTools(registry, BASE, { readOnly: false });
     const check = (value: unknown) => {
       for (const form of forms(key)) expect(JSON.stringify(value)).not.toContain(form);
       expect(JSON.stringify(value)).toContain("[redacted]");
@@ -416,7 +416,7 @@ it("INV-5 INV-6: private object names and encodings stay redacted through direct
       },
       silentLogger,
       undefined,
-      { trust: "trusted" },
+      { readOnly: false },
     );
     check(await run({ code: "async () => {}" }));
     source.boundary();
@@ -426,7 +426,7 @@ it("INV-5 INV-6: private object names and encodings stay redacted through direct
     let body = "";
     let offset = 0;
     for (;;) {
-      const page = await createMetaTools(registry, BASE, { trust: "trusted" }).readResult({
+      const page = await createMetaTools(registry, BASE, { readOnly: false }).readResult({
         id: notice.resultId,
         offset,
         maxBytes: 1_024,

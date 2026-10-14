@@ -2,7 +2,6 @@ import type { GuestBlock, GuestNativeBlock } from "./guest-types.js";
 import { GUEST_API_DECLARATION } from "./usage-guide.js";
 import { bindMcpClient, type McpClientContext } from "./mcp-client-context.js";
 import type { AuthElicitation } from "./auth-elicitation.js";
-import type { PoolTrust } from "./tool-safety.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { Cause, Deferred, Duration, Effect, Exit, type Scope } from "effect";
@@ -488,11 +487,11 @@ interface SandboxLimits {
   emitCollector?: EmitCollector | undefined;
   /** Runtime-owned tail for stale catalog refreshes. */
   defer?: DeferredWork | undefined;
-  /** Pool trust, resolved by the host route. Default read-only. */
-  trust?: PoolTrust | undefined;
-  /** Trusted-pool writes one program may send. Default 10. */
+  /** The endpoint refuses every write. Resolved by the host route; default writable. */
+  readOnly?: boolean | undefined;
+  /** Writes one program may send on a writable endpoint. Default 10. */
   maxWrites?: number | undefined;
-  /** The program's trusted-pool writes, for close and drain. */
+  /** The program's writes, for close and drain. */
   programWrites?: ProgramWrites | undefined;
   /** Cancel calls still resolving or waiting for admission at run end. */
   dispatchController?: AbortController | undefined;
@@ -552,6 +551,8 @@ function sandboxProvider(
   const catalog = new CatalogService(registry, baseUrl, {
     requestScope,
     requestSignal: hostAccessSignal,
+    // connecta.search and connecta.describe never show a read-only endpoint's writes.
+    readOnly: limits.readOnly,
     // A program that just missed an address cannot call search_tools.
     searchRoute: "connecta.search",
     concurrency: limits.discoveryConcurrency,
@@ -594,7 +595,7 @@ function sandboxProvider(
     }
     return value;
   };
-  /** Budget and account for writes admitted by the pool trust decision. */
+  /** Budget and account for writes a writable endpoint admits. */
   const invocationContext = (sending: { settle?: SettleWrite }, timeoutMs: number) => ({
     source: "execute_code" as const,
     sentSecrets,
@@ -602,7 +603,7 @@ function sandboxProvider(
     ...(signal !== undefined ? { requestSignal: signal } : {}),
     ...(limits.dispatchController ? { dispatchSignal: limits.dispatchController.signal } : {}),
     unwrapResult: true,
-    trust: limits.trust,
+    readOnly: limits.readOnly,
     processResult: async (
       value: unknown,
       resolved: ResolvedCatalogTool,
@@ -611,17 +612,7 @@ function sandboxProvider(
       raw: unknown,
     ) => {
       const page = (data: unknown, valueFormat: "json" | "text", wireBytes?: number) =>
-        pageProgramResult(
-          registry,
-          baseUrl,
-          resolved,
-          data,
-          valueFormat,
-          secrets,
-          limits.trust,
-          requestScope,
-          wireBytes,
-        );
+        pageProgramResult(registry, baseUrl, resolved, data, valueFormat, secrets, requestScope, wireBytes);
       const envelope =
         resolved.connector.kind === "mcp" && raw !== null && typeof raw === "object"
           ? (raw as Record<string, unknown>)
@@ -775,7 +766,7 @@ function sandboxProvider(
         normalizeTimeoutMs(limits.defaultToolTimeoutMs) ??
         hostCallTimeoutMs;
       const timeoutMs = Math.min(requestedMs, Math.max(1, (limits.programDeadlineAt ?? Infinity) - Date.now()));
-      // A trusted-pool write settles here — unknown if the call never returned an
+      // A program write settles here — unknown if the call never returned an
       // outcome. Credentials are filtered from arguments; submitted private values are not.
       const sending: { settle?: SettleWrite } = {};
       const outcome = yield* invocation
@@ -841,7 +832,7 @@ function sandboxProvider(
     });
 
   const meta = createMetaTools(registry, baseUrl, {
-    trust: limits.trust,
+    readOnly: limits.readOnly,
     requestScope,
     onResultRead: (dependencies) => limits.resultDependencies?.push(...dependencies),
   });
@@ -1304,9 +1295,9 @@ interface RunnerConfig {
   hostCallTimeoutMs?: number | undefined;
   watchdogMs?: number | undefined;
   defer?: DeferredWork | undefined;
-  /** Pool trust, resolved by the host route. Default read-only. */
-  trust?: PoolTrust | undefined;
-  /** Trusted-pool writes one program may send (`execute.maxWrites`). Default 10. */
+  /** The endpoint refuses every write. Resolved by the host route; default writable. */
+  readOnly?: boolean | undefined;
+  /** Writes one program may send on a writable endpoint (`execute.maxWrites`). Default 10. */
   maxWrites?: number | undefined;
 }
 
@@ -1411,7 +1402,7 @@ export function createExecuteTool(
                 defaultToolTimeoutMs: config.defaultToolTimeoutMs,
                 programDeadlineAt: Date.now() + watchdog.ms,
                 defer: config.defer,
-                trust: config.trust,
+                readOnly: config.readOnly,
                 maxWrites: config.maxWrites,
                 programWrites,
                 resultDependencies,
@@ -1427,7 +1418,7 @@ export function createExecuteTool(
           );
         }
         const admitted = lease;
-        // A trusted-pool write may still be on the wire when the program settles:
+        // A program write may still be on the wire when the program settles:
         // close, so a write gated after this is not sent, then let the ones
         // already dispatched finish before the scope aborts them — an
         // abandoned write would be one whose outcome nobody knows.
@@ -1476,7 +1467,6 @@ export function createExecuteTool(
             baseUrl,
             [...new Map(resultDependencies.map((dependency) => [JSON.stringify(dependency), dependency])).values()],
             sentSecrets,
-            config.trust,
             logger,
             maxChars,
             programWrites.hasSucceeded,
@@ -1754,8 +1744,8 @@ const executeDescription = (
   connectorGuides: boolean,
   connectors: ReturnType<RegistryView["listConnectors"]>,
   maxWrites: number,
-  trust: PoolTrust,
-) => `One known read: call_tool. One known write: call_destructive_tool. Everything else: execute_code. ${trust === "trusted" ? "Trusted pool: programs may read and write; the host approves the program as a write." : "Read-only pool: programs read; writes use call_destructive_tool."} Limits: ${hostLimits.maxHostCalls} host calls, ${maxWrites} writes, ${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
+  readOnly: boolean,
+) => `${readOnly ? "One known read: call_tool. Everything else: execute_code. Read-only endpoint: search and describe omit write tools, and every write call is refused." : "One known read: call_tool. One known write: call_destructive_tool. Everything else: execute_code. Writable endpoint: programs may read and write; the client approves."} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
 ${connectorInventory(connectors)}
 
 Use async () => { ... }, no arguments. No portable ambient capabilities. API:
@@ -1815,9 +1805,9 @@ export function registerExecuteTool(
     /** Hard ceiling on one execution, outside the sandbox. Default 120_000. */
     watchdogMs?: number | undefined;
     defer?: DeferredWork | undefined;
-    /** Pool trust, resolved by the host route. Default read-only. */
-    trust?: PoolTrust | undefined;
-    /** Trusted-pool writes one program may send. Default 10. */
+    /** The endpoint refuses every write. Resolved by the host route; default writable. */
+    readOnly?: boolean | undefined;
+    /** Writes one program may send on a writable endpoint. Default 10. */
     maxWrites?: number | undefined;
   },
 ): void {
@@ -1845,7 +1835,7 @@ export function registerExecuteTool(
     hostCallTimeoutMs: hostLimits.hostCallTimeoutMs,
     watchdogMs: ctx.watchdogMs,
     defer: ctx.defer,
-    trust: ctx.trust,
+    readOnly: ctx.readOnly,
     maxWrites,
     requestScope: ctx.requestScope,
   });
@@ -1861,14 +1851,14 @@ export function registerExecuteTool(
         hasConnectorGuides(connectors),
         connectors,
         maxWrites,
-        ctx.trust ?? "read-only",
+        ctx.readOnly === true,
       ),
       inputSchema: EXECUTE_INPUT,
       outputSchema: EXECUTE_OUTPUT,
-      // The host sees execute_code as a write only on a trusted endpoint.
+      // The client sees execute_code as a write exactly when the endpoint writes.
       annotations: {
-        readOnlyHint: ctx.trust !== "trusted",
-        destructiveHint: ctx.trust === "trusted",
+        readOnlyHint: ctx.readOnly === true,
+        destructiveHint: ctx.readOnly !== true,
         openWorldHint: true,
       },
     },

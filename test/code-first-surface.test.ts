@@ -81,7 +81,7 @@ describe("the advertised surface", () => {
       const tools = body.result.tools as Array<{ name: string; description: string }>;
       expect(tools.map((tool) => tool.name).sort()).toEqual(SEVEN);
       const execute = tools.find((tool) => tool.name === "execute_code")?.description;
-      expect(execute).toContain("Read-only pool: programs read; writes use call_destructive_tool.");
+      expect(execute).toContain("Writable endpoint: programs may read and write; the client approves.");
       expect(execute).toContain("call_destructive_tool");
     }
   });

@@ -68,7 +68,7 @@ export const PLANNED_TASKS: PlannedTask[] = [
     sketch: {
       world:
         "stripe_sandbox over a fake Stripe holding ch_3Prefund000 (amount 5000 usd). The fake dedupes POST /v1/refunds by Idempotency-Key.",
-      approvals: "stripe_api_write is approved once; a trusted pool may run it inside a program.",
+      approvals: "stripe_api_write is approved once; a writable endpoint may run it inside a program.",
       faults:
         "The first POST /v1/refunds succeeds at the fake but answers HTTP 500 with request-id req_fault; a retry with the same Idempotency-Key returns the original refund.",
       grading: [
@@ -91,7 +91,7 @@ export const PLANNED_TASKS: PlannedTask[] = [
       world:
         "notion_bot: a token connector over a fake Notion (Notion-Version 2026-03-11) holding 'Q3 Offsite Plan' (page-q3) and a decoy 'Q3 Offsite Retro (2025)' (page-retro) whose titles both match 'offsite'; the fake records each request's method, path, body, and Notion-Version.",
       turns: ["One prompt; no follow-up."],
-      approvals: "The append write is approved once; a trusted pool may run it inside a program.",
+      approvals: "The append write is approved once; a writable endpoint may run it inside a program.",
       grading: [
         "correct-destination: the ledger shows one successful PATCH /v1/blocks/page-q3/children (integration_append_blocks or notion_api_write) whose children are three to_do blocks in order, unchecked.",
         "no-decoy: nothing is appended to page-retro, and no page is created.",
@@ -138,7 +138,7 @@ export const PLANNED_TASKS: PlannedTask[] = [
       world:
         "cloudflare_prod: an apiToken connector pinned to one account over a fake Cloudflare with zones example.com and example.net (both in the pinned account). example.com holds api.example.com A 192.0.2.10 with ttl 86400, an AAAA record with the same name, and a decoy api.example.net A record.",
       turns: ["One prompt; no follow-up."],
-      approvals: "cloudflare_api_write is approved once; a trusted pool may run it inside a program.",
+      approvals: "cloudflare_api_write is approved once; a writable endpoint may run it inside a program.",
       grading: [
         "state: the example.com A record for api.example.com has ttl 300 and unchanged content, name, type, and proxied; the AAAA record and the example.net decoy are untouched.",
         "correct-destination: the ledger shows exactly one PATCH /zones/<example.com id>/dns_records/<record id> (or a PUT carrying the record's existing type, name, and content) on cloudflare_prod.",

@@ -57,7 +57,7 @@ describe("cloudflare() over OAuth", () => {
     const guide = guideOf(connector);
     for (const text of [
       "Hosted MCP over OAuth",
-      "A read-only pool therefore gets only `search` here",
+      "A read-only endpoint therefore gets only `search` here",
       "configure an API-token connector",
       "no `graphql_query`",
       "authorize_connector",

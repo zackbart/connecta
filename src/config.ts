@@ -176,7 +176,7 @@ const execute = {
    */
   watchdogMs: whole({ min: 1, default: D.execute.watchdogMs }),
   /**
-   * Trusted-pool writes one program may send, on top of the host-call
+   * Writes one program may send on a writable endpoint, on top of the host-call
    * budget every call already spends. Default 10.
    */
   maxWrites: whole({ min: 1, default: D.execute.maxWrites }),
@@ -255,19 +255,23 @@ const identity = {
     fn<(identity: Readonly<AuthenticatedIdentity>) => ConnectorPermission | Promise<ConnectorPermission>>(),
 };
 
-const trust = () =>
-  opaque<"trusted" | "read-only", "trusted" | "read-only">({
-    check: (value, path) => {
-      if (value !== "trusted" && value !== "read-only") {
-        throw new ConfigError(`${path} must be "trusted" or "read-only".`);
-      }
-    },
-    resolve: (value) => value ?? "read-only",
-  });
+/** The choice every deployment makes explicitly while `trust` migrates (#820). */
+const READ_ONLY_REQUIRED = (path: string) =>
+  `${path} is required. Choose readOnly: true to refuse every write on /mcp, or readOnly: false to let ` +
+  "call_destructive_tool and programs write with MCP client approval. Pools inherit it unless they set their own.";
+
+function assertFlag(value: unknown, path: string): void {
+  if (typeof value !== "boolean") throw new ConfigError(`${path} must be true or false.`);
+}
 
 const pool = {
-  /** Programs may write only in trusted pools. Default read-only. */
-  trust: trust(),
+  /**
+   * Whether this pool's endpoint refuses every write: write tools are absent
+   * from search_tools, tool listings, and describe, and every write call is
+   * refused. Inherits the deployment's `readOnly` unless set here, in either
+   * direction.
+   */
+  readOnly: opaque<boolean>({ check: assertFlag }),
   /** Connector ids and exact `connector.tool` addresses in this pool. */
   tools: required(
     opaque<readonly string[]>({
@@ -309,7 +313,9 @@ const connectaConfig = {
       opaque<Connector>({
         check: (value, path) => {
           if (isObject(value) && Object.hasOwn(value, "approval")) {
-            throw new ConfigError(`${path}.approval was removed; configure pool trust instead.`);
+            throw new ConfigError(
+              `${path}.approval was removed; the MCP client owns approval. Set readOnly: true to refuse writes.`,
+            );
           }
           if (
             !isObject(value) ||
@@ -361,8 +367,6 @@ const connectaConfig = {
   identity: object(identity),
   /** Named tool pools, each served at `/mcp/<name>` to identities its grant admits. */
   pools: record(object(pool)),
-  /** Trust of the default /mcp endpoint. Default read-only. */
-  trust: trust(),
   /** Exact connector id -> tool name -> verdict. Unknown names fail at catalog publication. */
   classification: record(
     record(
@@ -521,6 +525,15 @@ const connectaConfig = {
       "workerExecutor({ loader: env.LOADER }) from " +
       '"@zackbart/connecta/worker" around DynamicWorkerExecutor on Workers.',
   ),
+  /**
+   * Required. Whether the default /mcp endpoint refuses every write. `true`:
+   * write tools are absent from search_tools, tool listings, and describe,
+   * and call_tool, call_destructive_tool, and program writes are refused.
+   * `false`: call_destructive_tool and programs may write, and the MCP
+   * client owns approval. Pools inherit it unless they set their own. It has
+   * no default while deployments migrate from `trust` (#820).
+   */
+  readOnly: required(opaque<boolean, boolean>({ check: assertFlag }), (path) => READ_ONLY_REQUIRED(path)),
 };
 
 const CONFIG = object(connectaConfig);
@@ -567,6 +580,10 @@ export interface ResolvedConfig extends Omit<Parsed, "serverInfo"> {
 /** Pause-only options #672 removed with `resume_execution`. */
 const RETIRED_PAUSE_OPTIONS = ["ConnectaConfig.execute.resumableWrites", "ConnectaConfig.execute.pausedRunTtlSeconds"];
 
+/** `trust`, on the deployment or a pool, was replaced by `readOnly` (#820). */
+const isRetiredTrust = (path: string): boolean =>
+  path === "ConnectaConfig.trust" || (path.startsWith("ConnectaConfig.pools.") && path.endsWith(".trust"));
+
 function rejectUnknownOptions(paths: string[]): void {
   if (paths.length === 0) return;
   throw new ConfigError(
@@ -579,10 +596,13 @@ function rejectUnknownOptions(paths: string[]): void {
         ? "\nMove branding into ui: operatorUi({ branding }) from @zackbart/connecta/ui."
         : "") +
       (paths.includes("ConnectaConfig.execute.approval")
-        ? '\nexecute.approval was removed. Set trust: "trusted" on a pool to allow program writes; the default is read-only.'
+        ? "\nexecute.approval was removed. The MCP client owns approval; set readOnly: true on the deployment or a pool to refuse writes."
         : "") +
       (paths.some((path) => RETIRED_PAUSE_OPTIONS.includes(path))
-        ? "\nPrograms no longer pause at writes, so there is nothing to configure: read-only pools route writes through call_destructive_tool; trusted pools allow program writes (issue #672). Delete the option."
+        ? "\nPrograms no longer pause at writes, so there is nothing to configure: writable endpoints let programs and call_destructive_tool write; readOnly endpoints refuse every write (issue #672). Delete the option."
+        : "") +
+      (paths.some(isRetiredTrust)
+        ? '\ntrust was removed (#820); set readOnly, which every deployment now chooses explicitly. trust: "read-only" becomes readOnly: true, which now also refuses call_destructive_tool. trust: "trusted" becomes readOnly: false. A pool inherits the deployment readOnly unless it sets its own.'
         : ""),
   );
 }

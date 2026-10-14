@@ -25,6 +25,7 @@ function connector(id = "shared", personal = false): Connector {
 function deployment(identity?: ConnectaIdentityConfig) {
   const storage = memoryStorage();
   return createConnecta({
+    readOnly: false,
     connectors: [connector(), connector("personal", true)],
     executor,
     logger: "silent",
@@ -43,7 +44,7 @@ describe("optional deployment modules", () => {
   });
 
   it("omits all UI routes while core health and OAuth callbacks remain available", async () => {
-    const app = createConnecta({ connectors: [], executor, logger: "silent" });
+    const app = createConnecta({ readOnly: false, connectors: [], executor, logger: "silent" });
     for (const path of [
       "/",
       "/credentials",
@@ -63,7 +64,14 @@ describe("optional deployment modules", () => {
   });
 
   it("omits vault and history routes independently while UI remains enabled", async () => {
-    const app = createConnecta({ connectors: [connector()], executor, auth, ui: operatorUi(), logger: "silent" });
+    const app = createConnecta({
+      readOnly: false,
+      connectors: [connector()],
+      executor,
+      auth,
+      ui: operatorUi(),
+      logger: "silent",
+    });
     for (const path of ["/ui/credentials/shared", "/ui/activity", "/activity"]) {
       expect((await app.fetch(new Request(BASE + path, { headers }))).status).toBe(404);
     }
@@ -77,6 +85,7 @@ describe("optional deployment modules", () => {
   ])("offers no credential handoff when a recovery module is missing (%j)", async (modules) => {
     const storage = memoryStorage();
     const app = createConnecta({
+      readOnly: false,
       connectors: [connector()],
       executor,
       auth,
@@ -112,6 +121,7 @@ describe("optional deployment modules", () => {
     slow.status = vi.fn(() => new Promise<never>(() => {}));
     slow.closeScope = vi.fn(async () => {});
     const app = createConnecta({
+      readOnly: false,
       connectors: [slow, fast],
       executor,
       auth,
@@ -165,6 +175,7 @@ describe("optional deployment modules", () => {
         release = () => resolve(null);
       });
     const app = createConnecta({
+      readOnly: false,
       connectors: [c],
       executor,
       auth,
@@ -249,6 +260,7 @@ describe("optional deployment modules", () => {
       finishAuth: vi.fn(async () => {}),
     };
     const app = createConnecta({
+      readOnly: false,
       connectors: [oauth],
       executor,
       auth,
@@ -284,6 +296,7 @@ describe("optional deployment modules", () => {
         disconnectAuth: vi.fn(async () => {}),
       };
       const app = createConnecta({
+        readOnly: false,
         connectors: [oauth],
         executor,
         auth,
@@ -314,6 +327,7 @@ describe("optional deployment modules", () => {
       finishAuth: vi.fn(async () => {}),
     };
     const app = createConnecta({
+      readOnly: false,
       connectors: [oauth],
       executor,
       auth,
@@ -354,6 +368,7 @@ describe("optional deployment modules", () => {
 
   it("mounts activity only with a reader and enforces interactive access", async () => {
     const app = createConnecta({
+      readOnly: false,
       connectors: [],
       executor,
       auth,
@@ -363,6 +378,7 @@ describe("optional deployment modules", () => {
     });
     expect((await app.fetch(new Request(BASE + "/ui/activity", { headers }))).status).toBe(200);
     const denied = createConnecta({
+      readOnly: false,
       connectors: [],
       executor,
       auth,

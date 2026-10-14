@@ -130,7 +130,8 @@ export function OverviewPage({ state }: { state: OperatorState }) {
             <p className="meta">
               {contract.live.connectors.reduce((n, c) => n + c.tools.length, 0)}
               {" tools across "}
-              {contract.live.connectors.length} connectors. Root endpoint trust: {contract.you.trust}.
+              {contract.live.connectors.length} connectors. Root endpoint:{" "}
+              {contract.you.readOnly ? "read-only" : "writable"}.
             </p>
             <a href="/tools" className="btn quiet">
               Browse tools

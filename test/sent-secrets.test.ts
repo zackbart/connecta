@@ -257,7 +257,7 @@ describe("call-scoped sent credentials", () => {
           return { result: { echoed: token }, logs: [token] };
         },
       };
-      const run = createExecuteTool(registry, BASE, executor, silentLogger, undefined, { trust: "trusted" });
+      const run = createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false });
       const result = await run({ code: "async () => {}" });
       expect(result.isError).toBeFalsy();
       expect(JSON.stringify(result)).not.toContain(token);

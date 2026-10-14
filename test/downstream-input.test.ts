@@ -237,7 +237,7 @@ function setup(
     identity: { credentialAdministration: () => (options.authFirst ? "all" : "none") },
     ...(options.authFirst ? { ui: operatorUi() } : {}),
     activity: activityHistory({ store: activity }),
-    pools: { trusted: { tools: ["service"], grant: () => true, trust: "trusted" } },
+    pools: { trusted: { tools: ["service"], grant: () => true, readOnly: false } },
     executor: {
       execute: async (_code, providers) => {
         try {

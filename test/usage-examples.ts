@@ -35,11 +35,7 @@ const fixture: Connector = {
 };
 
 /** Read the actual registered description, including every deployment variant. */
-export function usageDescription(
-  executor: Executor,
-  trust: "trusted" | "read-only" = "read-only",
-  guided = false,
-): string {
+export function usageDescription(executor: Executor, readOnly = false, guided = false): string {
   let description = "";
   const server = {
     registerTool(_name: string, options: { description: string }) {
@@ -50,7 +46,7 @@ export function usageDescription(
     baseUrl: BASE,
     executor,
     logger: silentLogger,
-    trust,
+    readOnly,
   });
   return description;
 }
@@ -101,9 +97,9 @@ export async function checkUsageExamples(executor: Executor): Promise<void> {
     if (index === 2)
       expect((required(result.structuredContent).hostCalls as { attempted: number }).attempted).toBeGreaterThan(1);
   }
-  for (const trust of ["trusted", "read-only"] as const) {
+  for (const readOnly of [false, true]) {
     for (const guided of [false, true]) {
-      const description = usageDescription(executor, trust, guided);
+      const description = usageDescription(executor, readOnly, guided);
       expect(description.length).toBeLessThan(1_800);
       for (const code of examples(description)) {
         const result = await run({ code });

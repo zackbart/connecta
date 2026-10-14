@@ -64,7 +64,7 @@ through to `fetch`. The example owns those details and
 
 ## Compose capabilities and access
 
-Both configurations use `defineConfig((env) => …)` and a required executor.
+Both configurations use `defineConfig((env) => …)`, a required executor, and a required `readOnly` choice.
 [Integrating services](./integrating.md) explains the `connectors` array.
 Configuration selects optional factories through explicit slots:
 
@@ -96,10 +96,15 @@ personal connection, token management, and activity access explicit.
 [Clerk setup](./auth.md#clerk-oauth-tokens-and-operator-sessions) owns resource-bound
 tokens and `aud_claim_enabled`. A person's operator session is not an MCP token.
 
-Root and named pools default to `read-only`. A `trusted` pool allows writes
-inside programs and marks `execute_code` as a write. Host approval remains the
-host's decision. Pool membership intersects the caller's grants; it never
-widens them. See [pools](./auth.md#pools) before changing trust.
+Every deployment must set `readOnly` in its configuration; startup fails without
+it, and the template and Worker example set `readOnly: false`. Each named pool
+inherits that value unless it sets its own. A writable endpoint (`false`) allows
+writes through `call_destructive_tool` and programs and marks `execute_code` as
+a write; the client decides what to approve. A read-only endpoint (`true`) omits
+write tools from search and describe and refuses every write call; provider
+guides may still name those tools. Pool membership intersects
+the caller's grants; it never widens them. See [pools](./auth.md#pools) before
+changing `readOnly`.
 
 ## Verify and diagnose
 

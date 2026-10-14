@@ -117,7 +117,7 @@ test.beforeAll(async () => {
     calls: { maxResultBytes: CONFIG_DEFAULTS.calls.maxResultBytes },
     identity: { connectorAccess: () => ["github", "slack", "slot"], accessTokenManagement: () => true },
     pools: {
-      support: { tools: ["github.read"], trust: "read-only", grant: () => true },
+      support: { tools: ["github.read"], readOnly: true, grant: () => true },
       denied: { tools: ["hidden"], grant: () => false },
     },
     accessTokens: accessTokens(storage),

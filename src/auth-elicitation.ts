@@ -230,7 +230,7 @@ export class AuthElicitation {
         requestSignal: AbortSignal.any([context.mcpReq.signal, this.options.requestSignal]),
       });
       // Recheck every entered read before restarting any part of a program.
-      // A trusted pool cannot authorize replay of a newly classified write.
+      // A writable endpoint cannot authorize replay of a newly classified write.
       for (const read of previous.reads) {
         const current = await catalog.resolveTool(read.address, { signal: context.mcpReq.signal });
         if (

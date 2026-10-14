@@ -341,7 +341,7 @@ describe("buildSandboxProviders", () => {
     });
   });
 
-  it("does not expose or execute tools annotated destructive", async () => {
+  it("INV-2: does not execute tools annotated destructive on a read-only endpoint", async () => {
     let calls = 0;
     const dangerous: Connector = connectorWith({
       id: "danger",
@@ -360,7 +360,9 @@ describe("buildSandboxProviders", () => {
         return { erased: true };
       },
     });
-    const providers = await buildSandboxProviders(makeRegistry([dangerous]), BASE, silentLogger);
+    const providers = await buildSandboxProviders(makeRegistry([dangerous]), BASE, silentLogger, undefined, {
+      readOnly: true,
+    });
     const connecta = connectaProvider(providers);
     const directError = await required(connecta.fns.call)("danger.erase", {}).then(
       () => undefined,
@@ -371,10 +373,11 @@ describe("buildSandboxProviders", () => {
       (error: unknown) => error as InvocationFailure,
     );
     expect(lazyError).toMatchObject({
-      code: "destructive_tool_requires_approval",
+      code: "read_only_endpoint",
       details: { message: directError?.details.message },
     });
-    expect(lazyError?.message).toContain("call_destructive_tool");
+    expect(lazyError?.message).toContain("this endpoint is read-only");
+    expect(lazyError?.nextAction).toBeUndefined();
     expect(calls).toBe(0);
   });
 
@@ -398,7 +401,9 @@ describe("buildSandboxProviders", () => {
         return "unsafe";
       },
     });
-    const providers = await buildSandboxProviders(makeRegistry([ambiguous]), BASE, silentLogger);
+    const providers = await buildSandboxProviders(makeRegistry([ambiguous]), BASE, silentLogger, undefined, {
+      readOnly: true,
+    });
     const connecta = connectaProvider(providers);
     await expect(required(connecta.fns.call)("ambiguous.missing_annotations", {})).rejects.toThrow("is a write");
     await expect(required(connecta.fns.call)("ambiguous.contradictory", {})).rejects.toThrow("is a write");
@@ -1034,11 +1039,16 @@ it("a synchronous unawaited burst cannot return success after exhausting its bud
 });
 
 describe("MCP and code-mode invocation parity", () => {
-  async function failuresFor(connector: Connector, address: string, options: { timeoutMs?: number } = {}) {
+  async function failuresFor(
+    connector: Connector,
+    address: string,
+    options: { timeoutMs?: number; readOnly?: boolean } = {},
+  ) {
     const mcpRegistry = makeRegistry([connector]);
     const mcpActivity = activityRecorder("mcp-request");
     const mcpResult = await createMetaTools(mcpRegistry, BASE, {
       activity: mcpActivity.activity,
+      ...(options.readOnly ? { readOnly: true } : {}),
     }).callTool({
       address,
       args: {},
@@ -1053,13 +1063,10 @@ describe("MCP and code-mode invocation parity", () => {
 
     const codeRegistry = makeRegistry([connector]);
     const codeActivity = activityRecorder("code-request");
-    const providers = await buildSandboxProviders(
-      codeRegistry,
-      BASE,
-      silentLogger,
-      codeActivity.activity,
-      options.timeoutMs ? { hostCallTimeoutMs: options.timeoutMs } : undefined,
-    );
+    const providers = await buildSandboxProviders(codeRegistry, BASE, silentLogger, codeActivity.activity, {
+      ...(options.timeoutMs ? { hostCallTimeoutMs: options.timeoutMs } : {}),
+      ...(options.readOnly ? { readOnly: true } : {}),
+    });
     const connecta = providers.find((provider) => provider.name === "connecta")!;
     const codeError = await required(connecta.fns.call)(address, {}).then(
       () => undefined,
@@ -1088,11 +1095,12 @@ describe("MCP and code-mode invocation parity", () => {
       expectedCode: "unknown_tool",
     },
     {
-      label: "non-read-only refusal",
+      label: "a read-only endpoint's write refusal",
       address: "parity.write",
-      expectedCode: "destructive_tool_requires_approval",
+      expectedCode: "read_only_endpoint",
+      readOnly: true,
     },
-  ])("uses the same code and wording for $label", async ({ address, expectedCode }) => {
+  ])("uses the same code and wording for $label", async ({ address, expectedCode, readOnly }) => {
     const connector: Connector = connectorWith({
       id: "parity",
       kind: "api",
@@ -1107,7 +1115,7 @@ describe("MCP and code-mode invocation parity", () => {
         throw new Error("should not dispatch");
       },
     });
-    const { mcpError, codeError } = await failuresFor(connector, address);
+    const { mcpError, codeError } = await failuresFor(connector, address, readOnly ? { readOnly } : {});
     expect(codeError.code).toBe(expectedCode);
     expect(codeError.details.message).toBe(mcpError.message);
     expect(codeError.retryable).toBe(mcpError.retryable);

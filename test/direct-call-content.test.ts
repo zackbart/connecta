@@ -49,7 +49,7 @@ describe("direct-call result projections", () => {
         const app = createTestConnecta({
           connectors: [connector],
           storage: memoryStorage(),
-          trust: "trusted",
+          readOnly: false,
           calls: { maxResultBytes: CAP },
           logger: silentLogger,
         });
@@ -92,7 +92,7 @@ describe("direct-call result projections", () => {
   it("INV-9: value-mode direct-call results mirror complete data or paging envelopes in both forms", async () => {
     for (const { kind, format, truncated, write } of cases) {
       const { connector, call, value } = fixture(kind, format, truncated, write);
-      const mt = createMetaTools(makeRegistry([connector], { maxResultBytes: CAP }), BASE, { trust: "trusted" });
+      const mt = createMetaTools(makeRegistry([connector], { maxResultBytes: CAP }), BASE, { readOnly: false });
       const args = { address: "down.run", resultMode: "value" as const };
       const result = await (write ? mt.callDestructiveTool(args) : mt.callTool(args));
       expect(result.isError).toBeFalsy();
@@ -129,7 +129,7 @@ describe("direct-call result projections", () => {
   it("INV-9: result pages retain the same bytes and metadata in both internal forms without recalling the tool", async () => {
     for (const { kind, format, write } of cases.filter((c) => c.truncated)) {
       const { connector, call, text } = fixture(kind, format, true, write);
-      const mt = createMetaTools(makeRegistry([connector], { maxResultBytes: CAP }), BASE, { trust: "trusted" });
+      const mt = createMetaTools(makeRegistry([connector], { maxResultBytes: CAP }), BASE, { readOnly: false });
       const args = { address: "down.run" };
       const result = await (write ? mt.callDestructiveTool(args) : mt.callTool(args));
       const notice = JSON.parse(required(result.content[0]).text.split("\n")[0]!);

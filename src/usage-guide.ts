@@ -16,9 +16,9 @@ description: How to route work between one execute_code program and Connecta's e
 
 Read one account with call_tool: \`{ "address": "crm.get_account", "args": { "id": "acct_42" } }\`.
 Discover and call together when schemas suffice. search_tools covers catalog
-inspection and write discovery in read-only pools. Programs may
-write only in trusted pools; the tool description states this endpoint's trust.
-Unannotated tools fail closed to writes.
+inspection. On a read-only endpoint, as execute_code's description says, search
+omits writes (guides may name them) and each fails read_only_endpoint; tell the
+user. Unannotated tools fail closed to writes.
 
 ## The global and the envelopes
 

@@ -55,7 +55,11 @@ export interface Connecta {
  * catalog lacks it. Remote catalogs load lazily, so their addresses are
  * checked at catalog load instead and stay unreachable until they match.
  */
-function resolvePools(pools: ResolvedConfig["pools"], registry: Registry): Map<string, ResolvedPool> {
+function resolvePools(
+  pools: ResolvedConfig["pools"],
+  readOnly: boolean,
+  registry: Registry,
+): Map<string, ResolvedPool> {
   const resolved = new Map<string, ResolvedPool>();
   if (!pools) return resolved;
   // The schema has already refused a pool that is not an object, a missing or
@@ -88,7 +92,8 @@ function resolvePools(pools: ResolvedConfig["pools"], registry: Registry): Map<s
         }
       }
     }
-    resolved.set(name, { access, trust: pool.trust, grant: pool.grant ?? (() => false) });
+    // A pool inherits the deployment value unless it sets its own, either way.
+    resolved.set(name, { access, readOnly: pool.readOnly ?? readOnly, grant: pool.grant ?? (() => false) });
   }
   return resolved;
 }
@@ -250,7 +255,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     results: resolved.results,
     classification: resolved.classification,
   });
-  const pools = resolvePools(resolved.pools, registry);
+  const pools = resolvePools(resolved.pools, resolved.readOnly, registry);
   warnInsecureConfig(resolved);
   const requestAdmission = new AdmissionController(resolved.admission.requests);
   let codeAdmission: AdmissionController | undefined;

@@ -195,7 +195,7 @@ function configRead(context: RouteContext): Effect.Effect<Response, Answer> {
         pools.push({
           name,
           path: `/mcp/${name}`,
-          trust: pool.trust,
+          readOnly: pool.readOnly,
           grants: grants(intersectAccess(authz, pool.access), ids),
         });
     }
@@ -247,7 +247,7 @@ function configRead(context: RouteContext): Effect.Effect<Response, Answer> {
       you: {
         interactive: authz.identity.interactive,
         grants: grants(authz, ids),
-        trust: opts.config.trust,
+        readOnly: opts.config.readOnly,
         pools,
         permissions: {
           activity: activity === "available" || activity === "unavailable",

@@ -69,7 +69,7 @@ personal connectors to the caller's activity identity. Each retained fact
 copies a validated timestamp and outcome only. A null call means unknown or
 absent in that window, not proof of no calls. `live.activity` distinguishes
 available, unconfigured, forbidden, and unavailable history. `you` names no
-identity or auth material; it reports grants, root and admitted-pool trust,
+identity or auth material; it reports grants, whether the root and admitted pools are read-only,
 and effective activity, token, and per-connector auth permissions.
 
 `connecta doctor --config` fetches this authenticated contract and prints only
@@ -112,7 +112,7 @@ id and typed actor when available, otherwise a fresh id and system actor. No
 names, descriptions or schemas enter the event. Private catalog changes require
 a matching principal owner even when the connector uses shared auth. Empty credential declarations
 report `credential_required` before running a connector status or catalog probe.
-The Access adapter reports inbound provider kinds, admitted pools, grants, trust
+The Access adapter reports inbound provider kinds, admitted pools, grants, read-only endpoints
 and endpoint setup; token controls retain their existing permission gate.
 Configuration remains in deployment code. The UI mutates only credentials,
 OAuth connections and client tokens through the existing routes.

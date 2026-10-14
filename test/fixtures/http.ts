@@ -13,6 +13,8 @@ let rpcId = 0;
 type RpcOptions = {
   baseUrl?: string;
   id?: number;
+  /** A named pool: the request goes to `/mcp/<pool>`. */
+  pool?: string;
   query?: string;
   runtimeContext?: { waitUntil(promise: Promise<unknown>): void };
   signal?: AbortSignal;
@@ -62,7 +64,7 @@ export function mcpRpc(
   };
   if (options.token) headers.Authorization = `Bearer ${options.token}`;
   const request = new Request(
-    `${options.baseUrl ?? TEST_BASE}/mcp${options.query ?? ""}`,
+    `${options.baseUrl ?? TEST_BASE}/mcp${options.pool ? `/${options.pool}` : ""}${options.query ?? ""}`,
     {
       method: "POST",
       headers,
@@ -166,8 +168,9 @@ export function calcApi(options: {
 }
 
 export function makeDeployment(
-  config: Partial<Omit<ConnectaConfig, "executor">> & {
+  config: Partial<Omit<ConnectaConfig, "executor" | "readOnly">> & {
     executor?: ConnectaConfig["executor"];
+    readOnly?: boolean;
   } = {},
 ) {
   return createTestConnecta({

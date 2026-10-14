@@ -25,6 +25,7 @@ interface Env {
 function build(env: Env) {
   const storage = d1Storage(env.CONNECTA_DB);
   return createConnecta({
+    readOnly: false,
     publicUrl: env.PUBLIC_URL,
     storage,
     executor: workerExecutor({ loader: env.LOADER }),

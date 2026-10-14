@@ -6,15 +6,15 @@
 and package maintenance. This guide owns identity, grants, and downstream
 credential contracts; use [deployment setup](./deploying.md) for runnable steps.
 
-| Task                                                  | Sections                                                                                                                                                                      |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Connect a machine or migrate an old client            | [Managed tokens](#managed-client-tokens-and-upgrading-from-v023), [static bearer migration](#migrating-static-bearer-clients)                                                 |
-| Configure caller visibility, trust, or auth ownership | [Principals and operators](#principals-visibility-and-operators), [pools](#pools), [shared and personal auth](#shared-and-personal-auth)                                      |
-| Set up human sign-in                                  | [Access on Workers](#cloudflare-access-on-workers), [Clerk tokens and sessions](#clerk-oauth-tokens-and-operator-sessions), [management](#human-authentication-management)    |
-| Enable credential or connection controls              | [Management permissions](#management-permissions), [start/restart/disconnect](#starting-restarting-and-disconnecting)                                                         |
-| Diagnose consent or token refresh                     | [State at rest](#downstream-oauth-state-at-rest), [callbacks](#consents-and-callbacks), [refresh failures](#refresh-failures), [safe errors](#what-a-servers-errors-may-say)  |
-| Configure a downstream OAuth client or HTTP handler   | [Client registration](#downstream-oauth-client-registration), [api() OAuth](#downstream-oauth-on-api), [request-local bearer tokens](#request-local-downstream-bearer-tokens) |
-| Review browser or downstream URL boundaries           | [Origins](#origins), [advertised URLs](#urls-a-downstream-advertises), [one server per grant](#one-server-per-grant)                                                          |
+| Task                                                                | Sections                                                                                                                                                                      |
+| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Connect a machine or migrate an old client                          | [Managed tokens](#managed-client-tokens-and-upgrading-from-v023), [static bearer migration](#migrating-static-bearer-clients)                                                 |
+| Configure caller visibility, read-only endpoints, or auth ownership | [Principals and operators](#principals-visibility-and-operators), [pools](#pools), [shared and personal auth](#shared-and-personal-auth)                                      |
+| Set up human sign-in                                                | [Access on Workers](#cloudflare-access-on-workers), [Clerk tokens and sessions](#clerk-oauth-tokens-and-operator-sessions), [management](#human-authentication-management)    |
+| Enable credential or connection controls                            | [Management permissions](#management-permissions), [start/restart/disconnect](#starting-restarting-and-disconnecting)                                                         |
+| Diagnose consent or token refresh                                   | [State at rest](#downstream-oauth-state-at-rest), [callbacks](#consents-and-callbacks), [refresh failures](#refresh-failures), [safe errors](#what-a-servers-errors-may-say)  |
+| Configure a downstream OAuth client or HTTP handler                 | [Client registration](#downstream-oauth-client-registration), [api() OAuth](#downstream-oauth-on-api), [request-local bearer tokens](#request-local-downstream-bearer-tokens) |
+| Review browser or downstream URL boundaries                         | [Origins](#origins), [advertised URLs](#urls-a-downstream-advertises), [one server per grant](#one-server-per-grant)                                                          |
 
 [Credential recognition and admission](#credential-recognition-and-admission)
 defines refusal precedence.
@@ -90,6 +90,7 @@ createConnecta({
       principal.id === "your-operator-id",
   },
   connectors, executor,
+  readOnly: false, // required: true refuses every write call
 });
 ```
 
@@ -206,6 +207,7 @@ createConnecta({
     },
   },
   connectors: [issues, campaigns, billing], executor,
+  readOnly: false, // required: true refuses every write call
 });
 ```
 
@@ -215,12 +217,12 @@ grant both connectors in full. Unknown or unprincipalled identities get `[]`.
 Use a stable authenticated principal or subject, never request headers or tool
 arguments. A token's stored principal is vouched for by inbound auth. Pools narrow their endpoint, not plain `/mcp`.
 
-| Catalog change                                           | Guarded exact grant                                                                                      | Unrestricted exact string grant                                     |
-| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| New name                                                 | Excluded until reviewed and added                                                                        | Excluded until reviewed and added                                   |
-| Removed or renamed name                                  | Unreachable; warned when the scoped view reads the catalog                                               | Same                                                                |
-| Stored write verdict after overrides and provider review | Removed from discovery and every invocation path, including `call_destructive_tool` and trusted programs | Still granted; `call_tool` refuses writes and write paths take over |
-| Schema change alone                                      | Does not revoke, unless it breaks a reviewed digest: then it is a write, as above                        | Same as above                                                       |
+| Catalog change                                           | Guarded exact grant                                                                                                     | Unrestricted exact string grant                                     |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| New name                                                 | Excluded until reviewed and added                                                                                       | Excluded until reviewed and added                                   |
+| Removed or renamed name                                  | Unreachable; warned when the scoped view reads the catalog                                                              | Same                                                                |
+| Stored write verdict after overrides and provider review | Removed from discovery and every invocation path, including `call_destructive_tool` and programs on a writable endpoint | Still granted; `call_tool` refuses writes and write paths take over |
+| Schema change alone                                      | Does not revoke, unless it breaks a reviewed digest: then it is a write, as above                                       | Same as above                                                       |
 
 The example assumes both exact tools were reviewed as read-only; names imply no safety.
 Review schemas, annotations, and downstream behavior
@@ -236,7 +238,7 @@ Failed remote loads are errors, not empty catalogs. A transient first-page tool
 listing failure may serve complete facts in the same auth partition for five
 minutes after expiry. Failed pagination, permission and auth failures do not
 use this fallback. The expired deadline cannot authorize auth recovery. Personal OAuth ownership and credential
-administration are separate from visibility; program writes follow the endpoint's trust tier and host approval. `test/identity-scope.test.ts` exercises these boundaries.
+administration are separate from visibility; writes follow the endpoint's `readOnly` setting and client approval. `test/identity-scope.test.ts` exercises these boundaries.
 
 ## Migrating static bearer clients
 
@@ -284,6 +286,7 @@ createConnecta({
   storage,
   accessTokens: accessTokens(storage),
   auth: clerkAuth({ publishableKey, secretKey }),
+  readOnly: false, // required; pools without their own readOnly inherit it
   pools: {
     support: {
       tools: ["linear", "notion.search_pages", "notion.fetch_page"],
@@ -292,6 +295,11 @@ createConnecta({
     calendar_bot: {
       tools: ["calendar.create_event"],
       grant: ({ actor }) => actor.kind === "access_token" && actor.id === calendarTokenId,
+    },
+    reporting: {
+      tools: ["linear", "notion"],
+      readOnly: true,
+      grant: ({ principal }) => analysts.has(principal?.id ?? ""),
     },
   },
   identity: { connectorAccess },
@@ -302,12 +310,30 @@ createConnecta({
 Without configured `auth`, an open deployment has one anonymous, non-interactive
 identity; grants like these return false and every pool path 404s.
 
+Each endpoint is writable or read-only. The deployment's `readOnly` sets the
+plain `/mcp` endpoint and is required: a deployment that omits it fails at
+construction and must choose `true` or `false`. A pool inherits it unless the
+pool sets its own `readOnly`, in either direction. A writable endpoint lets
+`call_destructive_tool` and programs write, and the MCP client decides what to
+approve. On a read-only endpoint, write tools are absent from `search_tools`
+results, `connecta.search`, and `connecta.describe`, and `call_tool`,
+`call_destructive_tool`, and program writes are refused with
+`read_only_endpoint` before validation or dispatch. Reads, including reads
+through `call_destructive_tool`, still run.
+Guides are documentation, not discovery: provider `SKILL.md` and usage guides,
+surfaced through `queryAnalysis.guideSummary`, `skills`, `connecta.skill`, and
+skill `resources/read`, are the same on every endpoint and may name tools a
+read-only endpoint refuses.
+Resource reads, grants, and `connectorAccess`, including guarded
+`requireReadOnly` grants, are the same on both. The removed `trust` option fails
+construction with a message naming `readOnly`.
+
 | Rule         | Contract                                                                                                                                                                                                                                                     |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Scope        | `/mcp/<pool>` intersects pool tools with the identity's `connectorAccess`, never widening it. Plain `/mcp` is unchanged; the resolver remains the security boundary.                                                                                         |
 | Grant        | Defaults to deny; only literal `true` admits. Other returns, throws, and undeclared names produce an identical 404 status, body, and headers, after auth. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content. |
 | Timing       | Declared names await grants, so timing is not hidden. Keep grants pure and fast and names unsecret; names grant no access. The operator log records the refusal reason.                                                                                      |
-| Construction | Malformed names, unknown options or connectors, empty pools, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load.                                                                                            |
+| Construction | Malformed names, unknown options or connectors, empty pools, a non-boolean `readOnly`, a retired `trust`, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load.                                               |
 | Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                         |
 | Drift        | No wildcards; tool grants are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO.                                                                                                                           |
 
@@ -809,6 +835,7 @@ createConnecta({
     activityAccess: ({ id }) => id === "owner-id",
   },
   connectors, executor,
+  readOnly: false, // required: true refuses every write call
 });
 ```
 
@@ -821,7 +848,7 @@ Access trusts the identity validated at the Worker edge.
 
 ```ts
 import { cloudflareAccessAuth } from "@zackbart/connecta/auth/cloudflare-access";
-createConnecta({ auth: cloudflareAccessAuth(), connectors, executor });
+createConnecta({ auth: cloudflareAccessAuth(), connectors, executor, readOnly: false });
 ```
 
 The adapter trusts only `ctx.access`, which Cloudflare attaches after validating
@@ -1011,7 +1038,7 @@ fallbacks, including a failed listing followed by cached annotations, cannot
 authorize a re-run. Normal calls retain their existing stale-fallback behavior.
 Before an accepted retry restarts any call, it rechecks every entered read.
 A write classification, changed classification digest, or stale catalog returns
-`auth_replay_refused` with reconciliation guidance, including in trusted programs.
+`auth_replay_refused` with reconciliation guidance, including in programs on a writable endpoint.
 Pre-invocation credential-resolution eligibility is unchanged.
 Custom vaults may implement the host-only `requestStateKey` method; without it, the
 deployment retains the ordinary handoff. It must return a stable,

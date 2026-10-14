@@ -8,6 +8,7 @@ import guideChanges from "./fixtures/hosted-5c-guide-changes.json";
 import usageGuideChanges from "./fixtures/hosted-p2-item5-guide-changes.json";
 import errorGuideChanges from "./fixtures/hosted-p2-item4-guide-changes.json";
 import provenanceChanges from "./fixtures/hosted-p4-provenance-changes.json";
+import readOnlyGuideChanges from "./fixtures/hosted-readonly-820-guide-changes.json";
 import trustChanges from "./fixtures/providers-p2-item1-contract-changes.json";
 import { classifyTool } from "../src/tool-safety.js";
 import { providerFixtures } from "./providers.generated.js";
@@ -40,8 +41,10 @@ async function hash(value: unknown): Promise<string> {
 function expectedGuide(name: Name, content: string): string {
   const usage = usageGuideChanges as Partial<Record<Name, string[][]>>;
   const repairs = errorGuideChanges as Partial<Record<Name, string[][]>>;
+  // Issue #820 replaces pool trust wording with readOnly endpoints.
+  const readOnly = readOnlyGuideChanges as Partial<Record<Name, string[][]>>;
   const changes = Object.hasOwn(configChanges, name) ? [] : guideChanges[name];
-  for (const [from, to] of [...changes, ...(repairs[name] ?? []), ...(usage[name] ?? [])])
+  for (const [from, to] of [...changes, ...(repairs[name] ?? []), ...(usage[name] ?? []), ...(readOnly[name] ?? [])])
     content = content.replaceAll(from!, to!);
   return content;
 }

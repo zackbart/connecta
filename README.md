@@ -86,19 +86,20 @@ summarize them in its program, or read a large result in smaller pieces.
 
 ## Writes, credentials, and access
 
-Connecta distinguishes reads from writes. By default, programs can read, and
-each change uses a separate visible tool call. Your agent's host controls
-whether it asks for approval. You can explicitly allow programs to make
-changes too; the host then sees the program tool as a write. This choice does
-not give a caller access to additional services.
+Connecta distinguishes reads from writes, and each endpoint is either writable
+or read-only. By default an endpoint is writable: your agent can make a change
+with one visible tool call or inside a program, and your agent's host decides
+whether to ask for approval; it sees the program tool as a write. You can mark
+the whole deployment or a single endpoint read-only, and then nothing there can
+change anything: search leaves write tools out and every write is refused. You
+make this choice explicitly for each deployment. Neither choice gives a caller
+access to additional services.
 
 ```mermaid
 flowchart TB
-    Change["Your agent wants to change something"] --> Choice{"Are programs allowed<br/>to make changes?"}
-    Choice -->|"Default: no"| Separate["A separate visible call for each change"]
-    Choice -->|"Explicit choice: yes"| Program["A program that can make changes"]
-    Separate --> Host["Your agent's host handles approval"]
-    Program --> Host
+    Change["Your agent wants to change something"] --> Choice{"Is this endpoint<br/>read-only?"}
+    Choice -->|"Explicit choice: yes"| Refused["Refused; nothing is sent"]
+    Choice -->|"Default: no"| Host["Your agent's host handles approval"]
     Host --> Access["Connecta checks the caller's access"]
     Access --> Services["The connected service receives the change"]
 

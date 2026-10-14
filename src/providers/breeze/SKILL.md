@@ -55,7 +55,7 @@ may be missing. Read the currency from `get_account_summary`.
 
 - Every write, `add_person`, `assign_tag`, and `record_check_in`
   included, follows the routing in the `usage` skill. Fetch it with
-  `skills({ name: "usage" })` for guest API and trust rules.
+  `skills({ name: "usage" })` for guest API and write rules.
   Those three only add, and `add_person` never deduplicates.
 - `update_person` field values: text, date (M/D/YYYY), or option id in
   `response`; email, phone, address, and family_role values in `details`.
