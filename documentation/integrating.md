@@ -181,7 +181,7 @@ HTTP example and the client setup contract.
 
 Mark every side-effecting tool `readOnlyHint: false`. On a writable endpoint
 writes use `call_destructive_tool` or a program, within the caller's grants; a
-`readOnly` endpoint hides and refuses them. Client approval is independent of
+`readOnly` endpoint refuses them and omits them from search. Client approval is independent of
 tool definition. Use declared output
 schemas when known; runtime observations cannot replace them.
 

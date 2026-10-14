@@ -91,8 +91,9 @@ or read-only. By default an endpoint is writable: your agent can make a change
 with one visible tool call or inside a program, and your agent's host decides
 whether to ask for approval; it sees the program tool as a write. You can mark
 the whole deployment or a single endpoint read-only, and then nothing there can
-change anything: write tools are hidden and every attempt is refused. Neither
-choice gives a caller access to additional services.
+change anything: search leaves write tools out and every write is refused. You
+make this choice explicitly for each deployment. Neither choice gives a caller
+access to additional services.
 
 ```mermaid
 flowchart TB

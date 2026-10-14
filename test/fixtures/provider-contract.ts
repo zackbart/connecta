@@ -14,7 +14,7 @@ export async function providerContract(fixture: ContractFixture) {
   for (const scenario of [...fixture.cases, { label: "instructions", options: { instructions: "  Local deployment instructions.  ", title: "Fixture title", maxResultBytes: 12000 } }]) {
     const connector = fixture.create("fixture", scenario.options);
     const raw = connector.staticTools ?? Object.keys(connector.classification?.tools ?? {}).map((name) => ({ name }));
-    const deployment = createConnecta({
+    const deployment = createConnecta({ readOnly: false,
       connectors: [{ ...connector, listTools: async () => raw }],
       storage: memoryStorage(), logger: silentLogger,
       executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),

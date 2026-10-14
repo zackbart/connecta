@@ -746,8 +746,8 @@ export class CatalogService {
   // each settling in its input slot: an unavailable catalog is a Failure
   // there, not a failed discovery. `route` names the surface in a timeout.
   // A probe also ends with its request, so no listing outlives the caller
-  // that asked for it. On a read-only endpoint a write is absent from every
-  // listing, as if the connector never had it.
+  // that asked for it. On a read-only endpoint a write is absent from search
+  // and describe, as if the connector never had it. Guides are not filtered.
   private discoveryCatalogs(
     ids: readonly string[],
     route: SearchRoute | "connecta.describe",

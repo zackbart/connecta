@@ -713,7 +713,7 @@ function metaToolsForRequest(
   opts: {
     /** Deadline applied when a call passes no `timeoutMs`. Off when unset. */
     defaultToolTimeoutMs?: number | undefined;
-    /** The endpoint refuses every write: hides writes from discovery and refuses their calls and pages. */
+    /** The endpoint refuses every write call and write page, and search and describe omit write tools. */
     readOnly?: boolean | undefined;
     /** Per-connector deadline for the search/describe probe fan-out. Default 30_000. */
     probeTimeoutMs?: number | undefined;
@@ -1233,14 +1233,14 @@ function metaToolsForRequest(
 }
 
 const SEARCH_DESC = (readOnly: boolean) =>
-  `${readOnly ? "Use top-level search for catalog inspection; this read-only endpoint lists no writes." : "Use top-level search for catalog inspection or approval-required work before call_destructive_tool."} Unknown-address read-only work belongs in one execute_code program that searches, calls, and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" finds tools that run unasked; "approvalRequired" finds the fail-closed complement. These filters grant no authority. Empty query browses. Returns { catalogErrors, tools, total, offset, limit, hasMore }; read catalogErrors and absence before selecting a tool. Compact schemas have schemaFormat="text".`;
+  `${readOnly ? "Use top-level search for catalog inspection; this read-only endpoint omits write tools." : "Use top-level search for catalog inspection or approval-required work before call_destructive_tool."} Unknown-address read-only work belongs in one execute_code program that searches, calls, and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" finds tools that run unasked; "approvalRequired" finds the fail-closed complement. These filters grant no authority. Empty query browses. Returns { catalogErrors, tools, total, offset, limit, hasMore }; read catalogErrors and absence before selecting a tool. Compact schemas have schemaFormat="text".`;
 const CALL_DESC = (readOnly: boolean) =>
   `Call one known-address tool explicitly annotated readOnlyHint: true. Use execute_code for unknown-address, multiple, dependent, or reduced read-only work. ${readOnly ? "This endpoint is read-only and refuses every write." : "Unannotated or write-capable tools fail closed to call_destructive_tool."} A truncated result carries a connecta.result action.`;
 const CALL_DESTRUCTIVE_DESC =
   "Call any tool not explicitly annotated readOnlyHint: true. Include a short reason for the human reviewer after checking the schema and consequences. The reason grants no authority and is not sent downstream.";
 /** A read-only endpoint keeps the six-tool surface, so this tool says why it never writes here. */
 const CALL_DESTRUCTIVE_READ_ONLY_DESC =
-  "This endpoint is read-only: write tools are hidden from discovery and every call here is refused. Use call_tool or execute_code for reads.";
+  "This endpoint is read-only: search and describe omit write tools, and every write call here is refused. Reads still run; prefer call_tool or execute_code for them.";
 const AUTHORIZE_DESC =
   "Use after auth_required. Returns an OAuth or operator-credential handoff, or reports required deployment configuration. force=true requests an OAuth restart when the verified user opens the /connect URL; this tool never accepts credentials.";
 const SKILLS_DESC =

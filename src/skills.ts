@@ -16,9 +16,10 @@ const RECOVERY =
 /**
  * The always-loaded MCP `instructions` string. An endpoint is writable or
  * read-only: a writable one lets programs and call_destructive_tool write,
- * and the client owns approval; a read-only one hides and refuses every write.
+ * and the client owns approval; a read-only one omits write tools from search
+ * and describe and refuses every write call. Guides may still name them.
  */
-export const CONNECTA_INSTRUCTIONS = `${ROUTE} On a writable endpoint, programs and call_destructive_tool may write. On a read-only endpoint, write tools are hidden and every write is refused. The execute_code description says which this endpoint is. Never repeat a write to recover its output. ${RECOVERY}`;
+export const CONNECTA_INSTRUCTIONS = `${ROUTE} On a writable endpoint, programs and call_destructive_tool may write. On a read-only endpoint, search omits write tools and every write call is refused; guides may still name them. The execute_code description says which this endpoint is. Never repeat a write to recover its output. ${RECOVERY}`;
 
 export { USAGE_SKILL } from "./usage-guide.js";
 

@@ -124,7 +124,7 @@ describe("server /mcp end-to-end", () => {
     expect(body.result.instructions).toContain("Unknown-address read-only work starts with execute_code");
     expect(body.result.instructions).toContain("On a writable endpoint, programs and call_destructive_tool may write");
     expect(body.result.instructions).toContain(
-      "On a read-only endpoint, write tools are hidden and every write is refused",
+      "On a read-only endpoint, search omits write tools and every write call is refused",
     );
     expect(body.result.instructions).not.toContain("trust");
     expect(body.result.instructions).toContain("call_destructive_tool");
@@ -540,7 +540,7 @@ describe("server /mcp end-to-end", () => {
     expect(skill).toContain("## Choose the route");
     expect(skill).toContain("## The global and the envelopes");
     expect(skill).toContain("## Keep partial successes");
-    expect(skill).toContain("writes\nare hidden and fail read_only_endpoint");
+    expect(skill).toContain("each fails read_only_endpoint");
     expect(skill).not.toContain("trust");
     expect(skill).toContain("No imports, require, filesystem, fetch, or timers");
     expect(skill).toContain("## Large results and recovery");

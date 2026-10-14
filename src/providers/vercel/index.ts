@@ -215,12 +215,12 @@ const VERCEL_MCP_CLASSIFICATION: ToolClassification = {
     "filter_project_envs": {
       "verdict": "write",
       "reason":
-        "Lists project environment variables and can return decrypted values; reviewed as a write so a read-only endpoint hides and refuses the disclosure (#801).",
+        "Lists project environment variables and can return decrypted values; reviewed as a write so a read-only endpoint refuses the disclosure (#801).",
     },
     "get_project_env": {
       "verdict": "write",
       "reason":
-        "Returns one environment variable's decrypted value; reviewed as a write so a read-only endpoint hides and refuses the disclosure (#801).",
+        "Returns one environment variable's decrypted value; reviewed as a write so a read-only endpoint refuses the disclosure (#801).",
     },
     "create_project_env": {
       "verdict": "destructive",

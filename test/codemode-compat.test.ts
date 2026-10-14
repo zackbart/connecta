@@ -26,7 +26,7 @@ describe.skipIf(!inWorkerd)("executor construction in workerd", () => {
     } as unknown as WorkerLoader;
     class MinifiedSubclass extends DynamicWorkerExecutor {}
     for (const executor of [new DynamicWorkerExecutor({ loader }), new MinifiedSubclass({ loader })]) {
-      expect(() => createConnecta({ connectors: [], executor, logger: "silent" })).toThrow(
+      expect(() => createConnecta({ readOnly: false, connectors: [], executor, logger: "silent" })).toThrow(
         "ConnectaConfig.executor must declare its lifecycle",
       );
     }
@@ -47,7 +47,7 @@ describe.skipIf(!inWorkerd)("executor construction in workerd", () => {
         enumerable: false,
         value: { version: 1, lifecycle: "leased" },
       });
-      const app = createConnecta({ connectors: [], executor, logger: "silent" });
+      const app = createConnecta({ readOnly: false, connectors: [], executor, logger: "silent" });
       await app.close();
     }
   });

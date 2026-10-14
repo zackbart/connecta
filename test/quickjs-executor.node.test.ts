@@ -105,7 +105,7 @@ describe("quickJsExecutor", () => {
       enumerable: false,
       value: { version: 1, lifecycle: "leased" },
     });
-    const app = createConnecta({ connectors: [], executor, logger: "silent" });
+    const app = createConnecta({ readOnly: false, connectors: [], executor, logger: "silent" });
     await app.close();
   });
 

@@ -25,7 +25,7 @@ const PROGRAM = `async () => {
 describe.each(Object.keys(STALE_SCHEMA_PATHS) as Array<keyof typeof STALE_SCHEMA_PATHS>)(
   "a stale reviewed read in a QuickJS program (%s)",
   (path) => {
-    it("INV-1 INV-2: is hidden from a read-only endpoint's discovery and refused before it is sent", async () => {
+    it("INV-1 INV-2: is absent from a read-only endpoint's search and refused before it is sent", async () => {
       const calls: string[] = [];
       const connecta = createConnecta({
         connectors: [STALE_SCHEMA_PATHS[path](await currentDigest(), calls)],

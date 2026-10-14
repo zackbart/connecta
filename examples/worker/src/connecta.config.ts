@@ -69,6 +69,11 @@ export default defineConfig((env: Env) => {
   return {
     publicUrl: env.PUBLIC_URL,
     storage,
+    // Required: can /mcp write? false lets call_destructive_tool and programs
+    // write, with the MCP client approving; true leaves write tools out of
+    // search and describe and refuses every write call. Pools inherit it
+    // unless they set their own readOnly. Startup fails without it.
+    readOnly: false,
     // Required adapter owns each run's handles; direct upstream construction throws.
     executor: workerExecutor({ loader: env.LOADER }),
     // Access owns edge admission and proves human identity for MCP and the

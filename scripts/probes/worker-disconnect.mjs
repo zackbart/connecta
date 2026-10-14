@@ -94,7 +94,7 @@ export default {
     const url = new URL(request.url);
     const id = url.searchParams.get('id');
     let app = apps.get(id);
-    if (!app) { app = createConnecta({
+    if (!app) { app = createConnecta({ readOnly: false,
       connectors: [], logger: 'silent', executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
       admission: { requests: { concurrency: 1, maxQueueSize: url.searchParams.has('queue') ? 1 : 0,
         queueTimeoutMs: url.searchParams.has('queue') ? 6000 : 1000,

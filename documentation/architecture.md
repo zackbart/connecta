@@ -133,8 +133,9 @@ An admitted non-preflight `/mcp` request then takes five steps in
    access. A pool can never widen a view; anything else is a 404 naming no pool.
    The endpoint's `readOnly` is the pool's own value, else the deployment's;
    plain `/mcp` uses the deployment's. It travels to the meta-tools and the
-   program as one boolean that hides writes from `CatalogService` discovery and
-   makes `writeRefusal` (`src/tool-safety.ts`) refuse every write.
+   program as one boolean that drops writes from `CatalogService` search and
+   describe and makes `writeRefusal` (`src/tool-safety.ts`) refuse every write
+   call. Guides and skills are not filtered.
 4. **Derive the registry view.** One `registry.scoped(...)` call with those
    connector ids, exact `connector.tool` addresses when the identity declares a
    narrower slice, and the subject and principal keys. Personal connectors use

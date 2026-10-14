@@ -177,6 +177,7 @@ export async function checkStashAuthority(executor: Executor, programReturn = fa
   };
   const build = (readOnly: boolean) =>
     createConnecta({
+      readOnly: false,
       connectors: [docs, control],
       storage,
       logger: "silent",
@@ -340,6 +341,7 @@ export async function checkProgramReadDependencies(executor: Executor): Promise<
     },
   };
   const app = createConnecta({
+    readOnly: false,
     connectors: [remote, control],
     storage: memoryStorage(),
     logger: "silent",
@@ -477,6 +479,7 @@ export async function checkProgramVisibilityDependencies(executor: Executor): Pr
     },
   };
   const app = createConnecta({
+    readOnly: false,
     connectors: [remote, control],
     storage: memoryStorage(),
     logger: "silent",

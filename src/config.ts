@@ -255,15 +255,21 @@ const identity = {
     fn<(identity: Readonly<AuthenticatedIdentity>) => ConnectorPermission | Promise<ConnectorPermission>>(),
 };
 
+/** The choice every deployment makes explicitly while `trust` migrates (#820). */
+const READ_ONLY_REQUIRED = (path: string) =>
+  `${path} is required. Choose readOnly: true to refuse every write on /mcp, or readOnly: false to let ` +
+  "call_destructive_tool and programs write with MCP client approval. Pools inherit it unless they set their own.";
+
 function assertFlag(value: unknown, path: string): void {
   if (typeof value !== "boolean") throw new ConfigError(`${path} must be true or false.`);
 }
 
 const pool = {
   /**
-   * Whether nothing on this pool's endpoint writes: write tools are hidden
-   * from discovery and every write is refused. Inherits the deployment's
-   * `readOnly` unless set here, in either direction.
+   * Whether this pool's endpoint refuses every write: write tools are absent
+   * from search_tools, tool listings, and describe, and every write call is
+   * refused. Inherits the deployment's `readOnly` unless set here, in either
+   * direction.
    */
   readOnly: opaque<boolean>({ check: assertFlag }),
   /** Connector ids and exact `connector.tool` addresses in this pool. */
@@ -361,14 +367,6 @@ const connectaConfig = {
   identity: object(identity),
   /** Named tool pools, each served at `/mcp/<name>` to identities its grant admits. */
   pools: record(object(pool)),
-  /**
-   * Whether nothing on the default /mcp endpoint writes: write tools are
-   * hidden from discovery, and call_tool, call_destructive_tool, and program
-   * writes are all refused. Pools inherit it unless they set their own.
-   * Default false: direct calls and programs may write, and the MCP client
-   * owns approval.
-   */
-  readOnly: opaque<boolean, boolean>({ check: assertFlag, resolve: (value) => value ?? false }),
   /** Exact connector id -> tool name -> verdict. Unknown names fail at catalog publication. */
   classification: record(
     record(
@@ -527,6 +525,15 @@ const connectaConfig = {
       "workerExecutor({ loader: env.LOADER }) from " +
       '"@zackbart/connecta/worker" around DynamicWorkerExecutor on Workers.',
   ),
+  /**
+   * Required. Whether the default /mcp endpoint refuses every write. `true`:
+   * write tools are absent from search_tools, tool listings, and describe,
+   * and call_tool, call_destructive_tool, and program writes are refused.
+   * `false`: call_destructive_tool and programs may write, and the MCP
+   * client owns approval. Pools inherit it unless they set their own. It has
+   * no default while deployments migrate from `trust` (#820).
+   */
+  readOnly: required(opaque<boolean, boolean>({ check: assertFlag }), (path) => READ_ONLY_REQUIRED(path)),
 };
 
 const CONFIG = object(connectaConfig);
@@ -595,7 +602,7 @@ function rejectUnknownOptions(paths: string[]): void {
         ? "\nPrograms no longer pause at writes, so there is nothing to configure: writable endpoints let programs and call_destructive_tool write; readOnly endpoints refuse every write (issue #672). Delete the option."
         : "") +
       (paths.some(isRetiredTrust)
-        ? '\ntrust was removed (#820); use readOnly. trust: "read-only" becomes readOnly: true, which now also refuses call_destructive_tool. trust: "trusted" becomes readOnly: false, the default. A pool inherits the deployment readOnly unless it sets its own.'
+        ? '\ntrust was removed (#820); set readOnly, which every deployment now chooses explicitly. trust: "read-only" becomes readOnly: true, which now also refuses call_destructive_tool. trust: "trusted" becomes readOnly: false. A pool inherits the deployment readOnly unless it sets its own.'
         : ""),
   );
 }

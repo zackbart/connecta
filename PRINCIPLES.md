@@ -41,9 +41,9 @@ The full Node run checks the executed test tree, including runtime skips.
 - **INV-1: Fail-closed classification.** Missing, false, or contradictory
   read annotations classify as writes unless deployment config or a current
   provider review supplies a verdict. Stale reviewed schemas fail closed.
-- **INV-2: Writes respect the endpoint.** A `readOnly` endpoint hides every
-  write from discovery and refuses it on every path before validation or
-  dispatch. A writable endpoint sends writes only through
+- **INV-2: Writes respect the endpoint.** A `readOnly` endpoint omits write
+  tools from search and describe and refuses every write call on every path
+  before validation or dispatch; guides may still name them. A writable endpoint sends writes only through
   `call_destructive_tool` and programs, and annotates `execute_code` as a
   write. Approval belongs to the host.
 - **INV-3: Generated code mints nothing.** No connectors, grants, downstream

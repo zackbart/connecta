@@ -45,7 +45,7 @@ describe("static tool names", () => {
           constructionChecks: false,
         }),
     ).toThrow(message);
-    const construct = () => createConnecta({ connectors: [connector], executor, logger });
+    const construct = () => createConnecta({ readOnly: false, connectors: [connector], executor, logger });
     expect(construct).toThrow(message);
     try {
       construct();

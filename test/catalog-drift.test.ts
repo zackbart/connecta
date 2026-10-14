@@ -381,6 +381,7 @@ describe("drift on the registry surface", () => {
     const { connector } = proxy("linear_test", () => [...currentCatalog(), tool("merge_issues")]);
     const store = { record() {}, recordCatalogDrift: drift };
     const connecta = createConnecta({
+      readOnly: false,
       executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
       connectors: [connector],
       storage: memoryStorage(),
@@ -427,6 +428,7 @@ describe("the connector seam is projected, not echoed", () => {
     });
     connector.catalogDrift = drift;
     const connecta = createConnecta({
+      readOnly: false,
       executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
       storage: memoryStorage(),
       logger: silentLogger,

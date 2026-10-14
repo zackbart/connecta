@@ -284,6 +284,7 @@ createConnecta({
   storage,
   accessTokens: accessTokens(storage),
   auth: clerkAuth({ publishableKey, secretKey }),
+  readOnly: false, // required; pools without their own readOnly inherit it
   pools: {
     support: {
       tools: ["linear", "notion.search_pages", "notion.fetch_page"],
@@ -308,15 +309,22 @@ Without configured `auth`, an open deployment has one anonymous, non-interactive
 identity; grants like these return false and every pool path 404s.
 
 Each endpoint is writable or read-only. The deployment's `readOnly` sets the
-plain `/mcp` endpoint and defaults to `false`; a pool inherits it unless the pool
-sets its own `readOnly`, in either direction. A writable endpoint lets
+plain `/mcp` endpoint and is required: a deployment that omits it fails at
+construction and must choose `true` or `false`. A pool inherits it unless the
+pool sets its own `readOnly`, in either direction. A writable endpoint lets
 `call_destructive_tool` and programs write, and the MCP client decides what to
-approve. A read-only endpoint hides write tools from `search_tools`,
-`connecta.search`, and `connecta.describe`, and refuses `call_tool`,
-`call_destructive_tool`, and program writes with `read_only_endpoint` before
-validation or dispatch. Resource reads, grants, and `connectorAccess`, including
-guarded `requireReadOnly` grants, are the same on both. The removed `trust`
-option fails construction with a message naming `readOnly`.
+approve. On a read-only endpoint, write tools are absent from `search_tools`
+results, `connecta.search`, and `connecta.describe`, and `call_tool`,
+`call_destructive_tool`, and program writes are refused with
+`read_only_endpoint` before validation or dispatch. Reads, including reads
+through `call_destructive_tool`, still run.
+Guides are documentation, not discovery: provider `SKILL.md` and usage guides,
+surfaced through `queryAnalysis.guideSummary`, `skills`, `connecta.skill`, and
+skill `resources/read`, are the same on every endpoint and may name tools a
+read-only endpoint refuses.
+Resource reads, grants, and `connectorAccess`, including guarded
+`requireReadOnly` grants, are the same on both. The removed `trust` option fails
+construction with a message naming `readOnly`.
 
 | Rule         | Contract                                                                                                                                                                                                                                                     |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -837,7 +845,7 @@ Access trusts the identity validated at the Worker edge.
 
 ```ts
 import { cloudflareAccessAuth } from "@zackbart/connecta/auth/cloudflare-access";
-createConnecta({ auth: cloudflareAccessAuth(), connectors, executor });
+createConnecta({ auth: cloudflareAccessAuth(), connectors, executor, readOnly: false });
 ```
 
 The adapter trusts only `ctx.access`, which Cloudflare attaches after validating

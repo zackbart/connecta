@@ -168,8 +168,9 @@ export function calcApi(options: {
 }
 
 export function makeDeployment(
-  config: Partial<Omit<ConnectaConfig, "executor">> & {
+  config: Partial<Omit<ConnectaConfig, "executor" | "readOnly">> & {
     executor?: ConnectaConfig["executor"];
+    readOnly?: boolean;
   } = {},
 ) {
   return createTestConnecta({

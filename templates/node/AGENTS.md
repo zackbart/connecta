@@ -5,10 +5,10 @@ This repository is deployment configuration, not a copy of Connecta itself.
 - Edit `src/connecta.config.ts` for connectors, authentication, storage, public
   URL, and optional modules. `src/index.ts` only starts it.
 - Keep `executor: quickJsExecutor()` for the prescribed six-tool code-first
-  surface. The root endpoint is writable unless `readOnly: true`, and each
-  named pool inherits that unless it sets its own `readOnly`. A writable
-  endpoint lets `call_destructive_tool` and programs write and annotates
-  `execute_code` as a write; a read-only one hides and refuses every write.
+  surface. Keep the required `readOnly` choice in the config: `false` lets
+  `call_destructive_tool` and programs write and annotates `execute_code` as
+  a write; `true` omits write tools from search and describe and refuses every
+  write call. Named pools inherit it unless they set their own `readOnly`.
   Approval belongs to the MCP host. Do not configure the removed `trust` or
   `execute.approval`.
 - Keep credentials in environment variables or an external secret store.

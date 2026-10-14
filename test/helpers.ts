@@ -24,10 +24,14 @@ const stubExecutor: Executor = {
  * from every suite that imports it. A suite that wants to observe that
  * refusal must call the real `createConnecta` from `../src/index.js`.
  */
-export function createTestConnecta(config: Omit<ConnectaConfig, "executor"> & { executor?: Executor }) {
+/** Writable unless a test chooses `readOnly`; deployments must choose it themselves. */
+export function createTestConnecta(
+  config: Omit<ConnectaConfig, "executor" | "readOnly"> & { executor?: Executor; readOnly?: boolean },
+) {
   return createRuntimeConnecta({
     ui: operatorUi(),
     ...config,
+    readOnly: config.readOnly ?? false,
     identity: { credentialAdministration: () => "all", personalConnection: () => "all", ...config.identity },
     executor: customExecutor(config.executor ?? stubExecutor, { lifecycle: "self-managed" }),
   });

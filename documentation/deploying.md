@@ -96,11 +96,13 @@ personal connection, token management, and activity access explicit.
 [Clerk setup](./auth.md#clerk-oauth-tokens-and-operator-sessions) owns resource-bound
 tokens and `aud_claim_enabled`. A person's operator session is not an MCP token.
 
-The root endpoint is writable unless the deployment sets `readOnly: true`, and
-each named pool inherits that value unless it sets its own. A writable endpoint
-allows writes through `call_destructive_tool` and programs and marks
-`execute_code` as a write; the client decides what to approve. A read-only
-endpoint hides write tools and refuses every write. Pool membership intersects
+Every deployment must set `readOnly` in its configuration; startup fails without
+it, and the template and Worker example set `readOnly: false`. Each named pool
+inherits that value unless it sets its own. A writable endpoint (`false`) allows
+writes through `call_destructive_tool` and programs and marks `execute_code` as
+a write; the client decides what to approve. A read-only endpoint (`true`) omits
+write tools from search and describe and refuses every write call; provider
+guides may still name those tools. Pool membership intersects
 the caller's grants; it never widens them. See [pools](./auth.md#pools) before
 changing `readOnly`.
 

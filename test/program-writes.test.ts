@@ -312,7 +312,7 @@ describe("a program's write", () => {
     expect(w.writes()).toEqual([]);
   });
 
-  it("INV-2: runs by default, since an endpoint is writable unless it is read-only", async () => {
+  it("INV-2: runs when the host route threads no readOnly, as on a writable endpoint", async () => {
     const w = world();
     expect(value(await w.run(closeOne)).result).toBe("closed");
     expect(w.writes()).toEqual([{ address: "tracker.close_issue", args: { id: 1 } }]);
@@ -537,7 +537,7 @@ describe("writable-endpoint programs (#706, #820)", () => {
       tools: [{ name: "read", description: "Read", annotations: { readOnlyHint: true }, handler: () => [] }],
     });
     const construct = (options: unknown) =>
-      createConnecta({ connectors: [notes], executor, logger: "silent", ...(options as object) });
+      createConnecta({ readOnly: false, connectors: [notes], executor, logger: "silent", ...(options as object) });
     expect(() => construct({ execute: { approval: { notes: "never" } } })).toThrow("ConnectaConfig.execute.approval");
     expect(() => construct({ classification: { nope: { read: "read" } } })).toThrow('unknown connector "nope"');
     expect(() => construct({ classification: { notes: { missing: "read" } } })).toThrow('has no tool "missing"');
@@ -625,6 +625,7 @@ describe("retired pause configuration (#672)", () => {
 
   it("lists no resume_execution and reports no resumableWrites on /health", async () => {
     const connecta = createConnecta({
+      readOnly: false,
       connectors: [],
       executor: customExecutor(executor, { lifecycle: "self-managed" }),
       logger: "silent",
@@ -740,6 +741,7 @@ describe("read-only and writable endpoints (#820)", () => {
         return "written";
       },
     ],
+    ["async () => guide", async (connecta) => (await connecta.skill!("connector:notes")).text],
     [
       "async () => discover",
       async (connecta) => {
@@ -755,9 +757,11 @@ describe("read-only and writable endpoints (#820)", () => {
     ],
   ]);
 
-  function deployment(config: { readOnly?: boolean; pools: Record<string, { readOnly?: boolean }> }) {
+  function deployment(config: { readOnly: boolean; pools: Record<string, { readOnly?: boolean }> }) {
     let writes = 0;
     const notes = api("notes", {
+      // A guide is documentation: it names the write on every endpoint.
+      usageGuide: "Close a note with notes.write; pass its text.",
       tools: [
         { name: "read", description: "Read", annotations: { readOnlyHint: true }, handler: () => "read" },
         {
@@ -777,7 +781,7 @@ describe("read-only and writable endpoints (#820)", () => {
       connectors: [notes],
       logger: "silent",
       executor: customExecutor(scriptedExecutor(PROGRAMS), { lifecycle: "self-managed" }),
-      ...(config.readOnly !== undefined ? { readOnly: config.readOnly } : {}),
+      readOnly: config.readOnly,
       pools: Object.fromEntries(
         Object.entries(config.pools).map(([name, pool]) => [name, { tools: ["notes"], grant: () => true, ...pool }]),
       ),
@@ -795,7 +799,7 @@ describe("read-only and writable endpoints (#820)", () => {
     return { app, rpc, writes: () => writes };
   }
 
-  /** Every discovery path hides the write, and every write path refuses it before validation or dispatch. */
+  /** Search and describe omit the write, and every write path refuses it before validation or dispatch. */
   async function expectReadOnly(target: ReturnType<typeof deployment>, path: string) {
     const before = target.writes();
     const listing = await target.rpc(path, "tools/list", {});
@@ -871,8 +875,8 @@ describe("read-only and writable endpoints (#820)", () => {
     expect(target.writes()).toBe(before + 2);
   }
 
-  it("INV-2 INV-4 INV-9: the default endpoint is writable and a pool inherits it unless it sets readOnly", async () => {
-    const target = deployment({ pools: { inherits: {}, locked: { readOnly: true } } });
+  it("INV-2 INV-4 INV-9: a writable deployment writes, and a pool inherits it unless it sets readOnly", async () => {
+    const target = deployment({ readOnly: false, pools: { inherits: {}, locked: { readOnly: true } } });
     try {
       await expectWritable(target, "/mcp");
       await expectWritable(target, "/mcp/inherits");
@@ -889,7 +893,41 @@ describe("read-only and writable endpoints (#820)", () => {
     }
   });
 
-  it("INV-2 INV-4 INV-9: a read-only deployment hides and refuses writes, and a pool can reopen them", async () => {
+  it("INV-2: a write a guide names is still refused on a read-only endpoint, root and pooled", async () => {
+    for (const [config, path] of [
+      [{ readOnly: true, pools: {} }, "/mcp"],
+      [{ readOnly: false, pools: { locked: { readOnly: true } } }, "/mcp/locked"],
+    ] as const) {
+      const target = deployment(config);
+      try {
+        // Guides are documentation, not discovery: they may name a write the endpoint refuses.
+        const skill = await target.rpc(path, "tools/call", { name: "skills", arguments: { name: "connector:notes" } });
+        expect(JSON.stringify(skill.result)).toContain("notes.write");
+        const guide = await target.rpc(path, "tools/call", {
+          name: "execute_code",
+          arguments: { code: "async () => guide" },
+        });
+        expect(guide.result.structuredContent.result).toContain("notes.write");
+        await expectReadOnly(target, path);
+        expect(target.writes()).toBe(0);
+      } finally {
+        await target.app.close();
+      }
+    }
+  });
+
+  it("INV-11: requires every deployment to choose readOnly, while pools inherit it", () => {
+    const executor = customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" });
+    for (const config of [{}, { readOnly: undefined }, { pools: { named: { tools: [], readOnly: true } } }]) {
+      const construct = () =>
+        (createConnecta as (config: unknown) => unknown)({ connectors: [], executor, logger: "silent", ...config });
+      expect(construct).toThrow("ConnectaConfig.readOnly is required");
+      expect(construct).toThrow("Choose readOnly: true");
+      expect(construct).toThrow("or readOnly: false");
+    }
+  });
+
+  it("INV-2 INV-4 INV-9: a read-only deployment omits writes from search and refuses them, and a pool can reopen them", async () => {
     const target = deployment({ readOnly: true, pools: { inherits: {}, open: { readOnly: false } } });
     try {
       await expectReadOnly(target, "/mcp");

@@ -44,7 +44,7 @@ export function AccessPage({ state }: { state: OperatorState }) {
         <EndpointLine url={mcpUrl} />
         <p className="meta">
           {you.readOnly
-            ? "Nothing on this endpoint writes. Write tools are hidden and every write is refused."
+            ? "Nothing on this endpoint writes: search and describe omit write tools, and every write call is refused."
             : "Direct calls and programs may read and write. The MCP client approves writes."}
         </p>
       </section>

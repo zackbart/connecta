@@ -645,7 +645,7 @@ if (failures) {
           {
             name: "execute_code",
             description:
-              "One known read: call_tool. Everything else: execute_code. Read-only endpoint: write tools are hidden and every write is refused.",
+              "One known read: call_tool. Everything else: execute_code. Read-only endpoint: search and describe omit write tools, and every write call is refused.",
           },
         ],
       },
@@ -686,7 +686,7 @@ if (failures) {
       if (
         fixture.method === "tools/list" &&
         result.tools[0].description !==
-          "Every operation uses execute_code. Read-only endpoint: write tools are hidden and every write is refused."
+          "Every operation uses execute_code. Read-only endpoint: search and describe omit write tools, and every write call is refused."
       )
         throw new Error("Code tool guidance differs by HTTP encoding");
       if (

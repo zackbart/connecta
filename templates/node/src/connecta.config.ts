@@ -68,6 +68,11 @@ export default defineConfig((env: Env) => {
   return {
     storage,
     publicUrl,
+    // Required: can /mcp write? false lets call_destructive_tool and programs
+    // write, with the MCP client approving; true leaves write tools out of
+    // search and describe and refuses every write call. Pools inherit it
+    // unless they set their own readOnly. Startup fails without it.
+    readOnly: false,
     // Required: model-written programs run in a bounded QuickJS child.
     executor: quickJsExecutor(),
     auth: clerk ? [clerk] : [],

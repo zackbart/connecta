@@ -48,7 +48,7 @@ QuickJS subpath:
 import { createConnecta } from "@zackbart/connecta";
 import { quickJsExecutor } from "@zackbart/connecta/quickjs";
 
-createConnecta({ executor: quickJsExecutor() /* connectors, auth, storage… */ });
+createConnecta({ executor: quickJsExecutor(), readOnly: false /* connectors, auth, storage… */ });
 ```
 
 `quickJsExecutor()` runs each program in a disposable child process, with CPU,
@@ -61,7 +61,7 @@ On Workers the Worker Loader is the sandbox; Dynamic Workers require the Paid pl
 ```ts
 import { workerExecutor } from "@zackbart/connecta/worker";
 
-createConnecta({ executor: workerExecutor({ loader: env.LOADER }) });
+createConnecta({ executor: workerExecutor({ loader: env.LOADER }), readOnly: false /* … */ });
 ```
 
 The adapter uses only `loader` and an optional `timeout`. Its admission defaults
@@ -284,8 +284,9 @@ integration is ambiguous. `safety: "readOnly"` selects stored read verdicts;
 `"approvalRequired"` selects stored write verdicts; omitted or `"all"` selects
 both. Search and describe rows carry `classification`. These filters grant no
 authority and change no call admission decision. On a read-only endpoint,
-search and describe omit write tools entirely (`W12`): a write is absent from
-every filter, and describing one is `unknown_tool`.
+search and describe omit write tools (`W12`): a write is absent from every
+filter, and describing one is `unknown_tool`. `connecta.skill` guides are not
+filtered and may name such a write; calling it is still refused.
 
 **S2.** A requested object schema carries `inputKeys`, `requiredInputKeys`
 (declared properties only), and `outputKeys`: the names the rendered schema
@@ -1007,15 +1008,15 @@ sent and records nothing: it was never an attempt (`W9`).
 
 ## Writes
 
-Whether an endpoint writes belongs to deployment code. The default `/mcp`
-endpoint is writable: `readOnly` defaults to `false`. Each named pool inherits
+Whether an endpoint writes belongs to deployment code. Every deployment sets
+`readOnly` for `/mcp` explicitly; construction fails without it. Each named pool inherits
 the deployment's `readOnly` unless it sets its own, in either direction. The
 client owns approval; Connecta answers one question per endpoint: can it write.
 
 ```ts
 createConnecta({
   connectors, executor,
-  readOnly: false, // the default
+  readOnly: false, // required: false writes, true refuses every write call
   pools: {
     reporting: { tools: ["posthog"], readOnly: true, grant },
   },
@@ -1075,9 +1076,10 @@ See [argument echo rules](./meta-tools.md#echo-budgets) for supported schema sha
 with `destructive_tool_requires_approval`. Read-only endpoints annotate
 `execute_code` as read-only (`readOnlyHint: true, destructiveHint: false`),
 omit write tools from `search_tools`, `connecta.search`, and
-`connecta.describe`, and refuse `call_tool`, `call_destructive_tool`, and
-program writes with `read_only_endpoint` before validation or dispatch.
-`tools/list` is the same six tools on both. Approval belongs to the client.
+`connecta.describe`, and refuse every write call through `call_tool`,
+`call_destructive_tool`, and programs with `read_only_endpoint` before
+validation or dispatch. Guides and skills are documentation and may still name
+those tools. `tools/list` is the same six tools on both. Approval belongs to the client.
 `readOnly` grants no tool or connector access and cannot be set by guest code,
 request arguments, or a downstream catalog. `execute.approval`,
 `Connector.approval`, per-tool approval exemptions, and pool `trust` are
@@ -1233,7 +1235,7 @@ rejection, and branded adapter acceptance across module copies.
 | `L6`, `X10`            | `test/guest-api-contract-quickjs.node.test.ts` and `test/guest-api-contract.test.ts` (whole oversized reads and one-write pageable handles), `test/sqlite-storage.node.test.ts` and `test/d1-storage.node.test.ts` (shared stash transfers), `test/quickjs-executor.node.test.ts` (bridge and IPC bounds for arguments and result; the address in the over-bound message), `test/quickjs-child-stderr.node.test.ts` (outer reply serialization failure settles the call)                                                        |
 | `V1`–`V4`              | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, the friction each derives, no event for the execution itself), `test/activity.test.ts` (the shared code → friction table, the identity clamp, the one-attempt floor), `test/operator-view.test.ts`, `test/sql-storage-contract.ts`, run by `test/d1-storage.node.test.ts` and `test/sqlite-storage.node.test.ts` (historical pause and approval rows still render and round-trip)                              |
 | `V5`, `W9`             | `test/program-writes.test.ts` (an unawaited program write finished and recorded, its unknown outcome reported, counts on a failed program, the classification table), `test/invocation-pipeline.test.ts` (the gate after validation, an unrecorded refusal)                                                                                                                                                                                                                                                                     |
-| `W10`, `W12`           | `test/program-writes.test.ts` (a writable endpoint's program write runs, a read-only endpoint hides and refuses every write on every path, the write budget, `readOnly` inheritance and overrides, `call_tool` still refusing, search and describe verdicts, construction refusals including retired `trust`), `test/operator-ui-model.test.ts`, `test/browser/operator-ui.spec.ts` (the badge)                                                                                                                                 |
+| `W10`, `W12`           | `test/program-writes.test.ts` (a writable endpoint's program write runs, a read-only endpoint omits writes from search and describe and refuses every write call on every path, including a write its guide names, a required deployment `readOnly`, the write budget, `readOnly` inheritance and overrides, `call_tool` still refusing, search and describe verdicts, construction refusals including retired `trust`), `test/operator-ui-model.test.ts`, `test/browser/operator-ui.spec.ts` (the badge)                       |
 | `M1`                   | `test/guest-api-contract.test.ts` (invalid emits throw catchably, accept nothing), `test/execute-emit.test.ts` (rejected shapes, bounded native snapshots, paging before metadata traversal, and cyclic presentation refusal)                                                                                                                                                                                                                                                                                                   |
 | `M2`, `M3`             | `test/guest-api-contract.test.ts` (delivery order, truncated return plus delivered blocks), `test/execute-emit.test.ts` (envelope, `structuredContent`, byte-for-byte no-emit path)                                                                                                                                                                                                                                                                                                                                             |
 | `M4`                   | `test/guest-api-contract.test.ts` (discard is visible), `test/execute-emit.test.ts` (structured and plain paths), `test/quickjs-executor.node.test.ts` (mid-run shutdown)                                                                                                                                                                                                                                                                                                                                                       |

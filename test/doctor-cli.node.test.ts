@@ -37,6 +37,7 @@ async function doctorAgainst(
   } = {},
 ): Promise<string> {
   const connecta = createConnecta({
+    readOnly: false,
     connectors: [
       api("echo", {
         tools: [
@@ -309,6 +310,7 @@ describe("connecta doctor --config", () => {
   it("INV-4: prints the caller's scoped snapshot and does not execute a diagnostic program", async () => {
     let executed = 0;
     const app = createConnecta({
+      readOnly: false,
       connectors: [
         api("visible", {
           tools: [

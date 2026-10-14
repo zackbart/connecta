@@ -145,6 +145,7 @@ describe("operator config contract", () => {
       { name: "contradiction", annotations: { readOnlyHint: true, destructiveHint: true } },
     ];
     const app = deployment({
+      readOnly: false,
       connectors: [
         connector("svc", {
           staticTools: null,
@@ -189,6 +190,7 @@ describe("operator config contract", () => {
 
   it("INV-4 INV-1: guarded grants do not expose write metadata in the snapshot or live listing", async () => {
     const app = deployment({
+      readOnly: false,
       connectors: [connector("svc")],
       executor,
       auth: human,
@@ -213,6 +215,7 @@ describe("operator config contract", () => {
   it("INV-10: catalog age reports completed observations and static catalogs have no age", async () => {
     const storage = memoryStorage();
     const app = deployment({
+      readOnly: false,
       connectors: [
         connector("things", { staticTools: null, status: async () => ({ state: "ok" }), listTools: async () => tools }),
         connector("static"),
@@ -239,6 +242,7 @@ describe("operator config contract", () => {
         ...extra,
       }) as unknown as ToolCallActivityEvent;
     const app = deployment({
+      readOnly: false,
       connectors: [connector("svc"), connector("personal", { authScope: "personal" })],
       executor,
       auth: human,
@@ -284,6 +288,7 @@ describe("operator config contract", () => {
     async (mode) => {
       let calls = 0;
       const app = deployment({
+        readOnly: false,
         connectors: [connector("svc")],
         executor,
         auth: mode === "machine" ? machineAuth("token") : human,
@@ -318,6 +323,7 @@ describe("operator config contract", () => {
 
   it("INV-4 INV-10: preserves the data-route auth challenge, rejects mutations, and requires the UI module", async () => {
     const app = deployment({
+      readOnly: false,
       connectors: [],
       executor,
       auth: machineAuth("token"),
@@ -331,13 +337,14 @@ describe("operator config contract", () => {
       const refusal = await app.fetch(new Request(`${BASE}/ui/api/config`, { method }));
       expect(refusal.status).toBe(405);
     }
-    const noUi = deployment({ connectors: [], executor, logger: "silent" });
+    const noUi = deployment({ readOnly: false, connectors: [], executor, logger: "silent" });
     expect((await noUi.fetch(new Request(`${BASE}/ui/api/config`))).status).toBe(404);
   });
 
   it("INV-6: status and catalog failures are closed problem codes, and authorization hooks never run", async () => {
     let starts = 0;
     const app = deployment({
+      readOnly: false,
       connectors: [
         connector("oauth", {
           status: async () => ({ state: "auth_required", message: "SENTINEL-status" }),
@@ -377,6 +384,7 @@ describe("operator config contract", () => {
     const closed: string[] = [];
     let aborted = false;
     const app = deployment({
+      readOnly: false,
       connectors: [
         connector("slow", {
           status: (ctx) =>
@@ -425,6 +433,7 @@ describe("operator config contract", () => {
     });
     let calls = 0;
     const app = deployment({
+      readOnly: false,
       connectors: [connector("svc")],
       executor,
       auth: human,

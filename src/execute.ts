@@ -1745,7 +1745,7 @@ const executeDescription = (
   connectors: ReturnType<RegistryView["listConnectors"]>,
   maxWrites: number,
   readOnly: boolean,
-) => `${readOnly ? "One known read: call_tool. Everything else: execute_code. Read-only endpoint: write tools are hidden and every write is refused." : "One known read: call_tool. One known write: call_destructive_tool. Everything else: execute_code. Writable endpoint: programs may read and write; the client approves."} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
+) => `${readOnly ? "One known read: call_tool. Everything else: execute_code. Read-only endpoint: search and describe omit write tools, and every write call is refused." : "One known read: call_tool. One known write: call_destructive_tool. Everything else: execute_code. Writable endpoint: programs may read and write; the client approves."} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
 ${connectorInventory(connectors)}
 
 Use async () => { ... }, no arguments. No portable ambient capabilities. API:

@@ -33,9 +33,11 @@ never depends on the storage behind the deployment. There was an eighth,
 ([#672](https://github.com/zackbart/connecta/issues/672)). `execute_code`
 is annotated `readOnlyHint: true, destructiveHint: false` on a read-only
 endpoint, and `readOnlyHint: false, destructiveHint: true` on a writable one.
-Approval belongs to the client. A read-only endpoint keeps all six tools, hides
-write tools from discovery, and refuses every write; `readOnly` never changes
-connector visibility or read grants. The four tools with structured-only success results
+Approval belongs to the client. A read-only endpoint keeps all six tools, omits
+write tools from `search_tools` results and describe, and refuses every write
+call; `readOnly` never changes connector visibility or read grants. Guides
+(`queryAnalysis.guideSummary`, `skills`, `connecta.skill`, skill
+`resources/read`) are documentation and may name tools the endpoint refuses. The four tools with structured-only success results
 advertise `outputSchema`. The two direct-call tools omit it because their default
 mode returns native `content`. Default-mode successes declare
 `_meta["dev.connecta/format"]: "json" | "text"`; value mode places the value in
@@ -75,7 +77,7 @@ writes and is annotated destructive. `execute_code` states whether the endpoint
 is read-only or writable in its description and annotations. On a writable
 endpoint the client may approve the whole program as a write. On a read-only
 endpoint, the `call_tool`, `call_destructive_tool`, and `search_tools`
-descriptions say so too. `call_destructive_tool.reason` is dropped before
+descriptions say so too; `call_destructive_tool` still runs reads there. `call_destructive_tool.reason` is dropped before
 anything runs.
 
 ## Routing between the call surfaces
@@ -100,9 +102,11 @@ On a writable endpoint the same program discovers and dispatches writes, capped
 by `execute.maxWrites`, and `call_destructive_tool` sends one known write. On a
 read-only endpoint nothing writes: `search_tools`, `connecta.search`, and
 `connecta.describe` omit write tools as if the connector lacked them, and
-`call_tool`, `call_destructive_tool`, and program writes are refused before
-validation or dispatch with `read_only_endpoint`, `retryable: false`, and no
-`nextAction`. No route on that endpoint writes; the agent reports it. Connecta
+every write call through `call_tool`, `call_destructive_tool`, or a program is
+refused before validation or dispatch with `read_only_endpoint`,
+`retryable: false`, and no `nextAction`. Connector guides are not filtered and
+may still name such a write. No route on that endpoint writes; the agent
+reports it. Connecta
 never pauses, replays, or approves a program.
 
 Both search routes return the flat page specified under

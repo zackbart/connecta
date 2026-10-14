@@ -14,6 +14,7 @@ describe("factory configuration provenance", () => {
       const storage = memoryStorage();
       const module = accessTokens(storage, options);
       const raw = {
+        readOnly: false,
         executor,
         publicUrl: "https://connecta.example",
         logger: "silent" as const,
@@ -41,6 +42,7 @@ describe("factory configuration provenance", () => {
     async (transport) => {
       const connector = remoteMcp("remote", { url: "https://remote.example/mcp", ...transport });
       const raw = {
+        readOnly: false,
         executor,
         publicUrl: "https://connecta.example",
         logger: "silent" as const,
@@ -76,7 +78,13 @@ describe("factory configuration provenance", () => {
     };
     const connector = remoteMcp("remote", options);
     options.requireHttps = true;
-    const raw = { executor, publicUrl: "https://connecta.example", logger: "silent" as const, connectors: [connector] };
+    const raw = {
+      readOnly: false,
+      executor,
+      publicUrl: "https://connecta.example",
+      logger: "silent" as const,
+      connectors: [connector],
+    };
     const app = createTestConnecta(raw);
     try {
       const sources = describeConfigSources(app.describeConfig(), raw);

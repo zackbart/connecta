@@ -126,7 +126,8 @@ connection management. Omit that option and import for an API-only
 server. OAuth callbacks remain in core even with no UI.
 
 The page labels each tool as a read or write and each endpoint as writable or
-read-only; a read-only endpoint hides and refuses every write, and the host
+read-only. `src/connecta.config.ts` must set `readOnly`: a read-only endpoint
+refuses every write call and leaves write tools out of search, and the host
 controls approval on a writable one. For
 classified connection failures it offers a fixed repair prompt, and its
 endpoint section has client setup commands for `/mcp` and any pool available

@@ -184,7 +184,7 @@ connector beside the token connector.
 The hosted connection now lists `filter_project_envs`, `get_project_env`,
 `create_project_env`, and `edit_project_env`, which 0.29 hid. The two reads can
 return decrypted values, so they are reviewed as writes, and a `readOnly`
-endpoint hides and refuses them. Vercel admits only reviewed and approved MCP clients to its
+endpoint refuses them. Vercel admits only reviewed and approved MCP clients to its
 hosted server; if authorization is refused for that reason, the deployment
 needs Vercel's approval or a token connector. The
 [Vercel skill](https://github.com/zackbart/connecta/blob/main/src/providers/vercel/SKILL.md)

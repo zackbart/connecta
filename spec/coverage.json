@@ -297,7 +297,7 @@
       "id": "tool-annotations",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
-      "notes": "Read/write routing fails closed. A readOnly endpoint hides write tools from discovery and refuses every write with read_only_endpoint; execute_code's annotations follow the endpoint, and the client owns approval.",
+      "notes": "Read/write routing fails closed. A readOnly endpoint omits write tools from search_tools results and describe and refuses every write call with read_only_endpoint; guides may still name those tools. execute_code's annotations follow the endpoint, and the client owns approval.",
       "tests": [
         {
           "file": "test/execute.test.ts",
@@ -309,7 +309,7 @@
         },
         {
           "file": "test/program-writes.test.ts",
-          "title": "INV-2 INV-4 INV-9: a read-only deployment hides and refuses writes, and a pool can reopen them"
+          "title": "INV-2 INV-4 INV-9: a read-only deployment omits writes from search and refuses them, and a pool can reopen them"
         }
       ]
     },
