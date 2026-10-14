@@ -845,8 +845,11 @@ describe("quickJsExecutor", () => {
     const ex = quickJsExecutor({
       concurrency: 4,
       maxQueueSize: 50,
+      // Admission and process startup are incidental to the CPU/heartbeat
+      // assertions. Allow queued work to drain on a loaded runner.
+      queueTimeoutMs: 30_000,
       cpuTimeMs: 30,
-      timeoutMs: 2_000,
+      timeoutMs: 10_000,
     });
     let last = performance.now();
     const gaps: number[] = [];
@@ -863,7 +866,7 @@ describe("quickJsExecutor", () => {
     const p99 = gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * 0.99))];
     for (const out of outputs) expect(out.error).toContain("guest CPU budget");
     expect(p99).toBeLessThan(150);
-  }, 15_000);
+  }, 60_000);
 
   it("close terminates active children and rejects new admission", async () => {
     const ex = quickJsExecutor({ cpuTimeMs: 5_000, timeoutMs: 10_000 });

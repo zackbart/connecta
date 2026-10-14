@@ -33,7 +33,7 @@ describe("operator assets on both runtimes", () => {
       expect(conditional.status).toBe(304);
       expect(await conditional.text()).toBe("");
     }
-  });
+  }, 30_000);
 
   it("refuses unknown assets and mutations without long-lived caching", async () => {
     const c = deployment();

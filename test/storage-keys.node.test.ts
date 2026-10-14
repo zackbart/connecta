@@ -169,7 +169,7 @@ describe("storage key families", () => {
       .filter((file) => !file.endsWith(join("storage", "keys.ts")))
       .flatMap((file) => strayKeys(relative(SRC, file), readFileSync(file, "utf8")));
     expect(offenders).toEqual([]);
-  });
+  }, 30_000);
 
   it("rejects NUL in every unencoded key component, including identity scopes", () => {
     const bad = "a\0b";

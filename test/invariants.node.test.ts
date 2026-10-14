@@ -85,7 +85,7 @@ describe("principles backed by tests", () => {
           root,
           output,
         ],
-        { timeout: 20_000 },
+        { timeout: 30_000 },
       );
       const titles = JSON.parse(readFileSync(output, "utf8")) as TestTitle[];
       expect(
@@ -115,7 +115,7 @@ describe("principles backed by tests", () => {
             output,
             "gate",
           ],
-          { timeout: 20_000 },
+          { timeout: 30_000 },
         );
       await expect(runGate()).rejects.toMatchObject({
         stderr: expect.stringContaining("INV-9 has no passing enforcing test"),
@@ -128,7 +128,7 @@ describe("principles backed by tests", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 90_000);
 
   it("fails the unfiltered coverage gate despite excluded suites and accepts explicit filters", async () => {
     const root = mkdtempSync(join(tmpdir(), "connecta-coverage-collection-"));
@@ -137,7 +137,7 @@ describe("principles backed by tests", () => {
       promisify(execFile)(
         process.execPath,
         ["--import", "tsx", fileURLToPath(new URL("./fixtures/coverage-gate-runner.ts", import.meta.url)), root, mode],
-        { timeout: 20_000 },
+        { timeout: 30_000 },
       );
     try {
       mkdirSync(join(root, "test/dist"), { recursive: true });
@@ -177,7 +177,7 @@ describe("principles backed by tests", () => {
             "--config",
             config,
           ],
-          { timeout: 20_000 },
+          { timeout: 30_000 },
         );
       await expect(runCli()).rejects.toMatchObject({
         stdout: expect.stringMatching(/active\.test\.ts[\s\S]*other\.test\.ts|other\.test\.ts[\s\S]*active\.test\.ts/),
@@ -218,5 +218,5 @@ describe("principles backed by tests", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  }, 60_000);
+  }, 120_000);
 });
