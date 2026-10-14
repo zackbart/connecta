@@ -172,26 +172,30 @@ describe("default endpoint grant", () => {
     },
   );
 
-  it("INV-4: authenticates protected-resource metadata against the MCP endpoint audience", async () => {
-    const authorize = vi.fn((request: Request) => {
-      expect(new URL(request.url).pathname).toBe("/mcp");
-      expect(request.headers.get("Authorization")).toBe("Bearer human");
-      return { ok: true as const, subjectId: "human" };
-    });
-    const app = deployment({
-      grant: () => true,
-      auth: { kind: "audience-check", authorize, handleMetadata: () => Response.json({ resource: `${BASE}/mcp` }) },
-    });
-    try {
-      const response = await app.fetch(
-        new Request(`${BASE}${METADATA}/mcp`, { headers: { Authorization: "Bearer human" } }),
-      );
-      expect(await response.json()).toEqual({ resource: `${BASE}/mcp` });
-      expect(authorize).toHaveBeenCalledOnce();
-    } finally {
-      await app.close();
-    }
-  });
+  it.each(["GET", "HEAD"])(
+    "INV-4: authenticates protected-resource metadata against the MCP endpoint audience: %s",
+    async (method) => {
+      const authorize = vi.fn((request: Request) => {
+        expect(new URL(request.url).pathname).toBe("/mcp");
+        expect(request.method).toBe(method);
+        expect(request.headers.get("Authorization")).toBe("Bearer human");
+        return { ok: true as const, subjectId: "human" };
+      });
+      const app = deployment({
+        grant: () => true,
+        auth: { kind: "audience-check", authorize, handleMetadata: () => Response.json({ resource: `${BASE}/mcp` }) },
+      });
+      try {
+        const response = await app.fetch(
+          new Request(`${BASE}${METADATA}/mcp`, { method, headers: { Authorization: "Bearer human" } }),
+        );
+        expect(await response.json()).toEqual({ resource: `${BASE}/mcp` });
+        expect(authorize).toHaveBeenCalledOnce();
+      } finally {
+        await app.close();
+      }
+    },
+  );
 
   it("INV-4: keeps metadata public when no default grant is configured", async () => {
     const app = deployment();

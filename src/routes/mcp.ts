@@ -710,7 +710,7 @@ export function createMcpRoute(opts: ServerOptions): {
         const authUrl = new URL(request.url);
         if (defaultMetadata) authUrl.pathname = "/mcp";
         const localRequest = defaultMetadata
-          ? new Request(authUrl, { headers: request.headers, signal: localAbort.signal })
+          ? new Request(authUrl, { method: request.method, headers: request.headers, signal: localAbort.signal })
           : new Request(request, { signal: localAbort.signal });
         if (admission.success && admission.success.waitMs > 0) {
           opts.config.logger.debug("[connecta] MCP request admitted after queue wait", {
