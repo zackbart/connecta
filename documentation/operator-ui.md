@@ -42,7 +42,9 @@ from `connecta/ui`. `src/operator-ui/contract.ts` is also the browser's type
 source. The response has `schemaVersion: 1`, `config`, `configSources`, `live`, and `you`.
 `config` is the construction-time `describeConfig()` snapshot, filtered to
 visible connectors, granted tools, classification overrides, and admitted
-pools. Pool tools are the intersection with the caller's identity grants.
+pools. `config.hasGrant` reports whether deployment code configures a grant for
+plain `/mcp`; Access displays that fact and Config includes its provenance.
+Pool tools are the intersection with the caller's identity grants.
 `configSources` labels each serialized leaf as `default` or `config`, based on
 option presence rather than equality with the default. Factory descriptions carry
 relative `optionSources` paths so resolved module and transport defaults retain
@@ -52,6 +54,10 @@ ids and pool names and are filtered after disclosure; hidden values leave no
 provenance keys. It contains no source code or credential material.
 Every response is private, `no-store` JSON. Only GET is allowed, with the
 same auth gate and identity partition as `/ui/data` and `/ui/connectors/:id`.
+These catalog reads, activity reads, and connector auth routes also require
+admission through the default `/mcp` grant. Refusals return private JSON 404s;
+there is no per-pool UI view. Public HTML shells and static assets carry no
+catalog data. Access-token management retains its interactive permission gate.
 
 `live.connectors` carries status and problem codes, complete registry tools
 with their final read/write classification, catalog age in milliseconds, and

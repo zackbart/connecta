@@ -61,6 +61,7 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
     storage, vault: encryptedCredentialVault(storage, "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="), logger: "silent",
     identity: { connectorAccess: () => empty ? keepEmptyConnector ? ["github"] : [] : restricted ? ["github.read", "slot"] : "all", activityAccess: () => !restricted,
       credentialAdministration: () => restricted ? [] : "all", personalConnection: () => restricted ? [] : "all", accessTokenManagement: () => !restricted },
+    grant: empty ? undefined : () => true,
     pools: empty || restricted ? {} : { support: { tools: ["github.read"], readOnly: true, grant: () => true }, automation: { tools: ["github"], readOnly: false, grant: () => true } },
     activity: activityHistory({ store: { record() {}, list: async () => ({ events: empty ? [] : events }) } }),
     accessTokens: accessTokens(storage),

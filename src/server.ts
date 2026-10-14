@@ -103,6 +103,8 @@ export function createFetchHandler(
       }
 
       if (path.startsWith("/.well-known/")) {
+        const guardedMetadata = yield* routeMcp.handle(context);
+        if (guardedMetadata) return guardedMetadata;
         const response = yield* metadata(request, baseUrl);
         if (response) return response;
         return notFoundResponse(request, opts.config);

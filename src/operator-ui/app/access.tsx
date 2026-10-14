@@ -43,6 +43,11 @@ export function AccessPage({ state }: { state: OperatorState }) {
         </div>
         <EndpointLine url={mcpUrl} />
         <p className="meta">
+          {config.hasGrant
+            ? "Grant configured in code."
+            : "No grant configured; every caller admitted by auth may use this endpoint."}
+        </p>
+        <p className="meta">
           {you.readOnly
             ? "Nothing on this endpoint writes: search and describe omit write tools, and every write call is refused."
             : "Direct calls and programs may read and write. The MCP client approves writes."}

@@ -615,6 +615,8 @@ export function createMcpRoute(opts: ServerOptions): {
 
   function routeMcp(context: RouteContext): Effect.Effect<Response | null, unknown> {
     const { path, request, baseUrl, runtimeContext } = context;
+    // Protected-resource metadata stays public, including when a grant is
+    // configured, so a fresh OAuth client can discover how to authenticate.
     if (path !== "/mcp" && !path.startsWith("/mcp/")) return Effect.succeed(null);
     // Admission, refusal bodies, SDK serialization and connector work share
     // one set. Connector contexts still receive an opaque scope, never the
@@ -753,6 +755,25 @@ export function createMcpRoute(opts: ServerOptions): {
           // the operator log is where the reason lives.
           let access: ConnectorAccess = authz;
           let readOnly = opts.config.readOnly;
+          if (poolName === undefined && opts.config.grant) {
+            const denialReason = yield* Effect.promise(async () => {
+              try {
+                return (await opts.config.grant!(authz.identity)) === true
+                  ? undefined
+                  : ("default_grant_denied" as const);
+              } catch {
+                return "default_grant_threw" as const;
+              }
+            });
+            if (denialReason !== undefined) {
+              logFailure(
+                opts.config.logger,
+                "MCP default endpoint request denied",
+                failureRecord({ reason: denialReason }),
+              );
+              return cors(mcpRefusal(sentSecrets, 404, -33004, "MCP endpoint not found."));
+            }
+          }
           if (poolName !== undefined) {
             const pool = opts.pools?.get(poolName);
             const denialReason = !pool
@@ -802,6 +823,8 @@ export function createMcpRoute(opts: ServerOptions): {
                 if (current.subjectKey !== authz.subjectKey || current.principalKey !== authz.principalKey)
                   return false;
                 validateAuthPermissions(current, opts.registry);
+                if (poolName === undefined && opts.config.grant && (await opts.config.grant(current.identity)) !== true)
+                  return false;
                 let currentAccess: ConnectorAccess = current;
                 let currentReadOnly = opts.config.readOnly;
                 if (poolName !== undefined) {
