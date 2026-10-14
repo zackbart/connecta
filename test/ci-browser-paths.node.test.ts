@@ -141,12 +141,15 @@ describe("CI aggregate check", () => {
     ["success", "success", "success", "true", "skipped", "", 1],
     ["success", "success", "success", "true", "failure", "false", 1],
   ])(
-    "handles core=%s changes=%s browser=%s required=%s security=%s required=%s",
+    "handles static=%s changes=%s browser=%s required=%s security=%s required=%s",
     (core, changes, browser, required, security, securityNeeded, status) => {
       const result = spawnSync("bash", ["-e", "-c", script], {
         env: {
           ...process.env,
-          CORE_RESULT: core,
+          STATIC_RESULT: core,
+          NODE_RESULT: "success",
+          WORKERS_RESULT: "success",
+          BUILD_RESULT: "success",
           CHANGES_RESULT: changes,
           BROWSER_RESULT: browser,
           BROWSER_REQUIRED: required,
@@ -158,4 +161,28 @@ describe("CI aggregate check", () => {
       expect(result.status, result.stdout + result.stderr).toBe(status);
     },
   );
+
+  it.each(
+    ["NODE", "WORKERS", "BUILD"].flatMap((job) =>
+      ["failure", "cancelled", "skipped", ""].map((result) => [job, result] as const),
+    ),
+  )("rejects %s=%s even when every other job succeeds", (job, outcome) => {
+    const result = spawnSync("bash", ["-e", "-c", script], {
+      env: {
+        ...process.env,
+        STATIC_RESULT: "success",
+        NODE_RESULT: "success",
+        WORKERS_RESULT: "success",
+        BUILD_RESULT: "success",
+        CHANGES_RESULT: "success",
+        BROWSER_RESULT: "skipped",
+        BROWSER_REQUIRED: "false",
+        SECURITY_RESULT: "skipped",
+        SECURITY_REQUIRED: "false",
+        [`${job}_RESULT`]: outcome,
+      },
+      encoding: "utf8",
+    });
+    expect(result.status, result.stdout + result.stderr).toBe(1);
+  });
 });
