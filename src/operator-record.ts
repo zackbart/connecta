@@ -139,6 +139,8 @@ export type AuthDenialReason =
   | "email_domain_denied"
   | "gate_denied"
   | "gate_failed"
+  | "default_grant_denied"
+  | "default_grant_threw"
   | "pool_not_declared"
   | "pool_grant_denied"
   | "pool_grant_threw";
@@ -157,6 +159,8 @@ const AUTH_DENIAL_REASONS: ReadonlySet<AuthDenialReason> = new Set([
   "email_domain_denied",
   "gate_denied",
   "gate_failed",
+  "default_grant_denied",
+  "default_grant_threw",
   "pool_not_declared",
   "pool_grant_denied",
   "pool_grant_threw",
@@ -491,6 +495,7 @@ export type FailureEvent =
   | "OAuth disconnect failed"
   | "OAuth callback verifyState threw; no authorization code was exchanged"
   | "OAuth callback handoff could not be consumed; no authorization code was exchanged"
+  | "MCP default endpoint request denied"
   | "MCP pool request denied"
   | "OAuth error callback consent could not be consumed; no authorization code was exchanged"
   | "MCP handler error"

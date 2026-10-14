@@ -94,6 +94,8 @@ export interface ConnectaConfigDescription {
   };
   /** Whether the default /mcp endpoint refuses every write, and exact classification overrides from deployment code. */
   readOnly: boolean;
+  /** Whether deployment code configures a grant for plain `/mcp`. */
+  hasGrant: boolean;
   classification: Record<string, Record<string, "read" | "write">>;
   /** Inbound auth providers in the order they are tried. */
   auth: Array<{ kind: string; interactive: boolean; ui?: string }>;
@@ -415,6 +417,7 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
       ) as ConnectaConfigDescription["limits"]["requests"],
     },
     readOnly: config.readOnly,
+    hasGrant: typeof config.grant === "function",
     classification: structuredClone(config.classification ?? {}),
     auth: config.auth.map((provider) => ({
       kind: String(provider.kind),

@@ -42,7 +42,9 @@ from `connecta/ui`. `src/operator-ui/contract.ts` is also the browser's type
 source. The response has `schemaVersion: 1`, `config`, `configSources`, `live`, and `you`.
 `config` is the construction-time `describeConfig()` snapshot, filtered to
 visible connectors, granted tools, classification overrides, and admitted
-pools. Pool tools are the intersection with the caller's identity grants.
+pools. `config.hasGrant` reports whether deployment code configures a grant for
+plain `/mcp`; Access displays that fact and Config includes its provenance.
+Pool tools are the intersection with the caller's identity grants.
 `configSources` labels each serialized leaf as `default` or `config`, based on
 option presence rather than equality with the default. Factory descriptions carry
 relative `optionSources` paths so resolved module and transport defaults retain

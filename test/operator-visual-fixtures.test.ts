@@ -19,6 +19,8 @@ describe("operator visual fixture contract", () => {
     const { contract, data } = fixture;
     expect(contract.schemaVersion).toBe(1);
     expect(contract.config.schemaVersion).toBe(1);
+    expect(contract.config.hasGrant).toBe(state !== "empty");
+    expect(contract.configSources?.["config.hasGrant"]).toBe(state === "empty" ? "default" : "config");
     expect(contract.configSources?.["config.limits.calls.maxResultBytes"]).toBe("config");
     const ids = contract.config.connectors.map((c) => c.id);
     expect(contract.live.connectors.map((c) => c.id)).toEqual(ids);

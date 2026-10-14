@@ -102,7 +102,7 @@ the identity namespaces and connector/pool grant callbacks too; storage
 compatibility translates no configuration and invents no grants. `access_token`
 actor ids, the `connecta:access-tokens:v1` activity namespace, friendly names,
 and stored principals carry over; a token without a principal stays unbound.
-Every request evaluates current identity, tool, and pool grants, and a token
+Every request evaluates current identity, tool, and endpoint grants, and a token
 never becomes an interactive operator. Names are labels, never permissions. A
 UI-issued token belongs to the issuing human's principal, and any explicitly
 permitted token manager can list, rename, or revoke deployment tokens. Machine tokens manage neither tokens nor connection credentials; operators
@@ -163,6 +163,10 @@ provider authenticated: any `ok`, a subject-less custom credential included, nev
 deployment's anonymous admission. Otherwise, or on `undefined`, the call fails
 `auth_required` before any request leaves. Arguments, headers, and programs
 never reach it; a deployment's own connectors still cannot read the caller.
+
+The deployment's top-level `grant` decides who may use plain `/mcp`; named
+pools use their own grants. These endpoint decisions receive the admitted
+identity below and never widen its connector access.
 
 `identity.connectorAccess` returns `"all"` (the default) or grants, for
 discovery and use alike: a connector id opens every tool on it, a
@@ -287,6 +291,7 @@ createConnecta({
   accessTokens: accessTokens(storage),
   auth: clerkAuth({ publishableKey, secretKey }),
   readOnly: false, // required; pools without their own readOnly inherit it
+  grant: ({ actor }) => actor.kind !== "access_token", // machines use their pools
   pools: {
     support: {
       tools: ["linear", "notion.search_pages", "notion.fetch_page"],
@@ -310,6 +315,29 @@ createConnecta({
 Without configured `auth`, an open deployment has one anonymous, non-interactive
 identity; grants like these return false and every pool path 404s.
 
+The optional top-level `grant: (identity) => boolean | Promise<boolean>`
+controls plain `/mcp`. Omitted, it admits everyone who passes auth, including
+anonymous callers on an open deployment. Configured, only literal `true`
+admits; other returns and throws deny. A refusal has the same 404 status,
+body bytes, and headers as a refused or undeclared pool, after auth. The
+operator log records `default_grant_denied` or `default_grant_threw`, never
+the callback's error text. Invalid config values throw at construction.
+Named pools use only their own grants, so a caller refused at `/mcp` may
+still use a pool that grants it.
+
+A configured default grant also gates both protected-resource metadata aliases,
+`/.well-known/oauth-protected-resource` and
+`/.well-known/oauth-protected-resource/mcp`, after authentication for `/mcp`.
+Clients must supply their endpoint credential to fetch that metadata when a
+grant is configured. Without a grant, metadata discovery remains public.
+Named-pool metadata discovery is unchanged. Result/page handles remain bound
+to their originating endpoint; paging rechecks the current endpoint grant,
+identity, and connector access. A granting pool cannot read a `/mcp` handle,
+and `/mcp` cannot read that pool's handle.
+
+`describeConfig().hasGrant` and the operator UI report whether plain `/mcp`
+has a configured grant, without evaluating it or exposing callback source.
+
 Each endpoint is writable or read-only. The deployment's `readOnly` sets the
 plain `/mcp` endpoint and is required: a deployment that omits it fails at
 construction and must choose `true` or `false`. A pool inherits it unless the
@@ -328,14 +356,14 @@ Resource reads, grants, and `connectorAccess`, including guarded
 `requireReadOnly` grants, are the same on both. The removed `trust` option fails
 construction with a message naming `readOnly`.
 
-| Rule         | Contract                                                                                                                                                                                                                                                     |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Scope        | `/mcp/<pool>` intersects pool tools with the identity's `connectorAccess`, never widening it. Plain `/mcp` is unchanged; the resolver remains the security boundary.                                                                                         |
-| Grant        | Defaults to deny; only literal `true` admits. Other returns, throws, and undeclared names produce an identical 404 status, body, and headers, after auth. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content. |
-| Timing       | Declared names await grants, so timing is not hidden. Keep grants pure and fast and names unsecret; names grant no access. The operator log records the refusal reason.                                                                                      |
-| Construction | Malformed names, unknown options or connectors, empty pools, a non-boolean `readOnly`, a retired `trust`, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load.                                               |
-| Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                         |
-| Drift        | No wildcards; tool grants are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO.                                                                                                                           |
+| Rule         | Contract                                                                                                                                                                                                                                                                |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scope        | `/mcp/<pool>` intersects pool tools with the identity's `connectorAccess`, never widening it. Plain `/mcp` serves the identity's `connectorAccess` after its optional top-level `grant` admits it.                                                                      |
+| Grant        | Pool grants default to deny; only literal `true` admits. Other returns, throws, and undeclared names produce an identical 404 status, body, and headers, after auth. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content. |
+| Timing       | Declared names await grants, so timing is not hidden. Keep grants pure and fast and names unsecret; names grant no access. The operator log records the refusal reason.                                                                                                 |
+| Construction | Malformed names, unknown options or connectors, empty pools, a non-boolean `readOnly`, a retired `trust`, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load.                                                          |
+| Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                                    |
+| Drift        | No wildcards; tool grants are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO.                                                                                                                                      |
 
 ## Shared and personal auth
 

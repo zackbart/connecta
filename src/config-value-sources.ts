@@ -65,6 +65,7 @@ export function describeConfigSources(
       source = provided(raw.serverInfo?.[key as keyof NonNullable<ConnectaConfig["serverInfo"]>]);
     else if (group === "urls")
       source = key === "mcpPath" ? "default" : provided(raw[key as "publicUrl" | "allowedOrigins"]);
+    else if (group === "hasGrant") source = provided(raw.grant);
     else if (group === "readOnly") source = provided(raw.readOnly);
     else if (group === "identity")
       source = provided(raw.identity?.[key as keyof NonNullable<ConnectaConfig["identity"]>]);

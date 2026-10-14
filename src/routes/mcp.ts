@@ -1,3 +1,4 @@
+import { notFoundResponse } from "../branding.js";
 import { bindActivityRequest } from "../activity-request.js";
 import { closeConnectorScope } from "../connector-scope.js";
 import { executeLimits } from "../config.js";
@@ -35,6 +36,7 @@ import { detach } from "../runtime/run.js";
 import type { Logger } from "../types.js";
 import {
   authorize,
+  authMetadata,
   mayManageConnector,
   validateAuthPermissions,
   type RouteContext,
@@ -615,13 +617,18 @@ export function createMcpRoute(opts: ServerOptions): {
 
   function routeMcp(context: RouteContext): Effect.Effect<Response | null, unknown> {
     const { path, request, baseUrl, runtimeContext } = context;
-    if (path !== "/mcp" && !path.startsWith("/mcp/")) return Effect.succeed(null);
+    // Without a grant, keep public OAuth discovery unchanged. A configured
+    // default grant also protects both metadata aliases for that endpoint.
+    const defaultMetadata =
+      opts.config.grant !== undefined &&
+      (path === "/.well-known/oauth-protected-resource" || path === "/.well-known/oauth-protected-resource/mcp");
+    if (!defaultMetadata && path !== "/mcp" && !path.startsWith("/mcp/")) return Effect.succeed(null);
     // Admission, refusal bodies, SDK serialization and connector work share
     // one set. Connector contexts still receive an opaque scope, never the
     // inbound Request or its headers.
     const requestScope = {};
     const sentSecrets = sentSecretsForRequest(requestScope, sentSecretsForRequest(request));
-    const poolName = path === "/mcp" ? undefined : path.slice("/mcp/".length);
+    const poolName = defaultMetadata || path === "/mcp" ? undefined : path.slice("/mcp/".length);
     const origin = request.headers.get("Origin");
     const allowed = origin === null || allowsOrigin(origin);
     const cors = (response: Response): Response =>
@@ -698,7 +705,13 @@ export function createMcpRoute(opts: ServerOptions): {
             localAbort.abort(new Error("MCP request lifetime exceeded."));
           }, remainingMs);
         }
-        const localRequest = new Request(request, { signal: localAbort.signal });
+        // Auth adapters bind OAuth audiences and challenges to the endpoint,
+        // not its metadata URL. Preserve the caller's credentials and signal.
+        const authUrl = new URL(request.url);
+        if (defaultMetadata) authUrl.pathname = "/mcp";
+        const localRequest = defaultMetadata
+          ? new Request(authUrl, { headers: request.headers, signal: localAbort.signal })
+          : new Request(request, { signal: localAbort.signal });
         if (admission.success && admission.success.waitMs > 0) {
           opts.config.logger.debug("[connecta] MCP request admitted after queue wait", {
             waitMs: admission.success.waitMs,
@@ -753,6 +766,25 @@ export function createMcpRoute(opts: ServerOptions): {
           // the operator log is where the reason lives.
           let access: ConnectorAccess = authz;
           let readOnly = opts.config.readOnly;
+          if (poolName === undefined && opts.config.grant) {
+            const denialReason = yield* Effect.promise(async () => {
+              try {
+                return (await opts.config.grant!(authz.identity)) === true
+                  ? undefined
+                  : ("default_grant_denied" as const);
+              } catch {
+                return "default_grant_threw" as const;
+              }
+            });
+            if (denialReason !== undefined) {
+              logFailure(
+                opts.config.logger,
+                "MCP default endpoint request denied",
+                failureRecord({ reason: denialReason }),
+              );
+              return cors(mcpRefusal(sentSecrets, 404, -33004, "MCP endpoint not found."));
+            }
+          }
           if (poolName !== undefined) {
             const pool = opts.pools?.get(poolName);
             const denialReason = !pool
@@ -774,6 +806,13 @@ export function createMcpRoute(opts: ServerOptions): {
             }
             access = intersectAccess(authz, pool.access);
             readOnly = pool.readOnly;
+          }
+          if (defaultMetadata) {
+            return (
+              (yield* Effect.promise(() =>
+                authMetadata(new Request(request, { signal: localAbort.signal }), baseUrl, opts.config.auth),
+              ))?.response ?? notFoundResponse(request, opts.config)
+            );
           }
           let scopedRegistry: RegistryView;
           try {
@@ -802,6 +841,8 @@ export function createMcpRoute(opts: ServerOptions): {
                 if (current.subjectKey !== authz.subjectKey || current.principalKey !== authz.principalKey)
                   return false;
                 validateAuthPermissions(current, opts.registry);
+                if (poolName === undefined && opts.config.grant && (await opts.config.grant(current.identity)) !== true)
+                  return false;
                 let currentAccess: ConnectorAccess = current;
                 let currentReadOnly = opts.config.readOnly;
                 if (poolName !== undefined) {

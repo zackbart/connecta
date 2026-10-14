@@ -365,6 +365,12 @@ const connectaConfig = {
   }),
   /** Code-derived connection visibility and independent management permissions. */
   identity: object(identity),
+  /**
+   * Whether this admitted identity may open plain `/mcp`. Omitted admits
+   * everyone; only literal true admits when configured. Other returns and
+   * throws receive the same 404 as a refused or undeclared pool.
+   */
+  grant: fn<(identity: Readonly<AuthenticatedIdentity>) => boolean | Promise<boolean>>(),
   /** Named tool pools, each served at `/mcp/<name>` to identities its grant admits. */
   pools: record(object(pool)),
   /** Exact connector id -> tool name -> verdict. Unknown names fail at catalog publication. */
