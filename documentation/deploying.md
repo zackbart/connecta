@@ -64,7 +64,7 @@ through to `fetch`. The example owns those details and
 
 ## Compose capabilities and access
 
-Both configurations use `defineConfig((env) => …)` and a required executor.
+Both configurations use `defineConfig((env) => …)`, a required executor, and a required `readOnly` choice.
 [Integrating services](./integrating.md) explains the `connectors` array.
 Configuration selects optional factories through explicit slots:
 

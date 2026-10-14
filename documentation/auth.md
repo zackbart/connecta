@@ -90,6 +90,7 @@ createConnecta({
       principal.id === "your-operator-id",
   },
   connectors, executor,
+  readOnly: false, // required: true refuses every write call
 });
 ```
 
@@ -206,6 +207,7 @@ createConnecta({
     },
   },
   connectors: [issues, campaigns, billing], executor,
+  readOnly: false, // required: true refuses every write call
 });
 ```
 
@@ -833,6 +835,7 @@ createConnecta({
     activityAccess: ({ id }) => id === "owner-id",
   },
   connectors, executor,
+  readOnly: false, // required: true refuses every write call
 });
 ```
 
