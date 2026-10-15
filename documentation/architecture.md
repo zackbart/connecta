@@ -478,11 +478,20 @@ whitelisted fields: ids, names, counts, booleans, and the Worker's `ctx.access`
 summary. Credentials stay in a holder that prints as `[secret]`. An unexpected
 shape, including `null` where a list belongs, is a failure, never an empty
 result. Errors are fixed diagnostics plus those facts. Teardown deletes every
-tracked id on its own, then retries discovery by name for leftovers. It counts a
-resource as gone only when a successful lookup omits it. Run
+tracked id on its own. Then Access applications, service tokens, and Workers
+each get their own bounded discovery-and-delete pass by name, for resources
+whose create response was lost, so a failure in one family never skips
+another. Each discovered resource is deleted independently. Access policies are
+inline on their applications and go with them. A resource counts as gone only
+when a successful lookup omits it, and the final inventory verifies each family
+separately. Run
 `node scripts/probes/access-agent-bypass.mjs --self-test` to check the runner
 offline. It feeds canary secrets, suffixed slugs, malformed JSON, and a stalled
-process tree through it, and runs no `cf`, `curl`, or network command. This
+process tree through it. It also runs teardown against a fake `cf` whose
+application listing always fails, after a lost token-create response, and
+checks that the token is still found and deleted. It also checks that a Worker
+that refuses deletion does not block another Worker's deletion. It runs no real
+`cf`, `curl`, or network command. This
 hardening and the joint convergence are verified offline only and have not run
 against Cloudflare.
 

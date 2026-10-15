@@ -466,6 +466,104 @@ async function selfTest() {
     const missing = keep(await run(join(scratch, "no-such-binary"), []));
     check("run: a missing binary is a failure with facts only", !missing.ok && missing.exitCode === null);
 
+    // Regression: a lost service-token create response plus an Access
+    // application listing that always fails must still discover and delete the
+    // token and the Workers, with each discovered deletion attempted on its own.
+    const fakeCf = join(scratch, "fake-cf.mjs");
+    const fakeState = join(scratch, "fake-cf-state.json");
+    const teardownName = "connecta-probe-selftest";
+    await writeFile(
+      fakeCf,
+      `#!${process.execPath}
+import { readFileSync, writeFileSync } from "node:fs";
+const file = process.env.FAKE_CF_STATE;
+const state = JSON.parse(readFileSync(file, "utf8"));
+let args = process.argv.slice(2);
+if (args[0] === "--profile") args = args.slice(2);
+const command = args.slice(0, 4).join(" ");
+const print = (value) => process.stdout.write(JSON.stringify(value));
+const fail = () => {
+  process.stderr.write("[10000] access.api.error.internal ${canary} │ 500 Internal Server Error · HTTP /x");
+  process.exit(1);
+};
+if (command === "zero-trust access applications list") {
+  if (state.failAppList) fail();
+  print(state.apps);
+} else if (command === "zero-trust access applications delete") state.apps = state.apps.filter((a) => a.id !== args[4]);
+else if (command === "zero-trust access service-tokens list")
+  print(state.tokens.filter((t) => t.name.includes(args[args.indexOf("--search") + 1])));
+else if (command === "zero-trust access service-tokens delete") state.tokens = state.tokens.filter((t) => t.id !== args[4]);
+else if (args[0] === "workers" && args[1] === "scripts" && args[2] === "search")
+  print(
+    state.workers
+      .filter((w) => (args[3] === "--id" ? w.id === args[4] : w.name.includes(args[4])))
+      .map((w) => ({ id: w.id, script_name: w.name })),
+  );
+else if (args[0] === "workers" && args[1] === "delete") {
+  if (state.stuckWorkers.includes(args[2])) fail();
+  state.workers = state.workers.filter((w) => w.id !== args[2]);
+} else fail();
+writeFileSync(file, JSON.stringify(state));
+`,
+      { mode: 0o755 },
+    );
+    await writeFile(
+      fakeState,
+      JSON.stringify({
+        failAppList: true,
+        apps: [{ id: "app-other", name: "unrelated" }],
+        tokens: [{ id: "tok-lost", name: `${teardownName}-token` }],
+        workers: [
+          { id: "wk-stuck", name: teardownName },
+          { id: "wk-lost", name: teardownName },
+        ],
+        stuckWorkers: ["wk-stuck"],
+      }),
+    );
+    const previousState = process.env.FAKE_CF_STATE;
+    process.env.FAKE_CF_STATE = fakeState;
+    const teardownState = {
+      created: { apps: [], serviceToken: undefined, worker: true },
+      ever: { apps: new Set(), tokens: new Set() },
+    };
+    const inventory = { before: { count: 1 } };
+    let teardownFailures;
+    try {
+      teardownFailures = await teardown(
+        createAccount({
+          bin: fakeCf,
+          profile: "selftest",
+          name: teardownName,
+          cwd: scratch,
+          state: teardownState,
+          retryDelayMs: 5,
+        }),
+        { name: teardownName, state: teardownState, workerId: undefined, beforeIds: new Set(["app-other"]), inventory },
+      );
+    } finally {
+      if (previousState === undefined) delete process.env.FAKE_CF_STATE;
+      else process.env.FAKE_CF_STATE = previousState;
+    }
+    const finalState = JSON.parse(await readFile(fakeState, "utf8"));
+    const teardownMessages = keep(teardownFailures.map(describe));
+    keep(inventory);
+    check(
+      "teardown: a lost token is found by name although application listing always fails",
+      finalState.tokens.length === 0 && inventory.after.probeServiceTokensRemaining === 0,
+    );
+    check(
+      "teardown: Worker discovery still runs, and one stuck Worker does not block another",
+      finalState.workers.length === 1 && finalState.workers[0].id === "wk-stuck",
+    );
+    check(
+      "teardown: the failing families stay unverified and are reported",
+      inventory.after.probeApplicationsRemaining === "unverified" &&
+        inventory.after.probeWorkersRemaining === 1 &&
+        teardownMessages.some((m) => m.includes("Access applications")) &&
+        teardownMessages.some((m) => m.includes("Workers")) &&
+        teardownMessages.some((m) => m.includes("teardown verification failed")),
+    );
+
     const probeError = new ProbeError("could not list Access applications", failed);
     const foreign = new TypeError(`boom ${canary}`);
     keep(describe(probeError));
@@ -481,6 +579,194 @@ async function selfTest() {
   const failedCount = results.filter((row) => !row.pass).length;
   console.log(`self-test: ${results.length - failedCount}/${results.length} passed`);
   if (failedCount) process.exitCode = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Account access and teardown. Kept outside probe() so the self-test can run
+// them against a fake cf.
+// ---------------------------------------------------------------------------
+function createAccount({ bin, profile, name, cwd, state, retryDelayMs = 1000 }) {
+  // cf caches the account under ./.cloudflare; running in cwd (a temp
+  // directory) keeps that out of the checkout.
+  const cfArgs = (args, body) => ["--profile", profile, ...args, ...(body ? ["--body", JSON.stringify(body)] : [])];
+  const cfRun = (args) => run(bin, cfArgs(args), { cwd, timeoutMs: 120000 });
+  const cfJson = (args, schema, body) => runJson(bin, cfArgs(args, body), schema, { cwd, timeoutMs: 120000 });
+
+  async function listApps() {
+    const apps = [];
+    for (let page = 1; page < 50; page++) {
+      const response = await cfJson(
+        ["zero-trust", "access", "applications", "list", "--per-page", "100", "--page", String(page)],
+        appListSchema,
+      );
+      if (!response.ok) throw new ProbeError("could not list Access applications", response);
+      apps.push(...response.value);
+      if (response.value.length < 100) break;
+    }
+    return apps;
+  }
+
+  async function listProbeTokens() {
+    const response = await cfJson(
+      ["zero-trust", "access", "service-tokens", "list", "--search", name],
+      tokenListSchema,
+    );
+    if (!response.ok) throw new ProbeError("could not list service tokens", response);
+    return response.value.filter((token) => token.name === `${name}-token` || state.ever.tokens.has(token.id));
+  }
+
+  async function searchWorkers(flag, value) {
+    const response = await cfJson(["workers", "scripts", "search", flag, value], workerSearchSchema);
+    if (!response.ok) throw new ProbeError("could not search Workers", response);
+    return flag === "--id" ? response.value : response.value.filter((w) => (w.script_name ?? w.name) === name);
+  }
+
+  // Retries until a successful lookup confirms absence. A failed lookup is
+  // retried, never taken as proof that the resource is gone.
+  async function confirmGone(label, present) {
+    let last;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        if (!(await present())) return;
+        last = new ProbeError(`${label} still present after delete`);
+      } catch (error) {
+        last = error instanceof ProbeError ? error : new ProbeError(`${label}: lookup failed`);
+      }
+      await wait(retryDelayMs);
+    }
+    throw last;
+  }
+
+  // Without --force, cf asks for confirmation and exits 0 without deleting when
+  // stdin is not a terminal, so every delete is forced and then verified. The
+  // delete's own result is not trusted either way; only a confirmed absence is.
+  async function deleteApp(appId) {
+    await cfRun(["zero-trust", "access", "applications", "delete", appId, "--force"]);
+    await confirmGone(`Access application ${appId}`, async () => (await listApps()).some((app) => app.id === appId));
+    state.created.apps = state.created.apps.filter((tracked) => tracked !== appId);
+  }
+
+  async function deleteToken(tokenId) {
+    await cfRun(["zero-trust", "access", "service-tokens", "delete", tokenId, "--force"]);
+    await confirmGone(`service token ${tokenId}`, async () =>
+      (await listProbeTokens()).some((token) => token.id === tokenId),
+    );
+    if (state.created.serviceToken === tokenId) state.created.serviceToken = undefined;
+  }
+
+  async function deleteWorker(scriptId) {
+    await cfRun(["workers", "delete", scriptId, "--force"]);
+    await confirmGone(`Worker ${scriptId}`, async () => (await searchWorkers("--id", scriptId)).length > 0);
+  }
+
+  return { cfJson, listApps, listProbeTokens, searchWorkers, deleteApp, deleteToken, deleteWorker, retryDelayMs };
+}
+
+// Deletes everything the run created and fills `inventory.after`. Tracked ids
+// go first, each on its own. Then each resource family gets its own bounded
+// discovery-and-delete pass by name, for resources whose create response was
+// lost, so a failure in one family never skips another. Access policies are
+// created inline on their applications and are deleted with them; the probe
+// creates no reusable policies, so there is no separate policy family.
+async function teardown(account, { name, state, workerId, beforeIds, inventory }) {
+  const failures = [];
+  const attempt = async (step) => {
+    try {
+      await step();
+      return true;
+    } catch (error) {
+      failures.push(error);
+      return false;
+    }
+  };
+  for (const appId of [...state.created.apps].reverse()) await attempt(() => account.deleteApp(appId));
+  if (state.created.serviceToken) await attempt(() => account.deleteToken(state.created.serviceToken));
+  if (workerId) await attempt(() => account.deleteWorker(workerId));
+
+  const families = [
+    {
+      label: "Access applications",
+      discover: async () => (await account.listApps()).filter((app) => app.name.startsWith(name)),
+      remove: (app) => account.deleteApp(app.id),
+    },
+    {
+      label: "service tokens",
+      discover: () => account.listProbeTokens(),
+      remove: (token) => {
+        state.ever.tokens.add(token.id);
+        return account.deleteToken(token.id);
+      },
+    },
+    {
+      label: "Workers",
+      discover: () => account.searchWorkers("--name", name),
+      remove: (worker) => account.deleteWorker(worker.id),
+    },
+  ];
+  for (const family of families) {
+    let lastError;
+    let clean = false;
+    for (let round = 0; round < 3 && !clean; round++) {
+      try {
+        const leftovers = await family.discover();
+        let removedAll = true;
+        // Each discovered resource is deleted on its own; one failure does not skip the rest.
+        for (const leftover of leftovers)
+          try {
+            await family.remove(leftover);
+          } catch (error) {
+            removedAll = false;
+            lastError = error;
+          }
+        clean = removedAll;
+      } catch (error) {
+        lastError = error;
+      }
+      if (!clean) await wait(account.retryDelayMs * 2);
+    }
+    if (!clean) {
+      failures.push(new ProbeError(`leftover discovery by name for ${family.label} did not complete`));
+      if (lastError) failures.push(lastError);
+    }
+  }
+
+  // Each family is verified on its own; a failed lookup leaves that family
+  // "unverified" without hiding the others.
+  const after = {
+    count: "unverified",
+    nonProbeIdsUnchanged: "unverified",
+    probeApplicationsRemaining: "unverified",
+    probeWorkersRemaining: "unverified",
+    probeServiceTokensRemaining: "unverified",
+  };
+  await attempt(async () => {
+    const apps = await account.listApps();
+    const ids = new Set(apps.map((app) => app.id));
+    after.count = apps.length;
+    after.nonProbeIdsUnchanged =
+      beforeIds !== undefined && ids.size === beforeIds.size && [...beforeIds].every((appId) => ids.has(appId));
+    after.probeApplicationsRemaining = apps.filter(
+      (app) => state.ever.apps.has(app.id) || app.name.startsWith("connecta-probe-"),
+    ).length;
+  });
+  await attempt(async () => {
+    after.probeServiceTokensRemaining = (await account.listProbeTokens()).length;
+  });
+  await attempt(async () => {
+    const byName = await account.searchWorkers("--name", name);
+    const byId = workerId ? await account.searchWorkers("--id", workerId) : [];
+    after.probeWorkersRemaining = byName.length + byId.length;
+  });
+  inventory.after = after;
+  if (
+    after.count !== inventory.before?.count ||
+    after.nonProbeIdsUnchanged !== true ||
+    after.probeApplicationsRemaining !== 0 ||
+    after.probeWorkersRemaining !== 0 ||
+    after.probeServiceTokensRemaining !== 0
+  )
+    failures.push(new ProbeError("teardown verification failed; see the inventory in the observations"));
+  return failures;
 }
 
 // ---------------------------------------------------------------------------
@@ -508,10 +794,8 @@ async function probe(argv) {
   let workerId;
   const audDigests = new Map();
 
-  // cf caches the account under ./.cloudflare; running in temp keeps that out of the checkout.
-  const cfArgs = (args, body) => ["--profile", profile, ...args, ...(body ? ["--body", JSON.stringify(body)] : [])];
-  const cfRun = (args) => run(cfBin, cfArgs(args), { cwd: temp, timeoutMs: 120000 });
-  const cfJson = (args, schema, body) => runJson(cfBin, cfArgs(args, body), schema, { cwd: temp, timeoutMs: 120000 });
+  const account = createAccount({ bin: cfBin, profile, name, cwd: temp, state: { created, ever } });
+  const { cfJson, listApps, searchWorkers, deleteApp } = account;
 
   async function rememberAud(label, aud) {
     if (typeof aud !== "string" || !aud) return;
@@ -524,73 +808,6 @@ async function probe(argv) {
     if (origin) text = text.replaceAll(new URL(origin).host, "<probe-host>");
     if (workerId) text = text.replaceAll(workerId, "<probe-worker-id>");
     return JSON.parse(text);
-  }
-
-  async function listApps() {
-    const apps = [];
-    for (let page = 1; page < 50; page++) {
-      const response = await cfJson(
-        ["zero-trust", "access", "applications", "list", "--per-page", "100", "--page", String(page)],
-        appListSchema,
-      );
-      if (!response.ok) throw new ProbeError("could not list Access applications", response);
-      apps.push(...response.value);
-      if (response.value.length < 100) break;
-    }
-    return apps;
-  }
-
-  async function listProbeTokens() {
-    const response = await cfJson(
-      ["zero-trust", "access", "service-tokens", "list", "--search", name],
-      tokenListSchema,
-    );
-    if (!response.ok) throw new ProbeError("could not list service tokens", response);
-    return response.value.filter((token) => token.name === `${name}-token` || ever.tokens.has(token.id));
-  }
-
-  async function searchWorkers(flag, value) {
-    const response = await cfJson(["workers", "scripts", "search", flag, value], workerSearchSchema);
-    if (!response.ok) throw new ProbeError("could not search Workers", response);
-    return flag === "--id" ? response.value : response.value.filter((w) => (w.script_name ?? w.name) === name);
-  }
-
-  // Retries until a successful lookup confirms absence. A failed lookup is
-  // retried, never taken as proof that the resource is gone.
-  async function confirmGone(label, present) {
-    let last;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      try {
-        if (!(await present())) return;
-        last = new ProbeError(`${label} still present after delete`);
-      } catch (error) {
-        last = error instanceof ProbeError ? error : new ProbeError(`${label}: lookup failed`);
-      }
-      await wait(1000);
-    }
-    throw last;
-  }
-
-  // Without --force, cf asks for confirmation and exits 0 without deleting when
-  // stdin is not a terminal, so every delete is forced and then verified. The
-  // delete's own result is not trusted either way; only a confirmed absence is.
-  async function deleteApp(appId) {
-    await cfRun(["zero-trust", "access", "applications", "delete", appId, "--force"]);
-    await confirmGone(`Access application ${appId}`, async () => (await listApps()).some((app) => app.id === appId));
-    created.apps = created.apps.filter((tracked) => tracked !== appId);
-  }
-
-  async function deleteToken(tokenId) {
-    await cfRun(["zero-trust", "access", "service-tokens", "delete", tokenId, "--force"]);
-    await confirmGone(`service token ${tokenId}`, async () =>
-      (await listProbeTokens()).some((token) => token.id === tokenId),
-    );
-    if (created.serviceToken === tokenId) created.serviceToken = undefined;
-  }
-
-  async function deleteWorker(scriptId) {
-    await cfRun(["workers", "delete", scriptId, "--force"]);
-    await confirmGone(`Worker ${scriptId}`, async () => (await searchWorkers("--id", scriptId)).length > 0);
   }
 
   async function createApp(label, body) {
@@ -945,66 +1162,16 @@ export default {
     failures.push(error);
     record.error = describe(error);
   } finally {
-    const attempt = async (step) => {
-      try {
-        await step();
-      } catch (error) {
-        failures.push(error);
-      }
-    };
-    // Tracked ids first, each deleted on its own, with no dependency on discovery.
-    for (const appId of [...created.apps].reverse()) await attempt(() => deleteApp(appId));
-    if (created.serviceToken) await attempt(() => deleteToken(created.serviceToken));
-    if (workerId) await attempt(() => deleteWorker(workerId));
-    // Then discovery by name, for resources whose create response was lost.
-    if (created.worker || ever.apps.size || ever.tokens.size || record.inventory.before) {
-      let discovered = false;
-      for (let round = 0; round < 3 && !discovered; round++) {
-        try {
-          for (const app of await listApps()) if (app.name.startsWith(name)) await deleteApp(app.id);
-          for (const token of await listProbeTokens()) {
-            ever.tokens.add(token.id);
-            await deleteToken(token.id);
-          }
-          for (const worker of await searchWorkers("--name", name)) await deleteWorker(worker.id);
-          discovered = true;
-        } catch {
-          await wait(2000);
-        }
-      }
-      if (!discovered) failures.push(new ProbeError("leftover discovery by name did not complete"));
-    }
-    try {
-      const after = await listApps();
-      const afterIds = new Set(after.map((app) => app.id));
-      const byName = await searchWorkers("--name", name);
-      const byId = workerId ? await searchWorkers("--id", workerId) : [];
-      record.inventory.after = {
-        count: after.length,
-        nonProbeIdsUnchanged:
-          beforeIds !== undefined &&
-          afterIds.size === beforeIds.size &&
-          [...beforeIds].every((appId) => afterIds.has(appId)),
-        probeApplicationsRemaining: after.filter(
-          (app) => ever.apps.has(app.id) || app.name.startsWith("connecta-probe-"),
-        ).length,
-        probeWorkersRemaining: byName.length + byId.length,
-        probeServiceTokensRemaining: (await listProbeTokens()).length,
-      };
-      const inventory = record.inventory;
-      if (
-        inventory.after.count !== inventory.before?.count ||
-        !inventory.after.nonProbeIdsUnchanged ||
-        inventory.after.probeApplicationsRemaining !== 0 ||
-        inventory.after.probeWorkersRemaining !== 0 ||
-        inventory.after.probeServiceTokensRemaining !== 0
-      )
-        failures.push(new ProbeError("teardown verification failed; see the inventory in the observations"));
-      console.log(`Inventory: ${JSON.stringify(inventory)}`);
-    } catch (error) {
-      failures.push(error);
-      record.inventory.after = "unverified";
-    }
+    failures.push(
+      ...(await teardown(account, {
+        name,
+        state: { created, ever },
+        workerId,
+        beforeIds,
+        inventory: record.inventory,
+      })),
+    );
+    console.log(`Inventory: ${JSON.stringify(record.inventory)}`);
     await save();
     await rm(temp, { recursive: true, force: true });
   }
