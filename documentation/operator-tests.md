@@ -22,27 +22,23 @@ its state and fonts before capturing.
 ## Page and state matrix
 
 Each row runs empty, loading, error, populated, and restricted-viewer fixtures
-in both light and dark themes, for 120 screenshots.
+in both light and dark themes, for 80 screenshots.
 
-| Page or tab           | Empty state                          | Loading/error request | Restricted viewer                                   |
-| --------------------- | ------------------------------------ | --------------------- | --------------------------------------------------- |
-| Overview              | No connectors or attention items     | Config                | Scoped connectors, no privileged navigation         |
-| Connectors            | No connectors                        | Config                | Read grant and credential slot, no other connectors |
-| Connector Config      | Zero-tool connector                  | Config                | Scoped connector snapshot                           |
-| Connector Tools       | Empty catalog                        | Config                | Read tool only                                      |
-| Connector Auth        | Deployment-managed auth              | Config                | Visible slot, deployment-managed auth               |
-| Connector Activity    | No calls                             | Activity              | Unavailable                                         |
-| Connector Diagnostics | No observed drift/call               | Config                | Scoped diagnostics                                  |
-| Tools                 | Empty catalog                        | Config                | Read tool only                                      |
-| Access                | No pools or client tokens            | Config                | No token management                                 |
-| Access tokens         | No client tokens                     | Token list            | No token management                                 |
-| Activity              | No calls                             | Activity              | Unavailable                                         |
-| Config                | Snapshot without connectors or pools | Config                | Scoped snapshot                                     |
+| Page or tab          | Empty state                          | Loading/error request | Restricted viewer                                   |
+| -------------------- | ------------------------------------ | --------------------- | --------------------------------------------------- |
+| Endpoints            | Root endpoint without tools          | Config                | Scoped endpoints, no privileged navigation          |
+| Connectors           | No connectors                        | Config                | Read grant and credential slot, no other connectors |
+| Connector Tools      | Empty catalog                        | Config                | Read tool only                                      |
+| Connector Connection | Deployment-managed auth              | Config                | Scoped auth, diagnostics and snapshot               |
+| Connector Activity   | No calls                             | Activity              | Unavailable                                         |
+| Tokens               | No client tokens                     | Token list            | No token management                                 |
+| Activity             | No calls                             | Activity              | Unavailable                                         |
+| Settings             | Snapshot without connectors or pools | Config                | Scoped snapshot and inbound-auth facts              |
 
-Another 36 screenshots cover configured, mismatched, unreadable and multifield
+Another 42 screenshots cover configured, mismatched, unreadable and multifield
 credentials; all three OAuth client mechanisms; clean and unobserved drift;
 historical Activity; client setup; schema dialog; read/write filters; expanded
-config provenance; narrow sign-in and Auth; and deployment branding. The base
+config provenance; narrow sign-in and Connection; deployment branding; an expanded endpoint (per-connector runs-as and tool chips); command search; and narrow endpoints. The base
 populated Activity fixture includes grouped calls, an ungrouped legacy row,
 classification/result size/client facts, and a catalog-change event.
 
@@ -63,8 +59,8 @@ non-Linux hosts. Do not commit Darwin baselines.
 When Docker is unavailable, use the **Operator snapshots** workflow:
 
 ```sh
-git push --force-with-lease origin feat/p4-ui-tests
-gh workflow run operator-snapshots.yml --ref feat/p4-ui-tests
+git push --force-with-lease origin ui/834-shell
+gh workflow run operator-snapshots.yml --ref ui/834-shell
 # Read the completed run ID from the Actions page or gh run list.
 gh run download RUN_ID --name operator-linux-snapshots \
   --dir test/browser/operator-visual.spec.ts-snapshots

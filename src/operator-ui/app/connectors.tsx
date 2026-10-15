@@ -1,17 +1,11 @@
 import { useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import type { OperatorConnectorOverlay } from "../contract.js";
-import {
-  connectorStatusLabel,
-  connectorSourceLabel,
-  connectorStatusTone,
-  formatDate,
-  registrationPathLabel,
-  type OperatorState,
-} from "../view.js";
-import { Badge, StateBlock } from "./parts.js";
+import { formatDate, type OperatorState } from "../view.js";
+import { StateBlock } from "./parts.js";
 import { Button, DataTable, Input } from "./primitives.js";
-import { ContractState } from "./overview.js";
+import { ConnectorStatus } from "./problems.js";
+import { ContractState } from "./contract-state.js";
 import { loadOperatorContract, navigate } from "./store.js";
 
 function ConnectorLink({ id, name, tab }: { id: string; name?: string; tab?: string }) {
@@ -30,8 +24,8 @@ function ConnectorLink({ id, name, tab }: { id: string; name?: string; tab?: str
   );
 }
 
-type Row = OperatorConnectorOverlay & { title: string; authScope: string; source: string };
-const columns: ColumnDef<Row>[] = [
+type Row = OperatorConnectorOverlay & { title: string; authScope: string };
+const columns = (state: OperatorState): ColumnDef<Row>[] => [
   {
     accessorKey: "title",
     header: "Connector",
@@ -46,28 +40,15 @@ const columns: ColumnDef<Row>[] = [
     accessorKey: "status",
     header: "Status",
     cell: ({ row }) => (
-      <Badge tone={connectorStatusTone(row.original.status)}>
-        {connectorStatusLabel(row.original.status, row.original.problem)}
-      </Badge>
+      <ConnectorStatus id={row.original.id} name={row.original.title} live={row.original} state={state} />
     ),
   },
   {
     accessorKey: "authScope",
     header: "Auth",
-    cell: ({ row }) => <ConnectorLink id={row.original.id} tab="auth" name={`${row.original.authScope} auth`} />,
+    cell: ({ row }) => (row.original.authScope === "personal" ? "Personal" : "Shared"),
   },
-  {
-    id: "registrationPath",
-    header: "OAuth client",
-    cell: ({ row }) =>
-      row.original.auth ? (
-        registrationPathLabel(row.original.auth.registrationPath)
-      ) : (
-        <span className="meta">Not selected</span>
-      ),
-  },
-  { accessorKey: "source", header: "Source" },
-  { id: "tools", header: "Tools", cell: ({ row }) => row.original.tools.length },
+  { id: "tools", header: "Tools", cell: ({ row }) => <span className="num">{row.original.tools.length}</span> },
   {
     id: "lastCall",
     header: "Last call",
@@ -75,7 +56,9 @@ const columns: ColumnDef<Row>[] = [
       row.original.lastCall ? (
         <span title={row.original.lastCall.outcome}>{formatDate(row.original.lastCall.at)}</span>
       ) : (
-        <span className="meta">Not observed</span>
+        <span className="meta" title="Not observed">
+          —<span className="visually-hidden">Not observed</span>
+        </span>
       ),
   },
 ];
@@ -92,36 +75,31 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
               ...live,
               title: config.title ?? config.id,
               authScope: config.authScope,
-              source: connectorSourceLabel(config.source),
             },
           ]
         : [];
     }) ?? [];
   const q = query.trim().toLowerCase();
   const visible = rows.filter((row) =>
-    [row.id, row.title, row.source, row.status].some((value) => value.toLowerCase().includes(q)),
+    [row.id, row.title, row.status].some((value) => value.toLowerCase().includes(q)),
   );
   return (
     <section id="connectionsView">
       <div className="page-heading">
-        <h1 id="connectionsHeading" tabIndex={-1}>
-          Connectors
-        </h1>
-        <Button disabled={state.contractPhase === "loading"} onClick={() => void loadOperatorContract()}>
-          Refresh
-        </Button>
-      </div>
-      <p className="meta">
-        Configured in code. Open a connector to inspect its catalog, authentication, and diagnostics.
-      </p>
-      {!contract ? (
-        <ContractState state={state} />
-      ) : (
-        <section className="section" aria-labelledby="connectorLedgerHeading">
-          <div className="section-head">
-            <h2 id="connectorLedgerHeading" tabIndex={-1}>
-              {rows.length} connectors
+        <div>
+          <h1 id="connectionsHeading" tabIndex={-1}>
+            Connectors
+          </h1>
+          {contract ? (
+            <h2 id="connectorLedgerHeading" className="meta" tabIndex={-1}>
+              {rows.length} {rows.length === 1 ? "connector" : "connectors"}, defined in code.
             </h2>
+          ) : (
+            <p className="meta">Defined in code.</p>
+          )}
+        </div>
+        <div className="page-actions">
+          {contract ? (
             <Input
               id="filter"
               type="search"
@@ -131,9 +109,18 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
               placeholder="Filter connectors…"
               aria-label="Filter connectors"
             />
-          </div>
+          ) : null}
+          <Button disabled={state.contractPhase === "loading"} onClick={() => void loadOperatorContract()}>
+            Refresh
+          </Button>
+        </div>
+      </div>
+      {!contract ? (
+        <ContractState state={state} />
+      ) : (
+        <section className="section" aria-labelledby="connectorLedgerHeading">
           {visible.length ? (
-            <DataTable data={visible} columns={columns} label="Connectors" />
+            <DataTable data={visible} columns={columns(state)} label="Connectors" />
           ) : (
             <StateBlock>
               {rows.length ? "No connectors match this filter." : "No connectors are visible to this session."}

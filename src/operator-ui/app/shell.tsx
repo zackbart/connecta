@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Command } from "cmdk";
 import { Button, Dialog, Tabs } from "./primitives.js";
-import { PAGE_META, type OperatorPage } from "../view.js";
+import { PAGE_META, type OperatorPage, type OperatorState } from "../view.js";
 import { navigate } from "./store.js";
 
 const THEME_KEY = "connecta:scheme";
@@ -17,7 +17,7 @@ function readScheme(): Scheme {
   }
   return "system";
 }
-export function ShellControls({ pages }: { pages: OperatorPage[] }) {
+export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: OperatorState }) {
   // Each dialog keeps its own return target, including when ⌘K opens over
   // Appearance. Closing the palette returns to the still-open appearance tab.
   const commandReturnFocus = useRef<HTMLElement | null>(null);
@@ -61,14 +61,14 @@ export function ShellControls({ pages }: { pages: OperatorPage[] }) {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
-  const go = (page: OperatorPage) => {
+  const go = (page: OperatorPage, href = PAGE_META[page].path) => {
     // Page navigation owns focus. Radix's deferred close callbacks must not
     // restore a sidebar trigger after the destination heading receives it.
     commandReturnFocus.current = null;
     appearanceReturnFocus.current = null;
     setAppearanceOpen(false);
     setCommandOpen(false);
-    navigate(page, PAGE_META[page].path);
+    navigate(page, href);
   };
   return (
     <>
@@ -80,18 +80,23 @@ export function ShellControls({ pages }: { pages: OperatorPage[] }) {
           setCommandOpen(true);
         }}
       >
-        <span>Search pages</span>
+        <span>Search</span>
         <kbd>⌘K</kbd>
       </Button>
       <Button
         variant="quiet"
         className="appearance-trigger"
+        aria-label="Appearance"
+        title="Appearance"
         onClick={() => {
           appearanceReturnFocus.current = document.activeElement as HTMLElement;
           setAppearanceOpen(true);
         }}
       >
-        Appearance
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+          <circle cx="8" cy="8" r="5.75" fill="none" stroke="currentColor" strokeWidth="1.3" />
+          <path d="M8 2.25a5.75 5.75 0 0 1 0 11.5z" fill="currentColor" />
+        </svg>
       </Button>
       <Dialog
         returnFocusTo={appearanceReturnFocus}
@@ -118,13 +123,13 @@ export function ShellControls({ pages }: { pages: OperatorPage[] }) {
         returnFocusTo={commandReturnFocus}
         open={commandOpen}
         onOpenChange={setCommandOpen}
-        title="Go to page"
-        description="Search operator pages and actions."
+        title="Search"
+        description="Search pages, connectors, tools and actions."
       >
         <Command label="Operator commands" loop>
-          <Command.Input className="command-input" placeholder="Search pages…" autoFocus />
+          <Command.Input className="command-input" placeholder="Search pages, connectors, tools…" autoFocus />
           <Command.List className="command-list">
-            <Command.Empty>No matching pages or actions.</Command.Empty>
+            <Command.Empty>No matching pages, connectors, tools or actions.</Command.Empty>
             <Command.Group heading="Pages">
               {pages.map((page) => (
                 <Command.Item key={page} value={PAGE_META[page].label} onSelect={() => go(page)}>
@@ -132,6 +137,34 @@ export function ShellControls({ pages }: { pages: OperatorPage[] }) {
                 </Command.Item>
               ))}
             </Command.Group>
+            {state.session === "ready" && state.contract ? (
+              <>
+                <Command.Group heading="Connectors">
+                  {state.contract.config.connectors.map((connector) => (
+                    <Command.Item
+                      key={connector.id}
+                      value={`connector ${connector.id} ${connector.title ?? ""}`}
+                      onSelect={() => go("connector", `/connectors/${encodeURIComponent(connector.id)}#tools`)}
+                    >
+                      {connector.title ?? connector.id}
+                    </Command.Item>
+                  ))}
+                </Command.Group>
+                <Command.Group heading="Tools">
+                  {state.contract.live.connectors.flatMap((connector) =>
+                    connector.tools.map((tool) => (
+                      <Command.Item
+                        key={tool.address}
+                        value={`tool ${tool.address} ${tool.description ?? ""}`}
+                        onSelect={() => go("connector", `/connectors/${encodeURIComponent(connector.id)}#tools`)}
+                      >
+                        {tool.address}
+                      </Command.Item>
+                    )),
+                  )}
+                </Command.Group>
+              </>
+            ) : null}
             <Command.Group heading="Preferences">
               <Command.Item
                 onSelect={() => {

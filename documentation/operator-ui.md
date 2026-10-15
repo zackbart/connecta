@@ -22,10 +22,20 @@ and [Worker example](../examples/worker/README.md#select-optional-modules)
 own the runnable configuration, variables, and branding shape. The UI is an
 explicit optional import and stays outside the root package import graph.
 
-Overview, Connectors, Tools, Access, Activity, and Config show only what the
-caller may inspect. Connector detail tabs cover configuration, schemas,
-authentication, activity, and diagnostics. Config labels values as default or
-configured. Deployment code owns connectors, grants, pools, and classification;
+Endpoints, Connectors, Activity, Tokens, and Settings show only what the
+caller may inspect. Endpoints is the default page at `/`: one row for `/mcp`
+and each admitted pool, with a copyable URL, tool count, endpoint mode, and
+client setup. Expanding a row lists each connector on that endpoint with who it
+runs as (shared or personal) and its tools, marking write tools. Connector
+health is not repeated per endpoint: a connector that needs attention gets a
+status dot linking to its Connection tab. Counts intersect live tools with
+grants, pool declarations, and read-only mode. Connectors lists each connector
+with one status badge, auth scope, tool count, and last call; a problem adds one
+action (Connect, Replace key, or Inspect) that opens Connection. Connector
+detail has Tools, Connection, and Activity tabs. Connection combines
+authentication (including the OAuth client mechanism), catalog diagnostics,
+one fix prompt beside each problem it reports, and the connector snapshot with its source. Settings combines inbound-auth facts with the
+configuration snapshot and labels values as default or configured. Deployment code owns connectors, grants, pools, and classification;
 the UI changes only authorized authentication material.
 
 Install the vault for declared credential slots and activity history for
@@ -43,7 +53,7 @@ source. The response has `schemaVersion: 1`, `config`, `configSources`, `live`, 
 `config` is the construction-time `describeConfig()` snapshot, filtered to
 visible connectors, granted tools, classification overrides, and admitted
 pools. `config.hasGrant` reports whether deployment code configures a grant for
-plain `/mcp`; Access displays that fact and Config includes its provenance.
+plain `/mcp`; Settings displays that fact and its provenance.
 Pool tools are the intersection with the caller's identity grants.
 `configSources` labels each serialized leaf as `default` or `config`, based on
 option presence rather than equality with the default. Factory descriptions carry
@@ -84,14 +94,14 @@ authentication environment variables; it runs no diagnostic program, follows
 no redirects, and prints no raw HTTP failure body.
 
 The operator shell uses React, TanStack Router/Query/Table, Radix, cmdk and
-Tailwind v4. Inter, CSS, JavaScript and dependency notices are hashed assets
+Tailwind v4. Geist Sans, Geist Mono, CSS, JavaScript and dependency notices are hashed assets
 under `/ui/assets/*`, served identically with immutable cache headers on Node
 and Workers. HTML contains only mount points and escaped inert configuration;
 it remains uncached. `generated.ts` is ignored and generated before build and
 test; `check:operator-ui` detects stale assets and shared page styles. The UI
 stays behind `./ui`, outside the root import graph. The identity-fenced store
-owns authenticated reads and existing mutations. Overview, Connectors, connector
-detail, Tools, Access and Config consume the typed contract. Activity retains
+owns authenticated reads and existing mutations. Endpoints, Connectors, connector
+detail, and Settings consume the typed contract. Activity retains
 its authenticated data routes. Connector detail tabs live
 in the URL hash; Activity filters live in the query string and apply to loaded
 history. Both `/ui/activity` and `/ui/api/activity` require Activity access and
@@ -118,8 +128,16 @@ id and typed actor when available, otherwise a fresh id and system actor. No
 names, descriptions or schemas enter the event. Private catalog changes require
 a matching principal owner even when the connector uses shared auth. Empty credential declarations
 report `credential_required` before running a connector status or catalog probe.
-The Access adapter reports inbound provider kinds, admitted pools, grants, read-only endpoints
-and endpoint setup; token controls retain their existing permission gate.
+The top bar shows deployment branding and a name breadcrumb, then Search (the
+command palette), Appearance, and the session action (Change token or Sign out)
+at one quiet size. The tab row lists Endpoints, Connectors, Activity,
+Tokens, and Settings. Activity and Tokens keep their permission gates; a gated
+viewer sees no operator navigation. The command palette searches visible pages,
+connectors and tools, opening connector results on Tools. `/access` redirects
+to `/`, `/tools` to `/connectors`, and `/config` to `/settings` in the browser
+with history replacement. Connector hashes `#config`, `#auth` and `#diagnostics`
+redirect to `#connection`, preserving query parameters such as signed handoffs.
+Token controls retain their existing permission gate.
 Configuration remains in deployment code. The UI mutates only credentials,
 OAuth connections and client tokens through the existing routes.
 

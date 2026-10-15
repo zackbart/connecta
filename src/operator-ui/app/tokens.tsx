@@ -138,14 +138,11 @@ export function TokensPage({ state, embedded = false }: { state: OperatorState; 
       <div className="lead">
         {embedded ? null : (
           <h1 id="tokensHeading" className="" tabIndex={-1}>
-            Access tokens
+            Tokens
           </h1>
         )}
         <div className="lead-copy">
-          <p className="activity-copy">
-            Create named Bearer tokens for MCP clients. Each secret is shown once; revoke it when that client should
-            lose access.
-          </p>
+          <p className="activity-copy">Bearer tokens for MCP clients. Each secret is shown once.</p>
           <NoticeLine id="tokenNotice" notice={state.tokenNotice} />
           {!available ? (
             <Unavailable>{accessTokenUnavailableCopy(state.data?.accessTokenManagement)}</Unavailable>

@@ -33,36 +33,24 @@ export function connectorSourceLabel(source: { kind: string; provider?: string }
   return `${source.provider} · ${implementation}`;
 }
 
-export type OperatorPage =
-  | "overview"
-  | "tools"
-  | "access"
-  | "config"
-  | "connector"
-  | "tokens"
-  | "connections"
-  | "activity";
+export type OperatorPage = "endpoints" | "settings" | "connector" | "tokens" | "connections" | "activity";
 
-/** Pages the nav lists. */
-export const OPERATOR_PAGES: readonly OperatorPage[] = [
-  "overview",
-  "connections",
-  "tools",
-  "access",
-  "activity",
-  "config",
-];
+/** Pages the nav lists, in dashboard order. */
+export const OPERATOR_PAGES: readonly OperatorPage[] = ["endpoints", "connections", "activity", "tokens", "settings"];
 
 export const PAGE_META: Readonly<Record<OperatorPage, { path: string; label: string }>> = {
-  overview: { path: "/", label: "Overview" },
+  endpoints: { path: "/", label: "Endpoints" },
   connector: { path: "/connectors", label: "Connector" },
-  tools: { path: "/tools", label: "Tools" },
-  access: { path: "/access", label: "Access" },
-  config: { path: "/config", label: "Config" },
-  tokens: { path: "/tokens", label: "Access tokens" },
+  settings: { path: "/settings", label: "Settings" },
+  tokens: { path: "/tokens", label: "Tokens" },
   connections: { path: "/connectors", label: "Connectors" },
   activity: { path: "/activity", label: "Activity" },
 };
+
+/** Legacy links remain valid, with the browser replacing their URL. */
+export function canonicalOperatorPath(path: string): string {
+  return ({ "/access": "/", "/tools": "/connectors", "/config": "/settings" } as Record<string, string>)[path] ?? path;
+}
 
 /**
  * What each page is for, in one line under its heading — on the gate as well
@@ -84,7 +72,7 @@ export function checkingCopy(): string {
 export function pageForPath(path: string): OperatorPage {
   if (/^\/connectors\/[a-z0-9_-]+$/.test(path)) return "connector";
   if (path === "/tokens") return "tokens";
-  const match = OPERATOR_PAGES.find((page) => PAGE_META[page].path === path);
+  const match = OPERATOR_PAGES.find((page) => PAGE_META[page].path === canonicalOperatorPath(path));
   return match ?? "connections";
 }
 
@@ -554,7 +542,7 @@ export function connectorStatusLabel(status: string, problem?: UiProblem): strin
 }
 
 /** The tone a status carries wherever it is rendered as a badge or a tile. */
-export type Tone = "ok" | "warn" | "danger" | "neutral";
+export type Tone = "ok" | "warn" | "danger" | "neutral" | "accent";
 
 export function connectorStatusTone(status: string): Tone {
   if (status === "ok") return "ok";
@@ -866,7 +854,7 @@ export function credentialStateLabel(credential: {
   updatedAt?: string;
 }): string {
   if (!credential.configured) return "not configured";
-  const masked = credential.fields?.length ? "configured" : `configured · ••••${credential.lastFour ?? ""}`;
+  const masked = "configured";
   return credential.updatedAt ? `${masked} · updated ${formatDate(credential.updatedAt)}` : masked;
 }
 

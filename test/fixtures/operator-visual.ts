@@ -96,6 +96,7 @@ export async function createOperatorVisualFixture(state: VisualState, keepEmptyC
 export const VISUAL_VARIANTS = [
   "credential-configured", "credential-mismatch", "credential-unreadable", "credential-fields",
   "oauth-static", "oauth-cimd", "oauth-dcr", "drift-clean", "drift-unobserved", "legacy-activity",
+  "endpoints-expanded", "command-search", "narrow-endpoints",
   "client-setup", "schema", "tools-read", "tools-write", "config-provenance", "narrow-gate", "narrow-auth", "branded",
 ] as const;
 export type VisualVariant = typeof VISUAL_VARIANTS[number];

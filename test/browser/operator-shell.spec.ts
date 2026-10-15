@@ -114,8 +114,8 @@ async function openShell(page: Page, scheme = "light", clerk = false) {
     `localStorage.setItem('connecta:token', ${JSON.stringify(TOKEN)}); localStorage.setItem('connecta:scheme', ${JSON.stringify(scheme)});`,
   );
   await page.goto(origin + (clerk ? "/?clerk" : "/"));
-  await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
-  await expect(page.getByText("Slack", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Endpoints", exact: true })).toBeVisible();
+  await expect(page.locator(".endpoint-table")).toBeVisible();
   await page.evaluate("document.fonts.ready");
 }
 
@@ -124,10 +124,10 @@ test("operator shell admits ambient Access without sending a stored token", asyn
   await page.context().setExtraHTTPHeaders({ "X-Test-Access": "1" });
   await page.addInitScript("localStorage.setItem('connecta:token', 'stale-token');");
   const dataRequest = page.waitForRequest((request) => new URL(request.url()).pathname === "/ui/data");
-  await page.goto(`${origin}/access?access`);
+  await page.goto(`${origin}/settings?access`);
   const request = await dataRequest;
   expect(request.headers()["authorization"]).toBeUndefined();
-  await expect(page.getByRole("heading", { name: "Access", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
   await expect(page.locator("#inboundHeading + .rows")).toContainText("cloudflare-access");
   await expect(page.getByText("Checking your session…")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toHaveCount(0);
@@ -135,11 +135,11 @@ test("operator shell admits ambient Access without sending a stored token", asyn
 
 test("command palette filters, traps focus and restores its trigger", async ({ page }) => {
   await openShell(page);
-  const trigger = page.getByRole("button", { name: "Search pages" });
+  const trigger = page.getByRole("button", { name: "Search" });
   await trigger.click();
-  const dialog = page.getByRole("dialog", { name: "Go to page" });
+  const dialog = page.getByRole("dialog", { name: "Search" });
   await expect(dialog).toBeVisible();
-  await page.getByPlaceholder("Search pages…").fill("Act");
+  await page.getByPlaceholder("Search pages, connectors, tools…").fill("Act");
   await expect(page.getByRole("option", { name: "Activity" })).toBeVisible();
   await expect(page.getByRole("option", { name: "Connectors" })).toHaveCount(0);
   await page.keyboard.press("Escape");
@@ -161,8 +161,8 @@ for (const fromAppearance of [false, true]) {
     if (fromAppearance) {
       await page.getByRole("button", { name: "Appearance", exact: true }).click();
       await page.keyboard.press("Meta+k");
-    } else await page.getByRole("button", { name: "Search pages" }).click();
-    await page.getByPlaceholder("Search pages…").fill("Activity");
+    } else await page.getByRole("button", { name: "Search" }).click();
+    await page.getByPlaceholder("Search pages, connectors, tools…").fill("Activity");
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(origin + "/activity");
     await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -173,15 +173,15 @@ for (const fromAppearance of [false, true]) {
 for (const alreadyOpen of [false, true]) {
   test(`palette Appearance action focuses its tab${alreadyOpen ? " when already open" : ""}`, async ({ page }) => {
     await openShell(page);
-    const trigger = page.getByRole("button", { name: alreadyOpen ? "Appearance" : "Search pages", exact: alreadyOpen });
+    const trigger = page.getByRole("button", { name: alreadyOpen ? "Appearance" : "Search", exact: alreadyOpen });
     await trigger.click();
     if (alreadyOpen) {
       await page.getByRole("tab", { name: "Light", exact: true }).focus();
       await page.keyboard.press("Meta+k");
     }
-    await page.getByPlaceholder("Search pages…").fill("Appearance");
+    await page.getByPlaceholder("Search pages, connectors, tools…").fill("Appearance");
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("dialog", { name: "Go to page" })).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: "Search" })).toHaveCount(0);
     await expect(page.getByRole("tab", { name: "Light", exact: true })).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(trigger).toBeFocused();
@@ -211,7 +211,7 @@ test("closing a palette above Appearance restores both focus targets", async ({ 
   await trigger.click();
   await page.getByRole("tab", { name: "Light", exact: true }).focus();
   await page.keyboard.press("Meta+k");
-  await expect(page.getByPlaceholder("Search pages…")).toBeFocused();
+  await expect(page.getByPlaceholder("Search pages, connectors, tools…")).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("tab", { name: "Light", exact: true })).toBeFocused();
   await page.keyboard.press("Escape");

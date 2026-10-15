@@ -29,23 +29,21 @@ export { CONNECTA_FAVICON_SVG, resolveBranding, isSafeHttpUrl, isSafeHttpsUrl, i
 export type OperatorPage = import("./operator-ui/view.js").OperatorPage;
 
 const OPERATOR_PAGE_LABELS: Readonly<Record<OperatorPage, string>> = {
-  overview: "Overview",
+  endpoints: "Endpoints",
   connections: "Connectors",
   connector: "Connector",
-  tools: "Tools",
-  access: "Access",
-  config: "Config",
-  tokens: "Access tokens",
+  settings: "Settings",
+  tokens: "Tokens",
   activity: "Activity",
 };
 
 export function operatorPageForPath(path: string): OperatorPage | undefined {
-  if (path === "/") return "overview";
+  if (path === "/") return "endpoints";
   if (path === "/connectors") return "connections";
   if (/^\/connectors\/[a-z0-9_-]+$/.test(path)) return "connector";
-  if (path === "/tools") return "tools";
-  if (path === "/access") return "access";
-  if (path === "/config") return "config";
+  if (path === "/tools") return "connections";
+  if (path === "/access") return "endpoints";
+  if (path === "/config" || path === "/settings") return "settings";
   if (path === "/tokens") return "tokens";
   if (path === "/activity") return "activity";
   return undefined;
@@ -143,7 +141,7 @@ export function renderUiHtml(
   branding?: ConnectaBranding,
   /** @deprecated Scripts load from same-origin assets; ignored. */
   _nonce?: string,
-  page: OperatorPage = "overview",
+  page: OperatorPage = "endpoints",
 ): string {
   const clerk = uiAuth?.kind === "clerk" ? uiAuth : undefined;
   // The Clerk loader's origin. A value that fails the gate is dropped rather
@@ -237,6 +235,7 @@ export function operatorUi(options: { branding?: ConnectaBranding } = {}): Opera
     "/tools",
     "/access",
     "/config",
+    "/settings",
     "/ui",
     "/ui/*",
     "/favicon.svg",
