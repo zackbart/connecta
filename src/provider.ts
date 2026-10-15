@@ -79,10 +79,12 @@ const admissionPolicy = object({
   rules: required(array(admissionRule)),
 });
 
-export const CALL_ADMISSION: Field<unknown, ConnectorCallAdmissionPolicy, true> & {
+export const CALL_ADMISSION: Omit<Field<unknown, ConnectorCallAdmissionPolicy | undefined, true>, "parse"> & {
+  parse(value: unknown, path: string): ConnectorCallAdmissionPolicy;
   readonly shape: typeof admissionPolicy.shape;
 } = {
   ...admissionPolicy,
+  absent: () => undefined,
   parse(value: unknown, path: string): ConnectorCallAdmissionPolicy {
     const policy = admissionPolicy.parse(assertKnownOptions(value, path, admissionPolicy), path);
     if (policy.rules.length !== 1) {
