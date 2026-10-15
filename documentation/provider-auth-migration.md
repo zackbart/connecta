@@ -105,6 +105,15 @@ connectors: [
 | `integration_list_comments`, `integration_add_comment`                                                                                    | `notion_api_read` `GET /v1/comments`; `notion_api_write` `POST /v1/comments`.                                        |
 | `integration_update_page_properties`, `integration_trash_page`                                                                            | `notion_api_write` `PATCH /v1/pages/{page_id}` with `properties`, or `in_trash` to trash or restore.                 |
 
+Both auth variants accept optional `callAdmission`. On a token connector it
+replaces the whole default policy of 180 calls per minute and 3 concurrent
+per runtime. Malformed policies throw at construction. Notion's
+[request limits](https://developers.notion.com/reference/request-limits) allow
+600 requests per minute per connection on Business and Enterprise and 180 on
+other plans, with a separate workspace-wide limit shared by all connections.
+Account for other runtimes and tools that make multiple HTTP requests when
+choosing an override.
+
 The token connector gains Connecta's generic REST tools over Notion's pinned
 API index (`notion_api_search`, `notion_api_details`, `notion_api_read`,
 `notion_api_write`), so every public operation is reachable with the bot's

@@ -6,7 +6,7 @@ const options: Options = { "purpose":"Audit fixture", "auth":{"type":"token"} };
 export const fixture = {
   name: "notion",
   options,
-  cases: [{"label":"padded-purpose","options":{"purpose":"  Audit fixture  "}},{"label":"default","options":{}},{"label":"oauth","options":{"auth":{"type":"oauth"}}}],
+  cases: [{"label":"padded-purpose","options":{"purpose":"  Audit fixture  "}},{"label":"default","options":{}},{"label":"oauth","options":{"auth":{"type":"oauth"}}},{"label":"business-admission","options":{"callAdmission":{"rules":[{"budget":{"kind":"rolling-window","maxCalls":600,"windowMs":60000}}]}}}],
   create(id = "fixture", overrides: Partial<Options> = {}) { return notion(id, { ...options, ...overrides } as Options); },
   conventions: {"verbs":["integration","notion"],"nestedDescriptionExceptions":[],"auth":"credential"},
 };

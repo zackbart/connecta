@@ -227,7 +227,7 @@ describe("notion() auth selects the implementation", () => {
     expect(mcpMocks.remoteMcp).not.toHaveBeenCalled();
   });
 
-  it("INV-11: refuses token-only options under OAuth by name, and OAuth-only options under a token", () => {
+  it("INV-11: refuses token-only options under OAuth and inline secrets under a token", () => {
     expect(() =>
       // @ts-expect-error The hosted server holds no operator credential.
       notion("wiki", { purpose: "Docs", auth: { type: "oauth" }, credentialLabel: "Docs token" }),
@@ -236,14 +236,62 @@ describe("notion() auth selects the implementation", () => {
       // @ts-expect-error Hosted tools own their own paging.
       notion("wiki", { purpose: "Docs", auth: { type: "oauth" }, defaultPageSize: 10 }),
     ).toThrow('Unknown option: notion("wiki").defaultPageSize.');
-    expect(() => build({ callAdmission: { rules: [{ maxConcurrency: 1 }] } })).toThrow(
-      'Unknown option: notion("workspace").callAdmission.',
-    );
     expect(() => build({ auth: { type: "token", token: "secret_x" } })).toThrow(
       'Unknown option: notion("workspace").auth.token.',
     );
     expect(mcpMocks.remoteMcp).not.toHaveBeenCalled();
   });
+
+  it.each(["oauth", "token"] as const)("INV-11: refuses malformed %s call admission at construction", (type) => {
+    for (const [callAdmission, path] of [
+      [[], "callAdmission"],
+      [{ rules: [[]] }, "callAdmission.rules[0]"],
+      [{ rules: [{ maxConcurency: 3 }] }, "callAdmission.rules[0].maxConcurency"],
+      [{ rules: [{ budget: [] }] }, "callAdmission.rules[0].budget"],
+      [{ rules: [{ budget: { maxCall: 600 } }] }, "callAdmission.rules[0].budget.maxCall"],
+    ] as const) {
+      expect(() => notion("wiki", { purpose: "Docs", auth: { type }, callAdmission } as never)).toThrow(path);
+    }
+    expect(mcpMocks.remoteMcp).not.toHaveBeenCalled();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  describe.each(["oauth", "token"] as const)("%s call admission", (type) => {
+    it.each([false, null, 0, ""])("INV-11: refuses the falsy nested budget %j at factory construction", (budget) => {
+      expect(() =>
+        notion("wiki", { purpose: "Docs", auth: { type }, callAdmission: { rules: [{ budget }] } } as never),
+      ).toThrow(/callAdmission.*budget/);
+      expect(mcpMocks.remoteMcp).not.toHaveBeenCalled();
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    it.each([false, null, 0, ""])("INV-11: refuses the falsy policy %j at factory construction", (callAdmission) => {
+      expect(() => notion("wiki", { purpose: "Docs", auth: { type }, callAdmission } as never)).toThrow(
+        'notion("wiki") requires callAdmission to be an object.',
+      );
+      expect(mcpMocks.remoteMcp).not.toHaveBeenCalled();
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+  });
+
+  it.each(["oauth", "token"] as const)(
+    "INV-11: refuses invalid %s admission limits at deployment construction",
+    (type) => {
+      for (const callAdmission of [
+        { rules: {} },
+        { rules: [] },
+        { rules: [{}] },
+        { rules: [{ maxConcurrency: 0 }] },
+        { rules: [{ budget: { kind: "rolling-window", maxCalls: 0, windowMs: 60_000 } }] },
+        { rules: [{ budget: { kind: "rolling-window", maxCalls: 600, windowMs: 0 } }] },
+      ]) {
+        expect(() =>
+          makeRegistry([notion("wiki", { purpose: "Docs", auth: { type }, callAdmission } as never)]),
+        ).toThrow(/callAdmission/);
+      }
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("notion() over OAuth", () => {
@@ -394,8 +442,11 @@ describe("notion() over an integration token", () => {
     expect(build().classification).toBeUndefined();
   });
 
-  it("declares a rate budget and a concurrency cap together", () => {
-    expect(build().callAdmission).toEqual({
+  it.each([
+    { label: "omitted", options: {} },
+    { label: "undefined", options: { callAdmission: undefined } },
+  ])("defaults to 180 calls per minute and three concurrent calls with $label admission", ({ options }) => {
+    expect(build(options).callAdmission).toEqual({
       rules: [
         {
           maxConcurrency: 3,
@@ -406,6 +457,16 @@ describe("notion() over an integration token", () => {
         },
       ],
     });
+  });
+
+  it("replaces the default admission with the token connector's policy", () => {
+    const callAdmission = {
+      rules: [{ budget: { kind: "rolling-window" as const, maxCalls: 600, windowMs: 60_000 } }],
+    };
+    const connector = notion("business", { ...TOKEN, callAdmission });
+    expect(connector.callAdmission).toEqual(callAdmission);
+    expect(connector.callAdmission?.rules[0]?.maxConcurrency).toBeUndefined();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   it("carries a required guide covering what schemas cannot", () => {

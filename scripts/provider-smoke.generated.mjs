@@ -189,7 +189,7 @@ var options13 = { "purpose": "Audit fixture", "auth": { "type": "token" } };
 var fixture13 = {
   name: "notion",
   options: options13,
-  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "oauth", "options": { "auth": { "type": "oauth" } } }],
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "oauth", "options": { "auth": { "type": "oauth" } } }, { "label": "business-admission", "options": { "callAdmission": { "rules": [{ "budget": { "kind": "rolling-window", "maxCalls": 600, "windowMs": 6e4 } }] } } }],
   create(id = "fixture", overrides = {}) {
     return notion(id, { ...options13, ...overrides });
   },
