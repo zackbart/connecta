@@ -1,0 +1,28 @@
+{
+  "stripe": [
+    [
+      "Admission checks JSON keys and values and refuses payloads beyond 48 levels or 100,000 keys/values.",
+      "Admission iteratively checks every JSON key and value within the host's accepted request size, without separate depth or node-count ceilings; cyclic direct arguments are refused."
+    ]
+  ],
+  "vercel": [
+    [
+      "Admission checks JSON keys and values and refuses payloads beyond 48 levels or 100,000 keys/values.",
+      "Admission iteratively checks every JSON key and value within the host's accepted request size, without separate depth or node-count ceilings; cyclic direct arguments are refused."
+    ],
+    [
+      "(at most 8 MiB decoded per field; malformed or oversized base64 is refused)",
+      "(one decode bounded by the field's encoded length and the host's request limit; malformed base64 is refused)"
+    ]
+  ],
+  "cloudflare": [
+    [
+      "Admission checks JSON keys and values and refuses payloads beyond 48 levels or 100,000 keys/values.",
+      "Admission iteratively checks every JSON key and value within the host's accepted request size, without separate depth or node-count ceilings; cyclic direct arguments are refused."
+    ],
+    [
+      "(at most 8 MiB decoded per field; malformed or oversized base64 is refused)",
+      "(up to Cloudflare's 25 MiB decoded value limit; malformed or oversized base64 is refused, and the host's inbound body cap still applies)"
+    ]
+  ]
+}
