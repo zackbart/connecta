@@ -111,7 +111,7 @@ async function focus(page: Page) {
 }
 
 async function open(page: Page) {
-  await page.goto(`${origin}/connectors/oauth#auth`);
+  await page.goto(`${origin}/connectors/oauth#connection`);
 }
 
 test("INV-4: retries a transient Access failure on /ui/data without reload", async ({ page }) => {
@@ -159,6 +159,64 @@ test("INV-4 INV-10: bounds repeated focus and visibility returns during Access r
   expect(reads.filter((path) => path === "/connectors/oauth")).toHaveLength(documentCount);
   expect(reads.filter((path) => path.startsWith("/ui/oauth/"))).toHaveLength(0);
 });
+
+for (const delayed of ["config", "detail"] as const) {
+  test(`INV-4 INV-10: continuous focus cannot starve delayed ${delayed} recovery`, async ({ page }) => {
+    const start = new Date("2026-01-01T00:00:00Z");
+    await page.clock.install({ time: start });
+    await page.clock.pauseAt(start);
+    // Delay successful production-route responses on the browser's clock.
+    // The other half also overlaps returns, and detail can outlast config.
+    await page.route("**/ui/**", async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      const delay =
+        path === "/ui/api/config"
+          ? delayed === "config"
+            ? 7000
+            : 5000
+          : path.startsWith("/ui/connectors/")
+            ? delayed === "detail"
+              ? 7000
+              : 5000
+            : 0;
+      if (!delay) return route.continue();
+      const response = await route.fetch();
+      await page.evaluate(
+        (ms) =>
+          new Promise<void>((resolve) => {
+            const root = document.documentElement;
+            root.dataset.delayedReads = String(Number(root.dataset.delayedReads ?? 0) + 1);
+            setTimeout(resolve, ms);
+          }),
+        delay,
+      );
+      await route.fulfill({ response });
+    });
+    failIdentityPath = "/ui/data";
+    connected = true;
+    const refused = page.waitForResponse((response) => response.url().endsWith("/ui/data"));
+    await open(page);
+    expect((await refused).status()).toBe(503);
+    await expect(page.locator("#gate")).toBeVisible();
+    await page.clock.runFor(2000);
+    await expect.poll(() => reads.filter((path) => path === "/ui/api/config").length).toBe(1);
+    // Wait for both response-delay timers before advancing the browser clock.
+    await expect(page.locator("html")).toHaveAttribute("data-delayed-reads", "3");
+    await expect(page.getByText("Loading configuration…", { exact: true })).toBeVisible();
+    for (let i = 0; i < 11; i++) {
+      await page.evaluate("window.dispatchEvent(new Event('focus'))");
+      await page.clock.runFor(2100);
+    }
+    await expect(page.locator("#connectorView .conn-head")).toContainText("Connected");
+    await expect(page.getByRole("button", { name: "Reconnect CRM", exact: true })).toBeVisible();
+    expect(reads.filter((path) => path === "/ui/data")).toHaveLength(2);
+    expect(reads.filter((path) => path === "/ui/api/config")).toHaveLength(1);
+    expect(reads.filter((path) => path === "/ui/connectors/oauth")).toHaveLength(1);
+    expect(reads.filter((path) => path === "/ui/connectors/key")).toHaveLength(1);
+    expect(reads.filter((path) => path.startsWith("/ui/oauth/"))).toHaveLength(0);
+    expect(reads.filter((path) => path === "/connectors/oauth")).toHaveLength(1);
+  });
+}
 
 test("INV-4: retries a config refusal without reload", async ({ page }) => {
   failIdentityPath = "/ui/api/config";
@@ -208,7 +266,7 @@ test("INV-4 INV-10: OAuth polling reads only the pending connector", async ({ pa
   expect(reads.filter((path) => path === "/ui/connectors/oauth")).toHaveLength(1);
 });
 
-for (const destination of ["/tools", "/connectors/key"]) {
+for (const destination of ["/settings", "/connectors/key"]) {
   test(`INV-10: OAuth polling stops after navigating to ${destination}`, async ({ page }) => {
     await startPolling(page);
     // A real client-side route change also covers connector-to-connector navigation.
@@ -268,7 +326,7 @@ test("INV-10: focus after OAuth grant commit refreshes auth status", async ({ pa
 
 test("INV-5: unreadable credential is unavailable and recovers without reload", async ({ page }) => {
   failMetadata = true;
-  await page.goto(`${origin}/connectors/key#auth`);
+  await page.goto(`${origin}/connectors/key#connection`);
   await expect(page.locator("#credential-key .subcard-head .meta")).toContainText("unavailable");
   await expect(page.locator("#credential-key .subcard-head .meta")).not.toContainText("not configured");
   failMetadata = false;

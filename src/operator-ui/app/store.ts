@@ -277,7 +277,9 @@ async function loadData(): Promise<void> {
     refreshing: false,
     loadFailure: null,
   });
-  void loadOperatorContract();
+  // A passive recovery owns the whole matching catalog/auth cycle. Releasing
+  // its in-flight guard at the summary would let focus supersede slow reads.
+  await loadOperatorContract();
 }
 
 /** Catalog and auth controls publish together, guarded by one refresh revision. */
@@ -416,7 +418,6 @@ function mergeConnectorContract(next: OperatorUiContract, id: string): OperatorU
     },
   };
 }
-
 
 /**
  * Every mutation in the same shape: mark the control busy, send exactly one

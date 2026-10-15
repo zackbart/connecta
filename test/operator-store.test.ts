@@ -890,6 +890,105 @@ describe("operator recovery bounds and snapshot ordering", () => {
     expect(fetchMock).toHaveBeenCalledTimes(7);
   });
 
+  it.each(["config", "detail"])(
+    "INV-4 INV-10: publishes delayed %s recovery despite continuous focus with bounded reads",
+    async (delayed) => {
+      const { store, fetchMock, configMock, windowListeners } = await loadStore(
+        { id: "unused", getToken: async () => "unused" },
+        { kind: "cloudflare-access" },
+      );
+      vi.useFakeTimers();
+      const connector = { id: "svc", status: "ok", tools: [], toolCount: 0 };
+      const contract = {
+        schemaVersion: 1,
+        config: { connectors: [{ id: "svc" }] },
+        you: { permissions: { connectors: [] } },
+        live: { connectors: [{ ...connector, catalogAgeMs: null, lastCall: null }] },
+      };
+      const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+      configMock.mockImplementation(async () => {
+        await delay(delayed === "config" ? 7000 : 5000);
+        return Response.json(contract);
+      });
+      fetchMock.mockResolvedValueOnce(Response.json({ problem: "identity_unavailable" }, { status: 503 }));
+      fetchMock.mockImplementation(async (path: string) => {
+        if (path === "/ui/data") return Response.json({ ...uiData("recovered"), connectors: [connector] });
+        await delay(delayed === "detail" ? 7000 : 5000);
+        return Response.json(connector);
+      });
+      await store.boot();
+      expect(store.getState().session).toBe("gated");
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(store.getState().contractPhase).toBe("loading");
+      // Every return is beyond the minimum interval, including while the
+      // config has landed but its matching auth detail is still pending.
+      for (let i = 0; i < 11; i++) {
+        windowListeners.get("focus")?.();
+        await vi.advanceTimersByTimeAsync(2100);
+      }
+      expect(store.getState().contractPhase).toBe("ready");
+      expect(store.getState().contract?.live.connectors[0]?.status).toBe("ok");
+      expect(store.getState().data?.connectors[0]?.status).toBe("ok");
+      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(2);
+      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/connectors/svc")).toHaveLength(1);
+      expect(configMock).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(configMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["retry", "sign-out"])(
+    "INV-4: preserves %s while passive catalog/auth recovery is in flight",
+    async (action) => {
+      const { store, fetchMock, configMock } = await loadStore(
+        { id: "unused", getToken: async () => "unused" },
+        { kind: "cloudflare-access" },
+      );
+      vi.useFakeTimers();
+      const connector = { id: "svc", status: "ok", tools: [], toolCount: 0 };
+      const contract = (title: string) => ({
+        schemaVersion: 1,
+        config: { connectors: [{ id: "svc", title }] },
+        you: { permissions: { connectors: [] } },
+        live: { connectors: [{ ...connector, catalogAgeMs: null, lastCall: null }] },
+      });
+      const oldConfig = deferred<Response>();
+      const oldDetail = deferred<Response>();
+      configMock.mockReturnValueOnce(oldConfig.promise);
+      configMock.mockImplementation(async () => Response.json(contract("newer")));
+      fetchMock.mockResolvedValueOnce(Response.json({ problem: "identity_unavailable" }, { status: 503 }));
+      fetchMock.mockImplementation(async (path: string) =>
+        path === "/ui/data" ? Response.json({ ...uiData("operator"), connectors: [connector] }) : oldDetail.promise,
+      );
+      await store.boot();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(configMock).toHaveBeenCalledTimes(1);
+      if (action === "retry") {
+        fetchMock.mockImplementation(async (path: string) =>
+          Response.json(path === "/ui/data" ? { ...uiData("operator"), connectors: [connector] } : connector),
+        );
+        await store.retryLoad();
+        expect(store.getState().contract?.config.connectors[0]?.title).toBe("newer");
+      } else {
+        store.signOut();
+      }
+      oldConfig.resolve(Response.json(contract("stale")));
+      oldDetail.resolve(Response.json({ ...connector, status: "auth_required" }));
+      await vi.advanceTimersByTimeAsync(60_000);
+      if (action === "retry") {
+        expect(store.getState().contract?.config.connectors[0]?.title).toBe("newer");
+        expect(store.getState().data?.connectors[0]?.status).toBe("ok");
+      } else {
+        expect(store.getState().session).toBe("gated");
+        expect(store.getState().data).toBeNull();
+        expect(store.getState().contract).toBeNull();
+      }
+      expect(configMock).toHaveBeenCalledTimes(action === "retry" ? 2 : 1);
+      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(action === "retry" ? 3 : 2);
+    },
+  );
+
   it("INV-4: bounds gated Access retries and resumes admission checks on focus", async () => {
     const { store, fetchMock, windowListeners } = await loadStore(
       { id: "unused", getToken: async () => "unused" },

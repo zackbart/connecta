@@ -99,6 +99,11 @@ reloading the document. The repeated-refusal browser case drives ten focus and v
 160 ms apart with a controlled clock, checks the shared backoff and exhausted
 retry budget, then recovers without reloading. Store tests cover the same
 state transitions for 401, 403, and 503 refusals and debounced explicit Retry.
+Delayed config/detail cases in both runtimes and Chromium keep returning focus
+every 2.1 seconds, require eventual catalog/auth publication, and assert one
+recovery cycle. Store cases also preserve explicit Retry and sign-out while
+that cycle is pending. The Retry focus browser case uses a controlled clock to
+check click coalescing inside 150 ms and heading focus after a later Retry.
 Store tests defend bounded recovery and OAuth polling,
 atomic refresh publication, identity cancellation, and late-response fencing.
 Multi-connector browser cases assert scoped polling and cancellation after

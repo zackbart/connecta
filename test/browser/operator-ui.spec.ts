@@ -487,7 +487,7 @@ test("INV-4: queued focus and later passive returns cannot restore data during d
   await page.evaluate(`
     window.Clerk.signOut = () => new Promise(() => {});
     window.dispatchEvent(new Event("focus"));
-    document.querySelector(".session-actions button").click();
+    document.querySelector(".session-action").click();
   `);
   await expect(page.locator("#gate")).toBeVisible();
   await page.clock.runFor(200);
@@ -1024,8 +1024,13 @@ test("keeps a downstream's error text out of every action notice, end to end", a
 });
 
 test("stays signed in with a retry when operator data fails, and gates only on 401", async ({ page }) => {
+  const start = new Date("2026-01-01T00:00:00Z");
+  await page.clock.install({ time: start });
+  await page.clock.pauseAt(start);
+  let summaryReads = 0;
   let answer: "500" | "network" | "401" | "ok" = "500";
   await page.route("**/ui/data", async (route) => {
+    summaryReads++;
     if (answer === "network") return route.abort("failed");
     if (answer === "500") return route.fulfill({ status: 500, json: { error: "boom" } });
     if (answer === "401") return route.fulfill({ status: 401, json: { error: "unauthorized" } });
@@ -1046,6 +1051,12 @@ test("stays signed in with a retry when operator data fails, and gates only on 4
   await expect(page.locator("#gate")).toHaveCount(0);
 
   answer = "ok";
+  const beforeDebouncedClick = summaryReads;
+  await failure.getByRole("button", { name: "Retry" }).click();
+  await expect(failure).toContainText("Your browser couldn't connect.");
+  expect(summaryReads).toBe(beforeDebouncedClick);
+  // A distinct explicit retry must be outside the documented 150 ms debounce.
+  await page.clock.runFor(160);
   await failure.getByRole("button", { name: "Retry" }).click();
   await expect(page.getByRole("link", { name: "CRM", exact: true })).toBeVisible();
   // The Retry button went with its block; focus is on the region it reloaded.
