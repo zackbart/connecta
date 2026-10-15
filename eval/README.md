@@ -7,6 +7,11 @@ The final 0.29 baselines for #709 item 1 are
 failure triage and caveats. Older files retain their historical tools, models
 and grades and are not directly comparable.
 
+The [#801 REST follow-up notes](baselines/notes-rest-801.md) record the ten
+new tasks, both live batches, harness corrections and failure triage. Final
+saved-evidence scores are GPT-6-Luna 6/10 and Sonnet 5.5 7/10; the Luna refund
+trial remains fixture-confounded.
+
 ## Runners
 
 ```sh
@@ -118,8 +123,9 @@ and budget behavior checks remain. Existing advisory checks stay advisory.
 Claude's two unobservable rich-output tasks remain N/A in both arms and modes.
 
 ```sh
-npm run eval:agent -- --runner claude --models claude-haiku-5-5 --surface six --grading outcome --pair-id 765-haiku-2026-10-08 --repeats 5 --out eval/results/haiku-six.json
-npm run eval:agent -- --runner claude --models claude-haiku-5-5 --surface code --grading outcome --pair-id 765-haiku-2026-10-08 --repeats 5 --out eval/results/haiku-code.json
+comparison_tasks=$(node --import tsx --input-type=module -e 'import { COMPARISON_TASKS } from "./eval/tasks/index.ts"; console.log(COMPARISON_TASKS.map(t => t.id).join(","))')
+npm run eval:agent -- --runner claude --models claude-haiku-5-5 --surface six --grading outcome --tasks "$comparison_tasks" --pair-id 765-haiku-2026-10-08 --repeats 5 --out eval/results/haiku-six.json
+npm run eval:agent -- --runner claude --models claude-haiku-5-5 --surface code --grading outcome --tasks "$comparison_tasks" --pair-id 765-haiku-2026-10-08 --repeats 5 --out eval/results/haiku-code.json
 npm run eval:compare -- --a eval/results/haiku-six.json --b eval/results/haiku-code.json
 npm run eval:regrade -- --grading outcome --in eval/baselines/gpt-6-luna-0.29.json --out eval/results/luna-outcome.json
 ```
@@ -201,7 +207,8 @@ it separately for each model. The code arm passes only if:
 - no task's pass count drops by **3 or more of N paired trials**.
 
 The comparison prints PASS or FAIL and the reasons for complete 19-task batches.
-Subsets print diagnostic metrics and `Decision NOT EVALUATED`. Task drops are
+Other task sets, including supersets with REST follow-ups, print diagnostic
+metrics and `Decision NOT EVALUATED`. Task drops are
 listed for triage. A missing/incomplete batch, unsupported skip or mismatched
 settings/N/A set cannot establish a pass.
 This is the rule for this measurement, superseding the draft record's two-repeat
@@ -397,7 +404,7 @@ per runner; its results are proof of login/isolation, not committed baselines.
 
 Planning assumptions, not measured 0.29 results: 20,000-80,000 input tokens,
 4,000-12,000 output tokens and 45-150 seconds per trial. At concurrency 1,
-allow 17-55 minutes per runner for the default batch, or 33-110 minutes per
+allow 22-73 minutes per runner for the default batch, or 44-145 minutes per
 runner for two repeats. Rate limits, retries, large logs and thinking can raise
 these estimates. The eight-minute timeout is a failure bound.
 
