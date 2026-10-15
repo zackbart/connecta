@@ -4,10 +4,12 @@
 // with what ctx.access, and which pathname the Worker saw. Everything it creates
 // is named connecta-probe-<run> and deleted in finally; existing Access
 // applications are only counted and compared, never changed.
-// Requires an authenticated `cf` (Access app, policy, and service-token write)
-// and Wrangler (Worker deploy and delete).
-// Usage: node scripts/probes/access-agent-bypass.mjs [output.json]
-import { execFile } from "node:child_process";
+// Requires `cf` authenticated for Access application, policy, service-token,
+// and Workers script writes. Every cf call names its auth profile explicitly
+// (--profile, default onemany); Wrangler is used only to build the Worker for
+// `cf deploy` and needs no login.
+// Usage: node scripts/probes/access-agent-bypass.mjs [--profile <name>] [output.json]
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,18 +18,24 @@ import { fileURLToPath } from "node:url";
 
 const exec = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const wrangler = join(root, "node_modules/.bin/wrangler");
 const cfBin = process.env.CF_BIN ?? "cf";
-const output = resolve(process.argv[2] ?? join(root, "eval/results/access-agent-bypass.json"));
+const argv = process.argv.slice(2);
+const profileFlag = argv.indexOf("--profile");
+const profile = profileFlag === -1 ? "onemany" : argv.splice(profileFlag, 2)[1];
+if (!profile) throw new Error("--profile needs a value");
+const output = resolve(argv[0] ?? join(root, "eval/results/access-agent-bypass.json"));
+// cf deploy builds through Wrangler and requires 4.136.0 or newer, newer than
+// the repository's pinned devDependency, so the probe project installs its own.
+const buildWrangler = "4.145.0";
 const run = Date.now().toString(36);
 const name = `connecta-probe-${run}`;
 const temp = await mkdtemp(join(tmpdir(), "connecta-probe-"));
-const configPath = join(temp, "wrangler.json");
+const project = join(temp, "worker");
 const tokenHeaders = join(temp, "service-token.headers");
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const failures = [];
 const created = { apps: [], serviceToken: undefined, worker: false };
-const record = { testedAt: new Date().toISOString(), name, tools: {}, inventory: {}, api: [], phases: [] };
+const record = { testedAt: new Date().toISOString(), name, profile, tools: {}, inventory: {}, api: [], phases: [] };
 let origin;
 const audDigests = new Map();
 async function rememberAud(label, aud) {
@@ -37,7 +45,7 @@ async function rememberAud(label, aud) {
 }
 
 async function cf(args, { body } = {}) {
-  const full = [...args, ...(body ? ["--body", JSON.stringify(body)] : [])];
+  const full = ["--profile", profile, ...args, ...(body ? ["--body", JSON.stringify(body)] : [])];
   try {
     // cf caches the account under ./.cloudflare; keep that out of the checkout.
     const { stdout } = await exec(cfBin, full, { cwd: temp, maxBuffer: 2 ** 24 });
@@ -115,6 +123,7 @@ async function deleteApp(id) {
 }
 
 const source = `
+const PROBE_RUN = ${JSON.stringify(run)};
 const SERVICE_MARKERS = ["service_token_status", "service_token_id", "common_name"];
 async function digest(text) {
   const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
@@ -150,10 +159,45 @@ export default {
       authorizationCookie: /(^|;\\s*)CF_Authorization=/.test(request.headers.get("cookie") ?? ""),
       clientIdHeader: request.headers.has("cf-access-client-id"),
       authorizationHeader: request.headers.has("authorization"),
-    }, { headers: { "x-connecta-probe": env.PROBE_RUN, "cache-control": "no-store" } });
+    }, { headers: { "x-connecta-probe": PROBE_RUN, "cache-control": "no-store" } });
   }
 };
 `;
+
+async function findWorker() {
+  const search = await cf(["workers", "scripts", "search", "--name", name]);
+  if (!search.ok) throw new Error(`Could not search Workers: ${search.error}`);
+  return search.value.find((s) => (s.script_name ?? s.name) === name)?.id;
+}
+
+// cf deploy printed "Deploy complete" and then stayed running on 2026-10-15, so
+// the probe resolves on that line and stops the process itself.
+function deploy() {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cfBin, ["--profile", profile, "deploy"], { cwd: project, stdio: ["ignore", "pipe", "pipe"] });
+    let text = "";
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error("cf deploy timed out"));
+    }, 300000);
+    const onData = (chunk) => {
+      text += chunk;
+      if (/Deploy complete/.test(text)) {
+        clearTimeout(timer);
+        child.kill();
+        resolve(text);
+      }
+    };
+    child.stdout.on("data", onData);
+    child.stderr.on("data", onData);
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      if (/Deploy complete/.test(text)) resolve(text);
+      else reject(new Error(`cf deploy exited ${code}: ${redact(text.slice(-400))}`));
+    });
+  });
+}
 
 // curl --path-as-is sends each raw path byte for byte; WHATWG fetch would
 // normalize dot segments and %2e before the request leaves the client.
@@ -286,7 +330,7 @@ async function phase(label, cases) {
 let beforeIds;
 try {
   record.tools.cf = (await exec(cfBin, ["--version"])).stdout.trim();
-  record.tools.wrangler = (await exec(wrangler, ["--version"])).stdout.trim();
+  record.tools.buildWrangler = buildWrangler;
   record.tools.node = process.version;
   record.tools.curl = (await exec("curl", ["--version"])).stdout.split("\n")[0].split(" ").slice(0, 2).join(" ");
 
@@ -299,27 +343,38 @@ try {
     record.inventory.accountLevelWorkerAccess = true;
   console.log(`Access applications before: ${before.length}`);
 
-  await writeFile(join(temp, "worker.mjs"), source);
+  await mkdir(project);
+  await writeFile(join(project, "worker.mjs"), source);
   await writeFile(
-    configPath,
+    join(project, "package.json"),
     JSON.stringify({
-      name,
-      main: "worker.mjs",
-      compatibility_date: "2026-09-01",
-      workers_dev: true,
-      preview_urls: false,
-      vars: { PROBE_RUN: run },
-      observability: { enabled: false },
+      name: "connecta-probe",
+      private: true,
+      type: "module",
+      devDependencies: { wrangler: buildWrangler },
     }),
   );
+  // defineConfig only returns its argument, so a plain default export needs no cf package.
+  await writeFile(
+    join(project, "cloudflare.config.ts"),
+    `export default ${JSON.stringify({
+      worker: {
+        name,
+        entrypoint: "./worker.mjs",
+        compatibilityDate: "2026-09-01",
+        workersDev: true,
+        previewUrls: false,
+        observability: { enabled: false },
+      },
+    })};\n`,
+  );
+  await exec("npm", ["install", "--no-audit", "--no-fund", "--silent"], { cwd: project, maxBuffer: 2 ** 22 });
   created.worker = true;
-  const deployment = await exec(wrangler, ["deploy", "--config", configPath], { cwd: root, maxBuffer: 2 ** 20 });
-  origin = deployment.stdout.match(new RegExp(`https://${name}\\.[a-zA-Z0-9-]+\\.workers\\.dev`))?.[0];
+  origin = (await deploy()).match(new RegExp(`https://${name}\\.[a-zA-Z0-9-]+\\.workers\\.dev`))?.[0];
   if (!origin) throw new Error("Deployment returned no workers.dev URL");
   const host = new URL(origin).host;
-  const search = await cf(["workers", "scripts", "search", "--name", name]);
-  workerId = search.ok ? search.value.find((s) => s.script_name === name || s.name === name)?.id : undefined;
-  if (!workerId) throw new Error(`Could not resolve the probe Worker id: ${search.error ?? "no exact match"}`);
+  workerId = await findWorker();
+  if (!workerId) throw new Error("Could not resolve the probe Worker id");
   console.log(`Deployed ${redact(origin)}`);
   record.compatibilityDate = "2026-09-01";
   await until("worker reachable", "/mcp", "none", (row) => row.outcome === "worker");
@@ -454,19 +509,26 @@ try {
       failures.push(new Error(`Could not delete service token ${created.serviceToken}: ${response.error}`));
   }
   if (created.worker) {
-    let deletionError;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    let deletionError = "not attempted";
+    for (let attempt = 0; attempt < 3 && deletionError; attempt++) {
       try {
-        await exec(wrangler, ["delete", "--config", configPath, "--force"], { cwd: root });
-        deletionError = undefined;
-        break;
+        const id = workerId ?? (await findWorker());
+        const response = id === undefined ? { ok: true } : await cf(["workers", "delete", id, "--force"]);
+        if (!response.ok) deletionError = response.error;
+        else if ((await findWorker()) !== undefined) deletionError = "Worker still exists after delete";
+        else deletionError = undefined;
+        if (deletionError) await wait(1000);
       } catch (error) {
-        deletionError = error;
+        deletionError = String(error.message ?? error);
         await wait(1000);
       }
     }
     if (deletionError)
-      failures.push(new Error(`Could not delete Worker ${name}. Run wrangler delete --name ${name} --force.`));
+      failures.push(
+        new Error(
+          `Could not delete Worker ${name} (${deletionError}). Run cf --profile ${profile} workers delete <id> --force.`,
+        ),
+      );
   }
   try {
     const after = await listApps();

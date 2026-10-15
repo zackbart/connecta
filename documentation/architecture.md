@@ -435,16 +435,25 @@ same documented hostname-and-path form, but it was not observed here. Allow
 about 20 seconds for each change to settle before testing.
 
 To repeat from a repository checkout, run
-`node scripts/probes/access-agent-bypass.mjs [output.json]` with `cf`
-authenticated for Access application, policy, and service-token writes, and
-Wrangler for Worker deploys. The script records only the count of existing Access
-applications, then names everything it creates `connecta-probe-<run>`. It
-force-deletes and verifies each resource in `finally`, then checks that the
-non-probe application ids are unchanged. Observations record statuses, outcome
-classes, pathnames, and which application's AUD matched, compared by digest
-inside the Worker. They contain no hostnames, account ids, tokens, cookies, or
-JWTs. `cf` delete commands prompt for confirmation and exit 0 without deleting
-when stdin is not a terminal, so the script passes `--force`.
+`node scripts/probes/access-agent-bypass.mjs [--profile <name>] [output.json]`.
+Every `cf` call passes `--profile` explicitly, defaulting to `onemany`. Name
+the profile for the account that should host the probe; the profile needs
+Access application, policy, and service-token writes, plus Workers script
+writes. The script deploys and deletes the Worker with `cf`. `cf deploy` builds
+through Wrangler 4.136.0 or newer, so the probe installs Wrangler 4.145.0 into
+its temporary project. Wrangler needs no login. The script records only the
+count of existing Access applications, then names everything it creates
+`connecta-probe-<run>`. It force-deletes and verifies each resource in
+`finally`, then checks that the non-probe application ids are unchanged.
+Observations record statuses, outcome classes, pathnames, and which
+application's AUD matched, compared by digest inside the Worker. They contain no
+hostnames, account ids, tokens, cookies, or JWTs. `cf` delete commands prompt
+for confirmation and exit 0 without deleting when stdin is not a terminal, so
+the script passes `--force`. `cf deploy` printed `Deploy complete` and then
+kept running, so the script stops it after that line. The recorded run deployed
+with Wrangler 4.114.0 and used `cf` for Access. A standalone deploy and delete
+verified the `cf` deploy and delete path. The full probe has not been rerun on
+that path.
 
 ## Storage, credentials, and connectors
 
