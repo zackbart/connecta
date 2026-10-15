@@ -48,6 +48,42 @@ async function read(app: ReturnType<typeof createConnecta>, headers?: HeadersIni
 }
 
 describe("operator config contract", () => {
+  it("INV-4 INV-10: a connector-filtered config read probes and discloses only the admitted connector", async () => {
+    const probes: string[] = [];
+    const app = deployment({
+      connectors: ["selected", "unrelated", "hidden"].map((id) =>
+        connector(id, {
+          status: async () => {
+            probes.push(id);
+            return { state: "ok" };
+          },
+        }),
+      ),
+      executor,
+      auth: human,
+      ui: operatorUi(),
+      logger: "silent",
+      identity: { connectorAccess: () => ["selected", "unrelated"] },
+      classification: { selected: { read: "read" }, unrelated: { read: "read" } },
+      pools: { shared: { tools: ["selected", "unrelated", "hidden"], grant: () => true } },
+    });
+    const response = await app.fetch(new Request(`${BASE}/ui/api/config?connector=selected`));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    const body = (await response.json()) as OperatorUiContract;
+    expect(body.config.connectors.map(({ id }) => id)).toEqual(["selected"]);
+    expect(body.live.connectors.map(({ id }) => id)).toEqual(["selected"]);
+    expect(body.you.permissions.connectors.map(({ id }) => id)).toEqual(["selected"]);
+    expect(probes).toEqual(["selected"]);
+    expect(JSON.stringify(body)).not.toMatch(/unrelated|hidden/);
+    for (const id of ["hidden", "missing"]) {
+      const refused = await app.fetch(new Request(`${BASE}/ui/api/config?connector=${id}`));
+      expect(refused.status).toBe(404);
+      expect(refused.headers.get("Cache-Control")).toBe("no-store");
+    }
+    expect(probes).toEqual(["selected"]);
+  });
+
   it("INV-5 INV-6: reuses the config sentinel set and excludes secrets, raw status, and credential metadata", async () => {
     const { config, vault, storage } = secretBearingDeployment();
     await vault.set("vaulted_mcp", SECRETS.storedCredential, "operator");

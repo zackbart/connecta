@@ -477,6 +477,32 @@ test("reports a real Clerk loader failure", async ({ page }) => {
   expect(clerkLoaderRequests).toEqual(["/clerk-loader"]);
 });
 
+test("INV-4: queued focus and later passive returns cannot restore data during delayed sign-out", async ({ page }) => {
+  await page.clock.install();
+  await page.goto(origin + "/clerk");
+  await page.getByRole("link", { name: "Connectors", exact: true }).click();
+  await expect(page.getByRole("link", { name: "CRM", exact: true })).toBeVisible();
+  await page.waitForLoadState("networkidle");
+  requests = [];
+  await page.evaluate(() => {
+    window.Clerk!.signOut = () => new Promise(() => {});
+    window.dispatchEvent(new Event("focus"));
+    const signOut = document.querySelector<HTMLButtonElement>(".session-actions button");
+    signOut!.click();
+  });
+  await expect(page.locator("#gate")).toBeVisible();
+  await page.clock.runFor(200);
+  await page.waitForLoadState("networkidle");
+  await expect(page.locator("#gate")).toBeVisible();
+  await page.clock.runFor(2100);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.clock.runFor(60_000);
+  await page.waitForLoadState("networkidle");
+  await expect(page.locator("#gate")).toBeVisible();
+  await expect(page.locator("#app")).toHaveCount(0);
+  expect(requests.filter((request) => request.path.startsWith("/ui/"))).toEqual([]);
+});
+
 test("keeps the shell open and loads private data only after authentication", async ({ page }) => {
   await page.goto(origin + "/");
 

@@ -75,7 +75,7 @@ async function loadStore(
     signOut: vi.fn(async () => {}),
   };
   const window = {
-    location: { href: `${BASE}/`, assign: vi.fn(), reload: vi.fn() },
+    location: { href: `${BASE}/`, pathname: "/connectors", assign: vi.fn(), reload: vi.fn() },
     Clerk: clerk,
     addEventListener: (name: string, listener: () => void) => {
       windowListeners.set(name, listener);
@@ -637,6 +637,134 @@ describe("activity collection recovery", () => {
 });
 
 describe("operator recovery bounds and snapshot ordering", () => {
+  it("INV-4: fences queued focus and suppresses passive recovery until a new Clerk session", async () => {
+    const { store, clerk, fetchMock, windowListeners, changeSession } = await loadStore({
+      id: "a",
+      getToken: async () => "a",
+    });
+    fetchMock.mockImplementation(async () => Response.json(uiData("operator")));
+    await store.boot();
+    await vi.waitFor(() => expect(store.getState().contractPhase).toBe("ready"));
+    vi.useFakeTimers();
+    clerk.signOut.mockImplementation(() => new Promise(() => {}));
+    windowListeners.get("focus")?.();
+    store.signOut();
+    fetchMock.mockClear();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(store.getState().session).toBe("gated");
+    await vi.advanceTimersByTimeAsync(2100);
+    windowListeners.get("focus")?.();
+    await store.retryLoad();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(store.getState().data).toBeNull();
+    changeSession({ id: "b", getToken: async () => "b" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getState().session).toBe("ready");
+  });
+
+  it("INV-4: drops a queued focus pass across an identity change", async () => {
+    const { store, fetchMock, windowListeners, changeSession } = await loadStore({
+      id: "a",
+      getToken: async () => "a",
+    });
+    fetchMock.mockImplementation(async () => Response.json(uiData("operator")));
+    await store.boot();
+    await vi.waitFor(() => expect(store.getState().contractPhase).toBe("ready"));
+    vi.useFakeTimers();
+    windowListeners.get("focus")?.();
+    const pending = deferred<Response>();
+    fetchMock.mockReturnValue(pending.promise);
+    changeSession({ id: "b", getToken: async () => "b" });
+    await vi.advanceTimersByTimeAsync(200);
+    expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(2);
+    pending.resolve(Response.json(uiData("new-operator")));
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  async function pollingStore() {
+    const loaded = await loadStore({ id: "a", getToken: async () => "a" });
+    const { store, fetchMock, configMock } = loaded;
+    const connector = { id: "svc", status: "auth_required", oauth: true, tools: [], toolCount: 0 };
+    const other = { ...connector, id: "other", status: "ok" };
+    const contract = (rows = [connector, other]) => ({
+      schemaVersion: 1,
+      config: { connectors: rows.map(({ id }) => ({ id })), classification: {} },
+      you: { permissions: { connectors: [] } },
+      live: { connectors: rows.map((row) => ({ ...row, catalogAgeMs: null, lastCall: null })) },
+    });
+    configMock.mockImplementation(async () => Response.json(contract()));
+    fetchMock.mockImplementation(async (path: string) =>
+      Response.json(
+        path === "/ui/data"
+          ? { ...uiData("operator"), connectors: [connector, other] }
+          : path.startsWith("/ui/oauth/")
+            ? { state: "auth_required", authorizationUrl: "https://provider.test/consent" }
+            : path.endsWith("/other")
+              ? other
+              : connector,
+      ),
+    );
+    store.routeChanged("/connectors/svc");
+    await store.boot();
+    await vi.waitFor(() => expect(store.getState().contractPhase).toBe("ready"));
+    vi.useFakeTimers();
+    await store.startOAuth("svc", "continue");
+    await vi.advanceTimersByTimeAsync(0);
+    fetchMock.mockClear();
+    configMock.mockClear();
+    return { ...loaded, connector, other, contract };
+  }
+
+  it("INV-4 INV-10: limits OAuth polls to the pending connector and preserves unrelated facts", async () => {
+    const { store, fetchMock, configMock, connector, contract } = await pollingStore();
+    const other = store.getState().data?.connectors[1];
+    configMock.mockImplementation(async () => Response.json(contract([connector])));
+    await vi.advanceTimersByTimeAsync(2100);
+    expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(["/ui/connectors/svc"]);
+    expect(configMock.mock.calls.map(([path]) => path)).toEqual(["/ui/api/config?connector=svc"]);
+    expect(store.getState().data?.connectors[1]).toBe(other);
+    expect(store.getState().contract?.live.connectors).toHaveLength(2);
+  });
+
+  it.each(["ok", "error", "network", "refused"])("INV-10: stops OAuth polling on %s", async (terminal) => {
+    const { fetchMock, configMock, connector, contract } = await pollingStore();
+    fetchMock.mockImplementation(async () => {
+      if (terminal === "network") throw new Error("offline");
+      return terminal === "refused"
+        ? new Response(null, { status: 500 })
+        : Response.json({ ...connector, status: terminal });
+    });
+    configMock.mockImplementation(async () => Response.json(contract([{ ...connector, status: terminal }])));
+    await vi.advanceTimersByTimeAsync(2100);
+    fetchMock.mockClear();
+    configMock.mockClear();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(configMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["/tools", "/connectors/other"])("INV-4 INV-10: aborts an OAuth poll on navigation to %s", async (path) => {
+    const { store, fetchMock, configMock, connector, contract } = await pollingStore();
+    const pending = deferred<Response>();
+    let signal: AbortSignal | undefined;
+    fetchMock.mockImplementation((_path: string, init: RequestInit) => {
+      signal = init.signal ?? undefined;
+      return pending.promise;
+    });
+    configMock.mockImplementation(async () => Response.json(contract([connector])));
+    await vi.advanceTimersByTimeAsync(2100);
+    store.routeChanged(path);
+    expect(signal?.aborted).toBe(true);
+    pending.resolve(Response.json({ ...connector, status: "ok" }));
+    fetchMock.mockClear();
+    configMock.mockClear();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(store.getState().data?.connectors[0]?.status).toBe("auth_required");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(configMock).not.toHaveBeenCalled();
+  });
+
   it("INV-4: bounds gated Access retries and resumes admission checks on focus", async () => {
     const { store, fetchMock, windowListeners } = await loadStore(
       { id: "unused", getToken: async () => "unused" },

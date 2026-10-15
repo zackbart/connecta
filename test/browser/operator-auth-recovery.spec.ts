@@ -16,6 +16,7 @@ let omitShellContext = false;
 let rejectIdentity = false;
 let reads: string[] = [];
 let failMetadata = false;
+let oauthFailed = false;
 
 test.beforeAll(async () => {
   server = createServer(async (incoming, outgoing) => {
@@ -59,6 +60,7 @@ test.beforeEach(async () => {
   reads = [];
   failMetadata = false;
   rejectIdentity = false;
+  oauthFailed = false;
   const storage = memoryStorage();
   const key = Buffer.alloc(32, 7).toString("base64");
   await new CredentialVault(storage, key).set("key", "saved-test-key", "operator");
@@ -89,7 +91,7 @@ test.beforeEach(async () => {
         kind: "mcp",
         listTools: async () => [],
         callTool: async () => null,
-        status: async () => ({ state: connected ? "ok" : "auth_required" }),
+        status: async () => ({ state: oauthFailed ? "error" : connected ? "ok" : "auth_required" }),
         startAuth: async () => ({ state: "auth_required", authorizationUrl: `${origin}/consent` }),
         disconnectAuth: async () => {},
       },
@@ -145,6 +147,60 @@ test("INV-10: polls after OAuth starts when focus precedes grant commit", async 
   await expect(page.locator("#connectorView .conn-head")).toContainText("Connected");
   expect(reads.filter((p) => p === "/ui/oauth/oauth")).toHaveLength(1);
 });
+
+async function startPolling(page: Page) {
+  await page.clock.install();
+  await open(page);
+  await page.getByRole("button", { name: "Connect CRM", exact: true }).click();
+  await expect(page.locator("#oauthNotice-oauth")).toBeVisible();
+  // Let the immediate mutation follow-up finish before counting poll reads.
+  await page.waitForLoadState("networkidle");
+  reads = [];
+}
+
+test("INV-4 INV-10: OAuth polling reads only the pending connector", async ({ page }) => {
+  await startPolling(page);
+  const detail = page.waitForResponse((response) => response.url().endsWith("/ui/connectors/oauth"));
+  await page.clock.runFor(2100);
+  await detail;
+  await page.waitForLoadState("networkidle");
+  expect(reads.filter((path) => path === "/ui/connectors/key")).toEqual([]);
+  expect(reads.filter((path) => path === "/ui/connectors/oauth")).toHaveLength(1);
+});
+
+for (const destination of ["/tools", "/connectors/key"]) {
+  test(`INV-10: OAuth polling stops after navigating to ${destination}`, async ({ page }) => {
+    await startPolling(page);
+    // A real client-side route change also covers connector-to-connector navigation.
+    await page.evaluate((path) => {
+      history.pushState(null, "", path);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    }, destination);
+    await expect(page).toHaveURL(origin + destination);
+    await page.waitForLoadState("networkidle");
+    reads = [];
+    await page.clock.runFor(6100);
+    await page.waitForLoadState("networkidle");
+    expect(reads.filter((path) => path.startsWith("/ui/"))).toEqual([]);
+  });
+}
+
+for (const terminal of ["connected", "failed"] as const) {
+  test(`INV-10: OAuth polling stops when authorization is ${terminal}`, async ({ page }) => {
+    await startPolling(page);
+    connected = terminal === "connected";
+    oauthFailed = terminal === "failed";
+    await page.clock.runFor(2100);
+    await expect(page.locator("#connectorView .conn-head")).toContainText(
+      terminal === "connected" ? "Connected" : "Unavailable",
+    );
+    await page.waitForLoadState("networkidle");
+    reads = [];
+    await page.clock.runFor(6100);
+    await page.waitForLoadState("networkidle");
+    expect(reads.filter((path) => path.startsWith("/ui/"))).toEqual([]);
+  });
+}
 
 test("INV-10: catalog refresh reconciles connector auth controls", async ({ page }) => {
   await open(page);
