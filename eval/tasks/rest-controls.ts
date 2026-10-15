@@ -38,6 +38,15 @@ export async function restTransportControls() {
       }
       if (!refused) throw new Error("Fake vendor transport allowed an unregistered credential or host");
     }
+    const bodyRequest = await fetch(
+      new Request(`${services[0]!.url}/v1/refunds`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${services[0]!.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ charge: "ch_passthrough", amount: 1250 }),
+      }),
+    );
+    if (!bodyRequest.ok || services[0]!.state.refunds[0]?.charge !== "ch_passthrough")
+      throw new Error("Fake transport consumed a passthrough Request body");
     await services[0]!.stop();
     if (!(await request(services[1]!.token)).ok || ledgers[1]!.calls.length !== 2)
       throw new Error("Stopping one fake world broke another");

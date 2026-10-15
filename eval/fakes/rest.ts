@@ -33,7 +33,7 @@ function installTransport() {
   globalThis.fetch = (async (input, init) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
-    if (!Object.values(HOSTS).flat().includes(url.hostname)) return forward(input, init);
+    if (!Object.values(HOSTS).flat().includes(url.hostname)) return forward(request);
     const key = request.headers.get("x-auth-key") ?? request.headers.get("authorization")?.replace(/^Bearer /, "");
     const target = key ? routes.get(key) : undefined;
     if (!target || !target.hosts.includes(url.hostname)) throw new Error("Eval refused non-fake vendor transport");
@@ -241,7 +241,13 @@ export class FakeRestService {
       if (method === "GET" && path === "/v1/charges/ch_3Pfail0000") return ok(charge);
       if (method === "GET" && path === "/v1/charges/ch_3Prefund000")
         return ok({ id: "ch_3Prefund000", object: "charge", amount: 5000, currency: "usd", paid: true });
-      if (method === "GET" && path.startsWith("/v1/charges"))
+      if (method === "GET" && path === "/v1/charges/ch_3Prefund000/refunds")
+        return ok({
+          object: "list",
+          data: this.state.refunds.filter((r) => r.charge === "ch_3Prefund000"),
+          has_more: false,
+        });
+      if (method === "GET" && ["/v1/charges", "/v1/charges/search"].includes(path))
         return ok({
           object: "list",
           data: [
