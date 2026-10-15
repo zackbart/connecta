@@ -16,7 +16,7 @@ import type {
   ToolClassification,
 } from "../../types.js";
 import { keys, optionsOf, variants } from "../../config-schema.js";
-import { defineProvider, type ProviderContext } from "../../provider.js";
+import { CALL_ADMISSION, defineProvider, type ProviderContext } from "../../provider.js";
 import { byAuth, hostedOAuth } from "../_shared/rest/dispatch.js";
 import { restTools } from "../_shared/rest/tools.js";
 import { CLOUDFLARE_API_BASE, cloudflareRest, type CloudflareKeyAuth, type CloudflarePin } from "./rest.js";
@@ -212,7 +212,7 @@ const PIN = optionsOf<CloudflarePin>()(keys("accountIds", "zoneIds"));
 const CLOUDFLARE_OPTIONS = variants(["auth", "type"], {
   oauth: optionsOf<CloudflareOAuthOptions>()({
     ...COMMON,
-    ...keys("callAdmission"),
+    callAdmission: CALL_ADMISSION,
     auth: optionsOf<CloudflareOAuthOptions["auth"]>()(keys("type")),
   }).shape,
   apiToken: optionsOf<CloudflareApiTokenOptions>()({
@@ -235,7 +235,7 @@ function cloudflareOAuth(id: string, options: Readonly<CloudflareOAuthOptions>, 
     url: CLOUDFLARE_MCP_ENDPOINT,
     title: options.title ?? "Cloudflare (MCP)",
     description: `Cloudflare's official whole-API MCP interface: ${options.purpose.trim()}`,
-    ...(options.callAdmission ? { callAdmission: options.callAdmission } : {}),
+    ...(options.callAdmission !== undefined ? { callAdmission: options.callAdmission } : {}),
     usageGuide: {
       content: oauthUsageGuide(options.purpose.trim(), options.instructions),
       summary: "Hosted MCP over OAuth. Search the OpenAPI document; execute programs always classify as writes.",

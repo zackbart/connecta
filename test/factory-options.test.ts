@@ -255,7 +255,7 @@ describe("built-in factory options", () => {
       }),
     ).not.toThrow();
     expect(() =>
-      cloudflare("cf", { purpose: "Ops", auth: { type: "oauth" }, callAdmission: { rules: [] } }),
+      cloudflare("cf", { purpose: "Ops", auth: { type: "oauth" }, callAdmission: { rules: [{ maxConcurrency: 2 }] } }),
     ).not.toThrow();
     expect(() =>
       operatorUi({

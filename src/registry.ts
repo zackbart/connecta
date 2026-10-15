@@ -470,7 +470,7 @@ export class Registry implements RegistryView {
         );
       }
       this.connectors.set(c.id, c);
-      if (c.callAdmission) {
+      if (c.callAdmission !== undefined) {
         this.callAdmission.set(c.id, new ConnectorCallAdmissionController(c.id, c.callAdmission));
       }
     }

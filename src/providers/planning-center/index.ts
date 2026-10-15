@@ -2995,7 +2995,7 @@ function planningCenterConnector(id: string, options: PlanningCenterOptions): Co
         };
       }
     },
-    callAdmission: options.callAdmission ?? PLANNING_CENTER_ADMISSION,
+    callAdmission: options.callAdmission === undefined ? PLANNING_CENTER_ADMISSION : options.callAdmission,
     usageGuide: {
       content: usageGuide(purpose, options.instructions, excluded),
       summary:

@@ -1,4 +1,5 @@
 import { Deferred, Duration, Effect } from "effect";
+import { CALL_ADMISSION } from "./provider.js";
 import { ConnectorCallError } from "./errors.js";
 import { provideCallAdmissionProgram, provideCallBudgetCharge, startCallAdmission } from "./runtime/call-admission.js";
 import { fromSignal, runEdge } from "./runtime/run.js";
@@ -152,6 +153,7 @@ export class ConnectorCallAdmissionController {
     readonly connectorId: string,
     policy: ConnectorCallAdmissionPolicy,
   ) {
+    policy = CALL_ADMISSION.parse(policy, `connector "${connectorId}" callAdmission`);
     if (!Array.isArray(policy.rules) || policy.rules.length !== 1) {
       throw new TypeError(
         `connector "${connectorId}" callAdmission.rules must contain exactly one rule in this release.`,

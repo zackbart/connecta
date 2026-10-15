@@ -1467,6 +1467,8 @@ interface ConnectionState {
  */
 export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   opts = assertKnownOptions(opts, `remoteMcp(${JSON.stringify(id)})`, REMOTE_MCP_OPTIONS);
+  if (opts.callAdmission !== undefined)
+    CALL_ADMISSION.parse(opts.callAdmission, `remoteMcp(${JSON.stringify(id)}).callAdmission`);
   const skillsEnabled = opts.skills;
   if (skillsEnabled !== undefined && typeof skillsEnabled !== "boolean") {
     throw new Error(`[connecta] connector "${id}" skills must be a boolean.`);

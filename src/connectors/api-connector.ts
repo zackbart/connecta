@@ -290,6 +290,8 @@ export interface ApiOAuthHooks {
  */
 export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks): Connector {
   opts = assertKnownOptions(opts, `api(${JSON.stringify(id)})`, API_OPTIONS);
+  if (opts.callAdmission !== undefined)
+    CALL_ADMISSION.parse(opts.callAdmission, `api(${JSON.stringify(id)}).callAdmission`);
   assertStaticToolNames(opts.tools, `api(${JSON.stringify(id)}).tools`);
   if (opts.oauth !== undefined && oauth === undefined) {
     throw new Error(`api() connector "${id}" declares oauth but was built without its grant; construct it with api().`);

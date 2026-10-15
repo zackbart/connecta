@@ -3,7 +3,18 @@
 // acquire the MCP client, OAuth, or Effect graph by using it, and a hosted
 // provider does not acquire `api()`. Its runtime imports validate plain
 // options and reviewed classification, with no I/O.
-import { array, assertKnownOptions, keys, optionsOf, type Field } from "./config-schema.js";
+import {
+  array,
+  assertKnownOptions,
+  ConfigError,
+  fn,
+  keys,
+  object,
+  opaque,
+  required,
+  whole,
+  type Field,
+} from "./config-schema.js";
 import { reviewedClassification } from "./catalog-drift.js";
 import type {
   Connector,
@@ -39,17 +50,55 @@ export interface ProviderOptions {
   callAdmission?: ConnectorCallAdmissionPolicy;
 }
 
-const budget = optionsOf<ConnectorRollingWindowBudget>()(keys("kind", "maxCalls", "windowMs"));
+const budget = {
+  ...object({
+    kind: required(
+      opaque<ConnectorRollingWindowBudget["kind"]>({
+        check(value, path) {
+          if (value !== "rolling-window") throw new ConfigError(`${path} must be "rolling-window".`);
+        },
+      }),
+    ),
+    maxCalls: required(whole({ min: 1 })),
+    windowMs: required(whole({ min: 1 })),
+  }),
+  absent: () => undefined,
+};
 
-const admissionRule = optionsOf<ConnectorCallAdmissionRule>()({
-  ...keys("maxConcurrency", "maxQueueSize", "queueTimeoutMs", "retryAfterMs", "partitionKey"),
+const admissionRule = object({
+  maxConcurrency: whole({ min: 1 }),
+  maxQueueSize: whole({ min: 0 }),
+  queueTimeoutMs: whole({ min: 1 }),
+  retryAfterMs: whole({ min: 0 }),
+  partitionKey: fn<NonNullable<ConnectorCallAdmissionRule["partitionKey"]>>(),
   budget,
 });
 
-export const CALL_ADMISSION = optionsOf<ConnectorCallAdmissionPolicy>()({
-  ...keys("maxPartitions"),
-  rules: array(admissionRule),
+const admissionPolicy = object({
+  maxPartitions: whole({ min: 1 }),
+  rules: required(array(admissionRule)),
 });
+
+export const CALL_ADMISSION = {
+  ...admissionPolicy,
+  parse(value: unknown, path: string): ConnectorCallAdmissionPolicy {
+    const policy = admissionPolicy.parse(assertKnownOptions(value, path, admissionPolicy), path);
+    if (policy.rules.length !== 1) {
+      throw new ConfigError(`${path}.rules must contain exactly one rule in this release.`);
+    }
+    const rule = policy.rules[0]!;
+    if (rule.maxConcurrency === undefined && rule.budget === undefined) {
+      throw new ConfigError(`${path} rule must declare maxConcurrency or budget.`);
+    }
+    if (
+      rule.maxConcurrency === undefined &&
+      (rule.maxQueueSize !== undefined || rule.queueTimeoutMs !== undefined || rule.retryAfterMs !== undefined)
+    ) {
+      throw new ConfigError(`${path} queue settings require maxConcurrency.`);
+    }
+    return policy;
+  },
+};
 
 /** Options every maintained provider shares. */
 export const PROVIDER_COMMON = {
@@ -285,6 +334,8 @@ function asProvider<O, C extends { describe?(): ConnectorDescription }>(
   let connector: C;
   try {
     options = assertKnownOptions(options, `${factory}(${JSON.stringify(id)})`, shape);
+    const admission = options == null ? undefined : (options as ProviderOptions).callAdmission;
+    if (admission !== undefined) CALL_ADMISSION.parse(admission, `${factory}(${JSON.stringify(id)}).callAdmission`);
     connector = build(id, options);
   } catch (error) {
     throw providerConstructionError(factory, id, error);

@@ -526,7 +526,7 @@ function mixpanelApi(id: string, options: MixpanelApiOptions, provider: Provider
       placeholder: "username:secret",
     },
     testCredential: rest.testCredential,
-    callAdmission: options.callAdmission ?? MIXPANEL_API_ADMISSION,
+    callAdmission: options.callAdmission === undefined ? MIXPANEL_API_ADMISSION : options.callAdmission,
     usageGuide: {
       content: `# Mixpanel API usage\n\nService-account REST, ${region} residency. Account purpose: ${options.purpose}\n\nDefault project: ${options.defaultProjectId ?? "none; supply project_id"}.${skill.fragments.api}${instructions ? `\n## ${skill.instructionsHeading}\n\n${instructions}\n` : ""}`,
       summary: `${REGION_COPY[region]} residency, service-account REST. Raw export, user activity, profiles, reports and event import.`,
