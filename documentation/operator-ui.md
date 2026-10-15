@@ -88,6 +88,14 @@ available, unconfigured, forbidden, and unavailable history. `you` names no
 identity or auth material; it reports grants, whether the root and admitted pools are read-only,
 and effective activity, token, and per-connector auth permissions.
 
+`contract.ts` also declares `OperatorUiContractV2` and its member, pool, agent,
+connector and matrix types, frozen by
+[decision 0006](https://github.com/zackbart/connecta/blob/main/decisions/0006-pools-are-the-access-model.md#operator-contract)
+ahead of the server cutover in P6b of [#837](https://github.com/zackbart/connecta/issues/837). No route serves v2 yet;
+`test/fixtures/operator-contract-v2.ts` holds maintainer and member fixtures,
+and `test/helpers/operator-member-view.ts` checks that a member response
+withholds every maintainer fact.
+
 `connecta doctor --config` fetches this authenticated contract and prints only
 `config` as indented JSON. It requires the UI module and the existing doctor
 authentication environment variables; it runs no diagnostic program, follows
