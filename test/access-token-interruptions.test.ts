@@ -45,7 +45,7 @@ const admits = async (manager: AccessTokenManager, token: string) =>
 
 /** Make the next issued secret predictable, so a test can present a token rotate never returned. */
 function predictableSecret(): string {
-  vi.spyOn(crypto, "getRandomValues").mockImplementation(<T extends ArrayBufferView | null>(array: T) => {
+  vi.spyOn(crypto, "getRandomValues").mockImplementation((array) => {
     if (array instanceof Uint8Array) array.fill(7);
     return array;
   });
