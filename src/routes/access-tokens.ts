@@ -38,9 +38,8 @@ export async function routeAccessTokens(context: RouteContext, manager: AccessTo
       return privateJson({ agents: await manager.list() });
     }
     // The request's signal bounds each mutation: a caller that leaves before
-    // the commit point publishes nothing, and one that leaves after a
-    // rotation commits gets its undeliverable secret retired. Each call
-    // settles only after that cleanup.
+    // the slot commit publishes nothing, and one that leaves after a rotation
+    // commits has the slot revoked, since its secret cannot be delivered.
     const signal = request.signal;
     if (name && request.method === "POST") {
       return privateJson(await manager.rotate(name, operator, { signal }));
@@ -55,6 +54,9 @@ export async function routeAccessTokens(context: RouteContext, manager: AccessTo
     }
     if (error instanceof AccessTokenError && error.code === "aborted") {
       return privateJson({ error: "request ended" }, { status: 499 });
+    }
+    if (error instanceof AccessTokenError && error.code === "outcome_unknown") {
+      return privateJson({ error: "Rotation outcome unknown; rotate again" }, { status: 503 });
     }
     if (error instanceof AccessTokenError && error.code === "conflict") {
       return privateJson({ error: "The agent's token changed meanwhile; reload and retry" }, { status: 409 });

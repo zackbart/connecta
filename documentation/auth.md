@@ -134,46 +134,59 @@ agent. Activity attributes its calls to the agent name. Grant callbacks
 recognize agents by `identity.agent`. An agent never becomes an interactive
 operator: machine tokens manage neither tokens nor connection credentials.
 
-**Rotation is an immediate cutover.** A rotation writes the new record and its
-digest lookup, then swaps the slot to it with one `compareAndSet`. From that
-swap the new secret admits and the old one refuses, so after `rotate` returns
-the old secret fails on its next request. Of concurrent rotations exactly one
-swaps and returns a secret; the others publish nothing and fail with a conflict
-(409 on the route). Admission refuses a record that is revoked or that the
-slot no longer names, even if its lookup survives, so retirement deletes the
-lookup and marks the record revoked as independent steps, and an unanswered
-write is re-read and compared, never replayed blindly. If a write's answer is
-lost, the new secret is retired, and if the swap did commit the slot is marked
-revoked, so no live secret exists that nobody holds. Revocation removes the
-digest lookup before it marks the slot revoked.
+**The slot is the only authority.** A token admits iff its digest's lookup
+names a record, that record carries a currently declared `agent`, and that
+agent's slot is `issued` naming exactly that record. Nothing else counts: a
+lookup or record the slot does not name is inert garbage. Every mutation
+commits by one `compareAndSet` on the slot and only moves forward; no security
+outcome depends on cleanup or on undoing a write.
 
-**Cancellation.** The routes pass the request's `AbortSignal` to `rotate`,
-`revoke`, and `adopt` (`{ signal }`), which check it before each write and
-settle only after their cleanup. A rotation aborted before the swap publishes
-nothing: its provisional record and lookup are retired and the previous token
-keeps working. The swap cannot be undone, so a rotation aborted after it
-retires the secret it can no longer deliver: the slot reads `revoked`, exactly
-as after a revocation, and an operator rotates again. A revocation aborted
-before its first write changes nothing; once the lookup is deleted it
-completes. An adoption interrupted between binding the record and claiming the
-slot, by an abort or a failed or unanswered write, is reconciled by re-reading
-both: a committed slot is a completed adoption, and otherwise the bind is
-released only while the record still reads as that attempt wrote it. If the
-release fails too, `unboundTokens()` still lists the record and retrying the
-same adoption resumes it. Authorization caches no token, and D1 and
-SQLite are strongly consistent; admitted requests are not recalled. Management
-writes require an exact same-origin Origin; responses are private and
-non-cacheable.
+- **Rotate** writes the new record and its lookup (inert), checks the
+  request's signal, then compare-and-sets the slot from what it read to
+  `issued` with the new record. That is the commit: from it the new secret
+  admits and the previous one refuses, so after `rotate` returns the old secret
+  fails on its next request. Of concurrent rotations exactly one commits and
+  returns a secret; the others publish nothing and fail with a conflict (409
+  on the route). An unanswered commit is read back, never assumed or replayed.
+  If the request has ended once the commit is decided, the secret cannot be
+  delivered, so the slot moves forward to `revoked` by a compare-and-set
+  retried a bounded number of times; if even that cannot be settled, the call
+  fails with "rotation outcome unknown; rotate again" (503 on the route), never
+  success. An operator then rotates again.
+- **Revoke** reads the slot, checks the signal, and compare-and-sets it to
+  `revoked`. An abort before that commit changes nothing.
+- **Garbage collection.** After the response is decided, the previous or
+  revoked record and its lookup are deleted, best effort, bounded by a short
+  timeout and awaited inside the request. A failed or stalled collection
+  leaves only inert data; nothing waits on it before the commit or the abort
+  check, and none is started after the request has ended.
+
+The routes pass the request's `AbortSignal` to `rotate`, `revoke`, and `adopt`
+(`{ signal }`). Authorization caches no token, and D1 and SQLite are strongly
+consistent; admitted requests are not recalled. Management writes require an
+exact same-origin Origin; responses are private and non-cacheable.
 
 **Upgrading.** Keep `accessTokens(storage)` on **the same storage and key
 namespace**. The `access-token:v1:record:*` and `access-token:v1:lookup:*`
 records stay readable, and slots are added beside them as
-`access-token:v1:agent:<name>`. A stored token stops admitting until it is bound
-to an agent. Trusted provisioning binds an existing machine token once with
-`AccessTokenManager.adopt(tokenId, agentName)`, so that machine's `cta_` secret
-keeps working; `unboundTokens()` lists the records it accepts. Adoption
-refuses a record already bound, a human-bound or revoked record, and an agent
-whose slot was ever issued. The Node template wraps both as `npm run adopt-token`.
+`access-token:v1:agent:<name>`. A stored token stops admitting until an agent
+adopts it. Trusted provisioning runs `AccessTokenManager.adopt(tokenId,
+agentName)`, which never changes the legacy record: it writes a new record
+carrying the agent and the legacy digest, checks the signal, commits by
+compare-and-setting the agent's slot from none to `issued` with that record,
+then moves the digest's lookup from the legacy record to the new one by
+compare-and-set, from which the machine's existing `cta_` secret admits as the
+agent. Adopt delivers no secret, so once committed it completes even if the
+request ended. Running the same adoption again, when the slot already names a
+record with this digest, completes the lookup step and succeeds; there is no
+release step. If the lookup step cannot be confirmed the call says so and asks
+for a rerun. Adoption refuses a human-bound, revoked, or already adopted token,
+a token another agent's slot already carries, and an agent whose slot names
+anything else. If two agents race for one token, the lookup goes to one and the
+other's slot moves forward to `revoked`. `unboundTokens()` lists the legacy
+records adopt accepts: unbound, unrevoked, still owning their digest's lookup,
+and carried by no declared agent's slot. The Node template wraps both as
+`npm run adopt-token`.
 Human-bound tokens, which earlier UI issuance tied to the issuing operator,
 cannot be adopted and stay refused; issue the agent a new token instead. Rows
 recorded before the upgrade keep their token-record actor ids. Grant callbacks

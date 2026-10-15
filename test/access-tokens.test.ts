@@ -292,7 +292,7 @@ describe("rotation and revocation", () => {
     expect(await seed.list()).toEqual([{ name: "simon", state: "revoked", revokedAt: expect.any(String) }]);
   });
 
-  it("INV-4: revocation removes the lookup before the slot changes", async () => {
+  it("INV-4: revocation commits on the slot first and only then collects the record and lookup", async () => {
     const base = memoryStorage();
     const manager = new AccessTokenManager(base, { agents: ["simon"] });
     const { token } = await manager.rotate("simon");
@@ -309,8 +309,9 @@ describe("rotation and revocation", () => {
       },
     };
     await new AccessTokenManager(storage, { agents: ["simon"] }).revoke("simon");
-    expect(order.slice(0, 2)).toEqual(["delete lookup", "swap agent"]);
+    expect(order).toEqual(["swap agent", "swap lookup", "delete record"]);
     expect(await admits(manager, token)).toBe(false);
+    expect(await base.list("access-token:v1:")).toEqual(["access-token:v1:agent:simon"]);
   });
 
   it("INV-4: an interrupted rotation never leaves a live secret nobody holds", async () => {
@@ -337,12 +338,18 @@ describe("rotation and revocation", () => {
           return committed;
         },
       };
-      await expect(new AccessTokenManager(storage, { agents: ["simon"] }).rotate("simon")).rejects.toThrow(
-        "answer lost",
-      );
-      // Only the previous secret can still exist; after a committed swap not even that.
-      expect(await base.list("access-token:v1:lookup:")).toHaveLength(failure === "lookup" ? 1 : 0);
-      expect(await admits(seed, previous.token)).toBe(failure === "lookup");
+      const rotation = new AccessTokenManager(storage, { agents: ["simon"] }).rotate("simon");
+      if (failure === "lookup") {
+        // Before the commit: nothing is published and the previous token stays.
+        await expect(rotation).rejects.toThrow("answer lost");
+        expect(await base.list("access-token:v1:lookup:")).toHaveLength(1);
+        expect(await admits(seed, previous.token)).toBe(true);
+      } else {
+        // An unanswered commit is read back: it committed, so the secret is delivered.
+        const delivered = await rotation;
+        expect(await admits(seed, delivered.token)).toBe(true);
+        expect(await admits(seed, previous.token)).toBe(false);
+      }
       const recovered = await seed.rotate("simon");
       expect(await admits(seed, recovered.token)).toBe(true);
       expect(await admits(seed, previous.token)).toBe(false);
@@ -419,7 +426,7 @@ describe("tokens issued before agents", () => {
     },
   );
 
-  it("INV-4: adopt binds an unbound token to an agent once, keeping its secret, and refuses every second bind", async () => {
+  it("INV-4: adopt keeps a legacy token's secret for one agent without rewriting the legacy record", async () => {
     const storage = await legacyStorage();
     const manager = new AccessTokenManager(storage, { agents: ["legacy", "other"] });
     expect(await manager.adopt(fixture.unbound.accessToken.id, "legacy")).toEqual({
@@ -429,16 +436,19 @@ describe("tokens issued before agents", () => {
     });
     const authz = await authorize(request(fixture.unbound.token), BASE, [manager.auth]);
     expect(authz).toMatchObject({ ok: true, identity: { agent: "legacy" } });
-    for (const [tokenId, agent, code] of [
-      [fixture.unbound.accessToken.id, "other", "not_adoptable"],
-      [fixture.unbound.accessToken.id, "legacy", "not_adoptable"],
-      [fixture.bound.accessToken.id, "other", "not_adoptable"],
-      [fixture.revoked.accessToken.id, "other", "not_adoptable"],
-      ["00000000-0000-4000-8000-000000000000", "other", "not_adoptable"],
+    expect(await storage.get(recordKey)).toBe(fixture.records[recordKey as keyof typeof fixture.records]);
+    // Repeating the same adoption is idempotent; anything else is refused.
+    await expect(manager.adopt(fixture.unbound.accessToken.id, "legacy")).resolves.toMatchObject({ state: "issued" });
+    for (const [tokenId, agent] of [
+      [fixture.unbound.accessToken.id, "other"],
+      [fixture.bound.accessToken.id, "other"],
+      [fixture.revoked.accessToken.id, "other"],
+      ["00000000-0000-4000-8000-000000000000", "other"],
     ] as const) {
-      await expect(manager.adopt(tokenId, agent)).rejects.toMatchObject({ code });
+      await expect(manager.adopt(tokenId, agent)).rejects.toMatchObject({ code: "not_adoptable" });
     }
     expect(await admits(manager, fixture.bound.token)).toBe(false);
+    expect((await manager.unboundTokens()).map((token) => token.id)).not.toContain(fixture.unbound.accessToken.id);
     // An agent whose slot was ever issued is rotated, never adopted into.
     const fresh = new AccessTokenManager(await legacyStorage(), { agents: ["other"] });
     await fresh.rotate("other");
@@ -449,9 +459,12 @@ describe("tokens issued before agents", () => {
     const replacement = await manager.rotate("legacy");
     expect(await admits(manager, fixture.unbound.token)).toBe(false);
     expect(await admits(manager, replacement.token)).toBe(true);
+    await expect(manager.adopt(fixture.unbound.accessToken.id, "other")).rejects.toMatchObject({
+      code: "not_adoptable",
+    });
   });
 
-  it("INV-4: concurrent adoptions of one token bind it to exactly one agent", async () => {
+  it("INV-4: concurrent adoptions of one token by two agents leave exactly one admitting", async () => {
     const base = await legacyStorage();
     const storage = barrierStorage(base, recordKey, 2);
     const results = await Promise.allSettled(
@@ -461,16 +474,17 @@ describe("tokens issued before agents", () => {
     );
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     const manager = new AccessTokenManager(base, { agents: ["legacy", "other"] });
-    const states = (await manager.list()).map((slot) => slot.state).sort();
-    expect(states).toEqual(["issued", "none"]);
+    // The loser's slot can never admit, so it moved forward to revoked.
+    expect((await manager.list()).map((slot) => slot.state).sort()).toEqual(["issued", "revoked"]);
     expect(await admits(manager, fixture.unbound.token)).toBe(true);
   });
 
-  it("INV-4: fails closed on corrupt, unbound or rebound records after adoption", async () => {
+  it("INV-4: fails closed on a corrupt, unbound or rebound record after adoption", async () => {
     const storage = await legacyStorage();
     const manager = new AccessTokenManager(storage, { agents: ["legacy", "other"] });
     await manager.adopt(fixture.unbound.accessToken.id, "legacy");
-    const adopted = (await storage.get(recordKey))!;
+    const adoptedKey = `access-token:v1:record:${JSON.parse((await storage.get("access-token:v1:agent:legacy"))!).tokenId}`;
+    const adopted = (await storage.get(adoptedKey))!;
     const record = JSON.parse(adopted) as Record<string, unknown>;
     const { agent: _agent, ...unbound } = record;
     for (const raw of [
@@ -485,10 +499,10 @@ describe("tokens issued before agents", () => {
       JSON.stringify({ ...record, tokenHash: "0".repeat(64) }),
       JSON.stringify(unbound),
     ]) {
-      await storage.set(recordKey, raw);
+      await storage.set(adoptedKey, raw);
       expect(await admits(manager, fixture.unbound.token), raw).toBe(false);
     }
-    await storage.set(recordKey, adopted);
+    await storage.set(adoptedKey, adopted);
     expect(await admits(manager, fixture.unbound.token)).toBe(true);
   });
 
@@ -622,7 +636,7 @@ describe("agent identity", () => {
     }
   });
 
-  it("INV-6: activity attributes an agent's calls to its name", async () => {
+  it("INV-6: activity attributes an agent's calls to its name and records no payload or token", async () => {
     const storage = memoryStorage();
     const { token } = await new AccessTokenManager(storage, { agents: ["simon"] }).rotate("simon");
     const recorded: unknown[] = [];
@@ -638,12 +652,15 @@ describe("agent identity", () => {
         await mcpRpc(
           app,
           "tools/call",
-          { name: "call_tool", arguments: { address: "calc.add", args: { a: 1, b: 1 } } },
+          { name: "call_tool", arguments: { address: "calc.add", args: { a: 4242, b: 1717 } } },
           { token },
         ),
       );
       await expect.poll(() => recorded.length).toBeGreaterThan(0);
       expect(recorded[0]).toMatchObject({ actor: { kind: "access_token", id: "simon", namespace: NAMESPACE } });
+      const rows = JSON.stringify(recorded);
+      // Neither the arguments, the result, the secret nor its digest reach activity.
+      for (const payload of ["4242", "1717", "5959", token, token.slice(0, 12)]) expect(rows).not.toContain(payload);
     } finally {
       await app.close();
     }
