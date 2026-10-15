@@ -3,6 +3,11 @@ import type { ConnectorContext, ToolDef } from "../../types.js";
 import { guideOf, mockRemoteMcp, servedTools } from "../../../test/fixtures/hosted-provider.js";
 import { connectorContext } from "../../../test/fixtures/misc.js";
 import { ConnectorCallError } from "../../errors.js";
+import { CallAdmissionError } from "../../call-admission.js";
+import { CredentialVault } from "../../credentials.js";
+import { memoryStorage } from "../../storage/memory.js";
+import { createMetaTools } from "../../meta-tools.js";
+import { makeRegistry } from "../../../test/helpers.js";
 
 const mocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
@@ -771,6 +776,120 @@ describe("cloudflare() over a key", () => {
       );
       expect(error.code).toBe("provider_permission_denied");
       expect(sent.filter((request) => request.method === "DELETE")).toEqual([]);
+    });
+
+    async function admittedConnector(maxCalls: number) {
+      const connector = cloudflare("cf", { ...TOKEN, pin: { accountIds: [ACCOUNT] }, maxConcurrency: 1 });
+      connector.callAdmission = {
+        rules: [
+          { maxConcurrency: 1, maxQueueSize: 0, budget: { kind: "rolling-window", maxCalls, windowMs: 300_000 } },
+        ],
+      };
+      const storage = memoryStorage();
+      const vault = new CredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
+      await vault.setAll("cf", { value: "cf-token-123" }, "operator");
+      const registry = makeRegistry([connector], { storage, credentialVault: vault });
+      respond = (request) =>
+        request.url.pathname.endsWith("/dns_records")
+          ? envelope([])
+          : envelope({ id: request.url.pathname.split("/").pop(), account: { id: ACCOUNT } });
+      const tools = createMetaTools(registry, "https://connecta.test");
+      const read = (zone: string) =>
+        tools.callTool({
+          address: "cf.cloudflare_api_read",
+          args: { path: `/zones/${zone}/dns_records` },
+          resultMode: "value",
+        });
+      return { connector, registry, read, tools };
+    }
+
+    it("INV-4: charges ownership reads to registry admission with one concurrency permit and reuses cached ownership", async () => {
+      const { registry, read } = await admittedConnector(3);
+      expect((await read(ZONE)).isError).not.toBe(true);
+      expect((await read(ZONE)).isError).not.toBe(true);
+      expect(sent.map((request) => request.url.pathname)).toEqual([
+        `/client/v4/zones/${ZONE}`,
+        `/client/v4/zones/${ZONE}/dns_records`,
+        `/client/v4/zones/${ZONE}/dns_records`,
+      ]);
+      expect(registry.callAdmissionSnapshot()["cf"]).toMatchObject({
+        active: 0,
+        queued: 0,
+        totals: { admitted: 3, queued: 0, rejected: 0 },
+      });
+      expect((await read(OTHER_ZONE)).isError).toBe(true);
+      expect(sent).toHaveLength(3);
+    });
+
+    it.each([2, 3])(
+      "INV-4: charges each ownership read in a multi-zone query with a budget of %i",
+      async (maxCalls) => {
+        const { registry, tools } = await admittedConnector(maxCalls);
+        respond = (request) =>
+          request.url.pathname.endsWith("/graphql")
+            ? Response.json({ data: { viewer: {} } })
+            : envelope({ account: { id: ACCOUNT } });
+        const result = await tools.callTool({
+          address: "cf.graphql_query",
+          args: { query: `{ viewer { zones(filter: { zoneTag_in: ["${ZONE}", "${OTHER_ZONE}"] }) { zoneTag } } }` },
+          resultMode: "value",
+        });
+        const ownershipPaths = [`/client/v4/zones/${ZONE}`, `/client/v4/zones/${OTHER_ZONE}`];
+        expect(sent.map((request) => request.url.pathname)).toEqual(
+          maxCalls === 3 ? [...ownershipPaths, "/client/v4/graphql"] : ownershipPaths.slice(0, 1),
+        );
+        expect(result.isError === true).toBe(maxCalls === 2);
+        expect(registry.callAdmissionSnapshot()["cf"]).toMatchObject({
+          active: 0,
+          queued: 0,
+          totals: { admitted: maxCalls, rateLimited: maxCalls === 2 ? 1 : 0 },
+        });
+      },
+    );
+
+    it("INV-4: returns the normal admission error before either ownership or target request when the budget is exhausted", async () => {
+      const { connector, registry, read } = await admittedConnector(1);
+      const call = connector.callTool.bind(connector);
+      let caught: unknown;
+      connector.callTool = async (...args) => {
+        try {
+          return await call(...args);
+        } catch (error) {
+          caught = error;
+          throw error;
+        }
+      };
+      const result = await read(ZONE);
+      expect(result.isError).toBe(true);
+      expect(caught).toBeInstanceOf(CallAdmissionError);
+      expect(caught).toMatchObject({ admissionKind: "budget", code: "rate_limited", retryable: true });
+      expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+        ok: false,
+        error: { code: "rate_limited", retryable: true, retryAfterMs: expect.any(Number) },
+        attempts: 1,
+      });
+      expect(sent).toEqual([]);
+      expect(registry.callAdmissionSnapshot()["cf"]).toMatchObject({
+        active: 0,
+        queued: 0,
+        totals: { admitted: 1, rateLimited: 1 },
+      });
+      expect(await registry.statusFor("cf", "https://connecta.test")).toMatchObject({ state: "ok" });
+    });
+
+    it("INV-4: stops a later ownership read before dispatch when an earlier call spent the shared budget", async () => {
+      const { registry, read } = await admittedConnector(3);
+      expect((await read(ZONE)).isError).not.toBe(true);
+      expect((await read(OTHER_ZONE)).isError).toBe(true);
+      expect(sent.map((request) => request.url.pathname)).toEqual([
+        `/client/v4/zones/${ZONE}`,
+        `/client/v4/zones/${ZONE}/dns_records`,
+      ]);
+      expect(registry.callAdmissionSnapshot()["cf"]).toMatchObject({
+        active: 0,
+        queued: 0,
+        totals: { admitted: 3, rateLimited: 1 },
+      });
     });
 
     it("filters account and zone lists to the pin, in the generic and named tools", async () => {

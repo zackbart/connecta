@@ -2,9 +2,10 @@ import { recordToolActivity } from "../src/activity.js";
 import { describe, expect, it, vi } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
 import { CallAdmissionError, ConnectorCallAdmissionController } from "../src/call-admission.js";
+import { chargeConnectorCall } from "../src/call-admission-context.js";
 import { buildSandboxProviders } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
-import type { Connector, ConnectorCallAdmissionPolicy, ToolDef } from "../src/types.js";
+import type { Connector, ConnectorCallAdmissionPolicy, ConnectorContext, ToolDef } from "../src/types.js";
 import { activitySink, createTestConnecta, required, makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
@@ -350,6 +351,30 @@ describe("connector call admission integration", () => {
     releases.shift()!();
     await expect(codeMode).resolves.toEqual({ data: { source: "code" }, format: "json" });
     expect(maxActive).toBe(1);
+  });
+
+  it("INV-7: stops a retained connector context from charging after its invocation ends", async () => {
+    let captured: ConnectorContext | undefined;
+    const connector = connectorWith({
+      id: "limited",
+      kind: "api",
+      tools: [READ_TOOL],
+      callAdmission: policy({ maxConcurrency: 1, budget: { kind: "rolling-window", maxCalls: 3, windowMs: 60_000 } }),
+      call: async (_name, _args, ctx) => {
+        captured = ctx;
+        await chargeConnectorCall(ctx);
+        return {};
+      },
+    });
+    const registry = makeRegistry([connector]);
+    const result = await createMetaTools(registry, BASE).callTool({ address: "limited.read" });
+    expect(result.isError).not.toBe(true);
+    await expect(chargeConnectorCall(required(captured))).rejects.toMatchObject({ admissionKind: "closed" });
+    expect(registry.callAdmissionSnapshot()["limited"]).toMatchObject({
+      active: 0,
+      queued: 0,
+      totals: { admitted: 2 },
+    });
   });
 
   it("threads direct-call cancellation into the shared admission queue", async () => {

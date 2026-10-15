@@ -3,6 +3,7 @@
 // pins, reviewed read-only POSTs and refusals, two pagination shapes, and the
 // named tools (credential check, accounts, zones, GraphQL analytics, uploads).
 import type { ApiTool } from "../../connectors/api-connector.js";
+import { chargeConnectorCall } from "../../call-admission-context.js";
 import { retryAfterMs, type GuardedTransport } from "../../connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../../errors.js";
 import type { ConnectorContext, CredentialTestResult, JsonSchema } from "../../types.js";
@@ -564,6 +565,7 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
     let owner = owners.get(zone);
     if (owner === undefined) {
       chargeLookup(ctx);
+      await chargeConnectorCall(ctx);
       owner = await send({ method: "GET", path: `/zones/${encodeURIComponent(zone)}` }, ctx, async (response) => {
         const body = await response.jsonResult().catch(() => ({ value: undefined }));
         const value = "value" in body ? body.value : undefined;

@@ -34,6 +34,24 @@ type CallAdmissionProgram = (
 
 let program: CallAdmissionProgram | undefined;
 
+type CallBudgetCharge = (now: number, signal: AbortSignal | undefined) => Effect.Effect<void, CallAdmissionError>;
+const budgetCharges = new WeakMap<CallAdmissionPermit, CallBudgetCharge>();
+
+/** Bind budget-only admission to the partition already owned by this permit. */
+export function provideCallBudgetCharge(permit: CallAdmissionPermit, charge: CallBudgetCharge): void {
+  budgetCharges.set(permit, charge);
+}
+
+/** Charge an internal request without acquiring another concurrency permit. */
+export function chargeCallBudget(
+  permit: CallAdmissionPermit,
+  signal?: AbortSignal,
+): Effect.Effect<void, CallAdmissionError> {
+  return Effect.clockWith(
+    (clock) => budgetCharges.get(permit)?.(clock.currentTimeMillisUnsafe(), signal) ?? Effect.void,
+  );
+}
+
 // What the live Clock reads, looked up on every call rather than bound once,
 // so a Date faked after a caller queued (vitest's setSystemTime) still counts.
 const liveNow = (): number => Date.now();
