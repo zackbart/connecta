@@ -19,7 +19,7 @@ import { closeScope } from "../runtime/connector-scope.js";
 import { withDeadlineEffect } from "../runtime/run.js";
 import type { Connector } from "../types.js";
 import { uiProblemFor } from "../ui.js";
-import { authorized, serveOperator, visibleRegistry, type Answer, type Authorized } from "./operator.js";
+import { authorized, refuse, serveOperator, visibleRegistry, type Answer, type Authorized } from "./operator.js";
 import { mayManageConnector, privateJson, type RouteContext } from "./shared.js";
 
 const attempt = <A>(operation: () => Promise<A>) => Effect.tryPromise({ try: operation, catch: (error) => error });
@@ -184,7 +184,9 @@ function configRead(context: RouteContext): Effect.Effect<Response, Answer> {
   return Effect.gen(function* () {
     const authz = yield* authorized(context);
     const registry = yield* visibleRegistry(context, authz);
-    const visible = registry.listConnectors();
+    const selected = context.url.searchParams.get("connector");
+    const visible = registry.listConnectors().filter((connector) => selected === null || connector.id === selected);
+    if (selected !== null && visible.length === 0) return yield* refuse("unknown connector", 404);
     const ids = visible.map((c) => c.id);
     const pools: OperatorPool[] = [];
     for (const [name, pool] of opts.pools) {

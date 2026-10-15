@@ -1,4 +1,5 @@
 import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useEffect } from "react";
 import type { OperatorState } from "../view.js";
 import { connectorSourceLabel, connectorStatusLabel, connectorStatusTone, formatDate } from "../view.js";
 import { Badge, StateBlock } from "./parts.js";
@@ -8,13 +9,14 @@ import { SnapshotTree } from "./snapshot.js";
 import { Catalog } from "./catalog.js";
 import { ConnectorAuth, ConnectorDiagnostics } from "./connections.js";
 import { ActivityPage } from "./activity.js";
-import { loadOperatorContract } from "./store.js";
+import { loadOperatorContract, stopOAuthPolling } from "./store.js";
 
 const TABS = ["tools", "connection", "activity"];
 export function ConnectorDetailPage({ state }: { state: OperatorState }) {
   const location = useLocation();
   const go = useNavigate();
   const id = location.pathname.split("/").pop() ?? "";
+  useEffect(() => () => stopOAuthPolling(id), [id]);
   const tab = TABS.includes(location.hash) ? location.hash : "tools";
   const contract = state.contract;
   const config = contract?.config.connectors.find((c) => c.id === id);

@@ -97,3 +97,7 @@ rejected identity reads, missing shell context, delayed OAuth grant commits,
 catalog/auth reconciliation, and unreadable credential metadata, all without
 reloading the document. Store tests defend bounded recovery and OAuth polling,
 atomic refresh publication, identity cancellation, and late-response fencing.
+Multi-connector browser cases assert scoped polling and cancellation after
+navigation, successful authorization, and failed status. The Clerk browser
+fixture holds sign-out pending to check that queued focus and later passive
+returns cannot restore operator data.

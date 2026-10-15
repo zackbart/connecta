@@ -111,11 +111,12 @@ export function navHint(): { activity: boolean } {
 function gate(notice: Notice | null = null): void {
   queryClient.clear();
   forgetNav();
-  awaitingAuthorization.clear();
-  clearTimeout(oauthPollTimer);
+  stopOAuthPolling();
+  clearTimeout(returnTimer);
+  returnTimer = undefined;
+  lastReturnPass = 0;
   clearTimeout(recoveryTimer);
   recoveryTimer = undefined;
-  oauthPollTimer = undefined;
   state = resetIdentity(state, notice);
   for (const listener of listeners) listener();
 }
@@ -213,6 +214,7 @@ let dataRevision = 0;
 
 /** Fetch `/ui/data`. The only route that decides gated versus signed in. */
 async function loadData(): Promise<void> {
+  if (signedOut) return;
   const identityCurrent = fence();
   const revision = ++dataRevision;
   ++snapshotRevision;
@@ -285,10 +287,11 @@ export function loadOperatorContract(): Promise<void> {
   return refreshSnapshot();
 }
 
-async function refreshSnapshot(quiet = false): Promise<void> {
+async function refreshSnapshot(quiet = false, connectorId?: string, pollSignal?: AbortSignal): Promise<void> {
+  if (signedOut) return;
   const identityCurrent = fence();
   const revision = ++snapshotRevision;
-  const current = () => identityCurrent() && revision === snapshotRevision;
+  const current = () => identityCurrent() && revision === snapshotRevision && !pollSignal?.aborted;
   const data = state.data;
   if (!data) return;
   if (!quiet) set({ contractPhase: "loading" });
@@ -298,7 +301,7 @@ async function refreshSnapshot(quiet = false): Promise<void> {
   } catch {
     if (!current()) return;
     gate(failure("Your sign-in session couldn't be read. Retry to check again."));
-    scheduleRecovery();
+    if (!connectorId) scheduleRecovery();
     return;
   }
   if (!current()) return;
@@ -306,14 +309,17 @@ async function refreshSnapshot(quiet = false): Promise<void> {
   let loadedContract: OperatorUiContract | null | undefined;
   const publish = () => {
     if (!current() || loadedContract === undefined) return;
+    if (connectorId && loadedContract && !outcomes.has(connectorId)) return;
     // Publish each completed connector with its matching catalog facts. A slow
     // provider leaves other rows usable; pending rows retain their last pair.
-    const contract = loadedContract
+    const refreshed =
+      loadedContract && connectorId ? mergeConnectorContract(loadedContract, connectorId) : loadedContract;
+    const contract = refreshed
       ? {
-          ...loadedContract,
+          ...refreshed,
           live: {
-            ...loadedContract.live,
-            connectors: loadedContract.live.connectors.map((live) =>
+            ...refreshed.live,
+            connectors: refreshed.live.connectors.map((live) =>
               outcomes.has(live.id)
                 ? live
                 : (state.contract?.live.connectors.find((previous) => previous.id === live.id) ?? live),
@@ -321,14 +327,28 @@ async function refreshSnapshot(quiet = false): Promise<void> {
           },
         }
       : null;
-    set({ ...detailsPatch(outcomes, quiet, contract), contract, contractPhase: contract ? "ready" : "error" });
+    set({
+      ...detailsPatch(outcomes, quiet && !connectorId, contract),
+      contract,
+      contractPhase: contract ? "ready" : "error",
+    });
+    if (connectorId) {
+      const outcome = outcomes.get(connectorId);
+      if (
+        !contract ||
+        outcome?.kind !== "detail" ||
+        outcome.detail.status === "error" ||
+        contract.live.connectors.find((row) => row.id === connectorId)?.status === "error"
+      )
+        stopOAuthPolling(connectorId);
+    }
   };
-  const connectors = data.connectors;
+  const connectors = data.connectors.filter((connector) => !connectorId || connector.id === connectorId);
   let next = 0;
   const worker = async () => {
     while (next < connectors.length && current()) {
       const connector = connectors[next++]!;
-      const outcome = await readConnector(connector.id, token, revision);
+      const outcome = await readConnector(connector.id, token, revision, pollSignal);
       if (current()) {
         outcomes.set(connector.id, outcome);
         publish();
@@ -339,11 +359,14 @@ async function refreshSnapshot(quiet = false): Promise<void> {
     .fetchQuery({
       queryKey: ["operator-config", state.generation, revision],
       queryFn: async ({ signal }) => {
-        const response = await fetch("/ui/api/config", {
-          headers: requestHeaders(token),
-          credentials: "same-origin",
-          signal,
-        });
+        const response = await fetch(
+          connectorId ? `/ui/api/config?connector=${encodeURIComponent(connectorId)}` : "/ui/api/config",
+          {
+            headers: requestHeaders(token),
+            credentials: "same-origin",
+            signal: pollSignal ? AbortSignal.any([signal, pollSignal]) : signal,
+          },
+        );
         if (response.status === 401 || response.status === 403) throw new RequestFailure("session");
         if (!response.ok) throw new RequestFailure("refused");
         const value = (await response.json()) as OperatorUiContract;
@@ -360,7 +383,7 @@ async function refreshSnapshot(quiet = false): Promise<void> {
       if (!current()) return;
       if (result.error instanceof RequestFailure && result.error.kind === "session") {
         gate(failure("Your session cannot read this configuration. Retry to check again."));
-        scheduleRecovery();
+        if (!connectorId) scheduleRecovery();
       } else {
         loadedContract = result.contract ?? null;
         publish();
@@ -368,6 +391,9 @@ async function refreshSnapshot(quiet = false): Promise<void> {
     });
   await Promise.all([contractRead, ...Array.from({ length: Math.min(4, connectors.length) }, worker)]);
   if (!current()) return;
+  // OAuth recovery has its own cap and cancellation. Never turn a failed poll
+  // into a deployment-wide retry through the general recovery backoff.
+  if (connectorId) return;
   const needsRecovery =
     !loadedContract ||
     Object.keys(state.connectorFailures).length > 0 ||
@@ -377,6 +403,21 @@ async function refreshSnapshot(quiet = false): Promise<void> {
   if (needsRecovery) scheduleRecovery();
   else resetRecovery();
 }
+
+/** A scoped poll replaces one live row; all unrelated contract facts stay put. */
+function mergeConnectorContract(next: OperatorUiContract, id: string): OperatorUiContract | null {
+  const previous = state.contract;
+  const live = next.live.connectors.find((connector) => connector.id === id);
+  if (!previous || !live) return null;
+  return {
+    ...previous,
+    live: {
+      ...previous.live,
+      connectors: previous.live.connectors.map((connector) => (connector.id === id ? live : connector)),
+    },
+  };
+}
+
 
 /**
  * Every mutation in the same shape: mark the control busy, send exactly one
@@ -426,14 +467,24 @@ function setPage(page: OperatorPage, focus = false): void {
 }
 
 let routerNavigate: ((href: string) => void) | undefined;
+let currentPath = window.location.pathname;
+let navigationRevision = 0;
 export function configureNavigation(navigate: (href: string) => void): void {
   routerNavigate = navigate;
 }
 export function routeChanged(path: string): void {
+  if (path !== currentPath) {
+    currentPath = path;
+    ++navigationRevision;
+    for (const id of awaitingAuthorization.keys()) {
+      if (path !== `/connectors/${encodeURIComponent(id)}`) stopOAuthPolling(id);
+    }
+  }
   const page = pageForPath(path);
   if (state.page !== page) setPage(page, true);
 }
 export function navigate(page: OperatorPage, href: string): void {
+  routeChanged(new URL(href, window.location.href).pathname);
   if (routerNavigate) routerNavigate(href);
   else history.pushState({ operatorPage: page }, "", href);
   setPage(page, true);
@@ -452,13 +503,16 @@ export function setActivitySearch(activitySearch: string): void {
 export function signInWithBearer(value: string): void {
   resetRecovery();
   gate(null);
+  signedOut = false;
   localStorage.setItem(TOKEN_KEY, value);
+  const current = fence();
   void loadCurrent().then(() => {
-    if (state.session === "ready") set({ pendingFocus: `${state.page}Heading` });
+    if (current() && state.session === "ready") set({ pendingFocus: `${state.page}Heading` });
   });
 }
 
 export function forgetBearer(): void {
+  signedOut = true;
   resetRecovery();
   localStorage.removeItem(TOKEN_KEY);
   gate(null);
@@ -501,17 +555,35 @@ function oauthStartPath(connector: string, mode: OAuthStartMode): string {
  */
 const awaitingAuthorization = new Map<string, number>();
 let oauthPollTimer: ReturnType<typeof setTimeout> | undefined;
+let oauthDeadlineTimer: ReturnType<typeof setTimeout> | undefined;
+let oauthPollController: AbortController | undefined;
+let oauthPollGeneration = 0;
 const OAUTH_POLL_INTERVAL_MS = 2000;
 const OAUTH_POLL_WINDOW_MS = 30_000;
+
+/** Navigation, unmount and identity resets also cancel in-flight poll reads. */
+export function stopOAuthPolling(connector?: string): void {
+  ++oauthPollGeneration;
+  if (connector && !awaitingAuthorization.has(connector)) return;
+  if (connector) awaitingAuthorization.delete(connector);
+  else awaitingAuthorization.clear();
+  clearTimeout(oauthPollTimer);
+  clearTimeout(oauthDeadlineTimer);
+  oauthPollTimer = undefined;
+  oauthDeadlineTimer = undefined;
+  oauthPollController?.abort();
+  oauthPollController = undefined;
+}
 
 function scheduleOAuthPoll(): void {
   if (oauthPollTimer !== undefined || awaitingAuthorization.size === 0) return;
   const current = fence();
+  const generation = oauthPollGeneration;
   oauthPollTimer = setTimeout(async () => {
     oauthPollTimer = undefined;
-    if (!current()) return;
+    if (!current() || generation !== oauthPollGeneration) return;
     for (const [id, deadline] of awaitingAuthorization) {
-      if (Date.now() >= deadline) awaitingAuthorization.delete(id);
+      if (Date.now() >= deadline) stopOAuthPolling(id);
     }
     if (awaitingAuthorization.size === 0) return;
     if (
@@ -519,10 +591,20 @@ function scheduleOAuthPoll(): void {
       state.session === "ready" &&
       !state.oauthBusy
     ) {
-      await refreshSnapshot(true);
+      for (const id of awaitingAuthorization.keys()) {
+        await pollOAuthConnector(id);
+      }
     }
     scheduleOAuthPoll();
   }, OAUTH_POLL_INTERVAL_MS);
+}
+
+async function pollOAuthConnector(id: string): Promise<void> {
+  if (oauthPollController || !awaitingAuthorization.has(id)) return;
+  const controller = new AbortController();
+  oauthPollController = controller;
+  await refreshSnapshot(true, id, controller.signal);
+  if (oauthPollController === controller) oauthPollController = undefined;
 }
 
 /**
@@ -563,6 +645,9 @@ function oauthNoticePatch(connector: string, notice: Notice): Partial<OperatorSt
  * the tab, the route is still asked, and the row offers the link it returned.
  */
 export function startOAuth(connector: string, mode: OAuthStartMode): Promise<void> {
+  stopOAuthPolling();
+  const startedOn = navigationRevision;
+  const generation = oauthPollGeneration;
   const tab = openBlankTab();
   return mutate({
     request: (current) => operatorRequest(oauthStartPath(connector, mode), "POST", current),
@@ -588,8 +673,11 @@ export function startOAuth(connector: string, mode: OAuthStartMode): Promise<voi
         tab.opener = null;
         tab.location.replace(url);
       }
-      awaitingAuthorization.set(connector, Date.now() + OAUTH_POLL_WINDOW_MS);
-      scheduleOAuthPoll();
+      if (startedOn === navigationRevision && generation === oauthPollGeneration) {
+        awaitingAuthorization.set(connector, Date.now() + OAUTH_POLL_WINDOW_MS);
+        oauthDeadlineTimer = setTimeout(() => stopOAuthPolling(connector), OAUTH_POLL_WINDOW_MS);
+        scheduleOAuthPoll();
+      }
       return {
         ...(state.data
           ? {
@@ -618,7 +706,7 @@ export function startOAuth(connector: string, mode: OAuthStartMode): Promise<voi
 }
 
 export function disconnectOAuth(connector: string): Promise<void> {
-  awaitingAuthorization.delete(connector);
+  stopOAuthPolling(connector);
   return mutate({
     request: (current) => operatorRequest(`/ui/oauth/${encodeURIComponent(connector)}`, "DELETE", current),
     busy: {
@@ -750,6 +838,7 @@ function loadCurrent(): Promise<void> {
  * region being reloaded instead of dropping to the page.
  */
 export function retryLoad(): Promise<void> {
+  if (signedOut) return Promise.resolve();
   resetRecovery();
   set({
     pendingFocus: `${state.page}Heading`,
@@ -767,13 +856,17 @@ export function retryCollection(): Promise<void> {
 /* Boot -------------------------------------------------------------------- */
 
 export function signIn(): void {
+  signedOut = false;
   window.Clerk?.redirectToSignIn({
     signInFallbackRedirectUrl: window.location.href,
     signUpFallbackRedirectUrl: window.location.href,
   });
 }
 
+let signedOut = false;
+
 export function signOut(): void {
+  signedOut = true;
   resetRecovery();
   if (auth.kind === "cloudflare-access") {
     gate(null);
@@ -797,10 +890,13 @@ const RETURN_DEBOUNCE_MS = 150;
 const RETURN_MIN_INTERVAL_MS = 2000;
 
 function onReturn(): void {
+  if (signedOut) return;
   if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
   if (returnTimer !== undefined) return;
+  const current = fence();
   returnTimer = setTimeout(() => {
     returnTimer = undefined;
+    if (!current() || signedOut) return;
     const now = Date.now();
     if (now - lastReturnPass < RETURN_MIN_INTERVAL_MS) return;
     lastReturnPass = now;
@@ -819,19 +915,25 @@ function resetRecovery(): void {
 }
 
 function scheduleRecovery(): void {
+  if (signedOut) return;
   if (recoveryTimer !== undefined || recoveryAttempt >= RECOVERY_DELAYS_MS.length) return;
   const current = fence();
   recoveryTimer = setTimeout(() => {
     recoveryTimer = undefined;
-    if (current()) void loadCurrent();
+    if (current() && !signedOut) void loadCurrent();
   }, RECOVERY_DELAYS_MS[recoveryAttempt++]);
 }
 
 function recheckAuthorization(): void {
+  if (signedOut) return;
   // Focus is also a way out of a refusal. It only re-requests admission.
   resetRecovery();
   if (state.session !== "ready" || !state.data || state.loadFailure || state.contractPhase === "error") {
     void loadCurrent();
+    return;
+  }
+  if (awaitingAuthorization.size > 0) {
+    if (!state.oauthBusy) for (const id of awaitingAuthorization.keys()) void pollOAuthConnector(id);
     return;
   }
   const retry =
@@ -879,7 +981,8 @@ export async function boot(): Promise<void> {
         // be repainted while the replacement identity is being fetched.
         resetRecovery();
         gate(null);
-        void loadCurrent();
+        if (next) signedOut = false;
+        if (!signedOut) void loadCurrent();
       });
     } catch {
       return gate(failure("Clerk couldn't start. Reload the page to try again."));
@@ -901,11 +1004,16 @@ type DetailOutcome =
   | { kind: "local"; failure: ConnectorLoadFailure }
   | { kind: "downstream" };
 
-async function readConnector(id: string, token: string | null | undefined, revision: number): Promise<DetailOutcome> {
+async function readConnector(
+  id: string,
+  token: string | null | undefined,
+  revision: number,
+  pollSignal?: AbortSignal,
+): Promise<DetailOutcome> {
   try {
     return await queryClient.fetchQuery({
       queryKey: ["connector", state.generation, id, revision],
-      queryFn: ({ signal }) => fetchConnector(id, token, signal),
+      queryFn: ({ signal }) => fetchConnector(id, token, pollSignal ? AbortSignal.any([signal, pollSignal]) : signal),
     });
   } catch (error) {
     return { kind: "local", failure: isCancelledError(error) ? "session" : "network" };
@@ -1000,9 +1108,12 @@ function detailsPatch(
           toolCount: live.tools.length,
         };
       }
-      if (detail.status === "ok" && awaitingAuthorization.delete(c.id) && state.oauthNoticeFor === c.id) {
-        patch.oauthNotice = info("Connected.");
-        patch.oauthBlocked = null;
+      if (detail.status === "ok" && awaitingAuthorization.has(c.id)) {
+        stopOAuthPolling(c.id);
+        if (state.oauthNoticeFor === c.id) {
+          patch.oauthNotice = info("Connected.");
+          patch.oauthBlocked = null;
+        }
       }
       if (detail.status === "auth_required" && c.authorizationUrl && !detail.authorizationUrl)
         return { ...detail, authorizationUrl: c.authorizationUrl };

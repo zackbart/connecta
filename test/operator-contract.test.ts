@@ -60,6 +60,7 @@ describe("operator config contract", () => {
         }),
       ),
       executor,
+      readOnly: true,
       auth: human,
       ui: operatorUi(),
       logger: "silent",

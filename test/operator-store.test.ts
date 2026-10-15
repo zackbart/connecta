@@ -98,7 +98,7 @@ async function loadStore(
     }),
   );
   vi.stubGlobal("fetch", async (path: string, init: RequestInit) => {
-    if (path === "/ui/api/config") return configMock(path, init);
+    if (path.startsWith("/ui/api/config")) return configMock(path, init);
     const response = (await fetchMock(path, init)) as Response | undefined;
     if (path === "/ui/data" && response?.ok) {
       try {
@@ -744,23 +744,54 @@ describe("operator recovery bounds and snapshot ordering", () => {
     expect(configMock).not.toHaveBeenCalled();
   });
 
-  it.each(["/tools", "/connectors/other"])("INV-4 INV-10: aborts an OAuth poll on navigation to %s", async (path) => {
-    const { store, fetchMock, configMock, connector, contract } = await pollingStore();
+  it.each(["/tools", "/connectors/other", "unmount", "sign-out", "deadline"])(
+    "INV-4 INV-10: aborts both OAuth reads on %s and drops late responses",
+    async (path) => {
+      const { store, fetchMock, configMock, connector, contract } = await pollingStore();
+      const pending = deferred<Response>();
+      const pendingContract = deferred<Response>();
+      let signal: AbortSignal | undefined;
+      let contractSignal: AbortSignal | undefined;
+      fetchMock.mockImplementation((_path: string, init: RequestInit) => {
+        signal = init.signal ?? undefined;
+        return pending.promise;
+      });
+      configMock.mockImplementation((_path: string, init: RequestInit) => {
+        contractSignal = init.signal ?? undefined;
+        return pendingContract.promise;
+      });
+      await vi.advanceTimersByTimeAsync(2100);
+      if (path === "unmount") store.stopOAuthPolling("svc");
+      else if (path === "sign-out") store.signOut();
+      else if (path === "deadline") await vi.advanceTimersByTimeAsync(30_000);
+      else store.routeChanged(path);
+      expect(signal?.aborted).toBe(true);
+      expect(contractSignal?.aborted).toBe(true);
+      pendingContract.resolve(Response.json(contract([{ ...connector, status: "ok" }])));
+      pending.resolve(Response.json({ ...connector, status: "ok" }));
+      fetchMock.mockClear();
+      configMock.mockClear();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(store.getState().data?.connectors[0]?.status).toBe(path === "sign-out" ? undefined : "auth_required");
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(configMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("INV-10: never arms OAuth polling when its pending start finishes after unmount", async () => {
+    const { store, fetchMock, configMock } = await pollingStore();
+    store.stopOAuthPolling("svc");
     const pending = deferred<Response>();
-    let signal: AbortSignal | undefined;
-    fetchMock.mockImplementation((_path: string, init: RequestInit) => {
-      signal = init.signal ?? undefined;
-      return pending.promise;
-    });
-    configMock.mockImplementation(async () => Response.json(contract([connector])));
-    await vi.advanceTimersByTimeAsync(2100);
-    store.routeChanged(path);
-    expect(signal?.aborted).toBe(true);
-    pending.resolve(Response.json({ ...connector, status: "ok" }));
+    fetchMock.mockReturnValueOnce(pending.promise);
+    const start = store.startOAuth("svc", "continue");
+    await vi.advanceTimersByTimeAsync(0);
+    store.stopOAuthPolling("svc");
+    pending.resolve(Response.json({ state: "auth_required", authorizationUrl: "https://provider.test/consent" }));
+    await start;
+    await vi.advanceTimersByTimeAsync(0);
     fetchMock.mockClear();
     configMock.mockClear();
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(store.getState().data?.connectors[0]?.status).toBe("auth_required");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(configMock).not.toHaveBeenCalled();
   });
