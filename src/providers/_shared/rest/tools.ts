@@ -36,7 +36,7 @@ import {
   type GuardedRequest,
   type GuardedTransport,
 } from "../../../connectors/guarded-fetch.js";
-import { recordRecovery } from "../../../call-recovery.js";
+import { IDEMPOTENCY_KEY_MAX_LENGTH, recordRecovery } from "../../../call-recovery.js";
 import { ConnectorCallError, unavailableCallError } from "../../../errors.js";
 import type { ConnectorContext, JsonSchema } from "../../../types.js";
 import type { Operation, OperationIndex, RestMethod } from "./operation-index.js";
@@ -691,7 +691,7 @@ export function restTools(vendor: RestVendor): ApiTool[] {
                 idempotencyKey: {
                   type: "string",
                   minLength: 1,
-                  maxLength: 255,
+                  maxLength: IDEMPOTENCY_KEY_MAX_LENGTH,
                   description: "Reuse to retry this exact write; one is generated and returned when omitted.",
                 },
               }

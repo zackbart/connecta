@@ -653,7 +653,11 @@ describe("restTools()", () => {
     }
   });
 
-  it("INV-9: carries recorded recovery on a direct write whose reply was lost, not only on a deadline", async () => {
+  it.each([
+    ["generated", undefined],
+    ["200-character caller-supplied", "k".repeat(200)],
+    ["255-character caller-supplied", "k".repeat(255)],
+  ])("INV-9: carries the %s idempotency key in recovery when a direct write's reply is lost", async (_label, given) => {
     respond = () =>
       new Response(
         new ReadableStream({
@@ -673,12 +677,19 @@ describe("restTools()", () => {
           name: "call_destructive_tool",
           arguments: {
             address: "acme.acme_api_write",
-            args: { method: "POST", path: "/v1/widgets", body: { name: "a" } },
+            args: {
+              method: "POST",
+              path: "/v1/widgets",
+              body: { name: "a" },
+              ...(given ? { idempotencyKey: given } : {}),
+            },
           },
         }),
       );
       const error = rpc.result.structuredContent.error;
       const key = sent[0]!.headers.get("idempotency-key");
+      if (given) expect(key).toBe(given);
+      else expect(key).toMatch(/^[0-9a-f-]{36}$/);
       expect(error.code).toBe("unavailable");
       expect(error.uncertainCall).toMatchObject({ address: "acme.acme_api_write", recovery: { idempotencyKey: key } });
       expect(error.retry).toContain("uncertainCall.recovery.idempotencyKey");
@@ -688,7 +699,11 @@ describe("restTools()", () => {
     }
   });
 
-  it("INV-9: returns the generated idempotency key with write_outcome_unknown when the call deadline interrupts it", async () => {
+  it.each([
+    ["generated", undefined],
+    ["200-character caller-supplied", "k".repeat(200)],
+    ["255-character caller-supplied", "k".repeat(255)],
+  ])("INV-9: returns the %s idempotency key with write_outcome_unknown on a call deadline", async (_label, given) => {
     globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
       sent.push({
         url: new URL(String(input)),
@@ -710,7 +725,12 @@ describe("restTools()", () => {
           name: "call_destructive_tool",
           arguments: {
             address: "acme.acme_api_write",
-            args: { method: "POST", path: "/v1/widgets", body: { name: "a" } },
+            args: {
+              method: "POST",
+              path: "/v1/widgets",
+              body: { name: "a" },
+              ...(given ? { idempotencyKey: given } : {}),
+            },
             timeoutMs: 200,
           },
         }),
@@ -719,13 +739,51 @@ describe("restTools()", () => {
       expect(error.code).toBe("write_outcome_unknown");
       expect(sent).toHaveLength(1);
       const key = sent[0]!.headers.get("idempotency-key");
-      expect(key).toMatch(/^[0-9a-f-]{36}$/);
+      if (given) expect(key).toBe(given);
+      else expect(key).toMatch(/^[0-9a-f-]{36}$/);
       expect(error.uncertainCall).toMatchObject({ address: "acme.acme_api_write", recovery: { idempotencyKey: key } });
       expect(error.retry).toContain("uncertainCall.recovery.idempotencyKey");
       expect(error.retry).toContain("while the vendor retains that key");
     } finally {
       await app.close();
     }
+  });
+
+  it("INV-9: rejects a 256-character idempotency key per the write schema before dispatch", async () => {
+    const app = createTestConnecta({
+      connectors: [apiConnector("acme", { tools: restTools(vendor({ idempotencyHeader: "Idempotency-Key" })) })],
+      logger: silentLogger,
+    });
+    try {
+      const rpc = await readJsonRpc(
+        await mcpRpc(app, "tools/call", {
+          name: "call_destructive_tool",
+          arguments: {
+            address: "acme.acme_api_write",
+            args: { method: "POST", path: "/v1/widgets", body: { name: "a" }, idempotencyKey: "k".repeat(256) },
+          },
+        }),
+      );
+      expect(rpc.result.structuredContent.error).toMatchObject({
+        code: "invalid_args",
+        validation: { issues: [{ path: "/idempotencyKey", code: "maxLength" }] },
+      });
+      expect(sent).toHaveLength(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("INV-9: keeps 255-character recovery keys while other facts retain the 128-character bound", () => {
+    const callCtx = ctx();
+    const key = "k".repeat(255);
+    recordRecovery(callCtx, { idempotencyKey: key, reference: "r".repeat(128), tooLong: "r".repeat(129) });
+    expect(recoveryFor(callCtx)).toEqual({ idempotencyKey: key, reference: "r".repeat(128) });
+    recordRecovery(callCtx, { idempotencyKey: "k".repeat(256) });
+    expect(recoveryFor(callCtx)).toEqual({ idempotencyKey: key, reference: "r".repeat(128) });
+    const oversized = ctx();
+    recordRecovery(oversized, { idempotencyKey: "k".repeat(256) });
+    expect(recoveryFor(oversized)).toBeUndefined();
   });
 
   it("bounds recovery facts to a few short named strings", () => {
