@@ -11,7 +11,7 @@ if (!agent || process.argv.length !== 3) {
   throw new Error("Usage: npm run --silent rotate-token -- <agent>");
 }
 const { storage, agents } = connectaConfig(process.env);
-const manager = new AccessTokenManager(storage!, { agents });
+const manager = new AccessTokenManager(storage!, { agents: agents ?? [] });
 const { token } = await manager.rotate(agent, "local-provisioning");
 // The secret is returned once. Keep stdout private; storage holds its hash.
 process.stdout.write(`${token}\n`);

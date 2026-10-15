@@ -10,7 +10,7 @@ import connectaConfig from "./connecta.config.js";
 
 const [tokenId, agent] = process.argv.slice(2);
 const { storage, agents } = connectaConfig(process.env);
-const manager = new AccessTokenManager(storage!, { agents });
+const manager = new AccessTokenManager(storage!, { agents: agents ?? [] });
 if (tokenId === undefined) {
   for (const token of await manager.unboundTokens()) {
     process.stdout.write(`${token.id}  ${token.createdAt}  ${token.name}\n`);
