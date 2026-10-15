@@ -284,7 +284,7 @@ for (const variant of VISUAL_VARIANTS)
           else if (variant === "branded") {
             await expect(page.locator(".endpoint-table")).toBeVisible();
             expect(
-              await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()),
+              await page.evaluate('getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()'),
             ).toBe("#0a7d55");
           } else {
             await expect(page.locator("#credential-slot")).toBeVisible();
