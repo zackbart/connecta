@@ -107,9 +107,11 @@ function oauthUsageGuide(purpose: string, instructions: string | undefined): str
 
 /**
  * Reviewed in #705's provider audit against https://developers.notion.com/guides/mcp/mcp-supported-tools.
- * Retains the release-reviewed inventory, including names absent from today's
- * public reference. Live annotations were not reverified without credentials.
- * No schema digest is asserted without a captured schema to review.
+ * Extended in #814 from the operator's 2026-10-15 hosted catalog capture,
+ * recorded in mcp-catalog-2026-10-15.md. Includes names absent from the public
+ * reference and retains reviewed names absent from this client's catalog.
+ * Annotations were not visible; captured input summaries are not schema
+ * documents, so no schema digests are asserted.
  */
 const NOTION_MCP_CLASSIFICATION: ToolClassification = {
   tools: {
@@ -256,6 +258,96 @@ const NOTION_MCP_CLASSIFICATION: ToolClassification = {
       "reason": "update view changes existing Notion state or removes it.",
     },
     "notion-stop-session": { "verdict": "destructive", "reason": "Stops an existing session and interrupts its work." },
+    "notion-check-mcp-next-steps": {
+      "verdict": "read",
+      "reason": "Returns an upsell or next-step card without changing workspace state or enabling access.",
+    },
+    "notion-show-advanced-analysis-next-steps": {
+      "verdict": "read",
+      "reason": "Returns a message and destination link without changing workspace state or enabling access.",
+    },
+    "notion-get-enabled-skills": {
+      "verdict": "read",
+      "reason": "Lists the current user's enabled skills; enabling or disabling them is a separate write.",
+    },
+    "notion-get-file-download-urls": {
+      "verdict": "read",
+      "reason":
+        "Returns signed, expiring download URLs for existing file references without changing workspace state; use only for downloads and do not expose the URLs.",
+    },
+    "notion-get-groups": {
+      "verdict": "read",
+      "reason": "Retrieves visible permission group IDs and names without changing membership or permissions.",
+    },
+    "notion-list-favorite-pages": {
+      "verdict": "read",
+      "reason": "Lists existing favorites in sidebar order without changing them.",
+    },
+    "notion-list-page-backlinks": {
+      "verdict": "read",
+      "reason": "Retrieves IDs, titles and URLs of existing page backlinks without changing links or pages.",
+    },
+    "notion-list-private-pages": {
+      "verdict": "read",
+      "reason": "Lists existing pages and databases in the user's Private sidebar without changing them.",
+    },
+    "notion-list-recent-pages": {
+      "verdict": "read",
+      "reason": "Lists the user's existing page-view history without changing pages or recording a new view.",
+    },
+    "notion-list-shared-pages": {
+      "verdict": "read",
+      "reason": "Lists existing pages and databases in the user's Shared sidebar without changing sharing.",
+    },
+    "notion-memory-search": {
+      "verdict": "read",
+      "reason": "Searches memories saved by connected agents in earlier sessions without saving or changing memories.",
+    },
+    "notion-query-multiple-data-sources": {
+      "verdict": "read",
+      "reason": "Runs read-only SQLite SQL across existing data sources without changing them.",
+    },
+    "notion-delete-comment": {
+      "verdict": "destructive",
+      "reason": "Deletes a comment and may remove its discussion when no comments remain.",
+    },
+    "notion-delete-databases": {
+      "verdict": "destructive",
+      "reason": "Moves existing databases to Trash; an optional confirmation flag does not make this tool read-only.",
+    },
+    "notion-delete-pages": {
+      "verdict": "destructive",
+      "reason": "Moves existing pages to Trash; an optional confirmation flag does not make this tool read-only.",
+    },
+    "notion-restore-pages": {
+      "verdict": "destructive",
+      "reason": "Restores pages or databases from Trash and changes their workspace state.",
+    },
+    "notion-set-comment-reaction": {
+      "verdict": "destructive",
+      "reason": "Adds or removes the user's emoji reaction on a comment; repeatability does not make it read-only.",
+    },
+    "notion-set-discussion-resolved": {
+      "verdict": "destructive",
+      "reason": "Resolves or reopens an existing comment discussion.",
+    },
+    "notion-update-comment": {
+      "verdict": "destructive",
+      "reason": "Replaces the text of an existing comment.",
+    },
+    "notion-update-enabled-skills": {
+      "verdict": "destructive",
+      "reason": "Changes the current user's skill enablement for external MCP clients, Notion AI, or both.",
+    },
+    "notion-update-folder": {
+      "verdict": "destructive",
+      "reason": "Changes an existing folder by adding or removing files or adding a subfolder.",
+    },
+    "notion-upload-skill": {
+      "verdict": "destructive",
+      "reason":
+        "Preparation returns a credential-bearing upload URL and headers; completion replaces the target page title, Description, body and Files. Both actions stay writes.",
+    },
   },
 };
 
