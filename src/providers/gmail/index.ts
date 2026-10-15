@@ -251,11 +251,6 @@ function ownBody(own: JsonRecord[]): JsonRecord | undefined {
   return own.find((part) => mimeOf(part) === "text/plain") ?? own.find((part) => mimeOf(part) === "text/html");
 }
 
-function bodyText(part: JsonRecord, decoded: { text: string; note?: string }): string {
-  const body = mimeOf(part) === "text/html" ? htmlToText(decoded.text) : decoded.text;
-  return decoded.note ? `${body}\n[${decoded.note}]` : body;
-}
-
 /** Gmail stores a large body apart from the message, behind an attachment id. */
 const MAX_STORED_BODY_BYTES = 1024 * 1024;
 
@@ -265,6 +260,7 @@ interface MessageBody {
   body: string;
   bodyTruncated: boolean;
   bodyFormat: BodyFormat;
+  bodyNote?: string;
 }
 
 /**
@@ -279,7 +275,7 @@ async function readBody(
   messageId: string | undefined,
   payload: JsonRecord,
   max: number,
-): Promise<MessageBody | { text: string; bodyFormat: "text" | "html" }> {
+): Promise<MessageBody | { text: string; bodyFormat: "text" | "html"; bodyNote?: string }> {
   const own = walk(payload).own;
   const chosen = ownBody(own);
   if (!chosen) return { body: "", bodyTruncated: false, bodyFormat: "none" };
@@ -312,7 +308,11 @@ async function readBody(
   }
   const decoded = data ? decodeIn(chosen, data) : { text: "" };
   // Uncut: the caller caps it, by characters and by the result's bytes.
-  return { text: bodyText(chosen, decoded), bodyFormat: format };
+  return {
+    text: format === "html" ? htmlToText(decoded.text) : decoded.text,
+    bodyFormat: format,
+    ...(decoded.note ? { bodyNote: decoded.note } : {}),
+  };
 }
 
 /**
@@ -644,6 +644,7 @@ async function projectMessage(
     body: "",
     bodyTruncated: false,
     bodyFormat: read.bodyFormat,
+    bodyNote: read.bodyNote,
     attachments: attachments.listed.length > 0 ? attachments.listed : undefined,
     attachmentsOmitted: attachments.omitted > 0 ? attachments.omitted : undefined,
     omittedIds,
@@ -1322,6 +1323,7 @@ const MESSAGE_PROPERTIES: Record<string, JsonSchema> = {
   body: { type: "string" },
   bodyTruncated: { type: "boolean" },
   bodyFormat: { type: "string", enum: ["text", "html", "none", "unavailable"] },
+  bodyNote: { type: "string", description: "Decoding notice, preserved when the body is truncated." },
   attachments: { type: "array", items: ATTACHMENT_SCHEMA },
   attachmentsOmitted: { type: "integer" },
 };
