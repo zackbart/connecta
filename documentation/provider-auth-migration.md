@@ -62,6 +62,10 @@ contracts: search finds operations in a pinned API index, every call is
 checked against that index before it is sent, results arrive as
 `{ status, data, page? }`, and POST writes send the caller's `idempotencyKey`
 or a generated one as `Idempotency-Key` and return it (DELETE sends none).
+Caller-supplied keys may contain up to 255 characters. An ambiguous POST write
+also returns the key in `uncertainCall.recovery.idempotencyKey`, including when
+the call deadline interrupts it. See [argument recovery](./meta-tools.md#argument-recovery)
+before retrying.
 Every request, v1 and v2, sends `Stripe-Version: 2026-09-30.endive`, the
 version of the pinned index, whatever the account's default API version, so
 response shapes and accepted parameters follow that version. Check fields

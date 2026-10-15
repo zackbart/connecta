@@ -933,9 +933,13 @@ list connectors from another pool or identity's grants.
 A write that times out after dispatch returns `write_outcome_unknown` with
 `retryable: false` and an agent-only `uncertainCall: { address, args?, argsOmitted?, argsRedacted?, recovery? }`.
 No write is automatically replayed. `recovery` carries facts the connector
-recorded before dispatch (`src/call-recovery.ts`), such as the `idempotencyKey`
-a REST connector generated; a deliberate retry that reuses it with the exact
-original arguments cannot repeat the write while the vendor retains the key
+recorded before dispatch (`src/call-recovery.ts`), such as a REST connector's
+generated or caller-supplied `idempotencyKey`. Recovery accepts keys up to 255
+characters, matching the REST write schema. Other recovery values remain capped
+at 128 characters, with at most four facts per call and camelCase names of at
+most 32 characters. Values outside these bounds are dropped whole. A deliberate
+retry that reuses the key with the exact original arguments cannot repeat the
+write while the vendor retains the key
 (Stripe may prune v1 keys after 24 hours). After that, look the object up before
 retrying. When a connector recorded such facts, any other dispatched write whose
 outcome is unknown (a lost response body, a 5xx) also carries `uncertainCall`
