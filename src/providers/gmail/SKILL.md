@@ -37,6 +37,10 @@ to. No argument names a mailbox. A call with none mapped fails
   forwarded email is an attachment, not the body.
 - `bodyFormat: "unavailable"` means Gmail stored the body apart from the
   message and it is too large to read here; say so rather than summarizing.
+- `get_message`, each `get_thread` message, and `get_draft` return `bodyNote`
+  when decoding falls back to UTF-8 for an unsupported charset. The note
+  survives character and result-byte truncation, including `maxBodyChars: 0`
+  when inline body data is decoded. It counts toward the result's byte limit.
 
 ## Attachments
 
@@ -51,8 +55,8 @@ to. No argument names a mailbox. A call with none mapped fails
   message body parts or blind download ids.
 - Text, JSON, XML, calendar invites, CSV, and `message/rfc822` return
   `format: "text"` and `content` decoded in the declared charset. An unsupported
-  charset produces an explicit note that decoding used UTF-8. Message bodies
-  include the same notice in their text.
+  charset produces an explicit `note` that decoding used UTF-8. Message bodies
+  return the notice separately as `bodyNote`.
   Parsed forwarded emails render From, To, Date, Subject, and their own
   plain body, else HTML converted to text. Raw forwarded data is preferred
   when present. A forwarded email without readable text returns an

@@ -1516,7 +1516,68 @@ describe("reading carried attachments", () => {
     route = () => ({
       body: { id: "m1", payload: { ...part, filename: "", body: { data: b64url("Café", "latin1") } } },
     });
-    expect((await call(connection(), "get_message", { messageId: "m1" })).body).toMatch(/x-unknown.*decoded as UTF-8/);
+    expect(await call(connection(), "get_message", { messageId: "m1" })).toMatchObject({
+      body: "Caf�",
+      bodyNote: expect.stringMatching(/x-unknown.*decoded as UTF-8/),
+    });
+  });
+
+  describe.each([
+    ["get_message", { messageId: "m1" }],
+    ["get_thread", { threadId: "t1" }],
+    ["get_draft", { draftId: "d1" }],
+  ] as const)("%s charset notices", (tool, args) => {
+    it.each(
+      ["text/plain", "text/html"].flatMap((mimeType) =>
+        [
+          { limit: "uncut", suffix: "", options: {}, truncated: false },
+          { limit: "default characters", suffix: "x".repeat(13_000), options: {}, truncated: true },
+          { limit: "explicit characters", suffix: "x".repeat(13_000), options: { maxBodyChars: 3 }, truncated: true },
+          { limit: "zero characters", suffix: "x".repeat(13_000), options: { maxBodyChars: 0 }, truncated: true },
+          { limit: "result bytes", suffix: "界".repeat(90_000), options: { maxBodyChars: 100_000 }, truncated: true },
+        ].map((entry) => ({ mimeType, ...entry })),
+      ),
+    )(
+      "INV-10: reads $mimeType at the $limit limit with a fallback note and only GETs",
+      async ({ mimeType, suffix, options, truncated, limit }) => {
+        const value = `Café${suffix}`;
+        const data = b64url(mimeType === "text/html" ? `<p>${value}</p>` : value);
+        const message = {
+          id: "m1",
+          payload: {
+            mimeType,
+            headers: [{ name: "Content-Type", value: `${mimeType}; charset=x-unknown` }],
+            body: { data },
+          },
+        };
+        route = () => ({
+          body:
+            tool === "get_thread"
+              ? { id: "t1", messages: [message] }
+              : tool === "get_draft"
+                ? { id: "d1", message }
+                : message,
+        });
+        const connector = connection();
+        const result = await call(connector, tool, { ...args, ...options });
+        const projected = tool === "get_thread" ? result.messages[0] : result;
+        expect(projected).toMatchObject({
+          bodyNote: 'Gmail declared unsupported charset "x-unknown"; decoded as UTF-8.',
+          bodyTruncated: truncated,
+          bodyFormat: mimeType === "text/html" ? "html" : "text",
+        });
+        const schema = (await connector.listTools(context())).find((entry) => entry.name === tool)!.outputSchema as any;
+        const properties = tool === "get_thread" ? schema.properties.messages.items.properties : schema.properties;
+        expect(properties.bodyNote).toMatchObject({ type: "string" });
+        expect(projected.body).not.toContain("decoded as UTF-8");
+        if (limit === "result bytes") expect(projected.body).toContain("192 KiB per-result limit");
+        if (truncated) expect(projected.body).toContain("truncated");
+        else expect(projected.body).toBe(value);
+        expect(new TextEncoder().encode(JSON.stringify(result)).byteLength).toBeLessThanOrEqual(RESULT_BUDGET_BYTES);
+        expect(calls.length).toBeGreaterThan(0);
+        expect(calls.every((request) => request.method === "GET")).toBe(true);
+      },
+    );
   });
 
   it.each([
