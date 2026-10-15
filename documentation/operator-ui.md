@@ -93,8 +93,8 @@ connector and matrix types, frozen by
 [decision 0006](https://github.com/zackbart/connecta/blob/main/decisions/0006-pools-are-the-access-model.md#operator-contract)
 ahead of the server cutover in P6b of [#837](https://github.com/zackbart/connecta/issues/837). No route serves v2 yet;
 `test/fixtures/operator-contract-v2.ts` holds maintainer and member fixtures,
-and `test/helpers/operator-member-view.ts` checks that a member response
-withholds every maintainer fact.
+and `test/helpers/operator-member-view.ts` checks a member response's exact
+shape and compares its values with a projection built from config and membership.
 
 `connecta doctor --config` fetches this authenticated contract and prints only
 `config` as indented JSON. It requires the UI module and the existing doctor

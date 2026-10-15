@@ -145,6 +145,7 @@ export type OperatorRunsAs =
   | { kind: "shared"; savedAt: string | null }
   | { kind: "personal"; connectedMembers: number; members: number }
   // Mapping subject: humans act as themselves; agents act as the pool owner.
+  // `agents` is null on plain /mcp (`pool: null`), which admits no agents.
   | { kind: "workspace"; humans: "self"; agents: string | null }
   // Fixed subject: every caller acts as it.
   | { kind: "workspaceFixed"; subject: string };
@@ -153,6 +154,7 @@ export interface OperatorConnectorPoolCell {
   connectorId: string;
   /** Null is plain /mcp. */
   pool: string | null;
+  /** Connector-relative tool names, as in `OperatorGrant`, not addresses. */
   tools: "all" | string[];
   runsAs: OperatorRunsAs;
 }

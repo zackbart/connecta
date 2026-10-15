@@ -15,6 +15,7 @@ import type {
   OperatorUiContractV2,
 } from "../../src/operator-ui/contract.js";
 import type { ConnectaConfigDescription, DescribedConnector, DescribedLimit } from "../../src/describe-config.js";
+import { memberViewExpectation } from "../helpers/operator-member-view.js";
 
 const NOW = "2026-10-08T12:00:00.000Z";
 const EARLIER = "2026-10-01T09:30:00.000Z";
@@ -183,12 +184,19 @@ const matrix: OperatorConnectorPoolCell[] = [
   // A fixed-subject Workspace connector: every caller acts as the subject.
   {
     connectorId: "drive",
+    pool: null,
+    tools: "all",
+    runsAs: { kind: "workspaceFixed", subject: "support@workspace.example" },
+  },
+  {
+    connectorId: "drive",
     pool: "support",
     tools: ["search"],
     runsAs: { kind: "workspaceFixed", subject: "support@workspace.example" },
   },
   { connectorId: "slack", pool: null, tools: "all", runsAs: { kind: "personal", connectedMembers: 1, members: 2 } },
   { connectorId: "slack", pool: "team", tools: "all", runsAs: { kind: "personal", connectedMembers: 1, members: 2 } },
+  { connectorId: "notion", pool: null, tools: "all", runsAs: { kind: "personal", connectedMembers: 0, members: 2 } },
   { connectorId: "notion", pool: "team", tools: "all", runsAs: { kind: "personal", connectedMembers: 0, members: 2 } },
 ];
 
@@ -300,3 +308,14 @@ export const OPERATOR_V2_MEMBER = {
   connectors: memberConnectors,
   you: { interactive: true },
 } satisfies OperatorUiContractV2;
+
+/**
+ * What Lin's view must carry, built from config, catalog and membership the
+ * way P6b builds it from a real deployment, never from the member fixture.
+ */
+export const OPERATOR_V2_MEMBER_EXPECTED = memberViewExpectation({
+  member: { namespace: CLERK, id: "user_lin" },
+  pools,
+  connectors: config.connectors,
+  catalog: OPERATOR_V2_MAINTAINER.live.connectors.flatMap((connector) => connector.tools),
+});
