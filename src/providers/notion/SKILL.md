@@ -156,8 +156,13 @@ So the sequence for "find rows in this database" is the database read, then
   the same value-safety redaction, when a specific field is missing. It is
   much larger. Narrow
   `integration_query_data_source` and `integration_get_page` with `properties`
-  when the goal is fewer fields. `integration_get_page_content` with
-  `raw: true` returns one level and ignores `depth`.
+  when the goal is fewer fields. This also narrows the request to Notion with
+  repeated `filter_properties` URL parameters, shrinking the response before
+  Connecta reads it. The title property is always fetched so the projected
+  `title` stays populated. `raw: true` with `properties` returns that filtered
+  Notion response; omit `properties` for the full response.
+  `integration_get_page_content` with `raw: true` returns one level and ignores
+  `depth`.
 
 ## Writing content
 

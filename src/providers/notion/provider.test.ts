@@ -1224,6 +1224,96 @@ describe("notion() generic REST tools", () => {
   });
 });
 
+describe.each([
+  { tool: "integration_get_page", method: "GET", path: "/v1/pages/page-1", args: { page_id: "page-1" } },
+  {
+    tool: "integration_query_data_source",
+    method: "POST",
+    path: "/v1/data_sources/ds-1/query",
+    args: { data_source_id: "ds-1" },
+  },
+])("notion() $tool property filtering", ({ tool, method, path, args }) => {
+  const payload = (page: unknown) =>
+    method === "GET" ? page : { results: [page], has_more: false, next_cursor: null };
+
+  it("sends repeated URL parameters and preserves the title outside selected properties (INV-10)", async () => {
+    // Model Notion returning only the requested columns plus the title.
+    const filteredPage = {
+      ...PAGE_FIXTURE,
+      properties: { Name: PAGE_FIXTURE.properties.Name, Status: PAGE_FIXTURE.properties.Status },
+    };
+    queue({ body: payload(filteredPage) });
+    const result = await call(build(), tool, {
+      ...args,
+      properties: ["Status", "abc", "Due date & cost?"],
+      ...(method === "POST"
+        ? {
+            filter: { property: "Status", status: { equals: "Done" } },
+            sorts: [{ property: "Due", direction: "ascending" }],
+            start_cursor: "opaque::cursor+value",
+          }
+        : {}),
+    });
+    expect(calls).toHaveLength(1);
+    const request = calls[0]!;
+    const url = new URL(request.url);
+    expect(url.origin + url.pathname).toBe(NOTION_API_BASE_URL + path);
+    expect([...url.searchParams.entries()]).toEqual([
+      ["filter_properties", "Status"],
+      ["filter_properties", "abc"],
+      ["filter_properties", "Due date & cost?"],
+      ["filter_properties", "title"],
+    ]);
+    expect(request.method).toBe(method);
+    expect(request.body).toEqual(
+      method === "GET"
+        ? undefined
+        : {
+            page_size: 25,
+            filter: { property: "Status", status: { equals: "Done" } },
+            sorts: [{ property: "Due", direction: "ascending" }],
+            start_cursor: "opaque::cursor+value",
+          },
+    );
+    const page = method === "GET" ? result : result.results[0];
+    expect(page.title).toBe("Quarterly review");
+    expect(page.properties).toEqual({ Status: "In progress" });
+  });
+
+  it.each([false, true])("omits filtering without properties, raw=%s (INV-10)", async (raw) => {
+    const response = payload(PAGE_FIXTURE);
+    queue({ body: response });
+    const result = await call(build(), tool, { ...args, raw });
+    expect(calls[0]?.url).toBe(NOTION_API_BASE_URL + path);
+    if (raw) expect(result).toEqual(response);
+    else {
+      const page = method === "GET" ? result : result.results[0];
+      expect(page.title).toBe("Quarterly review");
+      expect(Object.keys(page.properties)).toEqual(Object.keys(PAGE_FIXTURE.properties));
+    }
+  });
+
+  it.each([{ properties: [] }, { properties: ["title", "title"] }])(
+    "fetches the title once for $properties (INV-10)",
+    async ({ properties }) => {
+      queue({ body: payload({ ...PAGE_FIXTURE, properties: { Name: PAGE_FIXTURE.properties.Name } }) });
+      const result = await call(build(), tool, { ...args, properties });
+      expect(new URL(calls[0]!.url).searchParams.getAll("filter_properties")).toEqual(["title"]);
+      const page = method === "GET" ? result : result.results[0];
+      expect(page.title).toBe("Quarterly review");
+      expect(page.properties).toEqual({});
+    },
+  );
+
+  it("filters the upstream response even when raw is requested (INV-10)", async () => {
+    const response = payload({ ...PAGE_FIXTURE, properties: { Name: PAGE_FIXTURE.properties.Name } });
+    queue({ body: response });
+    const result = await call(build(), tool, { ...args, properties: ["Name"], raw: true });
+    expect(new URL(calls[0]!.url).searchParams.getAll("filter_properties")).toEqual(["Name", "title"]);
+    expect(result).toEqual(response);
+  });
+});
+
 describe("notion() lean projections", () => {
   it("flattens every property shape and reports truncation", async () => {
     queue({ body: PAGE_FIXTURE });
