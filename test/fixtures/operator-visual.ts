@@ -1,7 +1,6 @@
 import type { OperatorUiContract } from "../../src/operator-ui/contract.js";
 import type { UiData } from "../../src/operator-ui/model.js";
 import type { UiActivityEvent } from "../../src/operator-ui/view.js";
-import type { UiAgentSlot } from "../../src/operator-ui/app/store.js";
 import type { Connector } from "../../src/types.js";
 import { activityHistory, type ToolCallActivityEvent } from "../../src/activity.js";
 import { accessTokens } from "../../src/access-tokens.js";
@@ -23,7 +22,7 @@ export interface OperatorVisualFixture {
   contract: OperatorUiContract;
   data: UiData;
   activity: { events: UiActivityEvent[]; nextCursor?: string };
-  tokens: { agents: UiAgentSlot[] };
+  tokens: { agents: Array<{ name: string; state: "issued"; issuedAt: string }> };
 }
 
 const catalog = [

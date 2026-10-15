@@ -310,7 +310,7 @@ describe("deployment shapes", () => {
       expect((await initialize()).status).toBe(401);
       expect((await initialize(staticToken)).status).toBe(401);
       expect(config.agents).toEqual(["local-machine"]);
-      const manager = new AccessTokenManager(config.storage!, { agents: config.agents });
+      const manager = new AccessTokenManager(config.storage!, { agents: config.agents ?? [] });
       const { token } = await manager.rotate("local-machine", "local-provisioning");
       expect(token).toMatch(/^cta_[A-Za-z0-9_-]{43}$/);
       expect((await initialize(token)).status).toBe(200);

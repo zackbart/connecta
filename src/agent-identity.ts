@@ -6,9 +6,9 @@ import { ConfigError } from "./config-schema.js";
 import type { InboundAuth } from "./types.js";
 
 /** Agent names: lowercase letters, digits, `_` and `-`. */
-export const AGENT_NAME_RE = /^[a-z0-9_-]+$/u;
+const AGENT_NAME_RE = /^[a-z0-9_-]+$/u;
 /** Longest accepted agent name, so a name always fits a storage key. */
-export const MAX_AGENT_NAME_LENGTH = 64;
+const MAX_AGENT_NAME_LENGTH = 64;
 /** Directory namespace of agent subjects and activity actors. */
 export const AGENT_NAMESPACE = "connecta:access-tokens:v1";
 

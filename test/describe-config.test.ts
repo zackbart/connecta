@@ -49,7 +49,7 @@ describe("describeConfig", () => {
     // The published contract holds for a direct call: an operator tool may
     // read connector.describe() without going through describeConfig().
     const builtIn = config.connectors.filter((connector) => connector.id !== "custom_conn");
-    const outputs = [...builtIn.map((connector) => [connector.id, connector.describe?.()] as const)];
+    const outputs = builtIn.map((connector) => [connector.id, connector.describe?.()] as const);
     for (const [where, described] of outputs) {
       expect(described, `${where} describes itself`).toBeDefined();
       const json = JSON.stringify(described);
