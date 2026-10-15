@@ -89,7 +89,9 @@ and 3 concurrent. Notion's [request limits](https://developers.notion.com/refere
 allow 600 requests per minute per connection on Business and Enterprise and
 180 on other plans. A separate workspace-wide limit is shared by all
 connections. Size an override for other runtime traffic and tools that make
-multiple HTTP requests; malformed policies throw at construction.
+multiple HTTP requests. Only an omitted or `undefined` policy selects the
+default; malformed policies, including `false`, `null`, `0`, and `""`, throw
+at construction on both auth variants.
 
 Planning Center's `excludeApps` removes whole products from a connection, for
 example `planningCenter("pco", { purpose, excludeApps: ["giving"] })` for a

@@ -2,7 +2,7 @@ import { skill } from "./skill.generated.js";
 import { apiConnector } from "../../connectors/api-connector.js";
 import { reviewedCatalog } from "../../catalog-drift.js";
 import type { Connector, ToolClassification, ConnectorCallAdmissionPolicy } from "../../types.js";
-import { keys, optionsOf, variants } from "../../config-schema.js";
+import { keys, object, optionsOf, variants } from "../../config-schema.js";
 import { CALL_ADMISSION, defineProvider, type ProviderContext } from "../../provider.js";
 import { byAuth, hostedOAuth } from "../_shared/rest/dispatch.js";
 import { MAX_PAGE_SIZE, notionRest } from "./rest.js";
@@ -404,7 +404,7 @@ function notionToken(id: string, options: Readonly<NotionTokenOptions>, provider
       placeholder: "Paste the integration token",
     },
     testCredential: rest.testCredential,
-    callAdmission: options.callAdmission ?? NOTION_ADMISSION,
+    callAdmission: options.callAdmission === undefined ? NOTION_ADMISSION : options.callAdmission,
     usageGuide: {
       content: tokenUsageGuide(options.purpose, options.instructions),
       summary:
@@ -414,6 +414,8 @@ function notionToken(id: string, options: Readonly<NotionTokenOptions>, provider
     tools: rest.tools,
   });
 }
+
+const createNotion = byAuth<NotionOptions>({ oauth: notionOAuth, token: notionToken });
 
 /**
  * A maintained Notion connection. `auth` selects the implementation: OAuth
@@ -434,7 +436,15 @@ export const notion = defineProvider<NotionOptions>({
   skill,
   options: NOTION_OPTIONS,
   classify: NOTION_MCP_CLASSIFICATION,
-  create: byAuth<NotionOptions>({ oauth: notionOAuth, token: notionToken }),
+  create(id, options, provider) {
+    // The option walk checks nested keys, but leaves primitive values to the
+    // factory. Use the shared policy schema's parser before either auth path
+    // can drop a malformed value or replace it with the default.
+    if (options.callAdmission !== undefined) {
+      object(CALL_ADMISSION.shape).parse(options.callAdmission, `notion(${JSON.stringify(id)}).callAdmission`);
+    }
+    return createNotion(id, options, provider);
+  },
 });
 
 /** @deprecated Read `notion.definition.classify` instead. Kept for existing imports. */

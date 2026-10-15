@@ -256,6 +256,16 @@ describe("notion() auth selects the implementation", () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
+  describe.each(["oauth", "token"] as const)("%s call admission", (type) => {
+    it.each([false, null, 0, ""])("INV-11: refuses the falsy policy %j at factory construction", (callAdmission) => {
+      expect(() => notion("wiki", { purpose: "Docs", auth: { type }, callAdmission } as never)).toThrow(
+        'notion("wiki") requires callAdmission to be an object.',
+      );
+      expect(mcpMocks.remoteMcp).not.toHaveBeenCalled();
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+  });
+
   it.each(["oauth", "token"] as const)(
     "INV-11: refuses invalid %s admission limits at deployment construction",
     (type) => {
@@ -424,8 +434,11 @@ describe("notion() over an integration token", () => {
     expect(build().classification).toBeUndefined();
   });
 
-  it("defaults to 180 calls per minute and three concurrent calls", () => {
-    expect(build().callAdmission).toEqual({
+  it.each([
+    { label: "omitted", options: {} },
+    { label: "undefined", options: { callAdmission: undefined } },
+  ])("defaults to 180 calls per minute and three concurrent calls with $label admission", ({ options }) => {
+    expect(build(options).callAdmission).toEqual({
       rules: [
         {
           maxConcurrency: 3,
