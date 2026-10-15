@@ -1083,6 +1083,18 @@ function comparisonFixture(arm: Surface, repeats: number, task?: string): AgentR
 }
 const six = comparisonFixture("six", 20),
   code = comparisonFixture("code", 20);
+{
+  const extendedA = comparisonFixture("six", 1),
+    extendedB = comparisonFixture("code", 1);
+  for (const file of [extendedA, extendedB]) {
+    const extra = structuredClone(file.trials.find((t) => t.task === "p5-known-read-routing")!);
+    extra.task = "801-stripe-failed-payment";
+    file.config.tasks.push(extra.task);
+    file.trials.push(extra);
+  }
+  if (!compare(extendedA, extendedB).includes("Decision NOT EVALUATED"))
+    throw new Error("Adding a REST task changed the registered 19-task decision scope");
+}
 if (!compare(six, code).includes("Decision PASS")) throw new Error("Equal full-batch outcomes failed comparison");
 for (const trial of code.trials.filter((t) => t.task === "p5-known-read-routing").slice(0, 3))
   trial.saved!.trace.finalAnswer = "Completed.";

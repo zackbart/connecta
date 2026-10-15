@@ -311,7 +311,8 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
     code = validate(b, "code");
   if (six.size !== code.size || [...six.keys()].some((k) => !code.has(k)))
     throw new Error("Arms must have identical model/task/repeat pairs");
-  const fullScope = COMPARISON_TASKS.every((t) => a.config.tasks.includes(t.id));
+  const fullScope =
+    a.config.tasks.length === COMPARISON_TASKS.length && COMPARISON_TASKS.every((t) => a.config.tasks.includes(t.id));
   const lines: string[] = mismatches.length
     ? ["NON-COMPARABLE: --allow-mismatch diagnostics", ...mismatches.map((r) => `  - ${r}`)]
     : [
@@ -382,7 +383,7 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
     lines.push(
       fullScope
         ? `  Decision ${mismatches.length ? "NON-COMPARABLE " : ""}${reasons.length ? "FAIL" : "PASS"}: ${reasons.join("; ") || "rate within 5 percentage points, zero code duplicate/export violations, no task drops by >=3 trials"}`
-        : `  Decision NOT EVALUATED: diagnostic subset; all ${COMPARISON_TASKS.length} registered tasks are required${reasons.length ? `; ${reasons.join("; ")}` : ""}`,
+        : `  Decision NOT EVALUATED: diagnostic task set; exactly the ${COMPARISON_TASKS.length} registered tasks are required${reasons.length ? `; ${reasons.join("; ")}` : ""}`,
     );
   }
   return lines.join("\n");
