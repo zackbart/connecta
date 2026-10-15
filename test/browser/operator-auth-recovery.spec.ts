@@ -214,6 +214,82 @@ for (const delayed of ["config", "detail"] as const) {
   });
 }
 
+for (const stalled of ["summary", "config"] as const) {
+  for (const action of ["deadline", "retry", "sign-out"] as const) {
+    test(`INV-4 INV-10: ${action} releases a never-settling ${stalled} recovery with bounded reads`, async ({
+      page,
+    }) => {
+      const start = new Date("2026-01-01T00:00:00Z");
+      await page.clock.install({ time: start });
+      await page.clock.pauseAt(start);
+      // Stall one read without honoring abort. Subsequent reads use real routes.
+      // Record the signal to verify physical cancellation as well as UI fencing.
+      await page.addInitScript((target) => {
+        const original = window.fetch.bind(window);
+        let summaryReads = 0;
+        let configReads = 0;
+        window.fetch = (input, init) => {
+          const path = new URL(String(input), location.href).pathname;
+          const root = document.documentElement;
+          if (path === "/ui/data") root.dataset.summaryReads = String(++summaryReads);
+          if (path === "/ui/api/config") root.dataset.configReads = String(++configReads);
+          if (
+            (target === "summary" && path === "/ui/data" && summaryReads === 2) ||
+            (target === "config" && path === "/ui/api/config" && configReads === 1)
+          ) {
+            root.dataset.stalledRead = "true";
+            root.dataset.stalledAborted = String(init?.signal?.aborted);
+            init?.signal?.addEventListener("abort", () => {
+              root.dataset.stalledAborted = "true";
+            });
+            return new Promise<Response>(() => {});
+          }
+          return original(input, init);
+        };
+      }, stalled);
+      await page.route("**/cdn-cgi/access/logout", (route) => route.fulfill({ status: 204 }));
+      failIdentityPath = "/ui/data";
+      connected = true;
+      const refused = page.waitForResponse((response) => response.url().endsWith("/ui/data"));
+      await open(page);
+      expect((await refused).status()).toBe(503);
+      await expect(page.locator("#gate")).toBeVisible();
+      await page.clock.runFor(2000);
+      await expect(page.locator("html")).toHaveAttribute("data-stalled-read", "true");
+      await expect(page.locator("html")).toHaveAttribute("data-stalled-aborted", "false");
+      await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeEnabled();
+      if (stalled === "config") await expect(page.getByText("Loading configuration…", { exact: true })).toBeVisible();
+      if (action === "deadline") {
+        for (let i = 0; i < 7; i++) {
+          await page.evaluate("window.dispatchEvent(new Event('focus'))");
+          await page.clock.runFor(2100);
+        }
+        await expect(page.locator("html")).toHaveAttribute("data-summary-reads", "2");
+        await expect(page.locator("html")).toHaveAttribute("data-stalled-aborted", "false");
+        await page.clock.runFor(300);
+        await expect(page.locator("html")).toHaveAttribute("data-stalled-aborted", "true");
+        if (stalled === "config") await expect(page.getByText("Configuration couldn't be loaded")).toBeVisible();
+        await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeEnabled();
+      }
+      if (action === "sign-out") {
+        await page.getByRole("button", { name: "Sign out", exact: stalled === "config" }).click();
+        await page.clock.runFor(100_000);
+        await expect(page.locator("#gate")).toBeVisible();
+        await expect(page.locator("html")).toHaveAttribute("data-summary-reads", "2");
+      } else {
+        await page.getByRole("button", { name: "Retry", exact: true }).click();
+        await expect(page.getByRole("button", { name: "Reconnect CRM", exact: true })).toBeVisible();
+        await page.clock.runFor(100_000);
+        await expect(page.locator("html")).toHaveAttribute("data-summary-reads", "3");
+        await expect(page.locator("html")).toHaveAttribute("data-config-reads", stalled === "summary" ? "1" : "2");
+      }
+      await expect(page.locator("html")).toHaveAttribute("data-stalled-aborted", "true");
+      expect(reads.filter((path) => path.startsWith("/ui/oauth/"))).toHaveLength(0);
+      expect(reads.filter((path) => path === "/connectors/oauth")).toHaveLength(1);
+    });
+  }
+}
+
 test("INV-4: retries a config refusal without reload", async ({ page }) => {
   failIdentityPath = "/ui/api/config";
   await open(page);

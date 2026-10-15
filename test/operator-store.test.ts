@@ -281,6 +281,7 @@ describe("operator store identity wiring", () => {
     expect(loaded.store.getState().session).toBe("ready");
     expect(loaded.clerk.load).not.toHaveBeenCalled();
     expect(loaded.fetchMock).toHaveBeenCalledWith("/ui/data", {
+      signal: expect.any(AbortSignal),
       headers: {},
       credentials: "same-origin",
     });
@@ -874,7 +875,7 @@ describe("operator recovery bounds and snapshot ordering", () => {
     await vi.advanceTimersByTimeAsync(2000);
     for (let i = 0; i < 5; i++) {
       windowListeners.get("focus")?.();
-      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(2100);
     }
     expect(fetchMock).toHaveBeenCalledTimes(2);
     pending.resolve(Response.json(uiData("recovered")));
@@ -890,9 +891,32 @@ describe("operator recovery bounds and snapshot ordering", () => {
     expect(fetchMock).toHaveBeenCalledTimes(7);
   });
 
-  it.each(["config", "detail"])(
-    "INV-4 INV-10: publishes delayed %s recovery despite continuous focus with bounded reads",
-    async (delayed) => {
+  it("INV-4 INV-10: bounds stalled session-token acquisition and fences its late continuation", async () => {
+    const token = vi.fn(async () => "token");
+    const { store, fetchMock, windowListeners } = await loadStore({ id: "a", getToken: token });
+    vi.useFakeTimers();
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 503 }));
+    await store.boot();
+    const pending = deferred<string>();
+    token.mockReturnValueOnce(pending.promise);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(store.getState().recoveryPending).toBe(true);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(store.getState().recoveryPending).toBe(false);
+    expect(store.getState().loadFailure).toBe("network");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    fetchMock.mockImplementation(async () => Response.json(uiData("recovered")));
+    await store.retryLoad();
+    pending.resolve("stale-token");
+    windowListeners.get("focus")?.();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(store.getState().data?.serverInfo.name).toBe("recovered");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["summary", "config", "config-body", "detail", "detail-body"])(
+    "INV-4 INV-10: bounds a never-settling %s recovery, preserves backoff, and lets Retry supersede it",
+    async (stalled) => {
       const { store, fetchMock, configMock, windowListeners } = await loadStore(
         { id: "unused", getToken: async () => "unused" },
         { kind: "cloudflare-access" },
@@ -905,6 +929,143 @@ describe("operator recovery bounds and snapshot ordering", () => {
         you: { permissions: { connectors: [] } },
         live: { connectors: [{ ...connector, catalogAgeMs: null, lastCall: null }] },
       };
+      const pending = deferred<Response>();
+      const signals: AbortSignal[] = [];
+      const stuck = (init: RequestInit, value: object) => {
+        signals.push(init.signal!);
+        if (!stalled.endsWith("body")) return pending.promise;
+        const response = Response.json(value);
+        vi.spyOn(response, "json").mockReturnValue(new Promise(() => {}));
+        return Promise.resolve(response);
+      };
+      configMock.mockImplementation(async (_path, init) =>
+        stalled.startsWith("config") ? stuck(init, contract) : Response.json(contract),
+      );
+      fetchMock.mockResolvedValueOnce(Response.json({ problem: "identity_unavailable" }, { status: 503 }));
+      fetchMock.mockImplementation(async (path: string, init: RequestInit) => {
+        if (path === "/ui/data")
+          return stalled === "summary"
+            ? stuck(init, {})
+            : Response.json({ ...uiData("operator"), connectors: [connector] });
+        return stalled.startsWith("detail") ? stuck(init, connector) : Response.json(connector);
+      });
+      await store.boot();
+      await vi.advanceTimersByTimeAsync(2000);
+      for (let i = 0; i < 7; i++) {
+        windowListeners.get("focus")?.();
+        await vi.advanceTimersByTimeAsync(2100);
+      }
+      expect(signals).toHaveLength(1);
+      expect(signals[0]?.aborted).toBe(false);
+      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(300);
+      expect(signals[0]?.aborted).toBe(true);
+      expect(store.getState().recoveryPending).toBe(false);
+      expect(stalled === "summary" ? store.getState().session : store.getState().contractPhase).toBe(
+        stalled === "summary" ? "gated" : "error",
+      );
+      // Timeout consumes the next shared backoff slot, rather than resetting it.
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(signals).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(signals).toHaveLength(2);
+      expect(signals[1]?.aborted).toBe(false);
+      configMock.mockImplementation(async () => Response.json(contract));
+      fetchMock.mockImplementation(async (path: string) =>
+        Response.json(path === "/ui/data" ? { ...uiData("recovered"), connectors: [connector] } : connector),
+      );
+      await Promise.all([store.retryLoad(), store.retryLoad()]);
+      expect(signals.every((signal) => signal.aborted)).toBe(true);
+      expect(store.getState().contractPhase).toBe("ready");
+      expect(store.getState().data?.serverInfo.name).toBe("recovered");
+      pending.resolve(Response.json({ ...uiData("stale"), ...contract, ...connector }));
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(store.getState().data?.serverInfo.name).toBe("recovered");
+      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(4);
+      expect(configMock).toHaveBeenCalledTimes(stalled === "summary" ? 1 : 3);
+    },
+  );
+
+  it.each(["summary", "config"])(
+    "INV-4 INV-10: exhausts the automatic budget despite never-settling %s reads",
+    async (stalled) => {
+      const { store, fetchMock, configMock, windowListeners } = await loadStore(
+        { id: "unused", getToken: async () => "unused" },
+        { kind: "cloudflare-access" },
+      );
+      vi.useFakeTimers();
+      const signals: AbortSignal[] = [];
+      const stuck = (_path: string, init: RequestInit) => {
+        signals.push(init.signal!);
+        return new Promise<Response>(() => {});
+      };
+      configMock.mockImplementation(stuck);
+      fetchMock.mockResolvedValueOnce(Response.json({ problem: "identity_unavailable" }, { status: 503 }));
+      fetchMock.mockImplementation(stalled === "summary" ? stuck : async () => Response.json(uiData("operator")));
+      await store.boot();
+      await vi.advanceTimersByTimeAsync(100_000);
+      expect(signals).toHaveLength(4);
+      expect(signals.every((signal) => signal.aborted)).toBe(true);
+      expect(store.getState().recoveryPending).toBe(false);
+      expect(fetchMock.mock.calls.filter(([path]) => path === "/ui/data")).toHaveLength(5);
+      windowListeners.get("focus")?.();
+      await vi.advanceTimersByTimeAsync(160);
+      expect(signals).toHaveLength(5);
+      await vi.advanceTimersByTimeAsync(100_000);
+      expect(signals).toHaveLength(5);
+      expect(signals.every((signal) => signal.aborted)).toBe(true);
+    },
+  );
+
+  it.each(["summary", "config"])(
+    "INV-4: sign-out cancels a never-settling %s recovery and fences queued work",
+    async (stalled) => {
+      const { store, fetchMock, configMock, windowListeners } = await loadStore(
+        { id: "unused", getToken: async () => "unused" },
+        { kind: "cloudflare-access" },
+      );
+      vi.useFakeTimers();
+      let signal: AbortSignal | undefined;
+      const stuck = (_path: string, init: RequestInit) => {
+        signal = init.signal!;
+        return new Promise<Response>(() => {});
+      };
+      configMock.mockImplementation(stuck);
+      fetchMock.mockResolvedValueOnce(Response.json({ problem: "identity_unavailable" }, { status: 503 }));
+      fetchMock.mockImplementation(stalled === "summary" ? stuck : async () => Response.json(uiData("operator")));
+      await store.boot();
+      await vi.advanceTimersByTimeAsync(2000);
+      windowListeners.get("focus")?.();
+      store.signOut();
+      expect(signal?.aborted).toBe(true);
+      expect(store.getState().recoveryPending).toBe(false);
+      await vi.advanceTimersByTimeAsync(100_000);
+      windowListeners.get("focus")?.();
+      await vi.advanceTimersByTimeAsync(200);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(configMock).toHaveBeenCalledTimes(stalled === "summary" ? 0 : 1);
+      expect(store.getState().data).toBeNull();
+      expect(store.getState().contract).toBeNull();
+    },
+  );
+
+  it.each(["config", "detail", "explicit-config", "explicit-detail"])(
+    "INV-4 INV-10: publishes delayed %s recovery despite continuous focus with bounded reads",
+    async (kind) => {
+      const delayed = kind.endsWith("config") ? "config" : "detail";
+      const { store, fetchMock, configMock, windowListeners } = await loadStore(
+        { id: "unused", getToken: async () => "unused" },
+        { kind: "cloudflare-access" },
+      );
+      vi.useFakeTimers();
+      const connector = { id: "svc", status: "ok", tools: [], toolCount: 0 };
+      const contract = {
+        schemaVersion: 1,
+        config: { connectors: [{ id: "svc" }] },
+        you: { permissions: { connectors: [] } },
+        live: { connectors: [{ ...connector, catalogAgeMs: null, lastCall: null }] },
+      };
+      const pendingAuth = { ...connector, status: "auth_required", oauth: true };
       const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
       configMock.mockImplementation(async () => {
         await delay(delayed === "config" ? 7000 : 5000);
@@ -912,13 +1073,16 @@ describe("operator recovery bounds and snapshot ordering", () => {
       });
       fetchMock.mockResolvedValueOnce(Response.json({ problem: "identity_unavailable" }, { status: 503 }));
       fetchMock.mockImplementation(async (path: string) => {
-        if (path === "/ui/data") return Response.json({ ...uiData("recovered"), connectors: [connector] });
+        if (path === "/ui/data") return Response.json({ ...uiData("recovered"), connectors: [pendingAuth] });
         await delay(delayed === "detail" ? 7000 : 5000);
         return Response.json(connector);
       });
       await store.boot();
       expect(store.getState().session).toBe("gated");
-      await vi.advanceTimersByTimeAsync(2000);
+      if (kind.startsWith("explicit")) {
+        void store.retryLoad();
+        await vi.advanceTimersByTimeAsync(0);
+      } else await vi.advanceTimersByTimeAsync(2000);
       expect(store.getState().contractPhase).toBe("loading");
       // Every return is beyond the minimum interval, including while the
       // config has landed but its matching auth detail is still pending.
@@ -964,6 +1128,10 @@ describe("operator recovery bounds and snapshot ordering", () => {
       await store.boot();
       await vi.advanceTimersByTimeAsync(2000);
       expect(configMock).toHaveBeenCalledTimes(1);
+      const configSignal = configMock.mock.calls[0]?.[1].signal;
+      const detailSignal = fetchMock.mock.calls.find(([path]) => path === "/ui/connectors/svc")?.[1].signal;
+      expect(configSignal?.aborted).toBe(false);
+      expect(detailSignal?.aborted).toBe(false);
       if (action === "retry") {
         fetchMock.mockImplementation(async (path: string) =>
           Response.json(path === "/ui/data" ? { ...uiData("operator"), connectors: [connector] } : connector),
@@ -973,6 +1141,8 @@ describe("operator recovery bounds and snapshot ordering", () => {
       } else {
         store.signOut();
       }
+      expect(configSignal?.aborted).toBe(true);
+      expect(detailSignal?.aborted).toBe(true);
       oldConfig.resolve(Response.json(contract("stale")));
       oldDetail.resolve(Response.json({ ...connector, status: "auth_required" }));
       await vi.advanceTimersByTimeAsync(60_000);

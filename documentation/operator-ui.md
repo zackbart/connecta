@@ -121,8 +121,12 @@ API responses establish the session. A gated Access session offers Retry.
 Focus, visibility, and timer-driven recovery share one admission-read schedule
 with at least two seconds between passive attempts. An in-flight passive attempt
 coalesces returns until its summary and matching catalog/auth cycle finish,
-so slow successful reads can publish. Explicit Retry can supersede that cycle;
-identity changes cancel it. Failed reads retry after
+so slow successful reads can publish. Each admission summary and its matching
+config/auth cycle share a 15-second deadline, including token acquisition,
+fetches and response bodies. The deadline aborts and fences the cycle, releases
+its guard, and reports retryable unavailability through the same backoff without
+resetting its budget. Retry remains available during recovery configuration
+loading and supersedes and aborts the old cycle; identity changes cancel it. Failed reads retry after
 2, 2, 4, and 8 seconds. Refusals preserve the throttle and retry budget. After
 those four automatic retries, a focus return can request one more read after
 the eight-second backoff, without replenishing the automatic budget. Retry

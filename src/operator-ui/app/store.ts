@@ -109,6 +109,7 @@ export function navHint(): { activity: boolean } {
 }
 
 function gate(notice: Notice | null = null): void {
+  cancelRecoveryRead();
   queryClient.clear();
   forgetNav();
   stopOAuthPolling();
@@ -212,12 +213,12 @@ function unreachable(loadFailure: "server" | "network"): void {
 let dataRevision = 0;
 
 /** Fetch `/ui/data`. The only route that decides gated versus signed in. */
-async function loadData(): Promise<void> {
+async function loadData(signal: AbortSignal): Promise<void> {
   if (signedOut) return;
   const identityCurrent = fence();
   const revision = ++dataRevision;
   ++snapshotRevision;
-  const current = () => identityCurrent() && revision === dataRevision;
+  const current = () => identityCurrent() && revision === dataRevision && !signal.aborted;
   set(state.session === "ready" ? { refreshing: true, loadFailure: null } : { loadFailure: null });
   let token;
   try {
@@ -231,6 +232,7 @@ async function loadData(): Promise<void> {
   let res: Response;
   try {
     res = await fetch("/ui/data", {
+      signal,
       headers: requestHeaders(token),
       credentials: "same-origin",
     });
@@ -279,13 +281,13 @@ async function loadData(): Promise<void> {
   });
   // A passive recovery owns the whole matching catalog/auth cycle. Releasing
   // its in-flight guard at the summary would let focus supersede slow reads.
-  await loadOperatorContract();
+  await refreshSnapshot(false, undefined, signal);
 }
 
 /** Catalog and auth controls publish together, guarded by one refresh revision. */
 let snapshotRevision = 0;
 export function loadOperatorContract(): Promise<void> {
-  return refreshSnapshot();
+  return guardedRecoveryRead((signal) => refreshSnapshot(false, undefined, signal), true);
 }
 
 async function refreshSnapshot(quiet = false, connectorId?: string, pollSignal?: AbortSignal): Promise<void> {
@@ -828,8 +830,8 @@ export async function loadActivity(reset: boolean): Promise<void> {
 }
 
 /** Load what the current page shows, deciding gated or ready on the way. */
-function loadCurrent(): Promise<void> {
-  return loadData();
+function loadCurrent(exposeRetry = false): Promise<void> {
+  return guardedRecoveryRead(loadData, exposeRetry);
 }
 
 /**
@@ -848,7 +850,7 @@ export function retryLoad(): Promise<void> {
   set({
     pendingFocus: `${state.page}Heading`,
   });
-  return loadCurrent();
+  return loadCurrent(true);
 }
 
 /** Retry for a collection page, with focus kept on its heading. */
@@ -910,14 +912,65 @@ const RECOVERY_DELAYS_MS = [2000, 2000, 4000, 8000];
 let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
 let recoveryAttempt = 0;
 let recoveryNotBefore = 0;
-let recoveryRead: Promise<void> | undefined;
+const RECOVERY_READ_TIMEOUT_MS = 15_000;
+let recoveryRead:
+  | {
+      controller: AbortController;
+      timer: ReturnType<typeof setTimeout>;
+      finish: () => void;
+    }
+  | undefined;
+
+function cancelRecoveryRead(): void {
+  const read = recoveryRead;
+  if (!read) return;
+  recoveryRead = undefined;
+  clearTimeout(read.timer);
+  read.controller.abort();
+  read.finish();
+  set({ recoveryPending: false });
+}
+
+/** Bound the entire cycle, including token acquisition and response bodies.
+ * Racing cancellation also releases callers when a transport ignores abort.
+ * The aborted signal fences any late completion before it can publish.
+ */
+function guardedRecoveryRead(read: (signal: AbortSignal) => Promise<void>, exposeRetry = false): Promise<void> {
+  cancelRecoveryRead();
+  const current = fence();
+  const controller = new AbortController();
+  let finish!: () => void;
+  const cancelled = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const cycle = {
+    controller,
+    finish,
+    timer: setTimeout(() => {
+      if (recoveryRead !== cycle) return;
+      cancelRecoveryRead();
+      if (!current() || signedOut) return;
+      ++dataRevision;
+      ++snapshotRevision;
+      if (state.data) {
+        set({ contract: null, contractPhase: "error", refreshing: false });
+        scheduleRecovery();
+      } else unreachable("network");
+    }, RECOVERY_READ_TIMEOUT_MS),
+  };
+  recoveryRead = cycle;
+  set({ recoveryPending: exposeRetry });
+  return Promise.race([read(controller.signal), cancelled]).finally(() => {
+    if (recoveryRead === cycle) cancelRecoveryRead();
+  });
+}
 
 function resetRecovery(): void {
   clearTimeout(recoveryTimer);
   recoveryTimer = undefined;
   recoveryAttempt = 0;
   recoveryNotBefore = 0;
-  recoveryRead = undefined;
+  cancelRecoveryRead();
   lastReturnPass = -Infinity;
 }
 
@@ -928,11 +981,7 @@ function recover(): void {
   clearTimeout(recoveryTimer);
   recoveryTimer = undefined;
   lastReturnPass = now;
-  const pending = loadCurrent();
-  recoveryRead = pending;
-  void pending.finally(() => {
-    if (recoveryRead === pending) recoveryRead = undefined;
-  });
+  void loadCurrent(true);
 }
 
 function scheduleRecovery(): void {
@@ -952,7 +1001,7 @@ function scheduleRecovery(): void {
 }
 
 function recheckAuthorization(): void {
-  if (signedOut) return;
+  if (signedOut || recoveryRead) return;
   // Focus is also a way out of a refusal. It only re-requests admission.
   if (
     recoveryAttempt > 0 ||

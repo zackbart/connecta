@@ -380,6 +380,8 @@ export interface OperatorState {
   gate: Notice | null;
   /** True while a signed-in operator's /ui/data is in flight. */
   refreshing: boolean;
+  /** A bounded admission recovery is pending; Retry can supersede it. */
+  recoveryPending: boolean;
   /**
    * Why the last /ui/data read failed when the session itself was not the
    * reason: the page stays signed in, with its chrome, and offers a retry.
@@ -452,6 +454,7 @@ export function initialState(page: OperatorPage): OperatorState {
  */
 function identityScopedState() {
   return {
+    recoveryPending: false,
     data: null,
     contract: null,
     contractPhase: "idle" as LoadPhase,
