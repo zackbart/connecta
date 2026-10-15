@@ -150,7 +150,20 @@ interface OperatorMemberConnector {
   tools: Array<{ address: string; classification: "read" | "write" }>; // tools their pools grant
   /** Own connection state for personal connectors; null for shared ones. */
   connection: { state: ConnectorStatus["state"]; problem?: UiProblem } | null;
+  /** What the member may do. Always "none" for shared connectors. */
+  manage: OperatorMemberManage;
 }
+
+type OperatorMemberManage =
+  | { kind: "none" }
+  | { kind: "oauth"; actions: Array<"connect" | "restart" | "disconnect"> } // /ui/oauth/<id>
+  | {
+      kind: "credential"; // /ui/credentials/<id>, the member's own partition
+      label: string;
+      description?: string;
+      fields?: Array<{ name: string; label: string; description?: string }>;
+      actions: Array<"save" | "test" | "clear">;
+    };
 
 interface OperatorAgent {
   name: string;
@@ -166,7 +179,8 @@ interface OperatorAgent {
 type OperatorRunsAs =
   | { kind: "shared"; savedAt: string | null }
   | { kind: "personal"; connectedMembers: number; members: number }
-  | { kind: "workspace"; humans: "self"; agents: string | null }; // agents: pool owner
+  | { kind: "workspace"; humans: "self"; agents: string | null } // mapping subject; agents: pool owner
+  | { kind: "workspaceFixed"; subject: string }; // fixed subject: every caller acts as it
 
 interface OperatorConnectorPoolCell {
   connectorId: string;
@@ -204,7 +218,12 @@ those pools with the tools their pools grant and, for personal connectors,
 their own connection state. It carries no `config`, `configSources`, `root`,
 live overlays, catalog ages, last calls, shared credential status or problems,
 agents, matrix, other members, or activity. Tests compare the complete
-serialized member response against a fixture. Human
+serialized member response against fixtures that include a personal OAuth
+connector, a personal credential connector, and a shared connector. `manage`
+names only actions the member's permission and the connector's hooks support;
+credential field definitions are labels and names, never values. Matrix
+`runsAs` uses `workspaceFixed` for a fixed-subject Workspace connector, with a
+fixture, so the UI never labels it "humans act as themselves". Human
 labels come from the same directory lookup activity actor labels use; Access
 deployments, which have no directory, show `null`. No field carries secret
 material, digests, credential suffixes, or downstream account labels.
