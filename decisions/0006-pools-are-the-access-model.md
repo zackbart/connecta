@@ -73,14 +73,21 @@ createConnecta({
   refuse Clerk tokens, cookies, and Access context. Their protected-resource
   metadata names no authorization server. Human endpoints (`/mcp`,
   `/mcp/<pool>`) refuse `cta_`. Behind Cloudflare Access, `/agent/*` is
-  bypassed at the edge, so an agent sends one credential. If the probe shows a
-  Worker-level Access application cannot bypass one path, agents use a
-  separate hostname routed to the same Worker without Access.
-- **Pool owner** sets Google Workspace subjects for agents. A human always
-  acts as their own Workspace account through the deployment's existing
-  `subject` mapping, in any pool. An agent acts as the owner of the pool it
-  came through. An agent in a pool without an owner gets `auth_required`. One
-  `gmail()` connector then serves every per-person pool.
+  bypassed at the edge by a path-scoped Access application, so an agent sends
+  one credential. Cloudflare documents that path applications take precedence
+  over a Worker-level application, and that Worker-level protection covers
+  every hostname the Worker serves, so a second hostname is not a fallback.
+  P0 verifies the bypass, including path normalization, before P4 documents
+  it.
+- **Pool owner** sets Google Workspace subjects for agents when a provider's
+  `subject` is a mapping function. A human acts as their own Workspace account
+  through that mapping, in any pool. An agent acts as the owner of the pool it
+  came through, resolved before the mapping runs; an agent in a pool without
+  an owner gets `auth_required`. One `gmail()` connector then serves every
+  per-person pool. A fixed `subject` address stays an explicit shared-account
+  exception: every caller, human or agent, acts as that address, in any pool
+  the connector is in, and pool owners do not apply. Keep fixed-subject
+  connectors out of pools whose members must not share that account.
 
 Removed, each failing construction with a message naming its replacement:
 `identity.connectorAccess` (guarded `{ tool, requireReadOnly: true }` grants
@@ -122,9 +129,27 @@ interface OperatorPoolV2 {
   humanPath: string; // "/mcp/<name>"
   agentPath: string; // "/agent/<name>"
   readOnly: boolean;
-  owner: string | null; // Workspace address agents act as
+  owner: string | null; // Workspace address agents act as; null in the member view
   tools: OperatorGrant[]; // the pool's declared tools, unfiltered
   members: OperatorMember[]; // maintainer view only; [] for members
+}
+
+/** Plain /mcp. Maintainer view only; null for members. */
+interface OperatorRootEndpoint {
+  path: string; // "/mcp"
+  readOnly: boolean;
+  maintainers: OperatorMember[]; // humans only
+}
+
+/** What a member may see about one connector in their pools. */
+interface OperatorMemberConnector {
+  id: string;
+  title: string;
+  pools: string[];
+  authScope: "shared" | "personal";
+  tools: Array<{ address: string; classification: "read" | "write" }>; // tools their pools grant
+  /** Own connection state for personal connectors; null for shared ones. */
+  connection: { state: ConnectorStatus["state"]; problem?: UiProblem } | null;
 }
 
 interface OperatorAgent {
@@ -145,7 +170,7 @@ type OperatorRunsAs =
 
 interface OperatorConnectorPoolCell {
   connectorId: string;
-  pool: string;
+  pool: string | null; // null is plain /mcp
   tools: "all" | string[];
   runsAs: OperatorRunsAs;
 }
@@ -153,33 +178,33 @@ interface OperatorConnectorPoolCell {
 interface OperatorUiContractV2 {
   schemaVersion: 2;
   role: OperatorRole;
-  config: ConnectaConfigDescription; // maintainer: unfiltered; member: their pools only
+  /** Maintainer only; null for members. */
+  config: ConnectaConfigDescription | null;
+  /** Leaf provenance for Settings, as in v1. Maintainer only; null for members. */
+  configSources: Record<string, "default" | "config"> | null;
   live: {
-    connectors: OperatorConnectorOverlay[];
-    activity: "available" | "unconfigured" | "forbidden" | "unavailable";
+    connectors: OperatorConnectorOverlay[]; // maintainer only; [] for members
+    activity: "available" | "unconfigured" | "forbidden" | "unavailable"; // "forbidden" for members
   };
-  pools: OperatorPoolV2[]; // maintainer: all; member: their pools
+  root: OperatorRootEndpoint | null; // maintainer only
+  pools: OperatorPoolV2[]; // maintainer: all; member: their pools, owner null, members []
   agents: OperatorAgent[]; // maintainer only; [] for members
   matrix: OperatorConnectorPoolCell[]; // maintainer only; [] for members
-  you: {
-    interactive: boolean;
-    personalConnectors: Array<{
-      id: string;
-      pools: string[];
-      connected: boolean;
-    }>;
-    sharedConnectors: Array<{ id: string; pools: string[] }>; // names only, no credential state
-  };
+  connectors: OperatorMemberConnector[]; // member only; [] for maintainers, who read live.connectors
+  you: { interactive: boolean };
 }
 ```
 
 `GET /ui/api/config` serves this shape for both roles; a caller who is
 neither gets the existing private JSON 404. Activity and shared-credential
 routes require a maintainer. Personal connect and disconnect stay on
-`/ui/oauth/<id>`, gated by membership. The member view returns only that
-member's pools, their own personal
-connection state, and the names of shared connectors in those pools. Members
-see no other members, agents, shared credential state, or activity. Human
+`/ui/oauth/<id>`, gated by membership. The member view carries only that
+member's pools (without owner or members), and `connectors`: each connector in
+those pools with the tools their pools grant and, for personal connectors,
+their own connection state. It carries no `config`, `configSources`, `root`,
+live overlays, catalog ages, last calls, shared credential status or problems,
+agents, matrix, other members, or activity. Tests compare the complete
+serialized member response against a fixture. Human
 labels come from the same directory lookup activity actor labels use; Access
 deployments, which have no directory, show `null`. No field carries secret
 material, digests, credential suffixes, or downstream account labels.
