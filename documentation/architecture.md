@@ -296,6 +296,14 @@ connector remain: they bound pin checks separately from the connector's larger
 shared call budget. The Cloudflare provider tests cover these checks through
 registry invocation as well as the existing pin refusals.
 
+Only an omitted or `undefined` `callAdmission` selects a connector's default.
+The shared schema rejects malformed defined policies at factory construction,
+and the registry validates custom connector policies before registration.
+Falsy values such as `false`, `null`, `0`, and `""` are construction errors
+(INV-11), never a way to disable admission. The generated provider fixtures
+exercise these refusals and unchanged defaults in
+`test/call-admission-options.test.ts`.
+
 ### Production Worker disconnects
 
 The original production probe for [#573](https://github.com/zackbart/connecta/issues/573)

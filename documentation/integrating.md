@@ -19,6 +19,14 @@ registry enforcement, caller grants, result bounds, and activity paths. There
 is no runtime installation or registration. Keep connector IDs unique and
 stable because they prefix canonical `<connectorId>.<toolName>` addresses.
 
+`callAdmission` is optional on `remoteMcp()`, `api()`, custom connectors, and
+provider variants that expose an override. Only omission or `undefined` uses
+the connector's documented default, which may be no admission. Every defined
+value is validated at construction. Malformed policies, including `false`,
+`null`, `0`, and `""`, throw before serving requests; they never disable
+admission or select a default. Custom connector policies are validated when
+the deployment constructs its registry.
+
 ## Maintained integrations
 
 Import a provider individually. For example, Linear requires an explicit
