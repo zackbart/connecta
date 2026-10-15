@@ -67,11 +67,25 @@ export interface IssuedAgentToken {
 export class AccessTokenError extends Error {
   override readonly name = "AccessTokenError";
   constructor(
-    readonly code: "unknown_agent" | "conflict" | "not_adoptable",
+    readonly code: "unknown_agent" | "conflict" | "not_adoptable" | "aborted",
     message: string,
   ) {
     super(message);
   }
+}
+
+/** Options every token mutation takes. */
+export interface AccessTokenOperationOptions {
+  /**
+   * The request this operation serves. Checked before each write: an abort
+   * before the commit point publishes nothing, and an abort after a rotation
+   * commits retires the undeliverable secret.
+   */
+  signal?: AbortSignal;
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new AccessTokenError("aborted", "The request ended before the token operation finished");
 }
 
 const recordKey = accessTokenKeys.record;
@@ -244,12 +258,25 @@ export class AccessTokenManager {
 
   /**
    * Issue the agent's first token, or replace its current one. The new secret
-   * admits and the previous one refuses from the same compare-and-set, so the
-   * cutover is immediate. Of concurrent rotations exactly one returns a secret;
-   * the others refuse with a conflict and publish nothing.
+   * admits and the previous one refuses from the same compare-and-set on the
+   * slot, so the cutover is immediate. Of concurrent rotations exactly one
+   * returns a secret; the others refuse with a conflict and publish nothing.
+   *
+   * Cancellation: `signal` is checked before each write. Aborted before the
+   * swap, nothing is published and the provisional record is retired before
+   * this rejects. Aborted after the swap commits, the secret cannot be
+   * delivered, so it is retired too and the slot reads `revoked`: the agent
+   * has no live token until an operator rotates again. Either way no live
+   * secret is left that nobody holds.
    */
-  async rotate(name: string, issuedBy = "operator"): Promise<IssuedAgentToken> {
+  async rotate(
+    name: string,
+    issuedBy = "operator",
+    options: AccessTokenOperationOptions = {},
+  ): Promise<IssuedAgentToken> {
+    const { signal } = options;
     const agent = this.declared(name);
+    throwIfAborted(signal);
     const { raw, slot: previous } = await this.readSlot(agent);
     const token = TOKEN_PREFIX + bytesToBase64Url(crypto.getRandomValues(new Uint8Array(TOKEN_BYTES)));
     const hash = await hashToken(token);
@@ -271,38 +298,89 @@ export class AccessTokenManager {
     let swapped = false;
     try {
       // Record and lookup land first, so the slot only ever names a token that
-      // is completely written.
+      // is completely written. The swap is the commit point.
+      throwIfAborted(signal);
       await this.storage.set(recordKey(record.id), JSON.stringify(record));
+      throwIfAborted(signal);
       await this.storage.set(lookupKey(hash), JSON.stringify({ version: 1, id: record.id } satisfies TokenLookup));
+      throwIfAborted(signal);
       swapped = await this.storage.compareAndSet(slotKey(agent), raw, JSON.stringify(next));
     } catch (error) {
-      // A write may have committed without an answer. Nobody will hold this
-      // secret, so retire it; if the swap did commit, the previous token no
-      // longer admits either, and the slot admits nothing until the next
-      // rotation. Never a live secret nobody holds.
+      // A write may have committed without an answer: the swap's outcome is
+      // read back, never assumed. Nobody will hold this secret, so it is
+      // retired either way; if the swap did commit, the previous token no
+      // longer admits and the slot is marked revoked.
       const committed = await this.readSlot(agent).then(
-        ({ slot }) => slot?.state === "issued" && slot.tokenId === record.id,
-        () => false,
+        ({ slot }) => (slot?.state === "issued" && slot.tokenId === record.id ? true : false),
+        () => undefined,
       );
-      await this.retire(record.id, issuedBy).catch(() => {});
-      if (committed && previous?.tokenId) await this.retire(previous.tokenId, issuedBy).catch(() => {});
+      await this.abandon(agent, record, committed === false ? undefined : previous, issuedBy);
       throw error;
     }
     if (!swapped) {
-      await this.retire(record.id, issuedBy).catch(() => {});
+      await this.retire(record.id, issuedBy, record.tokenHash).catch(() => {});
       throw new AccessTokenError("conflict", "The agent's token changed during rotation; retry");
     }
     // Admission already refuses the previous token: the slot no longer names it.
     if (previous?.tokenId) await this.retire(previous.tokenId, issuedBy).catch(() => {});
+    if (signal?.aborted) {
+      // Committed, but the response cannot carry the secret.
+      await this.abandon(agent, record, undefined, issuedBy);
+      throwIfAborted(signal);
+    }
     return { token, agent: slotView(agent, next) };
   }
 
-  /** Revoke the agent's token. Admission is removed before the slot changes. */
-  async revoke(name: string, revokedBy = "operator"): Promise<AgentTokenSlot> {
+  /**
+   * Retire a secret nobody will receive. Each step stands alone so that one
+   * failed write cannot leave it admitting: the lookup is deleted, the record
+   * marked revoked, and a slot still naming it is marked revoked. The
+   * previous token, when the swap committed, is retired as well.
+   */
+  private async abandon(
+    agent: string,
+    record: StoredAccessToken,
+    previous: StoredSlot | null | undefined,
+    by: string,
+  ): Promise<void> {
+    await this.retire(record.id, by, record.tokenHash).catch(() => {});
+    await this.releaseSlot(agent, record.id).catch(() => {});
+    if (previous?.tokenId) await this.retire(previous.tokenId, by).catch(() => {});
+  }
+
+  /** Mark the slot revoked if, and only if, it still names `tokenId`. */
+  private async releaseSlot(agent: string, tokenId: string): Promise<void> {
+    let failure: unknown;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const { raw, slot } = await this.readSlot(agent);
+      if (slot?.state !== "issued" || slot.tokenId !== tokenId) return;
+      const next: StoredSlot = { version: 1, agent, state: "revoked", tokenId, revokedAt: new Date().toISOString() };
+      try {
+        if (await this.storage.compareAndSet(slotKey(agent), raw, JSON.stringify(next))) return;
+      } catch (error) {
+        // Ambiguous: the next read decides whether it committed.
+        failure = error;
+      }
+    }
+    throw failure ?? new Error("Agent token slot is busy");
+  }
+
+  /**
+   * Revoke the agent's token. Admission is removed before the slot changes.
+   * `signal` is checked before the first write; once the lookup is deleted the
+   * token no longer admits, and the slot is brought in line regardless.
+   */
+  async revoke(
+    name: string,
+    revokedBy = "operator",
+    options: AccessTokenOperationOptions = {},
+  ): Promise<AgentTokenSlot> {
     const agent = this.declared(name);
+    throwIfAborted(options.signal);
     for (let attempt = 0; attempt < 32; attempt++) {
       const { raw, slot } = await this.readSlot(agent);
       if (slot?.state !== "issued") return slotView(agent, slot);
+      if (attempt === 0) throwIfAborted(options.signal);
       const record = await this.read(slot.tokenId);
       if (record) await this.storage.delete(lookupKey(record.tokenHash));
       const next: StoredSlot = {
@@ -324,46 +402,85 @@ export class AccessTokenManager {
    * Trusted provisioning: bind an existing, unbound, unrevoked machine token
    * record to a declared agent whose slot has never been issued, so its
    * current secret keeps working. A record binds once; human-bound records
-   * are refused.
+   * are refused. An adoption interrupted between its two writes is reconciled
+   * before this rejects: a bind the slot does not confirm is released. If even
+   * that fails, retrying the same adoption resumes it.
    */
-  async adopt(tokenId: string, name: string): Promise<AgentTokenSlot> {
+  async adopt(tokenId: string, name: string, options: AccessTokenOperationOptions = {}): Promise<AgentTokenSlot> {
+    const { signal } = options;
     const agent = this.declared(name);
     const refused = (message: string) => new AccessTokenError("not_adoptable", message);
-    const record = await this.read(tokenId);
-    if (!record) throw refused("No access token record has that id");
-    if (record.agent !== undefined) throw refused("That access token is already bound to an agent");
+    throwIfAborted(signal);
+    if (!ID_RE.test(tokenId)) throw refused("No access token record has that id");
+    const recordRaw = await this.storage.get(recordKey(tokenId));
+    const record = recordRaw ? parseRecord(recordRaw) : null;
+    if (!recordRaw || !record || record.id !== tokenId) throw refused("No access token record has that id");
     if (record.principal) throw refused("Human-bound access tokens cannot be adopted by an agent");
     if (record.revokedAt) throw refused("That access token is revoked");
+    const slotRaw = (await this.readSlot(agent)).raw;
+    // A bind to this agent with an empty slot is an interrupted adoption: resume it.
+    const resuming = record.agent === agent && slotRaw === null;
+    if (record.agent !== undefined && !resuming) {
+      const held = record.agent;
+      const interrupted = held !== agent && (await this.storage.get(slotKey(held)).catch(() => "unknown")) === null;
+      throw refused(
+        interrupted
+          ? `That access token is held by an interrupted adoption for "${held}"; retry adopting it as "${held}"`
+          : "That access token is already bound to an agent",
+      );
+    }
+    if (slotRaw !== null) throw refused("That agent already has a token slot; rotate it instead");
     const lookupRaw = await this.storage.get(lookupKey(record.tokenHash));
     if (!lookupRaw || parseLookup(lookupRaw)?.id !== record.id) {
       throw refused("That access token no longer authenticates");
     }
-    if ((await this.readSlot(agent)).raw !== null) {
-      throw refused("That agent already has a token slot; rotate it instead");
-    }
-    await this.updateRecord(record.id, (current) => {
-      if (current.agent !== undefined || current.principal || current.revokedAt) {
-        throw refused("That access token changed while it was being adopted");
-      }
-      return { ...current, agent };
-    });
+    const boundRaw = resuming ? recordRaw : JSON.stringify({ ...record, agent } satisfies StoredAccessToken);
     const next: StoredSlot = { version: 1, agent, state: "issued", tokenId: record.id, issuedAt: record.createdAt };
-    if (!(await this.storage.compareAndSet(slotKey(agent), null, JSON.stringify(next)))) {
-      // Another issuance claimed the slot first. Release the bind so the
-      // record stays adoptable; it never admitted, since no slot named it.
-      await this.updateRecord(record.id, (current) => {
-        if (current.agent !== agent) return current;
-        const { agent: _bound, ...unbound } = current;
-        return unbound;
-      });
-      throw new AccessTokenError("conflict", "That agent's token slot changed during adoption; retry");
+    try {
+      if (!resuming) {
+        throwIfAborted(signal);
+        if (!(await this.storage.compareAndSet(recordKey(record.id), recordRaw, boundRaw))) {
+          throw refused("That access token changed while it was being adopted");
+        }
+      }
+      throwIfAborted(signal);
+      if (!(await this.storage.compareAndSet(slotKey(agent), null, JSON.stringify(next)))) {
+        throw new AccessTokenError("conflict", "That agent's token slot changed during adoption; retry");
+      }
+    } catch (error) {
+      if (await this.reconcileAdoption(agent, record.id, boundRaw, recordRaw)) return slotView(agent, next);
+      throw error;
     }
     return slotView(agent, next);
   }
 
   /**
-   * Trusted provisioning: the records `adopt` can bind, oldest first. Ids,
-   * names and creation times only; never secret material.
+   * After an adoption write failed or went unanswered: true when the slot
+   * confirms the adoption committed. Otherwise a bind this attempt wrote is
+   * released, only while the record still reads exactly as it wrote it.
+   */
+  private async reconcileAdoption(
+    agent: string,
+    tokenId: string,
+    boundRaw: string,
+    unboundRaw: string,
+  ): Promise<boolean> {
+    try {
+      const { slot } = await this.readSlot(agent);
+      if (slot?.state === "issued" && slot.tokenId === tokenId) return true;
+      if (boundRaw !== unboundRaw && (await this.storage.get(recordKey(tokenId))) === boundRaw) {
+        await this.storage.compareAndSet(recordKey(tokenId), boundRaw, unboundRaw);
+      }
+    } catch {
+      // Left bound with an empty slot: a retry of this adoption resumes it.
+    }
+    return false;
+  }
+
+  /**
+   * Trusted provisioning: the records `adopt` can bind, oldest first,
+   * including one left bound by an interrupted adoption whose agent slot is
+   * still empty. Ids, names and creation times only; never secret material.
    */
   async unboundTokens(): Promise<Array<{ id: string; name: string; createdAt: string }>> {
     const keys = await this.storage.list(accessTokenKeys.recordPrefix);
@@ -377,39 +494,59 @@ export class AccessTokenManager {
         }
       }),
     );
-    return records
-      .filter((record): record is StoredAccessToken =>
-        Boolean(record && record.agent === undefined && !record.principal && !record.revokedAt),
-      )
+    const candidates = records.filter((record): record is StoredAccessToken =>
+      Boolean(record && !record.principal && !record.revokedAt),
+    );
+    const emptySlot = new Map<string, boolean>();
+    for (const agent of new Set(candidates.flatMap((record) => (record.agent ? [record.agent] : [])))) {
+      emptySlot.set(agent, (await this.storage.get(slotKey(agent))) === null);
+    }
+    return candidates
+      .filter((record) => record.agent === undefined || emptySlot.get(record.agent))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .map(({ id, name, createdAt }) => ({ id, name, createdAt }));
   }
 
-  /** Remove a token's lookup, then mark its record revoked. */
-  private async retire(id: string, revokedBy: string): Promise<void> {
-    const record = await this.read(id);
-    if (!record) return;
-    await this.storage.delete(lookupKey(record.tokenHash));
-    await this.updateRecord(id, (current) =>
-      current.revokedAt ? current : { ...current, revokedAt: new Date().toISOString(), revokedBy },
-    );
+  /**
+   * Make a token stop admitting. Deleting its lookup and marking its record
+   * revoked each suffice for admission, so each is attempted even when the
+   * other fails; this throws only if neither took effect.
+   */
+  private async retire(id: string, revokedBy: string, tokenHash?: string): Promise<void> {
+    let unlinked = false;
+    try {
+      const hash = tokenHash ?? (await this.read(id))?.tokenHash;
+      if (hash) {
+        await this.storage.delete(lookupKey(hash));
+        unlinked = true;
+      }
+    } catch {
+      // The revoked mark below still refuses it.
+    }
+    try {
+      await this.markRevoked(id, revokedBy);
+    } catch (error) {
+      if (!unlinked) throw error;
+    }
   }
 
-  private async updateRecord(
-    id: string,
-    update: (record: StoredAccessToken) => StoredAccessToken,
-  ): Promise<StoredAccessToken | null> {
-    if (!ID_RE.test(id)) return null;
-    for (let attempt = 0; attempt < 32; attempt++) {
+  /** Conditionally mark a record revoked; an unanswered write is re-read, never replayed blindly. */
+  private async markRevoked(id: string, revokedBy: string): Promise<void> {
+    if (!ID_RE.test(id)) return;
+    let failure: unknown;
+    for (let attempt = 0; attempt < 8; attempt++) {
       const raw = await this.storage.get(recordKey(id));
-      if (!raw) return null;
+      if (!raw) return;
       const record = parseRecord(raw);
-      if (record.id !== id) throw new Error("Stored access token id mismatch");
-      const next = update(record);
-      if (!(await this.storage.compareAndSet(recordKey(id), raw, JSON.stringify(next)))) continue;
-      return next;
+      if (record.revokedAt) return;
+      const next = JSON.stringify({ ...record, revokedAt: new Date().toISOString(), revokedBy });
+      try {
+        if (await this.storage.compareAndSet(recordKey(id), raw, next)) return;
+      } catch (error) {
+        failure = error;
+      }
     }
-    throw new Error("Access token metadata is busy; retry the operation");
+    throw failure ?? new Error("Access token metadata is busy; retry the operation");
   }
 
   private async authorize(request: Request): Promise<AuthResult> {

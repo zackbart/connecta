@@ -37,16 +37,24 @@ export async function routeAccessTokens(context: RouteContext, manager: AccessTo
     if (!name && request.method === "GET") {
       return privateJson({ agents: await manager.list() });
     }
+    // The request's signal bounds each mutation: a caller that leaves before
+    // the commit point publishes nothing, and one that leaves after a
+    // rotation commits gets its undeliverable secret retired. Each call
+    // settles only after that cleanup.
+    const signal = request.signal;
     if (name && request.method === "POST") {
-      return privateJson(await manager.rotate(name, operator));
+      return privateJson(await manager.rotate(name, operator, { signal }));
     }
     if (name && request.method === "DELETE") {
-      return privateJson({ agent: await manager.revoke(name, operator) });
+      return privateJson({ agent: await manager.revoke(name, operator, { signal }) });
     }
     return privateJson({ error: "method not allowed" }, { status: 405 });
   } catch (error) {
     if (error instanceof AccessTokenError && error.code === "unknown_agent") {
       return privateJson({ error: "unknown agent" }, { status: 404 });
+    }
+    if (error instanceof AccessTokenError && error.code === "aborted") {
+      return privateJson({ error: "request ended" }, { status: 499 });
     }
     if (error instanceof AccessTokenError && error.code === "conflict") {
       return privateJson({ error: "The agent's token changed meanwhile; reload and retry" }, { status: 409 });

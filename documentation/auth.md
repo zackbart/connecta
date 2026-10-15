@@ -139,9 +139,28 @@ digest lookup, then swaps the slot to it with one `compareAndSet`. From that
 swap the new secret admits and the old one refuses, so after `rotate` returns
 the old secret fails on its next request. Of concurrent rotations exactly one
 swaps and returns a secret; the others publish nothing and fail with a conflict
-(409 on the route). If a write's answer is lost, the new secret is retired, so
-no live secret exists that nobody holds. Revocation removes the digest lookup
-before it marks the slot revoked. Authorization caches no token, and D1 and
+(409 on the route). Admission refuses a record that is revoked or that the
+slot no longer names, even if its lookup survives, so retirement deletes the
+lookup and marks the record revoked as independent steps, and an unanswered
+write is re-read and compared, never replayed blindly. If a write's answer is
+lost, the new secret is retired, and if the swap did commit the slot is marked
+revoked, so no live secret exists that nobody holds. Revocation removes the
+digest lookup before it marks the slot revoked.
+
+**Cancellation.** The routes pass the request's `AbortSignal` to `rotate`,
+`revoke`, and `adopt` (`{ signal }`), which check it before each write and
+settle only after their cleanup. A rotation aborted before the swap publishes
+nothing: its provisional record and lookup are retired and the previous token
+keeps working. The swap cannot be undone, so a rotation aborted after it
+retires the secret it can no longer deliver: the slot reads `revoked`, exactly
+as after a revocation, and an operator rotates again. A revocation aborted
+before its first write changes nothing; once the lookup is deleted it
+completes. An adoption interrupted between binding the record and claiming the
+slot, by an abort or a failed or unanswered write, is reconciled by re-reading
+both: a committed slot is a completed adoption, and otherwise the bind is
+released only while the record still reads as that attempt wrote it. If the
+release fails too, `unboundTokens()` still lists the record and retrying the
+same adoption resumes it. Authorization caches no token, and D1 and
 SQLite are strongly consistent; admitted requests are not recalled. Management
 writes require an exact same-origin Origin; responses are private and
 non-cacheable.
