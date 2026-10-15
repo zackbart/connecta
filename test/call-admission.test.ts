@@ -35,6 +35,24 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 describe("connector call admission controller", () => {
+  it.each([
+    false,
+    null,
+    0,
+    "",
+    [],
+    {},
+    { kind: "unknown", maxCalls: 1, windowMs: 1 },
+    { kind: "rolling-window", maxCalls: 0, windowMs: 1 },
+    { kind: "rolling-window", maxCalls: 1, windowMs: 0 },
+  ])("INV-11: rejects the malformed nested budget %j at construction", (budget) => {
+    for (const maxConcurrency of [undefined, 3]) {
+      expect(
+        () => new ConnectorCallAdmissionController("limited", policy({ maxConcurrency, budget } as never)),
+      ).toThrow(/callAdmission budget/);
+    }
+  });
+
   it("bounds one partition while admitting another independently", async () => {
     const admission = new ConnectorCallAdmissionController(
       "limited",

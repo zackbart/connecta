@@ -257,6 +257,14 @@ describe("notion() auth selects the implementation", () => {
   });
 
   describe.each(["oauth", "token"] as const)("%s call admission", (type) => {
+    it.each([false, null, 0, ""])("INV-11: refuses the falsy nested budget %j at factory construction", (budget) => {
+      expect(() =>
+        notion("wiki", { purpose: "Docs", auth: { type }, callAdmission: { rules: [{ budget }] } } as never),
+      ).toThrow(/callAdmission.*budget/);
+      expect(mcpMocks.remoteMcp).not.toHaveBeenCalled();
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
     it.each([false, null, 0, ""])("INV-11: refuses the falsy policy %j at factory construction", (callAdmission) => {
       expect(() => notion("wiki", { purpose: "Docs", auth: { type }, callAdmission } as never)).toThrow(
         'notion("wiki") requires callAdmission to be an object.',
