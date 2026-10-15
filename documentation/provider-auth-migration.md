@@ -289,12 +289,17 @@ one; read or rotate withheld secrets in the vendor's dashboard.
   Failures of credential-bearing operations keep Stripe's type, code, and
   param but not its message. Create client-side sessions and links from your
   own server code.
-- **Notion** results withhold the signature, credential, and security-token
-  parameters of pre-signed file URLs, so a returned file URL no longer
-  downloads; credential-named fields, including database properties named
-  like credentials, read as `"[redacted]"`. Failures of the OAuth, file
-  upload, bot user, and agent operations keep Notion's code but not its
-  message.
+- **Notion** REST results and error text withhold the whole query and
+  fragment of canonical Notion file links, including links embedded in
+  Markdown and async task results. External proxy URLs keep their bytes;
+  AWS and Google signing-parameter values are withheld at any host. Writes
+  carrying the plain or encoded `[redacted]` placeholder in a Notion file
+  link's own query or fragment are refused before dispatch. See the
+  [Notion guide](https://github.com/zackbart/connecta/blob/main/src/providers/notion/SKILL.md)
+  for recognized hosts and scanning limits. Credential-named fields,
+  including database properties named like credentials, read as
+  `"[redacted]"`. Failures of the OAuth, file upload, bot user, and agent
+  operations keep Notion's code but not its message.
 - **Vercel** replaces environment values with `"[redacted]"` instead of
   dropping the field, and withholds Vercel's error text for every reviewed
   operation and every operation whose request takes a credential-named

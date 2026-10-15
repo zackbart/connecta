@@ -527,6 +527,489 @@ describe("notion() value safety", () => {
     const upload = await call(build(), "notion_api_read", { path: "/v1/file_uploads/fu_1" });
     expect(upload.data.upload_url).toBe("https://api.notion.com/v1/file_uploads/fu_1/send");
   });
+  it("INV-5: withholds the signature of every pre-signed link a page's Markdown embeds", async () => {
+    const signed = (name: string) =>
+      `https://prod-files-secure.s3.us-west-2.amazonaws.com/ws/${name}?X-Amz-Algorithm=AWS4-HMAC-SHA256` +
+      "&X-Amz-Credential=ASIAEXAMPLE%2F20261009&X-Amz-Security-Token=SESSION-TOKEN&X-Amz-Signature=SIGNATURE-HEX";
+    const markdown = [
+      "# Report",
+      `![Chart](${signed("chart.png")})`,
+      `<file src="${signed("report.pdf").replaceAll("&", "&amp;")}">Report</file>`,
+      "See [the docs](https://developers.notion.com/reference?topic=markdown) for more.",
+    ].join("\n");
+    queue({
+      body: {
+        object: "page_markdown",
+        id: "page-1",
+        markdown,
+        truncated: false,
+        unknown_block_ids: [],
+      },
+    });
+    const read = await call(build(), "notion_api_read", {
+      path: "/v1/pages/page-1/markdown",
+    });
+    const text: string = read.data.markdown;
+    for (const leaked of ["ASIAEXAMPLE", "SESSION-TOKEN", "SIGNATURE-HEX"]) expect(text).not.toContain(leaked);
+    // The links still name their files, and the attribute keeps its escaping.
+    expect(text).toContain("![Chart](https://prod-files-secure.s3.us-west-2.amazonaws.com/ws/chart.png?[redacted])");
+    expect(text).toContain(
+      '<file src="https://prod-files-secure.s3.us-west-2.amazonaws.com/ws/report.pdf?[redacted]">Report</file>',
+    );
+    // An ordinary link and the surrounding Markdown come back byte for byte.
+    expect(text).toContain("# Report\n");
+    expect(text).toContain("See [the docs](https://developers.notion.com/reference?topic=markdown) for more.");
+  });
+
+  // Synthetic, vendor-shaped payloads: each spelling a Markdown destination or
+  // an HTML attribute allows for the same signed link, the reviews'
+  // reproductions included.
+  const HOST = "prod-files-secure.s3.us-west-2.amazonaws.com";
+  const S3 = `https://${HOST}/ws`;
+  const WRAPPED = [
+    `![a](${S3}/file(1).png?X-Amz-Signature=FAKE_SIGNATURE)`,
+    `<file src="${S3}/file(1).pdf?X-Amz-Signature=FAKE_SIGNATURE">f</file>`,
+    `![a](${S3}/file\\(1\\).png?X-Amz-Signature=FAKE_SIGNATURE)`,
+    `<file src="https://cdn.example/a.pdf?a=1&#38;X-Amz-Signature=FAKE_SIGNATURE"></file>`,
+    `<file src="https://cdn.example/a.pdf?a=1&#x26;X-Amz-Signature=FAKE_SIGNATURE"></file>`,
+    `<file src="${S3}/file).pdf?X-Amz-Signature=FAKE_SIGNATURE">f</file>`,
+    `<file src="${S3}/file.pdf?name=a)b&X-Amz-Signature=FAKE_SIGNATURE">f</file>`,
+    `<${S3}/file).pdf?X-Amz-Signature=FAKE_SIGNATURE>`,
+    `<file src="${S3}/a]b.pdf?X-Amz-Signature=FAKE_SIGNATURE">f</file>`,
+    `<file src="https:&#47;&#47;${HOST}/ws/file.png?X-Amz-Signature=FAKE_SIGNATURE">f</file>`,
+    `<file src="https&colon;&sol;&sol;${HOST}/ws/file.png?table=block&id=ASIAEXAMPLE">f</file>`,
+    `[a](https:\\/\\/${HOST}/ws/file.png?X-Amz-Signature=FAKE_SIGNATURE)`,
+    `<file src="${S3}/a.png?table=block&amp;id=ASIAEXAMPLE">f</file>`,
+  ].join("\n");
+  const PAGE_MARKDOWN = {
+    object: "page_markdown",
+    id: "page-1",
+    markdown: WRAPPED,
+    truncated: false,
+  };
+
+  it("INV-5: withholds signed links behind parentheses and character references on a Markdown read", async () => {
+    queue({ body: PAGE_MARKDOWN });
+    const read = await call(build(), "notion_api_read", {
+      path: "/v1/pages/page-1/markdown",
+    });
+    expect(read.data.markdown).not.toContain("FAKE_SIGNATURE");
+    expect(read.data.markdown).not.toContain("ASIAEXAMPLE");
+    expect(read.data.markdown).toContain(`![a](${S3}/file(1).png?[redacted])`);
+    expect(read.data.markdown).toContain(`<file src="${S3}/file.pdf?[redacted]">f</file>`);
+    expect(read.data.markdown).toContain(`[a](https:\\/\\/${HOST}/ws/file.png?[redacted])`);
+
+    queue({ body: PAGE_MARKDOWN });
+    const selected = await call(build(), "notion_api_read", {
+      path: "/v1/pages/page-1/markdown",
+      select: ["markdown"],
+    });
+    expect(JSON.stringify(selected)).not.toContain("FAKE_SIGNATURE");
+    expect(JSON.stringify(selected)).not.toContain("ASIAEXAMPLE");
+  });
+
+  it("INV-5: withholds signed links in the Markdown a page update answers with", async () => {
+    for (const select of [undefined, ["markdown"]]) {
+      queue({ body: PAGE_MARKDOWN });
+      const written = await call(build(), "notion_api_write", {
+        method: "PATCH",
+        path: "/v1/pages/page-1/markdown",
+        body: { type: "insert_content", insert_content: { content: "More" } },
+        ...(select ? { select } : {}),
+      });
+      expect(JSON.stringify(written)).not.toContain("FAKE_SIGNATURE");
+      expect(JSON.stringify(written)).not.toContain("ASIAEXAMPLE");
+      expect(written.data.markdown).toContain(`<file src="${S3}/file(1).pdf?[redacted]">f</file>`);
+      expect(written.data.markdown).toContain(`<file src="https:&#47;&#47;${HOST}/ws/file.png?[redacted]">f</file>`);
+    }
+  });
+
+  it("INV-5: withholds signed links in an async Markdown update's polled result", async () => {
+    const task = {
+      object: "async_task",
+      id: "task-1",
+      status: "completed",
+      status_url: "https://api.notion.com/v1/async_tasks/task-1",
+      created_time: "2026-10-09T00:00:00.000Z",
+      operation: { surface: "rest", name: "update_page_markdown" },
+      result: { ...PAGE_MARKDOWN, artifacts: [{ arbitrary_key: WRAPPED }] },
+    };
+    queue({ body: task });
+    const polled = await call(build(), "notion_api_read", {
+      path: "/v1/async_tasks/task-1",
+    });
+    expect(JSON.stringify(polled)).not.toContain("FAKE_SIGNATURE");
+    expect(polled.data.result.markdown).toContain(`![a](${S3}/file(1).png?[redacted])`);
+    expect(polled.data.status_url).toBe("https://api.notion.com/v1/async_tasks/task-1");
+
+    queue({ body: task });
+    const selected = await call(build(), "notion_api_read", {
+      path: "/v1/async_tasks/task-1",
+      select: ["result.markdown", "result.artifacts.arbitrary_key"],
+    });
+    expect(JSON.stringify(selected)).not.toContain("FAKE_SIGNATURE");
+    expect(selected.data.result.artifacts[0].arbitrary_key).toContain("?[redacted]");
+  });
+});
+
+describe("notion() value safety: a person's links and read-modify-write", () => {
+  const HOST = "prod-files-secure.s3.us-west-2.amazonaws.com";
+  const AWS_LINK = "https://api-id.execute-api.us-east-1.amazonaws.com/prod/report?reportId=42";
+
+  // Review round 3, finding 2: a host or path that merely contains a
+  // reviewed name is someone else's.
+  const LOOKALIKES = [
+    "https://file.notion.so.example.com/report?reportId=42",
+    "https://file.notion.so;example.com/report?reportId=42",
+    "https://s3.amazonaws.com/prod-files-secure;archive/a.png?v=1",
+    "https://my-prod-files-secure.example.com/report?reportId=42",
+    "https://example.com/prod-files-secure?reportId=42",
+    // Review round 4, finding 1: a name in a path or before userinfo is not the host.
+    "https://example.com/x.file.notion.so/report?reportId=42",
+    "https://example.com//file.notion.so/report?reportId=42",
+    "https://192.0.2.1/x.notionusercontent.com/report?reportId=42",
+    "https://[2001:db8::1]/x.secure.notion-static.com/report?reportId=42",
+    "https://s3.us-west-2.amazonaws.com/prod-files-secure@other/a.png?v=1",
+  ];
+  // In text; as a whole URL field the URL rule withholds its userinfo instead.
+  const USERINFO = "https://file.notion.so@evil.com/report?reportId=42";
+
+  it.each([AWS_LINK, ...LOOKALIKES])(
+    "INV-5: returns a person's link %s unchanged in a URL property and an external cover",
+    async (link) => {
+      const page = {
+        object: "page",
+        id: "page-1",
+        cover: { type: "external", external: { url: link } },
+        properties: { Report: { id: "r", type: "url", url: link } },
+      };
+      queue({ body: page }, { body: page });
+      const read = await call(build(), "notion_api_read", {
+        path: "/v1/pages/page-1",
+      });
+      expect(read.data.cover.external.url).toBe(link);
+      expect(read.data.properties.Report.url).toBe(link);
+      const projected = await call(build(), "integration_get_page", {
+        page_id: "page-1",
+      });
+      expect(projected.properties.Report).toBe(link);
+    },
+  );
+
+  it("INV-5: returns links at look-alike hosts byte for byte in Markdown and admits writes carrying them", async () => {
+    const markdown = [...LOOKALIKES, USERINFO]
+      .map((link, i) => `[r${i}](${link}) <file src="${link}">f</file> ${link}`)
+      .join("\n");
+    queue({
+      body: {
+        object: "page_markdown",
+        id: "page-1",
+        markdown,
+        truncated: false,
+      },
+    });
+    const read = await call(build(), "notion_api_read", {
+      path: "/v1/pages/page-1/markdown",
+    });
+    expect(read.data.markdown).toBe(markdown);
+
+    queue(
+      { body: { object: "page", id: "page-1" } },
+      { body: { object: "page_markdown", id: "page-1", markdown } },
+      { body: { object: "page_markdown", id: "page-1", markdown } },
+    );
+    await call(build(), "notion_api_write", {
+      method: "PATCH",
+      path: "/v1/pages/page-1",
+      body: { cover: { type: "external", external: { url: LOOKALIKES[0] } } },
+    });
+    await call(build(), "notion_api_write", {
+      method: "PATCH",
+      path: "/v1/pages/page-1/markdown",
+      body: { type: "insert_content", insert_content: { content: markdown } },
+    });
+    // A placeholder in their own queries is theirs too.
+    await call(build(), "notion_api_write", {
+      method: "PATCH",
+      path: "/v1/pages/page-1/markdown",
+      body: {
+        type: "insert_content",
+        insert_content: { content: markdown.replaceAll("?", "?[redacted]&") },
+      },
+    });
+    // The read, then all three writes.
+    expect(calls).toHaveLength(4);
+  });
+
+  it("INV-5: returns a person's links in page Markdown and rich text byte for byte", async () => {
+    const markdown = [
+      `[report](${AWS_LINK}) and [login](https://app.example/cb?code=abc&name=x).`,
+      "![chart](https://cdn.example/chart(1).png?width=200)",
+    ].join("\n");
+    queue({
+      body: {
+        object: "page_markdown",
+        id: "page-1",
+        markdown,
+        truncated: false,
+      },
+    });
+    const read = await call(build(), "notion_api_read", {
+      path: "/v1/pages/page-1/markdown",
+    });
+    expect(read.data.markdown).toBe(markdown);
+
+    const run = {
+      type: "text",
+      text: {
+        content: "login",
+        link: { url: "https://app.example/cb?state=s" },
+      },
+      plain_text: "login",
+      href: "https://app.example/cb?state=s",
+    };
+    queue({
+      body: {
+        object: "block",
+        id: "b1",
+        type: "paragraph",
+        paragraph: { rich_text: [run] },
+      },
+    });
+    const block = await call(build(), "notion_api_read", {
+      path: "/v1/blocks/b1",
+    });
+    expect(block.data.paragraph.rich_text[0]).toEqual(run);
+  });
+
+  it("INV-5: refuses a write that copies a withheld file link back, before any request", async () => {
+    const writes: Array<[string, Record<string, unknown>]> = [
+      [
+        "notion_api_write",
+        {
+          method: "PATCH",
+          path: "/v1/pages/page-1",
+          body: {
+            cover: {
+              type: "external",
+              external: { url: `https://${HOST}/ws/c.png?[redacted]` },
+            },
+          },
+        },
+      ],
+      [
+        "notion_api_write",
+        {
+          method: "PATCH",
+          path: "/v1/pages/page-1/markdown",
+          body: {
+            type: "replace_content",
+            replace_content: {
+              new_str: `<file src="https://${HOST}/ws/a.pdf?X-Amz-Signature=%5Bredacted%5D">f</file>`,
+            },
+          },
+        },
+      ],
+      [
+        "integration_append_blocks",
+        {
+          block_id: "page-1",
+          children: [
+            {
+              object: "block",
+              type: "image",
+              image: {
+                type: "external",
+                external: {
+                  url: "https://file.notion.so/f/f/a.png?[redacted]",
+                },
+              },
+            },
+          ],
+        },
+      ],
+    ];
+    for (const [tool, args] of writes) {
+      const error = await refusal(call(build(), tool, args));
+      expect(error.code).toBe("invalid_args");
+      expect(error.message).toContain("cannot be copied into a write");
+    }
+    expect(calls).toHaveLength(0);
+
+    // The placeholder alone, away from a Notion file host, is a person's text.
+    queue({ body: { object: "page", id: "page-1" } });
+    await call(build(), "notion_api_write", {
+      method: "PATCH",
+      path: "/v1/pages/page-1",
+      body: {
+        properties: {
+          Note: {
+            rich_text: [{ text: { content: "[redacted] https://example.com/a?b=1" } }],
+          },
+        },
+      },
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  // Review round 3, finding 3: the placeholder itself, however encoded, and
+  // never the word inside another value.
+  const insert = (content: string) => ({
+    method: "PATCH",
+    path: "/v1/pages/page-1/markdown",
+    body: { type: "insert_content", insert_content: { content } },
+  });
+
+  it.each([
+    ["percent-encoded", "![a](https://file.notion.so/f/f/a.png?%5B%72%65%64%61%63%74%65%64%5D)"],
+    ["entity-encoded", '<file src="https://file.notion.so/f/f/a.pdf?&#91;redac&#116;ed&#93;">f</file>'],
+    ["double percent-encoded", `![a](https://${HOST}/ws/a.png?X-Amz-Signature=%255Bredacted%255D)`],
+  ])("INV-5: refuses a write carrying the placeholder %s on a Notion file link", async (_, content) => {
+    const error = await refusal(call(build(), "notion_api_write", insert(content)));
+    expect(error.code).toBe("invalid_args");
+    expect(error.message).toContain("cannot be copied into a write");
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each(["a.png", "a(1).png", "a\\(1\\).png", "a\\).png"])(
+    "INV-5: refuses a withheld destination after an adjacent fresh file named %s before dispatch",
+    async (filename) => {
+      for (const first of ["", "?label=unredacted", "#top"]) {
+        for (const separator of ["", ",", ";"]) {
+          for (const opener of ["?", "#"]) {
+            for (const image of ["", "!"]) {
+              const content = `![first](https://file.notion.so/f/${filename}${first})${separator}${image}[second](https://${HOST}/b.png${opener}%5Bredacted%5D)`;
+              const error = await refusal(call(build(), "notion_api_write", insert(content)));
+              expect(error.code, content).toBe("invalid_args");
+              expect(error.message).toContain("cannot be copied into a write");
+            }
+          }
+        }
+      }
+      expect(calls).toHaveLength(0);
+    },
+  );
+
+  it.each([" ", "\t", "\n", "\r", "\r\n", " \t\n\t "])(
+    "INV-5: admits an outside marker after a destination with leading whitespace %j and refuses an inside marker",
+    async (space) => {
+      const start = `[f](${space}https://file.notion.so/f/a(1).png`;
+      const content = `${start}?label=unredacted)[redacted]`;
+      queue({ body: { object: "page_markdown", id: "page-1", markdown: "Saved" } });
+      await call(build(), "notion_api_write", insert(content));
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.body.insert_content.content).toBe(content);
+      for (const opener of ["?", "#"]) {
+        const error = await refusal(call(build(), "notion_api_write", insert(`${start}${opener}%5Bredacted%5D)`)));
+        expect(error.code).toBe("invalid_args");
+        expect(error.message).toContain("cannot be copied into a write");
+      }
+      expect(calls).toHaveLength(1);
+    },
+  );
+
+  const PROXIES = [
+    "https://example.com/image?url=https://file.notion.so/f/f/a.png?table=block&id=42&width=400",
+    "https://example.com/image?url=//file.notion.so/f/f/a.png?id=42",
+    "https://example.com/proxy/https://file.notion.so/f/f/a.png?id=42",
+    "/proxy/https://file.notion.so/f/f/a.png?id=42",
+    "https://example.com/image?url=https%3A%2F%2Ffile.notion.so%2Fa.png%3Fid%3D42",
+    `https://example.com/image?url=https://${HOST}/a.png?id=42`,
+    "https://example.com/image?url=https://s3.amazonaws.com/prod-files-secure/a.png?id=42",
+  ];
+
+  it.each(PROXIES)(
+    "INV-5: preserves a proxy URL through fields, select, named tools, Markdown, and writes: %s",
+    async (link) => {
+      const page = {
+        object: "page",
+        id: "page-1",
+        cover: { type: "external", external: { url: link } },
+        properties: { Report: { id: "r", type: "url", url: link } },
+      };
+      queue({ body: page }, { body: page }, { body: page });
+      const read = await call(build(), "notion_api_read", { path: "/v1/pages/page-1" });
+      expect(read.data).toEqual(page);
+      const selected = await call(build(), "notion_api_read", {
+        path: "/v1/pages/page-1",
+        select: ["cover.external.url", "properties.Report.url"],
+      });
+      expect(selected.data).toEqual({ cover: { external: { url: link } }, properties: { Report: { url: link } } });
+      const named = await call(build(), "integration_get_page", { page_id: "page-1", properties: ["Report"] });
+      expect(named.properties.Report).toBe(link);
+      const markdown = `[r](${link}) ![i]( \t${link}) <file src="${link}">f</file>`;
+      const body = { object: "page_markdown", id: "page-1", markdown };
+      queue({ body }, { body });
+      expect((await call(build(), "notion_api_read", { path: "/v1/pages/page-1/markdown" })).data.markdown).toBe(
+        markdown,
+      );
+      expect(
+        (await call(build(), "notion_api_read", { path: "/v1/pages/page-1/markdown", select: ["markdown"] })).data
+          .markdown,
+      ).toBe(markdown);
+      for (const value of [link, link.replace("42", "%5Bredacted%5D")]) {
+        queue({ body: page }, { body: { ...body, markdown: value } });
+        await call(build(), "notion_api_write", {
+          method: "PATCH",
+          path: "/v1/pages/page-1",
+          body: { cover: { type: "external", external: { url: value } }, properties: { Report: { url: value } } },
+        });
+        expect(calls.at(-1)!.body.cover.external.url).toBe(value);
+        const content = `[r](${value})`;
+        await call(build(), "notion_api_write", insert(content));
+        expect(calls.at(-1)!.body.insert_content.content).toBe(content);
+      }
+      expect(calls).toHaveLength(9);
+    },
+  );
+
+  it("INV-5: withholds signing parameter values inside external proxies through every projection", async () => {
+    for (const proxy of PROXIES) {
+      const link = `${proxy}&X-Amz-Signature=FAKE_SIGNATURE&X-Goog-Credential=ASIAEXAMPLE&width=400`;
+      const expected = link.replace("FAKE_SIGNATURE", "[redacted]").replace("ASIAEXAMPLE", "[redacted]");
+      const page = { object: "page", id: "page-1", properties: { Report: { id: "r", type: "url", url: link } } };
+      queue({ body: page }, { body: page }, { body: page });
+      // The shared whole-URL heuristic URL-encodes its placeholders on absolute URLs.
+      const clean = new URL(link, "https://relative.example");
+      clean.searchParams.set("X-Amz-Signature", "[redacted]");
+      clean.searchParams.set("X-Goog-Credential", "[redacted]");
+      const field = link.startsWith("https:") ? clean.toString() : expected;
+      const read = await call(build(), "notion_api_read", { path: "/v1/pages/page-1" });
+      expect(read.data.properties.Report.url).toBe(field);
+      const selected = await call(build(), "notion_api_read", {
+        path: "/v1/pages/page-1",
+        select: ["properties.Report.url"],
+      });
+      expect(selected.data.properties.Report.url).toBe(field);
+      const named = await call(build(), "integration_get_page", { page_id: "page-1" });
+      expect(named.properties.Report).toBe(field);
+      const markdown = `[r](${link})`;
+      queue({ body: { object: "page_markdown", id: "page-1", markdown } });
+      const readMarkdown = await call(build(), "notion_api_read", {
+        path: "/v1/pages/page-1/markdown",
+        select: ["markdown"],
+      });
+      expect(readMarkdown.data.markdown).toBe(`[r](${expected})`);
+    }
+  });
+
+  it.each([
+    ["a value containing the word", "[a](https://file.notion.so/f/f/a.png?label=unredacted)"],
+    ["a filename containing the word", "![a](https://file.notion.so/f/f/redacted-report.png?table=block)"],
+    ["a query value starting with the word", "![a](https://file.notion.so/f/f/a.png?name=redacted-report)"],
+    ["the placeholder as text beside a file link", "[redacted] ![a](https://file.notion.so/f/f/a.png)"],
+    // Review round 4, finding 2: text after the link's closing parenthesis is not its query.
+    [
+      "the placeholder as text after a closed link",
+      "[file](https://file.notion.so/f/f/a.png?label=unredacted)[redacted]",
+    ],
+  ])("INV-5: admits a write with %s", async (_, content) => {
+    queue({
+      body: { object: "page_markdown", id: "page-1", markdown: content },
+    });
+    await call(build(), "notion_api_write", insert(content));
+    expect(calls).toHaveLength(1);
+  });
 });
 
 describe("notion() generic REST tools", () => {
@@ -1423,6 +1906,48 @@ describe("notion() error mapping", () => {
     expect(created.message).toContain("committed the write");
     expect(created.message).not.toContain("SECRET-");
     expect(calls).toHaveLength(2);
+  });
+
+  caseOf("INV-5: withholds signed file links that Notion's error text echoes", async () => {
+    const signed = "https://prod-files-secure.s3.us-west-2.amazonaws.com/ws/a.png?X-Amz-Signature=FAKE_SIGNATURE";
+    queue({
+      status: 400,
+      body: {
+        code: "validation_error",
+        message: `old_str not found near ![a](${signed})`,
+      },
+    });
+    const error = await call(build(), "notion_api_write", {
+      method: "PATCH",
+      path: "/v1/pages/page-1/markdown",
+      body: {
+        type: "update_content",
+        update_content: { content_updates: [{ old_str: "x", new_str: "y" }] },
+      },
+    }).catch((thrown: any) => thrown);
+    expect(error.code).toBe("invalid_args");
+    expect(error.message).toContain("prod-files-secure.s3.us-west-2.amazonaws.com/ws/a.png?[redacted])");
+    expect(error.message).not.toContain("FAKE_SIGNATURE");
+
+    queue({
+      status: 503,
+      body: {
+        code: "service_unavailable",
+        message: "Saved.",
+        additional_data: { retry_guidance: [`Read ${signed} again.`] },
+      },
+    });
+    const updated = await call(build(), "notion_api_write", {
+      method: "PATCH",
+      path: "/v1/pages/page-1",
+      body: { properties: { Done: { checkbox: true } } },
+    }).catch((thrown: any) => thrown);
+    expect(updated).toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+    });
+    expect(updated.message).toContain("Notion's guidance: Read");
+    expect(updated.message).not.toContain("FAKE_SIGNATURE");
   });
 
   caseOf("survives an error body that is not JSON", async () => {

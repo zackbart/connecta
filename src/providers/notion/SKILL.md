@@ -89,13 +89,33 @@ Hosted Notion MCP is a separate OAuth connector.
 - Refused by design: Notion's OAuth token endpoints (`/v1/oauth/*`) and
   multipart file sends. Import a file with `POST /v1/file_uploads` and
   `mode: "external_url"` instead.
-- Notion-hosted file URLs in pages and blocks are pre-signed: Connecta
-  withholds their signature, credential, and security-token parameters, so a
-  returned URL names the file but does not download it. File links inside
-  page Markdown come back as Notion sent them: use one only for its download
-  and do not repeat it in replies. Credential-named
-  fields read as `"[redacted]"`, a database property named like a credential
-  (`API token`) included. Failures of the OAuth, file upload, bot user, and
+- Notion-minted file links lose their whole query and fragment wherever
+  they appear, including page Markdown, async task results, and error text.
+  Connecta matches the actual authority: `file.notion.so`,
+  `secure.notion-static.com`, `notionusercontent.com` and their subdomains,
+  or the `prod-files-secure` and `secure.notion-static.com` S3 buckets,
+  virtual-hosted or exactly the first path segment on an S3 endpoint.
+  Escaped schemes, slashes, and query/fragment openers are recognized. The
+  withheld span runs through the next whitespace, quote, or angle bracket;
+  trailing closing punctuation comes back. A returned file URL names the
+  file but cannot download it. Links at other authorities, including proxy
+  URLs with a Notion URL inside their path or query, come back as written.
+  AWS `X-Amz-*` and Google `X-Goog-*` signing `Signature`, `Credential`, and
+  `Security-Token` values are withheld at any host.
+- A write whose Notion file link carries the exact `[redacted]` placeholder
+  in its own query or fragment, plain or up to four layers encoded, is
+  refused before dispatch. Each inline Markdown destination is checked,
+  including adjacent links and images, balanced or escaped parentheses, and
+  leading spaces, tabs, or one line ending. A marker after the destination's
+  close is ordinary text. To keep a file, leave its block in place or
+  re-upload it with `POST /v1/file_uploads`; to edit Markdown around media,
+  match `old_str` on nearby text rather than the withheld URL.
+- Each string is scanned separately. Links split across rich-text runs,
+  encoded hostnames or signing-parameter names, bare hosts without `//`,
+  and userinfo before a Notion host are outside this scan's threat model.
+  The shared URL rule still removes userinfo from whole URL fields.
+  Credential-named fields read as `"[redacted]"`, a database property named
+  like a credential (`API token`) included. Failures of the OAuth, file upload, bot user, and
   agent operations carry Notion's code, not its message.
 - Not here: the hosted MCP's user identity, its search across connected
   apps, page duplication, team and skill search, attachment downloads, and
@@ -132,8 +152,9 @@ So the sequence for "find rows in this database" is the database read, then
   `{ name, id }`; read the complete value with `notion_api_read`
   `GET /v1/pages/{page_id}/properties/{property_id}` and follow its cursor.
 - Every named read projects Notion's payload to ids, plain text, and
-  flattened property values. Pass `raw: true` for Notion's untouched response
-  when a specific field is missing. It is much larger. Narrow
+  flattened property values. Pass `raw: true` for the full response, with
+  the same value-safety redaction, when a specific field is missing. It is
+  much larger. Narrow
   `integration_query_data_source` and `integration_get_page` with `properties`
   when the goal is fewer fields. `integration_get_page_content` with
   `raw: true` returns one level and ignores `depth`.
