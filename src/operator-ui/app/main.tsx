@@ -29,7 +29,7 @@ import {
   focusHandled,
   forgetBearer,
   getState,
-  loadOperatorContract,
+  retryLoad,
   loadActivity,
   loadAccessTokens,
   signIn,
@@ -145,6 +145,9 @@ function Gate({ state }: { state: OperatorState }) {
           </div>
         ) : auth.kind === "cloudflare-access" ? (
           <div className="actions">
+            <button className="btn primary" type="button" onClick={() => void retryLoad()}>
+              Retry
+            </button>
             <button className="btn" type="button" onClick={signOut}>
               Sign out of Cloudflare Access
             </button>
@@ -203,7 +206,6 @@ function OperatorApp() {
   // identity opens it, and again after an identity change resets it to idle.
   useEffect(() => {
     if (!ready) return;
-    if (state.data && state.contractPhase === "idle") void loadOperatorContract();
     if (state.page === "tokens" && state.data?.accessTokenManagement === "available" && state.tokenPhase === "idle") {
       void loadAccessTokens();
     }

@@ -575,12 +575,12 @@ describe("status UI credential management", () => {
     );
     const payload = (await data.json()) as any;
     expect(payload.connectors[0].credential).toMatchObject({
-      configured: false,
+      configured: null,
       removable: true,
       error: "Stored credential could not be read.",
       fields: [
-        { name: "email", inputType: "email", configured: false },
-        { name: "apiKey", inputType: "password", configured: false },
+        { name: "email", inputType: "email", configured: null },
+        { name: "apiKey", inputType: "password", configured: null },
       ],
     });
 

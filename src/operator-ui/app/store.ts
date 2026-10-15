@@ -112,6 +112,10 @@ function gate(notice: Notice | null = null): void {
   queryClient.clear();
   forgetNav();
   awaitingAuthorization.clear();
+  clearTimeout(oauthPollTimer);
+  clearTimeout(recoveryTimer);
+  recoveryTimer = undefined;
+  oauthPollTimer = undefined;
   state = resetIdentity(state, notice);
   for (const listener of listeners) listener();
 }
@@ -193,12 +197,16 @@ async function operatorRequest(
 }
 
 /**
- * `/ui/data` could not be read, and not because of the session. The page
- * stays signed in with its chrome and says so; a 500 or a dropped connection
- * is no reason to ask for a token again.
+ * A failed Access summary cannot establish an identity. Other auth modes keep
+ * their existing signed-in error page. Both can retry the read.
  */
 function unreachable(loadFailure: "server" | "network"): void {
-  set({ session: "ready", gate: null, refreshing: false, loadFailure });
+  if (auth.kind === "cloudflare-access") {
+    gate(failure("Cloudflare Access identity is unavailable. Retry to check your session."));
+  } else {
+    set({ session: "ready", gate: null, refreshing: false, loadFailure });
+  }
+  scheduleRecovery();
 }
 
 let dataRevision = 0;
@@ -207,6 +215,7 @@ let dataRevision = 0;
 async function loadData(): Promise<void> {
   const identityCurrent = fence();
   const revision = ++dataRevision;
+  ++snapshotRevision;
   const current = () => identityCurrent() && revision === dataRevision;
   set(state.session === "ready" ? { refreshing: true, loadFailure: null } : { loadFailure: null });
   let token;
@@ -231,16 +240,18 @@ async function loadData(): Promise<void> {
   if (!current()) return;
   if (res.status === 401 || res.status === 403) {
     if (auth.kind === "clerk") {
-      return gate(
+      gate(
         failure(
           res.status === 403
             ? `This Clerk account can't open ${productName}'s operator pages.`
             : "Your Clerk session wasn't accepted. Sign out, then sign in again.",
         ),
       );
+      return scheduleRecovery();
     }
     if (auth.kind === "cloudflare-access") {
-      return gate(failure("Cloudflare Access let this browser in, but this identity isn't an operator here."));
+      gate(failure("Cloudflare Access did not accept this identity for operator pages. Retry to check again."));
+      return scheduleRecovery();
     }
     localStorage.removeItem(TOKEN_KEY);
     return gate(failure("That token wasn't accepted. Paste a valid operator token."));
@@ -256,21 +267,76 @@ async function loadData(): Promise<void> {
   if (!current()) return;
   if (!data || !Array.isArray(data.connectors)) return unreachable("server");
   rememberNav(data);
-  set({ data, session: "ready", gate: null, refreshing: false, loadFailure: null });
-  void loadConnectorDetails(data, current, token);
+  set({
+    data,
+    contract: null,
+    contractPhase: "loading",
+    session: "ready",
+    gate: null,
+    refreshing: false,
+    loadFailure: null,
+  });
+  void loadOperatorContract();
 }
 
-/** The typed read model uses the same token and identity fence as mutations. */
-let contractRevision = 0;
-export async function loadOperatorContract(): Promise<void> {
+/** Catalog and auth controls publish together, guarded by one refresh revision. */
+let snapshotRevision = 0;
+export function loadOperatorContract(): Promise<void> {
+  return refreshSnapshot();
+}
+
+async function refreshSnapshot(quiet = false): Promise<void> {
   const identityCurrent = fence();
-  const revision = ++contractRevision;
-  const current = () => identityCurrent() && revision === contractRevision;
-  set({ contractPhase: "loading" });
+  const revision = ++snapshotRevision;
+  const current = () => identityCurrent() && revision === snapshotRevision;
+  const data = state.data;
+  if (!data) return;
+  if (!quiet) set({ contractPhase: "loading" });
+  let token;
   try {
-    const token = await sessionToken();
+    token = await sessionToken();
+  } catch {
     if (!current()) return;
-    const contract = await queryClient.fetchQuery({
+    gate(failure("Your sign-in session couldn't be read. Retry to check again."));
+    scheduleRecovery();
+    return;
+  }
+  if (!current()) return;
+  const outcomes = new Map<string, DetailOutcome>();
+  let loadedContract: OperatorUiContract | null | undefined;
+  const publish = () => {
+    if (!current() || loadedContract === undefined) return;
+    // Publish each completed connector with its matching catalog facts. A slow
+    // provider leaves other rows usable; pending rows retain their last pair.
+    const contract = loadedContract
+      ? {
+          ...loadedContract,
+          live: {
+            ...loadedContract.live,
+            connectors: loadedContract.live.connectors.map((live) =>
+              outcomes.has(live.id)
+                ? live
+                : (state.contract?.live.connectors.find((previous) => previous.id === live.id) ?? live),
+            ),
+          },
+        }
+      : null;
+    set({ ...detailsPatch(outcomes, quiet, contract), contract, contractPhase: contract ? "ready" : "error" });
+  };
+  const connectors = data.connectors;
+  let next = 0;
+  const worker = async () => {
+    while (next < connectors.length && current()) {
+      const connector = connectors[next++]!;
+      const outcome = await readConnector(connector.id, token, revision);
+      if (current()) {
+        outcomes.set(connector.id, outcome);
+        publish();
+      }
+    }
+  };
+  const contractRead = queryClient
+    .fetchQuery({
       queryKey: ["operator-config", state.generation, revision],
       queryFn: async ({ signal }) => {
         const response = await fetch("/ui/api/config", {
@@ -285,14 +351,31 @@ export async function loadOperatorContract(): Promise<void> {
           throw new RequestFailure("refused");
         return value;
       },
+    })
+    .then(
+      (contract) => ({ contract, error: undefined }),
+      (error: unknown) => ({ contract: undefined, error }),
+    )
+    .then((result) => {
+      if (!current()) return;
+      if (result.error instanceof RequestFailure && result.error.kind === "session") {
+        gate(failure("Your session cannot read this configuration. Retry to check again."));
+        scheduleRecovery();
+      } else {
+        loadedContract = result.contract ?? null;
+        publish();
+      }
     });
-    if (current()) set({ contract, contractPhase: "ready" });
-  } catch (error) {
-    if (!current()) return;
-    if (error instanceof RequestFailure && error.kind === "session")
-      return gate(failure("Your session cannot read this configuration. Sign in again."));
-    set({ contract: null, contractPhase: "error" });
-  }
+  await Promise.all([contractRead, ...Array.from({ length: Math.min(4, connectors.length) }, worker)]);
+  if (!current()) return;
+  const needsRecovery =
+    !loadedContract ||
+    Object.keys(state.connectorFailures).length > 0 ||
+    [...outcomes.values()].some(
+      (outcome) => outcome.kind !== "detail" || outcome.detail.credential?.problem === "credential_unreadable",
+    );
+  if (needsRecovery) scheduleRecovery();
+  else resetRecovery();
 }
 
 /**
@@ -311,7 +394,7 @@ async function mutate(options: {
   reload?: string | undefined;
 }): Promise<void> {
   const current = fence();
-  if (options.reload) detailRevisions.set(options.reload, (detailRevisions.get(options.reload) ?? 0) + 1);
+  if (options.reload) ++snapshotRevision;
   set(options.busy);
   try {
     const payload = await options.request(current);
@@ -367,6 +450,7 @@ export function setActivitySearch(activitySearch: string): void {
 /* Bearer sign-in ---------------------------------------------------------- */
 
 export function signInWithBearer(value: string): void {
+  resetRecovery();
   gate(null);
   localStorage.setItem(TOKEN_KEY, value);
   void loadCurrent().then(() => {
@@ -375,6 +459,7 @@ export function signInWithBearer(value: string): void {
 }
 
 export function forgetBearer(): void {
+  resetRecovery();
   localStorage.removeItem(TOKEN_KEY);
   gate(null);
   set({ pendingFocus: "token" });
@@ -414,7 +499,31 @@ function oauthStartPath(connector: string, mode: OAuthStartMode): string {
  * their status — and only their status: a status read never starts
  * authorization, so nothing here can open another consent screen.
  */
-const awaitingAuthorization = new Set<string>();
+const awaitingAuthorization = new Map<string, number>();
+let oauthPollTimer: ReturnType<typeof setTimeout> | undefined;
+const OAUTH_POLL_INTERVAL_MS = 2000;
+const OAUTH_POLL_WINDOW_MS = 30_000;
+
+function scheduleOAuthPoll(): void {
+  if (oauthPollTimer !== undefined || awaitingAuthorization.size === 0) return;
+  const current = fence();
+  oauthPollTimer = setTimeout(async () => {
+    oauthPollTimer = undefined;
+    if (!current()) return;
+    for (const [id, deadline] of awaitingAuthorization) {
+      if (Date.now() >= deadline) awaitingAuthorization.delete(id);
+    }
+    if (awaitingAuthorization.size === 0) return;
+    if (
+      (typeof document === "undefined" || document.visibilityState !== "hidden") &&
+      state.session === "ready" &&
+      !state.oauthBusy
+    ) {
+      await refreshSnapshot(true);
+    }
+    scheduleOAuthPoll();
+  }, OAUTH_POLL_INTERVAL_MS);
+}
 
 /**
  * A blank tab, opened while the click that asked for it is still on the
@@ -479,16 +588,15 @@ export function startOAuth(connector: string, mode: OAuthStartMode): Promise<voi
         tab.opener = null;
         tab.location.replace(url);
       }
-      awaitingAuthorization.add(connector);
+      awaitingAuthorization.set(connector, Date.now() + OAUTH_POLL_WINDOW_MS);
+      scheduleOAuthPoll();
       return {
         ...(state.data
           ? {
               data: {
                 ...state.data,
                 connectors: state.data.connectors.map((c) =>
-                  c.id === connector
-                    ? { ...c, status: "auth_required" as const, tools: [], toolCount: 0, authorizationUrl: url }
-                    : c,
+                  c.id === connector ? { ...c, authorizationUrl: url } : c,
                 ),
               },
             }
@@ -510,6 +618,7 @@ export function startOAuth(connector: string, mode: OAuthStartMode): Promise<voi
 }
 
 export function disconnectOAuth(connector: string): Promise<void> {
+  awaitingAuthorization.delete(connector);
   return mutate({
     request: (current) => operatorRequest(`/ui/oauth/${encodeURIComponent(connector)}`, "DELETE", current),
     busy: {
@@ -519,21 +628,7 @@ export function disconnectOAuth(connector: string): Promise<void> {
       oauthBlocked: null,
       confirming: null,
     },
-    done: (payload) => ({
-      ...(state.data
-        ? {
-            data: {
-              ...state.data,
-              connectors: state.data.connectors.map((c) => {
-                if (c.id !== connector) return c;
-                const { authorizationUrl: _old, registrationPath: _path, ...rest } = c;
-                return { ...rest, status: "auth_required" as const, tools: [], toolCount: 0 };
-              }),
-            },
-          }
-        : {}),
-      ...oauthNoticePatch(connector, oauthDoneNotice("oauth_disconnect", payload)),
-    }),
+    done: (payload) => oauthNoticePatch(connector, oauthDoneNotice("oauth_disconnect", payload)),
     failed: (facts) =>
       oauthNoticePatch(connector, actionFailedNotice("oauth_disconnect", connector, facts, productName)),
     reload: connector,
@@ -655,6 +750,7 @@ function loadCurrent(): Promise<void> {
  * region being reloaded instead of dropping to the page.
  */
 export function retryLoad(): Promise<void> {
+  resetRecovery();
   set({
     pendingFocus: `${state.page}Heading`,
   });
@@ -678,6 +774,7 @@ export function signIn(): void {
 }
 
 export function signOut(): void {
+  resetRecovery();
   if (auth.kind === "cloudflare-access") {
     gate(null);
     window.location.assign("/cdn-cgi/access/logout");
@@ -711,18 +808,42 @@ function onReturn(): void {
   }, RETURN_DEBOUNCE_MS);
 }
 
+const RECOVERY_DELAYS_MS = [1000, 2000, 4000, 8000];
+let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
+let recoveryAttempt = 0;
+
+function resetRecovery(): void {
+  clearTimeout(recoveryTimer);
+  recoveryTimer = undefined;
+  recoveryAttempt = 0;
+}
+
+function scheduleRecovery(): void {
+  if (recoveryTimer !== undefined || recoveryAttempt >= RECOVERY_DELAYS_MS.length) return;
+  const current = fence();
+  recoveryTimer = setTimeout(() => {
+    recoveryTimer = undefined;
+    if (current()) void loadCurrent();
+  }, RECOVERY_DELAYS_MS[recoveryAttempt++]);
+}
+
 function recheckAuthorization(): void {
-  if (state.session !== "ready" || !state.data) return;
-  for (const connector of state.data.connectors) {
-    if (state.oauthBusy === connector.id) continue;
-    // Only authorization that happens in another tab can change while this
-    // one is away; a credential slot is filled on this page.
-    const authorizesElsewhere =
-      connector.status === "auth_required" && (connector.oauth === true || Boolean(connector.authorizationUrl));
-    if (authorizesElsewhere || awaitingAuthorization.has(connector.id)) {
-      void refreshConnector(connector.id, true);
-    }
+  // Focus is also a way out of a refusal. It only re-requests admission.
+  resetRecovery();
+  if (state.session !== "ready" || !state.data || state.loadFailure || state.contractPhase === "error") {
+    void loadCurrent();
+    return;
   }
+  const retry =
+    Object.keys(state.connectorFailures).length > 0 ||
+    state.data.connectors.some(
+      (connector) =>
+        connector.status === "error" ||
+        connector.credential?.problem === "credential_unreadable" ||
+        (connector.status === "auth_required" && (connector.oauth || connector.authorizationUrl)) ||
+        awaitingAuthorization.has(connector.id),
+    );
+  if (retry && !state.oauthBusy) void refreshSnapshot(true);
 }
 
 export async function boot(): Promise<void> {
@@ -756,6 +877,7 @@ export async function boot(): Promise<void> {
         // Clerk has already updated its public session before notifying
         // listeners. Clear synchronously so stale identity-scoped data cannot
         // be repainted while the replacement identity is being fetched.
+        resetRecovery();
         gate(null);
         void loadCurrent();
       });
@@ -779,23 +901,26 @@ type DetailOutcome =
   | { kind: "local"; failure: ConnectorLoadFailure }
   | { kind: "downstream" };
 
-async function readConnector(id: string, token: string | null | undefined): Promise<DetailOutcome> {
+async function readConnector(id: string, token: string | null | undefined, revision: number): Promise<DetailOutcome> {
   try {
     return await queryClient.fetchQuery({
-      queryKey: ["connector", state.generation, id, detailRevisions.get(id) ?? 0],
-      queryFn: () => fetchConnector(id, token),
+      queryKey: ["connector", state.generation, id, revision],
+      queryFn: ({ signal }) => fetchConnector(id, token, signal),
     });
   } catch (error) {
-    // Clearing an identity's cache cancels pending Query promises. The session
-    // fence drops this outcome; consume the rejection even on background loads.
     return { kind: "local", failure: isCancelledError(error) ? "session" : "network" };
   }
 }
 
-async function fetchConnector(id: string, token: string | null | undefined): Promise<DetailOutcome> {
+async function fetchConnector(
+  id: string,
+  token: string | null | undefined,
+  signal: AbortSignal,
+): Promise<DetailOutcome> {
   let response: Response;
   try {
     response = await fetch(`/ui/connectors/${encodeURIComponent(id)}`, {
+      signal,
       headers: requestHeaders(token),
       credentials: "same-origin",
     });
@@ -804,6 +929,14 @@ async function fetchConnector(id: string, token: string | null | undefined): Pro
   }
   if (response.status === 401 || response.status === 403) {
     return { kind: "local", failure: "session" };
+  }
+  if (response.status === 503) {
+    try {
+      const payload = (await response.json()) as { problem?: unknown };
+      if (payload.problem === "identity_unavailable") return { kind: "local", failure: "unavailable" };
+    } catch {
+      /* The status still refuses this read. */
+    }
   }
   if (!response.ok) return { kind: "downstream" };
   try {
@@ -818,92 +951,84 @@ function withoutKey<T>(record: Readonly<Record<string, T>>, key: string): Record
   return rest;
 }
 
-/** Land one connector's outcome on screen. */
-function applyDetail(id: string, outcome: DetailOutcome): void {
-  if (!state.data) return;
+/** Build one atomic patch for all connector auth controls and catalog facts. */
+function detailsPatch(
+  outcomes: Map<string, DetailOutcome>,
+  quiet: boolean,
+  contract: OperatorUiContract | null,
+): Partial<OperatorState> {
+  if (!state.data) return {};
+  let connectorFailures = state.connectorFailures;
   const patch: Partial<OperatorState> = {};
-  const connectors = state.data.connectors.map((c) => {
-    if (c.id !== id) return c;
-    if (outcome.kind === "detail") {
-      const { detail } = outcome;
-      return detail.status === "auth_required" && c.authorizationUrl && !detail.authorizationUrl
-        ? { ...detail, authorizationUrl: c.authorizationUrl }
-        : detail;
-    }
-    const { problem: _problem, ...rest } = c;
-    return outcome.kind === "downstream"
-      ? { ...rest, status: "error" as const, problem: "connector_unavailable" as const }
-      : { ...rest, status: "error" as const };
-  });
-  patch.connectorFailures =
-    outcome.kind === "local"
-      ? { ...state.connectorFailures, [id]: outcome.failure }
-      : withoutKey(state.connectorFailures, id);
-  // Authorization finished elsewhere: this row now says so in its own words.
-  if (outcome.kind === "detail" && outcome.detail.status === "ok" && awaitingAuthorization.delete(id)) {
-    if (state.oauthNoticeFor === id) {
-      patch.oauthNotice = info("Connected.");
-      patch.oauthBlocked = null;
-    }
-  }
-  set({ ...patch, data: { ...state.data, connectors }, ...(state.contract ? { contractPhase: "idle" } : {}) });
+  const connectors = state.data.connectors
+    .filter((c) => !contract || contract.config.connectors.some((v) => v.id === c.id))
+    .map((c) => {
+      const outcome = outcomes.get(c.id);
+      if (!outcome) return c;
+      if (outcome && !(quiet && outcome.kind !== "detail"))
+        connectorFailures =
+          outcome.kind === "local"
+            ? { ...connectorFailures, [c.id]: outcome.failure }
+            : withoutKey(connectorFailures, c.id);
+      if (outcome && outcome.kind !== "detail" && !quiet) {
+        const live = contract?.live.connectors.find((v) => v.id === c.id);
+        if (live) {
+          live.status = "error";
+          live.problem = "connector_unavailable";
+          live.tools = [];
+        }
+        const { problem: _problem, ...rest } = c;
+        return outcome.kind === "downstream"
+          ? { ...rest, status: "error" as const, problem: "connector_unavailable" as const }
+          : { ...rest, status: "error" as const };
+      }
+      const live = contract?.live.connectors.find((v) => v.id === c.id);
+      let detail = outcome?.kind === "detail" ? outcome.detail : c;
+      if (live) {
+        const { problem: _problem, registrationPath: _path, ...rest } = detail;
+        detail = {
+          ...rest,
+          status: live.status,
+          ...(live.problem ? { problem: live.problem } : {}),
+          ...(live.auth ? { registrationPath: live.auth.registrationPath } : {}),
+          tools: live.tools.map((t) => ({
+            name: t.name,
+            address: t.address,
+            ...(t.description ? { description: t.description } : {}),
+            safety: t.classification === "read" ? "runs_in_programs" : "needs_approval",
+          })),
+          toolCount: live.tools.length,
+        };
+      }
+      if (detail.status === "ok" && awaitingAuthorization.delete(c.id) && state.oauthNoticeFor === c.id) {
+        patch.oauthNotice = info("Connected.");
+        patch.oauthBlocked = null;
+      }
+      if (detail.status === "auth_required" && c.authorizationUrl && !detail.authorizationUrl)
+        return { ...detail, authorizationUrl: c.authorizationUrl };
+      if (detail.status === "ok") {
+        const { authorizationUrl: _old, ...rest } = detail;
+        return rest;
+      }
+      return detail;
+    });
+  return { ...patch, connectorFailures, data: { ...state.data, connectors } };
 }
 
-let detailGeneration = 0;
-const detailRevisions = new Map<string, number>();
-async function loadConnectorDetails(
-  data: UiData,
-  current: () => boolean,
-  token: string | null | undefined,
-): Promise<void> {
-  const generation = ++detailGeneration;
-  let next = 0;
-  const worker = async () => {
-    while (next < data.connectors.length && current() && generation === detailGeneration) {
-      const connector = data.connectors[next++]!;
-      const revision = (detailRevisions.get(connector.id) ?? 0) + 1;
-      detailRevisions.set(connector.id, revision);
-      const outcome = await readConnector(connector.id, token);
-      if (!current() || generation !== detailGeneration || !state.data) return;
-      if (detailRevisions.get(connector.id) !== revision) continue;
-      applyDetail(connector.id, outcome);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(4, data.connectors.length) }, worker));
-}
-
-/**
- * Re-read one connector. A `quiet` read — the one a returning tab makes —
- * keeps the row as it is while it waits, and keeps it as it was when the read
- * could not get through: a passive check that fails has nothing new to say.
- */
-export async function refreshConnector(id: string, quiet = false): Promise<void> {
-  const current = fence();
-  const revision = (detailRevisions.get(id) ?? 0) + 1;
-  detailRevisions.set(id, revision);
-  if (!quiet && state.data) {
+/** Refreshes never replay the mutation that caused them. */
+export function refreshConnector(id: string, quiet = false): Promise<void> {
+  if (!state.data?.connectors.some((connector) => connector.id === id)) return Promise.resolve();
+  if (!quiet && state.data)
     set({
       data: {
         ...state.data,
-        connectors: state.data.connectors.map((c) => (c.id === id ? { ...c, status: "loading" } : c)),
+        connectors: state.data.connectors.map((connector) =>
+          connector.id === id ? { ...connector, status: "loading" } : connector,
+        ),
       },
       connectorFailures: withoutKey(state.connectorFailures, id),
     });
-  }
-  let token;
-  try {
-    token = await sessionToken();
-  } catch {
-    if (!current() || quiet || detailRevisions.get(id) !== revision) return;
-    return applyDetail(id, { kind: "local", failure: "session" });
-  }
-  if (!current()) return;
-  const outcome = await readConnector(id, token);
-  if (!current() || !state.data || detailRevisions.get(id) !== revision) return;
-  // A passive read only reports good news: a transient failure on a focus
-  // check is not a reason to repaint an auth-needed row as broken.
-  if (quiet && outcome.kind !== "detail") return;
-  applyDetail(id, outcome);
+  return refreshSnapshot(quiet);
 }
 
 /* Access tokens ----------------------------------------------------------- */

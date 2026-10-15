@@ -109,7 +109,26 @@ and Workers. HTML contains only mount points and escaped inert configuration;
 it remains uncached. `generated.ts` is ignored and generated before build and
 test; `check:operator-ui` detects stale assets and shared page styles. The UI
 stays behind `./ui`, outside the root import graph. The identity-fenced store
-owns authenticated reads and existing mutations. Endpoints, Connectors, connector
+owns authenticated reads and existing mutations. An Access-only shell selects
+Access even when the HTML request has no trusted context; only authenticated
+API responses establish the session. A gated Access session offers Retry.
+Focus and visibility returns recheck gated or failed reads, and failed reads
+also retry after 1, 2, 4, and 8 seconds. After those four automatic retries,
+Retry or a later focus return starts another bounded attempt. Identity changes
+cancel pending retries and fence out responses from the previous identity.
+
+Catalog and connector auth details share one revisioned refresh cycle. Each
+completed connector publishes its catalog facts and auth controls together,
+while a slow provider leaves other rows usable.
+Catalog refresh, connector refresh, and mutation follow-up reads update both
+consumers together. A later refresh or mutation invalidates an older cycle,
+and a failed contract read clears its old snapshot. After an explicit OAuth
+start, visible tabs poll read-only status every two seconds for up to 30 seconds.
+Success, disconnect, or identity reset ends polling; a focus return can still
+request another status read. Recovery never starts OAuth or replays a mutation.
+Unreadable credential metadata uses `configured: null`, including named fields,
+and renders as unavailable with a retry prompt. It does not claim that the slot
+is empty. Endpoints, Connectors, connector
 detail, and Settings consume the typed contract. Activity retains
 its authenticated data routes. Connector detail tabs live
 in the URL hash; Activity filters live in the query string and apply to loaded

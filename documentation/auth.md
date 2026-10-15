@@ -892,8 +892,12 @@ identity, or unusable user ids refuse. Access service credentials can admit the
 request at the edge, but connecta requires a `cta_` token for machine identity.
 
 It never reads `Cf-Access-Jwt-Assertion`, fetches signing keys, or accepts a
-caller's JWT. Missing context or a throwing lookup fails closed on both
-runtimes. It does not support Node, a `cloudflared` origin, or a Service Binding
+caller's JWT. Missing or malformed trusted context returns 401. A rejected
+human identity, including a service identity or an unusable user id, returns 403. A thrown identity lookup or its five-second deadline returns retryable
+503 with `problem: "identity_unavailable"` and `Retry-After: 1`. Every refusal
+carries `Cache-Control: no-store`. None of these failures admits an identity,
+and an unavailable lookup never falls back to another provider. The operator
+UI can re-request admission after a failure without a browser reload. It does not support Node, a `cloudflared` origin, or a Service Binding
 hop. [Decision 0003](https://github.com/zackbart/connecta/blob/main/decisions/0003-inbound-auth.md) records that boundary
 and replaces #506's provisional verdict with supported Worker Access.
 Connecta configuration still decides connector and management permissions.

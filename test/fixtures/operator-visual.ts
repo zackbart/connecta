@@ -110,11 +110,11 @@ export function operatorVisualVariant(base: OperatorVisualFixture, variant: Visu
     slot.status = slotLive.status = "ok";
     delete slot.problem; delete slotLive.problem;
     if (variant === "credential-mismatch" || variant === "credential-unreadable") {
-      slot.credential.configured = false;
+      slot.credential.configured = variant === "credential-unreadable" ? null : false;
       slot.credential.problem = variant === "credential-mismatch" ? "credential_mismatch" : "credential_unreadable";
       slot.credential.error = variant === "credential-mismatch" ? "Stored fields no longer match the declared credential." : "The stored credential cannot be decrypted.";
-      slot.status = slotLive.status = "credential_required";
-      slot.problem = slotLive.problem = "credential_mismatch";
+      slot.status = slotLive.status = variant === "credential-unreadable" ? "error" : "credential_required";
+      slot.problem = slotLive.problem = variant === "credential-unreadable" ? "connector_unavailable" : "credential_mismatch";
     }
     if (variant === "credential-fields") {
       slot.credential.fields = [

@@ -278,11 +278,12 @@ export function actionFailedNotice(
  * server's `connector_unavailable` and keeps its own copy and fix prompt;
  * these two have nothing for a coding agent to fix.
  */
-export type ConnectorLoadFailure = "session" | "network";
+export type ConnectorLoadFailure = "session" | "network" | "unavailable";
 
 export function connectorLoadFailureCopy(failure: ConnectorLoadFailure, productName: string): string {
+  if (failure === "unavailable") return "Session identity is temporarily unavailable. Retry this connection.";
   return failure === "session"
-    ? "Your session wasn't accepted while loading this connector. Sign in again to see its status."
+    ? "Your session wasn't accepted while loading this connector. Retry to check again. Sign in again if the session keeps failing."
     : `Couldn't reach ${productName} to load this connector. Check your connection, then refresh it.`;
 }
 
@@ -842,17 +843,19 @@ export function activityDetail(event: UiActivityEvent): string {
 export function credentialProblemCopy(problem: string | undefined): string {
   if (problem === "credential_mismatch") return PROBLEM_COPY.credential_mismatch;
   if (problem === "credential_unreadable") {
-    return "The stored credential can't be read, so it can't be used. Replace it, or remove it and add a new one.";
+    return "Credential status is unavailable. Retry the status check before replacing or removing the credential.";
   }
   return "The stored credential can't be used. Replace it, or remove it and add a new one.";
 }
 
 export function credentialStateLabel(credential: {
-  configured: boolean;
+  configured: boolean | null;
+  problem?: string;
   fields?: unknown[];
   lastFour?: string;
   updatedAt?: string;
 }): string {
+  if (credential.configured === null || credential.problem === "credential_unreadable") return "unavailable";
   if (!credential.configured) return "not configured";
   const masked = "configured";
   return credential.updatedAt ? `${masked} · updated ${formatDate(credential.updatedAt)}` : masked;
@@ -861,7 +864,7 @@ export function credentialStateLabel(credential: {
 /** Gate copy for each browser-auth shape, so the sign-in state is never a blank page. */
 export function gateCopy(kind: string, signedIn: boolean): string {
   if (kind === "cloudflare-access") {
-    return "Cloudflare Access admitted this browser, but the current identity cannot open deployment-wide operator pages.";
+    return "Checking Cloudflare Access identity failed. Retry to check whether this browser can open operator pages.";
   }
   if (kind !== "clerk") {
     return "Paste an operator bearer token to open this page. Nothing is requested until you do.";

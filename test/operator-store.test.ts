@@ -8,6 +8,8 @@ import type { UiData } from "../src/operator-ui/model.js";
  * flight, so stale data cannot land under another identity.
  */
 
+const stores: Array<{ forgetBearer(): void }> = [];
+
 const BASE = "https://deployment.example";
 
 /** The constants `renderUiHtml` writes into the page ahead of the bundle. */
@@ -86,7 +88,27 @@ async function loadStore(
     setItem: () => {},
     removeItem: () => {},
   });
-  vi.stubGlobal("fetch", fetchMock);
+  let summary: UiData | undefined;
+  const configMock = vi.fn(async (_path: string, _init: RequestInit) =>
+    Response.json({
+      schemaVersion: 1,
+      config: { connectors: summary?.connectors.map(({ id }) => ({ id })) ?? [] },
+      you: { permissions: { connectors: [] } },
+      live: { connectors: [] },
+    }),
+  );
+  vi.stubGlobal("fetch", async (path: string, init: RequestInit) => {
+    if (path === "/ui/api/config") return configMock(path, init);
+    const response = (await fetchMock(path, init)) as Response | undefined;
+    if (path === "/ui/data" && response?.ok) {
+      try {
+        summary = (await response.clone().json()) as UiData;
+      } catch {
+        /* Unreadable response fixture. */
+      }
+    }
+    return response;
+  });
   vi.resetModules();
   vi.doMock("../src/operator-ui/app/config.js", () => ({
     auth: browserAuth,
@@ -100,10 +122,12 @@ async function loadStore(
     TOKEN_KEY: "connecta:token",
   }));
   const store = await import("../src/operator-ui/app/store.js");
+  stores.push(store);
   return {
     store,
     clerk,
     fetchMock,
+    configMock,
     windowListeners,
     window,
     /** Hand Clerk's listener a session change, the way Clerk itself would. */
@@ -121,18 +145,24 @@ function bearerOf(fetchMock: ReturnType<typeof vi.fn>, index: number): unknown {
 }
 
 afterEach(() => {
+  for (const store of stores.splice(0)) store.forgetBearer();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
 describe("operator store identity wiring", () => {
   it("consumes Query cancellation and drops a pending connector detail after sign-out", async () => {
     const { store, fetchMock, changeSession } = await loadStore({ id: "sess_a", getToken: async () => "token-a" });
-    fetchMock.mockResolvedValueOnce(Response.json(uiData("identity-a")));
+    const connector = { id: "github", status: "ok", toolCount: 0, tools: [] };
+    fetchMock.mockImplementation(async (path: string) =>
+      Response.json(path === "/ui/data" ? { ...uiData("identity-a"), connectors: [connector] } : connector),
+    );
     await store.boot();
+    await vi.waitFor(() => expect(store.getState().data?.connectors[0]?.status).toBe("ok"));
     const pending = deferred<Response>();
     fetchMock.mockImplementationOnce(() => pending.promise);
     const refresh = store.refreshConnector("github");
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     changeSession(null);
     await expect(refresh).resolves.toBeUndefined();
     pending.resolve(Response.json({ id: "github", status: "ok", toolCount: 1, tools: [] }));
@@ -603,5 +633,96 @@ describe("activity collection recovery", () => {
     await pagination;
     expect(store.getState().activityEvents).toEqual([{ connectorId: "fresh" }]);
     expect(store.getState().activityCursor).toBe("fresh-cursor");
+  });
+});
+
+describe("operator recovery bounds and snapshot ordering", () => {
+  it("INV-4: bounds gated Access retries and resumes admission checks on focus", async () => {
+    const { store, fetchMock, windowListeners } = await loadStore(
+      { id: "unused", getToken: async () => "unused" },
+      { kind: "cloudflare-access" },
+    );
+    vi.useFakeTimers();
+    fetchMock.mockImplementation(async () => Response.json({ problem: "identity_unavailable" }, { status: 503 }));
+    await store.boot();
+    expect(store.getState().session).toBe("gated");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(store.getState().data).toBeNull();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    fetchMock.mockImplementation(async () => Response.json(uiData("recovered")));
+    windowListeners.get("focus")?.();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(store.getState().session).toBe("ready");
+    expect(store.getState().data?.serverInfo.name).toBe("recovered");
+  });
+
+  it("INV-10: polls status for a bounded OAuth window without replaying authorization", async () => {
+    const { store, fetchMock } = await loadStore({ id: "a", getToken: async () => "a" });
+    const connector = { id: "svc", status: "auth_required", oauth: true, tools: [], toolCount: 0 };
+    fetchMock.mockImplementation(async (path: string) =>
+      Response.json(path === "/ui/data" ? { ...uiData("operator"), connectors: [connector] } : connector),
+    );
+    await store.boot();
+    await vi.waitFor(() => expect(store.getState().data?.connectors[0]?.status).toBe("auth_required"));
+    vi.useFakeTimers();
+    fetchMock.mockImplementation(async (path: string) =>
+      Response.json(
+        path.startsWith("/ui/oauth/")
+          ? { state: "auth_required", authorizationUrl: "https://provider.test/consent" }
+          : connector,
+      ),
+    );
+    await store.startOAuth("svc", "continue");
+    await vi.advanceTimersByTimeAsync(60_000);
+    const count = fetchMock.mock.calls.length;
+    expect(fetchMock.mock.calls.filter(([path]) => String(path).startsWith("/ui/connectors/")).length).toBeGreaterThan(
+      2,
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(count);
+    expect(fetchMock.mock.calls.filter(([path]) => String(path).startsWith("/ui/oauth/"))).toHaveLength(1);
+  });
+
+  it("INV-4 INV-10: publishes one catalog/auth revision and drops a late older refresh", async () => {
+    const { store, fetchMock, configMock } = await loadStore({ id: "a", getToken: async () => "a" });
+    const old = { id: "svc", status: "auth_required", problem: "oauth_required", oauth: true, tools: [], toolCount: 0 };
+    const live = { id: "svc", status: "ok", tools: [], catalogAgeMs: null, lastCall: null };
+    const contract = (row: object) => ({
+      schemaVersion: 1,
+      config: { connectors: [{ id: "svc" }] },
+      you: { permissions: { connectors: [] } },
+      live: { connectors: [row] },
+    });
+    configMock.mockImplementation(async () => Response.json(contract(old)));
+    fetchMock.mockImplementation(async (path: string) =>
+      Response.json(path === "/ui/data" ? { ...uiData("operator"), connectors: [old] } : old),
+    );
+    await store.boot();
+    await vi.waitFor(() => expect(store.getState().contractPhase).toBe("ready"));
+    const pendingContract = deferred<Response>();
+    const pendingDetail = deferred<Response>();
+    configMock.mockReturnValueOnce(pendingContract.promise);
+    fetchMock.mockReturnValueOnce(pendingDetail.promise);
+    const first = store.loadOperatorContract();
+    await vi.waitFor(() => expect(configMock).toHaveBeenCalledTimes(2));
+    configMock.mockImplementation(async () => Response.json(contract(live)));
+    fetchMock.mockImplementation(async () => Response.json({ ...old, status: "ok", problem: undefined }));
+    const seen: string[] = [];
+    const stop = store.subscribe(() => {
+      const state = store.getState();
+      if (state.contract)
+        seen.push(`${state.contract.live.connectors[0]?.status}/${state.data?.connectors[0]?.status}`);
+    });
+    await store.loadOperatorContract();
+    pendingContract.resolve(Response.json(contract(old)));
+    pendingDetail.resolve(Response.json(old));
+    await first;
+    stop();
+    expect(store.getState().contract?.live.connectors[0]?.status).toBe("ok");
+    expect(store.getState().data?.connectors[0]?.status).toBe("ok");
+    expect(seen).not.toContain("ok/auth_required");
+    expect(seen).not.toContain("auth_required/ok");
   });
 });

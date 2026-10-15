@@ -187,8 +187,8 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
           const fields = credentialFields();
           return Effect.succeed({
             ...card,
-            ...(fields?.length ? { fields } : {}),
-            configured: false,
+            ...(fields?.length ? { fields: fields.map((field) => ({ ...field, configured: null })) } : {}),
+            configured: null,
             removable: true,
             testable: testRule.mode !== null,
             error: "Stored credential could not be read.",
