@@ -15,6 +15,11 @@ import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { stripe } from "@zackbart/connecta/providers/stripe";
+import { notion } from "@zackbart/connecta/providers/notion";
+import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
+import { vercel } from "@zackbart/connecta/providers/vercel";
+import { ACCOUNT_A, SHOP_ZONE } from "../fakes/rest.js";
 import { createConnecta, remoteMcp } from "@zackbart/connecta";
 import { accessTokens, AccessTokenManager } from "@zackbart/connecta/auth/access-tokens";
 import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
@@ -74,8 +79,25 @@ export async function startNodeDeployment(
     logger: quiet,
     connectors: [
       ...(oauth ? [oauth.connector()] : []),
-      ...connectors.map((spec) =>
-        remoteMcp(spec.id, {
+      ...connectors.map((spec) => {
+        const options = { purpose: spec.description };
+        if (spec.rest === "stripe") return stripe(spec.id, { ...options, auth: { type: "apiKey" }, mode: "sandbox" });
+        if (spec.rest === "notion")
+          return notion(spec.id, { ...options, auth: { type: "token" }, defaultPageSize: 100 });
+        if (spec.rest === "vercel")
+          return vercel(spec.id, { ...options, auth: { type: "token" }, teamId: "team_fake" });
+        if (spec.rest === "cloudflare")
+          return cloudflare(spec.id, {
+            ...options,
+            ...(spec.id === "cloudflare_legacy"
+              ? { auth: { type: "globalApiKey" as const } }
+              : { auth: { type: "apiToken" as const } }),
+            pin: { accountIds: [ACCOUNT_A] },
+            ...(spec.id === "cloudflare_legacy"
+              ? { instructions: `The operator's zone inventory reports shop.example.org as zone ${SHOP_ZONE}.` }
+              : {}),
+          });
+        return remoteMcp(spec.id, {
           url: spec.url,
           title: spec.title,
           description: spec.description,
@@ -84,14 +106,15 @@ export async function startNodeDeployment(
           ...(spec.credential
             ? { auth: { type: "credential" as const, credential: { label: spec.credential.label } } }
             : {}),
-        }),
-      ),
+        });
+      }),
     ],
     ...(passthrough as Partial<Parameters<typeof createConnecta>[0]>),
   });
   for (const spec of connectors) {
     if (spec.credential?.value) {
-      await vault.set(spec.id, spec.credential.value, "operator");
+      if (spec.id === "cloudflare_legacy") await vault.setAll(spec.id, JSON.parse(spec.credential.value), "operator");
+      else await vault.set(spec.id, spec.credential.value, "operator");
     }
   }
   const server = listen(forSurface(connecta, surface), {

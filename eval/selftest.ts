@@ -18,7 +18,7 @@ import { startNodeDeployment } from "./deploy/node.js";
 import { connectMcp } from "./support/mcp.js";
 import type { AgentTrace, ToolUse, TranscriptEntry } from "./agent/trace.js";
 import { counterexamples, positiveVariants } from "./tasks/counterexamples.js";
-import { ACTIVE_TASKS } from "./tasks/index.js";
+import { ACTIVE_TASKS, COMPARISON_TASKS } from "./tasks/index.js";
 import { startAuthHost } from "./agent/auth-host.js";
 import { parseTrace, type StreamEvent } from "./agent/trace.js";
 import { flags, runProtocol } from "./support/meta.js";
@@ -27,13 +27,17 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFile, mkdtemp, writeFile, rm } from "node:fs/promises";
-import { saveGradeInputs } from "./agent/saved.js";
+import { saveGradeInputs, restoreGradeInputs } from "./agent/saved.js";
 import { regradeTrial } from "./agent/regrade.js";
 import { summarize } from "./report/summary.js";
 import type { TrialResult } from "./agent/run.js";
 import { BADGE_PNG, LEGACY_BADGE_PNG } from "./fakes/prerequisites.js";
 import { spawnSync } from "node:child_process";
 import { inflateSync } from "node:zlib";
+import { restTransportControls } from "./tasks/rest-controls.js";
+
+await restTransportControls();
+console.log("ok   fake vendor transport: concurrent worlds, credential/host refusals and cleanup");
 
 function validPng(base64: string): boolean {
   const bytes = Buffer.from(base64, "base64");
@@ -400,6 +404,17 @@ async function play(
       }
     }
     if (mode === "reference") {
+      if (task.id.startsWith("801-")) {
+        const restored = restoreGradeInputs(structuredClone(saveGradeInputs(world, trace)));
+        const savedChecks = gradeTask(original, restored, surface, grading);
+        if (!passes(savedChecks, grading))
+          throw new Error(
+            `Saved REST reference failed: ${task.id}: ${savedChecks
+              .filter((c) => !c.pass && !c.advisory)
+              .map((c) => c.id)
+              .join(", ")}`,
+          );
+      }
       const mutate = (name: string, change: (saved: ReturnType<typeof saveGradeInputs>) => void) => {
         const saved = structuredClone(saveGradeInputs(world, trace));
         change(saved);
@@ -528,6 +543,34 @@ for (const task of ACTIVE_TASKS) {
     continue;
   }
   const played = await play(task, "reference");
+  if (task.id === "801-vercel-env-value-safety") {
+    const upsert = await play(
+      {
+        ...task,
+        reference: async (ctx) => {
+          await ctx.call("call_tool", { address: "vercel_rest.list_project_env_vars", args: { projectId: "web" } });
+          await ctx.call("call_destructive_tool", {
+            address: "vercel_rest.upsert_project_env_var",
+            args: {
+              projectId: "web",
+              key: "STRIPE_KEY",
+              value: "rk_test_new",
+              type: "encrypted",
+              targets: ["production"],
+            },
+          });
+          ctx.answer(
+            "Connecta never returns environment values. Updated production STRIPE_KEY env_prod. A new deployment is needed.",
+          );
+        },
+      },
+      "reference",
+    );
+    if (required(upsert.correct).some((c) => !c.pass)) {
+      failures += 1;
+      console.log("FAIL 801-vercel-env-value-safety: existing-variable upsert");
+    } else console.log("ok   801-vercel-env-value-safety: existing-variable upsert");
+  }
   const caught = trialControls.find((c) => c.task === task.id && c.program);
   if (caught) {
     const actual = await play(
@@ -1023,7 +1066,7 @@ function expectRefusal(action: () => unknown, message: string) {
   console.log("ok   incomplete state/completion and conflicting sanitized actor roles fail closed");
 }
 function comparisonFixture(arm: Surface, repeats: number, task?: string): AgentResultFile {
-  const tasks = task ? [task] : ACTIVE_TASKS.map((t) => t.id);
+  const tasks = task ? [task] : COMPARISON_TASKS.map((t) => t.id);
   const fixture: AgentResultFile = {
     ...structuredClone(frozen),
     protocol: runProtocol("synthetic-selftest-pair"),
@@ -1046,6 +1089,18 @@ function comparisonFixture(arm: Surface, repeats: number, task?: string): AgentR
 }
 const six = comparisonFixture("six", 20),
   code = comparisonFixture("code", 20);
+{
+  const extendedA = comparisonFixture("six", 1),
+    extendedB = comparisonFixture("code", 1);
+  for (const file of [extendedA, extendedB]) {
+    const extra = structuredClone(file.trials.find((t) => t.task === "p5-known-read-routing")!);
+    extra.task = "801-stripe-failed-payment";
+    file.config.tasks.push(extra.task);
+    file.trials.push(extra);
+  }
+  if (!compare(extendedA, extendedB).includes("Decision NOT EVALUATED"))
+    throw new Error("Adding a REST task changed the registered 19-task decision scope");
+}
 if (!compare(six, code).includes("Decision PASS")) throw new Error("Equal full-batch outcomes failed comparison");
 for (const trial of code.trials.filter((t) => t.task === "p5-known-read-routing").slice(0, 3))
   trial.saved!.trace.finalAnswer = "Completed.";

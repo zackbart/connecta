@@ -7,6 +7,13 @@ The final 0.29 baselines for #709 item 1 are
 failure triage and caveats. Older files retain their historical tools, models
 and grades and are not directly comparable.
 
+The [#801 REST follow-up notes](baselines/notes-rest-801.md) record the ten
+new tasks, live batches, harness corrections and failure triage. The replacement
+baseline from clean commit `aaadc969957f` is **GPT-6-Luna 6/10** and
+**Sonnet 5.5 6/10**, with all ten tasks freshly run for each model. Pre-review
+files are diagnostic history and are excluded from these scores, including the
+fixture-invalid Luna refund trial.
+
 ## Runners
 
 ```sh
@@ -118,8 +125,9 @@ and budget behavior checks remain. Existing advisory checks stay advisory.
 Claude's two unobservable rich-output tasks remain N/A in both arms and modes.
 
 ```sh
-npm run eval:agent -- --runner claude --models claude-haiku-5-5 --surface six --grading outcome --pair-id 765-haiku-2026-10-08 --repeats 5 --out eval/results/haiku-six.json
-npm run eval:agent -- --runner claude --models claude-haiku-5-5 --surface code --grading outcome --pair-id 765-haiku-2026-10-08 --repeats 5 --out eval/results/haiku-code.json
+comparison_tasks=$(node --import tsx --input-type=module -e 'import { COMPARISON_TASKS } from "./eval/tasks/index.ts"; console.log(COMPARISON_TASKS.map(t => t.id).join(","))')
+npm run eval:agent -- --runner claude --models claude-haiku-5-5 --surface six --grading outcome --tasks "$comparison_tasks" --pair-id 765-haiku-2026-10-08 --repeats 5 --out eval/results/haiku-six.json
+npm run eval:agent -- --runner claude --models claude-haiku-5-5 --surface code --grading outcome --tasks "$comparison_tasks" --pair-id 765-haiku-2026-10-08 --repeats 5 --out eval/results/haiku-code.json
 npm run eval:compare -- --a eval/results/haiku-six.json --b eval/results/haiku-code.json
 npm run eval:regrade -- --grading outcome --in eval/baselines/gpt-6-luna-0.29.json --out eval/results/luna-outcome.json
 ```
@@ -201,7 +209,8 @@ it separately for each model. The code arm passes only if:
 - no task's pass count drops by **3 or more of N paired trials**.
 
 The comparison prints PASS or FAIL and the reasons for complete 19-task batches.
-Subsets print diagnostic metrics and `Decision NOT EVALUATED`. Task drops are
+Other task sets, including supersets with REST follow-ups, print diagnostic
+metrics and `Decision NOT EVALUATED`. Task drops are
 listed for triage. A missing/incomplete batch, unsupported skip or mismatched
 settings/N/A set cannot establish a pass.
 This is the rule for this measurement, superseding the draft record's two-repeat
@@ -243,12 +252,52 @@ calls and final-answer facts. Fourteen new active tasks cover:
 - a known read routed through `call_tool`, with no program, discovery or other route;
 - an advertised MCP resource read through `connecta.read` with its qualified URI.
 
-[Planned tasks](tasks/planned.ts) record #801's Stripe REST acceptance tests
-(a failed payment, recovery from a refused guess, an idempotent refund),
-Notion token-connector tests (append a checklist to a page found by title,
-count filtered rows across body-cursor pages), and Cloudflare ones (a DNS TTL
-fix, a pinned Global API Key refusal, read-only analytics). They need fake
-Stripe, Notion, and Cloudflare services before promotion and never run.
+Ten [#801 REST tasks](tasks/rest.ts) are active against loopback fake Stripe,
+Notion, Cloudflare and Vercel HTTP services. The Node deployment uses the real
+published provider factories with `apiKey`, `token`, `apiToken`, and
+`globalApiKey` auth, fake vault credentials, account pins and Vercel's default
+team. No hosted vendor MCP or real vendor credential is used. The REST ledger
+records method, path, query, body, version and idempotency headers, and verified
+credential framing without recording credential headers. These tasks cover:
+
+- Stripe charge declines, recovery after rejected parameters, and an HTTP 500
+  after a committed refund followed by a retry with the same idempotency key;
+- Notion title resolution and append-once unchecked checklists, plus 230
+  filtered rows across three body-cursor pages of at most 100 rows;
+- one Cloudflare DNS TTL change with decoys, a Global API Key account-pin
+  refusal, and GraphQL analytics from the named read-only pool;
+- Vercel's bounded non-following build logs and an environment rotation that
+  never reads or echoes the previous value and requires a future deployment.
+
+The pin task's deployment instructions supply the operator's known zone id,
+because pinned zone lists intentionally omit other accounts. The agent still
+has to observe and report the real pin refusal. REST worlds expose only their
+vendor connectors. The Notion fixture uses 100-row pages and seeds 400 rows;
+its provider's default page size is 100. Refund retry metrics distinguish
+vendor-proven idempotent replays from duplicate business writes. The grader
+still requires identical arguments and one nonempty key across attempts.
+Saved inputs include complete REST state, raw request ledger and guest-call
+observations, so offline regrading does not start HTTP services.
+[Planned tasks](tasks/planned.ts) is currently empty.
+The #765 paired comparison keeps its registered 19-task scope; these ten
+follow-ups do not change that experiment's acceptance rule.
+An eval-only fetch adapter maps fresh per-world sentinel credentials to
+loopback HTTP, so Stripe and Notion keep their fixed public origins and the
+providers retain their production host checks. Unregistered credentials and
+cross-vendor hosts fail before any network request. The last world to stop
+restores the original fetch function; concurrent worlds keep separate routes.
+
+The refund fake follows Stripe API v1 idempotency: the same account/mode/key
+and parameters replay the original status and body, including HTTP 500; changed
+parameters return `idempotency_error`. The fault commits a refund before its
+HTTP 500, so confirmation requires reconciliation through a read. The reference
+also replays that 500 with the same key. No grader requires a successful replay.
+Read-only graders inspect the HTTP ledger, direct tool attempts and observed
+guest calls, including caught or refused writes. Their read inventory derives
+from the authored provider annotations; unknown tools fail closed. Analytics
+answer checks bind request and cache counts to their labels and reject conflicting
+counts. Environment confirmation requires the requested production STRIPE_KEY
+and deployment/value-safety facts, without requiring an unrequested variable id.
 
 Each grader has independent required `correct-destination` and
 `answer-evidence` checks. Destination checks require the connector, tool and
@@ -300,6 +349,10 @@ controls; closed, missing and overridden answers have negative controls.
 Historical saved refusal trials predate this instruction and cannot be
 regraded for `structured-outcome`. The final 0.29 baselines use fresh live
 trials with this instruction.
+Their saved `destructive_tool_requires_approval` program errors remain valid
+typed refusals alongside `read_only_endpoint`; both still require the exact
+target, one attempt, unchanged state and the structured answer. Other errors
+do not establish a refusal.
 
 Auth tasks use a local fake OAuth connector and sign-in directory. A deterministic
 host adapter sends 2026-07-28 requests to the real Connecta auth boundary. A capable
@@ -326,7 +379,7 @@ VITEST_MAX_WORKERS=2 npx vitest run --project node test/claude-eval.node.test.ts
 VITEST_MAX_WORKERS=2 npm run release:check
 ```
 
-The self-test executes all 19 references in both arms and grading modes through real MCP, checks exact usage-guide parity across aliases and host representations, JSON/SSE guidance, six-arm byte preservation, hidden-tool refusals and terminal caught/uncaught errors, and verifies the paired decision rule and provenance refusals, then proves that its
+The self-test executes all 29 references in both arms and grading modes through real MCP, checks exact usage-guide parity across aliases and host representations, JSON/SSE guidance, six-arm byte preservation, hidden-tool refusals and terminal caught/uncaught errors, and verifies the paired decision rule and provenance refusals, then proves that its
 grader rejects a wrong-source attribution with the expected answer intact,
 and a right-source run without answer evidence. It also rejects a no-op, wrong-issue
 refusals, comment-only paging/fan-out, another retained result, direct images
@@ -348,8 +401,8 @@ headless Chromium; install it with `npm run test:browser:install` if needed.
 
 Freeze the checkout before baseline runs, record the commit and CLI versions,
 and save new files rather than overwrite `baselines/`. Owner scope is Sonnet
-5.5 and GPT-6-Luna only, with 1-2 repeats per task. Defaults run 19 tasks x 1
-repeat = 19 trials per runner. A two-repeat baseline runs 38 per runner.
+5.5 and GPT-6-Luna only, with 1-2 repeats per task. Defaults run 29 tasks x 1
+repeat = 29 trials per runner. A two-repeat baseline runs 58 per runner.
 Both use signed-in CLI subscription logins and consume plan allowance.
 
 ```sh
@@ -365,7 +418,7 @@ per runner; its results are proof of login/isolation, not committed baselines.
 
 Planning assumptions, not measured 0.29 results: 20,000-80,000 input tokens,
 4,000-12,000 output tokens and 45-150 seconds per trial. At concurrency 1,
-allow 17-55 minutes per runner for the default batch, or 33-110 minutes per
+allow 22-73 minutes per runner for the default batch, or 44-145 minutes per
 runner for two repeats. Rate limits, retries, large logs and thinking can raise
 these estimates. The eight-minute timeout is a failure bound.
 

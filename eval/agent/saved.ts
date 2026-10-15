@@ -10,6 +10,7 @@ export interface SavedGradeInputs {
   version: 1;
   trace: AgentTrace;
   world: {
+    rest?: World["rest"];
     ci?: World["ci"];
     tracker: TrackerState;
     chat: ChatState;
@@ -25,6 +26,7 @@ export function saveGradeInputs(world: World, trace: AgentTrace): SavedGradeInpu
     version: 1,
     trace,
     world: {
+      rest: world.rest,
       ci: world.ci,
       tracker: world.tracker,
       chat: world.chat,
@@ -104,6 +106,30 @@ export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; tra
       ).length === 1,
       `ci.${run.runId}`,
     );
+  if (state.rest) {
+    for (const key of ["refunds", "dns", "purges", "createdPages", "envs"] as const)
+      requireEvidence(Array.isArray(state.rest[key]), `rest.${key}`);
+    for (const [family, seeded] of [
+      ["dns", world.rest.dns],
+      ["envs", world.rest.envs],
+    ] as const)
+      for (const record of seeded)
+        requireEvidence(
+          state.rest[family].filter((r) => r.id === record.id).length === 1,
+          `rest.${family}.${record.id}`,
+        );
+    requireEvidence(
+      state.rest.blocks && ["page-q3", "page-retro"].every((id) => Array.isArray(state.rest!.blocks[id])),
+      "rest.blocks",
+    );
+    requireEvidence(state.rest.refundKeys && typeof state.rest.refundFaulted === "boolean", "rest.refund-recovery");
+    Object.assign(world.rest, structuredClone(state.rest));
+  } else if (
+    state.calls.some((c) =>
+      /^(stripe_sandbox|notion_bot|cloudflare_prod|cloudflare_legacy|vercel_rest)$/.test(c.service),
+    )
+  )
+    throw new Error("Incomplete saved grading evidence: rest");
   world.ci.splice(0, world.ci.length, ...state.ci!);
   Object.assign(world.tracker, saved.world.tracker);
   Object.assign(world.chat, saved.world.chat);
