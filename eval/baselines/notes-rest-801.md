@@ -10,6 +10,9 @@ workflows can miss a required replay or source-selection criterion.
 
 - Frozen source commit `aaadc969957f`, clean checkout and clean product source.
   Measured `src/` tree `fb11c2c9acc5` includes the rebase onto current main.
+  The interrupted fix round completed both batches before the app restart.
+  The resumed round preserved those files and verified that their task and
+  harness fingerprints and measured product tree match the rebased checkout.
 - Requested and served `gpt-6-luna`, Codex CLI 0.162.1; requested and served
   `claude-sonnet-5-5`, Claude Code 2.1.301. Node v26.11.1, darwin-arm64,
   package 0.32.0. Both batches began at 2026-10-15 21:40 UTC.
@@ -95,7 +98,20 @@ change the registered 19-task #765 experiment or estimate general model quality.
 
 ### Review-round verification
 
-Verification results will be recorded after the full local gate and selftest.
+The resumed round ran `npm ci` and `npm run build`, then
+`VITEST_MAX_WORKERS=2 npm run check:fast`: all checks passed, including six
+related suites and 86 tests. The three eval runner/trace suites and four REST
+provider suites passed all 247 tests with the same worker cap.
+`VITEST_MAX_WORKERS=2 npm run eval:selftest` passed all 29 references in both
+interfaces and grading modes, including transport, forbidden-write, analytics,
+environment, saved-evidence and comparison/provenance controls.
+Offline `regradeTrial` reproduced both 6/10 scores with no unavailable checks.
+Both result files match the current task/harness fingerprints and product tree.
+Export scans found no access tokens, vendor credentials or absolute home paths.
+
+Per the owner's shared-machine instructions, this round did not run the full
+local `npm run check`. CI supplies the full gate after the push; its result is
+recorded in the review-resolution PR comment.
 
 The pre-review files below are diagnostic history and are excluded from the
 current baseline. In particular, a scripted reference or offline regrade cannot
@@ -117,8 +133,9 @@ business outcome.
 Both runners executed all ten `801-*` tasks on 2026-10-15, one repeat per batch,
 concurrency one per runner, default effort and eight-minute deadlines. The two
 runners ran in the same batch window using their signed-in CLI subscriptions.
-Only fake Connecta tools were available. Each task has two live trials per model
-across the initial and final batches; no third model run was made.
+Only fake Connecta tools were available. Before review, each task had two live
+trials per model across the initial and second batches. The review-round
+replacement above is a third live batch, saved separately.
 
 - Requested and served `gpt-6-luna`, Codex CLI 0.162.1.
 - Requested and served `claude-sonnet-5-5`, Claude Code 2.1.301.
@@ -166,9 +183,10 @@ vendor credentials or accounts were used. No HTML reports are committed.
   fallback returned charge-shaped data instead of the committed refund, so Luna
   incorrectly concluded that no refund was present. This is a fake-vendor bug,
   not evidence of a Stripe connector bug. The nested route is now implemented
-  and checked by the reference. Its corrected response was not tested in a
-  third live run. Luna also never retried the POST with the same key, which this
-  planned task requires.
+  and checked by the reference. At the time of the pre-review measurement,
+  its corrected response had not received a replacement live trial. The fresh
+  review-round trial above receives valid refund data. Luna also never retried
+  the POST with the same key, which this planned task requires.
 - **Stripe refund, Sonnet: acceptance miss with a safe business outcome.** It
   read `GET /v1/refunds?charge=ch_3Prefund000`, correctly confirmed `re_eval_1`
   succeeded, and avoided another write. State and answer checks pass. The task

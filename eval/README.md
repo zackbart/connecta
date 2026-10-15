@@ -278,6 +278,14 @@ vendor-proven idempotent replays from duplicate business writes. The grader
 still requires identical arguments and one nonempty key across attempts.
 Saved inputs include complete REST state, raw request ledger and guest-call
 observations, so offline regrading does not start HTTP services.
+[Planned tasks](tasks/planned.ts) is currently empty.
+The #765 paired comparison keeps its registered 19-task scope; these ten
+follow-ups do not change that experiment's acceptance rule.
+An eval-only fetch adapter maps fresh per-world sentinel credentials to
+loopback HTTP, so Stripe and Notion keep their fixed public origins and the
+providers retain their production host checks. Unregistered credentials and
+cross-vendor hosts fail before any network request. The last world to stop
+restores the original fetch function; concurrent worlds keep separate routes.
 
 The refund fake follows Stripe API v1 idempotency: the same account/mode/key
 and parameters replay the original status and body, including HTTP 500; changed
