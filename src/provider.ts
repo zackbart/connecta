@@ -96,7 +96,8 @@ export const CALL_ADMISSION = {
     ) {
       throw new ConfigError(`${path} queue settings require maxConcurrency.`);
     }
-    return policy;
+    // object() omits undefined children; its resolved type lists every key.
+    return policy as ConnectorCallAdmissionPolicy;
   },
 };
 

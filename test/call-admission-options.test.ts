@@ -57,6 +57,17 @@ describe.each(factories)("$name admission options", ({ create }) => {
   });
 });
 
+it("INV-11: registers a custom policy and leaves only omitted or undefined policies unadmitted", () => {
+  const registry = makeRegistry([
+    { ...calcConnector, id: "omitted" },
+    { ...calcConnector, id: "undefined", callAdmission: undefined },
+    { ...calcConnector, id: "limited", callAdmission: valid },
+  ]);
+  expect(Object.keys(registry.callAdmissionSnapshot())).toEqual(["limited"]);
+  expect(remoteMcp("remote", { url: "https://mcp.example/mcp" }).callAdmission).toBeUndefined();
+  expect(api("local", { tools: [] }).callAdmission).toBeUndefined();
+});
+
 // The generated membership list and each provider's own cases cover every
 // maintained provider and its auth/mode variants without a second provider list.
 const scenarios = (providerFixtures as readonly ContractFixture[]).flatMap((fixture) =>
