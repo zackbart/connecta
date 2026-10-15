@@ -47,15 +47,19 @@ describe("operator assets on both runtimes", () => {
     expect(response.headers.get("allow")).toBe("GET, HEAD");
   });
 
-  it("keeps the open shell small and hosts Inter in its hashed stylesheet", () => {
+  it("keeps the open shell small and hosts Geist Sans and Mono in its hashed stylesheet", () => {
     const html = renderUiHtml();
     expect(html.length).toBeLessThan(5000);
     expect(html).toContain(OPERATOR_UI_SCRIPT_PATH);
     expect(html).toContain(OPERATOR_UI_STYLE_PATH);
     const css = OPERATOR_UI_ASSETS[OPERATOR_UI_STYLE_PATH]!.body;
-    const font = Object.keys(OPERATOR_UI_ASSETS).find((path) => path.endsWith(".woff2"));
-    expect(font).toBeTruthy();
-    expect(css).toContain(font);
+    const fonts = Object.keys(OPERATOR_UI_ASSETS).filter((path) => path.endsWith(".woff2"));
+    expect(fonts).toHaveLength(2);
+    for (const font of fonts) expect(css).toContain(font);
+    const notices = Object.entries(OPERATOR_UI_ASSETS).find(([path]) => path.endsWith(".txt"))![1].body;
+    expect(notices).toContain("@fontsource-variable/geist");
+    expect(notices).toContain("@fontsource-variable/geist-mono");
+    expect(notices).toContain("SIL OPEN FONT LICENSE");
     expect(html).not.toContain("https://fonts.");
   });
 });

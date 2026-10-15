@@ -18,10 +18,16 @@ const compiler = await compile(await readFile(resolve(cssDirectory, "browser.css
 const scanner = new Scanner({
   sources: [{ base: resolve(cssDirectory, "app"), pattern: "**/*.{ts,tsx}", negated: false }],
 });
-const fontPath = fileURLToPath(import.meta.resolve("@fontsource-variable/inter/files/inter-latin-wght-normal.woff2"));
-const css = compiler
-  .build(scanner.scan())
-  .replace("@fontsource-variable/inter/files/inter-latin-wght-normal.woff2", fontPath);
+let css = compiler.build(scanner.scan());
+const fontPaths = {
+  "@fontsource-variable/geist/files/geist-latin-wght-normal.woff2": fileURLToPath(
+    import.meta.resolve("@fontsource-variable/geist/files/geist-latin-wght-normal.woff2"),
+  ),
+  "@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2": fileURLToPath(
+    import.meta.resolve("@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2"),
+  ),
+};
+for (const [specifier, path] of Object.entries(fontPaths)) css = css.replace(specifier, path);
 const result = await build({
   absWorkingDir: root,
   bundle: true,
@@ -73,14 +79,15 @@ const assets = Object.fromEntries(
     ];
   }),
 );
-// Carry the notices with the shipped browser bundle, including Inter's OFL.
+// Carry the notices with the shipped browser bundle, including both Geist OFL notices.
 const packages = new Set(
   Object.keys(result.metafile.inputs).flatMap((input) => {
     const match = /(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)/.exec(input);
     return match ? [match[1]] : [];
   }),
 );
-packages.add("@fontsource-variable/inter");
+packages.add("@fontsource-variable/geist");
+packages.add("@fontsource-variable/geist-mono");
 const notices = [];
 for (const name of [...packages].sort()) {
   const directory = resolve(root, "node_modules", name);

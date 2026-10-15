@@ -295,18 +295,6 @@ export async function loadOperatorContract(): Promise<void> {
   }
 }
 
-export async function loadHealth(): Promise<void> {
-  const current = fence();
-  set({ health: "loading" });
-  try {
-    const response = await fetch("/health", { credentials: "same-origin" });
-    const facts = (await response.json()) as { status?: unknown };
-    if (current()) set({ health: response.ok && facts.status === "ok" ? "ok" : "unavailable" });
-  } catch {
-    if (current()) set({ health: "unavailable" });
-  }
-}
-
 /**
  * Every mutation in the same shape: mark the control busy, send exactly one
  * request, then land on a notice — success or failure, never neither. `reload`
@@ -977,9 +965,9 @@ export function createAccessToken(name: string): Promise<boolean> {
         tokenBusy: false,
         tokenPhase: "ready",
         tokens: [issued, ...state.tokens.filter((token) => token.id !== issued.id)],
-        createdToken: state.page === "tokens" || state.page === "access" ? payload.token : null,
+        createdToken: state.page === "tokens" ? payload.token : null,
         tokenNotice: info("Access token created."),
-        pendingFocus: state.page === "tokens" || state.page === "access" ? "tokenRevealHeading" : null,
+        pendingFocus: state.page === "tokens" ? "tokenRevealHeading" : null,
       };
     },
     failed: () => tokenFailure(failure("Access token could not be created. Check the name, capacity, and storage.")),

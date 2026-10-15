@@ -1,17 +1,11 @@
 import { useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import type { OperatorConnectorOverlay } from "../contract.js";
-import {
-  connectorStatusLabel,
-  connectorSourceLabel,
-  connectorStatusTone,
-  formatDate,
-  registrationPathLabel,
-  type OperatorState,
-} from "../view.js";
-import { Badge, StateBlock } from "./parts.js";
+import { connectorSourceLabel, formatDate, registrationPathLabel, type OperatorState } from "../view.js";
+import { StateBlock } from "./parts.js";
 import { Button, DataTable, Input } from "./primitives.js";
-import { ContractState } from "./overview.js";
+import { ConnectorProblems } from "./problems.js";
+import { ContractState } from "./contract-state.js";
 import { loadOperatorContract, navigate } from "./store.js";
 
 function ConnectorLink({ id, name, tab }: { id: string; name?: string; tab?: string }) {
@@ -31,7 +25,7 @@ function ConnectorLink({ id, name, tab }: { id: string; name?: string; tab?: str
 }
 
 type Row = OperatorConnectorOverlay & { title: string; authScope: string; source: string };
-const columns: ColumnDef<Row>[] = [
+const columns = (state: OperatorState): ColumnDef<Row>[] => [
   {
     accessorKey: "title",
     header: "Connector",
@@ -45,16 +39,12 @@ const columns: ColumnDef<Row>[] = [
   {
     accessorKey: "status",
     header: "Status",
-    cell: ({ row }) => (
-      <Badge tone={connectorStatusTone(row.original.status)}>
-        {connectorStatusLabel(row.original.status, row.original.problem)}
-      </Badge>
-    ),
+    cell: ({ row }) => <ConnectorProblems id={row.original.id} live={row.original} state={state} />,
   },
   {
     accessorKey: "authScope",
     header: "Auth",
-    cell: ({ row }) => <ConnectorLink id={row.original.id} tab="auth" name={`${row.original.authScope} auth`} />,
+    cell: ({ row }) => <ConnectorLink id={row.original.id} tab="connection" name={`${row.original.authScope} auth`} />,
   },
   {
     id: "registrationPath",
@@ -133,7 +123,7 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
             />
           </div>
           {visible.length ? (
-            <DataTable data={visible} columns={columns} label="Connectors" />
+            <DataTable data={visible} columns={columns(state)} label="Connectors" />
           ) : (
             <StateBlock>
               {rows.length ? "No connectors match this filter." : "No connectors are visible to this session."}

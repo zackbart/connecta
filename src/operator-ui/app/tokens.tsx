@@ -138,7 +138,7 @@ export function TokensPage({ state, embedded = false }: { state: OperatorState; 
       <div className="lead">
         {embedded ? null : (
           <h1 id="tokensHeading" className="" tabIndex={-1}>
-            Access tokens
+            Tokens
           </h1>
         )}
         <div className="lead-copy">

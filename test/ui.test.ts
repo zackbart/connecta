@@ -91,7 +91,7 @@ function scriptSrcs(body: string): string[] {
 describe("status UI", () => {
   it("serves direct, page-specific, data-free operator shells", async () => {
     const c = makeDeployment(uiDeploymentConfig());
-    for (const [path, page, label] of [["/", "overview", "Overview"]] as const) {
+    for (const [path, page, label] of [["/", "endpoints", "Endpoints"]] as const) {
       const res = await c.fetch(new Request(`${BASE}${path}`));
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type")).toContain("text/html");

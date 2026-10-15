@@ -230,38 +230,17 @@ export function ConnectorAuth({ connector, state }: { connector: UiConnector; st
 }
 
 export function ConnectorDiagnostics({ connector, state }: { connector: UiConnector; state: OperatorState }) {
-  const problem = problemCopy(connector.problem);
-  const failure = state.connectorFailures[connector.id];
-  const fixKind = connector.problem && problemTone(connector.problem) === "danger" ? connector.problem : null;
+  const fixKind =
+    !state.connectorFailures[connector.id] && connector.problem && problemTone(connector.problem) === "danger"
+      ? connector.problem
+      : null;
   return (
     <div className="collection">
-      {problem ? (
-        <p
-          className={connector.problem && problemTone(connector.problem) === "warn" ? "msg warn" : "msg"}
-          data-problem={connector.problem}
-        >
-          {problem}
-        </p>
-      ) : null}
-      {failure ? (
-        <p className="msg warn" data-load-failure={failure}>
-          {connectorLoadFailureCopy(failure, productName)}
-        </p>
-      ) : null}
-      <div className="actions">
-        <button
-          className="btn"
-          type="button"
-          aria-label={`Refresh ${connector.title || connector.id}`}
-          disabled={connector.status === "loading"}
-          onClick={() => void refreshConnector(connector.id)}
-        >
-          Refresh diagnostics
-        </button>
-        {fixKind ? (
+      {fixKind ? (
+        <div className="actions">
           <FixPromptButton kind={fixKind} connectorId={connector.id} name={connector.title || connector.id} />
-        ) : null}
-      </div>
+        </div>
+      ) : null}
       {fixKind ? <FixPromptPreview kind={fixKind} connectorId={connector.id} standalone /> : null}
       <DriftPanel connector={connector} />
       {connector.resourceTemplateRefusals?.map((code) => (

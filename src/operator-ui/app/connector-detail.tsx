@@ -3,19 +3,19 @@ import type { OperatorState } from "../view.js";
 import { connectorStatusLabel, connectorStatusTone, formatDate } from "../view.js";
 import { Badge, StateBlock } from "./parts.js";
 import { Button, Tabs } from "./primitives.js";
-import { ContractState } from "./overview.js";
+import { ContractState } from "./contract-state.js";
 import { SnapshotTree } from "./snapshot.js";
 import { Catalog } from "./catalog.js";
 import { ConnectorAuth, ConnectorDiagnostics } from "./connections.js";
 import { ActivityPage } from "./activity.js";
 import { loadOperatorContract } from "./store.js";
 
-const TABS = ["config", "tools", "auth", "activity", "diagnostics"];
+const TABS = ["tools", "connection", "activity"];
 export function ConnectorDetailPage({ state }: { state: OperatorState }) {
   const location = useLocation();
   const go = useNavigate();
   const id = location.pathname.split("/").pop() ?? "";
-  const tab = TABS.includes(location.hash) ? location.hash : "config";
+  const tab = TABS.includes(location.hash) ? location.hash : "tools";
   const contract = state.contract;
   const config = contract?.config.connectors.find((c) => c.id === id);
   const live = contract?.live.connectors.find((c) => c.id === id);
@@ -59,31 +59,51 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
             }}
             items={[
               {
-                value: "config",
-                label: "Config",
-                content: (
-                  <>
-                    <p className="meta">Defined in deployment code.</p>
-                    <SnapshotTree value={config} path={`config.connectors.${id}`} sources={contract.configSources} />
-                  </>
-                ),
-              },
-              {
                 value: "tools",
                 label: "Tools",
                 content: <Catalog tools={live.tools.map((tool) => ({ ...tool, connectorId: id }))} />,
               },
               {
-                value: "auth",
-                label: "Auth",
+                value: "connection",
+                label: "Connection",
                 content: (
-                  <section id={`auth-${id}`} tabIndex={-1}>
-                    {auth ? (
-                      <ConnectorAuth connector={auth} state={state} />
-                    ) : (
-                      <StateBlock>Authentication details are loading.</StateBlock>
-                    )}
-                  </section>
+                  <div className="collection connection-sections">
+                    <section id={`auth-${id}`} tabIndex={-1} aria-label="Authentication">
+                      <h2>Authentication</h2>
+                      {auth ? (
+                        <ConnectorAuth connector={auth} state={state} />
+                      ) : (
+                        <StateBlock>Authentication details are loading.</StateBlock>
+                      )}
+                    </section>
+                    <section aria-label="Diagnostics">
+                      <h2>Diagnostics</h2>
+                      <div className="facts-row">
+                        <span>
+                          Catalog age:{" "}
+                          {live.catalogAgeMs === null
+                            ? "Not observed"
+                            : `${Math.round(live.catalogAgeMs / 1000)} seconds`}
+                        </span>
+                        <span>
+                          Last call:{" "}
+                          {live.lastCall
+                            ? `${formatDate(live.lastCall.at)} · ${live.lastCall.outcome}`
+                            : "Not observed"}
+                        </span>
+                      </div>
+                      {auth ? (
+                        <ConnectorDiagnostics connector={auth} state={state} />
+                      ) : (
+                        <StateBlock>Diagnostics are loading.</StateBlock>
+                      )}
+                    </section>
+                    <section aria-label="Connector configuration">
+                      <h2>Configuration</h2>
+                      <p className="meta">Defined in deployment code.</p>
+                      <SnapshotTree value={config} path={`config.connectors.${id}`} sources={contract.configSources} />
+                    </section>
+                  </div>
                 ),
               },
               {
@@ -93,31 +113,6 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
                   <ActivityPage state={state} connectorId={id} />
                 ) : (
                   <StateBlock>Activity is not available to this session.</StateBlock>
-                ),
-              },
-              {
-                value: "diagnostics",
-                label: "Diagnostics",
-                content: (
-                  <div className="collection">
-                    <div className="facts-row">
-                      <span>
-                        {"Catalog age: "}
-                        {live.catalogAgeMs === null
-                          ? "Not observed"
-                          : `${Math.round(live.catalogAgeMs / 1000)} seconds`}
-                      </span>
-                      <span>
-                        {"Last call: "}
-                        {live.lastCall ? `${formatDate(live.lastCall.at)} · ${live.lastCall.outcome}` : "Not observed"}
-                      </span>
-                    </div>
-                    {auth ? (
-                      <ConnectorDiagnostics connector={auth} state={state} />
-                    ) : (
-                      <StateBlock>Diagnostics are loading.</StateBlock>
-                    )}
-                  </div>
                 ),
               },
             ]}

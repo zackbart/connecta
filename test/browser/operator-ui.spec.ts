@@ -443,12 +443,11 @@ async function openRow(page: import("@playwright/test").Page, title: string, tab
   if (new URL(page.url()).pathname !== "/connectors")
     await page.getByRole("link", { name: "Connectors", exact: true }).click();
   await page.getByRole("link", { name: title, exact: true }).click();
-  await page
-    .getByRole("tab", { name: tab === "auth" ? "Auth" : tab === "tools" ? "Tools" : "Diagnostics", exact: true })
-    .click();
-  await expect(
-    page.getByRole("tab", { name: tab === "auth" ? "Auth" : tab === "tools" ? "Tools" : "Diagnostics", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("tab", { name: tab === "tools" ? "Tools" : "Connection", exact: true }).click();
+  await expect(page.getByRole("tab", { name: tab === "tools" ? "Tools" : "Connection", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
   return connectorRow(page, title);
 }
@@ -475,7 +474,7 @@ test("reports a real Clerk loader failure", async ({ page }) => {
 test("keeps the shell open and loads private data only after authentication", async ({ page }) => {
   await page.goto(origin + "/");
 
-  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Endpoints" })).toBeVisible();
   await expect(page.getByText("CRM")).toHaveCount(0);
   expect(requests.filter((request) => request.path === "/ui/data")).toHaveLength(0);
 
@@ -657,7 +656,7 @@ test("keeps a rejected credential save on screen and retryable", async ({ page }
 
   faults.clear();
   await row.getByRole("button", { name: "Save" }).click();
-  await expect(row.getByText("configured · ••••cret")).toBeVisible();
+  await expect(row.getByText("configured", { exact: true })).toBeVisible();
 });
 
 test("reports a failed OAuth restart and re-enables the control", async ({ page }) => {
@@ -761,10 +760,10 @@ test("copies a fix prompt that carries nothing from the failure", async ({ page,
   await expect(row.locator(".msg")).toContainText("Unavailable: its status check or catalog load failed");
   await expect(row).not.toContainText("sk_live_leaked_value");
   // The copy button sits among the row's actions; the preview under them.
-  const actions = row.locator(".actions").first();
+  const actions = row.getByRole("region", { name: "Diagnostics", exact: true }).locator(".actions");
   await actions.getByRole("button", { name: "Copy fix prompt for Hosted proxy" }).click();
   await expect(actions.getByRole("button", { name: "Copied" })).toBeVisible();
-  await expect(actions.getByRole("button", { name: "Refresh Hosted proxy" })).toBeVisible();
+  await expect(row.getByRole("button", { name: "Refresh Hosted proxy" })).toBeVisible();
   await expect(row.locator('[data-fix-prompt="connector_unavailable"]')).toContainText("Preview prompt");
   // ...but the clipboard gets only the fixed catalogue text.
   const copied = String(await page.evaluate("navigator.clipboard.readText()"));
@@ -1103,9 +1102,9 @@ test("keeps inactive connector tabs out of sight and out of the tab order", asyn
   await openAuthenticated(page);
   const row = await openRow(page, "CRM");
   await expect(row.getByRole("button", { name: "Reconnect CRM" })).toBeVisible();
-  await page.getByRole("tab", { name: "Config", exact: true }).click();
+  await page.getByRole("tab", { name: "Tools", exact: true }).click();
   await expect(row.getByRole("button", { name: "Reconnect CRM" })).toHaveCount(0);
-  await page.getByRole("tab", { name: "Auth", exact: true }).click();
+  await page.getByRole("tab", { name: "Connection", exact: true }).click();
   await expect(row.getByRole("button", { name: "Reconnect CRM" })).toBeVisible();
 });
 
@@ -1209,7 +1208,7 @@ test("creates, shows once, renames and revokes client tokens through real routes
   });
   try {
     await openAuthenticated(page);
-    await page.getByRole("link", { name: "Access", exact: true }).click();
+    await page.getByRole("link", { name: "Tokens", exact: true }).click();
     await listEntered;
     await page.getByLabel("Client name").fill("Desktop client");
     await page.getByRole("button", { name: "Create token", exact: true }).click();

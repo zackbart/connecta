@@ -7,6 +7,7 @@ import { ShellControls } from "./shell.js";
 import { Button, Input } from "./primitives.js";
 import { useEffect, useSyncExternalStore, useState } from "react";
 import {
+  canonicalOperatorPath,
   checkingCopy,
   gateCopy,
   pageDescription,
@@ -17,10 +18,8 @@ import {
 } from "../view.js";
 import { auth, productDescription, titleSuffix } from "./config.js";
 import { ConnectorsPage } from "./connectors.js";
-import { ConfigPage } from "./config-page.js";
-import { AccessPage } from "./access.js";
-import { ToolsPage } from "./tools.js";
-import { OverviewPage } from "./overview.js";
+import { SettingsPage } from "./config-page.js";
+import { EndpointsPage } from "./endpoints.js";
 import { TokensPage } from "./tokens.js";
 import { ActivityPage } from "./activity.js";
 import { ConnectorDetailPage } from "./connector-detail.js";
@@ -63,20 +62,35 @@ function visiblePages(state: OperatorState): OperatorPage[] {
   });
 }
 
+function DeploymentName({ state }: { state: OperatorState }) {
+  return state.contract ? (
+    <span className="deployment-name">
+      <span aria-hidden="true">/</span>
+      {state.contract.config.server.name}
+    </span>
+  ) : null;
+}
+
 function OperatorNav() {
   const state = useOperatorState();
 
   return (
     <div className="mast-actions">
-      <ShellControls pages={state.session === "ready" ? visiblePages(state) : []} />
+      <DeploymentName state={state} />
       <nav className="page-nav" aria-label="Operator pages">
         {(state.session === "ready" ? visiblePages(state) : []).map((page) => (
-          <PageLink key={page} page={page} className="navlink" current={state.page === page}>
+          <PageLink
+            key={page}
+            page={page}
+            className="navlink"
+            current={state.page === page || (page === "connections" && state.page === "connector")}
+          >
             {PAGE_META[page].label}
           </PageLink>
         ))}
       </nav>
       <div hidden={state.session !== "ready"} className="session-actions" aria-label="Session actions">
+        <ShellControls state={state} pages={state.session === "ready" ? visiblePages(state) : []} />
         {auth.kind === "clerk" || auth.kind === "cloudflare-access" ? (
           <button className="navlink" type="button" onClick={signOut}>
             Sign out
@@ -168,15 +182,13 @@ function Gate({ state }: { state: OperatorState }) {
 }
 
 function CurrentPage({ state }: { state: OperatorState }) {
-  if (state.page === "config") return <ConfigPage state={state} />;
-  if (state.page === "access") return <AccessPage state={state} />;
-  if (state.page === "tools") return <ToolsPage state={state} />;
+  if (state.page === "settings") return <SettingsPage state={state} />;
   if (state.page === "connector") return <ConnectorDetailPage state={state} />;
   if (state.page === "connections") return <ConnectorsPage state={state} />;
-  if (state.page === "overview") return <OverviewPage state={state} />;
+  if (state.page === "endpoints") return <EndpointsPage state={state} />;
   if (state.page === "tokens") return <TokensPage state={state} />;
   if (state.page === "activity") return <ActivityPage state={state} />;
-  return <OverviewPage state={state} />;
+  return <EndpointsPage state={state} />;
 }
 
 function OperatorApp() {
@@ -192,11 +204,7 @@ function OperatorApp() {
   useEffect(() => {
     if (!ready) return;
     if (state.data && state.contractPhase === "idle") void loadOperatorContract();
-    if (
-      (state.page === "tokens" || (state.page === "access" && state.contract?.you.permissions.accessTokenManagement)) &&
-      state.data?.accessTokenManagement === "available" &&
-      state.tokenPhase === "idle"
-    ) {
+    if (state.page === "tokens" && state.data?.accessTokenManagement === "available" && state.tokenPhase === "idle") {
       void loadAccessTokens();
     }
     if (
@@ -246,14 +254,34 @@ function mount(id: string, view: ReactNode): void {
 
 mount("operatorNav", <OperatorNav />);
 const rootRoute = createRootRoute({ component: Outlet, notFoundComponent: OperatorApp });
-const routes = ["/", "/connectors", "/connectors/$id", "/tools", "/access", "/config", "/tokens", "/activity"].map(
-  (path) => createRoute({ getParentRoute: () => rootRoute, path, component: OperatorApp }),
-);
+const routes = [
+  "/",
+  "/connectors",
+  "/connectors/$id",
+  "/tools",
+  "/access",
+  "/config",
+  "/settings",
+  "/tokens",
+  "/activity",
+].map((path) => createRoute({ getParentRoute: () => rootRoute, path, component: OperatorApp }));
 const router = createRouter({ routeTree: rootRoute.addChildren(routes), defaultPendingMinMs: 0 });
 configureNavigation((href) => {
   void router.navigate({ to: href });
 });
-router.subscribe("onResolved", () => routeChanged(router.state.location.pathname));
+function resolveLocation() {
+  const location = router.state.location;
+  const path = canonicalOperatorPath(location.pathname);
+  const hash =
+    path.startsWith("/connectors/") && ["config", "auth", "diagnostics"].includes(location.hash)
+      ? "connection"
+      : location.hash;
+  if (path !== location.pathname || hash !== location.hash) {
+    void router.navigate({ to: path, search: location.search, hash, replace: true });
+  }
+  routeChanged(path);
+}
+router.subscribe("onResolved", resolveLocation);
 mount(
   "operatorContent",
   <QueryClientProvider client={queryClient}>

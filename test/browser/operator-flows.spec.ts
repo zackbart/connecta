@@ -269,7 +269,7 @@ async function openShell(page: Page, deployment: Deployment, path: string, signe
   );
   // Fonts come from the unmodified hashed asset routes, never a CDN.
   await page.evaluate("document.fonts.ready");
-  expect(deployment.requests.some((request) => /^\/ui\/assets\/inter-.+\.woff2$/.test(request.path))).toBe(true);
+  expect(deployment.requests.some((request) => /^\/ui\/assets\/geist-.+\.woff2$/.test(request.path))).toBe(true);
 }
 
 test("INV-4: Clerk sign-in admits a session before loading real operator data", async ({ page, deployment }) => {

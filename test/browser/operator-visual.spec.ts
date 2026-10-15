@@ -21,18 +21,14 @@ import {
 test.describe.configure({ mode: "parallel" });
 
 const pages = [
-  ["overview", "/", "Overview"],
+  ["endpoints", "/", "Endpoints"],
   ["connectors", "/connectors", "Connectors"],
-  ["connector-config", "/connectors/github#config", "GitHub"],
   ["connector-tools", "/connectors/github#tools", "GitHub"],
-  ["connector-auth", "/connectors/slot#auth", "Empty slot"],
+  ["connector-connection", "/connectors/slot#connection", "Empty slot"],
   ["connector-activity", "/connectors/github#activity", "GitHub"],
-  ["connector-diagnostics", "/connectors/github#diagnostics", "GitHub"],
-  ["tools", "/tools", "Tools"],
-  ["access", "/access", "Access"],
-  ["tokens", "/tokens", "Access tokens"],
+  ["tokens", "/tokens", "Tokens"],
   ["activity", "/activity", "Activity"],
-  ["config", "/config", "Config"],
+  ["settings", "/settings", "Settings"],
 ] as const;
 const fixtures = new Map<string, OperatorVisualFixture>();
 let app: ReturnType<typeof createTestConnecta>;
@@ -160,7 +156,7 @@ async function ready(page: Page, name: string, state: VisualState) {
       ).toBeVisible();
     else if (name.includes("activity"))
       await expect(page.getByText(/Activity.*not available to this session/)).toBeVisible();
-    else if (name === "connector-auth")
+    else if (name === "connector-connection")
       await expect(page.getByText("Authentication for this connection is managed by your deployment.")).toBeVisible();
     else await expect(page.locator("#app")).toBeVisible();
   } else if (name.includes("activity")) {
@@ -176,28 +172,18 @@ async function ready(page: Page, name: string, state: VisualState) {
   } else {
     await expect(page.getByText("Loading configuration…", { exact: true })).toHaveCount(0);
     await expect(page.locator("#app")).toBeVisible();
-    if (name === "access")
-      await expect(
-        state === "empty"
-          ? page.getByText("No access tokens yet. Name the first MCP client above.")
-          : page.getByRole("heading", { name: "Claude desktop", exact: true }),
-      ).toBeVisible();
   }
   if (!["loading", "error"].includes(state) && !["tokens", "activity", "connector-activity"].includes(name)) {
     await expect(
       page
         .locator(
-          name === "overview"
-            ? "#attentionHeading"
+          name === "endpoints"
+            ? ".endpoint-table"
             : name === "connectors"
               ? "#connectorLedgerHeading"
-              : name === "config"
+              : name === "settings"
                 ? ".snapshot-tree"
-                : name === "access"
-                  ? "#poolsHeading"
-                  : name.startsWith("connector-")
-                    ? ".conn-head"
-                    : 'input[aria-label="Filter tools"]',
+                : ".conn-head",
         )
         .first(),
     ).toBeVisible();
@@ -213,13 +199,13 @@ for (const [name, path, heading] of pages) {
         try {
           // Empty detail fixtures keep GitHub. Its Auth tab shows deployment-
           // managed state instead of referring to a missing credential slot.
-          const href = name === "connector-auth" && state === "empty" ? "/connectors/github#auth" : path;
+          const href = name === "connector-connection" && state === "empty" ? "/connectors/github#connection" : path;
           await page.goto(VISUAL_ORIGIN + href);
           if (!["loading", "restricted"].includes(state) && !(name.startsWith("connector-") && state === "error")) {
             await expect(
               page
                 .getByRole("heading", {
-                  name: name === "connector-auth" && state === "empty" ? "GitHub" : heading,
+                  name: name === "connector-connection" && state === "empty" ? "GitHub" : heading,
                   exact: true,
                 })
                 .first(),
@@ -246,12 +232,12 @@ async function screenshot(page: Page, name: string) {
 }
 
 function variantPath(variant: VisualVariant): string {
-  if (variant.startsWith("credential-") || variant === "narrow-auth") return "/connectors/slot#auth";
-  if (variant.startsWith("oauth-")) return "/connectors/slack#auth";
-  if (variant.startsWith("drift-")) return "/connectors/github#diagnostics";
+  if (variant.startsWith("credential-") || variant === "narrow-auth") return "/connectors/slot#connection";
+  if (variant.startsWith("oauth-")) return "/connectors/slack#connection";
+  if (variant.startsWith("drift-")) return "/connectors/github#connection";
   if (variant === "legacy-activity") return "/activity";
-  if (variant === "schema" || variant.startsWith("tools-")) return "/tools";
-  if (variant === "config-provenance") return "/config";
+  if (variant === "schema" || variant.startsWith("tools-")) return "/connectors/github#tools";
+  if (variant === "config-provenance") return "/settings";
   return "/";
 }
 for (const variant of VISUAL_VARIANTS)
@@ -269,8 +255,15 @@ for (const variant of VISUAL_VARIANTS)
         else {
           await expect(page.locator("#app")).toBeVisible();
           await expect(page.getByText("Loading configuration…", { exact: true })).toHaveCount(0);
-          if (variant === "client-setup") {
-            await page.getByRole("button", { name: "Client setup", exact: true }).click();
+          if (variant === "endpoints-expanded" || variant === "narrow-endpoints") {
+            await page.locator(".endpoint-entry").nth(1).locator("summary").click();
+            await expect(page.locator(".endpoint-entry").nth(1).locator(".tool-chip")).toBeVisible();
+          } else if (variant === "command-search") {
+            await page.getByRole("button", { name: "Search" }).click();
+            await page.getByPlaceholder("Search pages, connectors, tools…").fill("github");
+            await expect(page.getByRole("option", { name: "github.read", exact: true })).toBeVisible();
+          } else if (variant === "client-setup") {
+            await page.getByRole("button", { name: "Client setup for Default", exact: true }).click();
             await expect(page.getByRole("dialog", { name: "Client setup", exact: true })).toBeVisible();
           } else if (variant === "schema") {
             await page.getByRole("button", { name: "github.read", exact: true }).click();
@@ -288,8 +281,12 @@ for (const variant of VISUAL_VARIANTS)
           else if (variant.startsWith("drift-")) await expect(page.locator("#drift-github")).toBeVisible();
           else if (variant.startsWith("oauth-"))
             await expect(page.getByRole("button", { name: "Disconnect Slack", exact: true })).toBeVisible();
-          else if (variant === "branded") await expect(page.locator("#attentionHeading")).toBeVisible();
-          else {
+          else if (variant === "branded") {
+            await expect(page.locator(".endpoint-table")).toBeVisible();
+            expect(
+              await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()),
+            ).toBe("#0a7d55");
+          } else {
             await expect(page.locator("#credential-slot")).toBeVisible();
             if (variant === "narrow-auth") {
               await page.getByRole("button", { name: "Add credential", exact: true }).click();
