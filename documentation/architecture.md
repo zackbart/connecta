@@ -438,11 +438,15 @@ Only the `workers.dev` hostname was probed. A Custom Domain application is the
 same documented hostname-and-path form, but it was not observed here. Do not
 rely on a fixed wait after a change. Changes settled in 15–19 seconds, yet one
 earlier round still saw a 403 on a bypassed path more than 30 seconds after
-the change.
-Test only after positive and negative controls have each converged, as the
-script does: the bypassed path reaches the Worker with the path AUD, and a
-protected path returns the Access refusal, each for several consecutive
-requests.
+the change. Test only after the positive and negative controls agree together
+for several consecutive rounds. The positive controls are bypassed paths
+reaching the Worker with the path AUD and a service token reaching a protected
+path with the Worker-level AUD; the negative controls are `/mcp` and `/`
+returning the Access refusal. The current script requires five such rounds
+after creating the bypass and three after other changes. The recorded run
+predates this: after the bypass it converged only the positive `/agent/x`
+control, then waited a fixed 90 seconds, and its negative controls were checked
+in the recorded rounds rather than before them.
 
 To repeat from a repository checkout, run
 `node scripts/probes/access-agent-bypass.mjs [--profile <name>] [output.json]`.
@@ -463,11 +467,24 @@ the script passes `--force`. `cf deploy` printed `Deploy complete` and then
 kept running, so the script stops it after that line. The recorded run deployed
 with Wrangler 4.114.0 and used `cf` for Access. A standalone deploy and delete
 verified the `cf` deploy and delete path. The full probe has not been rerun on
-that path. The later teardown hardening was not exercised live either. It
-covers token lookup by exact name, absence confirmed only by a successful
-lookup, and lookup of the tracked ids in the final inventory. CLI output is
-reduced to allowlisted API codes, error slugs, known messages, and HTTP
-statuses, and only the HTTP status for credential-creating commands.
+that path.
+
+Every subprocess (`cf`, `curl`, `npm`) runs through one runner. It enforces a
+deadline by killing the process group, keeps stdout and stderr in memory, and
+returns only facts: success, exit code, timeout, HTTP status, numeric API
+code, and an error slug from a fixed set (anything else is `unknown`). Commands
+that return data are parsed inside the runner against schemas that copy only
+whitelisted fields: ids, names, counts, booleans, and the Worker's `ctx.access`
+summary. Credentials stay in a holder that prints as `[secret]`. An unexpected
+shape, including `null` where a list belongs, is a failure, never an empty
+result. Errors are fixed diagnostics plus those facts. Teardown deletes every
+tracked id on its own, then retries discovery by name for leftovers. It counts a
+resource as gone only when a successful lookup omits it. Run
+`node scripts/probes/access-agent-bypass.mjs --self-test` to check the runner
+offline. It feeds canary secrets, suffixed slugs, malformed JSON, and a stalled
+process tree through it, and runs no `cf`, `curl`, or network command. This
+hardening and the joint convergence are verified offline only and have not run
+against Cloudflare.
 
 ## Storage, credentials, and connectors
 
