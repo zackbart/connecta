@@ -222,7 +222,7 @@ describe("operator contract v2 fixtures", () => {
       linExpectation((source) => (source.personal[id]!.manage = manage));
 
     it("INV-4: an action the trusted value omits fails", () => {
-      // A credential connector whose hooks cannot test it, or a deployment without a vault.
+      // A credential connector whose hooks cannot test it. (Without a vault, every credential action is gone.)
       const noTest = withManage("notion", { ...credential(linView()), actions: ["save", "clear"] });
       expectRejected(() => {}, noTest);
       expectMemberViewWithholds(

@@ -56,13 +56,21 @@ export interface MemberViewExpectation {
  * P6b must derive `manage` server-side, and test that derivation itself
  * (including a disconnect-only connector and a deployment without a vault),
  * from three facts. The member's permission to manage their own connection
- * gates every action. The connector's hooks: `test` when
+ * gates every action. Deployment availability: every credential action
+ * (`save`, `test`, `clear`) needs a vault, which `src/routes/credentials.ts`
+ * checks before anything else; `connect` and `restart` need what
+ * `oauthConnectUnavailable` checks (supported interactive auth plus handoff
+ * signing and verification). The connector's hooks: `test` when
  * `credentialTestRule(connector).mode !== null`, which pairs named fields with
  * `testCredentials` and a single credential with `testCredential`; `connect`
- * and `restart` with `startAuth` and `finishAuth`; `disconnect` with
- * `disconnectAuth`. Deployment availability: a vault for `save` and `clear`,
- * and handoff signing for `connect` and `restart`. This helper only compares
- * the derived value; it models none of those rules.
+ * and `restart` with `startAuth`, `finishAuth` and `verifyState` (the
+ * callback needs it); `disconnect` with `disconnectAuth`. `restart` is
+ * `connect` with `force`, so it needs nothing more. Today
+ * `src/routes/oauth-management.ts` requires both `startAuth` and
+ * `disconnectAuth` before either verb, so a disconnect-only connector is
+ * refused; P6b must gate each verb on its own hooks before advertising
+ * `["disconnect"]` alone. This helper only compares the derived value; it
+ * models none of those rules.
  */
 export interface MemberPartition {
   /** The member's own status from the server's status seam. */
