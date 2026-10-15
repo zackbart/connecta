@@ -30,15 +30,15 @@ place: a pool's member list.
 ```ts
 createConnecta({
   auth: clerkAuth({ ... }),
-  maintainers: ["clerk:user_zack"],
+  maintainers: ["user_zack"],
   agents: ["simon"],
   pools: {
     "simon-zack": {
       tools: ["linear", "gmail", "drive"],
       owner: "zack@onemany.co",
-      members: ["clerk:user_zack", "agent:simon"],
+      members: ["user_zack", "agent:simon"],
     },
-    reporting: { tools: ["linear", "notion"], readOnly: true, members: ["clerk:user_analyst"] },
+    reporting: { tools: ["linear", "notion"], readOnly: true, members: ["user_analyst"] },
   },
 });
 ```
@@ -49,11 +49,17 @@ createConnecta({
   activity. A maintainer does not implicitly open any pool; to use one, list
   yourself as a member. Plain `/mcp` includes the maintainer's own personal
   connectors.
-- **Pools** are the unit of access. `members` is a static list of
-  `"<namespace>:<id>"` humans and `"agent:<name>"` agents. A pool serves
-  exactly its `tools` (connector ids or exact `connector.tool` addresses), with
-  no intersection against another list. A non-member, an undeclared pool, and
-  an unauthenticated agent path all get the same 404 after authentication. A
+- **Member references.** `maintainers` and pool `members` list humans by
+  principal id (`"user_2abc"`), resolved in the namespace of the deployment's
+  one interactive auth provider, or as `{ namespace, id }` when a deployment
+  configures more than one or an id contains `:`. Agents are `"agent:<name>"`
+  and must be declared in `agents`. Ambiguous or unknown references throw at
+  construction. Clerk namespaces are URLs, so a `"<namespace>:<id>"` string
+  form would not parse.
+- **Pools** are the unit of access. `members` is a static list of those
+  references. A pool serves exactly its `tools` (connector ids or exact
+  `connector.tool` addresses), with no intersection against another list. A
+  non-member and an undeclared pool get the same 404 after authentication. A
   member may connect and disconnect their own account on personal connectors
   in their pools and nothing else. `readOnly` per pool is unchanged.
 - **Agents** are declared by name in code. Each has one token slot. A slot
