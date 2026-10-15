@@ -484,18 +484,17 @@ test("INV-4: queued focus and later passive returns cannot restore data during d
   await expect(page.getByRole("link", { name: "CRM", exact: true })).toBeVisible();
   await page.waitForLoadState("networkidle");
   requests = [];
-  await page.evaluate(() => {
-    window.Clerk!.signOut = () => new Promise(() => {});
+  await page.evaluate(`
+    window.Clerk.signOut = () => new Promise(() => {});
     window.dispatchEvent(new Event("focus"));
-    const signOut = document.querySelector<HTMLButtonElement>(".session-actions button");
-    signOut!.click();
-  });
+    document.querySelector(".session-actions button").click();
+  `);
   await expect(page.locator("#gate")).toBeVisible();
   await page.clock.runFor(200);
   await page.waitForLoadState("networkidle");
   await expect(page.locator("#gate")).toBeVisible();
   await page.clock.runFor(2100);
-  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.evaluate("window.dispatchEvent(new Event('focus'))");
   await page.clock.runFor(60_000);
   await page.waitForLoadState("networkidle");
   await expect(page.locator("#gate")).toBeVisible();

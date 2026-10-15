@@ -172,10 +172,8 @@ for (const destination of ["/tools", "/connectors/key"]) {
   test(`INV-10: OAuth polling stops after navigating to ${destination}`, async ({ page }) => {
     await startPolling(page);
     // A real client-side route change also covers connector-to-connector navigation.
-    await page.evaluate((path) => {
-      history.pushState(null, "", path);
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    }, destination);
+    await page.evaluate(`history.pushState(null, "", ${JSON.stringify(destination)});
+      window.dispatchEvent(new PopStateEvent("popstate"));`);
     await expect(page).toHaveURL(origin + destination);
     await page.waitForLoadState("networkidle");
     reads = [];
