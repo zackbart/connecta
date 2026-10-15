@@ -432,8 +432,8 @@ describe.each(JSON_UPLOADS)("$vendor.name decoded JSON admission", ({ vendor, ar
     },
   );
 
-  it.each(["not base64!", "A".repeat(4 * Math.ceil((8 * 1024 * 1024) / 3) + 4)])(
-    "INV-5: refuses malformed or oversized decoded JSON uploads with zero dispatch %#",
+  it.each(["not base64!", "-___", "A"])(
+    "INV-5: refuses malformed decoded JSON uploads with zero dispatch %#",
     async (input) => {
       await expect(call(vendor.create(), `${vendor.name}_api_write`, args(input))).rejects.toMatchObject({
         code: "invalid_args",
@@ -450,6 +450,21 @@ describe.each(JSON_UPLOADS)("$vendor.name decoded JSON admission", ({ vendor, ar
     expect(sent).toHaveLength(1);
     expect(JSON.parse(String(sent[0]!.body))).toEqual(request.body);
   });
+
+  it("INV-5: admits a base64 JSON field above 8 MiB and inspects a withheld destination at its end", async () => {
+    const safe = "a".repeat(8 * 1024 * 1024 + 1);
+    const connector = vendor.create();
+    respond = () => vendor.envelope({});
+    const request = args(btoa(safe));
+    await call(connector, `${vendor.name}_api_write`, request);
+    expect(sent).toHaveLength(1);
+    expect(JSON.parse(String(sent[0]!.body))).toEqual(request.body);
+    sent = [];
+    await expect(
+      call(connector, `${vendor.name}_api_write`, args(btoa(`${safe} https://f.test/?%5Bredacted%5D`))),
+    ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringContaining("withheld") });
+    expect(sent).toHaveLength(0);
+  }, 20_000);
 
   it("INV-5: refuses JSON-escaped and entity-encoded destinations after the documented base64 decode", async () => {
     for (const input of [
@@ -488,16 +503,85 @@ describe.each(VENDORS)("$name JSON key and depth admission", (vendor) => {
     },
   );
 
-  it.each(["https://files.example/a?[redacted]", "ordinary text"])(
-    "INV-5: refuses over-depth metadata instead of skipping an unexamined subtree: %s",
+  it.each(["https://files.example/a?[redacted]", "https://files.example/a?%5Bredacted%5D"])(
+    "INV-5: refuses deeply nested withheld metadata with zero dispatch: %s",
     async (input) => {
       let nested: unknown = input;
       for (let depth = 0; depth < 52; depth++) nested = [nested];
       await expect(call(vendor.create(), `${vendor.name}_api_write`, args({ nested }))).rejects.toMatchObject({
         code: "invalid_args",
-        ...(vendor.name === "cloudflare" ? { message: expect.stringContaining("maximum JSON depth") } : {}),
+        ...(vendor.name === "cloudflare" ? { message: expect.stringContaining("withheld") } : {}),
       });
       expect(sent).toHaveLength(0);
     },
   );
+});
+
+describe("request-sized JSON admission", () => {
+  const cases = [
+    {
+      vendor: VENDORS[2],
+      args: () => ({
+        method: "PUT",
+        path: `/accounts/${ACCOUNT}/storage/kv/namespaces/ns/bulk`,
+        body: Array.from({ length: 10_000 }, (_, i) => ({
+          key: String(i),
+          value: "x",
+          expiration_ttl: 60,
+          metadata: { a: 1 },
+        })),
+      }),
+    },
+    {
+      vendor: VENDORS[1],
+      args: () => ({
+        method: "POST",
+        path: "/v13/deployments",
+        body: {
+          name: "review",
+          files: Array.from({ length: 15_000 }, (_, i) => ({
+            file: `${i}.txt`,
+            data: "x",
+            encoding: "utf-8",
+          })),
+        },
+      }),
+    },
+  ];
+
+  it.each(cases)(
+    "INV-5: dispatches the supported maximum entry count for $vendor.name and scans its last entry",
+    async ({ vendor, args }) => {
+      const request = args();
+      respond = () => vendor.envelope({});
+      const connector = vendor.create();
+      await call(connector, `${vendor.name}_api_write`, request);
+      expect(sent).toHaveLength(1);
+      expect(JSON.parse(String(sent[0]!.body))).toEqual(request.body);
+      sent = [];
+      const entries = Array.isArray(request.body) ? request.body : request.body.files;
+      Object.assign(entries.at(-1)!, {
+        [vendor.name === "cloudflare" ? "value" : "data"]: "https://f.test/?%5Bredacted%5D",
+      });
+      await expect(call(connector, `${vendor.name}_api_write`, request)).rejects.toMatchObject({
+        code: "invalid_args",
+        message: expect.stringContaining("withheld"),
+      });
+      expect(sent).toHaveLength(0);
+    },
+  );
+
+  it("INV-5: dispatches supported Cloudflare KV metadata nested beyond 48 levels unchanged", async () => {
+    let nested: unknown = "safe";
+    for (let i = 0; i < 52; i++) nested = [nested];
+    const body = [{ key: "review", value: "x", metadata: { nested } }];
+    respond = () => VENDORS[2].envelope({});
+    await call(VENDORS[2].create(), "cloudflare_api_write", {
+      method: "PUT",
+      path: `/accounts/${ACCOUNT}/storage/kv/namespaces/ns/bulk`,
+      body,
+    });
+    expect(sent).toHaveLength(1);
+    expect(JSON.parse(String(sent[0]!.body))).toEqual(body);
+  });
 });

@@ -142,8 +142,6 @@ const HEADER_RULE_VALUES = ["value", "values", "args"];
 /** Keys whose absolute URL is a route or redirect destination. */
 const DESTINATION_KEYS = ["dest", "destination", "location"];
 const MAX_DEPTH = 48;
-const MAX_ADMISSION_NODES = 100_000;
-const MAX_BASE64_BYTES = 8 * 1024 * 1024;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -912,35 +910,37 @@ function decodeLinkText(text: string, percent = true): string {
  * to match that policy, preserving Notion's external-proxy boundary.
  */
 export function carriesWithheldLink(value: unknown, hosts?: FileHosts): boolean {
-  const pending = [{ value, depth: 0 }];
-  let remaining = MAX_ADMISSION_NODES - 1;
+  const pending: Array<{ value: unknown; leave?: boolean }> = [{ value }];
+  const ancestors = new WeakSet<object>();
   const inspect = (text: string): boolean => {
     for (const { cut, end } of hostLinks(text, hosts, false)) {
       if (cut >= 0 && decodeLinkText(text.slice(cut, end)).includes(REDACTED)) return true;
     }
     return false;
   };
-  // Bound the traversal as well as the string scanner. Never silently skip an
-  // unexamined subtree: it can carry a placeholder in either a key or a value.
+  // JSON structure is bounded by the admitted request's bytes. Visit every key
+  // and value iteratively, without imposing a smaller node/depth limit. Reject
+  // cycles from direct callers; repeated non-cyclic references remain valid.
   while (pending.length > 0) {
-    const { value: item, depth } = pending.pop()!;
-    if (depth > MAX_DEPTH) {
-      throw new ConnectorCallError("invalid_args", "Not sent: URL admission exceeds the maximum JSON depth of 48.");
-    }
+    const { value: item, leave } = pending.pop()!;
     if (typeof item === "string") {
       if (inspect(item)) return true;
     } else if (typeof item === "object" && item !== null) {
-      const entries = Array.isArray(item) ? item : Object.entries(item);
-      remaining -= entries.length * (Array.isArray(item) ? 1 : 2);
-      if (remaining < 0) {
-        throw new ConnectorCallError("invalid_args", "Not sent: URL admission exceeds 100000 JSON keys and values.");
+      if (leave) {
+        ancestors.delete(item);
+        continue;
       }
+      if (ancestors.has(item)) {
+        throw new ConnectorCallError("invalid_args", "Not sent: URL admission cannot inspect cyclic JSON.");
+      }
+      ancestors.add(item);
+      pending.push({ value: item, leave: true });
       if (Array.isArray(item)) {
-        for (const child of item) pending.push({ value: child, depth: depth + 1 });
+        for (const child of item) pending.push({ value: child });
       } else {
-        for (const [key, child] of entries as Array<[string, unknown]>) {
+        for (const [key, child] of Object.entries(item)) {
           if (inspect(key)) return true;
-          pending.push({ value: child, depth: depth + 1 });
+          pending.push({ value: child });
         }
       }
     }
@@ -975,20 +975,27 @@ export async function refuseWithheldUpload(body: BodyInit, title: string): Promi
 }
 
 /** Only for documented JSON fields the vendor decodes as base64, never arbitrary strings. */
-export async function refuseWithheldBase64(value: unknown, title: string): Promise<void> {
-  if (typeof value !== "string" || value.length > 4 * Math.ceil(MAX_BASE64_BYTES / 3)) {
-    throw new ConnectorCallError("invalid_args", "Not sent: a base64 field must encode at most 8 MiB.");
+export async function refuseWithheldBase64(value: unknown, title: string, maxDecodedBytes?: number): Promise<void> {
+  if (typeof value !== "string") {
+    throw new ConnectorCallError("invalid_args", "Not sent: a base64 field must be a string.");
   }
-  let bytes: Uint8Array<ArrayBuffer>;
+  // One decode, bounded by this field's own encoded length (at most 3/4 as
+  // many bytes), itself bounded by the host's request limit. Operation-specific
+  // value limits are independent of response caps and raw-upload caps.
+  let decoded: string;
   try {
-    const decoded = atob(value);
-    if (decoded.length > MAX_BASE64_BYTES) {
-      throw new Error("oversized");
-    }
-    bytes = Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+    decoded = atob(value);
   } catch {
-    throw new ConnectorCallError("invalid_args", "Not sent: a base64 field must be valid and encode at most 8 MiB.");
+    throw new ConnectorCallError("invalid_args", "Not sent: a base64 field must be valid base64.");
   }
+  if (maxDecodedBytes !== undefined && decoded.length > maxDecodedBytes) {
+    throw new ConnectorCallError(
+      "invalid_args",
+      `Not sent: a base64 field must encode at most ${maxDecodedBytes} bytes.`,
+    );
+  }
+  const bytes = new Uint8Array(decoded.length);
+  for (let i = 0; i < decoded.length; i++) bytes[i] = decoded.charCodeAt(i);
   await refuseWithheldUpload(bytes, title);
 }
 

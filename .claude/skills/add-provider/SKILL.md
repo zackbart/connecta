@@ -143,7 +143,10 @@ vendors"). The steps:
    `refuseWithheldUpload` on decoded upload bytes/multipart parts, before any
    dispatch. Inspect documented vendor-decoded base64 JSON fields with
    `refuseWithheldBase64` too. Admission traverses JSON keys and values
-   iteratively and refuses over-limit payloads. Embedded-URL operation keys
+   iteratively within the host's accepted request size, without separate
+   depth or node-count ceilings. Base64 decoding is single-pass and bounded
+   by the field's encoded length and any documented operation value limit.
+   Refuse malformed encodings and cyclic direct arguments. Embedded-URL operation keys
    must exist in the pinned index; the shared review harness guards this.
    Do not allow agents to store withheld destinations. Record exact
    reviewed paths and evidence, false positives and binary/base64 exclusions.

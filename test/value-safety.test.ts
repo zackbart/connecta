@@ -851,33 +851,38 @@ describe("reviewed text policy and global admission (#846)", () => {
     expect(carriesWithheldLink({ "https://public.example/?code=welcome": ["[redacted] outside"] })).toBe(false);
   });
 
-  it("INV-5: scans admitted depth iteratively and refuses excessive depth or breadth, including clean subtrees", () => {
+  it("INV-5: scans all request-sized JSON keys and values iteratively without depth or breadth ceilings", () => {
     const nest = (value: unknown, depth: number): unknown => {
       for (let i = 0; i < depth; i++) value = [value];
       return value;
     };
-    expect(carriesWithheldLink(nest("https://files.example/?[redacted]", 48))).toBe(true);
-    expect(carriesWithheldLink(nest("ordinary", 48))).toBe(false);
-    for (const value of [
-      nest("ordinary", 49),
-      nest("https://files.example/?[redacted]", 52),
-      nest({}, 20_000),
-      Array(100_000).fill("safe"),
-    ]) {
-      expect(() => refuseWithheldLinks(value, "Vendor")).toThrow(expect.objectContaining({ code: "invalid_args" }));
+    for (const depth of [48, 52, 20_000]) {
+      expect(carriesWithheldLink(nest("https://files.example/?[redacted]", depth))).toBe(true);
+      expect(carriesWithheldLink(nest("ordinary", depth))).toBe(false);
+      expect(carriesWithheldLink(nest({ "https://files.example/?%5Bredacted%5D": "link" }, depth))).toBe(true);
     }
-    expect(carriesWithheldLink(Array(99_999).fill("safe"))).toBe(false);
+    expect(carriesWithheldLink(Array(110_000).fill("safe"))).toBe(false);
+    expect(carriesWithheldLink(["https://files.example/?[redacted]", ...Array(110_000).fill("safe")])).toBe(true);
   });
 
-  it("INV-5: checks only the decoded base64 bytes once and bounds decoding before allocation", async () => {
+  it("INV-5: refuses cyclic direct arguments while inspecting repeated non-cyclic references", () => {
+    const cyclic: unknown[] = [];
+    cyclic.push(cyclic);
+    expect(() => refuseWithheldLinks(cyclic, "Vendor")).toThrow(expect.objectContaining({ code: "invalid_args" }));
+    const repeated = { note: "safe" };
+    expect(carriesWithheldLink([repeated, repeated])).toBe(false);
+  });
+
+  it("INV-5: decodes base64 once within its encoded length and optional operation value limit", async () => {
     const text = "https://files.example/?%255Bredacted%255D";
     await expect(refuseWithheldBase64(btoa(text), "Vendor")).rejects.toMatchObject({ code: "invalid_args" });
     await expect(refuseWithheldBase64("!!", "Vendor")).rejects.toMatchObject({ code: "invalid_args" });
     await expect(refuseWithheldBase64(btoa(btoa(text)), "Vendor")).resolves.toBeUndefined();
     await expect(refuseWithheldBase64(btoa("https://public.example/?code=welcome"), "Vendor")).resolves.toBeUndefined();
-    await expect(
-      refuseWithheldBase64("A".repeat(4 * Math.ceil((8 * 1024 * 1024) / 3)), "Vendor"),
-    ).rejects.toMatchObject({ code: "invalid_args" });
+    for (const input of [btoa("safe"), btoa("safe").replace(/=+$/, ""), ` \n${btoa("safe")}\t`]) {
+      await expect(refuseWithheldBase64(input, "Vendor", 4)).resolves.toBeUndefined();
+      await expect(refuseWithheldBase64(input, "Vendor", 3)).rejects.toMatchObject({ code: "invalid_args" });
+    }
   });
 
   it.each([

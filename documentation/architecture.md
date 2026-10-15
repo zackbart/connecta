@@ -905,10 +905,16 @@ every vendor ships one reviewed table through one mechanism
    layers encoded. Upload admission reads decoded bytes and each multipart
    string/blob. Vercel deployment `files[].data` with `encoding: "base64"`
    and Cloudflare KV bulk `value` with `base64: true` pass through the same
-   byte inspection, bounded to 8 MiB decoded per field; malformed or oversized
-   fields are refused. JSON admission iteratively checks keys and values and
-   fails closed with `invalid_args` beyond 48 levels or 100,000 keys/values.
-   The scans remain linear in the supplied and decoded bytes.
+   byte inspection with one decode, bounded by the field's own encoded length
+   (decoded bytes are at most three quarters of encoded characters). Cloudflare
+   KV additionally enforces its documented 25 MiB decoded value limit;
+   malformed base64 and values beyond that limit refuse with `invalid_args`.
+   The host's inbound request cap still applies (Node `maxBodyBytes`, or the
+   Workers platform); response and raw-upload limits do not bound JSON fields.
+   JSON admission iteratively checks every key and value, with no separate
+   depth or node-count ceiling below the accepted request's size. Cyclic
+   direct arguments refuse with `invalid_args`; repeated non-cyclic references
+   are inspected. The scans remain linear in the supplied and decoded bytes.
    Withheld values must not be written back; obtain the original
    link or omit the field. A placeholder outside a destination is ordinary
    text. Notion keeps its stricter reviewed-host admission and proxy policy.

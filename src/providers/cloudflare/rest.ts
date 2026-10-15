@@ -602,7 +602,9 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
         Array.isArray(call.body)
       ) {
         for (const entry of call.body) {
-          if (record(entry)["base64"] === true) await refuseWithheldBase64(record(entry)["value"], "Cloudflare");
+          // KV values support 25 MiB decoded; MAX_RESPONSE_BYTES only caps reads.
+          if (record(entry)["base64"] === true)
+            await refuseWithheldBase64(record(entry)["value"], "Cloudflare", 25 * 1024 * 1024);
         }
       }
     }
