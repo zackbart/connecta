@@ -73,12 +73,20 @@ createConnecta({
   refuse Clerk tokens, cookies, and Access context. Their protected-resource
   metadata names no authorization server. Human endpoints (`/mcp`,
   `/mcp/<pool>`) refuse `cta_`. Behind Cloudflare Access, `/agent/*` is
-  bypassed at the edge by a path-scoped Access application, so an agent sends
-  one credential. Cloudflare documents that path applications take precedence
-  over a Worker-level application, and that Worker-level protection covers
-  every hostname the Worker serves, so a second hostname is not a fallback.
-  P0 verifies the bypass, including path normalization, before P4 documents
-  it.
+  bypassed at the edge, so an agent sends one credential. The P0 probe
+  (2026-10-15, `workers.dev`) verified it: one self-hosted application per
+  agent hostname, destination `<host>/agent/*`, with a single Bypass policy,
+  takes precedence over the Worker-level application on matching paths only.
+  A second Worker-destination application is refused, so a second hostname is
+  not a fallback. Bypassed requests still carry `ctx.access`, with the path
+  application's AUD and no identity, so `/agent/*` ignores Access context
+  entirely. Access normalizes before matching: it resolves dot segments,
+  matches case-insensitively, decodes unreserved escapes and collapses a
+  leading `//`, while the Worker receives the raw path. So `/agent/<pool>`
+  accepts only a raw pathname exactly equal to `/agent/` plus a declared pool
+  name, with no decoding, case folding or slash collapsing, and returns the
+  same 404 for everything else. Human routes keep refusing a missing Access
+  identity; pinning the Worker-level AUD there is recommended hardening.
 - **Pool owner** sets Google Workspace subjects for agents when a provider's
   `subject` is a mapping function. A human acts as their own Workspace account
   through that mapping, in any pool. An agent acts as the owner of the pool it
