@@ -406,8 +406,14 @@ async function play(
     if (mode === "reference") {
       if (task.id.startsWith("801-")) {
         const restored = restoreGradeInputs(structuredClone(saveGradeInputs(world, trace)));
-        if (!passes(gradeTask(original, restored, surface, grading), grading))
-          throw new Error(`Saved REST reference failed: ${task.id}`);
+        const savedChecks = gradeTask(original, restored, surface, grading);
+        if (!passes(savedChecks, grading))
+          throw new Error(
+            `Saved REST reference failed: ${task.id}: ${savedChecks
+              .filter((c) => !c.pass && !c.advisory)
+              .map((c) => c.id)
+              .join(", ")}`,
+          );
       }
       const mutate = (name: string, change: (saved: ReturnType<typeof saveGradeInputs>) => void) => {
         const saved = structuredClone(saveGradeInputs(world, trace));

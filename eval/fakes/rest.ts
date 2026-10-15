@@ -41,6 +41,17 @@ function installTransport() {
   }) as typeof fetch;
 }
 type Row = Record<string, any>;
+// Stripe compares parameters rather than their serialization order.
+const canonicalParams = (value: unknown): unknown =>
+  Array.isArray(value)
+    ? value.map(canonicalParams)
+    : value !== null && typeof value === "object"
+      ? Object.fromEntries(
+          Object.entries(value)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([key, item]) => [key, canonicalParams(item)]),
+        )
+      : String(value);
 const sameTargets = (a: unknown, b: unknown) =>
   Array.isArray(a) && Array.isArray(b) && [...a].sort().join() === [...b].sort().join();
 const text = (value: string) => [{ type: "text", text: { content: value }, plain_text: value }];
@@ -72,7 +83,7 @@ const cf = (result: unknown) => ({
 export function restState() {
   return {
     refunds: [] as Row[],
-    refundKeys: {} as Record<string, Row>,
+    refundKeys: {} as Record<string, { params: string; status: number; value: unknown }>,
     refundFaulted: false,
     blocks: { "page-q3": [] as Row[], "page-retro": [] as Row[] } as Record<string, Row[]>,
     dns: [
@@ -123,8 +134,10 @@ export class FakeRestService {
     private readonly ledger: Ledger,
     readonly state: RestState,
     private readonly refundFault = false,
+    private readonly stripeMode: "test" | "live" = "test",
+    private readonly stripeAccount = "acct_eval",
   ) {
-    this.token = `${vendor === "stripe" ? "sk_test_eval_" : "eval_"}${randomUUID()}`;
+    this.token = `${vendor === "stripe" ? `sk_${stripeMode}_eval_` : "eval_"}${randomUUID()}`;
   }
   get credential() {
     return this.name === "cloudflare_legacy" ? JSON.stringify({ email: REST_EMAIL, apiKey: this.token }) : this.token;
@@ -230,7 +243,7 @@ export class FakeRestService {
         currency: "usd",
       };
       if (method === "GET" && path === "/v1/account")
-        return ok({ id: "acct_eval", object: "account", livemode: false });
+        return ok({ id: this.stripeAccount, object: "account", livemode: this.stripeMode === "live" });
       if (method === "GET" && path === "/v1/payment_intents/pi_3Pfail0000")
         return ok({
           id: "pi_3Pfail0000",
@@ -271,7 +284,24 @@ export class FakeRestService {
       }
       if (method === "POST" && path === "/v1/refunds") {
         const key = String(headers["idempotency-key"] ?? "");
-        if (key && this.state.refundKeys[key]) return { value: this.state.refundKeys[key], deduplicated: true };
+        // Stripe v1 scopes keys to account and mode, not API credential.
+        const scope = JSON.stringify([headers["stripe-account"] ?? this.stripeAccount, this.stripeMode, key]);
+        const params = JSON.stringify([method, path, canonicalParams(query), canonicalParams(body)]);
+        const previous = key ? this.state.refundKeys[scope] : undefined;
+        if (previous) {
+          if (previous.params !== params)
+            return {
+              status: 400,
+              value: {
+                error: {
+                  type: "idempotency_error",
+                  message:
+                    "Keys for idempotent requests can only be used with the same parameters they were first used with.",
+                },
+              },
+            };
+          return { status: previous.status, value: previous.value, deduplicated: true };
+        }
         const refund = {
           id: `re_eval_${this.state.refunds.length + 1}`,
           object: "refund",
@@ -281,12 +311,13 @@ export class FakeRestService {
           status: "succeeded",
         };
         this.state.refunds.push(refund);
-        if (key) this.state.refundKeys[key] = refund;
-        if (this.refundFault && !this.state.refundFaulted) {
-          this.state.refundFaulted = true;
-          return { status: 500, value: { error: { type: "api_error", message: "Refund outcome unknown" } } };
-        }
-        return ok(refund);
+        const fault = this.refundFault && !this.state.refundFaulted;
+        if (fault) this.state.refundFaulted = true;
+        const result = fault
+          ? { status: 500, value: { error: { type: "api_error", message: "Refund outcome unknown" } } }
+          : { status: 200, value: refund };
+        if (key) this.state.refundKeys[scope] = { params, ...structuredClone(result) };
+        return result;
       }
       if (method === "GET" && path === "/v1/refunds")
         return ok({ object: "list", data: this.state.refunds, has_more: false });

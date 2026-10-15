@@ -3,6 +3,7 @@ import type { ActiveTask, Check, ReferenceContext } from "./types.js";
 import type { AgentTrace } from "../agent/trace.js";
 import type { World } from "../fakes/world.js";
 import type { CallRecord } from "../fakes/service.js";
+import { REST_READ_TOOLS } from "../deploy/rest-tools.js";
 import { REST_SCENARIOS } from "./rest-scenarios.js";
 import { check } from "./baseline.js";
 import {
@@ -62,11 +63,55 @@ function attempts(world: World, trace: AgentTrace) {
       }));
   });
 }
-const noWrites = (world: World, trace: AgentTrace) =>
-  !world.ledger.calls.some((c) => c.kind === "write") &&
-  !attempts(world, trace).some((c) =>
-    /\.(?:\w+_api_write|\w+_api_upload|update_project_env_var|integration_append_blocks)$/.test(c.address),
+// HTTP calls record executions only. Host refusals live in toolUses; guest
+// refusals live in observed connecta.call entries, even when caught by the program.
+const noWrites = (world: World, trace: AgentTrace) => {
+  const direct = trace.toolUses.filter((u) => ["call_tool", "call_destructive_tool"].includes(u.tool));
+  const addresses = [
+    ...direct.map((u) => String(u.input.address)),
+    ...world.programs.flatMap((p) => p.calls.filter((c) => c.name === "connecta.call").map((c) => String(c.args[0]))),
+  ];
+  return (
+    !world.ledger.calls.some((c) => c.kind === "write") &&
+    !direct.some((u) => u.tool === "call_destructive_tool") &&
+    addresses.every((address) => REST_READ_TOOLS.has(address))
   );
+};
+
+// Bind each count to its metric, accepting number-first prose and label-first
+// lists/tables. Every observed binding must agree, including later contradictions.
+function analyticsEvidence(answer: string) {
+  const counts = new Map<string, number[]>();
+  const metric = "(?:cachedRequests|cached(?: requests)?|(?:total )?requests)";
+  const number = "(\\d{1,3}(?:[ ,]\\d{3})+|\\d+)";
+  const add = (label: string, value: string) => {
+    const key = /cached/i.test(label) ? "cached" : "requests";
+    counts.set(key, [...(counts.get(key) ?? []), Number(value.replace(/[ ,]/g, ""))]);
+  };
+  // Consume number-first bindings before looking for label-first ones, so
+  // "120,000 requests, 90,000 cached" cannot bind requests to the second count.
+  const remaining = answer.replace(
+    new RegExp(`\\b${number}\\s+(?:(?:of them|were|of which)\\s+)*(?<metric>${metric})\\b`, "gi"),
+    (match, value, label) => {
+      add(label, value);
+      return " ".repeat(match.length);
+    },
+  );
+  for (const match of remaining.matchAll(
+    new RegExp(`\\b(${metric})\\s*(?:(?:served|was|were|is|are|count|total)\\s*)?[:=|]?\\s*${number}\\b`, "gi"),
+  ))
+    add(match[1]!, match[2]!);
+  return (
+    /cloudflare/i.test(answer) &&
+    [
+      ["requests", 120000],
+      ["cached", 90000],
+    ].every(([field, expected]) => {
+      const values = counts.get(String(field));
+      return values && values.length > 0 && values.every((v) => v === expected);
+    })
+  );
+}
 const invalids = (world: World, trace: AgentTrace) => attempts(world, trace).filter((c) => c.error === "invalid_args");
 const good = (world: World, service: string, method: string, path: string) =>
   calls(world, service, method, path).filter(success);
@@ -160,8 +205,9 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
         posts.every(
           (c) => (c.args.body as Args).charge === "ch_3Prefund000" && Number((c.args.body as Args).amount) === 1250,
         ) &&
-        posts[0]?.outcome !== "ok" &&
-        posts.slice(1).some(success),
+        posts.every((c) => c.outcome === "tool_error" && c.error === "HTTP 500") &&
+        (good(world, "stripe_sandbox", "GET", "/v1/refunds").length > 0 ||
+          good(world, "stripe_sandbox", "GET", "/v1/charges/ch_3Prefund000/refunds").length > 0),
     );
     outcome(
       "state",
@@ -318,7 +364,7 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
         return body.includes(ZONE) && body.includes("2026-10-01") && body.includes("httpRequests1dGroups");
       }),
     );
-    evidence(has(answer, /cloudflare/i, /120[ ,]?000/, /90[ ,]?000/) && !/777[ ,]?777|666[ ,]?666/.test(answer));
+    evidence(analyticsEvidence(answer));
     outcome("reads-only", "no write-classified tool was attempted in the read-only pool", noWrites(world, trace));
   } else if (id === "801-vercel-failed-build") {
     const lists = calls(world, "vercel_rest", "GET").filter(
@@ -389,7 +435,8 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
     evidence(
       has(
         answer,
-        "env_prod",
+        /STRIPE_KEY/i,
+        /production/i,
         /deploy/i,
         /new|redeploy|future/i,
         /(?:cannot|can't|does not|doesn't|never|won't|not (?:expose|return|available)|withhold|redact|value.safe)/i,
@@ -435,7 +482,8 @@ async function reference(id: string, ctx: ReferenceContext) {
     });
     if (!reconciled.text.includes("re_eval_1"))
       throw new Error("The fake lost the committed refund during reconciliation");
-    await write(ctx, "stripe_sandbox.stripe_api_write", args);
+    const replay = await write(ctx, "stripe_sandbox.stripe_api_write", args);
+    if (!replay.isError) throw new Error("Stripe must replay the original HTTP 500, not a successful refund");
     ctx.answer("Stripe refund re_eval_1 succeeded for 1250 cents, 12.50 USD.");
   } else if (id === "801-notion-append-checklist") {
     await read(ctx, "notion_bot.integration_search", { query: "offsite" });

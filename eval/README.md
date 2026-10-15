@@ -8,9 +8,9 @@ failure triage and caveats. Older files retain their historical tools, models
 and grades and are not directly comparable.
 
 The [#801 REST follow-up notes](baselines/notes-rest-801.md) record the ten
-new tasks, both live batches, harness corrections and failure triage. Final
-saved-evidence scores are GPT-6-Luna 6/10 and Sonnet 5.5 7/10; the Luna refund
-trial remains fixture-confounded.
+new tasks, live batches, harness corrections and failure triage. Pre-review
+files are diagnostic history, not a complete baseline: the Luna refund trial
+used an invalid reconciliation response.
 
 ## Runners
 
@@ -276,14 +276,23 @@ vendor-proven idempotent replays from duplicate business writes. The grader
 still requires identical arguments and one nonempty key across attempts.
 Saved inputs include complete REST state, raw request ledger and guest-call
 observations, so offline regrading does not start HTTP services.
-[Planned tasks](tasks/planned.ts) is currently empty.
-The #765 paired comparison keeps its registered 19-task scope; these ten
-follow-ups do not change that experiment's acceptance rule.
-An eval-only fetch adapter maps fresh per-world sentinel credentials to
-loopback HTTP, so Stripe and Notion keep their fixed public origins and the
-providers retain their production host checks. Unregistered credentials and
-cross-vendor hosts fail before any network request. The last world to stop
-restores the original fetch function; concurrent worlds keep separate routes.
+Ten active `801-*` tasks exercise Stripe failed payments, refused-parameter
+recovery and idempotent refunds; Notion checklist append and filtered body-cursor
+paging; Cloudflare DNS TTL changes, pinned Global API Key refusal and read-only
+analytics; and Vercel build errors and value-safe environment updates. All use
+local fake REST vendors through the maintained providers.
+
+The refund fake follows Stripe API v1 idempotency: the same account/mode/key
+and parameters replay the original status and body, including HTTP 500; changed
+parameters return `idempotency_error`. The fault commits a refund before its
+HTTP 500, so confirmation requires reconciliation through a read. The reference
+also replays that 500 with the same key. No grader requires a successful replay.
+Read-only graders inspect the HTTP ledger, direct tool attempts and observed
+guest calls, including caught or refused writes. Their read inventory derives
+from the authored provider annotations; unknown tools fail closed. Analytics
+answer checks bind request and cache counts to their labels and reject conflicting
+counts. Environment confirmation requires the requested production STRIPE_KEY
+and deployment/value-safety facts, without requiring an unrequested variable id.
 
 Each grader has independent required `correct-destination` and
 `answer-evidence` checks. Destination checks require the connector, tool and

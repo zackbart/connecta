@@ -1,6 +1,14 @@
 # REST provider agent evals for #801
 
-The final saved-evidence grades are **GPT-6-Luna 6/10** and **Sonnet 5.5 7/10**.
+The pre-review files below are diagnostic history and are excluded from the
+current baseline. In particular, a scripted reference or offline regrade cannot
+repair Luna's fixture-invalid refund interaction. Review round 1 replaces the
+refund fake and collects fresh trials; replacement results are recorded separately.
+
+## Historical pre-review measurements
+
+The historical saved-evidence grades were **GPT-6-Luna 6/10** and **Sonnet 5.5 7/10**.
+These are not valid complete-baseline scores.
 There are no runner errors, skips, unavailable grading checks, duplicate business
 writes, or environment-value disclosures. The Luna refund trial is
 fixture-confounded, as described below. These scores measure the planned task
@@ -24,9 +32,9 @@ across the initial and final batches; no third model run was made.
   newly exported result files; the grader source is committed. Original live
   provenance is preserved, including its clean checkout flags.
 
-The final raw files are [Luna](gpt-6-luna-rest-801-live.json) and
+The historical second-batch raw files are [Luna](gpt-6-luna-rest-801-live.json) and
 [Sonnet](sonnet-5-5-rest-801-live.json). Their original scores are 5/10 and 7/10.
-The current [Luna grade](gpt-6-luna-rest-801.json) and
+The historical [Luna grade](gpt-6-luna-rest-801.json) and
 [Sonnet grade](sonnet-5-5-rest-801.json) were computed from full saved inputs with
 `regradeTrial`, using route grading, without executing programs or contacting a
 model. Only Luna's pin-answer grade changes. Regrade source paths are relative
@@ -37,7 +45,7 @@ tokens, fake vault keys, absolute home paths, or real email addresses.
 `ada@example.com` is retained because it is an explicit task input. No real
 vendor credentials or accounts were used. No HTML reports are committed.
 
-## Final task scores
+## Historical task scores
 
 | Task | GPT-6-Luna | Sonnet 5.5 |
 | --- | --- | --- |
@@ -86,9 +94,10 @@ vendor credentials or accounts were used. No HTML reports are committed.
 - **Vercel build, Luna: source-selection miss.** It sent `projectId=""` when
   listing deployments. It reported the correct `dpl_fail2` build error, but the
   required project filter was absent.
-- **Vercel environment, Luna: answer-evidence miss.** It changed only
-  `env_prod`, kept preview unchanged, withheld the previous value, and mentioned
-  future deployments. It omitted the required variable id from its final answer.
+- **Vercel environment, Luna: grader defect.** It changed only `env_prod`,
+  kept preview unchanged, withheld the previous value, and mentioned future
+  deployments. Its answer satisfies the prompt. Requiring the unrequested
+  variable id was incorrect, and review round 1 removes that requirement.
 
 No confirmed product bug was found for the orchestrator to file. The observations
 above distinguish safe alternative workflows and incomplete answers from fake
