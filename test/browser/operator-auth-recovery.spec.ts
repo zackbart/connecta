@@ -224,7 +224,8 @@ for (const stalled of ["summary", "config"] as const) {
       await page.clock.pauseAt(start);
       // Stall one read without honoring abort. Subsequent reads use real routes.
       // Record the signal to verify physical cancellation as well as UI fencing.
-      await page.addInitScript((target) => {
+      await page.addInitScript(`(() => {
+        const target = ${JSON.stringify(stalled)};
         const original = window.fetch.bind(window);
         let summaryReads = 0;
         let configReads = 0;
@@ -242,11 +243,11 @@ for (const stalled of ["summary", "config"] as const) {
             init?.signal?.addEventListener("abort", () => {
               root.dataset.stalledAborted = "true";
             });
-            return new Promise<Response>(() => {});
+            return new Promise(() => {});
           }
           return original(input, init);
         };
-      }, stalled);
+      })();`);
       await page.route("**/cdn-cgi/access/logout", (route) => route.fulfill({ status: 204 }));
       failIdentityPath = "/ui/data";
       connected = true;
