@@ -325,7 +325,7 @@ export function asProviderFactory<O extends ProviderOptions>(
  * rather than "remote MCP". This is the same construction path defineProvider
  * uses; existing constructors retain their provider-specific option policy.
  */
-function asProvider<O, C extends { describe?(): ConnectorDescription }>(
+function asProvider<O extends ProviderOptions, C extends { describe?(): ConnectorDescription }>(
   provider: string,
   shape: Field<unknown, unknown>,
   id: string,
@@ -337,7 +337,7 @@ function asProvider<O, C extends { describe?(): ConnectorDescription }>(
   let connector: C;
   try {
     options = assertKnownOptions(options, `${factory}(${JSON.stringify(id)})`, shape);
-    const admission = options == null ? undefined : (options as ProviderOptions).callAdmission;
+    const admission = options == null ? undefined : options.callAdmission;
     if (admission !== undefined) CALL_ADMISSION.parse(admission, `${factory}(${JSON.stringify(id)}).callAdmission`);
     connector = build(id, options);
   } catch (error) {
