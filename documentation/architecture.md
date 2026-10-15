@@ -874,7 +874,10 @@ every vendor ships one reviewed table through one mechanism
    and fragment. The tables list exact operations/resource paths with evidence:
    Stripe charge failure/outcome messages, Vercel deployment failures and
    build/runtime log text, Cloudflare Workers/Pages build logs and telemetry
-   message/error text. Vercel's unavailable full pin remains a review limitation.
+   message/error and raw string/object source payloads in both events and
+   invocation maps. The shared review harness rejects embedded-URL operation
+   keys absent from each vendor's pinned index and invalid path syntax.
+   Vercel's unavailable full pin remains a review limitation.
    Generic parameters in descriptions, metadata, nicknames, billing footers,
    notes, DNS TXT, KV values and operator HTML retain their original bytes,
    including whole URL strings. Ordinary code/key URLs can be false positives
@@ -894,12 +897,19 @@ every vendor ships one reviewed table through one mechanism
    destinations, including large inputs.
    These three vendors enforce write admission with the shared
    `carriesWithheldLink(value)` scanner and `refuseWithheldLinks`/
-   `refuseWithheldUpload` helpers. Every supported write transport (JSON,
+   `refuseWithheldUpload` helpers, plus `refuseWithheldBase64` for documented
+   base64 JSON fields. Every supported write transport (JSON,
    form-encoded, raw/base64 bytes, multipart parts and named writes) refuses
    with `invalid_args` and zero dispatch when a URL destination's own query
    or fragment contains the exact `[redacted]` placeholder, plain or up to four
    layers encoded. Upload admission reads decoded bytes and each multipart
-   string/blob. Withheld values must not be written back; obtain the original
+   string/blob. Vercel deployment `files[].data` with `encoding: "base64"`
+   and Cloudflare KV bulk `value` with `base64: true` pass through the same
+   byte inspection, bounded to 8 MiB decoded per field; malformed or oversized
+   fields are refused. JSON admission iteratively checks keys and values and
+   fails closed with `invalid_args` beyond 48 levels or 100,000 keys/values.
+   The scans remain linear in the supplied and decoded bytes.
+   Withheld values must not be written back; obtain the original
    link or omit the field. A placeholder outside a destination is ordinary
    text. Notion keeps its stricter reviewed-host admission and proxy policy.
    Vendors whose responses embed the file links they mint can

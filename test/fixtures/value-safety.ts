@@ -6,7 +6,7 @@
 //
 // - candidates derived from another pin, detector format, or detector option;
 // - a flagged operation without a verdict;
-// - a verdict for an operation the pinned index does not carry;
+// - a verdict or embedded-URL rule for an operation the pinned index does not carry;
 // - a verdict without a reason, a redact verdict without paths, or a path
 //   outside the path language;
 // - a reviewed path the pinned response schema does not have (`providers:spec`
@@ -265,6 +265,7 @@ export function reviewProblems(review: ValueSafetyReview): ReviewProblems {
   const { table, index, candidates } = review;
   const safety = valueSafety(table, () => index);
   const operations = Object.entries(table.operations);
+  const indexedKeys = new Set(index.ops.map((op) => `${op.method} ${op.path}`));
   const fields = table.fields ?? {};
   const resources = table.resources;
   const dataPath = review.dataPath ?? ((field: string) => field);
@@ -296,8 +297,7 @@ export function reviewProblems(review: ValueSafetyReview): ReviewProblems {
   }
 
   for (const [key, verdict] of operations) {
-    const [method, path] = key.split(" ") as [string, string];
-    if (!index.operation(method, path)) problems.invalid.push(`${key}: not in the pinned index`);
+    if (!indexedKeys.has(key)) problems.invalid.push(`${key}: not in the pinned index`);
     if (verdict.reason.trim() === "") problems.invalid.push(`${key}: no reason`);
     if (verdict.verdict === "redact" && verdict.paths.length === 0) problems.invalid.push(`${key}: no redact paths`);
     for (const reviewed of verdictPaths(verdict)) {
@@ -308,6 +308,12 @@ export function reviewProblems(review: ValueSafetyReview): ReviewProblems {
     if (reviewed.reason.trim() === "") problems.invalid.push(`fields ${field}: no reason`);
     if (reviewed.verdict === "keep" && CORE_CREDENTIALS.has(field.toLowerCase())) {
       problems.invalid.push(`fields ${field}: a vendor-wide keep of a credential name`);
+    }
+  }
+  for (const [key, paths] of Object.entries(table.embeddedUrls?.operations ?? {})) {
+    if (!indexedKeys.has(key)) problems.invalid.push(`embeddedUrls ${key}: not in the pinned index`);
+    for (const reviewed of paths) {
+      if (!validPath(reviewed)) problems.invalid.push(`embeddedUrls ${key}: ${reviewed} is not in the path language`);
     }
   }
   for (const [type, rule] of Object.entries(resources?.rules ?? {})) {

@@ -24,6 +24,7 @@ import {
   withholdEmbeddedUrlsIn,
   refuseWithheldLinks,
   refuseWithheldUpload,
+  refuseWithheldBase64,
 } from "../_shared/rest/value-safety.js";
 import { VERCEL_VALUE_SAFETY } from "./value-safety.js";
 
@@ -525,7 +526,7 @@ export function vercelRest(options: { baseUrl: string; teamId: string | undefine
       vercelFailure(status, headers, body, call ? SAFETY.withholdsErrors(call.op) : false),
     readPosts: READ_POSTS,
     valueSafety: SAFETY,
-    admit(call) {
+    async admit(call) {
       if (
         call.method === "GET" ||
         call.method === "HEAD" ||
@@ -533,6 +534,14 @@ export function vercelRest(options: { baseUrl: string; teamId: string | undefine
       )
         return;
       refuseWithheldLinks([call.body, call.query, call.path], "Vercel");
+      if (call.method === "POST" && call.op.path === "/v13/deployments") {
+        const files = record(call.body)["files"];
+        if (Array.isArray(files)) {
+          for (const file of files) {
+            if (record(file)["encoding"] === "base64") await refuseWithheldBase64(record(file)["data"], "Vercel");
+          }
+        }
+      }
     },
     refuse,
     scope(call) {

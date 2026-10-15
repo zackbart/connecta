@@ -8,6 +8,7 @@ import {
   carriesWithheldLink,
   refuseWithheldLinks,
   refuseWithheldUpload,
+  refuseWithheldBase64,
   withholdEmbeddedUrls,
   withholdEmbeddedUrlsIn,
   withholdSignedLinks,
@@ -836,6 +837,47 @@ describe("reviewed text policy and global admission (#846)", () => {
     const form = new FormData();
     form.append("file", new Blob([text]), "index.js");
     await expect(refuseWithheldUpload(form, "Vendor")).rejects.toMatchObject({ code: "invalid_args" });
+  });
+
+  it("INV-5: inspects object keys and array values with the same host policy as strings", () => {
+    const input = "https://file.notion.so/a?%5Bredacted%5D";
+    const external = "https://external.example/a?%5Bredacted%5D";
+    const hosts = { domains: ["file.notion.so"], buckets: [] };
+    for (const value of [{ [input]: "link" }, { nested: ["safe", { [input]: "link" }] }, [[input]]]) {
+      expect(carriesWithheldLink(value)).toBe(true);
+      expect(carriesWithheldLink(value, hosts)).toBe(true);
+    }
+    expect(carriesWithheldLink({ [external]: [external] }, hosts)).toBe(false);
+    expect(carriesWithheldLink({ "https://public.example/?code=welcome": ["[redacted] outside"] })).toBe(false);
+  });
+
+  it("INV-5: scans admitted depth iteratively and refuses excessive depth or breadth, including clean subtrees", () => {
+    const nest = (value: unknown, depth: number): unknown => {
+      for (let i = 0; i < depth; i++) value = [value];
+      return value;
+    };
+    expect(carriesWithheldLink(nest("https://files.example/?[redacted]", 48))).toBe(true);
+    expect(carriesWithheldLink(nest("ordinary", 48))).toBe(false);
+    for (const value of [
+      nest("ordinary", 49),
+      nest("https://files.example/?[redacted]", 52),
+      nest({}, 20_000),
+      Array(100_000).fill("safe"),
+    ]) {
+      expect(() => refuseWithheldLinks(value, "Vendor")).toThrow(expect.objectContaining({ code: "invalid_args" }));
+    }
+    expect(carriesWithheldLink(Array(99_999).fill("safe"))).toBe(false);
+  });
+
+  it("INV-5: checks only the decoded base64 bytes once and bounds decoding before allocation", async () => {
+    const text = "https://files.example/?%255Bredacted%255D";
+    await expect(refuseWithheldBase64(btoa(text), "Vendor")).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(refuseWithheldBase64("!!", "Vendor")).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(refuseWithheldBase64(btoa(btoa(text)), "Vendor")).resolves.toBeUndefined();
+    await expect(refuseWithheldBase64(btoa("https://public.example/?code=welcome"), "Vendor")).resolves.toBeUndefined();
+    await expect(
+      refuseWithheldBase64("A".repeat(4 * Math.ceil((8 * 1024 * 1024) / 3)), "Vendor"),
+    ).rejects.toMatchObject({ code: "invalid_args" });
   });
 
   it.each([

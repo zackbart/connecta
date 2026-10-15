@@ -25,6 +25,7 @@ import {
   withholdEmbeddedUrlsIn,
   refuseWithheldLinks,
   refuseWithheldUpload,
+  refuseWithheldBase64,
 } from "../_shared/rest/value-safety.js";
 import { CLOUDFLARE_VALUE_SAFETY } from "./value-safety.js";
 import { openapi } from "./openapi.generated.js";
@@ -595,6 +596,15 @@ export function cloudflareRest(options: CloudflareRestOptions): CloudflareRest {
       refuseWithheldLinks([call.query, call.path], "Cloudflare");
       if (call.body instanceof RawUpload) await refuseWithheldUpload(call.body.body, "Cloudflare");
       else refuseWithheldLinks(call.body, "Cloudflare");
+      if (
+        call.method === "PUT" &&
+        call.op.path === "/accounts/{account_id}/storage/kv/namespaces/{namespace_id}/bulk" &&
+        Array.isArray(call.body)
+      ) {
+        for (const entry of call.body) {
+          if (record(entry)["base64"] === true) await refuseWithheldBase64(record(entry)["value"], "Cloudflare");
+        }
+      }
     }
     if (!pin) return;
     const { accounts, zones, template } = scopeIds(call);

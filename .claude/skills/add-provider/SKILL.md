@@ -141,7 +141,11 @@ vendors"). The steps:
    vendor errors and cover named transports before projection/truncation.
    Enforce `refuseWithheldLinks` on every write path and
    `refuseWithheldUpload` on decoded upload bytes/multipart parts, before any
-   dispatch. Do not allow agents to store withheld destinations. Record exact
+   dispatch. Inspect documented vendor-decoded base64 JSON fields with
+   `refuseWithheldBase64` too. Admission traverses JSON keys and values
+   iteratively and refuses over-limit payloads. Embedded-URL operation keys
+   must exist in the pinned index; the shared review harness guards this.
+   Do not allow agents to store withheld destinations. Record exact
    reviewed paths and evidence, false positives and binary/base64 exclusions.
    A `FileHosts` policy needs reviewed domains/buckets; do not infer one from
    the vendor's name. Keep Notion's stricter host and proxy contracts.

@@ -1,4 +1,4 @@
-// Portable security/data-integrity regressions for #812 and PR #846 round 1.
+// Portable security/data-integrity regressions for #812 and PR #846 review rounds.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stripe } from "../src/providers/stripe/index.js";
 import { vercel } from "../src/providers/vercel/index.js";
@@ -332,4 +332,172 @@ it("INV-5: describes Worker JavaScript as unchanged base64, outside decoded-text
     path: `/accounts/${ACCOUNT}/workers/scripts/main`,
   });
   expect(result.data.base64).toBe(btoa(input));
+});
+
+it("INV-5: sanitizes every Vercel deployment-list diagnostic before full-response and select projections", async () => {
+  const connector = VENDORS[1].create();
+  respond = () =>
+    Response.json({
+      deployments: [
+        { uid: "dpl_1", errorMessage: "Download https://files.example/a?token=PRIVATE" },
+        { uid: "dpl_2", errorMessage: "See https://files.example/b#key=PRIVATE" },
+      ],
+    });
+  for (const projection of [{}, { select: ["deployments.errorMessage"] }]) {
+    const result = await call(connector, "vercel_api_read", { path: "/v7/deployments", ...projection });
+    expect(result.data.deployments).toHaveLength(2);
+    expect(JSON.stringify(result)).not.toContain("PRIVATE");
+    expect(result.data.deployments.map((item: any) => item.errorMessage)).toEqual([
+      "Download https://files.example/a?[redacted]",
+      "See https://files.example/b#[redacted]",
+    ]);
+  }
+});
+
+it.each(["events", "invocations"])(
+  "INV-5: sanitizes Cloudflare telemetry metadata and raw string/object sources in %s before select",
+  async (view) => {
+    const connector = VENDORS[2].create();
+    const input = "Fetched https://imagedelivery.net/account/image/private?exp=2000000000&sig=PRIVATE";
+    const events = [
+      input,
+      { message: input, nested: [input, { log: input }], ordinary: "https://docs.example/a?page=1" },
+    ].map((source, i) => ({
+      $metadata: { id: `event${i}`, message: input, error: input },
+      source,
+      timestamp: 1,
+      dataset: "cloudflare-workers",
+    }));
+    const data =
+      view === "events" ? { events: { events } } : { invocations: { request1: [events[0]], request2: [events[1]] } };
+    respond = () => VENDORS[2].envelope(data);
+    const selected = view === "events" ? "events.events" : "invocations";
+    for (const projection of [
+      {},
+      { select: [selected] },
+      ...(view === "events" ? [{ select: ["events.events.source", "events.events.$metadata.message"] }] : []),
+    ]) {
+      const result = await call(connector, "cloudflare_api_read", {
+        method: "POST",
+        path: `/accounts/${ACCOUNT}/workers/observability/telemetry/query`,
+        body: { view, queryId: "review", timeframe: { from: 0, to: 2 } },
+        ...projection,
+      });
+      expect(JSON.stringify(result)).not.toContain("PRIVATE");
+      expect(JSON.stringify(result)).toContain("[redacted]");
+      expect(JSON.stringify(result)).toContain("https://docs.example/a?page=1");
+    }
+  },
+);
+
+const JSON_UPLOADS = [
+  {
+    vendor: VENDORS[1],
+    args: (data: string) => ({
+      method: "POST",
+      path: "/v13/deployments",
+      body: {
+        name: "review",
+        files: [
+          { file: "safe.txt", data: btoa("safe"), encoding: "base64" },
+          { file: "url.txt", data, encoding: "base64" },
+        ],
+      },
+    }),
+  },
+  {
+    vendor: VENDORS[2],
+    args: (value: string) => ({
+      method: "PUT",
+      path: `/accounts/${ACCOUNT}/storage/kv/namespaces/ns/bulk`,
+      body: [
+        { key: "safe", value: btoa("safe"), base64: true },
+        { key: "review", value, base64: true },
+      ],
+    }),
+  },
+] as const;
+
+describe.each(JSON_UPLOADS)("$vendor.name decoded JSON admission", ({ vendor, args }) => {
+  it.each(PLACEHOLDERS)(
+    "INV-5: refuses withheld links in later base64 array entries with zero dispatch: %s",
+    async (input) => {
+      for (const encoded of [btoa(input), btoa(input).replace(/=+$/, ""), btoa(input).replace(/.{12}/g, "$&\n")]) {
+        await expect(call(vendor.create(), `${vendor.name}_api_write`, args(encoded))).rejects.toMatchObject({
+          code: "invalid_args",
+          message: expect.stringContaining("withheld"),
+        });
+        expect(sent).toHaveLength(0);
+      }
+    },
+  );
+
+  it.each(["not base64!", "A".repeat(4 * Math.ceil((8 * 1024 * 1024) / 3) + 4)])(
+    "INV-5: refuses malformed or oversized decoded JSON uploads with zero dispatch %#",
+    async (input) => {
+      await expect(call(vendor.create(), `${vendor.name}_api_write`, args(input))).rejects.toMatchObject({
+        code: "invalid_args",
+      });
+      expect(sent).toHaveLength(0);
+    },
+  );
+
+  it("INV-5: preserves benign base64 field bytes and application links on dispatch", async () => {
+    const input = "See https://docs.example/a?code=welcome&key=public [redacted] outside";
+    const request = args(btoa(input));
+    respond = () => vendor.envelope({});
+    await call(vendor.create(), `${vendor.name}_api_write`, request);
+    expect(sent).toHaveLength(1);
+    expect(JSON.parse(String(sent[0]!.body))).toEqual(request.body);
+  });
+
+  it("INV-5: refuses JSON-escaped and entity-encoded destinations after the documented base64 decode", async () => {
+    for (const input of [
+      '{"https:\\u002f\\u002ff.test/\\u003f\\u005bredacted\\u005d":"link"}',
+      "[file](https://files.example/a?token=&#x5b;redacted&#x5d;)",
+    ]) {
+      await expect(call(vendor.create(), `${vendor.name}_api_write`, args(btoa(input)))).rejects.toMatchObject({
+        code: "invalid_args",
+        message: expect.stringContaining("withheld"),
+      });
+      expect(sent).toHaveLength(0);
+    }
+  });
+});
+
+describe.each(VENDORS)("$name JSON key and depth admission", (vendor) => {
+  const args = (metadata: unknown) =>
+    vendor.name === "stripe"
+      ? { method: "POST", path: "/v1/products/prod_1", body: { metadata } }
+      : vendor.name === "vercel"
+        ? { method: "POST", path: "/v13/deployments", body: { name: "review", meta: metadata } }
+        : {
+            method: "PUT",
+            path: `/accounts/${ACCOUNT}/storage/kv/namespaces/ns/bulk`,
+            body: [{ key: "review", value: "safe", metadata }],
+          };
+
+  it.each(["https://f.test/?%5Bredacted%5D", "https://f.test/#%255Bredacted%255D"])(
+    "INV-5: refuses encoded withheld object keys with zero dispatch: %s",
+    async (input) => {
+      await expect(call(vendor.create(), `${vendor.name}_api_write`, args({ [input]: "link" }))).rejects.toMatchObject({
+        code: "invalid_args",
+        message: expect.stringContaining("withheld"),
+      });
+      expect(sent).toHaveLength(0);
+    },
+  );
+
+  it.each(["https://files.example/a?[redacted]", "ordinary text"])(
+    "INV-5: refuses over-depth metadata instead of skipping an unexamined subtree: %s",
+    async (input) => {
+      let nested: unknown = input;
+      for (let depth = 0; depth < 52; depth++) nested = [nested];
+      await expect(call(vendor.create(), `${vendor.name}_api_write`, args({ nested }))).rejects.toMatchObject({
+        code: "invalid_args",
+        ...(vendor.name === "cloudflare" ? { message: expect.stringContaining("maximum JSON depth") } : {}),
+      });
+      expect(sent).toHaveLength(0);
+    },
+  );
 });

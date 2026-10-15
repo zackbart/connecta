@@ -404,7 +404,7 @@ export const VERCEL_VALUE_SAFETY: ValueSafetyTable = {
     operations: {
       "GET /v13/deployments/{idOrUrl}": ["errorMessage"],
       "POST /v13/deployments": ["errorMessage"],
-      "GET /v6/deployments": ["deployments.errorMessage"],
+      "GET /v7/deployments": ["deployments.errorMessage"],
       "GET /v3/deployments/{idOrUrl}/events": ["payload.text", "text"],
       "GET /v1/projects/{projectId}/deployments/{deploymentId}/runtime-logs": ["message"],
     },

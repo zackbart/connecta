@@ -19,7 +19,8 @@
 // Evidence: digest-verified schema revision 3fad73eb27c381031c09ccdfa28ef9352029cd5a:
 // builds_BuildLogsResponse.lines (timestamp/log-message tuples),
 // pages_deployment_log.data.line and workers-observability_query_results
-// events.events -> telemetry_event.$metadata.message/error. Exact operations
+// events.events and invocations.* -> telemetry_event.$metadata.message/error
+// and source (raw string/object log payload). Exact operations
 // and paths are below, after envelope unwrapping. All vendor error text is
 // scanned too; ordinary code/key links can be false positives in diagnostics.
 // DNS TXT content, KV values, Access custom_html, Waiting Room custom_page_html
@@ -1488,6 +1489,10 @@ export const CLOUDFLARE_VALUE_SAFETY: ValueSafetyTable = {
       "POST /accounts/{account_id}/workers/observability/telemetry/query": [
         "events.events.$metadata.message",
         "events.events.$metadata.error",
+        "events.events.source",
+        "invocations.*.$metadata.message",
+        "invocations.*.$metadata.error",
+        "invocations.*.source",
       ],
     },
   },
