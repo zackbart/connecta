@@ -111,20 +111,6 @@ export function aggregateCallAdmissionSnapshots(
   return aggregate;
 }
 
-function positiveWhole(value: number, name: string): number {
-  if (!Number.isFinite(value) || !Number.isInteger(value) || value < 1) {
-    throw new TypeError(`${name} must be a positive whole number.`);
-  }
-  return value;
-}
-
-function nonNegativeWhole(value: number, name: string): number {
-  if (!Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
-    throw new TypeError(`${name} must be a non-negative whole number.`);
-  }
-  return value;
-}
-
 /**
  * Per-runtime, per-connector call admission. State contains only bounded
  * partition keys, counters, timestamps, signals, and promise continuations;
@@ -154,51 +140,13 @@ export class ConnectorCallAdmissionController {
     policy: ConnectorCallAdmissionPolicy,
   ) {
     policy = CALL_ADMISSION.parse(policy, `connector "${connectorId}" callAdmission`);
-    if (!Array.isArray(policy.rules) || policy.rules.length !== 1) {
-      throw new TypeError(
-        `connector "${connectorId}" callAdmission.rules must contain exactly one rule in this release.`,
-      );
-    }
-    const rule = policy.rules[0];
-    if (rule.maxConcurrency === undefined && rule.budget === undefined) {
-      throw new TypeError(`connector "${connectorId}" callAdmission rule must declare maxConcurrency or budget.`);
-    }
-    this.maxConcurrency =
-      rule.maxConcurrency === undefined
-        ? undefined
-        : positiveWhole(rule.maxConcurrency, `connector "${connectorId}" callAdmission maxConcurrency`);
-    if (
-      this.maxConcurrency === undefined &&
-      (rule.maxQueueSize !== undefined || rule.queueTimeoutMs !== undefined || rule.retryAfterMs !== undefined)
-    ) {
-      throw new TypeError(`connector "${connectorId}" callAdmission queue settings require maxConcurrency.`);
-    }
-    this.maxQueueSize = nonNegativeWhole(
-      rule.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE,
-      `connector "${connectorId}" callAdmission maxQueueSize`,
-    );
-    this.queueTimeoutMs = positiveWhole(
-      rule.queueTimeoutMs ?? DEFAULT_QUEUE_TIMEOUT_MS,
-      `connector "${connectorId}" callAdmission queueTimeoutMs`,
-    );
-    this.retryAfterMs = nonNegativeWhole(
-      rule.retryAfterMs ?? DEFAULT_RETRY_AFTER_MS,
-      `connector "${connectorId}" callAdmission retryAfterMs`,
-    );
-    this.maxPartitions = positiveWhole(
-      policy.maxPartitions ?? DEFAULT_MAX_PARTITIONS,
-      `connector "${connectorId}" callAdmission maxPartitions`,
-    );
-    if (rule.budget) {
-      if (rule.budget.kind !== "rolling-window") {
-        throw new TypeError(`connector "${connectorId}" callAdmission budget kind must be "rolling-window".`);
-      }
-      const maxCalls = positiveWhole(rule.budget.maxCalls, `connector "${connectorId}" callAdmission budget.maxCalls`);
-      const windowMs = positiveWhole(rule.budget.windowMs, `connector "${connectorId}" callAdmission budget.windowMs`);
-      this.budget = { maxCalls, windowMs };
-    } else {
-      this.budget = undefined;
-    }
+    const rule = policy.rules[0]!;
+    this.maxConcurrency = rule.maxConcurrency;
+    this.maxQueueSize = rule.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE;
+    this.queueTimeoutMs = rule.queueTimeoutMs ?? DEFAULT_QUEUE_TIMEOUT_MS;
+    this.retryAfterMs = rule.retryAfterMs ?? DEFAULT_RETRY_AFTER_MS;
+    this.maxPartitions = policy.maxPartitions ?? DEFAULT_MAX_PARTITIONS;
+    this.budget = rule.budget ? { maxCalls: rule.budget.maxCalls, windowMs: rule.budget.windowMs } : undefined;
     this.partitionKey = rule.partitionKey;
   }
 
