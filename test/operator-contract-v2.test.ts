@@ -83,13 +83,19 @@ describe("operator contract v2 fixtures", () => {
 
   it("INV-4 INV-5: the member fixture matches the projection built from config and membership", () => {
     expect(OPERATOR_V2_MEMBER_EXPECTED.pools.map((p) => p.name)).toEqual(["support", "team"]);
-    expect(OPERATOR_V2_MEMBER_EXPECTED.connectors.map((c) => c.id)).toEqual(["github", "drive", "slack", "notion"]);
+    expect(OPERATOR_V2_MEMBER_EXPECTED.connectors.map((c) => c.id)).toEqual([
+      "github",
+      "drive",
+      "slack",
+      "calendar",
+      "notion",
+    ]);
     expectMemberViewWithholds(OPERATOR_V2_MEMBER, OPERATOR_V2_MEMBER_EXPECTED);
     const kinds = OPERATOR_V2_MEMBER.connectors.map((c) => `${c.authScope}:${c.manage.kind}`);
     expect(kinds).toEqual(expect.arrayContaining(["personal:oauth", "personal:credential", "shared:none"]));
   });
 
-  it("INV-4: builds the projection from membership, partition status and manage permission only", () => {
+  it("INV-4: builds the projection from membership and caller-supplied partition facts only", () => {
     expect(linExpectation((source) => (source.member.namespace = "https://other.example"))).toEqual({
       pools: [],
       connectors: [],
@@ -101,8 +107,15 @@ describe("operator contract v2 fixtures", () => {
       { address: "github.read", classification: "read" },
     ]);
     expect(ada.connectors.find((c) => c.id === "slack")?.connection).toEqual(OPERATOR_V2_PARTITIONS.user_ada.slack);
-    const unmanaged = linExpectation((source) => (source.canManage = () => false));
-    expect(unmanaged.connectors.map((c) => c.manage)).toEqual(unmanaged.connectors.map(() => ({ kind: "none" })));
+    // Shared connectors are always "none", whatever partition facts a caller passes.
+    const shared = linExpectation(
+      (source) =>
+        (source.personal.github = { connection: { state: "ok" }, manage: { kind: "oauth", actions: ["connect"] } }),
+    );
+    expect(shared.connectors.find((c) => c.id === "github")).toMatchObject({
+      connection: null,
+      manage: { kind: "none" },
+    });
     expect(() => linExpectation((source) => delete source.personal.slack)).toThrow(/slack/);
   });
 
@@ -204,52 +217,48 @@ describe("operator contract v2 fixtures", () => {
     });
   });
 
-  describe("manage actions match hooks and permission exactly", () => {
-    it("INV-4: a credential connector without a test hook cannot advertise test", () => {
-      const noTest = linExpectation(
-        (source) => (source.personal.notion!.hooks = { credential: { test: false, clear: true } }),
-      );
+  describe("manage matches the trusted value exactly", () => {
+    const withManage = (id: string, manage: OperatorMemberManage) =>
+      linExpectation((source) => (source.personal[id]!.manage = manage));
+
+    it("INV-4: an action the trusted value omits fails", () => {
+      // A credential connector whose hooks cannot test it, or a deployment without a vault.
+      const noTest = withManage("notion", { ...credential(linView()), actions: ["save", "clear"] });
       expectRejected(() => {}, noTest);
       expectMemberViewWithholds(
         linView((view) => (credential(view).actions = ["save", "clear"])),
         noTest,
       );
+      expectRejected(() => {}, withManage("slack", { kind: "oauth", actions: ["disconnect"] }));
     });
 
-    it("INV-4: an OAuth connector without disconnectAuth cannot advertise disconnect", () => {
-      const noDisconnect = linExpectation(
-        (source) => (source.personal.slack!.hooks = { oauth: { disconnect: false } }),
-      );
-      expectRejected(() => {}, noDisconnect);
-    });
-
-    it("INV-4: a supported action cannot go missing", () => {
+    it("INV-4: an action the trusted value names cannot go missing", () => {
       expectRejected((view) => (connector(view, "slack").manage = { kind: "oauth", actions: ["connect", "restart"] }));
       expectRejected((view) => credential(view).actions.splice(1, 1));
     });
 
-    it("INV-4: a member without manage permission sees manage none", () => {
-      expectRejected(
-        () => {},
-        linExpectation((source) => (source.canManage = (id) => id !== "slack")),
-      );
+    it("INV-4: a member without manage permission must see none", () => {
+      expectRejected(() => {}, withManage("slack", { kind: "none" }));
     });
 
-    it("accepts an OAuth-capable custom connector whose description omits auth.mode", () => {
-      const custom = linExpectation((source) => {
-        const slack = source.connectors.find((c) => c.id === "slack")!;
-        slack.source = { kind: "custom" };
-        delete slack.auth;
-      });
-      expect(custom.connectors.find((c) => c.id === "slack")?.manage).toEqual({
-        kind: "oauth",
-        actions: ["connect", "restart", "disconnect"],
-      });
-      expectMemberViewWithholds(linView(), custom);
-      // Without hooks it has nothing to manage, whatever its description says.
+    it("INV-4: a disconnect-only connector advertises disconnect alone", () => {
+      expect(connector(linView(), "calendar").manage).toEqual({ kind: "oauth", actions: ["disconnect"] });
       expectRejected(
-        () => {},
-        linExpectation((source) => (source.personal.slack!.hooks = {})),
+        (view) =>
+          (connector(view, "calendar").manage = { kind: "oauth", actions: ["connect", "restart", "disconnect"] }),
+      );
+      expectRejected((view) => (connector(view, "calendar").manage = { kind: "oauth", actions: [] }));
+    });
+
+    it("INV-4: shared connectors must manage none", () => {
+      expectRejected((view) => (connector(view, "github").manage = { kind: "oauth", actions: ["connect"] }));
+    });
+
+    it("INV-6: the kind's allowed actions bound even a trusted value", () => {
+      const bogus = withManage("slack", { kind: "oauth", actions: ["save"] as unknown as ["connect"] });
+      expectRejected(
+        (view) => (connector(view, "slack").manage = { kind: "oauth", actions: ["save"] as unknown as ["connect"] }),
+        bogus,
       );
     });
   });

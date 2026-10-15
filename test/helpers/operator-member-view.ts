@@ -8,9 +8,9 @@
 // compares every member-visible value against a projection the caller builds
 // from config and membership, so a value that reads as a name or label cannot
 // smuggle an owner, another principal, an unadmitted pool or an ungranted tool.
-// The caller supplies what config cannot show: the member's own partition
-// status and each personal connector's lifecycle hooks. Unordered collections
-// compare as sets and reject duplicates.
+// The caller supplies what config cannot show: each personal connector's
+// connection in the member's own partition and its exact `manage` value.
+// Unordered collections compare as sets and reject duplicates.
 import { expect } from "vitest";
 import type { DescribedConnector } from "../../src/describe-config.js";
 import type {
@@ -50,23 +50,25 @@ export interface MemberViewExpectation {
 }
 
 /**
- * Lifecycle hooks a personal connector implements. `DescribedConnector` does
- * not carry them, so P6b must read them from the `Connector` itself:
- * `oauth` when it has `startAuth` and `finishAuth` (connect and restart), with
- * `disconnect` when it also has `disconnectAuth`; `credential` when it declares
- * a credential slot, with `test` when it has `testCredential` or
- * `testCredentials`, and `clear` when the vault can delete the member's value.
+ * One personal connector as the tested member's own partition sees it. Both
+ * values are trusted inputs, never read from the response under test.
+ *
+ * P6b must derive `manage` server-side, and test that derivation itself
+ * (including a disconnect-only connector and a deployment without a vault),
+ * from three facts. The member's permission to manage their own connection
+ * gates every action. The connector's hooks: `test` when
+ * `credentialTestRule(connector).mode !== null`, which pairs named fields with
+ * `testCredentials` and a single credential with `testCredential`; `connect`
+ * and `restart` with `startAuth` and `finishAuth`; `disconnect` with
+ * `disconnectAuth`. Deployment availability: a vault for `save` and `clear`,
+ * and handoff signing for `connect` and `restart`. This helper only compares
+ * the derived value; it models none of those rules.
  */
-export interface MemberConnectorHooks {
-  oauth?: { disconnect: boolean };
-  credential?: { test: boolean; clear: boolean };
-}
-
-/** One personal connector as the tested member's own partition sees it. */
 export interface MemberPartition {
-  /** The member's own status from the server's status seam, never from the response. */
+  /** The member's own status from the server's status seam. */
   connection: { state: ConnectorStatus["state"]; problem?: UiProblem };
-  hooks: MemberConnectorHooks;
+  /** The exact expected value, kind and actions included. */
+  manage: OperatorMemberManage;
 }
 
 export interface MemberViewSource {
@@ -80,11 +82,9 @@ export interface MemberViewSource {
   catalog: Array<{ address: string; classification: "read" | "write" }>;
   /** Every personal connector in the member's pools, keyed by connector id. */
   personal: Record<string, MemberPartition>;
-  /** Whether the member may manage their own connection to this connector. */
-  canManage: (connectorId: string) => boolean;
 }
 
-/** Build the member projection from config, catalog, membership and partition status, never from a member response. */
+/** Build the member projection from config, catalog, membership and partition facts, never from a member response. */
 export function memberViewExpectation(source: MemberViewSource): MemberViewExpectation {
   const isMember = (m: OperatorMember) =>
     m.kind === "human" && m.namespace === source.member.namespace && m.id === source.member.id;
@@ -111,14 +111,9 @@ export function memberViewExpectation(source: MemberViewSource): MemberViewExpec
     };
     if (connector.authScope === "shared") return [{ ...visible, connection: null, manage: { kind: "none" } }];
     const partition = source.personal[connector.id];
-    if (!partition) throw new Error(`No partition status for personal connector ${connector.id}`);
-    const { state, problem } = partition.connection;
+    if (!partition) throw new Error(`No partition facts for personal connector ${connector.id}`);
     return [
-      {
-        ...visible,
-        connection: problem === undefined ? { state } : { state, problem },
-        manage: source.canManage(connector.id) ? expectedManage(connector, partition.hooks) : { kind: "none" },
-      },
+      { ...visible, connection: structuredClone(partition.connection), manage: structuredClone(partition.manage) },
     ];
   });
   return {
@@ -131,40 +126,6 @@ export function memberViewExpectation(source: MemberViewSource): MemberViewExpec
     })),
     connectors,
   };
-}
-
-// Exactly the actions the hooks support: no extras, none missing.
-function expectedManage(connector: DescribedConnector, hooks: MemberConnectorHooks): OperatorMemberManage {
-  if (hooks.credential) {
-    if (!connector.credential) throw new Error(`Connector ${connector.id} has credential hooks but no credential slot`);
-    const { label, description, fields } = connector.credential;
-    return {
-      kind: "credential",
-      label,
-      ...(description === undefined ? {} : { description }),
-      ...(fields === undefined
-        ? {}
-        : {
-            fields: fields.map(({ name, label, description }) => ({
-              name,
-              label,
-              ...(description === undefined ? {} : { description }),
-            })),
-          }),
-      actions: [
-        "save" as const,
-        ...(hooks.credential.test ? (["test"] as const) : []),
-        ...(hooks.credential.clear ? (["clear"] as const) : []),
-      ],
-    };
-  }
-  if (hooks.oauth) {
-    return {
-      kind: "oauth",
-      actions: ["connect", "restart", ...(hooks.oauth.disconnect ? (["disconnect"] as const) : [])],
-    };
-  }
-  return { kind: "none" };
 }
 
 type Json = Record<string, unknown>;
