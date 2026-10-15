@@ -1,4 +1,5 @@
 /** Regressions that generic wrong-source and missing-answer mutations cannot expose. */
+import { restCounterexamples } from "./rest-controls.js";
 import type { AgentTrace } from "../agent/trace.js";
 import type { World } from "../fakes/world.js";
 import type { ActiveTask } from "./types.js";
@@ -32,6 +33,17 @@ export function counterexamples(
   const withPrograms = (programs: World["programs"]): World =>
     Object.assign(Object.create(Object.getPrototypeOf(world)), world, { programs });
   if (task.id === "p5-read-only-program-refusal") {
+    for (const errorCode of ["invalid_args", "downstream_error"]) {
+      cases.push({
+        name: `an unrelated ${errorCode} error is not a write refusal`,
+        world: withPrograms(
+          world.programs.map((p) => ({
+            ...p,
+            calls: p.calls.map((c) => (c.args[0] === "tracker.close_issue" ? { ...c, errorCode } : c)),
+          })),
+        ),
+      });
+    }
     for (const answer of [
       "ANSWER: closed",
       "",
@@ -387,12 +399,15 @@ export function counterexamples(
       trace: { ...trace, finalAnswer: trace.finalAnswer?.replace(" during billing grace period", "") ?? "" },
     });
   }
-  return cases.map((c) => ({
-    name: c.name,
-    rejected: task
-      .grade({ world: c.world ?? world, trace: c.trace ?? trace })
-      .some((check) => !check.advisory && !check.pass),
-  }));
+  return [
+    ...restCounterexamples(task, world, trace),
+    ...cases.map((c) => ({
+      name: c.name,
+      rejected: task
+        .grade({ world: c.world ?? world, trace: c.trace ?? trace })
+        .some((check) => !check.advisory && !check.pass),
+    })),
+  ];
 }
 
 /** Positive variants preserve the real source calls and observed program results. */
@@ -404,6 +419,52 @@ export function positiveVariants(
   const cases: { name: string; trace: AgentTrace; world?: World; advisoryMiss?: string; advisoryPass?: string }[] = [];
   const withPrograms = (programs: World["programs"]): World =>
     Object.assign(Object.create(Object.getPrototypeOf(world)), world, { programs });
+  if (task.id === "801-stripe-guessed-parameter-recovery") {
+    const use = trace.toolUses.at(-1)!;
+    const code = "async () => await connecta.call('stripe_sandbox.stripe_api_read', {})";
+    cases.push({
+      name: "a direct refused guess can recover inside a later program",
+      world: withPrograms([
+        {
+          code,
+          calls: [{ name: "connecta.call", args: [use.input.address, use.input.args], outcome: "ok" }],
+          peakCalls: 1,
+          succeeded: true,
+        },
+      ]),
+      trace: {
+        ...trace,
+        toolUses: [...trace.toolUses.slice(0, -1), { ...use, tool: "execute_code", input: { code } }],
+      },
+    });
+    cases.push({
+      name: "a valid customer search needs no preceding rejected guess",
+      world: Object.assign(Object.create(Object.getPrototypeOf(world)), world, {
+        ledger: {
+          ...world.ledger,
+          calls: world.ledger.calls.map((c) => ({
+            ...c,
+            args: { ...c.args, path: "/v1/customers/search", query: { query: "email:'ada@example.com'", limit: "5" } },
+          })),
+        },
+      }),
+      trace: {
+        ...trace,
+        toolUses: [
+          {
+            ...use,
+            input: {
+              address: use.input.address,
+              args: {
+                path: "/v1/customers/search",
+                query: { query: "email:'ada@example.com'", limit: 5 },
+              },
+            },
+          },
+        ],
+      },
+    });
+  }
   if (task.id === "p5-result-paging") {
     cases.push({ name: "Luna repeat-1 value-mode retained-result envelope", trace: valueModePagingTrace(trace) });
     cases.push({

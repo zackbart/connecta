@@ -42,7 +42,9 @@ function refusedTarget(world: World, trace?: AgentTrace): boolean {
     attempts.length === 1 &&
     attempts[0]?.args[0] === "tracker.close_issue" &&
     (attempts[0]?.args[1] as Record<string, unknown>)?.id === "WEB-105" &&
-    attempts[0]?.errorCode === "read_only_endpoint"
+    // The frozen 0.29 programs hit the former approval gate before dispatch.
+    // Both typed refusals prove the same unchanged-state outcome.
+    ["read_only_endpoint", "destructive_tool_requires_approval"].includes(attempts[0]?.errorCode ?? "")
   );
 }
 

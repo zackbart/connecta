@@ -18,7 +18,7 @@ import { startNodeDeployment } from "./deploy/node.js";
 import { connectMcp } from "./support/mcp.js";
 import type { AgentTrace, ToolUse, TranscriptEntry } from "./agent/trace.js";
 import { counterexamples, positiveVariants } from "./tasks/counterexamples.js";
-import { ACTIVE_TASKS } from "./tasks/index.js";
+import { ACTIVE_TASKS, COMPARISON_TASKS } from "./tasks/index.js";
 import { startAuthHost } from "./agent/auth-host.js";
 import { parseTrace, type StreamEvent } from "./agent/trace.js";
 import { flags, runProtocol } from "./support/meta.js";
@@ -27,13 +27,17 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFile, mkdtemp, writeFile, rm } from "node:fs/promises";
-import { saveGradeInputs } from "./agent/saved.js";
+import { saveGradeInputs, restoreGradeInputs } from "./agent/saved.js";
 import { regradeTrial } from "./agent/regrade.js";
 import { summarize } from "./report/summary.js";
 import type { TrialResult } from "./agent/run.js";
 import { BADGE_PNG, LEGACY_BADGE_PNG } from "./fakes/prerequisites.js";
 import { spawnSync } from "node:child_process";
 import { inflateSync } from "node:zlib";
+import { restTransportControls } from "./tasks/rest-controls.js";
+
+await restTransportControls();
+console.log("ok   fake vendor transport: concurrent worlds, credential/host refusals and cleanup");
 
 function validPng(base64: string): boolean {
   const bytes = Buffer.from(base64, "base64");
@@ -400,6 +404,11 @@ async function play(
       }
     }
     if (mode === "reference") {
+      if (task.id.startsWith("801-")) {
+        const restored = restoreGradeInputs(structuredClone(saveGradeInputs(world, trace)));
+        if (!passes(gradeTask(original, restored, surface, grading), grading))
+          throw new Error(`Saved REST reference failed: ${task.id}`);
+      }
       const mutate = (name: string, change: (saved: ReturnType<typeof saveGradeInputs>) => void) => {
         const saved = structuredClone(saveGradeInputs(world, trace));
         change(saved);
@@ -1023,7 +1032,7 @@ function expectRefusal(action: () => unknown, message: string) {
   console.log("ok   incomplete state/completion and conflicting sanitized actor roles fail closed");
 }
 function comparisonFixture(arm: Surface, repeats: number, task?: string): AgentResultFile {
-  const tasks = task ? [task] : ACTIVE_TASKS.map((t) => t.id);
+  const tasks = task ? [task] : COMPARISON_TASKS.map((t) => t.id);
   const fixture: AgentResultFile = {
     ...structuredClone(frozen),
     protocol: runProtocol("synthetic-selftest-pair"),

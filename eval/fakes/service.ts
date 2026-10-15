@@ -55,6 +55,8 @@ export interface CallRecord {
   args: Record<string, unknown>;
   kind: "read" | "write";
   outcome: "ok" | "tool_error" | "fault";
+  /** A REST retry that the fake vendor proved returned an existing write. */
+  deduplicated?: boolean;
   fault?: Fault["kind"];
   error?: string;
   resultBytes: number;

@@ -243,12 +243,40 @@ calls and final-answer facts. Fourteen new active tasks cover:
 - a known read routed through `call_tool`, with no program, discovery or other route;
 - an advertised MCP resource read through `connecta.read` with its qualified URI.
 
-[Planned tasks](tasks/planned.ts) record #801's Stripe REST acceptance tests
-(a failed payment, recovery from a refused guess, an idempotent refund),
-Notion token-connector tests (append a checklist to a page found by title,
-count filtered rows across body-cursor pages), and Cloudflare ones (a DNS TTL
-fix, a pinned Global API Key refusal, read-only analytics). They need fake
-Stripe, Notion, and Cloudflare services before promotion and never run.
+Ten [#801 REST tasks](tasks/rest.ts) are active against loopback fake Stripe,
+Notion, Cloudflare and Vercel HTTP services. The Node deployment uses the real
+published provider factories with `apiKey`, `token`, `apiToken`, and
+`globalApiKey` auth, fake vault credentials, account pins and Vercel's default
+team. No hosted vendor MCP or real vendor credential is used. The REST ledger
+records method, path, query, body, version and idempotency headers, and verified
+credential framing without recording credential headers. These tasks cover:
+
+- Stripe charge declines, recovery after rejected parameters, and an HTTP 500
+  after a committed refund followed by a retry with the same idempotency key;
+- Notion title resolution and append-once unchecked checklists, plus 230
+  filtered rows across three body-cursor pages of at most 100 rows;
+- one Cloudflare DNS TTL change with decoys, a Global API Key account-pin
+  refusal, and GraphQL analytics from the named read-only pool;
+- Vercel's bounded non-following build logs and an environment rotation that
+  never reads or echoes the previous value and requires a future deployment.
+
+The pin task's deployment instructions supply the operator's known zone id,
+because pinned zone lists intentionally omit other accounts. The agent still
+has to observe and report the real pin refusal. REST worlds expose only their
+vendor connectors. The Notion fixture uses 100-row pages and seeds 400 rows;
+its provider's default page size is 100. Refund retry metrics distinguish
+vendor-proven idempotent replays from duplicate business writes. The grader
+still requires identical arguments and one nonempty key across attempts.
+Saved inputs include complete REST state, raw request ledger and guest-call
+observations, so offline regrading does not start HTTP services.
+[Planned tasks](tasks/planned.ts) is currently empty.
+The #765 paired comparison keeps its registered 19-task scope; these ten
+follow-ups do not change that experiment's acceptance rule.
+An eval-only fetch adapter maps fresh per-world sentinel credentials to
+loopback HTTP, so Stripe and Notion keep their fixed public origins and the
+providers retain their production host checks. Unregistered credentials and
+cross-vendor hosts fail before any network request. The last world to stop
+restores the original fetch function; concurrent worlds keep separate routes.
 
 Each grader has independent required `correct-destination` and
 `answer-evidence` checks. Destination checks require the connector, tool and
@@ -300,6 +328,10 @@ controls; closed, missing and overridden answers have negative controls.
 Historical saved refusal trials predate this instruction and cannot be
 regraded for `structured-outcome`. The final 0.29 baselines use fresh live
 trials with this instruction.
+Their saved `destructive_tool_requires_approval` program errors remain valid
+typed refusals alongside `read_only_endpoint`; both still require the exact
+target, one attempt, unchanged state and the structured answer. Other errors
+do not establish a refusal.
 
 Auth tasks use a local fake OAuth connector and sign-in directory. A deterministic
 host adapter sends 2026-07-28 requests to the real Connecta auth boundary. A capable
@@ -326,7 +358,7 @@ VITEST_MAX_WORKERS=2 npx vitest run --project node test/claude-eval.node.test.ts
 VITEST_MAX_WORKERS=2 npm run release:check
 ```
 
-The self-test executes all 19 references in both arms and grading modes through real MCP, checks exact usage-guide parity across aliases and host representations, JSON/SSE guidance, six-arm byte preservation, hidden-tool refusals and terminal caught/uncaught errors, and verifies the paired decision rule and provenance refusals, then proves that its
+The self-test executes all 29 references in both arms and grading modes through real MCP, checks exact usage-guide parity across aliases and host representations, JSON/SSE guidance, six-arm byte preservation, hidden-tool refusals and terminal caught/uncaught errors, and verifies the paired decision rule and provenance refusals, then proves that its
 grader rejects a wrong-source attribution with the expected answer intact,
 and a right-source run without answer evidence. It also rejects a no-op, wrong-issue
 refusals, comment-only paging/fan-out, another retained result, direct images
@@ -348,8 +380,8 @@ headless Chromium; install it with `npm run test:browser:install` if needed.
 
 Freeze the checkout before baseline runs, record the commit and CLI versions,
 and save new files rather than overwrite `baselines/`. Owner scope is Sonnet
-5.5 and GPT-6-Luna only, with 1-2 repeats per task. Defaults run 19 tasks x 1
-repeat = 19 trials per runner. A two-repeat baseline runs 38 per runner.
+5.5 and GPT-6-Luna only, with 1-2 repeats per task. Defaults run 29 tasks x 1
+repeat = 29 trials per runner. A two-repeat baseline runs 58 per runner.
 Both use signed-in CLI subscription logins and consume plan allowance.
 
 ```sh

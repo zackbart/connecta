@@ -13,6 +13,16 @@ export function parseGrading(value = "route"): Grading {
 
 const common = { route: [], outcome: ["correct-destination", "answer-evidence"] };
 export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }> = {
+  "801-stripe-failed-payment": { route: [], outcome: ["reads-only", "no-guessed-search", "efficient-route"] },
+  "801-stripe-guessed-parameter-recovery": { route: [], outcome: ["recovery", "reads-only"] },
+  "801-stripe-idempotent-refund": { route: [], outcome: ["state", "idempotency", "only-requested-writes"] },
+  "801-notion-append-checklist": { route: [], outcome: ["state", "only-requested-writes", "efficient-route"] },
+  "801-notion-rows-past-first-page": { route: [], outcome: ["cursor-placement", "reads-only", "efficient-route"] },
+  "801-cloudflare-dns-ttl": { route: [], outcome: ["state", "only-requested-writes", "efficient-route"] },
+  "801-cloudflare-pin-refusal": { route: [], outcome: ["zero-writes", "no-bypass"] },
+  "801-cloudflare-read-only-analytics": { route: [], outcome: ["reads-only"] },
+  "801-vercel-failed-build": { route: [], outcome: ["no-stream", "reads-only", "efficient-route"] },
+  "801-vercel-env-value-safety": { route: [], outcome: ["state", "value-safety", "only-requested-writes"] },
   "cross-connector-join": {
     route: [],
     outcome: ["one-post", "no-stray-posts", "names-issue", "names-customer", "states-mrr", "no-unrequested-writes"],

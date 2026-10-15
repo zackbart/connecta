@@ -300,7 +300,7 @@ export function downstreamMetrics(calls: CallRecord[], requests: RequestRecord[]
     const key = `${address}:${stable(call.args)}`;
     if (seen.has(key)) {
       if (call.kind === "read") metrics.duplicateReads += 1;
-      else metrics.duplicateWrites += 1;
+      else if (!call.deduplicated) metrics.duplicateWrites += 1;
     }
     seen.add(key);
   }
