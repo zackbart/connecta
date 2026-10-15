@@ -24,17 +24,19 @@
 // Residual risk, as with Infisical: a secret a person typed into a free-text
 // name, description, log line, or identifier is out of scope.
 
-// Embedded URL verdict (#812): global, pin sha256:32399b3ed273.
-// Reviewed the pinned operation index and response candidates, including
-// deployments' errorMessage, build events' payload.text, runtime logs' message,
-// checks' output, and file/download operations. These are open-ended text or
-// content; path-only scanning would miss logs and arbitrary nested results.
+// Embedded URL verdict (#812): reviewed paths + global signing parameters.
+// Evidence: pinned index/candidates sha256:32399b3ed273 identify deployment
+// reads/creation/listing, build events and runtime logs; the operation/path
+// list below scans errorMessage, deployments.errorMessage, payload.text/text
+// and message respectively, both lists and individual named-stream rows.
+// All vendor error text is scanned too. These diagnostics can have false
+// positives for ordinary code/key links. Deployment meta, descriptions and
+// other application content retain generic query parameters byte for byte.
+// Literal X-Amz-/X-Goog- Signature/Credential/Security-Token values are
+// withheld in every string. Existing structured-capability rules still apply.
 // The original full response document is unavailable at its unversioned URL:
-// upstream now differs. Current upstream was inspected as supplementary
-// evidence only; the pin and existing verdicts are unchanged. No claim of a
-// complete pinned-response review or Vercel-wide file-host policy is made.
-// Scan credential/signing query parameters globally; ordinary user links and
-// deployment URLs keep their bytes. Streams use the same engine before clamp.
+// current upstream differs and is supplementary evidence only. This is not a
+// claim of complete pinned-response review or of a Vercel-wide host policy.
 
 import {
   redact,
@@ -398,7 +400,15 @@ const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
  * names, which the heuristic leaves.
  */
 export const VERCEL_VALUE_SAFETY: ValueSafetyTable = {
-  embeddedUrls: "global",
+  embeddedUrls: {
+    operations: {
+      "GET /v13/deployments/{idOrUrl}": ["errorMessage"],
+      "POST /v13/deployments": ["errorMessage"],
+      "GET /v6/deployments": ["deployments.errorMessage"],
+      "GET /v3/deployments/{idOrUrl}/events": ["payload.text", "text"],
+      "GET /v1/projects/{projectId}/deployments/{deploymentId}/runtime-logs": ["message"],
+    },
+  },
   title: "Vercel",
   operations: VALUE_SAFETY,
   envBodies: /^\/v\d+\/(?:env(?:\/|$)|projects\/\{[^}]+\}\/env(?:\/|$))/,

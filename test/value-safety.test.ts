@@ -698,7 +698,10 @@ describe("global embedded REST URL policy (#812)", () => {
       nested: [{ text: "[file](//example.com/a?sig=PRIVATE)" }],
     };
     expect(engine({ operations: {} }).redact(input, "GET", "/v1/things")).toEqual(input);
-    const safety = engine({ operations: {}, embeddedUrls: "global" });
+    const safety = engine({
+      operations: {},
+      embeddedUrls: { operations: { "GET /v1/things": ["description", "nested.text", "text"] } },
+    });
     expect(safety.redact(input, "GET", "/v1/things")).toEqual({
       description: "download https://files.example/a?[redacted]",
       nested: [{ text: "[file](//example.com/a?[redacted])" }],
@@ -711,7 +714,7 @@ describe("global embedded REST URL policy (#812)", () => {
       ),
     ).toEqual({ text: "https://example.com/a?width=400 see https://files.example/b?[redacted]" });
     expect(safety.redact({ text: "https://example.com/a?token=PRIVATE&width=400" }, "GET", "/v1/things")).toEqual({
-      text: "https://example.com/a?token=%5Bredacted%5D&width=400",
+      text: "https://example.com/a?[redacted]",
     });
     const unchanged = { description: "[file](https://example.com/a?width=100)" };
     expect(withholdEmbeddedUrlsIn(unchanged)).toBe(unchanged);

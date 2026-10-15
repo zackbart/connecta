@@ -48,16 +48,21 @@
 // - Issuing card numbers and CVCs come back only as expansions, which the
 //   connector refuses on every Issuing path (`rest.ts`); the card operations
 //   also redact both fields.
-// Embedded URL verdict (#812): global, Stripe v2555 (openapi.source.json).
-// Reviewed components/schemas: product.description, customer.description,
-// invoice.description/footer, charge.description/failure_message, file.url,
-// file_link.url, and v2.commerce.product_catalog_import.status_details (upload
-// and error-file download URLs). No documented vendor-minted URL embedded in
-// free text was found; download/upload capabilities are structured fields,
-// already refused or covered by resource rules. Still scan every text field:
-// expansions/events repeat these objects and arbitrary descriptions can carry
-// query credentials. No Stripe-wide file-host/bucket policy is justified:
-// payer-facing and public links must retain their existing reviewed rules.
+// Embedded URL verdict (#812): reviewed paths + global signing parameters.
+// Evidence: digest-verified Stripe v2555, components/schemas/charge's
+// failure_message ("Message to user further explaining reason for charge
+// failure") and charge_outcome.seller_message (Stripe's human-readable
+// outcome/reason). Scan those paths on charge objects, including expansions,
+// events and previous_attributes. All vendor error text is scanned too.
+// Product/customer/charge/invoice descriptions, metadata, price nicknames,
+// invoice footers and notes are customer data: generic code/key/token names
+// there retain their bytes, even in whole URL strings. The required literal
+// X-Amz-/X-Goog- Signature/Credential/Security-Token defense applies globally.
+// file.url/file_link.url and catalog-import upload/download capabilities are
+// structured and retain existing resource/operation rules. The v2555 review
+// found no documented vendor-minted link embedded in other free text; no
+// Stripe-wide file-host/bucket policy is justified. Errors and diagnostic
+// paths can have false positives for ordinary code/key links.
 
 import {
   redact,
@@ -823,7 +828,13 @@ const RESOURCES: ValueSafetyTable["resources"] = {
 };
 
 export const STRIPE_VALUE_SAFETY: ValueSafetyTable = {
-  embeddedUrls: "global",
+  embeddedUrls: {
+    resources: {
+      key: "object",
+      partials: ["previous_attributes"],
+      paths: { charge: ["failure_message", "outcome.seller_message"] },
+    },
+  },
   title: "Stripe",
   operations: OPERATIONS,
   fields: FIELDS,

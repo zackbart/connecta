@@ -35,6 +35,7 @@
 // and Vercel's): every detection either made still redacts. Exemptions are
 // never shared: each vendor states its own in its table (`keep`, `urls`,
 // `fields`, `scopeMaps`, `envBodies`).
+import { ConnectorCallError } from "../../../errors.js";
 import type { JsonSchema } from "../../../types.js";
 import type { Operation, OperationIndex } from "./operation-index.js";
 
@@ -255,8 +256,16 @@ interface ResourceRules {
 export interface ValueSafetyTable {
   /** Display name in refusals. */
   readonly title: string;
-  /** Opt in after reviewing embedded URLs in the pinned response contract. */
-  readonly embeddedUrls?: "global";
+  /** Global signing names plus generic credential names only on these reviewed response paths. */
+  readonly embeddedUrls?: {
+    readonly operations?: Readonly<Record<string, readonly string[]>>;
+    /** Discriminated resources, wherever lists, expansions, or events embed them. */
+    readonly resources?: {
+      readonly key: string;
+      readonly partials?: readonly string[];
+      readonly paths: Readonly<Record<string, readonly string[]>>;
+    };
+  };
   /** The reviewed verdict for every flagged operation, keyed `METHOD /path template`. */
   readonly operations: Readonly<Record<string, ValueSafetyVerdict>>;
   /**
@@ -332,7 +341,7 @@ function isRecord(value: unknown): value is JsonRecord {
 }
 
 /** A URL without userinfo, credential query parameters, or a credential-looking fragment; anything unparseable is withheld. */
-function sanitizeUrl(value: string): string {
+function sanitizeUrl(value: string, credentials = true): string {
   let url: URL;
   try {
     url = new URL(value);
@@ -346,13 +355,13 @@ function sanitizeUrl(value: string): string {
     changed = true;
   }
   // A snapshot of the names: setting a parameter while iterating the live list is unsafe.
-  for (const name of Array.from(url.searchParams.keys())) {
+  for (const name of credentials ? Array.from(url.searchParams.keys()) : []) {
     if (URL_PARAM_CONTAINS.test(name) || URL_PARAM_SUFFIX.test(name.toLowerCase().replace(/[_-]/g, ""))) {
       url.searchParams.set(name, REDACTED);
       changed = true;
     }
   }
-  if (url.hash && /token|secret|key|code|auth/i.test(url.hash)) {
+  if (credentials && url.hash && /token|secret|key|code|auth/i.test(url.hash)) {
     url.hash = "";
     changed = true;
   }
@@ -713,7 +722,13 @@ function* hostLinks(text: string, hosts: FileHosts | undefined, redact: boolean)
         const angle = text[destination] === "<";
         const start = destination + (angle ? 1 : 0);
         const authority = destinationHost(text, start);
-        const host = authority === undefined ? undefined : matcher ? fileHost(text, authority, matcher) : authority;
+        // Generic policy inspects a relative destination's own query/fragment.
+        // Host policy must still attribute the leading authority to the vendor.
+        const host = matcher
+          ? authority === undefined
+            ? undefined
+            : fileHost(text, authority, matcher)
+          : (authority ?? start);
         const span = linkSpan(text, start, host, !angle, redact);
         at = Math.max(destination, span.end) - 1;
         firstReference = -1;
@@ -801,10 +816,12 @@ function withholdSigningParams(anchored: string): string {
   SIGNING_PARAM.lastIndex = 0;
   for (let match = SIGNING_PARAM.exec(anchored); match; match = SIGNING_PARAM.exec(anchored)) {
     const start = match.index + match[0].length;
-    let end = start;
+    // Skip an existing complete placeholder, but still remove any suffix.
+    const already = anchored.startsWith(REDACTED, start);
+    let end = already ? start + REDACTED.length : start;
     while (end < anchored.length && !endsValue(anchored, end)) end++;
     SIGNING_PARAM.lastIndex = end;
-    if (end === start || anchored.startsWith(REDACTED, start)) continue;
+    if (end === start || (already && end === start + REDACTED.length)) continue;
     out += `${anchored.slice(copied, start)}${REDACTED}`;
     copied = end;
   }
@@ -878,7 +895,7 @@ function decodeLinkText(text: string): string {
  * The word alone (`unredacted`) or the placeholder away from a file link is
  * a person's text.
  */
-export function carriesWithheldLink(value: unknown, hosts: FileHosts, depth = 0): boolean {
+export function carriesWithheldLink(value: unknown, hosts?: FileHosts, depth = 0): boolean {
   if (typeof value === "string") {
     for (const { cut, end } of hostLinks(value, hosts, false)) {
       if (cut >= 0 && decodeLinkText(value.slice(cut, end)).includes(REDACTED)) return true;
@@ -887,6 +904,32 @@ export function carriesWithheldLink(value: unknown, hosts: FileHosts, depth = 0)
   }
   if (typeof value !== "object" || value === null || depth > MAX_DEPTH) return false;
   return Object.values(value).some((item) => carriesWithheldLink(item, hosts, depth + 1));
+}
+
+/** Refuse a withheld destination copied into customer data, before any dispatch. */
+export function refuseWithheldLinks(value: unknown, title: string): void {
+  if (!carriesWithheldLink(value)) return;
+  throw new ConnectorCallError(
+    "invalid_args",
+    `This write carries a URL whose query or fragment Connecta withheld ([redacted]), so ${title} would store the placeholder. Do not write withheld URLs back; obtain the original link or omit the field.`,
+  );
+}
+
+/** Upload admission inspects actual bytes, including base64-decoded files and multipart blobs. */
+export async function refuseWithheldUpload(body: BodyInit, title: string): Promise<void> {
+  if (body instanceof FormData) {
+    for (const [name, part] of body) {
+      refuseWithheldLinks(name, title);
+      if (typeof part === "string") refuseWithheldLinks(part, title);
+      else {
+        refuseWithheldLinks(part.name, title);
+        refuseWithheldLinks(await part.text(), title);
+      }
+    }
+  } else if (body instanceof Blob) refuseWithheldLinks(await body.text(), title);
+  else if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
+    refuseWithheldLinks(new TextDecoder().decode(body), title);
+  } else refuseWithheldLinks(body instanceof URLSearchParams ? body.toString() : body, title);
 }
 
 /**
@@ -994,10 +1037,11 @@ export function validPath(raw: string): boolean {
 }
 
 /** Apply one reviewed path to a body in place of its value. */
-function applyPath(body: unknown, raw: string): unknown {
+function applyPath(body: unknown, raw: string, transform?: (value: unknown) => unknown): unknown {
   const { mode, segments } = parsePath(raw);
   const step = (current: unknown, index: number): unknown => {
     if (index === segments.length) {
+      if (transform) return transform(current);
       if (current === undefined || current === null) return current;
       if (mode === "url") return typeof current === "string" ? sanitizeUrl(current) : REDACTED;
       if (mode === "origin") return originOnly(current);
@@ -1129,7 +1173,7 @@ interface Exemptions {
   verbatim: WeakMap<object, Set<string>>;
   fields: Readonly<Record<string, FieldReview>>;
   scopeMaps: readonly string[];
-  embeddedUrls: boolean;
+  reviewedUrls: boolean;
 }
 
 /**
@@ -1144,11 +1188,13 @@ function heuristic(value: unknown, exempt: Exemptions): unknown {
   const walk = (current: unknown, trail: string[], parent: string, depth: number): unknown => {
     if (depth > MAX_DEPTH) return REDACTED;
     if (typeof current === "string") {
-      // A whole URL retains the existing per-parameter policy. Whitespace
-      // means this can be prose starting with a URL, so scan each link.
-      const clean =
-        URL_SHAPE.test(current) && (!exempt.embeddedUrls || !/\s/.test(current)) ? sanitizeUrl(current) : current;
-      return exempt.embeddedUrls ? withholdEmbeddedUrls(clean) : clean;
+      // Scan original escaped text before URL parsing. A string containing
+      // HTML, Markdown or escapes is text, even when it has no whitespace.
+      // Reviewed vendors already scanned signing names and selected text;
+      // generic names in customer data must retain their original bytes.
+      if (!exempt.reviewedUrls) return URL_SHAPE.test(current) ? sanitizeUrl(current) : current;
+      const whole = URL_SHAPE.test(current) && !/[\s<>"'`\\]|&(?:#|[a-z]+;)|[()[\]]/i.test(current);
+      return whole ? sanitizeUrl(current, false) : current;
     }
     if (Array.isArray(current)) return current.map((item) => walk(item, trail, parent, depth + 1));
     if (!isRecord(current)) return current;
@@ -1259,6 +1305,39 @@ export function valueSafety(table: ValueSafetyTable, index: () => OperationIndex
     redact(data, method, template) {
       const reviewed = verdict(method, template);
       let out = data;
+      if (table.embeddedUrls) {
+        // Do this before any reviewed URL rule parses/serializes the text.
+        out = mapStrings(out, withholdSigningParams, 0);
+        for (const path of table.embeddedUrls.operations?.[`${method} ${template}`] ?? []) {
+          out = applyPath(out, path, withholdEmbeddedUrlsIn);
+        }
+        const resources = table.embeddedUrls.resources;
+        if (resources) {
+          const scan = (value: unknown, depth: number): unknown => {
+            if (depth > MAX_DEPTH || value === null || typeof value !== "object") return value;
+            if (Array.isArray(value)) return value.map((item) => scan(item, depth + 1));
+            let clean: JsonRecord = Object.fromEntries(
+              Object.entries(value).map(([key, item]) => [key, scan(item, depth + 1)]),
+            );
+            const inner = clean[resources.key];
+            const innerType = isRecord(inner) ? inner[resources.key] : undefined;
+            if (typeof innerType === "string" && Object.hasOwn(resources.paths, innerType)) {
+              for (const partial of resources.partials ?? []) {
+                if (!Object.hasOwn(clean, partial)) continue;
+                for (const path of resources.paths[innerType]!)
+                  clean[partial] = applyPath(clean[partial], path, withholdEmbeddedUrlsIn);
+              }
+            }
+            const type = clean[resources.key];
+            if (typeof type === "string" && Object.hasOwn(resources.paths, type)) {
+              for (const path of resources.paths[type]!)
+                clean = applyPath(clean, path, withholdEmbeddedUrlsIn) as JsonRecord;
+            }
+            return clean;
+          };
+          out = scan(out, 0);
+        }
+      }
       if (reviewed?.verdict === "redact") for (const path of reviewed.paths) out = applyPath(out, path);
       if (table.envBodies?.test(template)) out = scrubValues(out, 0);
       const verbatim = new WeakMap<object, Set<string>>();
@@ -1269,7 +1348,7 @@ export function valueSafety(table: ValueSafetyTable, index: () => OperationIndex
         verbatim,
         fields,
         scopeMaps,
-        embeddedUrls: table.embeddedUrls === "global",
+        reviewedUrls: table.embeddedUrls !== undefined,
       });
     },
     withholdsErrors(op) {

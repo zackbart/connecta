@@ -16,7 +16,7 @@ import {
   type RestReadPost,
   type RestVendor,
 } from "../_shared/rest/tools.js";
-import { valueSafety, withholdEmbeddedUrlsIn } from "../_shared/rest/value-safety.js";
+import { valueSafety, withholdEmbeddedUrlsIn, refuseWithheldLinks } from "../_shared/rest/value-safety.js";
 import { openapi } from "./openapi.generated.js";
 import { STRIPE_VALUE_SAFETY } from "./value-safety.js";
 
@@ -324,6 +324,15 @@ export function stripeRest(mode: StripeMode, connectedAccount: string | undefine
       stripeFailure(status, headers, body, call ? SAFETY.withholdsErrors(call.op) : false),
     readPosts: READ_POSTS,
     valueSafety: SAFETY,
+    admit(call) {
+      if (
+        call.method === "GET" ||
+        call.method === "HEAD" ||
+        READ_POSTS.some(([method, path]) => method === call.method && path === call.op.path)
+      )
+        return;
+      refuseWithheldLinks([call.body, call.query, call.path], "Stripe");
+    },
     refuse,
     encode,
     page,

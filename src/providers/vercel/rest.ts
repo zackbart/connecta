@@ -19,7 +19,12 @@ import {
   type RestVendor,
 } from "../_shared/rest/tools.js";
 import { openapi } from "./openapi.generated.js";
-import { valueSafety, withholdEmbeddedUrlsIn } from "../_shared/rest/value-safety.js";
+import {
+  valueSafety,
+  withholdEmbeddedUrlsIn,
+  refuseWithheldLinks,
+  refuseWithheldUpload,
+} from "../_shared/rest/value-safety.js";
 import { VERCEL_VALUE_SAFETY } from "./value-safety.js";
 
 /** Vercel's public REST origin. Override only for a proxy or test double. */
@@ -520,6 +525,15 @@ export function vercelRest(options: { baseUrl: string; teamId: string | undefine
       vercelFailure(status, headers, body, call ? SAFETY.withholdsErrors(call.op) : false),
     readPosts: READ_POSTS,
     valueSafety: SAFETY,
+    admit(call) {
+      if (
+        call.method === "GET" ||
+        call.method === "HEAD" ||
+        READ_POSTS.some(([method, path]) => method === call.method && path === call.op.path)
+      )
+        return;
+      refuseWithheldLinks([call.body, call.query, call.path], "Vercel");
+    },
     refuse,
     scope(call) {
       const query: JsonRecord = { ...call.query };
@@ -1030,6 +1044,8 @@ export function vercelRest(options: { baseUrl: string; teamId: string | undefine
         // Decode first, then validate what was supplied: a required binary body
         // is present whenever bytes are (the index types it as a string).
         const bytes = decodeUpload(args);
+        await vendor.admit?.(call, ctx);
+        await refuseWithheldUpload(bytes, "Vercel");
         operations.check(call.op, call.query, String(args["base64Body"] ?? args["textBody"]));
         const digest = call.op.path === "/v2/files" ? await sha1(bytes) : undefined;
         const query: Record<string, string | number | boolean> = {};
