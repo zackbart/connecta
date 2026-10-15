@@ -38,7 +38,7 @@ in both light and dark themes, for 80 screenshots.
 Another 42 screenshots cover configured, mismatched, unreadable and multifield
 credentials; all three OAuth client mechanisms; clean and unobserved drift;
 historical Activity; client setup; schema dialog; read/write filters; expanded
-config provenance; narrow sign-in and Connection; deployment branding; expanded endpoints; command search; and narrow endpoints. The base
+config provenance; narrow sign-in and Connection; deployment branding; an expanded endpoint (per-connector runs-as and tool chips); command search; and narrow endpoints. The base
 populated Activity fixture includes grouped calls, an ungrouped legacy row,
 classification/result size/client facts, and a catalog-change event.
 

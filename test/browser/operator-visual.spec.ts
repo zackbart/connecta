@@ -259,7 +259,7 @@ for (const variant of VISUAL_VARIANTS)
           await expect(page.locator("#app")).toBeVisible();
           await expect(page.getByText("Loading configuration…", { exact: true })).toHaveCount(0);
           if (variant === "endpoints-expanded" || variant === "narrow-endpoints") {
-            await page.locator(".endpoint-entry").nth(1).locator("summary").click();
+            await page.locator(".endpoint-entry").nth(1).locator(".endpoint-toggle").click();
             await expect(page.locator(".endpoint-entry").nth(1).locator(".tool-chip")).toBeVisible();
           } else if (variant === "command-search") {
             await page.getByRole("button", { name: "Search" }).click();

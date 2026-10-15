@@ -1,6 +1,6 @@
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import type { OperatorState } from "../view.js";
-import { connectorStatusLabel, connectorStatusTone, formatDate } from "../view.js";
+import { connectorSourceLabel, connectorStatusLabel, connectorStatusTone, formatDate } from "../view.js";
 import { Badge, StateBlock } from "./parts.js";
 import { Button, Tabs } from "./primitives.js";
 import { ContractState } from "./contract-state.js";
@@ -47,7 +47,7 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
             <Badge tone={state.connectorFailures[id] ? "warn" : connectorStatusTone(live.status)}>
               {state.connectorFailures[id] ? "Couldn't load" : connectorStatusLabel(live.status, live.problem)}
             </Badge>
-            <Badge>{config.authScope} auth</Badge>
+            <span className="meta">{config.authScope === "personal" ? "Personal" : "Shared"} auth</span>
             <span className="meta">{live.tools.length} tools</span>
           </div>
           {config.description ? <p className="meta catalog-description">{config.description}</p> : null}
@@ -100,7 +100,7 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
                     </section>
                     <section aria-label="Connector configuration">
                       <h2>Configuration</h2>
-                      <p className="meta">Defined in deployment code.</p>
+                      <p className="meta">Source: {connectorSourceLabel(config.source)}. Defined in deployment code.</p>
                       <SnapshotTree value={config} path={`config.connectors.${id}`} sources={contract.configSources} />
                     </section>
                   </div>

@@ -74,7 +74,6 @@ export function FixPromptButton({
     <CopyButton
       value={fixPrompt(kind, connectorId)}
       label="Copy fix prompt"
-      className="btn quiet"
       ariaLabel={`Copy fix prompt for ${name ?? connectorId}`}
     />
   );
@@ -271,13 +270,16 @@ export function PageLink({
 export function CopyButton({
   value,
   label,
-  className = "btn",
+  className = "btn quiet copy-btn",
   ariaLabel,
   id,
+  icon,
 }: {
   value: string;
   label: string;
   className?: string;
+  /** Draw a small icon instead of the label; the label stays the fallback name. */
+  icon?: boolean;
   /** For a row of identical labels, the name that tells them apart. */
   ariaLabel?: string;
   id?: string;
@@ -288,11 +290,13 @@ export function CopyButton({
     const timer = window.setTimeout(() => setStatus("idle"), 1600);
     return () => window.clearTimeout(timer);
   }, [status]);
+  const text = status === "copied" ? "Copied" : status === "failed" ? "Copy failed" : label;
   return (
     <button
-      className={className}
+      className={icon ? `${className} icon` : className}
       type="button"
       {...(id ? { id } : {})}
+      {...(icon ? { title: text } : {})}
       {...(ariaLabel && status === "idle" ? { "aria-label": ariaLabel } : {})}
       onClick={() => {
         // No clipboard at all — an insecure origin, an old browser — is a
@@ -304,7 +308,34 @@ export function CopyButton({
         );
       }}
     >
-      {status === "copied" ? "Copied" : status === "failed" ? "Copy failed" : label}
+      {icon ? (
+        <>
+          <CopyIcon done={status === "copied"} />
+          <span className="visually-hidden">{text}</span>
+        </>
+      ) : (
+        text
+      )}
     </button>
+  );
+}
+
+function CopyIcon({ done }: { done: boolean }) {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
+      {done ? (
+        <path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      ) : (
+        <>
+          <rect x="5.25" y="5.25" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
+          <path
+            d="M10.75 3.25v-.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.3"
+          />
+        </>
+      )}
+    </svg>
   );
 }

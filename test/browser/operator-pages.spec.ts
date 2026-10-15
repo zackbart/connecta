@@ -158,12 +158,16 @@ async function clean(page: Page) {
   await expect(page.locator("body")).not.toContainText("Hidden connector");
 }
 
-test("inline problem links and signed authorize_connector hand off to Connection without starting OAuth", async ({
+test("connector status actions and signed authorize_connector hand off to Connection without starting OAuth", async ({
   page,
 }) => {
   await session(page);
-  await page.goto(origin);
-  await page.getByRole("link", { name: "Connect / fix" }).first().click();
+  await page.goto(origin + "/connectors");
+  const slack = page.getByRole("row").filter({ has: page.getByRole("link", { name: "Slack", exact: true }) });
+  // One badge and one action per row; fix prompts live on Connection.
+  await expect(slack.locator(".badge")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: /Copy fix prompt/ })).toHaveCount(0);
+  await slack.getByRole("link", { name: "Connect Slack", exact: true }).click();
   await expect(page).toHaveURL(origin + "/connectors/slack#connection");
   await expect(page.getByRole("tab", { name: "Connection", exact: true })).toHaveAttribute("aria-selected", "true");
   const rpc = await readJsonRpc(
@@ -315,13 +319,35 @@ test("INV-4 INV-6: endpoint rows expand exact granted tools and copy client setu
 }) => {
   await session(page);
   await page.goto(origin);
+  // Connector health and fix prompts belong to Connectors, not every endpoint row.
+  await expect(page.locator("#endpointsView .badge.ok, #endpointsView .badge.warn")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Copy fix prompt/ })).toHaveCount(0);
   const support = page.getByRole("region", { name: "/mcp/support", exact: true });
   await expect(support.locator(".endpoint-count")).toHaveText("Tools: 1");
-  await support.locator("summary").focus();
+  const toggle = support.getByRole("button", { name: /^\/mcp\/support/ });
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(support.locator(".tool-chip")).toHaveCount(0);
+  await toggle.focus();
   await page.keyboard.press("Enter");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  const tools = support.getByRole("table", { name: "Tools on /mcp/support", exact: true });
+  await expect(tools.getByRole("columnheader")).toHaveText(["Connector", "Runs as", "Tools"]);
   await expect(support.locator(".tool-chip")).toHaveCount(1);
-  await expect(support.locator(".tool-chip")).toHaveText("readread");
+  await expect(support.locator(".tool-chip")).toHaveText("read");
   await expect(support).not.toContainText("github.write");
+  await page.keyboard.press("Space");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(support.locator(".tool-chip")).toHaveCount(0);
+  // The root endpoint marks write tools, and a connector that needs attention
+  // links to its Connection tab with the status in its name.
+  const root = page.getByRole("region", { name: "/mcp", exact: true });
+  await root.locator(".endpoint-toggle").click();
+  await expect(root.locator(".tool-chip.write")).toContainText("· write");
+  await expect(root.locator(".tool-chip.read")).not.toContainText("read ·");
+  await expect(root.getByRole("link", { name: "Slack (Authorization needed)", exact: true })).toHaveAttribute(
+    "href",
+    "/connectors/slack#connection",
+  );
   const trigger = support.getByRole("button", { name: "Client setup for support" });
   await trigger.click();
   const dialog = page.getByRole("dialog", { name: "Client setup", exact: true });
@@ -364,7 +390,7 @@ test("INV-6: Endpoints and command search ignore payload and raw error sentinels
   });
   await page.goto(origin);
   await expect(page.locator(".endpoint-table")).toBeVisible();
-  await page.locator(".endpoint-entry").first().locator("summary").click();
+  await page.locator(".endpoint-entry").first().locator(".endpoint-toggle").click();
   await page.getByRole("button", { name: "Search" }).click();
   await page.getByPlaceholder("Search pages, connectors, tools…").fill(sentinel);
   await expect(page.getByText("No matching pages, connectors, tools or actions.")).toBeVisible();

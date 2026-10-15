@@ -25,11 +25,16 @@ explicit optional import and stays outside the root package import graph.
 Endpoints, Connectors, Activity, Tokens, and Settings show only what the
 caller may inspect. Endpoints is the default page at `/`: one row for `/mcp`
 and each admitted pool, with a copyable URL, tool count, endpoint mode, and
-client setup. Expand a row for tools grouped by connector with their final
-read/write classification. Counts intersect live tools with grants, pool
-declarations, and read-only mode. Connector detail has Tools, Connection,
-and Activity tabs. Connection combines authentication, catalog diagnostics,
-and the connector snapshot. Settings combines inbound-auth facts with the
+client setup. Expanding a row lists each connector on that endpoint with who it
+runs as (shared or personal) and its tools, marking write tools. Connector
+health is not repeated per endpoint: a connector that needs attention gets a
+status dot linking to its Connection tab. Counts intersect live tools with
+grants, pool declarations, and read-only mode. Connectors lists each connector
+with one status badge, auth scope, tool count, and last call; a problem adds one
+action (Connect, Replace key, or Inspect) that opens Connection. Connector
+detail has Tools, Connection, and Activity tabs. Connection combines
+authentication (including the OAuth client mechanism), catalog diagnostics,
+fix prompts, and the connector snapshot with its source. Settings combines inbound-auth facts with the
 configuration snapshot and labels values as default or configured. Deployment code owns connectors, grants, pools, and classification;
 the UI changes only authorized authentication material.
 
@@ -123,15 +128,15 @@ id and typed actor when available, otherwise a fresh id and system actor. No
 names, descriptions or schemas enter the event. Private catalog changes require
 a matching principal owner even when the connector uses shared auth. Empty credential declarations
 report `credential_required` before running a connector status or catalog probe.
-The top bar shows deployment branding and a name breadcrumb, session actions,
-and a command palette. The tab row lists Endpoints, Connectors, Activity,
+The top bar shows deployment branding and a name breadcrumb, then Search (the
+command palette), Appearance, and the session action (Change token or Sign out)
+at one quiet size. The tab row lists Endpoints, Connectors, Activity,
 Tokens, and Settings. Activity and Tokens keep their permission gates; a gated
 viewer sees no operator navigation. The command palette searches visible pages,
 connectors and tools, opening connector results on Tools. `/access` redirects
 to `/`, `/tools` to `/connectors`, and `/config` to `/settings` in the browser
 with history replacement. Connector hashes `#config`, `#auth` and `#diagnostics`
 redirect to `#connection`, preserving query parameters such as signed handoffs.
-Status and drift badges appear beside connection links and fixed fix prompts.
 Token controls retain their existing permission gate.
 Configuration remains in deployment code. The UI mutates only credentials,
 OAuth connections and client tokens through the existing routes.

@@ -11,7 +11,7 @@ export function SettingsPage({ state }: { state: OperatorState }) {
           <h1 id="settingsHeading" tabIndex={-1}>
             Settings
           </h1>
-          <p className="meta">The deployment snapshot visible to your session. Change configuration in code.</p>
+          <p className="meta">Read-only snapshot, defined in code.</p>
         </div>
       </div>
       {!state.contract ? (

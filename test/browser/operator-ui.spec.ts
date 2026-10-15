@@ -537,7 +537,7 @@ for (const [path, label] of [
   ["cimd", "Client metadata document (CIMD)"],
   ["dcr", "Dynamic registration (DCR)"],
 ] as const) {
-  test(`renders the ${path} OAuth client label in the ledger and Auth tab`, async ({ page }) => {
+  test(`renders the ${path} OAuth client label on Connection, not in the ledger`, async ({ page }) => {
     await page.route("**/ui/api/config", async (route) => {
       const response = await route.fetch();
       const facts = await response.json();
@@ -553,7 +553,7 @@ for (const [path, label] of [
     await page.getByRole("link", { name: "Connectors", exact: true }).click();
     await expect(
       page.getByRole("row").filter({ has: page.getByRole("link", { name: "CRM", exact: true }) }),
-    ).toContainText(label);
+    ).not.toContainText(label);
     const row = await openRow(page, "CRM", "auth");
     await expect(row.getByText(`OAuth client: ${label}`, { exact: true })).toBeVisible();
   });

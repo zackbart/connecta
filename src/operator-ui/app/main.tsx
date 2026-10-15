@@ -92,13 +92,13 @@ function OperatorNav() {
       <div hidden={state.session !== "ready"} className="session-actions" aria-label="Session actions">
         <ShellControls state={state} pages={state.session === "ready" ? visiblePages(state) : []} />
         {auth.kind === "clerk" || auth.kind === "cloudflare-access" ? (
-          <button className="navlink" type="button" onClick={signOut}>
+          <Button variant="quiet" className="session-action" onClick={signOut}>
             Sign out
-          </button>
+          </Button>
         ) : (
-          <button className="navlink" type="button" onClick={forgetBearer}>
+          <Button variant="quiet" className="session-action" onClick={forgetBearer}>
             Change token
-          </button>
+          </Button>
         )}
       </div>
     </div>
