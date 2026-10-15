@@ -41,6 +41,9 @@ export const NOTION_API_VERSION = "2026-03-11";
 /** Notion's hard cap on `page_size` for every paginated endpoint. */
 export const MAX_PAGE_SIZE = 100;
 
+/** Page retrieval caps `filter_properties` at 100; data-source queries declare no cap. */
+const MAX_PAGE_PROPERTY_FILTERS = 100;
+
 /** Notion's cap on `children` per append, and on blocks per page create. */
 const MAX_CHILDREN_PER_REQUEST = 100;
 
@@ -848,10 +851,14 @@ function pagination(args: Record<string, any>, defaultPageSize: number): { page_
 }
 
 /** Both page GETs and data-source POST queries filter properties on the URL. */
-function propertyQuery(properties: string[] | undefined): Record<string, unknown> {
+function propertyQuery(properties: string[] | undefined, maxFilters?: number): Record<string, unknown> {
+  if (properties === undefined) return {};
   // The title column's name varies, but its id is always `title`. Fetch it
   // even when projection drops the column so the top-level title survives.
-  return properties === undefined ? {} : { filter_properties: [...new Set([...properties, "title"])] };
+  const filters = [...new Set([...properties, "title"])];
+  // Filtering is an optimization. An oversized selection still needs every
+  // requested column, so retrieve all properties and keep projecting locally.
+  return maxFilters !== undefined && filters.length > maxFilters ? {} : { filter_properties: filters };
 }
 
 /** Exactly-one-of validation, phrased so the agent knows what to send next. */
@@ -950,7 +957,7 @@ function namedTools(defaultPageSize: number): ApiTool[] {
       outputSchema: PAGE_OUTPUT_SCHEMA,
       handler: async (args, ctx) => {
         const payload = await notion(ctx, "GET", `/v1/pages/${id(args.page_id)}`, {
-          query: propertyQuery(args.properties),
+          query: propertyQuery(args.properties, MAX_PAGE_PROPERTY_FILTERS),
         });
         if (args.raw) return payload;
         return projectPage(payload, args.properties);

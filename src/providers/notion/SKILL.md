@@ -159,8 +159,12 @@ So the sequence for "find rows in this database" is the database read, then
   when the goal is fewer fields. This also narrows the request to Notion with
   repeated `filter_properties` URL parameters, shrinking the response before
   Connecta reads it. The title property is always fetched so the projected
-  `title` stays populated. `raw: true` with `properties` returns that filtered
-  Notion response; omit `properties` for the full response.
+  `title` stays populated. Page retrieval allows at most 100 distinct filters,
+  including the title id. A larger selection fetches all properties and still
+  projects only the selected names locally. Data source queries have no
+  documented filter count limit. `raw: true` returns the upstream response,
+  filtered when those filters fit and full when page retrieval falls back.
+  Omit `properties` for the full response on either tool.
   `integration_get_page_content` with `raw: true` returns one level and ignores
   `depth`.
 

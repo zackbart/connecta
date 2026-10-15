@@ -1312,6 +1312,52 @@ describe.each([
     expect(new URL(calls[0]!.url).searchParams.getAll("filter_properties")).toEqual(["Name", "title"]);
     expect(result).toEqual(response);
   });
+
+  describe.each([99, 100, 101])("with %i distinct selected properties", (count) => {
+    it.each(
+      [false, true].flatMap((includeTitle) =>
+        [false, true].flatMap((duplicates) => [false, true].map((raw) => ({ includeTitle, duplicates, raw }))),
+      ),
+    )(
+      "preserves all selected values, title=$includeTitle, duplicates=$duplicates, raw=$raw (INV-10)",
+      async ({ includeTitle, duplicates, raw }) => {
+        const columns = Array.from({ length: count - (includeTitle ? 1 : 0) }, (_, i) => `Column ${i + 1}`);
+        const selected = includeTitle ? ["title", ...columns] : columns;
+        const properties = duplicates ? [...selected, ...selected] : selected;
+        const filters = includeTitle ? selected : [...selected, "title"];
+        const shouldFilter = method === "POST" || filters.length <= 100;
+        const values = Object.fromEntries(columns.map((name, i) => [name, { type: "number", number: i }]));
+        const response = payload({
+          ...PAGE_FIXTURE,
+          properties: {
+            title: PAGE_FIXTURE.properties.Name,
+            ...values,
+            ...(!shouldFilter ? { Unselected: { type: "number", number: -1 } } : {}),
+          },
+        });
+        queue({ body: response });
+
+        const result = await call(build(), tool, { ...args, properties, raw });
+
+        expect(calls).toHaveLength(1);
+        const request = calls[0]!;
+        const url = new URL(request.url);
+        expect(url.origin + url.pathname).toBe(NOTION_API_BASE_URL + path);
+        expect(url.searchParams.getAll("filter_properties")).toEqual(shouldFilter ? filters : []);
+        expect(request.method).toBe(method);
+        expect(request.body).toEqual(method === "GET" ? undefined : { page_size: 25 });
+        if (raw) expect(result).toEqual(response);
+        else {
+          const page = method === "GET" ? result : result.results[0];
+          expect(page.title).toBe("Quarterly review");
+          expect(page.properties).toEqual({
+            ...(includeTitle ? { title: "Quarterly review" } : {}),
+            ...Object.fromEntries(columns.map((name, i) => [name, i])),
+          });
+        }
+      },
+    );
+  });
 });
 
 describe("notion() lean projections", () => {
