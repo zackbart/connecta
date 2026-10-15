@@ -220,9 +220,12 @@ takes the same Markdown for a new page's body.
   (comment capabilities are off by default), the object was never shared, or
   the workspace is past its plan's block limit; Notion's message says which.
   Re-authorizing cannot fix it; an operator must change it in Notion.
-- **429** carries a retry window. Notion allows each integration 180 requests
-  a minute (600 on Business and Enterprise) plus a budget shared by the whole
-  workspace; Connecta admits 180 calls a minute, three at a time, per runtime.
+- **429** carries a retry window. Notion's [request limits](https://developers.notion.com/reference/request-limits)
+  allow 600 requests a minute per connection on Business and Enterprise and
+  180 on other plans, plus a workspace-wide limit shared by all connections.
+  Connecta defaults to 180 calls a minute, three at a time, per runtime.
+  A token connector's optional `callAdmission` replaces that whole policy;
+  account for other runtime traffic and tools that make multiple HTTP requests.
   Wait out the window rather than retrying immediately. A 429 that says the
   integration's API access is blocked is not retryable.
 - **5xx on a write** may still have been saved. When Notion names the

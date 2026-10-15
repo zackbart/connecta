@@ -16,13 +16,11 @@ export const NOTION_MCP_ENDPOINT = "https://mcp.notion.com/mcp";
 const DEFAULT_PAGE_SIZE = 25;
 
 /**
- * Notion documents "an average of three requests per second, with some bursts
- * beyond the average allowed" per connection. 180 calls per minute is that
- * average over a window short bursts pass and a sustained loop does not, and
- * `maxConcurrency: 3` is the load-bearing half — an averaged budget cannot stop
- * forty calls in one tick, and declaring a queue is also what makes the queue
- * settings legal at construction. Per runtime, and a floor on the real request
- * rate rather than a ceiling, since one admitted call can spend many fetches.
+ * Conservative default for every Notion plan: 180 calls per minute, with
+ * Connecta's concurrency cap of three to bound bursts. Business and Enterprise
+ * allow 600 requests per minute per connection; all connections also share a
+ * workspace-wide limit. This policy is per runtime and counts calls rather
+ * than HTTP requests, since one admitted call can spend many fetches.
  */
 const NOTION_ADMISSION: ConnectorCallAdmissionPolicy = {
   rules: [
@@ -70,6 +68,13 @@ export interface NotionOAuthOptions extends NotionCommonOptions {
  */
 export interface NotionTokenOptions extends NotionCommonOptions {
   auth: { type: "token" };
+  /**
+   * Per-runtime downstream call-admission policy, replacing the default of
+   * 180 calls/minute and 3 concurrent. Business and Enterprise allow 600
+   * requests/minute per connection; all connections share a workspace-wide
+   * limit. One admitted call can make several HTTP requests.
+   */
+  callAdmission?: ConnectorCallAdmissionPolicy;
   /** Operator-facing label for the integration token. */
   credentialLabel?: string;
   /**
@@ -363,6 +368,7 @@ const NOTION_OPTIONS = variants(["auth", "type"], {
   }).shape,
   token: optionsOf<NotionTokenOptions>()({
     ...COMMON,
+    callAdmission: CALL_ADMISSION,
     ...keys("credentialLabel", "defaultPageSize"),
     auth: optionsOf<NotionTokenOptions["auth"]>()(keys("type")),
   }).shape,
@@ -398,7 +404,7 @@ function notionToken(id: string, options: Readonly<NotionTokenOptions>, provider
       placeholder: "Paste the integration token",
     },
     testCredential: rest.testCredential,
-    callAdmission: NOTION_ADMISSION,
+    callAdmission: options.callAdmission ?? NOTION_ADMISSION,
     usageGuide: {
       content: tokenUsageGuide(options.purpose, options.instructions),
       summary:

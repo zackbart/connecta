@@ -83,6 +83,14 @@ MCP clients to its hosted server, an operational gate outside Connecta. See the
 To use both implementations of one provider, configure two connector ids with
 independent credentials.
 
+Both Notion auth variants accept optional `callAdmission`. For a token
+connector it replaces the whole per-runtime default of 180 calls per minute
+and 3 concurrent. Notion's [request limits](https://developers.notion.com/reference/request-limits)
+allow 600 requests per minute per connection on Business and Enterprise and
+180 on other plans. A separate workspace-wide limit is shared by all
+connections. Size an override for other runtime traffic and tools that make
+multiple HTTP requests; malformed policies throw at construction.
+
 Planning Center's `excludeApps` removes whole products from a connection, for
 example `planningCenter("pco", { purpose, excludeApps: ["giving"] })` for a
 deployment that keeps agents away from donor and financial data. Excluded

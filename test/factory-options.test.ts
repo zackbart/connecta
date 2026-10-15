@@ -144,6 +144,19 @@ describe("built-in factory options", () => {
       'notion("wiki").defaultPageSize',
     ],
     [
+      "a Notion token call admission budget",
+      () =>
+        notion(
+          "wiki",
+          loose({
+            purpose: "Docs",
+            auth: { type: "token" },
+            callAdmission: { rules: [{ budget: { kind: "rolling-window", maxCall: 600, windowMs: 60_000 } }] },
+          }),
+        ),
+      'notion("wiki").callAdmission.rules[0].budget.maxCall',
+    ],
+    [
       "a provider's narrowed auth",
       () => stripe("billing", loose({ purpose: "Revenue", auth: { type: "oauth", scope: "x" } })),
       'stripe("billing").auth.scope',
@@ -256,6 +269,13 @@ describe("built-in factory options", () => {
     ).not.toThrow();
     expect(() =>
       cloudflare("cf", { purpose: "Ops", auth: { type: "oauth" }, callAdmission: { rules: [{ maxConcurrency: 2 }] } }),
+    ).not.toThrow();
+    expect(() =>
+      notion("wiki", {
+        purpose: "Docs",
+        auth: { type: "token" },
+        callAdmission: { rules: [{ budget: { kind: "rolling-window", maxCalls: 600, windowMs: 60_000 } }] },
+      }),
     ).not.toThrow();
     expect(() =>
       operatorUi({
