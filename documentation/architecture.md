@@ -274,6 +274,28 @@ rule refuses would charge a call that never reached the provider, the exact
 accounting error a budget exists to prevent. Both layers are pinned by
 `test/request-admission.test.ts` and `test/call-admission.test.ts`.
 
+An admitted tool call can charge sequential auxiliary downstream requests with the internal
+`chargeConnectorCall(ctx)` hook in `src/call-admission-context.ts`. Invocation
+binds the context to its existing permit; the hook returns a Promise over an
+internal Effect program. The charge uses the enclosing call's partition
+and concurrency slot, so a connector with `maxConcurrency: 1` can perform a
+lookup without queuing behind itself. Exhaustion returns the same
+`CallAdmissionError` and retry delay as ordinary call admission, before the
+auxiliary request is sent. Charges against a configured policy also refuse
+after cancellation, permit release, or controller shutdown. The hook adds no
+public connector option or context member. Contexts outside registry invocation
+have no bound permit, so the hook does nothing there. Providers await the hook
+before sending and propagate its refusal; it does not acquire concurrency for
+parallel auxiliary requests.
+
+Cloudflare's REST connector charges each uncached zone-ownership lookup used
+to enforce an account pin, in addition to the enclosing tool-call attempt.
+Explicitly pinned zones and cached ownership need no extra request or charge.
+Its limits of three ownership lookups per call and 60 per five minutes per
+connector remain: they bound pin checks separately from the connector's larger
+shared call budget. The Cloudflare provider tests cover these checks through
+registry invocation as well as the existing pin refusals.
+
 ### Production Worker disconnects
 
 The original production probe for [#573](https://github.com/zackbart/connecta/issues/573)

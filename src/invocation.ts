@@ -4,6 +4,7 @@ import { writeRefusal } from "./tool-safety.js";
 import { Cause, Effect, Exit, type Scope } from "effect";
 import { type ActivityCallSource, type ActivityRequestContext, type AgentFriction } from "./activity.js";
 import { isCallAdmissionError, type CallAdmissionPermit } from "./call-admission.js";
+import { attachCallAdmission } from "./call-admission-context.js";
 import { CatalogService, type ResolvedCatalogTool } from "./catalog-service.js";
 import {
   boundedEchoText,
@@ -694,13 +695,14 @@ export class InvocationService {
 
           if (callSignal?.aborted) return yield* Effect.fail(callSignal.reason);
           attempts = 1;
-          const call = async () => {
+          const call = async (permit: CallAdmissionPermit) => {
             const connectorContext = this.registry.contextFor(
               target.connector.id,
               this.catalog.baseUrl,
               this.catalog.requestScope,
               defined({ signal: callSignal, timeoutMs: context.timeoutMs, defer: this.catalog.defer }),
             );
+            attachCallAdmission(connectorContext, permit);
             trackCredentialReads(connectorContext);
             sentSecrets.include(sentSecretsFor(connectorContext));
             dispatchContext = connectorContext;
@@ -756,7 +758,7 @@ export class InvocationService {
             Effect.scoped(
               Effect.gen({ self: this }, function* () {
                 stage = "admission";
-                yield* timed(
+                const permit = yield* timed(
                   (elapsed) => {
                     admissionMs += elapsed;
                   },
@@ -768,7 +770,7 @@ export class InvocationService {
                     connectorMs += elapsed;
                   },
                   Effect.tryPromise({
-                    try: () => Promise.resolve(call()),
+                    try: () => Promise.resolve(call(permit)),
                     catch: (error) => error,
                   }),
                 );

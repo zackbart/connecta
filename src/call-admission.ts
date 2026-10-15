@@ -1,6 +1,6 @@
 import { Deferred, Duration, Effect } from "effect";
 import { ConnectorCallError } from "./errors.js";
-import { provideCallAdmissionProgram, startCallAdmission } from "./runtime/call-admission.js";
+import { provideCallAdmissionProgram, provideCallBudgetCharge, startCallAdmission } from "./runtime/call-admission.js";
 import { fromSignal, runEdge } from "./runtime/run.js";
 import type { ConnectorCallAdmissionInput, ConnectorCallAdmissionPolicy, ConnectorCallAdmissionRule } from "./types.js";
 
@@ -270,7 +270,7 @@ export class ConnectorCallAdmissionController {
       this.queueWaitMaxMs = Math.max(this.queueWaitMaxMs, waitMs);
     }
     let released = false;
-    return {
+    const permit: CallAdmissionPermit = {
       waitMs,
       release: () => {
         if (released) return;
@@ -279,6 +279,31 @@ export class ConnectorCallAdmissionController {
         this.pump(state);
       },
     };
+    provideCallBudgetCharge(permit, (chargedAt, signal) => {
+      if (this.closed || released) {
+        return Effect.fail(
+          new CallAdmissionError(
+            "closed",
+            "unavailable",
+            `Connector "${this.connectorId}" call admission ${this.closed ? "is closed" : "permit is released"}.`,
+          ),
+        );
+      }
+      if (signal?.aborted) {
+        this.cancelledTotal++;
+        return Effect.fail(this.cancelled(signal));
+      }
+      this.pruneBudget(state, chargedAt);
+      const retryAfterMs = this.budgetRetryAfterMs(state, chargedAt);
+      if (retryAfterMs !== undefined) {
+        this.rateLimitedTotal++;
+        return Effect.fail(this.budgetLimited(retryAfterMs));
+      }
+      if (this.budget) state.admittedAt.push(chargedAt);
+      this.admittedTotal++;
+      return Effect.void;
+    });
+    return permit;
   }
 
   private pump(state: PartitionState): void {

@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CallAdmissionError, ConnectorCallAdmissionController } from "../src/call-admission.js";
 import { mapSettledWithConcurrency } from "../src/concurrency.js";
 import { closeConnectorScope } from "../src/connector-scope.js";
-import { acquireCallScoped, admitCall } from "../src/runtime/call-admission.js";
+import { acquireCallScoped, admitCall, chargeCallBudget } from "../src/runtime/call-admission.js";
 import { closeScopeOnExit } from "../src/runtime/connector-scope.js";
 import { microtaskScheduler, runEdge } from "../src/runtime/run.js";
 import type { Connector, ConnectorContext } from "../src/types.js";
@@ -134,6 +134,82 @@ describe("acquireCallScoped", () => {
     expect(admission.snapshot().active).toBe(0);
     expect(admission.isIdle()).toBe(true);
     await Effect.runPromise(Scope.close(scope, Exit.void));
+  });
+});
+
+describe("internal call budget charges", () => {
+  it("INV-4: charges the original partition without another permit or partition callback", async () => {
+    const args = { project: "a" };
+    const partitionKey = vi.fn(({ args }: { args: unknown }) => (args as { project: string }).project);
+    const admission = new ConnectorCallAdmissionController("budgeted", {
+      rules: [
+        {
+          maxConcurrency: 1,
+          maxQueueSize: 0,
+          budget: { kind: "rolling-window", maxCalls: 2, windowMs: 60_000 },
+          partitionKey,
+        },
+      ],
+    });
+    const permit = await admission.acquire({ toolName: "read", args });
+    args.project = "b";
+    await runEdge(chargeCallBudget(permit));
+    expect(partitionKey).toHaveBeenCalledTimes(1);
+    expect(admission.snapshot()).toMatchObject({ active: 1, queued: 0, totals: { admitted: 2 } });
+    await expect(runEdge(chargeCallBudget(permit))).rejects.toMatchObject({ admissionKind: "budget" });
+    permit.release();
+    await expect(admission.acquire({ toolName: "read", args: { project: "a" } })).rejects.toMatchObject({
+      admissionKind: "budget",
+    });
+    (await admission.acquire({ toolName: "read", args })).release();
+  });
+
+  it("uses the fiber's Clock for each lazy charge and keeps its exact budget reset", async () => {
+    const at = { ms: 50_000 };
+    const clock = await pinnedClock(at);
+    const admission = new ConnectorCallAdmissionController("budgeted", {
+      rules: [{ budget: { kind: "rolling-window", maxCalls: 2, windowMs: 1_000 } }],
+    });
+    const permit = await runEdge(admitCall(admission, input).pipe(Effect.provideService(Clock.Clock, clock)));
+    const charge = chargeCallBudget(permit).pipe(Effect.provideService(Clock.Clock, clock));
+    expect(admission.snapshot().totals.admitted).toBe(1);
+    at.ms = 50_250;
+    await runEdge(charge);
+    await expect(runEdge(charge)).rejects.toMatchObject({ retryAfterMs: 750 });
+    at.ms = 51_000;
+    await runEdge(charge);
+    await expect(runEdge(charge)).rejects.toMatchObject({ retryAfterMs: 250 });
+    permit.release();
+  });
+
+  it("INV-7: refuses charges after release, scope closure, or controller shutdown", async () => {
+    for (const end of ["release", "scope", "shutdown"] as const) {
+      const admission = limited();
+      const scope = Scope.makeUnsafe();
+      const permit = await runEdge(acquireCallScoped(admission, input).pipe(Scope.provide(scope)));
+      if (end === "release") permit.release();
+      if (end === "scope") await runEdge(Scope.close(scope, Exit.void));
+      if (end === "shutdown") admission.close();
+      await expect(runEdge(chargeCallBudget(permit))).rejects.toMatchObject({ admissionKind: "closed" });
+      expect(admission.snapshot().totals.admitted).toBe(1);
+      await runEdge(Scope.close(scope, Exit.void));
+      expect(admission.snapshot().active).toBe(0);
+    }
+  });
+
+  it("INV-7: refuses a cancelled internal request without charging the budget", async () => {
+    const admission = new ConnectorCallAdmissionController("budgeted", {
+      rules: [{ budget: { kind: "rolling-window", maxCalls: 2, windowMs: 60_000 } }],
+    });
+    const permit = await admission.acquire(input);
+    const controller = new AbortController();
+    controller.abort(new Error("caller left"));
+    await expect(runEdge(chargeCallBudget(permit, controller.signal))).rejects.toMatchObject({
+      admissionKind: "cancelled",
+    });
+    await runEdge(chargeCallBudget(permit));
+    expect(admission.snapshot()).toMatchObject({ active: 1, totals: { admitted: 2, cancelled: 1 } });
+    permit.release();
   });
 });
 

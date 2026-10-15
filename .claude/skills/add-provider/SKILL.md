@@ -82,6 +82,13 @@ a reason), and an idempotency header. Optional hooks: `path` (default ids),
 reviewed `headers` allowlist, `textBodies`, and `OperationIndex` `slashParams`
 for keys that carry `/`.
 
+Before sending a sequential auxiliary request inside an admitted tool call,
+await `chargeConnectorCall(ctx)` from `src/call-admission-context.ts` and
+propagate its refusal. It charges the enclosing call's admission partition
+and rolling budget while retaining its concurrency slot. It is internal to
+maintained providers and does nothing for contexts outside registry invocation.
+Keep any narrower provider limits on auxiliary requests.
+
 The REST connector reads `openapi.generated.ts`. Pin the vendor's document in
 `openapi.source.json` (`url`, `revision`, `digest`, optional `latest` and
 generation `options`), run `npm run providers:spec -- --provider <name>
