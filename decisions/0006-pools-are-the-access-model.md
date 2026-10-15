@@ -156,7 +156,8 @@ interface OperatorMemberConnector {
 
 type OperatorMemberManage =
   | { kind: "none" }
-  | { kind: "oauth"; actions: Array<"connect" | "restart" | "disconnect"> } // /ui/oauth/<id>
+  // connect: POST /ui/oauth/<id>?mode=continue; restart: POST ?mode=restart; disconnect: DELETE
+  | { kind: "oauth"; actions: Array<"connect" | "restart" | "disconnect"> }
   | {
       kind: "credential"; // /ui/credentials/<id>, the member's own partition
       label: string;
