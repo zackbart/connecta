@@ -796,6 +796,67 @@ describe("operator recovery bounds and snapshot ordering", () => {
     expect(configMock).not.toHaveBeenCalled();
   });
 
+  it.each([401, 403, 503])(
+    "INV-4 INV-10: preserves passive retry deadlines across Access %s refusals",
+    async (status) => {
+      const { store, fetchMock, windowListeners } = await loadStore(
+        { id: "unused", getToken: async () => "unused" },
+        { kind: "cloudflare-access" },
+      );
+      const visibilityListeners = new Map<string, () => void>();
+      vi.stubGlobal("document", {
+        visibilityState: "visible",
+        addEventListener: (name: string, listener: () => void) => visibilityListeners.set(name, listener),
+      });
+      vi.useFakeTimers();
+      vi.setSystemTime(100_000);
+      const attempts: number[] = [];
+      fetchMock.mockImplementation(async () => {
+        attempts.push(Date.now() - 100_000);
+        return Response.json({ problem: "identity_unavailable" }, { status });
+      });
+      await store.boot();
+      const focus = () => {
+        windowListeners.get("focus")?.();
+        visibilityListeners.get("visibilitychange")?.();
+      };
+      // The reviewer's ten returns, each just past the focus debounce.
+      for (let i = 0; i < 10; i++) {
+        focus();
+        await vi.advanceTimersByTimeAsync(160);
+      }
+      expect(attempts).toEqual([0]);
+      await vi.advanceTimersByTimeAsync(400);
+      expect(attempts).toEqual([0, 2000]);
+      focus();
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(attempts).toEqual([0, 2000]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(attempts).toEqual([0, 2000, 4000]);
+      await vi.advanceTimersByTimeAsync(12_000);
+      expect(attempts).toEqual([0, 2000, 4000, 8000, 16_000]);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(attempts).toHaveLength(5);
+      focus();
+      await vi.advanceTimersByTimeAsync(160);
+      expect(attempts).toHaveLength(6);
+      for (let i = 0; i < 40; i++) {
+        focus();
+        await vi.advanceTimersByTimeAsync(160);
+      }
+      expect(attempts).toHaveLength(6);
+      expect(store.getState().session).toBe("gated");
+      expect(store.getState().data).toBeNull();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(attempts).toHaveLength(6);
+      // Only an explicit, debounced retry resets the exhausted budget.
+      await Promise.all([store.retryLoad(), store.retryLoad(), store.retryLoad()]);
+      expect(attempts).toHaveLength(7);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(attempts).toHaveLength(8);
+    },
+  );
+
   it("INV-4: bounds gated Access retries and resumes admission checks on focus", async () => {
     const { store, fetchMock, windowListeners } = await loadStore(
       { id: "unused", getToken: async () => "unused" },

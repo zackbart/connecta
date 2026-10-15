@@ -14,6 +14,7 @@ let connected = false;
 let failIdentityPath: string | undefined;
 let omitShellContext = false;
 let rejectIdentity = false;
+let persistIdentityFailure = false;
 let reads: string[] = [];
 let failMetadata = false;
 let oauthFailed = false;
@@ -22,7 +23,7 @@ test.beforeAll(async () => {
   server = createServer(async (incoming, outgoing) => {
     const url = new URL(incoming.url ?? "/", origin);
     reads.push(url.pathname);
-    const fail = failIdentityPath === url.pathname;
+    const fail = failIdentityPath === url.pathname || (persistIdentityFailure && url.pathname === "/ui/data");
     if (fail) failIdentityPath = undefined;
     const omit = omitShellContext && url.pathname === "/connectors/oauth";
     if (omit) omitShellContext = false;
@@ -60,6 +61,7 @@ test.beforeEach(async () => {
   reads = [];
   failMetadata = false;
   rejectIdentity = false;
+  persistIdentityFailure = false;
   oauthFailed = false;
   const storage = memoryStorage();
   const key = Buffer.alloc(32, 7).toString("base64");
@@ -118,6 +120,46 @@ test("INV-4: retries a transient Access failure on /ui/data without reload", asy
   await expect(page.locator("#connectorView .conn-head")).toContainText("Authorization needed");
   expect(reads.filter((p) => p === "/ui/data").length).toBeGreaterThan(1);
   await expect(page.locator("#gate")).toHaveCount(0);
+});
+
+test("INV-4 INV-10: bounds repeated focus and visibility returns during Access refusals", async ({ page }) => {
+  persistIdentityFailure = true;
+  const start = new Date("2026-01-01T00:00:00Z");
+  await page.clock.install({ time: start });
+  await page.clock.pauseAt(start);
+  await open(page);
+  await expect(page.locator("#gate")).toBeVisible();
+  await page.waitForLoadState("networkidle");
+  const documentCount = reads.filter((path) => path === "/connectors/oauth").length;
+  for (let i = 0; i < 10; i++) {
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event("blur"));
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await page.clock.runFor(160);
+    await page.waitForLoadState("networkidle");
+  }
+  expect(reads.filter((path) => path === "/ui/data")).toHaveLength(1);
+  for (const delay of [400, 2000, 4000, 8000]) {
+    const response = page.waitForResponse((res) => res.url().endsWith("/ui/data"));
+    await page.clock.runFor(delay);
+    expect((await response).status()).toBe(503);
+    await page.waitForLoadState("networkidle");
+  }
+  expect(reads.filter((path) => path === "/ui/data")).toHaveLength(5);
+  await page.clock.runFor(60_000);
+  await page.waitForLoadState("networkidle");
+  expect(reads.filter((path) => path === "/ui/data")).toHaveLength(5);
+  await expect(page.locator("#gate")).toBeVisible();
+  persistIdentityFailure = false;
+  const recovered = page.waitForResponse((res) => res.url().endsWith("/ui/data"));
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.clock.runFor(160);
+  expect((await recovered).status()).toBe(200);
+  await expect(page.getByRole("button", { name: "Connect CRM", exact: true })).toBeVisible();
+  expect(reads.filter((path) => path === "/connectors/oauth")).toHaveLength(documentCount);
+  expect(reads.filter((path) => path.startsWith("/ui/oauth/"))).toHaveLength(0);
 });
 
 test("INV-4: retries a config refusal without reload", async ({ page }) => {
