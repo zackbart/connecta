@@ -60,7 +60,7 @@ describe.each(factories)("$name admission options", ({ create }) => {
 it("INV-11: registers a custom policy and leaves only omitted or undefined policies unadmitted", () => {
   const registry = makeRegistry([
     { ...calcConnector, id: "omitted" },
-    { ...calcConnector, id: "undefined", callAdmission: undefined },
+    { ...calcConnector, id: "undefined", callAdmission: undefined } as unknown as Connector,
     { ...calcConnector, id: "limited", callAdmission: valid },
   ]);
   expect(Object.keys(registry.callAdmissionSnapshot())).toEqual(["limited"]);
