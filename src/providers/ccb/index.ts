@@ -2061,7 +2061,7 @@ function ccbConnector(id: string, options: CcbOptions): Connector {
       summary: `${environment === "sandbox" ? "Sandbox" : "Production"} CCB, ${mode === "identity" ? "per person" : "church-wide"}: id resolution, sensitive data, paging, rate limits, hatches.`,
       required: true,
     },
-    callAdmission: options.callAdmission ?? CCB_ADMISSION,
+    callAdmission: options.callAdmission === undefined ? CCB_ADMISSION : options.callAdmission,
     ...(options.maxResultBytes !== undefined ? { maxResultBytes: options.maxResultBytes } : {}),
     tools: tools(ccbTransport(endpoints.apiOrigin), defaultPerPage, writable),
   });

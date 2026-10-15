@@ -1813,7 +1813,7 @@ function overflowConnector(id: string, options: OverflowOptions): Connector {
         };
       }
     },
-    callAdmission: options.callAdmission ?? OVERFLOW_ADMISSION,
+    callAdmission: options.callAdmission === undefined ? OVERFLOW_ADMISSION : options.callAdmission,
     usageGuide: {
       content: usageGuide(purpose, environment, options.instructions),
       summary: `Overflow ${label}: money units per field, final statuses, deposits, donor-PII care, and writes via mutate.`,
