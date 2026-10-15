@@ -49,7 +49,7 @@ describe("connector call admission controller", () => {
     for (const maxConcurrency of [undefined, 3]) {
       expect(
         () => new ConnectorCallAdmissionController("limited", policy({ maxConcurrency, budget } as never)),
-      ).toThrow(/callAdmission budget/);
+      ).toThrow(/callAdmission.*budget/);
     }
   });
 

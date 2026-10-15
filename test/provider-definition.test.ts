@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { describe, expect, it, vi } from "vitest";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
+import { CALL_ADMISSION } from "../src/provider.js";
 import {
   defineProvider,
   PROVIDER_COMMON,
@@ -37,6 +38,22 @@ function stub(id: string, extra: Partial<Connector> = {}): Connector {
 }
 
 const createStub = () => vi.fn((id: string, _options: object, _provider: ProviderContext) => stub(id));
+
+describe("shared call admission schema", () => {
+  it.each([false, null, 0, ""])("INV-11: rejects the nested budget %j when parsing a policy", (budget) => {
+    expect(() => CALL_ADMISSION.parse({ rules: [{ budget }] }, "callAdmission")).toThrow(
+      "callAdmission.rules[0].budget must be an object.",
+    );
+  });
+
+  it("preserves valid budgets and leaves omitted budgets absent", () => {
+    const policy = { rules: [{ budget: { kind: "rolling-window", maxCalls: 180, windowMs: 60_000 } }] };
+    expect(CALL_ADMISSION.parse(policy, "callAdmission")).toEqual(policy);
+    expect(CALL_ADMISSION.parse({ rules: [{ maxConcurrency: 3 }] }, "callAdmission")).toEqual({
+      rules: [{ maxConcurrency: 3 }],
+    });
+  });
+});
 
 function sample(create = createStub()) {
   return {

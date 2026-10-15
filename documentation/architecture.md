@@ -273,6 +273,10 @@ cannot be faked as sequential leases: consuming a rolling token before a later
 rule refuses would charge a call that never reached the provider, the exact
 accounting error a budget exists to prevent. Both layers are pinned by
 `test/request-admission.test.ts` and `test/call-admission.test.ts`.
+Every defined budget must be an object with `kind: "rolling-window"` and positive
+whole `maxCalls` and `windowMs` values. Malformed budgets, including `false`,
+`null`, `0`, and `""`, throw during construction, even when the rule also sets
+`maxConcurrency`.
 
 An admitted tool call can charge sequential auxiliary downstream requests with the internal
 `chargeConnectorCall(ctx)` hook in `src/call-admission-context.ts`. Invocation

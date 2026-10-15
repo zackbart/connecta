@@ -2,7 +2,7 @@ import { skill } from "./skill.generated.js";
 import { apiConnector } from "../../connectors/api-connector.js";
 import { reviewedCatalog } from "../../catalog-drift.js";
 import type { Connector, ToolClassification, ConnectorCallAdmissionPolicy } from "../../types.js";
-import { keys, object, optionsOf, variants } from "../../config-schema.js";
+import { keys, optionsOf, variants } from "../../config-schema.js";
 import { CALL_ADMISSION, defineProvider, type ProviderContext } from "../../provider.js";
 import { byAuth, hostedOAuth } from "../_shared/rest/dispatch.js";
 import { MAX_PAGE_SIZE, notionRest } from "./rest.js";
@@ -415,8 +415,6 @@ function notionToken(id: string, options: Readonly<NotionTokenOptions>, provider
   });
 }
 
-const createNotion = byAuth<NotionOptions>({ oauth: notionOAuth, token: notionToken });
-
 /**
  * A maintained Notion connection. `auth` selects the implementation: OAuth
  * reaches Notion's hosted MCP server as the authorizing user; an integration
@@ -436,15 +434,7 @@ export const notion = defineProvider<NotionOptions>({
   skill,
   options: NOTION_OPTIONS,
   classify: NOTION_MCP_CLASSIFICATION,
-  create(id, options, provider) {
-    // The option walk checks nested keys, but leaves primitive values to the
-    // factory. Use the shared policy schema's parser before either auth path
-    // can drop a malformed value or replace it with the default.
-    if (options.callAdmission !== undefined) {
-      object(CALL_ADMISSION.shape).parse(options.callAdmission, `notion(${JSON.stringify(id)}).callAdmission`);
-    }
-    return createNotion(id, options, provider);
-  },
+  create: byAuth<NotionOptions>({ oauth: notionOAuth, token: notionToken }),
 });
 
 /** @deprecated Read `notion.definition.classify` instead. Kept for existing imports. */
