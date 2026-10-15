@@ -11,6 +11,11 @@ The #707 item 8 decisions select Clerk or Cloudflare Access for people and
 stored `cta_` tokens for machines. This record supersedes only the provisional
 Worker Access row in 0001. Worker Access is supported within this boundary.
 
+[0006](./0006-pools-are-the-access-model.md) supersedes this record's machine
+rules: Access service credentials plus `cta_` behind Access, and human-bound
+`cta_` tokens. Agents now use `cta_` alone on `/agent/<pool>`. The human
+verification decisions below stand.
+
 ## Decision
 
 Access remains Workers-only. Trust the direct invocation's `ctx.access` and
