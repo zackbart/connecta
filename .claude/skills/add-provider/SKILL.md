@@ -134,11 +134,17 @@ vendors"). The steps:
 3. Review free-text response fields for embedded vendor-minted signed URLs
    against the pinned spec. Record `none found`, `reviewed paths`, or `global`
    in `value-safety.ts`, naming the reviewed fields and any missing evidence.
-   Prefer `embeddedUrls: "global"` for arbitrary logs or nested text, and use
-   `withholdEmbeddedUrlsIn` before error mapping, including named transports.
-   Credential-named query parameters must be withheld in embedded URLs while
-   ordinary links retain their bytes. A vendor-specific `FileHosts` policy
-   needs reviewed domains/buckets; do not infer one from the vendor's name.
+   Use `embeddedUrls` with reviewed operation/resource paths for generic
+   credential-named URL parameters in diagnostics, and global signing-name
+   defense. Preserve ordinary code/key/token URLs in customer/operator data,
+   including whole URL strings. Use `withholdEmbeddedUrlsIn` before mapping
+   vendor errors and cover named transports before projection/truncation.
+   Enforce `refuseWithheldLinks` on every write path and
+   `refuseWithheldUpload` on decoded upload bytes/multipart parts, before any
+   dispatch. Do not allow agents to store withheld destinations. Record exact
+   reviewed paths and evidence, false positives and binary/base64 exclusions.
+   A `FileHosts` policy needs reviewed domains/buckets; do not infer one from
+   the vendor's name. Keep Notion's stricter host and proxy contracts.
 4. Build the engine with `valueSafety(TABLE, () => index)`, pass it as the
    vendor's `valueSafety`, and use `withholdsErrors(call.op)` in the failure
    mapper to replace the vendor's text with codes and status. Named tools

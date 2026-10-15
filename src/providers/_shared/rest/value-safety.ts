@@ -31,10 +31,9 @@
 // Residual risk, as with Infisical: a secret a person typed into a free-text
 // name, description, log line, or identifier is out of scope.
 //
-// The rules here are the union of the two that preceded them (Cloudflare's
-// and Vercel's): every detection either made still redacts. Exemptions are
-// never shared: each vendor states its own in its table (`keep`, `urls`,
-// `fields`, `scopeMaps`, `envBodies`).
+// The key-name rules combine Cloudflare's and Vercel's former engines.
+// URL policy and exemptions are reviewed per vendor in its table (`keep`,
+// `fields`, `scopeMaps`, `envBodies`, `embeddedUrls`).
 import { ConnectorCallError } from "../../../errors.js";
 import type { JsonSchema } from "../../../types.js";
 import type { Operation, OperationIndex } from "./operation-index.js";
@@ -776,19 +775,28 @@ export function withholdSignedLinks(text: string, hosts: FileHosts): string {
 
 /** A credential-named parameter in a URL, rather than an assignment in prose. */
 function credentialQuery(text: string): boolean {
-  const decoded = decodeLinkText(text);
+  let decoded = decodeLinkText(text, false);
+  // Decode the destination's enclosing percent layers only until its own
+  // opener is visible. Encoded &/# inside a proxy parameter remain data,
+  // rather than becoming parameters or a fragment of the outer URL.
+  for (let round = 0; round < 4 && decoded[0] !== "?" && decoded[0] !== "#"; round++) {
+    const next = decoded.replace(/%([0-9a-f]{2})/gi, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
+    if (next === decoded) break;
+    decoded = next;
+  }
   const fragment = decoded.indexOf("#");
-  if (fragment >= 0 && /token|secret|key|code|auth/i.test(decoded.slice(fragment + 1))) return true;
-  const params = /[?&]([^?&#=]*)=/g;
-  for (let match = params.exec(decoded); match; match = params.exec(decoded)) {
-    const name = match[1]!;
+  if (fragment >= 0 && /token|secret|key|code|auth/i.test(decodeLinkText(decoded.slice(fragment + 1)))) return true;
+  const query = fragment < 0 ? decoded : decoded.slice(0, fragment);
+  for (let at = query[0] === "?" ? 1 : 0; at < query.length;) {
+    const next = query.indexOf("&", at);
+    const end = next < 0 ? query.length : next;
+    const pair = decodeLinkText(query.slice(at, end));
+    const equals = pair.indexOf("=");
+    at = end + 1;
+    if (equals < 0) continue;
+    const name = pair.slice(0, equals);
     if (!URL_PARAM_CONTAINS.test(name) && !URL_PARAM_SUFFIX.test(normalizedName(name))) continue;
-    const start = match.index + match[0].length;
-    let end = start;
-    while (end < decoded.length && decoded[end] !== "&" && decoded[end] !== "#") end++;
-    // The whole-URL pass already sanitizes individual parameters. Preserve
-    // that output, but never trust a placeholder followed by more bytes.
-    if (decoded.slice(start, end) !== REDACTED) return true;
+    if (pair.slice(equals + 1) !== REDACTED) return true;
   }
   return false;
 }
@@ -801,7 +809,12 @@ function withholdLinkQueries(text: string, hosts?: FileHosts): string {
     if (cut < 0) continue;
     if (!hosts && !credentialQuery(text.slice(cut, end))) continue;
     let keep = end;
-    while (keep > cut + 1 && TRAILING.test(text[keep - 1]!)) keep--;
+    while (keep > cut + 1 && TRAILING.test(text[keep - 1]!)) {
+      // A signing pass may already have replaced the final parameter. Its
+      // closing bracket belongs to the value, not the surrounding Markdown.
+      if (text.endsWith(REDACTED, keep)) break;
+      keep--;
+    }
     // A query with nothing in it.
     if (keep <= cut + 1) continue;
     out += `${text.slice(copied, cut)}${open}${REDACTED}`;
@@ -829,7 +842,7 @@ function withholdSigningParams(anchored: string): string {
 }
 
 /**
- * Global REST text policy: only credential-bearing URL queries/fragments
+ * Reviewed REST text policy: only credential-bearing URL queries/fragments
  * change. Ordinary links, including external proxies, retain their bytes.
  * Literal AWS/Google signing names are withheld anywhere, as in #818.
  */
@@ -842,7 +855,7 @@ export function withholdSignedLinksIn(value: unknown, hosts: FileHosts, depth = 
   return mapStrings(value, (text) => withholdSignedLinks(text, hosts), depth);
 }
 
-/** Apply the global embedded URL policy before a vendor maps an error body. */
+/** Apply the reviewed text policy to a selected value or vendor error body. */
 export function withholdEmbeddedUrlsIn(value: unknown): unknown {
   return mapStrings(value, withholdEmbeddedUrls, 0);
 }
@@ -875,10 +888,10 @@ function mapStrings(value: unknown, cleanText: (text: string) => string, depth: 
  * would, through up to four layers of escaping (`%255B`, `&amp;#91;`). Each
  * round is one linear pass.
  */
-function decodeLinkText(text: string): string {
+function decodeLinkText(text: string, percent = true): string {
   for (let round = 0; round < 4; round++) {
     const next = text.replace(ESCAPES, (token, ...groups: Array<string | undefined>) =>
-      token === "\\" ? "" : (unescaped(groups.slice(0, 6)) ?? token),
+      !percent && groups[0] !== undefined ? token : token === "\\" ? "" : (unescaped(groups.slice(0, 6)) ?? token),
     );
     if (next === text) break;
     text = next;
@@ -887,13 +900,14 @@ function decodeLinkText(text: string): string {
 }
 
 /**
- * Whether a request value carries a link at one of `hosts` whose query or
+ * Whether a request value carries a link whose query or
  * fragment holds the exact `[redacted]` placeholder, plain or encoded: a
  * withheld read copied into a write, which would store the placeholder.
  * Only the link's own destination is read: a Markdown link ends at its
  * closing `)`, so `[f](…?a=1)[redacted]` is ordinary text after it.
  * The word alone (`unredacted`) or the placeholder away from a file link is
- * a person's text.
+ * a person's text. When `hosts` is supplied, require its actual authority
+ * to match that policy, preserving Notion's external-proxy boundary.
  */
 export function carriesWithheldLink(value: unknown, hosts?: FileHosts, depth = 0): boolean {
   if (typeof value === "string") {
@@ -1193,7 +1207,7 @@ function heuristic(value: unknown, exempt: Exemptions): unknown {
       // Reviewed vendors already scanned signing names and selected text;
       // generic names in customer data must retain their original bytes.
       if (!exempt.reviewedUrls) return URL_SHAPE.test(current) ? sanitizeUrl(current) : current;
-      const whole = URL_SHAPE.test(current) && !/[\s<>"'`\\]|&(?:#|[a-z]+;)|[()[\]]/i.test(current);
+      const whole = URL_SHAPE.test(current) && !/[\s<>"'`\\]|&(?:#|[a-z]+;)|\]\(/i.test(current);
       return whole ? sanitizeUrl(current, false) : current;
     }
     if (Array.isArray(current)) return current.map((item) => walk(item, trail, parent, depth + 1));

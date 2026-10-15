@@ -768,7 +768,7 @@ describe("vercel() over an access token", () => {
         })
       ).data,
     ).toEqual({ id: "wh_3", url: "https://hooks.slack.com/[redacted]", secret: REDACTED });
-    // Elsewhere the heuristic strips userinfo and credential query parameters and keeps the rest.
+    // Outside reviewed diagnostics, strip userinfo but preserve generic application parameters.
     respond = () =>
       Response.json({
         deployments: [{ uid: "dpl_1", inspectorUrl: "https://alice:basic-secret@vercel.com/x?token=t1&env=prod" }],
@@ -777,9 +777,10 @@ describe("vercel() over an access token", () => {
     const page = await call(connector, "vercel_api_read", { path: "/v7/deployments" });
     const inspector = new URL(page.data.deployments[0].inspectorUrl);
     expect(inspector.searchParams.get("env")).toBe("prod");
-    expect(page.data.deployments[0].inspectorUrl).not.toMatch(/basic-secret|t1|alice/);
+    expect(page.data.deployments[0].inspectorUrl).not.toMatch(/basic-secret|alice/);
+    expect(inspector.searchParams.get("token")).toBe("t1");
     expect(page.page).toEqual({ hasMore: true });
-    expect(JSON.stringify(page)).not.toContain("cursor-secret");
+    expect(page.data.pagination.next).toBe("https://api.vercel.com/page?token=cursor-secret");
   });
 
   it("INV-3: refuses a project transfer request, whose code lets another team claim the project", async () => {

@@ -6,6 +6,8 @@ import { OperationIndex, type OpenApiData } from "../src/providers/_shared/rest/
 import {
   REDACTED,
   carriesWithheldLink,
+  refuseWithheldLinks,
+  refuseWithheldUpload,
   withholdEmbeddedUrls,
   withholdEmbeddedUrlsIn,
   withholdSignedLinks,
@@ -730,6 +732,122 @@ describe("global embedded REST URL policy (#812)", () => {
   ])("INV-5: scans %s with bounded linear passes", (_, input) => {
     const started = performance.now();
     expect(withholdEmbeddedUrls(input)).not.toContain("PRIVATE");
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+});
+
+describe("reviewed text policy and global admission (#846)", () => {
+  it("INV-5: still strips userinfo from whole IPv6 URLs while preserving generic query data", () => {
+    const safety = engine({ operations: {}, embeddedUrls: {} });
+    const result = safety.redact(
+      { description: "https://alice:PRIVATE@[::1]/a?code=welcome" },
+      "GET",
+      "/v1/things",
+    ) as any;
+    expect(result.description).not.toMatch(/alice|PRIVATE/);
+    expect(new URL(result.description).searchParams.get("code")).toBe("welcome");
+  });
+
+  it.each(["&#61;", "&#x3d;"])("INV-5: scans original entity equals before URL normalization: %s", (equals) => {
+    const safety = engine({ operations: {}, embeddedUrls: { operations: { "GET /v1/things": ["message"] } } });
+    const input = `https://public.example/a<br>https://files.example/a?token${equals}PRIVATE`;
+    const result = safety.redact({ message: input, description: input }, "GET", "/v1/things") as any;
+    expect(result.message).not.toContain("PRIVATE");
+    expect(result.description).toBe(input);
+    const signed = input.replace("token", "X-Amz-Signature");
+    expect(JSON.stringify(safety.redact({ description: signed }, "GET", "/v1/things"))).not.toContain("PRIVATE");
+  });
+
+  it.each([
+    "[file](/proxy/https://files.example/a?token=PRIVATE)",
+    "[file](/proxy/https://files.example/a%3Fkey%3DPRIVATE)",
+    "[file](/proxy/https://files.example/a#token=PRIVATE)",
+    "[a](/proxy/https://public.example/a?id=1)[b](/proxy/https://files.example/a?sig=PRIVATE)",
+  ])("INV-5: inspects a relative Markdown destination's own query: %s", (input) => {
+    expect(withholdEmbeddedUrls(input)).not.toContain("PRIVATE");
+    expect(withholdSignedLinks(input, { domains: ["files.example"], buckets: [] })).toBe(input);
+  });
+
+  it.each([
+    "[file](/proxy?url=https://files.example/a?token=ordinary&width=4)",
+    "[file](/proxy?url=https%3A%2F%2Ffiles.example%2Fa%3Ftoken%3Dordinary%26key%3Dpublic)",
+    "[file](/proxy?url=https%3A%2F%2Ffiles.example%2Fa%23token%3Dordinary)",
+    "[file](/proxy%3Furl%3Dhttps%253A%252F%252Ffiles.example%252Fa%253Ftoken%253Dordinary%2526key%253Dpublic)",
+  ])("INV-5: preserves nested ordinary proxy parameters without re-anchoring: %s", (input) => {
+    expect(withholdEmbeddedUrls(input)).toBe(input);
+  });
+
+  it("INV-5: replaces a credential query ending in an existing signing placeholder without duplicating syntax", () => {
+    expect(withholdEmbeddedUrls("[f](https://files.example/a?token=PRIVATE&X-Amz-Signature=[redacted])")).toBe(
+      "[f](https://files.example/a?[redacted])",
+    );
+  });
+
+  it("INV-5: protects resource diagnostics and partial event copies while preserving customer URLs", () => {
+    const safety = engine({
+      operations: {},
+      embeddedUrls: {
+        resources: { key: "object", partials: ["previous_attributes"], paths: { charge: ["failure_message"] } },
+      },
+    });
+    const input = "See https://public.example/a?code=welcome&key=public";
+    const result = safety.redact(
+      {
+        data: {
+          object: { object: "charge", failure_message: input, description: input },
+          previous_attributes: { failure_message: input, description: input },
+        },
+      },
+      "GET",
+      "/v1/things",
+    ) as any;
+    expect(result.data.object.failure_message).toContain("[redacted]");
+    expect(result.data.previous_attributes.failure_message).toContain("[redacted]");
+    expect(result.data.object.description).toBe(input);
+    expect(result.data.previous_attributes.description).toBe(input);
+    expect(safety.redact({ description: input.replace("See ", "") }, "GET", "/v1/things")).toEqual({
+      description: input.replace("See ", ""),
+    });
+  });
+
+  it("INV-5: removes a private suffix after an existing signing placeholder", () => {
+    expect(
+      withholdSignedLinks("https://files.example/a?X-Amz-Signature=[redacted]PRIVATE", { domains: [], buckets: [] }),
+    ).not.toContain("PRIVATE");
+  });
+
+  it.each([
+    "[file](/proxy/https://files.example/a?token=%255Bredacted%255D)",
+    "[a](https://public.example/a?width=1),![b](https://files.example/a#&#91;redacted&#93;)",
+    "[a](https://public.example/a?width=1);[b]( https://files.example/a%3F%5Bredacted%5D)",
+  ])("INV-5: shares exact-placeholder admission and actual adjacent destination boundaries: %s", (input) => {
+    expect(carriesWithheldLink(input)).toBe(true);
+    expect(() => refuseWithheldLinks(input, "Vendor")).toThrow("withheld");
+    expect(carriesWithheldLink("[file](https://files.example/a?width=1)[redacted]")).toBe(false);
+    expect(carriesWithheldLink("[redacted] outside https://files.example/a?code=unredacted")).toBe(false);
+  });
+
+  it("INV-5: refuses decoded binary and multipart file bytes before upload", async () => {
+    const text = "[file](/proxy/https://files.example/a%3F%5Bredacted%5D)";
+    const bytes = new Uint8Array(new TextEncoder().encode(text));
+    for (const body of [bytes, bytes.buffer, new Blob([text]), new URLSearchParams({ value: text })]) {
+      await expect(refuseWithheldUpload(body, "Vendor")).rejects.toMatchObject({ code: "invalid_args" });
+    }
+    const form = new FormData();
+    form.append("file", new Blob([text]), "index.js");
+    await expect(refuseWithheldUpload(form, "Vendor")).rejects.toMatchObject({ code: "invalid_args" });
+  });
+
+  it.each([
+    "[f](/proxy/https://files.example/a%3Ftoken%3DPRIVATE)".repeat(30_000),
+    "https://public.example/a<br>https://files.example/a?X-Amz-Signature&#61;PRIVATE ".repeat(25_000),
+    `see https://public.example/a?${"?&a&".repeat(400_000)}`,
+  ])("INV-5: scans large reviewed paths, global signing values and admission with bounded linear passes", (input) => {
+    const safety = engine({ operations: {}, embeddedUrls: { operations: { "GET /v1/things": ["message"] } } });
+    const started = performance.now();
+    const clean = safety.redact({ message: input }, "GET", "/v1/things") as any;
+    expect(clean.message).not.toContain("PRIVATE");
+    expect(carriesWithheldLink(clean)).toBe(input.includes("PRIVATE"));
     expect(performance.now() - started).toBeLessThan(2_000);
   });
 });

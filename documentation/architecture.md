@@ -861,28 +861,47 @@ every vendor ships one reviewed table through one mechanism
    labelled or typed secret records lose their value, environment containers
    lose their values, header, cookie, and query rules lose theirs, external
    destinations keep their origin, and every URL loses userinfo and
-   credential-named query parameters or fragments. Exemptions are never
-   shared; each vendor states its own. Whole URL strings keep the existing
-   per-parameter policy. Every REST vendor must also review the pinned spec's
-   free-text response fields for embedded vendor-minted links and record a
-   `none found`, `reviewed paths`, or `global` verdict in its value-safety
-   review. Stripe, Vercel, and Cloudflare opt into `embeddedUrls: "global"`:
-   the heuristic scans every remaining string, including logs, HTML, code,
-   arbitrary nested data and text starting with a URL. Before error mapping,
-   those vendors apply `withholdEmbeddedUrlsIn` too; named Vercel streams and
-   uploads use the same engine before projection or truncation. A URL with a
-   credential-named query parameter or credential-looking fragment loses its
-   whole query and fragment. The vocabulary matches the whole-URL rule, so
-   even an ordinary `code` or `key` parameter triggers withholding. This
-   deliberate false positive is limited to URL queries, not assignments in
-   prose. Ordinary user-authored links, look-alikes and external proxies
-   without credential parameters keep their bytes. Literal AWS/Google signing
-   names are withheld wherever they occur. Scans use bounded linear passes
-   over disjoint destinations; no repeated parsing of a growing text suffix.
-   Global scanning costs a pass over large bodies, but avoids omissions in
-   open-ended logs and objects. No host-wide policy is inferred from vendor
-   branding. The vendor tables record the schemas reviewed and any missing
-   source evidence, including Vercel's unavailable full pin.
+   credential-named query parameters or fragments under its URL policy.
+   Exemptions are never shared; each vendor states its own. Every REST vendor
+   reviews the pinned spec's free-text fields for embedded vendor-minted links
+   and records its verdict and source limitations beside its value-safety table.
+   Stripe, Vercel, and Cloudflare use **reviewed paths plus global signing
+   parameters**. Literal AWS SigV4/Google V4 `X-Amz-`/`X-Goog-` Signature,
+   Credential and Security-Token values are withheld across all decoded string
+   values. Generic credential names (`code`, `key`, `token`, `signature`, `sig`,
+   etc.) and credential-looking fragments apply only to reviewed diagnostic
+   paths and vendor error text. Matching destinations lose their entire query
+   and fragment. The tables list exact operations/resource paths with evidence:
+   Stripe charge failure/outcome messages, Vercel deployment failures and
+   build/runtime log text, Cloudflare Workers/Pages build logs and telemetry
+   message/error text. Vercel's unavailable full pin remains a review limitation.
+   Generic parameters in descriptions, metadata, nicknames, billing footers,
+   notes, DNS TXT, KV values and operator HTML retain their original bytes,
+   including whole URL strings. Ordinary code/key URLs can be false positives
+   in reviewed diagnostics. Existing structured-field/resource rules, reviewed
+   `url:` per-parameter rules, and payer-facing exceptions still apply.
+   Scans read the original escaped text before URL parsing or serialization;
+   adjacent HTML or Markdown is text even without whitespace. Relative Markdown
+   destinations are checked at their own query/fragment, without re-anchoring
+   a nested proxy URL. Ordinary proxy parameters retain their bytes.
+   Scans precede success/select/named projections and error mapping. Named
+   Vercel streams use the same paths before clamping. Binary responses encoded
+   as base64, including Cloudflare Worker JavaScript served as
+   `application/javascript`, are returned unchanged, without decoding/scanning.
+   Cloudflare omits an envelope cursor that URL sanitizing would change;
+   ordinary cursors retain their bytes. No vendor-wide host/bucket policy is
+   inferred. Each string is scanned with bounded linear passes over disjoint
+   destinations, including large inputs.
+   These three vendors enforce write admission with the shared
+   `carriesWithheldLink(value)` scanner and `refuseWithheldLinks`/
+   `refuseWithheldUpload` helpers. Every supported write transport (JSON,
+   form-encoded, raw/base64 bytes, multipart parts and named writes) refuses
+   with `invalid_args` and zero dispatch when a URL destination's own query
+   or fragment contains the exact `[redacted]` placeholder, plain or up to four
+   layers encoded. Upload admission reads decoded bytes and each multipart
+   string/blob. Withheld values must not be written back; obtain the original
+   link or omit the field. A placeholder outside a destination is ordinary
+   text. Notion keeps its stricter reviewed-host admission and proxy policy.
    Vendors whose responses embed the file links they mint can
    use `withholdSignedLinks(text, hosts)` or
    `withholdSignedLinksIn(value, hosts)` with a reviewed `FileHosts` policy

@@ -229,13 +229,13 @@ describe("stripe() over an API key", () => {
     const input = `${ordinary} Download [file](https://files.example/a?token=PRIVATE_TOKEN&X-Amz-Signature=PRIVATE_SIGNATURE)`;
     const expected = `${ordinary} Download [file](https://files.example/a?[redacted])`;
     const connector = stripe("billing", SANDBOX);
-    respond = () => Response.json({ object: "product", id: "prod_1", description: input });
+    respond = () => Response.json({ object: "charge", id: "ch_1", failure_message: input });
     const result = (await connector.callTool(
       "stripe_api_read",
-      { path: "/v1/products/prod_1", select: ["description"] },
+      { path: "/v1/charges/ch_1", select: ["failure_message"] },
       keyed(),
     )) as any;
-    expect(result.data).toEqual({ description: expected });
+    expect(result.data).toEqual({ failure_message: expected });
     respond = () => Response.json({ error: { type: "invalid_request_error", message: input } }, { status: 400 });
     const error = await refusal(connector.callTool("stripe_api_read", { path: "/v1/products/prod_1" }, keyed()));
     expect(error.message).toContain("Download");
