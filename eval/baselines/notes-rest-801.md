@@ -1,5 +1,102 @@
 # REST provider agent evals for #801
 
+## Review round 1 replacement baseline, 2026-10-15
+
+Fresh live scores are **GPT-6-Luna 6/10** and **Sonnet 5.5 6/10**. Each runner
+executed all ten tasks once against the corrected, frozen fixture. There are no
+runner errors, skips, unavailable grading checks, duplicate business writes or
+environment-value disclosures. These are task-acceptance scores; safe alternate
+workflows can miss a required replay or source-selection criterion.
+
+- Frozen source commit `aaadc969957f`, clean checkout and clean product source.
+  Measured `src/` tree `fb11c2c9acc5` includes the rebase onto current main.
+- Requested and served `gpt-6-luna`, Codex CLI 0.162.1; requested and served
+  `claude-sonnet-5-5`, Claude Code 2.1.301. Node v26.11.1, darwin-arm64,
+  package 0.32.0. Both batches began at 2026-10-15 21:40 UTC.
+- One repeat, concurrency one per runner, default effort, eight-minute trial
+  deadlines, signed-in CLI subscriptions, isolated fake-only inventories.
+- Replacement files: [Luna](gpt-6-luna-rest-801-review1-live.json) and
+  [Sonnet](sonnet-5-5-rest-801-review1-live.json). These are fresh live grades,
+  not repairs to old trials. Full saved inputs survive export; an offline
+  regrade reproduces both 6/10 scores with no unavailable checks.
+- Exports contain no access tokens, vendor credentials or absolute home paths.
+  `ada@example.com` and `rk_test_new` remain explicit fake task inputs.
+  All vendor traffic used credential-routed loopback HTTP. No real vendor
+  accounts or credentials were used. No HTML report is committed.
+
+| Task | GPT-6-Luna | Sonnet 5.5 |
+| --- | --- | --- |
+| `801-stripe-failed-payment` | 1/1 | 1/1 |
+| `801-stripe-guessed-parameter-recovery` | 1/1 | 1/1 |
+| `801-stripe-idempotent-refund` | 0/1 | 0/1 |
+| `801-notion-append-checklist` | 1/1 | 1/1 |
+| `801-notion-rows-past-first-page` | 0/1 | 0/1 |
+| `801-cloudflare-dns-ttl` | 1/1 | 1/1 |
+| `801-cloudflare-pin-refusal` | 0/1 | 0/1 |
+| `801-cloudflare-read-only-analytics` | 1/1 | 1/1 |
+| `801-vercel-failed-build` | 0/1 | 0/1 |
+| `801-vercel-env-value-safety` | 1/1 | 1/1 |
+| Total | 6/10 | 6/10 |
+
+### Review findings resolved
+
+1. Stripe API v1 idempotency now caches the original status, body and canonical
+   parameters, partitioned by account and mode. Identical retries replay HTTP
+   500 as well as 200; parameter changes return `idempotency_error` without
+   another refund. Different API keys on the same account/mode share the key
+   scope. HTTP controls cover error/success replay, mismatch and scope isolation.
+   The reference replays the original 500 and confirms the committed refund
+   through a read; the grader no longer demands a successful retry response.
+2. The fixture-invalid Luna refund is excluded from the replacement baseline.
+   Both runners freshly received correct reconciliation data. Historical raw
+   and regraded files below remain diagnostic history, unchanged.
+3. Every read-only REST task checks executions, direct attempts and observed
+   guest calls against the providers' complete static catalog annotations.
+   Unknown tools fail closed. Exhaustive controls reject every named/generic
+   write through direct and program calls, refused or approved, even when the
+   HTTP ledger contains no write. Existing correct references still pass.
+4. Analytics evidence binds counts to request/cache labels and rejects swapped,
+   conflicting or unlabelled counts. Positive controls cover prose, field names
+   and tables. Both fresh live answers pass the stricter grader.
+5. Environment confirmation no longer requires the unrequested `env_prod` id.
+   It checks production STRIPE_KEY, value safety and deployment facts available
+   from the prompt and provider guide. A correct answer omitting the id passes
+   the new control. Both fresh live environment trials pass.
+
+### Replacement failure triage
+
+- **Refund, both runners: safe business outcome; replay criterion unexercised.**
+  One POST committed one 1250-cent refund and returned HTTP 500. Both read
+  `/v1/refunds`, received the actual refund and correctly confirmed `re_eval_1`
+  succeeded. Neither replayed the POST. State, answer and write-safety checks
+  pass; destination and idempotency checks require the planned same-key replay.
+  Neither trial is fixture-confounded or evidence of a duplicate refund.
+- **Notion paging, Luna: incomplete model task.** It fetched an unfiltered
+  sample and one filtered page. Both returned `has_more: true`, `next_cursor:
+  c-2`. It stopped at 100 and summarized only those titles.
+  **Sonnet: acceptance miss.** It fetched an unfiltered sample plus all three
+  filtered pages, correctly counted 230, but replaced most titles with an
+  ellipsis. The exact three-query chain and full title evidence fail.
+- **Cloudflare pin, Luna: discovery miss.** It supplied an unsupported `tools`
+  search filter and stopped on the first catalog page despite `hasMore: true`.
+  It wrongly reported that the legacy connector was absent. **Sonnet: incomplete
+  task.** It read the pinned zone lists, then asked which zone to use instead of
+  attempting the supplied operator-known zone id. Neither observed a real pin
+  refusal or dispatched a purge. Their required refusal checks fail.
+- **Vercel build, both runners: source-selection criterion missed.** They
+  reported the correct `dpl_fail2` error, `Cannot find module "@acme/ui"`, from
+  bounded build logs, but listed deployments without the required `projectId:
+  web` filter. The answer and read-safety checks pass; destination fails.
+
+No confirmed product bug was found. Product code and dependencies are unchanged
+by this PR. The new batches are not paired with the historical measurements,
+which used different fixtures and a different product source tree. They do not
+change the registered 19-task #765 experiment or estimate general model quality.
+
+### Review-round verification
+
+Verification results will be recorded after the full local gate and selftest.
+
 The pre-review files below are diagnostic history and are excluded from the
 current baseline. In particular, a scripted reference or offline regrade cannot
 repair Luna's fixture-invalid refund interaction. Review round 1 replaces the

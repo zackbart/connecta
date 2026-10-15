@@ -8,9 +8,11 @@ failure triage and caveats. Older files retain their historical tools, models
 and grades and are not directly comparable.
 
 The [#801 REST follow-up notes](baselines/notes-rest-801.md) record the ten
-new tasks, live batches, harness corrections and failure triage. Pre-review
-files are diagnostic history, not a complete baseline: the Luna refund trial
-used an invalid reconciliation response.
+new tasks, live batches, harness corrections and failure triage. The replacement
+baseline from clean commit `aaadc969957f` is **GPT-6-Luna 6/10** and
+**Sonnet 5.5 6/10**, with all ten tasks freshly run for each model. Pre-review
+files are diagnostic history and are excluded from these scores, including the
+fixture-invalid Luna refund trial.
 
 ## Runners
 
@@ -276,11 +278,6 @@ vendor-proven idempotent replays from duplicate business writes. The grader
 still requires identical arguments and one nonempty key across attempts.
 Saved inputs include complete REST state, raw request ledger and guest-call
 observations, so offline regrading does not start HTTP services.
-Ten active `801-*` tasks exercise Stripe failed payments, refused-parameter
-recovery and idempotent refunds; Notion checklist append and filtered body-cursor
-paging; Cloudflare DNS TTL changes, pinned Global API Key refusal and read-only
-analytics; and Vercel build errors and value-safe environment updates. All use
-local fake REST vendors through the maintained providers.
 
 The refund fake follows Stripe API v1 idempotency: the same account/mode/key
 and parameters replay the original status and body, including HTTP 500; changed
