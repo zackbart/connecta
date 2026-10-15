@@ -30,13 +30,24 @@ Workspace purpose: <!-- endfragment -->
 - Use the live input schema as the contract. Notion owns these MCP schemas;
   the REST schemas of Connecta's token connector do not apply to MCP tools with
   similar names.
+- The next-step card tools return guidance without enabling access. Call
+  `notion-check-mcp-next-steps` only when fetch instructs you to, at most
+  once. Call `notion-show-advanced-analysis-next-steps` once at turn end
+  only when a multi-source query requires the full version.
 - Session and agent tools can launch asynchronous work. Read session state and
   events before sending another message, waiting, or stopping a session.
 - File uploads and attachment tools create durable workspace state. Keep
   downloads inside the requested task and do not expose signed attachment URLs.
-  `notion-download-skill` returns a signed, expiring archive URL by design;
-  the token connector's REST redaction does not apply to hosted tools, so
-  use that URL for the download and do not repeat it in replies.
+  `notion-get-file-download-urls` returns signed download URLs that expire
+  after a few minutes. Use them only for the requested download and keep
+  stable `notion-file-block://` references in edited or copied Markdown.
+  `notion-download-skill` also returns a signed, expiring archive URL.
+  The token connector's REST redaction does not apply to hosted tools;
+  do not repeat signed download URLs in replies.
+- `notion-upload-skill` is a write for both actions. `prepare` returns a
+  credential-bearing upload URL and headers with a ten-minute expiry;
+  keep them inside the upload flow and out of replies. `complete` replaces
+  the target page's title, Description, body, and Files.
 - Connecta's generic REST tools (`notion_api_*`) and the `integration_*`
   helpers exist only on a token connector.
 - An `auth_required` failure means this connector's OAuth grant is missing or

@@ -105,8 +105,43 @@
         "notion-move-pages",
         "notion-update-data-source",
         "notion-update-view",
-        "notion-stop-session"
+        "notion-stop-session",
+        "notion-check-mcp-next-steps",
+        "notion-show-advanced-analysis-next-steps",
+        "notion-get-enabled-skills",
+        "notion-get-file-download-urls",
+        "notion-get-groups",
+        "notion-list-favorite-pages",
+        "notion-list-page-backlinks",
+        "notion-list-private-pages",
+        "notion-list-recent-pages",
+        "notion-list-shared-pages",
+        "notion-memory-search",
+        "notion-query-multiple-data-sources",
+        "notion-delete-comment",
+        "notion-delete-databases",
+        "notion-delete-pages",
+        "notion-restore-pages",
+        "notion-set-comment-reaction",
+        "notion-set-discussion-resolved",
+        "notion-update-comment",
+        "notion-update-enabled-skills",
+        "notion-update-folder",
+        "notion-upload-skill"
       ]
+    },
+    {
+      "type": "manual",
+      "source": "https://mcp.notion.com/mcp",
+      "rationale": "The hosted catalog varies by client, workspace, plan and rollout. The public reference omits tools in the credentialed Claude capture. Recheck names, descriptions and input contracts manually; annotations were not visible and no operational tools were called. Public providers:check must not obtain credentials or accept this private catalog automatically.",
+      "evidence": {
+        "reviewedAt": "2026-10-15",
+        "capture": "mcp-catalog-2026-10-15.md",
+        "source": "Operator-supplied credentialed tools/list from a Claude client",
+        "toolCount": 57,
+        "newlyReviewedCount": 22,
+        "notes": "Retain notion-ai-search, notion-search-skills and notion-list-agents from earlier reviews even though absent from this capture. No schema digests or annotation claims are asserted from this summarized evidence."
+      }
     },
     {
       "type": "openapi-index",

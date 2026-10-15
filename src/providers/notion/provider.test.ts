@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, it as test, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
 import type { ToolDef } from "../../types.js";
-import { guideOf, itClassifiesLikeARelease, mockRemoteMcp } from "../../../test/fixtures/hosted-provider.js";
+import {
+  guideOf,
+  itClassifiesLikeARelease,
+  mockRemoteMcp,
+  servedTools,
+} from "../../../test/fixtures/hosted-provider.js";
 
 const mcpMocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
@@ -273,6 +278,11 @@ describe("notion() over OAuth", () => {
     expect(guide).toContain("acts as its OAuth-authorized user");
     expect(guide).toContain("## Notion's data model");
     expect(guide).toContain("no idempotency key");
+    expect(guide).toContain("`notion-get-file-download-urls` returns signed download URLs");
+    expect(guide).toContain("stable `notion-file-block://` references");
+    expect(guide).toContain("do not repeat signed download URLs in replies");
+    expect(guide).toContain("`notion-upload-skill` is a write for both actions");
+    expect(guide).toContain("credential-bearing upload URL and headers");
     expect(guide).toContain("## Workspace instructions\n\nPrefer the Engineering teamspace.");
     // The token guide's REST mechanics never leak into the OAuth guide.
     expect(guide).not.toContain("page.param");
@@ -281,23 +291,63 @@ describe("notion() over OAuth", () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-  it("classifies every tool in Notion's published MCP reference", () => {
+  it("INV-1: classifies the union of Notion's published and captured hosted MCP catalogs", () => {
     const counts = { "read-only": 0, additive: 0, destructive: 0 };
     for (const { verdict } of NOTION_MCP_VETTED_CATALOG.tools.values()) {
       counts[verdict] += 1;
     }
-    expect(NOTION_MCP_VETTED_CATALOG.tools.size).toBe(38);
-    expect(counts).toEqual({ "read-only": 22, additive: 10, destructive: 6 });
+    expect(NOTION_MCP_VETTED_CATALOG.tools.size).toBe(60);
+    expect(counts).toEqual({ "read-only": 34, additive: 10, destructive: 16 });
     // Documented since the release review, and reads by Notion's own description.
-    for (const name of ["notion-ai-search", "notion-get-self", "notion-get-tool-access", "notion-download-skill"]) {
+    for (const name of [
+      "notion-ai-search",
+      "notion-list-agents",
+      "notion-search-skills",
+      "notion-get-self",
+      "notion-get-tool-access",
+      "notion-download-skill",
+    ]) {
       expect(NOTION_MCP_VETTED_CATALOG.tools.get(name)?.verdict).toBe("read-only");
     }
   });
 
+  it.each([
+    ["notion-check-mcp-next-steps", "read"],
+    ["notion-show-advanced-analysis-next-steps", "read"],
+    ["notion-get-enabled-skills", "read"],
+    ["notion-get-file-download-urls", "read"],
+    ["notion-get-groups", "read"],
+    ["notion-list-favorite-pages", "read"],
+    ["notion-list-page-backlinks", "read"],
+    ["notion-list-private-pages", "read"],
+    ["notion-list-recent-pages", "read"],
+    ["notion-list-shared-pages", "read"],
+    ["notion-memory-search", "read"],
+    ["notion-query-multiple-data-sources", "read"],
+    ["notion-delete-comment", "write"],
+    ["notion-delete-databases", "write"],
+    ["notion-delete-pages", "write"],
+    ["notion-restore-pages", "write"],
+    ["notion-set-comment-reaction", "write"],
+    ["notion-set-discussion-resolved", "write"],
+    ["notion-update-comment", "write"],
+    ["notion-update-enabled-skills", "write"],
+    ["notion-update-folder", "write"],
+    ["notion-upload-skill", "write"],
+  ])(
+    "INV-1: classifies captured tool %s as %s without hints and keeps writes closed against read claims",
+    async (name, verdict) => {
+      const annotations = { readOnlyHint: true, destructiveHint: false };
+      mcpMocks.listTools.mockResolvedValue([{ name }, { name, annotations }]);
+      const tools = await servedTools(mcp());
+      expect(tools.map((tool) => classifyTool(tool))).toEqual([verdict, verdict]);
+    },
+  );
+
   itClassifiesLikeARelease(mcp, mcpMocks, {
-    read: ["notion-search", "notion-fetch", "notion-get-users"],
+    read: ["notion-get-file-download-urls", "notion-memory-search", "notion-query-multiple-data-sources"],
     write: "notion-create-comment",
-    destructive: "notion-update-page",
+    destructive: "notion-upload-skill",
     unknown: ["notion-new-tool", "notion-new-read", "notion-new-write"],
   });
 });
