@@ -4,6 +4,8 @@ import { createServer, type Server } from "node:http";
 import { once } from "node:events";
 import { test, expect } from "@playwright/test";
 import { operatorPageForPath, renderUiHtml, type UiData } from "../../src/ui.js";
+import { fixPrompt, type FixPromptKind } from "../../src/operator-ui/fix-prompts.js";
+import type { UiConnector } from "../../src/operator-ui/model.js";
 import { accessTokens, AccessTokenManager } from "../../src/access-tokens.js";
 import { api } from "../../src/connectors/api.js";
 import { CredentialVault, encryptedCredentialVault } from "../../src/credentials.js";
@@ -52,6 +54,8 @@ let oauthStartUrl: string | undefined;
  */
 const LEAKY_STATUS_MESSAGE = "fetch failed: 503 upstream connect error (token sk_live_abc123)";
 let leakyStatus = false;
+/** Fields laid over the "drifted" connector, for a test that needs another problem on it. */
+let driftedOverride: Partial<UiConnector> | undefined;
 /**
  * A real deployment behind this fake one. While set, the paths it names are
  * forwarded to its `fetch` as a signed-in, same-origin operator, so the page
@@ -123,6 +127,7 @@ function data(): UiData {
                   ...({ message: LEAKY_STATUS_MESSAGE } as object),
                 }
               : {}),
+            ...driftedOverride,
           },
           {
             id: "oauth",
@@ -421,6 +426,7 @@ test.beforeEach(() => {
   oauthStartBarrier = undefined;
   oauthStartUrl = undefined;
   leakyStatus = false;
+  driftedOverride = undefined;
   realRoutes = undefined;
   tokenManagement = false;
 });
@@ -759,8 +765,8 @@ test("copies a fix prompt that carries nothing from the failure", async ({ page,
   // The operator sees the classified description, not the failure's text...
   await expect(row.locator(".msg")).toContainText("Unavailable: its status check or catalog load failed");
   await expect(row).not.toContainText("sk_live_leaked_value");
-  // The copy button sits among the row's actions; the preview under them.
-  const actions = row.getByRole("region", { name: "Diagnostics", exact: true }).locator(".actions");
+  // The prompt sits beside the problem notice it answers.
+  const actions = row.getByRole("region", { name: "Authentication", exact: true }).locator(".fix-prompt");
   await actions.getByRole("button", { name: "Copy fix prompt for Hosted proxy" }).click();
   await expect(actions.getByRole("button", { name: "Copied" })).toBeVisible();
   await expect(row.getByRole("button", { name: "Refresh Hosted proxy" })).toBeVisible();
@@ -772,6 +778,79 @@ test("copies a fix prompt that carries nothing from the failure", async ({ page,
   expect(copied).not.toContain("sk_live_leaked_value");
   expect(copied).not.toContain("502");
 });
+
+/** Hosted proxy's drift prompt is its own kind; these cases clear it so one button remains. */
+const CLEAN_DRIFT = {
+  observedAt: "2026-08-12T12:00:00.000Z",
+  unclassifiedTools: 0,
+  unservedTools: 0,
+  annotationConflicts: 0,
+  schemaChanges: 0,
+};
+const CONNECTION_FIX_PROMPTS: ReadonlyArray<{
+  kind: FixPromptKind;
+  connector: string;
+  title: string;
+  arrange: () => void;
+}> = [
+  { kind: "oauth_required", connector: "oauth", title: "CRM", arrange: () => (oauthConnected = false) },
+  { kind: "credential_required", connector: "vaulted", title: "Vaulted service", arrange: () => {} },
+  {
+    kind: "auth_required",
+    connector: "drifted",
+    title: "Hosted proxy",
+    arrange: () => (driftedOverride = { status: "auth_required", problem: "auth_required", catalogDrift: CLEAN_DRIFT }),
+  },
+  {
+    kind: "connector_unavailable",
+    connector: "drifted",
+    title: "Hosted proxy",
+    arrange: () => {
+      leakyStatus = true;
+      driftedOverride = { catalogDrift: CLEAN_DRIFT };
+    },
+  },
+  {
+    // The notice and the credential card both name this kind; it is offered once.
+    kind: "credential_mismatch",
+    connector: "drifted",
+    title: "Hosted proxy",
+    arrange: () =>
+      (driftedOverride = {
+        status: "error",
+        problem: "credential_mismatch",
+        catalogDrift: CLEAN_DRIFT,
+        credential: {
+          label: "API key",
+          configured: true,
+          removable: true,
+          testable: false,
+          error: "stored fields differ (sk_live_mismatch_marker)",
+          problem: "credential_mismatch",
+        },
+      }),
+  },
+];
+
+for (const { kind, connector, title, arrange } of CONNECTION_FIX_PROMPTS) {
+  test(`INV-6: offers one ${kind} fix prompt on Connection carrying only its kind and connector`, async ({
+    page,
+    context,
+  }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
+    arrange();
+    await openAuthenticated(page);
+
+    const row = await openRow(page, title);
+    await expect(row.locator(`[data-problem="${kind}"]`)).toBeVisible();
+    const buttons = page.getByRole("button", { name: /^Copy fix prompt/ });
+    await expect(buttons).toHaveCount(1);
+    await buttons.click();
+    await expect(page.getByRole("button", { name: "Copied" })).toBeVisible();
+    // Byte for byte the catalogue's text for this kind and id: nothing else rides along.
+    expect(String(await page.evaluate("navigator.clipboard.readText()"))).toBe(fixPrompt(kind, connector));
+  });
+}
 
 test("renders a classified description and never a connector's status message", async ({ page }) => {
   leakyStatus = true;
@@ -1173,7 +1252,10 @@ test("ignores a failed background read instead of repainting the row", async ({ 
   await page.evaluate('document.dispatchEvent(new Event("visibilitychange"))');
   await expect.poll(() => requests.filter((request) => request.path === "/ui/connectors/oauth").length).toBe(2);
   await expect(crm.locator(".conn-head")).toContainText("Authorization needed");
-  await expect(crm.locator('[data-problem="connector_unavailable"], [data-fix-prompt]')).toHaveCount(0);
+  await expect(
+    crm.locator('[data-problem="connector_unavailable"], [data-fix-prompt="connector_unavailable"]'),
+  ).toHaveCount(0);
+  await expect(crm.locator('[data-fix-prompt="oauth_required"]')).toHaveCount(1);
 });
 
 test("creates, shows once, renames and revokes client tokens through real routes", async ({ page }) => {

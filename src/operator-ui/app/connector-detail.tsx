@@ -93,7 +93,7 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
                         </span>
                       </div>
                       {auth ? (
-                        <ConnectorDiagnostics connector={auth} state={state} />
+                        <ConnectorDiagnostics connector={auth} />
                       ) : (
                         <StateBlock>Diagnostics are loading.</StateBlock>
                       )}

@@ -34,7 +34,7 @@ with one status badge, auth scope, tool count, and last call; a problem adds one
 action (Connect, Replace key, or Inspect) that opens Connection. Connector
 detail has Tools, Connection, and Activity tabs. Connection combines
 authentication (including the OAuth client mechanism), catalog diagnostics,
-fix prompts, and the connector snapshot with its source. Settings combines inbound-auth facts with the
+one fix prompt beside each problem it reports, and the connector snapshot with its source. Settings combines inbound-auth facts with the
 configuration snapshot and labels values as default or configured. Deployment code owns connectors, grants, pools, and classification;
 the UI changes only authorized authentication material.
 

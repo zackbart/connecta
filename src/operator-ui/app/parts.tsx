@@ -57,19 +57,8 @@ export function FixPrompt({ kind, connectorId, name }: { kind: FixPromptKind; co
   );
 }
 
-/**
- * The fix prompt's two halves, for a row that puts the copy button among its
- * actions and the preview under them.
- */
-export function FixPromptButton({
-  kind,
-  connectorId,
-  name,
-}: {
-  kind: FixPromptKind;
-  connectorId: string;
-  name?: string;
-}) {
+/** The fix prompt's two halves. */
+function FixPromptButton({ kind, connectorId, name }: { kind: FixPromptKind; connectorId: string; name?: string }) {
   return (
     <CopyButton
       value={fixPrompt(kind, connectorId)}
@@ -79,18 +68,9 @@ export function FixPromptButton({
   );
 }
 
-export function FixPromptPreview({
-  kind,
-  connectorId,
-  standalone,
-}: {
-  kind: FixPromptKind;
-  connectorId: string;
-  /** Rendered on its own, away from its button: it carries the marker then. */
-  standalone?: boolean;
-}) {
+function FixPromptPreview({ kind, connectorId }: { kind: FixPromptKind; connectorId: string }) {
   return (
-    <details className="fix-prompt-preview" {...(standalone ? { "data-fix-prompt": kind } : {})}>
+    <details className="fix-prompt-preview">
       <summary className="disclosure">Preview prompt</summary>
       <p className="meta">
         Fixed text for a coding agent working on this deployment. It carries no error details or secrets.

@@ -16,15 +16,7 @@ import {
 } from "../view.js";
 import { productName } from "./config.js";
 import { CredentialCard } from "./credentials.js";
-import {
-  ConfirmBar,
-  FixPrompt,
-  FixPromptButton,
-  FixPromptPreview,
-  NoticeLine,
-  StateBlock,
-  focusableId,
-} from "./parts.js";
+import { ConfirmBar, FixPrompt, NoticeLine, StateBlock, focusableId } from "./parts.js";
 import { askConfirm, cancelConfirm, disconnectOAuth, refreshConnector, startOAuth } from "./store.js";
 
 const DRIFT_HEADING: Record<ReturnType<typeof driftState>, string> = {
@@ -163,6 +155,9 @@ export function ConnectorAuth({ connector, state }: { connector: UiConnector; st
   const oauthConfirm = confirming && confirming.action !== "credential_remove" ? confirming : null;
   const local = state.connectorFailures[id];
   const problem = !local && connector.status !== "loading" ? problemCopy(connector.problem) : null;
+  // One prompt per kind: a credential card already offering this one keeps it.
+  const credentialFix = connector.credential?.error ? connector.credential.problem : undefined;
+  const fixKind = problem && connector.problem !== credentialFix ? connector.problem : undefined;
   return (
     <div className="collection" data-connector={id}>
       {connector.registrationPath ? (
@@ -174,6 +169,7 @@ export function ConnectorAuth({ connector, state }: { connector: UiConnector; st
           {problem}
         </p>
       ) : null}
+      {fixKind ? <FixPrompt kind={fixKind} connectorId={id} name={name} /> : null}
       {local ? (
         <p className="msg warn" data-load-failure={local}>
           {connectorLoadFailureCopy(local, productName)}
@@ -229,19 +225,9 @@ export function ConnectorAuth({ connector, state }: { connector: UiConnector; st
   );
 }
 
-export function ConnectorDiagnostics({ connector, state }: { connector: UiConnector; state: OperatorState }) {
-  const fixKind =
-    !state.connectorFailures[connector.id] && connector.problem && problemTone(connector.problem) === "danger"
-      ? connector.problem
-      : null;
+export function ConnectorDiagnostics({ connector }: { connector: UiConnector }) {
   return (
     <div className="collection">
-      {fixKind ? (
-        <div className="actions">
-          <FixPromptButton kind={fixKind} connectorId={connector.id} name={connector.title || connector.id} />
-        </div>
-      ) : null}
-      {fixKind ? <FixPromptPreview kind={fixKind} connectorId={connector.id} standalone /> : null}
       <DriftPanel connector={connector} />
       {connector.resourceTemplateRefusals?.map((code) => (
         <p className="meta" key={code}>
