@@ -15,6 +15,17 @@
 // Paths are dot paths into the data a tool returns (Cloudflare's `result`,
 // or the whole body when it is not an envelope); lists are traversed
 // implicitly and `*` matches every key of an object.
+// Embedded URL verdict (#812): global, schema revision 3fad73eb27c381031c09ccdfa28ef9352029cd5a.
+// Reviewed response schemas: access_custom_page.custom_html, Waiting Room
+// custom_page_html, Workers build logs, workers-observability telemetry events'
+// $metadata.message and arbitrary event data, Browser Rendering content, and
+// realtimekit_Recording download_url/audio_download_url. No documented rule
+// embeds Cloudflare-minted signed URLs in free text; recording and upload
+// capabilities use structured URL fields. Logs, HTML, Worker code and KV data
+// can nevertheless carry credential queries under arbitrary keys. Scan all
+// strings instead of maintaining paths; do not strip all Cloudflare, R2 or S3
+// URLs, which include customers' public content. Existing refusals still apply.
+
 import {
   redact as reviewed,
   refuse,
@@ -1463,6 +1474,7 @@ const OPERATIONS: Readonly<Record<string, ValueSafetyVerdict>> = {
  * are reviewed metadata wherever they appear.
  */
 export const CLOUDFLARE_VALUE_SAFETY: ValueSafetyTable = {
+  embeddedUrls: "global",
   title: "Cloudflare",
   operations: OPERATIONS,
   fields: {

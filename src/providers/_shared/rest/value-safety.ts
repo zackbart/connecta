@@ -255,6 +255,8 @@ interface ResourceRules {
 export interface ValueSafetyTable {
   /** Display name in refusals. */
   readonly title: string;
+  /** Opt in after reviewing embedded URLs in the pinned response contract. */
+  readonly embeddedUrls?: "global";
   /** The reviewed verdict for every flagged operation, keyed `METHOD /path template`. */
   readonly operations: Readonly<Record<string, ValueSafetyVerdict>>;
   /**
@@ -694,8 +696,8 @@ function linkSpan(text: string, start: number, host: number | undefined, inline:
  * file-host matching. Each consumed span is skipped in full; admission and
  * redaction choose their own span boundary, and both stay linear.
  */
-function* hostLinks(text: string, hosts: FileHosts, redact: boolean): Generator<LinkSpan> {
-  const matcher = hostMatcher(hosts);
+function* hostLinks(text: string, hosts: FileHosts | undefined, redact: boolean): Generator<LinkSpan> {
+  const matcher = hosts ? hostMatcher(hosts) : undefined;
   // The first URL delimiter in the current text run also protects relative
   // paths/queries such as /proxy/https://… and image?url=//… .
   let firstReference = -1;
@@ -711,7 +713,7 @@ function* hostLinks(text: string, hosts: FileHosts, redact: boolean): Generator<
         const angle = text[destination] === "<";
         const start = destination + (angle ? 1 : 0);
         const authority = destinationHost(text, start);
-        const host = authority === undefined ? undefined : fileHost(text, authority, matcher);
+        const host = authority === undefined ? undefined : matcher ? fileHost(text, authority, matcher) : authority;
         const span = linkSpan(text, start, host, !angle, redact);
         at = Math.max(destination, span.end) - 1;
         firstReference = -1;
@@ -727,8 +729,11 @@ function* hostLinks(text: string, hosts: FileHosts, redact: boolean): Generator<
         if (SLASH.test(text)) {
           const authority = SLASH.lastIndex;
           const start = authorityAt(text, authority);
-          if (start >= 0 && (firstReference < 0 || firstReference >= start)) {
-            const host = fileHost(text, authority, matcher);
+          // Global parameter scanning needs no host attribution. This also
+          // catches a URL after a log label such as `download:https://…`.
+          // File-host policy keeps the stricter authority/proxy boundary.
+          if (!matcher || (start >= 0 && (firstReference < 0 || firstReference >= start))) {
+            const host = matcher ? fileHost(text, authority, matcher) : authority;
             const span = linkSpan(text, authority, host, false, redact);
             at = span.end - 1;
             firstReference = -1;
@@ -751,10 +756,35 @@ function* hostLinks(text: string, hosts: FileHosts, redact: boolean): Generator<
  * parameter's value. Everything else comes back byte for byte.
  */
 export function withholdSignedLinks(text: string, hosts: FileHosts): string {
+  return withholdSigningParams(withholdLinkQueries(text, hosts));
+}
+
+/** A credential-named parameter in a URL, rather than an assignment in prose. */
+function credentialQuery(text: string): boolean {
+  const decoded = decodeLinkText(text);
+  const fragment = decoded.indexOf("#");
+  if (fragment >= 0 && /token|secret|key|code|auth/i.test(decoded.slice(fragment + 1))) return true;
+  const params = /[?&]([^?&#=]*)=/g;
+  for (let match = params.exec(decoded); match; match = params.exec(decoded)) {
+    const name = match[1]!;
+    if (!URL_PARAM_CONTAINS.test(name) && !URL_PARAM_SUFFIX.test(normalizedName(name))) continue;
+    const start = match.index + match[0].length;
+    let end = start;
+    while (end < decoded.length && decoded[end] !== "&" && decoded[end] !== "#") end++;
+    // The whole-URL pass already sanitizes individual parameters. Preserve
+    // that output, but never trust a placeholder followed by more bytes.
+    if (decoded.slice(start, end) !== REDACTED) return true;
+  }
+  return false;
+}
+
+/** Remove a link's entire query/fragment, keeping its surrounding syntax. */
+function withholdLinkQueries(text: string, hosts?: FileHosts): string {
   let out = "";
   let copied = 0;
-  for (const { cut, open, end } of hostLinks(text, hosts, true)) {
+  for (const { cut, open, end } of hostLinks(text, hosts, hosts !== undefined)) {
     if (cut < 0) continue;
+    if (!hosts && !credentialQuery(text.slice(cut, end))) continue;
     let keep = end;
     while (keep > cut + 1 && TRAILING.test(text[keep - 1]!)) keep--;
     // A query with nothing in it.
@@ -762,10 +792,12 @@ export function withholdSignedLinks(text: string, hosts: FileHosts): string {
     out += `${text.slice(copied, cut)}${open}${REDACTED}`;
     copied = keep;
   }
-  const anchored = copied === 0 ? text : out + text.slice(copied);
+  return copied === 0 ? text : out + text.slice(copied);
+}
 
-  out = "";
-  copied = 0;
+function withholdSigningParams(anchored: string): string {
+  let out = "";
+  let copied = 0;
   SIGNING_PARAM.lastIndex = 0;
   for (let match = SIGNING_PARAM.exec(anchored); match; match = SIGNING_PARAM.exec(anchored)) {
     const start = match.index + match[0].length;
@@ -779,16 +811,34 @@ export function withholdSignedLinks(text: string, hosts: FileHosts): string {
   return copied === 0 ? anchored : out + anchored.slice(copied);
 }
 
+/**
+ * Global REST text policy: only credential-bearing URL queries/fragments
+ * change. Ordinary links, including external proxies, retain their bytes.
+ * Literal AWS/Google signing names are withheld anywhere, as in #818.
+ */
+export function withholdEmbeddedUrls(text: string): string {
+  return withholdSigningParams(withholdLinkQueries(text));
+}
+
 /** Every string inside a JSON value through `withholdSignedLinks`; unchanged values keep their identity. */
 export function withholdSignedLinksIn(value: unknown, hosts: FileHosts, depth = 0): unknown {
-  if (typeof value === "string") return withholdSignedLinks(value, hosts);
+  return mapStrings(value, (text) => withholdSignedLinks(text, hosts), depth);
+}
+
+/** Apply the global embedded URL policy before a vendor maps an error body. */
+export function withholdEmbeddedUrlsIn(value: unknown): unknown {
+  return mapStrings(value, withholdEmbeddedUrls, 0);
+}
+
+function mapStrings(value: unknown, cleanText: (text: string) => string, depth: number): unknown {
+  if (typeof value === "string") return cleanText(value);
   if (typeof value !== "object" || value === null) return value;
   // Deeper than any vendor's shape: withheld, as the heuristic does.
   if (depth > MAX_DEPTH) return REDACTED;
   if (Array.isArray(value)) {
     let changed = false;
     const items = value.map((item) => {
-      const clean = withholdSignedLinksIn(item, hosts, depth + 1);
+      const clean = mapStrings(item, cleanText, depth + 1);
       if (clean !== item) changed = true;
       return clean;
     });
@@ -796,7 +846,7 @@ export function withholdSignedLinksIn(value: unknown, hosts: FileHosts, depth = 
   }
   let changed = false;
   const entries = Object.entries(value).map(([key, item]) => {
-    const clean = withholdSignedLinksIn(item, hosts, depth + 1);
+    const clean = mapStrings(item, cleanText, depth + 1);
     if (clean !== item) changed = true;
     return [key, clean] as const;
   });
@@ -1079,6 +1129,7 @@ interface Exemptions {
   verbatim: WeakMap<object, Set<string>>;
   fields: Readonly<Record<string, FieldReview>>;
   scopeMaps: readonly string[];
+  embeddedUrls: boolean;
 }
 
 /**
@@ -1092,7 +1143,13 @@ interface Exemptions {
 function heuristic(value: unknown, exempt: Exemptions): unknown {
   const walk = (current: unknown, trail: string[], parent: string, depth: number): unknown => {
     if (depth > MAX_DEPTH) return REDACTED;
-    if (typeof current === "string") return URL_SHAPE.test(current) ? sanitizeUrl(current) : current;
+    if (typeof current === "string") {
+      // A whole URL retains the existing per-parameter policy. Whitespace
+      // means this can be prose starting with a URL, so scan each link.
+      const clean =
+        URL_SHAPE.test(current) && (!exempt.embeddedUrls || !/\s/.test(current)) ? sanitizeUrl(current) : current;
+      return exempt.embeddedUrls ? withholdEmbeddedUrls(clean) : clean;
+    }
     if (Array.isArray(current)) return current.map((item) => walk(item, trail, parent, depth + 1));
     if (!isRecord(current)) return current;
     const labelled =
@@ -1207,7 +1264,13 @@ export function valueSafety(table: ValueSafetyTable, index: () => OperationIndex
       const verbatim = new WeakMap<object, Set<string>>();
       if (table.resources) out = resourcePass(out, table.resources, verbatim, 0);
       const keep = reviewed && reviewed.verdict !== "refuse" ? (reviewed.keep ?? []) : [];
-      return heuristic(out, { keep: keep.map(trailOf), verbatim, fields, scopeMaps });
+      return heuristic(out, {
+        keep: keep.map(trailOf),
+        verbatim,
+        fields,
+        scopeMaps,
+        embeddedUrls: table.embeddedUrls === "global",
+      });
     },
     withholdsErrors(op) {
       const reviewed = verdict(op.method, op.path);

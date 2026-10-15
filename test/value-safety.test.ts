@@ -6,6 +6,8 @@ import { OperationIndex, type OpenApiData } from "../src/providers/_shared/rest/
 import {
   REDACTED,
   carriesWithheldLink,
+  withholdEmbeddedUrls,
+  withholdEmbeddedUrlsIn,
   withholdSignedLinks,
   withholdSignedLinksIn,
   redact,
@@ -625,5 +627,106 @@ describe("pre-signed links in free text", () => {
     const admitting = performance.now();
     expect(carriesWithheldLink(text, HOSTS)).toBeTypeOf("boolean");
     expect(performance.now() - admitting).toBeLessThan(2_000);
+  });
+});
+
+describe("global embedded REST URL policy (#812)", () => {
+  it.each([
+    [
+      "Markdown",
+      "[download](https://files.example/a?token=PRIVATE&width=400)",
+      "[download](https://files.example/a?[redacted])",
+    ],
+    [
+      "HTML",
+      '<a href="https://files.example/a?width=400&amp;api_key=PRIVATE">file</a>',
+      '<a href="https://files.example/a?[redacted]">file</a>',
+    ],
+    ["scheme-less URL", "download //files.example/a?sig=PRIVATE now", "download //files.example/a?[redacted] now"],
+    [
+      "escaped URL",
+      String.raw`see https:\/\/files.example/a\u003ftoken%3DPRIVATE now`,
+      String.raw`see https:\/\/files.example/a?[redacted] now`,
+    ],
+    [
+      "encoded URL",
+      "see https%3A%2F%2Ffiles.example%2Fa%3Ftoken%3DPRIVATE now",
+      "see https%3A%2F%2Ffiles.example%2Fa?[redacted] now",
+    ],
+    ["fragment", "[file](https://files.example/a#access_token=PRIVATE)", "[file](https://files.example/a#[redacted])"],
+    [
+      "adjacent links",
+      "[a](https://example.com/a?width=400)[b](https://files.example/b?secret=PRIVATE)[c](https://example.com/c?x=1)",
+      "[a](https://example.com/a?width=400)[b](https://files.example/b?[redacted])[c](https://example.com/c?x=1)",
+    ],
+    [
+      "unmatched filename parentheses in HTML",
+      '<img src="https://files.example/a)b?sig=PRIVATE">',
+      '<img src="https://files.example/a)b?[redacted]">',
+    ],
+    [
+      "literal signing name",
+      "download https://files.example/a?X-Amz-Signature=PRIVATE",
+      "download https://files.example/a?[redacted]",
+    ],
+    ["signing name outside a URL", "X-Goog-Credential=PRIVATE", "X-Goog-Credential=[redacted]"],
+    ["log labels", "download:https://files.example/a?api_key=PRIVATE", "download:https://files.example/a?[redacted]"],
+    [
+      "credential after a placeholder",
+      "see https://files.example/a?token=[redacted]PRIVATE",
+      "see https://files.example/a?[redacted]",
+    ],
+  ])("INV-5: withholds credential queries in %s", (_, input, expected) => {
+    expect(withholdEmbeddedUrls(input)).toBe(expected);
+    expect(withholdEmbeddedUrls(expected)).toBe(expected);
+  });
+
+  it.each([
+    "A token=ordinary assignment and code=42 in prose",
+    "[user](https://EXAMPLE.com/a%2fb?width=400&x=%2f#section)",
+    "[proxy](https://example.com/image?url=https://file.notion.so/a?id=42&width=400)",
+    "[proxy](/proxy/https://file.notion.so/a?id=42)",
+    "[a]( https://example.com/a?width=1)[redacted]![b](https://example.com/b#section)",
+    "<img src='//files.example/a?width=200'>",
+  ])("INV-5: preserves ordinary user text and links byte for byte: %s", (input) => {
+    expect(withholdEmbeddedUrls(input)).toBe(input);
+  });
+
+  it("INV-5: applies globally through arrays and projections' source objects without changing the default vendor policy", () => {
+    const input = {
+      description: "download https://files.example/a?token=PRIVATE",
+      nested: [{ text: "[file](//example.com/a?sig=PRIVATE)" }],
+    };
+    expect(engine({ operations: {} }).redact(input, "GET", "/v1/things")).toEqual(input);
+    const safety = engine({ operations: {}, embeddedUrls: "global" });
+    expect(safety.redact(input, "GET", "/v1/things")).toEqual({
+      description: "download https://files.example/a?[redacted]",
+      nested: [{ text: "[file](//example.com/a?[redacted])" }],
+    });
+    expect(
+      safety.redact(
+        { text: "https://example.com/a?width=400 see https://files.example/b?token=PRIVATE" },
+        "GET",
+        "/v1/things",
+      ),
+    ).toEqual({ text: "https://example.com/a?width=400 see https://files.example/b?[redacted]" });
+    expect(safety.redact({ text: "https://example.com/a?token=PRIVATE&width=400" }, "GET", "/v1/things")).toEqual({
+      text: "https://example.com/a?token=%5Bredacted%5D&width=400",
+    });
+    const unchanged = { description: "[file](https://example.com/a?width=100)" };
+    expect(withholdEmbeddedUrlsIn(unchanged)).toBe(unchanged);
+    expect(withholdEmbeddedUrlsIn(input)).toEqual(safety.redact(input, "GET", "/v1/things"));
+  });
+
+  it.each([
+    ["a large body with no URLs", "plain text ".repeat(200_000)],
+    ["many ordinary queries", "[f](https://example.com/a?width=400)".repeat(40_000)],
+    ["many signed queries", "[f](https://example.com/a?sig=PRIVATE)".repeat(40_000)],
+    ["one long parameter name", `see https://example.com/a?${"a".repeat(2_000_000)}=value`],
+    ["many parameter delimiters", `see https://example.com/a?${"?&a&".repeat(400_000)}`],
+  ])("INV-5: scans %s with bounded linear passes", (_, input) => {
+    const started = performance.now();
+    expect(withholdEmbeddedUrls(input)).not.toContain("PRIVATE");
+    expect(performance.now() - started).toBeLessThan(2_000);
   });
 });

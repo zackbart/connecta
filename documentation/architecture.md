@@ -862,8 +862,28 @@ every vendor ships one reviewed table through one mechanism
    lose their values, header, cookie, and query rules lose theirs, external
    destinations keep their origin, and every URL loses userinfo and
    credential-named query parameters or fragments. Exemptions are never
-   shared; each vendor states its own. This URL rule sees a string that is
-   itself a URL. Vendors whose responses embed the file links they mint can
+   shared; each vendor states its own. Whole URL strings keep the existing
+   per-parameter policy. Every REST vendor must also review the pinned spec's
+   free-text response fields for embedded vendor-minted links and record a
+   `none found`, `reviewed paths`, or `global` verdict in its value-safety
+   review. Stripe, Vercel, and Cloudflare opt into `embeddedUrls: "global"`:
+   the heuristic scans every remaining string, including logs, HTML, code,
+   arbitrary nested data and text starting with a URL. Before error mapping,
+   those vendors apply `withholdEmbeddedUrlsIn` too; named Vercel streams and
+   uploads use the same engine before projection or truncation. A URL with a
+   credential-named query parameter or credential-looking fragment loses its
+   whole query and fragment. The vocabulary matches the whole-URL rule, so
+   even an ordinary `code` or `key` parameter triggers withholding. This
+   deliberate false positive is limited to URL queries, not assignments in
+   prose. Ordinary user-authored links, look-alikes and external proxies
+   without credential parameters keep their bytes. Literal AWS/Google signing
+   names are withheld wherever they occur. Scans use bounded linear passes
+   over disjoint destinations; no repeated parsing of a growing text suffix.
+   Global scanning costs a pass over large bodies, but avoids omissions in
+   open-ended logs and objects. No host-wide policy is inferred from vendor
+   branding. The vendor tables record the schemas reviewed and any missing
+   source evidence, including Vercel's unavailable full pin.
+   Vendors whose responses embed the file links they mint can
    use `withholdSignedLinks(text, hosts)` or
    `withholdSignedLinksIn(value, hosts)` with a reviewed `FileHosts` policy
    (`domains` and S3 `buckets`). Notion applies the latter in its `result`

@@ -131,11 +131,19 @@ vendors"). The steps:
    a `keep`, a reviewed `urls` entry, or a field review. Wrap a verdict in
    `vendorErrors()` only when a review shows its errors cannot echo a stored
    secret.
-3. Build the engine with `valueSafety(TABLE, () => index)`, pass it as the
+3. Review free-text response fields for embedded vendor-minted signed URLs
+   against the pinned spec. Record `none found`, `reviewed paths`, or `global`
+   in `value-safety.ts`, naming the reviewed fields and any missing evidence.
+   Prefer `embeddedUrls: "global"` for arbitrary logs or nested text, and use
+   `withholdEmbeddedUrlsIn` before error mapping, including named transports.
+   Credential-named query parameters must be withheld in embedded URLs while
+   ordinary links retain their bytes. A vendor-specific `FileHosts` policy
+   needs reviewed domains/buckets; do not infer one from the vendor's name.
+4. Build the engine with `valueSafety(TABLE, () => index)`, pass it as the
    vendor's `valueSafety`, and use `withholdsErrors(call.op)` in the failure
    mapper to replace the vendor's text with codes and status. Named tools
    that bypass `callRest` call its `redact` themselves.
-4. Add `value-safety.node.test.ts` that runs `describeValueSafety` from
+5. Add `value-safety.node.test.ts` that runs `describeValueSafety` from
    `test/fixtures/value-safety.ts` with the verdict counts, a connector, a
    vendor-shaped error body, `absent`, and examples for conditional resource
    rules, plus regressions in `provider.test.ts` for each secret family the

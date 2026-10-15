@@ -24,6 +24,18 @@
 // Residual risk, as with Infisical: a secret a person typed into a free-text
 // name, description, log line, or identifier is out of scope.
 
+// Embedded URL verdict (#812): global, pin sha256:32399b3ed273.
+// Reviewed the pinned operation index and response candidates, including
+// deployments' errorMessage, build events' payload.text, runtime logs' message,
+// checks' output, and file/download operations. These are open-ended text or
+// content; path-only scanning would miss logs and arbitrary nested results.
+// The original full response document is unavailable at its unversioned URL:
+// upstream now differs. Current upstream was inspected as supplementary
+// evidence only; the pin and existing verdicts are unchanged. No claim of a
+// complete pinned-response review or Vercel-wide file-host policy is made.
+// Scan credential/signing query parameters globally; ordinary user links and
+// deployment URLs keep their bytes. Streams use the same engine before clamp.
+
 import {
   redact,
   refuse as refusal,
@@ -386,6 +398,7 @@ const VALUE_SAFETY: Readonly<Record<string, ValueSafetyVerdict>> = {
  * names, which the heuristic leaves.
  */
 export const VERCEL_VALUE_SAFETY: ValueSafetyTable = {
+  embeddedUrls: "global",
   title: "Vercel",
   operations: VALUE_SAFETY,
   envBodies: /^\/v\d+\/(?:env(?:\/|$)|projects\/\{[^}]+\}\/env(?:\/|$))/,

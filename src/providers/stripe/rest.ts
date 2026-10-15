@@ -16,7 +16,7 @@ import {
   type RestReadPost,
   type RestVendor,
 } from "../_shared/rest/tools.js";
-import { valueSafety } from "../_shared/rest/value-safety.js";
+import { valueSafety, withholdEmbeddedUrlsIn } from "../_shared/rest/value-safety.js";
 import { openapi } from "./openapi.generated.js";
 import { STRIPE_VALUE_SAFETY } from "./value-safety.js";
 
@@ -163,7 +163,7 @@ function refuse(call: RestCall): string | undefined {
  * the type, code, decline code, and param still route.
  */
 function stripeFailure(status: number, headers: Headers, body: unknown, withheld = false): ConnectorCallError {
-  const error = record(record(body)["error"]);
+  const error = record(record(withholdEmbeddedUrlsIn(body))["error"]);
   const code = text(error["code"]);
   const kind = [text(error["type"]), code, text(error["decline_code"])].filter(Boolean).join(" ");
   const param = text(error["param"]);

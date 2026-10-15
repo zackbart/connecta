@@ -20,7 +20,7 @@ import {
   type RestVendor,
 } from "../_shared/rest/tools.js";
 import { inspectGraphqlQuery } from "./graphql.js";
-import { valueSafety } from "../_shared/rest/value-safety.js";
+import { valueSafety, withholdEmbeddedUrlsIn } from "../_shared/rest/value-safety.js";
 import { CLOUDFLARE_VALUE_SAFETY } from "./value-safety.js";
 import { openapi } from "./openapi.generated.js";
 
@@ -312,7 +312,7 @@ const SAFETY = valueSafety(CLOUDFLARE_VALUE_SAFETY, () => cloudflareIndex());
  * (it may echo a submitted secret); the status and numeric codes still route.
  */
 function failureFor(status: number, headers: Headers, body: unknown, call?: RestCall): ConnectorCallError {
-  const errors = errorsOf(body);
+  const errors = errorsOf(withholdEmbeddedUrlsIn(body));
   const ray = headers.get("cf-ray");
   const codes = errorCodes(errors);
   const withheld = call !== undefined && SAFETY.withholdsErrors(call.op);

@@ -180,6 +180,27 @@ describe("cloudflare() over a key", () => {
     return error as ConnectorCallError;
   }
 
+  it("INV-5: withholds signed and credential-bearing URLs embedded in response text before select and error mapping (#812)", async () => {
+    const ordinary = "[proxy](https://EXAMPLE.com/image?url=https://file.notion.so/a?id=42&width=400#section)";
+    const input = `${ordinary} Download [file](https://files.example/a?token=PRIVATE_TOKEN&X-Amz-Signature=PRIVATE_SIGNATURE)`;
+    const expected = `${ordinary} Download [file](https://files.example/a?[redacted])`;
+    const connector = cloudflare("cf", TOKEN);
+    respond = () => envelope({ custom_html: input });
+    const result = (await connector.callTool(
+      "cloudflare_api_read",
+      { path: `/accounts/${ACCOUNT}/access/custom_pages/page-1`, select: ["custom_html"] },
+      token(),
+    )) as any;
+    expect(result.data).toEqual({ custom_html: expected });
+    respond = () => Response.json({ success: false, errors: [{ code: 1001, message: input }] }, { status: 400 });
+    const error = await refusal(
+      connector.callTool("cloudflare_api_read", { path: `/accounts/${ACCOUNT}/access/custom_pages/page-1` }, token()),
+    );
+    expect(error.message).toContain("Download");
+    expect(error.message).toContain("[redacted]");
+    expect(error.message).not.toMatch(/PRIVATE_TOKEN|PRIVATE_SIGNATURE/);
+  });
+
   it("builds Connecta's REST connector with an operator credential, admission, and its tool set", async () => {
     const connector = cloudflare("cf", { ...TOKEN, maxResultBytes: 30_000 });
     expect(mocks.remoteMcp).not.toHaveBeenCalled();

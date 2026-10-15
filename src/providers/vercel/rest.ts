@@ -19,7 +19,7 @@ import {
   type RestVendor,
 } from "../_shared/rest/tools.js";
 import { openapi } from "./openapi.generated.js";
-import { valueSafety } from "../_shared/rest/value-safety.js";
+import { valueSafety, withholdEmbeddedUrlsIn } from "../_shared/rest/value-safety.js";
 import { VERCEL_VALUE_SAFETY } from "./value-safety.js";
 
 /** Vercel's public REST origin. Override only for a proxy or test double. */
@@ -116,7 +116,7 @@ function reviewedCode(value: unknown): string | undefined {
  * value: it says the status, a reviewed code, and what to do.
  */
 function vercelFailure(status: number, headers: Headers, payload: unknown, family = false): ConnectorCallError {
-  const root = record(payload);
+  const root = record(withholdEmbeddedUrlsIn(payload));
   const error = record(root["error"]);
   const code = text(error["code"]);
   const message = text(error["message"])?.trim() ?? text(root["message"])?.trim() ?? `Vercel returned HTTP ${status}.`;
