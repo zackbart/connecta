@@ -225,6 +225,9 @@ for (const [name, path, heading] of pages) {
 }
 
 async function screenshot(page: Page, name: string) {
+  // Clicking a lower row scrolls it into view. Reset before full-page capture
+  // so sticky chrome and the off-screen skip link keep their page-top positions.
+  await page.evaluate("window.scrollTo(0, 0)");
   if (process.platform === "linux") await expect(page).toHaveScreenshot(`${name}.png`, { fullPage: true });
   else test.info().annotations.push({ type: "snapshot", description: "Linux Chromium comparison runs in CI" });
   if (process.env.OPERATOR_VISUAL_INSPECT)
